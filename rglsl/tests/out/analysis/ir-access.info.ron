@@ -42,7 +42,7 @@
     functions: [
         (
             flags: ("EXPRESSIONS | BLOCKS | CONTROL_FLOW_UNIFORMITY | STRUCT_LAYOUTS | CONSTANTS | BINDINGS"),
-            available_stages: ("VERTEX | FRAGMENT | COMPUTE | MESH | TASK | RAY_GENERATION | ANY_HIT | CLOSEST_HIT | MISS"),
+            available_stages: ("VERTEX | FRAGMENT | COMPUTE | MESH | TASK | RAY_GENERATION | ANY_HIT | CLOSEST_HIT | MISS | TESS_CONTROL | TESS_EVALUATION | GEOMETRY"),
             uniformity: (
                 non_uniform_result: None,
                 requirements: (""),
@@ -1201,7 +1201,7 @@
         ),
         (
             flags: ("EXPRESSIONS | BLOCKS | CONTROL_FLOW_UNIFORMITY | STRUCT_LAYOUTS | CONSTANTS | BINDINGS"),
-            available_stages: ("VERTEX | FRAGMENT | COMPUTE | MESH | TASK | RAY_GENERATION | ANY_HIT | CLOSEST_HIT | MISS"),
+            available_stages: ("VERTEX | FRAGMENT | COMPUTE | MESH | TASK | RAY_GENERATION | ANY_HIT | CLOSEST_HIT | MISS | TESS_CONTROL | TESS_EVALUATION | GEOMETRY"),
             uniformity: (
                 non_uniform_result: None,
                 requirements: (""),
@@ -2528,7 +2528,7 @@
         ),
         (
             flags: ("EXPRESSIONS | BLOCKS | CONTROL_FLOW_UNIFORMITY | STRUCT_LAYOUTS | CONSTANTS | BINDINGS"),
-            available_stages: ("VERTEX | FRAGMENT | COMPUTE | MESH | TASK | RAY_GENERATION | ANY_HIT | CLOSEST_HIT | MISS"),
+            available_stages: ("VERTEX | FRAGMENT | COMPUTE | MESH | TASK | RAY_GENERATION | ANY_HIT | CLOSEST_HIT | MISS | TESS_CONTROL | TESS_EVALUATION | GEOMETRY"),
             uniformity: (
                 non_uniform_result: Some(0),
                 requirements: (""),
@@ -2569,7 +2569,7 @@
         ),
         (
             flags: ("EXPRESSIONS | BLOCKS | CONTROL_FLOW_UNIFORMITY | STRUCT_LAYOUTS | CONSTANTS | BINDINGS"),
-            available_stages: ("VERTEX | FRAGMENT | COMPUTE | MESH | TASK | RAY_GENERATION | ANY_HIT | CLOSEST_HIT | MISS"),
+            available_stages: ("VERTEX | FRAGMENT | COMPUTE | MESH | TASK | RAY_GENERATION | ANY_HIT | CLOSEST_HIT | MISS | TESS_CONTROL | TESS_EVALUATION | GEOMETRY"),
             uniformity: (
                 non_uniform_result: Some(0),
                 requirements: (""),
@@ -2619,7 +2619,7 @@
         ),
         (
             flags: ("EXPRESSIONS | BLOCKS | CONTROL_FLOW_UNIFORMITY | STRUCT_LAYOUTS | CONSTANTS | BINDINGS"),
-            available_stages: ("VERTEX | FRAGMENT | COMPUTE | MESH | TASK | RAY_GENERATION | ANY_HIT | CLOSEST_HIT | MISS"),
+            available_stages: ("VERTEX | FRAGMENT | COMPUTE | MESH | TASK | RAY_GENERATION | ANY_HIT | CLOSEST_HIT | MISS | TESS_CONTROL | TESS_EVALUATION | GEOMETRY"),
             uniformity: (
                 non_uniform_result: None,
                 requirements: (""),
@@ -2663,7 +2663,7 @@
         ),
         (
             flags: ("EXPRESSIONS | BLOCKS | CONTROL_FLOW_UNIFORMITY | STRUCT_LAYOUTS | CONSTANTS | BINDINGS"),
-            available_stages: ("VERTEX | FRAGMENT | COMPUTE | MESH | TASK | RAY_GENERATION | ANY_HIT | CLOSEST_HIT | MISS"),
+            available_stages: ("VERTEX | FRAGMENT | COMPUTE | MESH | TASK | RAY_GENERATION | ANY_HIT | CLOSEST_HIT | MISS | TESS_CONTROL | TESS_EVALUATION | GEOMETRY"),
             uniformity: (
                 non_uniform_result: None,
                 requirements: (""),
@@ -2758,7 +2758,7 @@
         ),
         (
             flags: ("EXPRESSIONS | BLOCKS | CONTROL_FLOW_UNIFORMITY | STRUCT_LAYOUTS | CONSTANTS | BINDINGS"),
-            available_stages: ("VERTEX | FRAGMENT | COMPUTE | MESH | TASK | RAY_GENERATION | ANY_HIT | CLOSEST_HIT | MISS"),
+            available_stages: ("VERTEX | FRAGMENT | COMPUTE | MESH | TASK | RAY_GENERATION | ANY_HIT | CLOSEST_HIT | MISS | TESS_CONTROL | TESS_EVALUATION | GEOMETRY"),
             uniformity: (
                 non_uniform_result: None,
                 requirements: (""),
@@ -2880,7 +2880,7 @@
         ),
         (
             flags: ("EXPRESSIONS | BLOCKS | CONTROL_FLOW_UNIFORMITY | STRUCT_LAYOUTS | CONSTANTS | BINDINGS"),
-            available_stages: ("VERTEX | FRAGMENT | COMPUTE | MESH | TASK | RAY_GENERATION | ANY_HIT | CLOSEST_HIT | MISS"),
+            available_stages: ("VERTEX | FRAGMENT | COMPUTE | MESH | TASK | RAY_GENERATION | ANY_HIT | CLOSEST_HIT | MISS | TESS_CONTROL | TESS_EVALUATION | GEOMETRY"),
             uniformity: (
                 non_uniform_result: Some(0),
                 requirements: (""),
@@ -2933,7 +2933,7 @@
         ),
         (
             flags: ("EXPRESSIONS | BLOCKS | CONTROL_FLOW_UNIFORMITY | STRUCT_LAYOUTS | CONSTANTS | BINDINGS"),
-            available_stages: ("VERTEX | FRAGMENT | COMPUTE | MESH | TASK | RAY_GENERATION | ANY_HIT | CLOSEST_HIT | MISS"),
+            available_stages: ("VERTEX | FRAGMENT | COMPUTE | MESH | TASK | RAY_GENERATION | ANY_HIT | CLOSEST_HIT | MISS | TESS_CONTROL | TESS_EVALUATION | GEOMETRY"),
             uniformity: (
                 non_uniform_result: None,
                 requirements: (""),
@@ -2989,7 +2989,7 @@
         ),
         (
             flags: ("EXPRESSIONS | BLOCKS | CONTROL_FLOW_UNIFORMITY | STRUCT_LAYOUTS | CONSTANTS | BINDINGS"),
-            available_stages: ("VERTEX | FRAGMENT | COMPUTE | MESH | TASK | RAY_GENERATION | ANY_HIT | CLOSEST_HIT | MISS"),
+            available_stages: ("VERTEX | FRAGMENT | COMPUTE | MESH | TASK | RAY_GENERATION | ANY_HIT | CLOSEST_HIT | MISS | TESS_CONTROL | TESS_EVALUATION | GEOMETRY"),
             uniformity: (
                 non_uniform_result: Some(0),
                 requirements: (""),
@@ -3042,7 +3042,7 @@
         ),
         (
             flags: ("EXPRESSIONS | BLOCKS | CONTROL_FLOW_UNIFORMITY | STRUCT_LAYOUTS | CONSTANTS | BINDINGS"),
-            available_stages: ("VERTEX | FRAGMENT | COMPUTE | MESH | TASK | RAY_GENERATION | ANY_HIT | CLOSEST_HIT | MISS"),
+            available_stages: ("VERTEX | FRAGMENT | COMPUTE | MESH | TASK | RAY_GENERATION | ANY_HIT | CLOSEST_HIT | MISS | TESS_CONTROL | TESS_EVALUATION | GEOMETRY"),
             uniformity: (
                 non_uniform_result: None,
                 requirements: (""),
@@ -3098,7 +3098,7 @@
         ),
         (
             flags: ("EXPRESSIONS | BLOCKS | CONTROL_FLOW_UNIFORMITY | STRUCT_LAYOUTS | CONSTANTS | BINDINGS"),
-            available_stages: ("VERTEX | FRAGMENT | COMPUTE | MESH | TASK | RAY_GENERATION | ANY_HIT | CLOSEST_HIT | MISS"),
+            available_stages: ("VERTEX | FRAGMENT | COMPUTE | MESH | TASK | RAY_GENERATION | ANY_HIT | CLOSEST_HIT | MISS | TESS_CONTROL | TESS_EVALUATION | GEOMETRY"),
             uniformity: (
                 non_uniform_result: Some(0),
                 requirements: (""),
@@ -3163,7 +3163,7 @@
         ),
         (
             flags: ("EXPRESSIONS | BLOCKS | CONTROL_FLOW_UNIFORMITY | STRUCT_LAYOUTS | CONSTANTS | BINDINGS"),
-            available_stages: ("VERTEX | FRAGMENT | COMPUTE | MESH | TASK | RAY_GENERATION | ANY_HIT | CLOSEST_HIT | MISS"),
+            available_stages: ("VERTEX | FRAGMENT | COMPUTE | MESH | TASK | RAY_GENERATION | ANY_HIT | CLOSEST_HIT | MISS | TESS_CONTROL | TESS_EVALUATION | GEOMETRY"),
             uniformity: (
                 non_uniform_result: Some(2),
                 requirements: (""),
@@ -3237,7 +3237,7 @@
         ),
         (
             flags: ("EXPRESSIONS | BLOCKS | CONTROL_FLOW_UNIFORMITY | STRUCT_LAYOUTS | CONSTANTS | BINDINGS"),
-            available_stages: ("VERTEX | FRAGMENT | COMPUTE | MESH | TASK | RAY_GENERATION | ANY_HIT | CLOSEST_HIT | MISS"),
+            available_stages: ("VERTEX | FRAGMENT | COMPUTE | MESH | TASK | RAY_GENERATION | ANY_HIT | CLOSEST_HIT | MISS | TESS_CONTROL | TESS_EVALUATION | GEOMETRY"),
             uniformity: (
                 non_uniform_result: Some(2),
                 requirements: (""),
@@ -3314,7 +3314,7 @@
         ),
         (
             flags: ("EXPRESSIONS | BLOCKS | CONTROL_FLOW_UNIFORMITY | STRUCT_LAYOUTS | CONSTANTS | BINDINGS"),
-            available_stages: ("VERTEX | FRAGMENT | COMPUTE | MESH | TASK | RAY_GENERATION | ANY_HIT | CLOSEST_HIT | MISS"),
+            available_stages: ("VERTEX | FRAGMENT | COMPUTE | MESH | TASK | RAY_GENERATION | ANY_HIT | CLOSEST_HIT | MISS | TESS_CONTROL | TESS_EVALUATION | GEOMETRY"),
             uniformity: (
                 non_uniform_result: None,
                 requirements: (""),
@@ -3415,7 +3415,7 @@
         ),
         (
             flags: ("EXPRESSIONS | BLOCKS | CONTROL_FLOW_UNIFORMITY | STRUCT_LAYOUTS | CONSTANTS | BINDINGS"),
-            available_stages: ("VERTEX | FRAGMENT | COMPUTE | MESH | TASK | RAY_GENERATION | ANY_HIT | CLOSEST_HIT | MISS"),
+            available_stages: ("VERTEX | FRAGMENT | COMPUTE | MESH | TASK | RAY_GENERATION | ANY_HIT | CLOSEST_HIT | MISS | TESS_CONTROL | TESS_EVALUATION | GEOMETRY"),
             uniformity: (
                 non_uniform_result: Some(1),
                 requirements: (""),
@@ -3614,7 +3614,7 @@
     entry_points: [
         (
             flags: ("EXPRESSIONS | BLOCKS | CONTROL_FLOW_UNIFORMITY | STRUCT_LAYOUTS | CONSTANTS | BINDINGS"),
-            available_stages: ("VERTEX | FRAGMENT | COMPUTE | MESH | TASK | RAY_GENERATION | ANY_HIT | CLOSEST_HIT | MISS"),
+            available_stages: ("VERTEX | FRAGMENT | COMPUTE | MESH | TASK | RAY_GENERATION | ANY_HIT | CLOSEST_HIT | MISS | TESS_CONTROL | TESS_EVALUATION | GEOMETRY"),
             uniformity: (
                 non_uniform_result: Some(0),
                 requirements: (""),
@@ -4310,7 +4310,7 @@
         ),
         (
             flags: ("EXPRESSIONS | BLOCKS | CONTROL_FLOW_UNIFORMITY | STRUCT_LAYOUTS | CONSTANTS | BINDINGS"),
-            available_stages: ("VERTEX | FRAGMENT | COMPUTE | MESH | TASK | RAY_GENERATION | ANY_HIT | CLOSEST_HIT | MISS"),
+            available_stages: ("VERTEX | FRAGMENT | COMPUTE | MESH | TASK | RAY_GENERATION | ANY_HIT | CLOSEST_HIT | MISS | TESS_CONTROL | TESS_EVALUATION | GEOMETRY"),
             uniformity: (
                 non_uniform_result: None,
                 requirements: (""),
@@ -4763,7 +4763,7 @@
         ),
         (
             flags: ("EXPRESSIONS | BLOCKS | CONTROL_FLOW_UNIFORMITY | STRUCT_LAYOUTS | CONSTANTS | BINDINGS"),
-            available_stages: ("VERTEX | FRAGMENT | COMPUTE | MESH | TASK | RAY_GENERATION | ANY_HIT | CLOSEST_HIT | MISS"),
+            available_stages: ("VERTEX | FRAGMENT | COMPUTE | MESH | TASK | RAY_GENERATION | ANY_HIT | CLOSEST_HIT | MISS | TESS_CONTROL | TESS_EVALUATION | GEOMETRY"),
             uniformity: (
                 non_uniform_result: Some(0),
                 requirements: (""),

@@ -257,6 +257,20 @@ impl super::Validator {
             for &variable in &entry_point.interface {
                 Self::validate_global_variable_handle(variable, global_variables)?;
             }
+            for &(variable, _) in entry_point
+                .geometry
+                .iter()
+                .flat_map(|geometry| &geometry.streams)
+            {
+                Self::validate_global_variable_handle(variable, global_variables)?;
+            }
+            for &variable in entry_point
+                .geometry
+                .iter()
+                .flat_map(|geometry| &geometry.passthrough)
+            {
+                Self::validate_global_variable_handle(variable, global_variables)?;
+            }
             if let Some(task_payload) = entry_point.task_payload {
                 Self::validate_global_variable_handle(task_payload, global_variables)?;
             }
@@ -976,6 +990,8 @@ impl super::Validator {
             crate::Statement::Break
             | crate::Statement::Continue
             | crate::Statement::Kill
+            | crate::Statement::EmitVertex { .. }
+            | crate::Statement::EndPrimitive { .. }
             | crate::Statement::ControlBarrier(_)
             | crate::Statement::MemoryBarrier(_) => Ok(()),
         })

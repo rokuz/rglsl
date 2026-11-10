@@ -10,11 +10,11 @@ Shaders that glslang's own test suite (`gtests/*.FromFile.cpp`) compiles under V
 
 | Stage | Files | accept | diag | valid | interface | exec | link | crashes |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| **all** | 694 | 370 / 694 (53.3 %) | 70 / 143 (49.0 %) | 227 / 227 (100.0 %) | – | – | – | 0 |
+| **all** | 694 | 379 / 694 (54.6 %) | 71 / 143 (49.7 %) | 236 / 236 (100.0 %) | – | – | – | 0 |
 | vert | 68 | 46 / 68 (67.6 %) | 8 / 9 (88.9 %) | 37 / 37 (100.0 %) | – | – | – | 0 |
-| tesc | 7 | 1 / 7 (14.3 %) | 0 / 1 (0.0 %) | – | – | – | – | 0 |
-| tese | 4 | 0 / 4 (0.0 %) | – | – | – | – | – | 0 |
-| geom | 4 | 0 / 4 (0.0 %) | – | – | – | – | – | 0 |
+| tesc | 7 | 4 / 7 (57.1 %) | 1 / 1 (100.0 %) | 3 / 3 (100.0 %) | – | – | – | 0 |
+| tese | 4 | 3 / 4 (75.0 %) | – | 3 / 3 (100.0 %) | – | – | – | 0 |
+| geom | 4 | 3 / 4 (75.0 %) | – | 3 / 3 (100.0 %) | – | – | – | 0 |
 | frag | 207 | 131 / 207 (63.3 %) | 28 / 33 (84.8 %) | 98 / 98 (100.0 %) | – | – | – | 0 |
 | comp | 296 | 166 / 296 (56.1 %) | 29 / 75 (38.7 %) | 91 / 91 (100.0 %) | – | – | – | 0 |
 | mesh | 20 | 4 / 20 (20.0 %) | 0 / 4 (0.0 %) | – | – | – | – | 0 |
@@ -30,7 +30,7 @@ Shaders that glslang's own test suite (`gtests/*.FromFile.cpp`) compiles under V
 
 | | we accept | we reject |
 |---|---:|---:|
-| glslang accepts | 227 | 324 |
+| glslang accepts | 236 | 315 |
 | glslang rejects | 0 | 143 |
 
 ## glslang OpenGL tests, compiled for Vulkan
@@ -39,11 +39,11 @@ Shaders that glslang's own test suite compiles under OpenGL semantics. Here glsl
 
 | Stage | Files | accept | diag | valid | interface | exec | link | crashes |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| **all** | 218 | 200 / 218 (91.7 %) | 77 / 145 (53.1 %) | 55 / 55 (100.0 %) | – | – | – | 0 |
+| **all** | 218 | 206 / 218 (94.5 %) | 86 / 145 (59.3 %) | 61 / 61 (100.0 %) | – | – | – | 0 |
 | vert | 73 | 69 / 73 (94.5 %) | 22 / 35 (62.9 %) | 34 / 34 (100.0 %) | – | – | – | 0 |
-| tesc | 6 | 5 / 6 (83.3 %) | 0 / 5 (0.0 %) | – | – | – | – | 0 |
-| tese | 2 | 2 / 2 (100.0 %) | 0 / 2 (0.0 %) | – | – | – | – | 0 |
-| geom | 11 | 6 / 11 (54.5 %) | 0 / 6 (0.0 %) | – | – | – | – | 0 |
+| tesc | 6 | 6 / 6 (100.0 %) | 4 / 5 (80.0 %) | 1 / 1 (100.0 %) | – | – | – | 0 |
+| tese | 2 | 2 / 2 (100.0 %) | 2 / 2 (100.0 %) | – | – | – | – | 0 |
+| geom | 11 | 11 / 11 (100.0 %) | 3 / 6 (50.0 %) | 5 / 5 (100.0 %) | – | – | – | 0 |
 | frag | 88 | 81 / 88 (92.0 %) | 40 / 62 (64.5 %) | 19 / 19 (100.0 %) | – | – | – | 0 |
 | comp | 27 | 26 / 27 (96.3 %) | 9 / 24 (37.5 %) | 2 / 2 (100.0 %) | – | – | – | 0 |
 | mesh | 4 | 4 / 4 (100.0 %) | 1 / 4 (25.0 %) | – | – | – | – | 0 |
@@ -59,7 +59,7 @@ Shaders that glslang's own test suite compiles under OpenGL semantics. Here glsl
 
 | | we accept | we reject |
 |---|---:|---:|
-| glslang accepts | 55 | 18 |
+| glslang accepts | 61 | 12 |
 | glslang rejects | 0 | 145 |
 
 ## Modes

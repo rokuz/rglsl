@@ -403,7 +403,9 @@ pub enum BuiltIn {
     PrimitiveIndex,
 
     /// Written in vertex/mesh shaders, read in fragment shaders
-    Position { invariant: bool },
+    Position {
+        invariant: bool,
+    },
     /// Read in task, mesh, vertex, and fragment shaders
     ViewIndex,
 
@@ -424,6 +426,14 @@ pub enum BuiltIn {
     /// Read in vertex & task shaders, or mesh shaders in pipelines without task shaders
     DrawIndex,
 
+    InvocationId,
+    PatchVertices,
+    TessCoord,
+    TessLevelOuter,
+    TessLevelInner,
+    Layer,
+    ViewportIndex,
+
     /// Written in fragment shaders
     FragDepth,
     /// Read in fragment shaders
@@ -431,7 +441,9 @@ pub enum BuiltIn {
     /// Read in fragment shaders
     FrontFacing,
     /// Read in fragment shaders
-    Barycentric { perspective: bool },
+    Barycentric {
+        perspective: bool,
+    },
     /// Read in fragment shaders
     SampleIndex,
     /// Read or written in fragment shaders
@@ -2378,7 +2390,9 @@ pub enum Statement {
     /// [`Loop`] statement.
     ///
     /// [`Loop`]: Statement::Loop
-    Return { value: Option<Handle<Expression>> },
+    Return {
+        value: Option<Handle<Expression>>,
+    },
 
     /// Aborts the current shader execution.
     ///
@@ -2387,6 +2401,14 @@ pub enum Statement {
     ///
     /// [`Loop`]: Statement::Loop
     Kill,
+
+    EmitVertex {
+        stream: Option<u32>,
+    },
+
+    EndPrimitive {
+        stream: Option<u32>,
+    },
 
     /// Synchronize invocations within the work group.
     /// The `Barrier` flags control which memory accesses should be synchronized.
@@ -2854,6 +2876,102 @@ pub struct EntryPoint {
     pub interface: Vec<Handle<GlobalVariable>>,
     #[cfg_attr(feature = "deserialize", serde(default))]
     pub transform_feedback: bool,
+    #[cfg_attr(feature = "serialize", serde(skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    pub geometry: Option<GeometryInfo>,
+    #[cfg_attr(feature = "serialize", serde(skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    pub tessellation: Option<TessellationInfo>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub struct GeometryInfo {
+    pub input: GeometryInputPrimitive,
+    pub output: GeometryOutputPrimitive,
+    pub max_vertices: u32,
+    pub invocations: u32,
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    pub streams: Vec<(Handle<GlobalVariable>, u32)>,
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    pub passthrough: Vec<Handle<GlobalVariable>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub enum GeometryInputPrimitive {
+    Points,
+    Lines,
+    LinesAdjacency,
+    Triangles,
+    TrianglesAdjacency,
+}
+
+impl GeometryInputPrimitive {
+    pub const fn vertices(self) -> u32 {
+        match self {
+            Self::Points => 1,
+            Self::Lines => 2,
+            Self::LinesAdjacency => 4,
+            Self::Triangles => 3,
+            Self::TrianglesAdjacency => 6,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub enum GeometryOutputPrimitive {
+    Points,
+    LineStrip,
+    TriangleStrip,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub struct TessellationInfo {
+    pub output_vertices: Option<u32>,
+    pub primitive: Option<TessellationPrimitive>,
+    pub spacing: Option<TessellationSpacing>,
+    pub vertex_order: Option<TessellationVertexOrder>,
+    pub point_mode: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub enum TessellationPrimitive {
+    Triangles,
+    Quads,
+    Isolines,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub enum TessellationSpacing {
+    Equal,
+    FractionalEven,
+    FractionalOdd,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub enum TessellationVertexOrder {
+    Cw,
+    Ccw,
 }
 
 /// Return types predeclared for the frexp, modf, and atomicCompareExchangeWeak built-in functions.

@@ -1025,6 +1025,60 @@ pub struct InterfaceBlock {
     pub arrayed: bool,
 }
 
+pub fn is_patch_variable(
+    types: &crate::UniqueArena<crate::Type>,
+    var: &crate::GlobalVariable,
+) -> bool {
+    let member_patch = |ty: crate::Handle<crate::Type>| match types[ty].inner {
+        crate::TypeInner::Struct { ref members, .. } => members.iter().any(|member| {
+            matches!(
+                member.binding,
+                Some(crate::Binding::Location { patch: true, .. })
+                    | Some(crate::Binding::BuiltIn(
+                        crate::BuiltIn::TessLevelOuter | crate::BuiltIn::TessLevelInner
+                    ))
+            )
+        }),
+        _ => false,
+    };
+    match var.io {
+        Some(crate::Binding::Location { patch, .. }) => {
+            patch
+                || member_patch(var.ty)
+                || match types[var.ty].inner {
+                    crate::TypeInner::Array { base, .. } => member_patch(base),
+                    _ => false,
+                }
+        }
+        Some(crate::Binding::BuiltIn(built_in)) => matches!(
+            built_in,
+            crate::BuiltIn::TessLevelOuter | crate::BuiltIn::TessLevelInner
+        ),
+        None => {
+            member_patch(var.ty)
+                || match types[var.ty].inner {
+                    crate::TypeInner::Array { base, .. } => member_patch(base),
+                    _ => false,
+                }
+        }
+    }
+}
+
+pub fn is_per_vertex_variable(
+    stage: crate::ShaderStage,
+    types: &crate::UniqueArena<crate::Type>,
+    var: &crate::GlobalVariable,
+) -> bool {
+    let arrayed_direction = match var.space {
+        crate::AddressSpace::Input => stage.has_arrayed_io(),
+        crate::AddressSpace::Output => stage == crate::ShaderStage::TessControl,
+        _ => false,
+    };
+    arrayed_direction
+        && !matches!(var.io, Some(crate::Binding::BuiltIn(_)))
+        && !is_patch_variable(types, var)
+}
+
 pub fn interface_block(
     types: &crate::UniqueArena<crate::Type>,
     ty: crate::Handle<crate::Type>,

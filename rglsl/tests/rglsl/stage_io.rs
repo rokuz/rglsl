@@ -197,6 +197,8 @@ impl Builder {
             incoming_ray_payload: None,
             interface: self.interface,
             transform_feedback: false,
+            geometry: None,
+            tessellation: None,
         });
         self.module
     }
@@ -914,4 +916,148 @@ fn invalid_blocks_are_rejected() {
     })
     .unwrap_err();
     assert!(error.contains("InvalidBlockBinding"), "{error}");
+}
+
+fn geometry_info() -> rglsl::GeometryInfo {
+    rglsl::GeometryInfo {
+        input: rglsl::GeometryInputPrimitive::Triangles,
+        output: rglsl::GeometryOutputPrimitive::TriangleStrip,
+        max_vertices: 3,
+        invocations: 1,
+        streams: Vec::new(),
+        passthrough: Vec::new(),
+    }
+}
+
+fn arrayed(b: &mut Builder, base: Handle<Type>, length: u32) -> Handle<Type> {
+    b.ty(TypeInner::Array {
+        base,
+        size: rglsl::ArraySize::Constant(core::num::NonZeroU32::new(length).unwrap()),
+        stride: 16,
+    })
+}
+
+fn patch(location: u32) -> Binding {
+    Binding::Location {
+        location,
+        interpolation: Some(rglsl::Interpolation::Perspective),
+        sampling: Some(rglsl::Sampling::Center),
+        blend_src: None,
+        per_primitive: false,
+        component: None,
+        invariant: false,
+        patch: true,
+    }
+}
+
+#[test]
+fn per_vertex_inputs_take_the_locations_of_one_element() {
+    let mut b = Builder::new();
+    let vec4 = b.vector(VectorSize::Quad);
+    let per_vertex = arrayed(&mut b, vec4, 3);
+    b.variable("a", AddressSpace::Input, per_vertex, location(0));
+    b.variable("c", AddressSpace::Input, per_vertex, location(1));
+    b.variable("o", AddressSpace::Output, vec4, location(0));
+    let mut module = b.finish(ShaderStage::Geometry);
+    module.entry_points[0].geometry = Some(geometry_info());
+    let spirv = compile(&module);
+    assert_eq!(decorations(&spirv, "a"), [(Decoration::Location, vec![0])]);
+    assert_eq!(decorations(&spirv, "c"), [(Decoration::Location, vec![1])]);
+}
+
+#[test]
+fn invalid_geometry_and_tessellation_interfaces_are_rejected() {
+    let mut b = Builder::new();
+    let vec4 = b.vector(VectorSize::Quad);
+    b.variable("a", AddressSpace::Input, vec4, location(0));
+    let mut module = b.finish(ShaderStage::Geometry);
+    module.entry_points[0].geometry = Some(geometry_info());
+    let error = validate(&module).unwrap_err();
+    assert!(error.contains("ArrayedInterfaceNotArray"), "{error}");
+
+    let mut b = Builder::new();
+    let vec4 = b.vector(VectorSize::Quad);
+    let per_vertex = arrayed(&mut b, vec4, 3);
+    b.variable("a", AddressSpace::Input, per_vertex, location(0));
+    let error = validate(&b.finish(ShaderStage::Geometry)).unwrap_err();
+    assert!(error.contains("ExpectedGeometryInfo"), "{error}");
+
+    let mut b = Builder::new();
+    let vec4 = b.vector(VectorSize::Quad);
+    b.variable("p", AddressSpace::Input, vec4, patch(0));
+    let error = validate(&b.finish(ShaderStage::Fragment)).unwrap_err();
+    assert!(error.contains("patch"), "{error}");
+
+    let mut module = Builder::new().finish(ShaderStage::TessControl);
+    let error = validate(&module).unwrap_err();
+    assert!(error.contains("ExpectedOutputVertices"), "{error}");
+    module.entry_points[0].tessellation = Some(rglsl::TessellationInfo {
+        output_vertices: Some(4),
+        ..rglsl::TessellationInfo::default()
+    });
+    validate(&module).unwrap();
+
+    let mut module = Builder::new().finish(ShaderStage::Vertex);
+    module.entry_points[0].geometry = Some(geometry_info());
+    let error = validate(&module).unwrap_err();
+    assert!(error.contains("UnexpectedGeometryInfo"), "{error}");
+
+    let mut b = Builder::new();
+    b.function
+        .body
+        .push(Statement::EmitVertex { stream: None }, Span::UNDEFINED);
+    let error = validate(&b.finish(ShaderStage::Vertex)).unwrap_err();
+    assert!(error.contains("ForbiddenStageOperations"), "{error}");
+}
+
+#[test]
+fn patch_outputs_have_their_own_locations() {
+    let mut b = Builder::new();
+    let vec4 = b.vector(VectorSize::Quad);
+    let per_vertex = arrayed(&mut b, vec4, 4);
+    b.variable("v", AddressSpace::Output, per_vertex, location(0));
+    b.variable("p", AddressSpace::Output, vec4, patch(0));
+    let mut module = b.finish(ShaderStage::TessControl);
+    module.entry_points[0].tessellation = Some(rglsl::TessellationInfo {
+        output_vertices: Some(4),
+        ..rglsl::TessellationInfo::default()
+    });
+    let spirv = compile(&module);
+    assert_eq!(
+        decorations(&spirv, "p"),
+        [
+            (Decoration::Patch, Vec::new()),
+            (Decoration::Location, vec![0])
+        ]
+    );
+    assert_eq!(decorations(&spirv, "v"), [(Decoration::Location, vec![0])]);
+}
+
+#[test]
+fn tessellation_levels_are_patch_built_ins() {
+    let mut b = Builder::new();
+    let float = b.ty(TypeInner::Scalar(Scalar::F32));
+    let outer = arrayed(&mut b, float, 4);
+    b.variable(
+        "gl_TessLevelOuter",
+        AddressSpace::Output,
+        outer,
+        Binding::BuiltIn(BuiltIn::TessLevelOuter),
+    );
+    let mut module = b.finish(ShaderStage::TessControl);
+    module.entry_points[0].tessellation = Some(rglsl::TessellationInfo {
+        output_vertices: Some(3),
+        ..rglsl::TessellationInfo::default()
+    });
+    let spirv = compile(&module);
+    assert_eq!(
+        decorations(&spirv, "gl_TessLevelOuter"),
+        [
+            (
+                Decoration::BuiltIn,
+                vec![spirv::BuiltIn::TessLevelOuter as u32]
+            ),
+            (Decoration::Patch, Vec::new())
+        ]
+    );
 }

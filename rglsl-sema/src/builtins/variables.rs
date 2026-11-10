@@ -37,6 +37,14 @@ in int gl_DrawID
 ",
     },
     Group {
+        stages: VERTEX | TESS_CONTROL | TESS_EVALUATION,
+        since: 450,
+        text: "
+out int gl_ViewportIndex
+out int gl_Layer
+",
+    },
+    Group {
         stages: TESS_CONTROL,
         since: 450,
         text: "

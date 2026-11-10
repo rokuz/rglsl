@@ -334,6 +334,35 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   its handle; an abstract scalar reaching a type or constant declaration makes
   `Writer::write` fail. `process_overrides` reports the new `PipelineConstantError` variants
   `UnresolvedOverride` and `InvalidOverrideType` instead of panicking.
+- **Geometry and tessellation stages.** `ShaderStage::{TessControl, TessEvaluation, Geometry}`
+  (new; `ShaderStage::has_arrayed_io`), the matching `ShaderStages` bits of the validator and
+  the `TessellationControl`/`TessellationEvaluation`/`Geometry` execution models.
+  `Statement::EmitVertex { stream }` and `Statement::EndPrimitive { stream }` (new) are
+  `OpEmitVertex`/`OpEndPrimitive`, or `OpEmitStreamVertex`/`OpEndStreamPrimitive` with the
+  `GeometryStreams` capability when a stream is given; they restrict a function to the
+  geometry stage. `EntryPoint::geometry: Option<GeometryInfo>` (input and output primitive,
+  `max_vertices`, `invocations`, the `Stream` of each output when the shader uses streams, the
+  `PassthroughNV` inputs of `GL_NV_geometry_shader_passthrough`) and
+  `EntryPoint::tessellation: Option<TessellationInfo>` (output vertices, primitive mode,
+  spacing, vertex order, point mode) are the execution modes; both are serialized only when
+  set, and the validator requires the one of the entry point's stage and rejects the other.
+  `BuiltIn::{InvocationId, PatchVertices, TessCoord, TessLevelOuter, TessLevelInner, Layer,
+  ViewportIndex}` (new) with their stage rules; `PrimitiveIndex` is also a geometry output and
+  a tessellation and geometry input. `TessLevelOuter`/`TessLevelInner` get the `Patch`
+  decoration; `Binding::Location::patch` is allowed on tessellation control outputs and
+  tessellation evaluation inputs and takes a location space of its own. Inputs of the
+  tessellation and geometry stages and tessellation control outputs, unless per-patch or
+  standalone built-ins, are per-vertex arrays (`proc::is_per_vertex_variable`): the validator
+  checks the element type against the bindings, so the arrayed dimension takes no locations
+  and an arrayed block may have member locations. `Position` is `FragCoord` only on fragment
+  inputs. `PointSize`, `ClipDistance` and `CullDistance` members of a block add their
+  capability (`GeometryPointSize`, `TessellationPointSize`, `ClipDistance`, `CullDistance`)
+  only when a function reachable from an entry point accesses them, also through an element
+  of an arrayed block. `Layer`/`ViewportIndex` add `Geometry`/`MultiViewport` in the
+  geometry and fragment stages and `ShaderViewportIndexLayerEXT` (with
+  `SPV_EXT_shader_viewport_index_layer`) before SPIR-V 1.5, `ShaderLayer`/
+  `ShaderViewportIndex` after, in the vertex and tessellation stages, as glslang does;
+  `PrimitiveId` adds `Geometry` except in the tessellation stages.
 
 ## Cherry-picked upstream commits
 
