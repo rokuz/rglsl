@@ -20,6 +20,8 @@ enum Kind {
 
 #[derive(Debug, Clone, Default)]
 pub struct StageLayout {
+    pub(crate) selections: u32,
+    pub(crate) returned_from_main: bool,
     input_primitive: Option<&'static str>,
     output_primitive: Option<&'static str>,
     vertices: Option<i64>,
@@ -219,6 +221,32 @@ impl Analyzer<'_> {
             }
         } else {
             self.error(span, invalid(name, "cannot apply to this storage"));
+        }
+    }
+
+    pub(crate) fn in_main(&self) -> bool {
+        self.current_function
+            .and_then(|id| self.functions.get(usize::try_from(id.index()).ok()?))
+            .is_some_and(|function| function.name == "main")
+    }
+
+    pub(crate) fn tessellation_barrier(&mut self, span: Span) {
+        if self.options.stage != Stage::TessControl {
+            return;
+        }
+        let reason =
+            if self.stage_layout.selections > 0 || self.loop_depth > 0 || !self.switches.is_empty()
+            {
+                Some("tessellation control barrier() cannot be placed within flow control")
+            } else if !self.in_main() {
+                Some("tessellation control barrier() must be in main()")
+            } else if self.stage_layout.returned_from_main {
+                Some("tessellation control barrier() cannot be placed after a return from main()")
+            } else {
+                None
+            };
+        if let Some(reason) = reason {
+            self.error(span, invalid("barrier", reason));
         }
     }
 
