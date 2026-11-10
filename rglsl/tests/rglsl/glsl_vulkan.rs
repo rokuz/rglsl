@@ -835,15 +835,50 @@ fn booleans_in_blocks() {
     assert_eq!(offsets("B"), [0, 8]);
     assert_eq!(offsets("Anon"), [0, 8]);
 
-    // Not supported yet, and reported rather than miscompiled.
     let error = parse(
         ShaderStage::Fragment,
         "#version 450
-        layout(binding = 0) uniform U { bool flags[4]; } u;
+        struct S { bool flag; };
+        layout(binding = 0) uniform U { S s; } u;
         void main() {}",
     )
     .unwrap_err();
     assert!(error.contains("booleans inside arrays"), "{error}");
+}
+
+#[test]
+fn boolean_arrays_in_blocks() {
+    let source = "#version 450
+        layout(local_size_x = 1) in;
+        layout(binding = 0, std430) buffer B { bool a[3]; bvec2 v[2][2]; bool r[]; } b;
+        layout(binding = 1) uniform U { bool u[2]; } ub;
+        void main() {
+            bool x[3] = b.a;
+            b.a = x;
+            b.a[1] = true;
+            bvec2 w[2][2] = b.v;
+            b.v[1] = w[0];
+            b.r[2] = b.v[1][0].x || ub.u[1];
+        }";
+    let module = compile(ShaderStage::Compute, source);
+    assert!(!instructions(&module, Op::INotEqual).is_empty());
+    assert!(!instructions(&module, Op::Select).is_empty());
+    let ir = parse(ShaderStage::Compute, source).unwrap();
+    let element = ir.types.iter().find_map(|(_, ty)| match ty.inner {
+        rglsl::TypeInner::Struct { ref members, .. } if ty.name.as_deref() == Some("U") => {
+            match ir.types[members[0].ty].inner {
+                rglsl::TypeInner::Array { base, stride, .. } => Some((base, stride)),
+                _ => None,
+            }
+        }
+        _ => None,
+    });
+    let (base, stride) = element.expect("U has an array member");
+    assert_eq!(stride, 16);
+    assert_eq!(
+        ir.types[base].inner,
+        rglsl::TypeInner::Scalar(rglsl::Scalar::U32)
+    );
 }
 
 /// Reading one member of a block does not load the whole block, so a buffer
@@ -4835,4 +4870,318 @@ fn string_literal_misuse_is_rejected() {
     }
     let guarded = "#version 450\n#ifndef GUARD\n#define GUARD\nvoid main() { \"a\"; }\n#endif\n";
     parse(ShaderStage::Fragment, guarded).unwrap();
+}
+
+struct Words {
+    instructions: Vec<(u32, Vec<u32>)>,
+}
+
+impl Words {
+    fn of(&self, op: Op) -> Vec<&[u32]> {
+        self.instructions
+            .iter()
+            .filter(|(opcode, _)| *opcode == op as u32)
+            .map(|(_, operands)| operands.as_slice())
+            .collect()
+    }
+
+    fn count(&self, op: Op) -> usize {
+        self.of(op).len()
+    }
+
+    fn capability(&self, capability: spirv::Capability) -> bool {
+        self.of(Op::Capability)
+            .iter()
+            .any(|operands| operands == &[capability as u32])
+    }
+
+    fn named(&self, name: &str) -> u32 {
+        self.of(Op::Name)
+            .into_iter()
+            .find(|operands| string_operand(&operands[1..]) == name)
+            .map(|operands| operands[0])
+            .unwrap_or_else(|| panic!("nothing named {name}"))
+    }
+
+    fn constant(&self, id: u32) -> Option<u32> {
+        self.of(Op::Constant)
+            .into_iter()
+            .find(|operands| operands[1] == id)
+            .map(|operands| operands[2])
+    }
+
+    fn decorations(&self, id: u32) -> Vec<Vec<u32>> {
+        self.of(Op::Decorate)
+            .into_iter()
+            .filter(|operands| operands[0] == id)
+            .map(|operands| operands[1..].to_vec())
+            .collect()
+    }
+
+    fn member_decorations(&self, id: u32) -> Vec<Vec<u32>> {
+        self.of(Op::MemberDecorate)
+            .into_iter()
+            .filter(|operands| operands[0] == id)
+            .map(|operands| operands[1..].to_vec())
+            .collect()
+    }
+
+    fn id_decorations(&self, op: Op, decoration: Decoration) -> Vec<u32> {
+        self.of(op)
+            .into_iter()
+            .filter(|operands| operands[operands.len() - 2] == decoration as u32)
+            .filter_map(|operands| operands.last().copied())
+            .collect()
+    }
+}
+
+fn string_operand(words: &[u32]) -> String {
+    let bytes: Vec<u8> = words
+        .iter()
+        .flat_map(|word| word.to_le_bytes())
+        .take_while(|byte| *byte != 0)
+        .collect();
+    String::from_utf8(bytes).unwrap_or_default()
+}
+
+fn compile_heap(stage: ShaderStage, source: &str) -> Words {
+    let module = parse(stage, source).unwrap_or_else(|e| panic!("shader rejected: {e}"));
+    let info = Validator::new(ValidationFlags::all(), Capabilities::all())
+        .validate(&module)
+        .expect("validated in parse");
+    let options = spv::Options {
+        lang_version: (1, 4),
+        flags: spv::WriterFlags::DEBUG
+            | spv::WriterFlags::LABEL_VARYINGS
+            | spv::WriterFlags::SMALL_TYPE_CAPABILITIES_BY_USE,
+        ..spv::Options::default()
+    };
+    let words = spv::write_vec(&module, &info, &options, None).expect("SPIR-V backend failed");
+    crate::stage_io::spirv_val_in(&words, &["--target-env", "vulkan1.1spv1.4"]);
+    let mut instructions = Vec::new();
+    let mut rest = &words[5..];
+    while let Some(&first) = rest.first() {
+        let count = (first >> 16) as usize;
+        assert!(count > 0 && count <= rest.len(), "malformed SPIR-V");
+        instructions.push((first & 0xffff, rest[1..count].to_vec()));
+        rest = &rest[count..];
+    }
+    Words { instructions }
+}
+
+#[test]
+fn descriptor_heap_buffer_arrays() {
+    let module = compile_heap(
+        ShaderStage::Compute,
+        "#version 450
+        #extension GL_EXT_descriptor_heap : require
+        layout(local_size_x = 1) in;
+        layout(descriptor_heap) uniform U { uint inputData; } ubo[];
+        layout(descriptor_heap) readonly buffer R { uint value; } reads[];
+        layout(descriptor_heap, descriptor_stride = 512) buffer O { uint outputData; } ssbo[];
+        void main() { ssbo[8].outputData = ubo[9].inputData + reads[1].value; }",
+    );
+    assert!(module.capability(spirv::Capability::DescriptorHeapEXT));
+    assert!(module.capability(spirv::Capability::UntypedPointersKHR));
+    assert_eq!(module.count(Op::UntypedVariableKHR), 1);
+    assert_eq!(module.count(Op::BufferPointerEXT), 3);
+    assert_eq!(module.count(Op::TypeBufferEXT), 2);
+    assert_eq!(module.count(Op::UntypedAccessChainKHR), 3);
+    assert_eq!(
+        module.decorations(module.named("resource_heap")),
+        [vec![
+            Decoration::BuiltIn as u32,
+            spirv::BuiltIn::ResourceHeapEXT as u32
+        ]]
+    );
+    let strides = module.id_decorations(Op::DecorateId, Decoration::ArrayStrideIdEXT);
+    assert_eq!(strides.len(), 3);
+    assert!(strides
+        .iter()
+        .any(|&stride| module.constant(stride) == Some(512)));
+    assert_eq!(module.count(Op::ConstantSizeOfEXT), 2);
+    let readonly = module.member_decorations(module.named("R"));
+    assert!(readonly.contains(&vec![0, Decoration::NonWritable as u32]));
+    let pointers = module.of(Op::BufferPointerEXT);
+    assert!(pointers.iter().any(|operands| module
+        .decorations(operands[1])
+        .contains(&vec![Decoration::NonWritable as u32])));
+}
+
+#[test]
+fn descriptor_heap_images_and_samplers() {
+    let module = compile_heap(
+        ShaderStage::Fragment,
+        "#version 460
+        #extension GL_EXT_descriptor_heap : require
+        layout(descriptor_heap) uniform texture2D textures[];
+        layout(descriptor_heap) uniform sampler samplers[];
+        layout(descriptor_heap, r32f) writeonly uniform image2D writes[];
+        layout(location = 0) in vec2 uv;
+        void main() {
+            vec4 texel = texture(sampler2D(textures[2], samplers[1]), uv);
+            imageStore(writes[3], ivec2(0), texel);
+        }",
+    );
+    assert_eq!(module.count(Op::UntypedVariableKHR), 2);
+    assert_eq!(
+        module.decorations(module.named("sampler_heap")),
+        [vec![
+            Decoration::BuiltIn as u32,
+            spirv::BuiltIn::SamplerHeapEXT as u32
+        ]]
+    );
+    let wrapper = module.named("writes_heap");
+    assert_eq!(
+        module.member_decorations(wrapper),
+        [vec![0, Decoration::NonReadable as u32]]
+    );
+    let offsets = module.id_decorations(Op::MemberDecorateIdEXT, Decoration::OffsetIdEXT);
+    assert_eq!(offsets.len(), 1);
+    assert_eq!(module.constant(offsets[0]), Some(0));
+}
+
+#[test]
+fn structured_descriptor_heap_offsets() {
+    let module = compile_heap(
+        ShaderStage::Compute,
+        "#version 460
+        #extension GL_EXT_descriptor_heap : require
+        #extension GL_EXT_structured_descriptor_heap : require
+        layout(local_size_x = 1) in;
+        layout(buffer_type, std430) buffer DataBuffer { uint value; };
+        layout(heap_offset = 0) resourceheap Heap {
+            layout(descriptor_size = 128, rgba32f) image2D sources[2];
+            layout(descriptor_size = 64, rgba32f) image2D destinations[2];
+            layout(descriptor_size = 128) DataBuffer data;
+            uint after;
+        } heap;
+        void main() {
+            imageStore(heap.destinations[1], ivec2(0), imageLoad(heap.sources[0], ivec2(0)));
+            heap.data.value = heap.after;
+        }",
+    );
+    let offsets: Vec<Option<u32>> = module
+        .id_decorations(Op::MemberDecorateIdEXT, Decoration::OffsetIdEXT)
+        .into_iter()
+        .map(|id| module.constant(id))
+        .collect();
+    assert_eq!(offsets, [Some(0), Some(256), Some(384), Some(512)]);
+    assert_eq!(module.count(Op::BufferPointerEXT), 1);
+}
+
+#[test]
+fn structured_descriptor_heap_offsets_are_specializable() {
+    let module = compile_heap(
+        ShaderStage::Compute,
+        "#version 460
+        #extension GL_EXT_descriptor_heap : require
+        #extension GL_EXT_structured_descriptor_heap : require
+        layout(local_size_x = 1) in;
+        layout(constant_id = 0) const uint base = 1024;
+        layout(push_constant) uniform P { uint samplerOffset; } push;
+        layout(buffer_type) buffer DataBuffer { uint data0; uint data1; };
+        layout(heap_offset = base) resourceheap Resources {
+            uint count;
+            DataBuffer data;
+            texture2D textures[2];
+        } resources;
+        layout(heap_offset = push.samplerOffset) samplerheap Samplers {
+            sampler samplers[2];
+        } samplers;
+        layout(heap_offset = 64) resourceheap Plain { uint value; } plain;
+        layout(binding = 0) buffer Out { vec4 color; } result;
+        void main() {
+            resources.data.data0 = resources.count + plain.value;
+            result.color = textureLod(sampler2D(resources.textures[1], samplers.samplers[1]), vec2(0.5), 0.0);
+        }",
+    );
+    let offsets = module.id_decorations(Op::MemberDecorateIdEXT, Decoration::OffsetIdEXT);
+    let spec = module.of(Op::SpecConstant)[0][1];
+    assert!(offsets.contains(&spec));
+    assert!(module.capability(spirv::Capability::Int8));
+    let byte = module
+        .of(Op::TypeInt)
+        .into_iter()
+        .find(|operands| operands[1] == 8)
+        .map(|operands| operands[0])
+        .expect("an 8-bit integer type");
+    let byte_array = module
+        .of(Op::TypeRuntimeArray)
+        .into_iter()
+        .find(|operands| operands[1] == byte)
+        .map(|operands| operands[0])
+        .expect("a byte array moves heap views by their offset");
+    let shifted = module
+        .of(Op::UntypedAccessChainKHR)
+        .into_iter()
+        .filter(|operands| operands[2] == byte_array)
+        .count();
+    assert_eq!(shifted, 2);
+}
+
+#[test]
+fn descriptor_heap_image_atomics() {
+    let module = compile_heap(
+        ShaderStage::Compute,
+        "#version 460
+        #extension GL_EXT_descriptor_heap : require
+        layout(local_size_x = 1) in;
+        layout(descriptor_heap, r32i) uniform iimage1D images[];
+        void main() { imageAtomicAdd(images[1], 1, 1); }",
+    );
+    assert_eq!(module.count(Op::UntypedImageTexelPointerEXT), 1);
+    assert_eq!(module.count(Op::AtomicIAdd), 1);
+}
+
+#[test]
+fn descriptor_heap_requested_replaces_non_uniform_decorations() {
+    let module = compile_heap(
+        ShaderStage::Fragment,
+        "#version 450
+        #extension GL_EXT_nonuniform_qualifier : require
+        #extension GL_EXT_descriptor_heap : require
+        layout(binding = 0) uniform UBO { vec4 data; } ubo[];
+        layout(descriptor_heap) buffer S { vec4 a; } heap[];
+        layout(location = 0) flat in uint index;
+        layout(location = 0) out vec4 color;
+        void main() { color = ubo[nonuniformEXT(index)].data + heap[nonuniformEXT(index)].a; }",
+    );
+    assert!(!module
+        .of(Op::Decorate)
+        .iter()
+        .any(|operands| operands[1] == Decoration::NonUniform as u32));
+    assert!(module.capability(spirv::Capability::ShaderNonUniform));
+    assert!(module.capability(spirv::Capability::DescriptorHeapEXT));
+    assert!(module.capability(spirv::Capability::UniformBufferArrayNonUniformIndexing));
+    assert!(module.capability(spirv::Capability::StorageBufferArrayNonUniformIndexing));
+}
+
+#[test]
+fn descriptor_heap_rejections() {
+    let cases = [
+        (
+            "layout(descriptor_heap) uniform sampler2D s[];",
+            "combined image samplers",
+        ),
+        (
+            "layout(descriptor_heap) uniform texture2D t;",
+            "could only be declared as an array",
+        ),
+        (
+            "layout(descriptor_stride = 2) uniform U { uint a; } u[];",
+            "must specify 'descriptor_heap'",
+        ),
+        (
+            "layout(descriptor_heap, descriptor_stride = 3) uniform U { uint a; } u[];",
+            "power of 2",
+        ),
+    ];
+    for (declaration, expected) in cases {
+        let source = format!(
+            "#version 450\n#extension GL_EXT_descriptor_heap : require\n{declaration}\nvoid main() {{}}\n"
+        );
+        let error = parse(ShaderStage::Fragment, &source).unwrap_err();
+        assert!(error.contains(expected), "{declaration}: {error}");
+    }
 }

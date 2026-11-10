@@ -38,7 +38,7 @@ fn heap_offset_expression(qualifier: &Spanned<TypeQualifier>) -> Option<&AstExpr
         .flat_map(|layout| layout.ids.iter())
         .filter(|id| id.name.node == "heap_offset")
         .filter_map(|id| id.value.as_ref())
-        .last()
+        .next_back()
 }
 
 fn explicit_packing(qualifiers: &Qualifiers) -> Option<Packing> {

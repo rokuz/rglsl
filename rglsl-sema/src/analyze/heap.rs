@@ -18,7 +18,7 @@ const fn invalid(qualifier: &'static str, reason: &'static str) -> DiagnosticKin
     DiagnosticKind::InvalidQualifier { qualifier, reason }
 }
 
-pub(crate) fn is_heap_storage(storage: Storage) -> bool {
+pub(crate) const fn is_heap_storage(storage: Storage) -> bool {
     matches!(storage, Storage::ResourceHeap | Storage::SamplerHeap)
 }
 
