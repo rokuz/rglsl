@@ -186,6 +186,62 @@ uint atomicExchange(inout uint, uint)
 int atomicExchange(inout int, int)
 uint atomicCompSwap(inout uint, uint, uint)
 int atomicCompSwap(inout int, int, int)
+uint64_t atomicAdd(inout uint64_t, uint64_t)
+uint64_t atomicMin(inout uint64_t, uint64_t)
+uint64_t atomicMax(inout uint64_t, uint64_t)
+uint64_t atomicAnd(inout uint64_t, uint64_t)
+uint64_t atomicOr(inout uint64_t, uint64_t)
+uint64_t atomicXor(inout uint64_t, uint64_t)
+uint64_t atomicExchange(inout uint64_t, uint64_t)
+uint64_t atomicCompSwap(inout uint64_t, uint64_t, uint64_t)
+int64_t atomicAdd(inout int64_t, int64_t)
+int64_t atomicMin(inout int64_t, int64_t)
+int64_t atomicMax(inout int64_t, int64_t)
+int64_t atomicAnd(inout int64_t, int64_t)
+int64_t atomicOr(inout int64_t, int64_t)
+int64_t atomicXor(inout int64_t, int64_t)
+int64_t atomicExchange(inout int64_t, int64_t)
+int64_t atomicCompSwap(inout int64_t, int64_t, int64_t)
+uint atomicAdd(inout uint, uint, int, int, int)
+uint atomicMin(inout uint, uint, int, int, int)
+uint atomicMax(inout uint, uint, int, int, int)
+uint atomicAnd(inout uint, uint, int, int, int)
+uint atomicOr(inout uint, uint, int, int, int)
+uint atomicXor(inout uint, uint, int, int, int)
+uint atomicExchange(inout uint, uint, int, int, int)
+uint atomicCompSwap(inout uint, uint, uint, int, int, int, int, int)
+uint atomicLoad(uint, int, int, int)
+void atomicStore(out uint, uint, int, int, int)
+int atomicAdd(inout int, int, int, int, int)
+int atomicMin(inout int, int, int, int, int)
+int atomicMax(inout int, int, int, int, int)
+int atomicAnd(inout int, int, int, int, int)
+int atomicOr(inout int, int, int, int, int)
+int atomicXor(inout int, int, int, int, int)
+int atomicExchange(inout int, int, int, int, int)
+int atomicCompSwap(inout int, int, int, int, int, int, int, int)
+int atomicLoad(int, int, int, int)
+void atomicStore(out int, int, int, int, int)
+uint64_t atomicAdd(inout uint64_t, uint64_t, int, int, int)
+uint64_t atomicMin(inout uint64_t, uint64_t, int, int, int)
+uint64_t atomicMax(inout uint64_t, uint64_t, int, int, int)
+uint64_t atomicAnd(inout uint64_t, uint64_t, int, int, int)
+uint64_t atomicOr(inout uint64_t, uint64_t, int, int, int)
+uint64_t atomicXor(inout uint64_t, uint64_t, int, int, int)
+uint64_t atomicExchange(inout uint64_t, uint64_t, int, int, int)
+uint64_t atomicCompSwap(inout uint64_t, uint64_t, uint64_t, int, int, int, int, int)
+uint64_t atomicLoad(uint64_t, int, int, int)
+void atomicStore(out uint64_t, uint64_t, int, int, int)
+int64_t atomicAdd(inout int64_t, int64_t, int, int, int)
+int64_t atomicMin(inout int64_t, int64_t, int, int, int)
+int64_t atomicMax(inout int64_t, int64_t, int, int, int)
+int64_t atomicAnd(inout int64_t, int64_t, int, int, int)
+int64_t atomicOr(inout int64_t, int64_t, int, int, int)
+int64_t atomicXor(inout int64_t, int64_t, int, int, int)
+int64_t atomicExchange(inout int64_t, int64_t, int, int, int)
+int64_t atomicCompSwap(inout int64_t, int64_t, int64_t, int, int, int, int, int)
+int64_t atomicLoad(int64_t, int, int, int)
+void atomicStore(out int64_t, int64_t, int, int, int)
 ";
 
 const DERIVATIVES: &str = "
@@ -221,6 +277,11 @@ const MEMORY_BARRIERS: &str = "
 void memoryBarrier()
 void memoryBarrierBuffer()
 void memoryBarrierImage()
+";
+
+const SCOPED_BARRIERS: &str = "
+void controlBarrier(int, int, int, int)
+void memoryBarrier(int, int, int)
 ";
 
 const COMPUTE_MEMORY_BARRIERS: &str = "
@@ -442,6 +503,7 @@ pub(super) const SECTIONS: &[Section] = &[
     Section::new(GEOMETRY_SHADER).in_stages(GEOMETRY),
     Section::new(BARRIER).in_stages(TESS_CONTROL | COMPUTE),
     Section::new(MEMORY_BARRIERS).in_stages(ALL_STAGES),
+    Section::new(SCOPED_BARRIERS),
     Section::new(COMPUTE_MEMORY_BARRIERS).in_stages(COMPUTE),
     Section::new(SHADER_INVOCATION_GROUP).since(460),
 ];

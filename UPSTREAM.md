@@ -242,6 +242,40 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
 - **Atomics on plain integers.** `Statement::Atomic` accepts a pointer to an `i32`/`u32`/
   `i64`/`u64` scalar as well as to an `Atomic`; the SPIR-V backend gives such operations
   GLSL's scope (`Device`, `QueueFamily` under the Vulkan memory model) and relaxed semantics.
+- **Explicit memory scopes and semantics** (`GL_KHR_memory_scope_semantics`;
+  `docs/design/buffer-reference.md`). `MemoryScope`, `MemorySemantics` (the SPIR-V bits) and
+  `MemoryOrder { scope, semantics, unequal }` (new). `Statement::Atomic::order` (new, not
+  serialized when `None`) overrides the default scope and semantics; `Statement::AtomicLoad`
+  and `Statement::AtomicStore` (new) are `OpAtomicLoad`/`OpAtomicStore` on an
+  `AtomicLocation` (new): a pointer to an integer (or `Atomic`) scalar, or a `Texel` (new: image,
+  coordinate, layer, sample) written as `OpImageTexelPointer`. `Statement::ScopedBarrier` (new)
+  is `OpControlBarrier` (with an execution scope) or `OpMemoryBarrier` with explicit operands.
+  Semantics with `MakeAvailable`, `MakeVisible`, `OutputMemory` or `Volatile`, and the
+  `QueueFamily` scope, declare `VulkanMemoryModel` (and the extension before SPIR-V 1.5), which
+  selects `MemoryModel Vulkan`; `VulkanMemoryModelDeviceScope` is declared when the model is
+  Vulkan and a `Device` scope is used (`back/spv/atomic.rs`).
+- **Image atomics with a result.** `Statement::ImageAtomic` gains `sample`, `result` (an
+  `AtomicResult`) and `order` (all optional and not serialized when absent). The image may be a
+  global, an element of a binding array or a function argument; with an `order` the backend
+  writes the access chain of a binding-array element as the texel pointer's image instead of
+  loading the descriptor, decorates the texel pointer `NonUniform` for a `VALUE` image, and
+  supports `Exchange` and compare-exchange (`OpAtomicCompareExchange`, scalar result) on
+  `r32i`/`r32ui` and `Exchange` on `r32f`. Without an `order` the upstream behaviour is kept.
+  Handle validation, `compact`, `process_overrides` and the uniformity analysis now also visit
+  the compare operand of image atomics, which upstream skipped.
+- **Multisampled storage images.** `ImageClass::Storage::multi` (new, not serialized when
+  false): `OpTypeImage ... MS=1` with `StorageImageMultisample` (and `ImageMSArray` when
+  arrayed); `ImageLoad` takes a sample for them.
+- **Memory qualifiers of globals.** `MemoryDecorations` gains `DEVICE_COHERENT`,
+  `QUEUE_FAMILY_COHERENT`, `WORKGROUP_COHERENT`, `SUBGROUP_COHERENT`, `SHADER_CALL_COHERENT` and
+  `NONPRIVATE`, and is allowed on `Handle` and `Uniform` globals as well as `Storage`. Without
+  the Vulkan memory model any coherence qualifier or `volatile` decorates `Coherent` (glslang
+  decorates a `volatile` variable both `Volatile` and `Coherent`); under the model they give
+  loads and stores their availability operands and scope, and storage image reads and writes
+  `MakeTexelVisible`/`MakeTexelAvailable`, `NonPrivateTexel` and `VolatileTexel`.
+- **Override ids may repeat.** The validator no longer rejects two overrides with the same id
+  (`OverrideError::DuplicateID` is gone): glslang gives `local_size_*_id` and `constant_id`
+  constants with the same id separate spec constants with one `SpecId`.
 - **Scalar block layout** (`std140`/`std430`/`scalar` packing in `front/glsl/lower/offset.rs`)
   and array strides smaller than the natural size of a matrix element (the matrix layout of
   the member decides the size).

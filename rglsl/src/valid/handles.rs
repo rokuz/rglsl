@@ -789,6 +789,7 @@ impl super::Validator {
                 fun,
                 value,
                 result,
+                order: _,
             } => {
                 validate_expr(pointer)?;
                 match fun {
@@ -811,15 +812,46 @@ impl super::Validator {
                 image,
                 coordinate,
                 array_index,
-                fun: _,
+                fun,
                 value,
+                sample,
+                result,
+                order: _,
             } => {
                 validate_expr(image)?;
                 validate_expr(coordinate)?;
                 validate_expr_opt(array_index)?;
+                if let crate::AtomicFunction::Exchange { compare } = fun {
+                    validate_expr_opt(compare)?;
+                }
+                validate_expr(value)?;
+                validate_expr_opt(sample)?;
+                validate_expr_opt(result)?;
+                Ok(())
+            }
+            crate::Statement::AtomicLoad {
+                ref location,
+                order: _,
+                result,
+            } => {
+                for handle in location.expressions() {
+                    validate_expr(handle)?;
+                }
+                validate_expr(result)?;
+                Ok(())
+            }
+            crate::Statement::AtomicStore {
+                ref location,
+                value,
+                order: _,
+            } => {
+                for handle in location.expressions() {
+                    validate_expr(handle)?;
+                }
                 validate_expr(value)?;
                 Ok(())
             }
+            crate::Statement::ScopedBarrier { .. } => Ok(()),
             crate::Statement::WorkGroupUniformLoad { pointer, result } => {
                 validate_expr(pointer)?;
                 validate_expr(result)?;

@@ -12,9 +12,9 @@ use super::prepass::strip;
 use super::types::{scalar, vector_size};
 use super::{internal, unsupported, Result};
 use crate::{
-    Barrier, BinaryOperator, DerivativeAxis, DerivativeControl, Expression, Handle, ImageQuery,
-    Literal, MathFunction, NonUniform, PredeclaredType, RelationalFunction, SampleLevel,
-    ShaderStage, Span, Statement, SwizzleComponent, UnaryOperator,
+    BinaryOperator, DerivativeAxis, DerivativeControl, Expression, Handle, ImageQuery, Literal,
+    MathFunction, NonUniform, PredeclaredType, RelationalFunction, SampleLevel, ShaderStage, Span,
+    Statement, SwizzleComponent, UnaryOperator,
 };
 
 fn math(name: &str, arguments: usize) -> Option<MathFunction> {
@@ -182,14 +182,32 @@ impl FunctionLowerer<'_, '_> {
                 self.query(name, arguments, at).map(Some)
             }
             "imageLoad" | "imageStore" => self.image(name, arguments, at),
+            _ if name.starts_with("imageAtomic") => {
+                let first = arguments.first().ok_or_else(|| internal(at))?;
+                let Sampled {
+                    image,
+                    opaque,
+                    non_uniform,
+                    ..
+                } = self.sampled(first, at)?;
+                self.image_atomic(name, image, opaque, non_uniform, arguments, at)
+            }
             "subpassLoad" => self.subpass_load(arguments, at).map(Some),
-            "barrier" => {
-                self.push(Statement::ControlBarrier(Barrier::WORK_GROUP), at);
+            "barrier"
+            | "memoryBarrier"
+            | "memoryBarrierBuffer"
+            | "memoryBarrierShared"
+            | "memoryBarrierImage"
+            | "groupMemoryBarrier"
+            | "controlBarrier" => {
+                self.barrier(name, arguments, at)?;
                 Ok(None)
             }
             "modf" | "frexp" => self.split(name, arguments, at).map(Some),
             "atomicAdd" | "atomicMin" | "atomicMax" | "atomicAnd" | "atomicOr" | "atomicXor"
-            | "atomicExchange" | "atomicCompSwap" => self.atomic(name, arguments, at).map(Some),
+            | "atomicExchange" | "atomicCompSwap" | "atomicLoad" | "atomicStore" => {
+                self.atomic(name, arguments, at)
+            }
             "uaddCarry" | "usubBorrow" | "umulExtended" | "imulExtended" => {
                 self.wide(name, arguments, at)
             }
@@ -964,7 +982,7 @@ impl FunctionLowerer<'_, '_> {
         self.as_kind(floor, crate::Scalar::I32, at)
     }
 
-    fn split_coordinate(
+    pub(super) fn split_coordinate(
         &mut self,
         coordinate: Handle<Expression>,
         size: u32,
@@ -1218,18 +1236,27 @@ impl FunctionLowerer<'_, '_> {
         let size = ty.component_count().ok_or_else(|| internal(at))?;
         let (point, array_index) = self.split_coordinate(coordinate, size, opaque, false, at)?;
         if name == "imageLoad" {
+            let sample = if opaque.multisample {
+                let sample = arguments.get(2).ok_or_else(|| internal(at))?;
+                Some(self.rvalue(sample)?)
+            } else {
+                None
+            };
             return self
                 .add(
                     Expression::ImageLoad {
                         image,
                         coordinate: point,
                         array_index,
-                        sample: None,
+                        sample,
                         level: None,
                     },
                     at,
                 )
                 .map(Some);
+        }
+        if opaque.multisample {
+            return Err(unsupported("`imageStore` to multisampled images", at));
         }
         let value = arguments.get(2).ok_or_else(|| internal(at))?;
         let value = self.rvalue(value)?;

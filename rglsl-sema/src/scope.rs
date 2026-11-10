@@ -73,6 +73,20 @@ impl Qualifiers {
             || self.needs_vulkan_memory_model()
     }
 
+    pub const fn only_nonprivate(&self) -> bool {
+        self.nonprivate
+            && !(self.readonly
+                || self.writeonly
+                || self.coherent
+                || self.volatile
+                || self.restrict
+                || self.device_coherent
+                || self.queue_family_coherent
+                || self.workgroup_coherent
+                || self.subgroup_coherent
+                || self.shader_call_coherent)
+    }
+
     pub const fn needs_vulkan_memory_model(&self) -> bool {
         self.coherent
             || self.volatile

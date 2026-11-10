@@ -1509,7 +1509,12 @@ impl super::Validator {
         }
 
         if !var.memory_decorations.is_empty()
-            && !matches!(var.space, crate::AddressSpace::Storage { .. })
+            && !matches!(
+                var.space,
+                crate::AddressSpace::Storage { .. }
+                    | crate::AddressSpace::Handle
+                    | crate::AddressSpace::Uniform
+            )
         {
             return Err(GlobalVariableError::InvalidMemoryDecorationsAddressSpace);
         }

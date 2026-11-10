@@ -23,6 +23,34 @@ fn physical_qualifiers(
     }
 }
 
+pub(super) fn global_qualifiers(decorations: crate::MemoryDecorations) -> PointerQualifiers {
+    use crate::MemoryDecorations as Md;
+    [
+        (Md::COHERENT, PointerQualifiers::COHERENT),
+        (Md::VOLATILE, PointerQualifiers::VOLATILE),
+        (Md::DEVICE_COHERENT, PointerQualifiers::DEVICE_COHERENT),
+        (
+            Md::QUEUE_FAMILY_COHERENT,
+            PointerQualifiers::QUEUE_FAMILY_COHERENT,
+        ),
+        (
+            Md::WORKGROUP_COHERENT,
+            PointerQualifiers::WORKGROUP_COHERENT,
+        ),
+        (Md::SUBGROUP_COHERENT, PointerQualifiers::SUBGROUP_COHERENT),
+        (
+            Md::SHADER_CALL_COHERENT,
+            PointerQualifiers::SHADER_CALL_COHERENT,
+        ),
+        (Md::NONPRIVATE, PointerQualifiers::NONPRIVATE),
+    ]
+    .into_iter()
+    .filter(|&(decoration, _)| decorations.contains(decoration))
+    .fold(PointerQualifiers::empty(), |all, (_, qualifier)| {
+        all | qualifier
+    })
+}
+
 impl super::Writer {
     pub(super) const fn device_scope(&self) -> spirv::Scope {
         if self.vulkan_memory_model {
@@ -291,19 +319,7 @@ impl BlockContext<'_> {
                 }
                 Expression::GlobalVariable(handle) => {
                     let global = &self.ir_module.global_variables[handle];
-                    let mut qualifiers = PointerQualifiers::empty();
-                    if global
-                        .memory_decorations
-                        .contains(crate::MemoryDecorations::COHERENT)
-                    {
-                        qualifiers |= PointerQualifiers::COHERENT;
-                    }
-                    if global
-                        .memory_decorations
-                        .contains(crate::MemoryDecorations::VOLATILE)
-                    {
-                        qualifiers |= PointerQualifiers::VOLATILE;
-                    }
+                    let mut qualifiers = global_qualifiers(global.memory_decorations);
                     if global.space == AddressSpace::WorkGroup {
                         qualifiers |= PointerQualifiers::WORKGROUP_COHERENT;
                     }
@@ -323,6 +339,77 @@ impl BlockContext<'_> {
                 _ => return (PointerQualifiers::empty(), None),
             }
         }
+    }
+
+    fn coherent_scope(&mut self, qualifiers: PointerQualifiers) -> spirv::Scope {
+        if qualifiers.intersects(PointerQualifiers::VOLATILE | PointerQualifiers::COHERENT) {
+            spirv::Scope::QueueFamily
+        } else if qualifiers.contains(PointerQualifiers::DEVICE_COHERENT) {
+            self.writer
+                .capabilities_used
+                .insert(spirv::Capability::VulkanMemoryModelDeviceScope);
+            spirv::Scope::Device
+        } else if qualifiers.contains(PointerQualifiers::QUEUE_FAMILY_COHERENT) {
+            spirv::Scope::QueueFamily
+        } else if qualifiers.contains(PointerQualifiers::WORKGROUP_COHERENT) {
+            spirv::Scope::Workgroup
+        } else if qualifiers.contains(PointerQualifiers::SUBGROUP_COHERENT) {
+            spirv::Scope::Subgroup
+        } else {
+            spirv::Scope::ShaderCallKHR
+        }
+    }
+
+    pub(super) fn texel_memory(
+        &mut self,
+        image: Handle<Expression>,
+        store: bool,
+    ) -> (spirv::ImageOperands, Option<super::Word>) {
+        if !self.writer.vulkan_memory_model {
+            return (spirv::ImageOperands::empty(), None);
+        }
+        let global = match self.ir_function.expressions[image] {
+            Expression::GlobalVariable(handle) => Some(handle),
+            Expression::Access { base, .. } | Expression::AccessIndex { base, .. } => {
+                match self.ir_function.expressions[base] {
+                    Expression::GlobalVariable(handle) => Some(handle),
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+        let Some(global) = global else {
+            return (spirv::ImageOperands::empty(), None);
+        };
+        let qualifiers =
+            global_qualifiers(self.ir_module.global_variables[global].memory_decorations);
+        let volatile = qualifiers.contains(PointerQualifiers::VOLATILE);
+        let coherent = qualifiers.intersects(
+            PointerQualifiers::COHERENT
+                | PointerQualifiers::DEVICE_COHERENT
+                | PointerQualifiers::QUEUE_FAMILY_COHERENT
+                | PointerQualifiers::WORKGROUP_COHERENT
+                | PointerQualifiers::SUBGROUP_COHERENT
+                | PointerQualifiers::SHADER_CALL_COHERENT,
+        );
+        let mut mask = spirv::ImageOperands::empty();
+        let mut scope = None;
+        if volatile || coherent {
+            mask |= if store {
+                spirv::ImageOperands::MAKE_TEXEL_AVAILABLE
+            } else {
+                spirv::ImageOperands::MAKE_TEXEL_VISIBLE
+            };
+            let coherent_scope = self.coherent_scope(qualifiers);
+            scope = Some(self.get_index_constant(coherent_scope as u32));
+        }
+        if volatile || coherent || qualifiers.contains(PointerQualifiers::NONPRIVATE) {
+            mask |= spirv::ImageOperands::NON_PRIVATE_TEXEL;
+        }
+        if volatile {
+            mask |= spirv::ImageOperands::VOLATILE_TEXEL;
+        }
+        (mask, scope)
     }
 
     pub(super) fn memory_access(
@@ -370,24 +457,7 @@ impl BlockContext<'_> {
                 } else {
                     spirv::MemoryAccess::MAKE_POINTER_VISIBLE
                 };
-                scope = Some(
-                    if volatile || qualifiers.contains(PointerQualifiers::COHERENT) {
-                        spirv::Scope::QueueFamily
-                    } else if qualifiers.contains(PointerQualifiers::DEVICE_COHERENT) {
-                        self.writer
-                            .capabilities_used
-                            .insert(spirv::Capability::VulkanMemoryModelDeviceScope);
-                        spirv::Scope::Device
-                    } else if qualifiers.contains(PointerQualifiers::QUEUE_FAMILY_COHERENT) {
-                        spirv::Scope::QueueFamily
-                    } else if qualifiers.contains(PointerQualifiers::WORKGROUP_COHERENT) {
-                        spirv::Scope::Workgroup
-                    } else if qualifiers.contains(PointerQualifiers::SUBGROUP_COHERENT) {
-                        spirv::Scope::Subgroup
-                    } else {
-                        spirv::Scope::ShaderCallKHR
-                    },
-                );
+                scope = Some(self.coherent_scope(qualifiers));
             }
             if visible
                 && (volatile || any_coherent || qualifiers.contains(PointerQualifiers::NONPRIVATE))
