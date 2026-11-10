@@ -13,6 +13,8 @@ use crate::{
     StructMember, Type, TypeInner, VectorSize,
 };
 
+const UNLAID_PADDING: u32 = 1;
+
 pub(super) const fn scalar(scalar: GlslScalar) -> Scalar {
     match scalar {
         GlslScalar::Bool => Scalar::BOOL,
@@ -108,7 +110,7 @@ impl Lowerer<'_> {
             self.layouter
                 .update(self.module.to_ctx())
                 .map_err(|_| internal(span))?;
-            let stride = self.layouter[ty].to_stride();
+            let stride = self.layouter[ty].to_stride().saturating_add(UNLAID_PADDING);
             ty = self.insert_type(TypeInner::Array {
                 base: ty,
                 size,
@@ -256,7 +258,7 @@ impl Lowerer<'_> {
             });
             offset = offset.saturating_add(layout.size);
         }
-        let span_bytes = alignment.round_up(offset);
+        let span_bytes = alignment.round_up(offset).saturating_add(UNLAID_PADDING);
         let handle = self.module.types.insert(
             Type {
                 name: structure.name.clone(),
