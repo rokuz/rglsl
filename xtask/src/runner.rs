@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Mutex;
+use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
@@ -165,7 +165,7 @@ pub fn run(root: &Path, options: Options) -> Result<()> {
     let started = Instant::now();
     let next = AtomicUsize::new(0);
     let done = AtomicUsize::new(0);
-    let results: Mutex<Vec<Option<CaseResult>>> = Mutex::new(vec![None; cases.len()]);
+    let results: Mutex<Vec<(usize, CaseResult)>> = Mutex::new(Vec::with_capacity(cases.len()));
     let errors: Mutex<Vec<anyhow::Error>> = Mutex::new(Vec::new());
     std::thread::scope(|scope| {
         for _ in 0..jobs {
@@ -173,8 +173,14 @@ pub fn run(root: &Path, options: Options) -> Result<()> {
                 let index = next.fetch_add(1, Ordering::Relaxed);
                 let Some(case) = cases.get(index) else { break };
                 match run_case(&env, &self_exe, &work_dir, case, timeout) {
-                    Ok(result) => results.lock().unwrap()[index] = Some(result),
-                    Err(err) => errors.lock().unwrap().push(err.context(case.name.clone())),
+                    Ok(result) => results
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .push((index, result)),
+                    Err(err) => errors
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .push(err.context(case.name.clone())),
                 }
                 let finished = done.fetch_add(1, Ordering::Relaxed) + 1;
                 if finished.is_multiple_of(200) {
@@ -183,15 +189,17 @@ pub fn run(root: &Path, options: Options) -> Result<()> {
             });
         }
     });
-    if let Some(err) = errors.into_inner().unwrap().into_iter().next() {
+    if let Some(err) = errors
+        .into_inner()
+        .unwrap_or_else(PoisonError::into_inner)
+        .into_iter()
+        .next()
+    {
         return Err(err);
     }
-    let results: Vec<CaseResult> = results
-        .into_inner()
-        .unwrap()
-        .into_iter()
-        .flatten()
-        .collect();
+    let mut results = results.into_inner().unwrap_or_else(PoisonError::into_inner);
+    results.sort_by_key(|&(index, _)| index);
+    let results: Vec<CaseResult> = results.into_iter().map(|(_, result)| result).collect();
     eprintln!(
         "[xtask] ran {} shaders in {:.1}s",
         results.len(),

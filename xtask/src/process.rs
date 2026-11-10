@@ -35,8 +35,11 @@ pub fn run(mut command: Command, timeout: Duration) -> Result<Output> {
         .with_context(|| format!("failed to start `{program}`"))?;
 
     // Drain the pipes on their own threads so a chatty child never blocks.
-    let mut stdout = child.stdout.take().expect("stdout is piped");
-    let mut stderr = child.stderr.take().expect("stderr is piped");
+    let (Some(mut stdout), Some(mut stderr)) = (child.stdout.take(), child.stderr.take()) else {
+        let _ = child.kill();
+        let _ = child.wait();
+        bail!("`{program}` was started without piped output");
+    };
     let out_reader = thread::spawn(move || {
         let mut buf = Vec::new();
         let _ = stdout.read_to_end(&mut buf);
