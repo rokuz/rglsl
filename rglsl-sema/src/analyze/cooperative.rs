@@ -28,6 +28,13 @@ impl Parameter {
         }
     }
 
+    fn raw(self) -> Option<ArraySize> {
+        match self {
+            Self::Value(value) => u32::try_from(value).ok().map(ArraySize::Sized),
+            Self::Specialized(size) => Some(ArraySize::Specialized(size)),
+        }
+    }
+
     fn value(self) -> Option<i64> {
         match self {
             Self::Value(value) => Some(value),
@@ -250,44 +257,32 @@ impl Analyzer<'_> {
                 if element.is_some() || values.is_empty() || values.len() > 2 {
                     return self.parameter_error(span, keyword, "expected 1-2 type parameters");
                 }
-                let constants: Option<Vec<i64>> =
-                    values.iter().map(|value| value.value()).collect();
-                let Some(constants) = constants else {
-                    return self.parameter_error(span, keyword, "type parameters must be constant");
-                };
-                let dimensions = constants.first().copied().unwrap_or(0);
-                let clamp_mode = constants.get(1).copied().unwrap_or(0);
-                match (u32::try_from(dimensions), u32::try_from(clamp_mode)) {
-                    (Ok(dimensions), Ok(clamp_mode)) if (1..=5).contains(&dimensions) => {
-                        Type::new(TypeKind::TensorLayout {
-                            dimensions,
-                            clamp_mode,
-                        })
-                    }
-                    _ => self.parameter_error(span, keyword, "invalid dimension count"),
+                let dimensions = values.first().copied().map(Parameter::raw);
+                let clamp_mode = values
+                    .get(1)
+                    .copied()
+                    .map_or(Some(ArraySize::Sized(0)), Parameter::raw);
+                match (dimensions.flatten(), clamp_mode) {
+                    (Some(dimensions), Some(clamp_mode)) => Type::new(TypeKind::TensorLayout {
+                        dimensions,
+                        clamp_mode,
+                    }),
+                    _ => self.parameter_error(span, keyword, "invalid type parameters"),
                 }
             }
             ParameterizedType::TensorViewNv => {
                 if element.is_some() || values.is_empty() || values.len() > 7 {
                     return self.parameter_error(span, keyword, "expected 1-7 type parameters");
                 }
-                let constants: Option<Vec<i64>> =
-                    values.iter().map(|value| value.value()).collect();
-                let Some(constants) = constants else {
-                    return self.parameter_error(span, keyword, "type parameters must be constant");
-                };
-                let dimensions = constants.first().copied().unwrap_or(0);
-                let Some(dimensions) = u32::try_from(dimensions)
-                    .ok()
-                    .filter(|dimensions| (1..=5).contains(dimensions))
-                else {
+                let Some(dimensions) = values.first().copied().and_then(Parameter::raw) else {
                     return self.parameter_error(span, keyword, "invalid dimension count");
                 };
-                let has_dimensions = constants.get(1).copied().unwrap_or(0) != 0;
+                let has_dimensions =
+                    values.get(1).and_then(|value| value.value()).unwrap_or(0) != 0;
                 let mut permutation = [0, 1, 2, 3, 4];
-                for (slot, value) in permutation.iter_mut().zip(constants.iter().skip(2)) {
-                    match u8::try_from(*value) {
-                        Ok(value) if u32::from(value) < dimensions => *slot = value,
+                for (slot, value) in permutation.iter_mut().zip(values.iter().skip(2)) {
+                    match value.value().and_then(|value| u8::try_from(value).ok()) {
+                        Some(value) if value < 5 => *slot = value,
                         _ => {
                             return self.parameter_error(
                                 span,

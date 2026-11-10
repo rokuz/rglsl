@@ -37,7 +37,8 @@ pub mod types;
 mod tests;
 
 pub use analyze::{
-    analyze, analyze_with_builtins, Analysis, Callee, CooperativeCall, ExpressionInfo, Options,
+    analyze, analyze_with_builtins, Analysis, Callee, CooperativeCall, ExpressionInfo, MatrixCall,
+    Options, TensorCall,
 };
 pub use builtins::{BuiltinFunctionId, Builtins, ResourceLimits, Stage};
 pub use diagnostic::{Diagnostic, DiagnosticKind};

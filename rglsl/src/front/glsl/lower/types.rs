@@ -253,8 +253,31 @@ impl Lowerer<'_> {
                 scalar: scalar(s),
                 class: LongVectorClass::CooperativeNv,
             },
-            TypeKind::TensorLayout { .. } | TypeKind::TensorView { .. } => {
-                return Err(unsupported("tensor layouts and views", span));
+            TypeKind::TensorLayout {
+                dimensions,
+                clamp_mode,
+            } => TypeInner::TensorLayout {
+                dimensions: self.cooperative_size(dimensions, span)?,
+                clamp_mode: match clamp_mode {
+                    GlslArraySize::Sized(0) => None,
+                    other => Some(self.cooperative_size(other, span)?),
+                },
+            },
+            TypeKind::TensorView {
+                dimensions,
+                has_dimensions,
+                permutation,
+            } => {
+                let count = dimensions.nominal().unwrap_or(1).min(5);
+                TypeInner::TensorView {
+                    dimensions: self.cooperative_size(dimensions, span)?,
+                    has_dimensions,
+                    permutation: permutation
+                        .iter()
+                        .take(usize::try_from(count).unwrap_or(5))
+                        .map(|&index| u32::from(index))
+                        .collect(),
+                }
             }
         };
         Ok(self.insert_type(inner))

@@ -49,6 +49,15 @@ impl FunctionLowerer<'_, '_> {
                 self.construct(ty, &call.arguments, at).map(Some)
             }
             Some(&Callee::Cooperative(kind)) => self.cooperative_call(kind, &call.arguments, at),
+            Some(&Callee::Tensor(kind)) => {
+                let result = self.info(expression)?.ty.clone();
+                self.tensor_call(kind, &result, &call.arguments, at)
+                    .map(Some)
+            }
+            Some(&Callee::Matrix(kind)) => {
+                let result = self.info(expression)?.ty.clone();
+                self.matrix_call(kind, &result, &call.arguments, at)
+            }
             Some(&Callee::Length) => match call.function.node {
                 FunctionIdentifier::Method { ref object, .. } => self.length(object, at).map(Some),
                 _ => Err(internal(at)),
@@ -457,6 +466,7 @@ impl FunctionLowerer<'_, '_> {
                         expr,
                         ty,
                         saturating: false,
+                        family: self.cooperative_family(),
                     },
                     at,
                 )

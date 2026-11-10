@@ -5,11 +5,21 @@ use spirv::{Op, Word};
 use super::block::{AccessTypeAdjustment, ExpressionPointer};
 use super::{Block, BlockContext, Error, Instruction, LookupType, Writer};
 use crate::{
-    arena::Handle, CooperativeData, CooperativeMatrixClass, CooperativeSize, Expression,
-    LongVectorClass, ScalarKind, TypeInner,
+    arena::Handle, CooperativeData, CooperativeFamily, CooperativeMatrixClass,
+    CooperativeMatrixFunction, CooperativeSize, Expression, LongVectorClass, ScalarKind,
+    TensorOperation, TypeInner,
 };
 
 const SPV_EXT_REPLICATED_COMPOSITES: &str = "SPV_EXT_replicated_composites";
+const SPV_NV_COOPERATIVE_MATRIX2: &str = "SPV_NV_cooperative_matrix2";
+const SPV_EXT_COOPERATIVE_MATRIX_MAINTENANCE1: &str = "SPV_EXT_cooperative_matrix_maintenance1";
+const SPV_NV_COOPERATIVE_MATRIX_DECODE_VECTOR: &str = "SPV_NV_cooperative_matrix_decode_vector";
+const CAPABILITY_COOPERATIVE_MATRIX_CONVERSIONS_EXT: Word = 5429;
+const CAPABILITY_COOPERATIVE_MATRIX_GET_COORDINATE_EXT: Word = 5438;
+const CAPABILITY_COOPERATIVE_MATRIX_DECODE_VECTOR_NV: Word = 5447;
+const OP_COOPERATIVE_MATRIX_GET_COORDINATE_EXT: Word = 5363;
+const DECORATION_COOPERATIVE_MATRIX_TRANSPOSE_EXT: Word = 5440;
+const TENSOR_ADDRESSING_DECODE_VECTOR_FUNC: Word = 0x4;
 
 #[derive(Clone, Copy)]
 pub(super) enum ReplicateShape {
@@ -649,7 +659,7 @@ impl BlockContext<'_> {
         &mut self,
         expr: Handle<Expression>,
         ty: Handle<crate::Type>,
-        saturating: bool,
+        (saturating, family): (bool, CooperativeFamily),
         result_type_id: Word,
         block: &mut Block,
     ) -> Result<Word, Error> {
@@ -669,11 +679,7 @@ impl BlockContext<'_> {
             _ => false,
         };
         if use_changes {
-            self.writer.require_any(
-                "cooperative matrix conversions",
-                &[spirv::Capability::CooperativeMatrixConversionsNV],
-            )?;
-            self.writer.use_extension("SPV_NV_cooperative_matrix2");
+            self.require_conversions(family)?;
         }
         let id = if source == target {
             let expr_id = self.cached.get(expr)?;
@@ -705,5 +711,373 @@ impl BlockContext<'_> {
             );
         }
         Ok(id)
+    }
+
+    fn require_conversions(&mut self, family: CooperativeFamily) -> Result<(), Error> {
+        match family {
+            CooperativeFamily::Ext => {
+                self.writer
+                    .raw_capabilities
+                    .insert(CAPABILITY_COOPERATIVE_MATRIX_CONVERSIONS_EXT);
+                self.writer
+                    .use_extension(SPV_EXT_COOPERATIVE_MATRIX_MAINTENANCE1);
+            }
+            CooperativeFamily::Khr | CooperativeFamily::Nv => {
+                self.writer.require_any(
+                    "cooperative matrix conversions",
+                    &[spirv::Capability::CooperativeMatrixConversionsNV],
+                )?;
+                self.writer.use_extension(SPV_NV_COOPERATIVE_MATRIX2);
+            }
+        }
+        Ok(())
+    }
+
+    fn require_family(
+        &mut self,
+        family: CooperativeFamily,
+        capability: spirv::Capability,
+    ) -> Result<(), Error> {
+        self.writer
+            .require_any("cooperative matrix operation", &[capability])?;
+        match family {
+            CooperativeFamily::Ext => self
+                .writer
+                .use_extension(SPV_EXT_COOPERATIVE_MATRIX_MAINTENANCE1),
+            CooperativeFamily::Khr | CooperativeFamily::Nv => {
+                self.writer.use_extension(SPV_NV_COOPERATIVE_MATRIX2)
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn write_tensor_create(
+        &mut self,
+        ty: Handle<crate::Type>,
+        result_type_id: Word,
+        block: &mut Block,
+    ) -> Result<Word, Error> {
+        let op = match self.ir_module.types[ty].inner {
+            TypeInner::TensorLayout { .. } => Op::CreateTensorLayoutNV,
+            TypeInner::TensorView { .. } => Op::CreateTensorViewNV,
+            _ => return Err(Error::Validation("creating a non-tensor type")),
+        };
+        let id = self.gen_id();
+        let mut instruction = Instruction::new(op);
+        instruction.set_type(result_type_id);
+        instruction.set_result(id);
+        block.body.push(instruction);
+        Ok(id)
+    }
+
+    pub(super) fn write_tensor_set(
+        &mut self,
+        base: Handle<Expression>,
+        operation: TensorOperation,
+        operands: &[Handle<Expression>],
+        result_type_id: Word,
+        block: &mut Block,
+    ) -> Result<Word, Error> {
+        let op = match operation {
+            TensorOperation::LayoutSetBlockSize => Op::TensorLayoutSetBlockSizeNV,
+            TensorOperation::LayoutSetDimension => Op::TensorLayoutSetDimensionNV,
+            TensorOperation::LayoutSetStride => Op::TensorLayoutSetStrideNV,
+            TensorOperation::LayoutSlice => Op::TensorLayoutSliceNV,
+            TensorOperation::LayoutSetClampValue => Op::TensorLayoutSetClampValueNV,
+            TensorOperation::ViewSetDimension => Op::TensorViewSetDimensionNV,
+            TensorOperation::ViewSetStride => Op::TensorViewSetStrideNV,
+            TensorOperation::ViewSetClip => Op::TensorViewSetClipNV,
+        };
+        let base_id = self.cached.get(base)?;
+        let id = self.gen_id();
+        let mut instruction = Instruction::new(op);
+        instruction.set_type(result_type_id);
+        instruction.set_result(id);
+        instruction.add_operand(base_id);
+        for &operand in operands {
+            instruction.add_operand(self.cached.get(operand)?);
+        }
+        block.body.push(instruction);
+        Ok(id)
+    }
+
+    fn function_id(&self, function: Handle<crate::Function>) -> Result<Word, Error> {
+        self.writer
+            .lookup_function
+            .get(&function)
+            .copied()
+            .ok_or(Error::Validation(
+                "a referenced function is not written yet",
+            ))
+    }
+
+    fn result_scalar(&self, expression: Handle<Expression>) -> Result<crate::Scalar, Error> {
+        self.fun_info[expression]
+            .ty
+            .inner_with(&self.ir_module.types)
+            .scalar()
+            .ok_or(Error::Validation("a cooperative operand is not numeric"))
+    }
+
+    fn write_transpose_ext(
+        &mut self,
+        matrix: Handle<Expression>,
+        result: Handle<Expression>,
+        result_type_id: Word,
+        block: &mut Block,
+    ) -> Result<Word, Error> {
+        self.require_conversions(CooperativeFamily::Ext)?;
+        let source = self.result_scalar(matrix)?;
+        let target = self.result_scalar(result)?;
+        let matrix_id = self.cached.get(matrix)?;
+        let integer = |kind: ScalarKind| matches!(kind, ScalarKind::Sint | ScalarKind::Uint);
+        let float = |kind: ScalarKind| {
+            matches!(
+                kind,
+                ScalarKind::Float
+                    | ScalarKind::BFloat
+                    | ScalarKind::FloatE4M3
+                    | ScalarKind::FloatE5M2
+            )
+        };
+        let op = match (source.kind, target.kind) {
+            _ if source == target => Op::CooperativeMatrixConvertNV,
+            (from, to) if float(from) && float(to) => Op::FConvert,
+            (ScalarKind::Sint, to) if float(to) => Op::ConvertSToF,
+            (ScalarKind::Uint, to) if float(to) => Op::ConvertUToF,
+            (from, ScalarKind::Sint) if float(from) => Op::ConvertFToS,
+            (from, ScalarKind::Uint) if float(from) => Op::ConvertFToU,
+            (ScalarKind::Sint, _) if source.width != target.width => Op::SConvert,
+            (ScalarKind::Uint, _) if source.width != target.width => Op::UConvert,
+            _ => Op::CooperativeMatrixConvertNV,
+        };
+        let sign_change = integer(source.kind)
+            && integer(target.kind)
+            && source.kind != target.kind
+            && source.width != target.width;
+        let converted = self.gen_id();
+        if sign_change {
+            let intermediate = match self.fun_info[result].ty.inner_with(&self.ir_module.types) {
+                &TypeInner::CooperativeMatrix {
+                    columns,
+                    rows,
+                    role,
+                    scope,
+                    class,
+                    ..
+                } => TypeInner::CooperativeMatrix {
+                    columns,
+                    rows,
+                    scalar: crate::Scalar {
+                        kind: source.kind,
+                        width: target.width,
+                    },
+                    role,
+                    scope,
+                    class,
+                },
+                _ => return Err(Error::Validation("transpose into a non-matrix")),
+            };
+            let intermediate_type =
+                self.get_expression_type_id(&crate::proc::TypeResolution::Value(intermediate))?;
+            block.body.push(Instruction::unary(
+                op,
+                intermediate_type,
+                converted,
+                matrix_id,
+            ));
+            self.decorate_transpose(converted);
+            let id = self.gen_id();
+            block.body.push(Instruction::unary(
+                Op::Bitcast,
+                result_type_id,
+                id,
+                converted,
+            ));
+            return Ok(id);
+        }
+        block
+            .body
+            .push(Instruction::unary(op, result_type_id, converted, matrix_id));
+        self.decorate_transpose(converted);
+        Ok(converted)
+    }
+
+    fn decorate_transpose(&mut self, id: Word) {
+        let mut decoration = Instruction::new(Op::Decorate);
+        decoration.add_operand(id);
+        decoration.add_operand(DECORATION_COOPERATIVE_MATRIX_TRANSPOSE_EXT);
+        self.writer.annotations.push(decoration);
+    }
+
+    fn require_tensor_access(&mut self) -> Result<(), Error> {
+        self.writer.require_any(
+            "cooperative matrix tensor addressing",
+            &[spirv::Capability::CooperativeMatrixTensorAddressingNV],
+        )?;
+        self.writer.use_extension(SPV_NV_COOPERATIVE_MATRIX2);
+        Ok(())
+    }
+
+    pub(super) fn write_cooperative_matrix_function(
+        &mut self,
+        function: &CooperativeMatrixFunction,
+        result: Option<Handle<Expression>>,
+        block: &mut Block,
+    ) -> Result<(), Error> {
+        let result_type_id = match result {
+            Some(result) => self.get_expression_type_id(&self.fun_info[result].ty)?,
+            None => 0,
+        };
+        let id = self.gen_id();
+        let instruction = match *function {
+            CooperativeMatrixFunction::Transpose { matrix, family } => match (family, result) {
+                (CooperativeFamily::Ext, Some(result)) => {
+                    let converted =
+                        self.write_transpose_ext(matrix, result, result_type_id, block)?;
+                    self.cached.set(result, converted)?;
+                    return Ok(());
+                }
+                _ => {
+                    self.require_conversions(family)?;
+                    let matrix_id = self.cached.get(matrix)?;
+                    Instruction::unary(
+                        Op::CooperativeMatrixTransposeNV,
+                        result_type_id,
+                        id,
+                        matrix_id,
+                    )
+                }
+            },
+            CooperativeMatrixFunction::Reduce {
+                matrix,
+                mask,
+                combine,
+                family,
+            } => {
+                self.require_family(family, spirv::Capability::CooperativeMatrixReductionsNV)?;
+                let mut instruction = Instruction::new(Op::CooperativeMatrixReduceNV);
+                instruction.set_type(result_type_id);
+                instruction.set_result(id);
+                instruction.add_operand(self.cached.get(matrix)?);
+                instruction.add_operand(mask);
+                instruction.add_operand(self.function_id(combine)?);
+                instruction
+            }
+            CooperativeMatrixFunction::PerElement {
+                matrix,
+                function,
+                ref arguments,
+                family,
+            } => {
+                self.require_family(
+                    family,
+                    spirv::Capability::CooperativeMatrixPerElementOperationsNV,
+                )?;
+                let mut instruction = Instruction::new(Op::CooperativeMatrixPerElementOpNV);
+                instruction.set_type(result_type_id);
+                instruction.set_result(id);
+                instruction.add_operand(self.cached.get(matrix)?);
+                instruction.add_operand(self.function_id(function)?);
+                for &argument in arguments {
+                    instruction.add_operand(self.cached.get(argument)?);
+                }
+                instruction
+            }
+            CooperativeMatrixFunction::GetCoordinate { matrix, index } => {
+                self.writer
+                    .raw_capabilities
+                    .insert(CAPABILITY_COOPERATIVE_MATRIX_GET_COORDINATE_EXT);
+                self.writer
+                    .use_extension(SPV_EXT_COOPERATIVE_MATRIX_MAINTENANCE1);
+                let mut instruction = Instruction::raw(OP_COOPERATIVE_MATRIX_GET_COORDINATE_EXT);
+                instruction.set_type(result_type_id);
+                instruction.set_result(id);
+                instruction.add_operand(self.cached.get(matrix)?);
+                instruction.add_operand(self.cached.get(index)?);
+                instruction
+            }
+            CooperativeMatrixFunction::LoadTensor {
+                pointer,
+                object,
+                layout,
+                view,
+                decode,
+                decode_vector,
+            } => {
+                self.require_tensor_access()?;
+                let mut memory = self.memory_access(pointer, false, false);
+                if memory.is_empty() {
+                    memory.push(0);
+                }
+                let pointer_id = self.cooperative_pointer(pointer, block)?;
+                let mut instruction = Instruction::new(Op::CooperativeMatrixLoadTensorNV);
+                instruction.set_type(result_type_id);
+                instruction.set_result(id);
+                instruction.add_operand(pointer_id);
+                instruction.add_operand(self.cached.get(object)?);
+                instruction.add_operand(self.cached.get(layout)?);
+                instruction.add_operands(memory);
+                let mut mask = 0;
+                let mut extra = Vec::new();
+                if let Some(view) = view {
+                    mask |= spirv::TensorAddressingOperands::TENSOR_VIEW.bits();
+                    extra.push(self.cached.get(view)?);
+                }
+                if let Some(decode) = decode {
+                    self.writer.require_any(
+                        "cooperative matrix block loads",
+                        &[spirv::Capability::CooperativeMatrixBlockLoadsNV],
+                    )?;
+                    mask |= spirv::TensorAddressingOperands::DECODE_FUNC.bits();
+                    extra.push(self.function_id(decode)?);
+                }
+                if let Some(decode_vector) = decode_vector {
+                    self.writer
+                        .raw_capabilities
+                        .insert(CAPABILITY_COOPERATIVE_MATRIX_DECODE_VECTOR_NV);
+                    self.writer
+                        .use_extension(SPV_NV_COOPERATIVE_MATRIX_DECODE_VECTOR);
+                    mask |= TENSOR_ADDRESSING_DECODE_VECTOR_FUNC;
+                    extra.push(self.function_id(decode_vector)?);
+                }
+                instruction.add_operand(mask);
+                instruction.add_operands(extra);
+                instruction
+            }
+            CooperativeMatrixFunction::StoreTensor {
+                pointer,
+                value,
+                layout,
+                view,
+            } => {
+                self.require_tensor_access()?;
+                let mut memory = self.memory_access(pointer, false, true);
+                if memory.is_empty() {
+                    memory.push(0);
+                }
+                let pointer_id = self.cooperative_pointer(pointer, block)?;
+                let mut instruction = Instruction::new(Op::CooperativeMatrixStoreTensorNV);
+                instruction.add_operand(pointer_id);
+                instruction.add_operand(self.cached.get(value)?);
+                instruction.add_operand(self.cached.get(layout)?);
+                instruction.add_operands(memory);
+                match view {
+                    Some(view) => {
+                        instruction
+                            .add_operand(spirv::TensorAddressingOperands::TENSOR_VIEW.bits());
+                        instruction.add_operand(self.cached.get(view)?);
+                    }
+                    None => instruction.add_operand(0),
+                }
+                block.body.push(instruction);
+                return Ok(());
+            }
+        };
+        block.body.push(instruction);
+        if let Some(result) = result {
+            self.cached.set(result, id)?;
+        }
+        Ok(())
     }
 }

@@ -1512,6 +1512,11 @@ impl super::Validator {
                 Ti::CooperativeMatrix { .. } => ShaderStages::all(),
                 _ => return Err(ExpressionError::InvalidCooperativeOperand(root)),
             },
+            E::CooperativeMatrixResult { .. } | E::TensorCreate { .. } => ShaderStages::all(),
+            E::TensorSet { base, .. } => match resolver[base] {
+                Ti::TensorLayout { .. } | Ti::TensorView { .. } => ShaderStages::all(),
+                _ => return Err(ExpressionError::InvalidCooperativeOperand(base)),
+            },
             E::Convert { expr, ty, .. } => {
                 let source = resolver[expr].scalar();
                 let target = module.types[ty].inner.scalar();

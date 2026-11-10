@@ -347,6 +347,8 @@ impl Finder<'_> {
             Some(
                 Callee::Constructor(_)
                 | Callee::Cooperative(_)
+                | Callee::Tensor(_)
+                | Callee::Matrix(_)
                 | Callee::Length
                 | Callee::NonUniform
                 | Callee::DebugPrintf

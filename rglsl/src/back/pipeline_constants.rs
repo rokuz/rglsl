@@ -747,6 +747,17 @@ fn adjust_expr(new_pos: &HandleVec<Expression, Handle<Expression>>, expr: &mut E
             adjust(expected);
         }
         Expression::Convert { ref mut expr, .. } => adjust(expr),
+        Expression::CooperativeMatrixResult { .. } | Expression::TensorCreate { .. } => {}
+        Expression::TensorSet {
+            ref mut base,
+            ref mut operands,
+            ..
+        } => {
+            adjust(base);
+            for operand in operands {
+                adjust(operand);
+            }
+        }
         Expression::CooperativeVectorLoad {
             ref mut pointer,
             ref mut offset,
@@ -1009,6 +1020,17 @@ fn adjust_stmt(new_pos: &HandleVec<Expression, Handle<Expression>>, stmt: &mut S
             }
         }
         Statement::Assume { ref mut condition } => adjust(condition),
+        Statement::CooperativeMatrix {
+            ref mut function,
+            ref mut result,
+        } => {
+            for operand in function.operands_mut() {
+                adjust(operand);
+            }
+            if let Some(ref mut result) = *result {
+                adjust(result);
+            }
+        }
         Statement::CooperativeVector(ref mut function) => {
             for operand in function.operands_mut() {
                 adjust(operand);

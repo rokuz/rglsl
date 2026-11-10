@@ -201,6 +201,18 @@ impl FunctionTracer<'_> {
                     St::CooperativeVector(ref function) => {
                         self.expressions_used.insert_iter(function.operands());
                     }
+                    St::CooperativeMatrix {
+                        ref function,
+                        result,
+                    } => {
+                        self.expressions_used.insert_iter(function.operands());
+                        if let Some(result) = result {
+                            self.expressions_used.insert(result);
+                        }
+                        for callee in function.functions() {
+                            self.trace_call(callee);
+                        }
+                    }
                     St::MeshFunction(ref function) => {
                         for operand in function.operands() {
                             self.expressions_used.insert(operand);
@@ -489,6 +501,20 @@ impl FunctionMap {
                     St::CooperativeVector(ref mut function) => {
                         for operand in function.operands_mut() {
                             adjust(operand)?;
+                        }
+                    }
+                    St::CooperativeMatrix {
+                        ref mut function,
+                        ref mut result,
+                    } => {
+                        for operand in function.operands_mut() {
+                            adjust(operand)?;
+                        }
+                        for callee in function.functions_mut() {
+                            function_map.adjust(callee)?;
+                        }
+                        if let Some(ref mut result) = *result {
+                            adjust(result)?;
                         }
                     }
                     St::MeshFunction(ref mut function) => {

@@ -510,6 +510,8 @@ impl crate::TypeInner {
             | Self::Matrix { .. }
             | Self::CooperativeMatrix { .. }
             | Self::LongVector { .. }
+            | Self::TensorLayout { .. }
+            | Self::TensorView { .. }
             | Self::Array {
                 size: crate::ArraySize::Constant(_),
                 ..

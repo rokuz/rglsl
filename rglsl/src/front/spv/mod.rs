@@ -1661,7 +1661,8 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                 | S::WorkGroupUniformLoad { .. }
                 | S::CooperativeStore { .. }
                 | S::Assume { .. }
-                | S::CooperativeVector(_) => {}
+                | S::CooperativeVector(_)
+                | S::CooperativeMatrix { .. } => {}
                 S::Call {
                     function: ref mut callee,
                     ref arguments,

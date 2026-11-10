@@ -474,8 +474,21 @@ impl super::Validator {
                 }
                 max
             }
-            crate::TypeInner::LongVector { size, .. } => {
-                Self::validate_cooperative_size(handle, size, overrides)?
+            crate::TypeInner::LongVector { size, .. }
+            | crate::TypeInner::TensorView {
+                dimensions: size, ..
+            } => Self::validate_cooperative_size(handle, size, overrides)?,
+            crate::TypeInner::TensorLayout {
+                dimensions,
+                clamp_mode,
+            } => {
+                let clamp = match clamp_mode {
+                    Some(clamp_mode) => {
+                        Self::validate_cooperative_size(handle, clamp_mode, overrides)?
+                    }
+                    None => None,
+                };
+                Self::validate_cooperative_size(handle, dimensions, overrides)?.max(clamp)
             }
             crate::TypeInner::Array { base, size, .. }
             | crate::TypeInner::BindingArray { base, size, .. } => {
@@ -787,6 +800,17 @@ impl super::Validator {
                 validate_type(ty)?;
                 handle.check_dep(expr)?;
             }
+            crate::Expression::CooperativeMatrixResult { ty }
+            | crate::Expression::TensorCreate { ty } => {
+                validate_type(ty)?;
+            }
+            crate::Expression::TensorSet {
+                base, ref operands, ..
+            } => {
+                handle
+                    .check_dep(base)?
+                    .check_dep_iter(operands.iter().copied())?;
+            }
             crate::Expression::CooperativeVectorLoad {
                 ty,
                 pointer,
@@ -1019,6 +1043,16 @@ impl super::Validator {
                     validate_expr(operand)?;
                 }
                 validate_expr_opt(fun.result())?;
+                Ok(())
+            }
+            crate::Statement::CooperativeMatrix {
+                ref function,
+                result,
+            } => {
+                for operand in function.operands() {
+                    validate_expr(operand)?;
+                }
+                validate_expr_opt(result)?;
                 Ok(())
             }
             crate::Statement::CooperativeVector(ref function) => {

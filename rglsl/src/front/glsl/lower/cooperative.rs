@@ -2,16 +2,16 @@ use alloc::{format, vec::Vec};
 
 use rglsl_ast::ast::Expression as AstExpression;
 use rglsl_sema::types::{Scalar as GlslScalar, Type as GlslType};
-use rglsl_sema::CooperativeCall;
+use rglsl_sema::{Callee, CooperativeCall, MatrixCall, TensorCall};
 
 use super::builtins::{derivative, math};
 use super::function::FunctionLowerer;
 use super::types::scalar;
 use super::{internal, unsupported, Result};
 use crate::{
-    BinaryOperator, CooperativeData, CooperativeVectorBias, CooperativeVectorFunction,
-    CooperativeVectorMatMul, Expression, Handle, MathFunction, RelationalFunction, Span, Statement,
-    UnaryOperator,
+    BinaryOperator, CooperativeData, CooperativeFamily, CooperativeMatrixFunction,
+    CooperativeVectorBias, CooperativeVectorFunction, CooperativeVectorMatMul, Expression, Handle,
+    MathFunction, RelationalFunction, Span, Statement, TensorOperation, UnaryOperator,
 };
 
 const REPLICATED: [&str; 7] = ["min", "max", "clamp", "mix", "step", "smoothstep", "mod"];
@@ -426,6 +426,7 @@ impl FunctionLowerer<'_, '_> {
                         expr,
                         ty,
                         saturating: true,
+                        family: self.cooperative_family(),
                     },
                     at,
                 )?;
@@ -447,6 +448,215 @@ impl FunctionLowerer<'_, '_> {
                 )
                 .map(Some)
             }
+        }
+    }
+
+    pub(super) fn tensor_call(
+        &mut self,
+        kind: TensorCall,
+        result: &GlslType,
+        arguments: &[AstExpression],
+        at: Span,
+    ) -> Result<Handle<Expression>> {
+        let operation = match kind {
+            TensorCall::CreateLayout | TensorCall::CreateView => {
+                let ty = self.lw.ir_type(result, at)?;
+                return self.add(Expression::TensorCreate { ty }, at);
+            }
+            TensorCall::LayoutSetBlockSize => TensorOperation::LayoutSetBlockSize,
+            TensorCall::LayoutSetDimension => TensorOperation::LayoutSetDimension,
+            TensorCall::LayoutSetStride => TensorOperation::LayoutSetStride,
+            TensorCall::LayoutSlice => TensorOperation::LayoutSlice,
+            TensorCall::LayoutSetClampValue => TensorOperation::LayoutSetClampValue,
+            TensorCall::ViewSetDimension => TensorOperation::ViewSetDimension,
+            TensorCall::ViewSetStride => TensorOperation::ViewSetStride,
+            TensorCall::ViewSetClip => TensorOperation::ViewSetClip,
+        };
+        let (base, rest) = arguments.split_first().ok_or_else(|| internal(at))?;
+        let base = self.rvalue(base)?;
+        let mut operands = Vec::with_capacity(rest.len());
+        for argument in rest {
+            operands.push(self.rvalue(argument)?);
+        }
+        self.add(
+            Expression::TensorSet {
+                base,
+                operation,
+                operands,
+            },
+            at,
+        )
+    }
+
+    fn referenced_function(
+        &self,
+        argument: &AstExpression,
+        at: Span,
+    ) -> Result<Handle<crate::Function>> {
+        let analysis = self.lw.analysis;
+        let Some(&Callee::Function(id)) = analysis.calls.get(&argument.id) else {
+            return Err(internal(at));
+        };
+        self.lw
+            .functions
+            .get(&id)
+            .copied()
+            .ok_or_else(|| unsupported("a function without a body as a cooperative callback", at))
+    }
+
+    pub(super) fn matrix_call(
+        &mut self,
+        kind: MatrixCall,
+        result: &GlslType,
+        arguments: &[AstExpression],
+        at: Span,
+    ) -> Result<Option<Handle<Expression>>> {
+        let argument = |index: usize| arguments.get(index).ok_or_else(|| internal(at));
+        let family = |ext: bool| {
+            if ext {
+                CooperativeFamily::Ext
+            } else {
+                CooperativeFamily::Nv
+            }
+        };
+        let (function, target) = match kind {
+            MatrixCall::LoadTensor { view } | MatrixCall::StoreTensor { view } => {
+                let pointer = self.cooperative_element(argument(1)?, argument(2)?, at)?;
+                let layout = self.rvalue(argument(3)?)?;
+                let view_value = if view {
+                    Some(self.rvalue(argument(4)?)?)
+                } else {
+                    None
+                };
+                let start = if view { 5 } else { 4 };
+                if let MatrixCall::StoreTensor { .. } = kind {
+                    let value = self.rvalue(argument(0)?)?;
+                    self.push(
+                        Statement::CooperativeMatrix {
+                            function: CooperativeMatrixFunction::StoreTensor {
+                                pointer,
+                                value,
+                                layout,
+                                view: view_value,
+                            },
+                            result: None,
+                        },
+                        at,
+                    );
+                    return Ok(None);
+                }
+                let decode = match arguments.get(start) {
+                    Some(argument) => Some(self.referenced_function(argument, at)?),
+                    None => None,
+                };
+                let decode_vector = match arguments.get(start + 1) {
+                    Some(argument) => Some(self.referenced_function(argument, at)?),
+                    None => None,
+                };
+                let object = self.rvalue(argument(0)?)?;
+                (
+                    CooperativeMatrixFunction::LoadTensor {
+                        pointer,
+                        object,
+                        layout,
+                        view: view_value,
+                        decode,
+                        decode_vector,
+                    },
+                    Some(argument(0)?),
+                )
+            }
+            MatrixCall::Transpose { ext } => {
+                let matrix = self.rvalue(argument(1)?)?;
+                (
+                    CooperativeMatrixFunction::Transpose {
+                        matrix,
+                        family: family(ext),
+                    },
+                    Some(argument(0)?),
+                )
+            }
+            MatrixCall::Reduce { ext, mask } => {
+                let matrix = self.rvalue(argument(1)?)?;
+                let combine = self.referenced_function(argument(3)?, at)?;
+                (
+                    CooperativeMatrixFunction::Reduce {
+                        matrix,
+                        mask,
+                        combine,
+                        family: family(ext),
+                    },
+                    Some(argument(0)?),
+                )
+            }
+            MatrixCall::PerElement { ext } => {
+                let matrix = self.rvalue(argument(1)?)?;
+                let function = self.referenced_function(argument(2)?, at)?;
+                let mut extra = Vec::new();
+                for argument in arguments.iter().skip(3) {
+                    extra.push(self.rvalue(argument)?);
+                }
+                (
+                    CooperativeMatrixFunction::PerElement {
+                        matrix,
+                        function,
+                        arguments: extra,
+                        family: family(ext),
+                    },
+                    Some(argument(0)?),
+                )
+            }
+            MatrixCall::GetCoordinate => {
+                let matrix = self.rvalue(argument(0)?)?;
+                let index = self.rvalue(argument(1)?)?;
+                (
+                    CooperativeMatrixFunction::GetCoordinate { matrix, index },
+                    None,
+                )
+            }
+        };
+        let result_ty = match target {
+            Some(target) => self.info(target)?.ty.clone(),
+            None => result.clone(),
+        };
+        let ty = self.lw.ir_type(&result_ty, at)?;
+        let value = self.result_statement(
+            Expression::CooperativeMatrixResult { ty },
+            |result| Statement::CooperativeMatrix {
+                function,
+                result: Some(result),
+            },
+            at,
+        );
+        match target {
+            Some(target) => {
+                let place = self.place(target)?;
+                self.store(&place, value, at)?;
+                Ok(None)
+            }
+            None => Ok(Some(value)),
+        }
+    }
+
+    fn cooperative_element(
+        &mut self,
+        buffer: &AstExpression,
+        element: &AstExpression,
+        at: Span,
+    ) -> Result<Handle<Expression>> {
+        let base = self.array_pointer(buffer, at)?;
+        let index = self.rvalue(element)?;
+        self.add(Expression::Access { base, index }, at)
+    }
+
+    pub(super) fn cooperative_family(&self) -> CooperativeFamily {
+        let extensions = &self.lw.analysis.extensions;
+        if extensions.contains("GL_EXT_cooperative_matrix_maintenance1") {
+            CooperativeFamily::Ext
+        } else if extensions.contains("GL_NV_cooperative_matrix2") {
+            CooperativeFamily::Nv
+        } else {
+            CooperativeFamily::Khr
         }
     }
 

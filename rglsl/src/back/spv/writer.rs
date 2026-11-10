@@ -623,7 +623,9 @@ impl Writer {
             },
             crate::TypeInner::Array { .. }
             | crate::TypeInner::Struct { .. }
-            | crate::TypeInner::BindingArray { .. } => return Ok(None),
+            | crate::TypeInner::BindingArray { .. }
+            | crate::TypeInner::TensorLayout { .. }
+            | crate::TypeInner::TensorView { .. } => return Ok(None),
         }))
     }
 
@@ -1797,7 +1799,9 @@ impl Writer {
                 id,
                 spirv::StorageClass::Function,
                 init_word.or_else(|| match ir_module.types[variable.ty].inner {
-                    crate::TypeInner::RayQuery { .. } => None,
+                    crate::TypeInner::RayQuery { .. }
+                    | crate::TypeInner::TensorLayout { .. }
+                    | crate::TypeInner::TensorView { .. } => None,
                     _ => {
                         let plain = context.writer.plain_type_id(type_id);
                         if context.writer.contains_physical_type(plain) {
@@ -2435,6 +2439,29 @@ impl Writer {
         instruction.to_words(&mut self.logical_layout.declarations);
     }
 
+    fn require_tensor_addressing(&mut self) -> Result<(), Error> {
+        self.require_any(
+            "tensor addressing",
+            &[spirv::Capability::TensorAddressingNV],
+        )?;
+        self.use_extension("SPV_NV_tensor_addressing");
+        Ok(())
+    }
+
+    fn write_cooperative_size(
+        &mut self,
+        size: crate::CooperativeSize,
+        module: &crate::Module,
+        mod_info: &ModuleInfo,
+    ) -> Result<Word, Error> {
+        match size {
+            crate::CooperativeSize::Constant(size) => Ok(self.get_index_constant(size.get())),
+            crate::CooperativeSize::Pending(handle) => {
+                self.write_override(handle, module, mod_info)
+            }
+        }
+    }
+
     fn cooperative_size_id(&mut self, size: crate::CooperativeSize) -> Word {
         match size {
             crate::CooperativeSize::Constant(size) => self.get_index_constant(size.get()),
@@ -2557,6 +2584,11 @@ impl Writer {
         // capability requirements. See https://github.com/gfx-rs/wgpu/issues/5569
         self.request_type_capabilities(&ty.inner)?;
         let pending = match ty.inner {
+            crate::TypeInner::TensorLayout {
+                dimensions,
+                clamp_mode,
+            } => [Some(dimensions), clamp_mode, None],
+            crate::TypeInner::TensorView { dimensions, .. } => [Some(dimensions), None, None],
             crate::TypeInner::CooperativeMatrix {
                 columns,
                 rows,
@@ -2646,6 +2678,43 @@ impl Writer {
 
             let id = self.id_gen.next();
             let instruction = match ty.inner {
+                crate::TypeInner::TensorLayout {
+                    dimensions,
+                    clamp_mode,
+                } => {
+                    self.require_tensor_addressing()?;
+                    let dimensions = self.write_cooperative_size(dimensions, module, mod_info)?;
+                    let clamp_mode = match clamp_mode {
+                        Some(clamp_mode) => {
+                            self.write_cooperative_size(clamp_mode, module, mod_info)?
+                        }
+                        None => self.get_index_constant(0),
+                    };
+                    let mut instruction = Instruction::new(spirv::Op::TypeTensorLayoutNV);
+                    instruction.set_result(id);
+                    instruction.add_operand(dimensions);
+                    instruction.add_operand(clamp_mode);
+                    instruction
+                }
+                crate::TypeInner::TensorView {
+                    dimensions,
+                    has_dimensions,
+                    ref permutation,
+                } => {
+                    self.require_tensor_addressing()?;
+                    let dimensions = self.write_cooperative_size(dimensions, module, mod_info)?;
+                    let has_dimensions =
+                        self.get_constant_scalar(crate::Literal::Bool(has_dimensions));
+                    let mut instruction = Instruction::new(spirv::Op::TypeTensorViewNV);
+                    instruction.set_result(id);
+                    instruction.add_operand(dimensions);
+                    instruction.add_operand(has_dimensions);
+                    for &index in permutation {
+                        let index = self.get_index_constant(index);
+                        instruction.add_operand(index);
+                    }
+                    instruction
+                }
                 crate::TypeInner::Array { base, size, stride } => {
                     let type_id = self.get_handle_type_id(base)?;
                     let (length, count) = if let crate::ArraySize::Pending(length) = size {

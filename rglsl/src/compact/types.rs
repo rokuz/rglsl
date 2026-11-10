@@ -46,6 +46,16 @@ impl TypeTracer<'_> {
                 }
             }
             Ti::LongVector { size, .. } => self.trace_cooperative_size(size),
+            Ti::TensorLayout {
+                dimensions,
+                clamp_mode,
+            } => {
+                self.trace_cooperative_size(dimensions);
+                if let Some(clamp_mode) = clamp_mode {
+                    self.trace_cooperative_size(clamp_mode);
+                }
+            }
+            Ti::TensorView { dimensions, .. } => self.trace_cooperative_size(dimensions),
 
             // Types that do contain handles.
             Ti::Array {
@@ -110,9 +120,26 @@ impl ModuleMap {
                     }
                 }
             }
-            Ti::LongVector { ref mut size, .. } => {
+            Ti::LongVector { ref mut size, .. }
+            | Ti::TensorView {
+                dimensions: ref mut size,
+                ..
+            } => {
                 if let crate::CooperativeSize::Pending(ref mut r#override) = *size {
                     self.overrides.adjust(r#override)?;
+                }
+            }
+            Ti::TensorLayout {
+                ref mut dimensions,
+                ref mut clamp_mode,
+            } => {
+                for size in [Some(dimensions), clamp_mode.as_mut()]
+                    .into_iter()
+                    .flatten()
+                {
+                    if let crate::CooperativeSize::Pending(ref mut r#override) = *size {
+                        self.overrides.adjust(r#override)?;
+                    }
                 }
             }
 

@@ -333,6 +333,14 @@ impl Analyzer<'_> {
         {
             return self.cooperative_call(expression, span, name, arguments);
         }
+        if self.scopes.function_levels(name).is_empty() {
+            if let Some(call) = super::cooperative_matrix2::tensor_call(name) {
+                return self.tensor_function(expression, span, name, call, arguments);
+            }
+            if super::cooperative_matrix2::matrix_call(name) {
+                return self.matrix2_function(expression, span, name, arguments);
+            }
+        }
         let operands: Vec<Operand> = arguments
             .iter()
             .map(|argument| self.expression(argument))

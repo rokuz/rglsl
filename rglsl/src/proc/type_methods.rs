@@ -296,6 +296,7 @@ impl crate::TypeInner {
             Self::LongVector { size, scalar, .. } => {
                 size.known_or_one().checked_mul(u32::from(scalar.width))
             }
+            Self::TensorLayout { .. } | Self::TensorView { .. } => Some(0),
             Self::Pointer {
                 space: crate::AddressSpace::PhysicalStorage { .. },
                 ..
@@ -488,7 +489,9 @@ impl crate::TypeInner {
             | Ti::Matrix { .. }
             | Ti::RayQuery { .. }
             | Ti::CooperativeMatrix { .. }
-            | Ti::LongVector { .. } => true,
+            | Ti::LongVector { .. }
+            | Ti::TensorLayout { .. }
+            | Ti::TensorView { .. } => true,
         }
     }
 
@@ -532,6 +535,8 @@ impl crate::TypeInner {
             crate::TypeInner::Matrix { .. }
             | crate::TypeInner::CooperativeMatrix { .. }
             | crate::TypeInner::LongVector { .. }
+            | crate::TypeInner::TensorLayout { .. }
+            | crate::TypeInner::TensorView { .. }
             | crate::TypeInner::Atomic(_)
             | crate::TypeInner::Pointer { .. }
             | crate::TypeInner::ValuePointer { .. }
@@ -560,6 +565,8 @@ impl crate::TypeInner {
             crate::TypeInner::Array { base, .. } => types[base].inner.is_abstract(types),
             crate::TypeInner::CooperativeMatrix { .. }
             | crate::TypeInner::LongVector { .. }
+            | crate::TypeInner::TensorLayout { .. }
+            | crate::TypeInner::TensorView { .. }
             | crate::TypeInner::ValuePointer { .. }
             | crate::TypeInner::Pointer { .. }
             | crate::TypeInner::Struct { .. }

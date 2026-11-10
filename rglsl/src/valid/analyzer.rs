@@ -943,6 +943,19 @@ impl FunctionInfo {
                 non_uniform_result: self.add_ref(value).or(self.add_ref(expected)),
                 requirements: UniformityRequirements::empty(),
             },
+            E::CooperativeMatrixResult { .. } | E::TensorCreate { .. } => Uniformity::new(),
+            E::TensorSet {
+                base, ref operands, ..
+            } => {
+                let mut non_uniform_result = self.add_ref(base);
+                for &operand in operands {
+                    non_uniform_result = non_uniform_result.or(self.add_ref(operand));
+                }
+                Uniformity {
+                    non_uniform_result,
+                    requirements: UniformityRequirements::empty(),
+                }
+            }
             E::Convert { expr, .. } => Uniformity {
                 non_uniform_result: self.add_ref(expr),
                 requirements: UniformityRequirements::empty(),
@@ -1345,6 +1358,22 @@ impl FunctionInfo {
                         }
                     } else {
                         FunctionUniformity::new()
+                    }
+                }
+                S::CooperativeMatrix {
+                    ref function,
+                    result: _,
+                } => {
+                    let mut non_uniform_result = None;
+                    for operand in function.operands() {
+                        non_uniform_result = non_uniform_result.or(self.add_ref(operand));
+                    }
+                    FunctionUniformity {
+                        result: Uniformity {
+                            non_uniform_result,
+                            requirements: UniformityRequirements::empty(),
+                        },
+                        exit: ExitFlags::empty(),
                     }
                 }
                 S::CooperativeVector(ref function) => {

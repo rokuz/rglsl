@@ -2347,7 +2347,17 @@ impl BlockContext<'_> {
                 expr,
                 ty,
                 saturating,
-            } => self.write_convert(expr, ty, saturating, result_type_id, block)?,
+                family,
+            } => self.write_convert(expr, ty, (saturating, family), result_type_id, block)?,
+            crate::Expression::CooperativeMatrixResult { .. } => self.cached.get(expr_handle)?,
+            crate::Expression::TensorCreate { ty } => {
+                self.write_tensor_create(ty, result_type_id, block)?
+            }
+            crate::Expression::TensorSet {
+                base,
+                operation,
+                ref operands,
+            } => self.write_tensor_set(base, operation, operands, result_type_id, block)?,
             crate::Expression::CooperativeVectorMatMul { ref operation, .. } => self
                 .write_cooperative_vector_mat_mul(expr_handle, operation, result_type_id, block)?,
         };
@@ -4202,6 +4212,12 @@ impl BlockContext<'_> {
                     ref arguments,
                 } => self.write_debug_printf_statement(&mut block, format, arguments)?,
                 Statement::Assume { condition } => self.write_assume(condition, &mut block)?,
+                Statement::CooperativeMatrix {
+                    ref function,
+                    result,
+                } => {
+                    self.write_cooperative_matrix_function(function, result, &mut block)?;
+                }
                 Statement::CooperativeVector(ref function) => {
                     self.write_cooperative_vector_function(function, &mut block)?;
                 }

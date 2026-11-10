@@ -1402,7 +1402,10 @@ impl<'a> ConstantEvaluator<'a> {
             | Expression::Expect { .. }
             | Expression::CooperativeVectorLoad { .. }
             | Expression::CooperativeVectorMatMul { .. }
-            | Expression::Convert { .. } => Err(ConstantEvaluatorError::CooperativeOperation),
+            | Expression::Convert { .. }
+            | Expression::CooperativeMatrixResult { .. }
+            | Expression::TensorCreate { .. }
+            | Expression::TensorSet { .. } => Err(ConstantEvaluatorError::CooperativeOperation),
         }
     }
 

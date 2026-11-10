@@ -291,6 +291,15 @@ impl ExpressionTracer<'_> {
                 self.types_used.insert(ty);
                 self.expressions_used.insert(expr);
             }
+            Ex::CooperativeMatrixResult { ty } | Ex::TensorCreate { ty } => {
+                self.types_used.insert(ty);
+            }
+            Ex::TensorSet {
+                base, ref operands, ..
+            } => {
+                self.expressions_used.insert(base);
+                self.expressions_used.insert_iter(operands.iter().copied());
+            }
             Ex::CooperativeVectorMatMul { ty, ref operation } => {
                 self.types_used.insert(ty);
                 self.expressions_used.insert_iter(operation.operands());
@@ -526,6 +535,19 @@ impl ModuleMap {
             } => {
                 self.types.adjust(ty)?;
                 adjust(expr)?;
+            }
+            Ex::CooperativeMatrixResult { ref mut ty } | Ex::TensorCreate { ref mut ty } => {
+                self.types.adjust(ty)?;
+            }
+            Ex::TensorSet {
+                ref mut base,
+                ref mut operands,
+                ..
+            } => {
+                adjust(base)?;
+                for operand in operands {
+                    adjust(operand)?;
+                }
             }
             Ex::CooperativeVectorMatMul {
                 ref mut ty,

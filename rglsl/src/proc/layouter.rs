@@ -235,6 +235,10 @@ impl Layouter {
                             .ok_or(LayoutErrorInner::TooLarge.with(ty_handle))?,
                     }
                 }
+                Ti::TensorLayout { .. } | Ti::TensorView { .. } => TypeLayout {
+                    size,
+                    alignment: Alignment::ONE,
+                },
                 Ti::Pointer {
                     space: crate::AddressSpace::PhysicalStorage { .. },
                     ..

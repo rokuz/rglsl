@@ -1211,6 +1211,8 @@ impl super::Validator {
                             | Ex::Replicate { .. }
                             | Ex::Expect { .. }
                             | Ex::Convert { .. }
+                            | Ex::TensorCreate { .. }
+                            | Ex::TensorSet { .. }
                             | Ex::CooperativeVectorLoad { .. }
                             | Ex::CooperativeVectorMatMul { .. } => {
                                 self.emit_expression(handle, context)?
@@ -1221,7 +1223,8 @@ impl super::Validator {
                             | Ex::RayQueryProceedResult
                             | Ex::ReportIntersectionResult
                             | Ex::SubgroupBallotResult
-                            | Ex::SubgroupOperationResult { .. } => {
+                            | Ex::SubgroupOperationResult { .. }
+                            | Ex::CooperativeMatrixResult { .. } => {
                                 return Err(FunctionError::EmitResult(handle)
                                     .with_span_handle(handle, context.expressions));
                             }
@@ -1424,6 +1427,17 @@ impl super::Validator {
                 }
                 S::EmitVertex { .. } | S::EndPrimitive { .. } => {
                     stages &= super::ShaderStages::GEOMETRY;
+                }
+                S::CooperativeMatrix {
+                    ref function,
+                    result,
+                } => {
+                    for operand in function.operands() {
+                        context.resolve_type_inner(operand, &self.valid_expression_set)?;
+                    }
+                    if let Some(result) = result {
+                        self.emit_expression(result, context)?;
+                    }
                 }
                 S::CooperativeVector(ref function) => {
                     for operand in function.operands() {

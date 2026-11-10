@@ -597,11 +597,11 @@ pub enum TypeKind {
         size: ArraySize,
     },
     TensorLayout {
-        dimensions: u32,
-        clamp_mode: u32,
+        dimensions: ArraySize,
+        clamp_mode: ArraySize,
     },
     TensorView {
-        dimensions: u32,
+        dimensions: ArraySize,
         has_dimensions: bool,
         permutation: [u8; 5],
     },
@@ -1235,9 +1235,14 @@ impl fmt::Display for TypeDisplay<'_> {
             TypeKind::TensorLayout {
                 dimensions,
                 clamp_mode,
-            } => write!(formatter, "tensorLayoutNV<{dimensions}, {clamp_mode}>")?,
+            } => write!(
+                formatter,
+                "tensorLayoutNV<{}, {}>",
+                ShowSize(dimensions),
+                ShowSize(clamp_mode)
+            )?,
             TypeKind::TensorView { dimensions, .. } => {
-                write!(formatter, "tensorViewNV<{dimensions}>")?;
+                write!(formatter, "tensorViewNV<{}>", ShowSize(dimensions))?;
             }
         }
         for dimension in &self.ty.array {
