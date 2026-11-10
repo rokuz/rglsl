@@ -967,6 +967,11 @@ fn adjust_stmt(new_pos: &HandleVec<Expression, Handle<Expression>>, stmt: &mut S
             adjust(&mut data.pointer);
             adjust(&mut data.stride);
         }
+        Statement::MeshFunction(ref mut function) => {
+            for operand in function.operands_mut() {
+                adjust(operand);
+            }
+        }
         Statement::RayPipelineFunction(ref mut func) => {
             for operand in func.operands_mut() {
                 adjust(operand);

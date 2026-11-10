@@ -20,6 +20,17 @@ pub(super) fn strip(expression: &Expression) -> &Expression {
 
 pub(super) const CLIP_DISTANCES: [&str; 2] = ["gl_ClipDistance", "gl_CullDistance"];
 
+pub(super) const IMPLICITLY_SIZED: [&str; 8] = [
+    "gl_ClipDistance",
+    "gl_CullDistance",
+    "gl_ViewportMask",
+    "gl_SecondaryViewportMaskNV",
+    "gl_PositionPerViewNV",
+    "gl_ViewportMaskPerViewNV",
+    "gl_SampleMask",
+    "gl_SampleMaskIn",
+];
+
 impl<'a> Lowerer<'a> {
     pub(super) fn variable_symbol(&self, expression: &Expression) -> Option<SymbolId> {
         let expression = strip(expression);
@@ -144,6 +155,24 @@ impl<'a> Lowerer<'a> {
                         let entry = self.member_sizes.entry(member).or_insert(0);
                         *entry = (*entry).max(size);
                     }
+                    let mut depth = 0_usize;
+                    let mut inner = strip(base);
+                    while let ExpressionKind::Subscript {
+                        base: ref outer, ..
+                    } = inner.kind
+                    {
+                        depth += 1;
+                        inner = strip(outer);
+                    }
+                    if depth > 0 {
+                        if let Some((block, member)) = self.block_member_of(inner) {
+                            let entry = self
+                                .member_dimension_sizes
+                                .entry((block, member, depth))
+                                .or_insert(0);
+                            *entry = (*entry).max(size);
+                        }
+                    }
                     let Some(symbol) = symbol else {
                         continue;
                     };
@@ -155,7 +184,7 @@ impl<'a> Lowerer<'a> {
                     let Some(name) = self.symbol(symbol).map(|symbol| symbol.name.clone()) else {
                         continue;
                     };
-                    if CLIP_DISTANCES.contains(&name.as_str()) {
+                    if IMPLICITLY_SIZED.contains(&name.as_str()) {
                         let entry = self.builtin_sizes.entry(name).or_insert(0);
                         *entry = (*entry).max(size);
                     }

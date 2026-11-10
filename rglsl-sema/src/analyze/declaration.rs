@@ -125,6 +125,10 @@ impl Analyzer<'_> {
         }
         self.record_buffer_defaults(&qualifiers);
         self.standalone_stage_layout(&qualifiers);
+        self.task_payload_type_only(qualifier.span, &qualifiers);
+        if qualifiers.storage == Storage::Out {
+            self.resize_mesh_arrays(qualifier.span);
+        }
         if qualifiers.storage == Storage::Out {
             if let Some(vertices) = qualifiers
                 .layout_entry("vertices")
@@ -219,6 +223,17 @@ impl Analyzer<'_> {
                 "derivative_group_linearkhr" => {
                     linear = true;
                     self.khr_derivative_group = true;
+                }
+                "derivative_group_quadsnv" | "derivative_group_linearnv"
+                    if self.options.stage != Stage::Compute =>
+                {
+                    self.error(
+                        entry.span,
+                        DiagnosticKind::InvalidQualifier {
+                            qualifier: "derivative_group_*NV",
+                            reason: "can only apply to compute shaders",
+                        },
+                    );
                 }
                 "derivative_group_quadsnv" => quads = true,
                 "derivative_group_linearnv" => linear = true,
@@ -351,6 +366,22 @@ impl Analyzer<'_> {
                             "shadercallcoherent",
                         );
                         result.shader_call_coherent = true;
+                    }
+                    StorageQualifier::PerPrimitiveNV | StorageQualifier::PerPrimitiveEXT => {
+                        self.mesh_qualifier(single.span, *storage);
+                        result.per_primitive = true;
+                    }
+                    StorageQualifier::PerViewNV => {
+                        self.mesh_qualifier(single.span, *storage);
+                        result.per_view = true;
+                    }
+                    StorageQualifier::TaskNV => {
+                        self.mesh_qualifier(single.span, *storage);
+                        result.per_task = true;
+                    }
+                    StorageQualifier::TaskPayloadSharedEXT => {
+                        self.mesh_qualifier(single.span, *storage);
+                        result.storage = Storage::TaskPayloadShared;
                     }
                     StorageQualifier::Volatile => result.volatile = true,
                     StorageQualifier::Restrict => result.restrict = true,
@@ -697,11 +728,17 @@ impl Analyzer<'_> {
                 qualifiers.shader_call_coherent |= block.shader_call_coherent;
                 qualifiers.nonprivate |= block.nonprivate;
                 qualifiers.writeonly |= block.writeonly;
+                qualifiers.per_primitive |= block.per_primitive;
+                qualifiers.per_view |= block.per_view;
+                qualifiers.per_task |= block.per_task;
             }
             for declarator in &declaration.declarators {
                 let name = &declarator.name;
                 let dimensions = self.array_sizes(declarator.array.as_ref());
-                let ty = base.clone().with_dimensions(&dimensions);
+                let mut ty = base.clone().with_dimensions(&dimensions);
+                if in_block.is_some() {
+                    self.per_view_dimension(name.span, &qualifiers, &mut ty, true);
+                }
                 let reason = if ty.is_void() {
                     Some("a member cannot be `void`")
                 } else if members.iter().any(|member| member.name == name.node) {
@@ -771,11 +808,13 @@ impl Analyzer<'_> {
         }
         let base = self.type_specifier(&list.ty.specifier);
         if list.declarators.is_empty() {
+            self.task_payload_type_only(list.ty.specifier.span, &qualifiers);
             self.global_storage_checks(&qualifiers, &base, list.ty.specifier.span, true);
             return;
         }
         self.no_shader_layouts(&qualifiers);
         self.passthrough_extension(&qualifiers);
+        self.view_layout_extensions(&qualifiers);
         for declarator in &list.declarators {
             self.init_declarator(declarator, &qualifiers, &base);
         }
@@ -1123,7 +1162,9 @@ impl Analyzer<'_> {
             );
         }
         if is_global {
+            self.per_view_dimension(name.span, &qualifiers, &mut ty, false);
             self.interface_array(name, &qualifiers, &mut ty);
+            self.mesh_interface_array(name, &qualifiers, &mut ty);
         }
         if !is_global && !matches!(qualifiers.storage, Storage::None) {
             self.error(
@@ -1148,7 +1189,11 @@ impl Analyzer<'_> {
         if let Some((span, operand)) = initializer {
             if matches!(
                 qualifiers.storage,
-                Storage::In | Storage::Out | Storage::Buffer | Storage::Shared
+                Storage::In
+                    | Storage::Out
+                    | Storage::Buffer
+                    | Storage::Shared
+                    | Storage::TaskPayloadShared
             ) || (qualifiers.storage == Storage::Uniform && ty.contains_opaque(&self.types))
             {
                 self.error(
@@ -1461,7 +1506,13 @@ impl Analyzer<'_> {
         }
         self.no_shader_layouts(&qualifiers);
         self.passthrough_extension(&qualifiers);
+        self.mesh_block_storage(structure.name.span, &qualifiers);
+        self.view_layout_extensions(&qualifiers);
         let storage = match qualifiers.storage {
+            Storage::TaskPayloadShared => {
+                self.task_payload_checks(structure.name.span, &qualifiers, true);
+                BlockStorage::Uniform
+            }
             Storage::Uniform => BlockStorage::Uniform,
             Storage::Buffer => BlockStorage::Buffer,
             Storage::In => BlockStorage::In,
@@ -1513,6 +1564,17 @@ impl Analyzer<'_> {
         let dimensions = instance
             .map(|instance| self.array_sizes(instance.array.as_ref()))
             .unwrap_or_default();
+        if self.redeclare_mesh_block(
+            declaration,
+            structure,
+            instance,
+            storage,
+            &qualifiers,
+            &members,
+            &dimensions,
+        ) {
+            return;
+        }
         if structure.name.node == "gl_PerVertex" {
             let invalid = |reason| DiagnosticKind::InvalidBlock {
                 name: structure.name.node.clone(),
@@ -1661,6 +1723,7 @@ impl Analyzer<'_> {
                 let name = &instance.name;
                 let located = Spanned::new(structure.name.span, name.node.clone());
                 self.interface_array(&located, &qualifiers, &mut ty);
+                self.mesh_interface_array(&located, &qualifiers, &mut ty);
                 let id =
                     self.add_variable(&name.node, name.span, ty, qualifiers, Origin::Global, None);
                 self.declarations.insert(declaration.id, id);
@@ -1699,6 +1762,78 @@ impl Analyzer<'_> {
                 }
             }
         }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn redeclare_mesh_block(
+        &mut self,
+        declaration: &Declaration,
+        structure: &BlockStructure,
+        instance: Option<&Spanned<BlockInstance>>,
+        storage: BlockStorage,
+        qualifiers: &Qualifiers,
+        members: &[Member],
+        dimensions: &[ArraySize],
+    ) -> bool {
+        let name = structure.name.node.as_str();
+        let Some(&(_, instance_name)) = super::mesh::MESH_BLOCK_NAMES
+            .iter()
+            .find(|(block, _)| *block == name)
+        else {
+            return false;
+        };
+        if self.options.stage != Stage::Mesh {
+            return false;
+        }
+        let given = instance.map_or("", |instance| instance.name.node.as_str());
+        let found = self.symbols.iter().enumerate().find_map(|(index, symbol)| {
+            let variable = symbol.variable()?;
+            let TypeKind::Block(id) = variable.ty.kind else {
+                return None;
+            };
+            let matches = variable.origin == Origin::BuiltIn && symbol.name == instance_name;
+            let index = u32::try_from(index).ok()?;
+            matches.then_some((id, SymbolId(index)))
+        });
+        let invalid = |reason| DiagnosticKind::InvalidBlock {
+            name: String::from(name),
+            reason,
+        };
+        let Some((block, variable)) =
+            found.filter(|_| given == instance_name && storage == BlockStorage::Out)
+        else {
+            self.error(
+                structure.name.span,
+                invalid("there is no such built-in block to redeclare"),
+            );
+            return true;
+        };
+        self.declarations.insert(declaration.id, variable);
+        if let Some(block) = self.types.block_mut(block) {
+            block.members = members.to_vec();
+            block.qualifiers.per_primitive |= qualifiers.per_primitive;
+        }
+        let mut sized = None;
+        if let Some(SymbolKind::Variable(variable)) =
+            self.symbol_mut(variable).map(|symbol| &mut symbol.kind)
+        {
+            if matches!(dimensions.first(), Some(ArraySize::Sized(_))) {
+                variable.ty.array = dimensions.to_vec();
+            }
+            sized = Some(variable.ty.clone());
+        }
+        if let (Some(mut ty), Some(instance)) = (sized, instance) {
+            let mut qualifiers = qualifiers.clone();
+            qualifiers.storage = Storage::Out;
+            let located = Spanned::new(structure.name.span, instance.name.node.clone());
+            self.mesh_interface_array(&located, &qualifiers, &mut ty);
+            if let Some(SymbolKind::Variable(variable)) =
+                self.symbol_mut(variable).map(|symbol| &mut symbol.kind)
+            {
+                variable.ty = ty;
+            }
+        }
+        true
     }
 
     fn builtin_per_vertex(

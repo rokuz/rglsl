@@ -206,6 +206,10 @@ impl FunctionLowerer<'_, '_> {
                 self.barrier(name, arguments, at)?;
                 Ok(None)
             }
+            "SetMeshOutputsEXT" | "EmitMeshTasksEXT" | "writePackedPrimitiveIndices4x8NV" => {
+                self.mesh_statement(name, arguments, at)?;
+                Ok(None)
+            }
             "EmitVertex" | "EndPrimitive" | "EmitStreamVertex" | "EndStreamPrimitive" => {
                 self.primitive_statement(name, arguments, at)?;
                 Ok(None)

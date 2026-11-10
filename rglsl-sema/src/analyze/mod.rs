@@ -4,6 +4,7 @@ mod expression;
 mod extension;
 mod heap;
 mod memory;
+mod mesh;
 mod ray;
 mod reference;
 mod reference_expression;
@@ -433,6 +434,7 @@ impl<'a> Analyzer<'a> {
             self.error(Span::new(end, end), DiagnosticKind::MissingEntryPoint);
         }
         self.check_derivative_group(Span::new(end, end));
+        self.mesh_output_reads(unit);
     }
 
     fn pragma(&mut self, span: Span, tokens: &[String]) {

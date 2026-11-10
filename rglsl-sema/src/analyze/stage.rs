@@ -16,6 +16,7 @@ enum Kind {
     PointMode,
     Invocations,
     Vertices,
+    Primitives,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -25,6 +26,7 @@ pub struct StageLayout {
     input_primitive: Option<&'static str>,
     output_primitive: Option<&'static str>,
     vertices: Option<i64>,
+    primitives: Option<i64>,
     invocations: Option<i64>,
     spacing: Option<&'static str>,
     order: Option<&'static str>,
@@ -56,6 +58,28 @@ const TESS_EVALUATION: &[(&str, Kind)] = &[
 
 const TESS_CONTROL: &[(&str, Kind)] = &[("vertices", Kind::Vertices)];
 
+const MESH: &[(&str, Kind)] = &[
+    ("points", Kind::OutputPrimitive),
+    ("lines", Kind::OutputPrimitive),
+    ("triangles", Kind::OutputPrimitive),
+    ("max_vertices", Kind::Vertices),
+    ("max_primitives", Kind::Primitives),
+];
+
+impl StageLayout {
+    pub(crate) const fn output_primitive(&self) -> Option<&'static str> {
+        self.output_primitive
+    }
+
+    pub(crate) const fn mesh_vertices(&self) -> Option<i64> {
+        self.vertices
+    }
+
+    pub(crate) const fn mesh_primitives(&self) -> Option<i64> {
+        self.primitives
+    }
+}
+
 const VIEWPORT_LAYER_EXTENSIONS: [&str; 2] = [
     "GL_ARB_shader_viewport_layer_array",
     "GL_NV_viewport_array2",
@@ -66,6 +90,7 @@ const fn table(stage: Stage) -> &'static [(&'static str, Kind)] {
         Stage::Geometry => GEOMETRY,
         Stage::TessEvaluation => TESS_EVALUATION,
         Stage::TessControl => TESS_CONTROL,
+        Stage::Mesh => MESH,
         _ => &[],
     }
 }
@@ -102,6 +127,37 @@ impl Analyzer<'_> {
                 "GL_NV_geometry_shader_passthrough",
                 "geometry shader passthrough",
             );
+        }
+    }
+
+    pub(crate) fn view_layout_extensions(&mut self, qualifiers: &Qualifiers) {
+        let pre_rasterization = matches!(
+            self.options.stage,
+            Stage::Vertex | Stage::TessControl | Stage::TessEvaluation | Stage::Geometry
+        );
+        let fragment = self.options.stage == Stage::Fragment;
+        let required: alloc::vec::Vec<(Span, &'static str, &'static str)> = qualifiers
+            .layout
+            .iter()
+            .filter_map(|entry| {
+                let name = entry.name.to_ascii_lowercase();
+                let (extension, what) = match name.as_str() {
+                    "viewport_relative" if pre_rasterization => {
+                        ("GL_NV_viewport_array2", "viewport_relative")
+                    }
+                    "secondary_view_offset" if pre_rasterization => {
+                        ("GL_NV_stereo_view_rendering", "secondary_view_offset")
+                    }
+                    "override_coverage" if fragment => {
+                        ("GL_NV_sample_mask_override_coverage", "override_coverage")
+                    }
+                    _ => return None,
+                };
+                Some((entry.span, extension, what))
+            })
+            .collect();
+        for (span, extension, what) in required {
+            self.require_extension(span, extension, what);
         }
     }
 
@@ -143,6 +199,9 @@ impl Analyzer<'_> {
                             ),
                         );
                     }
+                    if stage == Stage::Mesh {
+                        self.mesh_limit(span, name, value, false);
+                    }
                     if !output {
                         self.error(span, invalid(name, "can only apply to 'out'"));
                     }
@@ -152,6 +211,19 @@ impl Analyzer<'_> {
                             invalid(name, "cannot change previously set layout value"),
                         ),
                         _ => self.stage_layout.vertices = value,
+                    }
+                }
+                Kind::Primitives => {
+                    self.mesh_limit(span, name, value, true);
+                    if !output {
+                        self.error(span, invalid(name, "can only apply to 'out'"));
+                    }
+                    match self.stage_layout.primitives {
+                        Some(previous) if Some(previous) != value => self.error(
+                            span,
+                            invalid(name, "cannot change previously set layout value"),
+                        ),
+                        _ => self.stage_layout.primitives = value,
                     }
                 }
                 Kind::Invocations => {
@@ -202,6 +274,32 @@ impl Analyzer<'_> {
                     }
                 }
             }
+        }
+    }
+
+    fn mesh_limit(&mut self, span: Span, name: &'static str, value: Option<i64>, primitives: bool) {
+        let ext = self.mesh_ext();
+        let limits = &self.options.limits;
+        let (limit, message) = match (primitives, ext) {
+            (false, true) => (
+                limits.max_mesh_output_vertices_ext,
+                "too large, must be less than gl_MaxMeshOutputVerticesEXT",
+            ),
+            (false, false) => (
+                limits.max_mesh_output_vertices_nv,
+                "too large, must be less than gl_MaxMeshOutputVerticesNV",
+            ),
+            (true, true) => (
+                limits.max_mesh_output_primitives_ext,
+                "too large, must be less than gl_MaxMeshOutputPrimitivesEXT",
+            ),
+            (true, false) => (
+                limits.max_mesh_output_primitives_nv,
+                "too large, must be less than gl_MaxMeshOutputPrimitivesNV",
+            ),
+        };
+        if value.is_some_and(|value| value > i64::from(limit)) {
+            self.error(span, invalid(name, message));
         }
     }
 
