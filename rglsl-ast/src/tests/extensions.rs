@@ -2,7 +2,8 @@ use alloc::vec::Vec;
 
 use crate::ast::{
     BasicType, Declaration, DeclarationKind, Dimension, ExpressionKind, ExtensionBehavior,
-    ExternalDeclaration, NumericKind, ScalarType, TypeSpecifierNonArray,
+    ExternalDeclaration, FunctionIdentifier, NumericKind, ScalarType, SingleTypeQualifier,
+    TypeSpecifierNonArray,
 };
 use crate::extensions::{
     is_known, ExtensionIssue, ExtensionState, Feature, Request, EXPLICIT_ARITHMETIC, KNOWN,
@@ -268,4 +269,65 @@ fn a_prefix_is_returned_with_the_first_syntax_error() {
     let (unit, error) = crate::parse_prefix("float a;\n");
     assert_eq!(unit.external_declarations.len(), 1);
     assert!(error.is_none());
+}
+
+#[test]
+fn nonuniform_needs_its_extension() {
+    for (source, line) in [
+        ("#version 450\nnonuniformEXT float g;\n", 2),
+        (
+            "#version 450\nvoid main() {\n    int a = 1;\n    int b = nonuniformEXT(a);\n}\n",
+            4,
+        ),
+        ("#version 450\nvoid f(nonuniformEXT int a) {}\n", 2),
+    ] {
+        let error = parse(source).expect_err("nonuniformEXT needs an extension");
+        assert_eq!(error.position.line, line, "{source}");
+        assert_eq!(
+            error.kind,
+            ParseErrorKind::ExtensionRequired {
+                word: "nonuniformEXT".into(),
+                extensions: "GL_EXT_nonuniform_qualifier".into(),
+            },
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn nonuniform_is_a_qualifier_and_a_constructor() {
+    let source = "#version 450\n#extension GL_EXT_nonuniform_qualifier : enable\n\
+        layout(location = 0) nonuniformEXT in flat int i;\n\
+        nonuniformEXT int f(nonuniformEXT in int a) {\n    return a;\n}\n\
+        void main() {\n    nonuniformEXT int b = nonuniformEXT(i);\n    nonuniformEXT(b);\n}\n";
+    let printed = round_trip(source);
+    assert!(printed.contains("nonuniformEXT in flat int i"), "{printed}");
+    assert!(printed.contains("nonuniformEXT(i)"), "{printed}");
+    let parsed = unit(source);
+    let qualifiers = parsed
+        .external_declarations
+        .iter()
+        .filter_map(|declaration| match declaration {
+            ExternalDeclaration::Declaration(Declaration {
+                kind: DeclarationKind::InitDeclaratorList(list),
+                ..
+            }) => list.ty.qualifier.clone(),
+            _ => None,
+        })
+        .flat_map(|qualifier| qualifier.node.qualifiers)
+        .map(|single| single.node)
+        .collect::<Vec<_>>();
+    assert!(qualifiers.contains(&SingleTypeQualifier::NonUniform));
+    let call = crate::expressions(&parsed)
+        .into_iter()
+        .find_map(|expression| match &expression.kind {
+            ExpressionKind::FunctionCall(call) => match &call.function.node {
+                FunctionIdentifier::Function(name) if name == "nonuniformEXT" => {
+                    Some(call.arguments.len())
+                }
+                _ => None,
+            },
+            _ => None,
+        });
+    assert_eq!(call, Some(1));
 }

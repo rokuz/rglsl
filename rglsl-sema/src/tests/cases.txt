@@ -4015,3 +4015,94 @@ void main() {
 void main() {
     float16_t x = 1.0hf + 1;
 }
+### nonuniformEXT on inputs, globals, locals and parameters | frag | ok
+#extension GL_EXT_nonuniform_qualifier : enable
+layout(location = 0) nonuniformEXT in vec4 v;
+layout(location = 1) in nonuniformEXT flat int i;
+nonuniformEXT float g;
+nonuniformEXT int f(nonuniformEXT int a, nonuniformEXT out int b, nonuniformEXT inout int c) {
+    b = a;
+    return c;
+}
+void main() {
+    nonuniformEXT int local = i;
+    nonuniformEXT struct S { int a; } s;
+    nonuniformEXT int array[2];
+    int b;
+    local = f(local, b, local);
+}
+### nonuniformEXT on outputs, uniforms and constants | frag | 3:InvalidQualifier, 4:InvalidQualifier, 5:InvalidQualifier
+#extension GL_EXT_nonuniform_qualifier : enable
+layout(location = 0) nonuniformEXT out vec4 o;
+layout(binding = 0) nonuniformEXT uniform sampler2D s;
+nonuniformEXT const float c = 1.0;
+void main() {}
+### nonuniformEXT on a local constant | frag | 4:InvalidQualifier
+#extension GL_EXT_nonuniform_qualifier : enable
+void main() {
+    nonuniformEXT const int c = 2;
+}
+### nonuniformEXT on blocks | comp | 3:InvalidQualifier, 4:InvalidQualifier
+#extension GL_EXT_nonuniform_qualifier : enable
+layout(binding = 0) nonuniformEXT buffer B { int x; } b;
+layout(binding = 1) nonuniformEXT uniform U { int y; } u;
+void main() {}
+### nonuniformEXT on shared variables | comp | 3:InvalidQualifier
+#extension GL_EXT_nonuniform_qualifier : enable
+shared nonuniformEXT int s;
+void main() {}
+### nonuniformEXT on struct and block members | frag | 3:InvalidQualifier, 4:InvalidQualifier
+#extension GL_EXT_nonuniform_qualifier : enable
+layout(location = 1) in struct S { float a; nonuniformEXT float b; } ins;
+layout(location = 3) in Block { float a; nonuniformEXT float b; } inb;
+void main() {}
+### nonuniformEXT with too many arguments | frag | 5:InvalidConstructor
+#extension GL_EXT_nonuniform_qualifier : enable
+void main() {
+    int a = 1;
+    int b = nonuniformEXT(a, a);
+}
+### nonuniformEXT without arguments | frag | 4:InvalidConstructor
+#extension GL_EXT_nonuniform_qualifier : enable
+void main() {
+    int b = nonuniformEXT();
+}
+### nonuniformEXT of an array | frag | 5:InvalidConstructor
+#extension GL_EXT_nonuniform_qualifier : enable
+void main() {
+    int a[3];
+    int b = nonuniformEXT(a)[0];
+}
+### nonuniformEXT of void | frag | 5:InvalidConstructor
+#extension GL_EXT_nonuniform_qualifier : enable
+void f() {}
+void main() {
+    nonuniformEXT(f());
+}
+### nonuniformEXT result is not an l-value | frag | 5:NotAnLValue
+#extension GL_EXT_nonuniform_qualifier : enable
+void main() {
+    int x = 1;
+    nonuniformEXT(x)++;
+}
+### nonuniformEXT of a constant is not a constant expression | frag | 4:ArraySizeNotConstant
+#extension GL_EXT_nonuniform_qualifier : enable
+void main() {
+    int k[nonuniformEXT(2)];
+}
+### nonuniformEXT allows variable indexing of unsized descriptor arrays | frag | ok
+#extension GL_EXT_nonuniform_qualifier : enable
+layout(binding = 0) uniform sampler2D textures[];
+layout(binding = 1) buffer B { vec4 v; } buffers[];
+layout(location = 0) flat in int index;
+layout(location = 0) out vec4 o;
+void main() {
+    o = texture(textures[nonuniformEXT(index)], vec2(0.5)) + buffers[index].v;
+}
+### variable indexing of unsized descriptor arrays needs the extension | frag | 6:VariableIndexIntoUnsizedArray
+layout(binding = 0) uniform sampler2D textures[];
+layout(location = 0) flat in int index;
+layout(location = 0) out vec4 o;
+void main() {
+    o = texture(textures[index], vec2(0.5));
+}

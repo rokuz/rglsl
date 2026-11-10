@@ -714,8 +714,27 @@ impl BlockContext<'_> {
         Ok(Some(result_id))
     }
 
-    /// Cache an expression for a value.
     pub(super) fn cache_expression_value(
+        &mut self,
+        expr_handle: Handle<crate::Expression>,
+        block: &mut Block,
+    ) -> Result<(), Error> {
+        self.write_expression_value(expr_handle, block)?;
+        if self
+            .non_uniform(expr_handle)
+            .contains(crate::NonUniform::VALUE)
+            && self.produces_instruction(expr_handle)
+        {
+            let id = self.cached.ids[expr_handle];
+            if id != 0 {
+                self.writer.decorate_non_uniform(id)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Cache an expression for a value.
+    fn write_expression_value(
         &mut self,
         expr_handle: Handle<crate::Expression>,
         block: &mut Block,
@@ -2235,13 +2254,6 @@ impl BlockContext<'_> {
         };
 
         self.cached[expr_handle] = id;
-        if self
-            .non_uniform(expr_handle)
-            .contains(crate::NonUniform::VALUE)
-            && self.produces_instruction(expr_handle)
-        {
-            self.writer.decorate_non_uniform(id)?;
-        }
         Ok(())
     }
 

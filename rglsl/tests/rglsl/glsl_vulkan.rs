@@ -3034,3 +3034,359 @@ void main() {
     let new = spec_operations(&compile_for(ShaderStage::Compute, source, (1, 4)));
     assert!(new.contains(&Op::UConvert), "{new:?}");
 }
+
+fn non_uniform_ops(module: &dr::Module) -> Vec<Op> {
+    let decorated: Vec<u32> = module
+        .annotations
+        .iter()
+        .filter(|inst| {
+            inst.class.opcode == Op::Decorate
+                && inst.operands[1] == Operand::Decoration(Decoration::NonUniform)
+        })
+        .map(|inst| inst.operands[0].unwrap_id_ref())
+        .collect();
+    module
+        .functions
+        .iter()
+        .flat_map(|function| {
+            function.parameters.iter().chain(
+                function
+                    .blocks
+                    .iter()
+                    .flat_map(|block| block.instructions.iter()),
+            )
+        })
+        .filter(|inst| inst.result_id.is_some_and(|id| decorated.contains(&id)))
+        .map(|inst| inst.class.opcode)
+        .collect()
+}
+
+fn capabilities(module: &dr::Module) -> Vec<spirv::Capability> {
+    module
+        .capabilities
+        .iter()
+        .filter_map(|inst| match inst.operands[0] {
+            Operand::Capability(capability) => Some(capability),
+            _ => None,
+        })
+        .collect()
+}
+
+fn uses_descriptor_indexing(module: &dr::Module) -> bool {
+    module.extensions.iter().any(|inst| {
+        inst.operands[0] == Operand::LiteralString("SPV_EXT_descriptor_indexing".to_string())
+    })
+}
+
+#[test]
+fn nonuniform_index_decorates_the_descriptor_access() {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+        #extension GL_EXT_nonuniform_qualifier : require
+        layout(location = 0) flat in int index;
+        layout(location = 0) out vec4 o;
+        layout(set = 0, binding = 0) uniform UBO { vec4 v; } ubos[];
+        void main() {
+            o = ubos[nonuniformEXT(index)].v;
+        }",
+    );
+    assert_eq!(
+        non_uniform_ops(&module),
+        [Op::Load, Op::AccessChain, Op::Load]
+    );
+    let capabilities = capabilities(&module);
+    for capability in [
+        spirv::Capability::ShaderNonUniform,
+        spirv::Capability::RuntimeDescriptorArray,
+        spirv::Capability::UniformBufferArrayNonUniformIndexing,
+    ] {
+        assert!(capabilities.contains(&capability), "{capability:?}");
+    }
+    assert!(uses_descriptor_indexing(&module));
+    assert_eq!(instructions(&module, Op::TypeRuntimeArray).len(), 1);
+}
+
+#[test]
+fn nonuniform_texel_buffer_and_image_accesses() {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+        #extension GL_EXT_nonuniform_qualifier : require
+        layout(set = 0, binding = 0, rgba32f) uniform imageBuffer data[];
+        layout(set = 0, binding = 1) uniform samplerBuffer texels[];
+        layout(set = 0, binding = 2, r32f) uniform image2D images[];
+        layout(location = 0) flat in int index;
+        layout(location = 0) out vec4 o;
+        void main() {
+            o = imageLoad(data[nonuniformEXT(index)], 0);
+            o += texelFetch(texels[nonuniformEXT(index)], 1);
+            imageStore(images[nonuniformEXT(index)], ivec2(0), o);
+        }",
+    );
+    assert_eq!(
+        non_uniform_ops(&module),
+        [
+            Op::Load,
+            Op::AccessChain,
+            Op::Load,
+            Op::Load,
+            Op::AccessChain,
+            Op::Load,
+            Op::Image,
+            Op::Load,
+            Op::AccessChain,
+            Op::Load,
+        ]
+    );
+    let capabilities = capabilities(&module);
+    for capability in [
+        spirv::Capability::StorageTexelBufferArrayNonUniformIndexing,
+        spirv::Capability::UniformTexelBufferArrayNonUniformIndexing,
+        spirv::Capability::StorageImageArrayNonUniformIndexing,
+    ] {
+        assert!(capabilities.contains(&capability), "{capability:?}");
+    }
+}
+
+#[test]
+fn nonuniform_sampler_constructor_decorates_the_sampled_image() {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+        #extension GL_EXT_nonuniform_qualifier : require
+        layout(set = 0, binding = 0) uniform texture2D textures[];
+        layout(set = 1, binding = 0) uniform sampler samp;
+        layout(location = 0) flat in int index;
+        layout(location = 0) out vec4 o;
+        void main() {
+            o = texture(nonuniformEXT(sampler2D(textures[index], samp)), vec2(0.5));
+        }",
+    );
+    assert_eq!(non_uniform_ops(&module), [Op::SampledImage]);
+    let capabilities = capabilities(&module);
+    assert!(capabilities.contains(&spirv::Capability::ShaderNonUniform));
+    assert!(!capabilities.contains(&spirv::Capability::SampledImageArrayNonUniformIndexing));
+}
+
+#[test]
+fn constructed_sampler_from_a_nonuniform_texture_is_not_non_uniform() {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+        #extension GL_EXT_nonuniform_qualifier : require
+        layout(set = 0, binding = 0) uniform texture2D textures[8];
+        layout(set = 1, binding = 0) uniform sampler samp;
+        layout(location = 0) flat in int index;
+        layout(location = 0) out vec4 o;
+        void main() {
+            o = texture(sampler2D(textures[nonuniformEXT(index)], samp), vec2(0.5));
+        }",
+    );
+    assert_eq!(
+        non_uniform_ops(&module),
+        [Op::Load, Op::AccessChain, Op::Load]
+    );
+    assert!(capabilities(&module).contains(&spirv::Capability::SampledImageArrayNonUniformIndexing));
+    assert!(instructions(&module, Op::TypeRuntimeArray).is_empty());
+}
+
+#[test]
+fn uniform_dynamic_indexing_of_texel_buffers_needs_descriptor_indexing() {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+        layout(binding = 0) uniform samplerBuffer texels[4];
+        layout(binding = 1, r32f) uniform imageBuffer images[4];
+        layout(binding = 2) uniform sampler2D textures[4];
+        layout(location = 0) flat in int index;
+        layout(location = 0) out vec4 o;
+        void main() {
+            o = texelFetch(texels[index], 0) + imageLoad(images[index], 0)
+                + texture(textures[index], vec2(0.5));
+        }",
+    );
+    assert!(non_uniform_ops(&module).is_empty());
+    let capabilities = capabilities(&module);
+    assert!(capabilities.contains(&spirv::Capability::UniformTexelBufferArrayDynamicIndexing));
+    assert!(capabilities.contains(&spirv::Capability::StorageTexelBufferArrayDynamicIndexing));
+    assert!(!capabilities.contains(&spirv::Capability::ShaderNonUniform));
+    assert!(!capabilities.contains(&spirv::Capability::SampledImageArrayDynamicIndexing));
+    assert!(uses_descriptor_indexing(&module));
+}
+
+#[test]
+fn nonuniform_propagates_through_operators_but_not_conversions_or_calls() {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+        #extension GL_EXT_nonuniform_qualifier : require
+        layout(location = 0) flat in int index;
+        layout(location = 0) out float o;
+        void main() {
+            nonuniformEXT int n = index;
+            int sum = n + index;
+            float converted = n + 1.5;
+            int absolute = abs(n);
+            float constructed = float(n);
+            bool chosen = index > 0 ? n > 0 : false;
+            o = float(sum) + converted + float(absolute) + constructed + float(chosen);
+        }",
+    );
+    assert_eq!(
+        non_uniform_ops(&module),
+        [
+            Op::Load,
+            Op::IAdd,
+            Op::Load,
+            Op::Load,
+            Op::Load,
+            Op::Load,
+            Op::SGreaterThan,
+        ]
+    );
+}
+
+#[test]
+fn nonuniform_vectors_swizzles_and_assignments() {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+        #extension GL_EXT_nonuniform_qualifier : require
+        layout(location = 0) in vec4 color;
+        layout(location = 0) out vec4 o;
+        void main() {
+            nonuniformEXT vec4 v = color;
+            vec2 xy = v.xy;
+            float b = 1.0;
+            b += v.z;
+            v *= 2.0;
+            o = vec4(xy, b, v.w);
+        }",
+    );
+    assert_eq!(
+        non_uniform_ops(&module),
+        [
+            Op::Load,
+            Op::VectorShuffle,
+            Op::Load,
+            Op::FAdd,
+            Op::Load,
+            Op::VectorTimesScalar,
+            Op::Load,
+        ]
+    );
+}
+
+#[test]
+fn nonuniform_function_results_parameters_and_out_arguments() {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+        #extension GL_EXT_nonuniform_qualifier : require
+        layout(location = 0) flat in int index;
+        layout(location = 0) out vec4 o;
+        layout(binding = 0) uniform U { vec4 v; } blocks[];
+        nonuniformEXT int pick(nonuniformEXT int a, nonuniformEXT out int b) {
+            b = a;
+            return a;
+        }
+        void main() {
+            nonuniformEXT int written;
+            int chosen = pick(index, written);
+            o = blocks[chosen].v + blocks[written].v;
+        }",
+    );
+    let ops = non_uniform_ops(&module);
+    assert_eq!(
+        ops,
+        [
+            Op::Load,
+            Op::Load,
+            Op::FunctionCall,
+            Op::Load,
+            Op::Load,
+            Op::AccessChain,
+            Op::Load,
+            Op::FAdd,
+        ]
+    );
+}
+
+#[test]
+fn nonuniform_stores_decorate_the_access_chain() {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+        #extension GL_EXT_nonuniform_qualifier : require
+        layout(location = 0) flat in int index;
+        layout(binding = 0) buffer B { float value; } buffers[];
+        void main() {
+            buffers[nonuniformEXT(index)].value = 1.0;
+        }",
+    );
+    assert_eq!(non_uniform_ops(&module), [Op::Load, Op::AccessChain]);
+    assert!(
+        capabilities(&module).contains(&spirv::Capability::StorageBufferArrayNonUniformIndexing)
+    );
+}
+
+#[test]
+fn nonuniform_constant_and_global_operands_get_a_fresh_value() {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+        #extension GL_EXT_nonuniform_qualifier : require
+        layout(binding = 0) uniform U { vec4 v; } blocks[];
+        layout(binding = 1) uniform sampler2D single;
+        layout(location = 0) out vec4 o;
+        void main() {
+            o = blocks[nonuniformEXT(3)].v + texture(nonuniformEXT(single), vec2(0.5));
+        }",
+    );
+    assert_eq!(
+        non_uniform_ops(&module),
+        [
+            Op::Load,
+            Op::AccessChain,
+            Op::Load,
+            Op::CopyObject,
+            Op::FAdd
+        ]
+    );
+}
+
+#[test]
+fn unsized_descriptor_arrays_indexed_with_constants_stay_sized() {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+        #extension GL_EXT_nonuniform_qualifier : require
+        layout(binding = 0) uniform sampler2D textures[];
+        layout(location = 0) out vec4 o;
+        void main() {
+            o = texture(textures[2], vec2(0.5));
+        }",
+    );
+    assert!(instructions(&module, Op::TypeRuntimeArray).is_empty());
+    assert_eq!(array_lengths(&module), [3]);
+    assert!(!capabilities(&module).contains(&spirv::Capability::RuntimeDescriptorArray));
+}
+
+#[test]
+fn descriptor_indexing_is_core_in_spirv_1_5() {
+    let module = compile_for(
+        ShaderStage::Fragment,
+        "#version 450
+        #extension GL_EXT_nonuniform_qualifier : require
+        layout(binding = 0) uniform sampler2D textures[];
+        layout(location = 0) flat in int index;
+        layout(location = 0) out vec4 o;
+        void main() {
+            o = texture(textures[nonuniformEXT(index)], vec2(0.5));
+        }",
+        (1, 5),
+    );
+    assert!(!uses_descriptor_indexing(&module));
+    assert!(capabilities(&module).contains(&spirv::Capability::ShaderNonUniform));
+}

@@ -292,10 +292,7 @@ impl Analyzer<'_> {
                 for expression in expressions {
                     last = self.expression(expression);
                 }
-                Operand {
-                    non_uniform: last.non_uniform,
-                    ..Operand::temporary(last.ty)
-                }
+                Operand::temporary(last.ty)
             }
         }
     }

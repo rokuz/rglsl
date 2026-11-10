@@ -215,14 +215,41 @@ impl<'a> FunctionLowerer<'_, 'a> {
                 ref value,
             } => self.assignment(operator, target, value, at)?,
             ExpressionKind::Sequence(ref expressions) => {
-                let mut last = None;
-                for expression in expressions {
-                    last = self.value_converted(expression)?;
+                let Some((final_expression, leading)) = expressions.split_last() else {
+                    return Err(internal(at));
+                };
+                for expression in leading {
+                    self.value_converted(expression)?;
                 }
-                return Ok(last);
+                return self.sequence_result(final_expression);
             }
         };
         Ok(Some(value))
+    }
+
+    fn sequence_result(
+        &mut self,
+        expression: &AstExpression,
+    ) -> Result<Option<Handle<Expression>>> {
+        let inner = super::prepass::strip(expression);
+        let info = self.info(expression)?;
+        let lvalue = matches!(
+            inner.kind,
+            ExpressionKind::Variable(_)
+                | ExpressionKind::Subscript { .. }
+                | ExpressionKind::FieldSelection { .. }
+        );
+        if !lvalue || info.is_constant || info.is_specialization || info.conversion.is_some() {
+            return self.value_converted(expression);
+        }
+        match self.chain(inner)? {
+            Chain::Place(mut place) => {
+                place.non_uniform = false;
+                let at = self.at(expression.span);
+                self.load(&place, at).map(Some)
+            }
+            Chain::Value(value) => Ok(Some(value)),
+        }
     }
 
     fn mark_operation(&mut self, value: Handle<Expression>) {
