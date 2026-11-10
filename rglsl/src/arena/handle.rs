@@ -101,6 +101,10 @@ impl<T> Handle<T> {
     }
 
     /// Convert a `usize` index into a `Handle<T>`.
+    #[expect(
+        clippy::expect_used,
+        reason = "an arena past u32::MAX entries is an allocation limit like Vec::push overflow, not a reachable error"
+    )]
     pub(super) fn from_usize(index: usize) -> Self {
         let handle_index = u32::try_from(index)
             .ok()
