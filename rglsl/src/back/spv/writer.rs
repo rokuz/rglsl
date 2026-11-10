@@ -3940,6 +3940,7 @@ impl Writer {
         if global_variable.memory_decorations.intersects(
             crate::MemoryDecorations::all().difference(crate::MemoryDecorations::NONPRIVATE),
         ) && !self.vulkan_memory_model
+            && global_variable.space != crate::AddressSpace::Input
         {
             self.decorate(id, Decoration::Coherent, &[]);
         }

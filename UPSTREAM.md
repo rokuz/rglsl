@@ -362,7 +362,9 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   `GatherMode::Broadcast` as `OpGroupNonUniformBroadcast` (upstream used a shuffle), declares
   `GroupNonUniform` together with the specific capability as glslang does, and splits the
   `SPV_KHR_shader_ballot` reads and the AMD group operations into components as glslang does
-  (`back/spv/subgroup.rs`).
+  (`back/spv/subgroup.rs`). An `Input` global may carry `MemoryDecorations::VOLATILE` (the
+  subgroup built-ins of the ray-tracing stages other than any-hit, as glslang declares them): it
+  is decorated `Volatile` but not `Coherent`, or loaded `Volatile` under the Vulkan memory model.
 
 ## Cherry-picked upstream commits
 

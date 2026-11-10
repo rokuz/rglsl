@@ -1514,7 +1514,10 @@ impl super::Validator {
             }
         }
 
+        let volatile_input = var.space == crate::AddressSpace::Input
+            && var.memory_decorations == crate::MemoryDecorations::VOLATILE;
         if !var.memory_decorations.is_empty()
+            && !volatile_input
             && !matches!(
                 var.space,
                 crate::AddressSpace::Storage { .. }

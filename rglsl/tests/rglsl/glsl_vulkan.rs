@@ -5556,3 +5556,39 @@ fn subgroup_features_are_checked_like_glslang() {
     let error = parse_for_spirv(ShaderStage::Fragment, fragment, (1, 3)).unwrap_err();
     assert!(error.contains("gl_NumSubgroups"), "{error}");
 }
+
+#[test]
+fn subgroup_builtins_are_volatile_in_ray_tracing_stages() {
+    let source = "#version 460
+        #extension GL_EXT_ray_tracing : enable
+        #extension GL_KHR_shader_subgroup_ballot : enable
+        layout(binding = 0, std430) buffer B { uvec4 v; };
+        void main() { v = gl_SubgroupEqMask + uvec4(gl_SubgroupSize); }";
+    let words = compile_words_with_names(ShaderStage::RayGeneration, source, (1, 4));
+    crate::stage_io::spirv_val_in(&words, &["--target-env", "vulkan1.2"]);
+    let module = dr::load_words(words).expect("produced SPIR-V does not parse");
+    for name in ["gl_SubgroupEqMask", "gl_SubgroupSize"] {
+        assert!(
+            sorted_variable_decorations(&module, name).contains(&(Decoration::Volatile, vec![])),
+            "{name}"
+        );
+        assert!(
+            !sorted_variable_decorations(&module, name).contains(&(Decoration::Coherent, vec![])),
+            "{name}"
+        );
+    }
+    let model = source.replacen(
+        "#version 460\n",
+        "#version 460\n#pragma use_vulkan_memory_model\n",
+        1,
+    );
+    let words = compile_words_with_names(ShaderStage::RayGeneration, &model, (1, 4));
+    crate::stage_io::spirv_val_in(&words, &["--target-env", "vulkan1.2"]);
+    let module = dr::load_words(words).expect("produced SPIR-V does not parse");
+    let loads = instructions(&module, Op::Load);
+    assert_eq!(loads.len(), 2);
+    assert!(loads
+        .iter()
+        .all(|load| load.operands.last()
+            == Some(&Operand::MemoryAccess(spirv::MemoryAccess::VOLATILE))));
+}

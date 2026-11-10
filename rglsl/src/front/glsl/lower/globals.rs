@@ -1634,7 +1634,7 @@ impl<'a> Lowerer<'a> {
         }
         let analysis = self.analysis;
         let record = self.symbol(symbol).ok_or_else(|| internal(at))?;
-        let (ty, output, value) = match record.kind {
+        let (ty, output, value, volatile) = match record.kind {
             SymbolKind::Variable(ref variable) => {
                 if variable.origin != Origin::BuiltIn {
                     return Err(internal(at));
@@ -1643,6 +1643,7 @@ impl<'a> Lowerer<'a> {
                     variable.ty.clone(),
                     variable.qualifiers.storage == Storage::Out,
                     variable.value.as_ref(),
+                    variable.qualifiers.volatile,
                 )
             }
             SymbolKind::BlockMember { instance, index } => {
@@ -1655,7 +1656,12 @@ impl<'a> Lowerer<'a> {
                     .members
                     .get(usize::try_from(index).map_err(|_| internal(at))?)
                     .ok_or_else(|| internal(at))?;
-                (member.ty.clone(), block.storage == BlockStorage::Out, None)
+                (
+                    member.ty.clone(),
+                    block.storage == BlockStorage::Out,
+                    None,
+                    false,
+                )
             }
             SymbolKind::Struct(_)
             | SymbolKind::Reference(_)
@@ -1677,7 +1683,7 @@ impl<'a> Lowerer<'a> {
                 );
                 GlobalRef::Constant(handle)
             }
-            None => GlobalRef::Variable(self.builtin_variable(&name, &ty, output, at)?),
+            None => GlobalRef::Variable(self.builtin_variable(&name, &ty, output, volatile, at)?),
         };
         self.globals.insert(symbol, found);
         Ok(found)
@@ -1688,6 +1694,7 @@ impl<'a> Lowerer<'a> {
         name: &str,
         ty: &GlslType,
         output: bool,
+        volatile: bool,
         at: Span,
     ) -> Result<Handle<GlobalVariable>> {
         if let Some(&handle) = self.builtins.get(name) {
@@ -1726,7 +1733,11 @@ impl<'a> Lowerer<'a> {
                 binding: None,
                 ty: ir,
                 init: None,
-                memory_decorations: MemoryDecorations::empty(),
+                memory_decorations: if volatile {
+                    MemoryDecorations::VOLATILE
+                } else {
+                    MemoryDecorations::empty()
+                },
                 io: Some(Binding::BuiltIn(builtin)),
                 xfb: None,
                 input_attachment_index: None,
