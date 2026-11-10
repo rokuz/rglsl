@@ -547,6 +547,9 @@ impl Analyzer<'_> {
             );
             false
         };
+        if !self.memory_scope_checks(span, name, operands) {
+            return false;
+        }
         let first = operands.first();
         if name.starts_with("interpolateAt") {
             if first.is_some_and(|operand| operand.storage != Storage::In) {

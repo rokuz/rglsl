@@ -130,26 +130,46 @@ fn images(emitter: &mut Emitter<'_>, opaque: Opaque) {
     emitter.common("imageLoad", texel(opaque), base.clone());
     emitter.common("imageStore", Type::VOID, with(&[texel(opaque)]));
     let data = Type::scalar(opaque.sampled.scalar());
-    if opaque.sampled == SampledType::Float {
-        emitter.common("imageAtomicExchange", data.clone(), with(&[data]));
-        return;
-    }
-    for name in [
-        "imageAtomicAdd",
-        "imageAtomicMin",
-        "imageAtomicMax",
-        "imageAtomicAnd",
-        "imageAtomicOr",
-        "imageAtomicXor",
-        "imageAtomicExchange",
-    ] {
+    let scope = [Type::INT, Type::INT, Type::INT];
+    let scoped = |extra: &[Type]| {
+        let mut parameters = with(extra);
+        parameters.extend_from_slice(&scope);
+        parameters
+    };
+    emitter.common("imageAtomicLoad", data.clone(), scoped(&[]));
+    emitter.common(
+        "imageAtomicStore",
+        Type::VOID,
+        scoped(core::slice::from_ref(&data)),
+    );
+    let names: &[&str] = if opaque.sampled == SampledType::Float {
+        &["imageAtomicExchange"]
+    } else {
+        &[
+            "imageAtomicAdd",
+            "imageAtomicMin",
+            "imageAtomicMax",
+            "imageAtomicAnd",
+            "imageAtomicOr",
+            "imageAtomicXor",
+            "imageAtomicExchange",
+        ]
+    };
+    for name in names {
         emitter.common(name, data.clone(), with(core::slice::from_ref(&data)));
+        emitter.common(name, data.clone(), scoped(core::slice::from_ref(&data)));
+    }
+    if opaque.sampled == SampledType::Float {
+        return;
     }
     emitter.common(
         "imageAtomicCompSwap",
         data.clone(),
-        with(&[data.clone(), data]),
+        with(&[data.clone(), data.clone()]),
     );
+    let mut parameters = with(&[data.clone(), data.clone()]);
+    parameters.extend_from_slice(&[Type::INT; 5]);
+    emitter.common("imageAtomicCompSwap", data, parameters);
 }
 
 #[derive(Clone, Copy)]

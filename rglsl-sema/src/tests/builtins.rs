@@ -53,14 +53,14 @@ fn variable_names(builtins: &Builtins) -> BTreeSet<String> {
 #[test]
 fn the_tables_have_the_expected_sizes() {
     let expected = [
-        (Stage::Vertex, 2166, 82, 85),
-        (Stage::TessControl, 2167, 83, 83),
-        (Stage::TessEvaluation, 2166, 86, 86),
-        (Stage::Geometry, 2170, 86, 86),
-        (Stage::Fragment, 2420, 90, 90),
-        (Stage::Compute, 2169, 82, 82),
-        (Stage::Mesh, 2166, 76, 76),
-        (Stage::RayGeneration, 2166, 76, 76),
+        (Stage::Vertex, 2454, 100, 103),
+        (Stage::TessControl, 2455, 101, 101),
+        (Stage::TessEvaluation, 2454, 104, 104),
+        (Stage::Geometry, 2458, 104, 104),
+        (Stage::Fragment, 2708, 108, 108),
+        (Stage::Compute, 2457, 100, 100),
+        (Stage::Mesh, 2454, 94, 94),
+        (Stage::RayGeneration, 2454, 94, 94),
     ];
     for (stage, functions, variables_450, variables_460) in expected {
         let older = builtins(450, stage);
@@ -300,9 +300,14 @@ fn stage_specific_functions_are_gated() {
                 "{stage:?} {name}"
             );
         }
-        for name in ["memoryBarrier", "memoryBarrierBuffer", "memoryBarrierImage"] {
+        for name in [
+            "memoryBarrierBuffer",
+            "memoryBarrierImage",
+            "controlBarrier",
+        ] {
             assert_eq!(table.overloads(name).len(), 1, "{stage:?} {name}");
         }
+        assert_eq!(table.overloads("memoryBarrier").len(), 2, "{stage:?}");
         let bias = signatures(&table, "texture")
             .contains(&"vec4 texture(sampler2D, vec2, float)".to_string());
         assert_eq!(bias, stage == Stage::Fragment, "{stage:?}");
@@ -364,11 +369,12 @@ fn every_core_function_name_is_known() {
         dFdx dFdy dFdxFine dFdyFine dFdxCoarse dFdyCoarse fwidth fwidthFine fwidthCoarse
         interpolateAtCentroid interpolateAtSample interpolateAtOffset
         memoryBarrier memoryBarrierBuffer memoryBarrierImage
-        anyInvocation allInvocations allInvocationsEqual subpassLoad";
+        anyInvocation allInvocations allInvocationsEqual subpassLoad
+        atomicLoad atomicStore imageAtomicLoad imageAtomicStore controlBarrier";
     for name in names.split_whitespace() {
         assert!(!table.overloads(name).is_empty(), "{name}");
     }
-    assert_eq!(table.function_names().count(), 184);
+    assert_eq!(table.function_names().count(), 189);
 }
 
 fn storage_of(builtins: &Builtins, name: &str) -> Option<Storage> {

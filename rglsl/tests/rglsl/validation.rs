@@ -142,6 +142,7 @@ fn populate_atomic_result() {
                         fun: rglsl::AtomicFunction::Add,
                         value: ex_42,
                         result: Some(ex_result),
+                        order: None,
                     },
                     span,
                 );

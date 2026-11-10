@@ -38,6 +38,9 @@ pub fn ensure_block_returns(block: &mut crate::Block) {
             | S::RayQuery { .. }
             | S::Atomic { .. }
             | S::ImageAtomic { .. }
+            | S::AtomicLoad { .. }
+            | S::AtomicStore { .. }
+            | S::ScopedBarrier { .. }
             | S::WorkGroupUniformLoad { .. }
             | S::SubgroupBallot { .. }
             | S::SubgroupCollectiveOperation { .. }

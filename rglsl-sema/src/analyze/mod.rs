@@ -3,6 +3,7 @@ mod declaration;
 mod expression;
 mod extension;
 mod heap;
+mod memory;
 mod reference;
 mod reference_expression;
 mod statement;

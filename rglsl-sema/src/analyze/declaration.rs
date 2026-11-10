@@ -756,7 +756,14 @@ impl Analyzer<'_> {
         }
         let invalid = |qualifier, reason| DiagnosticKind::InvalidQualifier { qualifier, reason };
         let is_image = matches!(ty.kind, TypeKind::Opaque(opaque) if opaque.is_image());
-        if qualifiers.has_memory_qualifier() && !is_image && !ty.is_reference() {
+        let misplaced = if qualifiers.has_memory_qualifier() && !qualifiers.only_nonprivate() {
+            !is_image && qualifiers.storage != Storage::Buffer
+        } else {
+            qualifiers.nonprivate
+                && !matches!(ty.kind, TypeKind::Opaque(_))
+                && !matches!(qualifiers.storage, Storage::Uniform | Storage::Buffer)
+        };
+        if misplaced && !ty.is_reference() {
             self.error(
                 span,
                 invalid(

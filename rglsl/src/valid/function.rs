@@ -415,6 +415,174 @@ impl super::Validator {
         }
     }
 
+    fn validate_texel(
+        &self,
+        texel: &crate::Texel,
+        context: &BlockContext,
+    ) -> Result<(crate::StorageFormat, crate::StorageAccess), WithSpan<FunctionError>> {
+        let image = texel.image;
+        let is_handle = match *context.get_expression(image) {
+            crate::Expression::GlobalVariable(_) | crate::Expression::FunctionArgument(_) => true,
+            crate::Expression::Access { base, .. }
+            | crate::Expression::AccessIndex { base, .. } => {
+                matches!(
+                    *context.get_expression(base),
+                    crate::Expression::GlobalVariable(_)
+                )
+            }
+            _ => false,
+        };
+        if !is_handle {
+            return Err(
+                FunctionError::InvalidImageAtomic(ExpressionError::ExpectedGlobalVariable)
+                    .with_span_handle(image, context.expressions),
+            );
+        }
+        let crate::TypeInner::Image {
+            class,
+            arrayed,
+            dim,
+        } = *context.resolve_type_inner(image, &self.valid_expression_set)?
+        else {
+            return Err(
+                FunctionError::InvalidImageAtomic(ExpressionError::ExpectedGlobalVariable)
+                    .with_span_handle(image, context.expressions),
+            );
+        };
+        let crate::ImageClass::Storage {
+            format,
+            access,
+            multi,
+        } = class
+        else {
+            return Err(
+                FunctionError::InvalidImageAtomic(ExpressionError::InvalidImageClass(class))
+                    .with_span_handle(image, context.expressions),
+            );
+        };
+        if !context
+            .resolve_type_inner(texel.coordinate, &self.valid_expression_set)?
+            .addresses_image(dim)
+        {
+            return Err(FunctionError::InvalidImageAtomic(
+                ExpressionError::InvalidImageCoordinateType(dim, texel.coordinate),
+            )
+            .with_span_handle(texel.coordinate, context.expressions));
+        }
+        if arrayed != texel.array_index.is_some() {
+            return Err(
+                FunctionError::InvalidImageAtomic(ExpressionError::InvalidImageArrayIndex)
+                    .with_span_handle(texel.coordinate, context.expressions),
+            );
+        }
+        for index in texel.array_index.into_iter().chain(texel.sample) {
+            if !matches!(
+                *context.resolve_type_inner(index, &self.valid_expression_set)?,
+                crate::TypeInner::Scalar(crate::Scalar {
+                    kind: crate::ScalarKind::Sint | crate::ScalarKind::Uint,
+                    width: 4,
+                })
+            ) {
+                return Err(FunctionError::InvalidImageAtomic(
+                    ExpressionError::InvalidImageOtherIndexType(index),
+                )
+                .with_span_handle(index, context.expressions));
+            }
+        }
+        match (texel.sample, multi) {
+            (Some(_), true) | (None, false) => {}
+            (Some(_), false) => {
+                return Err(FunctionError::InvalidImageAtomic(
+                    ExpressionError::InvalidImageSampleSelector,
+                )
+                .with_span_handle(image, context.expressions));
+            }
+            (None, true) => {
+                return Err(FunctionError::InvalidImageAtomic(
+                    ExpressionError::MissingImageSampleSelector,
+                )
+                .with_span_handle(image, context.expressions));
+            }
+        }
+        Ok((format, access))
+    }
+
+    fn validate_atomic_location(
+        &self,
+        location: &crate::AtomicLocation,
+        context: &BlockContext,
+    ) -> Result<crate::Scalar, WithSpan<FunctionError>> {
+        match *location {
+            crate::AtomicLocation::Pointer(pointer) => {
+                let scalar =
+                    match *context.resolve_type_inner(pointer, &self.valid_expression_set)? {
+                        crate::TypeInner::Pointer { base, .. } => match context.types[base].inner {
+                            crate::TypeInner::Atomic(scalar) | crate::TypeInner::Scalar(scalar) => {
+                                Some(scalar)
+                            }
+                            _ => None,
+                        },
+                        crate::TypeInner::ValuePointer {
+                            size: None, scalar, ..
+                        } => Some(scalar),
+                        _ => None,
+                    };
+                match scalar {
+                    Some(
+                        scalar @ crate::Scalar {
+                            kind: crate::ScalarKind::Sint | crate::ScalarKind::Uint,
+                            width: 4 | 8,
+                        },
+                    ) => Ok(scalar),
+                    _ => Err(AtomicError::InvalidPointer(pointer)
+                        .with_span_handle(pointer, context.expressions)
+                        .into_other()),
+                }
+            }
+            crate::AtomicLocation::Texel(ref texel) => {
+                let (format, _) = self.validate_texel(texel, context)?;
+                match format {
+                    crate::StorageFormat::R32Sint
+                    | crate::StorageFormat::R32Uint
+                    | crate::StorageFormat::R32Float
+                    | crate::StorageFormat::R64Uint => Ok(format.into()),
+                    _ => Err(FunctionError::InvalidImageAtomic(
+                        ExpressionError::InvalidImageFormat(format),
+                    )
+                    .with_span_handle(texel.image, context.expressions)),
+                }
+            }
+        }
+    }
+
+    fn validate_atomic_result(
+        &mut self,
+        result: Handle<crate::Expression>,
+        scalar: crate::Scalar,
+        context: &BlockContext,
+    ) -> Result<(), WithSpan<FunctionError>> {
+        let crate::Expression::AtomicResult {
+            ty,
+            comparison: false,
+        } = context.expressions[result]
+        else {
+            return Err(AtomicError::InvalidResultExpression(result)
+                .with_span_handle(result, context.expressions)
+                .into_other());
+        };
+        if !self.needs_visit.remove(result) {
+            return Err(AtomicError::ResultAlreadyPopulated(result)
+                .with_span_handle(result, context.expressions)
+                .into_other());
+        }
+        if context.types[ty].inner != crate::TypeInner::Scalar(scalar) {
+            return Err(AtomicError::ResultTypeMismatch(result)
+                .with_span_handle(result, context.expressions)
+                .into_other());
+        }
+        self.emit_expression(result, context)
+    }
+
     fn validate_atomic(
         &mut self,
         pointer: Handle<crate::Expression>,
@@ -1294,6 +1462,7 @@ impl super::Validator {
                     ref fun,
                     value,
                     result,
+                    order: _,
                 } => {
                     self.validate_atomic(pointer, fun, value, result, span, context)?;
                 }
@@ -1303,180 +1472,105 @@ impl super::Validator {
                     array_index,
                     fun,
                     value,
+                    sample,
+                    result,
+                    order: _,
                 } => {
-                    let var = match *context.get_expression(image) {
-                        crate::Expression::GlobalVariable(var_handle) => {
-                            &context.global_vars[var_handle]
-                        }
-                        // We're looking at a binding index situation, so punch through the index and look at the global behind it.
-                        crate::Expression::Access { base, .. }
-                        | crate::Expression::AccessIndex { base, .. } => {
-                            match *context.get_expression(base) {
-                                crate::Expression::GlobalVariable(var_handle) => {
-                                    &context.global_vars[var_handle]
-                                }
-                                _ => {
-                                    return Err(FunctionError::InvalidImageAtomic(
-                                        ExpressionError::ExpectedGlobalVariable,
-                                    )
-                                    .with_span_handle(image, context.expressions))
-                                }
-                            }
-                        }
-                        _ => {
-                            return Err(FunctionError::InvalidImageAtomic(
-                                ExpressionError::ExpectedGlobalVariable,
-                            )
-                            .with_span_handle(image, context.expressions))
-                        }
+                    let texel = crate::Texel {
+                        image,
+                        coordinate,
+                        array_index,
+                        sample,
                     };
-
-                    // Punch through a binding array to get the underlying type
-                    let global_ty = match context.types[var.ty].inner {
-                        Ti::BindingArray { base, .. } => &context.types[base].inner,
-                        ref inner => inner,
-                    };
-
-                    let value_ty = match *global_ty {
-                        Ti::Image {
-                            class,
-                            arrayed,
-                            dim,
-                        } => {
-                            if !context
-                                .resolve_type_inner(coordinate, &self.valid_expression_set)?
-                                .addresses_image(dim)
+                    let (format, access) = self.validate_texel(&texel, context)?;
+                    if !access.contains(crate::StorageAccess::ATOMIC) {
+                        return Err(FunctionError::InvalidImageAtomic(
+                            ExpressionError::InvalidImageStorageAccess(access),
+                        )
+                        .with_span_handle(image, context.expressions));
+                    }
+                    let supported = match format {
+                        crate::StorageFormat::R64Uint => {
+                            if !self
+                                .capabilities
+                                .intersects(super::Capabilities::TEXTURE_INT64_ATOMIC)
                             {
-                                return Err(FunctionError::InvalidImageAtomic(
-                                    ExpressionError::InvalidImageCoordinateType(dim, coordinate),
+                                return Err(FunctionError::MissingCapability(
+                                    super::Capabilities::TEXTURE_INT64_ATOMIC,
                                 )
-                                .with_span_handle(coordinate, context.expressions));
+                                .with_span_static(span, "missing capability for this operation"));
                             }
-                            if arrayed != array_index.is_some() {
-                                return Err(FunctionError::InvalidImageAtomic(
-                                    ExpressionError::InvalidImageArrayIndex,
+                            !matches!(fun, crate::AtomicFunction::Subtract)
+                        }
+                        crate::StorageFormat::R32Sint | crate::StorageFormat::R32Uint => {
+                            if !self
+                                .capabilities
+                                .intersects(super::Capabilities::TEXTURE_ATOMIC)
+                            {
+                                return Err(FunctionError::MissingCapability(
+                                    super::Capabilities::TEXTURE_ATOMIC,
                                 )
-                                .with_span_handle(coordinate, context.expressions));
+                                .with_span_static(span, "missing capability for this operation"));
                             }
-                            if let Some(expr) = array_index {
-                                match *context
-                                    .resolve_type_inner(expr, &self.valid_expression_set)?
-                                {
-                                    Ti::Scalar(crate::Scalar {
-                                        kind: crate::ScalarKind::Sint | crate::ScalarKind::Uint,
-                                        width: _,
-                                    }) => {}
-                                    _ => {
-                                        return Err(FunctionError::InvalidImageAtomic(
-                                            ExpressionError::InvalidImageArrayIndexType(expr),
-                                        )
-                                        .with_span_handle(expr, context.expressions));
-                                    }
-                                }
-                            }
-                            match class {
-                                crate::ImageClass::Storage { format, access } => {
-                                    if !access.contains(crate::StorageAccess::ATOMIC) {
-                                        return Err(FunctionError::InvalidImageAtomic(
-                                            ExpressionError::InvalidImageStorageAccess(access),
-                                        )
-                                        .with_span_handle(image, context.expressions));
-                                    }
-                                    match format {
-                                        crate::StorageFormat::R64Uint => {
-                                            if !self.capabilities.intersects(
-                                                super::Capabilities::TEXTURE_INT64_ATOMIC,
-                                            ) {
-                                                return Err(FunctionError::MissingCapability(
-                                                    super::Capabilities::TEXTURE_INT64_ATOMIC,
-                                                )
-                                                .with_span_static(
-                                                    span,
-                                                    "missing capability for this operation",
-                                                ));
-                                            }
-                                            match fun {
-                                                crate::AtomicFunction::Min
-                                                | crate::AtomicFunction::Max => {}
-                                                _ => {
-                                                    return Err(
-                                                        FunctionError::InvalidImageAtomicFunction(
-                                                            fun,
-                                                        )
-                                                        .with_span_handle(
-                                                            image,
-                                                            context.expressions,
-                                                        ),
-                                                    );
-                                                }
-                                            }
-                                        }
-                                        crate::StorageFormat::R32Sint
-                                        | crate::StorageFormat::R32Uint => {
-                                            if !self
-                                                .capabilities
-                                                .intersects(super::Capabilities::TEXTURE_ATOMIC)
-                                            {
-                                                return Err(FunctionError::MissingCapability(
-                                                    super::Capabilities::TEXTURE_ATOMIC,
-                                                )
-                                                .with_span_static(
-                                                    span,
-                                                    "missing capability for this operation",
-                                                ));
-                                            }
-                                            match fun {
-                                                crate::AtomicFunction::Add
-                                                | crate::AtomicFunction::And
-                                                | crate::AtomicFunction::ExclusiveOr
-                                                | crate::AtomicFunction::InclusiveOr
-                                                | crate::AtomicFunction::Min
-                                                | crate::AtomicFunction::Max => {}
-                                                _ => {
-                                                    return Err(
-                                                        FunctionError::InvalidImageAtomicFunction(
-                                                            fun,
-                                                        )
-                                                        .with_span_handle(
-                                                            image,
-                                                            context.expressions,
-                                                        ),
-                                                    );
-                                                }
-                                            }
-                                        }
-                                        _ => {
-                                            return Err(FunctionError::InvalidImageAtomic(
-                                                ExpressionError::InvalidImageFormat(format),
-                                            )
-                                            .with_span_handle(image, context.expressions));
-                                        }
-                                    }
-                                    crate::TypeInner::Scalar(format.into())
-                                }
-                                _ => {
-                                    return Err(FunctionError::InvalidImageAtomic(
-                                        ExpressionError::InvalidImageClass(class),
-                                    )
-                                    .with_span_handle(image, context.expressions));
-                                }
-                            }
+                            !matches!(fun, crate::AtomicFunction::Subtract)
+                        }
+                        crate::StorageFormat::R32Float => {
+                            matches!(fun, crate::AtomicFunction::Exchange { compare: None })
                         }
                         _ => {
                             return Err(FunctionError::InvalidImageAtomic(
-                                ExpressionError::ExpectedImageType(var.ty),
+                                ExpressionError::InvalidImageFormat(format),
                             )
-                            .with_span()
-                            .with_handle(var.ty, context.types)
-                            .with_handle(image, context.expressions))
+                            .with_span_handle(image, context.expressions));
                         }
                     };
-
+                    if !supported {
+                        return Err(FunctionError::InvalidImageAtomicFunction(fun)
+                            .with_span_handle(image, context.expressions));
+                    }
+                    let value_ty = Ti::Scalar(format.into());
                     if *context.resolve_type_inner(value, &self.valid_expression_set)? != value_ty {
                         return Err(FunctionError::InvalidImageAtomicValue(value)
                             .with_span_handle(value, context.expressions));
                     }
+                    if let crate::AtomicFunction::Exchange {
+                        compare: Some(compare),
+                    } = fun
+                    {
+                        if *context.resolve_type_inner(compare, &self.valid_expression_set)?
+                            != value_ty
+                        {
+                            return Err(FunctionError::InvalidImageAtomicValue(compare)
+                                .with_span_handle(compare, context.expressions));
+                        }
+                    }
+                    if let Some(result) = result {
+                        self.validate_atomic_result(result, format.into(), context)?;
+                    }
                 }
+                S::AtomicLoad {
+                    ref location,
+                    order: _,
+                    result,
+                } => {
+                    let scalar = self.validate_atomic_location(location, context)?;
+                    self.validate_atomic_result(result, scalar, context)?;
+                }
+                S::AtomicStore {
+                    ref location,
+                    value,
+                    order: _,
+                } => {
+                    let scalar = self.validate_atomic_location(location, context)?;
+                    if *context.resolve_type_inner(value, &self.valid_expression_set)?
+                        != Ti::Scalar(scalar)
+                    {
+                        return Err(AtomicError::InvalidOperand(value)
+                            .with_span_handle(value, context.expressions)
+                            .into_other());
+                    }
+                }
+                S::ScopedBarrier { .. } => {}
                 S::WorkGroupUniformLoad { pointer, result } => {
                     stages &= super::ShaderStages::COMPUTE_LIKE;
                     let pointer_inner =

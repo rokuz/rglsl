@@ -1522,6 +1522,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
             fun: atomic_function,
             value: v_lexp_handle,
             result: Some(r_lexp_handle),
+            order: None,
         };
         block.push(stmt, span);
 
@@ -1637,6 +1638,9 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                 | S::ImageStore { .. }
                 | S::Atomic { .. }
                 | S::ImageAtomic { .. }
+                | S::AtomicLoad { .. }
+                | S::AtomicStore { .. }
+                | S::ScopedBarrier { .. }
                 | S::RayQuery { .. }
                 | S::SubgroupBallot { .. }
                 | S::SubgroupCollectiveOperation { .. }
@@ -2692,6 +2696,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                 crate::ImageClass::Storage {
                     format: map_image_format(format)?,
                     access: crate::StorageAccess::default(),
+                    multi: is_msaa,
                 }
             }
             // We will hit this case either when sampled is 1, or if we have unknown
@@ -3001,7 +3006,12 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
         if let crate::TypeInner::Image {
             dim,
             arrayed,
-            class: crate::ImageClass::Storage { format, access: _ },
+            class:
+                crate::ImageClass::Storage {
+                    format,
+                    access: _,
+                    multi,
+                },
         } = module.types[ty].inner
         {
             // Storage image types in IR have to contain the access, but not in the SPIR-V.
@@ -3015,7 +3025,11 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                     inner: crate::TypeInner::Image {
                         dim,
                         arrayed,
-                        class: crate::ImageClass::Storage { format, access },
+                        class: crate::ImageClass::Storage {
+                            format,
+                            access,
+                            multi,
+                        },
                     },
                 },
                 Default::default(),

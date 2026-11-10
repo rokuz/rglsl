@@ -129,13 +129,46 @@ pub(super) fn storage_access(qualifiers: &Qualifiers) -> StorageAccess {
     }
 }
 
+pub(super) fn image_access(qualifiers: &Qualifiers) -> StorageAccess {
+    if qualifiers.readonly || qualifiers.writeonly {
+        storage_access(qualifiers)
+    } else {
+        StorageAccess::LOAD | StorageAccess::STORE | StorageAccess::ATOMIC
+    }
+}
+
 fn memory(qualifiers: &Qualifiers) -> MemoryDecorations {
     let mut decorations = MemoryDecorations::empty();
     if qualifiers.coherent {
         decorations |= MemoryDecorations::COHERENT;
     }
-    if qualifiers.volatile {
-        decorations |= MemoryDecorations::VOLATILE;
+    for (present, decoration) in [
+        (qualifiers.volatile, MemoryDecorations::VOLATILE),
+        (
+            qualifiers.device_coherent,
+            MemoryDecorations::DEVICE_COHERENT,
+        ),
+        (
+            qualifiers.queue_family_coherent,
+            MemoryDecorations::QUEUE_FAMILY_COHERENT,
+        ),
+        (
+            qualifiers.workgroup_coherent,
+            MemoryDecorations::WORKGROUP_COHERENT,
+        ),
+        (
+            qualifiers.subgroup_coherent,
+            MemoryDecorations::SUBGROUP_COHERENT,
+        ),
+        (
+            qualifiers.shader_call_coherent,
+            MemoryDecorations::SHADER_CALL_COHERENT,
+        ),
+        (qualifiers.nonprivate, MemoryDecorations::NONPRIVATE),
+    ] {
+        if present {
+            decorations |= decoration;
+        }
     }
     decorations
 }
@@ -738,9 +771,6 @@ impl<'a> Lowerer<'a> {
             ));
         };
         let inner = if opaque.kind == OpaqueKind::Image {
-            if opaque.multisample {
-                return Err(unsupported("multisampled storage images", at));
-            }
             let format = qualifiers
                 .layout
                 .iter()
@@ -753,7 +783,8 @@ impl<'a> Lowerer<'a> {
                 arrayed: opaque.arrayed,
                 class: ImageClass::Storage {
                     format,
-                    access: storage_access(qualifiers),
+                    access: image_access(qualifiers),
+                    multi: opaque.multisample,
                 },
             }
         } else {

@@ -9,7 +9,7 @@ use rglsl_sema::types::{
 };
 use rglsl_sema::SymbolId;
 
-use super::globals::{image_format, storage_access};
+use super::globals::{image_access, image_format, storage_access};
 use super::types::{image_dimension, sampled_kind};
 use super::{internal, unsupported, GlobalRef, Lowerer, Result};
 use crate::proc::Alignment;
@@ -190,9 +190,6 @@ impl<'a> Lowerer<'a> {
         };
         match opaque.kind {
             OpaqueKind::Image => {
-                if opaque.multisample {
-                    return Err(unsupported("multisampled storage images", at));
-                }
                 let format = qualifiers
                     .layout
                     .iter()
@@ -205,7 +202,8 @@ impl<'a> Lowerer<'a> {
                     arrayed: opaque.arrayed,
                     class: ImageClass::Storage {
                         format,
-                        access: storage_access(qualifiers),
+                        access: image_access(qualifiers),
+                        multi: opaque.multisample,
                     },
                 })
             }

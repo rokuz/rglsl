@@ -370,6 +370,24 @@ pub enum UniformityDisruptor {
 }
 
 impl FunctionInfo {
+    fn add_location_ref(&mut self, location: &crate::AtomicLocation, global_use: GlobalUse) {
+        match *location {
+            crate::AtomicLocation::Pointer(pointer) => {
+                let _ = self.add_ref_impl(pointer, global_use);
+            }
+            crate::AtomicLocation::Texel(texel) => {
+                let _ = self.add_ref_impl(texel.image, GlobalUse::ATOMIC);
+                let _ = self.add_ref(texel.coordinate);
+                if let Some(expr) = texel.array_index {
+                    let _ = self.add_ref(expr);
+                }
+                if let Some(expr) = texel.sample {
+                    let _ = self.add_ref(expr);
+                }
+            }
+        }
+    }
+
     /// Record a use of `expr` of the sort given by `global_use`.
     ///
     /// Bump `expr`'s reference count, and return its uniformity.
@@ -987,13 +1005,15 @@ impl FunctionInfo {
                         ExitFlags::empty()
                     },
                 },
-                S::ControlBarrier(_) | S::MemoryBarrier(_) => FunctionUniformity {
-                    result: Uniformity {
-                        non_uniform_result: None,
-                        requirements: UniformityRequirements::WORK_GROUP_BARRIER,
-                    },
-                    exit: ExitFlags::empty(),
-                },
+                S::ControlBarrier(_) | S::MemoryBarrier(_) | S::ScopedBarrier { .. } => {
+                    FunctionUniformity {
+                        result: Uniformity {
+                            non_uniform_result: None,
+                            requirements: UniformityRequirements::WORK_GROUP_BARRIER,
+                        },
+                        exit: ExitFlags::empty(),
+                    }
+                }
                 S::WorkGroupUniformLoad { pointer, .. } => {
                     let _condition_nur = self.add_ref(pointer);
 
@@ -1155,6 +1175,7 @@ impl FunctionInfo {
                     ref fun,
                     value,
                     result: _,
+                    order: _,
                 } => {
                     let _ = self.add_ref_impl(pointer, GlobalUse::READ | GlobalUse::WRITE);
                     let _ = self.add_ref(value);
@@ -1167,14 +1188,40 @@ impl FunctionInfo {
                     image,
                     coordinate,
                     array_index,
-                    fun: _,
+                    ref fun,
                     value,
+                    sample,
+                    result: _,
+                    order: _,
                 } => {
                     let _ = self.add_ref_impl(image, GlobalUse::ATOMIC);
                     let _ = self.add_ref(coordinate);
                     if let Some(expr) = array_index {
                         let _ = self.add_ref(expr);
                     }
+                    if let crate::AtomicFunction::Exchange { compare: Some(cmp) } = *fun {
+                        let _ = self.add_ref(cmp);
+                    }
+                    let _ = self.add_ref(value);
+                    if let Some(expr) = sample {
+                        let _ = self.add_ref(expr);
+                    }
+                    FunctionUniformity::new()
+                }
+                S::AtomicLoad {
+                    ref location,
+                    order: _,
+                    result: _,
+                } => {
+                    self.add_location_ref(location, GlobalUse::READ);
+                    FunctionUniformity::new()
+                }
+                S::AtomicStore {
+                    ref location,
+                    value,
+                    order: _,
+                } => {
+                    self.add_location_ref(location, GlobalUse::WRITE);
                     let _ = self.add_ref(value);
                     FunctionUniformity::new()
                 }

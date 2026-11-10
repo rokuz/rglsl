@@ -94,6 +94,7 @@ impl Writer {
             zero_initialize_workgroup_memory: options.zero_initialize_workgroup_memory,
             force_loop_bounding: options.force_loop_bounding,
             vulkan_memory_model: false,
+            device_scope_used: false,
             ray_query_initialization_tracking: options.ray_query_initialization_tracking,
             trace_ray_argument_validation: options.trace_ray_argument_validation,
             use_storage_input_output_16: options.use_storage_input_output_16,
@@ -190,6 +191,7 @@ impl Writer {
             zero_initialize_workgroup_memory: self.zero_initialize_workgroup_memory,
             force_loop_bounding: self.force_loop_bounding,
             vulkan_memory_model: false,
+            device_scope_used: false,
             ray_query_initialization_tracking: self.ray_query_initialization_tracking,
             trace_ray_argument_validation: self.trace_ray_argument_validation,
             use_storage_input_output_16: self.use_storage_input_output_16,
@@ -1790,6 +1792,7 @@ impl Writer {
             }
         }
 
+        super::atomic::collect_texel_images(&ir_function.body, &mut context.function.texel_images);
         for (handle, expr) in ir_function.expressions.iter() {
             match *expr {
                 crate::Expression::LocalVariable(_) => {
@@ -2133,8 +2136,20 @@ impl Writer {
                 let sampled = match class {
                     crate::ImageClass::Sampled { .. } => true,
                     crate::ImageClass::Depth { .. } => true,
-                    crate::ImageClass::Storage { format, .. } => {
+                    crate::ImageClass::Storage { format, multi, .. } => {
                         self.request_image_format_capabilities(format.into())?;
+                        if multi {
+                            self.require_any(
+                                "multisampled storage images",
+                                &[spirv::Capability::StorageImageMultisample],
+                            )?;
+                            if arrayed {
+                                self.require_any(
+                                    "multisampled arrayed storage images",
+                                    &[spirv::Capability::ImageMSArray],
+                                )?;
+                            }
+                        }
                         false
                     }
                     crate::ImageClass::External => unimplemented!(),
@@ -3777,10 +3792,9 @@ impl Writer {
 
         //self.check(class.required_capabilities())?;
 
-        if global_variable
-            .memory_decorations
-            .contains(crate::MemoryDecorations::COHERENT)
-            && !self.vulkan_memory_model
+        if global_variable.memory_decorations.intersects(
+            crate::MemoryDecorations::all().difference(crate::MemoryDecorations::NONPRIVATE),
+        ) && !self.vulkan_memory_model
         {
             self.decorate(id, Decoration::Coherent, &[]);
         }
@@ -4231,6 +4245,7 @@ impl Writer {
         self.physical_pointees.clear();
         self.forward_pointers.clear();
         self.vulkan_memory_model = ir_module.vulkan_memory_model;
+        self.device_scope_used = false;
         if self.vulkan_memory_model {
             self.capabilities_used
                 .insert(spirv::Capability::VulkanMemoryModel);
@@ -4417,6 +4432,14 @@ impl Writer {
                     self.use_extension(extension);
                 }
             }
+        }
+        if self.device_scope_used
+            && self
+                .capabilities_used
+                .contains(&spirv::Capability::VulkanMemoryModel)
+        {
+            self.capabilities_used
+                .insert(spirv::Capability::VulkanMemoryModelDeviceScope);
         }
         for capability in self.capabilities_used.iter() {
             Instruction::capability(*capability).to_words(&mut self.logical_layout.capabilities);

@@ -980,6 +980,80 @@ layout(local_size_x = 1) in;
 void main() {
     memoryBarrierAtomicCounter();
 }
+### memory scope semantics functions | comp | ok
+#extension GL_KHR_memory_scope_semantics : require
+layout(local_size_x = 1) in;
+layout(binding = 0) buffer B { uint a; int b; };
+layout(binding = 1, r32ui) uniform uimage2D image;
+layout(binding = 2, r32i) uniform iimage2DMS samples;
+shared uint s;
+void main() {
+    uint x = atomicLoad(a, gl_ScopeDevice, gl_StorageSemanticsBuffer, gl_SemanticsAcquire);
+    atomicStore(s, x, gl_ScopeWorkgroup, gl_StorageSemanticsShared, gl_SemanticsRelease);
+    int y = atomicAdd(b, 1, gl_ScopeQueueFamily, 0, gl_SemanticsVolatile);
+    x = atomicCompSwap(a, 1u, 2u, gl_ScopeDevice, gl_StorageSemanticsBuffer, gl_SemanticsAcquireRelease, gl_StorageSemanticsBuffer, gl_SemanticsAcquire);
+    x = imageAtomicLoad(image, ivec2(0), gl_ScopeDevice, gl_StorageSemanticsImage, gl_SemanticsAcquire);
+    imageAtomicStore(samples, ivec2(0), 1, 2, gl_ScopeDevice, gl_StorageSemanticsImage, gl_SemanticsRelease);
+    x = imageAtomicCompSwap(image, ivec2(0), 1u, 2u, gl_ScopeDevice, 0, 0, 0, 0);
+    controlBarrier(gl_ScopeWorkgroup, gl_ScopeWorkgroup, gl_StorageSemanticsShared, gl_SemanticsAcquireRelease | gl_SemanticsMakeAvailable);
+    memoryBarrier(gl_ScopeDevice, gl_StorageSemanticsBuffer, gl_SemanticsAcquire | gl_SemanticsMakeVisible);
+}
+### memory scope constants need the extension | comp | 3:ExtensionRequired, 3:ExtensionRequired
+layout(local_size_x = 1) in;
+const int scopes = gl_ScopeDevice + gl_SemanticsAcquire + gl_ScopeQueueFamily + gl_ScopeShaderCallEXT;
+void main() {}
+### scoped functions need the extension | comp | 5:ExtensionRequired, 6:ExtensionRequired, 6:ExtensionRequired
+layout(local_size_x = 1) in;
+layout(binding = 0) buffer B { uint a; };
+void main() {
+    uint x = atomicLoad(a, 5, 0, 0);
+    controlBarrier(2, 2, 0, 0);
+}
+### scope and semantics must be constant | comp | 6:InvalidBuiltinCall, 7:InvalidBuiltinCall
+#extension GL_KHR_memory_scope_semantics : require
+layout(local_size_x = 1) in;
+layout(binding = 0) buffer B { uint a; int d; };
+void main() {
+    atomicAdd(a, 1u, d, 0, 0);
+    memoryBarrier(gl_ScopeDevice, gl_StorageSemanticsBuffer, d);
+}
+### invalid semantics | comp | 6:InvalidBuiltinCall, 7:InvalidBuiltinCall, 8:InvalidBuiltinCall, 8:InvalidBuiltinCall, 9:InvalidBuiltinCall, 10:InvalidBuiltinCall
+#extension GL_KHR_memory_scope_semantics : require
+layout(local_size_x = 1) in;
+layout(binding = 0) buffer B { uint a; };
+void main() {
+    uint x = atomicLoad(a, gl_ScopeDevice, gl_StorageSemanticsBuffer, gl_SemanticsRelease);
+    atomicAdd(a, 1u, gl_ScopeDevice, gl_StorageSemanticsBuffer, 0);
+    atomicAdd(a, 1u, gl_ScopeDevice, 0, gl_SemanticsAcquire | gl_SemanticsRelease);
+    memoryBarrier(gl_ScopeDevice, 0, 0);
+    atomicCompSwap(a, 1u, 2u, gl_ScopeDevice, 0, gl_SemanticsVolatile, 0, 0);
+}
+### 64-bit atomics need an extension | comp | 6:ExtensionRequired
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+layout(local_size_x = 1) in;
+shared uint64_t s;
+void main() {
+    atomicMax(s, 1ul);
+}
+### 64-bit atomics | comp | ok
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_shader_atomic_int64 : require
+layout(local_size_x = 1) in;
+shared int64_t s;
+void main() {
+    int64_t x = atomicCompSwap(s, 1l, 2l) + atomicXor(s, 3l);
+}
+### nonprivate samplers and uniform blocks | comp | ok
+#extension GL_KHR_memory_scope_semantics : require
+layout(local_size_x = 1) in;
+layout(binding = 0) nonprivate uniform sampler2D t;
+layout(binding = 1) nonprivate uniform U { uint x; } u;
+void main() {}
+### coherent samplers | comp | 4:InvalidQualifier
+#extension GL_KHR_memory_scope_semantics : require
+layout(local_size_x = 1) in;
+layout(binding = 0) workgroupcoherent uniform sampler2D t;
+void main() {}
 ### subpass load | frag | ok
 layout(input_attachment_index = 0, binding = 0) uniform subpassInput color;
 layout(input_attachment_index = 1, binding = 1) uniform isubpassInputMS ids;

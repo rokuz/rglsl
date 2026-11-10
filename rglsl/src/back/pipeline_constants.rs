@@ -811,6 +811,7 @@ fn adjust_stmt(new_pos: &HandleVec<Expression, Handle<Expression>>, stmt: &mut S
             ref mut value,
             ref mut result,
             ref mut fun,
+            order: _,
         } => {
             adjust(pointer);
             adjust(value);
@@ -837,14 +838,45 @@ fn adjust_stmt(new_pos: &HandleVec<Expression, Handle<Expression>>, stmt: &mut S
             ref mut image,
             ref mut coordinate,
             ref mut array_index,
-            fun: _,
+            ref mut fun,
             ref mut value,
+            ref mut sample,
+            ref mut result,
+            order: _,
         } => {
             adjust(image);
             adjust(coordinate);
             if let Some(ref mut array_index) = *array_index {
                 adjust(array_index);
             }
+            if let crate::AtomicFunction::Exchange {
+                compare: Some(ref mut compare),
+            } = *fun
+            {
+                adjust(compare);
+            }
+            adjust(value);
+            if let Some(ref mut sample) = *sample {
+                adjust(sample);
+            }
+            if let Some(ref mut result) = *result {
+                adjust(result);
+            }
+        }
+        Statement::AtomicLoad {
+            ref mut location,
+            order: _,
+            ref mut result,
+        } => {
+            adjust_location(location, &adjust);
+            adjust(result);
+        }
+        Statement::AtomicStore {
+            ref mut location,
+            ref mut value,
+            order: _,
+        } => {
+            adjust_location(location, &adjust);
             adjust(value);
         }
         Statement::WorkGroupUniformLoad {
@@ -949,7 +981,24 @@ fn adjust_stmt(new_pos: &HandleVec<Expression, Handle<Expression>>, stmt: &mut S
         | Statement::Continue
         | Statement::Kill
         | Statement::ControlBarrier(_)
-        | Statement::MemoryBarrier(_) => {}
+        | Statement::MemoryBarrier(_)
+        | Statement::ScopedBarrier { .. } => {}
+    }
+}
+
+fn adjust_location(location: &mut crate::AtomicLocation, adjust: &dyn Fn(&mut Handle<Expression>)) {
+    match *location {
+        crate::AtomicLocation::Pointer(ref mut pointer) => adjust(pointer),
+        crate::AtomicLocation::Texel(ref mut texel) => {
+            adjust(&mut texel.image);
+            adjust(&mut texel.coordinate);
+            if let Some(ref mut array_index) = texel.array_index {
+                adjust(array_index);
+            }
+            if let Some(ref mut sample) = texel.sample {
+                adjust(sample);
+            }
+        }
     }
 }
 

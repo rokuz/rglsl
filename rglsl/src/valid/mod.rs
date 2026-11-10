@@ -347,7 +347,6 @@ pub struct Validator {
     switch_values: FastHashSet<crate::SwitchValue>,
     valid_expression_list: Vec<Handle<crate::Expression>>,
     valid_expression_set: HandleSet<crate::Expression>,
-    override_ids: FastHashSet<u32>,
 
     /// Treat overrides whose initializers are not fully-evaluated
     /// constant expressions as errors.
@@ -417,8 +416,6 @@ pub enum ConstantError {
 pub enum OverrideError {
     #[error("Override name and ID are missing")]
     MissingNameAndID,
-    #[error("Override ID must be unique")]
-    DuplicateID,
     #[error("Initializer must be a const-expression or override-expression")]
     InitializerExprType,
     #[error("The type doesn't match the override")]
@@ -612,7 +609,6 @@ impl Validator {
             switch_values: FastHashSet::default(),
             valid_expression_list: Vec::new(),
             valid_expression_set: HandleSet::new(),
-            override_ids: FastHashSet::default(),
             overrides_resolved: false,
             needs_visit: HandleSet::new(),
             trace_rays_vertex_return: TraceRayVertexReturnState::NoTraceRays,
@@ -640,7 +636,6 @@ impl Validator {
         self.switch_values.clear();
         self.valid_expression_list.clear();
         self.valid_expression_set.clear();
-        self.override_ids.clear();
     }
 
     fn validate_constant(
@@ -675,12 +670,6 @@ impl Validator {
         mod_info: &ModuleInfo,
     ) -> Result<(), OverrideError> {
         let o = &gctx.overrides[handle];
-
-        if let Some(id) = o.id {
-            if !self.override_ids.insert(id) {
-                return Err(OverrideError::DuplicateID);
-            }
-        }
 
         let type_info = &self.types[o.ty.index()];
         if !type_info.flags.contains(TypeFlags::CONSTRUCTIBLE) {

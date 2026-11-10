@@ -808,7 +808,7 @@ impl Writer {
                 _ => None,
             };
             let access = storage_image_access(module, ty)
-                .filter(|access| *access != StorageAccess::LOAD | StorageAccess::STORE)
+                .filter(|access| !access.contains(StorageAccess::LOAD | StorageAccess::STORE))
                 .filter(|_| matches!(module.types[ty].inner, TypeInner::Array { .. }));
             if let Some(access) = access {
                 let zero = self.get_constant_scalar(crate::Literal::U32(0));
