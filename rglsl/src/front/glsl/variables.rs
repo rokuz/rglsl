@@ -16,6 +16,8 @@ pub struct VarDeclaration<'a, 'key> {
     pub ty: Handle<Type>,
     pub name: Option<String>,
     pub init: Option<Handle<Expression>>,
+    /// The declaration is an interface block (`uniform Name { ... } instance;`).
+    pub is_block: bool,
     pub meta: Span,
 }
 
@@ -37,7 +39,142 @@ pub enum GlobalOrConstant {
     Override(Handle<Override>),
 }
 
+/// A resource declared without a `binding`, waiting for an automatic one.
+#[derive(Debug)]
+struct UnboundResource {
+    handle: Handle<GlobalVariable>,
+    /// The `set` layout qualifier, if the declaration has one.
+    set: Option<u32>,
+}
+
+/// State of the automatic assignment of bindings and locations.
+///
+/// See [`Options::auto_map_bindings`] and [`Options::auto_map_locations`].
+///
+/// [`Options::auto_map_bindings`]: super::Options::auto_map_bindings
+/// [`Options::auto_map_locations`]: super::Options::auto_map_locations
+#[derive(Debug, Default)]
+pub(super) struct AutoMap {
+    pub bindings: bool,
+    pub locations: bool,
+    /// The next automatic location for inputs and for outputs.
+    next_input_location: u32,
+    next_output_location: u32,
+    /// Resources that need a binding, in declaration order.
+    unbound: Vec<UnboundResource>,
+}
+
+impl AutoMap {
+    /// Takes `count` consecutive locations and returns the first one.
+    const fn next_location(&mut self, input: bool, count: u32) -> u32 {
+        let next = if input {
+            &mut self.next_input_location
+        } else {
+            &mut self.next_output_location
+        };
+        let location = *next;
+        *next = next.saturating_add(count);
+        location
+    }
+}
+
+/// The number of consecutive locations a stage input or output of type `ty`
+/// occupies (GLSL 4.60, section 4.4.1 "Input Layout Qualifiers").
+fn location_count(types: &crate::UniqueArena<Type>, ty: Handle<Type>) -> u32 {
+    /// A `dvec3` or `dvec4` takes two locations, any other vector one.
+    const fn vector_locations(size: VectorSize, scalar: Scalar) -> u32 {
+        match (size, scalar.width) {
+            (VectorSize::Tri | VectorSize::Quad, 8) => 2,
+            _ => 1,
+        }
+    }
+
+    match types[ty].inner {
+        TypeInner::Vector { size, scalar } => vector_locations(size, scalar),
+        TypeInner::Matrix {
+            columns,
+            rows,
+            scalar,
+        } => (columns as u32).saturating_mul(vector_locations(rows, scalar)),
+        TypeInner::Array {
+            base,
+            size: crate::ArraySize::Constant(length),
+            ..
+        } => length.get().saturating_mul(location_count(types, base)),
+        TypeInner::Struct { ref members, .. } => members
+            .iter()
+            .map(|member| location_count(types, member.ty))
+            .fold(0, u32::saturating_add),
+        _ => 1,
+    }
+}
+
+/// Whether `ty` is an opaque type (a texture, a sampler, an acceleration
+/// structure) or an array of one.
+fn is_opaque(types: &crate::UniqueArena<Type>, ty: Handle<Type>) -> bool {
+    match types[ty].inner {
+        TypeInner::Image { .. }
+        | TypeInner::Sampler { .. }
+        | TypeInner::AccelerationStructure { .. } => true,
+        TypeInner::Array { base, .. } | TypeInner::BindingArray { base, .. } => {
+            is_opaque(types, base)
+        }
+        _ => false,
+    }
+}
+
 impl Frontend {
+    /// Gives every resource that was declared without a `binding` one, as
+    /// [`Options::auto_map_bindings`] describes.
+    ///
+    /// This runs once the whole shader is parsed, because the binding of a
+    /// resource depends on whether the shader uses it.
+    ///
+    /// [`Options::auto_map_bindings`]: super::Options::auto_map_bindings
+    pub(super) fn assign_automatic_bindings(&mut self, module: &mut crate::Module) {
+        let mut unbound = core::mem::take(&mut self.auto_map.unbound);
+        if unbound.is_empty() {
+            return;
+        }
+
+        // glslang resolves resources with an explicit `set` before the ones
+        // without, and in declaration order within each group.
+        unbound.sort_by_key(|resource| resource.set.is_none());
+
+        let live = crate::compact::live_global_variables(module);
+
+        // The bindings taken in each set. Explicit bindings are reserved
+        // before any automatic one is chosen.
+        let mut taken: crate::FastHashMap<u32, alloc::collections::BTreeSet<u32>> =
+            crate::FastHashMap::default();
+        for (_, global) in module.global_variables.iter() {
+            if let Some(ref binding) = global.binding {
+                taken
+                    .entry(binding.group)
+                    .or_default()
+                    .insert(binding.binding);
+            }
+        }
+
+        for resource in unbound {
+            let group = resource.set.unwrap_or(0);
+            let binding = if live.contains(resource.handle) {
+                let taken = taken.entry(group).or_default();
+                let free = (0..=u32::MAX)
+                    .find(|binding| !taken.contains(binding))
+                    .unwrap_or(u32::MAX);
+                taken.insert(free);
+                free
+            } else {
+                // A resource the shader does not use takes no binding of its
+                // own; glslang leaves it at binding 0.
+                0
+            };
+            module.global_variables[resource.handle].binding =
+                Some(ResourceBinding { group, binding });
+        }
+    }
+
     /// Adds a builtin and returns a variable reference to it
     fn add_builtin(
         &mut self,
@@ -491,6 +628,7 @@ impl Frontend {
             mut ty,
             name,
             init,
+            is_block,
             meta,
         }: VarDeclaration,
     ) -> Result<GlobalOrConstant> {
@@ -507,11 +645,23 @@ impl Frontend {
         let (ret, lookup) = match storage {
             StorageQualifier::Input | StorageQualifier::Output => {
                 let input = storage == StorageQualifier::Input;
-                // TODO: glslang seems to use a counter for variables without
-                // explicit location (even if that causes collisions)
-                let location = qualifiers
-                    .uint_layout_qualifier("location", &mut self.errors)
-                    .unwrap_or(0);
+                let location = match qualifiers.uint_layout_qualifier("location", &mut self.errors)
+                {
+                    Some(location) => location,
+                    None if self.auto_map.locations => {
+                        let count = location_count(&ctx.module.types, ty);
+                        self.auto_map.next_location(input, count)
+                    }
+                    None => {
+                        self.errors.push(Error {
+                            kind: ErrorKind::SemanticError(
+                                "SPIR-V requires location for user input/output".into(),
+                            ),
+                            meta,
+                        });
+                        0
+                    }
+                };
 
                 let interpolation = qualifiers.interpolation.take().map(|(i, _)| i);
                 let sampling = qualifiers.sampling.take().map(|(s, _)| s);
@@ -680,6 +830,18 @@ impl Frontend {
                         }
                         TypeInner::Sampler { .. } => space = AddressSpace::Handle,
                         _ => {
+                            if !is_block && !is_opaque(&ctx.module.types, ty) {
+                                // Vulkan has no default uniform block
+                                // (GL_KHR_vulkan_glsl).
+                                self.errors.push(Error {
+                                    kind: ErrorKind::SemanticError(
+                                        "non-opaque uniforms outside a block are not allowed \
+                                         when using GLSL for Vulkan"
+                                            .into(),
+                                    ),
+                                    meta,
+                                });
+                            }
                             if qualifiers.none_layout_qualifier("push_constant", &mut self.errors) {
                                 space = AddressSpace::Immediate
                             }
@@ -689,18 +851,24 @@ impl Frontend {
                     _ => {}
                 };
 
+                // `Some(set)` if the resource needs a binding and has none.
+                let mut unbound_set = None;
                 let binding = match space {
                     AddressSpace::Uniform | AddressSpace::Storage { .. } | AddressSpace::Handle => {
                         let binding = qualifiers.uint_layout_qualifier("binding", &mut self.errors);
-                        if binding.is_none() {
-                            self.errors.push(Error {
-                                kind: ErrorKind::SemanticError(
-                                    "uniform/buffer blocks require layout(binding=X)".into(),
-                                ),
-                                meta,
-                            });
-                        }
                         let set = qualifiers.uint_layout_qualifier("set", &mut self.errors);
+                        if binding.is_none() {
+                            if self.auto_map.bindings {
+                                unbound_set = Some(set);
+                            } else {
+                                self.errors.push(Error {
+                                    kind: ErrorKind::SemanticError(
+                                        "uniform/buffer blocks require layout(binding=X)".into(),
+                                    ),
+                                    meta,
+                                });
+                            }
+                        }
                         binding.map(|binding| ResourceBinding {
                             group: set.unwrap_or(0),
                             binding,
@@ -720,6 +888,10 @@ impl Frontend {
                     },
                     meta,
                 );
+
+                if let Some(set) = unbound_set {
+                    self.auto_map.unbound.push(UnboundResource { handle, set });
+                }
 
                 let lookup = GlobalLookup {
                     kind: GlobalLookupKind::Variable(handle),

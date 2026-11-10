@@ -268,8 +268,9 @@ fn convert_snapshots_glsl() {
         let mut module = parser
             .parse(
                 &rglsl::front::glsl::Options {
-                    stage,
-                    defines: Default::default(),
+                    // Many of these inputs leave out locations.
+                    auto_map_locations: true,
+                    ..rglsl::front::glsl::Options::from(stage)
                 },
                 &input.read_source(DIR_IN, true),
             )

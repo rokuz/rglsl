@@ -127,6 +127,16 @@ struct Args {
     #[argh(option, short = 'D')]
     defines: Vec<Defines>,
 
+    /// give GLSL resources without a `binding` an automatic one, as glslang's
+    /// option of the same name does
+    #[argh(switch)]
+    auto_map_bindings: bool,
+
+    /// give GLSL inputs and outputs without a `location` an automatic one, as
+    /// glslang's option of the same name does
+    #[argh(switch)]
+    auto_map_locations: bool,
+
     /// capabilities for parsing and validation.
     ///
     /// Can be a comma-separated list of capability names (e.g.,
@@ -327,6 +337,8 @@ struct Parameters<'a> {
     input_kind: Option<InputKind>,
     shader_stage: Option<ShaderStage>,
     defines: FastHashMap<String, String>,
+    auto_map_bindings: bool,
+    auto_map_locations: bool,
     capabilities: rglsl::valid::Capabilities,
 
     /// We use this copy of `args.compact` to know whether we should pass the
@@ -452,6 +464,9 @@ fn run() -> anyhow::Result<()> {
         strict_capabilities: false,
         block_ctx_dump_prefix: args.block_ctx_dir.clone(),
     };
+
+    params.auto_map_bindings = args.auto_map_bindings;
+    params.auto_map_locations = args.auto_map_locations;
 
     params.entry_point.clone_from(&args.entry_point);
     if let Some(ref version) = args.spirv_version {
@@ -690,6 +705,8 @@ fn parse_input(input_path: &Path, input: Vec<u8>, params: &Parameters) -> anyhow
                         &rglsl::front::glsl::Options {
                             stage: shader_stage.0,
                             defines: params.defines.clone(),
+                            auto_map_bindings: params.auto_map_bindings,
+                            auto_map_locations: params.auto_map_locations,
                         },
                         &input,
                     )

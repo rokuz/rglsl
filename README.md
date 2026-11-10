@@ -45,6 +45,16 @@ cargo xtask test --glslang-dir ../glslang --filter spv.100ops --no-progress-file
 
 Per-shader results go to `target/xtask/results.tsv`.
 
+## Command line
+
+```sh
+cargo run -p rglsl-cli -- shader.frag shader.spv
+cargo run -p rglsl-cli -- --auto-map-bindings --auto-map-locations shader.frag shader.spv
+```
+
+`--auto-map-bindings` and `--auto-map-locations` assign missing bindings and locations the way
+glslang's options of the same names do.
+
 ## License
 
 MIT OR Apache-2.0, like naga.

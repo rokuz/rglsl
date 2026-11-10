@@ -448,6 +448,7 @@ impl DeclarationContext<'_, '_, '_> {
             ty,
             name: Some(name),
             init,
+            is_block: false,
             meta,
         };
 

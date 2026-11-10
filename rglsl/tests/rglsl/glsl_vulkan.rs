@@ -394,3 +394,180 @@ fn shadow_sampling_keeps_lod_gradients_and_bias() {
         .collect();
     assert_eq!(implicit, [spirv::ImageOperands::BIAS]);
 }
+
+/// Automatic bindings follow glslang's `--auto-map-bindings`: resources the
+/// shader uses get the lowest free binding of their set, the ones with an
+/// explicit `set` first; unused resources get binding 0.
+#[test]
+fn automatic_bindings_match_glslang() {
+    let source = "#version 450
+        layout(binding = 1) uniform texture2D explicit1;
+        uniform texture2D unusedTex;
+        uniform U0 { vec4 a; } u0;
+        layout(set = 1) uniform U1 { vec4 a; } u1;
+        layout(set = 1, binding = 0) uniform texture2D t10;
+        buffer B { vec4 d[]; } b;
+        uniform U2 { vec4 a; } u2unused;
+        uniform sampler samp;
+        layout(binding = 3) uniform texture2D t3;
+        layout(set = 0) uniform USet { vec4 a; } uset;
+        uniform UL { vec4 a; } late;
+        layout(location = 0) in vec4 i0;
+        layout(location = 0) out vec4 o0;
+        vec4 helper() { return late.a; }
+        void main() {
+            o0 = texture(sampler2D(explicit1, samp), i0.xy) + u0.a + u1.a
+                + texture(sampler2D(t10, samp), i0.xy) + b.d[0] + helper()
+                + texture(sampler2D(t3, samp), i0.zw) + uset.a;
+        }";
+    let options = glsl::Options {
+        auto_map_bindings: true,
+        ..glsl::Options::from(ShaderStage::Fragment)
+    };
+    let module = glsl::Frontend::default().parse(&options, source).unwrap();
+    Validator::new(ValidationFlags::all(), Capabilities::all())
+        .validate(&module)
+        .unwrap();
+
+    let mut bindings: Vec<(&str, u32, u32)> = module
+        .global_variables
+        .iter()
+        .filter_map(|(_, global)| {
+            let binding = global.binding.as_ref()?;
+            Some((global.name.as_deref()?, binding.group, binding.binding))
+        })
+        .collect();
+    bindings.sort_unstable();
+    // What `glslang -V --auto-map-bindings` assigns to this shader.
+    assert_eq!(
+        bindings,
+        [
+            ("b", 0, 4),
+            ("explicit1", 0, 1),
+            ("late", 0, 6),
+            ("samp", 0, 5),
+            ("t10", 1, 0),
+            ("t3", 0, 3),
+            ("u0", 0, 2),
+            ("u1", 1, 1),
+            ("u2unused", 0, 0),
+            ("unusedTex", 0, 0),
+            ("uset", 0, 0),
+        ]
+    );
+
+    // Without the option a missing binding is an error, as in glslang.
+    let error = parse(ShaderStage::Fragment, source).unwrap_err();
+    assert!(error.contains("binding"), "{error}");
+}
+
+/// Automatic locations follow glslang's `--auto-map-locations`: one counter
+/// for inputs and one for outputs, advanced by the size of each type, and
+/// explicit locations are ignored.
+#[test]
+fn automatic_locations_match_glslang() {
+    let source = "#version 450
+        in vec4 i0;
+        in mat3 i1;
+        layout(location = 1) in vec4 iexp;
+        in vec4 i2unused;
+        in vec3 i3[2];
+        in vec2 i5;
+        out vec4 o0;
+        layout(location = 0) out vec4 oexp;
+        out vec4 o1;
+        void main() {
+            o0 = i0 + vec4(i1[0], 0.0) + iexp + vec4(i3[1], 0.0) + vec4(i5, 0.0, 0.0);
+            oexp = o0;
+            o1 = o0;
+        }";
+    let options = glsl::Options {
+        auto_map_locations: true,
+        ..glsl::Options::from(ShaderStage::Fragment)
+    };
+    // Not validated: matrix and array inputs, and overlapping locations, are
+    // not representable in a valid module yet.
+    let module = glsl::Frontend::default().parse(&options, source).unwrap();
+    let function = &module.entry_points[0].function;
+
+    let location = |binding: &Option<rglsl::Binding>| match *binding {
+        Some(rglsl::Binding::Location { location, .. }) => location,
+        ref other => panic!("not a location: {other:?}"),
+    };
+    let mut inputs: Vec<(&str, u32)> = function
+        .arguments
+        .iter()
+        .map(|argument| {
+            (
+                argument.name.as_deref().unwrap(),
+                location(&argument.binding),
+            )
+        })
+        .collect();
+    inputs.sort_unstable();
+    // What `glslang -V --auto-map-locations` assigns to this shader. The
+    // frontend passes each element of the array `i3` as its own argument.
+    assert_eq!(
+        inputs,
+        [
+            ("i0", 0),
+            ("i1", 1),
+            ("i2unused", 4),
+            ("i3", 5),
+            ("i3", 6),
+            ("i5", 7),
+            ("iexp", 1),
+        ]
+    );
+
+    let result = function.result.as_ref().unwrap();
+    let rglsl::TypeInner::Struct { ref members, .. } = module.types[result.ty].inner else {
+        panic!("the entry point returns a struct of outputs");
+    };
+    let mut outputs: Vec<(&str, u32)> = members
+        .iter()
+        .map(|member| (member.name.as_deref().unwrap(), location(&member.binding)))
+        .collect();
+    outputs.sort_unstable();
+    assert_eq!(outputs, [("o0", 0), ("o1", 1), ("oexp", 0)]);
+
+    // Without the option a missing location is an error, as in glslang.
+    let error = parse(ShaderStage::Fragment, source).unwrap_err();
+    assert!(error.contains("location"), "{error}");
+}
+
+/// Vulkan has no default uniform block: only opaque types and blocks can be
+/// `uniform`.
+#[test]
+fn loose_uniforms_are_rejected() {
+    let error = parse(
+        ShaderStage::Fragment,
+        "#version 450
+        layout(binding = 0) uniform vec4 color;
+        layout(location = 0) out vec4 o;
+        void main() { o = color; }",
+    )
+    .unwrap_err();
+    assert!(error.contains("outside a block"), "{error}");
+
+    // An array of an opaque type is still opaque. (Not validated: the frontend
+    // does not turn such arrays into binding arrays yet.)
+    glsl::Frontend::default()
+        .parse(
+            &glsl::Options::from(ShaderStage::Fragment),
+            "#version 450
+            layout(binding = 0) uniform texture2D textures[8];
+            void main() {}",
+        )
+        .unwrap();
+
+    compile(
+        ShaderStage::Fragment,
+        "#version 450
+        layout(binding = 0) uniform Block { vec4 color; };
+        layout(binding = 1) uniform sampler s;
+        layout(binding = 2) uniform texture2D t;
+        layout(location = 0) out vec4 o;
+        void main() { o = color + texture(sampler2D(t, s), vec2(0.0)); }",
+    );
+}

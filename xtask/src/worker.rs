@@ -54,7 +54,13 @@ fn full_message(err: &dyn std::error::Error) -> String {
     message
 }
 
-pub fn compile_one(input: &Path, stage: &str, spv_version: &str, out: &Path) -> i32 {
+pub fn compile_one(
+    input: &Path,
+    stage: &str,
+    spv_version: &str,
+    auto_map: bool,
+    out: &Path,
+) -> i32 {
     let source = match std::fs::read(input) {
         Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
         Err(err) => {
@@ -80,7 +86,12 @@ pub fn compile_one(input: &Path, stage: &str, spv_version: &str, out: &Path) -> 
 
     // Frontend
     let mut frontend = glsl::Frontend::default();
-    let module = match frontend.parse(&glsl::Options::from(stage), &source) {
+    let options = glsl::Options {
+        auto_map_bindings: auto_map,
+        auto_map_locations: auto_map,
+        ..glsl::Options::from(stage)
+    };
+    let module = match frontend.parse(&options, &source) {
         Ok(module) => module,
         Err(errors) => {
             for error in &errors.errors {

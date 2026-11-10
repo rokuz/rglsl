@@ -229,8 +229,11 @@ fn run_case(
             &format!("{}.{}", case.target.spirv.0, case.target.spirv.1),
         ])
         .arg("--out")
-        .arg(&out)
-        .arg(&case.path);
+        .arg(&out);
+    if case.target.automap {
+        command.arg("--auto-map");
+    }
+    command.arg(&case.path);
     let output = process::run(command, timeout)?;
     let first = output.stdout.lines().find_map(|l| l.strip_prefix("E "));
     let first_line = first

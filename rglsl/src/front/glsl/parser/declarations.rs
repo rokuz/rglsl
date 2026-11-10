@@ -600,6 +600,7 @@ impl ParsingContext<'_> {
                 ty,
                 name,
                 init: None,
+                is_block: true,
                 meta,
             },
         )?;

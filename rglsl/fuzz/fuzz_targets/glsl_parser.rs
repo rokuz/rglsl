@@ -15,6 +15,8 @@ mod fuzz {
     struct OptionsProxy {
         pub stage: ShaderStage,
         pub defines: std::collections::HashMap<String, String>,
+        pub auto_map_bindings: bool,
+        pub auto_map_locations: bool,
     }
 
     impl From<OptionsProxy> for Options {
@@ -28,6 +30,8 @@ mod fuzz {
                         .keys()
                         .map(|k| (k.clone(), proxy.defines.get(&k.clone()).unwrap().clone())),
                 ),
+                auto_map_bindings: proxy.auto_map_bindings,
+                auto_map_locations: proxy.auto_map_locations,
             }
         }
     }

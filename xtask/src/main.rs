@@ -78,12 +78,14 @@ fn run(args: Vec<String>) -> Result<i32> {
             let stage = args.value("--stage")?.context("--stage is required")?;
             let spv = args.value("--spv")?.context("--spv is required")?;
             let out = args.value("--out")?.context("--out is required")?;
+            let auto_map = args.flag("--auto-map");
             let input = args.next_positional().context("input file is required")?;
             args.finish()?;
             Ok(worker::compile_one(
                 Path::new(&input),
                 &stage,
                 &spv,
+                auto_map,
                 Path::new(&out),
             ))
         }

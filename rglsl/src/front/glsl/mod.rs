@@ -58,6 +58,23 @@ pub struct Options {
     /// ```
     /// for each key value pair in the map.
     pub defines: FastHashMap<String, String>,
+    /// Give uniform and buffer blocks, samplers, textures and images that have
+    /// no `binding` layout qualifier a binding, instead of rejecting them.
+    ///
+    /// The assignment is glslang's (`--auto-map-bindings`): a resource that
+    /// code reachable from `main` uses gets the lowest binding in its set that
+    /// no other resource has, in declaration order; explicit bindings are
+    /// reserved first. A resource that is not used gets binding 0.
+    pub auto_map_bindings: bool,
+    /// Give stage inputs and outputs that have no `location` layout qualifier
+    /// a location, instead of rejecting them.
+    ///
+    /// The assignment is glslang's (`--auto-map-locations`): inputs and
+    /// outputs are numbered separately, in declaration order, each variable
+    /// taking as many locations as its type needs. As in glslang, explicit
+    /// locations are not taken into account, so they can overlap automatic
+    /// ones.
+    pub auto_map_locations: bool,
 }
 
 impl From<ShaderStage> for Options {
@@ -65,6 +82,8 @@ impl From<ShaderStage> for Options {
         Options {
             stage,
             defines: FastHashMap::default(),
+            auto_map_bindings: false,
+            auto_map_locations: false,
         }
     }
 }
@@ -180,6 +199,10 @@ pub struct Frontend {
     /// from here on is invariant.
     invariant_all: bool,
 
+    /// Automatic bindings and locations; see [`Options::auto_map_bindings`]
+    /// and [`Options::auto_map_locations`].
+    auto_map: variables::AutoMap,
+
     errors: Vec<Error>,
 }
 
@@ -193,6 +216,7 @@ impl Frontend {
         self.entry_args.clear();
         self.layouter.clear();
         self.invariant_all = false;
+        self.auto_map = variables::AutoMap::default();
     }
 
     /// Parses a shader either outputting a shader [`Module`] or a list of
@@ -205,12 +229,15 @@ impl Frontend {
         source: &str,
     ) -> core::result::Result<Module, ParseErrors> {
         self.reset(options.stage);
+        self.auto_map.bindings = options.auto_map_bindings;
+        self.auto_map.locations = options.auto_map_locations;
 
         let lexer = lex::Lexer::new(source, &options.defines);
         let mut ctx = ParsingContext::new(lexer);
 
         match ctx.parse(self) {
-            Ok(module) => {
+            Ok(mut module) => {
+                self.assign_automatic_bindings(&mut module);
                 if self.errors.is_empty() {
                     Ok(module)
                 } else {
