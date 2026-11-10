@@ -12,6 +12,8 @@ goal, the language rules for linkage and `#include`, and the milestones (M0–M9
 | Path | What |
 |---|---|
 | `rglsl/` | the compiler: IR, GLSL frontend (`src/front/glsl`), validator, SPIR-V backend (`src/back/spv`, the only backend) |
+| `rglsl-ast/` | GLSL AST, parser and printer; shared by the compiler frontend and the fuzzer |
+| `rglsl-fuzz/` | port of GraphicsFuzz's variant generator (Apache-2.0; see `docs/design/fuzzer.md`) |
 | `rglsl-types/` | types shared by the rglsl crates (`ShaderStage`, ...) |
 | `rglsl-cli/` | the `rglsl` command-line tool (to become `glslangValidator`-compatible in M9) |
 | `rglsl-test/`, `rglsl/tests/` | upstream snapshot tests |
