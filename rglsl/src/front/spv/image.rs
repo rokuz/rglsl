@@ -69,29 +69,32 @@ fn extract_image_coordinates(
     base: Handle<crate::Expression>,
     coordinate_ty: Handle<crate::Type>,
     ctx: &mut super::BlockContext,
-) -> (Handle<crate::Expression>, Option<Handle<crate::Expression>>) {
+) -> Result<(Handle<crate::Expression>, Option<Handle<crate::Expression>>), Error> {
     let (given_size, kind) = match ctx.module.types[coordinate_ty].inner {
         crate::TypeInner::Scalar(Scalar { kind, .. }) => (None, kind),
         crate::TypeInner::Vector {
             size,
             scalar: Scalar { kind, .. },
         } => (Some(size), kind),
-        ref other => unreachable!("Unexpected texture coordinate {:?}", other),
+        _ => return Err(Error::InvalidImageCoordinateType(coordinate_ty)),
     };
 
     let required_size = image_dim.required_coordinate_size();
-    let required_ty = required_size.map(|size| {
-        ctx.module
-            .types
-            .get(&crate::Type {
-                name: None,
-                inner: crate::TypeInner::Vector {
-                    size,
-                    scalar: Scalar { kind, width: 4 },
-                },
-            })
-            .expect("Required coordinate type should have been set up by `parse_type_image`!")
-    });
+    let required_ty = required_size
+        .map(|size| {
+            ctx.module
+                .types
+                .get(&crate::Type {
+                    name: None,
+                    inner: crate::TypeInner::Vector {
+                        size,
+                        scalar: Scalar { kind, width: 4 },
+                    },
+                })
+                .map(|ty| (size, ty))
+                .ok_or(Error::InvalidImageCoordinateType(coordinate_ty))
+        })
+        .transpose()?;
     let extra_expr = crate::Expression::AccessIndex {
         base,
         index: required_size.map_or(1, |size| size as u32),
@@ -99,13 +102,13 @@ fn extract_image_coordinates(
 
     let base_span = ctx.expressions.get_span(base);
 
-    match extra_coordinate {
+    Ok(match extra_coordinate {
         ExtraCoordinate::ArrayLayer => {
-            let extracted = match required_size {
+            let extracted = match required_ty {
                 None => ctx
                     .expressions
                     .append(crate::Expression::AccessIndex { base, index: 0 }, base_span),
-                Some(size) => {
+                Some((size, ty)) => {
                     let mut components = Vec::with_capacity(size as usize);
                     for index in 0..size as u32 {
                         let comp = ctx
@@ -113,13 +116,8 @@ fn extract_image_coordinates(
                             .append(crate::Expression::AccessIndex { base, index }, base_span);
                         components.push(comp);
                     }
-                    ctx.expressions.append(
-                        crate::Expression::Compose {
-                            ty: required_ty.unwrap(),
-                            components,
-                        },
-                        base_span,
-                    )
+                    ctx.expressions
+                        .append(crate::Expression::Compose { ty, components }, base_span)
                 }
             };
             let array_index_f32 = ctx.expressions.append(extra_expr, base_span);
@@ -135,7 +133,7 @@ fn extract_image_coordinates(
         }
         ExtraCoordinate::Projection => {
             let projection = ctx.expressions.append(extra_expr, base_span);
-            let divided = match required_size {
+            let divided = match required_ty {
                 None => {
                     let temp = ctx
                         .expressions
@@ -149,7 +147,7 @@ fn extract_image_coordinates(
                         base_span,
                     )
                 }
-                Some(size) => {
+                Some((size, ty)) => {
                     let mut components = Vec::with_capacity(size as usize);
                     for index in 0..size as u32 {
                         let temp = ctx
@@ -165,13 +163,8 @@ fn extract_image_coordinates(
                         );
                         components.push(comp);
                     }
-                    ctx.expressions.append(
-                        crate::Expression::Compose {
-                            ty: required_ty.unwrap(),
-                            components,
-                        },
-                        base_span,
-                    )
+                    ctx.expressions
+                        .append(crate::Expression::Compose { ty, components }, base_span)
                 }
             };
             (divided, None)
@@ -189,19 +182,19 @@ fn extract_image_coordinates(
             };
             (ctx.expressions.append(cut_expr, base_span), None)
         }
-    }
+    })
 }
 
 pub(super) fn patch_comparison_type(
     flags: SamplingFlags,
     var: &mut crate::GlobalVariable,
     arena: &mut UniqueArena<crate::Type>,
-) -> bool {
+) -> Result<bool, Error> {
     if !flags.contains(SamplingFlags::COMPARISON) {
-        return true;
+        return Ok(true);
     }
     if flags == SamplingFlags::all() {
-        return false;
+        return Ok(false);
     }
 
     log::debug!("Flipping comparison for {var:?}");
@@ -218,7 +211,7 @@ pub(super) fn patch_comparison_type(
             arrayed,
         },
         crate::TypeInner::Sampler { .. } => crate::TypeInner::Sampler { comparison: true },
-        ref other => unreachable!("Unexpected type for comparison mutation: {:?}", other),
+        _ => return Err(Error::UnsupportedType(var.ty)),
     };
 
     let name = original_ty.name.clone();
@@ -229,7 +222,7 @@ pub(super) fn patch_comparison_type(
         },
         original_ty_span,
     );
-    true
+    Ok(true)
 }
 
 impl<I: Iterator<Item = u32>> super::Frontend<I> {
@@ -309,7 +302,7 @@ impl<I: Iterator<Item = u32>> super::Frontend<I> {
                 coord_handle,
                 coord_type_handle,
                 ctx,
-            ),
+            )?,
             _ => return Err(Error::InvalidImage(image_ty)),
         };
 
@@ -440,7 +433,7 @@ impl<I: Iterator<Item = u32>> super::Frontend<I> {
                     coord_handle,
                     coord_type_handle,
                     ctx,
-                );
+                )?;
                 (coord, array_index, class.is_depth())
             }
             _ => return Err(Error::InvalidImage(image_ty)),
@@ -723,20 +716,26 @@ impl<I: Iterator<Item = u32>> super::Frontend<I> {
 
         match ctx.expressions[si_lexp.sampler] {
             crate::Expression::GlobalVariable(handle) => {
-                *self.handle_sampling.get_mut(&handle).unwrap() |= sampling_bit;
+                *self.handle_sampling.get_mut(&handle).ok_or_else(|| {
+                    Error::InvalidGlobalVar(ctx.expressions[si_lexp.sampler].clone())
+                })? |= sampling_bit;
             }
 
             crate::Expression::FunctionArgument(i) => {
                 ctx.parameter_sampling[i as usize] |= sampling_bit;
             }
 
-            crate::Expression::Access { base, .. } => match ctx.expressions[base] {
-                crate::Expression::GlobalVariable(handle) => {
-                    *self.handle_sampling.get_mut(&handle).unwrap() |= sampling_bit;
-                }
+            crate::Expression::Access { base, .. } => {
+                match ctx.expressions[base] {
+                    crate::Expression::GlobalVariable(handle) => {
+                        *self.handle_sampling.get_mut(&handle).ok_or_else(|| {
+                            Error::InvalidGlobalVar(ctx.expressions[base].clone())
+                        })? |= sampling_bit;
+                    }
 
-                ref other => return Err(Error::InvalidGlobalVar(other.clone())),
-            },
+                    ref other => return Err(Error::InvalidGlobalVar(other.clone())),
+                }
+            }
 
             ref other => return Err(Error::InvalidGlobalVar(other.clone())),
         }
@@ -760,7 +759,7 @@ impl<I: Iterator<Item = u32>> super::Frontend<I> {
                         coord_handle,
                         coord_type_handle,
                         ctx,
-                    ),
+                    )?,
                     {
                         match dref_id {
                             Some(id) => {

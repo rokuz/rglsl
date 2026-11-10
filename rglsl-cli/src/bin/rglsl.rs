@@ -705,7 +705,12 @@ fn parse_input(input_path: &Path, input: Vec<u8>, params: &Parameters) -> anyhow
                             .and_then(std::ffi::OsStr::to_str)
                             .unwrap_or("glsl");
                         let mut writer = StandardStream::stderr(ColorChoice::Auto);
-                        error.emit_to_writer_with_path(&mut writer, &input, filename);
+                        if let Err(render_error) =
+                            error.emit_to_writer_with_path(&mut writer, &input, filename)
+                        {
+                            eprintln!("{filename}: {error}");
+                            eprintln!("cannot render the diagnostics: {render_error}");
+                        }
                         std::process::exit(1);
                     }),
                 input_text: Some(input),
@@ -721,15 +726,18 @@ fn write_output(
     params: &Parameters,
     output_path: &str,
 ) -> anyhow::Result<()> {
-    let entry_point = params.entry_point.as_deref().map(|name| {
-        let ep_index = module
-            .entry_points
-            .iter()
-            .position(|ep| ep.name == *name)
-            .expect("Unable to find the entry point");
-
-        (module.entry_points[ep_index].stage, name)
-    });
+    let entry_point = params
+        .entry_point
+        .as_deref()
+        .map(|name| {
+            module
+                .entry_points
+                .iter()
+                .find(|ep| ep.name == *name)
+                .map(|ep| (ep.stage, name))
+                .ok_or(CliError("Unable to find the entry point"))
+        })
+        .transpose()?;
 
     match Path::new(&output_path)
         .extension()
@@ -829,15 +837,9 @@ fn bulk_validate(args: &Args, params: &Parameters) -> anyhow::Result<()> {
     }
 
     if !invalid.is_empty() {
-        use std::fmt::Write;
-        let mut formatted = String::new();
-        writeln!(
-            &mut formatted,
-            "Validation failed for the following inputs:"
-        )
-        .unwrap();
+        let mut formatted = String::from("Validation failed for the following inputs:\n");
         for path in invalid {
-            writeln!(&mut formatted, "  {path}").unwrap();
+            formatted.push_str(&format!("  {path}\n"));
         }
         return Err(anyhow!(formatted));
     }

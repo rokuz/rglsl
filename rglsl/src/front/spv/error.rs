@@ -154,23 +154,37 @@ pub enum Error {
 
     #[error("atomic upgrade error: {0}")]
     AtomicUpgradeError(atomic_upgrade::Error),
+    #[error("invalid image coordinate type {0:?}")]
+    InvalidImageCoordinateType(Handle<crate::Type>),
+    #[error(transparent)]
+    Layout(#[from] crate::proc::LayoutError),
+    #[error("internal error: {0}")]
+    InternalError(&'static str),
 }
 
 impl Error {
     #[cfg(feature = "stderr")]
-    pub fn emit_to_writer(&self, writer: &mut impl ErrorWrite, source: &str) {
-        self.emit_to_writer_with_path(writer, source, "spv");
+    pub fn emit_to_writer(
+        &self,
+        writer: &mut impl ErrorWrite,
+        source: &str,
+    ) -> Result<(), codespan_reporting::files::Error> {
+        self.emit_to_writer_with_path(writer, source, "spv")
     }
 
     #[cfg(feature = "stderr")]
-    pub fn emit_to_writer_with_path(&self, writer: &mut impl ErrorWrite, source: &str, path: &str) {
+    pub fn emit_to_writer_with_path(
+        &self,
+        writer: &mut impl ErrorWrite,
+        source: &str,
+        path: &str,
+    ) -> Result<(), codespan_reporting::files::Error> {
         let path = path.to_string();
         let files = SimpleFile::new(path, replace_control_chars(source));
         let config = term::Config::default();
         let diagnostic = Diagnostic::error().with_message(format!("{self:?}"));
 
         crate::error::emit_to_writer(writer, &config, &files, &diagnostic)
-            .expect("cannot write error");
     }
 
     pub fn emit_to_string(&self, source: &str) -> String {
@@ -184,10 +198,12 @@ impl Error {
         let diagnostic = Diagnostic::error().with_message(format!("{self:?}"));
 
         let mut writer = crate::error::DiagnosticBuffer::new();
-        writer
-            .emit_to_self(&config, &files, &diagnostic)
-            .expect("cannot write error");
-        writer.into_string()
+        match writer.emit_to_self(&config, &files, &diagnostic) {
+            Ok(()) => writer.into_string(),
+            Err(render_error) => {
+                format!("error: {self:?}\n  = cannot render the diagnostic: {render_error}\n")
+            }
+        }
     }
 }
 

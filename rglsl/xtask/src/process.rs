@@ -66,7 +66,11 @@ impl DerefMut for EasyCommand {
 pub(crate) fn which(binary_name: &str) -> anyhow::Result<OsString> {
     ::which::which(binary_name)
         .with_context(|| format!("unable to find `{binary_name}` binary"))
-        .map(|buf| buf.file_name().unwrap().to_owned())
+        .and_then(|buf| {
+            buf.file_name().map(ToOwned::to_owned).with_context(|| {
+                format!("`{binary_name}` resolved to {buf:?}, which has no file name")
+            })
+        })
 }
 
 impl Display for EasyCommand {
