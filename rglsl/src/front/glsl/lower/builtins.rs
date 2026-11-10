@@ -13,8 +13,8 @@ use super::types::{scalar, vector_size};
 use super::{internal, unsupported, Result};
 use crate::{
     Barrier, BinaryOperator, DerivativeAxis, DerivativeControl, Expression, Handle, ImageQuery,
-    Literal, MathFunction, PredeclaredType, RelationalFunction, SampleLevel, ShaderStage, Span,
-    Statement, SwizzleComponent, UnaryOperator,
+    Literal, MathFunction, NonUniform, PredeclaredType, RelationalFunction, SampleLevel,
+    ShaderStage, Span, Statement, SwizzleComponent, UnaryOperator,
 };
 
 fn math(name: &str, arguments: usize) -> Option<MathFunction> {
@@ -110,6 +110,7 @@ struct Sampled {
     image: Handle<Expression>,
     sampler: Option<Handle<Expression>>,
     opaque: Opaque,
+    non_uniform: bool,
 }
 
 const fn coordinate_count(opaque: Opaque) -> u32 {
@@ -855,8 +856,28 @@ impl FunctionLowerer<'_, '_> {
     }
 
     fn sampled(&mut self, argument: &AstExpression, at: Span) -> Result<Sampled> {
-        let inner = strip(argument);
         let analysis = self.lw.analysis;
+        let mut inner = strip(argument);
+        let mut non_uniform = false;
+        while let (&ExpressionKind::FunctionCall(ref call), Some(&Callee::NonUniform)) =
+            (&inner.kind, analysis.calls.get(&inner.id))
+        {
+            let Some(constructed) = call.arguments.first().map(strip) else {
+                break;
+            };
+            let is_constructor = matches!(
+                (&constructed.kind, analysis.calls.get(&constructed.id)),
+                (
+                    &ExpressionKind::FunctionCall(_),
+                    Some(&Callee::Constructor(_))
+                ) | (&ExpressionKind::FunctionCall(_), Some(&Callee::NonUniform))
+            );
+            if !is_constructor {
+                break;
+            }
+            inner = constructed;
+            non_uniform = true;
+        }
         if let (&ExpressionKind::FunctionCall(ref call), Some(&Callee::Constructor(ref ty))) =
             (&inner.kind, analysis.calls.get(&inner.id))
         {
@@ -878,6 +899,7 @@ impl FunctionLowerer<'_, '_> {
                     image,
                     sampler: Some(sampler),
                     opaque,
+                    non_uniform,
                 });
             }
         }
@@ -892,6 +914,7 @@ impl FunctionLowerer<'_, '_> {
                     image: self.rvalue(argument)?,
                     sampler: None,
                     opaque,
+                    non_uniform: false,
                 })
             }
             _ => Err(unsupported("this texture argument", at)),
@@ -972,6 +995,7 @@ impl FunctionLowerer<'_, '_> {
             image,
             sampler,
             opaque,
+            non_uniform,
         } = self.sampled(first, at)?;
         if sampler.is_none() && opaque.kind != OpaqueKind::CombinedSampler {
             return Err(internal(at));
@@ -1054,7 +1078,7 @@ impl FunctionLowerer<'_, '_> {
         if matches!(level, SampleLevel::Auto) && self.lw.options.stage != ShaderStage::Fragment {
             level = SampleLevel::Zero;
         }
-        self.add(
+        let sample = self.add(
             Expression::ImageSample {
                 image,
                 sampler,
@@ -1067,7 +1091,11 @@ impl FunctionLowerer<'_, '_> {
                 clamp_to_edge: false,
             },
             at,
-        )
+        )?;
+        if non_uniform {
+            self.mark(sample, NonUniform::SAMPLED_IMAGE);
+        }
+        Ok(sample)
     }
 
     fn next_argument(
@@ -1088,7 +1116,15 @@ impl FunctionLowerer<'_, '_> {
         at: Span,
     ) -> Result<Handle<Expression>> {
         let first = arguments.first().ok_or_else(|| internal(at))?;
-        let Sampled { image, opaque, .. } = self.sampled(first, at)?;
+        let Sampled {
+            image,
+            opaque,
+            non_uniform,
+            ..
+        } = self.sampled(first, at)?;
+        if non_uniform {
+            self.mark(image, NonUniform::VALUE);
+        }
         let coordinate_argument = arguments.get(1).ok_or_else(|| internal(at))?;
         let (coordinate, ty) = self.typed(coordinate_argument)?;
         let size = ty.component_count().ok_or_else(|| internal(at))?;
@@ -1127,7 +1163,15 @@ impl FunctionLowerer<'_, '_> {
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
         let first = arguments.first().ok_or_else(|| internal(at))?;
-        let Sampled { image, opaque, .. } = self.sampled(first, at)?;
+        let Sampled {
+            image,
+            opaque,
+            non_uniform,
+            ..
+        } = self.sampled(first, at)?;
+        if non_uniform {
+            self.mark(image, NonUniform::VALUE);
+        }
         if opaque.dimension == TextureDimension::Cube {
             return Err(unsupported("cube storage images", at));
         }
@@ -1170,7 +1214,15 @@ impl FunctionLowerer<'_, '_> {
         at: Span,
     ) -> Result<Handle<Expression>> {
         let first = arguments.first().ok_or_else(|| internal(at))?;
-        let Sampled { image, opaque, .. } = self.sampled(first, at)?;
+        let Sampled {
+            image,
+            opaque,
+            non_uniform,
+            ..
+        } = self.sampled(first, at)?;
+        if non_uniform {
+            self.mark(image, NonUniform::VALUE);
+        }
         let query = match name {
             "textureQueryLevels" => ImageQuery::NumLevels,
             "textureSamples" => ImageQuery::NumSamples,

@@ -38,6 +38,7 @@ pub struct Qualifiers {
     pub sample: bool,
     pub invariant: bool,
     pub precise: bool,
+    pub nonuniform: bool,
     pub readonly: bool,
     pub writeonly: bool,
     pub coherent: bool,

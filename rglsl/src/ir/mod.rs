@@ -233,7 +233,7 @@ use serde::Serialize;
 
 use crate::arena::{Arena, Handle, Range, UniqueArena};
 use crate::diagnostic_filter::DiagnosticFilterNode;
-use crate::{FastIndexMap, NamedExpressions};
+use crate::{FastIndexMap, NamedExpressions, NonUniformExpressions};
 
 pub use block::Block;
 pub use rglsl_types::{ResourceBinding, ShaderStage};
@@ -2477,6 +2477,18 @@ pub struct FunctionResult {
     pub binding: Option<Binding>,
 }
 
+bitflags::bitflags! {
+    #[cfg_attr(feature = "serialize", derive(Serialize))]
+    #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+    #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+    #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    pub struct NonUniform: u8 {
+        const VALUE = 1 << 0;
+        const ACCESS = 1 << 1;
+        const SAMPLED_IMAGE = 1 << 2;
+    }
+}
+
 /// A function defined in the module.
 #[derive(Debug, Default, Clone)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
@@ -2516,6 +2528,12 @@ pub struct Function {
     pub expressions: Arena<Expression>,
     /// Map of expressions that have associated variable names
     pub named_expressions: NamedExpressions,
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    #[cfg_attr(
+        feature = "serialize",
+        serde(skip_serializing_if = "NonUniformExpressions::is_empty")
+    )]
+    pub non_uniform: NonUniformExpressions,
     /// Block of instructions comprising the body of the function.
     pub body: Block,
     /// The leaf of all diagnostic filter rules tree (stored in [`Module::diagnostic_filters`])

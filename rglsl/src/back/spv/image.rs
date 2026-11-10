@@ -373,6 +373,35 @@ impl BlockContext<'_> {
         })
     }
 
+    pub(super) fn get_non_uniform_handle_id(
+        &mut self,
+        expr_handle: Handle<crate::Expression>,
+        block: &mut Block,
+    ) -> Result<Word, Error> {
+        let id = self.get_handle_id(expr_handle);
+        let shared = matches!(
+            self.ir_function.expressions[expr_handle],
+            crate::Expression::GlobalVariable(_) | crate::Expression::FunctionArgument(_)
+        );
+        if !shared
+            || !self
+                .non_uniform(expr_handle)
+                .contains(crate::NonUniform::VALUE)
+        {
+            return Ok(id);
+        }
+        let type_id = self.get_expression_type_id(&self.fun_info[expr_handle].ty);
+        let copy_id = self.gen_id();
+        block.body.push(Instruction::unary(
+            spirv::Op::CopyObject,
+            type_id,
+            copy_id,
+            id,
+        ));
+        self.writer.decorate_non_uniform(copy_id)?;
+        Ok(copy_id)
+    }
+
     pub(super) fn get_handle_id(&mut self, expr_handle: Handle<crate::Expression>) -> Word {
         let id = match self.ir_function.expressions[expr_handle] {
             crate::Expression::GlobalVariable(handle) => {
@@ -401,8 +430,8 @@ impl BlockContext<'_> {
         &mut self,
         expr_handle: Handle<crate::Expression>,
         block: &mut Block,
-    ) -> Word {
-        let id = self.get_handle_id(expr_handle);
+    ) -> Result<Word, Error> {
+        let id = self.get_non_uniform_handle_id(expr_handle, block)?;
         match *self.fun_info[expr_handle]
             .ty
             .inner_with(&self.ir_module.types)
@@ -419,9 +448,15 @@ impl BlockContext<'_> {
                 block
                     .body
                     .push(Instruction::image_of_sampled(image_type_id, image_id, id));
-                image_id
+                if self
+                    .non_uniform(expr_handle)
+                    .contains(crate::NonUniform::VALUE)
+                {
+                    self.writer.decorate_non_uniform(image_id)?;
+                }
+                Ok(image_id)
             }
-            _ => id,
+            _ => Ok(id),
         }
     }
 
@@ -759,7 +794,7 @@ impl BlockContext<'_> {
         sample: Option<Handle<crate::Expression>>,
         block: &mut Block,
     ) -> Result<Word, Error> {
-        let image_id = self.get_image_id(image, block);
+        let image_id = self.get_image_id(image, block)?;
         let image_type = self.fun_info[image].ty.inner_with(&self.ir_module.types);
         let image_class = match *image_type {
             crate::TypeInner::Image { class, .. }
@@ -832,6 +867,7 @@ impl BlockContext<'_> {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn write_image_sample(
         &mut self,
+        sample_expression: Handle<crate::Expression>,
         result_type_id: Word,
         image: Handle<crate::Expression>,
         sampler: Option<Handle<crate::Expression>>,
@@ -845,8 +881,7 @@ impl BlockContext<'_> {
         block: &mut Block,
     ) -> Result<Word, Error> {
         use super::instructions::SampleLod;
-        // image
-        let handle_id = self.get_handle_id(image);
+        let handle_id = self.get_non_uniform_handle_id(image, block)?;
         let (dim, arrayed, class) = match *self.fun_info[image].ty.inner_with(&self.ir_module.types)
         {
             crate::TypeInner::Image {
@@ -988,7 +1023,7 @@ impl BlockContext<'_> {
 
         let sampled_image_id = match sampler {
             Some(sampler) => {
-                let sampler_id = self.get_handle_id(sampler);
+                let sampler_id = self.get_non_uniform_handle_id(sampler, block)?;
                 let sampled_image_id = self.gen_id();
                 block.body.push(Instruction::sampled_image(
                     sampled_image_type_id,
@@ -996,6 +1031,12 @@ impl BlockContext<'_> {
                     image_id,
                     sampler_id,
                 ));
+                if self
+                    .non_uniform(sample_expression)
+                    .contains(crate::NonUniform::SAMPLED_IMAGE)
+                {
+                    self.writer.decorate_non_uniform(sampled_image_id)?;
+                }
                 sampled_image_id
             }
             None => handle_id,
@@ -1188,7 +1229,7 @@ impl BlockContext<'_> {
     ) -> Result<Word, Error> {
         use crate::{ImageClass as Ic, ImageDimension as Id, ImageQuery as Iq};
 
-        let image_id = self.get_image_id(image, block);
+        let image_id = self.get_image_id(image, block)?;
         let (dim, arrayed, class) = match *self.fun_info[image].ty.inner_with(&self.ir_module.types)
         {
             crate::TypeInner::Image {
@@ -1358,7 +1399,7 @@ impl BlockContext<'_> {
         value: Handle<crate::Expression>,
         block: &mut Block,
     ) -> Result<(), Error> {
-        let image_id = self.get_handle_id(image);
+        let image_id = self.get_non_uniform_handle_id(image, block)?;
         let coordinates = self.write_image_coordinates(coordinate, array_index, block)?;
         let value_id = self.cached[value];
 

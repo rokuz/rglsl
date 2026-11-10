@@ -3,7 +3,9 @@
 ; Generator: rspirv
 ; Bound: 156
 OpCapability Shader
+OpCapability RuntimeDescriptorArray
 OpExtension "SPV_KHR_storage_buffer_storage_class"
+OpExtension "SPV_EXT_descriptor_indexing"
 %1 = OpExtInstImport "GLSL.std.450"
 OpMemoryModel Logical GLSL450
 OpEntryPoint Fragment %28 "main" %23 %26

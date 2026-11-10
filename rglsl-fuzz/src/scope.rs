@@ -337,7 +337,7 @@ impl Finder<'_> {
                         .collect()
                 })
                 .unwrap_or_default(),
-            Some(Callee::Constructor(_) | Callee::Length) | None => Vec::new(),
+            Some(Callee::Constructor(_) | Callee::Length | Callee::NonUniform) | None => Vec::new(),
         };
         (0..count)
             .map(|index| directions.get(index).is_some_and(|d| d.is_output()))

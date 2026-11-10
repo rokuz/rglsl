@@ -60,6 +60,7 @@ impl<I: Iterator<Item = u32>> super::Frontend<I> {
                     &module.overrides,
                 ),
                 named_expressions: crate::NamedExpressions::default(),
+                non_uniform: crate::NonUniformExpressions::default(),
                 body: crate::Block::new(),
                 diagnostic_filter_leaf: None,
             }
@@ -331,6 +332,7 @@ impl<I: Iterator<Item = u32>> super::Frontend<I> {
             local_variables: Arena::new(),
             expressions: Arena::new(),
             named_expressions: crate::NamedExpressions::default(),
+            non_uniform: crate::NonUniformExpressions::default(),
             body: crate::Block::new(),
             diagnostic_filter_leaf: None,
         };

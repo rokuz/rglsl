@@ -178,6 +178,7 @@ impl super::Validator {
                 ref local_variables,
                 ref expressions,
                 ref named_expressions,
+                ref non_uniform,
                 ref body,
                 ref diagnostic_filter_leaf,
             } = function;
@@ -204,6 +205,10 @@ impl super::Validator {
             }
 
             for handle in named_expressions.keys().copied() {
+                Self::validate_expression_handle(handle, expressions)?;
+            }
+
+            for handle in non_uniform.keys().copied() {
                 Self::validate_expression_handle(handle, expressions)?;
             }
 

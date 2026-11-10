@@ -235,6 +235,7 @@ impl Analyzer<'_> {
                 is_lvalue: operand.place == Place::Writable,
                 is_constant: operand.constant,
                 is_specialization: operand.constant && operand.specialization,
+                non_uniform: operand.non_uniform,
                 value: operand.value.clone(),
                 conversion: None,
                 output_conversion: None,
@@ -291,7 +292,10 @@ impl Analyzer<'_> {
                 for expression in expressions {
                     last = self.expression(expression);
                 }
-                Operand::temporary(last.ty)
+                Operand {
+                    non_uniform: last.non_uniform,
+                    ..Operand::temporary(last.ty)
+                }
             }
         }
     }
@@ -367,6 +371,14 @@ impl Analyzer<'_> {
                         .and_then(|block| block.members.get(usize::try_from(*index).ok()?))
                         .is_some_and(|member| member.qualifiers.writeonly)
             }
+            _ => false,
+        }
+    }
+
+    fn is_non_uniform(&self, id: SymbolId) -> bool {
+        match self.symbol(id).map(|symbol| &symbol.kind) {
+            Some(SymbolKind::Variable(variable)) => variable.qualifiers.nonuniform,
+            Some(SymbolKind::BlockMember { instance, .. }) => self.is_non_uniform(*instance),
             _ => false,
         }
     }
@@ -451,6 +463,7 @@ impl Analyzer<'_> {
         }
         let (place, storage) = self.variable_place(id);
         let writeonly = self.is_writeonly(id);
+        let non_uniform = self.is_non_uniform(id);
         Operand {
             ty,
             constant,
@@ -460,6 +473,7 @@ impl Analyzer<'_> {
             storage,
             specialization,
             writeonly,
+            non_uniform,
         }
     }
 
@@ -617,6 +631,7 @@ impl Analyzer<'_> {
             storage: base_operand.storage,
             specialization: false,
             writeonly: base_operand.writeonly,
+            non_uniform: base_operand.non_uniform || index_operand.non_uniform,
         }
     }
 
@@ -690,6 +705,7 @@ impl Analyzer<'_> {
             storage: base.storage,
             specialization: false,
             writeonly: base.writeonly,
+            non_uniform: base.non_uniform,
         })
     }
 
@@ -772,6 +788,7 @@ impl Analyzer<'_> {
             storage: base_operand.storage,
             specialization: false,
             writeonly: base_operand.writeonly || member.qualifiers.writeonly,
+            non_uniform: base_operand.non_uniform,
         }
     }
 
@@ -808,7 +825,10 @@ impl Analyzer<'_> {
             );
             return Operand::error();
         }
-        Operand::temporary(value.ty)
+        Operand {
+            non_uniform: value.non_uniform,
+            ..Operand::temporary(value.ty)
+        }
     }
 
     fn unary(&mut self, span: Span, operator: UnaryOperator, operand: &Expression) -> Operand {
@@ -850,6 +870,7 @@ impl Analyzer<'_> {
         Operand {
             constant: value.constant && !floating_specialization,
             value: folded,
+            non_uniform: value.non_uniform,
             ..Operand::temporary(value.ty)
         }
     }
@@ -938,6 +959,8 @@ impl Analyzer<'_> {
         };
         self.record_conversion(left, &left_operand.ty, &result.left);
         self.record_conversion(right, &right_operand.ty, &result.right);
+        let non_uniform = (left_operand.non_uniform && left_operand.ty == result.left)
+            || (right_operand.non_uniform && right_operand.ty == result.right);
         let floating_specialization = (left_operand.specialization || right_operand.specialization)
             && result.left.base_scalar().is_some_and(Scalar::is_floating);
         let constant = constant && !floating_specialization;
@@ -962,6 +985,7 @@ impl Analyzer<'_> {
         Operand {
             constant,
             value,
+            non_uniform,
             ..Operand::temporary(result.ty)
         }
     }

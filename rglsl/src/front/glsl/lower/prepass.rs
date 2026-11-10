@@ -125,6 +125,12 @@ impl<'a> Lowerer<'a> {
                     ref index,
                 } => {
                     let symbol = self.variable_symbol(base);
+                    let variable_index = analysis
+                        .expression(index.id)
+                        .is_some_and(|info| !info.is_constant || info.is_specialization);
+                    if let (true, Some(symbol)) = (variable_index, symbol) {
+                        self.variably_indexed.insert(symbol);
+                    }
                     let value = analysis
                         .expression(index.id)
                         .and_then(|info| info.value.as_ref())

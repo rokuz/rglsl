@@ -115,6 +115,12 @@ impl FunctionMap {
         core::mem::swap(&mut function.named_expressions, reuse);
         assert!(reuse.is_empty());
 
+        let non_uniform = core::mem::take(&mut function.non_uniform);
+        function.non_uniform = non_uniform
+            .into_iter()
+            .filter_map(|(handle, flags)| Some((self.expressions.try_adjust(handle)?, flags)))
+            .collect();
+
         // Adjust statements.
         self.adjust_body(function, &module_map.functions);
     }

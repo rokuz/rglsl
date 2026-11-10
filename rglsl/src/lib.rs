@@ -122,3 +122,5 @@ pub const ABSTRACT_WIDTH: Bytes = 8;
 
 /// Map of expressions that have associated variable names
 pub(crate) type NamedExpressions = FastIndexMap<Handle<Expression>, String>;
+
+pub type NonUniformExpressions = FastIndexMap<Handle<Expression>, NonUniform>;
