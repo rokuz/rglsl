@@ -3,9 +3,7 @@
 ; Generator: rspirv
 ; Bound: 159
 OpCapability Shader
-OpCapability ShaderNonUniform
 OpExtension "SPV_KHR_storage_buffer_storage_class"
-OpExtension "SPV_EXT_descriptor_indexing"
 %1 = OpExtInstImport "GLSL.std.450"
 OpMemoryModel Logical GLSL450
 OpEntryPoint Fragment %29 "main" %24 %27
@@ -33,9 +31,6 @@ OpMemberDecorate %20 0 Offset 0
 OpDecorate %24 Location 0
 OpDecorate %24 Flat
 OpDecorate %27 Location 0
-OpDecorate %60 NonUniform
-OpDecorate %87 NonUniform
-OpDecorate %133 NonUniform
 %2 = OpTypeVoid
 %3 = OpTypeInt 32 0
 %4 = OpTypeStruct %3

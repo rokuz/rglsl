@@ -1928,3 +1928,28 @@ fn sampler_constructors_at_point_of_use() {
         }",
     );
 }
+
+#[test]
+fn dynamic_indexing_of_opaque_arrays_is_not_non_uniform() {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+        layout(binding = 0) uniform sampler2D many[4];
+        layout(binding = 1) uniform texture2D textures[4];
+        layout(binding = 2) uniform sampler s;
+        layout(binding = 3, rgba8) uniform readonly image2D images[4];
+        layout(location = 0) flat in int index;
+        layout(location = 0) out vec4 o;
+        void main() {
+            o = texture(many[index], vec2(0.5))
+                + texture(sampler2D(textures[index], s), vec2(0.5))
+                + imageLoad(images[index], ivec2(0));
+        }",
+    );
+    assert!(decorated(&module, Decoration::NonUniform).is_empty());
+    assert!(!has_capability(
+        &module,
+        spirv::Capability::ShaderNonUniform
+    ));
+    assert!(module.extensions.is_empty());
+}

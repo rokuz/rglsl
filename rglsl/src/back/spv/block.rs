@@ -890,14 +890,6 @@ impl BlockContext<'_> {
                             None,
                         ));
 
-                        // Subsequent image operations require the image/sampler to be decorated as NonUniform
-                        // if the image/sampler binding array was accessed with a non-uniform index
-                        // see VUID-RuntimeSpirv-NonUniform-06274
-                        if self.fun_info[index].uniformity.non_uniform_result.is_some() {
-                            self.writer
-                                .decorate_non_uniform_binding_array_access(load_id)?;
-                        }
-
                         load_id
                     }
                     ref other => {
@@ -2532,7 +2524,6 @@ impl BlockContext<'_> {
         let mut accumulated_checks = None;
 
         // Is true if we are accessing into a binding array with a non-uniform index.
-        let mut is_non_uniform_binding_array = false;
 
         // The index value if the previously encountered expression was an
         // `AccessIndex` of a matrix which has been decomposed into individual
@@ -2553,9 +2544,6 @@ impl BlockContext<'_> {
 
             expr_handle = match self.ir_function.expressions[expr_handle] {
                 crate::Expression::Access { base, index } => {
-                    is_non_uniform_binding_array |=
-                        self.is_nonuniform_binding_array_access(base, index);
-
                     let index = GuardedIndex::Expression(index);
                     let index_id =
                         self.write_access_chain_index(base, index, &mut accumulated_checks, block)?;
@@ -2613,9 +2601,6 @@ impl BlockContext<'_> {
                             prev_decomposed_matrix_index = Some(index);
                         }
                         _ => {
-                            // `index` is constant, so this can't possibly require
-                            // setting `is_nonuniform_binding_array_access`.
-
                             // Even though the index value is statically known, `base`
                             // may be a runtime-sized array, so we still need to go
                             // through the bounds check process.
@@ -2645,13 +2630,10 @@ impl BlockContext<'_> {
             }
         };
 
-        let (pointer_id, expr_pointer) = if self.temp_list.is_empty() {
-            (
-                root_id,
-                ExpressionPointer::Ready {
-                    pointer_id: root_id,
-                },
-            )
+        let expr_pointer = if self.temp_list.is_empty() {
+            ExpressionPointer::Ready {
+                pointer_id: root_id,
+            }
         } else {
             self.temp_list.reverse();
             let pointer_id = self.gen_id();
@@ -2662,44 +2644,15 @@ impl BlockContext<'_> {
             // caller to generate the branch, the access, the load or store, and
             // the zero value (for loads). Otherwise, we can emit the access
             // ourselves, and just hand them the id of the pointer.
-            let expr_pointer = match accumulated_checks {
+            match accumulated_checks {
                 Some(condition) => ExpressionPointer::Conditional { condition, access },
                 None => {
                     block.body.push(access);
                     ExpressionPointer::Ready { pointer_id }
                 }
-            };
-            (pointer_id, expr_pointer)
+            }
         };
-        // Subsequent load, store and atomic operations require the pointer to be decorated as NonUniform
-        // if the binding array was accessed with a non-uniform index
-        // see VUID-RuntimeSpirv-NonUniform-06274
-        if is_non_uniform_binding_array {
-            self.writer
-                .decorate_non_uniform_binding_array_access(pointer_id)?;
-        }
-
         Ok(expr_pointer)
-    }
-
-    fn is_nonuniform_binding_array_access(
-        &mut self,
-        base: Handle<crate::Expression>,
-        index: Handle<crate::Expression>,
-    ) -> bool {
-        let crate::Expression::GlobalVariable(var_handle) = self.ir_function.expressions[base]
-        else {
-            return false;
-        };
-
-        // The access chain needs to be decorated as NonUniform
-        // see VUID-RuntimeSpirv-NonUniform-06274
-        let gvar = &self.ir_module.global_variables[var_handle];
-        let crate::TypeInner::BindingArray { .. } = self.ir_module.types[gvar.ty].inner else {
-            return false;
-        };
-
-        self.fun_info[index].uniformity.non_uniform_result.is_some()
     }
 
     /// Compute a single index operand to an `OpAccessChain` instruction.

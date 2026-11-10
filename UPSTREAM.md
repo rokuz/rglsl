@@ -124,6 +124,10 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   as `XfbBuffer`, `XfbStride` and `Offset` on the variable, and `StructMember::xfb_offset` (new)
   as `Offset` on a member of an interface block. The validator allows `xfb` only on `Output`
   globals.
+- **No automatic `NonUniform`.** The SPIR-V backend no longer decorates accesses to binding
+  arrays indexed by a non-uniform value with `NonUniform` (and no longer requires
+  `ShaderNonUniform`); glslang emits them only for `nonuniformEXT`.
+  `Writer::decorate_non_uniform_binding_array_access` remains for an explicit request.
 
 ## Cherry-picked upstream commits
 
