@@ -1993,6 +1993,7 @@ impl Writer {
 
         if let Some(ref geometry) = entry_point.geometry {
             self.write_streams(&geometry.streams)?;
+            self.write_passthrough(&geometry.passthrough)?;
         }
 
         let exec_model = match entry_point.stage {

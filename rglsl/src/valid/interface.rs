@@ -194,6 +194,8 @@ pub enum EntryPointError {
     ExpectedTessellationPrimitive,
     #[error("Only tessellation entry points have tessellation modes")]
     UnexpectedTessellationInfo,
+    #[error("Global variable {0:?} is passed through but is not an input of the entry point")]
+    InvalidPassthrough(Handle<crate::GlobalVariable>),
     #[error("Stream {1} of global variable {0:?} is not an output of a geometry entry point")]
     InvalidStream(Handle<crate::GlobalVariable>, u32),
     #[error("mesh shader entry point missing mesh shader attributes")]
@@ -1766,6 +1768,13 @@ impl super::Validator {
                 return Err(EntryPointError::ExpectedGeometryInfo.with_span());
             }
             (crate::ShaderStage::Geometry, &Some(ref geometry)) => {
+                for &handle in &geometry.passthrough {
+                    let valid = module.global_variables[handle].space == crate::AddressSpace::Input
+                        && ep.interface.contains(&handle);
+                    if !valid {
+                        return Err(EntryPointError::InvalidPassthrough(handle).with_span());
+                    }
+                }
                 for &(handle, stream) in &geometry.streams {
                     let valid = module.global_variables[handle].space
                         == crate::AddressSpace::Output
@@ -2026,7 +2035,12 @@ impl super::Validator {
                         .with_span_handle(handle, &module.global_variables));
                 }
                 let patch = crate::proc::is_patch_variable(&module.types, var);
-                let arrayed = crate::proc::is_per_vertex_variable(ep.stage, &module.types, var);
+                let passthrough = ep
+                    .geometry
+                    .as_ref()
+                    .is_some_and(|geometry| geometry.passthrough.contains(&handle));
+                let arrayed = !passthrough
+                    && crate::proc::is_per_vertex_variable(ep.stage, &module.types, var);
                 let ty = if arrayed {
                     match module.types[var.ty].inner {
                         crate::TypeInner::Array {

@@ -596,6 +596,11 @@ impl Validator {
             if capabilities.contains(Capabilities::SUBGROUP_VERTEX_STAGE) {
                 stages |= ShaderStages::VERTEX;
             }
+            if capabilities.contains(Capabilities::SUBGROUP_VERTEX_STAGE) {
+                stages |= ShaderStages::TESS_CONTROL
+                    | ShaderStages::TESS_EVALUATION
+                    | ShaderStages::GEOMETRY;
+            }
             if capabilities.contains(Capabilities::SUBGROUP) {
                 stages |= ShaderStages::FRAGMENT | ShaderStages::COMPUTE_LIKE;
             }

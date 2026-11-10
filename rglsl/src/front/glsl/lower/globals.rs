@@ -729,6 +729,7 @@ impl<'a> Lowerer<'a> {
         self.interface.push(handle);
         self.globals.insert(symbol, GlobalRef::Variable(handle));
         if input {
+            self.passthrough(handle, qualifiers);
             self.inputs.insert(name);
             return Ok(());
         }
@@ -888,6 +889,11 @@ impl<'a> Lowerer<'a> {
                 if has_qualifier(qualifier, |q| matches!(q, SingleTypeQualifier::Precise)) {
                     return Err(unsupported("`precise`", at));
                 }
+            }
+            if storage_of(Some(&structure.qualifier)) == Some(StorageQualifier::In)
+                && layout_names(Some(&structure.qualifier)).contains(&"passthrough")
+            {
+                return self.passthrough_per_vertex(structure, at);
             }
             if instance.is_some() {
                 return match self.analysis.declarations.get(&declaration.id) {
@@ -1302,7 +1308,9 @@ impl<'a> Lowerer<'a> {
         );
         self.interface.push(handle);
         self.globals.insert(symbol, GlobalRef::Variable(handle));
-        if !input {
+        if input {
+            self.passthrough(handle, outer);
+        } else {
             self.output_stream(handle, outer);
         }
         if let Some(buffer) = xfb_buffer {

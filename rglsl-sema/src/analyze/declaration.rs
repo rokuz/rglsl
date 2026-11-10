@@ -741,6 +741,7 @@ impl Analyzer<'_> {
             return;
         }
         self.no_shader_layouts(&qualifiers);
+        self.passthrough_extension(&qualifiers);
         for declarator in &list.declarators {
             self.init_declarator(declarator, &qualifiers, &base);
         }
@@ -1405,6 +1406,7 @@ impl Analyzer<'_> {
             self.non_uniform_storage_check(Some(&structure.qualifier), &qualifiers);
         }
         self.no_shader_layouts(&qualifiers);
+        self.passthrough_extension(&qualifiers);
         let storage = match qualifiers.storage {
             Storage::Uniform => BlockStorage::Uniform,
             Storage::Buffer => BlockStorage::Buffer,

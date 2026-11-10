@@ -138,6 +138,29 @@ impl Writer {
     }
 }
 
+impl Writer {
+    pub(super) fn write_passthrough(
+        &mut self,
+        passthrough: &[Handle<crate::GlobalVariable>],
+    ) -> Result<(), Error> {
+        if passthrough.is_empty() {
+            return Ok(());
+        }
+        self.require_any(
+            "geometry shader passthrough",
+            &[Capability::GeometryShaderPassthroughNV],
+        )?;
+        self.use_extension("SPV_NV_geometry_shader_passthrough");
+        for &handle in passthrough {
+            let id = self.global_variables[handle].var_id;
+            if id != 0 {
+                self.decorate(id, spirv::Decoration::PassthroughNV, &[]);
+            }
+        }
+        Ok(())
+    }
+}
+
 impl BlockContext<'_> {
     pub(super) fn write_primitive_operation(
         &mut self,

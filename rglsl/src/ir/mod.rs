@@ -2895,6 +2895,8 @@ pub struct GeometryInfo {
     pub invocations: u32,
     #[cfg_attr(feature = "deserialize", serde(default))]
     pub streams: Vec<(Handle<GlobalVariable>, u32)>,
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    pub passthrough: Vec<Handle<GlobalVariable>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

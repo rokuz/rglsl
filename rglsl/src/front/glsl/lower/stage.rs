@@ -29,7 +29,10 @@ pub(super) struct StageLayout {
     stream: u32,
     multi_stream: bool,
     streams: Vec<(Handle<GlobalVariable>, u32)>,
+    passthrough: Vec<Handle<GlobalVariable>>,
 }
+
+const PASSTHROUGH_EXTENSION: &str = "GL_NV_geometry_shader_passthrough";
 
 const fn input_primitive(name: &str) -> Option<GeometryInputPrimitive> {
     Some(match name.as_bytes() {
@@ -185,6 +188,128 @@ impl<'a> Lowerer<'a> {
         }
     }
 
+    pub(super) fn passthrough_defaults(&mut self) {
+        if self.options.stage != ShaderStage::Geometry
+            || !self.analysis.extensions.contains(PASSTHROUGH_EXTENSION)
+        {
+            return;
+        }
+        let layout = &mut self.stage_layout;
+        let defaults = match layout.input_primitive {
+            Some(GeometryInputPrimitive::Points) => Some((GeometryOutputPrimitive::Points, 1)),
+            Some(GeometryInputPrimitive::Lines) => Some((GeometryOutputPrimitive::LineStrip, 2)),
+            Some(GeometryInputPrimitive::Triangles) => {
+                Some((GeometryOutputPrimitive::TriangleStrip, 3))
+            }
+            Some(
+                GeometryInputPrimitive::LinesAdjacency | GeometryInputPrimitive::TrianglesAdjacency,
+            )
+            | None => None,
+        };
+        if let Some((output, vertices)) = defaults {
+            layout.output_primitive.get_or_insert(output);
+            layout.vertices.get_or_insert(vertices);
+        }
+    }
+
+    pub(super) fn passthrough(&mut self, handle: Handle<GlobalVariable>, qualifiers: &Qualifiers) {
+        if self.options.stage == ShaderStage::Geometry && qualifiers.has_layout("passthrough") {
+            self.stage_layout.passthrough.push(handle);
+        }
+    }
+
+    pub(super) fn passthrough_per_vertex(
+        &mut self,
+        structure: &rglsl_ast::ast::BlockStructure,
+        at: Span,
+    ) -> Result<()> {
+        let analysis = self.analysis;
+        let block = analysis
+            .symbols
+            .iter()
+            .filter(|symbol| symbol.name == "gl_in")
+            .filter_map(|symbol| match symbol.kind {
+                rglsl_sema::scope::SymbolKind::Variable(ref variable)
+                    if variable.origin == Origin::BuiltIn =>
+                {
+                    match variable.ty.kind {
+                        TypeKind::Block(id) => analysis.types.block(id),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            })
+            .next()
+            .ok_or_else(|| internal(at))?;
+        let mut members = Vec::new();
+        let mut offset = 0_u32;
+        let mut alignment = Alignment::ONE;
+        for declaration in &structure.members {
+            for declarator in &declaration.declarators {
+                let name = &declarator.name.node;
+                let (_, member) = block
+                    .member(name)
+                    .ok_or_else(|| unsupported(format_member(name), at))?;
+                let builtin = per_vertex_builtin(name, false)
+                    .ok_or_else(|| unsupported(format_member(name), at))?;
+                let ty = if super::prepass::CLIP_DISTANCES.contains(&name.as_str()) {
+                    let size = match member.ty.outer_size() {
+                        Some(GlslArraySize::Sized(size)) => size,
+                        _ => 1,
+                    };
+                    let element = GlslType::scalar(Scalar::Float);
+                    self.ir_type(&element.array_of(GlslArraySize::Sized(size)), at)?
+                } else {
+                    self.ir_type(&member.ty, at)?
+                };
+                self.layouter
+                    .update(self.module.to_ctx())
+                    .map_err(|_| internal(at))?;
+                let layout = self.layouter[ty];
+                offset = layout.alignment.round_up(offset);
+                alignment = layout.alignment.max(alignment);
+                members.push(crate::StructMember {
+                    name: Some(name.clone()),
+                    ty,
+                    binding: Some(Binding::BuiltIn(builtin)),
+                    offset,
+                    matrix_layout: None,
+                    xfb_offset: None,
+                    heap: None,
+                });
+                offset = offset.saturating_add(layout.size);
+            }
+        }
+        let ty = self.module.types.insert(
+            crate::Type {
+                name: Some(String::from("gl_PerVertex")),
+                inner: TypeInner::Struct {
+                    members,
+                    span: alignment.round_up(offset),
+                },
+            },
+            Span::UNDEFINED,
+        );
+        let handle = self.module.global_variables.append(
+            GlobalVariable {
+                name: None,
+                space: AddressSpace::Input,
+                binding: None,
+                ty,
+                init: None,
+                memory_decorations: MemoryDecorations::empty(),
+                io: None,
+                xfb: None,
+                input_attachment_index: None,
+                heap_offset: None,
+            },
+            at,
+        );
+        self.interface.push(handle);
+        self.stage_layout.passthrough.push(handle);
+        Ok(())
+    }
+
     pub(super) fn check_stage_layout(&mut self) {
         let layout = &self.stage_layout;
         let missing: &[(bool, &str)] = match self.options.stage {
@@ -249,6 +374,7 @@ impl<'a> Lowerer<'a> {
                         } else {
                             Vec::new()
                         },
+                        passthrough: layout.passthrough.clone(),
                     }),
                     _ => None,
                 };

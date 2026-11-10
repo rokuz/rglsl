@@ -264,6 +264,13 @@ impl super::Validator {
             {
                 Self::validate_global_variable_handle(variable, global_variables)?;
             }
+            for &variable in entry_point
+                .geometry
+                .iter()
+                .flat_map(|geometry| &geometry.passthrough)
+            {
+                Self::validate_global_variable_handle(variable, global_variables)?;
+            }
             if let Some(task_payload) = entry_point.task_payload {
                 Self::validate_global_variable_handle(task_payload, global_variables)?;
             }

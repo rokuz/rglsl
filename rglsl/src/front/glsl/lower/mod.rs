@@ -408,6 +408,7 @@ impl<'a> Lowerer<'a> {
         let result = self.declare_per_vertex();
         self.report(result);
         let layout_errors = self.errors.len();
+        self.passthrough_defaults();
         self.check_stage_layout();
         let missing_layouts: Vec<Error> = self.errors.drain(layout_errors..).collect();
         let order = match self.function_order(&definitions) {
