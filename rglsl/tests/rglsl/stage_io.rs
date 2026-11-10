@@ -932,7 +932,7 @@ fn geometry_info() -> rglsl::GeometryInfo {
 fn arrayed(b: &mut Builder, base: Handle<Type>, length: u32) -> Handle<Type> {
     b.ty(TypeInner::Array {
         base,
-        size: rglsl::ArraySize::Constant(std::num::NonZeroU32::new(length).unwrap()),
+        size: rglsl::ArraySize::Constant(core::num::NonZeroU32::new(length).unwrap()),
         stride: 16,
     })
 }
