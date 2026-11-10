@@ -1855,6 +1855,21 @@ impl BlockContext<'_> {
                             count_id,
                         ))
                     }
+                    Mf::AddCarry | Mf::SubBorrow | Mf::MulExtended => {
+                        let op = match (fun, arg_scalar_kind) {
+                            (Mf::AddCarry, _) => spirv::Op::IAddCarry,
+                            (Mf::SubBorrow, _) => spirv::Op::ISubBorrow,
+                            (_, Some(crate::ScalarKind::Sint)) => spirv::Op::SMulExtended,
+                            _ => spirv::Op::UMulExtended,
+                        };
+                        MathOp::Custom(Instruction::binary(
+                            op,
+                            result_type_id,
+                            id,
+                            arg0_id,
+                            arg1_id,
+                        ))
+                    }
                     Mf::FirstTrailingBit => MathOp::Ext(spirv::GlslStd450Op::FindILsb),
                     Mf::FirstLeadingBit => match arg_scalar_kind {
                         Some(crate::ScalarKind::Uint) => MathOp::Ext(spirv::GlslStd450Op::FindUMsb),

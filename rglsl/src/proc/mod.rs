@@ -325,6 +325,9 @@ impl super::MathFunction {
             Self::InsertBits => 4,
             Self::FirstTrailingBit => 1,
             Self::FirstLeadingBit => 1,
+            Self::AddCarry => 2,
+            Self::SubBorrow => 2,
+            Self::MulExtended => 2,
             // data packing
             Self::Pack4x8snorm => 1,
             Self::Pack4x8unorm => 1,

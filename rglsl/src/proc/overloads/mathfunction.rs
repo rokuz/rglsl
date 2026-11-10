@@ -107,6 +107,8 @@ impl ir::MathFunction {
             Mf::Transpose => transpose().into(),
             Mf::Determinant => regular!(1, MAT2X2|MAT3X3|MAT4X4 of FLOAT -> Scalar).into(),
             Mf::QuantizeToF16 => regular!(1, SCALAR|VECN of F32).into(),
+            Mf::AddCarry | Mf::SubBorrow => regular!(2, SCALAR|VECN of U32 -> Wide).into(),
+            Mf::MulExtended => regular!(2, SCALAR|VECN of U32|I32 -> Wide).into(),
             Mf::ExtractBits => extract_bits().into(),
             Mf::InsertBits => insert_bits().into(),
         };
@@ -167,13 +169,18 @@ fn outer() -> List {
 
 fn refract() -> List {
     list(
-        pairs(vector_sizes(), float_scalars_unimplemented_abstract()).map(|(size, scalar)| {
-            let incident = ir::TypeInner::Vector { size, scalar };
-            let normal = incident.clone();
-            let ratio = ir::TypeInner::Scalar(scalar);
-            let result = incident.clone();
-            rule([incident, normal, ratio], result)
-        }),
+        pairs(vector_sizes(), float_scalars_unimplemented_abstract())
+            .map(|(size, scalar)| {
+                let incident = ir::TypeInner::Vector { size, scalar };
+                let normal = incident.clone();
+                let ratio = ir::TypeInner::Scalar(scalar);
+                let result = incident.clone();
+                rule([incident, normal, ratio], result)
+            })
+            .chain(float_scalars_unimplemented_abstract().map(|scalar| {
+                let scalar = ir::TypeInner::Scalar(scalar);
+                rule([scalar.clone(), scalar.clone(), scalar.clone()], scalar)
+            })),
     )
 }
 

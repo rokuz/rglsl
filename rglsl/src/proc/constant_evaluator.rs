@@ -1165,7 +1165,8 @@ impl<'a> ConstantEvaluator<'a> {
                     && matches!(
                         eval_result,
                         Err(ConstantEvaluatorError::NotImplemented(_)
-                            | ConstantEvaluatorError::InvalidBinaryOpArgs,)
+                            | ConstantEvaluatorError::InvalidBinaryOpArgs
+                            | ConstantEvaluatorError::InvalidMathArg,)
                     )
                 {
                     Ok(self.append_expr(expr, span, ExpressionKind::Runtime))
@@ -1470,6 +1471,100 @@ impl<'a> ConstantEvaluator<'a> {
         }
     }
 
+    fn glsl_math(
+        &mut self,
+        arg: Handle<Expression>,
+        arg1: Option<Handle<Expression>>,
+        arg2: Option<Handle<Expression>>,
+        fun: crate::MathFunction,
+        span: Span,
+    ) -> Option<Result<Handle<Expression>, ConstantEvaluatorError>> {
+        use crate::MathFunction as Mf;
+
+        fn sum_of_products<F: num_traits::Float>(a: &[F], b: &[F]) -> F {
+            a.iter()
+                .zip(b.iter())
+                .fold(F::zero(), |sum, (&left, &right)| sum + left * right)
+        }
+
+        fn normalized<F: num_traits::Float>(e: &[F]) -> ArrayVec<F, { crate::VectorSize::MAX }> {
+            let length = sum_of_products(e, e).sqrt();
+            e.iter().map(|&component| component / length).collect()
+        }
+
+        Some(match fun {
+            Mf::Clamp => component_wise_scalar!(self, span, [arg, arg1?, arg2?], |e, low, high| {
+                let raised = if e < low { low } else { e };
+                Ok([if high < raised { high } else { raised }])
+            }),
+            Mf::Cosh => component_wise_float!(self, span, [arg], |e| { Ok([e.cosh()]) }),
+            Mf::Sinh => component_wise_float!(self, span, [arg], |e| { Ok([e.sinh()]) }),
+            Mf::Acos => component_wise_float!(self, span, [arg], |e| { Ok([e.acos()]) }),
+            Mf::Asin => component_wise_float!(self, span, [arg], |e| { Ok([e.asin()]) }),
+            Mf::Atanh => component_wise_float!(self, span, [arg], |e| { Ok([e.atanh()]) }),
+            Mf::Acosh => component_wise_float(self, span, [arg], |e| match e {
+                Float::Abstract([e]) => Ok(Float::Abstract([libm::acosh(e)])),
+                Float::F32([e]) => Ok(Float::F32([libm::acosh(f64::from(e)) as f32])),
+                Float::F16([e]) => Ok(Float::F16([e.acosh()])),
+            }),
+            Mf::Degrees => component_wise_float!(self, span, [arg], |e| { Ok([e.to_degrees()]) }),
+            Mf::Exp => component_wise_float!(self, span, [arg], |e| { Ok([e.exp()]) }),
+            Mf::Exp2 => component_wise_float!(self, span, [arg], |e| { Ok([e.exp2()]) }),
+            Mf::Log => component_wise_float!(self, span, [arg], |e| { Ok([e.ln()]) }),
+            Mf::Log2 => component_wise_float!(self, span, [arg], |e| { Ok([e.log2()]) }),
+            Mf::Sqrt => component_wise_float!(self, span, [arg], |e| { Ok([e.sqrt()]) }),
+            Mf::Pow => {
+                component_wise_float!(self, span, [arg, arg1?], |e1, e2| { Ok([e1.powf(e2)]) })
+            }
+            Mf::Dot => {
+                let e1 = match self.extract_vec(arg, false) {
+                    Ok(e1) => e1,
+                    Err(error) => return Some(Err(error)),
+                };
+                let e2 = match self.extract_vec(arg1?, false) {
+                    Ok(e2) => e2,
+                    Err(error) => return Some(Err(error)),
+                };
+                if e1.len() != e2.len() {
+                    return None;
+                }
+                let result = match match_literal_vector!(match (e1, e2) => Literal {
+                    Float => |e1, e2| { sum_of_products(e1, e2) },
+                }) {
+                    Ok(result) => result,
+                    Err(_) => return None,
+                };
+                self.register_evaluated_expr(Expression::Literal(result), span)
+            }
+            Mf::Length => {
+                let e1 = match self.extract_vec(arg, true) {
+                    Ok(e1) => e1,
+                    Err(error) => return Some(Err(error)),
+                };
+                let result = match match_literal_vector!(match e1 => Literal {
+                    Float => |e1| { sum_of_products(e1, e1).sqrt() },
+                }) {
+                    Ok(result) => result,
+                    Err(_) => return None,
+                };
+                self.register_evaluated_expr(Expression::Literal(result), span)
+            }
+            Mf::Normalize => {
+                let e1 = match self.extract_vec(arg, true) {
+                    Ok(e1) => e1,
+                    Err(error) => return Some(Err(error)),
+                };
+                match match_literal_vector!(match e1 => LiteralVector {
+                    Float => |e1| { normalized(e1) },
+                }) {
+                    Ok(result) => result.register_as_evaluated_expr(self, span),
+                    Err(_) => return None,
+                }
+            }
+            _ => return None,
+        })
+    }
+
     fn math(
         &mut self,
         arg: Handle<Expression>,
@@ -1490,6 +1585,12 @@ impl<'a> ConstantEvaluator<'a> {
             return Err(ConstantEvaluatorError::InvalidMathArgCount(
                 fun, expected, given,
             ));
+        }
+
+        if matches!(self.behavior, Behavior::Glsl(_)) {
+            if let Some(result) = self.glsl_math(arg, arg1, arg2, fun, span) {
+                return result;
+            }
         }
 
         // NOTE: We try to match the declaration order of `MathFunction` here.
@@ -1972,6 +2073,9 @@ impl<'a> ConstantEvaluator<'a> {
             // unimplemented
             crate::MathFunction::Modf
             | crate::MathFunction::Frexp
+            | crate::MathFunction::AddCarry
+            | crate::MathFunction::SubBorrow
+            | crate::MathFunction::MulExtended
             | crate::MathFunction::Ldexp
             | crate::MathFunction::Outer
             | crate::MathFunction::FaceForward
@@ -2808,6 +2912,7 @@ impl<'a> ConstantEvaluator<'a> {
         right: Handle<Expression>,
         span: Span,
     ) -> Result<Handle<Expression>, ConstantEvaluatorError> {
+        let glsl = matches!(self.behavior, Behavior::Glsl(_));
         let left = self.eval_zero_value_and_splat(left, span)?;
         let right = self.eval_zero_value_and_splat(right, span)?;
 
@@ -2975,6 +3080,20 @@ impl<'a> ConstantEvaluator<'a> {
                             BinaryOperator::Add => a.wrapping_add(b),
                             BinaryOperator::Subtract => a.wrapping_sub(b),
                             BinaryOperator::Multiply => a.wrapping_mul(b),
+                            BinaryOperator::Divide if glsl => {
+                                if b == 0 {
+                                    i32::MAX
+                                } else {
+                                    a.wrapping_div(b)
+                                }
+                            }
+                            BinaryOperator::Modulo if glsl => {
+                                if b == 0 {
+                                    a
+                                } else {
+                                    a.wrapping_rem(b)
+                                }
+                            }
                             BinaryOperator::Divide => a.checked_div(b).ok_or_else(|| {
                                 if b == 0 {
                                     ConstantEvaluatorError::DivisionByZero
@@ -2995,6 +3114,8 @@ impl<'a> ConstantEvaluator<'a> {
                             _ => return Err(ConstantEvaluatorError::InvalidBinaryOpArgs),
                         }),
                         (Literal::I32(a), Literal::U32(b)) => Literal::I32(match op {
+                            BinaryOperator::ShiftLeft if glsl => a.wrapping_shl(b),
+                            BinaryOperator::ShiftRight if glsl => a.wrapping_shr(b),
                             BinaryOperator::ShiftLeft => {
                                 if (if a.is_negative() { !a } else { a }).leading_zeros() <= b {
                                     return Err(ConstantEvaluatorError::Overflow("<<".to_string()));
@@ -3011,6 +3132,10 @@ impl<'a> ConstantEvaluator<'a> {
                             BinaryOperator::Add => a.wrapping_add(b),
                             BinaryOperator::Subtract => a.wrapping_sub(b),
                             BinaryOperator::Multiply => a.wrapping_mul(b),
+                            BinaryOperator::Divide if glsl => a.checked_div(b).unwrap_or(u32::MAX),
+                            BinaryOperator::Modulo if glsl => a.checked_rem(b).unwrap_or(a),
+                            BinaryOperator::ShiftLeft if glsl => a.wrapping_shl(b),
+                            BinaryOperator::ShiftRight if glsl => a.wrapping_shr(b),
                             BinaryOperator::Divide => a
                                 .checked_div(b)
                                 .ok_or(ConstantEvaluatorError::DivisionByZero)?,
@@ -3624,7 +3749,9 @@ impl<'a> ConstantEvaluator<'a> {
         // expressions can only refer to other expressions, and `ZeroValue`
         // expressions are always okay.
         if let Expression::Literal(literal) = expr {
-            crate::valid::check_literal_value(literal)?;
+            if !matches!(self.behavior, Behavior::Glsl(_)) {
+                crate::valid::check_literal_value(literal)?;
+            }
         }
 
         // Ensure vector composes contain the correct number of components. We

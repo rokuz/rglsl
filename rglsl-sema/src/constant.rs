@@ -230,7 +230,9 @@ fn fold_integer(
         BinaryOperator::Add => wrap(left.wrapping_add(right)),
         BinaryOperator::Subtract => wrap(left.wrapping_sub(right)),
         BinaryOperator::Multiply => wrap(left.wrapping_mul(right)),
+        BinaryOperator::Divide if right == 0 => wrap(division_by_zero(scalar)),
         BinaryOperator::Divide => wrap(left.checked_div(right)?),
+        BinaryOperator::Modulo if right == 0 => wrap(left),
         BinaryOperator::Modulo => wrap(left.checked_rem(right)?),
         BinaryOperator::BitAnd => wrap(left & right),
         BinaryOperator::BitOr => wrap(left | right),
@@ -243,13 +245,18 @@ fn fold_integer(
     })
 }
 
+fn division_by_zero(scalar: Scalar) -> i128 {
+    if scalar.is_signed() {
+        (1_i128 << (scalar.bits() - 1)) - 1
+    } else {
+        -1
+    }
+}
+
 fn fold_shift(operator: BinaryOperator, left: Value, right: Value) -> Option<Value> {
     let scalar = left.scalar();
     let value = left.wide()?;
-    let amount = u32::try_from(right.wide()?).ok()?;
-    if amount >= scalar.bits() {
-        return None;
-    }
+    let amount = u32::try_from(right.wide()?.rem_euclid(i128::from(scalar.bits()))).ok()?;
     Some(match operator {
         BinaryOperator::ShiftLeft => Value::integer(scalar, value << amount),
         BinaryOperator::ShiftRight => Value::integer(scalar, value >> amount),
