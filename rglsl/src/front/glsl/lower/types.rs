@@ -327,7 +327,7 @@ impl Lowerer<'_> {
                             u32::try_from(value).ok()
                         }
                         crate::Expression::Literal(crate::Literal::U32(value)) => Some(value),
-                        _ => None,
+                        _ => self.module.to_ctx().get_const_val::<u32, _>(init).ok(),
                     })
                     .filter(|value| *value > 0)
                     .unwrap_or(1)
@@ -434,13 +434,15 @@ impl Lowerer<'_> {
                 _ => &member.ty,
             };
             let lowered = match member_ty.kind {
-                TypeKind::Scalar(GlslScalar::Bool) if !member_ty.is_array() => {
-                    Some(GlslType::scalar(GlslScalar::Uint))
+                TypeKind::Scalar(GlslScalar::Bool) => {
+                    Some(GlslType::scalar(GlslScalar::Uint).with_dimensions(&member_ty.array))
                 }
                 TypeKind::Vector {
                     scalar: GlslScalar::Bool,
                     size,
-                } if !member_ty.is_array() => Some(GlslType::vector(GlslScalar::Uint, size)),
+                } => {
+                    Some(GlslType::vector(GlslScalar::Uint, size).with_dimensions(&member_ty.array))
+                }
                 _ => None,
             };
             let ty = match lowered {

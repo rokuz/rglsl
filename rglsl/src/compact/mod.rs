@@ -249,6 +249,9 @@ pub fn compact(module: &mut crate::Module, keep_unused: KeepUnused) {
         if let Some(init) = module.global_variables[global].init {
             module_tracer.global_expressions_used.insert(init);
         }
+        if let Some(offset) = module.global_variables[global].heap_offset {
+            module_tracer.global_expressions_used.insert(offset);
+        }
     }
 
     // We treat all named constants as used by definition, unless they have an
@@ -366,6 +369,9 @@ pub fn compact(module: &mut crate::Module, keep_unused: KeepUnused) {
         if module_map.globals.used(handle) {
             log::trace!("retaining global variable {:?}", global.name);
             module_map.types.adjust(&mut global.ty);
+            if let Some(ref mut offset) = global.heap_offset {
+                module_map.global_expressions.adjust(offset);
+            }
             if let Some(ref mut init) = global.init {
                 module_map.global_expressions.adjust(init);
             }

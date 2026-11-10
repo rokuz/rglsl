@@ -232,7 +232,12 @@ impl Writer {
     pub(super) fn write_heap_type_local(&mut self, id: Word, local: LocalType) -> bool {
         let instruction = match local {
             LocalType::UntypedPointer { class } => Instruction::type_untyped_pointer(id, class),
-            LocalType::BufferDescriptor { class } => Instruction::type_buffer(id, class),
+            LocalType::BufferDescriptor { class } => {
+                if class == spirv::StorageClass::StorageBuffer && self.lang_version() < (1, 3) {
+                    self.use_extension("SPV_KHR_storage_buffer_storage_class");
+                }
+                Instruction::type_buffer(id, class)
+            }
             _ => return false,
         };
         instruction.to_words(&mut self.logical_layout.declarations);
@@ -928,6 +933,62 @@ impl BlockContext<'_> {
             }
         }
         Ok(id)
+    }
+
+    pub(super) fn write_heap_texel_pointer(
+        &mut self,
+        texel: &crate::Texel,
+        block: &mut Block,
+    ) -> Result<Option<Word>, Error> {
+        let crate::Expression::Load { pointer } = self.ir_function.expressions[texel.image] else {
+            return Ok(None);
+        };
+        let heap = matches!(
+            *self.fun_info[pointer].ty.inner_with(&self.ir_module.types),
+            TypeInner::Pointer {
+                space: crate::AddressSpace::DescriptorHeap(_),
+                ..
+            }
+        );
+        if !heap {
+            return Ok(None);
+        }
+        let chain = match self.write_access_chain(
+            pointer,
+            block,
+            super::block::AccessTypeAdjustment::None,
+        )? {
+            ExpressionPointer::Ready { pointer_id } => pointer_id,
+            ExpressionPointer::Conditional { .. } => {
+                return Err(Error::Validation("a heap image is not addressable"))
+            }
+        };
+        let image_type_id = self.get_expression_type_id(&self.fun_info[texel.image].ty);
+        let pointer_type_id = self.writer.get_localtype_id(LocalType::UntypedPointer {
+            class: spirv::StorageClass::Image,
+        });
+        let coordinates =
+            self.write_image_coordinates(texel.coordinate, texel.array_index, block)?;
+        let sample_id = match texel.sample {
+            Some(sample) => self.cached[sample],
+            None => self.writer.get_constant_scalar(crate::Literal::U32(0)),
+        };
+        let id = self.gen_id();
+        let mut instruction = Instruction::new(Op::UntypedImageTexelPointerEXT);
+        instruction.set_type(pointer_type_id);
+        instruction.set_result(id);
+        instruction.add_operand(image_type_id);
+        instruction.add_operand(chain);
+        instruction.add_operand(coordinates.value_id);
+        instruction.add_operand(sample_id);
+        block.body.push(instruction);
+        if self
+            .non_uniform(texel.image)
+            .contains(crate::NonUniform::VALUE)
+        {
+            self.writer.decorate_non_uniform(id)?;
+        }
+        Ok(Some(id))
     }
 
     pub(super) fn write_buffer_pointer(

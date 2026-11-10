@@ -532,6 +532,12 @@ impl Writer {
                 }
             }
             crate::TypeInner::ValuePointer {
+                space: crate::AddressSpace::DescriptorHeap(_),
+                ..
+            } => LocalType::UntypedPointer {
+                class: spirv::StorageClass::UniformConstant,
+            },
+            crate::TypeInner::ValuePointer {
                 size,
                 scalar,
                 space,

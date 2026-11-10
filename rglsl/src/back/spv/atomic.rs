@@ -183,6 +183,9 @@ impl BlockContext<'_> {
         };
         let scalar: crate::Scalar = format.into();
         self.atomic_scalar(scalar);
+        if let Some(pointer_id) = self.write_heap_texel_pointer(texel, block)? {
+            return Ok((pointer_id, scalar));
+        }
         let image_id = self.image_pointer(texel.image, block)?;
         let scalar_type_id = self.get_numeric_type_id(NumericType::Scalar(scalar));
         let pointer_type_id = self.get_pointer_type_id(scalar_type_id, spirv::StorageClass::Image);

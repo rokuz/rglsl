@@ -248,6 +248,9 @@ pub fn process_overrides<'a>(
     }
 
     for (_, v) in module.global_variables.iter_mut() {
+        if let Some(ref mut offset) = v.heap_offset {
+            *offset = adjusted_global_expressions[*offset];
+        }
         if let Some(ref mut init) = v.init {
             *init = adjusted_global_expressions[*init];
         }

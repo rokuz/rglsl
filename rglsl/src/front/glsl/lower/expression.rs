@@ -974,9 +974,85 @@ impl<'a> FunctionLowerer<'_, 'a> {
             }
         }
         if place.boolean {
-            value = self.as_kind(value, crate::Scalar::BOOL, at)?;
+            value = match self.boolean_array(place) {
+                Some(ty) => self.convert_booleans(value, ty, true, at)?,
+                None => self.as_kind(value, crate::Scalar::BOOL, at)?,
+            };
         }
         Ok(value)
+    }
+
+    fn boolean_array(&self, place: &Place) -> Option<Handle<crate::Type>> {
+        if place.swizzle.is_some() {
+            return None;
+        }
+        let laid = self.buffer_pointee(place.pointer)?;
+        let ty = self.lw.relayout.get(&laid).copied().unwrap_or(laid);
+        matches!(
+            self.lw.module.types[ty].inner,
+            crate::TypeInner::Array { .. }
+        )
+        .then_some(ty)
+    }
+
+    fn convert_booleans(
+        &mut self,
+        value: Handle<Expression>,
+        integer: Handle<crate::Type>,
+        to_bool: bool,
+        at: Span,
+    ) -> Result<Handle<Expression>> {
+        match self.lw.module.types[integer].inner {
+            crate::TypeInner::Array {
+                base,
+                size: crate::ArraySize::Constant(count),
+                ..
+            } => {
+                let target = if to_bool {
+                    self.boolean_twin(integer, at)?
+                } else {
+                    integer
+                };
+                let mut components = Vec::new();
+                for index in 0..count.get() {
+                    let part = self.add(Expression::AccessIndex { base: value, index }, at)?;
+                    components.push(self.convert_booleans(part, base, to_bool, at)?);
+                }
+                self.add(
+                    Expression::Compose {
+                        ty: target,
+                        components,
+                    },
+                    at,
+                )
+            }
+            crate::TypeInner::Array { .. } => Err(internal(at)),
+            _ if to_bool => self.as_kind(value, crate::Scalar::BOOL, at),
+            _ => self.as_kind(value, crate::Scalar::U32, at),
+        }
+    }
+
+    fn boolean_twin(&mut self, ty: Handle<crate::Type>, at: Span) -> Result<Handle<crate::Type>> {
+        let scalar = crate::Scalar::BOOL;
+        let inner = match self.lw.module.types[ty].inner {
+            crate::TypeInner::Scalar(_) => crate::TypeInner::Scalar(scalar),
+            crate::TypeInner::Vector { size, .. } => crate::TypeInner::Vector { size, scalar },
+            crate::TypeInner::Array { base, size, .. } => {
+                let element = self.boolean_twin(base, at)?;
+                self.lw
+                    .layouter
+                    .update(self.lw.module.to_ctx())
+                    .map_err(|_| internal(at))?;
+                let stride = self.lw.layouter[element].to_stride();
+                crate::TypeInner::Array {
+                    base: element,
+                    size,
+                    stride,
+                }
+            }
+            _ => return Err(internal(at)),
+        };
+        Ok(self.lw.insert_type(inner))
     }
 
     pub(super) fn store(
@@ -986,7 +1062,10 @@ impl<'a> FunctionLowerer<'_, 'a> {
         at: Span,
     ) -> Result<()> {
         let mut value = if place.boolean {
-            self.as_kind(value, crate::Scalar::U32, at)?
+            match self.boolean_array(place) {
+                Some(ty) => self.convert_booleans(value, ty, false, at)?,
+                None => self.as_kind(value, crate::Scalar::U32, at)?,
+            }
         } else {
             value
         };
