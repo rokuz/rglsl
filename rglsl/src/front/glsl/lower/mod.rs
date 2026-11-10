@@ -209,6 +209,7 @@ pub(super) struct Lowerer<'a> {
     pub invariant: Vec<(String, Span)>,
     pub unbound: Vec<(Handle<GlobalVariable>, Option<u32>)>,
     pub next_location: [u32; 2],
+    pub explicit_locations: [Vec<(u32, u32)>; 2],
     pub initializers: Vec<Initialization<'a>>,
     pub uniform_defaults: BlockDefaults,
     pub buffer_defaults: BlockDefaults,
@@ -254,6 +255,7 @@ impl<'a> Lowerer<'a> {
             invariant: Vec::new(),
             unbound: Vec::new(),
             next_location: [0; 2],
+            explicit_locations: [Vec::new(), Vec::new()],
             initializers: Vec::new(),
             uniform_defaults: BlockDefaults::default(),
             buffer_defaults: BlockDefaults::default(),
@@ -306,6 +308,9 @@ impl<'a> Lowerer<'a> {
             }
         }
         self.prepass(&definitions);
+        if self.options.auto_map_locations {
+            self.reserve_explicit_locations();
+        }
         for declaration in &unit.external_declarations {
             if let ExternalDeclaration::Declaration(ref declaration) = *declaration {
                 let result = self.global_declaration(declaration);

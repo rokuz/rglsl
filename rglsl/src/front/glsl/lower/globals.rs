@@ -1,13 +1,14 @@
 use alloc::{format, string::String, vec, vec::Vec};
 
 use rglsl_ast::ast::{
-    BlockInstance, BlockStructure, Declaration, DeclarationKind, InitDeclarator,
-    InitDeclaratorList, Initializer, InterpolationQualifier, Node, SingleTypeQualifier, Spanned,
-    StorageQualifier, TypeQualifier,
+    BlockInstance, BlockStructure, Declaration, DeclarationKind, ExternalDeclaration,
+    InitDeclarator, InitDeclaratorList, Initializer, InterpolationQualifier, Node,
+    SingleTypeQualifier, Spanned, StorageQualifier, TypeQualifier,
 };
-use rglsl_sema::scope::{Origin, Qualifiers, Storage, SymbolKind};
+use rglsl_sema::scope::{Origin, Qualifiers, Storage, SymbolKind, Variable};
 use rglsl_sema::types::{
-    ArraySize as GlslArraySize, BlockId, BlockStorage, OpaqueKind, Type as GlslType, TypeKind,
+    ArraySize as GlslArraySize, BlockId, BlockStorage, OpaqueKind, Scalar, Type as GlslType,
+    TypeKind,
 };
 use rglsl_sema::SymbolId;
 
@@ -165,6 +166,127 @@ fn builtin_of(name: &str) -> Option<BuiltIn> {
 }
 
 impl<'a> Lowerer<'a> {
+    pub(super) fn reserve_explicit_locations(&mut self) {
+        let analysis = self.analysis;
+        for declaration in &self.unit.external_declarations {
+            let ExternalDeclaration::Declaration(ref declaration) = *declaration else {
+                continue;
+            };
+            let symbols: Vec<SymbolId> = match declaration.kind {
+                DeclarationKind::InitDeclaratorList(ref list) => list
+                    .declarators
+                    .iter()
+                    .filter_map(|declarator| analysis.declarations.get(&declarator.id).copied())
+                    .collect(),
+                DeclarationKind::Block { .. } => analysis
+                    .declarations
+                    .get(&declaration.id)
+                    .copied()
+                    .into_iter()
+                    .collect(),
+                _ => Vec::new(),
+            };
+            for symbol in symbols {
+                let Some(variable) = self.variable(symbol) else {
+                    continue;
+                };
+                if variable.origin == Origin::BuiltIn {
+                    continue;
+                }
+                let slot = match variable.qualifiers.storage {
+                    Storage::In => 0,
+                    Storage::Out => 1,
+                    _ => continue,
+                };
+                let ranges = self.explicit_ranges(variable);
+                self.explicit_locations[slot].extend(ranges);
+            }
+        }
+    }
+
+    fn explicit_ranges(&self, variable: &Variable) -> Vec<(u32, u32)> {
+        let location_of = |qualifiers: &Qualifiers| {
+            qualifiers
+                .layout_entry("location")
+                .and_then(|entry| entry.value)
+                .and_then(|value| u32::try_from(value).ok())
+        };
+        let mut ranges = Vec::new();
+        let mut push = |start: u32, count: u32| ranges.push((start, start.saturating_add(count)));
+        let block = match variable.ty.kind {
+            TypeKind::Block(id) => self.analysis.types.block(id),
+            _ => None,
+        };
+        match block {
+            Some(block) => {
+                let mut next = location_of(&block.qualifiers);
+                for member in &block.members {
+                    let count = self.glsl_location_count(&member.ty);
+                    let start = location_of(&member.qualifiers).or(next);
+                    if let Some(start) = start {
+                        push(start, count);
+                    }
+                    next = start.map(|start| start.saturating_add(count));
+                }
+            }
+            None => {
+                if let Some(start) = location_of(&variable.qualifiers) {
+                    push(start, self.glsl_location_count(&variable.ty));
+                }
+            }
+        }
+        ranges
+    }
+
+    fn glsl_location_count(&self, ty: &GlslType) -> u32 {
+        let wide = |scalar: Scalar, size: u8| u32::from(scalar == Scalar::Double && size > 2) + 1;
+        let members = |members: &[rglsl_sema::types::Member]| {
+            members
+                .iter()
+                .map(|member| self.glsl_location_count(&member.ty))
+                .fold(0, u32::saturating_add)
+        };
+        let element = match ty.kind {
+            TypeKind::Vector { scalar, size } => wide(scalar, size),
+            TypeKind::Matrix {
+                scalar,
+                columns,
+                rows,
+            } => u32::from(columns).saturating_mul(wide(scalar, rows)),
+            TypeKind::Struct(id) => self
+                .analysis
+                .types
+                .structure(id)
+                .map_or(1, |structure| members(&structure.members)),
+            TypeKind::Block(id) => self
+                .analysis
+                .types
+                .block(id)
+                .map_or(1, |block| members(&block.members)),
+            _ => 1,
+        };
+        ty.array
+            .iter()
+            .map(|size| match *size {
+                GlslArraySize::Sized(length) => length,
+                GlslArraySize::Specialized | GlslArraySize::Unsized => 1,
+            })
+            .fold(element, u32::saturating_mul)
+    }
+
+    fn auto_location(&mut self, slot: usize, count: u32) -> u32 {
+        let mut start = self.next_location[slot];
+        let end = |start: u32| start.saturating_add(count.max(1));
+        while let Some(&(_, taken)) = self.explicit_locations[slot]
+            .iter()
+            .find(|&&(from, to)| from < end(start) && start < to)
+        {
+            start = taken;
+        }
+        self.next_location[slot] = start.saturating_add(count);
+        start
+    }
+
     pub(super) fn global_declaration(&mut self, declaration: &'a Declaration) -> Result<()> {
         let qualifiers: Vec<&Spanned<TypeQualifier>> = match declaration.kind {
             DeclarationKind::InitDeclaratorList(ref list) => list.ty.qualifier.iter().collect(),
@@ -460,10 +582,7 @@ impl<'a> Lowerer<'a> {
             Some(location) => u32::try_from(location).map_err(|_| internal(at))?,
             None if self.options.auto_map_locations => {
                 let count = location_count(&self.module.types, ty);
-                let slot = &mut self.next_location[usize::from(!input)];
-                let location = *slot;
-                *slot = slot.saturating_add(count);
-                location
+                self.auto_location(usize::from(!input), count)
             }
             None => {
                 return Err(semantic(
@@ -939,19 +1058,13 @@ impl<'a> Lowerer<'a> {
                 next = Some(location.saturating_add(location_count(&self.module.types, member.ty)));
             }
             if self.options.auto_map_locations {
-                let counter = &mut self.next_location[slot];
-                *counter = counter.saturating_add(total);
+                self.auto_location(slot, total);
             }
             None
         } else {
             let start = match block_location {
                 Some(location) => location,
-                None if self.options.auto_map_locations => {
-                    let counter = &mut self.next_location[slot];
-                    let location = *counter;
-                    *counter = counter.saturating_add(total);
-                    location
-                }
+                None if self.options.auto_map_locations => self.auto_location(slot, total),
                 None => {
                     return Err(semantic(
                         "SPIR-V requires a location for user inputs and outputs",
@@ -1232,7 +1345,7 @@ impl<'a> Lowerer<'a> {
                 .ok_or_else(|| {
                     unsupported(format!("`{name}` without a size or a constant index"), at)
                 })?;
-                let element = GlslType::scalar(rglsl_sema::types::Scalar::Float);
+                let element = GlslType::scalar(Scalar::Float);
                 self.ir_type(&element.array_of(GlslArraySize::Sized(size)), at)?
             } else {
                 self.ir_type(&member.ty, at)?
@@ -1420,7 +1533,7 @@ impl<'a> Lowerer<'a> {
                 .ok_or_else(|| {
                     unsupported(format!("`{name}` without a size or a constant index"), at)
                 })?;
-            let element = GlslType::scalar(rglsl_sema::types::Scalar::Float);
+            let element = GlslType::scalar(Scalar::Float);
             let sized = element.array_of(GlslArraySize::Sized(size));
             self.ir_type(&sized, at)?
         } else {

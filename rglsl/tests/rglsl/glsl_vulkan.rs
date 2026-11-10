@@ -523,11 +523,8 @@ fn automatic_bindings_match_glslang() {
     assert!(error.contains("binding"), "{error}");
 }
 
-/// Automatic locations follow glslang's `--auto-map-locations`: one counter
-/// for inputs and one for outputs, advanced by the size of each type, and
-/// explicit locations are ignored.
 #[test]
-fn automatic_locations_match_glslang() {
+fn automatic_locations_skip_explicit_ones() {
     let source = "#version 450
         in vec4 i0;
         in mat3 i1;
@@ -547,9 +544,10 @@ fn automatic_locations_match_glslang() {
         auto_map_locations: true,
         ..glsl::Options::from(ShaderStage::Fragment)
     };
-    // Not validated: glslang lets the explicit locations overlap the
-    // automatic ones here, which is not a valid interface.
     let module = glsl::Frontend::default().parse(&options, source).unwrap();
+    Validator::new(ValidationFlags::all(), Capabilities::all())
+        .validate(&module)
+        .unwrap();
 
     let locations = |space| -> Vec<(&str, u32)> {
         let mut locations: Vec<_> = module.entry_points[0]
@@ -567,22 +565,20 @@ fn automatic_locations_match_glslang() {
         locations.sort_unstable();
         locations
     };
-    // What `glslang -V --auto-map-locations` assigns to this shader: `i1`
-    // is a matrix and takes three locations, `i3` an array that takes two.
     assert_eq!(
         locations(rglsl::AddressSpace::Input),
         [
             ("i0", 0),
-            ("i1", 1),
-            ("i2unused", 4),
-            ("i3", 5),
-            ("i5", 7),
+            ("i1", 2),
+            ("i2unused", 5),
+            ("i3", 6),
+            ("i5", 8),
             ("iexp", 1),
         ]
     );
     assert_eq!(
         locations(rglsl::AddressSpace::Output),
-        [("o0", 0), ("o1", 1), ("oexp", 0)]
+        [("o0", 1), ("o1", 2), ("oexp", 0)]
     );
 
     // Without the option a missing location is an error, as in glslang.
