@@ -459,3 +459,42 @@ fn stray_semicolons_and_empty_sources() {
         .external_declarations
         .is_empty());
 }
+
+#[test]
+fn heap_blocks_and_inline_reference_members() {
+    let source = "layout(buffer_type) buffer Data { uint value; };\n\
+                  layout(heap_offset = 64) resourceheap Heap {\n\
+                  Data data;\n\
+                  layout(buffer_reference, std430) buffer { uint inner; } reference;\n\
+                  } heap;\n";
+    round_trip(source);
+    let parsed = unit(source);
+    let blocks: Vec<_> = parsed
+        .external_declarations
+        .iter()
+        .filter_map(|external| match external {
+            ExternalDeclaration::Declaration(declaration) => match &declaration.kind {
+                DeclarationKind::Block { structure, .. } => Some(structure),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect();
+    assert_eq!(blocks.len(), 2);
+    let heap = blocks[1];
+    assert!(heap
+        .qualifier
+        .qualifiers
+        .iter()
+        .any(|single| single.node == SingleTypeQualifier::Storage(StorageQualifier::ResourceHeap)));
+    assert!(matches!(
+        heap.members[0].ty.node.specifier.node.non_array,
+        TypeSpecifierNonArray::TypeName(ref name) if name == "Data"
+    ));
+    assert!(matches!(
+        heap.members[1].ty.node.specifier.node.non_array,
+        TypeSpecifierNonArray::InlineBlock(ref members) if members.len() == 1
+    ));
+    assert!(is_keyword("resourceheap"));
+    assert!(is_keyword("samplerheap"));
+}

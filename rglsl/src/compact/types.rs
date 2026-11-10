@@ -45,7 +45,7 @@ impl TypeTracer<'_> {
                     crate::ArraySize::Constant(_) | crate::ArraySize::Dynamic => {}
                 }
             }
-            Ti::Pointer { base, space: _ } => {
+            Ti::Pointer { base, space: _ } | Ti::BufferDescriptor { base, space: _ } => {
                 self.types_used.insert(base);
             }
             Ti::Struct {
@@ -79,6 +79,10 @@ impl ModuleMap {
 
             // Types that do contain handles.
             Ti::Pointer {
+                ref mut base,
+                space: _,
+            }
+            | Ti::BufferDescriptor {
                 ref mut base,
                 space: _,
             } => adjust(base),

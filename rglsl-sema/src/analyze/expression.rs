@@ -314,10 +314,14 @@ impl Analyzer<'_> {
                     Some(BlockStorage::Buffer) => Storage::Buffer,
                     Some(BlockStorage::In) => Storage::In,
                     Some(BlockStorage::Out) => Storage::Out,
+                    Some(BlockStorage::ResourceHeap) => Storage::ResourceHeap,
+                    Some(BlockStorage::SamplerHeap) => Storage::SamplerHeap,
                     None => qualifiers.storage,
                 };
                 let place = if qualifiers.constant {
                     Place::ReadOnly("it is `const`")
+                } else if matches!(storage, Storage::ResourceHeap | Storage::SamplerHeap) {
+                    Place::ReadOnly("it is a descriptor heap")
                 } else if storage == Storage::Uniform {
                     Place::ReadOnly("it is a uniform")
                 } else if storage == Storage::In && variable.origin != Origin::Parameter {
@@ -348,9 +352,10 @@ impl Analyzer<'_> {
                     (place, storage)
                 }
             }
-            SymbolKind::Struct(_) | SymbolKind::Reference(_) | SymbolKind::BlockName => {
-                (Place::Temporary, Storage::None)
-            }
+            SymbolKind::Struct(_)
+            | SymbolKind::Reference(_)
+            | SymbolKind::BufferType(_)
+            | SymbolKind::BlockName => (Place::Temporary, Storage::None),
         }
     }
 
@@ -798,19 +803,35 @@ impl Analyzer<'_> {
             _ => None,
         };
         let is_block = matches!(base_operand.ty.kind, TypeKind::Block(_));
-        let place =
-            if is_block && member.qualifiers.readonly && base_operand.place == Place::Writable {
-                Place::ReadOnly("it is read-only")
-            } else {
-                base_operand.place
-            };
+        let buffer_type = match base_operand.ty.kind {
+            TypeKind::Block(id) => self
+                .types
+                .block(id)
+                .filter(|block| block.buffer_type)
+                .map(|block| block.storage),
+            _ => None,
+        };
+        let (place, storage) = match buffer_type {
+            Some(BlockStorage::Uniform) => (Place::ReadOnly("it is a uniform"), Storage::Uniform),
+            Some(_) if member.qualifiers.readonly => {
+                (Place::ReadOnly("it is read-only"), Storage::Buffer)
+            }
+            Some(_) => (Place::Writable, Storage::Buffer),
+            None if is_block
+                && member.qualifiers.readonly
+                && base_operand.place == Place::Writable =>
+            {
+                (Place::ReadOnly("it is read-only"), base_operand.storage)
+            }
+            None => (base_operand.place, base_operand.storage),
+        };
         Operand {
             ty: member.ty.clone(),
             constant: base_operand.constant,
             value,
             place,
             root: base_operand.root,
-            storage: base_operand.storage,
+            storage,
             specialization: false,
             writeonly: base_operand.writeonly || member.qualifiers.writeonly,
             non_uniform: base_operand.non_uniform,

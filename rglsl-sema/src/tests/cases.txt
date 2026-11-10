@@ -4296,3 +4296,94 @@ void main() {
     abortEXT(data.i);
     abortEXT(("x"));
 }
+### descriptor heap arrays of buffers and images | comp 460 | ok
+#extension GL_EXT_descriptor_heap : require
+layout(local_size_x = 1) in;
+layout(descriptor_heap) uniform U { uint value; } ubo[];
+layout(descriptor_heap, descriptor_stride = 256) buffer O { uint value; } ssbo[];
+layout(descriptor_heap, rgba32f) readonly uniform image2D images[];
+void main() { ssbo[1].value = ubo[2].value + uint(imageLoad(images[0], ivec2(0)).x); }
+### descriptor_heap needs its extension | comp 460 | 3:ExtensionRequired
+layout(local_size_x = 1) in;
+layout(descriptor_heap) uniform texture2D textures[];
+void main() {}
+### descriptor heap views must be arrays | comp 460 | 4:InvalidQualifier
+#extension GL_EXT_descriptor_heap : require
+layout(local_size_x = 1) in;
+layout(descriptor_heap) uniform texture2D t;
+void main() {}
+### descriptor heaps hold no combined samplers | frag 460 | 3:InvalidQualifier
+#extension GL_EXT_descriptor_heap : require
+layout(descriptor_heap) uniform sampler2D s[];
+void main() {}
+### descriptor_stride needs descriptor_heap and a power of two | comp 460 | 4:InvalidQualifier, 5:InvalidQualifier
+#extension GL_EXT_descriptor_heap : require
+layout(local_size_x = 1) in;
+layout(descriptor_stride = 2) uniform U { uint a; } u[];
+layout(descriptor_heap, descriptor_stride = 3) uniform V { uint a; } v[];
+void main() {}
+### structured descriptor heaps | comp 460 | ok
+#extension GL_EXT_descriptor_heap : require
+#extension GL_EXT_structured_descriptor_heap : require
+#extension GL_EXT_buffer_reference : require
+layout(local_size_x = 1) in;
+layout(constant_id = 0) const uint base = 64;
+layout(buffer_type, std430) buffer Data { uint value; uint values[]; };
+struct Material { texture2D tex; Data data; };
+layout(heap_offset = base) resourceheap Heap {
+    layout(offset = 16) uint count;
+    layout(descriptor_size = 64) Data data;
+    layout(buffer_reference, std430) buffer { uint inline_value; } reference;
+    Material materials[];
+} heap;
+layout(heap_offset = 128) samplerheap Samplers { sampler samplers[2]; } samplers;
+void main() {
+    heap.data.value = heap.count + heap.reference.inline_value + heap.materials[1].data.values[0];
+}
+### resourceheap needs both heap extensions | comp 460 | 3:ExtensionRequired
+#extension GL_EXT_descriptor_heap : require
+resourceheap Heap { uint count; } heap;
+void main() {}
+### descriptor heaps are read only | comp 460 | 9:NotAnLValue, 10:NotAnLValue, 11:NotAnLValue
+#extension GL_EXT_descriptor_heap : require
+#extension GL_EXT_structured_descriptor_heap : require
+layout(buffer_type) buffer Data { uint value; };
+layout(buffer_type) readonly buffer ReadOnlyData { uint value; };
+resourceheap Heap { uint count; Data data; ReadOnlyData readOnly; } heap;
+void main() {
+    heap.data.value = 1;
+    heap.count = 1;
+    heap.data = heap.data;
+    heap.readOnly.value = 1;
+}
+### buffer_type blocks have no instance | comp 460 | 4:InvalidQualifier
+#extension GL_EXT_descriptor_heap : require
+#extension GL_EXT_structured_descriptor_heap : require
+layout(buffer_type) buffer Data { uint value; } data;
+void main() {}
+### heap_offset must be a literal or read-only value | comp 460 | 6:InvalidQualifier
+#extension GL_EXT_descriptor_heap : require
+#extension GL_EXT_structured_descriptor_heap : require
+layout(local_size_x = 1) in;
+uint offset = 4u;
+layout(heap_offset = offset) resourceheap Heap { uint count; } heap;
+void main() {}
+### only the last heap member can be unsized | comp 460 | 5:InvalidStructMember
+#extension GL_EXT_descriptor_heap : require
+#extension GL_EXT_structured_descriptor_heap : require
+resourceheap Heap {
+    texture2D textures[];
+    uint count;
+} heap;
+void main() {}
+### inline blocks in heaps must be references | comp 460 | 5:InvalidQualifier
+#extension GL_EXT_descriptor_heap : require
+#extension GL_EXT_structured_descriptor_heap : require
+resourceheap Heap {
+    layout(std430) buffer { uint value; } inline_block;
+} heap;
+void main() {}
+### boolean arrays in blocks | comp | ok
+layout(local_size_x = 1) in;
+layout(binding = 0, std430) buffer B { bool a[3]; bvec2 v[2][2]; bool r[]; } b;
+void main() { b.a[1] = true; b.r[0] = b.v[1][0].y; bool copy[3] = b.a; b.a = copy; }

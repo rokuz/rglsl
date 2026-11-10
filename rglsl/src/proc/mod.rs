@@ -239,7 +239,7 @@ impl super::AddressSpace {
             crate::AddressSpace::Uniform => Sa::LOAD,
             crate::AddressSpace::Storage { access }
             | crate::AddressSpace::PhysicalStorage { access, .. } => access,
-            crate::AddressSpace::Handle => Sa::LOAD,
+            crate::AddressSpace::Handle | crate::AddressSpace::DescriptorHeap(_) => Sa::LOAD,
             crate::AddressSpace::Immediate => Sa::LOAD,
             // TaskPayload isn't always writable, but this is checked for elsewhere,
             // when not using multiple payloads and matching the entry payload is checked.

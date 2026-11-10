@@ -102,6 +102,7 @@ impl FunctionLowerer<'_, '_> {
             offset: 0,
             matrix_layout: None,
             xfb_offset: None,
+            heap: None,
         });
         let mut offset = length;
         let mut alignment = Alignment::ONE;
@@ -138,6 +139,7 @@ impl FunctionLowerer<'_, '_> {
                 offset,
                 matrix_layout: info.matrix_layout,
                 xfb_offset: None,
+                heap: None,
             });
             offset = offset.checked_add(info.span).ok_or_else(|| internal(at))?;
             values.push(value);

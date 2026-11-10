@@ -147,6 +147,16 @@ impl FunctionLowerer<'_, '_> {
         {
             if parameter.direction == Direction::In {
                 let value = self.rvalue(argument)?;
+                let source = match self.expressions[value] {
+                    Expression::Load { pointer } => pointer,
+                    _ => value,
+                };
+                if parameter.ty.is_opaque() && self.heap_pointee(source).is_some() {
+                    return Err(unsupported(
+                        "passing a descriptor heap resource to a user function",
+                        at,
+                    ));
+                }
                 values.push(self.requalify_to(value, parameter_ty, at)?);
                 continue;
             }

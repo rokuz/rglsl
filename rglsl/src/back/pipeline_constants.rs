@@ -248,6 +248,9 @@ pub fn process_overrides<'a>(
     }
 
     for (_, v) in module.global_variables.iter_mut() {
+        if let Some(ref mut offset) = v.heap_offset {
+            *offset = adjusted_global_expressions[*offset];
+        }
         if let Some(ref mut init) = v.init {
             *init = adjusted_global_expressions[*init];
         }
@@ -672,6 +675,16 @@ fn adjust_expr(new_pos: &HandleVec<Expression, Handle<Expression>>, expr: &mut E
             ty: _,
         } => {
             adjust(value);
+        }
+        Expression::BufferPointer { ref mut descriptor } => {
+            adjust(descriptor);
+        }
+        Expression::HeapOffset {
+            ref mut pointer,
+            ref mut offset,
+        } => {
+            adjust(pointer);
+            adjust(offset);
         }
         Expression::RayQueryGetIntersection {
             ref mut query,

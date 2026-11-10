@@ -18,6 +18,8 @@ pub enum Storage {
     Uniform,
     Buffer,
     Shared,
+    ResourceHeap,
+    SamplerHeap,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -140,6 +142,7 @@ pub enum SymbolKind {
     BlockMember { instance: SymbolId, index: u32 },
     Struct(StructId),
     Reference(BlockId),
+    BufferType(BlockId),
     BlockName,
 }
 

@@ -114,8 +114,10 @@ impl Rewriter<'_> {
     }
 
     fn specifier(&mut self, specifier: &mut TypeSpecifier) {
-        if let TypeSpecifierNonArray::Struct(structure) = &mut specifier.non_array {
-            self.members(&mut structure.declarations);
+        match &mut specifier.non_array {
+            TypeSpecifierNonArray::Struct(structure) => self.members(&mut structure.declarations),
+            TypeSpecifierNonArray::InlineBlock(declarations) => self.members(declarations),
+            _ => {}
         }
         self.array(specifier.array.as_mut());
     }

@@ -347,6 +347,32 @@ impl<'a> BlockContext<'a> {
         BlockContext { abilities, ..*self }
     }
 
+    fn heap_image(
+        &self,
+        image: Handle<crate::Expression>,
+    ) -> Option<(Handle<crate::GlobalVariable>, Handle<crate::Type>)> {
+        let crate::Expression::Load { pointer } = *self.get_expression(image) else {
+            return None;
+        };
+        let mut current = pointer;
+        let global = loop {
+            match *self.get_expression(current) {
+                crate::Expression::Access { base, .. }
+                | crate::Expression::AccessIndex { base, .. }
+                | crate::Expression::HeapOffset { pointer: base, .. } => current = base,
+                crate::Expression::GlobalVariable(global) => break global,
+                _ => return None,
+            }
+        };
+        match *self.resolve_pointer_type(pointer) {
+            crate::TypeInner::Pointer {
+                base,
+                space: crate::AddressSpace::DescriptorHeap(_),
+            } => Some((global, base)),
+            _ => None,
+        }
+    }
+
     fn get_expression(&self, handle: Handle<crate::Expression>) -> &'a crate::Expression {
         &self.expressions[handle]
     }
@@ -481,7 +507,7 @@ impl super::Validator {
                     crate::Expression::GlobalVariable(_)
                 )
             }
-            _ => false,
+            _ => context.heap_image(image).is_some(),
         };
         if !is_handle {
             return Err(
@@ -1051,6 +1077,8 @@ impl super::Validator {
                             | Ex::ArrayLength(_)
                             | Ex::PhysicalPointer { .. }
                             | Ex::PhysicalAddress { .. }
+                            | Ex::BufferPointer { .. }
+                            | Ex::HeapOffset { .. }
                             | Ex::RayQueryGetIntersection { .. }
                             | Ex::RayQueryVertexPositions { .. }
                             | Ex::CooperativeLoad { .. }
@@ -1352,7 +1380,8 @@ impl super::Validator {
                             | crate::Expression::AccessIndex { base, .. } => current = base,
                             crate::Expression::LocalVariable(_)
                             | crate::Expression::GlobalVariable(_)
-                            | crate::Expression::FunctionArgument(_) => break,
+                            | crate::Expression::FunctionArgument(_)
+                            | crate::Expression::BufferPointer { .. } => break,
                             _ if matches!(
                                 context.resolve_pointer_type(current).pointer_space(),
                                 Some(AddressSpace::PhysicalStorage { .. })
@@ -1457,10 +1486,14 @@ impl super::Validator {
                             image_ty = base;
                         }
                         _ => {
-                            return Err(FunctionError::InvalidImageStore(
-                                ExpressionError::ExpectedGlobalVariable,
-                            )
-                            .with_span_handle(image, context.expressions))
+                            let Some((global, ty)) = context.heap_image(image) else {
+                                return Err(FunctionError::InvalidImageStore(
+                                    ExpressionError::ExpectedGlobalVariable,
+                                )
+                                .with_span_handle(image, context.expressions));
+                            };
+                            global_var = &context.global_vars[global];
+                            image_ty = ty;
                         }
                     };
 

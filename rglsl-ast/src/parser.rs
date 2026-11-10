@@ -450,7 +450,8 @@ impl<'a> Parser<'a> {
             return Ok(AfterQualifier::Type(qualifier));
         };
         if self.at_nth(1, "{") && word != "struct" {
-            let reference = qualifier.has_layout("buffer_reference");
+            let reference =
+                qualifier.has_layout("buffer_reference") || qualifier.has_layout("buffer_type");
             let kind = self.parse_block(qualifier)?;
             if reference {
                 self.declare_struct(word);
@@ -776,7 +777,20 @@ impl<'a> Parser<'a> {
         loop {
             let start = self.start();
             let qualifier = self.parse_type_qualifier()?;
-            let specifier = self.parse_type_specifier()?;
+            let specifier = if qualifier.is_some() && self.at("{") {
+                let block_start = self.start();
+                let members = self.nested(Self::parse_struct_declaration_list)?;
+                let non_array = TypeSpecifierNonArray::InlineBlock(members);
+                self.spanned(
+                    block_start,
+                    TypeSpecifier {
+                        non_array,
+                        array: None,
+                    },
+                )
+            } else {
+                self.parse_type_specifier()?
+            };
             let ty = self.spanned(
                 start,
                 FullySpecifiedType {

@@ -234,6 +234,7 @@ impl Builder {
             qualifiers: qualifiers.clone(),
             members,
             reference: None,
+            buffer_type: false,
         })?;
         match instance {
             Instance::Anonymous => {

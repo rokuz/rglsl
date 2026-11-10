@@ -235,8 +235,14 @@ impl ExpressionTracer<'_> {
             } => {
                 self.expressions_used.insert(expr);
             }
-            Ex::ArrayLength(expr) | Ex::PhysicalAddress { pointer: expr, .. } => {
+            Ex::ArrayLength(expr)
+            | Ex::PhysicalAddress { pointer: expr, .. }
+            | Ex::BufferPointer { descriptor: expr } => {
                 self.expressions_used.insert(expr);
+            }
+            Ex::HeapOffset { pointer, offset } => {
+                self.expressions_used.insert(pointer);
+                self.expressions_used.insert(offset);
             }
             Ex::PhysicalPointer { value, ty } => {
                 self.expressions_used.insert(value);
@@ -428,6 +434,14 @@ impl ModuleMap {
                 ref mut pointer,
                 split: _,
             } => adjust(pointer),
+            Ex::BufferPointer { ref mut descriptor } => adjust(descriptor),
+            Ex::HeapOffset {
+                ref mut pointer,
+                ref mut offset,
+            } => {
+                adjust(pointer);
+                adjust(offset);
+            }
             Ex::PhysicalPointer {
                 ref mut value,
                 ref mut ty,

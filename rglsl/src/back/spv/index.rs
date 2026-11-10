@@ -91,6 +91,19 @@ impl BlockContext<'_> {
         array: Handle<crate::Expression>,
         block: &mut Block,
     ) -> Result<Word, Error> {
+        if let crate::Expression::AccessIndex { base, index } = self.ir_function.expressions[array]
+        {
+            if let crate::Expression::BufferPointer { .. } = self.ir_function.expressions[base] {
+                let length_id = self.gen_id();
+                block.body.push(Instruction::array_length(
+                    self.writer.get_u32_type_id(),
+                    length_id,
+                    self.cached[base],
+                    index,
+                ));
+                return Ok(length_id);
+            }
+        }
         // The index into the binding array, if any.
         let binding_array_index_id: Option<Word>;
 

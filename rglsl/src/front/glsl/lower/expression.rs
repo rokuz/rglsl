@@ -416,7 +416,19 @@ impl<'a> FunctionLowerer<'_, 'a> {
         let handle_space = matches!(global, GlobalRef::Variable(handle)
             if self.lw.module.global_variables[handle].space == AddressSpace::Handle);
         let expression = self.lw.global_expression(global);
-        let value = self.add(expression, at)?;
+        let mut value = self.add(expression, at)?;
+        if let GlobalRef::Variable(handle) = global {
+            if let Some(offset) = self.lw.heap_offset_value(handle) {
+                let offset = self.rvalue(offset)?;
+                value = self.add(
+                    Expression::HeapOffset {
+                        pointer: value,
+                        offset,
+                    },
+                    at,
+                )?;
+            }
+        }
         Ok(match global {
             GlobalRef::Variable(_) if !handle_space => Chain::Place(Place::pointer(value, false)),
             _ => Chain::Value(value),
@@ -712,14 +724,15 @@ impl<'a> FunctionLowerer<'_, 'a> {
                             .is_some_and(|block| self.lw.block_bools.contains(&(block, index)));
                         match self.chain(base)? {
                             Chain::Place(place) => {
+                                let base_pointer = self.buffer_pointer(place.pointer, at)?;
                                 let pointer = self.add(
                                     Expression::AccessIndex {
-                                        base: place.pointer,
+                                        base: base_pointer,
                                         index,
                                     },
                                     at,
                                 )?;
-                                self.inherit_access(pointer, place.pointer, false);
+                                self.inherit_access(pointer, base_pointer, false);
                                 Ok(Chain::Place(place.child(pointer, boolean)))
                             }
                             Chain::Value(value) => Ok(Chain::Value(
@@ -772,6 +785,60 @@ impl<'a> FunctionLowerer<'_, 'a> {
         }
     }
 
+    pub(super) fn heap_pointee(&self, pointer: Handle<Expression>) -> Option<Handle<crate::Type>> {
+        let module = &self.lw.module;
+        let element = |ty: Handle<crate::Type>| match module.types[ty].inner {
+            crate::TypeInner::Array { base, .. } => Some(base),
+            _ => None,
+        };
+        match self.expressions[pointer] {
+            Expression::GlobalVariable(handle) => {
+                let global = &module.global_variables[handle];
+                match global.space {
+                    AddressSpace::DescriptorHeap(_) => Some(global.ty),
+                    _ => None,
+                }
+            }
+            Expression::HeapOffset { pointer, .. } => self.heap_pointee(pointer),
+            Expression::AccessIndex { base, index } => {
+                let ty = self.heap_pointee(base)?;
+                match module.types[ty].inner {
+                    crate::TypeInner::Struct { ref members, .. } => usize::try_from(index)
+                        .ok()
+                        .and_then(|index| members.get(index))
+                        .map(|member| member.ty),
+                    _ => element(ty),
+                }
+            }
+            Expression::Access { base, .. } => element(self.heap_pointee(base)?),
+            _ => None,
+        }
+    }
+
+    fn buffer_pointer(
+        &mut self,
+        pointer: Handle<Expression>,
+        at: Span,
+    ) -> Result<Handle<Expression>> {
+        let descriptor = self.heap_pointee(pointer).is_some_and(|ty| {
+            matches!(
+                self.lw.module.types[ty].inner,
+                crate::TypeInner::BufferDescriptor { .. }
+            )
+        });
+        if !descriptor {
+            return Ok(pointer);
+        }
+        let buffer = self.add(
+            Expression::BufferPointer {
+                descriptor: pointer,
+            },
+            at,
+        )?;
+        self.inherit_access(buffer, pointer, false);
+        Ok(buffer)
+    }
+
     pub(super) fn buffer_pointee(
         &self,
         pointer: Handle<Expression>,
@@ -804,6 +871,12 @@ impl<'a> FunctionLowerer<'_, 'a> {
                 }
             }
             Expression::Access { base, .. } => element(self.buffer_pointee(base)?),
+            Expression::BufferPointer { descriptor } => {
+                match module.types[self.heap_pointee(descriptor)?].inner {
+                    crate::TypeInner::BufferDescriptor { base, .. } => Some(base),
+                    _ => None,
+                }
+            }
             Expression::PhysicalPointer { value, .. }
                 if !self.physical_bases.contains_key(&pointer) =>
             {
@@ -902,9 +975,85 @@ impl<'a> FunctionLowerer<'_, 'a> {
             }
         }
         if place.boolean {
-            value = self.as_kind(value, crate::Scalar::BOOL, at)?;
+            value = match self.boolean_array(place) {
+                Some(ty) => self.convert_booleans(value, ty, true, at)?,
+                None => self.as_kind(value, crate::Scalar::BOOL, at)?,
+            };
         }
         Ok(value)
+    }
+
+    fn boolean_array(&self, place: &Place) -> Option<Handle<crate::Type>> {
+        if place.swizzle.is_some() {
+            return None;
+        }
+        let laid = self.buffer_pointee(place.pointer)?;
+        let ty = self.lw.relayout.get(&laid).copied().unwrap_or(laid);
+        matches!(
+            self.lw.module.types[ty].inner,
+            crate::TypeInner::Array { .. }
+        )
+        .then_some(ty)
+    }
+
+    fn convert_booleans(
+        &mut self,
+        value: Handle<Expression>,
+        integer: Handle<crate::Type>,
+        to_bool: bool,
+        at: Span,
+    ) -> Result<Handle<Expression>> {
+        match self.lw.module.types[integer].inner {
+            crate::TypeInner::Array {
+                base,
+                size: crate::ArraySize::Constant(count),
+                ..
+            } => {
+                let target = if to_bool {
+                    self.boolean_twin(integer, at)?
+                } else {
+                    integer
+                };
+                let mut components = Vec::new();
+                for index in 0..count.get() {
+                    let part = self.add(Expression::AccessIndex { base: value, index }, at)?;
+                    components.push(self.convert_booleans(part, base, to_bool, at)?);
+                }
+                self.add(
+                    Expression::Compose {
+                        ty: target,
+                        components,
+                    },
+                    at,
+                )
+            }
+            crate::TypeInner::Array { .. } => Err(internal(at)),
+            _ if to_bool => self.as_kind(value, crate::Scalar::BOOL, at),
+            _ => self.as_kind(value, crate::Scalar::U32, at),
+        }
+    }
+
+    fn boolean_twin(&mut self, ty: Handle<crate::Type>, at: Span) -> Result<Handle<crate::Type>> {
+        let scalar = crate::Scalar::BOOL;
+        let inner = match self.lw.module.types[ty].inner {
+            crate::TypeInner::Scalar(_) => crate::TypeInner::Scalar(scalar),
+            crate::TypeInner::Vector { size, .. } => crate::TypeInner::Vector { size, scalar },
+            crate::TypeInner::Array { base, size, .. } => {
+                let element = self.boolean_twin(base, at)?;
+                self.lw
+                    .layouter
+                    .update(self.lw.module.to_ctx())
+                    .map_err(|_| internal(at))?;
+                let stride = self.lw.layouter[element].to_stride();
+                crate::TypeInner::Array {
+                    base: element,
+                    size,
+                    stride,
+                }
+            }
+            _ => return Err(internal(at)),
+        };
+        Ok(self.lw.insert_type(inner))
     }
 
     pub(super) fn store(
@@ -914,7 +1063,10 @@ impl<'a> FunctionLowerer<'_, 'a> {
         at: Span,
     ) -> Result<()> {
         let mut value = if place.boolean {
-            self.as_kind(value, crate::Scalar::U32, at)?
+            match self.boolean_array(place) {
+                Some(ty) => self.convert_booleans(value, ty, false, at)?,
+                None => self.as_kind(value, crate::Scalar::U32, at)?,
+            }
         } else {
             value
         };

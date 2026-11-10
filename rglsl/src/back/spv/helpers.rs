@@ -65,6 +65,7 @@ pub(super) const fn map_storage_class(space: crate::AddressSpace) -> spirv::Stor
         crate::AddressSpace::Input => spirv::StorageClass::Input,
         crate::AddressSpace::Output => spirv::StorageClass::Output,
         crate::AddressSpace::PhysicalStorage { .. } => spirv::StorageClass::PhysicalStorageBuffer,
+        crate::AddressSpace::DescriptorHeap(_) => spirv::StorageClass::UniformConstant,
     }
 }
 

@@ -18,7 +18,13 @@ impl ImmediateSlots {
             return Self(0);
         }
         let lo = offset / 4;
-        let hi = (offset + size_bytes).div_ceil(4);
+        if lo >= 64 {
+            return Self(0);
+        }
+        let hi = offset.saturating_add(size_bytes).div_ceil(4);
+        if hi >= 64 {
+            return Self(u64::MAX << lo);
+        }
         Self(u64::MAX << lo & u64::MAX >> (64 - hi))
     }
 
@@ -39,7 +45,11 @@ impl ImmediateSlots {
                 }
                 slots
             }
-            _ => Self::from_range(offset, ty.size(gctx)),
+            crate::TypeInner::Array {
+                size: crate::ArraySize::Pending(_),
+                ..
+            } => Self::from_range(offset, u32::MAX - offset),
+            _ => Self::from_range(offset, ty.try_size(gctx).unwrap_or(u32::MAX - offset)),
         }
     }
 
@@ -213,6 +223,7 @@ mod tests {
             offset,
             matrix_layout: None,
             xfb_offset: None,
+            heap: None,
         };
         let s = add(
             Some("S"),

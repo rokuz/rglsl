@@ -387,7 +387,10 @@ fn storage_of(builtins: &Builtins, name: &str) -> Option<Storage> {
             .get(usize::try_from(instance.index()).ok()?)?
             .variable()
             .map(|variable| variable.qualifiers.storage),
-        SymbolKind::Struct(_) | SymbolKind::Reference(_) | SymbolKind::BlockName => None,
+        SymbolKind::Struct(_)
+        | SymbolKind::Reference(_)
+        | SymbolKind::BufferType(_)
+        | SymbolKind::BlockName => None,
     }
 }
 

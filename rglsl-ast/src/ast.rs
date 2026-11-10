@@ -335,10 +335,12 @@ pub enum StorageQualifier {
     SubgroupCoherent,
     ShaderCallCoherent,
     NonPrivate,
+    ResourceHeap,
+    SamplerHeap,
 }
 
 impl StorageQualifier {
-    pub const ALL: [Self; 23] = [
+    pub const ALL: [Self; 25] = [
         Self::Const,
         Self::In,
         Self::Out,
@@ -362,6 +364,8 @@ impl StorageQualifier {
         Self::SubgroupCoherent,
         Self::ShaderCallCoherent,
         Self::NonPrivate,
+        Self::ResourceHeap,
+        Self::SamplerHeap,
     ];
 
     pub const fn keyword(self) -> &'static str {
@@ -389,6 +393,8 @@ impl StorageQualifier {
             Self::SubgroupCoherent => "subgroupcoherent",
             Self::ShaderCallCoherent => "shadercallcoherent",
             Self::NonPrivate => "nonprivate",
+            Self::ResourceHeap => "resourceheap",
+            Self::SamplerHeap => "samplerheap",
         }
     }
 
@@ -475,6 +481,7 @@ pub enum TypeSpecifierNonArray {
     Opaque(String),
     Struct(StructSpecifier),
     TypeName(String),
+    InlineBlock(Vec<Spanned<StructDeclaration>>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

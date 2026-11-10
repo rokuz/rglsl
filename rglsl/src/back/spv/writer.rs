@@ -139,6 +139,8 @@ impl Writer {
             laid_out_copies: crate::FastHashMap::default(),
             task_dispatch_limits: options.task_dispatch_limits,
             mesh_shader_primitive_indices_clamp: options.mesh_shader_primitive_indices_clamp,
+            heap: super::heap::HeapState::default(),
+            descriptor_heap: false,
         })
     }
 
@@ -249,6 +251,8 @@ impl Writer {
             raw_capabilities: take(&mut self.raw_capabilities).reclaim(),
             utf_encoded: take(&mut self.utf_encoded).reclaim(),
             laid_out_copies: take(&mut self.laid_out_copies).reclaim(),
+            heap: super::heap::HeapState::default(),
+            descriptor_heap: false,
         };
 
         *self = fresh;
@@ -521,6 +525,12 @@ impl Writer {
             crate::TypeInner::CooperativeMatrix { .. } => {
                 LocalType::Cooperative(CooperativeType::from_inner(inner).unwrap())
             }
+            crate::TypeInner::Pointer {
+                space: crate::AddressSpace::DescriptorHeap(_),
+                ..
+            } => LocalType::UntypedPointer {
+                class: spirv::StorageClass::UniformConstant,
+            },
             crate::TypeInner::Pointer { base, space } => {
                 let class = map_storage_class(space);
                 let base_type_id = self.get_handle_type_id(base);
@@ -529,6 +539,12 @@ impl Writer {
                     class,
                 }
             }
+            crate::TypeInner::ValuePointer {
+                space: crate::AddressSpace::DescriptorHeap(_),
+                ..
+            } => LocalType::UntypedPointer {
+                class: spirv::StorageClass::UniformConstant,
+            },
             crate::TypeInner::ValuePointer {
                 size,
                 scalar,
@@ -561,6 +577,9 @@ impl Writer {
             crate::TypeInner::Sampler { comparison: _ } => LocalType::Sampler,
             crate::TypeInner::AccelerationStructure { .. } => LocalType::AccelerationStructure,
             crate::TypeInner::RayQuery { .. } => LocalType::RayQuery,
+            crate::TypeInner::BufferDescriptor { space, .. } => LocalType::BufferDescriptor {
+                class: map_storage_class(space),
+            },
             crate::TypeInner::Array { .. }
             | crate::TypeInner::Struct { .. }
             | crate::TypeInner::BindingArray { .. } => return None,
@@ -1584,8 +1603,16 @@ impl Writer {
         for gv in self.global_variables.iter_mut() {
             gv.reset_for_function();
         }
+        if let Some(ref mut iface) = interface {
+            if self.physical_layout.version >= 0x10400 {
+                iface.varying_ids.extend(self.heap_variable_ids());
+            }
+        }
         for (handle, var) in ir_module.global_variables.iter() {
             if info[handle].is_empty() {
+                continue;
+            }
+            if let crate::AddressSpace::DescriptorHeap(_) = var.space {
                 continue;
             }
 
@@ -2331,6 +2358,10 @@ impl Writer {
             }
             LocalType::AccelerationStructure => Instruction::type_acceleration_structure(id),
             LocalType::RayQuery => Instruction::type_ray_query(id),
+            LocalType::UntypedPointer { .. } | LocalType::BufferDescriptor { .. } => {
+                self.write_heap_type_local(id, local_ty);
+                return;
+            }
         };
 
         instruction.to_words(&mut self.logical_layout.declarations);
@@ -2439,6 +2470,7 @@ impl Writer {
                     if laid_out {
                         self.decorate(id, Decoration::ArrayStride, &[stride]);
                     }
+                    self.heap_array_layout(module, handle, id)?;
                     self.record_composite_type(
                         id,
                         super::plain_types::CompositeType {
@@ -2483,6 +2515,7 @@ impl Writer {
                 } => {
                     let mut member_ids = Vec::with_capacity(members.len());
                     let laid_out = self.laid_out_types.contains(handle);
+                    self.heap_struct_layout(module, handle, id)?;
                     for (index, member) in members.iter().enumerate() {
                         self.decorate_struct_member(id, index, member, &module.types, laid_out)?;
                         let member_id = self.get_handle_type_id(member.ty);
@@ -2518,7 +2551,8 @@ impl Writer {
                 | crate::TypeInner::SampledImage { .. }
                 | crate::TypeInner::Sampler { .. }
                 | crate::TypeInner::AccelerationStructure { .. }
-                | crate::TypeInner::RayQuery { .. } => unreachable!(),
+                | crate::TypeInner::RayQuery { .. }
+                | crate::TypeInner::BufferDescriptor { .. } => unreachable!(),
             };
 
             instruction.to_words(&mut self.logical_layout.declarations);
@@ -3719,6 +3753,9 @@ impl Writer {
     ) -> Result<Word, Error> {
         use spirv::Decoration;
 
+        if let crate::AddressSpace::DescriptorHeap(heap) = global_variable.space {
+            return self.heap_variable(heap);
+        }
         let id = self.id_gen.next();
         let class = map_storage_class(global_variable.space);
 
@@ -3874,6 +3911,7 @@ impl Writer {
                         offset: 0,
                         matrix_layout: None,
                         xfb_offset: None,
+                        heap: None,
                     };
                     self.decorate_struct_member(
                         wrapper_type_id,
@@ -4257,6 +4295,8 @@ impl Writer {
                 mark_laid_out(&ir_module.types, &mut self.laid_out_types, var.ty);
             }
         }
+        self.prepare_heaps(ir_module);
+        self.descriptor_heap = ir_module.descriptor_heap;
 
         self.decorated_blocks = crate::arena::HandleSet::for_arena(&ir_module.types);
         self.prepare_overrides(ir_module);
@@ -4265,6 +4305,9 @@ impl Writer {
 
         // write all types
         for (handle, _) in ir_module.types.iter() {
+            if self.is_deferred_heap_type(handle) {
+                continue;
+            }
             self.write_type_declaration_arena(ir_module, mod_info, handle)?;
         }
         self.physical_type_ids.clear();
@@ -4295,6 +4338,7 @@ impl Writer {
         for (handle, _) in ir_module.overrides.iter() {
             self.write_override(handle, ir_module, mod_info)?;
         }
+        self.write_heap_layouts(ir_module)?;
 
         // write the name of constants on their respective const-expression initializer
         if self.flags.contains(WriterFlags::DEBUG) {
@@ -4506,7 +4550,12 @@ impl Writer {
     pub(super) fn decorate_non_uniform(&mut self, id: Word) -> Result<(), Error> {
         self.require_any("NonUniform", &[spirv::Capability::ShaderNonUniform])?;
         self.use_descriptor_indexing();
-        self.decorate(id, spirv::Decoration::NonUniform, &[]);
+        if self.descriptor_heap {
+            self.require_any("NonUniform", &[spirv::Capability::DescriptorHeapEXT])?;
+            self.use_extension("SPV_EXT_descriptor_heap");
+        } else {
+            self.decorate(id, spirv::Decoration::NonUniform, &[]);
+        }
         Ok(())
     }
 
@@ -4605,7 +4654,7 @@ impl Writer {
 }
 
 /// Adds `ty` and every type it contains to `laid_out`.
-fn mark_laid_out(
+pub(super) fn mark_laid_out(
     types: &UniqueArena<crate::Type>,
     laid_out: &mut crate::arena::HandleSet<crate::Type>,
     ty: Handle<crate::Type>,

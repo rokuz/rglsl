@@ -294,6 +294,30 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   opcode (`Instruction::raw`) and the writer a list of raw capabilities, because the `spirv`
   crate does not know these opcodes, capabilities and the decoration.
 
+- **Descriptor heaps** (`GL_EXT_descriptor_heap`, `GL_EXT_structured_descriptor_heap`;
+  `docs/design/descriptor-heap.md`). `AddressSpace::DescriptorHeap(DescriptorHeap)` (new, with
+  `DescriptorHeap::{Resource, Sampler}`): globals in it are typed views of a heap, with
+  `GlobalVariable::heap_offset` (new, a global expression, not serialized when `None`) as their
+  byte offset. `TypeInner::BufferDescriptor { base, space }` (new) is a buffer descriptor;
+  `Expression::BufferPointer` (new) turns a heap pointer to one into a `Uniform`/`Storage`
+  pointer, `Expression::HeapOffset` (new) moves a view by a run-time byte offset.
+  `StructMember::heap` (new, `HeapMember { offset, size }`, not serialized when `None`) holds
+  explicit offsets and `descriptor_size` of members of structures that contain descriptors;
+  the `stride` of an array of descriptors is the explicit stride or 0. The validator gives
+  heap layouts `TypeFlags::HEAP_LAYOUT` (new; `TypeFlags` is now `u16`) instead of `DATA`,
+  accepts loads of descriptors through heap pointers and images loaded from heaps in image
+  operations; `compact` and `process_overrides` keep `heap_offset`. The SPIR-V backend writes
+  untyped pointers (`SPV_KHR_untyped_pointers`), `OpUntypedVariableKHR` heap built-ins,
+  `OpTypeBufferEXT`, `OpBufferPointerEXT`, `OpConstantSizeOfEXT`, `ArrayStrideIdEXT`,
+  `OffsetIdEXT` computed as glslang does, and `OpUntypedImageTexelPointerEXT` for image
+  atomics (`back/spv/heap.rs`). `Module::descriptor_heap` (new, serialized only when set)
+  records that the source requested `GL_EXT_descriptor_heap`: `NonUniform` decorations are then
+  replaced by the `DescriptorHeapEXT` capability, as glslang does.
+- **Immediate slots of override-sized arrays.** `ImmediateSlots::from_type` no longer panics on
+  an array sized by a specialization constant in push constants (it built a context without
+  overrides); such an array covers the rest of the push-constant range, and
+  `ImmediateSlots::from_range` saturates instead of overflowing.
+
 ## Cherry-picked upstream commits
 
 None yet.
