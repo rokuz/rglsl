@@ -40,13 +40,13 @@ pub(super) const fn sampled_kind(sampled: SampledType) -> ScalarKind {
     }
 }
 
-pub(super) fn image_dimension(opaque: Opaque, span: Span) -> Result<ImageDimension> {
+pub(super) const fn image_dimension(opaque: Opaque) -> ImageDimension {
     match opaque.dimension {
-        TextureDimension::D1 => Ok(ImageDimension::D1),
-        TextureDimension::D2 => Ok(ImageDimension::D2),
-        TextureDimension::D3 => Ok(ImageDimension::D3),
-        TextureDimension::Cube => Ok(ImageDimension::Cube),
-        TextureDimension::Buffer => Err(unsupported("buffer textures and images", span)),
+        TextureDimension::D1 => ImageDimension::D1,
+        TextureDimension::D2 => ImageDimension::D2,
+        TextureDimension::D3 => ImageDimension::D3,
+        TextureDimension::Cube => ImageDimension::Cube,
+        TextureDimension::Buffer => ImageDimension::Buffer,
     }
 }
 
@@ -175,7 +175,7 @@ impl Lowerer<'_> {
                 comparison: opaque.shadow || comparison,
             }),
             OpaqueKind::Texture => {
-                let dim = image_dimension(opaque, span)?;
+                let dim = image_dimension(opaque);
                 let class = if depth {
                     if opaque.sampled != SampledType::Float {
                         return Err(unsupported(
@@ -213,7 +213,7 @@ impl Lowerer<'_> {
                     }
                 };
                 Ok(TypeInner::SampledImage {
-                    dim: image_dimension(opaque, span)?,
+                    dim: image_dimension(opaque),
                     arrayed: opaque.arrayed,
                     class,
                 })

@@ -637,6 +637,9 @@ impl super::Validator {
                     crate::ImageDimension::D1 => 1,
                     crate::ImageDimension::D2 => 2,
                     crate::ImageDimension::D3 | crate::ImageDimension::Cube => 3,
+                    crate::ImageDimension::Buffer => {
+                        return Err(ExpressionError::InvalidImageCoordinateType(dim, coordinate))
+                    }
                 };
                 match resolver[coordinate] {
                     Ti::Scalar(Sc {
@@ -689,7 +692,9 @@ impl super::Validator {
                 if let Some(component) = gather {
                     match dim {
                         crate::ImageDimension::D2 | crate::ImageDimension::Cube => {}
-                        crate::ImageDimension::D1 | crate::ImageDimension::D3 => {
+                        crate::ImageDimension::D1
+                        | crate::ImageDimension::D3
+                        | crate::ImageDimension::Buffer => {
                             return Err(ExpressionError::InvalidGatherDimension(dim))
                         }
                     };
@@ -859,10 +864,9 @@ impl super::Validator {
                     return Err(ExpressionError::ExpectedImageType(ty));
                 };
 
-                match resolver[coordinate].image_storage_coordinates() {
-                    Some(coord_dim) if coord_dim == dim => {}
-                    _ => return Err(ExpressionError::InvalidImageCoordinateType(dim, coordinate)),
-                };
+                if !resolver[coordinate].addresses_image(dim) {
+                    return Err(ExpressionError::InvalidImageCoordinateType(dim, coordinate));
+                }
                 if arrayed != array_index.is_some() {
                     return Err(ExpressionError::InvalidImageArrayIndex);
                 }
@@ -887,7 +891,7 @@ impl super::Validator {
                     }
                 }
 
-                match (level, class.is_mipmapped()) {
+                match (level, class.has_levels(dim)) {
                     (None, false) => {}
                     (Some(level), true) => match resolver[level] {
                         Ti::Scalar(Sc {
@@ -908,7 +912,16 @@ impl super::Validator {
             E::ImageQuery { image, query } => {
                 let ty = Self::global_var_ty(module, function, image)?;
                 match module.types[ty].inner {
-                    Ti::Image { class, arrayed, .. } | Ti::SampledImage { class, arrayed, .. } => {
+                    Ti::Image {
+                        class,
+                        arrayed,
+                        dim,
+                    }
+                    | Ti::SampledImage {
+                        class,
+                        arrayed,
+                        dim,
+                    } => {
                         let good = match query {
                             crate::ImageQuery::NumLayers => arrayed,
                             crate::ImageQuery::Size { level: None } => true,
@@ -921,9 +934,9 @@ impl super::Validator {
                                         ))
                                     }
                                 }
-                                class.is_mipmapped()
+                                class.has_levels(dim)
                             }
-                            crate::ImageQuery::NumLevels => class.is_mipmapped(),
+                            crate::ImageQuery::NumLevels => class.has_levels(dim),
                             crate::ImageQuery::NumSamples => class.is_multisampled(),
                         };
                         if !good {

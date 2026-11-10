@@ -72,6 +72,7 @@ pub(super) fn map_image_dim(word: spirv::Word) -> Result<crate::ImageDimension, 
         Some(D::Dim2D) => Ok(crate::ImageDimension::D2),
         Some(D::Dim3D) => Ok(crate::ImageDimension::D3),
         Some(D::DimCube) => Ok(crate::ImageDimension::Cube),
+        Some(D::DimBuffer) => Ok(crate::ImageDimension::Buffer),
         _ => Err(Error::UnsupportedImageDim(word)),
     }
 }

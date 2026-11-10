@@ -836,6 +836,20 @@ impl super::Validator {
                         class,
                     });
                 }
+                if dim == crate::ImageDimension::Buffer
+                    && (arrayed
+                        || class.is_multisampled()
+                        || matches!(
+                            class,
+                            crate::ImageClass::Depth { .. } | crate::ImageClass::External
+                        ))
+                {
+                    return Err(TypeError::UnsupportedImageType {
+                        dim,
+                        arrayed,
+                        class,
+                    });
+                }
                 if arrayed && matches!(dim, crate::ImageDimension::D3) {
                     return Err(TypeError::UnsupportedImageType {
                         dim,

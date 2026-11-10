@@ -709,7 +709,7 @@ impl<'a> Lowerer<'a> {
                 .ok_or_else(|| unsupported("storage images without a format qualifier", at))?;
             let _ = sampled_kind(opaque.sampled);
             TypeInner::Image {
-                dim: image_dimension(opaque, at)?,
+                dim: image_dimension(opaque),
                 arrayed: opaque.arrayed,
                 class: ImageClass::Storage {
                     format,

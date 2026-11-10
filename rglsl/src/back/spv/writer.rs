@@ -2078,6 +2078,19 @@ impl Writer {
                             self.require_any("1D storage images", &[spirv::Capability::Image1D])?;
                         }
                     }
+                    crate::ImageDimension::Buffer => {
+                        if sampled {
+                            self.require_any(
+                                "sampled buffer images",
+                                &[spirv::Capability::SampledBuffer],
+                            )?;
+                        } else {
+                            self.require_any(
+                                "buffer storage images",
+                                &[spirv::Capability::ImageBuffer],
+                            )?;
+                        }
+                    }
                     crate::ImageDimension::Cube if arrayed => {
                         if sampled {
                             self.require_any(

@@ -541,7 +541,9 @@ impl<'a> ResolveContext<'a> {
             crate::Expression::ImageQuery { image, query } => TypeResolution::Value(match query {
                 crate::ImageQuery::Size { level: _ } => match *past(image)?.inner_with(types) {
                     Ti::Image { dim, .. } | Ti::SampledImage { dim, .. } => match dim {
-                        crate::ImageDimension::D1 => Ti::Scalar(crate::Scalar::U32),
+                        crate::ImageDimension::D1 | crate::ImageDimension::Buffer => {
+                            Ti::Scalar(crate::Scalar::U32)
+                        }
                         crate::ImageDimension::D2 | crate::ImageDimension::Cube => Ti::Vector {
                             size: crate::VectorSize::Bi,
                             scalar: crate::Scalar::U32,

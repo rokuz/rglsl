@@ -717,6 +717,7 @@ pub enum ImageDimension {
     D3,
     /// Cube map
     Cube,
+    Buffer,
 }
 
 bitflags::bitflags! {

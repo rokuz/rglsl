@@ -1191,10 +1191,9 @@ impl super::Validator {
                     };
 
                     // The `coordinate` operand must be a vector of the appropriate size.
-                    if context
+                    if !context
                         .resolve_type_inner(coordinate, &self.valid_expression_set)?
-                        .image_storage_coordinates()
-                        .is_none_or(|coord_dim| coord_dim != dim)
+                        .addresses_image(dim)
                     {
                         return Err(FunctionError::InvalidImageStore(
                             ExpressionError::InvalidImageCoordinateType(dim, coordinate),
@@ -1319,20 +1318,15 @@ impl super::Validator {
                             arrayed,
                             dim,
                         } => {
-                            match context
+                            if !context
                                 .resolve_type_inner(coordinate, &self.valid_expression_set)?
-                                .image_storage_coordinates()
+                                .addresses_image(dim)
                             {
-                                Some(coord_dim) if coord_dim == dim => {}
-                                _ => {
-                                    return Err(FunctionError::InvalidImageAtomic(
-                                        ExpressionError::InvalidImageCoordinateType(
-                                            dim, coordinate,
-                                        ),
-                                    )
-                                    .with_span_handle(coordinate, context.expressions));
-                                }
-                            };
+                                return Err(FunctionError::InvalidImageAtomic(
+                                    ExpressionError::InvalidImageCoordinateType(dim, coordinate),
+                                )
+                                .with_span_handle(coordinate, context.expressions));
+                            }
                             if arrayed != array_index.is_some() {
                                 return Err(FunctionError::InvalidImageAtomic(
                                     ExpressionError::InvalidImageArrayIndex,

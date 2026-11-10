@@ -518,6 +518,14 @@ impl crate::TypeInner {
     }
 
     /// Return the `ImageDimension` for which `self` is an appropriate coordinate.
+    fn addresses_image(&self, dim: crate::ImageDimension) -> bool {
+        let dim = match dim {
+            crate::ImageDimension::Buffer => crate::ImageDimension::D1,
+            other => other,
+        };
+        self.image_storage_coordinates() == Some(dim)
+    }
+
     const fn image_storage_coordinates(&self) -> Option<crate::ImageDimension> {
         match *self {
             Self::Scalar(crate::Scalar {

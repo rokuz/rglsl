@@ -135,6 +135,11 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
 - **Resources may share a binding.** The validator no longer rejects two resources of an entry
   point with the same group and binding (`EntryPointError::BindingCollision` is gone): glslang
   accepts them for Vulkan, where descriptor aliasing is legal.
+- **Buffer images.** `ImageDimension::Buffer` (new) is `OpTypeImage Buffer` with the
+  `SampledBuffer` or `ImageBuffer` capability. The validator allows it only non-arrayed,
+  single-sampled and not depth, addresses it with a scalar integer, and gives it no levels: a
+  load has no level and the size query has no level (`OpImageQuerySize`); it cannot be sampled
+  or gathered.
 
 ## Cherry-picked upstream commits
 

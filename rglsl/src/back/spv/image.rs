@@ -1197,7 +1197,7 @@ impl BlockContext<'_> {
         let id = match query {
             Iq::Size { level } => {
                 let dim_coords = match dim {
-                    Id::D1 => 1,
+                    Id::D1 | Id::Buffer => 1,
                     Id::D2 | Id::Cube => 2,
                     Id::D3 => 3,
                 };
@@ -1219,6 +1219,7 @@ impl BlockContext<'_> {
                 let extended_size_type_id = self.get_numeric_type_id(vector_numeric_type);
 
                 let (query_op, level_id) = match class {
+                    _ if dim == Id::Buffer => (spirv::Op::ImageQuerySize, None),
                     Ic::Sampled { multi: true, .. }
                     | Ic::Depth { multi: true }
                     | Ic::Storage { .. } => (spirv::Op::ImageQuerySize, None),
@@ -1278,7 +1279,7 @@ impl BlockContext<'_> {
             }
             Iq::NumLayers => {
                 let vec_size = match dim {
-                    Id::D1 => crate::VectorSize::Bi,
+                    Id::D1 | Id::Buffer => crate::VectorSize::Bi,
                     Id::D2 | Id::Cube => crate::VectorSize::Tri,
                     Id::D3 => crate::VectorSize::Quad,
                 };

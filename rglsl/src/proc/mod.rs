@@ -455,6 +455,10 @@ impl super::ImageClass {
     pub const fn is_depth(self) -> bool {
         matches!(self, crate::ImageClass::Depth { .. })
     }
+
+    pub const fn has_levels(self, dim: crate::ImageDimension) -> bool {
+        self.is_mipmapped() && !matches!(dim, crate::ImageDimension::Buffer)
+    }
 }
 
 impl crate::Module {

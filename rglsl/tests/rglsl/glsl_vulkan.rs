@@ -2074,3 +2074,47 @@ fn structs_cross_between_buffers_and_functions() {
         .collect();
     assert_eq!(names.len(), 3);
 }
+
+#[test]
+fn buffer_textures_and_images_match_glslang() {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+        layout(binding = 0) uniform samplerBuffer sb;
+        layout(binding = 1) uniform textureBuffer tb;
+        layout(binding = 2) uniform sampler s;
+        layout(binding = 3) uniform isamplerBuffer isb;
+        layout(binding = 4, rgba32f) uniform imageBuffer ib;
+        layout(binding = 5, r32ui) uniform uimageBuffer uib;
+        layout(location = 0) flat in int i;
+        layout(location = 0) out vec4 o;
+        void main() {
+            vec4 v = texelFetch(sb, i) + texelFetch(samplerBuffer(tb, s), i)
+                + vec4(texelFetch(isb, i)) + texelFetch(tb, i);
+            v += imageLoad(ib, i);
+            imageStore(ib, i + 1, v);
+            imageStore(uib, i, uvec4(imageLoad(uib, i).x + 1u));
+            o = v + vec4(textureSize(sb) + textureSize(isb) + imageSize(ib) + imageSize(uib));
+        }",
+    );
+    for capability in [
+        spirv::Capability::SampledBuffer,
+        spirv::Capability::ImageBuffer,
+        spirv::Capability::ImageQuery,
+    ] {
+        assert!(has_capability(&module, capability), "{capability:?}");
+    }
+    let images = instructions(&module, Op::TypeImage);
+    assert_eq!(images.len(), 4);
+    for image in images {
+        assert_eq!(image.operands[1], Operand::Dim(spirv::Dim::DimBuffer));
+    }
+    assert_eq!(instructions(&module, Op::ImageFetch).len(), 4);
+    assert!(instructions(&module, Op::ImageFetch)
+        .iter()
+        .all(|inst| inst.operands.len() == 2));
+    assert_eq!(instructions(&module, Op::ImageQuerySize).len(), 4);
+    assert!(instructions(&module, Op::ImageQuerySizeLod).is_empty());
+    assert_eq!(instructions(&module, Op::ImageRead).len(), 2);
+    assert_eq!(instructions(&module, Op::ImageWrite).len(), 2);
+}

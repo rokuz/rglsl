@@ -501,7 +501,8 @@ impl FunctionLowerer<'_, '_> {
         match ty.as_opaque() {
             Some(opaque)
                 if opaque.kind == OpaqueKind::Image
-                    || opaque.kind == OpaqueKind::CombinedSampler =>
+                    || opaque.kind == OpaqueKind::CombinedSampler
+                    || opaque.kind == OpaqueKind::Texture =>
             {
                 Ok(Sampled {
                     image: self.rvalue(argument)?,
@@ -708,9 +709,6 @@ impl FunctionLowerer<'_, '_> {
     ) -> Result<Handle<Expression>> {
         let first = arguments.first().ok_or_else(|| internal(at))?;
         let Sampled { image, opaque, .. } = self.sampled(first, at)?;
-        if opaque.is_buffer() {
-            return Err(unsupported("buffer textures", at));
-        }
         let coordinate_argument = arguments.get(1).ok_or_else(|| internal(at))?;
         let (coordinate, ty) = self.typed(coordinate_argument)?;
         let size = ty.component_count().ok_or_else(|| internal(at))?;
@@ -793,9 +791,6 @@ impl FunctionLowerer<'_, '_> {
     ) -> Result<Handle<Expression>> {
         let first = arguments.first().ok_or_else(|| internal(at))?;
         let Sampled { image, opaque, .. } = self.sampled(first, at)?;
-        if opaque.is_buffer() {
-            return Err(unsupported("buffer textures", at));
-        }
         let query = match name {
             "textureQueryLevels" => ImageQuery::NumLevels,
             "textureSamples" => ImageQuery::NumSamples,
