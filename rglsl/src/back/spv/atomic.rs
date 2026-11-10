@@ -148,7 +148,7 @@ impl BlockContext<'_> {
     ) -> Result<Word, Error> {
         match self.ir_function.expressions[image] {
             Expression::GlobalVariable(handle) => Ok(self.writer.global_variables[handle].var_id),
-            Expression::FunctionArgument(index) => Ok(self.function.parameter_id(index)),
+            Expression::FunctionArgument(index) => self.function.parameter_id(index),
             Expression::Access { .. } | Expression::AccessIndex { .. } => {
                 match self.write_access_chain(
                     image,
@@ -192,7 +192,7 @@ impl BlockContext<'_> {
         let coordinates =
             self.write_image_coordinates(texel.coordinate, texel.array_index, block)?;
         let sample_id = match texel.sample {
-            Some(sample) => self.cached[sample],
+            Some(sample) => self.cached.get(sample)?,
             None => self.writer.get_constant_scalar(crate::Literal::U32(0)),
         };
         let pointer_id = self.gen_id();
@@ -270,7 +270,7 @@ impl BlockContext<'_> {
             ids.scope,
             ids.semantics,
         ));
-        self.cached[result] = id;
+        self.cached.set(result, id)?;
         Ok(())
     }
 
@@ -287,7 +287,7 @@ impl BlockContext<'_> {
             pointer_id,
             ids.scope,
             ids.semantics,
-            self.cached[value],
+            self.cached.get(value)?,
         ));
         Ok(())
     }
@@ -332,14 +332,14 @@ impl BlockContext<'_> {
         } = fun
         {
             instruction.add_operand(ids.unequal);
-            instruction.add_operand(self.cached[value]);
-            instruction.add_operand(self.cached[compare]);
+            instruction.add_operand(self.cached.get(value)?);
+            instruction.add_operand(self.cached.get(compare)?);
         } else {
-            instruction.add_operand(self.cached[value]);
+            instruction.add_operand(self.cached.get(value)?);
         }
         block.body.push(instruction);
         if let Some(result) = result {
-            self.cached[result] = id;
+            self.cached.set(result, id)?;
         }
         Ok(())
     }

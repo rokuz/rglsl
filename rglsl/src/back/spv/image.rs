@@ -6,8 +6,7 @@ use spirv::Word;
 
 use super::{
     selection::{MergeTuple, Selection},
-    Block, BlockContext, Error, IdGenerator, Instruction, LocalImageType, LocalType, LookupType,
-    NumericType,
+    Block, BlockContext, Error, IdGenerator, Instruction, LocalImageType, LocalType, NumericType,
 };
 use crate::arena::Handle;
 
@@ -121,7 +120,9 @@ impl Load {
             crate::ImageClass::Depth { .. } | crate::ImageClass::Sampled { .. } => {
                 spirv::Op::ImageFetch
             }
-            crate::ImageClass::External => unimplemented!(),
+            crate::ImageClass::External => {
+                return Err(Error::FeatureNotImplemented("external textures"))
+            }
         };
 
         // `OpImageRead` and `OpImageFetch` instructions produce vec4<f32>
@@ -272,7 +273,7 @@ impl BlockContext<'_> {
         use crate::TypeInner as Ti;
         use crate::VectorSize as Vs;
 
-        let coordinates_id = self.cached[coordinates];
+        let coordinates_id = self.cached.get(coordinates)?;
         let ty = &self.fun_info[coordinates].ty;
         let inner_ty = ty.inner_with(&self.ir_module.types);
 
@@ -281,7 +282,7 @@ impl BlockContext<'_> {
         let array_index = match array_index {
             None => {
                 let value_id = coordinates_id;
-                let type_id = self.get_expression_type_id(ty);
+                let type_id = self.get_expression_type_id(ty)?;
                 let size = match *inner_ty {
                     Ti::Scalar { .. } => None,
                     Ti::Vector { size, .. } => Some(size),
@@ -318,7 +319,7 @@ impl BlockContext<'_> {
         };
 
         // Convert the index to the coordinate component type, if necessary.
-        let array_index_id = self.cached[array_index];
+        let array_index_id = self.cached.get(array_index)?;
         let ty = &self.fun_info[array_index].ty;
         let inner_ty = ty.inner_with(&self.ir_module.types);
         let array_index_scalar = match *inner_ty {
@@ -328,7 +329,7 @@ impl BlockContext<'_> {
                     width: 4,
                 },
             ) => scalar,
-            _ => unreachable!("we only allow i32 and u32"),
+            _ => return Err(Error::Validation("image array index must be i32 or u32")),
         };
         let cast = match (component_scalar.kind, array_index_scalar.kind) {
             (crate::ScalarKind::Sint, crate::ScalarKind::Sint)
@@ -337,14 +338,7 @@ impl BlockContext<'_> {
             | (crate::ScalarKind::Uint, crate::ScalarKind::Sint) => Some(spirv::Op::Bitcast),
             (crate::ScalarKind::Float, crate::ScalarKind::Sint) => Some(spirv::Op::ConvertSToF),
             (crate::ScalarKind::Float, crate::ScalarKind::Uint) => Some(spirv::Op::ConvertUToF),
-            (crate::ScalarKind::Bool, _) => unreachable!("we don't allow bool for component"),
-            (_, crate::ScalarKind::Bool | crate::ScalarKind::Float) => {
-                unreachable!("we don't allow bool or float for array index")
-            }
-            (crate::ScalarKind::AbstractInt | crate::ScalarKind::AbstractFloat, _)
-            | (_, crate::ScalarKind::AbstractInt | crate::ScalarKind::AbstractFloat) => {
-                unreachable!("abstract types should never reach backends")
-            }
+            _ => return Err(Error::Validation("image coordinate type")),
         };
         let reconciled_array_index_id = if let Some(cast) = cast {
             let component_ty_id = self.get_numeric_type_id(NumericType::Scalar(component_scalar));
@@ -385,7 +379,7 @@ impl BlockContext<'_> {
         expr_handle: Handle<crate::Expression>,
         block: &mut Block,
     ) -> Result<Word, Error> {
-        let id = self.get_handle_id(expr_handle);
+        let id = self.get_handle_id(expr_handle)?;
         let shared = matches!(
             self.ir_function.expressions[expr_handle],
             crate::Expression::GlobalVariable(_) | crate::Expression::FunctionArgument(_)
@@ -397,7 +391,7 @@ impl BlockContext<'_> {
         {
             return Ok(id);
         }
-        let type_id = self.get_expression_type_id(&self.fun_info[expr_handle].ty);
+        let type_id = self.get_expression_type_id(&self.fun_info[expr_handle].ty)?;
         let copy_id = self.gen_id();
         block.body.push(Instruction::unary(
             spirv::Op::CopyObject,
@@ -409,7 +403,10 @@ impl BlockContext<'_> {
         Ok(copy_id)
     }
 
-    pub(super) fn get_handle_id(&mut self, expr_handle: Handle<crate::Expression>) -> Word {
+    pub(super) fn get_handle_id(
+        &mut self,
+        expr_handle: Handle<crate::Expression>,
+    ) -> Result<Word, Error> {
         let id = match self.ir_function.expressions[expr_handle] {
             crate::Expression::GlobalVariable(handle) => {
                 self.writer.global_variables[handle].handle_id
@@ -419,18 +416,15 @@ impl BlockContext<'_> {
             }
             crate::Expression::Access { .. }
             | crate::Expression::AccessIndex { .. }
-            | crate::Expression::Load { .. } => self.cached[expr_handle],
-            ref other => unreachable!("Unexpected image expression {:?}", other),
+            | crate::Expression::Load { .. } => self.cached.get(expr_handle)?,
+            _ => return Err(Error::Validation("unexpected opaque handle expression")),
         };
 
         if id == 0 {
-            unreachable!(
-                "Image expression {:?} doesn't have a handle ID",
-                expr_handle
-            );
+            return Err(Error::Validation("opaque handle expression has no id"));
         }
 
-        id
+        Ok(id)
     }
 
     pub(super) fn get_image_id(
@@ -448,9 +442,9 @@ impl BlockContext<'_> {
                 arrayed,
                 class,
             } => {
-                let image_type_id = self.get_type_id(LookupType::Local(LocalType::Image(
-                    LocalImageType::from_inner(dim, arrayed, class),
-                )));
+                let image_type_id = self.get_localtype_id(LocalType::Image(
+                    LocalImageType::from_inner(dim, arrayed, class)?,
+                ));
                 let image_id = self.gen_id();
                 block
                     .body
@@ -819,8 +813,8 @@ impl BlockContext<'_> {
         }
         let coordinates = self.write_image_coordinates(coordinate, array_index, block)?;
 
-        let level_id = level.map(|expr| self.cached[expr]);
-        let sample_id = sample.map(|expr| self.cached[expr]);
+        let level_id = level.map(|expr| self.cached.get(expr)).transpose()?;
+        let sample_id = sample.map(|expr| self.cached.get(expr)).transpose()?;
 
         let policy = if subpass {
             crate::proc::BoundsCheckPolicy::Unchecked
@@ -930,11 +924,11 @@ impl BlockContext<'_> {
             result_type_id
         };
 
-        let image_type_id = self.get_type_id(LookupType::Local(LocalType::Image(
-            LocalImageType::from_inner(dim, arrayed, class),
-        )));
+        let image_type_id = self.get_localtype_id(LocalType::Image(LocalImageType::from_inner(
+            dim, arrayed, class,
+        )?));
         let sampled_image_type_id =
-            self.get_type_id(LookupType::Local(LocalType::SampledImage { image_type_id }));
+            self.get_localtype_id(LocalType::SampledImage { image_type_id });
         let image_id = match sampler {
             Some(_) => handle_id,
             None if clamp_to_edge => {
@@ -990,11 +984,11 @@ impl BlockContext<'_> {
             // Calculate the top-left and bottom-right margin for clamping to. I.e. a
             // half-texel from each side.
             let const_0_5_f32_id = self.writer.get_constant_scalar(crate::Literal::F32(0.5));
-            let const_0_5_vec2f_id = self.writer.get_constant_composite(
-                LookupType::Local(LocalType::Numeric(NumericType::Vector {
+            let const_0_5_vec2f_id = self.writer.get_local_constant_composite(
+                LocalType::Numeric(NumericType::Vector {
                     size: crate::VectorSize::Bi,
                     scalar: crate::Scalar::F32,
-                })),
+                }),
                 &[const_0_5_f32_id, const_0_5_f32_id],
             );
 
@@ -1008,11 +1002,11 @@ impl BlockContext<'_> {
             ));
 
             let const_1_f32_id = self.writer.get_constant_scalar(crate::Literal::F32(1.0));
-            let const_1_vec2f_id = self.writer.get_constant_composite(
-                LookupType::Local(LocalType::Numeric(NumericType::Vector {
+            let const_1_vec2f_id = self.writer.get_local_constant_composite(
+                LocalType::Numeric(NumericType::Vector {
                     size: crate::VectorSize::Bi,
                     scalar: crate::Scalar::F32,
-                })),
+                }),
                 &[const_1_f32_id, const_1_f32_id],
             );
 
@@ -1062,7 +1056,9 @@ impl BlockContext<'_> {
         };
         let id = self.gen_id();
 
-        let depth_id = depth_ref.map(|handle| self.cached[handle]);
+        let depth_id = depth_ref
+            .map(|handle| self.cached.get(handle))
+            .transpose()?;
         let mut mask = spirv::ImageOperands::empty();
         let constant_offset =
             offset.is_none_or(|offset| self.expression_constness.is_constant_instruction(offset));
@@ -1139,7 +1135,7 @@ impl BlockContext<'_> {
                     depth_id,
                 );
 
-                let mut lod_id = self.cached[lod_handle];
+                let mut lod_id = self.cached.get(lod_handle)?;
                 // SPIR-V expects the LOD to be a float for all image classes.
                 // The IR allows an integer level for depth images (as WGSL
                 // has it), which must be converted.
@@ -1185,7 +1181,7 @@ impl BlockContext<'_> {
                     depth_id,
                 );
 
-                let bias_id = self.cached[bias_handle];
+                let bias_id = self.cached.get(bias_handle)?;
                 mask |= spirv::ImageOperands::BIAS;
                 inst.add_operand(mask.bits());
                 inst.add_operand(bias_id);
@@ -1202,8 +1198,8 @@ impl BlockContext<'_> {
                     depth_id,
                 );
 
-                let x_id = self.cached[x];
-                let y_id = self.cached[y];
+                let x_id = self.cached.get(x)?;
+                let y_id = self.cached.get(y)?;
                 mask |= spirv::ImageOperands::GRAD;
                 inst.add_operand(mask.bits());
                 inst.add_operand(x_id);
@@ -1214,7 +1210,7 @@ impl BlockContext<'_> {
         };
 
         if let Some(offset_const) = offset {
-            let offset_id = self.cached[offset_const];
+            let offset_id = self.cached.get(offset_const)?;
             main_instruction.add_operand(offset_id);
         }
 
@@ -1301,7 +1297,7 @@ impl BlockContext<'_> {
                     | Ic::Storage { .. } => (spirv::Op::ImageQuerySize, None),
                     _ => {
                         let level_id = match level {
-                            Some(expr) => self.cached[expr],
+                            Some(expr) => self.cached.get(expr)?,
                             None => self.get_index_constant(0),
                         };
                         (spirv::Op::ImageQuerySizeLod, Some(level_id))
@@ -1422,7 +1418,7 @@ impl BlockContext<'_> {
     ) -> Result<(), Error> {
         let image_id = self.get_non_uniform_handle_id(image, block)?;
         let coordinates = self.write_image_coordinates(coordinate, array_index, block)?;
-        let value_id = self.cached[value];
+        let value_id = self.cached.get(value)?;
 
         let memory = self.texel_memory(image, true);
         let write = Store {
@@ -1511,13 +1507,13 @@ impl BlockContext<'_> {
                 return Err(Error::Validation("Exchange atomics are not supported yet"))
             }
         };
-        let result_type_id = self.get_expression_type_id(&self.fun_info[value].ty);
+        let result_type_id = self.get_expression_type_id(&self.fun_info[value].ty)?;
         let id = self.gen_id();
         let space = crate::AddressSpace::Handle;
         let (semantics, scope) = space.to_spirv_semantics_and_scope();
         let scope_constant_id = self.get_scope_constant(scope as u32);
         let semantics_id = self.get_index_constant(semantics.bits());
-        let value_id = self.cached[value];
+        let value_id = self.cached.get(value)?;
 
         block.body.push(Instruction::image_atomic(
             op,

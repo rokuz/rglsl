@@ -100,16 +100,16 @@ impl Instruction {
         }
     }
 
-    pub(super) fn set_type(&mut self, id: Word) {
-        assert!(self.type_id.is_none(), "Type can only be set once");
-        self.type_id = Some(id);
-        self.wc += 1;
+    pub(super) const fn set_type(&mut self, id: Word) {
+        if self.type_id.replace(id).is_none() {
+            self.wc += 1;
+        }
     }
 
-    pub(super) fn set_result(&mut self, id: Word) {
-        assert!(self.result_id.is_none(), "Result can only be set once");
-        self.result_id = Some(id);
-        self.wc += 1;
+    pub(super) const fn set_result(&mut self, id: Word) {
+        if self.result_id.replace(id).is_none() {
+            self.wc += 1;
+        }
     }
 
     pub(super) fn add_operand(&mut self, operand: Word) {

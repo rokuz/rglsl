@@ -240,13 +240,13 @@ impl super::Instruction {
     //  Type-Declaration Instructions
     //
 
-    pub(super) fn type_void(id: Word) -> Self {
+    pub(super) const fn type_void(id: Word) -> Self {
         let mut instruction = Self::new(Op::TypeVoid);
         instruction.set_result(id);
         instruction
     }
 
-    pub(super) fn type_bool(id: Word) -> Self {
+    pub(super) const fn type_bool(id: Word) -> Self {
         let mut instruction = Self::new(Op::TypeBool);
         instruction.set_result(id);
         instruction
@@ -332,19 +332,19 @@ impl super::Instruction {
         instruction
     }
 
-    pub(super) fn type_sampler(id: Word) -> Self {
+    pub(super) const fn type_sampler(id: Word) -> Self {
         let mut instruction = Self::new(Op::TypeSampler);
         instruction.set_result(id);
         instruction
     }
 
-    pub(super) fn type_acceleration_structure(id: Word) -> Self {
+    pub(super) const fn type_acceleration_structure(id: Word) -> Self {
         let mut instruction = Self::new(Op::TypeAccelerationStructureKHR);
         instruction.set_result(id);
         instruction
     }
 
-    pub(super) fn type_ray_query(id: Word) -> Self {
+    pub(super) const fn type_ray_query(id: Word) -> Self {
         let mut instruction = Self::new(Op::TypeRayQueryKHR);
         instruction.set_result(id);
         instruction
@@ -421,28 +421,28 @@ impl super::Instruction {
     //  Constant-Creation Instructions
     //
 
-    pub(super) fn undef(result_type_id: Word, id: Word) -> Self {
+    pub(super) const fn undef(result_type_id: Word, id: Word) -> Self {
         let mut instruction = Self::new(Op::Undef);
         instruction.set_type(result_type_id);
         instruction.set_result(id);
         instruction
     }
 
-    pub(super) fn constant_null(result_type_id: Word, id: Word) -> Self {
+    pub(super) const fn constant_null(result_type_id: Word, id: Word) -> Self {
         let mut instruction = Self::new(Op::ConstantNull);
         instruction.set_type(result_type_id);
         instruction.set_result(id);
         instruction
     }
 
-    pub(super) fn constant_true(result_type_id: Word, id: Word) -> Self {
+    pub(super) const fn constant_true(result_type_id: Word, id: Word) -> Self {
         let mut instruction = Self::new(Op::ConstantTrue);
         instruction.set_type(result_type_id);
         instruction.set_result(id);
         instruction
     }
 
-    pub(super) fn constant_false(result_type_id: Word, id: Word) -> Self {
+    pub(super) const fn constant_false(result_type_id: Word, id: Word) -> Self {
         let mut instruction = Self::new(Op::ConstantFalse);
         instruction.set_type(result_type_id);
         instruction.set_result(id);
@@ -625,7 +625,7 @@ impl super::Instruction {
         instruction
     }
 
-    pub(super) fn function_parameter(result_type_id: Word, id: Word) -> Self {
+    pub(super) const fn function_parameter(result_type_id: Word, id: Word) -> Self {
         let mut instruction = Self::new(Op::FunctionParameter);
         instruction.set_type(result_type_id);
         instruction.set_result(id);
@@ -1150,7 +1150,7 @@ impl super::Instruction {
         instruction
     }
 
-    pub(super) fn label(id: Word) -> Self {
+    pub(super) const fn label(id: Word) -> Self {
         let mut instruction = Self::new(Op::Label);
         instruction.set_result(id);
         instruction

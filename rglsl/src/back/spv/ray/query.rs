@@ -4,8 +4,8 @@ Generating SPIR-V for ray query operations.
 
 use super::{
     super::{
-        Block, BlockContext, Instruction, LocalType, LookupRayQueryFunction, NumericType, Writer,
-        WriterFlags,
+        Block, BlockContext, Error, Instruction, LocalType, LookupRayQueryFunction, NumericType,
+        Writer, WriterFlags,
     },
     write_ray_flags_contains_flags,
 };
@@ -15,18 +15,16 @@ impl Writer {
     pub(in super::super) fn write_ray_query_get_intersection_function(
         &mut self,
         is_committed: bool,
-        ir_module: &crate::Module,
-    ) -> spirv::Word {
+        intersection_type_id: spirv::Word,
+    ) -> Result<spirv::Word, Error> {
         if let Some(&word) =
             self.ray_query_functions
                 .get(&LookupRayQueryFunction::GetIntersection {
                     committed: is_committed,
                 })
         {
-            return word;
+            return Ok(word);
         }
-        let ray_intersection = ir_module.special_types.ray_intersection.unwrap();
-        let intersection_type_id = self.get_handle_type_id(ray_intersection);
         let intersection_pointer_type_id =
             self.get_pointer_type_id(intersection_type_id, spirv::StorageClass::Function);
 
@@ -489,33 +487,30 @@ impl Writer {
             Instruction::return_value(loaded_blank_intersection_id),
         );
 
-        function.to_words(&mut self.logical_layout.function_definitions);
+        function.to_words(&mut self.logical_layout.function_definitions)?;
         self.ray_query_functions.insert(
             LookupRayQueryFunction::GetIntersection {
                 committed: is_committed,
             },
             func_id,
         );
-        func_id
+        Ok(func_id)
     }
 
-    fn write_ray_query_initialize(&mut self, ir_module: &crate::Module) -> spirv::Word {
+    fn write_ray_query_initialize(
+        &mut self,
+        ray_desc_type_id: spirv::Word,
+    ) -> Result<spirv::Word, Error> {
         if let Some(&word) = self
             .ray_query_functions
             .get(&LookupRayQueryFunction::Initialize)
         {
-            return word;
+            return Ok(word);
         }
 
         let ray_query_type_id = self.get_ray_query_pointer_id();
         let acceleration_structure_type_id =
             self.get_localtype_id(LocalType::AccelerationStructure);
-        let ray_desc_type_id = self.get_handle_type_id(
-            ir_module
-                .special_types
-                .ray_desc
-                .expect("ray desc should be set if ray queries are being initialized"),
-        );
 
         let u32_ty = self.get_u32_type_id();
         let u32_ptr_ty = self.get_pointer_type_id(u32_ty, spirv::StorageClass::Function);
@@ -627,19 +622,19 @@ impl Writer {
 
         function.consume(merge_block, Instruction::return_void());
 
-        function.to_words(&mut self.logical_layout.function_definitions);
+        function.to_words(&mut self.logical_layout.function_definitions)?;
 
         self.ray_query_functions
             .insert(LookupRayQueryFunction::Initialize, func_id);
-        func_id
+        Ok(func_id)
     }
 
-    fn write_ray_query_proceed(&mut self) -> spirv::Word {
+    fn write_ray_query_proceed(&mut self) -> Result<spirv::Word, Error> {
         if let Some(&word) = self
             .ray_query_functions
             .get(&LookupRayQueryFunction::Proceed)
         {
-            return word;
+            return Ok(word);
         }
 
         let ray_query_type_id = self.get_ray_query_pointer_id();
@@ -773,19 +768,19 @@ impl Writer {
 
         function.consume(merge_block, Instruction::return_value(loaded_proceeded_id));
 
-        function.to_words(&mut self.logical_layout.function_definitions);
+        function.to_words(&mut self.logical_layout.function_definitions)?;
 
         self.ray_query_functions
             .insert(LookupRayQueryFunction::Proceed, func_id);
-        func_id
+        Ok(func_id)
     }
 
-    fn write_ray_query_generate_intersection(&mut self) -> spirv::Word {
+    fn write_ray_query_generate_intersection(&mut self) -> Result<spirv::Word, Error> {
         if let Some(&word) = self
             .ray_query_functions
             .get(&LookupRayQueryFunction::GenerateIntersection)
         {
-            return word;
+            return Ok(word);
         }
 
         let ray_query_type_id = self.get_ray_query_pointer_id();
@@ -1071,19 +1066,19 @@ impl Writer {
 
         function.consume(final_block, Instruction::return_void());
 
-        function.to_words(&mut self.logical_layout.function_definitions);
+        function.to_words(&mut self.logical_layout.function_definitions)?;
 
         self.ray_query_functions
             .insert(LookupRayQueryFunction::GenerateIntersection, func_id);
-        func_id
+        Ok(func_id)
     }
 
-    fn write_ray_query_confirm_intersection(&mut self) -> spirv::Word {
+    fn write_ray_query_confirm_intersection(&mut self) -> Result<spirv::Word, Error> {
         if let Some(&word) = self
             .ray_query_functions
             .get(&LookupRayQueryFunction::ConfirmIntersection)
         {
-            return word;
+            return Ok(word);
         }
 
         let ray_query_type_id = self.get_ray_query_pointer_id();
@@ -1205,23 +1200,23 @@ impl Writer {
         self.ray_query_functions
             .insert(LookupRayQueryFunction::ConfirmIntersection, func_id);
 
-        function.to_words(&mut self.logical_layout.function_definitions);
+        function.to_words(&mut self.logical_layout.function_definitions)?;
 
-        func_id
+        Ok(func_id)
     }
 
     fn write_ray_query_get_vertex_positions(
         &mut self,
         is_committed: bool,
-        ir_module: &crate::Module,
-    ) -> spirv::Word {
+        rq_get_vertex_positions_ty_id: spirv::Word,
+    ) -> Result<spirv::Word, Error> {
         if let Some(&word) =
             self.ray_query_functions
                 .get(&LookupRayQueryFunction::GetVertexPositions {
                     committed: is_committed,
                 })
         {
-            return word;
+            return Ok(word);
         }
 
         let (committed_ty, committed_tri_ty) = if is_committed {
@@ -1243,13 +1238,6 @@ impl Writer {
         let u32_ty = self.get_u32_type_id();
         let u32_ptr_ty = self.get_pointer_type_id(u32_ty, spirv::StorageClass::Function);
 
-        let rq_get_vertex_positions_ty_id = self.get_handle_type_id(
-            *ir_module
-                .special_types
-                .ray_vertex_return
-                .as_ref()
-                .expect("must be generated when reading in get vertex position"),
-        );
         let ptr_return_ty =
             self.get_pointer_type_id(rq_get_vertex_positions_ty_id, spirv::StorageClass::Function);
 
@@ -1397,17 +1385,17 @@ impl Writer {
             func_id,
         );
 
-        function.to_words(&mut self.logical_layout.function_definitions);
+        function.to_words(&mut self.logical_layout.function_definitions)?;
 
-        func_id
+        Ok(func_id)
     }
 
-    fn write_ray_query_terminate(&mut self) -> spirv::Word {
+    fn write_ray_query_terminate(&mut self) -> Result<spirv::Word, Error> {
         if let Some(&word) = self
             .ray_query_functions
             .get(&LookupRayQueryFunction::Terminate)
         {
-            return word;
+            return Ok(word);
         }
 
         let ray_query_type_id = self.get_ray_query_pointer_id();
@@ -1485,11 +1473,11 @@ impl Writer {
 
         function.consume(merge_block, Instruction::return_void());
 
-        function.to_words(&mut self.logical_layout.function_definitions);
+        function.to_words(&mut self.logical_layout.function_definitions)?;
 
         self.ray_query_functions
             .insert(LookupRayQueryFunction::Terminate, func_id);
-        func_id
+        Ok(func_id)
     }
 }
 
@@ -1499,22 +1487,25 @@ impl BlockContext<'_> {
         query: Handle<crate::Expression>,
         function: &crate::RayQueryFunction,
         block: &mut Block,
-    ) {
-        let query_id = self.cached[query];
-        let tracker_ids = *self
-            .ray_query_tracker_expr
-            .get(&query)
-            .expect("not a cached ray query");
+    ) -> Result<(), Error> {
+        let query_id = self.cached.get(query)?;
+        let tracker_ids = self.ray_query_trackers(query)?;
 
         match *function {
             crate::RayQueryFunction::Initialize {
                 acceleration_structure,
                 descriptor,
             } => {
-                let desc_id = self.cached[descriptor];
-                let acc_struct_id = self.get_handle_id(acceleration_structure);
+                let desc_id = self.cached.get(descriptor)?;
+                let acc_struct_id = self.get_handle_id(acceleration_structure)?;
 
-                let func = self.writer.write_ray_query_initialize(self.ir_module);
+                let Some(ray_desc) = self.ir_module.special_types.ray_desc else {
+                    return Err(Error::Validation(
+                        "rayQueryInitialize requires the ray descriptor type",
+                    ));
+                };
+                let ray_desc_type_id = self.get_handle_type_id(ray_desc)?;
+                let func = self.writer.write_ray_query_initialize(ray_desc_type_id)?;
 
                 let func_id = self.gen_id();
                 block.body.push(Instruction::function_call(
@@ -1532,11 +1523,11 @@ impl BlockContext<'_> {
             }
             crate::RayQueryFunction::Proceed { result } => {
                 let id = self.gen_id();
-                self.cached[result] = id;
+                self.cached.set(result, id)?;
 
                 let bool_ty = self.writer.get_bool_type_id();
 
-                let func_id = self.writer.write_ray_query_proceed();
+                let func_id = self.writer.write_ray_query_proceed()?;
                 block.body.push(Instruction::function_call(
                     bool_ty,
                     id,
@@ -1545,9 +1536,9 @@ impl BlockContext<'_> {
                 ));
             }
             crate::RayQueryFunction::GenerateIntersection { hit_t } => {
-                let hit_id = self.cached[hit_t];
+                let hit_id = self.cached.get(hit_t)?;
 
-                let func_id = self.writer.write_ray_query_generate_intersection();
+                let func_id = self.writer.write_ray_query_generate_intersection()?;
 
                 let func_call_id = self.gen_id();
                 block.body.push(Instruction::function_call(
@@ -1563,7 +1554,7 @@ impl BlockContext<'_> {
                 ));
             }
             crate::RayQueryFunction::ConfirmIntersection => {
-                let func_id = self.writer.write_ray_query_confirm_intersection();
+                let func_id = self.writer.write_ray_query_confirm_intersection()?;
 
                 let func_call_id = self.gen_id();
                 block.body.push(Instruction::function_call(
@@ -1576,7 +1567,7 @@ impl BlockContext<'_> {
             crate::RayQueryFunction::Terminate => {
                 let id = self.gen_id();
 
-                let func_id = self.writer.write_ray_query_terminate();
+                let func_id = self.writer.write_ray_query_terminate()?;
                 block.body.push(Instruction::function_call(
                     self.writer.void_type,
                     id,
@@ -1585,6 +1576,7 @@ impl BlockContext<'_> {
                 ));
             }
         }
+        Ok(())
     }
 
     pub(in super::super) fn write_ray_query_return_vertex_position(
@@ -1592,25 +1584,19 @@ impl BlockContext<'_> {
         query: Handle<crate::Expression>,
         block: &mut Block,
         is_committed: bool,
-    ) -> spirv::Word {
+    ) -> Result<spirv::Word, Error> {
+        let Some(ray_vertex_return) = self.ir_module.special_types.ray_vertex_return else {
+            return Err(Error::Validation(
+                "ray query vertex positions require the vertex return type",
+            ));
+        };
+        let rq_get_vertex_positions_ty_id = self.get_handle_type_id(ray_vertex_return)?;
         let fn_id = self
             .writer
-            .write_ray_query_get_vertex_positions(is_committed, self.ir_module);
+            .write_ray_query_get_vertex_positions(is_committed, rq_get_vertex_positions_ty_id)?;
 
-        let query_id = self.cached[query];
-        let tracker_id = *self
-            .ray_query_tracker_expr
-            .get(&query)
-            .expect("not a cached ray query");
-
-        let rq_get_vertex_positions_ty_id = self.get_handle_type_id(
-            *self
-                .ir_module
-                .special_types
-                .ray_vertex_return
-                .as_ref()
-                .expect("must be generated when reading in get vertex position"),
-        );
+        let query_id = self.cached.get(query)?;
+        let tracker_id = self.ray_query_trackers(query)?;
 
         let func_call_id = self.gen_id();
         block.body.push(Instruction::function_call(
@@ -1619,6 +1605,16 @@ impl BlockContext<'_> {
             fn_id,
             &[query_id, tracker_id.initialized_tracker],
         ));
-        func_call_id
+        Ok(func_call_id)
+    }
+
+    pub(in super::super) fn ray_query_trackers(
+        &self,
+        query: Handle<crate::Expression>,
+    ) -> Result<super::super::RayQueryTrackers, Error> {
+        self.ray_query_tracker_expr
+            .get(&query)
+            .copied()
+            .ok_or(Error::Validation("ray query has no trackers"))
     }
 }

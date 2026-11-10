@@ -6,14 +6,33 @@ use crate::{
         helpers::BindingDecorations, writer::FunctionInterface, Block, EntryPointContext, Error,
         Instruction, WriterFlags,
     },
-    non_max_u32::NonMaxU32,
     Handle,
 };
 
 #[derive(Clone, Debug)]
 pub struct MeshReturnMember {
+    pub ty: Handle<crate::Type>,
     pub ty_id: u32,
     pub binding: crate::Binding,
+}
+
+fn member_index(members: &[MeshReturnMember], built_in: crate::BuiltIn) -> Result<u32, Error> {
+    members
+        .iter()
+        .position(|member| member.binding == crate::Binding::BuiltIn(built_in))
+        .and_then(|index| u32::try_from(index).ok())
+        .ok_or(Error::Validation(
+            "mesh output struct lacks a required built-in",
+        ))
+}
+
+const fn primitive_indices_built_in(built_in: crate::BuiltIn) -> Option<spirv::BuiltIn> {
+    match built_in {
+        crate::BuiltIn::PointIndex => Some(spirv::BuiltIn::PrimitivePointIndicesEXT),
+        crate::BuiltIn::LineIndices => Some(spirv::BuiltIn::PrimitiveLineIndicesEXT),
+        crate::BuiltIn::TriangleIndices => Some(spirv::BuiltIn::PrimitiveTriangleIndicesEXT),
+        _ => None,
+    }
 }
 
 #[derive(Debug)]
@@ -35,8 +54,6 @@ struct PerOutputTypeMeshReturnInfo {
 pub struct MeshReturnInfo {
     /// Id of the workgroup variable containing the data to be output
     out_variable_id: Word,
-    /// All members of the output variable struct type
-    out_members: Vec<MeshReturnMember>,
     /// Id of the input variable for local invocation id
     local_invocation_index_var_id: Word,
     /// Total workgroup size (product)
@@ -48,9 +65,38 @@ pub struct MeshReturnInfo {
     primitive_info: PerOutputTypeMeshReturnInfo,
     /// Array variable for the primitive indices builtin
     primitive_indices: Option<Word>,
+    vertices_index: u32,
+    primitives_index: u32,
+    vertex_count_index: u32,
+    primitive_count_index: u32,
 }
 
 impl super::Writer {
+    fn mesh_return_members(
+        &self,
+        ir_module: &crate::Module,
+        ty: Handle<crate::Type>,
+    ) -> Result<Vec<MeshReturnMember>, Error> {
+        let crate::TypeInner::Struct { ref members, .. } = ir_module.types[ty].inner else {
+            return Err(Error::Validation("mesh output type is not a struct"));
+        };
+        members
+            .iter()
+            .map(|member| {
+                let Some(ref binding) = member.binding else {
+                    return Err(Error::Validation(
+                        "mesh output struct member has no binding",
+                    ));
+                };
+                Ok(MeshReturnMember {
+                    ty: member.ty,
+                    ty_id: self.get_handle_type_id(member.ty)?,
+                    binding: binding.clone(),
+                })
+            })
+            .collect()
+    }
+
     /// Sets up an output variable that will handle part of the mesh shader output
     pub(super) fn write_mesh_return_global_variable(
         &mut self,
@@ -79,57 +125,19 @@ impl super::Writer {
         let Some(ref mesh_info) = iface.mesh_info else {
             return Ok(());
         };
-        // Collect the members in the output structs
-        let out_members: Vec<MeshReturnMember> =
-            match &ir_module.types[ir_module.global_variables[mesh_info.output_variable].ty] {
-                &crate::Type {
-                    inner: crate::TypeInner::Struct { ref members, .. },
-                    ..
-                } => members
-                    .iter()
-                    .map(|a| MeshReturnMember {
-                        ty_id: self.get_handle_type_id(a.ty),
-                        binding: a.binding.clone().unwrap(),
-                    })
-                    .collect(),
-                _ => unreachable!(),
-            };
-        let vertex_array_type_id = out_members
-            .iter()
-            .find(|a| a.binding == crate::Binding::BuiltIn(crate::BuiltIn::Vertices))
-            .unwrap()
-            .ty_id;
-        let primitive_array_type_id = out_members
-            .iter()
-            .find(|a| a.binding == crate::Binding::BuiltIn(crate::BuiltIn::Primitives))
-            .unwrap()
-            .ty_id;
-        let vertex_members = match &ir_module.types[mesh_info.vertex_output_type] {
-            &crate::Type {
-                inner: crate::TypeInner::Struct { ref members, .. },
-                ..
-            } => members
-                .iter()
-                .map(|a| MeshReturnMember {
-                    ty_id: self.get_handle_type_id(a.ty),
-                    binding: a.binding.clone().unwrap(),
-                })
-                .collect(),
-            _ => unreachable!(),
-        };
-        let primitive_members = match &ir_module.types[mesh_info.primitive_output_type] {
-            &crate::Type {
-                inner: crate::TypeInner::Struct { ref members, .. },
-                ..
-            } => members
-                .iter()
-                .map(|a| MeshReturnMember {
-                    ty_id: self.get_handle_type_id(a.ty),
-                    binding: a.binding.clone().unwrap(),
-                })
-                .collect(),
-            _ => unreachable!(),
-        };
+        let out_members = self.mesh_return_members(
+            ir_module,
+            ir_module.global_variables[mesh_info.output_variable].ty,
+        )?;
+        let vertices_index = member_index(&out_members, crate::BuiltIn::Vertices)?;
+        let primitives_index = member_index(&out_members, crate::BuiltIn::Primitives)?;
+        let vertex_count_index = member_index(&out_members, crate::BuiltIn::VertexCount)?;
+        let primitive_count_index = member_index(&out_members, crate::BuiltIn::PrimitiveCount)?;
+        let vertex_array_type_id = out_members[vertices_index as usize].ty_id;
+        let primitive_array_type_id = out_members[primitives_index as usize].ty_id;
+        let vertex_members = self.mesh_return_members(ir_module, mesh_info.vertex_output_type)?;
+        let primitive_members =
+            self.mesh_return_members(ir_module, mesh_info.primitive_output_type)?;
         // In the final return, we do a giant memcpy, for which this is helpful
         let local_invocation_index_var_id = match local_invocation_index_id {
             Some(a) => a,
@@ -158,7 +166,6 @@ impl super::Writer {
         // so that it can write the final return logic
         let mut mesh_return_info = MeshReturnInfo {
             out_variable_id: self.global_variables[mesh_info.output_variable].var_id,
-            out_members,
             local_invocation_index_var_id,
             workgroup_size: self
                 .get_constant_scalar(crate::Literal::U32(iface.workgroup_size.iter().product())),
@@ -180,6 +187,10 @@ impl super::Writer {
                 builtin_block: None,
             },
             primitive_indices: None,
+            vertices_index,
+            primitives_index,
+            vertex_count_index,
+            primitive_count_index,
         };
         let vert_array_size_id =
             self.get_constant_scalar(crate::Literal::U32(mesh_info.max_vertices));
@@ -211,8 +222,7 @@ impl super::Writer {
                         ir_module,
                         iface.stage,
                         spirv::StorageClass::Output,
-                        // Unused except in fragment shaders with other conditions, so we can pass null
-                        Handle::new(NonMaxU32::new(0).unwrap()),
+                        member.ty,
                         &member.binding,
                     )?;
                     match binding {
@@ -232,7 +242,11 @@ impl super::Writer {
                                 ));
                             }
                         }
-                        _ => unreachable!(),
+                        _ => {
+                            return Err(Error::Validation(
+                                "mesh built-in output has no built-in decoration",
+                            ))
+                        }
                     }
                     bi_index += 1;
                 }
@@ -291,8 +305,7 @@ impl super::Writer {
                         ir_module,
                         iface.stage,
                         spirv::StorageClass::Output,
-                        // Unused except in fragment shaders with other conditions, so we can pass null
-                        Handle::new(NonMaxU32::new(0).unwrap()),
+                        member.ty,
                         &member.binding,
                     )?;
                     match binding {
@@ -312,7 +325,11 @@ impl super::Writer {
                                 ));
                             }
                         }
-                        _ => unreachable!(),
+                        _ => {
+                            return Err(Error::Validation(
+                                "mesh built-in output has no built-in decoration",
+                            ))
+                        }
                     }
                     bi_index += 1;
                 }
@@ -358,11 +375,10 @@ impl super::Writer {
         // Also write indices output block
         for member in &mesh_return_info.primitive_info.struct_members {
             match member.binding {
-                crate::Binding::BuiltIn(
-                    crate::BuiltIn::PointIndex
-                    | crate::BuiltIn::LineIndices
-                    | crate::BuiltIn::TriangleIndices,
-                ) => {
+                crate::Binding::BuiltIn(bi) => {
+                    let Some(indices_built_in) = primitive_indices_built_in(bi) else {
+                        continue;
+                    };
                     // This is written here instead of as part of the builtin block
                     let v =
                         self.write_mesh_return_global_variable(member.ty_id, prim_array_size_id)?;
@@ -370,14 +386,7 @@ impl super::Writer {
                     Instruction::decorate(
                         v,
                         spirv::Decoration::BuiltIn,
-                        &[match member.binding.to_built_in().unwrap() {
-                            crate::BuiltIn::PointIndex => spirv::BuiltIn::PrimitivePointIndicesEXT,
-                            crate::BuiltIn::LineIndices => spirv::BuiltIn::PrimitiveLineIndicesEXT,
-                            crate::BuiltIn::TriangleIndices => {
-                                spirv::BuiltIn::PrimitiveTriangleIndicesEXT
-                            }
-                            _ => unreachable!(),
-                        } as Word],
+                        &[indices_built_in as Word],
                     )
                     .to_words(&mut self.logical_layout.annotations);
                     iface.varying_ids.push(v);
@@ -401,7 +410,6 @@ impl super::Writer {
 
                     mesh_return_info.primitive_info.bindings.push(v);
                 }
-                crate::Binding::BuiltIn(_) => (),
             }
         }
 
@@ -519,7 +527,7 @@ impl super::Writer {
         index_var: u32,
         vert_array_ptr: u32,
         prim_array_ptr: u32,
-    ) -> Vec<Instruction> {
+    ) -> Result<Vec<Instruction>, Error> {
         let u32_type_id = self.get_u32_type_id();
         let mut body = Vec::new();
         // Current index to copy
@@ -570,7 +578,9 @@ impl super::Writer {
                     body.push(Instruction::access_chain(
                         self.get_pointer_type_id(member.ty_id, spirv::StorageClass::Output),
                         ptr_to_copy_to,
-                        return_info.primitive_indices.unwrap(),
+                        return_info
+                            .primitive_indices
+                            .ok_or(Error::Validation("mesh output lacks primitive indices"))?,
                         &[val_i],
                     ));
                 }
@@ -578,7 +588,8 @@ impl super::Writer {
                     body.push(Instruction::access_chain(
                         self.get_pointer_type_id(member.ty_id, spirv::StorageClass::Output),
                         ptr_to_copy_to,
-                        info.builtin_block.unwrap(),
+                        info.builtin_block
+                            .ok_or(Error::Validation("mesh output lacks a built-in block"))?,
                         &[
                             val_i,
                             self.get_constant_scalar(crate::Literal::U32(builtin_index)),
@@ -626,7 +637,7 @@ impl super::Writer {
                 body.push(Instruction::store(new_ptr_to_copy_to, new_y, None));
             }
         }
-        body
+        Ok(body)
     }
 
     /// Writes the return call for a mesh shader, which involves copying previously
@@ -642,69 +653,56 @@ impl super::Writer {
         let u32_id = self.get_u32_type_id();
 
         // Load the actual vertex and primitive counts
-        let mut load_u32_by_member_index =
-            |members: &[MeshReturnMember], bi: crate::BuiltIn, max: u32| {
-                let member_index = members
-                    .iter()
-                    .position(|a| a.binding == crate::Binding::BuiltIn(bi))
-                    .unwrap() as u32;
-                let ptr_id = self.id_gen.next();
-                block.body.push(Instruction::access_chain(
-                    self.get_pointer_type_id(u32_id, spirv::StorageClass::Workgroup),
-                    ptr_id,
-                    return_info.out_variable_id,
-                    &[self.get_constant_scalar(crate::Literal::U32(member_index))],
-                ));
-                let before_min_id = self.id_gen.next();
-                block
-                    .body
-                    .push(Instruction::load(u32_id, before_min_id, ptr_id, None));
+        let mut load_u32_by_member_index = |member_index: u32, max: u32| {
+            let ptr_id = self.id_gen.next();
+            block.body.push(Instruction::access_chain(
+                self.get_pointer_type_id(u32_id, spirv::StorageClass::Workgroup),
+                ptr_id,
+                return_info.out_variable_id,
+                &[self.get_constant_scalar(crate::Literal::U32(member_index))],
+            ));
+            let before_min_id = self.id_gen.next();
+            block
+                .body
+                .push(Instruction::load(u32_id, before_min_id, ptr_id, None));
 
-                // Clamp the values
-                let id = self.id_gen.next();
-                block.body.push(Instruction::ext_inst_gl_op(
-                    self.gl450_ext_inst_id,
-                    spirv::GlslStd450Op::UMin,
-                    u32_id,
-                    id,
-                    &[before_min_id, max],
-                ));
-                id
-            };
+            // Clamp the values
+            let id = self.id_gen.next();
+            block.body.push(Instruction::ext_inst_gl_op(
+                self.gl450_ext_inst_id,
+                spirv::GlslStd450Op::UMin,
+                u32_id,
+                id,
+                &[before_min_id, max],
+            ));
+            id
+        };
         let vert_count_id = load_u32_by_member_index(
-            &return_info.out_members,
-            crate::BuiltIn::VertexCount,
+            return_info.vertex_count_index,
             return_info.vertex_info.max_length_constant,
         );
         let prim_count_id = load_u32_by_member_index(
-            &return_info.out_members,
-            crate::BuiltIn::PrimitiveCount,
+            return_info.primitive_count_index,
             return_info.primitive_info.max_length_constant,
         );
 
         // Get pointers to the arrays of data to extract
-        let mut get_array_ptr = |bi: crate::BuiltIn, array_type_id: u32| {
+        let mut get_array_ptr = |member_index: u32, array_type_id: u32| {
             let id = self.id_gen.next();
             block.body.push(Instruction::access_chain(
                 self.get_pointer_type_id(array_type_id, spirv::StorageClass::Workgroup),
                 id,
                 return_info.out_variable_id,
-                &[self.get_constant_scalar(crate::Literal::U32(
-                    return_info
-                        .out_members
-                        .iter()
-                        .position(|a| a.binding == crate::Binding::BuiltIn(bi))
-                        .unwrap() as u32,
-                ))],
+                &[self.get_constant_scalar(crate::Literal::U32(member_index))],
             ));
             id
         };
         let vert_array_ptr = get_array_ptr(
-            crate::BuiltIn::Vertices,
+            return_info.vertices_index,
             return_info.vertex_info.array_type_id,
         );
         let prim_array_ptr = get_array_ptr(
-            crate::BuiltIn::Primitives,
+            return_info.primitives_index,
             return_info.primitive_info.array_type_id,
         );
 
@@ -736,7 +734,7 @@ impl super::Writer {
             loop_counter_vertices,
             vert_array_ptr,
             prim_array_ptr,
-        );
+        )?;
         // Write vertex copy loop
         self.write_mesh_copy_loop(
             &mut block.body,
@@ -766,7 +764,7 @@ impl super::Writer {
             loop_counter_primitives,
             vert_array_ptr,
             prim_array_ptr,
-        );
+        )?;
         // Write primitive copy loop
         self.write_mesh_copy_loop(
             &mut block.body,
@@ -849,7 +847,7 @@ impl super::Writer {
             )?;
             function.consume(block, Instruction::return_void());
         }
-        function.to_words(&mut self.logical_layout.function_definitions);
+        function.to_words(&mut self.logical_layout.function_definitions)?;
         Ok(out_id)
     }
 
@@ -1021,7 +1019,7 @@ impl super::Writer {
                 self.write_entry_point_task_return(final_value, &mut block.body, task_payload)?;
             function.consume(block, ins);
         }
-        function.to_words(&mut self.logical_layout.function_definitions);
+        function.to_words(&mut self.logical_layout.function_definitions)?;
         Ok(out_id)
     }
 }

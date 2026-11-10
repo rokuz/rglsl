@@ -98,7 +98,7 @@ impl BlockContext<'_> {
                 block.body.push(Instruction::array_length(
                     self.writer.get_u32_type_id(),
                     length_id,
-                    self.cached[base],
+                    self.cached.get(base)?,
                     index,
                 ));
                 return Ok(length_id);
@@ -150,7 +150,7 @@ impl BlockContext<'_> {
                         // binding array holding structs whose last members are
                         // runtime-sized arrays.
                         crate::Expression::GlobalVariable(handle) => {
-                            let index_id = self.cached[index_outer];
+                            let index_id = self.cached.get(index_outer)?;
                             binding_array_index_id = Some(index_id);
                             global_handle = handle;
                             opt_last_member_index = Some(index);
@@ -238,7 +238,7 @@ impl BlockContext<'_> {
             Some(index_id) => {
                 let element_type_id = match self.ir_module.types[global.ty].inner {
                     crate::TypeInner::BindingArray { base, size: _ } => {
-                        let base_id = self.get_handle_type_id(base);
+                        let base_id = self.get_handle_type_id(base)?;
                         let class = map_storage_class(global.space);
                         self.get_pointer_type_id(base_id, class)
                     }
@@ -331,12 +331,10 @@ impl BlockContext<'_> {
     ) -> Result<MaybeKnown<u32>, Error> {
         match self.write_sequence_length(sequence, block)? {
             MaybeKnown::Known(known_length) => {
-                // We should have thrown out all attempts to subscript zero-length
-                // sequences during validation, so the following subtraction should never
-                // underflow.
-                assert!(known_length > 0);
-                // Compute the max index from the length now.
-                Ok(MaybeKnown::Known(known_length - 1))
+                let max_index = known_length
+                    .checked_sub(1)
+                    .ok_or(Error::Validation("indexing a zero-length sequence"))?;
+                Ok(MaybeKnown::Known(max_index))
             }
             MaybeKnown::Computed(length_id) => {
                 // Emit code to compute the max index from the length.
@@ -387,7 +385,7 @@ impl BlockContext<'_> {
 
         let index_id = match index {
             GuardedIndex::Known(value) => self.get_index_constant(value),
-            GuardedIndex::Expression(expr) => self.cached[expr],
+            GuardedIndex::Expression(expr) => self.cached.get(expr)?,
         };
 
         let max_index_id = match max_index {
@@ -451,7 +449,7 @@ impl BlockContext<'_> {
 
         let index_id = match index {
             GuardedIndex::Known(value) => self.get_index_constant(value),
-            GuardedIndex::Expression(expr) => self.cached[expr],
+            GuardedIndex::Expression(expr) => self.cached.get(expr)?,
         };
 
         let length_id = match length {
@@ -560,7 +558,9 @@ impl BlockContext<'_> {
             }
             BoundsCheckPolicy::Unchecked => match index {
                 GuardedIndex::Known(value) => BoundsCheckResult::KnownInBounds(value),
-                GuardedIndex::Expression(expr) => BoundsCheckResult::Computed(self.cached[expr]),
+                GuardedIndex::Expression(expr) => {
+                    BoundsCheckResult::Computed(self.cached.get(expr)?)
+                }
             },
         })
     }
@@ -579,7 +579,10 @@ impl BlockContext<'_> {
         index: GuardedIndex,
         block: &mut Block,
     ) -> Result<Word, Error> {
-        let base_id = base_id_override.unwrap_or_else(|| self.cached[base]);
+        let base_id = match base_id_override {
+            Some(id) => id,
+            None => self.cached.get(base)?,
+        };
 
         let result_id = match self.write_bounds_check(base, index, block)? {
             BoundsCheckResult::KnownInBounds(known_index) => {

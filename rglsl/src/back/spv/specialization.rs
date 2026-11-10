@@ -315,7 +315,7 @@ impl Writer {
                 return Err(Error::Validation("a type is used before it is declared"));
             }
         }
-        Ok(self.get_expression_type_id(resolution))
+        self.get_expression_type_id(resolution)
     }
 
     fn spec_op(&mut self, type_id: Word, op: Op, operands: &[Word]) -> Word {
@@ -395,11 +395,8 @@ impl Writer {
         if spec {
             self.get_spec_constant_composite(type_id, &parts)
         } else {
-            self.get_constant_composite(
-                LookupType::Local(super::LocalType::Numeric(NumericType::Vector {
-                    size,
-                    scalar,
-                })),
+            self.get_local_constant_composite(
+                super::LocalType::Numeric(NumericType::Vector { size, scalar }),
                 &parts,
             )
         }

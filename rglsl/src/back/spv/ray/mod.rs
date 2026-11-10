@@ -5,7 +5,7 @@ Module for code shared between ray queries and ray tracing pipeline code.
 pub mod pipeline;
 pub mod query;
 
-use alloc::{vec, vec::Vec};
+use alloc::vec::Vec;
 
 use super::{Block, Function, FunctionArgument, Instruction, LookupFunctionType, Writer};
 
@@ -114,7 +114,7 @@ impl Writer {
             &[5],
         ));
 
-        let valid_id = validate.then(||{
+        let valid_id = validate.then(|| {
             let tmin_le_tmax_id = self.id_gen.next();
             // Check both that tmin is less than or equal to tmax (https://docs.vulkan.org/spec/latest/appendices/spirvenv.html#VUID-RuntimeSpirv-OpRayQueryInitializeKHR-06350)
             // and implicitly that neither tmin or tmax are NaN (https://docs.vulkan.org/spec/latest/appendices/spirvenv.html#VUID-RuntimeSpirv-OpRayQueryInitializeKHR-06351)
@@ -243,22 +243,21 @@ impl Writer {
             fn write_less_than_2_true(
                 writer: &mut Writer,
                 block: &mut Block,
-                mut bools: Vec<spirv::Word>,
+                first: spirv::Word,
+                second: spirv::Word,
+                rest: &[spirv::Word],
             ) -> spirv::Word {
-                assert!(bools.len() > 1, "Must have multiple booleans!");
                 let bool_ty = writer.get_bool_type_id();
                 let mut each_two_true = Vec::new();
-                while let Some(last_bool) = bools.pop() {
-                    for &bool in &bools {
-                        let both_true_id = writer.write_logical_and(
-                            block,
-                            last_bool,
-                            bool,
-                        );
+                let mut remaining = rest;
+                while let Some((&last_bool, init)) = remaining.split_last() {
+                    for &bool in [first, second].iter().chain(init) {
+                        let both_true_id = writer.write_logical_and(block, last_bool, bool);
                         each_two_true.push(both_true_id);
                     }
+                    remaining = init;
                 }
-                let mut all_or_id = each_two_true.pop().expect("since this must have multiple booleans, there must be at least one thing in `each_two_true`");
+                let mut all_or_id = writer.write_logical_and(block, second, first);
                 for two_true in each_two_true {
                     let new_all_or_id = writer.id_gen.next();
                     block.body.push(Instruction::binary(
@@ -299,7 +298,9 @@ impl Writer {
             let not_contain_skip_triangles_aabbs = write_less_than_2_true(
                 self,
                 block,
-                vec![contains_skip_triangles, contains_skip_aabbs],
+                contains_skip_triangles,
+                contains_skip_aabbs,
+                &[],
             );
 
             // Check that at most one of skip triangles (taken from above check),
@@ -320,11 +321,9 @@ impl Writer {
             let not_contain_skip_triangles_cull = write_less_than_2_true(
                 self,
                 block,
-                vec![
-                    contains_skip_triangles,
-                    contains_cull_back,
-                    contains_cull_front,
-                ],
+                contains_skip_triangles,
+                contains_cull_back,
+                &[contains_cull_front],
             );
 
             // Check that at most one of force opaque, force not opaque, cull opaque,
@@ -357,25 +356,22 @@ impl Writer {
             let not_contain_multiple_opaque = write_less_than_2_true(
                 self,
                 block,
-                vec![
-                    contains_opaque,
-                    contains_no_opaque,
-                    contains_cull_opaque,
-                    contains_cull_no_opaque,
-                ],
+                contains_opaque,
+                contains_no_opaque,
+                &[contains_cull_opaque, contains_cull_no_opaque],
             );
 
             // Combine all checks into a single flag saying whether the call is valid or not.
             self.write_reduce_and(
                 block,
-                vec![
+                not_contain_multiple_opaque,
+                &[
                     tmin_le_tmax_id,
                     tmin_ge_zero_id,
                     all_ray_origin_finite_id,
                     all_ray_dir_finite_id,
                     not_contain_skip_triangles_aabbs,
                     not_contain_skip_triangles_cull,
-                    not_contain_multiple_opaque,
                 ],
             )
         });
@@ -409,10 +405,14 @@ impl Writer {
         id
     }
 
-    fn write_reduce_and(&mut self, block: &mut Block, mut bools: Vec<spirv::Word>) -> spirv::Word {
-        // The combined `and`ed together of all of the bools up to this point.
-        let mut current_combined = bools.pop().unwrap();
-        for boolean in bools {
+    fn write_reduce_and(
+        &mut self,
+        block: &mut Block,
+        last: spirv::Word,
+        others: &[spirv::Word],
+    ) -> spirv::Word {
+        let mut current_combined = last;
+        for &boolean in others {
             current_combined = self.write_logical_and(block, current_combined, boolean)
         }
         current_combined
