@@ -371,6 +371,13 @@ fn expand_section(section: &Section, prototypes: &mut Vec<Prototype>) {
     }
 }
 
+pub(crate) fn needs_memory_scope_semantics(name: &str) -> bool {
+    !matches!(name, "gl_ScopeQueueFamily" | "gl_ScopeShaderCallEXT")
+        && variables::MEMORY_SCOPE_CONSTANTS
+            .iter()
+            .any(|(constant, _)| *constant == name)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct BuiltinFunctionId(pub(crate) u32);
 

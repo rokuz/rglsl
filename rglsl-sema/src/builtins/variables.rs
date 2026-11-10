@@ -252,6 +252,27 @@ impl Builder {
     }
 }
 
+pub(super) const MEMORY_SCOPE_CONSTANTS: [(&str, i32); 18] = [
+    ("gl_ScopeDevice", 1),
+    ("gl_ScopeWorkgroup", 2),
+    ("gl_ScopeSubgroup", 3),
+    ("gl_ScopeInvocation", 4),
+    ("gl_ScopeQueueFamily", 5),
+    ("gl_ScopeShaderCallEXT", 6),
+    ("gl_SemanticsRelaxed", 0x0),
+    ("gl_SemanticsAcquire", 0x2),
+    ("gl_SemanticsRelease", 0x4),
+    ("gl_SemanticsAcquireRelease", 0x8),
+    ("gl_SemanticsMakeAvailable", 0x2000),
+    ("gl_SemanticsMakeVisible", 0x4000),
+    ("gl_SemanticsVolatile", 0x8000),
+    ("gl_StorageSemanticsNone", 0x0),
+    ("gl_StorageSemanticsBuffer", 0x40),
+    ("gl_StorageSemanticsShared", 0x100),
+    ("gl_StorageSemanticsImage", 0x800),
+    ("gl_StorageSemanticsOutput", 0x1000),
+];
+
 pub(super) fn build(
     version: u32,
     stage: Stage,
@@ -263,6 +284,9 @@ pub(super) fn build(
         scope: Vec::new(),
     };
     for (name, value) in limits.integer_constants() {
+        builder.constant(name, Type::INT, alloc::vec![Value::Int(value)]);
+    }
+    for (name, value) in MEMORY_SCOPE_CONSTANTS {
         builder.constant(name, Type::INT, alloc::vec![Value::Int(value)]);
     }
     let triple = |values: [i32; 3]| values.iter().map(|value| Value::Int(*value)).collect();

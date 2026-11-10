@@ -773,6 +773,12 @@ bitflags::bitflags! {
         /// The variable may be modified by something external to the shader,
         /// preventing certain compiler optimizations.
         const VOLATILE = 0x2;
+        const DEVICE_COHERENT = 0x4;
+        const QUEUE_FAMILY_COHERENT = 0x8;
+        const WORKGROUP_COHERENT = 0x10;
+        const SUBGROUP_COHERENT = 0x20;
+        const SHADER_CALL_COHERENT = 0x40;
+        const NONPRIVATE = 0x80;
     }
 }
 
@@ -865,6 +871,12 @@ pub enum ImageClass {
     Storage {
         format: StorageFormat,
         access: StorageAccess,
+        #[cfg_attr(
+            feature = "serialize",
+            serde(skip_serializing_if = "core::ops::Not::not")
+        )]
+        #[cfg_attr(feature = "deserialize", serde(default))]
+        multi: bool,
     },
 }
 
@@ -1384,6 +1396,91 @@ pub enum AtomicFunction {
     Min,
     Max,
     Exchange { compare: Option<Handle<Expression>> },
+}
+
+#[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub enum MemoryScope {
+    CrossDevice,
+    Device,
+    Workgroup,
+    Subgroup,
+    Invocation,
+    QueueFamily,
+    ShaderCall,
+}
+
+bitflags::bitflags! {
+    #[cfg_attr(feature = "serialize", derive(Serialize))]
+    #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+    #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+    #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    pub struct MemorySemantics: u32 {
+        const ACQUIRE = 0x2;
+        const RELEASE = 0x4;
+        const ACQUIRE_RELEASE = 0x8;
+        const UNIFORM_MEMORY = 0x40;
+        const WORKGROUP_MEMORY = 0x100;
+        const ATOMIC_COUNTER_MEMORY = 0x400;
+        const IMAGE_MEMORY = 0x800;
+        const OUTPUT_MEMORY = 0x1000;
+        const MAKE_AVAILABLE = 0x2000;
+        const MAKE_VISIBLE = 0x4000;
+        const VOLATILE = 0x8000;
+    }
+}
+
+#[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub struct MemoryOrder {
+    pub scope: MemoryScope,
+    pub semantics: MemorySemantics,
+    pub unequal: MemorySemantics,
+}
+
+#[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub struct Texel {
+    pub image: Handle<Expression>,
+    pub coordinate: Handle<Expression>,
+    pub array_index: Option<Handle<Expression>>,
+    pub sample: Option<Handle<Expression>>,
+}
+
+#[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub enum AtomicLocation {
+    Pointer(Handle<Expression>),
+    Texel(Texel),
+}
+
+impl Texel {
+    pub fn expressions(&self) -> impl Iterator<Item = Handle<Expression>> {
+        [self.image, self.coordinate]
+            .into_iter()
+            .chain(self.array_index)
+            .chain(self.sample)
+    }
+}
+
+impl AtomicLocation {
+    pub fn expressions(&self) -> impl Iterator<Item = Handle<Expression>> {
+        let (pointer, texel) = match *self {
+            Self::Pointer(pointer) => (Some(pointer), None),
+            Self::Texel(texel) => (None, Some(texel)),
+        };
+        pointer
+            .into_iter()
+            .chain(texel.into_iter().flat_map(|texel| texel.expressions()))
+    }
 }
 
 /// Hint at which precision to compute a derivative.
@@ -2255,6 +2352,12 @@ pub enum Statement {
     /// The `Barrier` flags control which memory accesses should be synchronized.
     MemoryBarrier(Barrier),
 
+    ScopedBarrier {
+        execution: Option<MemoryScope>,
+        memory: MemoryScope,
+        semantics: MemorySemantics,
+    },
+
     /// Stores a value at an address.
     ///
     /// For [`TypeInner::Atomic`] type behind the pointer, the value
@@ -2364,6 +2467,20 @@ pub enum Statement {
         /// [`SHADER_INT64_ATOMIC_MIN_MAX`]: crate::valid::Capabilities::SHADER_INT64_ATOMIC_MIN_MAX
         /// [`SHADER_INT64_ATOMIC_ALL_OPS`]: crate::valid::Capabilities::SHADER_INT64_ATOMIC_ALL_OPS
         result: Option<Handle<Expression>>,
+
+        #[cfg_attr(feature = "serialize", serde(skip_serializing_if = "Option::is_none"))]
+        #[cfg_attr(feature = "deserialize", serde(default))]
+        order: Option<MemoryOrder>,
+    },
+    AtomicLoad {
+        location: AtomicLocation,
+        order: MemoryOrder,
+        result: Handle<Expression>,
+    },
+    AtomicStore {
+        location: AtomicLocation,
+        value: Handle<Expression>,
+        order: MemoryOrder,
     },
     /// Performs an atomic operation on a texel value of an image.
     ///
@@ -2407,6 +2524,18 @@ pub enum Statement {
 
         /// The value with which to perform the atomic operation.
         value: Handle<Expression>,
+
+        #[cfg_attr(feature = "serialize", serde(skip_serializing_if = "Option::is_none"))]
+        #[cfg_attr(feature = "deserialize", serde(default))]
+        sample: Option<Handle<Expression>>,
+
+        #[cfg_attr(feature = "serialize", serde(skip_serializing_if = "Option::is_none"))]
+        #[cfg_attr(feature = "deserialize", serde(default))]
+        result: Option<Handle<Expression>>,
+
+        #[cfg_attr(feature = "serialize", serde(skip_serializing_if = "Option::is_none"))]
+        #[cfg_attr(feature = "deserialize", serde(default))]
+        order: Option<MemoryOrder>,
     },
     /// Load uniformly from a uniform pointer in the workgroup address space.
     ///

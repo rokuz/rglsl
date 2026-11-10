@@ -21,11 +21,11 @@ use crate::arena::Handle;
 /// In the process of generating code to compute the combined vector, we also
 /// produce SPIR-V types and vector lengths that are useful elsewhere. This
 /// struct gathers that information into one place, with standard names.
-struct ImageCoordinates {
+pub(super) struct ImageCoordinates {
     /// The SPIR-V id of the combined coordinate/index vector value.
     ///
     /// Note: when indexing a non-arrayed 1D image, this will be a scalar.
-    value_id: Word,
+    pub(super) value_id: Word,
 
     /// The SPIR-V id of the type of `value`.
     type_id: Word,
@@ -105,6 +105,8 @@ struct Load {
 
     /// The id of the image being accessed.
     image_id: Word,
+
+    memory: (spirv::ImageOperands, Option<Word>),
 }
 
 impl Load {
@@ -139,6 +141,7 @@ impl Load {
             opcode,
             type_id,
             image_id,
+            memory: (spirv::ImageOperands::empty(), None),
         })
     }
 }
@@ -164,18 +167,15 @@ impl Access for Load {
             coordinates_id,
         );
 
-        match (level_id, sample_id) {
-            (None, None) => {}
-            (Some(level_id), None) => {
-                instruction.add_operand(spirv::ImageOperands::LOD.bits());
-                instruction.add_operand(level_id);
-            }
-            (None, Some(sample_id)) => {
-                instruction.add_operand(spirv::ImageOperands::SAMPLE.bits());
-                instruction.add_operand(sample_id);
-            }
-            // There's no such thing as a multi-sampled mipmap.
-            (Some(_), Some(_)) => unreachable!(),
+        let (memory, scope_id) = self.memory;
+        let mut mask = memory;
+        mask.set(spirv::ImageOperands::LOD, level_id.is_some());
+        mask.set(spirv::ImageOperands::SAMPLE, sample_id.is_some());
+        if !mask.is_empty() {
+            instruction.add_operand(mask.bits());
+        }
+        for id in level_id.into_iter().chain(sample_id).chain(scope_id) {
+            instruction.add_operand(id);
         }
 
         block.body.push(instruction);
@@ -201,6 +201,8 @@ struct Store {
 
     /// The value we're going to write to the texel.
     value_id: Word,
+
+    memory: (spirv::ImageOperands, Option<Word>),
 }
 
 impl Access for Store {
@@ -215,11 +217,16 @@ impl Access for Store {
         _sample_id: Option<Word>,
         block: &mut Block,
     ) {
-        block.body.push(Instruction::image_write(
-            self.image_id,
-            coordinates_id,
-            self.value_id,
-        ));
+        let mut instruction =
+            Instruction::image_write(self.image_id, coordinates_id, self.value_id);
+        let (mask, scope_id) = self.memory;
+        if !mask.is_empty() {
+            instruction.add_operand(mask.bits());
+        }
+        if let Some(id) = scope_id {
+            instruction.add_operand(id);
+        }
+        block.body.push(instruction);
     }
 
     /// Stores don't generate any value, so this just returns `()`.
@@ -256,7 +263,7 @@ impl BlockContext<'_> {
     ///
     /// [`Expression::ImageLoad`]: crate::Expression::ImageLoad
     /// [`ImageSample`]: crate::Expression::ImageSample
-    fn write_image_coordinates(
+    pub(super) fn write_image_coordinates(
         &mut self,
         coordinates: Handle<crate::Expression>,
         array_index: Option<Handle<crate::Expression>>,
@@ -806,6 +813,9 @@ impl BlockContext<'_> {
         let mut access = Load::from_image_expr(self, image_id, image_class, result_type_id)?;
         if subpass {
             access.opcode = spirv::Op::ImageRead;
+        }
+        if matches!(image_class, crate::ImageClass::Storage { .. }) {
+            access.memory = self.texel_memory(image, false);
         }
         let coordinates = self.write_image_coordinates(coordinate, array_index, block)?;
 
@@ -1414,7 +1424,12 @@ impl BlockContext<'_> {
         let coordinates = self.write_image_coordinates(coordinate, array_index, block)?;
         let value_id = self.cached[value];
 
-        let write = Store { image_id, value_id };
+        let memory = self.texel_memory(image, true);
+        let write = Store {
+            image_id,
+            value_id,
+            memory,
+        };
 
         match *self.fun_info[image].ty.inner_with(&self.ir_module.types) {
             crate::TypeInner::Image {
