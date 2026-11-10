@@ -1,4 +1,4 @@
-use alloc::collections::BTreeMap;
+use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::rc::Rc;
 use alloc::string::String;
 use alloc::vec;
@@ -84,6 +84,7 @@ pub(crate) struct Preprocessor<'a> {
     pub(crate) disable_escapes: bool,
     pub(crate) extensions: [bool; 5],
     pub(crate) include_stack: Vec<FileId>,
+    pub(crate) included_once: BTreeSet<FileId>,
     pub(crate) sources: Vec<SourceInfo>,
     pub(crate) files: BTreeMap<FileId, String>,
     pub(crate) output: Output,
@@ -180,6 +181,7 @@ pub fn preprocess(
         disable_escapes: false,
         extensions: [false; 5],
         include_stack: Vec::new(),
+        included_once: BTreeSet::new(),
         sources,
         files,
         output: Output::new(file, options.limits.max_output_bytes),

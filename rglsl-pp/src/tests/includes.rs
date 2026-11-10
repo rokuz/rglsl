@@ -291,23 +291,41 @@ fn include_depth_is_limited() {
 }
 
 #[test]
-fn pragma_once_is_not_implemented_like_glslang() {
+fn pragma_once_includes_a_file_once() {
     let result = run_tree(&[
         (
             "main.frag",
-            "#version 450\n#include \"once.h\"\n#include \"once.h\"\n",
+            "#version 450\n#include \"a.h\"\n#include \"once.h\"\n#include \"sub/../once.h\"\nint end;\n",
         ),
-        ("once.h", "#pragma once\nint twice;\n"),
+        ("a.h", "#include \"once.h\"\nint a;\n"),
+        ("once.h", "#pragma once\nint once;\n"),
+    ]);
+    no_errors(&result);
+    assert!(warnings(&result).is_empty());
+    assert_eq!(code(&result.text), lex("int once; int a; int end;"));
+}
+
+#[test]
+fn pragma_once_in_the_root_file_stops_self_inclusion() {
+    let result = run_tree(&[(
+        "main.frag",
+        "#version 450\n#pragma once\n#include \"main.frag\"\nint main_token;\n",
+    )]);
+    no_errors(&result);
+    assert_eq!(code(&result.text), lex("int main_token;"));
+}
+
+#[test]
+fn files_without_pragma_once_are_included_every_time() {
+    let result = run_tree(&[
+        (
+            "main.frag",
+            "#version 450\n#include \"twice.h\"\n#include \"twice.h\"\n",
+        ),
+        ("twice.h", "int twice;\n"),
     ]);
     no_errors(&result);
     assert_eq!(code(&result.text), lex("int twice; int twice;"));
-    assert_eq!(
-        warnings(&result),
-        [
-            DiagnosticKind::PragmaOnceNotImplemented,
-            DiagnosticKind::PragmaOnceNotImplemented
-        ]
-    );
 }
 
 #[test]

@@ -141,13 +141,12 @@ fn extension_syntax() {
 
 #[test]
 fn pragmas() {
-    let result = run("#version 450\n#pragma once\nint a;\n");
+    let result = run("#version 450\n#pragma once\n#pragma optimize(off)\nint a;\n");
     assert!(errors(&result).is_empty());
-    assert_eq!(
-        warnings(&result),
-        [DiagnosticKind::PragmaOnceNotImplemented]
-    );
-    assert!(directive_lines(&result.text).contains(&String::from("#pragma once")));
+    assert!(warnings(&result).is_empty());
+    let directives = directive_lines(&result.text);
+    assert!(!directives.contains(&String::from("#pragma once")));
+    assert!(directives.contains(&String::from("#pragma optimize ( off )")));
     let (kind, _) = first_error("#version 450\n#pragma foo");
     assert_eq!(kind, DiagnosticKind::PragmaWithoutNewline);
     let result = run("#version 450\n#pragma\n#\nint a;\n");

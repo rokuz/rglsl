@@ -112,7 +112,6 @@ pub enum DiagnosticKind {
         message: String,
     },
     PragmaWithoutNewline,
-    PragmaOnceNotImplemented,
     VersionNotFirst,
     VersionWithoutNumber,
     BadProfile,
@@ -184,7 +183,6 @@ impl DiagnosticKind {
         match self {
             Self::MissingSpaceAfterMacroName
             | Self::ReservedDoubleUnderscore { .. }
-            | Self::PragmaOnceNotImplemented
             | Self::ContinuationInComment { .. } => Severity::Warning,
             _ => Severity::Error,
         }
@@ -300,7 +298,6 @@ impl DiagnosticKind {
             }
             Self::ErrorDirective { message } => ("#error", message, ""),
             Self::PragmaWithoutNewline => ("#pragma", "directive must end with a newline", ""),
-            Self::PragmaOnceNotImplemented => ("#pragma once", "not implemented", ""),
             Self::VersionNotFirst => ("#version", "must occur first in shader", ""),
             Self::VersionWithoutNumber => ("#version", "must be followed by version number", ""),
             Self::BadProfile => (

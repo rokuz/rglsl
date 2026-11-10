@@ -554,7 +554,7 @@ impl Preprocessor<'_> {
             return;
         }
         self.files.insert(included.file, included.name.clone());
-        if included.source.is_empty() {
+        if self.included_once.contains(&included.file) || included.source.is_empty() {
             return;
         }
         let number = self.source_number(self.current_at().source);
@@ -585,6 +585,13 @@ impl Preprocessor<'_> {
             self.report(DiagnosticKind::PragmaWithoutNewline, at);
             return token;
         }
+        if let [once] = words.as_slice() {
+            if once == "once" {
+                let file = self.innermost_file().map_or(self.root, |file| file.file);
+                self.included_once.insert(file);
+                return token;
+            }
+        }
         let mut text = String::from("#pragma");
         for word in &words {
             text.push(' ');
@@ -592,9 +599,6 @@ impl Preprocessor<'_> {
         }
         if !self.in_preamble() {
             self.output.directive(&text, at);
-        }
-        if words.first().is_some_and(|word| word == "once") {
-            self.report(DiagnosticKind::PragmaOnceNotImplemented, at);
         }
         token
     }
