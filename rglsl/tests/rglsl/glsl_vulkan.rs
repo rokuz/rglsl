@@ -2189,3 +2189,55 @@ fn non_constant_texture_offsets() {
         spirv::Capability::ImageGatherExtended
     ));
 }
+
+#[test]
+fn arrays_of_buffer_blocks_match_glslang() {
+    let source = "#version 450
+        layout(local_size_x = 1) in;
+        struct S { vec4 x; float y[2]; };
+        uniform U { vec4 a; S s; } u[4];
+        layout(std430) buffer B { float f; vec4 r[]; } b[2];
+        layout(std430) buffer C { uint n; } c[];
+        uniform I { vec4 sized[]; vec4 one[]; } implicit;
+        layout(push_constant) uniform P { int i; } pc;
+        void main() {
+            S t = u[pc.i].s;
+            b[1].r[pc.i] = u[2].a + t.x + implicit.sized[3] + implicit.one[0];
+            b[0].f = float(b[1].r.length()) + u[pc.i].s.y[1];
+            c[3].n = 1u;
+        }";
+    let options = glsl::Options {
+        auto_map_bindings: true,
+        ..glsl::Options::from(ShaderStage::Compute)
+    };
+    let module = glsl::Frontend::default().parse(&options, source).unwrap();
+    let info = Validator::new(ValidationFlags::all(), Capabilities::all())
+        .validate(&module)
+        .unwrap();
+    let words = spv::write_vec(
+        &module,
+        &info,
+        &spv::Options {
+            flags: spv::WriterFlags::DEBUG,
+            ..spv::Options::default()
+        },
+        None,
+    )
+    .expect("SPIR-V backend failed");
+    crate::stage_io::spirv_val(&words);
+    let module = dr::load_words(words).expect("produced SPIR-V does not parse");
+    for (name, binding) in [("u", 0), ("b", 1), ("c", 2), ("implicit", 3)] {
+        assert_eq!(
+            sorted_variable_decorations(&module, name),
+            [
+                (Decoration::Binding, vec![binding]),
+                (Decoration::DescriptorSet, vec![0])
+            ],
+            "{name}"
+        );
+    }
+    let mut blocks = decorated(&module, Decoration::Block);
+    blocks.sort_unstable();
+    assert_eq!(blocks, ["B", "C", "I", "P", "U"]);
+    assert_eq!(array_lengths(&module), [1, 2, 2, 2, 4, 4, 4]);
+}

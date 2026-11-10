@@ -663,6 +663,9 @@ impl<'a> Lowerer<'a> {
         qualifiers: &Qualifiers,
         at: Span,
     ) -> Result<(Option<ResourceBinding>, Option<Option<u32>>)> {
+        if qualifiers.has_layout("descriptor_heap") || qualifiers.has_layout("descriptor_stride") {
+            return Err(unsupported("descriptor heaps", at));
+        }
         let value = |name: &str| -> Result<Option<u32>> {
             match qualifiers.layout_entry(name).and_then(|e| e.value) {
                 Some(value) => u32::try_from(value).map(Some).map_err(|_| internal(at)),
@@ -826,9 +829,21 @@ impl<'a> Lowerer<'a> {
                 Packing::Std140
             });
         let row_major = row_major.or(defaults.row_major).unwrap_or(false);
-        let ty = self.block_struct(id, packing, row_major, at)?;
-        if variable.ty.is_array() {
-            return Err(unsupported("arrays of blocks", at));
+        let mut ty = self.block_struct(id, packing, row_major, at)?;
+        match *variable.ty.array.as_slice() {
+            [] => {}
+            [size] => {
+                let size = match size {
+                    GlslArraySize::Sized(_) => self.array_size(size, at)?,
+                    GlslArraySize::Unsized => match self.implicit_sizes.get(&symbol) {
+                        Some(&size) => self.array_size(GlslArraySize::Sized(size), at)?,
+                        None => crate::ArraySize::Dynamic,
+                    },
+                    GlslArraySize::Specialized => self.array_size(size, at)?,
+                };
+                ty = self.insert_type(TypeInner::BindingArray { base: ty, size });
+            }
+            _ => return Err(unsupported("arrays of arrays of blocks", at)),
         }
         let mut decorations = memory(qualifiers);
         for member in &block.members {

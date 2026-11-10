@@ -5,7 +5,7 @@ use alloc::{
 
 use rglsl_ast::ast::{Expression, ExpressionKind, FunctionDefinition, Node};
 use rglsl_sema::scope::{Origin, SymbolKind};
-use rglsl_sema::types::OpaqueKind;
+use rglsl_sema::types::{BlockId, OpaqueKind, TypeKind};
 use rglsl_sema::{Callee, FunctionId, SymbolId};
 
 use super::{semantic, Lowerer, Result};
@@ -36,6 +36,37 @@ impl<'a> Lowerer<'a> {
                 .variable(instance)
                 .is_some_and(|variable| variable.origin == Origin::BuiltIn),
             _ => false,
+        }
+    }
+
+    fn block_member_of(&self, expression: &Expression) -> Option<(BlockId, u32)> {
+        let expression = strip(expression);
+        let block_of = |ty: &rglsl_sema::types::Type| match ty.kind {
+            TypeKind::Block(id) if !ty.is_array() => Some(id),
+            _ => None,
+        };
+        match expression.kind {
+            ExpressionKind::Variable(_) => {
+                let symbol = self.analysis.references.get(&expression.id)?;
+                let SymbolKind::BlockMember { instance, index } = self.symbol(*symbol)?.kind else {
+                    return None;
+                };
+                let variable = self.variable(instance)?;
+                let id = match variable.ty.kind {
+                    TypeKind::Block(id) => id,
+                    _ => return None,
+                };
+                Some((id, index))
+            }
+            ExpressionKind::FieldSelection {
+                ref base,
+                ref field,
+            } => {
+                let id = block_of(self.analysis.type_of(base.id)?)?;
+                let (index, _) = self.analysis.types.block(id)?.member(&field.node)?;
+                Some((id, u32::try_from(index).ok()?))
+            }
+            _ => None,
         }
     }
 
@@ -93,9 +124,7 @@ impl<'a> Lowerer<'a> {
                     ref base,
                     ref index,
                 } => {
-                    let Some(symbol) = self.variable_symbol(base) else {
-                        continue;
-                    };
+                    let symbol = self.variable_symbol(base);
                     let value = analysis
                         .expression(index.id)
                         .and_then(|info| info.value.as_ref())
@@ -103,6 +132,13 @@ impl<'a> Lowerer<'a> {
                         .and_then(|value| u32::try_from(value).ok())
                         .and_then(|value| value.checked_add(1));
                     let Some(size) = value else {
+                        continue;
+                    };
+                    if let Some(member) = self.block_member_of(base) {
+                        let entry = self.member_sizes.entry(member).or_insert(0);
+                        *entry = (*entry).max(size);
+                    }
+                    let Some(symbol) = symbol else {
                         continue;
                     };
                     let entry = self.implicit_sizes.entry(symbol).or_insert(0);
