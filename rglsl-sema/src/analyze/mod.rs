@@ -7,6 +7,7 @@ mod memory;
 mod ray;
 mod reference;
 mod reference_expression;
+mod stage;
 mod statement;
 
 use alloc::collections::{BTreeMap, BTreeSet};
@@ -307,6 +308,7 @@ pub(crate) struct Analyzer<'a> {
     pub vulkan_memory_model: bool,
     pub ray_locations: [Vec<u32>; 2],
     pub primitive_culling: bool,
+    pub stage_layout: stage::StageLayout,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -374,6 +376,7 @@ impl<'a> Analyzer<'a> {
             vulkan_memory_model: false,
             ray_locations: [Vec::new(), Vec::new()],
             primitive_culling: false,
+            stage_layout: stage::StageLayout::default(),
         }
     }
 

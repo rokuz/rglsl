@@ -124,6 +124,7 @@ impl Analyzer<'_> {
             );
         }
         self.record_buffer_defaults(&qualifiers);
+        self.standalone_stage_layout(&qualifiers);
         if qualifiers.storage == Storage::Out {
             if let Some(vertices) = qualifiers
                 .layout_entry("vertices")
@@ -141,6 +142,16 @@ impl Analyzer<'_> {
         }
         self.input_layout(qualifier.span, &qualifiers);
         self.derivative_layout(qualifier.span, &qualifiers);
+        for entry in &qualifiers.layout {
+            let name = entry.name.to_ascii_lowercase();
+            if matches!(name.as_str(), "full_quads" | "quad_derivatives") {
+                self.require_extension(
+                    qualifier.span,
+                    crate::builtins::subgroup::QUAD_CONTROL,
+                    &name,
+                );
+            }
+        }
         let names = ["local_size_x", "local_size_y", "local_size_z"];
         let identifiers = ["local_size_x_id", "local_size_y_id", "local_size_z_id"];
         for index in 0..3 {
@@ -763,6 +774,8 @@ impl Analyzer<'_> {
             self.global_storage_checks(&qualifiers, &base, list.ty.specifier.span, true);
             return;
         }
+        self.no_shader_layouts(&qualifiers);
+        self.passthrough_extension(&qualifiers);
         for declarator in &list.declarators {
             self.init_declarator(declarator, &qualifiers, &base);
         }
@@ -1446,6 +1459,8 @@ impl Analyzer<'_> {
         if qualifiers.nonuniform {
             self.non_uniform_storage_check(Some(&structure.qualifier), &qualifiers);
         }
+        self.no_shader_layouts(&qualifiers);
+        self.passthrough_extension(&qualifiers);
         let storage = match qualifiers.storage {
             Storage::Uniform => BlockStorage::Uniform,
             Storage::Buffer => BlockStorage::Buffer,
@@ -1522,6 +1537,7 @@ impl Analyzer<'_> {
                 return;
             }
             self.redeclared_blocks.push(storage);
+            self.declarations.insert(declaration.id, variable);
             self.redeclare_per_vertex(block, variable, members);
             let sized = matches!(dimensions.first(), Some(ArraySize::Sized(_)));
             if let Some(SymbolKind::Variable(variable)) = self

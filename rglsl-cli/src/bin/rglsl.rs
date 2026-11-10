@@ -226,6 +226,9 @@ impl FromStr for ShaderStage {
             "frag" | "fragment" => ShaderStage::Fragment,
             "comp" | "compute" => ShaderStage::Compute,
             "vert" | "vertex" => ShaderStage::Vertex,
+            "tesc" => ShaderStage::TessControl,
+            "tese" => ShaderStage::TessEvaluation,
+            "geom" | "geometry" => ShaderStage::Geometry,
             "task" => ShaderStage::Task,
             "mesh" => ShaderStage::Mesh,
             "rgen" => ShaderStage::RayGeneration,
@@ -346,6 +349,7 @@ struct Parameters<'a> {
     defines: FastHashMap<String, String>,
     auto_map_bindings: bool,
     auto_map_locations: bool,
+    spirv_version: Option<(u8, u8)>,
     capabilities: rglsl::valid::Capabilities,
 
     /// We use this copy of `args.compact` to know whether we should pass the
@@ -478,6 +482,7 @@ fn run() -> anyhow::Result<()> {
     params.entry_point.clone_from(&args.entry_point);
     if let Some(ref version) = args.spirv_version {
         params.spv_out.lang_version = (version.0, version.1);
+        params.spirv_version = Some((version.0, version.1));
     }
     params.keep_coordinate_space = args.keep_coordinate_space;
 
@@ -698,6 +703,7 @@ fn parse_input(input_path: &Path, input: Vec<u8>, params: &Parameters) -> anyhow
                             defines: params.defines.clone(),
                             auto_map_bindings: params.auto_map_bindings,
                             auto_map_locations: params.auto_map_locations,
+                            spirv_version: params.spirv_version,
                         },
                         &input,
                     )

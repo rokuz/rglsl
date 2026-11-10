@@ -5203,6 +5203,833 @@ fn heap_resources_are_not_passed_to_user_functions() {
     assert!(error.contains("descriptor heap resource"), "{error}");
 }
 
+fn execution_mode_operands(module: &dr::Module, mode: spirv::ExecutionMode) -> Option<Vec<u32>> {
+    module
+        .execution_modes
+        .iter()
+        .find(|inst| inst.operands[1] == Operand::ExecutionMode(mode))
+        .map(|inst| {
+            inst.operands[2..]
+                .iter()
+                .filter_map(|operand| match *operand {
+                    Operand::LiteralBit32(value) => Some(value),
+                    _ => None,
+                })
+                .collect()
+        })
+}
+
+fn execution_model(module: &dr::Module) -> spirv::ExecutionModel {
+    match module.entry_points[0].operands[0] {
+        Operand::ExecutionModel(model) => model,
+        ref other => panic!("unexpected entry point operand {other:?}"),
+    }
+}
+
+fn variable_array_length(module: &dr::Module, name: &str) -> u32 {
+    let variable = module
+        .types_global_values
+        .iter()
+        .find(|inst| {
+            inst.class.opcode == Op::Variable
+                && inst.result_id.is_some_and(|id| name_of(module, id) == name)
+        })
+        .unwrap_or_else(|| panic!("{name} is not declared"));
+    let pointer = module
+        .types_global_values
+        .iter()
+        .find(|inst| inst.result_id == variable.result_type)
+        .expect("a variable has a pointer type");
+    let pointee = pointer.operands[1].unwrap_id_ref();
+    let array = module
+        .types_global_values
+        .iter()
+        .find(|inst| inst.result_id == Some(pointee))
+        .expect("the pointee is declared");
+    assert_eq!(array.class.opcode, Op::TypeArray, "{name}");
+    constant(module, &array.operands[1])
+}
+
+#[test]
+fn geometry_execution_modes_and_capabilities() {
+    let module = compile_valid(
+        ShaderStage::Geometry,
+        "#version 450 core
+        layout(triangles) in;
+        layout(line_strip) out;
+        layout(max_vertices = 127) out;
+        layout(invocations = 4) in;
+        void main() {
+            gl_PointSize = gl_in[1].gl_PointSize;
+            gl_Layer = 2;
+            gl_ViewportIndex = 3;
+        }",
+    );
+    assert_eq!(execution_model(&module), spirv::ExecutionModel::Geometry);
+    assert_eq!(
+        execution_mode_operands(&module, spirv::ExecutionMode::Triangles),
+        Some(Vec::new())
+    );
+    assert_eq!(
+        execution_mode_operands(&module, spirv::ExecutionMode::Invocations),
+        Some(vec![4])
+    );
+    assert_eq!(
+        execution_mode_operands(&module, spirv::ExecutionMode::OutputLineStrip),
+        Some(Vec::new())
+    );
+    assert_eq!(
+        execution_mode_operands(&module, spirv::ExecutionMode::OutputVertices),
+        Some(vec![127])
+    );
+    for capability in [
+        spirv::Capability::Geometry,
+        spirv::Capability::GeometryPointSize,
+        spirv::Capability::MultiViewport,
+    ] {
+        assert!(has_capability(&module, capability), "{capability:?}");
+    }
+    assert!(!has_capability(&module, spirv::Capability::ClipDistance));
+    assert_eq!(variable_array_length(&module, "gl_in"), 3);
+}
+
+#[test]
+fn geometry_invocations_default_to_one() {
+    let module = compile_valid(
+        ShaderStage::Geometry,
+        "#version 450
+        layout(points) in;
+        layout(points, max_vertices = 1) out;
+        void main() { gl_Position = gl_in[0].gl_Position; EmitVertex(); EndPrimitive(); }",
+    );
+    assert_eq!(
+        execution_mode_operands(&module, spirv::ExecutionMode::Invocations),
+        Some(vec![1])
+    );
+    assert_eq!(instructions(&module, Op::EmitVertex).len(), 1);
+    assert_eq!(instructions(&module, Op::EndPrimitive).len(), 1);
+    assert!(!has_capability(&module, spirv::Capability::GeometryStreams));
+    assert!(!has_capability(
+        &module,
+        spirv::Capability::GeometryPointSize
+    ));
+}
+
+#[test]
+fn geometry_streams() {
+    let module = compile_valid(
+        ShaderStage::Geometry,
+        "#version 450
+        layout(points) in;
+        layout(points, max_vertices = 2) out;
+        layout(location = 3) out vec4 early;
+        layout(stream = 1) out;
+        layout(location = 0) out vec4 a;
+        layout(stream = 0, location = 1) out vec4 b;
+        void main() {
+            a = vec4(1.0);
+            EmitStreamVertex(1);
+            EndStreamPrimitive(1);
+            b = vec4(2.0);
+            EmitVertex();
+        }",
+    );
+    assert!(has_capability(&module, spirv::Capability::GeometryStreams));
+    let emits = instructions(&module, Op::EmitStreamVertex);
+    assert_eq!(emits.len(), 1);
+    assert_eq!(constant(&module, &emits[0].operands[0]), 1);
+    assert_eq!(instructions(&module, Op::EndStreamPrimitive).len(), 1);
+    let streams: Vec<(String, u32)> = module
+        .annotations
+        .iter()
+        .filter(|inst| inst.operands[1] == Operand::Decoration(Decoration::Stream))
+        .map(|inst| {
+            let Operand::LiteralBit32(stream) = inst.operands[2] else {
+                panic!("Stream takes a literal");
+            };
+            (name_of(&module, inst.operands[0].unwrap_id_ref()), stream)
+        })
+        .collect();
+    for (name, stream) in [("early", 0), ("a", 1), ("b", 0)] {
+        assert!(
+            streams.contains(&(name.to_string(), stream)),
+            "{name} {stream} in {streams:?}"
+        );
+    }
+}
+
+#[test]
+fn geometry_per_vertex_inputs_take_element_locations() {
+    let module = compile_valid(
+        ShaderStage::Geometry,
+        "#version 450
+        layout(lines_adjacency) in;
+        layout(triangle_strip, max_vertices = 4) out;
+        layout(location = 0) in vec4 a[];
+        layout(location = 1) in vec2 b[4];
+        layout(location = 2) in Block { vec4 c; flat int d; } blocks[];
+        layout(location = 0) out vec4 color;
+        void main() {
+            for (int i = 0; i < 4; ++i) {
+                color = a[i] + vec4(b[i], blocks[i].c.xy) + vec4(blocks[i].d);
+                gl_Position = gl_in[i].gl_Position;
+                gl_PrimitiveID = gl_PrimitiveIDIn;
+                EmitVertex();
+            }
+        }",
+    );
+    assert!(has_execution_mode(
+        &module,
+        spirv::ExecutionMode::InputLinesAdjacency
+    ));
+    assert_eq!(variable_array_length(&module, "a"), 4);
+    assert_eq!(variable_array_length(&module, "blocks"), 4);
+    let primitive_ids = module
+        .annotations
+        .iter()
+        .filter(|inst| inst.operands.get(2) == Some(&Operand::BuiltIn(spirv::BuiltIn::PrimitiveId)))
+        .count();
+    assert_eq!(primitive_ids, 2);
+}
+
+#[test]
+fn tessellation_control_interface() {
+    let module = compile_valid(
+        ShaderStage::TessControl,
+        "#version 450 core
+        layout(vertices = 4) out;
+        layout(location = 1) patch out vec4 patchOut;
+        struct S { float sMem1; float sMem2; };
+        layout(location = 12) patch out TheBlock { float bMem1; float bMem2; S s; } tcBlock[2];
+        layout(location = 0) in vec3 inNormal[];
+        layout(location = 0) out vec3 outNormal[];
+        void main() {
+            gl_out[gl_InvocationID].gl_Position = gl_in[gl_InvocationID].gl_Position;
+            outNormal[gl_InvocationID] = inNormal[gl_InvocationID];
+            barrier();
+            if (gl_InvocationID == 0) {
+                patchOut = vec4(outNormal[1], 1.0);
+                gl_TessLevelOuter[0] = 1.0;
+                gl_TessLevelInner[1] = float(gl_PatchVerticesIn);
+            }
+        }",
+    );
+    assert_eq!(
+        execution_model(&module),
+        spirv::ExecutionModel::TessellationControl
+    );
+    assert_eq!(
+        execution_mode_operands(&module, spirv::ExecutionMode::OutputVertices),
+        Some(vec![4])
+    );
+    assert!(has_capability(&module, spirv::Capability::Tessellation));
+    assert!(!has_capability(
+        &module,
+        spirv::Capability::TessellationPointSize
+    ));
+    let patch = decorated(&module, Decoration::Patch);
+    for name in [
+        "patchOut",
+        "bMem1",
+        "bMem2",
+        "s",
+        "gl_TessLevelOuter",
+        "gl_TessLevelInner",
+    ] {
+        assert!(patch.contains(&name.to_string()), "{name} in {patch:?}");
+    }
+    assert!(!patch.contains(&"outNormal".to_string()));
+    let locations = decorated(&module, Decoration::Location);
+    for name in ["patchOut", "tcBlock", "inNormal", "outNormal"] {
+        assert!(locations.contains(&name.to_string()), "{name}");
+    }
+    assert_eq!(variable_array_length(&module, "gl_in"), 32);
+    assert_eq!(variable_array_length(&module, "gl_out"), 4);
+    assert_eq!(variable_array_length(&module, "inNormal"), 32);
+    assert_eq!(variable_array_length(&module, "outNormal"), 4);
+    let barriers = instructions(&module, Op::ControlBarrier);
+    assert_eq!(barriers.len(), 1);
+    assert_eq!(
+        constant(&module, &barriers[0].operands[0]),
+        spirv::Scope::Workgroup as u32
+    );
+}
+
+#[test]
+fn tessellation_evaluation_modes() {
+    let module = compile_valid(
+        ShaderStage::TessEvaluation,
+        "#version 450
+        layout(isolines, fractional_odd_spacing, cw, point_mode) in;
+        layout(location = 0) in vec4 inColor[];
+        layout(location = 1) patch in vec4 patchColor;
+        layout(location = 0) out vec4 color;
+        void main() {
+            color = inColor[0] * gl_TessCoord.x + patchColor + vec4(gl_TessLevelOuter[1]);
+            gl_Position = gl_in[1].gl_Position;
+            gl_PointSize = 2.0;
+        }",
+    );
+    for mode in [
+        spirv::ExecutionMode::Isolines,
+        spirv::ExecutionMode::SpacingFractionalOdd,
+        spirv::ExecutionMode::VertexOrderCw,
+        spirv::ExecutionMode::PointMode,
+    ] {
+        assert!(has_execution_mode(&module, mode), "{mode:?}");
+    }
+    assert!(has_capability(
+        &module,
+        spirv::Capability::TessellationPointSize
+    ));
+    let defaults = compile_valid(
+        ShaderStage::TessEvaluation,
+        "#version 450
+        layout(triangles) in;
+        void main() { gl_Position = gl_in[0].gl_Position * gl_TessCoord.x; }",
+    );
+    for mode in [
+        spirv::ExecutionMode::Triangles,
+        spirv::ExecutionMode::SpacingEqual,
+        spirv::ExecutionMode::VertexOrderCcw,
+    ] {
+        assert!(has_execution_mode(&defaults, mode), "{mode:?}");
+    }
+    assert!(!has_execution_mode(
+        &defaults,
+        spirv::ExecutionMode::PointMode
+    ));
+}
+
+#[test]
+fn layer_before_rasterization_needs_an_extension() {
+    let error = parse(
+        ShaderStage::TessEvaluation,
+        "#version 450
+        layout(triangles) in;
+        void main() { gl_Layer = 1; }",
+    )
+    .unwrap_err();
+    assert!(
+        error.contains("GL_ARB_shader_viewport_layer_array"),
+        "{error}"
+    );
+    let module = compile_valid(
+        ShaderStage::TessEvaluation,
+        "#version 450
+        #extension GL_ARB_shader_viewport_layer_array : require
+        layout(triangles) in;
+        void main() { gl_Layer = 1; gl_ViewportIndex = 2; }",
+    );
+    assert!(has_capability(
+        &module,
+        spirv::Capability::ShaderViewportIndexLayerEXT
+    ));
+    assert!(!has_capability(&module, spirv::Capability::Geometry));
+}
+
+#[test]
+fn geometry_passthrough() {
+    let module = compile_valid(
+        ShaderStage::Geometry,
+        "#version 450
+        #extension GL_NV_geometry_shader_passthrough : require
+        layout(triangles) in;
+        layout(passthrough) in gl_PerVertex { vec4 gl_Position; };
+        layout(passthrough, location = 0) in Inputs { vec2 texcoord; vec4 baseColor; };
+        void main() {}",
+    );
+    assert!(has_capability(
+        &module,
+        spirv::Capability::GeometryShaderPassthroughNV
+    ));
+    let passthrough = module
+        .annotations
+        .iter()
+        .filter(|inst| inst.operands[1] == Operand::Decoration(Decoration::PassthroughNV))
+        .count();
+    assert_eq!(passthrough, 2);
+    assert!(has_execution_mode(
+        &module,
+        spirv::ExecutionMode::OutputTriangleStrip
+    ));
+    assert_eq!(
+        execution_mode_operands(&module, spirv::ExecutionMode::OutputVertices),
+        Some(vec![3])
+    );
+}
+
+#[test]
+fn geometry_and_tessellation_rejections() {
+    let cases = [
+        (
+            ShaderStage::Geometry,
+            "layout(triangles) in;\nlayout(points) out;\nvoid main() {}",
+            "max_vertices",
+        ),
+        (
+            ShaderStage::Geometry,
+            "layout(points, max_vertices = 1) out;\nvoid main() {}",
+            "input layout primitive",
+        ),
+        (
+            ShaderStage::TessControl,
+            "void main() {}",
+            "layout(vertices=...)",
+        ),
+        (
+            ShaderStage::TessEvaluation,
+            "void main() {}",
+            "input layout primitive",
+        ),
+        (
+            ShaderStage::TessEvaluation,
+            "layout(triangles) in;\nlayout(equal_spacing) in float f[];\nvoid main() {}",
+            "standalone",
+        ),
+        (
+            ShaderStage::TessEvaluation,
+            "layout(triangles) in;\nlayout(quads) in;\nvoid main() {}",
+            "previously set input primitive",
+        ),
+        (
+            ShaderStage::Geometry,
+            "layout(triangles) in;\nlayout(triangles, max_vertices = 1) out;\nvoid main() {}",
+            "cannot apply to 'out'",
+        ),
+        (
+            ShaderStage::Geometry,
+            "layout(triangles) in;\nlayout(points, max_vertices = 1000) out;\nvoid main() {}",
+            "gl_MaxGeometryOutputVertices",
+        ),
+        (
+            ShaderStage::TessControl,
+            "layout(vertices = 4) out;\nvoid main() { if (gl_InvocationID == 0) barrier(); }",
+            "flow control",
+        ),
+        (
+            ShaderStage::TessControl,
+            "layout(vertices = 4) out;\nvoid f() { barrier(); }\nvoid main() { f(); }",
+            "must be in main()",
+        ),
+        (
+            ShaderStage::TessControl,
+            "layout(vertices = 4) out;\nvoid main() { if (gl_InvocationID == 1) return; barrier(); }",
+            "after a return",
+        ),
+        (
+            ShaderStage::Geometry,
+            "layout(triangles) in;\nlayout(points, max_vertices = 4) out;\nvoid main() { int s = 1; EmitStreamVertex(s); }",
+            "constant integral expression",
+        ),
+        (
+            ShaderStage::Geometry,
+            "layout(triangles) in;\nlayout(points, max_vertices = 1) out;\nlayout(passthrough) in Inputs { vec2 t; };\nvoid main() {}",
+            "GL_NV_geometry_shader_passthrough",
+        ),
+        (
+            ShaderStage::Vertex,
+            "void main() { EmitVertex(); }",
+            "EmitVertex",
+        ),
+    ];
+    for (stage, body, expected) in cases {
+        let source = format!("#version 450\n{body}\n");
+        let error = parse(stage, &source).unwrap_err();
+        assert!(error.contains(expected), "{source}: {error}");
+    }
+}
+
+fn parse_for_spirv(stage: ShaderStage, source: &str, version: (u8, u8)) -> Result<(), String> {
+    glsl::Frontend::default()
+        .parse(
+            &glsl::Options {
+                spirv_version: Some(version),
+                ..glsl::Options::from(stage)
+            },
+            source,
+        )
+        .map(|_| ())
+        .map_err(|errors| {
+            errors
+                .errors
+                .first()
+                .map_or_else(String::new, |e| e.kind.to_string())
+        })
+}
+
+fn is_constant(module: &dr::Module, operand: &Operand) -> bool {
+    let Operand::IdRef(id) = *operand else {
+        return false;
+    };
+    module
+        .types_global_values
+        .iter()
+        .any(|inst| inst.result_id == Some(id) && inst.class.opcode == Op::Constant)
+}
+
+fn group_operation(
+    module: &dr::Module,
+    op: Op,
+) -> Vec<(u32, Option<spirv::GroupOperation>, Vec<u32>)> {
+    instructions(module, op)
+        .into_iter()
+        .map(|inst| {
+            let scope = constant(module, &inst.operands[0]);
+            let group = inst.operands.iter().find_map(|operand| match *operand {
+                Operand::GroupOperation(group) => Some(group),
+                _ => None,
+            });
+            let extra = inst.operands[1..]
+                .iter()
+                .filter(|operand| !matches!(operand, Operand::GroupOperation(_)))
+                .skip(1)
+                .filter(|operand| is_constant(module, operand))
+                .map(|operand| constant(module, operand))
+                .collect();
+            (scope, group, extra)
+        })
+        .collect()
+}
+
+#[test]
+fn subgroup_operations_match_glslang() {
+    use spirv::{Capability as C, GroupOperation as G};
+    let module = compile_valid_1_3(
+        ShaderStage::Compute,
+        "#version 450
+        #extension GL_KHR_shader_subgroup_arithmetic : enable
+        #extension GL_KHR_shader_subgroup_ballot : enable
+        #extension GL_KHR_shader_subgroup_clustered : enable
+        #extension GL_KHR_shader_subgroup_shuffle : enable
+        #extension GL_KHR_shader_subgroup_vote : enable
+        #extension GL_KHR_shader_subgroup_quad : enable
+        layout(local_size_x = 8, local_size_y = 8) in;
+        layout(std430, binding = 0) buffer B { vec4 f; uvec4 u; bool b; uint i; };
+        void main() {
+            f = subgroupInclusiveAdd(f) + subgroupClusteredMax(f, 4u);
+            u = subgroupExclusiveOr(u) ^ subgroupBallot(b);
+            f.x = subgroupBroadcast(f.x, 3u) + subgroupShuffleXor(f.y, i);
+            b = subgroupAllEqual(f) && subgroupElect() && subgroupInverseBallot(u);
+            i = subgroupBallotInclusiveBitCount(u) + gl_SubgroupID + gl_NumSubgroups;
+            f = subgroupQuadSwapDiagonal(f);
+            subgroupBarrier();
+        }",
+    );
+    assert_eq!(
+        group_operation(&module, Op::GroupNonUniformFAdd),
+        [(3, Some(G::InclusiveScan), vec![])]
+    );
+    assert_eq!(
+        group_operation(&module, Op::GroupNonUniformFMax),
+        [(3, Some(G::ClusteredReduce), vec![4])]
+    );
+    assert_eq!(
+        group_operation(&module, Op::GroupNonUniformBitwiseOr),
+        [(3, Some(G::ExclusiveScan), vec![])]
+    );
+    assert_eq!(
+        group_operation(&module, Op::GroupNonUniformBroadcast),
+        [(3, None, vec![3])]
+    );
+    assert_eq!(
+        group_operation(&module, Op::GroupNonUniformShuffleXor).len(),
+        1
+    );
+    assert_eq!(
+        group_operation(&module, Op::GroupNonUniformBallotBitCount),
+        [(3, Some(G::InclusiveScan), vec![])]
+    );
+    assert_eq!(
+        group_operation(&module, Op::GroupNonUniformAllEqual).len(),
+        1
+    );
+    assert_eq!(group_operation(&module, Op::GroupNonUniformElect).len(), 1);
+    assert_eq!(
+        group_operation(&module, Op::GroupNonUniformInverseBallot).len(),
+        1
+    );
+    assert_eq!(
+        group_operation(&module, Op::GroupNonUniformQuadSwap),
+        [(3, None, vec![2])]
+    );
+    let barriers = instructions(&module, Op::ControlBarrier);
+    assert_eq!(barriers.len(), 1);
+    assert_eq!(constant(&module, &barriers[0].operands[0]), 3);
+    assert_eq!(constant(&module, &barriers[0].operands[1]), 3);
+    assert_eq!(
+        capabilities_of(&module),
+        sorted(vec![
+            C::Shader,
+            C::GroupNonUniform,
+            C::GroupNonUniformVote,
+            C::GroupNonUniformArithmetic,
+            C::GroupNonUniformBallot,
+            C::GroupNonUniformShuffle,
+            C::GroupNonUniformClustered,
+            C::GroupNonUniformQuad,
+        ])
+    );
+}
+
+#[test]
+fn subgroup_builtins_are_flat_in_fragment_shaders() {
+    use spirv::BuiltIn as Bi;
+    let module = compile_valid_1_3(
+        ShaderStage::Fragment,
+        "#version 450
+        #extension GL_KHR_shader_subgroup_ballot : enable
+        layout(location = 0) out uvec4 data;
+        void main() {
+            data = gl_SubgroupEqMask + gl_SubgroupLtMask
+                + uvec4(gl_SubgroupSize, gl_SubgroupInvocationID, 0, 0);
+        }",
+    );
+    for (name, builtin) in [
+        ("gl_SubgroupSize", Bi::SubgroupSize),
+        ("gl_SubgroupInvocationID", Bi::SubgroupLocalInvocationId),
+        ("gl_SubgroupEqMask", Bi::SubgroupEqMask),
+        ("gl_SubgroupLtMask", Bi::SubgroupLtMask),
+    ] {
+        assert_eq!(
+            sorted_variable_decorations(&module, name),
+            [
+                (Decoration::BuiltIn, vec![builtin as u32]),
+                (Decoration::Flat, vec![]),
+            ],
+            "{name}"
+        );
+    }
+    assert!(capabilities_of(&module).contains(&spirv::Capability::GroupNonUniformBallot));
+}
+
+#[test]
+fn shader_ballot_uses_the_khr_extensions() {
+    use spirv::Capability as C;
+    let module = compile_valid(
+        ShaderStage::Compute,
+        "#version 450
+        #extension GL_ARB_gpu_shader_int64 : enable
+        #extension GL_ARB_shader_ballot : enable
+        #extension GL_ARB_shader_group_vote : enable
+        layout(local_size_x = 8) in;
+        layout(std430, binding = 0) buffer B { vec4 f; uint64_t m; bool b; };
+        void main() {
+            m = ballotARB(b) + gl_SubGroupGeMaskARB;
+            f.xy = readInvocationARB(f.xy, gl_SubGroupInvocationARB) + readFirstInvocationARB(f.zw);
+            b = anyInvocationARB(b) || allInvocationsEqualARB(b);
+        }",
+    );
+    assert_eq!(instructions(&module, Op::SubgroupBallotKHR).len(), 1);
+    assert_eq!(
+        instructions(&module, Op::SubgroupReadInvocationKHR).len(),
+        2
+    );
+    assert_eq!(
+        instructions(&module, Op::SubgroupFirstInvocationKHR).len(),
+        2
+    );
+    assert_eq!(instructions(&module, Op::SubgroupAnyKHR).len(), 1);
+    assert_eq!(instructions(&module, Op::SubgroupAllEqualKHR).len(), 1);
+    assert_eq!(
+        extensions_of(&module),
+        ["SPV_KHR_shader_ballot", "SPV_KHR_subgroup_vote"]
+    );
+    assert_eq!(
+        capabilities_of(&module),
+        sorted(vec![
+            C::Shader,
+            C::Int64,
+            C::SubgroupBallotKHR,
+            C::SubgroupVoteKHR
+        ])
+    );
+    assert_eq!(
+        sorted_variable_decorations(&module, "gl_SubGroupGeMaskARB"),
+        [(
+            Decoration::BuiltIn,
+            vec![spirv::BuiltIn::SubgroupGeMask as u32]
+        )]
+    );
+}
+
+#[test]
+fn rotate_partition_and_quad_control_match_glslang() {
+    use spirv::{Capability as C, GroupOperation as G};
+    let module = compile_valid_1_3(
+        ShaderStage::Fragment,
+        "#version 460
+        #extension GL_KHR_shader_subgroup_rotate : enable
+        #extension GL_KHR_shader_subgroup_vote : enable
+        #extension GL_NV_shader_subgroup_partitioned : enable
+        #extension GL_EXT_shader_quad_control : enable
+        layout(full_quads) in;
+        layout(quad_derivatives) in;
+        layout(location = 0) flat in uint value;
+        layout(location = 0) out uint result;
+        void main() {
+            uvec4 groups = subgroupPartitionNV(value);
+            result = subgroupClusteredRotate(value, 1u, 4u) + subgroupRotate(value, 2u)
+                + subgroupPartitionedExclusiveAddNV(value, groups);
+            if (subgroupQuadAll(value > 0u)) { result = 0u; }
+        }",
+    );
+    let rotates = instructions(&module, Op::GroupNonUniformRotateKHR);
+    assert_eq!(rotates.len(), 2);
+    assert!(rotates
+        .iter()
+        .any(|inst| inst.operands.len() == 4 && constant(&module, &inst.operands[3]) == 4));
+    assert_eq!(
+        instructions(&module, Op::GroupNonUniformPartitionNV).len(),
+        1
+    );
+    assert_eq!(
+        group_operation(&module, Op::GroupNonUniformIAdd),
+        [(3, Some(G::PartitionedExclusiveScanEXT), vec![])]
+    );
+    let quad = instructions(&module, Op::GroupNonUniformQuadAllKHR);
+    assert_eq!(quad.len(), 1);
+    assert_eq!(quad[0].operands.len(), 1);
+    assert!(has_execution_mode(
+        &module,
+        spirv::ExecutionMode::QuadDerivativesKHR
+    ));
+    assert!(has_execution_mode(
+        &module,
+        spirv::ExecutionMode::RequireFullQuadsKHR
+    ));
+    assert_eq!(
+        extensions_of(&module),
+        [
+            "SPV_KHR_quad_control",
+            "SPV_KHR_subgroup_rotate",
+            "SPV_NV_shader_subgroup_partitioned"
+        ]
+    );
+    let capabilities = capabilities_of(&module);
+    for capability in [
+        C::GroupNonUniformRotateKHR,
+        C::GroupNonUniformPartitionedNV,
+        C::QuadControlKHR,
+        C::GroupNonUniformVote,
+    ] {
+        assert!(capabilities.contains(&capability), "{capability:?}");
+    }
+}
+
+#[test]
+fn amd_shader_ballot_uses_group_operations() {
+    let module = compile_valid(
+        ShaderStage::Compute,
+        "#version 450
+        #extension GL_AMD_shader_ballot : enable
+        layout(local_size_x = 8) in;
+        layout(std430, binding = 0) buffer B { vec2 f; int i; };
+        void main() {
+            f = minInvocationsInclusiveScanAMD(f);
+            i = addInvocationsNonUniformAMD(i);
+        }",
+    );
+    let mins = instructions(&module, Op::GroupFMin);
+    assert_eq!(mins.len(), 2);
+    assert_eq!(
+        mins[0].operands[1],
+        Operand::GroupOperation(spirv::GroupOperation::InclusiveScan)
+    );
+    assert_eq!(instructions(&module, Op::GroupIAddNonUniformAMD).len(), 1);
+    assert_eq!(extensions_of(&module), ["SPV_AMD_shader_ballot"]);
+    assert!(capabilities_of(&module).contains(&spirv::Capability::Groups));
+}
+
+#[test]
+fn subgroup_features_are_checked_like_glslang() {
+    let cases = [
+        (
+            "void main() { uint size = gl_SubgroupSize; }",
+            "GL_KHR_shader_subgroup_basic",
+        ),
+        (
+            "#extension GL_KHR_shader_subgroup_basic : enable\nvoid main() { subgroupAll(true); }",
+            "GL_KHR_shader_subgroup_vote",
+        ),
+        (
+            "#extension GL_KHR_shader_subgroup_vote : enable\nvoid main() { subgroupQuadAll(true); }",
+            "GL_EXT_shader_quad_control",
+        ),
+        (
+            "#extension GL_KHR_shader_subgroup_clustered : enable\nvoid main() { subgroupClusteredAdd(1.0, 3u); }",
+            "power of 2",
+        ),
+        (
+            "#extension GL_KHR_shader_subgroup_clustered : enable\nvoid main() { uint s = 2u; subgroupClusteredAdd(1.0, s); }",
+            "compile-time constant",
+        ),
+        (
+            "#extension GL_KHR_shader_subgroup_ballot : enable\nvoid main() { uint id = 2u; subgroupBroadcast(1.0, id); }",
+            "compile-time constant",
+        ),
+        (
+            "#extension GL_EXT_shader_explicit_arithmetic_types_int8 : enable\n#extension GL_KHR_shader_subgroup_arithmetic : enable\nvoid main() { subgroupAdd(int8_t(1)); }",
+            "GL_EXT_shader_subgroup_extended_types_int8",
+        ),
+    ];
+    for (body, expected) in cases {
+        let source = format!("#version 450\n{body}\n");
+        let error = parse_for_spirv(ShaderStage::Compute, &source, (1, 3)).unwrap_err();
+        assert!(error.contains(expected), "{body}: {error}");
+    }
+    let dynamic_broadcast = "#version 450
+        #extension GL_KHR_shader_subgroup_ballot : enable
+        void main() { uint id = 2u; subgroupBroadcast(1.0, id); }";
+    parse_for_spirv(ShaderStage::Compute, dynamic_broadcast, (1, 5)).unwrap();
+    let old_spirv = "#version 450
+        #extension GL_KHR_shader_subgroup_vote : enable
+        void main() { subgroupAll(true); }";
+    let error = parse_for_spirv(ShaderStage::Compute, old_spirv, (1, 0)).unwrap_err();
+    assert!(error.contains("SPIR-V 1.3"), "{error}");
+    let fragment = "#version 450
+        #extension GL_KHR_shader_subgroup_basic : enable
+        void main() { uint n = gl_NumSubgroups; }";
+    let error = parse_for_spirv(ShaderStage::Fragment, fragment, (1, 3)).unwrap_err();
+    assert!(error.contains("gl_NumSubgroups"), "{error}");
+}
+
+#[test]
+fn subgroup_builtins_are_volatile_in_ray_tracing_stages() {
+    let source = "#version 460
+        #extension GL_EXT_ray_tracing : enable
+        #extension GL_KHR_shader_subgroup_ballot : enable
+        layout(binding = 0, std430) buffer B { uvec4 v; };
+        void main() { v = gl_SubgroupEqMask + uvec4(gl_SubgroupSize); }";
+    let words = compile_words_with_names(ShaderStage::RayGeneration, source, (1, 4));
+    crate::stage_io::spirv_val_in(&words, &["--target-env", "vulkan1.2"]);
+    let module = dr::load_words(words).expect("produced SPIR-V does not parse");
+    for name in ["gl_SubgroupEqMask", "gl_SubgroupSize"] {
+        assert!(
+            sorted_variable_decorations(&module, name).contains(&(Decoration::Volatile, vec![])),
+            "{name}"
+        );
+        assert!(
+            !sorted_variable_decorations(&module, name).contains(&(Decoration::Coherent, vec![])),
+            "{name}"
+        );
+    }
+    let model = source.replacen(
+        "#version 460\n",
+        "#version 460\n#pragma use_vulkan_memory_model\n",
+        1,
+    );
+    let words = compile_words_with_names(ShaderStage::RayGeneration, &model, (1, 4));
+    crate::stage_io::spirv_val_in(&words, &["--target-env", "vulkan1.2"]);
+    let module = dr::load_words(words).expect("produced SPIR-V does not parse");
+    let loads = instructions(&module, Op::Load);
+    assert_eq!(loads.len(), 2);
+    assert!(loads
+        .iter()
+        .all(|load| load.operands.last()
+            == Some(&Operand::MemoryAccess(spirv::MemoryAccess::VOLATILE))));
+}
+
 fn storage_classes(module: &dr::Module) -> Vec<spirv::StorageClass> {
     module
         .types_global_values

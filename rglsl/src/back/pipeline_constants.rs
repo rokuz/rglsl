@@ -907,10 +907,14 @@ fn adjust_stmt(new_pos: &HandleVec<Expression, Handle<Expression>>, stmt: &mut S
             adjust(result);
         }
         Statement::SubgroupCollectiveOperation {
+            ref mut collective_op,
             ref mut argument,
             ref mut result,
             ..
         } => {
+            if let Some(ballot) = collective_op.partition_mut() {
+                adjust(ballot);
+            }
             adjust(argument);
             adjust(result);
         }
@@ -919,20 +923,20 @@ fn adjust_stmt(new_pos: &HandleVec<Expression, Handle<Expression>>, stmt: &mut S
             ref mut argument,
             ref mut result,
         } => {
-            match *mode {
-                crate::GatherMode::BroadcastFirst => {}
-                crate::GatherMode::Broadcast(ref mut index)
-                | crate::GatherMode::Shuffle(ref mut index)
-                | crate::GatherMode::ShuffleDown(ref mut index)
-                | crate::GatherMode::ShuffleUp(ref mut index)
-                | crate::GatherMode::ShuffleXor(ref mut index)
-                | crate::GatherMode::QuadBroadcast(ref mut index) => {
-                    adjust(index);
-                }
-                crate::GatherMode::QuadSwap(_) => {}
+            if let Some(index) = mode.index_mut() {
+                adjust(index);
             }
             adjust(argument);
             adjust(result)
+        }
+        Statement::SubgroupFunction {
+            ref mut fun,
+            ref mut result,
+        } => {
+            for operand in fun.operands_mut().into_iter().flatten() {
+                adjust(operand);
+            }
+            adjust(result);
         }
         Statement::Call {
             ref mut arguments,
@@ -990,6 +994,8 @@ fn adjust_stmt(new_pos: &HandleVec<Expression, Handle<Expression>>, stmt: &mut S
         Statement::Break
         | Statement::Continue
         | Statement::Kill
+        | Statement::EmitVertex { .. }
+        | Statement::EndPrimitive { .. }
         | Statement::ControlBarrier(_)
         | Statement::MemoryBarrier(_)
         | Statement::ScopedBarrier { .. } => {}

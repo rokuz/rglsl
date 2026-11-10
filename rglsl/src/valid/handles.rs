@@ -261,6 +261,20 @@ impl super::Validator {
             for &variable in &entry_point.interface {
                 Self::validate_global_variable_handle(variable, global_variables)?;
             }
+            for &(variable, _) in entry_point
+                .geometry
+                .iter()
+                .flat_map(|geometry| &geometry.streams)
+            {
+                Self::validate_global_variable_handle(variable, global_variables)?;
+            }
+            for &variable in entry_point
+                .geometry
+                .iter()
+                .flat_map(|geometry| &geometry.passthrough)
+            {
+                Self::validate_global_variable_handle(variable, global_variables)?;
+            }
             if let Some(task_payload) = entry_point.task_payload {
                 Self::validate_global_variable_handle(task_payload, global_variables)?;
             }
@@ -899,29 +913,28 @@ impl super::Validator {
             }
             crate::Statement::SubgroupCollectiveOperation {
                 op: _,
-                collective_op: _,
+                ref collective_op,
                 argument,
                 result,
             } => {
+                validate_expr_opt(collective_op.partition())?;
                 validate_expr(argument)?;
                 validate_expr(result)?;
                 Ok(())
             }
             crate::Statement::SubgroupGather {
-                mode,
+                ref mode,
                 argument,
                 result,
             } => {
                 validate_expr(argument)?;
-                match mode {
-                    crate::GatherMode::BroadcastFirst => {}
-                    crate::GatherMode::Broadcast(index)
-                    | crate::GatherMode::Shuffle(index)
-                    | crate::GatherMode::ShuffleDown(index)
-                    | crate::GatherMode::ShuffleUp(index)
-                    | crate::GatherMode::ShuffleXor(index)
-                    | crate::GatherMode::QuadBroadcast(index) => validate_expr(index)?,
-                    crate::GatherMode::QuadSwap(_) => {}
+                validate_expr_opt(mode.index())?;
+                validate_expr(result)?;
+                Ok(())
+            }
+            crate::Statement::SubgroupFunction { ref fun, result } => {
+                for operand in fun.operands() {
+                    validate_expr_opt(operand)?;
                 }
                 validate_expr(result)?;
                 Ok(())
@@ -959,6 +972,8 @@ impl super::Validator {
             crate::Statement::Break
             | crate::Statement::Continue
             | crate::Statement::Kill
+            | crate::Statement::EmitVertex { .. }
+            | crate::Statement::EndPrimitive { .. }
             | crate::Statement::ControlBarrier(_)
             | crate::Statement::MemoryBarrier(_) => Ok(()),
         })

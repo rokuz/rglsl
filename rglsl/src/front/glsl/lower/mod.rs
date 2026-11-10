@@ -12,7 +12,9 @@ mod prepass;
 mod ray;
 mod reference;
 mod specialization;
+mod stage;
 mod statement;
+mod subgroup;
 mod types;
 mod xfb;
 
@@ -76,7 +78,13 @@ pub(super) fn parse(options: &Options, source: &str) -> core::result::Result<Mod
     }
     let text = preprocessed.text.as_str();
     let (unit, failure) = rglsl_ast::parse_prefix(text);
-    let analysis = rglsl_sema::analyze(&unit, &rglsl_sema::Options::new(stage(options.stage)));
+    let analysis = rglsl_sema::analyze(
+        &unit,
+        &rglsl_sema::Options {
+            spirv_version: options.spirv_version,
+            ..rglsl_sema::Options::new(stage(options.stage))
+        },
+    );
     if let Some(error) = failure {
         let earlier = analysis.diagnostics.iter().filter(|diagnostic| {
             diagnostic.offset(text) < error.span.start
@@ -159,6 +167,9 @@ fn original(map: &rglsl_pp::SourceMap, span: rglsl_ast::Span) -> Span {
 const fn preprocessor_stage(stage: ShaderStage) -> rglsl_pp::Stage {
     match stage {
         ShaderStage::Vertex => rglsl_pp::Stage::Vertex,
+        ShaderStage::TessControl => rglsl_pp::Stage::TessControl,
+        ShaderStage::TessEvaluation => rglsl_pp::Stage::TessEvaluation,
+        ShaderStage::Geometry => rglsl_pp::Stage::Geometry,
         ShaderStage::Task => rglsl_pp::Stage::Task,
         ShaderStage::Mesh => rglsl_pp::Stage::Mesh,
         ShaderStage::Fragment => rglsl_pp::Stage::Fragment,
@@ -175,6 +186,9 @@ const fn preprocessor_stage(stage: ShaderStage) -> rglsl_pp::Stage {
 const fn stage(stage: ShaderStage) -> rglsl_sema::Stage {
     match stage {
         ShaderStage::Vertex => rglsl_sema::Stage::Vertex,
+        ShaderStage::TessControl => rglsl_sema::Stage::TessControl,
+        ShaderStage::TessEvaluation => rglsl_sema::Stage::TessEvaluation,
+        ShaderStage::Geometry => rglsl_sema::Stage::Geometry,
         ShaderStage::Task => rglsl_sema::Stage::Task,
         ShaderStage::Mesh => rglsl_sema::Stage::Mesh,
         ShaderStage::Fragment => rglsl_sema::Stage::Fragment,
@@ -268,6 +282,7 @@ pub(super) struct Lowerer<'a> {
     pub uniform_defaults: BlockDefaults,
     pub buffer_defaults: BlockDefaults,
     pub early_fragment_tests: bool,
+    pub quad_control: crate::QuadControl,
     pub conservative_depth: Option<ConservativeDepth>,
     pub post_depth_coverage: Option<Span>,
     pub per_vertex: Option<(Handle<GlobalVariable>, Vec<String>)>,
@@ -284,6 +299,7 @@ pub(super) struct Lowerer<'a> {
     pub ray_data: BTreeMap<(usize, u32), Handle<GlobalVariable>>,
     pub incoming_ray_payload: Option<Handle<GlobalVariable>>,
     xfb: xfb::Xfb,
+    stage_layout: stage::StageLayout,
 }
 
 impl<'a> Lowerer<'a> {
@@ -333,6 +349,7 @@ impl<'a> Lowerer<'a> {
             uniform_defaults: BlockDefaults::default(),
             buffer_defaults: BlockDefaults::default(),
             early_fragment_tests: false,
+            quad_control: crate::QuadControl::default(),
             conservative_depth: None,
             post_depth_coverage: None,
             per_vertex: None,
@@ -348,7 +365,14 @@ impl<'a> Lowerer<'a> {
             heap_runtime_offsets: BTreeMap::new(),
             ray_data: BTreeMap::new(),
             incoming_ray_payload: None,
-            xfb: xfb::Xfb::new((options.stage == ShaderStage::Vertex).then_some(0)),
+            xfb: xfb::Xfb::new(
+                matches!(
+                    options.stage,
+                    ShaderStage::Vertex | ShaderStage::TessEvaluation | ShaderStage::Geometry
+                )
+                .then_some(0),
+            ),
+            stage_layout: stage::StageLayout::default(),
         }
     }
 
@@ -401,6 +425,10 @@ impl<'a> Lowerer<'a> {
         }
         let result = self.declare_per_vertex();
         self.report(result);
+        let layout_errors = self.errors.len();
+        self.passthrough_defaults();
+        self.check_stage_layout();
+        let missing_layouts: Vec<Error> = self.errors.drain(layout_errors..).collect();
         let order = match self.function_order(&definitions) {
             Ok(order) => order,
             Err(error) => return Err(vec![error].into()),
@@ -427,6 +455,7 @@ impl<'a> Lowerer<'a> {
                 Span::UNDEFINED,
             )),
         }
+        self.errors.extend(missing_layouts);
         if !self.errors.is_empty() {
             return Err(core::mem::take(&mut self.errors).into());
         }

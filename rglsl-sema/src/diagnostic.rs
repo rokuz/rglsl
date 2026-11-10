@@ -202,6 +202,11 @@ pub enum DiagnosticKind {
     ExtensionWithoutSpirv(String),
     #[error("extension `{0}` needs a newer SPIR-V version")]
     ExtensionSpirvVersion(String),
+    #[error("{feature} requires SPIR-V {version}")]
+    SpirvVersionRequired {
+        feature: &'static str,
+        version: &'static str,
+    },
     #[error("{feature} requires one of the extensions {extensions}")]
     ExtensionRequired { feature: String, extensions: String },
     #[error("extension `{extension}` is being used for {feature}")]

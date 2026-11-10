@@ -235,7 +235,7 @@ bitflags::bitflags! {
     #[cfg_attr(feature = "serialize", derive(serde::Serialize))]
     #[cfg_attr(feature = "deserialize", derive(serde::Deserialize))]
     #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-    pub struct SubgroupOperationSet: u8 {
+    pub struct SubgroupOperationSet: u16 {
         /// Barriers
         // Possibly elections, when that is supported.
         // https://github.com/gfx-rs/wgpu/issues/6042#issuecomment-3272603431
@@ -252,13 +252,12 @@ bitflags::bitflags! {
         const SHUFFLE = 1 << 4;
         /// shuffle up, down
         const SHUFFLE_RELATIVE = 1 << 5;
-        // We don't support these operations yet
-        // /// Clustered
-        // const CLUSTERED = 1 << 6;
+        const CLUSTERED = 1 << 6;
         /// Quad supported
         const QUAD_FRAGMENT_COMPUTE = 1 << 7;
-        // /// Quad supported in all stages
-        // const QUAD_ALL_STAGES = 1 << 8;
+        const ROTATE = 1 << 8;
+        const PARTITIONED = 1 << 9;
+        const QUAD_CONTROL = 1 << 10;
     }
 }
 
@@ -274,6 +273,40 @@ impl super::SubgroupOperation {
     }
 }
 
+impl super::CollectiveOperation {
+    const fn required_operations(&self) -> SubgroupOperationSet {
+        use SubgroupOperationSet as S;
+        match *self {
+            Self::Reduce | Self::InclusiveScan | Self::ExclusiveScan => S::empty(),
+            Self::ClusteredReduce(_) => S::CLUSTERED,
+            Self::PartitionedReduce(_)
+            | Self::PartitionedInclusiveScan(_)
+            | Self::PartitionedExclusiveScan(_) => S::PARTITIONED,
+        }
+    }
+}
+
+impl super::SubgroupFunction {
+    const fn required_operations(&self) -> SubgroupOperationSet {
+        use SubgroupOperationSet as S;
+        match *self {
+            Self::Elect => S::BASIC,
+            Self::AllEqual(_) | Self::KhrAll(_) | Self::KhrAny(_) | Self::KhrAllEqual(_) => S::VOTE,
+            Self::QuadAll(_) | Self::QuadAny(_) => S::QUAD_CONTROL,
+            Self::InverseBallot(_)
+            | Self::BallotBitExtract { .. }
+            | Self::BallotBitCount { .. }
+            | Self::BallotFindLsb(_)
+            | Self::BallotFindMsb(_)
+            | Self::KhrBallot(_)
+            | Self::KhrReadInvocation { .. }
+            | Self::KhrReadFirstInvocation(_) => S::BALLOT,
+            Self::Partition(_) => S::PARTITIONED,
+            Self::Group { .. } => S::ARITHMETIC,
+        }
+    }
+}
+
 impl super::GatherMode {
     const fn required_operations(&self) -> SubgroupOperationSet {
         use SubgroupOperationSet as S;
@@ -282,6 +315,7 @@ impl super::GatherMode {
             Self::Shuffle(_) | Self::ShuffleXor(_) => S::SHUFFLE,
             Self::ShuffleUp(_) | Self::ShuffleDown(_) => S::SHUFFLE_RELATIVE,
             Self::QuadBroadcast(_) | Self::QuadSwap(_) => S::QUAD_FRAGMENT_COMPUTE,
+            Self::Rotate { .. } => S::ROTATE,
         }
     }
 }
@@ -303,6 +337,9 @@ bitflags::bitflags! {
         const MISS = 0x100;
         const INTERSECTION = 0x200;
         const CALLABLE = 0x400;
+        const TESS_CONTROL = 0x2000;
+        const TESS_EVALUATION = 0x4000;
+        const GEOMETRY = 0x8000;
         const COMPUTE_LIKE = Self::COMPUTE.bits() | Self::TASK.bits() | Self::MESH.bits();
     }
 }
@@ -553,13 +590,7 @@ impl Validator {
     pub fn new(flags: ValidationFlags, capabilities: Capabilities) -> Self {
         let subgroup_operations = if capabilities.contains(Capabilities::SUBGROUP) {
             use SubgroupOperationSet as S;
-            S::BASIC
-                | S::VOTE
-                | S::ARITHMETIC
-                | S::BALLOT
-                | S::SHUFFLE
-                | S::SHUFFLE_RELATIVE
-                | S::QUAD_FRAGMENT_COMPUTE
+            S::all()
         } else {
             SubgroupOperationSet::empty()
         };
@@ -568,8 +599,13 @@ impl Validator {
             if capabilities.contains(Capabilities::SUBGROUP_VERTEX_STAGE) {
                 stages |= ShaderStages::VERTEX;
             }
+            if capabilities.contains(Capabilities::SUBGROUP_VERTEX_STAGE) {
+                stages |= ShaderStages::TESS_CONTROL
+                    | ShaderStages::TESS_EVALUATION
+                    | ShaderStages::GEOMETRY;
+            }
             if capabilities.contains(Capabilities::SUBGROUP) {
-                stages |= ShaderStages::FRAGMENT | ShaderStages::COMPUTE_LIKE;
+                stages |= ShaderStages::all() - ShaderStages::VERTEX;
             }
             stages
         };

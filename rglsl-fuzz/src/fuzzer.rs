@@ -83,13 +83,23 @@ pub struct Templates {
 
 const SCALAR_NUMERIC: [ScalarType; 3] = [ScalarType::Float, ScalarType::Uint, ScalarType::Int];
 const INTEGERS: [ScalarType; 2] = [ScalarType::Uint, ScalarType::Int];
-const EXCLUDED_BUILTIN_PREFIXES: [&str; 6] = [
+const EXCLUDED_BUILTIN_PREFIXES: [&str; 16] = [
     "interpolateAt",
     "atomic",
     "anyInvocation",
     "allInvocations",
     "barrier",
     "memoryBarrier",
+    "subgroup",
+    "ballot",
+    "readInvocation",
+    "readFirstInvocation",
+    "minInvocations",
+    "maxInvocations",
+    "addInvocations",
+    "swizzleInvocations",
+    "writeInvocation",
+    "mbcnt",
 ];
 
 impl Templates {

@@ -4533,3 +4533,237 @@ void main() {}
 #extension GL_EXT_opacity_micromap_ray_query_mode : enable
 layout(constant_id = 2) gl_EnableOpacityMicromapEXT;
 void main() {}
+### stage layout on a declaration | tese | 3:InvalidQualifier
+layout(triangles) in;
+layout(equal_spacing) in float f1[];
+void main() {}
+### geometry layout on a block | geom | 4:InvalidQualifier
+layout(triangles) in;
+layout(points, max_vertices = 1) out;
+layout(invocations = 2) in B { vec4 v; } b[];
+void main() {}
+### changed input primitive | geom | 3:InvalidQualifier
+layout(triangles) in;
+layout(lines) in;
+layout(points, max_vertices = 1) out;
+void main() {}
+### repeated input primitive | geom | ok
+layout(triangles) in;
+layout(triangles) in;
+layout(points, max_vertices = 1) out;
+void main() {}
+### output primitive on input | geom | 3:InvalidQualifier
+layout(triangles) in;
+layout(line_strip) in;
+layout(points, max_vertices = 1) out;
+void main() {}
+### input primitive on output | geom | 3:InvalidQualifier
+layout(triangles) in;
+layout(triangles, max_vertices = 1) out;
+void main() {}
+### too many output vertices | geom | 3:InvalidQualifier
+layout(triangles) in;
+layout(points, max_vertices = 257) out;
+void main() {}
+### changed output vertices | geom | 4:InvalidQualifier
+layout(triangles) in;
+layout(points, max_vertices = 4) out;
+layout(max_vertices = 5) out;
+void main() {}
+### invocations on output | geom | 3:InvalidQualifier
+layout(triangles) in;
+layout(invocations = 2) out;
+layout(points, max_vertices = 1) out;
+void main() {}
+### zero invocations | geom | 2:InvalidQualifier
+layout(triangles, invocations = 0) in;
+layout(points, max_vertices = 1) out;
+void main() {}
+### zero output vertices | tesc | 2:InvalidQualifier
+layout(vertices = 0) out;
+void main() {}
+### vertices on input | tesc | 2:InvalidQualifier
+layout(vertices = 4) in;
+void main() {}
+### vertex order on output | tese | 3:InvalidQualifier
+layout(triangles) in;
+layout(cw) out;
+void main() {}
+### changed spacing | tese | 3:InvalidQualifier
+layout(triangles, equal_spacing) in;
+layout(fractional_odd_spacing) in;
+void main() {}
+### tessellation evaluation layout | tese | ok
+layout(quads, fractional_even_spacing, ccw, point_mode) in;
+void main() {}
+### tessellation control barrier in flow control | tesc | 4:InvalidQualifier
+layout(vertices = 4) out;
+void main() {
+    if (gl_InvocationID == 0) barrier();
+}
+### tessellation control barrier in a loop | tesc | 4:InvalidQualifier
+layout(vertices = 4) out;
+void main() {
+    for (int i = 0; i < 2; ++i) barrier();
+}
+### tessellation control barrier outside main | tesc | 3:InvalidQualifier
+layout(vertices = 4) out;
+void f() { barrier(); }
+void main() { f(); }
+### tessellation control barrier after return | tesc | 5:InvalidQualifier
+layout(vertices = 4) out;
+void main() {
+    if (gl_InvocationID == 1) return;
+    barrier();
+}
+### tessellation control barrier in main | tesc | ok
+layout(vertices = 4) out;
+void main() {
+    { barrier(); }
+}
+### compute barrier in flow control | comp | ok
+layout(local_size_x = 1) in;
+void main() {
+    if (gl_LocalInvocationIndex == 0u) barrier();
+}
+### layer in a vertex shader | vert | 2:ExtensionRequired
+void main() { gl_Layer = 1; }
+### viewport index in tessellation evaluation | tese | 4:ExtensionRequired
+layout(triangles) in;
+void main() {
+    gl_ViewportIndex = 1;
+}
+### layer with the extension | tese | ok
+#extension GL_ARB_shader_viewport_layer_array : require
+layout(triangles) in;
+void main() { gl_Layer = 1; gl_ViewportIndex = 2; }
+### layer in a geometry shader | geom | ok
+layout(triangles) in;
+layout(points, max_vertices = 1) out;
+void main() { gl_Layer = 1; gl_ViewportIndex = 2; }
+### passthrough needs the extension | geom | 4:ExtensionRequired
+layout(triangles) in;
+layout(points, max_vertices = 1) out;
+layout(passthrough) in Inputs { vec2 t; };
+void main() {}
+### passthrough with the extension | geom | ok
+#extension GL_NV_geometry_shader_passthrough : require
+layout(triangles) in;
+layout(passthrough) in gl_PerVertex { vec4 gl_Position; };
+layout(passthrough) in Inputs { vec2 t; };
+void main() {}
+### subgroup variables need the basic extension | comp | 4:ExtensionRequired, 5:ExtensionRequired
+layout(local_size_x = 1) in;
+void main() {
+    uint size = gl_SubgroupSize;
+    uint id = gl_SubgroupID;
+}
+### subgroup extensions imply the basic one | comp | ok
+#extension GL_KHR_shader_subgroup_vote : enable
+layout(local_size_x = 1) in;
+void main() {
+    uint size = gl_SubgroupSize + gl_NumSubgroups;
+    bool all = subgroupAll(size > 1u) && subgroupElect();
+    subgroupMemoryBarrierShared();
+}
+### subgroup masks need the ballot extension | frag | 5:ExtensionRequired
+#extension GL_KHR_shader_subgroup_basic : enable
+layout(location = 0) out uvec4 color;
+void main() {
+    color = gl_SubgroupEqMask;
+}
+### compute subgroup variables are not declared in fragment shaders | frag | 4:UndeclaredIdentifier, 5:NoMatchingFunction
+#extension GL_KHR_shader_subgroup_basic : enable
+void main() {
+    uint count = gl_NumSubgroups;
+    subgroupMemoryBarrierShared();
+}
+### subgroup functions name their extension | comp | 5:ExtensionRequired, 6:ExtensionRequired, 7:ExtensionRequired
+#extension GL_KHR_shader_subgroup_basic : enable
+layout(local_size_x = 1) in;
+void main() {
+    float sum = subgroupAdd(1.0);
+    float other = subgroupShuffle(1.0, 0u);
+    uvec4 ballot = subgroupPartitionNV(1.0);
+}
+### every subgroup extension enables its functions | comp | ok
+#extension GL_KHR_shader_subgroup_arithmetic : enable
+#extension GL_KHR_shader_subgroup_ballot : enable
+#extension GL_KHR_shader_subgroup_shuffle : enable
+#extension GL_KHR_shader_subgroup_shuffle_relative : enable
+#extension GL_KHR_shader_subgroup_clustered : enable
+#extension GL_KHR_shader_subgroup_quad : enable
+#extension GL_KHR_shader_subgroup_rotate : enable
+#extension GL_NV_shader_subgroup_partitioned : enable
+layout(local_size_x = 1) in;
+void main() {
+    vec4 v = vec4(1.0);
+    uvec4 ballot = subgroupBallot(true) | subgroupPartitionNV(v);
+    v = subgroupInclusiveMul(v) + subgroupClusteredMin(v, 2u) + subgroupShuffleUp(v, 1u);
+    v += subgroupQuadBroadcast(v, 1u) + subgroupRotate(v, 1u) + subgroupClusteredRotate(v, 1u, 2u);
+    v += subgroupPartitionedInclusiveMaxNV(v, ballot) + subgroupBroadcast(v, 0u);
+    bvec2 b = subgroupClusteredXor(bvec2(true), 4u);
+    uint count = subgroupBallotExclusiveBitCount(ballot) + subgroupBallotFindMSB(ballot);
+}
+### bitwise subgroup operations do not take floats | comp | 6:NoMatchingFunction
+#extension GL_KHR_shader_subgroup_arithmetic : enable
+layout(local_size_x = 1) in;
+void main() {
+    float f = 1.0;
+    f = subgroupAnd(f);
+}
+### the cluster size is a constant power of two | comp | 7:InvalidBuiltinCall, 8:InvalidBuiltinCall, 9:InvalidBuiltinCall
+#extension GL_KHR_shader_subgroup_clustered : enable
+layout(local_size_x = 1) in;
+void main() {
+    uint size = 2u;
+    const uint three = 3u;
+    float a = subgroupClusteredAdd(1.0, size);
+    float b = subgroupClusteredAdd(1.0, three);
+    float c = subgroupClusteredAdd(1.0, 0u);
+}
+### extended types need the subgroup extended types extension | comp | 6:ExtensionRequired
+#extension GL_KHR_shader_subgroup_arithmetic : enable
+#extension GL_EXT_shader_explicit_arithmetic_types_int16 : enable
+layout(local_size_x = 1) in;
+void main() {
+    int16_t sum = subgroupAdd(int16_t(1));
+}
+### extended types with their extension | comp | ok
+#extension GL_KHR_shader_subgroup_arithmetic : enable
+#extension GL_EXT_shader_subgroup_extended_types_int16 : enable
+layout(local_size_x = 1) in;
+void main() {
+    int16_t sum = subgroupAdd(int16_t(1));
+}
+### quad control functions need both extensions | frag | 4:ExtensionRequired, 5:ExtensionRequired
+#extension GL_KHR_shader_subgroup_vote : enable
+void main() {
+    bool a = subgroupQuadAll(true);
+    bool b = subgroupQuadAny(false);
+}
+### quad control layouts need the extension | frag | 2:ExtensionRequired
+layout(full_quads) in;
+void main() {}
+### shader ballot variables and functions need their extension | comp | 5:ExtensionRequired, 6:ExtensionRequired
+#extension GL_ARB_gpu_shader_int64 : enable
+layout(local_size_x = 1) in;
+void main() {
+    uint64_t mask = gl_SubGroupEqMaskARB;
+    uint64_t ballot = ballotARB(true);
+}
+### shader ballot and group vote with their extensions | comp | ok
+#extension GL_ARB_gpu_shader_int64 : enable
+#extension GL_ARB_shader_ballot : enable
+#extension GL_ARB_shader_group_vote : enable
+layout(local_size_x = 1) in;
+void main() {
+    uint64_t mask = gl_SubGroupEqMaskARB | ballotARB(true);
+    float first = readFirstInvocationARB(1.0) + readInvocationARB(2.0, gl_SubGroupInvocationARB);
+    bool any = anyInvocationARB(true) && allInvocationsEqualARB(false);
+}
+### amd shader ballot needs its extension | comp | 4:ExtensionRequired
+layout(local_size_x = 1) in;
+void main() {
+    float least = minInvocationsAMD(1.0);
+}

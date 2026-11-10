@@ -206,6 +206,10 @@ impl FunctionLowerer<'_, '_> {
                 self.barrier(name, arguments, at)?;
                 Ok(None)
             }
+            "EmitVertex" | "EndPrimitive" | "EmitStreamVertex" | "EndStreamPrimitive" => {
+                self.primitive_statement(name, arguments, at)?;
+                Ok(None)
+            }
             "modf" | "frexp" => self.split(name, arguments, at).map(Some),
             "atomicAdd" | "atomicMin" | "atomicMax" | "atomicAnd" | "atomicOr" | "atomicXor"
             | "atomicExchange" | "atomicCompSwap" | "atomicLoad" | "atomicStore" => {
@@ -214,6 +218,7 @@ impl FunctionLowerer<'_, '_> {
             "uaddCarry" | "usubBorrow" | "umulExtended" | "imulExtended" => {
                 self.wide(name, arguments, at)
             }
+            _ if super::subgroup::is_subgroup_function(name) => self.subgroup(name, arguments, at),
             _ => self.generic(name, function, arguments, at).map(Some),
         }
     }
@@ -669,7 +674,7 @@ impl FunctionLowerer<'_, '_> {
         self.literal(Literal::U32(amount), at)
     }
 
-    fn pack_bits(
+    pub(super) fn pack_bits(
         &mut self,
         value: Handle<Expression>,
         source: &GlslType,

@@ -7,7 +7,7 @@ use rglsl_ast::ast::{
 use rglsl_ast::Span;
 
 use super::{Analyzer, Callee, Operand};
-use crate::builtins::Stage;
+use crate::builtins::{subgroup, Stage};
 use crate::constant::{fold_builtin, Constant, Value};
 use crate::diagnostic::DiagnosticKind;
 use crate::scope::{Function, Lookup, Parameter, Storage, SymbolKind};
@@ -396,6 +396,12 @@ impl Analyzer<'_> {
             },
         );
         let is_builtin = matches!(chosen, Candidate::Builtin(_));
+        if is_builtin {
+            self.builtin_extensions(span, name);
+        }
+        if is_builtin && name == "barrier" {
+            self.tessellation_barrier(span);
+        }
         let first_argument = arguments.first().map_or(span, |argument| argument.span);
         let mut failed = false;
         for ((argument, operand), parameter) in
@@ -458,6 +464,9 @@ impl Analyzer<'_> {
                     failed = true;
                 }
             }
+        }
+        if is_builtin && !failed && subgroup::is_subgroup_operation(name) {
+            failed = !self.subgroup_checks(span, name, &operands);
         }
         if failed {
             return Operand::error();
@@ -607,6 +616,77 @@ impl Analyzer<'_> {
         }
         self.calls.insert(expression.id, callee);
         Operand::temporary(Type::VOID)
+    }
+
+    fn builtin_extensions(&mut self, span: Span, name: &str) {
+        if matches!(name, "subgroupQuadAll" | "subgroupQuadAny") {
+            self.require_extension(span, subgroup::QUAD_CONTROL, name);
+        }
+        if let Some(extension) = subgroup::function_extension(name) {
+            self.require_extension(span, extension, name);
+        }
+    }
+
+    fn subgroup_checks(&mut self, span: Span, name: &str, operands: &[Operand]) -> bool {
+        let invalid = |analyzer: &mut Self, reason: &'static str| {
+            analyzer.error(
+                span,
+                DiagnosticKind::InvalidBuiltinCall {
+                    name: String::from(name),
+                    reason,
+                },
+            );
+            false
+        };
+        let spirv = self.options.spirv_version;
+        let mut valid = true;
+        if name.starts_with("subgroupClustered") && name != "subgroupClusteredRotate" {
+            let size = operands.get(1).filter(|operand| {
+                operand.constant && !operand.specialization && operand.value.is_some()
+            });
+            match size.and_then(|operand| operand.value.as_ref().and_then(Constant::scalar_i64)) {
+                None => valid = invalid(self, "the cluster size must be a compile-time constant"),
+                Some(size) if size < 1 => {
+                    valid = invalid(self, "the cluster size must be at least 1");
+                }
+                Some(size) if size.count_ones() != 1 => {
+                    valid = invalid(self, "the cluster size must be a power of 2");
+                }
+                Some(_) => {}
+            }
+        }
+        if matches!(name, "subgroupBroadcast" | "subgroupQuadBroadcast")
+            && spirv.is_some_and(|version| version < (1, 5))
+            && operands
+                .get(1)
+                .is_some_and(|operand| !operand.constant || operand.specialization)
+        {
+            valid = invalid(self, "the id must be a compile-time constant");
+        }
+        if spirv.is_some_and(|version| version < (1, 3)) {
+            self.error(
+                span,
+                DiagnosticKind::SpirvVersionRequired {
+                    feature: "subgroup op",
+                    version: "1.3",
+                },
+            );
+            valid = false;
+        }
+        let extension = operands
+            .first()
+            .and_then(|operand| operand.ty.base_scalar())
+            .and_then(|scalar| match scalar {
+                Scalar::Int8 | Scalar::Uint8 => Some(subgroup::EXTENDED_INT8),
+                Scalar::Int16 | Scalar::Uint16 => Some(subgroup::EXTENDED_INT16),
+                Scalar::Int64 | Scalar::Uint64 => Some(subgroup::EXTENDED_INT64),
+                Scalar::Float16 => Some(subgroup::EXTENDED_FLOAT16),
+                _ => None,
+            });
+        if let Some(extension) = extension {
+            valid &= self.require_extension(span, extension, name);
+        }
+        valid
     }
 
     fn contains_unsized_array(&self, ty: &Type) -> bool {

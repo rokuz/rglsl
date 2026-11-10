@@ -24,6 +24,9 @@ pub const EXIT_BACKEND_FAILED: i32 = 2;
 fn stage_from_extension(ext: &str) -> Option<ShaderStage> {
     Some(match ext {
         "vert" => ShaderStage::Vertex,
+        "tesc" => ShaderStage::TessControl,
+        "tese" => ShaderStage::TessEvaluation,
+        "geom" => ShaderStage::Geometry,
         "frag" => ShaderStage::Fragment,
         "comp" => ShaderStage::Compute,
         "task" => ShaderStage::Task,
@@ -34,7 +37,6 @@ fn stage_from_extension(ext: &str) -> Option<ShaderStage> {
         "rchit" => ShaderStage::ClosestHit,
         "rint" => ShaderStage::Intersection,
         "rcall" => ShaderStage::Callable,
-        // No IR stage yet: tesc, tese, geom (M6).
         _ => return None,
     })
 }
@@ -91,6 +93,7 @@ pub fn compile_one(
     let options = glsl::Options {
         auto_map_bindings: auto_map,
         auto_map_locations: auto_map,
+        spirv_version: Some(lang_version),
         ..glsl::Options::from(stage)
     };
     let module = match frontend.parse(&options, &source) {

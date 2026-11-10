@@ -38,10 +38,12 @@ impl Analyzer<'_> {
             } => {
                 self.boolean_condition(statement.span, condition);
                 self.nesting += 1;
+                self.stage_layout.selections += 1;
                 self.scoped(|analyzer| analyzer.statement(then_branch));
                 if let Some(else_branch) = else_branch {
                     self.scoped(|analyzer| analyzer.statement(else_branch));
                 }
+                self.stage_layout.selections -= 1;
                 self.nesting -= 1;
             }
             StatementKind::Switch {
@@ -268,6 +270,9 @@ impl Analyzer<'_> {
 
     fn return_statement(&mut self, span: Span, value: Option<&Expression>) {
         let operand = value.map(|value| (span, self.expression(value)));
+        if self.in_main() {
+            self.stage_layout.returned_from_main = true;
+        }
         let Some(expected) = self
             .function
             .as_ref()

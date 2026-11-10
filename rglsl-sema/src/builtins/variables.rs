@@ -5,7 +5,8 @@ use rglsl_ast::ast::InterpolationQualifier;
 use rglsl_ast::Span;
 
 use super::{
-    available, parse_type, words, ResourceLimits, Stage, COMPUTE, FRAGMENT, GEOMETRY, TESS_CONTROL,
+    available, parse_type, words, ResourceLimits, Stage, ANY_HIT, CALLABLE, CLOSEST_HIT, COMPUTE,
+    FRAGMENT, GEOMETRY, INTERSECTION, MESH, MISS, RAY_GENERATION, TASK, TESS_CONTROL,
     TESS_EVALUATION, VERTEX,
 };
 use crate::constant::{Constant, Value};
@@ -34,6 +35,14 @@ in int gl_InstanceIndex
 in int gl_BaseVertex
 in int gl_BaseInstance
 in int gl_DrawID
+",
+    },
+    Group {
+        stages: VERTEX | TESS_CONTROL | TESS_EVALUATION,
+        since: 450,
+        text: "
+out int gl_ViewportIndex
+out int gl_Layer
 ",
     },
     Group {
@@ -100,7 +109,88 @@ in uvec3 gl_GlobalInvocationID
 in uint gl_LocalInvocationIndex
 ",
     },
+    Group {
+        stages: VERTEX
+            | TESS_CONTROL
+            | TESS_EVALUATION
+            | GEOMETRY
+            | COMPUTE
+            | MESH
+            | TASK
+            | ANY_HIT,
+        since: 450,
+        text: SUBGROUP,
+    },
+    Group {
+        stages: FRAGMENT,
+        since: 450,
+        text: FRAGMENT_SUBGROUP,
+    },
+    Group {
+        stages: RAY_GENERATION | INTERSECTION | CLOSEST_HIT | MISS | CALLABLE,
+        since: 450,
+        text: RAY_TRACING_SUBGROUP,
+    },
+    Group {
+        stages: COMPUTE | MESH | TASK,
+        since: 450,
+        text: "
+in uint gl_NumSubgroups
+in uint gl_SubgroupID
+",
+    },
 ];
+
+const SUBGROUP: &str = "
+in uint gl_SubgroupSize
+in uint gl_SubgroupInvocationID
+in uvec4 gl_SubgroupEqMask
+in uvec4 gl_SubgroupGeMask
+in uvec4 gl_SubgroupGtMask
+in uvec4 gl_SubgroupLeMask
+in uvec4 gl_SubgroupLtMask
+in uint gl_SubGroupSizeARB
+in uint gl_SubGroupInvocationARB
+in uint64_t gl_SubGroupEqMaskARB
+in uint64_t gl_SubGroupGeMaskARB
+in uint64_t gl_SubGroupGtMaskARB
+in uint64_t gl_SubGroupLeMaskARB
+in uint64_t gl_SubGroupLtMaskARB
+";
+
+const FRAGMENT_SUBGROUP: &str = "
+flat in uint gl_SubgroupSize
+flat in uint gl_SubgroupInvocationID
+flat in uvec4 gl_SubgroupEqMask
+flat in uvec4 gl_SubgroupGeMask
+flat in uvec4 gl_SubgroupGtMask
+flat in uvec4 gl_SubgroupLeMask
+flat in uvec4 gl_SubgroupLtMask
+flat in uint gl_SubGroupSizeARB
+flat in uint gl_SubGroupInvocationARB
+flat in uint64_t gl_SubGroupEqMaskARB
+flat in uint64_t gl_SubGroupGeMaskARB
+flat in uint64_t gl_SubGroupGtMaskARB
+flat in uint64_t gl_SubGroupLeMaskARB
+flat in uint64_t gl_SubGroupLtMaskARB
+";
+
+const RAY_TRACING_SUBGROUP: &str = "
+volatile in uint gl_SubgroupSize
+volatile in uint gl_SubgroupInvocationID
+volatile in uvec4 gl_SubgroupEqMask
+volatile in uvec4 gl_SubgroupGeMask
+volatile in uvec4 gl_SubgroupGtMask
+volatile in uvec4 gl_SubgroupLeMask
+volatile in uvec4 gl_SubgroupLtMask
+volatile in uint gl_SubGroupSizeARB
+volatile in uint gl_SubGroupInvocationARB
+volatile in uint64_t gl_SubGroupEqMaskARB
+volatile in uint64_t gl_SubGroupGeMaskARB
+volatile in uint64_t gl_SubGroupGtMaskARB
+volatile in uint64_t gl_SubGroupLeMaskARB
+volatile in uint64_t gl_SubGroupLtMaskARB
+";
 
 const PER_VERTEX: &str = "
 vec4 gl_Position
@@ -132,6 +222,7 @@ fn parse_declaration(line: &[&str]) -> Option<Declared> {
             "out" => qualifiers.storage = Storage::Out,
             "patch" => qualifiers.patch = true,
             "flat" => qualifiers.interpolation = Some(InterpolationQualifier::Flat),
+            "volatile" => qualifiers.volatile = true,
             "[" => {
                 let next = iterator.next()?;
                 if next == "]" {

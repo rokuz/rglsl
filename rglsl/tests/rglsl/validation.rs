@@ -1034,6 +1034,9 @@ fn unexpected_task_payload() {
         interface: Vec::new(),
         transform_feedback: false,
         opacity_micromap: None,
+        quad_control: rglsl::QuadControl::default(),
+        geometry: None,
+        tessellation: None,
     };
     module.entry_points.push(entry_point);
 

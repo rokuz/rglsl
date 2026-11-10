@@ -53,14 +53,14 @@ fn variable_names(builtins: &Builtins) -> BTreeSet<String> {
 #[test]
 fn the_tables_have_the_expected_sizes() {
     let expected = [
-        (Stage::Vertex, 2454, 27, 100, 135),
-        (Stage::TessControl, 2455, 27, 101, 133),
-        (Stage::TessEvaluation, 2454, 27, 104, 136),
-        (Stage::Geometry, 2458, 27, 104, 136),
-        (Stage::Fragment, 2708, 27, 108, 140),
-        (Stage::Compute, 2457, 27, 100, 132),
-        (Stage::Mesh, 2454, 27, 94, 126),
-        (Stage::RayGeneration, 2454, 32, 94, 130),
+        (Stage::Vertex, 5845, 27, 116, 151),
+        (Stage::TessControl, 5846, 27, 117, 149),
+        (Stage::TessEvaluation, 5845, 27, 120, 152),
+        (Stage::Geometry, 5849, 27, 118, 150),
+        (Stage::Fragment, 6099, 27, 122, 154),
+        (Stage::Compute, 5849, 27, 116, 148),
+        (Stage::Mesh, 5846, 27, 110, 142),
+        (Stage::RayGeneration, 5845, 32, 108, 144),
     ];
     for (stage, functions, added, variables_450, variables_460) in expected {
         let older = builtins(450, stage);
@@ -374,7 +374,7 @@ fn every_core_function_name_is_known() {
     for name in names.split_whitespace() {
         assert!(!table.overloads(name).is_empty(), "{name}");
     }
-    assert_eq!(table.function_names().count(), 213);
+    assert_eq!(table.function_names().count(), 322);
 }
 
 fn storage_of(builtins: &Builtins, name: &str) -> Option<Storage> {
@@ -404,6 +404,8 @@ fn vertex_variables() {
         "gl_PointSize",
         "gl_ClipDistance",
         "gl_CullDistance",
+        "gl_Layer",
+        "gl_ViewportIndex",
     ] {
         assert!(older.contains(name), "{name}");
     }
@@ -415,7 +417,6 @@ fn vertex_variables() {
         "gl_DrawID",
         "gl_FragCoord",
         "gl_in",
-        "gl_Layer",
     ] {
         assert!(!older.contains(name), "{name}");
     }

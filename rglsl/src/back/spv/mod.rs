@@ -114,6 +114,7 @@ mod reclaimable;
 mod selection;
 mod small_types;
 mod specialization;
+mod stage;
 mod subgroup;
 mod writer;
 

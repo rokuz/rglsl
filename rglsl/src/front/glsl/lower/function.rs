@@ -462,6 +462,7 @@ impl<'a> Lowerer<'a> {
                 .map(|conservative| EarlyDepthTest::Allow { conservative })
         };
         let opacity_micromap = self.opacity_micromap(at)?;
+        let (geometry, tessellation) = self.stage_info();
         self.module.entry_points.push(EntryPoint {
             name: String::from("main"),
             stage,
@@ -475,6 +476,9 @@ impl<'a> Lowerer<'a> {
             interface: self.interface.clone(),
             transform_feedback: self.xfb.mode,
             opacity_micromap,
+            quad_control: self.quad_control,
+            geometry,
+            tessellation,
         });
         Ok(())
     }
