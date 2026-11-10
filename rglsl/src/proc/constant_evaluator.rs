@@ -2765,6 +2765,11 @@ impl<'a> ConstantEvaluator<'a> {
                         rows,
                         scalar: target,
                     },
+                    TypeInner::LongVector { size, class, .. } => TypeInner::LongVector {
+                        size,
+                        scalar: target,
+                        class,
+                    },
                     _ => return make_error(),
                 };
 
@@ -2790,6 +2795,35 @@ impl<'a> ConstantEvaluator<'a> {
                     size,
                     value: cast_value,
                 }
+            }
+            Expression::Replicate { ty, value } => {
+                let inner = match self.types[ty].inner {
+                    TypeInner::LongVector { size, class, .. } => TypeInner::LongVector {
+                        size,
+                        scalar: target,
+                        class,
+                    },
+                    TypeInner::CooperativeMatrix {
+                        columns,
+                        rows,
+                        role,
+                        scope,
+                        class,
+                        ..
+                    } => TypeInner::CooperativeMatrix {
+                        columns,
+                        rows,
+                        scalar: target,
+                        role,
+                        scope,
+                        class,
+                    },
+                    _ => return make_error(),
+                };
+                let value_span = self.expressions.get_span(value);
+                let value = self.cast(value, target, value_span)?;
+                let ty = self.types.insert(Type { name: None, inner }, span);
+                Expression::Replicate { ty, value }
             }
             _ => return make_error(),
         };

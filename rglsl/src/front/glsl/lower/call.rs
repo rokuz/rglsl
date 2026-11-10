@@ -48,6 +48,7 @@ impl FunctionLowerer<'_, '_> {
                 }
                 self.construct(ty, &call.arguments, at).map(Some)
             }
+            Some(&Callee::Cooperative(kind)) => self.cooperative_call(kind, &call.arguments, at),
             Some(&Callee::Length) => match call.function.node {
                 FunctionIdentifier::Method { ref object, .. } => self.length(object, at).map(Some),
                 _ => Err(internal(at)),

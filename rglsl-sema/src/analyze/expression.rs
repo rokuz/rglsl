@@ -126,6 +126,9 @@ pub(crate) fn binary_types(
     if left.is_array() || right.is_array() {
         return None;
     }
+    if let Some(result) = cooperative_binary_types(operator, left, right, features) {
+        return result;
+    }
     let left_scalar = left.base_scalar()?;
     let right_scalar = right.base_scalar()?;
     let is_matrix = |ty: &Type| matches!(ty.kind, TypeKind::Matrix { .. });
@@ -194,6 +197,55 @@ pub(crate) fn binary_types(
             }),
         Op::Equal | Op::NotEqual => None,
     }
+}
+
+fn cooperative_binary_types(
+    operator: BinaryOperator,
+    left: &Type,
+    right: &Type,
+    features: NumericFeatures,
+) -> Option<Option<BinaryResult>> {
+    use BinaryOperator as Op;
+    let left_matrix = left.as_cooperative_matrix();
+    let right_matrix = right.as_cooperative_matrix();
+    if left_matrix.is_none() && right_matrix.is_none() {
+        return None;
+    }
+    let arithmetic = matches!(operator, Op::Add | Op::Subtract | Op::Multiply | Op::Divide);
+    Some(match (left_matrix, right_matrix) {
+        (Some(_), Some(_)) => (arithmetic && left == right).then(|| BinaryResult {
+            ty: left.clone(),
+            left: left.clone(),
+            right: right.clone(),
+            foldable: false,
+        }),
+        (Some(matrix), None) | (None, Some(matrix)) => {
+            let (scalar, matrix_ty) = if left_matrix.is_some() {
+                (right, left)
+            } else {
+                (left, right)
+            };
+            let target = Type::scalar(matrix.scalar);
+            (operator == Op::Multiply
+                && scalar.is_scalar()
+                && scalar.converts_with(&target, features))
+            .then(|| BinaryResult {
+                ty: matrix_ty.clone(),
+                left: if left_matrix.is_some() {
+                    left.clone()
+                } else {
+                    target.clone()
+                },
+                right: if right_matrix.is_some() {
+                    right.clone()
+                } else {
+                    target
+                },
+                foldable: false,
+            })
+        }
+        (None, None) => None,
+    })
 }
 
 const fn compound_operator(operator: AssignmentOperator) -> Option<BinaryOperator> {

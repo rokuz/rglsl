@@ -1,13 +1,16 @@
 use alloc::{format, vec::Vec};
 
+use rglsl_ast::ast::Expression as AstExpression;
 use rglsl_sema::types::{Scalar as GlslScalar, Type as GlslType};
+use rglsl_sema::CooperativeCall;
 
 use super::builtins::{derivative, math};
 use super::function::FunctionLowerer;
 use super::types::scalar;
 use super::{internal, unsupported, Result};
 use crate::{
-    BinaryOperator, Expression, Handle, MathFunction, RelationalFunction, Span, UnaryOperator,
+    BinaryOperator, CooperativeData, Expression, Handle, MathFunction, RelationalFunction, Span,
+    Statement, UnaryOperator,
 };
 
 const REPLICATED: [&str; 7] = ["min", "max", "clamp", "mix", "step", "smoothstep", "mod"];
@@ -272,6 +275,76 @@ impl FunctionLowerer<'_, '_> {
         let sum = self.binary_op(BinaryOperator::Add, low, high, at)?;
         let target = scalar(result.base_scalar().ok_or_else(|| internal(at))?);
         self.as_kind(sum, target, at)
+    }
+
+    pub(super) fn cooperative_call(
+        &mut self,
+        kind: CooperativeCall,
+        arguments: &[AstExpression],
+        at: Span,
+    ) -> Result<Option<Handle<Expression>>> {
+        let argument = |index: usize| arguments.get(index).ok_or_else(|| internal(at));
+        match kind {
+            CooperativeCall::Load { .. } | CooperativeCall::Store { .. } => {
+                let data = self.cooperative_data(&arguments[1..], at)?;
+                let matrix = argument(0)?;
+                if let CooperativeCall::Load { .. } = kind {
+                    let matrix_ty = self.info(matrix)?.ty.clone();
+                    let ty = self.lw.ir_type(&matrix_ty, at)?;
+                    let place = self.place(matrix)?;
+                    let value = self.add(Expression::CooperativeLoad { ty, data }, at)?;
+                    self.store(&place, value, at)?;
+                } else {
+                    let target = self.rvalue(matrix)?;
+                    self.push(Statement::CooperativeStore { target, data }, at);
+                }
+                Ok(None)
+            }
+            CooperativeCall::MulAdd { saturating, .. } => {
+                let a = self.rvalue(argument(0)?)?;
+                let b = self.rvalue(argument(1)?)?;
+                let c = self.rvalue(argument(2)?)?;
+                self.add(
+                    Expression::CooperativeMultiplyAdd {
+                        a,
+                        b,
+                        c,
+                        saturating,
+                    },
+                    at,
+                )
+                .map(Some)
+            }
+        }
+    }
+
+    fn cooperative_data(
+        &mut self,
+        arguments: &[AstExpression],
+        at: Span,
+    ) -> Result<CooperativeData> {
+        let &[ref buffer, ref element, ref stride, ref layout] = arguments else {
+            return Err(internal(at));
+        };
+        let place = self.place(buffer)?;
+        if place.swizzle.is_some() {
+            return Err(internal(at));
+        }
+        let index = self.rvalue(element)?;
+        let pointer = self.add(
+            Expression::Access {
+                base: place.pointer,
+                index,
+            },
+            at,
+        )?;
+        let stride = self.rvalue(stride)?;
+        let layout = self.rvalue(layout)?;
+        Ok(CooperativeData {
+            pointer,
+            stride: Some(stride),
+            layout,
+        })
     }
 
     pub(super) fn long_math_result(

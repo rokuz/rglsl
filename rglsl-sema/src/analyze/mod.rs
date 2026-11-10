@@ -1,5 +1,6 @@
 mod call;
 mod cooperative;
+mod cooperative_call;
 mod declaration;
 mod expression;
 mod extension;
@@ -21,6 +22,8 @@ use alloc::vec::Vec;
 use rglsl_ast::ast::{DirectiveKind, ExternalDeclaration, NodeId};
 use rglsl_ast::extensions::ExtensionState;
 use rglsl_ast::{Span, TranslationUnit};
+
+pub use cooperative_call::CooperativeCall;
 
 use crate::builtins::{BuiltinFunctionId, Builtins, ResourceLimits, Stage};
 use crate::constant::Constant;
@@ -59,6 +62,7 @@ pub enum Callee {
     NonUniform,
     DebugPrintf,
     Abort,
+    Cooperative(CooperativeCall),
 }
 
 #[derive(Debug, Clone, PartialEq)]

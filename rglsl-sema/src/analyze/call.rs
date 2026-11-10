@@ -328,6 +328,11 @@ impl Analyzer<'_> {
         if name == DEBUG_PRINTF || name == ABORT {
             return self.message_call(expression, span, name, arguments);
         }
+        if super::cooperative_call::cooperative_function(name)
+            && self.scopes.function_levels(name).is_empty()
+        {
+            return self.cooperative_call(expression, span, name, arguments);
+        }
         let operands: Vec<Operand> = arguments
             .iter()
             .map(|argument| self.expression(argument))

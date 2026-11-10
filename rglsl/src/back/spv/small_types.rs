@@ -183,9 +183,15 @@ pub(super) fn usage(declarations: &[Word], functions: &[Word], annotations: &[Wo
             Some(Op::TypeStruct) => {
                 Some(TypeInfo::Struct(operands.get(1..).unwrap_or(&[]).to_vec()))
             }
-            Some(Op::TypeVector | Op::TypeMatrix | Op::TypeArray | Op::TypeRuntimeArray) => {
-                second.map(TypeInfo::Element)
-            }
+            Some(
+                Op::TypeVector
+                | Op::TypeMatrix
+                | Op::TypeArray
+                | Op::TypeRuntimeArray
+                | Op::TypeVectorIdEXT
+                | Op::TypeCooperativeMatrixKHR
+                | Op::TypeCooperativeMatrixNV,
+            ) => second.map(TypeInfo::Element),
             Some(Op::TypePointer) => match (second, operands.get(2)) {
                 (Some(storage), Some(&pointee)) => Some(TypeInfo::Pointer(storage, pointee)),
                 _ => None,
@@ -220,6 +226,9 @@ pub(super) fn usage(declarations: &[Word], functions: &[Word], annotations: &[Wo
                 Op::ConstantComposite,
                 Op::SpecConstant,
                 Op::SpecConstantComposite,
+                Op::ConstantNull,
+                Op::ConstantCompositeReplicateEXT,
+                Op::SpecConstantCompositeReplicateEXT,
             ]
             .iter()
             .any(|candidate| instruction.op == op(*candidate));

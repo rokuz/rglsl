@@ -2195,6 +2195,11 @@ impl Writer {
     }
 
     fn request_type_capabilities(&mut self, inner: &crate::TypeInner) -> Result<(), Error> {
+        if let crate::TypeInner::CooperativeMatrix { scalar, .. }
+        | crate::TypeInner::LongVector { scalar, .. } = *inner
+        {
+            self.request_type_capabilities(&crate::TypeInner::Scalar(scalar))?;
+        }
         match *inner {
             crate::TypeInner::Image {
                 dim,

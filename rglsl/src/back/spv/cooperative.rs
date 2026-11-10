@@ -125,6 +125,23 @@ impl BlockContext<'_> {
         }
     }
 
+    fn note_matrix_layout(&mut self, layout: Handle<Expression>) -> Result<(), Error> {
+        let value = match self.ir_function.expressions[layout] {
+            Expression::Literal(crate::Literal::I32(value)) => i64::from(value),
+            Expression::Literal(crate::Literal::U32(value)) => i64::from(value),
+            _ => return Ok(()),
+        };
+        if matches!(value, 4202 | 4203) {
+            self.writer.require_any(
+                "blocked interleaved cooperative matrix layouts",
+                &[spirv::Capability::CooperativeMatrixLayoutsARM],
+            )?;
+            self.writer
+                .use_extension("SPV_ARM_cooperative_matrix_layouts");
+        }
+        Ok(())
+    }
+
     pub(super) fn write_cooperative_load(
         &mut self,
         ty: Handle<crate::Type>,
@@ -133,6 +150,7 @@ impl BlockContext<'_> {
         block: &mut Block,
     ) -> Result<Word, Error> {
         let class = self.matrix_class(ty)?;
+        self.note_matrix_layout(data.layout)?;
         let layout_id = self.cached.get(data.layout)?;
         let stride_id = match data.stride {
             Some(stride) => Some(self.cached.get(stride)?),
@@ -176,6 +194,7 @@ impl BlockContext<'_> {
             _ => return Err(Error::Validation("not a cooperative matrix")),
         };
         let target_id = self.cached.get(target)?;
+        self.note_matrix_layout(data.layout)?;
         let layout_id = self.cached.get(data.layout)?;
         let stride_id = match data.stride {
             Some(stride) => Some(self.cached.get(stride)?),

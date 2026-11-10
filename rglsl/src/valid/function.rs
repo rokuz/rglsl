@@ -2064,23 +2064,20 @@ impl super::Validator {
                     self.validate_subgroup_function(fun, result, context)?;
                 }
                 S::CooperativeStore { target, ref data } => {
-                    stages &= super::ShaderStages::COMPUTE;
-
-                    let target_scalar =
-                        match *context.resolve_type_inner(target, &self.valid_expression_set)? {
-                            Ti::CooperativeMatrix { scalar, .. } => scalar,
-                            ref other => {
-                                log::error!("Target operand type: {other:?}");
-                                return Err(FunctionError::InvalidCooperativeStoreTarget(target)
-                                    .with_span_handle(target, context.expressions));
-                            }
-                        };
+                    match *context.resolve_type_inner(target, &self.valid_expression_set)? {
+                        Ti::CooperativeMatrix { .. } => {}
+                        ref other => {
+                            log::error!("Target operand type: {other:?}");
+                            return Err(FunctionError::InvalidCooperativeStoreTarget(target)
+                                .with_span_handle(target, context.expressions));
+                        }
+                    };
 
                     let ptr_ty = context.resolve_pointer_type(data.pointer);
                     let ptr_scalar = ptr_ty
                         .pointer_base_type()
                         .and_then(|tr| tr.inner_with(context.types).scalar());
-                    if ptr_scalar != Some(target_scalar) {
+                    if ptr_scalar.is_none() {
                         return Err(FunctionError::InvalidCooperativeDataPointer(data.pointer)
                             .with_span_handle(data.pointer, context.expressions));
                     }

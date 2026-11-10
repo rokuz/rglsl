@@ -362,6 +362,10 @@ impl super::Validator {
                     }
                 }
 
+                let behind_pointer = matches!(
+                    *base_type,
+                    Ti::Pointer { base, .. } if matches!(module.types[base].inner, Ti::Array { .. })
+                );
                 // If index is const we can do check for non-negative index
                 match module
                     .to_ctx()
@@ -376,7 +380,7 @@ impl super::Validator {
                         // If we know both the length and the index, we can do the
                         // bounds check now.
                         if let crate::proc::IndexableLength::Known(known_length) = length {
-                            if value >= known_length {
+                            if value >= known_length && !behind_pointer {
                                 return Err(ExpressionError::IndexOutOfBounds(base, value));
                             }
                         }
@@ -1431,7 +1435,7 @@ impl super::Validator {
                 {
                     return Err(ExpressionError::InvalidPointerType(data.pointer));
                 }
-                ShaderStages::COMPUTE
+                ShaderStages::all()
             }
             E::CooperativeMultiplyAdd { a, b, c, .. } => {
                 let roles = [
