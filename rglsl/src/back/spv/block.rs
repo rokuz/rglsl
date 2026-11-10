@@ -39,7 +39,7 @@ fn get_dimension(type_inner: &crate::TypeInner) -> Dimension {
 ///
 /// [`Expression`]: crate::Expression
 #[derive(Copy, Clone)]
-enum AccessTypeAdjustment {
+pub(super) enum AccessTypeAdjustment {
     /// No adjustment needed: the SPIR-V type should be the direct
     /// analog of the rglsl IR expression type.
     ///
@@ -90,7 +90,7 @@ enum AccessTypeAdjustment {
 /// The results of emitting code for a left-hand-side expression.
 ///
 /// On success, `write_access_chain` returns one of these.
-enum ExpressionPointer {
+pub(super) enum ExpressionPointer {
     /// The pointer to the expression's value is available, as the value of the
     /// expression with the given id.
     Ready { pointer_id: Word },
@@ -900,6 +900,11 @@ impl BlockContext<'_> {
                             }
                         }
                     }
+                    crate::TypeInner::BindingArray { .. }
+                        if self.function.texel_images.contains(expr_handle) =>
+                    {
+                        0
+                    }
                     crate::TypeInner::BindingArray {
                         base: binding_type, ..
                     } => {
@@ -982,6 +987,11 @@ impl BlockContext<'_> {
                             &[index],
                         ));
                         id
+                    }
+                    crate::TypeInner::BindingArray { .. }
+                        if self.function.texel_images.contains(expr_handle) =>
+                    {
+                        0
                     }
                     crate::TypeInner::BindingArray {
                         base: binding_type, ..
@@ -2663,7 +2673,7 @@ impl BlockContext<'_> {
     ///
     /// On success, the return value is an [`ExpressionPointer`] value; see the
     /// documentation for that type.
-    fn write_access_chain(
+    pub(super) fn write_access_chain(
         &mut self,
         mut expr_handle: Handle<crate::Expression>,
         block: &mut Block,
@@ -4147,6 +4157,7 @@ impl BlockContext<'_> {
                     ref fun,
                     value,
                     result,
+                    order,
                 } => {
                     let id = self.gen_id();
                     // Compare-and-exchange operations produce a struct result,
@@ -4177,12 +4188,28 @@ impl BlockContext<'_> {
                         .inner_with(&self.ir_module.types)
                         .pointer_space()
                         .unwrap();
-                    let (semantics, scope) = match self.glsl_atomic_semantics(pointer) {
-                        Some(found) => found,
-                        None => space.to_spirv_semantics_and_scope(),
+                    let default_semantics = self.glsl_atomic_semantics(pointer);
+                    let (scope_constant_id, semantics_id, unequal_semantics_id) = match order {
+                        Some(order) => {
+                            let ids = self.writer.write_memory_order(order);
+                            (ids.scope, ids.semantics, ids.unequal)
+                        }
+                        None => {
+                            let (semantics, scope) = match default_semantics {
+                                Some(found) => found,
+                                None => space.to_spirv_semantics_and_scope(),
+                            };
+                            if scope == spirv::Scope::Device {
+                                self.writer.device_scope_used = true;
+                            }
+                            let semantics_id = self.get_index_constant(semantics.bits());
+                            (
+                                self.get_scope_constant(scope as u32),
+                                semantics_id,
+                                semantics_id,
+                            )
+                        }
                     };
-                    let scope_constant_id = self.get_scope_constant(scope as u32);
-                    let semantics_id = self.get_index_constant(semantics.bits());
                     let value_id = self.cached[value];
                     let value_inner = self.fun_info[value].ty.inner_with(&self.ir_module.types);
 
@@ -4355,7 +4382,7 @@ impl BlockContext<'_> {
                             cas_instr.add_operand(pointer_id);
                             cas_instr.add_operand(scope_constant_id);
                             cas_instr.add_operand(semantics_id); // semantics if equal
-                            cas_instr.add_operand(semantics_id); // semantics if not equal
+                            cas_instr.add_operand(unequal_semantics_id);
                             cas_instr.add_operand(value_id);
                             cas_instr.add_operand(self.cached[cmp]);
                             block.body.push(cas_instr);
@@ -4382,15 +4409,53 @@ impl BlockContext<'_> {
                     array_index,
                     fun,
                     value,
+                    sample,
+                    result,
+                    order,
+                } => match order {
+                    Some(order) => {
+                        let texel = crate::Texel {
+                            image,
+                            coordinate,
+                            array_index,
+                            sample,
+                        };
+                        self.write_ordered_image_atomic(
+                            &texel, fun, value, result, order, &mut block,
+                        )?;
+                    }
+                    None => {
+                        self.write_image_atomic(
+                            image,
+                            coordinate,
+                            array_index,
+                            fun,
+                            value,
+                            &mut block,
+                        )?;
+                    }
+                },
+                Statement::AtomicLoad {
+                    ref location,
+                    order,
+                    result,
                 } => {
-                    self.write_image_atomic(
-                        image,
-                        coordinate,
-                        array_index,
-                        fun,
-                        value,
-                        &mut block,
-                    )?;
+                    self.write_atomic_load(location, order, result, &mut block)?;
+                }
+                Statement::AtomicStore {
+                    ref location,
+                    value,
+                    order,
+                } => {
+                    self.write_atomic_store(location, value, order, &mut block)?;
+                }
+                Statement::ScopedBarrier {
+                    execution,
+                    memory,
+                    semantics,
+                } => {
+                    self.writer
+                        .write_scoped_barrier(execution, memory, semantics, &mut block);
                 }
                 Statement::WorkGroupUniformLoad { pointer, result } => {
                     self.writer

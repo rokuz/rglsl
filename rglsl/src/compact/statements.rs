@@ -74,6 +74,7 @@ impl FunctionTracer<'_> {
                         ref fun,
                         value,
                         result,
+                        order: _,
                     } => {
                         self.expressions_used.insert(pointer);
                         self.trace_atomic_function(fun);
@@ -86,13 +87,43 @@ impl FunctionTracer<'_> {
                         image,
                         coordinate,
                         array_index,
-                        fun: _,
+                        ref fun,
                         value,
+                        sample,
+                        result,
+                        order: _,
                     } => {
                         self.expressions_used.insert(image);
                         self.expressions_used.insert(coordinate);
                         if let Some(array_index) = array_index {
                             self.expressions_used.insert(array_index);
+                        }
+                        self.trace_atomic_function(fun);
+                        self.expressions_used.insert(value);
+                        if let Some(sample) = sample {
+                            self.expressions_used.insert(sample);
+                        }
+                        if let Some(result) = result {
+                            self.expressions_used.insert(result);
+                        }
+                    }
+                    St::AtomicLoad {
+                        ref location,
+                        order: _,
+                        result,
+                    } => {
+                        for handle in location.expressions() {
+                            self.expressions_used.insert(handle);
+                        }
+                        self.expressions_used.insert(result);
+                    }
+                    St::AtomicStore {
+                        ref location,
+                        value,
+                        order: _,
+                    } => {
+                        for handle in location.expressions() {
+                            self.expressions_used.insert(handle);
                         }
                         self.expressions_used.insert(value);
                     }
@@ -189,6 +220,7 @@ impl FunctionTracer<'_> {
                     | St::Continue
                     | St::Kill
                     | St::ControlBarrier(_)
+                    | St::ScopedBarrier { .. }
                     | St::MemoryBarrier(_)
                     | St::Return { value: None } => {}
                 }
@@ -318,6 +350,7 @@ impl FunctionMap {
                         ref mut fun,
                         ref mut value,
                         ref mut result,
+                        order: _,
                     } => {
                         adjust(pointer);
                         self.adjust_atomic_function(fun);
@@ -330,14 +363,40 @@ impl FunctionMap {
                         ref mut image,
                         ref mut coordinate,
                         ref mut array_index,
-                        fun: _,
+                        ref mut fun,
                         ref mut value,
+                        ref mut sample,
+                        ref mut result,
+                        order: _,
                     } => {
                         adjust(image);
                         adjust(coordinate);
                         if let Some(ref mut array_index) = *array_index {
                             adjust(array_index);
                         }
+                        self.adjust_atomic_function(fun);
+                        adjust(value);
+                        if let Some(ref mut sample) = *sample {
+                            adjust(sample);
+                        }
+                        if let Some(ref mut result) = *result {
+                            adjust(result);
+                        }
+                    }
+                    St::AtomicLoad {
+                        ref mut location,
+                        order: _,
+                        ref mut result,
+                    } => {
+                        self.adjust_atomic_location(location);
+                        adjust(result);
+                    }
+                    St::AtomicStore {
+                        ref mut location,
+                        ref mut value,
+                        order: _,
+                    } => {
+                        self.adjust_atomic_location(location);
                         adjust(value);
                     }
                     St::WorkGroupUniformLoad {
@@ -447,6 +506,7 @@ impl FunctionMap {
                     | St::Continue
                     | St::Kill
                     | St::ControlBarrier(_)
+                    | St::ScopedBarrier { .. }
                     | St::MemoryBarrier(_)
                     | St::Return { value: None } => {}
                 }
@@ -470,6 +530,22 @@ impl FunctionMap {
             | Af::InclusiveOr
             | Af::Min
             | Af::Max => {}
+        }
+    }
+
+    fn adjust_atomic_location(&self, location: &mut crate::AtomicLocation) {
+        match *location {
+            crate::AtomicLocation::Pointer(ref mut pointer) => self.expressions.adjust(pointer),
+            crate::AtomicLocation::Texel(ref mut texel) => {
+                self.expressions.adjust(&mut texel.image);
+                self.expressions.adjust(&mut texel.coordinate);
+                if let Some(ref mut array_index) = texel.array_index {
+                    self.expressions.adjust(array_index);
+                }
+                if let Some(ref mut sample) = texel.sample {
+                    self.expressions.adjust(sample);
+                }
+            }
         }
     }
 

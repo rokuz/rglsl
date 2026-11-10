@@ -2,6 +2,7 @@ mod call;
 mod declaration;
 mod expression;
 mod extension;
+mod memory;
 mod reference;
 mod reference_expression;
 mod statement;

@@ -454,8 +454,9 @@ impl super::SwizzleComponent {
 impl super::ImageClass {
     pub const fn is_multisampled(self) -> bool {
         match self {
-            crate::ImageClass::Sampled { multi, .. } | crate::ImageClass::Depth { multi } => multi,
-            crate::ImageClass::Storage { .. } => false,
+            crate::ImageClass::Sampled { multi, .. }
+            | crate::ImageClass::Depth { multi }
+            | crate::ImageClass::Storage { multi, .. } => multi,
             crate::ImageClass::External => false,
         }
     }

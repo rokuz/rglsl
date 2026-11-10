@@ -2951,6 +2951,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                         },
                         value: one_lexp_handle,
                         result: Some(r_lexp_handle),
+                        order: None,
                     };
                     block.push(stmt, span);
 
@@ -3046,6 +3047,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                         },
                         value: v_lexp_handle,
                         result: Some(atomic_lexp_handle),
+                        order: None,
                     };
                     block.push(stmt, span);
 

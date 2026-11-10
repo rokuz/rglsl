@@ -96,6 +96,7 @@ are read-only.
 [`dynamically accessed`]: crate::Expression::Access
 */
 
+mod atomic;
 mod block;
 mod f16_polyfill;
 mod helpers;
@@ -291,6 +292,8 @@ struct Function {
     /// [`spilled_composites`]: Function::spilled_composites
     spilled_accesses: crate::arena::HandleSet<crate::Expression>,
 
+    texel_images: crate::arena::HandleSet<crate::Expression>,
+
     /// A map taking each expression to the number of [`Access`] and
     /// [`AccessIndex`] expressions that uses it as a base value. If an
     /// expression has no entry, its count is zero: it is never used as a
@@ -394,10 +397,14 @@ impl LocalImageType {
                 flags: make_flags(multi, ImageTypeFlags::DEPTH | ImageTypeFlags::SAMPLED),
                 image_format: spirv::ImageFormat::Unknown,
             },
-            crate::ImageClass::Storage { format, access: _ } => LocalImageType {
+            crate::ImageClass::Storage {
+                format,
+                access: _,
+                multi,
+            } => LocalImageType {
                 sampled_type: format.into(),
                 dim,
-                flags: make_flags(false, ImageTypeFlags::empty()),
+                flags: make_flags(multi, ImageTypeFlags::empty()),
                 image_format: format.into(),
             },
             crate::ImageClass::External => unimplemented!(),
@@ -979,6 +986,7 @@ pub struct Writer {
     zero_initialize_workgroup_memory: ZeroInitializeWorkgroupMemoryMode,
     force_loop_bounding: bool,
     vulkan_memory_model: bool,
+    device_scope_used: bool,
     use_storage_input_output_16: bool,
     emit_int_div_checks: bool,
     void_type: Word,

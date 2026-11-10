@@ -4115,6 +4115,384 @@ fn subpass_input_errors() {
     }
 }
 
+fn compile_valid_1_3(stage: ShaderStage, source: &str) -> dr::Module {
+    let words = compile_words_with_names(stage, source, (1, 3));
+    crate::stage_io::spirv_val_in(&words, &["--target-env", "vulkan1.1"]);
+    dr::load_words(words).expect("produced SPIR-V does not parse")
+}
+
+fn compile_words_with_names(stage: ShaderStage, source: &str, lang_version: (u8, u8)) -> Vec<u32> {
+    let module = parse(stage, source).unwrap_or_else(|e| panic!("shader rejected: {e}"));
+    let info = Validator::new(ValidationFlags::all(), Capabilities::all())
+        .validate(&module)
+        .expect("validated in parse");
+    let options = spv::Options {
+        lang_version,
+        flags: spv::WriterFlags::DEBUG
+            | spv::WriterFlags::LABEL_VARYINGS
+            | spv::WriterFlags::SMALL_TYPE_CAPABILITIES_BY_USE,
+        ..spv::Options::default()
+    };
+    spv::write_vec(&module, &info, &options, None).expect("SPIR-V backend failed")
+}
+
+fn has_decoration(module: &dr::Module, id: u32, decoration: Decoration) -> bool {
+    module.annotations.iter().any(|inst| {
+        inst.class.opcode == Op::Decorate
+            && inst.operands[0] == Operand::IdRef(id)
+            && inst.operands[1] == Operand::Decoration(decoration)
+    })
+}
+
+fn scope_and_semantics(module: &dr::Module, inst: &dr::Instruction, first: usize) -> (u32, u32) {
+    (
+        constant(module, &inst.operands[first]),
+        constant(module, &inst.operands[first + 1]),
+    )
+}
+
+#[test]
+fn image_atomics_match_glslang() {
+    let module = compile_valid(
+        ShaderStage::Compute,
+        "#version 450
+        layout(local_size_x = 1) in;
+        layout(binding = 0, r32ui) uniform uimage2D u;
+        layout(binding = 1, r32i) uniform iimage2DArray a;
+        layout(binding = 2, r32f) uniform image2D f;
+        layout(binding = 3) buffer B { uint r[]; };
+        void main() {
+            r[0] = imageAtomicAdd(u, ivec2(1, 2), 1u);
+            r[1] = imageAtomicMin(u, ivec2(1, 2), 2u);
+            r[2] = imageAtomicMax(u, ivec2(1, 2), 3u);
+            r[3] = imageAtomicAnd(u, ivec2(1, 2), 4u);
+            r[4] = imageAtomicOr(u, ivec2(1, 2), 5u);
+            r[5] = imageAtomicXor(u, ivec2(1, 2), 6u);
+            r[6] = imageAtomicExchange(u, ivec2(1, 2), 7u);
+            r[7] = imageAtomicCompSwap(u, ivec2(1, 2), 8u, 9u);
+            r[8] = uint(imageAtomicMin(a, ivec3(1, 2, 3), -1));
+            r[9] = uint(imageAtomicExchange(f, ivec2(0), 1.0));
+        }",
+    );
+    assert_eq!(instructions(&module, Op::ImageTexelPointer).len(), 10);
+    for (op, count) in [
+        (Op::AtomicIAdd, 1),
+        (Op::AtomicUMin, 1),
+        (Op::AtomicSMin, 1),
+        (Op::AtomicUMax, 1),
+        (Op::AtomicAnd, 1),
+        (Op::AtomicOr, 1),
+        (Op::AtomicXor, 1),
+        (Op::AtomicExchange, 2),
+        (Op::AtomicCompareExchange, 1),
+    ] {
+        let atomics = instructions(&module, op);
+        assert_eq!(atomics.len(), count, "{op:?}");
+        for atomic in atomics {
+            assert_eq!(
+                scope_and_semantics(&module, atomic, 1),
+                (spirv::Scope::Device as u32, 0),
+                "{op:?}"
+            );
+        }
+    }
+    let swap = instructions(&module, Op::AtomicCompareExchange)[0];
+    assert_eq!(constant(&module, &swap.operands[3]), 0);
+    assert_eq!(constant(&module, &swap.operands[4]), 9);
+    assert_eq!(constant(&module, &swap.operands[5]), 8);
+    for pointer in instructions(&module, Op::ImageTexelPointer) {
+        assert_eq!(constant(&module, &pointer.operands[2]), 0);
+    }
+    assert!(decorated(&module, Decoration::NonUniform).is_empty());
+}
+
+#[test]
+fn image_atomics_on_non_uniform_elements() {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+        #extension GL_EXT_nonuniform_qualifier : require
+        layout(set = 0, binding = 4, r32ui) uniform uimageBuffer data[];
+        layout(location = 3) in flat int rIndex;
+        void main() {
+            imageAtomicAdd(data[nonuniformEXT(rIndex)], 0, 0);
+            imageAtomicAdd(data[rIndex], 1, 1);
+        }",
+    );
+    let chains = instructions(&module, Op::AccessChain);
+    let pointers = instructions(&module, Op::ImageTexelPointer);
+    assert_eq!((chains.len(), pointers.len()), (2, 2));
+    let image_loads = instructions(&module, Op::Load)
+        .into_iter()
+        .filter(|load| {
+            load.operands[0] == Operand::IdRef(chains[0].result_id.unwrap())
+                || load.operands[0] == Operand::IdRef(chains[1].result_id.unwrap())
+        })
+        .count();
+    assert_eq!(image_loads, 0);
+    for (index, non_uniform) in [(0, true), (1, false)] {
+        let chain = chains[index].result_id.unwrap();
+        let pointer = pointers[index].result_id.unwrap();
+        assert_eq!(
+            has_decoration(&module, chain, Decoration::NonUniform),
+            non_uniform
+        );
+        assert_eq!(
+            has_decoration(&module, pointer, Decoration::NonUniform),
+            non_uniform
+        );
+        assert_eq!(pointers[index].operands[0], Operand::IdRef(chain));
+    }
+    for capability in [
+        spirv::Capability::ShaderNonUniform,
+        spirv::Capability::RuntimeDescriptorArray,
+        spirv::Capability::StorageTexelBufferArrayNonUniformIndexing,
+        spirv::Capability::StorageTexelBufferArrayDynamicIndexing,
+    ] {
+        assert!(has_capability(&module, capability), "{capability:?}");
+    }
+}
+
+#[test]
+fn image_atomics_on_multisampled_images() {
+    let module = compile_valid(
+        ShaderStage::Compute,
+        "#version 450
+        layout(local_size_x = 1) in;
+        layout(binding = 0, r32i) uniform iimage2DMS ms;
+        layout(binding = 1, r32ui) uniform uimage2D u;
+        void main() {
+            imageAtomicOr(ms, ivec2(1), 3, 5);
+            imageAtomicAdd(u, ivec2(0), 1u);
+        }",
+    );
+    assert!(has_capability(
+        &module,
+        spirv::Capability::StorageImageMultisample
+    ));
+    let pointers = instructions(&module, Op::ImageTexelPointer);
+    assert_eq!(pointers.len(), 2);
+    let samples: Vec<u32> = pointers
+        .iter()
+        .map(|pointer| constant(&module, &pointer.operands[2]))
+        .collect();
+    assert_eq!(samples, [3, 0]);
+}
+
+#[test]
+fn scoped_atomics_match_glslang() {
+    let module = compile_valid_1_3(
+        ShaderStage::Compute,
+        "#version 450
+        #extension GL_KHR_memory_scope_semantics : require
+        layout(local_size_x = 1) in;
+        layout(binding = 0) buffer B { uint x; int y; } b;
+        layout(binding = 1, r32ui) uniform uimage2D image;
+        shared uint s;
+        void main() {
+            uint v = atomicLoad(b.x, gl_ScopeDevice, gl_StorageSemanticsBuffer, gl_SemanticsAcquire);
+            atomicStore(s, v, gl_ScopeWorkgroup, gl_StorageSemanticsShared, gl_SemanticsRelease);
+            atomicAdd(b.y, 2, gl_ScopeSubgroup, 0, 0);
+            atomicCompSwap(b.x, 1u, 2u, gl_ScopeDevice, gl_StorageSemanticsBuffer,
+                gl_SemanticsAcquireRelease, gl_StorageSemanticsBuffer, gl_SemanticsAcquire);
+            v += imageAtomicLoad(image, ivec2(0), gl_ScopeDevice, gl_StorageSemanticsImage, gl_SemanticsAcquire);
+            imageAtomicStore(image, ivec2(0), v, gl_ScopeDevice, gl_StorageSemanticsImage, gl_SemanticsRelease);
+            imageAtomicXor(image, ivec2(0), v, gl_ScopeInvocation, 0, 0);
+        }",
+    );
+    let loads = instructions(&module, Op::AtomicLoad);
+    assert_eq!(loads.len(), 2);
+    assert_eq!(scope_and_semantics(&module, loads[0], 1), (1, 0x42));
+    assert_eq!(scope_and_semantics(&module, loads[1], 1), (1, 0x802));
+    let stores = instructions(&module, Op::AtomicStore);
+    assert_eq!(stores.len(), 2);
+    assert_eq!(scope_and_semantics(&module, stores[0], 1), (2, 0x104));
+    assert_eq!(scope_and_semantics(&module, stores[1], 1), (1, 0x804));
+    let add = instructions(&module, Op::AtomicIAdd)[0];
+    assert_eq!(scope_and_semantics(&module, add, 1), (3, 0));
+    let swap = instructions(&module, Op::AtomicCompareExchange)[0];
+    assert_eq!(scope_and_semantics(&module, swap, 1), (1, 0x48));
+    assert_eq!(constant(&module, &swap.operands[3]), 0x42);
+    let xor = instructions(&module, Op::AtomicXor)[0];
+    assert_eq!(scope_and_semantics(&module, xor, 1), (4, 0));
+    assert!(!has_capability(
+        &module,
+        spirv::Capability::VulkanMemoryModel
+    ));
+}
+
+#[test]
+fn availability_semantics_select_the_vulkan_memory_model() {
+    let module = compile_valid_1_3(
+        ShaderStage::Compute,
+        "#version 450
+        #extension GL_KHR_memory_scope_semantics : require
+        layout(local_size_x = 1) in;
+        layout(binding = 0) buffer B { uint x; } b;
+        void main() {
+            atomicStore(b.x, 1u, gl_ScopeQueueFamily, gl_StorageSemanticsBuffer,
+                gl_SemanticsRelease | gl_SemanticsMakeAvailable);
+        }",
+    );
+    assert!(has_capability(
+        &module,
+        spirv::Capability::VulkanMemoryModel
+    ));
+    let model = &module.memory_model.as_ref().unwrap().operands[1];
+    assert_eq!(*model, Operand::MemoryModel(spirv::MemoryModel::Vulkan));
+    let store = instructions(&module, Op::AtomicStore)[0];
+    assert_eq!(scope_and_semantics(&module, store, 1), (5, 0x2044));
+}
+
+#[test]
+fn scoped_barriers_match_glslang() {
+    let module = compile_valid_1_3(
+        ShaderStage::Compute,
+        "#version 450
+        #extension GL_KHR_memory_scope_semantics : require
+        layout(local_size_x = 1) in;
+        void main() {
+            controlBarrier(gl_ScopeWorkgroup, gl_ScopeDevice,
+                gl_StorageSemanticsBuffer | gl_StorageSemanticsShared, gl_SemanticsAcquireRelease);
+            memoryBarrier(gl_ScopeSubgroup, gl_StorageSemanticsImage, gl_SemanticsRelease);
+            memoryBarrier();
+            memoryBarrierBuffer();
+            memoryBarrierShared();
+            memoryBarrierImage();
+            groupMemoryBarrier();
+        }",
+    );
+    let control = instructions(&module, Op::ControlBarrier);
+    assert_eq!(control.len(), 1);
+    assert_eq!(constant(&module, &control[0].operands[0]), 2);
+    assert_eq!(scope_and_semantics(&module, control[0], 1), (1, 0x148));
+    let memory: Vec<(u32, u32)> = instructions(&module, Op::MemoryBarrier)
+        .into_iter()
+        .map(|barrier| scope_and_semantics(&module, barrier, 0))
+        .collect();
+    assert_eq!(
+        memory,
+        [
+            (3, 0x804),
+            (1, 0xd48),
+            (1, 0x48),
+            (1, 0x108),
+            (1, 0x808),
+            (2, 0xd48)
+        ]
+    );
+}
+
+#[test]
+fn coherent_images_under_the_vulkan_memory_model() {
+    use spirv::ImageOperands as Io;
+    let module = compile_valid_1_3(
+        ShaderStage::Compute,
+        "#version 450
+        #pragma use_vulkan_memory_model
+        #extension GL_KHR_memory_scope_semantics : require
+        layout(local_size_x = 1) in;
+        layout(binding = 0, r32i) volatile coherent uniform iimage2D v;
+        layout(binding = 1, r32i) workgroupcoherent uniform iimage2D w;
+        layout(binding = 2, r32i) nonprivate uniform iimage2D n;
+        void main() {
+            ivec4 t = imageLoad(v, ivec2(0)) + imageLoad(w, ivec2(0));
+            imageStore(n, ivec2(0), t);
+            imageStore(w, ivec2(0), t);
+            imageAtomicAdd(v, ivec2(0), 1);
+        }",
+    );
+    let operands = |inst: &dr::Instruction, from: usize| -> (u32, Option<u32>) {
+        let mask = match inst.operands.get(from) {
+            Some(&Operand::ImageOperands(mask)) => mask.bits(),
+            None => 0,
+            Some(other) => panic!("unexpected operand {other:?}"),
+        };
+        let scope = inst
+            .operands
+            .get(from + 1)
+            .map(|scope| constant(&module, scope));
+        (mask, scope)
+    };
+    let reads = instructions(&module, Op::ImageRead);
+    assert_eq!(
+        operands(reads[0], 2),
+        (
+            (Io::MAKE_TEXEL_VISIBLE | Io::NON_PRIVATE_TEXEL | Io::VOLATILE_TEXEL).bits(),
+            Some(spirv::Scope::QueueFamily as u32)
+        )
+    );
+    assert_eq!(
+        operands(reads[1], 2),
+        (
+            (Io::MAKE_TEXEL_VISIBLE | Io::NON_PRIVATE_TEXEL).bits(),
+            Some(spirv::Scope::Workgroup as u32)
+        )
+    );
+    let writes = instructions(&module, Op::ImageWrite);
+    assert_eq!(operands(writes[0], 3), (Io::NON_PRIVATE_TEXEL.bits(), None));
+    assert_eq!(
+        operands(writes[1], 3),
+        (
+            (Io::MAKE_TEXEL_AVAILABLE | Io::NON_PRIVATE_TEXEL).bits(),
+            Some(spirv::Scope::Workgroup as u32)
+        )
+    );
+    let add = instructions(&module, Op::AtomicIAdd)[0];
+    assert_eq!(
+        scope_and_semantics(&module, add, 1),
+        (spirv::Scope::QueueFamily as u32, 0x8000)
+    );
+    assert!(decorated(&module, Decoration::Coherent).is_empty());
+}
+
+#[test]
+fn memory_scope_semantics_errors() {
+    let cases = [
+        (
+            "void main() { memoryBarrier(gl_ScopeDevice, 0, 0); }",
+            "GL_KHR_memory_scope_semantics",
+        ),
+        (
+            "#extension GL_KHR_memory_scope_semantics : require
+            shared uint s;
+            void main() { int d = 1; atomicAdd(s, 1u, d, 0, 0); }",
+            "compile-time constant",
+        ),
+        (
+            "#extension GL_KHR_memory_scope_semantics : require
+            shared uint s;
+            void main() {
+                atomicStore(s, 1u, gl_ScopeDevice, gl_StorageSemanticsShared, gl_SemanticsAcquire);
+            }",
+            "must not be used with (image) atomic store",
+        ),
+        (
+            "#extension GL_KHR_memory_scope_semantics : require
+            void main() {
+                controlBarrier(gl_ScopeWorkgroup, gl_ScopeWorkgroup, 0, gl_SemanticsVolatile);
+            }",
+            "gl_SemanticsVolatile must not be used",
+        ),
+        (
+            "#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+            shared uint64_t s;
+            void main() { atomicAdd(s, 1ul); }",
+            "GL_EXT_shader_atomic_int64",
+        ),
+        (
+            "layout(binding = 0) buffer B { uint x; } b;
+            void main() { atomicLoad(b.x, gl_ScopeQueueFamily, 0, 0); }",
+            "GL_KHR_memory_scope_semantics",
+        ),
+    ];
+    for (body, expected) in cases {
+        let source = format!("#version 450\nlayout(local_size_x = 1) in;\n{body}\n");
+        let error = parse(ShaderStage::Compute, &source).unwrap_err();
+        assert!(error.contains(expected), "{source}: {error}");
+    }
+}
+
 fn message_words(stage: ShaderStage, source: &str, lang_version: (u8, u8)) -> Vec<u32> {
     let module = parse(stage, source).unwrap_or_else(|e| panic!("shader rejected: {e}"));
     let info = Validator::new(ValidationFlags::all(), Capabilities::all())
@@ -4320,14 +4698,16 @@ void main() {
         .collect();
     assert_eq!(matrix_stride, [(4, 8)]);
     let instructions = raw_instructions(&words);
-    let strides: std::collections::BTreeSet<u32> = instructions
+    let mut strides: Vec<u32> = instructions
         .iter()
         .filter(|(op, operands)| {
             *op == Op::Decorate as u32 && operands[1] == Decoration::ArrayStride as u32
         })
         .map(|(_, operands)| operands[2])
         .collect();
-    assert_eq!(strides.into_iter().collect::<Vec<_>>(), [1, 4, 12]);
+    strides.sort_unstable();
+    strides.dedup();
+    assert_eq!(strides, [1, 4, 12]);
     let utf_encoded = instructions
         .iter()
         .filter(|(op, operands)| *op == Op::Decorate as u32 && operands[1] == 5145)
