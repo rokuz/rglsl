@@ -331,7 +331,9 @@ pub enum AddressSpace {
     /// Uniform buffer data.
     Uniform,
     /// Storage buffer data, potentially mutable.
-    Storage { access: StorageAccess },
+    Storage {
+        access: StorageAccess,
+    },
     /// Opaque handles, such as samplers and images.
     Handle,
 
@@ -377,6 +379,16 @@ pub enum AddressSpace {
         access: StorageAccess,
         qualifiers: PointerQualifiers,
     },
+    DescriptorHeap(DescriptorHeap),
+}
+
+#[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub enum DescriptorHeap {
+    Resource,
+    Sampler,
 }
 
 /// Built-in inputs and outputs.
@@ -689,6 +701,18 @@ pub struct StructMember {
     pub matrix_layout: Option<MatrixLayout>,
     #[cfg_attr(feature = "deserialize", serde(default))]
     pub xfb_offset: Option<u32>,
+    #[cfg_attr(feature = "serialize", serde(skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    pub heap: Option<HeapMember>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub struct HeapMember {
+    pub offset: Option<u32>,
+    pub size: Option<u32>,
 }
 
 /// The memory layout of a matrix in a buffer: [`StructMember::matrix_layout`].
@@ -1085,6 +1109,10 @@ pub enum TypeInner {
     /// [`ARGUMENT`]: crate::valid::TypeFlags::ARGUMENT
     /// [rglsl#1864]: https://github.com/gfx-rs/naga/issues/1864
     BindingArray { base: Handle<Type>, size: ArraySize },
+    BufferDescriptor {
+        base: Handle<Type>,
+        space: AddressSpace,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
@@ -1254,6 +1282,9 @@ pub struct GlobalVariable {
     #[cfg_attr(feature = "serialize", serde(skip_serializing_if = "Option::is_none"))]
     #[cfg_attr(feature = "deserialize", serde(default))]
     pub input_attachment_index: Option<u32>,
+    #[cfg_attr(feature = "serialize", serde(skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    pub heap_offset: Option<Handle<Expression>>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -1801,7 +1832,9 @@ pub enum Expression {
     ///
     /// For [`TypeInner::Atomic`] the result is a corresponding scalar.
     /// For other types behind the `pointer<T>`, the result is `T`.
-    Load { pointer: Handle<Expression> },
+    Load {
+        pointer: Handle<Expression>,
+    },
     /// Sample a point from a sampled or a depth image.
     ImageSample {
         image: Handle<Expression>,
@@ -1964,7 +1997,10 @@ pub enum Expression {
     /// [type]: TypeInner::Atomic
     /// [`Struct`]: TypeInner::Struct
     /// [`BOOL`]: Scalar::BOOL
-    AtomicResult { ty: Handle<Type>, comparison: bool },
+    AtomicResult {
+        ty: Handle<Type>,
+        comparison: bool,
+    },
 
     /// Result of a [`WorkGroupUniformLoad`] statement.
     ///
@@ -1986,6 +2022,13 @@ pub enum Expression {
     PhysicalAddress {
         pointer: Handle<Expression>,
         split: bool,
+    },
+    BufferPointer {
+        descriptor: Handle<Expression>,
+    },
+    HeapOffset {
+        pointer: Handle<Expression>,
+        offset: Handle<Expression>,
     },
 
     /// Get the Positions of the triangle hit by the [`RayQuery`]
@@ -2019,7 +2062,9 @@ pub enum Expression {
     ///
     /// [`SubgroupCollectiveOperation`]: Statement::SubgroupCollectiveOperation
     /// [`SubgroupGather`]: Statement::SubgroupGather
-    SubgroupOperationResult { ty: Handle<Type> },
+    SubgroupOperationResult {
+        ty: Handle<Type>,
+    },
 
     /// Load a cooperative primitive from memory.
     CooperativeLoad {
@@ -3004,4 +3049,10 @@ pub struct Module {
     )]
     #[cfg_attr(feature = "deserialize", serde(default))]
     pub vulkan_memory_model: bool,
+    #[cfg_attr(
+        feature = "serialize",
+        serde(skip_serializing_if = "core::ops::Not::not")
+    )]
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    pub descriptor_heap: bool,
 }

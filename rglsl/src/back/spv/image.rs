@@ -410,9 +410,9 @@ impl BlockContext<'_> {
             crate::Expression::FunctionArgument(i) => {
                 self.function.parameters[i as usize].handle_id
             }
-            crate::Expression::Access { .. } | crate::Expression::AccessIndex { .. } => {
-                self.cached[expr_handle]
-            }
+            crate::Expression::Access { .. }
+            | crate::Expression::AccessIndex { .. }
+            | crate::Expression::Load { .. } => self.cached[expr_handle],
             ref other => unreachable!("Unexpected image expression {:?}", other),
         };
 

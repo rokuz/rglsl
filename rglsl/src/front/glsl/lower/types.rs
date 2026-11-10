@@ -297,6 +297,7 @@ impl Lowerer<'_> {
                 offset,
                 matrix_layout: None,
                 xfb_offset: None,
+                heap: None,
             });
             offset = offset.saturating_add(layout.size);
         }
@@ -334,7 +335,7 @@ impl Lowerer<'_> {
             .collect()
     }
 
-    fn layout(
+    pub(super) fn layout(
         &mut self,
         ty: Handle<Type>,
         packing: Packing,
@@ -487,6 +488,7 @@ impl Lowerer<'_> {
                 offset,
                 matrix_layout: info.matrix_layout,
                 xfb_offset: None,
+                heap: None,
             });
             offset = offset.saturating_add(info.span);
         }

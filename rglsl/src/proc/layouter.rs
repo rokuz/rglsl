@@ -278,7 +278,8 @@ impl Layouter {
                 | Ti::Sampler { .. }
                 | Ti::AccelerationStructure { .. }
                 | Ti::RayQuery { .. }
-                | Ti::BindingArray { .. } => TypeLayout {
+                | Ti::BindingArray { .. }
+                | Ti::BufferDescriptor { .. } => TypeLayout {
                     size,
                     alignment: Alignment::ONE,
                 },

@@ -85,6 +85,7 @@ impl Builder {
                 io,
                 xfb: None,
                 input_attachment_index: None,
+                heap_offset: None,
             },
             Span::UNDEFINED,
         )
@@ -105,6 +106,7 @@ impl Builder {
                 offset: 16 * u32::try_from(index).unwrap(),
                 matrix_layout: None,
                 xfb_offset: None,
+                heap: None,
             })
             .collect::<Vec<_>>();
         let span = 16 * u32::try_from(members.len()).unwrap();
@@ -540,6 +542,7 @@ fn invalid_interfaces_are_rejected() {
                 io: None,
                 xfb: None,
                 input_attachment_index: None,
+                heap_offset: None,
             },
             Span::UNDEFINED,
         );

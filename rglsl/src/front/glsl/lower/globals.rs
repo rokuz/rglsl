@@ -72,7 +72,7 @@ const fn interpolation_of(qualifier: InterpolationQualifier) -> Interpolation {
     }
 }
 
-fn image_format(word: &str) -> Option<StorageFormat> {
+pub(super) fn image_format(word: &str) -> Option<StorageFormat> {
     use StorageFormat as Sf;
     Some(match word {
         "rgba32f" => Sf::Rgba32Float,
@@ -119,7 +119,7 @@ fn image_format(word: &str) -> Option<StorageFormat> {
     })
 }
 
-fn access(qualifiers: &Qualifiers) -> StorageAccess {
+pub(super) fn storage_access(qualifiers: &Qualifiers) -> StorageAccess {
     if qualifiers.readonly {
         StorageAccess::LOAD
     } else if qualifiers.writeonly {
@@ -485,6 +485,9 @@ impl<'a> Lowerer<'a> {
         }
         match qualifiers.storage {
             Storage::In | Storage::Out => self.interface_variable(symbol, name, at),
+            Storage::Uniform if self.is_heap_view(qualifiers) => {
+                self.heap_resource(symbol, name, list.ty.qualifier.as_ref(), at)
+            }
             Storage::Uniform => self.resource(symbol, name, at),
             Storage::Shared => {
                 let ir = self.ir_type(ty, at)?;
@@ -499,13 +502,16 @@ impl<'a> Lowerer<'a> {
                         io: None,
                         xfb: None,
                         input_attachment_index: None,
+                        heap_offset: None,
                     },
                     at,
                 );
                 self.globals.insert(symbol, GlobalRef::Variable(handle));
                 Ok(())
             }
-            Storage::Buffer | Storage::Inout => Err(internal(at)),
+            Storage::Buffer | Storage::Inout | Storage::ResourceHeap | Storage::SamplerHeap => {
+                Err(internal(at))
+            }
             Storage::None => self.private(symbol, name, declarator, at),
         }
     }
@@ -559,6 +565,7 @@ impl<'a> Lowerer<'a> {
                 io: None,
                 xfb: None,
                 input_attachment_index: None,
+                heap_offset: None,
             },
             at,
         );
@@ -659,6 +666,7 @@ impl<'a> Lowerer<'a> {
                 }),
                 xfb: None,
                 input_attachment_index: None,
+                heap_offset: None,
             },
             at,
         );
@@ -688,9 +696,6 @@ impl<'a> Lowerer<'a> {
         qualifiers: &Qualifiers,
         at: Span,
     ) -> Result<(Option<ResourceBinding>, Option<Option<u32>>)> {
-        if qualifiers.has_layout("descriptor_heap") || qualifiers.has_layout("descriptor_stride") {
-            return Err(unsupported("descriptor heaps", at));
-        }
         let value = |name: &str| -> Result<Option<u32>> {
             match qualifiers.layout_entry(name).and_then(|e| e.value) {
                 Some(value) => u32::try_from(value).map(Some).map_err(|_| internal(at)),
@@ -699,9 +704,6 @@ impl<'a> Lowerer<'a> {
         };
         let binding = value("binding")?;
         let set = value("set")?;
-        if binding.is_none() && self.analysis.extensions.contains("GL_EXT_descriptor_heap") {
-            return Err(unsupported("descriptor heaps", at));
-        }
         match binding {
             Some(binding) => Ok((
                 Some(ResourceBinding {
@@ -711,6 +713,13 @@ impl<'a> Lowerer<'a> {
                 None,
             )),
             None if self.options.auto_map_bindings => Ok((None, Some(set))),
+            None if self
+                .analysis
+                .extensions
+                .contains(super::heap::HEAP_EXTENSION) =>
+            {
+                Ok((None, None))
+            }
             None => Err(semantic(
                 "uniform/buffer blocks and opaque uniforms require layout(binding=X)",
                 at,
@@ -744,7 +753,7 @@ impl<'a> Lowerer<'a> {
                 arrayed: opaque.arrayed,
                 class: ImageClass::Storage {
                     format,
-                    access: access(qualifiers),
+                    access: storage_access(qualifiers),
                 },
             }
         } else {
@@ -800,6 +809,7 @@ impl<'a> Lowerer<'a> {
                 io: None,
                 xfb: None,
                 input_attachment_index,
+                heap_offset: None,
             },
             at,
         );
@@ -840,6 +850,8 @@ impl<'a> Lowerer<'a> {
         };
         let block = analysis.types.block(id).ok_or_else(|| internal(at))?;
         let qualifiers = &block.qualifiers;
+        let instance_name =
+            instance.map_or_else(String::new, |instance| instance.name.node.clone());
         let buffer = match block.storage {
             BlockStorage::Uniform => false,
             BlockStorage::Buffer => true,
@@ -847,8 +859,86 @@ impl<'a> Lowerer<'a> {
                 let name = instance.map(|instance| instance.name.node.clone());
                 return self.interface_block(symbol, id, name, at);
             }
+            BlockStorage::ResourceHeap | BlockStorage::SamplerHeap => {
+                return self.structured_heap(
+                    symbol,
+                    id,
+                    instance_name,
+                    Some(&structure.qualifier),
+                    at,
+                );
+            }
         };
         let push_constant = qualifiers.has_layout("push_constant");
+        if !push_constant && self.is_heap_view(&variable.qualifiers) {
+            return self.heap_buffer_array(
+                symbol,
+                instance_name,
+                id,
+                Some(&structure.qualifier),
+                at,
+            );
+        }
+        let (packing, row_major) = self.block_packing(qualifiers, buffer, push_constant);
+        let mut ty = self.block_struct(id, packing, row_major, at)?;
+        match *variable.ty.array.as_slice() {
+            [] => {}
+            [size] => {
+                let size = match size {
+                    GlslArraySize::Sized(_) => self.array_size(size, at)?,
+                    GlslArraySize::Unsized => self.unsized_binding_array(symbol, at)?,
+                    GlslArraySize::Specialized(_) => self.array_size(size, at)?,
+                };
+                ty = self.insert_type(TypeInner::BindingArray { base: ty, size });
+            }
+            _ => return Err(unsupported("arrays of arrays of blocks", at)),
+        }
+        let mut decorations = memory(qualifiers);
+        for member in &block.members {
+            decorations |= memory(&member.qualifiers);
+        }
+        let space = if push_constant {
+            AddressSpace::Immediate
+        } else if buffer {
+            AddressSpace::Storage {
+                access: storage_access(qualifiers),
+            }
+        } else {
+            AddressSpace::Uniform
+        };
+        let (binding, unbound) = if push_constant {
+            (None, None)
+        } else {
+            self.binding(qualifiers, at)?
+        };
+        let handle = self.module.global_variables.append(
+            GlobalVariable {
+                name: Some(instance_name),
+                space,
+                binding,
+                ty,
+                init: None,
+                memory_decorations: decorations,
+                io: None,
+                xfb: None,
+                input_attachment_index: None,
+                heap_offset: None,
+            },
+            at,
+        );
+        if let Some(set) = unbound {
+            self.unbound.push((handle, set));
+        }
+        self.globals.insert(symbol, GlobalRef::Variable(handle));
+        Ok(())
+    }
+
+    pub(super) fn block_packing(
+        &self,
+        qualifiers: &Qualifiers,
+        buffer: bool,
+        push_constant: bool,
+    ) -> (Packing, bool) {
         let defaults = if buffer {
             self.buffer_defaults
         } else {
@@ -873,59 +963,7 @@ impl<'a> Lowerer<'a> {
             } else {
                 Packing::Std140
             });
-        let row_major = row_major.or(defaults.row_major).unwrap_or(false);
-        let mut ty = self.block_struct(id, packing, row_major, at)?;
-        match *variable.ty.array.as_slice() {
-            [] => {}
-            [size] => {
-                let size = match size {
-                    GlslArraySize::Sized(_) => self.array_size(size, at)?,
-                    GlslArraySize::Unsized => self.unsized_binding_array(symbol, at)?,
-                    GlslArraySize::Specialized(_) => self.array_size(size, at)?,
-                };
-                ty = self.insert_type(TypeInner::BindingArray { base: ty, size });
-            }
-            _ => return Err(unsupported("arrays of arrays of blocks", at)),
-        }
-        let mut decorations = memory(qualifiers);
-        for member in &block.members {
-            decorations |= memory(&member.qualifiers);
-        }
-        let space = if push_constant {
-            AddressSpace::Immediate
-        } else if buffer {
-            AddressSpace::Storage {
-                access: access(qualifiers),
-            }
-        } else {
-            AddressSpace::Uniform
-        };
-        let (binding, unbound) = if push_constant {
-            (None, None)
-        } else {
-            self.binding(qualifiers, at)?
-        };
-        let handle = self.module.global_variables.append(
-            GlobalVariable {
-                name: Some(
-                    instance.map_or_else(String::new, |instance| instance.name.node.clone()),
-                ),
-                space,
-                binding,
-                ty,
-                init: None,
-                memory_decorations: decorations,
-                io: None,
-                xfb: None,
-                input_attachment_index: None,
-            },
-            at,
-        );
-        if let Some(set) = unbound {
-            self.unbound.push((handle, set));
-        }
-        self.globals.insert(symbol, GlobalRef::Variable(handle));
-        Ok(())
+        (packing, row_major.or(defaults.row_major).unwrap_or(false))
     }
 
     fn interface_block(
@@ -1045,6 +1083,7 @@ impl<'a> Lowerer<'a> {
                 offset,
                 matrix_layout: None,
                 xfb_offset: None,
+                heap: None,
             });
             offset = offset.saturating_add(layout.size);
         }
@@ -1191,6 +1230,7 @@ impl<'a> Lowerer<'a> {
                 io,
                 xfb: None,
                 input_attachment_index: None,
+                heap_offset: None,
             },
             at,
         );
@@ -1427,6 +1467,7 @@ impl<'a> Lowerer<'a> {
                 offset,
                 matrix_layout: None,
                 xfb_offset,
+                heap: None,
             });
             offset = offset.saturating_add(layout.size);
             names.push(String::from(name));
@@ -1455,6 +1496,7 @@ impl<'a> Lowerer<'a> {
                 io: None,
                 xfb: None,
                 input_attachment_index: None,
+                heap_offset: None,
             },
             Span::UNDEFINED,
         );
@@ -1551,9 +1593,10 @@ impl<'a> Lowerer<'a> {
                     .ok_or_else(|| internal(at))?;
                 (member.ty.clone(), block.storage == BlockStorage::Out, None)
             }
-            SymbolKind::Struct(_) | SymbolKind::Reference(_) | SymbolKind::BlockName => {
-                return Err(internal(at))
-            }
+            SymbolKind::Struct(_)
+            | SymbolKind::Reference(_)
+            | SymbolKind::BufferType(_)
+            | SymbolKind::BlockName => return Err(internal(at)),
         };
         let name = record.name.clone();
         let found = match value {
@@ -1621,6 +1664,7 @@ impl<'a> Lowerer<'a> {
                 io: Some(Binding::BuiltIn(builtin)),
                 xfb: None,
                 input_attachment_index: None,
+                heap_offset: None,
             },
             at,
         );

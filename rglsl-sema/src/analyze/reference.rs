@@ -20,7 +20,7 @@ pub(crate) const fn invalid(reason: &'static str) -> DiagnosticKind {
     }
 }
 
-fn packing_of(qualifiers: &Qualifiers) -> Option<Packing> {
+pub(crate) fn packing_of(qualifiers: &Qualifiers) -> Option<Packing> {
     qualifiers
         .layout
         .iter()
@@ -33,7 +33,7 @@ fn packing_of(qualifiers: &Qualifiers) -> Option<Packing> {
         })
 }
 
-fn matrix_of(qualifiers: &Qualifiers) -> Option<bool> {
+pub(crate) fn matrix_of(qualifiers: &Qualifiers) -> Option<bool> {
     qualifiers
         .layout
         .iter()
@@ -116,7 +116,7 @@ impl Analyzer<'_> {
         }
     }
 
-    fn reference_alignment(qualifiers: &Qualifiers) -> u32 {
+    pub(crate) fn reference_alignment(qualifiers: &Qualifiers) -> u32 {
         qualifiers
             .layout_entry("buffer_reference_align")
             .and_then(|entry| entry.value)
@@ -154,6 +154,7 @@ impl Analyzer<'_> {
             qualifiers: qualifiers.clone(),
             members: members.to_vec(),
             reference: None,
+            buffer_type: false,
         };
         let size = block_size(&self.types, &block, packing, row_major);
         block.reference = Some(ReferenceLayout {
@@ -269,6 +270,7 @@ impl Analyzer<'_> {
                     size: Some(0),
                     defined: false,
                 }),
+                buffer_type: false,
             };
             let Some(id) = self.types.add_block(block) else {
                 continue;

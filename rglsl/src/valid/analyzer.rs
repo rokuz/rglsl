@@ -223,6 +223,20 @@ impl GlobalOrArgument {
                 crate::Expression::GlobalVariable(var) => GlobalOrArgument::Global(var),
                 _ => return Err(ExpressionError::ExpectedGlobalOrArgument),
             },
+            crate::Expression::Load { pointer } => {
+                let mut current = pointer;
+                loop {
+                    match expression_arena[current] {
+                        crate::Expression::Access { base, .. }
+                        | crate::Expression::AccessIndex { base, .. }
+                        | crate::Expression::HeapOffset { pointer: base, .. } => current = base,
+                        crate::Expression::GlobalVariable(var) => {
+                            break GlobalOrArgument::Global(var)
+                        }
+                        _ => return Err(ExpressionError::ExpectedGlobalOrArgument),
+                    }
+                }
+            }
             _ => return Err(ExpressionError::ExpectedGlobalOrArgument),
         })
     }
@@ -671,7 +685,7 @@ impl FunctionInfo {
                     As::Uniform | As::Immediate => true,
                     // storage data is only uniform when read-only
                     As::Storage { access } => !access.contains(crate::StorageAccess::STORE),
-                    As::Handle | As::PhysicalStorage { .. } => false,
+                    As::Handle | As::PhysicalStorage { .. } | As::DescriptorHeap(_) => false,
                 };
                 Uniformity {
                     non_uniform_result: if uniform { None } else { Some(handle) },
@@ -848,9 +862,17 @@ impl FunctionInfo {
                 non_uniform_result: self.add_ref_impl(expr, GlobalUse::QUERY),
                 requirements: UniformityRequirements::empty(),
             },
-            E::PhysicalPointer { value: expr, .. } | E::PhysicalAddress { pointer: expr, .. } => {
+            E::PhysicalPointer { value: expr, .. }
+            | E::PhysicalAddress { pointer: expr, .. }
+            | E::BufferPointer { descriptor: expr } => Uniformity {
+                non_uniform_result: self.add_ref(expr),
+                requirements: UniformityRequirements::empty(),
+            },
+            E::HeapOffset { pointer, offset } => {
+                let pointer = self.add_ref(pointer);
+                let offset = self.add_ref(offset);
                 Uniformity {
-                    non_uniform_result: self.add_ref(expr),
+                    non_uniform_result: pointer.or(offset),
                     requirements: UniformityRequirements::empty(),
                 }
             }
@@ -1361,6 +1383,7 @@ fn uniform_control_flow() {
             io: None,
             xfb: None,
             input_attachment_index: None,
+            heap_offset: None,
         },
         Default::default(),
     );
@@ -1375,6 +1398,7 @@ fn uniform_control_flow() {
             io: None,
             xfb: None,
             input_attachment_index: None,
+            heap_offset: None,
         },
         Default::default(),
     );

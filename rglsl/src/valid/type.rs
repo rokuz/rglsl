@@ -12,7 +12,7 @@ bitflags::bitflags! {
     #[cfg_attr(feature = "deserialize", derive(serde::Deserialize))]
     #[repr(transparent)]
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-    pub struct TypeFlags: u8 {
+    pub struct TypeFlags: u16 {
         /// Can be used for data variables.
         ///
         /// This flag is required on types of local variables, function
@@ -76,6 +76,8 @@ bitflags::bitflags! {
         ///
         /// [constructible]: https://gpuweb.github.io/gpuweb/wgsl/#constructible
         const CONSTRUCTIBLE = 0x80;
+
+        const HEAP_LAYOUT = 0x100;
     }
 }
 
@@ -106,6 +108,8 @@ pub enum TypeError {
     InvalidData(Handle<crate::Type>),
     #[error("Base type {0:?} for the array is invalid")]
     InvalidArrayBaseType(Handle<crate::Type>),
+    #[error("Buffer descriptor of {0:?} is invalid")]
+    InvalidBufferDescriptor(Handle<crate::Type>),
     #[error("Matrix elements must always be floating-point types")]
     MatrixElementNotFloat,
     #[error("The constant {0:?} is specialized, and cannot be used as an array size")]
@@ -219,7 +223,8 @@ const fn ptr_space_argument_flag(space: crate::AddressSpace) -> TypeFlags {
         | As::WorkGroup
         | As::TaskPayload
         | As::Input
-        | As::Output => TypeFlags::empty(),
+        | As::Output
+        | As::DescriptorHeap(_) => TypeFlags::empty(),
     }
 }
 
@@ -525,6 +530,22 @@ impl super::Validator {
                     Alignment::EIGHT,
                 )
             }
+            Ti::Pointer {
+                base,
+                space: crate::AddressSpace::DescriptorHeap(_),
+            } => {
+                let base_info = &self.types[base.index()];
+                if !base_info
+                    .flags
+                    .intersects(TypeFlags::DATA | TypeFlags::HEAP_LAYOUT)
+                {
+                    return Err(TypeError::InvalidPointerBase(base));
+                }
+                TypeInfo::new(
+                    TypeFlags::SIZED | TypeFlags::COPY | TypeFlags::CREATION_RESOLVED,
+                    Alignment::ONE,
+                )
+            }
             Ti::Pointer { base, space } => {
                 use crate::AddressSpace as As;
 
@@ -596,6 +617,29 @@ impl super::Validator {
                         | TypeFlags::SIZED
                         | TypeFlags::COPY
                         | TypeFlags::CREATION_RESOLVED,
+                    Alignment::ONE,
+                )
+            }
+            Ti::Array { base, size, .. }
+                if self.types[base.index()]
+                    .flags
+                    .contains(TypeFlags::HEAP_LAYOUT) =>
+            {
+                let base_info = &self.types[base.index()];
+                if !base_info
+                    .flags
+                    .contains(TypeFlags::SIZED | TypeFlags::CREATION_RESOLVED)
+                {
+                    return Err(TypeError::InvalidArrayBaseType(base));
+                }
+                let sized = match size {
+                    crate::ArraySize::Constant(_) | crate::ArraySize::Pending(_) => {
+                        TypeFlags::SIZED
+                    }
+                    crate::ArraySize::Dynamic => TypeFlags::empty(),
+                };
+                TypeInfo::new(
+                    TypeFlags::HEAP_LAYOUT | TypeFlags::CREATION_RESOLVED | sized,
                     Alignment::ONE,
                 )
             }
@@ -672,6 +716,35 @@ impl super::Validator {
                     storage_layout,
                     immediates_compatibility: base_info.immediates_compatibility.clone(),
                 }
+            }
+            Ti::Struct { ref members, .. }
+                if members.iter().any(|member| {
+                    self.types[member.ty.index()]
+                        .flags
+                        .contains(TypeFlags::HEAP_LAYOUT)
+                }) =>
+            {
+                let mut flags =
+                    TypeFlags::HEAP_LAYOUT | TypeFlags::SIZED | TypeFlags::CREATION_RESOLVED;
+                for (i, member) in members.iter().enumerate() {
+                    let info = &self.types[member.ty.index()];
+                    let valid = info.flags.contains(TypeFlags::HEAP_LAYOUT)
+                        || info
+                            .flags
+                            .contains(TypeFlags::DATA | TypeFlags::CREATION_RESOLVED);
+                    if !valid {
+                        return Err(TypeError::InvalidData(member.ty));
+                    }
+                    if !info.flags.contains(TypeFlags::SIZED) {
+                        let is_array = matches!(gctx.types[member.ty].inner, Ti::Array { .. });
+                        if !is_array || i + 1 != members.len() {
+                            let name = member.name.clone().unwrap_or_default();
+                            return Err(TypeError::InvalidDynamicArray(name, member.ty));
+                        }
+                        flags.remove(TypeFlags::SIZED);
+                    }
+                }
+                TypeInfo::new(flags, Alignment::ONE)
             }
             Ti::Struct { ref members, span } => {
                 let mut blend_src_types = [None, None];
@@ -916,13 +989,21 @@ impl super::Validator {
                     }
                     self.require_type_capability(Capabilities::TEXTURE_EXTERNAL)?;
                 }
+                let heap = if matches!(gctx.types[handle].inner, Ti::Image { .. }) {
+                    TypeFlags::HEAP_LAYOUT | TypeFlags::SIZED
+                } else {
+                    TypeFlags::empty()
+                };
                 TypeInfo::new(
-                    TypeFlags::ARGUMENT | TypeFlags::CREATION_RESOLVED,
+                    TypeFlags::ARGUMENT | TypeFlags::CREATION_RESOLVED | heap,
                     Alignment::ONE,
                 )
             }
             Ti::Sampler { .. } => TypeInfo::new(
-                TypeFlags::ARGUMENT | TypeFlags::CREATION_RESOLVED,
+                TypeFlags::ARGUMENT
+                    | TypeFlags::CREATION_RESOLVED
+                    | TypeFlags::HEAP_LAYOUT
+                    | TypeFlags::SIZED,
                 Alignment::ONE,
             ),
             Ti::AccelerationStructure { vertex_return } => {
@@ -932,7 +1013,10 @@ impl super::Validator {
                     self.require_type_capability(Capabilities::RAY_HIT_VERTEX_POSITION)?;
                 }
                 TypeInfo::new(
-                    TypeFlags::ARGUMENT | TypeFlags::CREATION_RESOLVED,
+                    TypeFlags::ARGUMENT
+                        | TypeFlags::CREATION_RESOLVED
+                        | TypeFlags::HEAP_LAYOUT
+                        | TypeFlags::SIZED,
                     Alignment::ONE,
                 )
             }
@@ -990,6 +1074,25 @@ impl super::Validator {
                 }
 
                 TypeInfo::new(base_info.flags & type_info_mask, Alignment::ONE)
+            }
+            Ti::BufferDescriptor { base, space } => {
+                let base_info = &self.types[base.index()];
+                let buffer = matches!(
+                    space,
+                    crate::AddressSpace::Uniform | crate::AddressSpace::Storage { .. }
+                );
+                if !buffer
+                    || !matches!(gctx.types[base].inner, Ti::Struct { .. })
+                    || !base_info
+                        .flags
+                        .contains(TypeFlags::DATA | TypeFlags::HOST_SHAREABLE)
+                {
+                    return Err(TypeError::InvalidBufferDescriptor(base));
+                }
+                TypeInfo::new(
+                    TypeFlags::HEAP_LAYOUT | TypeFlags::SIZED | TypeFlags::CREATION_RESOLVED,
+                    Alignment::ONE,
+                )
             }
         })
     }

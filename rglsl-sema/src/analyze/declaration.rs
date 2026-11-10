@@ -10,7 +10,8 @@ use rglsl_ast::ast::{
 };
 use rglsl_ast::Span;
 
-use super::{Analyzer, DerivativeGroup, FunctionContext, Operand};
+use super::heap::is_heap_storage;
+use super::{Analyzer, DerivativeGroup, FunctionContext, Operand, Place};
 use crate::builtins::Stage;
 use crate::constant::{Constant, Value};
 use crate::diagnostic::DiagnosticKind;
@@ -297,6 +298,8 @@ impl Analyzer<'_> {
                     StorageQualifier::Uniform => result.storage = Storage::Uniform,
                     StorageQualifier::Buffer => result.storage = Storage::Buffer,
                     StorageQualifier::Shared => result.storage = Storage::Shared,
+                    StorageQualifier::ResourceHeap => result.storage = Storage::ResourceHeap,
+                    StorageQualifier::SamplerHeap => result.storage = Storage::SamplerHeap,
                     StorageQualifier::Centroid => result.centroid = true,
                     StorageQualifier::Patch => result.patch = true,
                     StorageQualifier::Sample => result.sample = true,
@@ -358,7 +361,19 @@ impl Analyzer<'_> {
                             if operand.ty.is_error() {
                                 return None;
                             }
-                            if !operand.constant || !operand.ty.is_scalar_integer() {
+                            if name == "heap_offset" && !operand.constant {
+                                let read_only = operand.storage == Storage::Uniform
+                                    || operand.place == Place::ReadOnly("it is read-only");
+                                if !operand.ty.is_scalar_integer() || !read_only {
+                                    self.error(
+                                        expression.span,
+                                        DiagnosticKind::InvalidQualifier {
+                                            qualifier: "heap_offset",
+                                            reason: "must be a literal or read-only variable value",
+                                        },
+                                    );
+                                }
+                            } else if !operand.constant || !operand.ty.is_scalar_integer() {
                                 self.error(
                                     expression.span,
                                     DiagnosticKind::LayoutValueNotConstant(name.clone()),
@@ -394,6 +409,7 @@ impl Analyzer<'_> {
                 SingleTypeQualifier::NonUniform => result.nonuniform = true,
             }
         }
+        self.heap_layout_check(&result);
         result
     }
 
@@ -548,6 +564,7 @@ impl Analyzer<'_> {
                 Some(Lookup::Symbol(id)) => match self.symbol(id).map(|symbol| &symbol.kind) {
                     Some(SymbolKind::Struct(structure)) => Type::structure(*structure),
                     Some(SymbolKind::Reference(block)) => Type::reference(*block),
+                    Some(SymbolKind::BufferType(block)) => Type::block(*block),
                     _ => {
                         self.error(span, DiagnosticKind::NotAType(name.clone()));
                         Type::ERROR
@@ -558,19 +575,53 @@ impl Analyzer<'_> {
                     Type::ERROR
                 }
             },
+            TypeSpecifierNonArray::InlineBlock(_) => {
+                self.error(
+                    span,
+                    DiagnosticKind::InvalidQualifier {
+                        qualifier: "block",
+                        reason: "only buffer_reference blocks can be declared inline inside a heap block",
+                    },
+                );
+                Type::ERROR
+            }
         };
         let dimensions = self.array_sizes(specifier.array.as_ref());
         base.with_dimensions(&dimensions)
     }
 
-    fn struct_members(
+    pub(crate) fn struct_members(
         &mut self,
         declarations: &[Spanned<StructDeclaration>],
         in_block: Option<&Qualifiers>,
     ) -> Vec<Member> {
+        let in_heap = in_block.is_some_and(|block| is_heap_storage(block.storage));
         let mut members: Vec<Member> = Vec::new();
-        for declaration in declarations {
+        let count = declarations.len();
+        for (position, declaration) in declarations.iter().enumerate() {
+            if let TypeSpecifierNonArray::InlineBlock(ref inner) =
+                declaration.ty.specifier.node.non_array
+            {
+                let qualifiers = self.optional_qualifiers(&declaration.ty.node);
+                let base = self.inline_reference(declaration.ty.span, &qualifiers, inner, in_heap);
+                let mut member_qualifiers = Qualifiers::default();
+                if let Some(block) = in_block {
+                    member_qualifiers.storage = block.storage;
+                }
+                for declarator in &declaration.declarators {
+                    let dimensions = self.array_sizes(declarator.array.as_ref());
+                    members.push(Member {
+                        name: declarator.name.node.clone(),
+                        ty: base.clone().with_dimensions(&dimensions),
+                        qualifiers: member_qualifiers.clone(),
+                    });
+                }
+                continue;
+            }
             let mut qualifiers = self.optional_qualifiers(&declaration.ty.node);
+            if let Some(qualifier) = &declaration.ty.node.qualifier {
+                self.heap_member_checks(qualifier.span, &qualifiers, in_heap);
+            }
             if qualifiers.nonuniform {
                 self.non_uniform_error(
                     declaration.ty.qualifier.as_ref(),
@@ -588,6 +639,7 @@ impl Analyzer<'_> {
                 );
             }
             let base = self.type_specifier(&declaration.ty.specifier);
+            let last = position + 1 == count;
             if let Some(block) = in_block {
                 if qualifiers.storage == Storage::None && !qualifiers.constant {
                     qualifiers.storage = block.storage;
@@ -624,8 +676,13 @@ impl Analyzer<'_> {
                     Some("the name is already used by another member")
                 } else if in_block.is_none() && ty.array.contains(&ArraySize::Unsized) {
                     Some("an array size is required")
-                } else if in_block.is_some() && ty.contains_opaque(&self.types) {
+                } else if in_block.is_some()
+                    && ty.contains_opaque(&self.types)
+                    && !(in_heap && self.extension_enabled(super::heap::STRUCTURED_DESCRIPTOR_HEAP))
+                {
                     Some("a block member cannot have an opaque type")
+                } else if in_heap && !last && ty.array.first() == Some(&ArraySize::Unsized) {
+                    Some("an array size is required")
                 } else if ty
                     .array
                     .iter()
@@ -980,6 +1037,10 @@ impl Analyzer<'_> {
             self.error(name.span, DiagnosticKind::UniformOutsideBlock);
         }
         self.global_storage_checks(&qualifiers, &ty, name.span, false);
+        if is_global {
+            self.heap_object_check(name.span, &qualifiers);
+            self.heap_declaration_check(name.span, &ty, &qualifiers, false);
+        }
         self.input_attachment_check(&qualifiers, &ty, name.span);
         self.storage_small_check(name.span, &ty, qualifiers.storage);
         if !is_global
@@ -1339,6 +1400,9 @@ impl Analyzer<'_> {
             Storage::Buffer => BlockStorage::Buffer,
             Storage::In => BlockStorage::In,
             Storage::Out => BlockStorage::Out,
+            Storage::ResourceHeap | Storage::SamplerHeap => {
+                self.heap_block_storage(structure.name.span, qualifiers.storage)
+            }
             _ => {
                 self.error(
                     structure.name.span,
@@ -1350,6 +1414,32 @@ impl Analyzer<'_> {
                 BlockStorage::Uniform
             }
         };
+        self.heap_object_check(structure.name.span, &qualifiers);
+        let buffer_type = qualifiers.has_layout("buffer_type");
+        if buffer_type {
+            let invalid =
+                |qualifier, reason| DiagnosticKind::InvalidQualifier { qualifier, reason };
+            if !matches!(storage, BlockStorage::Uniform | BlockStorage::Buffer) {
+                self.error(
+                    structure.name.span,
+                    invalid("buffer_type", "can only be used with uniform or buffer"),
+                );
+            }
+            if instance.is_some() {
+                self.error(
+                    structure.name.span,
+                    invalid("buffer_type", "cannot have an instance name"),
+                );
+            }
+            for layout in ["set", "binding"] {
+                if qualifiers.has_layout(layout) {
+                    self.error(
+                        structure.name.span,
+                        invalid(layout, "cannot be used with buffer_type"),
+                    );
+                }
+            }
+        }
         if qualifiers.has_layout("input_attachment_index") {
             self.error(
                 structure.name.span,
@@ -1454,6 +1544,10 @@ impl Analyzer<'_> {
                 invalid("this kind of block is not supported in this stage"),
             );
         }
+        if buffer_type {
+            self.buffer_type_block(structure, storage, &qualifiers, members);
+            return;
+        }
         let reference = self.reference_block(structure, storage, &qualifiers, &members);
         if reference.is_none() {
             match self.scopes.lookup_in_current(&block_name.node) {
@@ -1489,6 +1583,7 @@ impl Analyzer<'_> {
                     qualifiers: qualifiers.clone(),
                     members,
                     reference: None,
+                    buffer_type: false,
                 }) else {
                     return;
                 };
@@ -1499,6 +1594,7 @@ impl Analyzer<'_> {
             return;
         }
         let mut ty = Type::block(block).with_dimensions(&dimensions);
+        self.heap_declaration_check(structure.name.span, &ty, &qualifiers, instance.is_none());
         match instance {
             Some(instance) => {
                 let name = &instance.name;

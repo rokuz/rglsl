@@ -62,8 +62,10 @@ impl<'a> Walker<'a> {
     }
 
     fn specifier(&mut self, specifier: &'a TypeSpecifier) {
-        if let TypeSpecifierNonArray::Struct(structure) = &specifier.non_array {
-            self.members(&structure.declarations);
+        match &specifier.non_array {
+            TypeSpecifierNonArray::Struct(structure) => self.members(&structure.declarations),
+            TypeSpecifierNonArray::InlineBlock(declarations) => self.members(declarations),
+            _ => {}
         }
         self.array(specifier.array.as_ref());
     }

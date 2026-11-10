@@ -2,6 +2,7 @@ mod call;
 mod declaration;
 mod expression;
 mod extension;
+mod heap;
 mod reference;
 mod reference_expression;
 mod statement;
@@ -116,7 +117,7 @@ fn symbol_type(symbols: &[Symbol], types: &TypeRegistry, id: SymbolId) -> Option
         SymbolKind::Variable(variable) => Some(variable.ty.clone()),
         SymbolKind::Struct(structure) => Some(Type::structure(*structure)),
         SymbolKind::Reference(block) => Some(Type::reference(*block)),
-        SymbolKind::BlockName => None,
+        SymbolKind::BufferType(_) | SymbolKind::BlockName => None,
         SymbolKind::BlockMember { instance, index } => {
             let instance = symbols.get(usize::try_from(instance.index()).ok()?)?;
             let TypeKind::Block(block) = instance.variable()?.ty.kind else {

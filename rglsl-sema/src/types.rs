@@ -998,6 +998,14 @@ pub enum BlockStorage {
     Buffer,
     In,
     Out,
+    ResourceHeap,
+    SamplerHeap,
+}
+
+impl BlockStorage {
+    pub const fn is_heap(self) -> bool {
+        matches!(self, Self::ResourceHeap | Self::SamplerHeap)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -1031,6 +1039,7 @@ pub struct BlockType {
     pub qualifiers: Qualifiers,
     pub members: Vec<Member>,
     pub reference: Option<ReferenceLayout>,
+    pub buffer_type: bool,
 }
 
 impl BlockType {

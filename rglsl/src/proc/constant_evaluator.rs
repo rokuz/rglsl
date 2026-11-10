@@ -1338,7 +1338,9 @@ impl<'a> ConstantEvaluator<'a> {
             },
             Expression::Load { .. }
             | Expression::PhysicalPointer { .. }
-            | Expression::PhysicalAddress { .. } => Err(ConstantEvaluatorError::Load),
+            | Expression::PhysicalAddress { .. }
+            | Expression::BufferPointer { .. }
+            | Expression::HeapOffset { .. } => Err(ConstantEvaluatorError::Load),
             Expression::LocalVariable(_) => Err(ConstantEvaluatorError::LocalVariable),
             Expression::Derivative { .. } => Err(ConstantEvaluatorError::Derivative),
             Expression::CallResult { .. } => Err(ConstantEvaluatorError::Call),

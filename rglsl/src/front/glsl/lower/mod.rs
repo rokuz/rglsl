@@ -5,6 +5,7 @@ mod constant;
 mod expression;
 mod function;
 mod globals;
+mod heap;
 mod offset;
 mod prepass;
 mod reference;
@@ -272,6 +273,8 @@ pub(super) struct Lowerer<'a> {
     pub local_size_ids: [Option<u32>; 3],
     pub local_size_overrides: [Option<Handle<crate::Override>>; 3],
     pub work_group_size: Option<Handle<crate::Override>>,
+    pub heap_structs: BTreeMap<StructId, Handle<Type>>,
+    pub heap_runtime_offsets: BTreeMap<Handle<GlobalVariable>, &'a rglsl_ast::ast::Expression>,
     xfb: xfb::Xfb,
 }
 
@@ -289,6 +292,7 @@ impl<'a> Lowerer<'a> {
             options,
             module: Module {
                 vulkan_memory_model: analysis.vulkan_memory_model,
+                descriptor_heap: analysis.extensions.contains(heap::HEAP_EXTENSION),
                 ..Module::default()
             },
             layouter: Layouter::default(),
@@ -332,6 +336,8 @@ impl<'a> Lowerer<'a> {
             local_size_ids: [None; 3],
             local_size_overrides: [None; 3],
             work_group_size: None,
+            heap_structs: BTreeMap::new(),
+            heap_runtime_offsets: BTreeMap::new(),
             xfb: xfb::Xfb::new((options.stage == ShaderStage::Vertex).then_some(0)),
         }
     }

@@ -513,7 +513,8 @@ impl crate::TypeInner {
             | Self::Sampler { .. }
             | Self::AccelerationStructure { .. }
             | Self::RayQuery { .. }
-            | Self::BindingArray { .. } => false,
+            | Self::BindingArray { .. }
+            | Self::BufferDescriptor { .. } => false,
         }
     }
 

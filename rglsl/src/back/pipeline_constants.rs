@@ -673,6 +673,16 @@ fn adjust_expr(new_pos: &HandleVec<Expression, Handle<Expression>>, expr: &mut E
         } => {
             adjust(value);
         }
+        Expression::BufferPointer { ref mut descriptor } => {
+            adjust(descriptor);
+        }
+        Expression::HeapOffset {
+            ref mut pointer,
+            ref mut offset,
+        } => {
+            adjust(pointer);
+            adjust(offset);
+        }
         Expression::RayQueryGetIntersection {
             ref mut query,
             committed: _,

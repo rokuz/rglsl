@@ -64,6 +64,7 @@ impl crate::Module {
                             offset: 0,
                             matrix_layout: None,
                             xfb_offset: None,
+                            heap: None,
                         },
                         crate::StructMember {
                             name: Some("cull_mask".to_string()),
@@ -72,6 +73,7 @@ impl crate::Module {
                             offset: 4,
                             matrix_layout: None,
                             xfb_offset: None,
+                            heap: None,
                         },
                         crate::StructMember {
                             name: Some("tmin".to_string()),
@@ -80,6 +82,7 @@ impl crate::Module {
                             offset: 8,
                             matrix_layout: None,
                             xfb_offset: None,
+                            heap: None,
                         },
                         crate::StructMember {
                             name: Some("tmax".to_string()),
@@ -88,6 +91,7 @@ impl crate::Module {
                             offset: 12,
                             matrix_layout: None,
                             xfb_offset: None,
+                            heap: None,
                         },
                         crate::StructMember {
                             name: Some("origin".to_string()),
@@ -96,6 +100,7 @@ impl crate::Module {
                             offset: 16,
                             matrix_layout: None,
                             xfb_offset: None,
+                            heap: None,
                         },
                         crate::StructMember {
                             name: Some("dir".to_string()),
@@ -104,6 +109,7 @@ impl crate::Module {
                             offset: 32,
                             matrix_layout: None,
                             xfb_offset: None,
+                            heap: None,
                         },
                     ],
                     span: 48,
@@ -218,6 +224,7 @@ impl crate::Module {
                             offset: 0,
                             matrix_layout: None,
                             xfb_offset: None,
+                            heap: None,
                         },
                         crate::StructMember {
                             name: Some("t".to_string()),
@@ -226,6 +233,7 @@ impl crate::Module {
                             offset: 4,
                             matrix_layout: None,
                             xfb_offset: None,
+                            heap: None,
                         },
                         crate::StructMember {
                             name: Some("instance_custom_data".to_string()),
@@ -234,6 +242,7 @@ impl crate::Module {
                             offset: 8,
                             matrix_layout: None,
                             xfb_offset: None,
+                            heap: None,
                         },
                         crate::StructMember {
                             name: Some("instance_index".to_string()),
@@ -242,6 +251,7 @@ impl crate::Module {
                             offset: 12,
                             matrix_layout: None,
                             xfb_offset: None,
+                            heap: None,
                         },
                         crate::StructMember {
                             name: Some("sbt_record_offset".to_string()),
@@ -250,6 +260,7 @@ impl crate::Module {
                             offset: 16,
                             matrix_layout: None,
                             xfb_offset: None,
+                            heap: None,
                         },
                         crate::StructMember {
                             name: Some("geometry_index".to_string()),
@@ -258,6 +269,7 @@ impl crate::Module {
                             offset: 20,
                             matrix_layout: None,
                             xfb_offset: None,
+                            heap: None,
                         },
                         crate::StructMember {
                             name: Some("primitive_index".to_string()),
@@ -266,6 +278,7 @@ impl crate::Module {
                             offset: 24,
                             matrix_layout: None,
                             xfb_offset: None,
+                            heap: None,
                         },
                         crate::StructMember {
                             name: Some("barycentrics".to_string()),
@@ -274,6 +287,7 @@ impl crate::Module {
                             offset: 28,
                             matrix_layout: None,
                             xfb_offset: None,
+                            heap: None,
                         },
                         crate::StructMember {
                             name: Some("front_face".to_string()),
@@ -282,6 +296,7 @@ impl crate::Module {
                             offset: 36,
                             matrix_layout: None,
                             xfb_offset: None,
+                            heap: None,
                         },
                         crate::StructMember {
                             name: Some("object_to_world".to_string()),
@@ -290,6 +305,7 @@ impl crate::Module {
                             offset: 48,
                             matrix_layout: None,
                             xfb_offset: None,
+                            heap: None,
                         },
                         crate::StructMember {
                             name: Some("world_to_object".to_string()),
@@ -298,6 +314,7 @@ impl crate::Module {
                             offset: 112,
                             matrix_layout: None,
                             xfb_offset: None,
+                            heap: None,
                         },
                     ],
                     span: 176,
@@ -396,6 +413,7 @@ impl crate::Module {
                             offset: 0,
                             matrix_layout: None,
                             xfb_offset: None,
+                            heap: None,
                         },
                         crate::StructMember {
                             name: Some("b".to_string()),
@@ -404,6 +422,7 @@ impl crate::Module {
                             offset: 4,
                             matrix_layout: None,
                             xfb_offset: None,
+                            heap: None,
                         },
                         crate::StructMember {
                             name: Some("g".to_string()),
@@ -412,6 +431,7 @@ impl crate::Module {
                             offset: 8,
                             matrix_layout: None,
                             xfb_offset: None,
+                            heap: None,
                         },
                         crate::StructMember {
                             name: Some("k".to_string()),
@@ -420,6 +440,7 @@ impl crate::Module {
                             offset: 12,
                             matrix_layout: None,
                             xfb_offset: None,
+                            heap: None,
                         },
                     ],
                     span: 16,
@@ -441,6 +462,7 @@ impl crate::Module {
                             offset: 0,
                             matrix_layout: None,
                             xfb_offset: None,
+                            heap: None,
                         },
                         crate::StructMember {
                             name: Some("gamut_conversion_matrix".to_string()),
@@ -449,6 +471,7 @@ impl crate::Module {
                             offset: 64,
                             matrix_layout: None,
                             xfb_offset: None,
+                            heap: None,
                         },
                         crate::StructMember {
                             name: Some("src_tf".to_string()),
@@ -457,6 +480,7 @@ impl crate::Module {
                             offset: 112,
                             matrix_layout: None,
                             xfb_offset: None,
+                            heap: None,
                         },
                         crate::StructMember {
                             name: Some("dst_tf".to_string()),
@@ -465,6 +489,7 @@ impl crate::Module {
                             offset: 128,
                             matrix_layout: None,
                             xfb_offset: None,
+                            heap: None,
                         },
                         crate::StructMember {
                             name: Some("sample_transform".to_string()),
@@ -473,6 +498,7 @@ impl crate::Module {
                             offset: 144,
                             matrix_layout: None,
                             xfb_offset: None,
+                            heap: None,
                         },
                         crate::StructMember {
                             name: Some("load_transform".to_string()),
@@ -481,6 +507,7 @@ impl crate::Module {
                             offset: 168,
                             matrix_layout: None,
                             xfb_offset: None,
+                            heap: None,
                         },
                         crate::StructMember {
                             name: Some("size".to_string()),
@@ -489,6 +516,7 @@ impl crate::Module {
                             offset: 192,
                             matrix_layout: None,
                             xfb_offset: None,
+                            heap: None,
                         },
                         crate::StructMember {
                             name: Some("num_planes".to_string()),
@@ -497,6 +525,7 @@ impl crate::Module {
                             offset: 200,
                             matrix_layout: None,
                             xfb_offset: None,
+                            heap: None,
                         },
                     ],
                     span: 208,
@@ -547,6 +576,7 @@ impl crate::Module {
                                 offset: 0,
                                 matrix_layout: None,
                                 xfb_offset: None,
+                                heap: None,
                             },
                             crate::StructMember {
                                 name: Some("exchanged".to_string()),
@@ -555,6 +585,7 @@ impl crate::Module {
                                 offset: scalar.width as u32,
                                 matrix_layout: None,
                                 xfb_offset: None,
+                                heap: None,
                             },
                         ],
                         span: scalar.width as u32 * 2,
@@ -594,6 +625,7 @@ impl crate::Module {
                                 offset: 0,
                                 matrix_layout: None,
                                 xfb_offset: None,
+                                heap: None,
                             },
                             crate::StructMember {
                                 name: Some("whole".to_string()),
@@ -602,6 +634,7 @@ impl crate::Module {
                                 offset: second_offset,
                                 matrix_layout: None,
                                 xfb_offset: None,
+                                heap: None,
                             },
                         ],
                         span: second_offset * 2,
@@ -663,6 +696,7 @@ impl crate::Module {
                                 offset: 0,
                                 matrix_layout: None,
                                 xfb_offset: None,
+                                heap: None,
                             },
                             crate::StructMember {
                                 name: Some("exp".to_string()),
@@ -671,6 +705,7 @@ impl crate::Module {
                                 offset: second_offset,
                                 matrix_layout: None,
                                 xfb_offset: None,
+                                heap: None,
                             },
                         ],
                         span,
@@ -694,6 +729,7 @@ impl crate::Module {
                     offset,
                     matrix_layout: None,
                     xfb_offset: None,
+                    heap: None,
                 };
                 crate::Type {
                     name: Some(name),

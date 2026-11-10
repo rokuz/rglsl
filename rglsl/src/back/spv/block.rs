@@ -39,7 +39,7 @@ fn get_dimension(type_inner: &crate::TypeInner) -> Dimension {
 ///
 /// [`Expression`]: crate::Expression
 #[derive(Copy, Clone)]
-enum AccessTypeAdjustment {
+pub(super) enum AccessTypeAdjustment {
     /// No adjustment needed: the SPIR-V type should be the direct
     /// analog of the rglsl IR expression type.
     ///
@@ -90,7 +90,7 @@ enum AccessTypeAdjustment {
 /// The results of emitting code for a left-hand-side expression.
 ///
 /// On success, `write_access_chain` returns one of these.
-enum ExpressionPointer {
+pub(super) enum ExpressionPointer {
     /// The pointer to the expression's value is available, as the value of the
     /// expression with the given id.
     Ready { pointer_id: Word },
@@ -2190,6 +2190,10 @@ impl BlockContext<'_> {
             crate::Expression::PhysicalAddress { pointer, split } => {
                 self.write_physical_address(pointer, split, result_type_id, block)?
             }
+            crate::Expression::BufferPointer { descriptor } => {
+                self.write_buffer_pointer(descriptor, result_type_id, block)?
+            }
+            crate::Expression::HeapOffset { .. } => 0,
             crate::Expression::RayQueryGetIntersection { query, committed } => {
                 let query_id = self.cached[query];
                 let init_tracker_id = *self
@@ -2326,8 +2330,23 @@ impl BlockContext<'_> {
             ty = &self.ir_module.types[base].inner;
             space = Some(pointer_space);
         }
-        let crate::TypeInner::BindingArray { base: element, .. } = *ty else {
-            return Ok(());
+        let element = match *ty {
+            crate::TypeInner::BindingArray { base: element, .. } => element,
+            crate::TypeInner::Array { base: element, .. }
+                if matches!(space, Some(crate::AddressSpace::DescriptorHeap(_))) =>
+            {
+                match self.ir_module.types[element].inner {
+                    crate::TypeInner::BufferDescriptor {
+                        base,
+                        space: buffer,
+                    } => {
+                        space = Some(buffer);
+                        base
+                    }
+                    _ => element,
+                }
+            }
+            _ => return Ok(()),
         };
         let buffer = |dim| dim == crate::ImageDimension::Buffer;
         let (dynamic, nonuniform) = match self.ir_module.types[element].inner {
@@ -2663,7 +2682,7 @@ impl BlockContext<'_> {
     ///
     /// On success, the return value is an [`ExpressionPointer`] value; see the
     /// documentation for that type.
-    fn write_access_chain(
+    pub(super) fn write_access_chain(
         &mut self,
         mut expr_handle: Handle<crate::Expression>,
         block: &mut Block,
@@ -2711,6 +2730,7 @@ impl BlockContext<'_> {
         let mut prev_decomposed_matrix_index = None;
 
         self.temp_list.clear();
+        let mut heap_root = None;
         let root_id = loop {
             // If `expr_handle` was spilled, then the temporary variable has exactly
             // the value we want to start from.
@@ -2799,8 +2819,21 @@ impl BlockContext<'_> {
                     base
                 }
                 crate::Expression::GlobalVariable(handle) => {
+                    if self.heap_global(expr_handle).is_some() {
+                        heap_root = Some((handle, None));
+                    }
                     let gv = &self.writer.global_variables[handle];
                     break gv.access_id;
+                }
+                crate::Expression::HeapOffset { pointer, offset } => {
+                    let handle = self
+                        .heap_global(pointer)
+                        .ok_or(Error::Validation("a heap offset of a non-heap pointer"))?;
+                    heap_root = Some((handle, Some(offset)));
+                    break 0;
+                }
+                crate::Expression::BufferPointer { .. } => {
+                    break self.cached[expr_handle];
                 }
                 crate::Expression::LocalVariable(variable) => {
                     let local_var = &self.function.variables[&variable];
@@ -2825,6 +2858,17 @@ impl BlockContext<'_> {
             }
         };
 
+        if let Some((global, offset)) = heap_root {
+            self.temp_list.reverse();
+            let indices = core::mem::take(&mut self.temp_list);
+            let pointer_id =
+                self.write_heap_chain(global, offset, result_type_id, &indices, block)?;
+            self.temp_list = indices;
+            if non_uniform_access {
+                self.writer.decorate_non_uniform(pointer_id)?;
+            }
+            return Ok(ExpressionPointer::Ready { pointer_id });
+        }
         let expr_pointer = if self.temp_list.is_empty() {
             ExpressionPointer::Ready {
                 pointer_id: root_id,
@@ -2984,7 +3028,15 @@ impl BlockContext<'_> {
                 AccessTypeAdjustment::IntroducePointer(class) => Some(class),
                 _ => self.pointer_class(pointer),
             };
+            let heap = matches!(
+                *self.fun_info[pointer].ty.inner_with(&self.ir_module.types),
+                crate::TypeInner::Pointer {
+                    space: crate::AddressSpace::DescriptorHeap(_),
+                    ..
+                }
+            );
             let plain_load = wrapped_load.is_none()
+                && !heap
                 && class.is_some_and(|class| {
                     self.writer.needs_layout_conversion(result_type_id, class)
                 });

@@ -790,6 +790,24 @@ impl<'a> ResolveContext<'a> {
                 TypeResolution::Value(Ti::Scalar(crate::Scalar::U32))
             }
             crate::Expression::PhysicalPointer { ty, .. } => TypeResolution::Handle(ty),
+            crate::Expression::BufferPointer { descriptor } => {
+                match *past(descriptor)?.inner_with(types) {
+                    Ti::Pointer { base, .. } => match types[base].inner {
+                        Ti::BufferDescriptor { base, space } => {
+                            TypeResolution::Value(Ti::Pointer { base, space })
+                        }
+                        ref other => {
+                            log::error!("Buffer pointer of {other:?}");
+                            return Err(ResolveError::InvalidPointer(descriptor));
+                        }
+                    },
+                    ref other => {
+                        log::error!("Buffer pointer of {other:?}");
+                        return Err(ResolveError::InvalidPointer(descriptor));
+                    }
+                }
+            }
+            crate::Expression::HeapOffset { pointer, .. } => past(pointer)?.clone(),
             crate::Expression::PhysicalAddress { split: false, .. } => {
                 TypeResolution::Value(Ti::Scalar(crate::Scalar::U64))
             }

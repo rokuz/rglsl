@@ -147,7 +147,15 @@ fn layout_with_depth(
             let structure = registry.structure(id)?;
             members_layout(registry, &structure.members, packing, row_major, depth + 1)
         }
-        TypeKind::Error | TypeKind::Void | TypeKind::Block(_) | TypeKind::Opaque(_) => None,
+        TypeKind::Block(id) => {
+            let block = registry.block(id).filter(|block| block.buffer_type)?;
+            members_layout(registry, &block.members, packing, row_major, depth + 1)
+        }
+        TypeKind::Opaque(_) => Some(Layout {
+            alignment: 4,
+            size: 4,
+        }),
+        TypeKind::Error | TypeKind::Void => None,
     }
 }
 

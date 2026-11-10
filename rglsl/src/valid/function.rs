@@ -832,6 +832,8 @@ impl super::Validator {
                             | Ex::ArrayLength(_)
                             | Ex::PhysicalPointer { .. }
                             | Ex::PhysicalAddress { .. }
+                            | Ex::BufferPointer { .. }
+                            | Ex::HeapOffset { .. }
                             | Ex::RayQueryGetIntersection { .. }
                             | Ex::RayQueryVertexPositions { .. }
                             | Ex::CooperativeLoad { .. }
@@ -1077,7 +1079,8 @@ impl super::Validator {
                             | crate::Expression::AccessIndex { base, .. } => current = base,
                             crate::Expression::LocalVariable(_)
                             | crate::Expression::GlobalVariable(_)
-                            | crate::Expression::FunctionArgument(_) => break,
+                            | crate::Expression::FunctionArgument(_)
+                            | crate::Expression::BufferPointer { .. } => break,
                             _ if matches!(
                                 context.resolve_pointer_type(current).pointer_space(),
                                 Some(AddressSpace::PhysicalStorage { .. })

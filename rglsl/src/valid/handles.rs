@@ -44,6 +44,7 @@ impl super::Validator {
             ref diagnostic_filter_leaf,
             ref doc_comments,
             vulkan_memory_model: _,
+            descriptor_heap: _,
         } = module;
 
         // Because types can refer to global expressions and vice versa, to
@@ -172,10 +173,14 @@ impl super::Validator {
                 io: _,
                 xfb: _,
                 input_attachment_index: _,
+                heap_offset,
             } = global_variable;
             validate_type(ty)?;
             if let Some(init_expr) = init {
                 validate_const_expr(init_expr)?;
+            }
+            if let Some(offset) = heap_offset {
+                validate_const_expr(offset)?;
             }
         }
 
@@ -429,7 +434,8 @@ impl super::Validator {
                 let _ = base;
                 None
             }
-            crate::TypeInner::Pointer { base, space: _ } => {
+            crate::TypeInner::Pointer { base, space: _ }
+            | crate::TypeInner::BufferDescriptor { base, space: _ } => {
                 handle.check_dep(base)?;
                 None
             }
@@ -683,6 +689,13 @@ impl super::Validator {
             }
             crate::Expression::PhysicalAddress { pointer, split: _ } => {
                 handle.check_dep(pointer)?;
+            }
+            crate::Expression::BufferPointer { descriptor } => {
+                handle.check_dep(descriptor)?;
+            }
+            crate::Expression::HeapOffset { pointer, offset } => {
+                handle.check_dep(pointer)?;
+                handle.check_dep(offset)?;
             }
             crate::Expression::PhysicalPointer { value, ty } => {
                 validate_type(ty)?;

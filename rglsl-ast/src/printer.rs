@@ -298,6 +298,9 @@ impl Printer {
                 }
                 self.struct_declaration_list(&specifier.declarations);
             }
+            TypeSpecifierNonArray::InlineBlock(declarations) => {
+                self.struct_declaration_list(declarations);
+            }
         }
         self.optional_array_specifier(specifier.array.as_deref());
     }

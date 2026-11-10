@@ -415,7 +415,19 @@ impl<'a> FunctionLowerer<'_, 'a> {
         let handle_space = matches!(global, GlobalRef::Variable(handle)
             if self.lw.module.global_variables[handle].space == AddressSpace::Handle);
         let expression = self.lw.global_expression(global);
-        let value = self.add(expression, at)?;
+        let mut value = self.add(expression, at)?;
+        if let GlobalRef::Variable(handle) = global {
+            if let Some(offset) = self.lw.heap_offset_value(handle) {
+                let offset = self.rvalue(offset)?;
+                value = self.add(
+                    Expression::HeapOffset {
+                        pointer: value,
+                        offset,
+                    },
+                    at,
+                )?;
+            }
+        }
         Ok(match global {
             GlobalRef::Variable(_) if !handle_space => Chain::Place(Place::pointer(value, false)),
             _ => Chain::Value(value),
@@ -711,14 +723,15 @@ impl<'a> FunctionLowerer<'_, 'a> {
                             .is_some_and(|block| self.lw.block_bools.contains(&(block, index)));
                         match self.chain(base)? {
                             Chain::Place(place) => {
+                                let base_pointer = self.buffer_pointer(place.pointer, at)?;
                                 let pointer = self.add(
                                     Expression::AccessIndex {
-                                        base: place.pointer,
+                                        base: base_pointer,
                                         index,
                                     },
                                     at,
                                 )?;
-                                self.inherit_access(pointer, place.pointer, false);
+                                self.inherit_access(pointer, base_pointer, false);
                                 Ok(Chain::Place(place.child(pointer, boolean)))
                             }
                             Chain::Value(value) => Ok(Chain::Value(
@@ -771,6 +784,60 @@ impl<'a> FunctionLowerer<'_, 'a> {
         }
     }
 
+    pub(super) fn heap_pointee(&self, pointer: Handle<Expression>) -> Option<Handle<crate::Type>> {
+        let module = &self.lw.module;
+        let element = |ty: Handle<crate::Type>| match module.types[ty].inner {
+            crate::TypeInner::Array { base, .. } => Some(base),
+            _ => None,
+        };
+        match self.expressions[pointer] {
+            Expression::GlobalVariable(handle) => {
+                let global = &module.global_variables[handle];
+                match global.space {
+                    AddressSpace::DescriptorHeap(_) => Some(global.ty),
+                    _ => None,
+                }
+            }
+            Expression::HeapOffset { pointer, .. } => self.heap_pointee(pointer),
+            Expression::AccessIndex { base, index } => {
+                let ty = self.heap_pointee(base)?;
+                match module.types[ty].inner {
+                    crate::TypeInner::Struct { ref members, .. } => usize::try_from(index)
+                        .ok()
+                        .and_then(|index| members.get(index))
+                        .map(|member| member.ty),
+                    _ => element(ty),
+                }
+            }
+            Expression::Access { base, .. } => element(self.heap_pointee(base)?),
+            _ => None,
+        }
+    }
+
+    fn buffer_pointer(
+        &mut self,
+        pointer: Handle<Expression>,
+        at: Span,
+    ) -> Result<Handle<Expression>> {
+        let descriptor = self.heap_pointee(pointer).is_some_and(|ty| {
+            matches!(
+                self.lw.module.types[ty].inner,
+                crate::TypeInner::BufferDescriptor { .. }
+            )
+        });
+        if !descriptor {
+            return Ok(pointer);
+        }
+        let buffer = self.add(
+            Expression::BufferPointer {
+                descriptor: pointer,
+            },
+            at,
+        )?;
+        self.inherit_access(buffer, pointer, false);
+        Ok(buffer)
+    }
+
     pub(super) fn buffer_pointee(
         &self,
         pointer: Handle<Expression>,
@@ -803,6 +870,12 @@ impl<'a> FunctionLowerer<'_, 'a> {
                 }
             }
             Expression::Access { base, .. } => element(self.buffer_pointee(base)?),
+            Expression::BufferPointer { descriptor } => {
+                match module.types[self.heap_pointee(descriptor)?].inner {
+                    crate::TypeInner::BufferDescriptor { base, .. } => Some(base),
+                    _ => None,
+                }
+            }
             Expression::PhysicalPointer { value, .. }
                 if !self.physical_bases.contains_key(&pointer) =>
             {

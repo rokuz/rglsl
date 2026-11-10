@@ -98,6 +98,7 @@ are read-only.
 
 mod block;
 mod f16_polyfill;
+mod heap;
 mod helpers;
 mod image;
 mod index;
@@ -555,6 +556,12 @@ enum LocalType {
     },
     AccelerationStructure,
     RayQuery,
+    UntypedPointer {
+        class: spirv::StorageClass,
+    },
+    BufferDescriptor {
+        class: spirv::StorageClass,
+    },
 }
 
 /// A type encountered during SPIR-V generation.
@@ -1045,6 +1052,8 @@ pub struct Writer {
     task_dispatch_limits: Option<TaskDispatchLimits>,
     /// See docs in [`Options`]
     mesh_shader_primitive_indices_clamp: bool,
+    heap: heap::HeapState,
+    descriptor_heap: bool,
 }
 
 bitflags::bitflags! {

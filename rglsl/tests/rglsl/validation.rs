@@ -114,6 +114,7 @@ fn populate_atomic_result() {
                 io: None,
                 xfb: None,
                 input_attachment_index: None,
+                heap_offset: None,
             },
             span,
         );
@@ -290,6 +291,7 @@ fn emit_workgroup_uniform_load_result() {
                 io: None,
                 xfb: None,
                 input_attachment_index: None,
+                heap_offset: None,
             },
             span,
         );
@@ -461,6 +463,7 @@ impl BindingArrayFixture {
                         offset: 0,
                         matrix_layout: None,
                         xfb_offset: None,
+                        heap: None,
                     }],
                     span: 4,
                 },
@@ -632,6 +635,7 @@ fn local_var_override_sized_array() {
             io: None,
             xfb: None,
             input_attachment_index: None,
+            heap_offset: None,
         },
         span,
     );
@@ -895,6 +899,7 @@ fn invalid_constructor_unsized_struct() {
                     offset: 0,
                     matrix_layout: None,
                     xfb_offset: None,
+                    heap: None,
                 }],
                 span: 4,
             },
@@ -1010,6 +1015,7 @@ fn unexpected_task_payload() {
             io: None,
             xfb: None,
             input_attachment_index: None,
+            heap_offset: None,
         },
         err_span,
     );

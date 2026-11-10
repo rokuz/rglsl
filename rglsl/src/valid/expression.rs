@@ -27,6 +27,8 @@ pub enum ExpressionError {
     InvalidArrayType(Handle<crate::Expression>),
     #[error("Expression {0:?} cannot be converted to or from a physical storage buffer pointer")]
     InvalidPhysicalPointer(Handle<crate::Expression>),
+    #[error("Expression {0:?} is not a pointer into a descriptor heap of the expected kind")]
+    InvalidHeapPointer(Handle<crate::Expression>),
     #[error("Get intersection of {0:?} can't be done")]
     InvalidRayQueryType(Handle<crate::Expression>),
     #[error("Splatting {0:?} can't be done")]
@@ -412,6 +414,13 @@ impl super::Validator {
                         if self.types[base.index()]
                             .flags
                             .contains(TypeFlags::SIZED | TypeFlags::DATA) => {}
+                    Ti::Pointer {
+                        base,
+                        space: crate::AddressSpace::DescriptorHeap(_),
+                    } if matches!(
+                        module.types[base].inner,
+                        Ti::Image { .. } | Ti::Sampler { .. } | Ti::AccelerationStructure { .. }
+                    ) => {}
                     Ti::ValuePointer { .. } => {}
                     ref other => {
                         log::debug!("Loading {other:?}");
@@ -432,10 +441,10 @@ impl super::Validator {
                 clamp_to_edge,
             } => {
                 // check the validity of expressions
-                let image_ty = Self::global_var_ty(module, function, image)?;
+                let image_ty = Self::global_var_ty(module, function, info, image)?;
                 let comparison = match sampler {
                     Some(sampler) => {
-                        let sampler_ty = Self::global_var_ty(module, function, sampler)?;
+                        let sampler_ty = Self::global_var_ty(module, function, info, sampler)?;
                         match module.types[sampler_ty].inner {
                             Ti::Sampler { comparison } => Some(comparison),
                             _ => return Err(ExpressionError::ExpectedSamplerType(sampler_ty)),
@@ -716,7 +725,7 @@ impl super::Validator {
                 sample,
                 level,
             } => {
-                let ty = Self::global_var_ty(module, function, image)?;
+                let ty = Self::global_var_ty(module, function, info, image)?;
                 let (Ti::Image {
                     class,
                     arrayed,
@@ -781,7 +790,7 @@ impl super::Validator {
                 }
             }
             E::ImageQuery { image, query } => {
-                let ty = Self::global_var_ty(module, function, image)?;
+                let ty = Self::global_var_ty(module, function, info, image)?;
                 match module.types[ty].inner {
                     Ti::Image {
                         class,
@@ -1280,6 +1289,34 @@ impl super::Validator {
                 } => ShaderStages::all(),
                 _ => return Err(ExpressionError::InvalidPhysicalPointer(pointer)),
             },
+            E::BufferPointer { descriptor } => match resolver[descriptor] {
+                Ti::Pointer {
+                    base,
+                    space: crate::AddressSpace::DescriptorHeap(crate::DescriptorHeap::Resource),
+                } if matches!(module.types[base].inner, Ti::BufferDescriptor { .. }) => {
+                    ShaderStages::all()
+                }
+                _ => return Err(ExpressionError::InvalidHeapPointer(descriptor)),
+            },
+            E::HeapOffset { pointer, offset } => {
+                let root = match function.expressions[pointer] {
+                    E::GlobalVariable(global) => matches!(
+                        module.global_variables[global].space,
+                        crate::AddressSpace::DescriptorHeap(_)
+                    ),
+                    _ => false,
+                };
+                if !root {
+                    return Err(ExpressionError::InvalidHeapPointer(pointer));
+                }
+                match resolver[offset] {
+                    Ti::Scalar(Sc {
+                        kind: Sk::Sint | Sk::Uint,
+                        ..
+                    }) => ShaderStages::all(),
+                    _ => return Err(ExpressionError::InvalidIndexType(offset)),
+                }
+            }
             E::RayQueryProceedResult => ShaderStages::all(),
             E::RayQueryGetIntersection {
                 query,
@@ -1356,12 +1393,20 @@ impl super::Validator {
     fn global_var_ty(
         module: &crate::Module,
         function: &crate::Function,
+        info: &FunctionInfo,
         expr: Handle<crate::Expression>,
     ) -> Result<Handle<crate::Type>, ExpressionError> {
         use crate::Expression as Ex;
 
         match function.expressions[expr] {
             Ex::GlobalVariable(var_handle) => Ok(module.global_variables[var_handle].ty),
+            Ex::Load { pointer } => match *info[pointer].ty.inner_with(&module.types) {
+                crate::TypeInner::Pointer {
+                    base,
+                    space: crate::AddressSpace::DescriptorHeap(_),
+                } => Ok(base),
+                _ => Err(ExpressionError::ExpectedGlobalVariable),
+            },
             Ex::FunctionArgument(i) => Ok(function.arguments[i as usize].ty),
             Ex::Access { base, .. } | Ex::AccessIndex { base, .. } => {
                 match function.expressions[base] {

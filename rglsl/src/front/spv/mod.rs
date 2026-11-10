@@ -2594,6 +2594,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                 offset,
                 matrix_layout: None,
                 xfb_offset: None,
+                heap: None,
             });
         }
 
@@ -3041,6 +3042,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                     io: None,
                     xfb: None,
                     input_attachment_index: None,
+                    heap_offset: None,
                 };
                 (Variable::Global, var)
             }
@@ -3092,6 +3094,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                     io: None,
                     xfb: None,
                     input_attachment_index: None,
+                    heap_offset: None,
                 };
 
                 let inner = Variable::Input(crate::FunctionArgument {
@@ -3156,6 +3159,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                     io: None,
                     xfb: None,
                     input_attachment_index: None,
+                    heap_offset: None,
                 };
                 let inner = Variable::Output(crate::FunctionResult { ty, binding });
                 (inner, var)

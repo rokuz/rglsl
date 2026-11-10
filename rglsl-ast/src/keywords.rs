@@ -107,7 +107,7 @@ const EXTENSION_ONLY: [&str; 8] = [
     "tileImageEXT",
 ];
 
-const EXTENSION_KEYWORDS: [&str; 154] = [
+const EXTENSION_KEYWORDS: [&str; 152] = [
     "terminateInvocation",
     "terminateRayEXT",
     "ignoreIntersectionEXT",
@@ -260,8 +260,6 @@ const EXTENSION_KEYWORDS: [&str; 154] = [
     "tensorViewNV",
     "coopvecNV",
     "vector",
-    "resourceheap",
-    "samplerheap",
 ];
 
 pub fn is_opaque_type_keyword(word: &str) -> bool {

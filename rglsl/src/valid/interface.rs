@@ -1355,9 +1355,21 @@ impl super::Validator {
         };
         let type_info = &self.types[inner_ty.index()];
 
+        if var.heap_offset.is_some() && !matches!(var.space, crate::AddressSpace::DescriptorHeap(_))
+        {
+            return Err(GlobalVariableError::InvalidUsage(var.space));
+        }
         let (required_type_flags, is_resource) = match var.space {
             crate::AddressSpace::Function | crate::AddressSpace::PhysicalStorage { .. } => {
                 return Err(GlobalVariableError::InvalidUsage(var.space))
+            }
+            crate::AddressSpace::DescriptorHeap(_) => {
+                if !type_info.flags.contains(TypeFlags::HEAP_LAYOUT)
+                    && !type_info.flags.contains(TypeFlags::DATA)
+                {
+                    return Err(GlobalVariableError::InvalidType(var.space));
+                }
+                (TypeFlags::CREATION_RESOLVED, false)
             }
             crate::AddressSpace::Storage { access: _ } => {
                 if let Err((ty_handle, disalignment)) = type_info.storage_layout {
@@ -1889,6 +1901,7 @@ impl super::Validator {
                 crate::AddressSpace::Function | crate::AddressSpace::PhysicalStorage { .. } => {
                     GlobalUse::empty()
                 }
+                crate::AddressSpace::DescriptorHeap(_) => GlobalUse::READ | GlobalUse::QUERY,
                 crate::AddressSpace::Uniform => GlobalUse::READ | GlobalUse::QUERY,
                 crate::AddressSpace::Storage { access } => storage_usage(access),
                 crate::AddressSpace::Handle => match module.types[var.ty].inner {
