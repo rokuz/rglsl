@@ -6,6 +6,7 @@
 //!   writes `PROGRESS.md`.
 
 mod corpus;
+mod fuzz;
 mod oracles;
 mod process;
 mod report;
@@ -30,6 +31,11 @@ commands:
       --jobs N            number of parallel jobs (default: number of CPUs)
       --timeout SECS      per-process timeout (default: 30)
       --no-progress-file  do not rewrite PROGRESS.md (for filtered or local runs)
+  fuzz                compare rglsl with glslang on a directory of shaders
+                      (accepted or not, valid SPIR-V, crashes)
+      --shaders DIR       the shaders to compare (searched recursively)
+      --jobs N            number of parallel jobs (default: number of CPUs)
+      --timeout SECS      per-process timeout (default: 30)
 
 environment:
   RGLSL_GLSLANG, RGLSL_SPIRV_VAL   override the oracle binaries
@@ -70,6 +76,19 @@ fn run(args: Vec<String>) -> Result<i32> {
             };
             args.finish()?;
             runner::run(&workspace_root(), options)?;
+            Ok(0)
+        }
+        "fuzz" => {
+            let options = fuzz::Options {
+                shaders: args
+                    .value("--shaders")?
+                    .map(PathBuf::from)
+                    .context("--shaders is required")?,
+                jobs: args.parsed("--jobs")?,
+                timeout_secs: args.parsed("--timeout")?.unwrap_or(30),
+            };
+            args.finish()?;
+            fuzz::run(&workspace_root(), options)?;
             Ok(0)
         }
         // Internal: compiles one shader in a child process, so that a panic,
