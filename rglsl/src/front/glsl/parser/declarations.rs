@@ -561,8 +561,16 @@ impl ParsingContext<'_> {
         qualifiers.none_layout_qualifier("column_major", &mut frontend.errors);
 
         let mut members = Vec::new();
-        let span =
-            self.parse_struct_declaration_list(frontend, ctx, &mut members, layout, row_major)?;
+        let StructMembers {
+            span,
+            lowered_bools,
+        } = self.parse_struct_declaration_list(
+            frontend,
+            ctx,
+            &mut members,
+            layout,
+            StructKind::Block { row_major },
+        )?;
         self.expect(frontend, TokenValue::RightBrace)?;
 
         let mut ty = ctx.module.types.insert(
@@ -609,6 +617,13 @@ impl ParsingContext<'_> {
             },
         )?;
 
+        if let GlobalOrConstant::Global(handle) = global {
+            for index in lowered_bools {
+                frontend.block_bools.insert((handle, index));
+                ctx.block_bools.insert((handle, index));
+            }
+        }
+
         for (i, k, ty) in members.into_iter().enumerate().filter_map(|(i, m)| {
             let ty = m.ty;
             m.name.map(|s| (i as u32, s, ty))
@@ -637,10 +652,15 @@ impl ParsingContext<'_> {
         ctx: &mut Context,
         members: &mut Vec<StructMember>,
         layout: StructLayout,
-        row_major: bool,
-    ) -> Result<u32> {
+        kind: StructKind,
+    ) -> Result<StructMembers> {
         let mut span = 0;
         let mut align = Alignment::ONE;
+        let mut lowered_bools = Vec::new();
+        let row_major = match kind {
+            StructKind::Struct => false,
+            StructKind::Block { row_major } => row_major,
+        };
 
         loop {
             // TODO: type_qualifier
@@ -653,6 +673,25 @@ impl ParsingContext<'_> {
                 self.parse_array_specifier(frontend, ctx, &mut meta, &mut ty)?;
 
                 meta.subsume(name_meta);
+
+                if let StructKind::Block { .. } = kind {
+                    // A boolean has no representation in memory. In a block it
+                    // is stored as a `uint` and converted where the member is
+                    // read or written (see `Context::is_block_bool`).
+                    match lower_block_bool(&mut ctx.module.types, ty) {
+                        BlockBool::None => {}
+                        BlockBool::Lowered(lowered) => {
+                            ty = lowered;
+                            lowered_bools.push(members.len() as u32);
+                        }
+                        BlockBool::Nested => frontend.errors.push(Error {
+                            kind: ErrorKind::NotImplemented(
+                                "booleans inside arrays or structures in a block",
+                            ),
+                            meta,
+                        }),
+                    }
+                }
 
                 let info = offset::calculate_offset(
                     ty,
@@ -691,6 +730,72 @@ impl ParsingContext<'_> {
 
         span = align.round_up(span);
 
-        Ok(span)
+        Ok(StructMembers {
+            span,
+            lowered_bools,
+        })
     }
+}
+
+/// What [`ParsingContext::parse_struct_declaration_list`] is parsing the
+/// members of.
+#[derive(Clone, Copy, Debug)]
+pub enum StructKind {
+    /// A `struct` declaration.
+    Struct,
+    /// An interface block, whose members live in a buffer.
+    Block {
+        /// `layout(row_major)`: matrices are stored row by row.
+        row_major: bool,
+    },
+}
+
+/// The result of [`ParsingContext::parse_struct_declaration_list`].
+#[derive(Debug)]
+pub struct StructMembers {
+    /// The size of the structure.
+    pub span: u32,
+    /// The indices of the block members that are booleans in the source and
+    /// are stored as unsigned integers.
+    pub lowered_bools: Vec<u32>,
+}
+
+/// How a block member's type relates to booleans.
+enum BlockBool {
+    /// The type contains no boolean.
+    None,
+    /// The type is a boolean scalar or vector; this is the unsigned integer
+    /// type that stores it.
+    Lowered(Handle<Type>),
+    /// A boolean is nested inside an array or a structure.
+    Nested,
+}
+
+fn lower_block_bool(types: &mut crate::UniqueArena<Type>, ty: Handle<Type>) -> BlockBool {
+    fn contains_bool(types: &crate::UniqueArena<Type>, ty: Handle<Type>) -> bool {
+        match types[ty].inner {
+            TypeInner::Scalar(scalar) | TypeInner::Vector { scalar, .. } => {
+                scalar.kind == ScalarKind::Bool
+            }
+            TypeInner::Array { base, .. } => contains_bool(types, base),
+            TypeInner::Struct { ref members, .. } => {
+                members.iter().any(|member| contains_bool(types, member.ty))
+            }
+            _ => false,
+        }
+    }
+
+    let inner = match types[ty].inner {
+        TypeInner::Scalar(Scalar::BOOL) => TypeInner::Scalar(Scalar::U32),
+        TypeInner::Vector {
+            size,
+            scalar: Scalar::BOOL,
+        } => TypeInner::Vector {
+            size,
+            scalar: Scalar::U32,
+        },
+        _ if contains_bool(types, ty) => return BlockBool::Nested,
+        _ => return BlockBool::None,
+    };
+    BlockBool::Lowered(types.insert(Type { name: None, inner }, Span::default()))
 }

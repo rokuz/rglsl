@@ -26,10 +26,10 @@ OpDecorate %78 Location 0
 %20 = OpTypePointer Function %4
 %21 = OpConstantNull  %4
 %23 = OpTypePointer Function %3
-%32 = OpTypeInt 32 0
-%31 = OpConstant  %32  0
-%41 = OpConstant  %32  1
-%50 = OpConstant  %32  2
+%25 = OpTypeInt 32 0
+%24 = OpConstant  %25  0
+%34 = OpConstant  %25  1
+%43 = OpConstant  %25  2
 %54 = OpTypeFunction %2
 %55 = OpConstant  %4  0
 %56 = OpConstantComposite  %3  %55 %55 %55 %55
@@ -40,7 +40,7 @@ OpDecorate %78 Location 0
 %61 = OpConstantComposite  %5  %56 %58 %60
 %65 = OpConstantNull  %5
 %71 = OpTypePointer Private %4
-%75 = OpConstant  %32  3
+%75 = OpConstant  %25  3
 %79 = OpTypePointer Output %3
 %78 = OpVariable  %79  Output
 %15 = OpFunction  %2  None %16
@@ -54,33 +54,33 @@ OpBranch %22
 %22 = OpLabel
 OpStore %17 %13
 OpStore %19 %14
-%24 = OpLoad  %5  %12
-%25 = OpCompositeExtract  %3  %24 0
-%26 = OpLoad  %5  %17
-%27 = OpCompositeExtract  %3  %26 0
-%28 = OpLoad  %4  %19
-%29 = OpVectorTimesScalar  %3  %27 %28
-%30 = OpFAdd  %3  %25 %29
-%33 = OpAccessChain  %23  %12 %31
-OpStore %33 %30
-%34 = OpLoad  %5  %12
-%35 = OpCompositeExtract  %3  %34 1
-%36 = OpLoad  %5  %17
-%37 = OpCompositeExtract  %3  %36 1
-%38 = OpLoad  %4  %19
-%39 = OpVectorTimesScalar  %3  %37 %38
-%40 = OpFAdd  %3  %35 %39
-%42 = OpAccessChain  %23  %12 %41
-OpStore %42 %40
-%43 = OpLoad  %5  %12
-%44 = OpCompositeExtract  %3  %43 2
-%45 = OpLoad  %5  %17
-%46 = OpCompositeExtract  %3  %45 2
-%47 = OpLoad  %4  %19
-%48 = OpVectorTimesScalar  %3  %46 %47
-%49 = OpFAdd  %3  %44 %48
-%51 = OpAccessChain  %23  %12 %50
-OpStore %51 %49
+%26 = OpAccessChain  %23  %12 %24
+%27 = OpLoad  %3  %26
+%28 = OpAccessChain  %23  %17 %24
+%29 = OpLoad  %3  %28
+%30 = OpLoad  %4  %19
+%31 = OpVectorTimesScalar  %3  %29 %30
+%32 = OpFAdd  %3  %27 %31
+%33 = OpAccessChain  %23  %12 %24
+OpStore %33 %32
+%35 = OpAccessChain  %23  %12 %34
+%36 = OpLoad  %3  %35
+%37 = OpAccessChain  %23  %17 %34
+%38 = OpLoad  %3  %37
+%39 = OpLoad  %4  %19
+%40 = OpVectorTimesScalar  %3  %38 %39
+%41 = OpFAdd  %3  %36 %40
+%42 = OpAccessChain  %23  %12 %34
+OpStore %42 %41
+%44 = OpAccessChain  %23  %12 %43
+%45 = OpLoad  %3  %44
+%46 = OpAccessChain  %23  %17 %43
+%47 = OpLoad  %3  %46
+%48 = OpLoad  %4  %19
+%49 = OpVectorTimesScalar  %3  %47 %48
+%50 = OpFAdd  %3  %45 %49
+%51 = OpAccessChain  %23  %12 %43
+OpStore %51 %50
 OpReturn
 OpFunctionEnd
 %53 = OpFunction  %2  None %54
@@ -96,11 +96,11 @@ OpStore %64 %68
 %69 = OpFunctionCall  %2  %15 %64 %67 %59
 %70 = OpLoad  %5  %64
 OpStore %62 %70
-%72 = OpAccessChain  %71  %8 %31
+%72 = OpAccessChain  %71  %8 %24
 OpStore %72 %57
-%73 = OpAccessChain  %71  %8 %41
+%73 = OpAccessChain  %71  %8 %34
 OpStore %73 %57
-%74 = OpAccessChain  %71  %8 %50
+%74 = OpAccessChain  %71  %8 %43
 OpStore %74 %57
 %76 = OpAccessChain  %71  %8 %75
 OpStore %76 %57

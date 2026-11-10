@@ -457,8 +457,19 @@ impl Frontend {
         name: &str,
         meta: Span,
     ) -> Result<Handle<Expression>> {
+        // A pointer to a column of a matrix, or to another vector that is not
+        // a variable of its own, is a `ValuePointer`.
+        let pointee_vector;
         let (ty, is_pointer) = match *ctx.resolve_type(expression, meta)? {
             TypeInner::Pointer { base, .. } => (&ctx.module.types[base].inner, true),
+            TypeInner::ValuePointer {
+                size: Some(size),
+                scalar,
+                ..
+            } => {
+                pointee_vector = TypeInner::Vector { size, scalar };
+                (&pointee_vector, true)
+            }
             ref ty => (ty, false),
         };
         match *ty {
@@ -470,6 +481,16 @@ impl Frontend {
                         kind: ErrorKind::UnknownField(name.into()),
                         meta,
                     })?;
+                // A runtime-sized array has no value to load; it can only be
+                // indexed or asked for its length, through the pointer.
+                let member_ty = members[index].ty;
+                let runtime_sized = matches!(
+                    ctx.module.types[member_ty].inner,
+                    TypeInner::Array {
+                        size: crate::ArraySize::Dynamic,
+                        ..
+                    }
+                );
                 let pointer = ctx.add_expression(
                     Expression::AccessIndex {
                         base: expression,
@@ -479,7 +500,7 @@ impl Frontend {
                 )?;
 
                 Ok(match pos {
-                    ExprPos::Rhs if is_pointer => {
+                    ExprPos::Rhs if is_pointer && !runtime_sized => {
                         ctx.add_expression(Expression::Load { pointer }, meta)?
                     }
                     _ => pointer,

@@ -648,8 +648,7 @@ fn block_layout(module: &rglsl::Module, name: &str) -> Vec<(u32, Option<(u32, bo
     let (_, ty) = module
         .types
         .iter()
-        .filter(|(_, ty)| ty.name.as_deref() == Some(name))
-        .next_back()
+        .rfind(|(_, ty)| ty.name.as_deref() == Some(name))
         .unwrap_or_else(|| panic!("no type named {name}"));
     let rglsl::TypeInner::Struct { ref members, .. } = ty.inner else {
         panic!("{name} is not a struct");
@@ -743,5 +742,83 @@ fn block_layouts_match_glslang() {
             (160, row(16)),
             (192, row(16)),
         ]
+    );
+}
+
+/// A boolean in a block is stored as an unsigned integer and converted where
+/// it is read or written.
+#[test]
+fn booleans_in_blocks() {
+    let source = "#version 450
+        layout(std140, binding = 0) uniform U { bool b; bvec3 bv; float f; bvec4 b4; } u;
+        layout(std430, binding = 1) buffer B { bool b; bvec2 bv; } s;
+        layout(binding = 2) uniform Anon { bool ab; bvec2 abv; };
+        layout(location = 0) out vec4 o;
+        void setb(out bool x) { x = true; }
+        void flip(inout bvec2 v) { v = not(v); }
+        void main() {
+            if (u.b && u.bv.y && ab && abv.x && u.b4[1]) o = vec4(1.0); else o = vec4(u.f);
+            s.b = u.b;
+            s.bv = u.bv.xy;
+            s.bv.x = true;
+            s.bv.yx = bvec2(false, true);
+            bool l = s.b;
+            bvec2 lv = s.bv;
+            setb(s.b);
+            flip(s.bv);
+            setb(s.bv.y);
+            o += vec4(l, lv, any(u.b4));
+        }";
+    compile(ShaderStage::Fragment, source);
+
+    // The layout is the one of `uint` members, as in glslang's output.
+    let module = parse(ShaderStage::Fragment, source).unwrap();
+    let offsets = |name| -> Vec<u32> {
+        block_layout(&module, name)
+            .into_iter()
+            .map(|(offset, _)| offset)
+            .collect()
+    };
+    assert_eq!(offsets("U"), [0, 16, 28, 32]);
+    assert_eq!(offsets("B"), [0, 8]);
+    assert_eq!(offsets("Anon"), [0, 8]);
+
+    // Not supported yet, and reported rather than miscompiled.
+    let error = parse(
+        ShaderStage::Fragment,
+        "#version 450
+        layout(binding = 0) uniform U { bool flags[4]; } u;
+        void main() {}",
+    )
+    .unwrap_err();
+    assert!(error.contains("booleans inside arrays"), "{error}");
+}
+
+/// Reading one member of a block does not load the whole block, so a buffer
+/// block that ends in a runtime-sized array can be read.
+#[test]
+fn members_of_blocks_with_runtime_arrays() {
+    let module = compile(
+        ShaderStage::Fragment,
+        "#version 450
+        layout(std430, binding = 0) buffer B { float head; vec4 d[]; } b;
+        layout(location = 0) out vec4 o;
+        void main() { o = vec4(b.head) + b.d[1] + vec4(b.d.length()); }",
+    );
+    assert_eq!(instructions(&module, Op::ArrayLength).len(), 1);
+}
+
+/// A vector constructed from one boolean replicates it to every component.
+#[test]
+fn vector_from_scalar_bool() {
+    compile(
+        ShaderStage::Fragment,
+        "#version 450
+        layout(location = 0) out vec4 o;
+        void main() {
+            bool a = true;
+            ivec2 v = ivec2(a);
+            o = vec4(a) + vec4(v, 0, 0) + vec4(vec2(bvec2(a)), 0.0, 0.0);
+        }",
     );
 }

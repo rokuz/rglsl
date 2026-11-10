@@ -98,7 +98,14 @@ impl Frontend {
                     expr_meta,
                 )?;
 
-                return Ok(h);
+                // `vec4(b)` with a scalar `b`: the selected scalar is
+                // replicated to every component, like any other scalar.
+                return match ctx.module.types[ty].inner {
+                    TypeInner::Vector { size, .. } if vector_size.is_none() => {
+                        ctx.add_expression(Expression::Splat { size, value: h }, meta)
+                    }
+                    _ => Ok(h),
+                };
             }
             _ => {}
         }
@@ -938,7 +945,12 @@ impl Frontend {
         // Since output parameters also allow implicit conversions from the
         // parameter to the argument, we need to spill the conversion to a
         // variable and create a proxy write for the original variable.
-        if needs_conversion {
+        //
+        // A boolean block member is stored as an unsigned integer: the
+        // parameter is the boolean, and the value is converted back when it
+        // is written to the member.
+        let block_bool = ctx.is_block_bool(original);
+        if needs_conversion || block_bool {
             maybe_ty = Some(parameter_ty);
         }
 
@@ -970,7 +982,9 @@ impl Frontend {
             // Add the spill variable as an argument to the function call
             arguments.push(spill_expr);
 
-            let convert = if needs_conversion {
+            let convert = if block_bool {
+                Some(Scalar::U32)
+            } else if needs_conversion {
                 arg_scalar_comps
             } else {
                 None

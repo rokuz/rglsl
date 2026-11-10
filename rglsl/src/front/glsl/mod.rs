@@ -199,6 +199,10 @@ pub struct Frontend {
     /// from here on is invariant.
     invariant_all: bool,
 
+    /// Block members that are booleans in the source and unsigned integers
+    /// in the block's type: (the block's variable, the member's index).
+    block_bools: FastHashSet<(Handle<crate::GlobalVariable>, u32)>,
+
     /// Automatic bindings and locations; see [`Options::auto_map_bindings`]
     /// and [`Options::auto_map_locations`].
     auto_map: variables::AutoMap,
@@ -216,6 +220,7 @@ impl Frontend {
         self.entry_args.clear();
         self.layouter.clear();
         self.invariant_all = false;
+        self.block_bools.clear();
         self.auto_map = variables::AutoMap::default();
     }
 

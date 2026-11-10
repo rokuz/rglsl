@@ -71,6 +71,9 @@ pub(crate) struct Context<'a> {
 
     pub symbol_table: crate::front::SymbolTable<String, VariableReference>,
     pub samplers: FastHashMap<Handle<Expression>, Handle<Expression>>,
+    /// Block members that are booleans in the source and unsigned integers
+    /// in the block's type; see [`Context::is_block_bool`].
+    pub block_bools: crate::FastHashSet<(Handle<crate::GlobalVariable>, u32)>,
 
     pub const_typifier: Typifier,
     pub typifier: Typifier,
@@ -103,6 +106,7 @@ impl<'a> Context<'a> {
 
             symbol_table: crate::front::SymbolTable::default(),
             samplers: FastHashMap::default(),
+            block_bools: frontend.block_bools.clone(),
 
             const_typifier: Typifier::new(),
             typifier: Typifier::new(),
@@ -268,6 +272,11 @@ impl<'a> Context<'a> {
     }
 
     pub fn add_expression(&mut self, expr: Expression, meta: Span) -> Result<Handle<Expression>> {
+        // A boolean block member is stored as an unsigned integer; reading it
+        // yields the boolean the shader declared.
+        let load_of_block_bool =
+            matches!(expr, Expression::Load { pointer } if self.is_block_bool(pointer));
+
         let mut eval = if self.is_const {
             crate::proc::ConstantEvaluator::for_glsl_module(
                 self.module,
@@ -285,10 +294,52 @@ impl<'a> Context<'a> {
             )
         };
 
-        eval.try_eval_and_append(expr, meta).map_err(|e| Error {
+        let handle = eval.try_eval_and_append(expr, meta).map_err(|e| Error {
             kind: e.into(),
             meta,
-        })
+        })?;
+
+        if load_of_block_bool {
+            self.add_expression(
+                Expression::As {
+                    expr: handle,
+                    kind: crate::ScalarKind::Bool,
+                    convert: Some(crate::BOOL_WIDTH),
+                },
+                meta,
+            )
+        } else {
+            Ok(handle)
+        }
+    }
+
+    /// Returns true if `expr` refers to a block member that is a boolean in
+    /// the source and an unsigned integer in the block (or to a component of
+    /// such a member), so that values must be converted when it is read or
+    /// written.
+    pub fn is_block_bool(&self, mut expr: Handle<Expression>) -> bool {
+        loop {
+            match self.expressions[expr] {
+                Expression::AccessIndex { base, index } => {
+                    // A member of the block itself, or of an element of an
+                    // array of blocks.
+                    let block = match self.expressions[base] {
+                        Expression::Access { base, .. } => base,
+                        _ => base,
+                    };
+                    if let Expression::GlobalVariable(global) = self.expressions[block] {
+                        return self.block_bools.contains(&(global, index));
+                    }
+                    expr = base;
+                }
+                Expression::Access { base, .. } => expr = base,
+                Expression::Swizzle { vector, .. } => expr = vector,
+                Expression::Load { pointer } => expr = pointer,
+                // The conversion `add_expression` puts on a load.
+                Expression::As { expr: inner, .. } => expr = inner,
+                _ => return false,
+            }
+        }
     }
 
     /// Add variable to current scope
@@ -499,6 +550,12 @@ impl<'a> Context<'a> {
                 VectorSize::Quad => 4,
             };
 
+            // See through the conversion on a load of a boolean block member.
+            if let Expression::As { expr, .. } = self.expressions[vector] {
+                if self.is_block_bool(expr) {
+                    vector = expr;
+                }
+            }
             if let Expression::Load { pointer } = self.expressions[vector] {
                 vector = pointer;
             }
@@ -594,7 +651,18 @@ impl<'a> Context<'a> {
                 pointer
             }
             HirExprKind::Select { base, ref field } => {
-                let base = self.lower_expect_inner(stmt, frontend, base, pos)?.0;
+                // To read a member, take a pointer to the base and load only
+                // the member. Loading the base first would copy a whole block
+                // to read one member of it, which is not even possible for a
+                // buffer block that ends in a runtime-sized array, and would
+                // hide which block member is being read.
+                let base_pos = match pos {
+                    ExprPos::Rhs => ExprPos::AccessBase {
+                        constant_index: true,
+                    },
+                    ExprPos::Lhs | ExprPos::AccessBase { .. } => pos,
+                };
+                let base = self.lower_expect_inner(stmt, frontend, base, base_pos)?.0;
 
                 frontend.field_selection(self, pos, base, field, meta)?
             }
@@ -1215,6 +1283,15 @@ impl<'a> Context<'a> {
                     self.lower_expect_inner(stmt, frontend, tgt, ExprPos::Lhs)?;
                 let (mut value, value_meta) =
                     self.lower_expect_inner(stmt, frontend, value, ExprPos::Rhs)?;
+
+                let block_bool = self.is_block_bool(pointer);
+                if block_bool {
+                    // Stored as an unsigned integer: 1 for true, 0 for false.
+                    let mut stored = value;
+                    self.conversion(&mut stored, value_meta, Scalar::U32)?;
+                    self.lower_store(pointer, stored, meta)?;
+                    return Ok((Some(value), meta));
+                }
 
                 let ty = match *self.resolve_type(pointer, ptr_meta)? {
                     TypeInner::Pointer { base, .. } => &self.module.types[base].inner,

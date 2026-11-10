@@ -86,13 +86,15 @@ impl ParsingContext<'_> {
                 let ty_name = self.expect_ident(frontend)?.0;
                 self.expect(frontend, TokenValue::LeftBrace)?;
                 let mut members = Vec::new();
-                let span = self.parse_struct_declaration_list(
-                    frontend,
-                    ctx,
-                    &mut members,
-                    StructLayout::Std140,
-                    false,
-                )?;
+                let span = self
+                    .parse_struct_declaration_list(
+                        frontend,
+                        ctx,
+                        &mut members,
+                        StructLayout::Std140,
+                        super::declarations::StructKind::Struct,
+                    )?
+                    .span;
                 let end_meta = self.expect(frontend, TokenValue::RightBrace)?.meta;
                 meta.subsume(end_meta);
                 let ty = ctx.module.types.insert(
