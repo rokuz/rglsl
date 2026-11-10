@@ -113,6 +113,7 @@ fn populate_atomic_result() {
                 memory_decorations: rglsl::MemoryDecorations::empty(),
                 io: None,
                 xfb: None,
+                input_attachment_index: None,
             },
             span,
         );
@@ -288,6 +289,7 @@ fn emit_workgroup_uniform_load_result() {
                 memory_decorations: rglsl::MemoryDecorations::empty(),
                 io: None,
                 xfb: None,
+                input_attachment_index: None,
             },
             span,
         );
@@ -629,6 +631,7 @@ fn local_var_override_sized_array() {
             memory_decorations: rglsl::MemoryDecorations::empty(),
             io: None,
             xfb: None,
+            input_attachment_index: None,
         },
         span,
     );
@@ -1006,6 +1009,7 @@ fn unexpected_task_payload() {
             memory_decorations: ir::MemoryDecorations::empty(),
             io: None,
             xfb: None,
+            input_attachment_index: None,
         },
         err_span,
     );

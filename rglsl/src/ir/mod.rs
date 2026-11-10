@@ -723,6 +723,7 @@ pub enum ImageDimension {
     /// Cube map
     Cube,
     Buffer,
+    Subpass,
 }
 
 bitflags::bitflags! {
@@ -1250,6 +1251,9 @@ pub struct GlobalVariable {
     pub io: Option<Binding>,
     #[cfg_attr(feature = "deserialize", serde(default))]
     pub xfb: Option<XfbBinding>,
+    #[cfg_attr(feature = "serialize", serde(skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    pub input_attachment_index: Option<u32>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]

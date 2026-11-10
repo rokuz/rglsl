@@ -2127,6 +2127,9 @@ impl Writer {
                             self.require_any("1D storage images", &[spirv::Capability::Image1D])?;
                         }
                     }
+                    crate::ImageDimension::Subpass => {
+                        self.require_any("subpass inputs", &[spirv::Capability::InputAttachment])?;
+                    }
                     crate::ImageDimension::Buffer => {
                         if sampled {
                             self.require_any(
@@ -3808,6 +3811,9 @@ impl Writer {
                 }
             }
         };
+        if let Some(index) = global_variable.input_attachment_index {
+            self.decorate(id, Decoration::InputAttachmentIndex, &[index]);
+        }
 
         let init_word = match global_variable.init {
             Some(constant) if !super::plain_types::has_explicit_layout(class) => {

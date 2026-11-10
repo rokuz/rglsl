@@ -182,6 +182,7 @@ impl FunctionLowerer<'_, '_> {
                 self.query(name, arguments, at).map(Some)
             }
             "imageLoad" | "imageStore" => self.image(name, arguments, at),
+            "subpassLoad" => self.subpass_load(arguments, at).map(Some),
             "barrier" => {
                 self.push(Statement::ControlBarrier(Barrier::WORK_GROUP), at);
                 Ok(None)
@@ -910,7 +911,8 @@ impl FunctionLowerer<'_, '_> {
             Some(opaque)
                 if opaque.kind == OpaqueKind::Image
                     || opaque.kind == OpaqueKind::CombinedSampler
-                    || opaque.kind == OpaqueKind::Texture =>
+                    || opaque.kind == OpaqueKind::Texture
+                    || opaque.kind == OpaqueKind::SubpassInput =>
             {
                 Ok(Sampled {
                     image: self.rvalue(argument)?,
@@ -1153,6 +1155,40 @@ impl FunctionLowerer<'_, '_> {
                 array_index,
                 sample,
                 level,
+            },
+            at,
+        )
+    }
+
+    fn subpass_load(
+        &mut self,
+        arguments: &[AstExpression],
+        at: Span,
+    ) -> Result<Handle<Expression>> {
+        let first = arguments.first().ok_or_else(|| internal(at))?;
+        let image = self.rvalue(first)?;
+        let sample = match arguments.get(1) {
+            Some(argument) => Some(self.rvalue(argument)?),
+            None => None,
+        };
+        let zero = self.literal(Literal::I32(0), at)?;
+        let ty = self
+            .lw
+            .vector_type(crate::VectorSize::Bi, crate::Scalar::I32);
+        let coordinate = self.add(
+            Expression::Compose {
+                ty,
+                components: alloc::vec![zero, zero],
+            },
+            at,
+        )?;
+        self.add(
+            Expression::ImageLoad {
+                image,
+                coordinate,
+                array_index: None,
+                sample,
+                level: None,
             },
             at,
         )

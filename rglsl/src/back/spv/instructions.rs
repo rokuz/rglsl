@@ -1421,6 +1421,7 @@ impl From<crate::ImageDimension> for spirv::Dim {
             Id::D3 => Self::Dim3D,
             Id::Cube => Self::DimCube,
             Id::Buffer => Self::DimBuffer,
+            Id::Subpass => Self::DimSubpassData,
         }
     }
 }

@@ -992,6 +992,43 @@ layout(input_attachment_index = 0, binding = 0) uniform subpassInput color;
 void main() {
     vec4 a = subpassLoad(color, 1);
 }
+### subpass input without an attachment index | frag | 2:InvalidQualifier
+layout(binding = 0) uniform subpassInput color;
+void main() {}
+### subpass input with an optional attachment index | frag 460 | ok
+#extension GL_EXT_optional_input_attachment_index : enable
+layout(binding = 0) uniform subpassInput color;
+void main() {
+    vec4 a = subpassLoad(color);
+}
+### subpass input array without an attachment index | frag 460 | 3:InvalidQualifier
+#extension GL_EXT_optional_input_attachment_index : enable
+layout(binding = 0) uniform subpassInput colors[];
+void main() {}
+### attachment index on a texture | frag | 2:InvalidQualifier, 3:InvalidQualifier
+layout(input_attachment_index = 3, binding = 0) uniform texture2D t;
+layout(input_attachment_index = 4, binding = 1) writeonly uniform image2D i;
+void main() {}
+### attachment index on a block | frag | 2:InvalidQualifier
+layout(input_attachment_index = 3, binding = 0) uniform B { vec4 v; } b;
+void main() {}
+### non-literal attachment index | frag | 3:InvalidQualifier
+layout(constant_id = 1) const int c = 2;
+layout(input_attachment_index = c, binding = 0) uniform subpassInput color;
+void main() {}
+### subpass input with tile images | frag | 3:InvalidQualifier
+#extension GL_EXT_shader_tile_image : require
+layout(input_attachment_index = 0, binding = 0) uniform subpassInput color;
+void main() {}
+### subpass input parameter in a vertex shader | vert | 2:InvalidQualifier
+void f(subpassInput s) {}
+void main() {}
+### subpass input parameter | frag | ok
+layout(input_attachment_index = 1, binding = 0) uniform usubpassInputMS ids;
+uvec4 f(usubpassInputMS s) { return subpassLoad(s, 2); }
+void main() {
+    uvec4 a = f(ids);
+}
 ### invocation group functions need 460 | frag | 3:NoMatchingFunction
 void main() {
     bool a = anyInvocation(true);

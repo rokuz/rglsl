@@ -498,6 +498,7 @@ impl<'a> Lowerer<'a> {
                         memory_decorations: memory(qualifiers),
                         io: None,
                         xfb: None,
+                        input_attachment_index: None,
                     },
                     at,
                 );
@@ -557,6 +558,7 @@ impl<'a> Lowerer<'a> {
                 memory_decorations: MemoryDecorations::empty(),
                 io: None,
                 xfb: None,
+                input_attachment_index: None,
             },
             at,
         );
@@ -656,6 +658,7 @@ impl<'a> Lowerer<'a> {
                     patch: false,
                 }),
                 xfb: None,
+                input_attachment_index: None,
             },
             at,
         );
@@ -777,6 +780,15 @@ impl<'a> Lowerer<'a> {
             }
         }
         let (binding, unbound) = self.binding(qualifiers, at)?;
+        let input_attachment_index = match qualifiers
+            .layout_entry("input_attachment_index")
+            .and_then(|entry| entry.value)
+        {
+            Some(index) if opaque.kind == OpaqueKind::SubpassInput => {
+                Some(u32::try_from(index).map_err(|_| internal(at))?)
+            }
+            _ => None,
+        };
         let handle = self.module.global_variables.append(
             GlobalVariable {
                 name: Some(name),
@@ -787,6 +799,7 @@ impl<'a> Lowerer<'a> {
                 memory_decorations: memory(qualifiers),
                 io: None,
                 xfb: None,
+                input_attachment_index,
             },
             at,
         );
@@ -904,6 +917,7 @@ impl<'a> Lowerer<'a> {
                 memory_decorations: decorations,
                 io: None,
                 xfb: None,
+                input_attachment_index: None,
             },
             at,
         );
@@ -1176,6 +1190,7 @@ impl<'a> Lowerer<'a> {
                 memory_decorations: MemoryDecorations::empty(),
                 io,
                 xfb: None,
+                input_attachment_index: None,
             },
             at,
         );
@@ -1439,6 +1454,7 @@ impl<'a> Lowerer<'a> {
                 memory_decorations: MemoryDecorations::empty(),
                 io: None,
                 xfb: None,
+                input_attachment_index: None,
             },
             Span::UNDEFINED,
         );
@@ -1604,6 +1620,7 @@ impl<'a> Lowerer<'a> {
                 memory_decorations: MemoryDecorations::empty(),
                 io: Some(Binding::BuiltIn(builtin)),
                 xfb: None,
+                input_attachment_index: None,
             },
             at,
         );

@@ -3893,3 +3893,224 @@ fn reference_strides_agree_with_block_layouts() {
         );
     }
 }
+
+fn image_type_operands(module: &dr::Module) -> Vec<Vec<Operand>> {
+    instructions(module, Op::TypeImage)
+        .into_iter()
+        .map(|inst| inst.operands[1..].to_vec())
+        .collect()
+}
+
+fn literal_operands(module: &dr::Module, decoration: Decoration) -> Vec<u32> {
+    module
+        .annotations
+        .iter()
+        .filter(|inst| inst.operands[1] == Operand::Decoration(decoration))
+        .map(|inst| match inst.operands[2] {
+            Operand::LiteralBit32(value) => value,
+            ref other => panic!("unexpected operand {other:?}"),
+        })
+        .collect()
+}
+
+#[test]
+fn subpass_inputs_are_read_at_the_fragment() {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+        layout(input_attachment_index = 1, set = 0, binding = 0) uniform subpassInput color;
+        layout(input_attachment_index = 2, set = 0, binding = 1) uniform isubpassInputMS samples;
+        layout(location = 0) out vec4 o;
+        layout(location = 1) out ivec4 i;
+        void read(isubpassInputMS s) {
+            i += subpassLoad(s, 2);
+        }
+        void main() {
+            o = subpassLoad(color);
+            i = subpassLoad(samples, 3);
+            read(samples);
+        }",
+    );
+    let subpass = |multi: u32| {
+        vec![
+            Operand::Dim(spirv::Dim::DimSubpassData),
+            Operand::LiteralBit32(0),
+            Operand::LiteralBit32(0),
+            Operand::LiteralBit32(multi),
+            Operand::LiteralBit32(2),
+            Operand::ImageFormat(spirv::ImageFormat::Unknown),
+        ]
+    };
+    let types = image_type_operands(&module);
+    assert!(types.contains(&subpass(0)), "{types:?}");
+    assert!(types.contains(&subpass(1)), "{types:?}");
+    let reads = instructions(&module, Op::ImageRead);
+    assert_eq!(reads.len(), 3);
+    for read in &reads {
+        let coordinate = read.operands[1].unwrap_id_ref();
+        let composite = module
+            .types_global_values
+            .iter()
+            .find(|inst| inst.result_id == Some(coordinate))
+            .expect("the coordinate is a constant");
+        assert_eq!(composite.class.opcode, Op::ConstantComposite);
+        for component in &composite.operands {
+            assert_eq!(constant(&module, component), 0);
+        }
+    }
+    let mut samples: Vec<u32> = reads
+        .iter()
+        .filter(|read| read.operands.len() == 4)
+        .map(|read| {
+            assert_eq!(
+                read.operands[2],
+                Operand::ImageOperands(spirv::ImageOperands::SAMPLE)
+            );
+            constant(&module, &read.operands[3])
+        })
+        .collect();
+    samples.sort_unstable();
+    assert_eq!(samples, [2, 3]);
+    assert!(instructions(&module, Op::ImageFetch).is_empty());
+    assert_eq!(
+        decorated(&module, Decoration::InputAttachmentIndex),
+        ["color", "samples"]
+    );
+    assert_eq!(
+        literal_operands(&module, Decoration::InputAttachmentIndex),
+        [1, 2]
+    );
+    assert!(capabilities(&module).contains(&spirv::Capability::InputAttachment));
+}
+
+#[test]
+fn optional_input_attachment_index_is_not_decorated() {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 460
+        #extension GL_EXT_optional_input_attachment_index : enable
+        layout(set = 0, binding = 0) uniform subpassInput ia;
+        layout(location = 0) out vec4 o;
+        void main() {
+            o = subpassLoad(ia);
+        }",
+    );
+    assert!(decorated(&module, Decoration::InputAttachmentIndex).is_empty());
+    assert_eq!(instructions(&module, Op::ImageRead).len(), 1);
+}
+
+#[test]
+fn subpass_input_arrays_declare_the_indexing_capabilities() {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+        #extension GL_EXT_nonuniform_qualifier : require
+        layout(binding = 0, input_attachment_index = 0) uniform subpassInput dynamic[];
+        layout(binding = 1, input_attachment_index = 1) uniform subpassInput nonUniform[];
+        layout(binding = 2, input_attachment_index = 2) uniform subpassInput sized[4];
+        layout(location = 0) flat in int index;
+        layout(location = 0) out vec4 o;
+        void main() {
+            int uniformIndex = index;
+            o = subpassLoad(dynamic[uniformIndex]);
+            o += subpassLoad(nonUniform[nonuniformEXT(index)]);
+            o += subpassLoad(sized[2]);
+        }",
+    );
+    assert_eq!(
+        non_uniform_ops(&module),
+        [Op::Load, Op::AccessChain, Op::Load]
+    );
+    let capabilities = capabilities(&module);
+    for capability in [
+        spirv::Capability::InputAttachment,
+        spirv::Capability::RuntimeDescriptorArray,
+        spirv::Capability::ShaderNonUniform,
+        spirv::Capability::InputAttachmentArrayDynamicIndexing,
+        spirv::Capability::InputAttachmentArrayNonUniformIndexing,
+    ] {
+        assert!(capabilities.contains(&capability), "{capability:?}");
+    }
+    assert!(uses_descriptor_indexing(&module));
+    assert_eq!(instructions(&module, Op::TypeRuntimeArray).len(), 1);
+    assert_eq!(
+        literal_operands(&module, Decoration::InputAttachmentIndex),
+        [0, 1, 2]
+    );
+}
+
+#[test]
+fn nonuniform_subpass_input_is_copied() {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+        #extension GL_EXT_nonuniform_qualifier : require
+        layout(binding = 0, input_attachment_index = 0) uniform subpassInput ia;
+        layout(location = 0) out vec4 o;
+        void main() {
+            o = subpassLoad(nonuniformEXT(ia));
+        }",
+    );
+    assert_eq!(non_uniform_ops(&module), [Op::CopyObject]);
+}
+
+#[test]
+fn subpass_input_errors() {
+    let cases = [
+        (
+            ShaderStage::Vertex,
+            "layout(input_attachment_index = 0, binding = 0) uniform subpassInput s;",
+            "not supported in this stage",
+        ),
+        (
+            ShaderStage::Vertex,
+            "void f(subpassInput s) {}",
+            "not supported in this stage",
+        ),
+        (
+            ShaderStage::Fragment,
+            "layout(binding = 0) uniform subpassInput s;",
+            "requires an input_attachment_index",
+        ),
+        (
+            ShaderStage::Fragment,
+            "#extension GL_EXT_optional_input_attachment_index : enable
+            layout(binding = 0) uniform subpassInput s[2];",
+            "requires an input_attachment_index",
+        ),
+        (
+            ShaderStage::Fragment,
+            "layout(input_attachment_index = 0, binding = 0) uniform texture2D t;",
+            "can only be used with a subpass",
+        ),
+        (
+            ShaderStage::Fragment,
+            "layout(input_attachment_index = 0, binding = 0) uniform B { vec4 v; } b;",
+            "can only be used with a subpass",
+        ),
+        (
+            ShaderStage::Fragment,
+            "layout(constant_id = 3) const int c = 1;
+            layout(input_attachment_index = c, binding = 0) uniform subpassInput s;",
+            "needs a literal integer",
+        ),
+        (
+            ShaderStage::Fragment,
+            "#extension GL_EXT_shader_tile_image : require
+            layout(input_attachment_index = 0, binding = 0) uniform subpassInput s;",
+            "GL_EXT_shader_tile_image",
+        ),
+        (
+            ShaderStage::Fragment,
+            "layout(input_attachment_index = 0, binding = 0) uniform subpassInputMS s;
+            layout(location = 0) out vec4 o;
+            void f() { o = subpassLoad(s); }",
+            "subpassLoad",
+        ),
+    ];
+    for (stage, declarations, expected) in cases {
+        let source = format!("#version 450\n{declarations}\nvoid main() {{}}\n");
+        let error = parse(stage, &source).unwrap_err();
+        assert!(error.contains(expected), "{source}: {error}");
+    }
+}

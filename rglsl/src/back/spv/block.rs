@@ -2332,6 +2332,13 @@ impl BlockContext<'_> {
         let buffer = |dim| dim == crate::ImageDimension::Buffer;
         let (dynamic, nonuniform) = match self.ir_module.types[element].inner {
             crate::TypeInner::Image {
+                dim: crate::ImageDimension::Subpass,
+                ..
+            } => (
+                Some(Cap::InputAttachmentArrayDynamicIndexing),
+                Cap::InputAttachmentArrayNonUniformIndexing,
+            ),
+            crate::TypeInner::Image {
                 dim,
                 class: crate::ImageClass::Storage { .. },
                 ..

@@ -53,6 +53,8 @@ pub enum GlobalVariableError {
     VolatileNotSupported,
     #[error("Transform feedback decorations are only valid for stage outputs")]
     InvalidTransformFeedback,
+    #[error("An input attachment index is only valid for subpass inputs")]
+    InvalidInputAttachmentIndex,
 }
 
 #[derive(Clone, Debug, thiserror::Error)]
@@ -1243,6 +1245,22 @@ impl super::Validator {
         log::debug!("var {var:?}");
         if var.xfb.is_some() && var.space != crate::AddressSpace::Output {
             return Err(GlobalVariableError::InvalidTransformFeedback);
+        }
+        if var.input_attachment_index.is_some() {
+            let element = match gctx.types[var.ty].inner {
+                crate::TypeInner::BindingArray { base, .. } => base,
+                _ => var.ty,
+            };
+            let subpass = matches!(
+                gctx.types[element].inner,
+                crate::TypeInner::Image {
+                    dim: crate::ImageDimension::Subpass,
+                    ..
+                }
+            );
+            if !subpass || var.space != crate::AddressSpace::Handle {
+                return Err(GlobalVariableError::InvalidInputAttachmentIndex);
+            }
         }
         let inner_ty = match gctx.types[var.ty].inner {
             // A binding array is (mostly) supposed to behave the same as a

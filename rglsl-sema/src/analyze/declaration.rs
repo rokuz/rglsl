@@ -368,6 +368,12 @@ impl Analyzer<'_> {
                                     expression.span,
                                     DiagnosticKind::LayoutValueNegative(name.clone()),
                                 );
+                            } else if name == "input_attachment_index" {
+                                self.input_attachment_index_value(
+                                    expression.span,
+                                    value,
+                                    operand.specialization,
+                                );
                             }
                             value
                         });
@@ -389,6 +395,19 @@ impl Analyzer<'_> {
             }
         }
         result
+    }
+
+    fn input_attachment_index_value(&mut self, span: Span, value: Option<i64>, specialized: bool) {
+        let invalid = |reason| DiagnosticKind::InvalidQualifier {
+            qualifier: "input_attachment_index",
+            reason,
+        };
+        if value.is_some_and(|value| value >= i64::from(i32::MAX)) {
+            self.error(span, invalid("attachment index is too large"));
+        }
+        if specialized {
+            self.error(span, invalid("needs a literal integer"));
+        }
     }
 
     fn non_uniform_storage_check(
@@ -505,7 +524,20 @@ impl Analyzer<'_> {
             TypeSpecifierNonArray::Void => Type::VOID,
             TypeSpecifierNonArray::Basic(basic) => Type::from(*basic),
             TypeSpecifierNonArray::Opaque(name) => match Opaque::from_keyword(name) {
-                Some(opaque) => Type::opaque(opaque),
+                Some(opaque) => {
+                    if opaque.kind == crate::types::OpaqueKind::SubpassInput
+                        && self.options.stage != Stage::Fragment
+                    {
+                        self.error(
+                            span,
+                            DiagnosticKind::InvalidQualifier {
+                                qualifier: "subpass input",
+                                reason: "not supported in this stage",
+                            },
+                        );
+                    }
+                    Type::opaque(opaque)
+                }
                 None => {
                     self.error(span, DiagnosticKind::RemovedUnderVulkan(name.clone()));
                     Type::ERROR
@@ -612,6 +644,8 @@ impl Analyzer<'_> {
                             reason,
                         },
                     );
+                } else if in_block.is_some() {
+                    self.input_attachment_check(&qualifiers, &ty, name.span);
                 }
                 members.push(Member {
                     name: name.node.clone(),
@@ -683,17 +717,6 @@ impl Analyzer<'_> {
             return;
         }
         let stage = self.options.stage;
-        let is_subpass = matches!(
-            ty.kind,
-            TypeKind::Opaque(opaque) if opaque.kind == crate::types::OpaqueKind::SubpassInput
-        );
-        if is_subpass && stage != Stage::Fragment {
-            self.error(
-                span,
-                invalid("subpass", "subpass inputs need a fragment shader"),
-            );
-            return;
-        }
         if qualifiers.storage == Storage::Inout {
             self.error(span, invalid("inout", "not allowed at global scope"));
             return;
@@ -851,6 +874,44 @@ impl Analyzer<'_> {
         }
     }
 
+    fn input_attachment_check(&mut self, qualifiers: &Qualifiers, ty: &Type, span: Span) {
+        let is_subpass = matches!(
+            ty.kind,
+            TypeKind::Opaque(opaque) if opaque.kind == crate::types::OpaqueKind::SubpassInput
+        );
+        let has_index = qualifiers.has_layout("input_attachment_index");
+        let invalid = |qualifier, reason| DiagnosticKind::InvalidQualifier { qualifier, reason };
+        if !is_subpass {
+            if has_index {
+                self.error(
+                    span,
+                    invalid("input_attachment_index", "can only be used with a subpass"),
+                );
+            }
+            return;
+        }
+        if self.extension_enabled("GL_EXT_shader_tile_image") {
+            self.error(
+                span,
+                invalid(
+                    "subpass",
+                    "cannot be used with GL_EXT_shader_tile_image enabled",
+                ),
+            );
+        }
+        if !has_index
+            && (ty.is_array() || !self.extension_enabled("GL_EXT_optional_input_attachment_index"))
+        {
+            self.error(
+                span,
+                invalid(
+                    "subpass",
+                    "requires an input_attachment_index layout qualifier",
+                ),
+            );
+        }
+    }
+
     fn init_declarator(
         &mut self,
         declarator: &Node<InitDeclarator>,
@@ -919,6 +980,7 @@ impl Analyzer<'_> {
             self.error(name.span, DiagnosticKind::UniformOutsideBlock);
         }
         self.global_storage_checks(&qualifiers, &ty, name.span, false);
+        self.input_attachment_check(&qualifiers, &ty, name.span);
         self.storage_small_check(name.span, &ty, qualifiers.storage);
         if !is_global
             && (qualifiers.interpolation.is_some()
@@ -1288,6 +1350,15 @@ impl Analyzer<'_> {
                 BlockStorage::Uniform
             }
         };
+        if qualifiers.has_layout("input_attachment_index") {
+            self.error(
+                structure.name.span,
+                DiagnosticKind::InvalidQualifier {
+                    qualifier: "input_attachment_index",
+                    reason: "can only be used with a subpass",
+                },
+            );
+        }
         let members = self.struct_members(&structure.members, Some(&qualifiers));
         let dimensions = instance
             .map(|instance| self.array_sizes(instance.array.as_ref()))

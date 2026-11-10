@@ -473,7 +473,11 @@ impl super::ImageClass {
     }
 
     pub const fn has_levels(self, dim: crate::ImageDimension) -> bool {
-        self.is_mipmapped() && !matches!(dim, crate::ImageDimension::Buffer)
+        self.is_mipmapped()
+            && !matches!(
+                dim,
+                crate::ImageDimension::Buffer | crate::ImageDimension::Subpass
+            )
     }
 }
 

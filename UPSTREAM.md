@@ -161,6 +161,17 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   single-sampled and not depth, addresses it with a scalar integer, and gives it no levels: a
   load has no level and the size query has no level (`OpImageQuerySize`); it cannot be sampled
   or gathered.
+- **Subpass inputs.** `ImageDimension::Subpass` (new) is `OpTypeImage SubpassData` with
+  Sampled=2 and the `InputAttachment` capability; its class is `ImageClass::Sampled { kind,
+  multi }` for the texel kind and multisampling. The validator allows it only non-arrayed, as
+  an `Image` (not a `SampledImage`), addressed by an `i32` 2-vector, without levels, queries,
+  sampling or gathering, and its loads only in fragment shaders. An `ImageLoad` of it is
+  `OpImageRead` (with `Sample` when multisampled) and never bounds-checked.
+  `GlobalVariable::input_attachment_index` (new, not serialized when `None`) is the
+  `InputAttachmentIndex` decoration; the validator allows it only on a `Handle` global of a
+  subpass image or a binding array of them. Dynamic indexing of a binding array of subpass
+  inputs declares `InputAttachmentArrayDynamicIndexing` or, when marked `ACCESS`,
+  `InputAttachmentArrayNonUniformIndexing`.
 - **Non-constant sample offsets.** `ImageSample::offset` may be any expression, not only a
   const-expression; the SPIR-V backend emits a constant one as `ConstOffset` and another as
   `Offset` with the `ImageGatherExtended` capability, as glslang does.
