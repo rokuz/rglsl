@@ -866,11 +866,12 @@ impl VaryingContext<'_> {
                 // If this is per-vertex, we change the type we validate to the inner type, otherwise we leave it be.
                 // This lets all validation be done on the inner type once we've ensured the per-vertex is array<T, 3>
                 let (ty, ty_inner) = if interpolation == Some(crate::Interpolation::PerVertex) {
-                    let three = crate::ArraySize::Constant(core::num::NonZeroU32::new(3).unwrap());
                     match ty_inner {
-                        &Ti::Array { base, size, .. } if size == three => {
-                            (base, &self.types[base].inner)
-                        }
+                        &Ti::Array {
+                            base,
+                            size: crate::ArraySize::Constant(size),
+                            ..
+                        } if size.get() == 3 => (base, &self.types[base].inner),
                         _ => return Err(VaryingError::PerVertexNotArrayOfThree),
                     }
                 } else {
@@ -1098,10 +1099,9 @@ impl VaryingContext<'_> {
                         return Err(VaryingError::BindingCollision { location: 0 }.with_span());
                     }
 
-                    **self
-                        .dual_source_blending
-                        .as_mut()
-                        .expect("unexpected dual source blending") = true;
+                    if let Some(dual_source_blending) = self.dual_source_blending.as_mut() {
+                        **dual_source_blending = true;
+                    }
                 } else {
                     for (index, member) in members.iter().enumerate() {
                         let span_context = self.types.get_span_context(ty);
@@ -1314,7 +1314,7 @@ impl super::Validator {
                             }
                             crate::ImageClass::External => {
                                 // This should have been rejected in `validate_type`.
-                                unreachable!("binding arrays of external images are not supported");
+                                return Err(GlobalVariableError::InvalidType(var.space));
                             }
                         },
                         crate::TypeInner::Sampler { .. }
@@ -1340,7 +1340,7 @@ impl super::Validator {
                         }
                         crate::TypeInner::RayQuery { .. } => {
                             // This should have been rejected in `validate_type`.
-                            unreachable!("binding arrays of ray queries are not supported");
+                            return Err(GlobalVariableError::InvalidType(var.space));
                         }
                         _ => {
                             // Fall through to the regular validation, which will reject `base`

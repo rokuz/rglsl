@@ -95,10 +95,8 @@ impl<T> Arena<T> {
     /// Returns an iterator over the items stored in this arena, returning both
     /// the item's handle and a reference to it.
     pub fn iter(&self) -> impl DoubleEndedIterator<Item = (Handle<T>, &T)> + ExactSizeIterator {
-        self.data
-            .iter()
-            .enumerate()
-            .map(|(i, v)| (Handle::from_usize(i), v))
+        let handles = Range::full_range_from_size(self.data.len());
+        self.data.iter().zip(handles).map(|(v, handle)| (handle, v))
     }
 
     /// Returns an iterator over the items stored in this arena, returning both
@@ -106,31 +104,34 @@ impl<T> Arena<T> {
     pub fn iter_mut_span(
         &mut self,
     ) -> impl DoubleEndedIterator<Item = (Handle<T>, &mut T, &Span)> + ExactSizeIterator {
+        let handles = Range::full_range_from_size(self.data.len());
         self.data
             .iter_mut()
             .zip(self.span_info.iter())
-            .enumerate()
-            .map(|(i, (v, span))| (Handle::from_usize(i), v, span))
+            .zip(handles)
+            .map(|((v, span), handle)| (handle, v, span))
     }
 
     /// Drains the arena, returning an iterator over the items stored.
     pub fn drain(&mut self) -> impl DoubleEndedIterator<Item = (Handle<T>, T, Span)> {
         let arena = core::mem::take(self);
+        let handles = Range::full_range_from_size(arena.data.len());
         arena
             .data
             .into_iter()
             .zip(arena.span_info)
-            .enumerate()
-            .map(|(i, (v, span))| (Handle::from_usize(i), v, span))
+            .zip(handles)
+            .map(|((v, span), handle)| (handle, v, span))
     }
 
     /// Returns a iterator over the items stored in this arena,
     /// returning both the item's handle and a mutable reference to it.
     pub fn iter_mut(&mut self) -> impl DoubleEndedIterator<Item = (Handle<T>, &mut T)> {
+        let handles = Range::full_range_from_size(self.data.len());
         self.data
             .iter_mut()
-            .enumerate()
-            .map(|(i, v)| (Handle::from_usize(i), v))
+            .zip(handles)
+            .map(|(v, handle)| (handle, v))
     }
 
     /// Adds a new value to the arena, returning a typed handle.
@@ -146,7 +147,7 @@ impl<T> Arena<T> {
         self.data
             .iter()
             .position(fun)
-            .map(|index| Handle::from_usize(index))
+            .and_then(Handle::try_from_usize)
     }
 
     /// Adds a value with a custom check for uniqueness:
@@ -159,10 +160,9 @@ impl<T> Arena<T> {
         span: Span,
         fun: F,
     ) -> Handle<T> {
-        if let Some(index) = self.data.iter().position(|d| fun(d, &value)) {
-            Handle::from_usize(index)
-        } else {
-            self.append(value, span)
+        match self.fetch_if(|d| fun(d, &value)) {
+            Some(handle) => handle,
+            None => self.append(value, span),
         }
     }
 
@@ -182,7 +182,13 @@ impl<T> Arena<T> {
 
     /// Get a mutable reference to an element in the arena.
     pub fn get_mut(&mut self, handle: Handle<T>) -> &mut T {
-        self.data.get_mut(handle.index()).unwrap()
+        &mut self[handle]
+    }
+
+    pub fn try_get_mut(&mut self, handle: Handle<T>) -> Result<&mut T, BadHandle> {
+        self.data
+            .get_mut(handle.index())
+            .ok_or_else(|| BadHandle::new(handle))
     }
 
     /// Get the range of handles from a particular number of elements to the end.
@@ -230,23 +236,33 @@ impl<T> Arena<T> {
             return Ok(());
         }
 
-        let last_handle = Handle::new(Index::new(range.inner.end - 1).unwrap());
-        if self.check_contains_handle(last_handle).is_err() {
+        let Some(last_index) = Index::new(range.inner.end - 1) else {
+            return Err(BadRangeError::new(range.clone()));
+        };
+        if self.check_contains_handle(Handle::new(last_index)).is_err() {
             return Err(BadRangeError::new(range.clone()));
         }
 
         Ok(())
     }
 
-    pub(crate) fn retain_mut<P>(&mut self, mut predicate: P)
+    pub(crate) fn try_retain_mut<P>(&mut self, mut predicate: P) -> Result<(), BadHandle>
     where
-        P: FnMut(Handle<T>, &mut T) -> bool,
+        P: FnMut(Handle<T>, &mut T) -> Result<bool, BadHandle>,
     {
+        let mut handles = Range::full_range_from_size(self.data.len());
         let mut index = 0;
         let mut retained = 0;
+        let mut result = Ok(());
         self.data.retain_mut(|elt| {
-            let handle = Handle::from_usize(index);
-            let keep = predicate(handle, elt);
+            let handle = handles.next();
+            let keep = match handle {
+                Some(handle) if result.is_ok() => predicate(handle, elt).unwrap_or_else(|error| {
+                    result = Err(error);
+                    true
+                }),
+                _ => true,
+            };
 
             // Since `predicate` needs mutable access to each element,
             // we can't feasibly call it twice, so we have to compact
@@ -261,6 +277,7 @@ impl<T> Arena<T> {
         });
 
         self.span_info.truncate(retained);
+        result
     }
 }
 

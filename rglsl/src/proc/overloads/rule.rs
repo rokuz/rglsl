@@ -59,31 +59,27 @@ pub enum Conclusion {
 }
 
 impl Conclusion {
-    pub fn for_frexp_modf(
+    pub const fn for_frexp_modf(
         function: ir::MathFunction,
         size: ConstructorSize,
         scalar: ir::Scalar,
-    ) -> Self {
+    ) -> Option<Self> {
         use ir::MathFunction as Mf;
         use ir::PredeclaredType as Pt;
 
         let size = match size {
             ConstructorSize::Scalar => None,
             ConstructorSize::Vector(size) => Some(size),
-            ConstructorSize::Matrix { .. } => {
-                unreachable!("FrexpModf only supports scalars and vectors");
-            }
+            ConstructorSize::Matrix { .. } => return None,
         };
 
         let predeclared = match function {
             Mf::Frexp => Pt::FrexpResult { size, scalar },
             Mf::Modf => Pt::ModfResult { size, scalar },
-            _ => {
-                unreachable!("FrexpModf only supports Frexp and Modf");
-            }
+            _ => return None,
         };
 
-        Conclusion::Predeclared(predeclared)
+        Some(Conclusion::Predeclared(predeclared))
     }
 
     pub const fn for_wide(size: ConstructorSize, scalar: ir::Scalar) -> Self {

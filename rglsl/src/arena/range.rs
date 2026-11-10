@@ -78,12 +78,30 @@ impl<T> Iterator for Range<T> {
         if self.inner.start < self.inner.end {
             let next = self.inner.start;
             self.inner.start += 1;
-            Some(Handle::new(Index::new(next).unwrap()))
+            Index::new(next).map(Handle::new)
+        } else {
+            None
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let len = self.inner.len();
+        (len, Some(len))
+    }
+}
+
+impl<T> DoubleEndedIterator for Range<T> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        if self.inner.start < self.inner.end {
+            self.inner.end -= 1;
+            Index::new(self.inner.end).map(Handle::new)
         } else {
             None
         }
     }
 }
+
+impl<T> ExactSizeIterator for Range<T> {}
 
 impl<T> Range<T> {
     /// Return a range enclosing handles `first` through `last`, inclusive.
@@ -108,12 +126,12 @@ impl<T> Range<T> {
     /// return `None`.
     pub const fn first_and_last(&self) -> Option<(Handle<T>, Handle<T>)> {
         if self.inner.start < self.inner.end {
-            Some((
-                // `Range::new_from_bounds` expects a start- and end-inclusive
-                // range, but `self.inner` is an end-exclusive range.
-                Handle::new(Index::new(self.inner.start).unwrap()),
-                Handle::new(Index::new(self.inner.end - 1).unwrap()),
-            ))
+            // `Range::new_from_bounds` expects a start- and end-inclusive
+            // range, but `self.inner` is an end-exclusive range.
+            match (Index::new(self.inner.start), Index::new(self.inner.end - 1)) {
+                (Some(first), Some(last)) => Some((Handle::new(first), Handle::new(last))),
+                _ => None,
+            }
         } else {
             None
         }

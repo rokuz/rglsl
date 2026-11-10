@@ -1,6 +1,6 @@
 use alloc::vec::Vec;
 
-use crate::arena::{Arena, Handle, HandleSet, Range};
+use crate::arena::{Arena, BadHandle, Handle, HandleSet, Range};
 
 type Index = crate::non_max_u32::NonMaxU32;
 
@@ -43,7 +43,7 @@ impl<T, U> HandleMap<T, U> {
 
 impl<T: 'static> HandleMap<T> {
     pub fn from_set(set: HandleSet<T>) -> Self {
-        let mut next_index = Index::new(0).unwrap();
+        let mut next_indices = (0..).map_while(Index::new);
         Self {
             new_index: set
                 .all_possible()
@@ -51,9 +51,7 @@ impl<T: 'static> HandleMap<T> {
                     if set.contains(handle) {
                         // This handle will be retained in the compacted version,
                         // so assign it a new index.
-                        let this = next_index;
-                        next_index = next_index.checked_add(1).unwrap();
-                        Some(this)
+                        next_indices.next()
                     } else {
                         // This handle will be omitted in the compacted version.
                         None
@@ -66,7 +64,7 @@ impl<T: 'static> HandleMap<T> {
 
     /// Return true if `old` is used in the compacted module.
     pub fn used(&self, old: Handle<T>) -> bool {
-        self.new_index[old.index()].is_some()
+        self.new_index.get(old.index()).is_some_and(Option::is_some)
     }
 
     /// Return the counterpart to `old` in the compacted module.
@@ -78,22 +76,28 @@ impl<T: 'static> HandleMap<T> {
             "adjusting {} handle [{}] -> [{:?}]",
             core::any::type_name::<T>(),
             old.index(),
-            self.new_index[old.index()]
+            self.new_index.get(old.index())
         );
-        self.new_index[old.index()].map(Handle::new)
+        self.new_index
+            .get(old.index())
+            .copied()
+            .flatten()
+            .map(Handle::new)
     }
 
     /// Return the counterpart to `old` in the compacted module.
-    ///
-    /// If we thought `old` wouldn't be used in the compacted module, panic.
-    pub fn adjust(&self, handle: &mut Handle<T>) {
-        *handle = self.try_adjust(*handle).unwrap();
+    pub fn adjust(&self, handle: &mut Handle<T>) -> Result<(), BadHandle> {
+        *handle = self
+            .try_adjust(*handle)
+            .ok_or_else(|| BadHandle::new(*handle))?;
+        Ok(())
     }
 
     /// Like `adjust`, but for optional handles.
-    pub fn adjust_option(&self, handle: &mut Option<Handle<T>>) {
-        if let Some(ref mut handle) = *handle {
-            self.adjust(handle);
+    pub fn adjust_option(&self, handle: &mut Option<Handle<T>>) -> Result<(), BadHandle> {
+        match *handle {
+            Some(ref mut handle) => self.adjust(handle),
+            None => Ok(()),
         }
     }
 
@@ -111,11 +115,16 @@ impl<T: 'static> HandleMap<T> {
     pub fn adjust_range(&self, range: &mut Range<T>, compacted_arena: &Arena<T>) {
         let mut index_range = range.index_range();
         let compacted;
-        if let Some(first) = index_range.find_map(|i| self.new_index[i as usize]) {
+        if let Some(first) =
+            index_range.find_map(|i| self.new_index.get(i as usize).copied().flatten())
+        {
             // The first call to `find_map` mutated `index_range` to hold the
             // remainder of original range, which is exactly the range we need
             // to search for the new last handle.
-            if let Some(last) = index_range.rev().find_map(|i| self.new_index[i as usize]) {
+            if let Some(last) = index_range
+                .rev()
+                .find_map(|i| self.new_index.get(i as usize).copied().flatten())
+            {
                 // Build an end-exclusive range, given the two included indices
                 // `first` and `last`.
                 compacted = first.get()..last.get() + 1;

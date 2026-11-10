@@ -434,16 +434,19 @@ impl<I: Iterator<Item = u32>> super::Frontend<I> {
                             }
                         }
                         if let Some(new_members) = new_members {
-                            module.types.replace(
-                                result.ty,
-                                crate::Type {
-                                    name: ty.name.clone(),
-                                    inner: crate::TypeInner::Struct {
-                                        members: new_members,
-                                        span,
+                            module
+                                .types
+                                .replace(
+                                    result.ty,
+                                    crate::Type {
+                                        name: ty.name.clone(),
+                                        inner: crate::TypeInner::Struct {
+                                            members: new_members,
+                                            span,
+                                        },
                                     },
-                                },
-                            );
+                                )
+                                .map_err(|_| Error::UnsupportedType(result.ty))?;
                         }
                     }
                 }

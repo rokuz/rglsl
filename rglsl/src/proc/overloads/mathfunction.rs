@@ -119,11 +119,14 @@ impl ir::MathFunction {
 
 fn ldexp() -> List {
     /// Construct the exponent scalar given the mantissa's inner.
-    fn exponent_from_mantissa(mantissa: ir::Scalar) -> ir::Scalar {
+    const fn exponent_from_mantissa(mantissa: ir::Scalar) -> Option<ir::Scalar> {
         match mantissa.kind {
-            ir::ScalarKind::AbstractFloat => ir::Scalar::ABSTRACT_INT,
-            ir::ScalarKind::Float => ir::Scalar::I32,
-            _ => unreachable!("not a float scalar"),
+            ir::ScalarKind::AbstractFloat => Some(ir::Scalar::ABSTRACT_INT),
+            ir::ScalarKind::Float => Some(ir::Scalar::I32),
+            ir::ScalarKind::Sint
+            | ir::ScalarKind::Uint
+            | ir::ScalarKind::Bool
+            | ir::ScalarKind::AbstractInt => None,
         }
     }
 
@@ -134,7 +137,7 @@ fn ldexp() -> List {
             let exponent_scalar = exponent_from_mantissa(mantissa_scalar);
             // There are scalar and vector component-wise overloads.
             scalar_or_vecn(mantissa_scalar)
-                .zip(scalar_or_vecn(exponent_scalar))
+                .zip(exponent_scalar.into_iter().flat_map(scalar_or_vecn))
                 .map(move |(mantissa, exponent)| {
                     let result = mantissa.clone();
                     rule([mantissa, exponent], result)

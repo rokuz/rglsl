@@ -85,7 +85,6 @@ macro_rules! gen_component_wise_extractor {
         where
             $target<M>: Into<Expression>,
         {
-            assert!(N > 0);
             let err = ConstantEvaluatorError::InvalidMathArg;
             let mut exprs = exprs.into_iter();
 
@@ -96,7 +95,7 @@ macro_rules! gen_component_wise_extractor {
                 };
             }
 
-            let new_expr: Result<Expression, ConstantEvaluatorError> = match sanitize!(exprs.next().unwrap())? {
+            let new_expr: Result<Expression, ConstantEvaluatorError> = match sanitize!(exprs.next().ok_or_else(|| err.clone())?)? {
                 $(
                     &Expression::Literal(Literal::$literal(x)) => {
                         let mut arr = ArrayVec::<_, N>::new();
@@ -107,7 +106,7 @@ macro_rules! gen_component_wise_extractor {
                                 _ => return Err(err),
                             }
                         }
-                        let comps = $target::$mapping(arr.into_inner().unwrap());
+                        let comps = $target::$mapping(arr.into_inner().map_err(|_| err.clone())?);
                         Ok(handler(comps)?.into())
                     },
                 )+
@@ -149,7 +148,7 @@ macro_rules! gen_component_wise_extractor {
                                     _ => return Err(err),
                                 }
                             }
-                            let component_groups = component_groups.into_inner().unwrap();
+                            let component_groups = component_groups.into_inner().map_err(|_| err.clone())?;
                             let mut new_components =
                                 ArrayVec::<_, { crate::VectorSize::MAX }>::new();
                             for idx in 0..(size as u8).into() {
@@ -159,7 +158,7 @@ macro_rules! gen_component_wise_extractor {
                                         cs.get(idx).cloned().ok_or_else(|| err.clone())?,
                                     );
                                 }
-                                let group = group_arr.into_inner().unwrap();
+                                let group = group_arr.into_inner().map_err(|_| err.clone())?;
                                 new_components.push($ident(
                                     eval,
                                     span,
@@ -420,7 +419,12 @@ impl LiteralVector {
         span: Span,
     ) -> Result<Handle<Expression>, ConstantEvaluatorError> {
         let lit_vec = self.to_literal_vec();
-        assert!(!lit_vec.is_empty());
+        if lit_vec.is_empty() {
+            return Err(ConstantEvaluatorError::InvalidVectorComposeLength {
+                expected: crate::VectorSize::MAX,
+                actual: 0,
+            });
+        }
         let expr = if lit_vec.len() == 1 {
             Expression::Literal(lit_vec[0])
         } else {
@@ -433,7 +437,14 @@ impl LiteralVector {
                                 2 => crate::VectorSize::Bi,
                                 3 => crate::VectorSize::Tri,
                                 4 => crate::VectorSize::Quad,
-                                _ => unreachable!(),
+                                actual => {
+                                    return Err(
+                                        ConstantEvaluatorError::InvalidVectorComposeLength {
+                                            expected: crate::VectorSize::MAX,
+                                            actual,
+                                        },
+                                    )
+                                }
                             },
                             scalar: lit_vec[0].scalar(),
                         },
@@ -961,6 +972,10 @@ pub enum ConstantEvaluatorError {
     CooperativeOperation,
     #[error("Type is too large")]
     TypeTooLarge(Handle<Type>),
+    #[error(transparent)]
+    Layout(crate::proc::LayoutError),
+    #[error("Composite constant has no components")]
+    EmptyCompose,
 }
 
 impl<'a> ConstantEvaluator<'a> {
@@ -1590,6 +1605,11 @@ impl<'a> ConstantEvaluator<'a> {
                 fun, expected, given,
             ));
         }
+        let required = |arg: Option<Handle<Expression>>| {
+            arg.ok_or(ConstantEvaluatorError::InvalidMathArgCount(
+                fun, expected, given,
+            ))
+        };
 
         if matches!(self.behavior, Behavior::Glsl(_)) {
             if let Some(result) = self.glsl_math(arg, arg1, arg2, fun, span) {
@@ -1613,12 +1633,12 @@ impl<'a> ConstantEvaluator<'a> {
                 })
             }
             crate::MathFunction::Min => {
-                component_wise_scalar!(self, span, [arg, arg1.unwrap()], |e1, e2| {
+                component_wise_scalar!(self, span, [arg, required(arg1)?], |e1, e2| {
                     Ok([e1.min(e2)])
                 })
             }
             crate::MathFunction::Max => {
-                component_wise_scalar!(self, span, [arg, arg1.unwrap()], |e1, e2| {
+                component_wise_scalar!(self, span, [arg, required(arg1)?], |e1, e2| {
                     Ok([e1.max(e2)])
                 })
             }
@@ -1626,7 +1646,7 @@ impl<'a> ConstantEvaluator<'a> {
                 component_wise_scalar!(
                     self,
                     span,
-                    [arg, arg1.unwrap(), arg2.unwrap()],
+                    [arg, required(arg1)?, required(arg2)?],
                     |e, low, high| {
                         if low > high {
                             Err(ConstantEvaluatorError::InvalidClamp)
@@ -1699,7 +1719,7 @@ impl<'a> ConstantEvaluator<'a> {
                 component_wise_float!(self, span, [arg], |e| { Ok([e.atan()]) })
             }
             crate::MathFunction::Atan2 => {
-                component_wise_float!(self, span, [arg, arg1.unwrap()], |y, x| {
+                component_wise_float!(self, span, [arg, required(arg1)?], |y, x| {
                     Ok([y.atan2(x)])
                 })
             }
@@ -1826,7 +1846,7 @@ impl<'a> ConstantEvaluator<'a> {
                 })
             }
             crate::MathFunction::Pow => {
-                component_wise_float!(self, span, [arg, arg1.unwrap()], |e1, e2| {
+                component_wise_float!(self, span, [arg, required(arg1)?], |e1, e2| {
                     // 0.pow(0) is an error since exp2(0 * log2(0)) is NaN.
                     // https://www.w3.org/TR/WGSL/#pow-builtin
                     if e1 < Zero::zero()
@@ -1860,12 +1880,12 @@ impl<'a> ConstantEvaluator<'a> {
                 component_wise_float!(
                     self,
                     span,
-                    [arg, arg1.unwrap(), arg2.unwrap()],
+                    [arg, required(arg1)?, required(arg2)?],
                     |e1, e2, e3| { Ok([e1.mul_add(e2, e3)]) }
                 )
             }
             crate::MathFunction::Step => {
-                component_wise_float(self, span, [arg, arg1.unwrap()], |x| match x {
+                component_wise_float(self, span, [arg, required(arg1)?], |x| match x {
                     Float::Abstract([edge, x]) => {
                         Ok(Float::Abstract([if edge <= x { 1.0 } else { 0.0 }]))
                     }
@@ -1898,28 +1918,25 @@ impl<'a> ConstantEvaluator<'a> {
             crate::MathFunction::CountTrailingZeros => {
                 component_wise_concrete_int!(self, span, [arg], |e| {
                     #[allow(clippy::useless_conversion)]
-                    Ok([e
-                        .trailing_zeros()
-                        .try_into()
-                        .expect("bit count overflowed 32 bits, somehow!?")])
+                    Ok([e.trailing_zeros().try_into().map_err(|_| {
+                        ConstantEvaluatorError::InvalidMathArgValue("trailing_zeros".into())
+                    })?])
                 })
             }
             crate::MathFunction::CountLeadingZeros => {
                 component_wise_concrete_int!(self, span, [arg], |e| {
                     #[allow(clippy::useless_conversion)]
-                    Ok([e
-                        .leading_zeros()
-                        .try_into()
-                        .expect("bit count overflowed 32 bits, somehow!?")])
+                    Ok([e.leading_zeros().try_into().map_err(|_| {
+                        ConstantEvaluatorError::InvalidMathArgValue("leading_zeros".into())
+                    })?])
                 })
             }
             crate::MathFunction::CountOneBits => {
                 component_wise_concrete_int!(self, span, [arg], |e| {
                     #[allow(clippy::useless_conversion)]
-                    Ok([e
-                        .count_ones()
-                        .try_into()
-                        .expect("bit count overflowed 32 bits, somehow!?")])
+                    Ok([e.count_ones().try_into().map_err(|_| {
+                        ConstantEvaluatorError::InvalidMathArgValue("count_ones".into())
+                    })?])
                 })
             }
             crate::MathFunction::ReverseBits => {
@@ -1934,16 +1951,16 @@ impl<'a> ConstantEvaluator<'a> {
 
             // vector
             crate::MathFunction::Dot4I8Packed => {
-                self.packed_dot_product(arg, arg1.unwrap(), span, true)
+                self.packed_dot_product(arg, required(arg1)?, span, true)
             }
             crate::MathFunction::Dot4U8Packed => {
-                self.packed_dot_product(arg, arg1.unwrap(), span, false)
+                self.packed_dot_product(arg, required(arg1)?, span, false)
             }
-            crate::MathFunction::Cross => self.cross_product(arg, arg1.unwrap(), span),
+            crate::MathFunction::Cross => self.cross_product(arg, required(arg1)?, span),
             crate::MathFunction::Dot => {
                 // https://www.w3.org/TR/WGSL/#dot-builtin
                 let e1 = self.extract_vec(arg, false)?;
-                let e2 = self.extract_vec(arg1.unwrap(), false)?;
+                let e2 = self.extract_vec(required(arg1)?, false)?;
                 if e1.len() != e2.len() {
                     return Err(ConstantEvaluatorError::InvalidMathArg);
                 }
@@ -2015,7 +2032,7 @@ impl<'a> ConstantEvaluator<'a> {
             crate::MathFunction::Distance => {
                 // https://www.w3.org/TR/WGSL/#distance-builtin
                 let e1 = self.extract_vec(arg, true)?;
-                let e2 = self.extract_vec(arg1.unwrap(), true)?;
+                let e2 = self.extract_vec(required(arg1)?, true)?;
                 if e1.len() != e2.len() {
                     return Err(ConstantEvaluatorError::InvalidMathArg);
                 }
@@ -2810,8 +2827,10 @@ impl<'a> ConstantEvaluator<'a> {
             *component = self.cast_array(*component, target, span)?;
         }
 
-        let first = components.first().unwrap();
-        let new_base = match self.resolve_type(*first)? {
+        let first = *components
+            .first()
+            .ok_or(ConstantEvaluatorError::EmptyCompose)?;
+        let new_base = match self.resolve_type(first)? {
             crate::proc::TypeResolution::Handle(ty) => ty,
             crate::proc::TypeResolution::Value(inner) => {
                 self.types.insert(Type { name: None, inner }, span)
@@ -2821,10 +2840,12 @@ impl<'a> ConstantEvaluator<'a> {
         layouter.update(self.to_ctx()).map_err(|err| {
             // The layouter operates lazily, so the error
             // could be for any pending type.
-            let crate::proc::LayoutErrorInner::TooLarge = err.inner else {
-                unreachable!("unexpected layout error: {err:?}");
-            };
-            ConstantEvaluatorError::TypeTooLarge(err.ty)
+            match err.inner {
+                crate::proc::LayoutErrorInner::TooLarge => {
+                    ConstantEvaluatorError::TypeTooLarge(err.ty)
+                }
+                _ => ConstantEvaluatorError::Layout(err),
+            }
         })?;
         *self.layouter = layouter;
 
@@ -3516,7 +3537,7 @@ impl<'a> ConstantEvaluator<'a> {
             .iter()
             .map(|&column| {
                 let Expression::Compose { ref components, .. } = self.expressions[column] else {
-                    unreachable!()
+                    return Err(ConstantEvaluatorError::InvalidBinaryOpArgs);
                 };
                 self.dot_exprs(
                     vec_components.iter().cloned(),
@@ -3547,7 +3568,7 @@ impl<'a> ConstantEvaluator<'a> {
             span,
         );
 
-        let flatten = self.flatten_matrix(mat_components);
+        let flatten = self.flatten_matrix(mat_components)?;
         let nr = mat_rows as usize;
         let components = (0..nr)
             .map(|r| {
@@ -3595,8 +3616,8 @@ impl<'a> ConstantEvaluator<'a> {
             span,
         );
 
-        let left_flattened = self.flatten_matrix(left_components);
-        let right_flattened = self.flatten_matrix(right_components);
+        let left_flattened = self.flatten_matrix(left_components)?;
+        let right_flattened = self.flatten_matrix(right_components)?;
         for c in 0..right_nc {
             let result_column = (0..left_nr)
                 .map(|r| {
@@ -3618,15 +3639,20 @@ impl<'a> ConstantEvaluator<'a> {
         })
     }
 
-    fn flatten_matrix(&self, columns: &[Handle<Expression>]) -> ArrayVec<Handle<Expression>, 16> {
+    fn flatten_matrix(
+        &self,
+        columns: &[Handle<Expression>],
+    ) -> Result<ArrayVec<Handle<Expression>, 16>, ConstantEvaluatorError> {
         let mut flattened = ArrayVec::<_, 16>::new();
         for &column in columns {
             let Expression::Compose { ref components, .. } = self.expressions[column] else {
-                unreachable!()
+                return Err(ConstantEvaluatorError::InvalidBinaryOpArgs);
             };
-            flattened.extend(components.iter().cloned());
+            flattened
+                .try_extend_from_slice(components)
+                .map_err(|_| ConstantEvaluatorError::InvalidBinaryOpArgs)?;
         }
-        flattened
+        Ok(flattened)
     }
 
     fn dot_exprs(
@@ -3643,7 +3669,7 @@ impl<'a> ConstantEvaluator<'a> {
                 None => acc = Some(result),
             }
         }
-        Ok(acc.unwrap())
+        acc.ok_or(ConstantEvaluatorError::InvalidBinaryOpArgs)
     }
 
     fn relational(
@@ -3673,10 +3699,10 @@ impl<'a> ConstantEvaluator<'a> {
                         }
                     }
                     let components = bool_components;
-                    let result = match fun {
-                        RelationalFunction::All => components.iter().all(|c| *c),
-                        RelationalFunction::Any => components.iter().any(|c| *c),
-                        _ => unreachable!(),
+                    let result = if matches!(fun, RelationalFunction::All) {
+                        components.iter().all(|c| *c)
+                    } else {
+                        components.iter().any(|c| *c)
                     };
                     self.register_evaluated_expr(Expression::Literal(Literal::Bool(result)), span)
                 }
@@ -3879,14 +3905,14 @@ impl<'a> ConstantEvaluator<'a> {
                     components: ref accept_components,
                 },
             ) => {
-                let ty_deets = |ty| {
-                    let (size, scalar) = self.types[ty].inner.vector_size_and_scalar().unwrap();
-                    (size.unwrap(), scalar)
+                let ty_deets = |ty| match self.types[ty].inner.vector_size_and_scalar() {
+                    Some((Some(size), scalar)) => Ok((size, scalar)),
+                    _ => Err(ConstantEvaluatorError::SelectAcceptRejectTypeMismatch),
                 };
 
                 let expected_vec_size = {
-                    let [(reject_vec_size, _), (accept_vec_size, _)] =
-                        [reject_ty, accept_ty].map(ty_deets);
+                    let (reject_vec_size, _) = ty_deets(reject_ty)?;
+                    let (accept_vec_size, _) = ty_deets(accept_ty)?;
 
                     if reject_vec_size != accept_vec_size {
                         return Err(ConstantEvaluatorError::SelectVecRejectAcceptSizeMismatch {
@@ -3905,7 +3931,8 @@ impl<'a> ConstantEvaluator<'a> {
                         ty: condition_ty,
                         components: ref condition_components,
                     } => {
-                        let (condition_vec_size, condition_scalar) = ty_deets(condition_ty);
+                        let (condition_vec_size, condition_scalar) = ty_deets(condition_ty)
+                            .map_err(|_| ConstantEvaluatorError::SelectConditionNotAVecBool)?;
                         if condition_scalar.kind != ScalarKind::Bool {
                             return Err(ConstantEvaluatorError::SelectConditionNotAVecBool);
                         }
@@ -3915,11 +3942,11 @@ impl<'a> ConstantEvaluator<'a> {
                         condition_components
                             .iter()
                             .copied()
-                            .map(|component| match &self.expressions[component] {
-                                &Expression::Literal(Literal::Bool(condition)) => condition,
-                                _ => unreachable!(),
+                            .map(|component| match self.expressions[component] {
+                                Expression::Literal(Literal::Bool(condition)) => Ok(condition),
+                                _ => Err(ConstantEvaluatorError::SelectConditionNotAVecBool),
                             })
-                            .collect()
+                            .collect::<Result<_, _>>()?
                     }
 
                     _ => return Err(ConstantEvaluatorError::SelectConditionNotAVecBool),
@@ -3933,9 +3960,13 @@ impl<'a> ConstantEvaluator<'a> {
                         .zip(accept_components.clone().into_iter())
                         .zip(condition_components.into_iter())
                         .map(|((reject, accept), condition)| {
-                            let reject_scalar = match &self.expressions[reject] {
-                                &Expression::Literal(lit) => lit.scalar(),
-                                _ => unreachable!(),
+                            let reject_scalar = match self.expressions[reject] {
+                                Expression::Literal(lit) => lit.scalar(),
+                                _ => {
+                                    return Err(
+                                        ConstantEvaluatorError::SelectAcceptRejectTypeMismatch,
+                                    )
+                                }
                             };
                             select_single_component(self, reject_scalar, reject, accept, condition)
                         })
@@ -3955,8 +3986,7 @@ fn first_trailing_bit(concrete_int: ConcreteInt<1>) -> ConcreteInt<1> {
     let trailing_zeros_to_bit_idx = |e: u32| -> u32 {
         match e {
             idx @ 0..=31 => idx,
-            32 => u32::MAX,
-            _ => unreachable!(),
+            _ => u32::MAX,
         }
     };
     match concrete_int {
@@ -4035,8 +4065,7 @@ fn first_leading_bit(concrete_int: ConcreteInt<1>) -> ConcreteInt<1> {
     let rtl_to_ltr_bit_idx = |e: u32| -> u32 {
         match e {
             idx @ 0..=31 => 31 - idx,
-            32 => u32::MAX,
-            _ => unreachable!(),
+            _ => u32::MAX,
         }
     };
     match concrete_int {
@@ -4273,14 +4302,10 @@ impl TryFromAbstract<f64> for f16 {
 
 impl TryFromAbstract<i64> for f16 {
     fn try_from_abstract(value: i64) -> Result<f16, ConstantEvaluatorError> {
-        let f = f16::from_i64(value);
-        if f.is_none() {
-            return Err(ConstantEvaluatorError::AutomaticConversionLossy {
-                value: format!("{value:?}"),
-                to_type: "f16",
-            });
-        }
-        Ok(f.unwrap())
+        f16::from_i64(value).ok_or_else(|| ConstantEvaluatorError::AutomaticConversionLossy {
+            value: format!("{value:?}"),
+            to_type: "f16",
+        })
     }
 }
 

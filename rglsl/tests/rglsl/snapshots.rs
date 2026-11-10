@@ -57,7 +57,7 @@ Note: this is an issue with snapshot configuration, not code. If you added a new
         // meaningless changes add noise to snapshot diffs, making accurate
         // patch review difficult. Compacting the modules before generating
         // snapshots makes the output independent of unused arena entries.
-        rglsl::compact::compact(module, KeepUnused::No);
+        rglsl::compact::compact(module, KeepUnused::No).unwrap();
 
         {
             if targets.contains(Targets::IR) {
