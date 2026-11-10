@@ -13,7 +13,8 @@ It differs from glslang in two ways only, and adds no new syntax:
 
 **Status:** M0 — the naga crates are imported unchanged and the conformance harness runs.
 See [docs/PLAN.md](docs/PLAN.md) for the plan and milestones and [PROGRESS.md](PROGRESS.md)
-for the current numbers against glslang's test corpus.
+for the current numbers against glslang's test corpus, and [docs/parity/](docs/parity/README.md)
+for the feature-by-feature gap analysis against glslang.
 
 ## Building and testing
 
