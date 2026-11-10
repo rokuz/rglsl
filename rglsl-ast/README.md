@@ -24,7 +24,13 @@ Not accepted yet (extension-only or not available under Vulkan in glslang's gram
 `[[...]]`, `spirv_*` qualifiers and types, type parameters `<...>`, `demote`,
 `terminateInvocation`, the ray tracing and mesh shader qualifiers and statements, C-style casts,
 default parameter values, `...` parameters, explicit-arithmetic and half-float types, string
-literals, inline struct blocks in block members.
+literals, inline struct blocks in block members other than `qualifier { ... } name;`.
+
+`resourceheap` and `samplerheap` are storage qualifiers (`GL_EXT_structured_descriptor_heap`).
+A member declaration that starts with a type qualifier followed by `{` is an inline block
+(`TypeSpecifierNonArray::InlineBlock`), as in glslang's `block_heap_inner_structure`; the
+semantic analysis accepts it only for `buffer_reference` blocks inside heap blocks. A block
+with `layout(buffer_type)` declares a type name, like a `buffer_reference` block.
 
 `nonuniformEXT` is accepted with `GL_EXT_nonuniform_qualifier` as a type qualifier
 (`SingleTypeQualifier::NonUniform`) and as `nonuniformEXT(expr)`, a call of the function

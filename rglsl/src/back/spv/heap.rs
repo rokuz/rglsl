@@ -229,7 +229,7 @@ impl Instruction {
 }
 
 impl Writer {
-    pub(super) fn write_heap_type_local(&mut self, id: Word, local: LocalType) -> bool {
+    pub(super) fn write_heap_type_local(&mut self, id: Word, local: LocalType) {
         let instruction = match local {
             LocalType::UntypedPointer { class } => Instruction::type_untyped_pointer(id, class),
             LocalType::BufferDescriptor { class } => {
@@ -238,10 +238,9 @@ impl Writer {
                 }
                 Instruction::type_buffer(id, class)
             }
-            _ => return false,
+            _ => return,
         };
         instruction.to_words(&mut self.logical_layout.declarations);
-        true
     }
 
     fn use_heaps(&mut self) -> Result<(), Error> {

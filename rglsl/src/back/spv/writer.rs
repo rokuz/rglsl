@@ -2359,7 +2359,7 @@ impl Writer {
             LocalType::AccelerationStructure => Instruction::type_acceleration_structure(id),
             LocalType::RayQuery => Instruction::type_ray_query(id),
             LocalType::UntypedPointer { .. } | LocalType::BufferDescriptor { .. } => {
-                let _ = self.write_heap_type_local(id, local_ty);
+                self.write_heap_type_local(id, local_ty);
                 return;
             }
         };
