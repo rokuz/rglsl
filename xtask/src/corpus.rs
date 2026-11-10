@@ -7,8 +7,10 @@
 //! no gtest lists are compiled the way `glslangValidator <file>` does by default.
 //!
 //! The project targets Vulkan GLSL with `#version 450` or `460` only, so only
-//! shaders compiled under Vulkan semantics with one of those versions are in
-//! scope (see [`Case::in_scope`]).
+//! shaders with one of those versions are run. They form two corpora (see
+//! [`Corpus`]): the ones glslang's tests compile under Vulkan semantics, and
+//! the ones they compile under OpenGL semantics, which we compile under Vulkan
+//! semantics instead.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -56,6 +58,17 @@ impl Target {
         ast_only: true,
         compile_only: false,
         automap: false,
+        relax_set_binding_limits: false,
+    };
+
+    /// Vulkan 1.0 with the options glslang's Vulkan test suites use by default.
+    pub const VULKAN_DEFAULT: Self = Self {
+        semantics: Semantics::Vulkan,
+        vulkan: (1, 0),
+        spirv: (1, 0),
+        ast_only: false,
+        compile_only: false,
+        automap: true,
         relax_set_binding_limits: false,
     };
 
@@ -122,19 +135,36 @@ pub struct Case {
     pub target: Target,
     /// The gtest suite that lists the file, if any.
     pub suite: Option<String>,
-    /// The `#version` directive: number and profile (`es`, `core`, ...), if any.
-    pub version: Option<(u32, Option<String>)>,
+    /// The `#version` number: one of [`SUPPORTED_VERSIONS`].
+    pub version: u32,
+    pub corpus: Corpus,
+}
+
+/// Which part of glslang's `Test/` directory a shader belongs to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Corpus {
+    /// glslang's own tests compile the shader under Vulkan semantics.
+    Vulkan,
+    /// glslang's own tests compile the shader under OpenGL semantics (or do
+    /// not list it). The oracle compiles it under Vulkan semantics instead,
+    /// which mostly exercises the rules for rejecting OpenGL-only constructs.
+    OpenGlAsVulkan,
+}
+
+impl Corpus {
+    pub const ALL: [Self; 2] = [Self::Vulkan, Self::OpenGlAsVulkan];
 }
 
 /// The `#version` numbers the project supports.
 pub const SUPPORTED_VERSIONS: &[u32] = &[450, 460];
 
-impl Case {
-    /// Vulkan semantics and a desktop `#version` 450 or 460.
-    pub fn in_scope(&self) -> bool {
-        self.target.semantics == Semantics::Vulkan
-            && matches!(&self.version, Some((number, profile))
-                if SUPPORTED_VERSIONS.contains(number) && profile.as_deref() != Some("es"))
+/// The `#version` number, if it is a desktop version the project supports.
+fn supported_version(source: &str) -> Option<u32> {
+    match parse_version(source)? {
+        (number, profile) if profile.as_deref() != Some("es") => {
+            SUPPORTED_VERSIONS.contains(&number).then_some(number)
+        }
+        _ => None,
     }
 }
 
@@ -153,7 +183,8 @@ fn parse_version(source: &str) -> Option<(u32, Option<String>)> {
     })
 }
 
-/// Lists the shaders in `<glslang>/Test` with the target their gtest uses.
+/// Lists the in-scope shaders in `<glslang>/Test` with the target they are
+/// compiled for.
 pub fn load(glslang_dir: &Path) -> Result<Vec<Case>> {
     let test_dir = glslang_dir.join("Test");
     let manifest = load_manifest(&glslang_dir.join("gtests"))?;
@@ -180,13 +211,21 @@ pub fn load(glslang_dir: &Path) -> Result<Vec<Case>> {
             None => (Target::DEFAULT, None),
         };
         let source = String::from_utf8_lossy(&fs::read(&path)?).into_owned();
+        let Some(version) = supported_version(&source) else {
+            continue;
+        };
+        let (corpus, target) = match target.semantics {
+            Semantics::Vulkan => (Corpus::Vulkan, target),
+            Semantics::OpenGL => (Corpus::OpenGlAsVulkan, Target::VULKAN_DEFAULT),
+        };
         cases.push(Case {
             name: name.to_string(),
             path: path.clone(),
             stage,
             target,
             suite,
-            version: parse_version(&source),
+            version,
+            corpus,
         });
     }
     cases.sort_by(|a, b| a.name.cmp(&b.name));

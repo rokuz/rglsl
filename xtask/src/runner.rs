@@ -143,8 +143,6 @@ pub fn run(root: &Path, options: Options) -> Result<()> {
     }
 
     let mut cases = corpus::load(&env.glslang_dir)?;
-    let corpus_size = cases.len();
-    cases.retain(Case::in_scope);
     if let Some(filter) = &options.filter {
         cases.retain(|c| c.name.contains(filter.as_str()));
     }
@@ -202,12 +200,12 @@ pub fn run(root: &Path, options: Options) -> Result<()> {
 
     let details = root.join("target").join("xtask").join("results.tsv");
     fs::write(&details, report::details(&results))?;
-    let summary = report::progress(&env, &results, corpus_size);
+    let summary = report::progress(&env, &results);
     if options.write_progress && options.filter.is_none() {
         fs::write(root.join("PROGRESS.md"), &summary)?;
         eprintln!("[xtask] wrote PROGRESS.md");
     }
-    println!("{}", report::table_only(&summary));
+    print!("{}", report::summary(&results));
     eprintln!("[xtask] per-shader results: {}", details.display());
     Ok(())
 }
