@@ -4767,3 +4767,58 @@ layout(local_size_x = 1) in;
 void main() {
     float least = minInvocationsAMD(1.0);
 }
+### view index needs multiview | frag | 4:ExtensionRequired
+layout(location = 0) out vec4 color;
+void main() {
+    color = vec4(gl_ViewIndex);
+}
+### view index with multiview | tese | ok
+#extension GL_EXT_multiview : enable
+layout(triangles) in;
+void main() { gl_Position = vec4(gl_ViewIndex); }
+### view index is not a compute built-in | comp | 5:UndeclaredIdentifier
+#extension GL_EXT_multiview : enable
+layout(local_size_x = 1) in;
+void main() {
+    int view = gl_ViewIndex;
+}
+### viewport mask needs viewport array2 | vert | 3:ExtensionRequired
+void main() {
+    gl_ViewportMask[0] = 1;
+}
+### secondary position needs stereo view rendering | geom | 5:ExtensionRequired
+layout(points) in;
+layout(points, max_vertices = 1) out;
+void main() {
+    gl_SecondaryPositionNV = gl_in[0].gl_Position;
+}
+### per view members of gl_in need their extension | tese | 4:ExtensionRequired
+layout(triangles) in;
+void main() {
+    gl_Position = gl_in[0].gl_PositionPerViewNV[0];
+}
+### per view members of gl_out | tesc | ok
+#extension GL_NVX_multiview_per_view_attributes : require
+#extension GL_NV_stereo_view_rendering : require
+layout(vertices = 4) out;
+void main() {
+    gl_out[gl_InvocationID].gl_ViewportMaskPerViewNV[0] = 1;
+    gl_out[gl_InvocationID].gl_SecondaryPositionNV = gl_in[1].gl_SecondaryPositionNV;
+}
+### viewport layers are not tessellation control members in vulkan | tesc | 5:NoSuchField
+#extension GL_NV_viewport_array2 : require
+layout(vertices = 3) out;
+void main() {
+    gl_out[gl_InvocationID].gl_Layer = 2;
+}
+### viewport relative needs viewport array2 | vert | 3:ExtensionRequired
+#extension GL_ARB_shader_viewport_layer_array : require
+layout(viewport_relative) out int gl_Layer;
+void main() {}
+### secondary view offset needs stereo view rendering | vert | 3:ExtensionRequired
+#extension GL_NV_viewport_array2 : require
+layout(secondary_view_offset = 1) out int gl_Layer;
+void main() {}
+### override coverage needs its extension | frag | 2:ExtensionRequired
+layout(override_coverage) out int gl_SampleMask[];
+void main() { gl_SampleMask[0] = 1; }

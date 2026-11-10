@@ -53,13 +53,13 @@ fn variable_names(builtins: &Builtins) -> BTreeSet<String> {
 #[test]
 fn the_tables_have_the_expected_sizes() {
     let expected = [
-        (Stage::Vertex, 5845, 27, 116, 151),
-        (Stage::TessControl, 5846, 27, 117, 149),
-        (Stage::TessEvaluation, 5845, 27, 120, 152),
-        (Stage::Geometry, 5849, 27, 118, 150),
-        (Stage::Fragment, 6099, 27, 122, 154),
+        (Stage::Vertex, 5845, 27, 122, 157),
+        (Stage::TessControl, 5846, 27, 118, 150),
+        (Stage::TessEvaluation, 5845, 27, 126, 158),
+        (Stage::Geometry, 5849, 27, 124, 156),
+        (Stage::Fragment, 6099, 27, 123, 155),
         (Stage::Compute, 5849, 27, 116, 148),
-        (Stage::Mesh, 5846, 27, 110, 142),
+        (Stage::Mesh, 5846, 27, 111, 143),
         (Stage::RayGeneration, 5845, 32, 108, 144),
     ];
     for (stage, functions, added, variables_450, variables_460) in expected {

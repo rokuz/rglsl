@@ -140,6 +140,14 @@ pub(super) fn ast_layout_value<'q>(
     qualifier: impl IntoIterator<Item = &'q Spanned<TypeQualifier>>,
     name: &str,
 ) -> Option<u32> {
+    ast_layout_signed(lowerer, qualifier, name).and_then(|value| u32::try_from(value).ok())
+}
+
+pub(super) fn ast_layout_signed<'q>(
+    lowerer: &Lowerer<'_>,
+    qualifier: impl IntoIterator<Item = &'q Spanned<TypeQualifier>>,
+    name: &str,
+) -> Option<i64> {
     let mut found = None;
     for qualifier in qualifier {
         for single in &qualifier.qualifiers {
@@ -150,8 +158,7 @@ pub(super) fn ast_layout_value<'q>(
                         .as_ref()
                         .and_then(|value| lowerer.analysis.expression(value.id))
                         .and_then(|info| info.value.as_ref())
-                        .and_then(rglsl_sema::constant::Constant::scalar_i64)
-                        .and_then(|value| u32::try_from(value).ok());
+                        .and_then(rglsl_sema::constant::Constant::scalar_i64);
                 }
             }
         }

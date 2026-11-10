@@ -86,6 +86,11 @@ fn per_vertex_builtin(name: &str, invariant: bool) -> Option<BuiltIn> {
         "gl_PointSize" => BuiltIn::PointSize,
         "gl_ClipDistance" => BuiltIn::ClipDistances,
         "gl_CullDistance" => BuiltIn::CullDistance,
+        "gl_ViewportMask" => BuiltIn::ViewportMaskNV,
+        "gl_SecondaryPositionNV" => BuiltIn::SecondaryPositionNV,
+        "gl_SecondaryViewportMaskNV" => BuiltIn::SecondaryViewportMaskNV,
+        "gl_PositionPerViewNV" => BuiltIn::PositionPerViewNV,
+        "gl_ViewportMaskPerViewNV" => BuiltIn::ViewportMaskPerViewNV,
         _ => return None,
     })
 }
@@ -448,21 +453,28 @@ impl<'a> Lowerer<'a> {
         let mut offset = 0_u32;
         let mut alignment = Alignment::ONE;
         for (index, member) in block.members.iter().enumerate() {
+            let index = u32::try_from(index).map_err(|_| internal(at))?;
+            let requested = rglsl_sema::builtins::view_extension(&member.name)
+                .is_none_or(|extension| analysis.extensions.contains(extension));
+            if !requested {
+                continue;
+            }
+            let position = u32::try_from(members.len()).map_err(|_| internal(at))?;
+            if position != index {
+                self.member_indices.insert((id, index), position);
+            }
             let builtin = per_vertex_builtin(
                 &member.name,
                 member.qualifiers.invariant || (!input && self.invariant_all),
             )
             .ok_or_else(|| unsupported(format_member(&member.name), at))?;
-            let ty = if super::prepass::CLIP_DISTANCES.contains(&member.name.as_str()) {
-                let index = u32::try_from(index).map_err(|_| internal(at))?;
-                let size = match member.ty.outer_size() {
-                    Some(GlslArraySize::Sized(size)) => size,
-                    _ => self.member_sizes.get(&(id, index)).copied().unwrap_or(1),
-                };
-                let element = GlslType::scalar(Scalar::Float);
-                self.ir_type(&element.array_of(GlslArraySize::Sized(size)), at)?
-            } else {
-                self.ir_type(&member.ty, at)?
+            let ty = match member.ty.outer_size() {
+                Some(GlslArraySize::Unsized) => {
+                    let size = self.member_sizes.get(&(id, index)).copied().unwrap_or(1);
+                    let element = member.ty.element_type().ok_or_else(|| internal(at))?;
+                    self.ir_type(&element.array_of(GlslArraySize::Sized(size)), at)?
+                }
+                _ => self.ir_type(&member.ty, at)?,
             };
             self.layouter
                 .update(self.module.to_ctx())

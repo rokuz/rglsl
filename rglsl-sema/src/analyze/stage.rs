@@ -105,6 +105,37 @@ impl Analyzer<'_> {
         }
     }
 
+    pub(crate) fn view_layout_extensions(&mut self, qualifiers: &Qualifiers) {
+        let pre_rasterization = matches!(
+            self.options.stage,
+            Stage::Vertex | Stage::TessControl | Stage::TessEvaluation | Stage::Geometry
+        );
+        let fragment = self.options.stage == Stage::Fragment;
+        let required: alloc::vec::Vec<(Span, &'static str, &'static str)> = qualifiers
+            .layout
+            .iter()
+            .filter_map(|entry| {
+                let name = entry.name.to_ascii_lowercase();
+                let (extension, what) = match name.as_str() {
+                    "viewport_relative" if pre_rasterization => {
+                        ("GL_NV_viewport_array2", "viewport_relative")
+                    }
+                    "secondary_view_offset" if pre_rasterization => {
+                        ("GL_NV_stereo_view_rendering", "secondary_view_offset")
+                    }
+                    "override_coverage" if fragment => {
+                        ("GL_NV_sample_mask_override_coverage", "override_coverage")
+                    }
+                    _ => return None,
+                };
+                Some((entry.span, extension, what))
+            })
+            .collect();
+        for (span, extension, what) in required {
+            self.require_extension(span, extension, what);
+        }
+    }
+
     pub(crate) fn no_shader_layouts(&mut self, qualifiers: &Qualifiers) {
         let found: alloc::vec::Vec<(&'static str, Span)> =
             shader_layouts(self.options.stage, qualifiers)

@@ -200,8 +200,20 @@ fn builtin_of(name: &str) -> Option<BuiltIn> {
         "gl_TessCoord" => BuiltIn::TessCoord,
         "gl_TessLevelOuter" => BuiltIn::TessLevelOuter,
         "gl_TessLevelInner" => BuiltIn::TessLevelInner,
-        "gl_Layer" => BuiltIn::Layer,
+        "gl_Layer" => BuiltIn::Layer {
+            viewport_relative: false,
+            secondary_view_offset: None,
+        },
         "gl_ViewportIndex" => BuiltIn::ViewportIndex,
+        "gl_ViewIndex" => BuiltIn::ViewIndex,
+        "gl_ViewportMask" => BuiltIn::ViewportMaskNV,
+        "gl_SecondaryPositionNV" => BuiltIn::SecondaryPositionNV,
+        "gl_SecondaryViewportMaskNV" => BuiltIn::SecondaryViewportMaskNV,
+        "gl_PositionPerViewNV" => BuiltIn::PositionPerViewNV,
+        "gl_ViewportMaskPerViewNV" => BuiltIn::ViewportMaskPerViewNV,
+        "gl_SampleMask" | "gl_SampleMaskIn" => BuiltIn::SampleMask {
+            override_coverage: false,
+        },
         "gl_SubgroupSize" => BuiltIn::SubgroupSize,
         "gl_SubgroupInvocationID" => BuiltIn::SubgroupInvocationId,
         "gl_NumSubgroups" => BuiltIn::NumSubgroups,
@@ -1681,6 +1693,25 @@ impl<'a> Lowerer<'a> {
             self.invariant.push((name.clone(), at));
         }
         for layout in layout_names(qualifier) {
+            match (layout, name.as_str()) {
+                ("viewport_relative", "gl_Layer") => {
+                    self.layer_layout.viewport_relative = true;
+                    self.layer_layout.redeclared = Some(symbol);
+                    continue;
+                }
+                ("secondary_view_offset", "gl_Layer") => {
+                    self.layer_layout.secondary_view_offset =
+                        xfb::ast_layout_signed(self, qualifier, "secondary_view_offset")
+                            .and_then(|value| i32::try_from(value).ok());
+                    self.layer_layout.redeclared = Some(symbol);
+                    continue;
+                }
+                ("override_coverage", "gl_SampleMask") => {
+                    self.override_coverage = true;
+                    continue;
+                }
+                _ => {}
+            }
             let depth = match layout {
                 "depth_any" => None,
                 "depth_greater" => Some(ConservativeDepth::GreaterEqual),
@@ -1795,7 +1826,17 @@ impl<'a> Lowerer<'a> {
         if let Some(&handle) = self.builtins.get(key) {
             return Ok(handle);
         }
-        let ir = if super::prepass::CLIP_DISTANCES.contains(&name) {
+        let builtin = match builtin {
+            BuiltIn::Layer { .. } => BuiltIn::Layer {
+                viewport_relative: self.layer_layout.viewport_relative,
+                secondary_view_offset: self.layer_layout.secondary_view_offset,
+            },
+            BuiltIn::SampleMask { .. } if output => BuiltIn::SampleMask {
+                override_coverage: self.override_coverage,
+            },
+            other => other,
+        };
+        let ir = if super::prepass::IMPLICITLY_SIZED.contains(&name) {
             let size = self
                 .builtin_sizes
                 .get(name)
@@ -1807,7 +1848,7 @@ impl<'a> Lowerer<'a> {
                 .ok_or_else(|| {
                     unsupported(format!("`{name}` without a size or a constant index"), at)
                 })?;
-            let element = GlslType::scalar(Scalar::Float);
+            let element = ty.element_type().ok_or_else(|| internal(at))?;
             let sized = element.array_of(GlslArraySize::Sized(size));
             self.ir_type(&sized, at)?
         } else if let BuiltIn::ShaderBallot(ShaderBallot::Mask(_)) = builtin {

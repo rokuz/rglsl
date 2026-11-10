@@ -233,6 +233,13 @@ pub(super) enum GlobalRef {
 pub(super) use rglsl_sema::types::Packing;
 
 #[derive(Clone, Copy, Debug, Default)]
+pub(super) struct LayerLayout {
+    pub viewport_relative: bool,
+    pub secondary_view_offset: Option<i32>,
+    pub redeclared: Option<SymbolId>,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
 pub(super) struct BlockDefaults {
     pub packing: Option<Packing>,
     pub row_major: Option<bool>,
@@ -273,6 +280,7 @@ pub(super) struct Lowerer<'a> {
     pub implicit_sizes: BTreeMap<SymbolId, u32>,
     pub variably_indexed: BTreeSet<SymbolId>,
     pub member_sizes: BTreeMap<(BlockId, u32), u32>,
+    pub member_indices: BTreeMap<(BlockId, u32), u32>,
     pub invariant_all: bool,
     pub invariant: Vec<(String, Span)>,
     pub unbound: Vec<(Handle<GlobalVariable>, Option<u32>)>,
@@ -284,6 +292,8 @@ pub(super) struct Lowerer<'a> {
     pub early_fragment_tests: bool,
     pub quad_control: crate::QuadControl,
     pub conservative_depth: Option<ConservativeDepth>,
+    pub layer_layout: LayerLayout,
+    pub override_coverage: bool,
     pub post_depth_coverage: Option<Span>,
     pub per_vertex: Option<(Handle<GlobalVariable>, Vec<String>)>,
     pub per_vertex_used: BTreeSet<String>,
@@ -340,6 +350,7 @@ impl<'a> Lowerer<'a> {
             implicit_sizes: BTreeMap::new(),
             variably_indexed: BTreeSet::new(),
             member_sizes: BTreeMap::new(),
+            member_indices: BTreeMap::new(),
             invariant_all: false,
             invariant: Vec::new(),
             unbound: Vec::new(),
@@ -351,6 +362,8 @@ impl<'a> Lowerer<'a> {
             early_fragment_tests: false,
             quad_control: crate::QuadControl::default(),
             conservative_depth: None,
+            layer_layout: LayerLayout::default(),
+            override_coverage: false,
             post_depth_coverage: None,
             per_vertex: None,
             per_vertex_used: BTreeSet::new(),
@@ -425,6 +438,10 @@ impl<'a> Lowerer<'a> {
         }
         let result = self.declare_per_vertex();
         self.report(result);
+        if let Some(layer) = self.layer_layout.redeclared {
+            let result = self.global_ref(layer, Span::UNDEFINED).map(|_| ());
+            self.report(result);
+        }
         let layout_errors = self.errors.len();
         self.passthrough_defaults();
         self.check_stage_layout();

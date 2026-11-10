@@ -6234,3 +6234,221 @@ void main() {}
         .windows(2)
         .any(|pair| pair == [(2 << 16) | Op::Capability as u32, 6032]));
 }
+
+fn decoration_operands(module: &dr::Module, id: u32, decoration: Decoration) -> Option<Vec<u32>> {
+    module
+        .annotations
+        .iter()
+        .find(|inst| {
+            inst.class.opcode == Op::Decorate
+                && inst.operands[0] == Operand::IdRef(id)
+                && inst.operands[1] == Operand::Decoration(decoration)
+        })
+        .map(|inst| inst.operands[2..].iter().map(literal).collect())
+}
+
+#[test]
+fn view_index_needs_multiview() {
+    let source = "#version 450
+        #extension GL_EXT_multiview : enable
+        layout(location = 0) out vec4 color;
+        void main() { color = vec4(gl_ViewIndex, 0, 0, 0); }";
+    let module = compile_valid(ShaderStage::Fragment, source);
+    assert!(has_capability(&module, spirv::Capability::MultiView));
+    assert!(extensions_of(&module).contains(&"SPV_KHR_multiview".to_string()));
+    let view = named(&module, "gl_ViewIndex");
+    assert!(has_decoration(&module, view, Decoration::Flat));
+    let module = compile_valid_1_3(ShaderStage::Fragment, source);
+    assert!(has_capability(&module, spirv::Capability::MultiView));
+    assert!(extensions_of(&module).is_empty());
+    let error = parse(
+        ShaderStage::Vertex,
+        "#version 450
+        void main() { gl_Position = vec4(gl_ViewIndex); }",
+    )
+    .unwrap_err();
+    assert!(error.contains("GL_EXT_multiview"), "{error}");
+    let module = compile_valid(
+        ShaderStage::Geometry,
+        "#version 450
+        #extension GL_EXT_multiview : require
+        layout(points) in;
+        layout(points, max_vertices = 1) out;
+        void main() { gl_Layer = gl_ViewIndex; EmitVertex(); }",
+    );
+    let view = named(&module, "gl_ViewIndex");
+    assert!(!has_decoration(&module, view, Decoration::Flat));
+}
+
+#[test]
+fn per_view_attributes_match_glslang() {
+    let module = compile_valid(
+        ShaderStage::Vertex,
+        "#version 450
+        #extension GL_NVX_multiview_per_view_attributes : require
+        void main() {
+            gl_ViewportMaskPerViewNV[0] = 1;
+            gl_PositionPerViewNV[1] = gl_Position;
+        }",
+    );
+    assert!(has_capability(
+        &module,
+        spirv::Capability::PerViewAttributesNV
+    ));
+    assert!(extensions_of(&module).contains(&"SPV_NVX_multiview_per_view_attributes".to_string()));
+    assert_eq!(variable_array_length(&module, "gl_PositionPerViewNV"), 2);
+    assert_eq!(
+        variable_array_length(&module, "gl_ViewportMaskPerViewNV"),
+        1
+    );
+    let error = parse(
+        ShaderStage::Vertex,
+        "#version 450
+        void main() { gl_PositionPerViewNV[0] = vec4(1.0); }",
+    )
+    .unwrap_err();
+    assert!(
+        error.contains("GL_NVX_multiview_per_view_attributes"),
+        "{error}"
+    );
+}
+
+#[test]
+fn per_vertex_members_of_view_extensions() {
+    let module = compile_valid(
+        ShaderStage::TessControl,
+        "#version 450
+        #extension GL_NV_viewport_array2 : require
+        #extension GL_NVX_multiview_per_view_attributes : require
+        layout(vertices = 3) out;
+        void main() {
+            gl_out[gl_InvocationID].gl_ViewportMask[2] = 4;
+            gl_out[gl_InvocationID].gl_PositionPerViewNV[1] = gl_in[0].gl_PositionPerViewNV[3];
+        }",
+    );
+    let built_ins = decorated(&module, Decoration::BuiltIn);
+    for name in [
+        "gl_ViewportMask",
+        "gl_PositionPerViewNV",
+        "gl_ViewportMaskPerViewNV",
+    ] {
+        assert!(built_ins.iter().any(|found| found == name), "{built_ins:?}");
+    }
+    assert!(
+        !built_ins
+            .iter()
+            .any(|found| found.starts_with("gl_Secondary")),
+        "{built_ins:?}"
+    );
+    assert!(has_capability(
+        &module,
+        spirv::Capability::ShaderViewportMaskNV
+    ));
+    assert!(has_capability(
+        &module,
+        spirv::Capability::PerViewAttributesNV
+    ));
+    assert!(!has_capability(
+        &module,
+        spirv::Capability::ShaderStereoViewNV
+    ));
+    let error = parse(
+        ShaderStage::Geometry,
+        "#version 450
+        layout(points) in;
+        layout(points, max_vertices = 1) out;
+        in gl_PerVertex { vec4 gl_Position; vec4 gl_SecondaryPositionNV; } gl_in[];
+        void main() { gl_Position = gl_in[0].gl_SecondaryPositionNV; EmitVertex(); }",
+    )
+    .unwrap_err();
+    assert!(error.contains("GL_NV_stereo_view_rendering"), "{error}");
+}
+
+#[test]
+fn viewport_relative_layer() {
+    let module = compile_valid(
+        ShaderStage::Vertex,
+        "#version 450
+        #extension GL_NV_viewport_array2 : require
+        #extension GL_NV_stereo_view_rendering : require
+        layout(viewport_relative, secondary_view_offset = 3) out highp int gl_Layer;
+        void main() {
+            gl_ViewportMask[0] = 1;
+            gl_SecondaryViewportMaskNV[0] = 1;
+            gl_SecondaryPositionNV = gl_Position;
+        }",
+    );
+    let layer = named(&module, "gl_Layer");
+    assert_eq!(
+        decoration_operands(&module, layer, Decoration::ViewportRelativeNV),
+        Some(Vec::new())
+    );
+    assert_eq!(
+        decoration_operands(&module, layer, Decoration::SecondaryViewportRelativeNV),
+        Some(vec![3])
+    );
+    for capability in [
+        spirv::Capability::ShaderViewportIndexLayerEXT,
+        spirv::Capability::ShaderViewportMaskNV,
+        spirv::Capability::ShaderStereoViewNV,
+    ] {
+        assert!(has_capability(&module, capability), "{capability:?}");
+    }
+    let extensions = extensions_of(&module);
+    for extension in [
+        "SPV_EXT_shader_viewport_index_layer",
+        "SPV_NV_viewport_array2",
+        "SPV_NV_stereo_view_rendering",
+    ] {
+        assert!(
+            extensions.contains(&extension.to_string()),
+            "{extensions:?}"
+        );
+    }
+    let error = parse(
+        ShaderStage::Vertex,
+        "#version 450
+        #extension GL_ARB_shader_viewport_layer_array : require
+        layout(viewport_relative) out highp int gl_Layer;
+        void main() {}",
+    )
+    .unwrap_err();
+    assert!(error.contains("GL_NV_viewport_array2"), "{error}");
+    let error = parse(
+        ShaderStage::Vertex,
+        "#version 450
+        #extension GL_NV_stereo_view_rendering : require
+        layout(secondary_view_offset = -2) out highp int gl_Layer;
+        void main() {}",
+    )
+    .unwrap_err();
+    assert!(error.contains("negative"), "{error}");
+}
+
+#[test]
+fn sample_mask_override_coverage() {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+        #extension GL_NV_sample_mask_override_coverage : enable
+        layout(override_coverage) out int gl_SampleMask[];
+        void main() { gl_SampleMask[0] = gl_SampleMaskIn[0]; }",
+    );
+    let mask = named(&module, "gl_SampleMask");
+    assert!(has_decoration(
+        &module,
+        mask,
+        Decoration::OverrideCoverageNV
+    ));
+    assert!(has_capability(
+        &module,
+        spirv::Capability::SampleMaskOverrideCoverageNV
+    ));
+    let mask_in = named(&module, "gl_SampleMaskIn");
+    assert!(has_decoration(&module, mask_in, Decoration::Flat));
+    assert!(!has_decoration(
+        &module,
+        mask_in,
+        Decoration::OverrideCoverageNV
+    ));
+}
