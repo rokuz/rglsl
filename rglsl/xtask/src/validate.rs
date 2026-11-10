@@ -35,7 +35,9 @@ pub(crate) fn validate(cmd: ValidateSubcommand) -> anyhow::Result<()> {
                         None => anyhow::anyhow!("Validation job thread panicked"),
                     }),
                 };
-                tx_results.send(result).unwrap();
+                if let Err(lost) = tx_results.send(result) {
+                    log::error!("a validation result was lost: {:?}", lost.0);
+                }
             })?;
         }
         Ok(())
@@ -59,8 +61,10 @@ pub(crate) fn validate(cmd: ValidateSubcommand) -> anyhow::Result<()> {
         "failed to validate one or more files, see above output for more details"
     );
 
-    if let Err(error) = enqueuing_thread.join().unwrap() {
-        bail!("Error enqueuing jobs:\n{error:#}");
+    match enqueuing_thread.join() {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => bail!("Error enqueuing jobs:\n{error:#}"),
+        Err(_) => bail!("the job enqueuing thread panicked"),
     }
 
     Ok(())
@@ -78,7 +82,7 @@ fn collect_validation_jobs(jobs: &mut Vec<Job>, cmd: ValidateSubcommand) -> anyh
 
             push_job_for_each_file(snapshots_base_out, "spv/*.spvasm", jobs, |path| {
                 validate_spirv(&path, spirv_as, spirv_val)
-            });
+            })?;
         }
     };
 
@@ -94,12 +98,12 @@ fn push_job_for_each_file(
         + Send
         + std::panic::UnwindSafe
         + 'static,
-) {
+) -> anyhow::Result<()> {
     crate::glob::for_each_file(top_dir, pattern, move |path_result| {
         // Let each job closure stand on its own.
         let f = f.clone();
         jobs.push(Box::new(|| f(path_result?)));
-    });
+    })
 }
 
 fn validate_spirv(path: &Path, spirv_as: &str, spirv_val: &str) -> anyhow::Result<()> {
@@ -124,7 +128,8 @@ fn validate_spirv(path: &Path, spirv_as: &str, spirv_val: &str) -> anyhow::Resul
         cmd.stdout(Stdio::piped())
             .arg("--target-env")
             .arg(format!("spv{version}"))
-            .args([path.to_str().unwrap(), "-o", "-"])
+            .arg(path)
+            .args(["-o", "-"])
     });
     let assembled_spirv = spirv_as_cmd
         .output()
@@ -154,7 +159,7 @@ Note: Labels and line numbers will not match the input file.
     spirv_val_process
         .stdin
         .as_mut()
-        .unwrap()
+        .with_context(|| format!("{spirv_val_command} was started without a piped stdin"))?
         .write_all(&assembled_spirv.stdout)?;
 
     let spirv_val_output = spirv_val_process
