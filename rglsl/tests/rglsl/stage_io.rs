@@ -464,7 +464,7 @@ fn interface_variables_are_emitted_directly() {
 #[test]
 fn compact_keeps_the_interface() {
     let mut module = vertex_module();
-    rglsl::compact::compact(&mut module, rglsl::compact::KeepUnused::No);
+    rglsl::compact::compact(&mut module, rglsl::compact::KeepUnused::No).unwrap();
     let names: Vec<_> = module.entry_points[0]
         .interface
         .iter()

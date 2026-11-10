@@ -1,4 +1,4 @@
-use super::arena::HandleSet;
+use super::arena::{BadHandle, HandleSet};
 use super::{FunctionMap, ModuleMap};
 
 pub struct FunctionTracer<'a> {
@@ -78,38 +78,38 @@ impl FunctionMap {
         function: &mut crate::Function,
         module_map: &ModuleMap,
         reuse: &mut crate::NamedExpressions,
-    ) {
+    ) -> Result<(), BadHandle> {
         assert!(reuse.is_empty());
 
         for argument in function.arguments.iter_mut() {
-            module_map.types.adjust(&mut argument.ty);
+            module_map.types.adjust(&mut argument.ty)?;
         }
 
         if let Some(ref mut result) = function.result {
-            module_map.types.adjust(&mut result.ty);
+            module_map.types.adjust(&mut result.ty)?;
         }
 
         for (_, local) in function.local_variables.iter_mut() {
             log::trace!("adjusting local variable {:?}", local.name);
-            module_map.types.adjust(&mut local.ty);
+            module_map.types.adjust(&mut local.ty)?;
             if let Some(ref mut init) = local.init {
-                self.expressions.adjust(init);
+                self.expressions.adjust(init)?;
             }
         }
 
         // Drop unused expressions, reusing existing storage.
-        function.expressions.retain_mut(|handle, expr| {
+        function.expressions.try_retain_mut(|handle, expr| {
             if self.expressions.used(handle) {
-                module_map.adjust_expression(expr, &self.expressions);
-                true
+                module_map.adjust_expression(expr, &self.expressions)?;
+                Ok(true)
             } else {
-                false
+                Ok(false)
             }
-        });
+        })?;
 
         // Adjust named expressions.
         for (mut handle, name) in function.named_expressions.drain(..) {
-            self.expressions.adjust(&mut handle);
+            self.expressions.adjust(&mut handle)?;
             reuse.insert(handle, name);
         }
         core::mem::swap(&mut function.named_expressions, reuse);
@@ -122,6 +122,6 @@ impl FunctionMap {
             .collect();
 
         // Adjust statements.
-        self.adjust_body(function, &module_map.functions, &module_map.types);
+        self.adjust_body(function, &module_map.functions, &module_map.types)
     }
 }

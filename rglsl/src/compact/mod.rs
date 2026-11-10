@@ -7,7 +7,7 @@ mod types;
 use alloc::vec::Vec;
 
 use crate::{
-    arena::{self, HandleSet},
+    arena::{self, BadHandle, HandleSet},
     compact::functions::FunctionTracer,
     ir,
 };
@@ -54,6 +54,17 @@ pub(crate) fn live_global_variables(module: &crate::Module) -> HandleSet<crate::
     tracer.global_variables_used
 }
 
+#[derive(Clone, Debug, thiserror::Error, PartialEq)]
+pub enum CompactError {
+    #[error("Compaction found a handle it did not trace: {0}")]
+    UntracedHandle(#[from] BadHandle),
+    #[error("Compaction expected type {expected:?} to become {actual:?}")]
+    TypeRenumbering {
+        expected: crate::Handle<crate::Type>,
+        actual: crate::Handle<crate::Type>,
+    },
+}
+
 /// Remove most unused objects from `module`, which must be valid.
 ///
 /// Always removes the following unused objects:
@@ -87,7 +98,7 @@ pub(crate) fn live_global_variables(module: &crate::Module) -> HandleSet<crate::
 /// # Panics
 ///
 /// If `module` would not pass validation, this may panic.
-pub fn compact(module: &mut crate::Module, keep_unused: KeepUnused) {
+pub fn compact(module: &mut crate::Module, keep_unused: KeepUnused) -> Result<(), CompactError> {
     // The trickiest part of compaction is determining what is used and what is
     // not. Once we have computed that correctly, it's easy enough to call
     // `retain_mut` on each arena, drop unused elements, and fix up the handles
@@ -258,11 +269,14 @@ pub fn compact(module: &mut crate::Module, keep_unused: KeepUnused) {
     // abstract type as we do not want those reaching the validator.
     log::trace!("tracing named constants");
     for (handle, constant) in module.constants.iter() {
-        if constant.name.is_none() || module.types[constant.ty].inner.is_abstract(&module.types) {
+        let Some(ref name) = constant.name else {
+            continue;
+        };
+        if module.types[constant.ty].inner.is_abstract(&module.types) {
             continue;
         }
 
-        log::trace!("tracing constant {:?}", constant.name.as_ref().unwrap());
+        log::trace!("tracing constant {name:?}");
         module_tracer.constants_used.insert(handle);
         module_tracer.types_used.insert(constant.ty);
         module_tracer.global_expressions_used.insert(constant.init);
@@ -304,51 +318,56 @@ pub fn compact(module: &mut crate::Module, keep_unused: KeepUnused) {
     let mut new_types = arena::UniqueArena::new();
     for (old_handle, mut ty, span) in module.types.drain_all() {
         if let Some(expected_new_handle) = module_map.types.try_adjust(old_handle) {
-            module_map.adjust_type(&mut ty);
+            module_map.adjust_type(&mut ty)?;
             let actual_new_handle = new_types.insert(ty, span);
-            assert_eq!(actual_new_handle, expected_new_handle);
+            if actual_new_handle != expected_new_handle {
+                return Err(CompactError::TypeRenumbering {
+                    expected: expected_new_handle,
+                    actual: actual_new_handle,
+                });
+            }
         }
     }
     module.types = new_types;
     log::trace!("adjusting special types");
-    module_map.adjust_special_types(&mut module.special_types);
+    module_map.adjust_special_types(&mut module.special_types)?;
 
     // Drop unused constant expressions, reusing existing storage.
     log::trace!("adjusting constant expressions");
-    module.global_expressions.retain_mut(|handle, expr| {
+    module.global_expressions.try_retain_mut(|handle, expr| {
         if module_map.global_expressions.used(handle) {
-            module_map.adjust_expression(expr, &module_map.global_expressions);
-            true
+            module_map.adjust_expression(expr, &module_map.global_expressions)?;
+            Ok(true)
         } else {
-            false
+            Ok(false)
         }
-    });
+    })?;
 
     // Drop unused constants in place, reusing existing storage.
     log::trace!("adjusting constants");
-    module.constants.retain_mut(|handle, constant| {
+    module.constants.try_retain_mut(|handle, constant| {
         if module_map.constants.used(handle) {
-            module_map.types.adjust(&mut constant.ty);
-            module_map.global_expressions.adjust(&mut constant.init);
-            true
+            module_map.types.adjust(&mut constant.ty)?;
+            module_map.global_expressions.adjust(&mut constant.init)?;
+            Ok(true)
         } else {
-            false
+            Ok(false)
         }
-    });
+    })?;
 
     // Drop unused overrides in place, reusing existing storage.
     log::trace!("adjusting overrides");
-    module.overrides.retain_mut(|handle, r#override| {
+    module.overrides.try_retain_mut(|handle, r#override| {
         if module_map.overrides.used(handle) {
-            module_map.types.adjust(&mut r#override.ty);
+            module_map.types.adjust(&mut r#override.ty)?;
             if let Some(ref mut init) = r#override.init {
-                module_map.global_expressions.adjust(init);
+                module_map.global_expressions.adjust(init)?;
             }
-            true
+            Ok(true)
         } else {
-            false
+            Ok(false)
         }
-    });
+    })?;
 
     // Adjust workgroup_size_overrides
     log::trace!("adjusting workgroup_size_overrides");
@@ -356,7 +375,7 @@ pub fn compact(module: &mut crate::Module, keep_unused: KeepUnused) {
         if let Some(sizes) = e.workgroup_size_overrides.as_mut() {
             for size in sizes.iter_mut() {
                 if let Some(expr) = size.as_mut() {
-                    module_map.global_expressions.adjust(expr);
+                    module_map.global_expressions.adjust(expr)?;
                 }
             }
         }
@@ -365,22 +384,22 @@ pub fn compact(module: &mut crate::Module, keep_unused: KeepUnused) {
     // Drop unused global variables, reusing existing storage.
     // Adjust used global variables' types and initializers.
     log::trace!("adjusting global variables");
-    module.global_variables.retain_mut(|handle, global| {
+    module.global_variables.try_retain_mut(|handle, global| {
         if module_map.globals.used(handle) {
             log::trace!("retaining global variable {:?}", global.name);
-            module_map.types.adjust(&mut global.ty);
+            module_map.types.adjust(&mut global.ty)?;
             if let Some(ref mut offset) = global.heap_offset {
-                module_map.global_expressions.adjust(offset);
+                module_map.global_expressions.adjust(offset)?;
             }
             if let Some(ref mut init) = global.init {
-                module_map.global_expressions.adjust(init);
+                module_map.global_expressions.adjust(init)?;
             }
-            true
+            Ok(true)
         } else {
             log::trace!("dropping global variable {:?}", global.name);
-            false
+            Ok(false)
         }
-    });
+    })?;
 
     // Adjust doc comments
     if let Some(ref mut doc_comments) = module.doc_comments {
@@ -392,16 +411,16 @@ pub fn compact(module: &mut crate::Module, keep_unused: KeepUnused) {
     let mut reused_named_expressions = crate::NamedExpressions::default();
 
     // Drop unused functions. Compact and adjust used functions.
-    module.functions.retain_mut(|handle, function| {
+    module.functions.try_retain_mut(|handle, function| {
         if let Some(map) = function_maps.get(handle) {
             log::trace!("retaining and compacting function {:?}", function.name);
-            map.compact(function, &module_map, &mut reused_named_expressions);
-            true
+            map.compact(function, &module_map, &mut reused_named_expressions)?;
+            Ok(true)
         } else {
             log::trace!("dropping function {:?}", function.name);
-            false
+            Ok(false)
         }
-    });
+    })?;
 
     // Compact each entry point.
     for (entry, map) in module.entry_points.iter_mut().zip(entry_point_maps.iter()) {
@@ -410,29 +429,32 @@ pub fn compact(module: &mut crate::Module, keep_unused: KeepUnused) {
             &mut entry.function,
             &module_map,
             &mut reused_named_expressions,
-        );
+        )?;
         for variable in &mut entry.interface {
-            module_map.globals.adjust(variable);
+            module_map.globals.adjust(variable)?;
         }
         if let Some(ref mut task_payload) = entry.task_payload {
-            module_map.globals.adjust(task_payload);
+            module_map.globals.adjust(task_payload)?;
         }
         if let Some(ref mut mesh_info) = entry.mesh_info {
-            module_map.globals.adjust(&mut mesh_info.output_variable);
-            module_map.types.adjust(&mut mesh_info.vertex_output_type);
+            module_map.globals.adjust(&mut mesh_info.output_variable)?;
+            module_map.types.adjust(&mut mesh_info.vertex_output_type)?;
             module_map
                 .types
-                .adjust(&mut mesh_info.primitive_output_type);
+                .adjust(&mut mesh_info.primitive_output_type)?;
             if let Some(ref mut max_vertices_override) = mesh_info.max_vertices_override {
-                module_map.global_expressions.adjust(max_vertices_override);
+                module_map
+                    .global_expressions
+                    .adjust(max_vertices_override)?;
             }
             if let Some(ref mut max_primitives_override) = mesh_info.max_primitives_override {
                 module_map
                     .global_expressions
-                    .adjust(max_primitives_override);
+                    .adjust(max_primitives_override)?;
             }
         }
     }
+    Ok(())
 }
 
 struct ModuleTracer<'module> {
@@ -636,7 +658,7 @@ impl From<ModuleTracer<'_>> for ModuleMap {
 }
 
 impl ModuleMap {
-    fn adjust_special_types(&self, special: &mut crate::SpecialTypes) {
+    fn adjust_special_types(&self, special: &mut crate::SpecialTypes) -> Result<(), BadHandle> {
         let crate::SpecialTypes {
             ref mut ray_desc,
             ref mut ray_intersection,
@@ -647,29 +669,30 @@ impl ModuleMap {
         } = *special;
 
         if let Some(ref mut ray_desc) = *ray_desc {
-            self.types.adjust(ray_desc);
+            self.types.adjust(ray_desc)?;
         }
         if let Some(ref mut ray_intersection) = *ray_intersection {
-            self.types.adjust(ray_intersection);
+            self.types.adjust(ray_intersection)?;
         }
 
         if let Some(ref mut ray_vertex_return) = *ray_vertex_return {
-            self.types.adjust(ray_vertex_return);
+            self.types.adjust(ray_vertex_return)?;
         }
 
         if let Some(ref mut external_texture_params) = *external_texture_params {
-            self.types.adjust(external_texture_params);
+            self.types.adjust(external_texture_params)?;
         }
 
         if let Some(ref mut external_texture_transfer_function) =
             *external_texture_transfer_function
         {
-            self.types.adjust(external_texture_transfer_function);
+            self.types.adjust(external_texture_transfer_function)?;
         }
 
         for handle in predeclared_types.values_mut() {
-            self.types.adjust(handle);
+            self.types.adjust(handle)?;
         }
+        Ok(())
     }
 
     fn adjust_doc_comments(&self, doc_comments: &mut ir::DocComments) {
@@ -683,43 +706,38 @@ impl ModuleMap {
             global_variables: ref mut doc_globals,
         } = *doc_comments;
         log::trace!("adjusting doc comments for types");
-        for (mut ty, doc_comment) in core::mem::take(doc_types) {
-            if !self.types.used(ty) {
+        for (ty, doc_comment) in core::mem::take(doc_types) {
+            let Some(ty) = self.types.try_adjust(ty) else {
                 continue;
-            }
-            self.types.adjust(&mut ty);
+            };
             doc_types.insert(ty, doc_comment);
         }
         log::trace!("adjusting doc comments for struct members");
-        for ((mut ty, index), doc_comment) in core::mem::take(doc_struct_members) {
-            if !self.types.used(ty) {
+        for ((ty, index), doc_comment) in core::mem::take(doc_struct_members) {
+            let Some(ty) = self.types.try_adjust(ty) else {
                 continue;
-            }
-            self.types.adjust(&mut ty);
+            };
             doc_struct_members.insert((ty, index), doc_comment);
         }
         log::trace!("adjusting doc comments for functions");
-        for (mut handle, doc_comment) in core::mem::take(doc_functions) {
-            if !self.functions.used(handle) {
+        for (handle, doc_comment) in core::mem::take(doc_functions) {
+            let Some(handle) = self.functions.try_adjust(handle) else {
                 continue;
-            }
-            self.functions.adjust(&mut handle);
+            };
             doc_functions.insert(handle, doc_comment);
         }
         log::trace!("adjusting doc comments for constants");
-        for (mut constant, doc_comment) in core::mem::take(doc_constants) {
-            if !self.constants.used(constant) {
+        for (constant, doc_comment) in core::mem::take(doc_constants) {
+            let Some(constant) = self.constants.try_adjust(constant) else {
                 continue;
-            }
-            self.constants.adjust(&mut constant);
+            };
             doc_constants.insert(constant, doc_comment);
         }
         log::trace!("adjusting doc comments for globals");
-        for (mut handle, doc_comment) in core::mem::take(doc_globals) {
-            if !self.globals.used(handle) {
+        for (handle, doc_comment) in core::mem::take(doc_globals) {
+            let Some(handle) = self.globals.try_adjust(handle) else {
                 continue;
-            }
-            self.globals.adjust(&mut handle);
+            };
             doc_globals.insert(handle, doc_comment);
         }
     }
@@ -845,7 +863,7 @@ fn type_expression_interdependence() {
     let ty_init = type_needs_expression(&mut module, expr_trace);
     type_needed(&mut module, ty_init);
     let untouched = module.clone();
-    compact(&mut module, KeepUnused::Yes);
+    compact(&mut module, KeepUnused::Yes).unwrap();
     assert!(cmp_modules(&module, &untouched));
     let unused_expr = module.global_expressions.append(
         crate::Expression::Literal(crate::Literal::U32(1)),
@@ -853,7 +871,7 @@ fn type_expression_interdependence() {
     );
     type_needs_expression(&mut module, unused_expr);
     assert!(!cmp_modules(&module, &untouched));
-    compact(&mut module, KeepUnused::Yes);
+    compact(&mut module, KeepUnused::Yes).unwrap();
     assert!(cmp_modules(&module, &untouched));
 }
 
@@ -914,7 +932,7 @@ fn array_length_override() {
     );
 
     assert!(validator.validate(&module).is_ok());
-    compact(&mut module, KeepUnused::Yes);
+    compact(&mut module, KeepUnused::Yes).unwrap();
     assert!(validator.validate(&module).is_ok());
 }
 
@@ -1020,7 +1038,7 @@ fn array_length_override_mutual() {
     );
 
     assert!(validator.validate(&module).is_ok());
-    compact(&mut module, KeepUnused::Yes);
+    compact(&mut module, KeepUnused::Yes).unwrap();
     assert!(validator.validate(&module).is_ok());
 }
 
@@ -1069,7 +1087,7 @@ fn array_length_expression() {
     );
 
     assert!(validator.validate(&module).is_ok());
-    compact(&mut module, KeepUnused::Yes);
+    compact(&mut module, KeepUnused::Yes).unwrap();
     assert!(validator.validate(&module).is_ok());
 }
 
@@ -1125,7 +1143,7 @@ fn global_expression_override() {
     );
 
     assert!(validator.validate(&module).is_ok());
-    compact(&mut module, KeepUnused::Yes);
+    compact(&mut module, KeepUnused::Yes).unwrap();
     assert!(validator.validate(&module).is_ok());
 }
 
@@ -1196,7 +1214,7 @@ fn local_expression_override() {
     );
 
     assert!(validator.validate(&module).is_ok());
-    compact(&mut module, KeepUnused::Yes);
+    compact(&mut module, KeepUnused::Yes).unwrap();
     assert!(validator.validate(&module).is_ok());
 }
 
@@ -1268,7 +1286,7 @@ fn unnamed_constant_type() {
     );
 
     assert!(validator.validate(&module).is_ok());
-    compact(&mut module, KeepUnused::Yes);
+    compact(&mut module, KeepUnused::Yes).unwrap();
     assert!(validator.validate(&module).is_ok());
 }
 
@@ -1340,6 +1358,6 @@ fn unnamed_override_type() {
     );
 
     assert!(validator.validate(&module).is_ok());
-    compact(&mut module, KeepUnused::Yes);
+    compact(&mut module, KeepUnused::Yes).unwrap();
     assert!(validator.validate(&module).is_ok());
 }

@@ -35,7 +35,7 @@ macro_rules! define_any_overload_set {
                 }
             }
 
-            fn min_arguments(&self) -> usize {
+            fn min_arguments(&self) -> Option<usize> {
                 match *self {
                     $(
                         AnyOverloadSet::$name(ref x) => x.min_arguments(),
@@ -43,7 +43,7 @@ macro_rules! define_any_overload_set {
                 }
             }
 
-            fn max_arguments(&self) -> usize {
+            fn max_arguments(&self) -> Option<usize> {
                 match *self {
                     $(
                         AnyOverloadSet::$name(ref x) => x.max_arguments(),
@@ -72,7 +72,7 @@ macro_rules! define_any_overload_set {
                 }
             }
 
-            fn most_preferred(&self) -> Rule {
+            fn most_preferred(&self) -> Option<Rule> {
                 match *self {
                     $(
                         AnyOverloadSet::$name(ref x) => x.most_preferred(),

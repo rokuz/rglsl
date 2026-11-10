@@ -1147,16 +1147,8 @@ impl super::Validator {
                     _ => return Err(ExpressionError::WrongArgumentCount(fun)),
                 };
 
-                let resolve = |arg| &resolver[arg];
-                let actual_types: &[_] = match *actuals {
-                    [arg0] => &[resolve(arg0)],
-                    [arg0, arg1] => &[resolve(arg0), resolve(arg1)],
-                    [arg0, arg1, arg2] => &[resolve(arg0), resolve(arg1), resolve(arg2)],
-                    [arg0, arg1, arg2, arg3] => {
-                        &[resolve(arg0), resolve(arg1), resolve(arg2), resolve(arg3)]
-                    }
-                    _ => unreachable!(),
-                };
+                let actual_types: alloc::vec::Vec<_> =
+                    actuals.iter().map(|&arg| &resolver[arg]).collect();
 
                 // Start with the set of all overloads available for `fun`.
                 let mut overloads = fun.overloads();
@@ -1173,7 +1165,7 @@ impl super::Validator {
                 // abstract and concrete arguments, so we don't need to worry
                 // about that here.
 
-                for (i, (&expr, &ty)) in actuals.iter().zip(actual_types).enumerate() {
+                for (i, (&expr, ty)) in actuals.iter().zip(actual_types).enumerate() {
                     // Remove overloads that cannot accept an `i`'th
                     // argument arguments of type `ty`.
                     overloads = overloads.arg(i, ty, &module.types);
@@ -1188,7 +1180,10 @@ impl super::Validator {
                     }
                 }
 
-                if actuals.len() < overloads.min_arguments() {
+                if overloads
+                    .min_arguments()
+                    .is_none_or(|min_arguments| actuals.len() < min_arguments)
+                {
                     return Err(ExpressionError::WrongArgumentCount(fun));
                 }
 

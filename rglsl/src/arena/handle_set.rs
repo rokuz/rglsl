@@ -92,7 +92,7 @@ impl<T> HandleSet<T> {
 
     /// Return an iterator over all handles in `self`.
     pub fn iter(&self) -> impl '_ + Iterator<Item = Handle<T>> {
-        self.members.iter().map(Handle::from_usize)
+        self.members.iter().filter_map(Handle::try_from_usize)
     }
 
     /// Removes and returns the numerically largest handle in the set, or `None`
@@ -109,7 +109,7 @@ impl<T> HandleSet<T> {
             }
         });
         self.members = bit_set::BitSet::from_bit_vec(vec);
-        result.map(Handle::from_usize)
+        result.and_then(Handle::try_from_usize)
     }
 }
 

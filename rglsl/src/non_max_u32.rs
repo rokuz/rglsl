@@ -54,6 +54,8 @@ use core::num::NonZeroU32;
 pub struct NonMaxU32(NonZeroU32);
 
 impl NonMaxU32 {
+    pub const ZERO: Self = NonMaxU32(NonZeroU32::MIN);
+
     /// Construct a [`NonMaxU32`] whose value is `n`, if possible.
     pub const fn new(n: u32) -> Option<Self> {
         // If `n` is `u32::MAX`, then `n.wrapping_add(1)` is `0`,

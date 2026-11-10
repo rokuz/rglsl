@@ -1,9 +1,8 @@
 //! Implementation of `Validator::validate_module_handles`.
 
-use core::{convert::TryInto, hash::Hash};
+use core::hash::Hash;
 
 use super::{TypeError, ValidationError};
-use crate::non_max_u32::NonMaxU32;
 use crate::{
     arena::{BadHandle, BadRangeError},
     diagnostic_filter::DiagnosticFilterNode,
@@ -314,7 +313,7 @@ impl super::Validator {
 
             for (&(ty, struct_member_index), _) in doc_comments_for_struct_members.iter() {
                 validate_type(ty)?;
-                let struct_type = types.get_handle(ty).unwrap();
+                let struct_type = types.get_handle(ty)?;
                 match struct_type.inner {
                     crate::TypeInner::Struct {
                         ref members,
@@ -1061,13 +1060,10 @@ impl<T> Handle<T> {
         if depends_on < self {
             Ok(self)
         } else {
-            let erase_handle_type = |handle: Handle<_>| {
-                Handle::new(NonMaxU32::new((handle.index()).try_into().unwrap()).unwrap())
-            };
             Err(FwdDepError {
-                subject: erase_handle_type(self),
+                subject: self.erase_type(),
                 subject_kind: core::any::type_name::<T>(),
-                depends_on: erase_handle_type(depends_on),
+                depends_on: depends_on.erase_type(),
                 depends_on_kind: core::any::type_name::<T>(),
             })
         }
@@ -1206,7 +1202,8 @@ fn array_size_override() {
         nowhere,
     );
 
-    let bad_override: Handle<Override> = Handle::new(NonMaxU32::new(1000).unwrap());
+    let bad_override: Handle<Override> =
+        Handle::new(crate::non_max_u32::NonMaxU32::new(1000).unwrap());
     let _ty_arr = m.types.insert(
         Type {
             name: Some("bad_array".to_string()),

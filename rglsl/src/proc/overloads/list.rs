@@ -70,26 +70,22 @@ impl crate::proc::overloads::OverloadSet for List {
         self.members == 0
     }
 
-    fn min_arguments(&self) -> usize {
-        self.members()
-            .fold(None, |best, (_, rule)| {
-                // This is different from `max_arguments` because
-                // `<Option as PartialOrd>` doesn't work the way we'd like.
-                let len = rule.arguments.len();
-                Some(match best {
-                    Some(best) => core::cmp::max(best, len),
-                    None => len,
-                })
+    fn min_arguments(&self) -> Option<usize> {
+        self.members().fold(None, |best, (_, rule)| {
+            // This is different from `max_arguments` because
+            // `<Option as PartialOrd>` doesn't work the way we'd like.
+            let len = rule.arguments.len();
+            Some(match best {
+                Some(best) => core::cmp::max(best, len),
+                None => len,
             })
-            .unwrap()
+        })
     }
 
-    fn max_arguments(&self) -> usize {
-        self.members()
-            .fold(None, |n, (_, rule)| {
-                core::cmp::max(n, Some(rule.arguments.len()))
-            })
-            .unwrap()
+    fn max_arguments(&self) -> Option<usize> {
+        self.members().fold(None, |n, (_, rule)| {
+            core::cmp::max(n, Some(rule.arguments.len()))
+        })
     }
 
     fn arg(&self, i: usize, arg_ty: &ir::TypeInner, types: &crate::UniqueArena<ir::Type>) -> Self {
@@ -138,12 +134,11 @@ impl crate::proc::overloads::OverloadSet for List {
         })
     }
 
-    fn most_preferred(&self) -> Rule {
+    fn most_preferred(&self) -> Option<Rule> {
         // As documented for `Self::rules`, whatever rule is first is
-        // the most preferred. `OverloadSet` documents this method to
-        // panic if the set is empty.
-        let (_, rule) = self.members().next().unwrap();
-        rule.clone()
+        // the most preferred.
+        let (_, rule) = self.members().next()?;
+        Some(rule.clone())
     }
 
     fn overload_list(&self, _gctx: &GlobalCtx<'_>) -> Vec<Rule> {
@@ -162,17 +157,10 @@ impl crate::proc::overloads::OverloadSet for List {
 }
 
 const fn len_to_full_mask(n: usize) -> u64 {
-    #[expect(
-        clippy::allow_attributes,
-        reason = "This is a const function, which _sometimes_ gets called, \
-            so this lint is _sometimes_ triggered, depending on feature set."
-    )]
-    #[allow(clippy::panic)]
-    if n >= 64 {
-        panic!("List::rules can only hold up to 63 rules");
+    match 1_u64.checked_shl(n as u32) {
+        Some(bit) => bit - 1,
+        None => u64::MAX,
     }
-
-    (1_u64 << n) - 1
 }
 
 impl ForDebugWithTypes for &List {}

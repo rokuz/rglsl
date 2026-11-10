@@ -505,8 +505,8 @@ pub enum ConstValueError {
 }
 
 impl From<core::convert::Infallible> for ConstValueError {
-    fn from(_: core::convert::Infallible) -> Self {
-        unreachable!()
+    fn from(infallible: core::convert::Infallible) -> Self {
+        match infallible {}
     }
 }
 
@@ -746,7 +746,7 @@ impl crate::Module {
         }
 
         // Used to temporarily initialize stuff
-        let null_type = crate::Handle::new(NonMaxU32::new(0).unwrap());
+        let null_type = crate::Handle::new(NonMaxU32::ZERO);
         let mut output = crate::MeshStageInfo {
             topology: crate::MeshOutputTopology::Triangles,
             max_vertices: 0,

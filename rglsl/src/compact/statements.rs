@@ -2,7 +2,7 @@ use alloc::{vec, vec::Vec};
 
 use super::functions::FunctionTracer;
 use super::FunctionMap;
-use crate::arena::Handle;
+use crate::arena::{BadHandle, Handle};
 use crate::compact::handle_set_map::HandleMap;
 
 impl FunctionTracer<'_> {
@@ -279,12 +279,10 @@ impl FunctionMap {
         function: &mut crate::Function,
         function_map: &HandleMap<crate::Function>,
         type_map: &HandleMap<crate::Type>,
-    ) {
+    ) -> Result<(), BadHandle> {
         let block = &mut function.body;
         let mut worklist: Vec<&mut [crate::Statement]> = vec![block];
-        let adjust = |handle: &mut Handle<crate::Expression>| {
-            self.expressions.adjust(handle);
-        };
+        let adjust = |handle: &mut Handle<crate::Expression>| self.expressions.adjust(handle);
         while let Some(last) = worklist.pop() {
             for stmt in last {
                 use crate::Statement as St;
@@ -298,7 +296,7 @@ impl FunctionMap {
                         ref mut accept,
                         ref mut reject,
                     } => {
-                        adjust(condition);
+                        adjust(condition)?;
                         worklist.push(accept);
                         worklist.push(reject);
                     }
@@ -306,7 +304,7 @@ impl FunctionMap {
                         ref mut selector,
                         ref mut cases,
                     } => {
-                        adjust(selector);
+                        adjust(selector)?;
                         for case in cases {
                             worklist.push(&mut case.body);
                         }
@@ -317,20 +315,20 @@ impl FunctionMap {
                         ref mut break_if,
                     } => {
                         if let Some(ref mut break_if) = *break_if {
-                            adjust(break_if);
+                            adjust(break_if)?;
                         }
                         worklist.push(body);
                         worklist.push(continuing);
                     }
                     St::Return {
                         value: Some(ref mut value),
-                    } => adjust(value),
+                    } => adjust(value)?,
                     St::Store {
                         ref mut pointer,
                         ref mut value,
                     } => {
-                        adjust(pointer);
-                        adjust(value);
+                        adjust(pointer)?;
+                        adjust(value)?;
                     }
                     St::ImageStore {
                         ref mut image,
@@ -338,12 +336,12 @@ impl FunctionMap {
                         ref mut array_index,
                         ref mut value,
                     } => {
-                        adjust(image);
-                        adjust(coordinate);
+                        adjust(image)?;
+                        adjust(coordinate)?;
                         if let Some(ref mut array_index) = *array_index {
-                            adjust(array_index);
+                            adjust(array_index)?;
                         }
-                        adjust(value);
+                        adjust(value)?;
                     }
                     St::Atomic {
                         ref mut pointer,
@@ -352,11 +350,11 @@ impl FunctionMap {
                         ref mut result,
                         order: _,
                     } => {
-                        adjust(pointer);
-                        self.adjust_atomic_function(fun);
-                        adjust(value);
+                        adjust(pointer)?;
+                        self.adjust_atomic_function(fun)?;
+                        adjust(value)?;
                         if let Some(ref mut result) = *result {
-                            adjust(result);
+                            adjust(result)?;
                         }
                     }
                     St::ImageAtomic {
@@ -369,18 +367,18 @@ impl FunctionMap {
                         ref mut result,
                         order: _,
                     } => {
-                        adjust(image);
-                        adjust(coordinate);
+                        adjust(image)?;
+                        adjust(coordinate)?;
                         if let Some(ref mut array_index) = *array_index {
-                            adjust(array_index);
+                            adjust(array_index)?;
                         }
-                        self.adjust_atomic_function(fun);
-                        adjust(value);
+                        self.adjust_atomic_function(fun)?;
+                        adjust(value)?;
                         if let Some(ref mut sample) = *sample {
-                            adjust(sample);
+                            adjust(sample)?;
                         }
                         if let Some(ref mut result) = *result {
-                            adjust(result);
+                            adjust(result)?;
                         }
                     }
                     St::AtomicLoad {
@@ -388,52 +386,52 @@ impl FunctionMap {
                         order: _,
                         ref mut result,
                     } => {
-                        self.adjust_atomic_location(location);
-                        adjust(result);
+                        self.adjust_atomic_location(location)?;
+                        adjust(result)?;
                     }
                     St::AtomicStore {
                         ref mut location,
                         ref mut value,
                         order: _,
                     } => {
-                        self.adjust_atomic_location(location);
-                        adjust(value);
+                        self.adjust_atomic_location(location)?;
+                        adjust(value)?;
                     }
                     St::WorkGroupUniformLoad {
                         ref mut pointer,
                         ref mut result,
                     } => {
-                        adjust(pointer);
-                        adjust(result);
+                        adjust(pointer)?;
+                        adjust(result)?;
                     }
                     St::Call {
                         ref mut function,
                         ref mut arguments,
                         ref mut result,
                     } => {
-                        function_map.adjust(function);
+                        function_map.adjust(function)?;
                         for expr in arguments {
-                            adjust(expr);
+                            adjust(expr)?;
                         }
                         if let Some(ref mut result) = *result {
-                            adjust(result);
+                            adjust(result)?;
                         }
                     }
                     St::RayQuery {
                         ref mut query,
                         ref mut fun,
                     } => {
-                        adjust(query);
-                        self.adjust_ray_query_function(fun);
+                        adjust(query)?;
+                        self.adjust_ray_query_function(fun)?;
                     }
                     St::SubgroupBallot {
                         ref mut result,
                         ref mut predicate,
                     } => {
                         if let Some(ref mut predicate) = *predicate {
-                            adjust(predicate);
+                            adjust(predicate)?;
                         }
-                        adjust(result);
+                        adjust(result)?;
                     }
                     St::SubgroupCollectiveOperation {
                         op: _,
@@ -441,8 +439,8 @@ impl FunctionMap {
                         ref mut argument,
                         ref mut result,
                     } => {
-                        adjust(argument);
-                        adjust(result);
+                        adjust(argument)?;
+                        adjust(result)?;
                     }
                     St::SubgroupGather {
                         ref mut mode,
@@ -456,19 +454,19 @@ impl FunctionMap {
                             | crate::GatherMode::ShuffleDown(ref mut index)
                             | crate::GatherMode::ShuffleUp(ref mut index)
                             | crate::GatherMode::ShuffleXor(ref mut index)
-                            | crate::GatherMode::QuadBroadcast(ref mut index) => adjust(index),
+                            | crate::GatherMode::QuadBroadcast(ref mut index) => adjust(index)?,
                             crate::GatherMode::QuadSwap(_) => {}
                         }
-                        adjust(argument);
-                        adjust(result);
+                        adjust(argument)?;
+                        adjust(result)?;
                     }
                     St::CooperativeStore {
                         ref mut target,
                         ref mut data,
                     } => {
-                        adjust(target);
-                        adjust(&mut data.pointer);
-                        adjust(&mut data.stride);
+                        adjust(target)?;
+                        adjust(&mut data.pointer)?;
+                        adjust(&mut data.stride)?;
                     }
                     St::RayPipelineFunction(ref mut func) => match *func {
                         crate::RayPipelineFunction::TraceRay {
@@ -476,9 +474,9 @@ impl FunctionMap {
                             ref mut descriptor,
                             ref mut payload,
                         } => {
-                            adjust(acceleration_structure);
-                            adjust(descriptor);
-                            adjust(payload);
+                            adjust(acceleration_structure)?;
+                            adjust(descriptor)?;
+                            adjust(payload)?;
                         }
                     },
                     St::DebugPrintf {
@@ -486,7 +484,7 @@ impl FunctionMap {
                     } => {
                         for argument in arguments.iter_mut() {
                             if let crate::DebugPrintfArgument::Value(ref mut value) = *argument {
-                                adjust(value);
+                                adjust(value)?;
                             }
                         }
                     }
@@ -495,9 +493,9 @@ impl FunctionMap {
                         ref mut arguments,
                         ..
                     } => {
-                        type_map.adjust(ty);
+                        type_map.adjust(ty)?;
                         for argument in arguments.iter_mut() {
-                            adjust(argument);
+                            adjust(argument)?;
                         }
                     }
 
@@ -512,15 +510,16 @@ impl FunctionMap {
                 }
             }
         }
+        Ok(())
     }
 
-    fn adjust_atomic_function(&self, fun: &mut crate::AtomicFunction) {
+    fn adjust_atomic_function(&self, fun: &mut crate::AtomicFunction) -> Result<(), BadHandle> {
         use crate::AtomicFunction as Af;
         match *fun {
             Af::Exchange {
                 compare: Some(ref mut expr),
             } => {
-                self.expressions.adjust(expr);
+                self.expressions.adjust(expr)?;
             }
             Af::Exchange { compare: None }
             | Af::Add
@@ -531,42 +530,51 @@ impl FunctionMap {
             | Af::Min
             | Af::Max => {}
         }
+        Ok(())
     }
 
-    fn adjust_atomic_location(&self, location: &mut crate::AtomicLocation) {
+    fn adjust_atomic_location(
+        &self,
+        location: &mut crate::AtomicLocation,
+    ) -> Result<(), BadHandle> {
         match *location {
-            crate::AtomicLocation::Pointer(ref mut pointer) => self.expressions.adjust(pointer),
+            crate::AtomicLocation::Pointer(ref mut pointer) => self.expressions.adjust(pointer)?,
             crate::AtomicLocation::Texel(ref mut texel) => {
-                self.expressions.adjust(&mut texel.image);
-                self.expressions.adjust(&mut texel.coordinate);
+                self.expressions.adjust(&mut texel.image)?;
+                self.expressions.adjust(&mut texel.coordinate)?;
                 if let Some(ref mut array_index) = texel.array_index {
-                    self.expressions.adjust(array_index);
+                    self.expressions.adjust(array_index)?;
                 }
                 if let Some(ref mut sample) = texel.sample {
-                    self.expressions.adjust(sample);
+                    self.expressions.adjust(sample)?;
                 }
             }
         }
+        Ok(())
     }
 
-    fn adjust_ray_query_function(&self, fun: &mut crate::RayQueryFunction) {
+    fn adjust_ray_query_function(
+        &self,
+        fun: &mut crate::RayQueryFunction,
+    ) -> Result<(), BadHandle> {
         use crate::RayQueryFunction as Qf;
         match *fun {
             Qf::Initialize {
                 ref mut acceleration_structure,
                 ref mut descriptor,
             } => {
-                self.expressions.adjust(acceleration_structure);
-                self.expressions.adjust(descriptor);
+                self.expressions.adjust(acceleration_structure)?;
+                self.expressions.adjust(descriptor)?;
             }
             Qf::Proceed { ref mut result } => {
-                self.expressions.adjust(result);
+                self.expressions.adjust(result)?;
             }
             Qf::GenerateIntersection { ref mut hit_t } => {
-                self.expressions.adjust(hit_t);
+                self.expressions.adjust(hit_t)?;
             }
             Qf::ConfirmIntersection => {}
             Qf::Terminate => {}
         }
+        Ok(())
     }
 }

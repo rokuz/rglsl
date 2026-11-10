@@ -129,18 +129,10 @@ pub trait OverloadSet: Clone {
     fn is_empty(&self) -> bool;
 
     /// Return the smallest number of arguments in any type rule in the set.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `self` is empty.
-    fn min_arguments(&self) -> usize;
+    fn min_arguments(&self) -> Option<usize>;
 
     /// Return the largest number of arguments in any type rule in the set.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `self` is empty.
-    fn max_arguments(&self) -> usize;
+    fn max_arguments(&self) -> Option<usize>;
 
     /// Find the overloads that could accept a given argument.
     ///
@@ -219,12 +211,8 @@ pub trait OverloadSet: Clone {
     ///   even without knowing the argument types. So this method does not
     ///   require the argument types as a parameter.
     ///
-    /// # Panics
-    ///
-    /// Panics if `self` is empty, or if no argument types have been supplied.
-    ///
     /// [ora]: https://gpuweb.github.io/gpuweb/wgsl/#overload-resolution-section
-    fn most_preferred(&self) -> Rule;
+    fn most_preferred(&self) -> Option<Rule>;
 
     /// Return a type rule for each of the overloads in `self`.
     fn overload_list(&self, gctx: &crate::proc::GlobalCtx<'_>) -> Vec<Rule>;

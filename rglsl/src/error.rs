@@ -35,13 +35,10 @@ impl fmt::Display for ShaderError<crate::WithSpan<crate::valid::ValidationError>
         let files = SimpleFile::new(label, replace_control_chars(&self.source));
         let config = term::Config::default();
 
-        let mut writer = DiagnosticBuffer::new();
-        writer
-            .emit_to_self(&config, &files, &self.inner.diagnostic())
-            .expect("cannot write error");
-        let writer = writer.into_string();
-
-        write!(f, "\nShader validation {writer}")
+        match DiagnosticBuffer::render(&config, &files, self.inner.diagnostic()) {
+            Some(writer) => write!(f, "\nShader validation {writer}"),
+            None => write!(f, "\nShader validation error: {}", self.inner.as_inner()),
+        }
     }
 }
 
@@ -132,18 +129,41 @@ impl DiagnosticBuffer {
         }
     }
 
+    pub fn render<'files, F: codespan_reporting::files::Files<'files> + ?Sized>(
+        config: &codespan_reporting::term::Config,
+        files: &'files F,
+        mut diagnostic: codespan_reporting::diagnostic::Diagnostic<F::FileId>,
+    ) -> Option<String> {
+        let mut writer = Self::new();
+        if writer.emit_to_self(config, files, &diagnostic).is_ok() {
+            return Some(writer.into_string());
+        }
+        diagnostic.labels.clear();
+        let mut writer = Self::new();
+        writer.emit_to_self(config, files, &diagnostic).ok()?;
+        Some(writer.into_string())
+    }
+
     pub fn into_string(self) -> String {
         let Self { inner } = self;
 
         cfg_if::cfg_if! {
             if #[cfg(feature = "termcolor")] {
-                String::from_utf8(inner.into_inner()).unwrap()
+                utf8_to_string(inner.into_inner())
             } else if #[cfg(feature = "stderr")] {
-                String::from_utf8(inner).unwrap()
+                utf8_to_string(inner)
             } else {
                 inner
             }
         }
+    }
+}
+
+#[cfg(any(feature = "termcolor", feature = "stderr"))]
+fn utf8_to_string(bytes: alloc::vec::Vec<u8>) -> String {
+    match String::from_utf8(bytes) {
+        Ok(string) => string,
+        Err(error) => String::from_utf8_lossy(error.as_bytes()).into_owned(),
     }
 }
 
@@ -159,19 +179,17 @@ where
 
 pub(crate) fn replace_control_chars(s: &str) -> Cow<'_, str> {
     const REPLACEMENT_CHAR: &str = "\u{FFFD}";
-    debug_assert_eq!(
-        REPLACEMENT_CHAR.chars().next().unwrap(),
-        char::REPLACEMENT_CHARACTER
-    );
 
     let mut res = Cow::Borrowed(s);
     let mut offset = 0;
 
-    while let Some(found_pos) = res[offset..].find(|c: char| c.is_control() && !c.is_whitespace()) {
+    while let Some((found_pos, found)) = res[offset..]
+        .char_indices()
+        .find(|&(_, c)| c.is_control() && !c.is_whitespace())
+    {
         offset += found_pos;
-        let found_len = res[offset..].chars().next().unwrap().len_utf8();
         res.to_mut()
-            .replace_range(offset..offset + found_len, REPLACEMENT_CHAR);
+            .replace_range(offset..offset + found.len_utf8(), REPLACEMENT_CHAR);
         offset += REPLACEMENT_CHAR.len();
     }
 

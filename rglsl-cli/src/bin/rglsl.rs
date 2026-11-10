@@ -590,7 +590,7 @@ fn run() -> anyhow::Result<()> {
                 write_output(&module, &info, &params, before_compaction)?;
             }
 
-            rglsl::compact::compact(&mut module, KeepUnused::No);
+            rglsl::compact::compact(&mut module, KeepUnused::No)?;
 
             // Re-validate the IR after compaction.
             match rglsl::valid::Validator::new(params.validation_flags, validation_caps)

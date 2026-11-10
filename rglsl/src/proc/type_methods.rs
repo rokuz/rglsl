@@ -296,13 +296,8 @@ impl crate::TypeInner {
     }
 
     /// Get the size of this type.
-    ///
-    /// Panics if the size exceeds the limit of [`crate::valid::MAX_TYPE_SIZE`].
-    /// Validated modules should not contain such types. Code working with
-    /// modules prior to validation should use [`Self::try_size`] and handle the
-    /// error appropriately.
     pub fn size(&self, gctx: super::GlobalCtx) -> u32 {
-        self.try_size(gctx).expect("type is too large")
+        self.try_size(gctx).unwrap_or(u32::MAX)
     }
 
     /// Return the canonical form of `self`, or `None` if it's already in
@@ -702,13 +697,11 @@ define_int_float_limits!(u64, f64, 0.0f64, 18446744073709549568.0f64);
 
 /// Returns a tuple of [`crate::Literal`]s representing the minimum and maximum
 /// float values exactly representable by the provided float and integer types.
-/// Panics if `float` is not one of `F16`, `F32`, or `F64`, or `int` is
-/// not one of `I16`, `U16`, `I32`, `U32`, `I64`, or `U64`.
 pub fn min_max_float_representable_by(
     float: crate::Scalar,
     int: crate::Scalar,
-) -> (crate::Literal, crate::Literal) {
-    match (float, int) {
+) -> Option<(crate::Literal, crate::Literal)> {
+    Some(match (float, int) {
         (crate::Scalar::F16, crate::Scalar::I16) => (
             crate::Literal::F16(i16::min_float()),
             crate::Literal::F16(i16::max_float()),
@@ -781,8 +774,8 @@ pub fn min_max_float_representable_by(
             crate::Literal::F64(u64::min_float()),
             crate::Literal::F64(u64::max_float()),
         ),
-        _ => unreachable!(),
-    }
+        _ => return None,
+    })
 }
 
 /// Helper function that returns the string corresponding to the [`VectorSize`](crate::VectorSize)

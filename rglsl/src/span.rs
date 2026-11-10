@@ -238,11 +238,11 @@ impl<E> WithSpan<E> {
 
     /// Return a [`SourceLocation`] for our first span, if we have one.
     pub fn location(&self, source: &str) -> Option<SourceLocation> {
-        if self.spans.is_empty() || source.is_empty() {
+        if source.is_empty() {
             return None;
         }
 
-        Some(self.spans[0].0.location(source))
+        self.spans.first().map(|&(span, _)| span.location(source))
     }
 
     pub(crate) fn diagnostic(&self) -> codespan_reporting::diagnostic::Diagnostic<()>
@@ -254,8 +254,9 @@ impl<E> WithSpan<E> {
             .with_message(self.inner.to_string())
             .with_labels(
                 self.spans()
-                    .map(|&(span, ref desc)| {
-                        Label::primary((), span.to_range().unwrap()).with_message(desc.to_owned())
+                    .filter_map(|&(span, ref desc)| {
+                        let range = span.to_range()?;
+                        Some(Label::primary((), range).with_message(desc.to_owned()))
                     })
                     .collect(),
             )
@@ -291,15 +292,22 @@ impl<E> WithSpan<E> {
         let files = files::SimpleFile::new(path, replace_control_chars(source));
         let config = term::Config::default();
 
+        let mut diagnostic = self.diagnostic();
         cfg_if::cfg_if! {
             if #[cfg(feature = "termcolor")] {
                 let writer = term::termcolor::StandardStream::stderr(term::termcolor::ColorChoice::Auto);
-                term::emit_to_write_style(&mut writer.lock(), &config, &files, &self.diagnostic())
-                    .expect("cannot write error");
+                let mut writer = writer.lock();
+                if term::emit_to_write_style(&mut writer, &config, &files, &diagnostic).is_err() {
+                    diagnostic.labels.clear();
+                    let _ = term::emit_to_write_style(&mut writer, &config, &files, &diagnostic);
+                }
             } else {
                 let writer = std::io::stderr();
-                term::emit_to_io_write(&mut writer.lock(), &config, &files, &self.diagnostic())
-                    .expect("cannot write error");
+                let mut writer = writer.lock();
+                if term::emit_to_io_write(&mut writer, &config, &files, &diagnostic).is_err() {
+                    diagnostic.labels.clear();
+                    let _ = term::emit_to_io_write(&mut writer, &config, &files, &diagnostic);
+                }
             }
         }
     }
@@ -322,11 +330,8 @@ impl<E> WithSpan<E> {
         let files = files::SimpleFile::new(path, replace_control_chars(source));
         let config = term::Config::default();
 
-        let mut writer = crate::error::DiagnosticBuffer::new();
-        writer
-            .emit_to_self(&config, &files, &self.diagnostic())
-            .expect("cannot write error");
-        writer.into_string()
+        crate::error::DiagnosticBuffer::render(&config, &files, self.diagnostic())
+            .unwrap_or_else(|| self.inner.to_string())
     }
 }
 

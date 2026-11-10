@@ -466,9 +466,7 @@ impl FunctionInfo {
         // propagate the assignable global up the chain, till it either hits
         // a value-type expression, or the assignment statement.
         if let Some(global) = info.assignable_global {
-            if let Some(_old) = assignable_global.replace(global) {
-                unreachable!()
-            }
+            *assignable_global = Some(global);
         }
         info.uniformity.non_uniform_result
     }
@@ -619,10 +617,10 @@ impl FunctionInfo {
                                         crate::AddressSpace::Storage { .. } => {
                                             super::Capabilities::STORAGE_BUFFER_BINDING_ARRAY_NON_UNIFORM_INDEXING
                                         }
-                                        _ => unreachable!(),
+                                        _ => return Err(ExpressionError::InvalidBaseType(base)),
                                     }
                                 } else {
-                                    unreachable!()
+                                    return Err(ExpressionError::InvalidBaseType(base));
                                 }
                             }
                         };

@@ -82,22 +82,24 @@ impl Regular {
     /// characterize the entire rule.
     fn members(&self) -> impl Iterator<Item = (ConstructorSize, ir::Scalar)> {
         let scalars = self.scalars;
-        self.constructors.members().flat_map(move |constructor| {
-            let size = constructor.size();
-            // Technically, we don't need the "most general" `TypeInner` here,
-            // but since `ScalarSet::members` only produces singletons anyway,
-            // the effect is the same.
-            scalars
-                .members()
-                .map(move |singleton| (size, singleton.most_general_scalar()))
-        })
+        self.constructors
+            .members()
+            .filter_map(|constructor| constructor.size())
+            .flat_map(move |size| {
+                // Technically, we don't need the "most general" `TypeInner` here,
+                // but since `ScalarSet::members` only produces singletons anyway,
+                // the effect is the same.
+                scalars
+                    .members()
+                    .filter_map(move |singleton| Some((size, singleton.most_general_scalar()?)))
+            })
     }
 
     fn rules(&self) -> impl Iterator<Item = Rule> {
         let arity = self.arity;
         let conclude = self.conclude;
         self.members()
-            .map(move |(size, scalar)| make_rule(arity, size, scalar, conclude))
+            .filter_map(move |(size, scalar)| make_rule(arity, size, scalar, conclude))
     }
 }
 
@@ -106,14 +108,12 @@ impl OverloadSet for Regular {
         self.constructors.is_empty() || self.scalars.is_empty()
     }
 
-    fn min_arguments(&self) -> usize {
-        assert!(!self.is_empty());
-        self.arity
+    fn min_arguments(&self) -> Option<usize> {
+        (!self.is_empty()).then_some(self.arity)
     }
 
-    fn max_arguments(&self) -> usize {
-        assert!(!self.is_empty());
-        self.arity
+    fn max_arguments(&self) -> Option<usize> {
+        (!self.is_empty()).then_some(self.arity)
     }
 
     fn arg(&self, i: usize, ty: &ir::TypeInner, types: &UniqueArena<ir::Type>) -> Self {
@@ -149,16 +149,16 @@ impl OverloadSet for Regular {
         }
     }
 
-    fn most_preferred(&self) -> Rule {
-        assert!(!self.is_empty());
-
+    fn most_preferred(&self) -> Option<Rule> {
         // If there is more than one constructor allowed, then we must
         // not have had any arguments supplied at all. In any case, we
         // don't have any unambiguously preferred candidate.
-        assert!(self.constructors.is_singleton());
+        if self.is_empty() || !self.constructors.is_singleton() {
+            return None;
+        }
 
-        let size = self.constructors.size();
-        let scalar = self.scalars.most_general_scalar();
+        let size = self.constructors.size()?;
+        let scalar = self.scalars.most_general_scalar()?;
         make_rule(self.arity, size, scalar, self.conclude)
     }
 
@@ -191,13 +191,13 @@ fn make_rule(
     size: ConstructorSize,
     scalar: ir::Scalar,
     conclusion_rule: ConclusionRule,
-) -> Rule {
+) -> Option<Rule> {
     let inner = size.to_inner(scalar);
     let arg = TypeResolution::Value(inner.clone());
-    Rule {
+    Some(Rule {
         arguments: core::iter::repeat_n(arg.clone(), arity).collect(),
-        conclusion: conclusion_rule.conclude(size, scalar),
-    }
+        conclusion: conclusion_rule.conclude(size, scalar)?,
+    })
 }
 
 /// Conclusion-computing rules.
@@ -218,12 +218,12 @@ pub(in crate::proc::overloads) enum ConclusionRule {
 }
 
 impl ConclusionRule {
-    fn conclude(self, size: ConstructorSize, scalar: ir::Scalar) -> Conclusion {
-        match self {
+    fn conclude(self, size: ConstructorSize, scalar: ir::Scalar) -> Option<Conclusion> {
+        Some(match self {
             Self::ArgumentType => Conclusion::Value(size.to_inner(scalar)),
             Self::Scalar => Conclusion::Value(ir::TypeInner::Scalar(scalar)),
-            Self::Frexp => Conclusion::for_frexp_modf(ir::MathFunction::Frexp, size, scalar),
-            Self::Modf => Conclusion::for_frexp_modf(ir::MathFunction::Modf, size, scalar),
+            Self::Frexp => Conclusion::for_frexp_modf(ir::MathFunction::Frexp, size, scalar)?,
+            Self::Modf => Conclusion::for_frexp_modf(ir::MathFunction::Modf, size, scalar)?,
             Self::Wide => Conclusion::for_wide(size, scalar),
             Self::U32 => Conclusion::Value(ir::TypeInner::Scalar(ir::Scalar::U32)),
             Self::I32 => Conclusion::Value(ir::TypeInner::Scalar(ir::Scalar::I32)),
@@ -243,7 +243,7 @@ impl ConclusionRule {
                 size: ir::VectorSize::Quad,
                 scalar: ir::Scalar::U32,
             }),
-        }
+        })
     }
 }
 
@@ -358,7 +358,7 @@ mod test {
 
         let special_types = ir::SpecialTypes::default();
 
-        let preferred = set.most_preferred();
+        let preferred = set.most_preferred().unwrap();
         let conclusion = preferred.conclusion;
         let resolution = conclusion
             .into_resolution(&special_types)

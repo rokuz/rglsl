@@ -256,6 +256,19 @@ impl TypeInfo {
     }
 }
 
+fn scalar_alignment(scalar: crate::Scalar) -> Result<Alignment, WidthError> {
+    Alignment::from_width(scalar.width).ok_or(WidthError::Invalid(scalar.kind, scalar.width))
+}
+
+fn vector_alignment(
+    size: crate::VectorSize,
+    scalar: crate::Scalar,
+) -> Result<Alignment, WidthError> {
+    Alignment::from(size)
+        .checked_mul(scalar_alignment(scalar)?)
+        .ok_or(WidthError::Invalid(scalar.kind, scalar.width))
+}
+
 impl super::Validator {
     const fn require_type_capability(&self, capability: Capabilities) -> Result<(), TypeError> {
         if self.capabilities.contains(capability) {
@@ -402,7 +415,7 @@ impl super::Validator {
                         | TypeFlags::CONSTRUCTIBLE
                         | TypeFlags::CREATION_RESOLVED
                         | shareable,
-                    Alignment::from_width(scalar.width),
+                    scalar_alignment(scalar)?,
                 );
                 type_info.immediates_compatibility = immediates_compatibility;
                 type_info
@@ -422,7 +435,7 @@ impl super::Validator {
                         | TypeFlags::CONSTRUCTIBLE
                         | TypeFlags::CREATION_RESOLVED
                         | shareable,
-                    Alignment::from(size) * Alignment::from_width(scalar.width),
+                    vector_alignment(size, scalar)?,
                 );
                 type_info.immediates_compatibility = immediates_compatibility;
                 type_info
@@ -444,7 +457,7 @@ impl super::Validator {
                         | TypeFlags::ARGUMENT
                         | TypeFlags::CONSTRUCTIBLE
                         | TypeFlags::CREATION_RESOLVED,
-                    Alignment::from(rows) * Alignment::from_width(scalar.width),
+                    vector_alignment(rows, scalar)?,
                 );
                 type_info.immediates_compatibility = immediates_compatibility;
                 type_info
@@ -470,7 +483,7 @@ impl super::Validator {
                         | TypeFlags::ARGUMENT
                         | TypeFlags::CONSTRUCTIBLE
                         | TypeFlags::CREATION_RESOLVED,
-                    Alignment::from_width(scalar.width),
+                    scalar_alignment(scalar)?,
                 )
             }
             Ti::Atomic(scalar) => {
@@ -509,7 +522,7 @@ impl super::Validator {
                         | TypeFlags::SIZED
                         | TypeFlags::HOST_SHAREABLE
                         | TypeFlags::CREATION_RESOLVED,
-                    Alignment::from_width(scalar.width),
+                    scalar_alignment(scalar)?,
                 )
             }
             Ti::Pointer {
@@ -909,15 +922,18 @@ impl super::Validator {
                         // classify the struct as I/O-shareable.)
                         ti.flags |= TypeFlags::IO_SHAREABLE;
                     }
-                    [None, Some(_)] | [Some(_), None] => {
-                        // Only one of the blend sources was specified.
+                    // Only one of the blend sources was specified.
+                    [Some(_), None] => {
                         return Err(TypeError::InvalidBlendSrc(
                             super::VaryingError::IncompleteBlendSrcUsage {
-                                present_blend_src: blend_src_types
-                                    .iter()
-                                    .position(|src| src.is_some())
-                                    .unwrap()
-                                    as u32,
+                                present_blend_src: 0,
+                            },
+                        ));
+                    }
+                    [None, Some(_)] => {
+                        return Err(TypeError::InvalidBlendSrc(
+                            super::VaryingError::IncompleteBlendSrcUsage {
+                                present_blend_src: 1,
                             },
                         ));
                     }

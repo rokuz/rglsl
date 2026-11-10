@@ -89,23 +89,19 @@ impl ScalarSet {
     }
 
     /// Return the lowest-ranked member of `self` as a [`Scalar`].
-    ///
-    /// # Panics
-    ///
-    /// Panics if `self` is empty.
-    pub fn most_general_scalar(self) -> Scalar {
+    pub fn most_general_scalar(self) -> Option<Scalar> {
         // If the set is empty, this returns the full bit-length of
         // `self.bits()`, an index which is out of bounds for
         // `SCALARS_FOR_BITS`.
         let lowest = self.bits().trailing_zeros();
-        *SCALARS_FOR_BITS.get(lowest as usize).unwrap()
+        SCALARS_FOR_BITS.get(lowest as usize).copied()
     }
 
     /// Return an iterator over this set's members.
     ///
     /// Members are produced as singleton, in order from most general to least.
     pub fn members(self) -> impl Iterator<Item = ScalarSet> {
-        OneBitsIter::new(self.bits() as u64).map(|bit| Self::from_bits(bit as u16).unwrap())
+        OneBitsIter::new(self.bits() as u64).map(|bit| Self::from_bits_retain(bit as u16))
     }
 
     pub const FLOAT: Self = Self::ABSTRACT_FLOAT

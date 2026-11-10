@@ -1,4 +1,4 @@
-use super::{HandleSet, ModuleMap};
+use super::{BadHandle, HandleSet, ModuleMap};
 use crate::Handle;
 
 pub struct TypeTracer<'a> {
@@ -59,7 +59,7 @@ impl TypeTracer<'_> {
 }
 
 impl ModuleMap {
-    pub fn adjust_type(&self, ty: &mut crate::Type) {
+    pub fn adjust_type(&self, ty: &mut crate::Type) -> Result<(), BadHandle> {
         let adjust = |ty: &mut Handle<crate::Type>| self.types.adjust(ty);
 
         use crate::TypeInner as Ti;
@@ -85,7 +85,7 @@ impl ModuleMap {
             | Ti::BufferDescriptor {
                 ref mut base,
                 space: _,
-            } => adjust(base),
+            } => adjust(base)?,
             Ti::Array {
                 ref mut base,
                 ref mut size,
@@ -95,10 +95,10 @@ impl ModuleMap {
                 ref mut base,
                 ref mut size,
             } => {
-                adjust(base);
+                adjust(base)?;
                 match *size {
                     crate::ArraySize::Pending(ref mut r#override) => {
-                        self.overrides.adjust(r#override);
+                        self.overrides.adjust(r#override)?;
                     }
                     crate::ArraySize::Constant(_) | crate::ArraySize::Dynamic => {}
                 }
@@ -108,9 +108,10 @@ impl ModuleMap {
                 span: _,
             } => {
                 for member in members {
-                    self.types.adjust(&mut member.ty);
+                    self.types.adjust(&mut member.ty)?;
                 }
             }
         };
+        Ok(())
     }
 }

@@ -15,7 +15,9 @@ use alloc::vec::Vec;
 
 use super::Packing;
 use crate::front::glsl::{Error, ErrorKind};
-use crate::{proc::Alignment, Handle, MatrixLayout, Scalar, Span, Type, TypeInner, UniqueArena};
+use crate::{
+    proc::Alignment, Handle, MatrixLayout, Scalar, Span, Type, TypeInner, UniqueArena, VectorSize,
+};
 
 /// Struct with information needed for defining a struct member.
 ///
@@ -61,7 +63,9 @@ pub fn calculate_offset(
     let (align, span) = match types[ty].inner {
         // 1. If the member is a scalar consuming N basic machine units,
         // the base alignment is N.
-        TypeInner::Scalar(Scalar { width, .. }) => (Alignment::from_width(width), width as u32),
+        TypeInner::Scalar(Scalar { width, .. }) => {
+            (member_alignment(None, width, meta, errors), width as u32)
+        }
         // 2. If the member is a two- or four-component vector with components
         // consuming N basic machine units, the base alignment is 2N or 4N, respectively.
         // 3. If the member is a three-component vector with components consuming N
@@ -71,9 +75,9 @@ pub fn calculate_offset(
             scalar: Scalar { width, .. },
         } => (
             if layout == Packing::Scalar {
-                Alignment::from_width(width)
+                member_alignment(None, width, meta, errors)
             } else {
-                Alignment::from(size) * Alignment::from_width(width)
+                member_alignment(Some(size), width, meta, errors)
             },
             size as u32 * width as u32,
         ),
@@ -146,9 +150,9 @@ pub fn calculate_offset(
                 (rows, columns)
             };
             let mut align = if layout == Packing::Scalar {
-                Alignment::from_width(scalar.width)
+                member_alignment(None, scalar.width, meta, errors)
             } else {
-                Alignment::from(vector_size) * Alignment::from_width(scalar.width)
+                member_alignment(Some(vector_size), scalar.width, meta, errors)
             };
 
             if Packing::Std140 == layout {
@@ -224,4 +228,23 @@ pub fn calculate_offset(
         span,
         matrix_layout,
     }
+}
+
+fn member_alignment(
+    size: Option<VectorSize>,
+    width: u8,
+    meta: Span,
+    errors: &mut Vec<Error>,
+) -> Alignment {
+    let alignment = Alignment::from_width(width).and_then(|scalar| match size {
+        Some(size) => Alignment::from(size).checked_mul(scalar),
+        None => Some(scalar),
+    });
+    alignment.unwrap_or_else(|| {
+        errors.push(Error {
+            kind: ErrorKind::SemanticError("Invalid struct member type".into()),
+            meta,
+        });
+        Alignment::ONE
+    })
 }
