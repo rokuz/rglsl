@@ -645,10 +645,6 @@ impl FunctionLowerer<'_, '_> {
         }
         let mut sample_offset = None;
         if offset {
-            let offset_argument = arguments.get(next).ok_or_else(|| internal(at))?;
-            if !self.info(offset_argument)?.is_constant {
-                return Err(unsupported("non-constant texture offsets", at));
-            }
             sample_offset = Some(self.next_argument(arguments, &mut next, at)?);
         }
         let mut gather_component = None;

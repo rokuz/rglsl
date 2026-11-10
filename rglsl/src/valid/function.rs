@@ -1899,15 +1899,7 @@ impl super::Validator {
                     self.needs_visit.insert(handle);
                 }
 
-                match self.validate_expression(
-                    handle,
-                    expr,
-                    fun,
-                    module,
-                    &info,
-                    mod_info,
-                    &local_expr_kind,
-                ) {
+                match self.validate_expression(handle, expr, fun, module, &info, mod_info) {
                     Ok(stages) => info.available_stages &= stages,
                     Err(source) => {
                         return Err(FunctionError::Expression { handle, source }

@@ -2118,3 +2118,74 @@ fn buffer_textures_and_images_match_glslang() {
     assert_eq!(instructions(&module, Op::ImageRead).len(), 2);
     assert_eq!(instructions(&module, Op::ImageWrite).len(), 2);
 }
+
+fn image_operands(inst: &dr::Instruction) -> spirv::ImageOperands {
+    inst.operands
+        .iter()
+        .find_map(|operand| match *operand {
+            Operand::ImageOperands(operands) => Some(operands),
+            _ => None,
+        })
+        .unwrap_or(spirv::ImageOperands::NONE)
+}
+
+#[test]
+fn non_constant_texture_offsets() {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+        #extension GL_EXT_texture_offset_non_const : enable
+        layout(binding = 0) uniform sampler2D s;
+        layout(location = 0) in vec2 uv;
+        layout(location = 1) flat in ivec2 delta;
+        layout(location = 0) out vec4 o;
+        void main() {
+            o = textureGatherOffset(s, uv, delta) + textureGatherOffset(s, uv, ivec2(1, 2))
+                + texelFetchOffset(s, ivec2(uv), 0, delta);
+        }",
+    );
+    assert!(has_capability(
+        &module,
+        spirv::Capability::ImageGatherExtended
+    ));
+    let gathers: Vec<spirv::ImageOperands> = instructions(&module, Op::ImageGather)
+        .into_iter()
+        .map(image_operands)
+        .collect();
+    assert_eq!(
+        gathers,
+        [
+            spirv::ImageOperands::OFFSET,
+            spirv::ImageOperands::CONST_OFFSET
+        ]
+    );
+
+    let module = compile(
+        ShaderStage::Vertex,
+        "#version 450
+        #extension GL_EXT_texture_offset_non_const : enable
+        layout(binding = 0) uniform sampler2D s;
+        layout(location = 0) in vec2 uv;
+        layout(location = 1) in ivec2 delta;
+        layout(location = 0) out vec4 o;
+        void main() {
+            o = textureOffset(s, uv, delta) + textureLodOffset(s, uv, 1.0, ivec2(1));
+            gl_Position = vec4(0.0);
+        }",
+    );
+    let samples: Vec<spirv::ImageOperands> = instructions(&module, Op::ImageSampleExplicitLod)
+        .into_iter()
+        .map(image_operands)
+        .collect();
+    assert_eq!(
+        samples,
+        [
+            spirv::ImageOperands::LOD | spirv::ImageOperands::OFFSET,
+            spirv::ImageOperands::LOD | spirv::ImageOperands::CONST_OFFSET
+        ]
+    );
+    assert!(has_capability(
+        &module,
+        spirv::Capability::ImageGatherExtended
+    ));
+}

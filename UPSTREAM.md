@@ -140,6 +140,9 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   single-sampled and not depth, addresses it with a scalar integer, and gives it no levels: a
   load has no level and the size query has no level (`OpImageQuerySize`); it cannot be sampled
   or gathered.
+- **Non-constant sample offsets.** `ImageSample::offset` may be any expression, not only a
+  const-expression; the SPIR-V backend emits a constant one as `ConstOffset` and another as
+  `Offset` with the `ImageGatherExtended` capability, as glslang does.
 
 ## Cherry-picked upstream commits
 

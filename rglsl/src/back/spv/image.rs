@@ -1004,7 +1004,22 @@ impl BlockContext<'_> {
 
         let depth_id = depth_ref.map(|handle| self.cached[handle]);
         let mut mask = spirv::ImageOperands::empty();
-        mask.set(spirv::ImageOperands::CONST_OFFSET, offset.is_some());
+        let constant_offset =
+            offset.is_none_or(|offset| self.expression_constness.is_const(offset));
+        mask.set(
+            spirv::ImageOperands::CONST_OFFSET,
+            offset.is_some() && constant_offset,
+        );
+        mask.set(
+            spirv::ImageOperands::OFFSET,
+            offset.is_some() && !constant_offset,
+        );
+        if !constant_offset {
+            self.writer.require_any(
+                "non-constant image offsets",
+                &[spirv::Capability::ImageGatherExtended],
+            )?;
+        }
 
         let mut main_instruction = match (level, gather) {
             (_, Some(component)) => {
