@@ -1,3 +1,5 @@
+use alloc::vec::Vec;
+
 use super::{Block, BlockContext, Error, Instruction, Writer};
 use crate::{
     GeometryInfo, GeometryInputPrimitive, GeometryOutputPrimitive, Handle, ShaderStage,
@@ -191,5 +193,45 @@ impl BlockContext<'_> {
         };
         block.body.push(instruction);
         Ok(())
+    }
+}
+
+impl BlockContext<'_> {
+    pub(super) fn write_mesh_function(
+        &mut self,
+        mut block: Block,
+        function: &crate::MeshFunction,
+    ) -> Result<Option<Block>, Error> {
+        let mut operands = Vec::new();
+        for operand in function.operands() {
+            operands.push(self.cached.get(operand)?);
+        }
+        let op = match *function {
+            crate::MeshFunction::SetMeshOutputs { .. } => spirv::Op::SetMeshOutputsEXT,
+            crate::MeshFunction::EmitMeshTasks { .. } => spirv::Op::EmitMeshTasksEXT,
+            crate::MeshFunction::WritePackedPrimitiveIndices { .. } => {
+                spirv::Op::WritePackedPrimitiveIndices4x8NV
+            }
+        };
+        let mut instruction = Instruction::new(op);
+        for operand in operands {
+            instruction.add_operand(operand);
+        }
+        if !function.is_terminator() {
+            block.body.push(instruction);
+            return Ok(Some(block));
+        }
+        let payload = self
+            .ir_module
+            .global_variables
+            .iter()
+            .find(|&(_, global)| global.space == crate::AddressSpace::TaskPayload)
+            .map(|(handle, _)| self.writer.global_variables[handle].var_id)
+            .filter(|&id| id != 0);
+        if let Some(payload) = payload {
+            instruction.add_operand(payload);
+        }
+        self.function.consume(block, instruction);
+        Ok(None)
     }
 }

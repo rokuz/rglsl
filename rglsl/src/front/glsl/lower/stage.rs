@@ -20,7 +20,9 @@ use crate::{
 pub(super) struct StageLayout {
     input_primitive: Option<GeometryInputPrimitive>,
     output_primitive: Option<GeometryOutputPrimitive>,
-    vertices: Option<u32>,
+    pub(super) vertices: Option<u32>,
+    pub(super) primitives: Option<u32>,
+    pub(super) mesh_topology: Option<crate::MeshOutputTopology>,
     invocations: Option<u32>,
     primitive: Option<TessellationPrimitive>,
     spacing: Option<TessellationSpacing>,
@@ -156,6 +158,22 @@ impl<'a> Lowerer<'a> {
                     self.stage_layout.vertices.get_or_insert(vertices);
                 }
             }
+            ShaderStage::Mesh => {
+                for name in names {
+                    if let Some(topology) = super::mesh::mesh_topology(&name.to_ascii_lowercase()) {
+                        self.stage_layout.mesh_topology.get_or_insert(topology);
+                    }
+                }
+                if let Some(vertices) = xfb::ast_layout_value(self, Some(qualifier), "max_vertices")
+                {
+                    self.stage_layout.vertices.get_or_insert(vertices);
+                }
+                if let Some(primitives) =
+                    xfb::ast_layout_value(self, Some(qualifier), "max_primitives")
+                {
+                    self.stage_layout.primitives.get_or_insert(primitives);
+                }
+            }
             _ => {}
         }
     }
@@ -178,12 +196,15 @@ impl<'a> Lowerer<'a> {
 
     pub(super) const fn is_per_vertex_io(&self, qualifiers: &Qualifiers) -> bool {
         let stage = self.options.stage;
-        if qualifiers.patch || !stage.has_arrayed_io() {
+        if qualifiers.patch {
             return false;
         }
         match qualifiers.storage {
-            Storage::In => true,
-            Storage::Out => matches!(stage, ShaderStage::TessControl),
+            Storage::In => stage.has_arrayed_io(),
+            Storage::Out => {
+                matches!(stage, ShaderStage::TessControl)
+                    || (matches!(stage, ShaderStage::Mesh) && !qualifiers.per_task)
+            }
             _ => false,
         }
     }
@@ -314,6 +335,11 @@ impl<'a> Lowerer<'a> {
         match self.options.stage {
             ShaderStage::Geometry => self.stage_layout.input_primitive.is_none(),
             ShaderStage::TessControl => self.stage_layout.vertices.is_none(),
+            ShaderStage::Mesh => {
+                self.stage_layout.vertices.is_none()
+                    || self.stage_layout.primitives.is_none()
+                    || self.stage_layout.mesh_topology.is_none()
+            }
             _ => false,
         }
     }
@@ -343,6 +369,20 @@ impl<'a> Lowerer<'a> {
                 layout.primitive.is_none(),
                 "At least one shader must specify an input layout primitive",
             )],
+            ShaderStage::Mesh => &[
+                (
+                    layout.vertices.is_none(),
+                    "At least one shader must specify a layout(max_vertices = value)",
+                ),
+                (
+                    layout.primitives.is_none(),
+                    "At least one shader must specify a layout(max_primitives = value)",
+                ),
+                (
+                    layout.mesh_topology.is_none(),
+                    "At least one shader must specify an output layout primitive",
+                ),
+            ],
             _ => &[],
         };
         let errors: Vec<_> = missing
@@ -418,11 +458,9 @@ impl<'a> Lowerer<'a> {
         };
         variable.origin == Origin::BuiltIn
             && variable.ty.is_array()
-            && self
-                .analysis
-                .types
-                .block(id)
-                .is_some_and(|block| block.name == "gl_PerVertex")
+            && self.analysis.types.block(id).is_some_and(|block| {
+                block.name == "gl_PerVertex" || super::mesh::MESH_BLOCKS.contains(&block.name.as_str())
+            })
     }
 
     pub(super) fn per_vertex_array(&mut self, symbol: SymbolId, at: Span) -> Result<GlobalRef> {
@@ -447,23 +485,38 @@ impl<'a> Lowerer<'a> {
         let mut members = Vec::with_capacity(block.members.len());
         let mut offset = 0_u32;
         let mut alignment = Alignment::ONE;
+        let shading_rate = self
+            .analysis
+            .extensions
+            .contains("GL_EXT_fragment_shading_rate");
         for (index, member) in block.members.iter().enumerate() {
+            if member.name == "gl_PrimitiveShadingRateEXT" && !shading_rate {
+                continue;
+            }
             let builtin = per_vertex_builtin(
                 &member.name,
                 member.qualifiers.invariant || (!input && self.invariant_all),
             )
+            .or_else(|| match member.name.as_str() {
+                "gl_PrimitiveID" => Some(BuiltIn::PrimitiveIndex),
+                "gl_Layer" => Some(BuiltIn::Layer),
+                "gl_ViewportIndex" => Some(BuiltIn::ViewportIndex),
+                name => super::mesh::mesh_builtin(name),
+            })
             .ok_or_else(|| unsupported(format_member(&member.name), at))?;
-            let ty = if super::prepass::CLIP_DISTANCES.contains(&member.name.as_str()) {
-                let index = u32::try_from(index).map_err(|_| internal(at))?;
-                let size = match member.ty.outer_size() {
-                    Some(GlslArraySize::Sized(size)) => size,
-                    _ => self.member_sizes.get(&(id, index)).copied().unwrap_or(1),
-                };
-                let element = GlslType::scalar(Scalar::Float);
-                self.ir_type(&element.array_of(GlslArraySize::Sized(size)), at)?
-            } else {
-                self.ir_type(&member.ty, at)?
-            };
+            let index = u32::try_from(index).map_err(|_| internal(at))?;
+            let mut sized = member.ty.clone();
+            for (depth, size) in sized.array.iter_mut().enumerate() {
+                if *size == GlslArraySize::Unsized {
+                    let used = if depth == 0 {
+                        self.member_sizes.get(&(id, index)).copied()
+                    } else {
+                        self.member_dimension_sizes.get(&(id, index, depth)).copied()
+                    };
+                    *size = GlslArraySize::Sized(used.unwrap_or(1));
+                }
+            }
+            let ty = self.ir_type(&sized, at)?;
             self.layouter
                 .update(self.module.to_ctx())
                 .map_err(|_| internal(at))?;
@@ -483,7 +536,7 @@ impl<'a> Lowerer<'a> {
         }
         let structure = self.module.types.insert(
             crate::Type {
-                name: Some(String::from("gl_PerVertex")),
+                name: Some(block.name.clone()),
                 inner: TypeInner::Struct {
                     members,
                     span: alignment.round_up(offset),

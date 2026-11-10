@@ -447,7 +447,7 @@ impl<'a> Lowerer<'a> {
             .ok_or_else(|| internal(at))?;
         let function = self.lower_body(id, definition, true)?;
         let stage = self.options.stage;
-        let (workgroup_size, workgroup_size_overrides) = if stage == ShaderStage::Compute {
+        let (workgroup_size, workgroup_size_overrides) = if stage.compute_like() {
             (
                 self.work_group_size_defaults(),
                 self.workgroup_size_overrides(at)?,
@@ -471,7 +471,7 @@ impl<'a> Lowerer<'a> {
             workgroup_size_overrides,
             function,
             mesh_info: None,
-            task_payload: None,
+            task_payload: self.task_payload,
             incoming_ray_payload: self.incoming_ray_payload,
             interface: self.interface.clone(),
             transform_feedback: self.xfb.mode,
@@ -479,6 +479,7 @@ impl<'a> Lowerer<'a> {
             quad_control: self.quad_control,
             geometry,
             tessellation,
+            mesh_shader: self.mesh_shader_info(),
         });
         Ok(())
     }

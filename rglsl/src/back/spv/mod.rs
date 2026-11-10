@@ -996,6 +996,7 @@ pub struct Writer {
     temp_list: Vec<Word>,
 
     has_ray_tracing_pipeline: bool,
+    mesh_extension: Option<crate::MeshShaderExtension>,
 
     ray_tracing_features: crate::RayTracingFeatures,
 

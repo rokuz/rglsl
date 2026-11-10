@@ -952,6 +952,12 @@ impl super::Validator {
                 validate_expr_opt(fun.result())?;
                 Ok(())
             }
+            crate::Statement::MeshFunction(ref function) => {
+                for operand in function.operands() {
+                    validate_expr(operand)?;
+                }
+                Ok(())
+            }
             crate::Statement::DebugPrintf { ref arguments, .. } => {
                 for argument in arguments {
                     if let crate::DebugPrintfArgument::Value(value) = *argument {

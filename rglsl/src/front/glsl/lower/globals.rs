@@ -208,6 +208,7 @@ fn builtin_of(name: &str) -> Option<BuiltIn> {
         "gl_SubgroupID" => BuiltIn::SubgroupId,
         "gl_SubGroupSizeARB" => BuiltIn::ShaderBallot(ShaderBallot::Size),
         "gl_SubGroupInvocationARB" => BuiltIn::ShaderBallot(ShaderBallot::InvocationId),
+        _ if super::mesh::mesh_builtin(name).is_some() => super::mesh::mesh_builtin(name)?,
         _ => {
             if let Some(mask) = name
                 .strip_prefix("gl_Subgroup")
@@ -293,7 +294,12 @@ impl<'a> Lowerer<'a> {
             Some(block) => {
                 let mut next = location_of(&block.qualifiers);
                 for member in &block.members {
-                    let count = self.glsl_location_count(&member.ty);
+                    let count = match member.ty.element_type() {
+                        Some(element) if member.qualifiers.per_view => {
+                            self.glsl_location_count(&element)
+                        }
+                        _ => self.glsl_location_count(&member.ty),
+                    };
                     let start = location_of(&member.qualifiers).or(next);
                     if let Some(start) = start {
                         push(start, count);
@@ -307,6 +313,11 @@ impl<'a> Lowerer<'a> {
                         variable.ty.element_type()
                     } else {
                         None
+                    };
+                    let element = if variable.qualifiers.per_view {
+                        element.and_then(|element| element.element_type())
+                    } else {
+                        element
                     };
                     push(
                         start,
@@ -576,6 +587,7 @@ impl<'a> Lowerer<'a> {
                 self.heap_resource(symbol, name, list.ty.qualifier.as_ref(), at)
             }
             Storage::Uniform => self.resource(symbol, name, at),
+            Storage::TaskPayloadShared => self.task_payload_variable(symbol, name, at),
             Storage::Shared => {
                 let ir = self.ir_type(ty, at)?;
                 let handle = self.module.global_variables.append(
@@ -703,6 +715,11 @@ impl<'a> Lowerer<'a> {
             (true, &TypeInner::Array { base, .. }) => base,
             _ => ty,
         };
+        let element = match (qualifiers.per_view, &self.module.types[element].inner) {
+            (true, &TypeInner::Array { base, .. }) => base,
+            _ => element,
+        };
+        let per_primitive = self.per_primitive_binding(qualifiers);
         let location = match qualifiers.layout_entry("location").and_then(|e| e.value) {
             Some(location) => u32::try_from(location).map_err(|_| internal(at))?,
             None if self.options.auto_map_locations => {
@@ -753,10 +770,11 @@ impl<'a> Lowerer<'a> {
                     interpolation,
                     sampling,
                     blend_src,
-                    per_primitive: false,
+                    per_primitive,
                     component,
                     invariant: qualifiers.invariant,
                     patch: qualifiers.patch,
+                    per_view: qualifiers.per_view,
                 }),
                 xfb: None,
                 input_attachment_index: None,
@@ -1207,10 +1225,11 @@ impl<'a> Lowerer<'a> {
                     interpolation,
                     sampling,
                     blend_src: None,
-                    per_primitive: false,
+                    per_primitive: self.per_primitive_binding(qualifiers),
                     component,
                     invariant: !input && (qualifiers.invariant || self.invariant_all),
                     patch,
+                    per_view: qualifiers.per_view,
                 }),
                 offset,
                 matrix_layout: None,
@@ -1249,7 +1268,7 @@ impl<'a> Lowerer<'a> {
         let member_located = member_locations.iter().any(Option::is_some);
         let per_block = members
             .iter()
-            .map(|member| location_count(&self.module, member.ty))
+            .map(|member| self.member_location_count(member))
             .fold(0, u32::saturating_add);
         let elements = block_dimensions
             .iter()
@@ -1283,7 +1302,7 @@ impl<'a> Lowerer<'a> {
                 {
                     *slot = location;
                 }
-                next = Some(location.saturating_add(location_count(&self.module, member.ty)));
+                next = Some(location.saturating_add(self.member_location_count(member)));
             }
             if self.options.auto_map_locations {
                 self.auto_location(slot, total);
@@ -1322,7 +1341,7 @@ impl<'a> Lowerer<'a> {
                 {
                     *location = next;
                 }
-                next = next.saturating_add(location_count(&self.module, member.ty));
+                next = next.saturating_add(self.member_location_count(member));
             }
             Some(Binding::Location {
                 location: start,
@@ -1333,6 +1352,7 @@ impl<'a> Lowerer<'a> {
                 component: None,
                 invariant: false,
                 patch: false,
+                per_view: false,
             })
         };
         let structure = self.module.types.insert(
@@ -2003,7 +2023,7 @@ impl<'a> Lowerer<'a> {
     }
 }
 
-fn location_count(module: &crate::Module, ty: Handle<crate::Type>) -> u32 {
+pub(super) fn location_count(module: &crate::Module, ty: Handle<crate::Type>) -> u32 {
     let types = &module.types;
     const fn vector_locations(size: crate::VectorSize, scalar: crate::Scalar) -> u32 {
         match (size, scalar.width) {
