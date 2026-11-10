@@ -115,6 +115,12 @@ pub enum ShaderStage {
     /// A vertex shader, in a render pipeline.
     Vertex,
 
+    TessControl,
+
+    TessEvaluation,
+
+    Geometry,
+
     /// A task shader, in a mesh render pipeline.
     Task,
 
@@ -144,9 +150,17 @@ impl ShaderStage {
     pub const fn compute_like(self) -> bool {
         match self {
             Self::Vertex | Self::Fragment => false,
+            Self::TessControl | Self::TessEvaluation | Self::Geometry => false,
             Self::Compute | Self::Task | Self::Mesh => true,
             Self::RayGeneration | Self::AnyHit | Self::ClosestHit | Self::Miss => false,
         }
+    }
+
+    pub const fn has_arrayed_io(self) -> bool {
+        matches!(
+            self,
+            Self::TessControl | Self::TessEvaluation | Self::Geometry
+        )
     }
 
     /// Mesh or task shader

@@ -24,6 +24,9 @@ pub const EXIT_BACKEND_FAILED: i32 = 2;
 fn stage_from_extension(ext: &str) -> Option<ShaderStage> {
     Some(match ext {
         "vert" => ShaderStage::Vertex,
+        "tesc" => ShaderStage::TessControl,
+        "tese" => ShaderStage::TessEvaluation,
+        "geom" => ShaderStage::Geometry,
         "frag" => ShaderStage::Fragment,
         "comp" => ShaderStage::Compute,
         "task" => ShaderStage::Task,
@@ -32,7 +35,7 @@ fn stage_from_extension(ext: &str) -> Option<ShaderStage> {
         "rmiss" => ShaderStage::Miss,
         "rahit" => ShaderStage::AnyHit,
         "rchit" => ShaderStage::ClosestHit,
-        // No IR stage yet: tesc, tese, geom (M6), rint, rcall (M8).
+        // No IR stage yet: rint, rcall (M8).
         _ => return None,
     })
 }

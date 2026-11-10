@@ -197,6 +197,8 @@ impl Builder {
             incoming_ray_payload: None,
             interface: self.interface,
             transform_feedback: false,
+            geometry: None,
+            tessellation: None,
         });
         self.module
     }

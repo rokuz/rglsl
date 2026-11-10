@@ -219,6 +219,8 @@ impl FunctionTracer<'_> {
                     St::Break
                     | St::Continue
                     | St::Kill
+                    | St::EmitVertex { .. }
+                    | St::EndPrimitive { .. }
                     | St::ControlBarrier(_)
                     | St::ScopedBarrier { .. }
                     | St::MemoryBarrier(_)
@@ -503,6 +505,8 @@ impl FunctionMap {
                     St::Break
                     | St::Continue
                     | St::Kill
+                    | St::EmitVertex { .. }
+                    | St::EndPrimitive { .. }
                     | St::ControlBarrier(_)
                     | St::ScopedBarrier { .. }
                     | St::MemoryBarrier(_)

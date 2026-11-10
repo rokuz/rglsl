@@ -433,6 +433,13 @@ pub fn compact(module: &mut crate::Module, keep_unused: KeepUnused) -> Result<()
         for variable in &mut entry.interface {
             module_map.globals.adjust(variable)?;
         }
+        for &mut (ref mut variable, _) in entry
+            .geometry
+            .iter_mut()
+            .flat_map(|geometry| &mut geometry.streams)
+        {
+            module_map.globals.adjust(variable)?;
+        }
         if let Some(ref mut task_payload) = entry.task_payload {
             module_map.globals.adjust(task_payload)?;
         }

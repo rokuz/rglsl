@@ -301,6 +301,9 @@ bitflags::bitflags! {
         const ANY_HIT = 0x40;
         const CLOSEST_HIT = 0x80;
         const MISS = 0x100;
+        const TESS_CONTROL = 0x2000;
+        const TESS_EVALUATION = 0x4000;
+        const GEOMETRY = 0x8000;
         const COMPUTE_LIKE = Self::COMPUTE.bits() | Self::TASK.bits() | Self::MESH.bits();
     }
 }

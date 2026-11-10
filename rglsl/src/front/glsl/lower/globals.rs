@@ -194,6 +194,14 @@ fn builtin_of(name: &str) -> Option<BuiltIn> {
         "gl_LocalInvocationID" => BuiltIn::LocalInvocationId,
         "gl_GlobalInvocationID" => BuiltIn::GlobalInvocationId,
         "gl_LocalInvocationIndex" => BuiltIn::LocalInvocationIndex,
+        "gl_PrimitiveIDIn" => BuiltIn::PrimitiveIndex,
+        "gl_InvocationID" => BuiltIn::InvocationId,
+        "gl_PatchVerticesIn" => BuiltIn::PatchVertices,
+        "gl_TessCoord" => BuiltIn::TessCoord,
+        "gl_TessLevelOuter" => BuiltIn::TessLevelOuter,
+        "gl_TessLevelInner" => BuiltIn::TessLevelInner,
+        "gl_Layer" => BuiltIn::Layer,
+        "gl_ViewportIndex" => BuiltIn::ViewportIndex,
         _ => return None,
     })
 }
@@ -264,7 +272,15 @@ impl<'a> Lowerer<'a> {
             }
             None => {
                 if let Some(start) = location_of(&variable.qualifiers) {
-                    push(start, self.glsl_location_count(&variable.ty));
+                    let element = if self.is_per_vertex_io(&variable.qualifiers) {
+                        variable.ty.element_type()
+                    } else {
+                        None
+                    };
+                    push(
+                        start,
+                        self.glsl_location_count(element.as_ref().unwrap_or(&variable.ty)),
+                    );
                 }
             }
         }
@@ -404,6 +420,9 @@ impl<'a> Lowerer<'a> {
                 Ok(())
             }
             Some(StorageQualifier::In) => {
+                let owned: Vec<String> = names.iter().map(|name| String::from(*name)).collect();
+                self.stage_input_layout(&owned);
+                self.stage_input_values(qualifier);
                 for name in names {
                     match name {
                         "early_fragment_tests" => self.early_fragment_tests = true,
@@ -426,6 +445,8 @@ impl<'a> Lowerer<'a> {
                 Ok(())
             }
             Some(StorageQualifier::Out) => {
+                let owned: Vec<String> = names.iter().map(|name| String::from(*name)).collect();
+                self.stage_output_layout(&owned, qualifier);
                 let qualifier = Some(qualifier);
                 if let Some(buffer) = xfb::ast_layout_value(self, qualifier, "xfb_buffer") {
                     self.xfb.default_buffer = Some(buffer);
@@ -617,9 +638,7 @@ impl<'a> Lowerer<'a> {
         let variable = self.variable(symbol).ok_or_else(|| internal(at))?;
         let qualifiers = &variable.qualifiers;
         let input = qualifiers.storage == Storage::In;
-        if qualifiers.patch {
-            return Err(unsupported("`patch`", at));
-        }
+        let per_vertex = self.is_per_vertex_io(qualifiers);
         if qualifiers.invariant && input {
             return Err(semantic("invariant can only apply to an output", at));
         }
@@ -642,10 +661,14 @@ impl<'a> Lowerer<'a> {
             }
         }
         let ty = self.ir_type(&declared, at)?;
+        let element = match (per_vertex, &self.module.types[ty].inner) {
+            (true, &TypeInner::Array { base, .. }) => base,
+            _ => ty,
+        };
         let location = match qualifiers.layout_entry("location").and_then(|e| e.value) {
             Some(location) => u32::try_from(location).map_err(|_| internal(at))?,
             None if self.options.auto_map_locations => {
-                let count = location_count(&self.module, ty);
+                let count = location_count(&self.module, element);
                 self.auto_location(usize::from(!input), count)
             }
             None => {
@@ -695,7 +718,7 @@ impl<'a> Lowerer<'a> {
                     per_primitive: false,
                     component,
                     invariant: qualifiers.invariant,
-                    patch: false,
+                    patch: qualifiers.patch,
                 }),
                 xfb: None,
                 input_attachment_index: None,
@@ -710,6 +733,7 @@ impl<'a> Lowerer<'a> {
             return Ok(());
         }
         self.outputs.insert(name, handle);
+        self.output_stream(handle, qualifiers);
         let buffer = xfb::layout_value(qualifiers, "xfb_buffer").or(self.xfb.default_buffer);
         if let Some(buffer) = buffer {
             let offset = xfb::layout_value(qualifiers, "xfb_offset");
@@ -865,6 +889,14 @@ impl<'a> Lowerer<'a> {
                     return Err(unsupported("`precise`", at));
                 }
             }
+            if instance.is_some() {
+                return match self.analysis.declarations.get(&declaration.id) {
+                    Some(&symbol) if self.is_per_vertex_array(symbol) => {
+                        self.global_ref(symbol, at).map(|_| ())
+                    }
+                    _ => Ok(()),
+                };
+            }
             if storage_of(Some(&structure.qualifier)) == Some(StorageQualifier::Out) {
                 self.per_vertex_redeclared = true;
                 self.per_vertex_xfb(structure, at)?;
@@ -1009,9 +1041,8 @@ impl<'a> Lowerer<'a> {
         let block = analysis.types.block(id).ok_or_else(|| internal(at))?;
         let input = block.storage == BlockStorage::In;
         let outer = &block.qualifiers;
-        if outer.patch || block.members.iter().any(|member| member.qualifiers.patch) {
-            return Err(unsupported("`patch`", at));
-        }
+        let patch = outer.patch || block.members.iter().any(|member| member.qualifiers.patch);
+        let per_vertex = self.is_per_vertex_io(outer) && !patch;
         if outer.precise || block.members.iter().any(|member| member.qualifiers.precise) {
             return Err(unsupported("`precise`", at));
         }
@@ -1053,7 +1084,12 @@ impl<'a> Lowerer<'a> {
                 *first = GlslArraySize::Sized(size);
             }
         }
-        let arrayed = declared.is_array();
+        let block_dimensions = if per_vertex {
+            declared.array.get(1..).unwrap_or_default()
+        } else {
+            declared.array.as_slice()
+        };
+        let arrayed = !block_dimensions.is_empty();
         let mut members = Vec::with_capacity(block.members.len());
         let mut offset = 0_u32;
         let mut alignment = Alignment::ONE;
@@ -1109,7 +1145,7 @@ impl<'a> Lowerer<'a> {
                     per_primitive: false,
                     component,
                     invariant: !input && (qualifiers.invariant || self.invariant_all),
-                    patch: false,
+                    patch,
                 }),
                 offset,
                 matrix_layout: None,
@@ -1150,8 +1186,7 @@ impl<'a> Lowerer<'a> {
             .iter()
             .map(|member| location_count(&self.module, member.ty))
             .fold(0, u32::saturating_add);
-        let elements = declared
-            .array
+        let elements = block_dimensions
             .iter()
             .map(|size| match *size {
                 GlslArraySize::Sized(size) => size,
@@ -1267,6 +1302,9 @@ impl<'a> Lowerer<'a> {
         );
         self.interface.push(handle);
         self.globals.insert(symbol, GlobalRef::Variable(handle));
+        if !input {
+            self.output_stream(handle, outer);
+        }
         if let Some(buffer) = xfb_buffer {
             self.xfb_global(handle, buffer, None);
         }
@@ -1279,7 +1317,12 @@ impl<'a> Lowerer<'a> {
     }
 
     pub(super) fn is_per_vertex_member(&self, symbol: SymbolId) -> bool {
-        if self.options.stage != crate::ShaderStage::Vertex {
+        if !matches!(
+            self.options.stage,
+            crate::ShaderStage::Vertex
+                | crate::ShaderStage::TessEvaluation
+                | crate::ShaderStage::Geometry
+        ) {
             return false;
         }
         let Some(&SymbolKind::BlockMember { instance, .. }) =
@@ -1419,8 +1462,12 @@ impl<'a> Lowerer<'a> {
     }
 
     pub(super) fn declare_per_vertex(&mut self) -> Result<()> {
-        if self.options.stage != crate::ShaderStage::Vertex
-            || (self.per_vertex_used.is_empty() && !self.per_vertex_redeclared)
+        if !matches!(
+            self.options.stage,
+            crate::ShaderStage::Vertex
+                | crate::ShaderStage::TessEvaluation
+                | crate::ShaderStage::Geometry
+        ) || (self.per_vertex_used.is_empty() && !self.per_vertex_redeclared)
         {
             return Ok(());
         }
@@ -1605,6 +1652,9 @@ impl<'a> Lowerer<'a> {
             SymbolKind::Variable(ref variable) => {
                 if variable.origin != Origin::BuiltIn {
                     return Err(internal(at));
+                }
+                if self.is_per_vertex_array(symbol) {
+                    return self.per_vertex_array(symbol, at);
                 }
                 (
                     variable.ty.clone(),

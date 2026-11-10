@@ -53,9 +53,9 @@ fn variable_names(builtins: &Builtins) -> BTreeSet<String> {
 #[test]
 fn the_tables_have_the_expected_sizes() {
     let expected = [
-        (Stage::Vertex, 2454, 100, 103),
-        (Stage::TessControl, 2455, 101, 101),
-        (Stage::TessEvaluation, 2454, 104, 104),
+        (Stage::Vertex, 2454, 102, 105),
+        (Stage::TessControl, 2455, 103, 103),
+        (Stage::TessEvaluation, 2454, 106, 106),
         (Stage::Geometry, 2458, 104, 104),
         (Stage::Fragment, 2708, 108, 108),
         (Stage::Compute, 2457, 100, 100),
@@ -404,6 +404,8 @@ fn vertex_variables() {
         "gl_PointSize",
         "gl_ClipDistance",
         "gl_CullDistance",
+        "gl_Layer",
+        "gl_ViewportIndex",
     ] {
         assert!(older.contains(name), "{name}");
     }
@@ -415,7 +417,6 @@ fn vertex_variables() {
         "gl_DrawID",
         "gl_FragCoord",
         "gl_in",
-        "gl_Layer",
     ] {
         assert!(!older.contains(name), "{name}");
     }
