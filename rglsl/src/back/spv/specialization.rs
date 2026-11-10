@@ -216,7 +216,7 @@ impl Writer {
         }
     }
 
-    fn written(&self, handle: Handle<Expression>) -> Result<Word, Error> {
+    pub(super) fn written(&self, handle: Handle<Expression>) -> Result<Word, Error> {
         match self.constant_ids[handle] {
             0 => Err(Error::Validation("global expressions are out of order")),
             id => Ok(id),

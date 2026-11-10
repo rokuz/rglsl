@@ -436,6 +436,14 @@ impl Analyzer<'_> {
             }
         }
         if is_builtin && !failed {
+            if let Some(extensions) = crate::builtins::ray::function_extensions(name) {
+                failed = !self.require_extensions(span, extensions, name);
+            }
+        }
+        if is_builtin && !failed {
+            failed = !self.ray_builtin_checks(span, name, &operands);
+        }
+        if is_builtin && !failed {
             failed = !self.builtin_checks(span, name, &operands);
             let reason = "{} types can only be in uniform block or buffer storage";
             if !self.require_small_arithmetic(
@@ -894,6 +902,14 @@ impl Analyzer<'_> {
             Operand::error()
         };
         if let Some(opaque) = ty.as_opaque() {
+            if opaque.kind == OpaqueKind::AccelerationStructure {
+                if !Self::acceleration_structure_constructor(&operands) {
+                    return fail(self, &ty, "cannot construct with these arguments");
+                }
+                self.calls
+                    .insert(expression.id, Callee::Constructor(ty.clone()));
+                return Operand::temporary(ty);
+            }
             if opaque.kind != OpaqueKind::CombinedSampler {
                 return fail(self, &ty, "this type has no constructor");
             }

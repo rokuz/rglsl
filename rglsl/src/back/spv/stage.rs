@@ -40,7 +40,9 @@ impl Writer {
             | ShaderStage::RayGeneration
             | ShaderStage::AnyHit
             | ShaderStage::ClosestHit
-            | ShaderStage::Miss => Ok(()),
+            | ShaderStage::Miss
+            | ShaderStage::Intersection
+            | ShaderStage::Callable => Ok(()),
         }
     }
 

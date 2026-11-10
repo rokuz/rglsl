@@ -1,5 +1,6 @@
 mod functions;
 mod limits;
+pub(crate) mod ray;
 pub(crate) mod subgroup;
 mod textures;
 mod variables;
@@ -108,6 +109,18 @@ impl Stage {
             Self::Miss => MISS,
             Self::Callable => CALLABLE,
         }
+    }
+
+    pub const fn ray_tracing(self) -> bool {
+        matches!(
+            self,
+            Self::RayGeneration
+                | Self::Intersection
+                | Self::AnyHit
+                | Self::ClosestHit
+                | Self::Miss
+                | Self::Callable
+        )
     }
 }
 
@@ -411,7 +424,7 @@ pub struct Builtins {
 impl Builtins {
     pub fn new(version: u32, stage: Stage, limits: &ResourceLimits) -> Self {
         let mut prototypes = Vec::new();
-        for section in functions::SECTIONS {
+        for section in functions::SECTIONS.iter().chain(ray::SECTIONS) {
             if version >= section.since {
                 expand_section(section, &mut prototypes);
             }

@@ -234,6 +234,8 @@ pub enum EntryPointError {
     RayPayloadInInvalidStage(crate::ShaderStage),
     #[error("Only the `closest_hit`, `any_hit`, and `miss` shader stages can access a global variable in the `incoming_ray_payload` address space")]
     IncomingRayPayloadInInvalidStage(crate::ShaderStage),
+    #[error("A global variable in the {0:?} address space cannot be used in the {1:?} stage")]
+    RayDataInInvalidStage(crate::AddressSpace, crate::ShaderStage),
 }
 
 fn storage_usage(access: crate::StorageAccess) -> GlobalUse {
@@ -426,10 +428,7 @@ impl VaryingContext<'_> {
                 let required = match built_in {
                     Bi::ClipDistances => Capabilities::CLIP_DISTANCES,
                     Bi::CullDistance => Capabilities::CULL_DISTANCE,
-                    // Primitive index is allowed w/o any other extensions in any- and closest-hit shaders
-                    Bi::PrimitiveIndex if !matches!(ep.stage, St::AnyHit | St::ClosestHit) => {
-                        Capabilities::PRIMITIVE_INDEX
-                    }
+                    Bi::PrimitiveIndex if !ep.stage.ray_tracing() => Capabilities::PRIMITIVE_INDEX,
                     Bi::Barycentric { .. } => Capabilities::SHADER_BARYCENTRICS,
                     Bi::ViewIndex => Capabilities::MULTIVIEW,
                     Bi::SampleIndex => Capabilities::MULTISAMPLED_SHADING,
@@ -452,8 +451,7 @@ impl VaryingContext<'_> {
                         is_index_type(ty_inner),
                     ),
                     Bi::InstanceIndex => (
-                        matches!(self.stage, St::Vertex | St::AnyHit | St::ClosestHit)
-                            && !self.output,
+                        self.stage == St::Vertex && !self.output,
                         is_index_type(ty_inner),
                     ),
                     Bi::InvocationId => (
@@ -501,7 +499,9 @@ impl VaryingContext<'_> {
                             | St::RayGeneration
                             | St::AnyHit
                             | St::ClosestHit
-                            | St::Miss => false,
+                            | St::Miss
+                            | St::Intersection
+                            | St::Callable => false,
                         },
                         is_index_type(ty_inner),
                     ),
@@ -549,7 +549,12 @@ impl VaryingContext<'_> {
                             St::Fragment => !self.output,
                             St::TessControl | St::TessEvaluation | St::Geometry => true,
                             St::Compute | St::Task => false,
-                            St::RayGeneration | St::AnyHit | St::ClosestHit | St::Miss => false,
+                            St::RayGeneration
+                            | St::AnyHit
+                            | St::ClosestHit
+                            | St::Miss
+                            | St::Intersection
+                            | St::Callable => false,
                         },
                         *ty_inner
                             == Ti::Vector {
@@ -565,7 +570,9 @@ impl VaryingContext<'_> {
                             | St::RayGeneration
                             | St::AnyHit
                             | St::ClosestHit
-                            | St::Miss => false,
+                            | St::Miss
+                            | St::Intersection
+                            | St::Callable => false,
                         },
                         is_index_type(ty_inner),
                     ),
@@ -583,6 +590,7 @@ impl VaryingContext<'_> {
                             St::Fragment
                                 | St::AnyHit
                                 | St::ClosestHit
+                                | St::Intersection
                                 | St::TessControl
                                 | St::TessEvaluation
                                 | St::Geometry
@@ -675,217 +683,58 @@ impl VaryingContext<'_> {
                                 scalar: crate::Scalar::U32,
                             },
                     ),
-                    Bi::RayInvocationId => (
-                        match self.stage {
-                            St::Vertex
-                            | St::TessControl
-                            | St::TessEvaluation
-                            | St::Geometry
-                            | St::Fragment
-                            | St::Compute
-                            | St::Mesh
-                            | St::Task => false,
-                            St::RayGeneration | St::AnyHit | St::ClosestHit | St::Miss => true,
-                        },
+                    Bi::RayInvocationId | Bi::NumRayInvocations => (
+                        self.stage.ray_tracing() && !self.output,
                         *ty_inner
                             == Ti::Vector {
                                 size: Vs::Tri,
                                 scalar: crate::Scalar::U32,
                             },
                     ),
-                    Bi::NumRayInvocations => (
-                        match self.stage {
-                            St::Vertex
-                            | St::TessControl
-                            | St::TessEvaluation
-                            | St::Geometry
-                            | St::Fragment
-                            | St::Compute
-                            | St::Mesh
-                            | St::Task => false,
-                            St::RayGeneration | St::AnyHit | St::ClosestHit | St::Miss => true,
-                        },
-                        *ty_inner
-                            == Ti::Vector {
-                                size: Vs::Tri,
-                                scalar: crate::Scalar::U32,
-                            },
+                    Bi::InstanceCustomData | Bi::GeometryIndex | Bi::InstanceId => (
+                        matches!(self.stage, St::Intersection | St::AnyHit | St::ClosestHit)
+                            && !self.output,
+                        is_index_type(ty_inner),
                     ),
-                    Bi::InstanceCustomData => (
-                        match self.stage {
-                            St::RayGeneration
-                            | St::Miss
-                            | St::Vertex
-                            | St::TessControl
-                            | St::TessEvaluation
-                            | St::Geometry
-                            | St::Fragment
-                            | St::Compute
-                            | St::Mesh
-                            | St::Task => false,
-                            St::AnyHit | St::ClosestHit => true,
-                        },
-                        *ty_inner == Ti::Scalar(crate::Scalar::U32),
-                    ),
-                    Bi::GeometryIndex => (
-                        match self.stage {
-                            St::RayGeneration
-                            | St::Miss
-                            | St::Vertex
-                            | St::TessControl
-                            | St::TessEvaluation
-                            | St::Geometry
-                            | St::Fragment
-                            | St::Compute
-                            | St::Mesh
-                            | St::Task => false,
-                            St::AnyHit | St::ClosestHit => true,
-                        },
-                        *ty_inner == Ti::Scalar(crate::Scalar::U32),
-                    ),
-                    Bi::WorldRayOrigin => (
-                        match self.stage {
-                            St::RayGeneration
-                            | St::Vertex
-                            | St::TessControl
-                            | St::TessEvaluation
-                            | St::Geometry
-                            | St::Fragment
-                            | St::Compute
-                            | St::Mesh
-                            | St::Task => false,
-                            St::AnyHit | St::ClosestHit | St::Miss => true,
-                        },
+                    Bi::WorldRayOrigin | Bi::WorldRayDirection => (
+                        matches!(
+                            self.stage,
+                            St::Intersection | St::AnyHit | St::ClosestHit | St::Miss
+                        ) && !self.output,
                         *ty_inner
                             == Ti::Vector {
                                 size: Vs::Tri,
                                 scalar: crate::Scalar::F32,
                             },
                     ),
-                    Bi::WorldRayDirection => (
-                        match self.stage {
-                            St::RayGeneration
-                            | St::Vertex
-                            | St::TessControl
-                            | St::TessEvaluation
-                            | St::Geometry
-                            | St::Fragment
-                            | St::Compute
-                            | St::Mesh
-                            | St::Task => false,
-                            St::AnyHit | St::ClosestHit | St::Miss => true,
-                        },
+                    Bi::ObjectRayOrigin | Bi::ObjectRayDirection => (
+                        matches!(
+                            self.stage,
+                            St::Intersection | St::AnyHit | St::ClosestHit | St::Miss
+                        ) && !self.output,
                         *ty_inner
                             == Ti::Vector {
                                 size: Vs::Tri,
                                 scalar: crate::Scalar::F32,
                             },
                     ),
-                    Bi::ObjectRayOrigin => (
-                        match self.stage {
-                            St::RayGeneration
-                            | St::Miss
-                            | St::Vertex
-                            | St::TessControl
-                            | St::TessEvaluation
-                            | St::Geometry
-                            | St::Fragment
-                            | St::Compute
-                            | St::Mesh
-                            | St::Task => false,
-                            St::AnyHit | St::ClosestHit => true,
-                        },
-                        *ty_inner
-                            == Ti::Vector {
-                                size: Vs::Tri,
-                                scalar: crate::Scalar::F32,
-                            },
-                    ),
-                    Bi::ObjectRayDirection => (
-                        match self.stage {
-                            St::RayGeneration
-                            | St::Miss
-                            | St::Vertex
-                            | St::TessControl
-                            | St::TessEvaluation
-                            | St::Geometry
-                            | St::Fragment
-                            | St::Compute
-                            | St::Mesh
-                            | St::Task => false,
-                            St::AnyHit | St::ClosestHit => true,
-                        },
-                        *ty_inner
-                            == Ti::Vector {
-                                size: Vs::Tri,
-                                scalar: crate::Scalar::F32,
-                            },
-                    ),
-                    Bi::RayTmin => (
-                        match self.stage {
-                            St::RayGeneration
-                            | St::Vertex
-                            | St::TessControl
-                            | St::TessEvaluation
-                            | St::Geometry
-                            | St::Fragment
-                            | St::Compute
-                            | St::Mesh
-                            | St::Task => false,
-                            St::AnyHit | St::ClosestHit | St::Miss => true,
-                        },
+                    Bi::RayTmin | Bi::RayTCurrentMax | Bi::CurrentRayTime => (
+                        matches!(
+                            self.stage,
+                            St::Intersection | St::AnyHit | St::ClosestHit | St::Miss
+                        ) && !self.output,
                         *ty_inner == Ti::Scalar(crate::Scalar::F32),
                     ),
-                    Bi::RayTCurrentMax => (
-                        match self.stage {
-                            St::RayGeneration
-                            | St::Vertex
-                            | St::TessControl
-                            | St::TessEvaluation
-                            | St::Geometry
-                            | St::Fragment
-                            | St::Compute
-                            | St::Mesh
-                            | St::Task => false,
-                            St::AnyHit | St::ClosestHit | St::Miss => true,
-                        },
-                        *ty_inner == Ti::Scalar(crate::Scalar::F32),
+                    Bi::IncomingRayFlags | Bi::CullMask => (
+                        matches!(
+                            self.stage,
+                            St::Intersection | St::AnyHit | St::ClosestHit | St::Miss
+                        ) && !self.output,
+                        *ty_inner == Ti::Scalar(crate::Scalar::U32),
                     ),
-                    Bi::ObjectToWorld => (
-                        match self.stage {
-                            St::RayGeneration
-                            | St::Miss
-                            | St::Vertex
-                            | St::TessControl
-                            | St::TessEvaluation
-                            | St::Geometry
-                            | St::Fragment
-                            | St::Compute
-                            | St::Mesh
-                            | St::Task => false,
-                            St::AnyHit | St::ClosestHit => true,
-                        },
-                        *ty_inner
-                            == Ti::Matrix {
-                                columns: crate::VectorSize::Quad,
-                                rows: crate::VectorSize::Tri,
-                                scalar: crate::Scalar::F32,
-                            },
-                    ),
-                    Bi::WorldToObject => (
-                        match self.stage {
-                            St::RayGeneration
-                            | St::Miss
-                            | St::Vertex
-                            | St::TessControl
-                            | St::TessEvaluation
-                            | St::Geometry
-                            | St::Fragment
-                            | St::Compute
-                            | St::Mesh
-                            | St::Task => false,
-                            St::AnyHit | St::ClosestHit => true,
-                        },
+                    Bi::ObjectToWorld | Bi::WorldToObject => (
+                        matches!(self.stage, St::Intersection | St::AnyHit | St::ClosestHit)
+                            && !self.output,
                         *ty_inner
                             == Ti::Matrix {
                                 columns: crate::VectorSize::Quad,
@@ -894,20 +743,26 @@ impl VaryingContext<'_> {
                             },
                     ),
                     Bi::HitKind => (
-                        match self.stage {
-                            St::RayGeneration
-                            | St::Miss
-                            | St::Vertex
-                            | St::TessControl
-                            | St::TessEvaluation
-                            | St::Geometry
-                            | St::Fragment
-                            | St::Compute
-                            | St::Mesh
-                            | St::Task => false,
-                            St::AnyHit | St::ClosestHit => true,
-                        },
+                        matches!(self.stage, St::AnyHit | St::ClosestHit) && !self.output,
                         *ty_inner == Ti::Scalar(crate::Scalar::U32),
+                    ),
+                    Bi::HitTriangleVertexPositions => (
+                        matches!(self.stage, St::AnyHit | St::ClosestHit) && !self.output,
+                        match *ty_inner {
+                            Ti::Array {
+                                base,
+                                size: crate::ArraySize::Constant(size),
+                                ..
+                            } => {
+                                size.get() == 3
+                                    && self.types[base].inner
+                                        == Ti::Vector {
+                                            size: Vs::Tri,
+                                            scalar: crate::Scalar::F32,
+                                        }
+                            }
+                            _ => false,
+                        },
                     ),
                     // Validated elsewhere, shouldn't be here
                     Bi::VertexCount | Bi::PrimitiveCount | Bi::Vertices | Bi::Primitives => {
@@ -1132,7 +987,9 @@ impl VaryingContext<'_> {
                     | crate::ShaderStage::RayGeneration
                     | crate::ShaderStage::AnyHit
                     | crate::ShaderStage::ClosestHit
-                    | crate::ShaderStage::Miss => false,
+                    | crate::ShaderStage::Miss
+                    | crate::ShaderStage::Intersection
+                    | crate::ShaderStage::Callable => false,
                     crate::ShaderStage::Mesh => self.output,
                 };
 
@@ -1566,6 +1423,14 @@ impl super::Validator {
 
                 (TypeFlags::empty(), true)
             }
+            crate::AddressSpace::Private
+                if crate::proc::contains_ray_query(gctx.types, inner_ty) =>
+            {
+                if var.init.is_some() {
+                    return Err(GlobalVariableError::InitializerNotAllowed(var.space));
+                }
+                (TypeFlags::empty(), false)
+            }
             crate::AddressSpace::Private => (
                 TypeFlags::CONSTRUCTIBLE | TypeFlags::CREATION_RESOLVED,
                 false,
@@ -1596,7 +1461,11 @@ impl super::Validator {
                     false,
                 )
             }
-            crate::AddressSpace::RayPayload | crate::AddressSpace::IncomingRayPayload => {
+            crate::AddressSpace::RayPayload
+            | crate::AddressSpace::IncomingRayPayload
+            | crate::AddressSpace::HitAttribute
+            | crate::AddressSpace::CallableData
+            | crate::AddressSpace::IncomingCallableData => {
                 if !self
                     .capabilities
                     .contains(Capabilities::RAY_TRACING_PIPELINE)
@@ -1606,6 +1475,20 @@ impl super::Validator {
                     ));
                 }
                 (TypeFlags::DATA | TypeFlags::SIZED, false)
+            }
+            crate::AddressSpace::ShaderRecord => {
+                if !self
+                    .capabilities
+                    .contains(Capabilities::RAY_TRACING_PIPELINE)
+                {
+                    return Err(GlobalVariableError::UnsupportedCapability(
+                        Capabilities::RAY_TRACING_PIPELINE,
+                    ));
+                }
+                (
+                    TypeFlags::DATA | TypeFlags::HOST_SHAREABLE | TypeFlags::CREATION_RESOLVED,
+                    false,
+                )
             }
             // What the variable is bound to is validated for each entry point
             // that lists it, since it depends on the stage.
@@ -1631,7 +1514,14 @@ impl super::Validator {
             var.space,
             crate::AddressSpace::Input | crate::AddressSpace::Output
         );
-        if var.io.is_some() && !is_interface {
+        let ray_location = matches!(
+            var.space,
+            crate::AddressSpace::RayPayload
+                | crate::AddressSpace::IncomingRayPayload
+                | crate::AddressSpace::CallableData
+                | crate::AddressSpace::IncomingCallableData
+        ) && matches!(var.io, None | Some(crate::Binding::Location { .. }));
+        if var.io.is_some() && !is_interface && !ray_location {
             return Err(GlobalVariableError::InvalidBinding);
         }
         if var.space == crate::AddressSpace::Input && var.init.is_some() {
@@ -1646,9 +1536,12 @@ impl super::Validator {
             }
         }
 
+        let ray_tmax = var.space == crate::AddressSpace::Input
+            && var.io == Some(crate::Binding::BuiltIn(crate::BuiltIn::RayTCurrentMax));
         let volatile_input = var.space == crate::AddressSpace::Input
             && var.memory_decorations == crate::MemoryDecorations::VOLATILE;
         if !var.memory_decorations.is_empty()
+            && !ray_tmax
             && !volatile_input
             && !matches!(
                 var.space,
@@ -1932,6 +1825,8 @@ impl super::Validator {
                 crate::ShaderStage::AnyHit => ShaderStages::ANY_HIT,
                 crate::ShaderStage::ClosestHit => ShaderStages::CLOSEST_HIT,
                 crate::ShaderStage::Miss => ShaderStages::MISS,
+                crate::ShaderStage::Intersection => ShaderStages::INTERSECTION,
+                crate::ShaderStage::Callable => ShaderStages::CALLABLE,
                 crate::ShaderStage::TessControl => ShaderStages::TESS_CONTROL,
                 crate::ShaderStage::TessEvaluation => ShaderStages::TESS_EVALUATION,
                 crate::ShaderStage::Geometry => ShaderStages::GEOMETRY,
@@ -2168,6 +2063,7 @@ impl super::Validator {
                     if !matches!(
                         ep.stage,
                         crate::ShaderStage::RayGeneration
+                            | crate::ShaderStage::AnyHit
                             | crate::ShaderStage::ClosestHit
                             | crate::ShaderStage::Miss
                     ) {
@@ -2187,6 +2083,50 @@ impl super::Validator {
                             .with_span_handle(var_handle, &module.global_variables));
                     }
                     GlobalUse::READ | GlobalUse::QUERY | GlobalUse::WRITE
+                }
+                crate::AddressSpace::HitAttribute => {
+                    let writable = match ep.stage {
+                        crate::ShaderStage::Intersection => true,
+                        crate::ShaderStage::AnyHit | crate::ShaderStage::ClosestHit => false,
+                        stage => {
+                            return Err(EntryPointError::RayDataInInvalidStage(var.space, stage)
+                                .with_span_handle(var_handle, &module.global_variables))
+                        }
+                    };
+                    GlobalUse::READ
+                        | GlobalUse::QUERY
+                        | if writable {
+                            GlobalUse::WRITE
+                        } else {
+                            GlobalUse::empty()
+                        }
+                }
+                crate::AddressSpace::CallableData => {
+                    if !matches!(
+                        ep.stage,
+                        crate::ShaderStage::RayGeneration
+                            | crate::ShaderStage::ClosestHit
+                            | crate::ShaderStage::Miss
+                            | crate::ShaderStage::Callable
+                    ) {
+                        return Err(EntryPointError::RayDataInInvalidStage(var.space, ep.stage)
+                            .with_span_handle(var_handle, &module.global_variables));
+                    }
+                    GlobalUse::READ | GlobalUse::QUERY | GlobalUse::WRITE
+                }
+                crate::AddressSpace::IncomingCallableData => {
+                    if ep.stage != crate::ShaderStage::Callable {
+                        return Err(EntryPointError::RayDataInInvalidStage(var.space, ep.stage)
+                            .with_span_handle(var_handle, &module.global_variables));
+                    }
+                    GlobalUse::READ | GlobalUse::QUERY | GlobalUse::WRITE
+                }
+                crate::AddressSpace::ShaderRecord => {
+                    if !ep.stage.ray_tracing() {
+                        return Err(EntryPointError::RayDataInInvalidStage(var.space, ep.stage)
+                            .with_span_handle(var_handle, &module.global_variables));
+                    }
+                    GlobalUse::READ | GlobalUse::QUERY
                 }
             };
             if !allowed_usage.contains(usage) {

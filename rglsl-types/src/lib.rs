@@ -144,6 +144,10 @@ pub enum ShaderStage {
 
     /// A closest hit shader, in a ray tracing pipeline.
     ClosestHit,
+
+    Intersection,
+
+    Callable,
 }
 
 impl ShaderStage {
@@ -152,8 +156,25 @@ impl ShaderStage {
             Self::Vertex | Self::Fragment => false,
             Self::TessControl | Self::TessEvaluation | Self::Geometry => false,
             Self::Compute | Self::Task | Self::Mesh => true,
-            Self::RayGeneration | Self::AnyHit | Self::ClosestHit | Self::Miss => false,
+            Self::RayGeneration
+            | Self::AnyHit
+            | Self::ClosestHit
+            | Self::Miss
+            | Self::Intersection
+            | Self::Callable => false,
         }
+    }
+
+    pub const fn ray_tracing(self) -> bool {
+        matches!(
+            self,
+            Self::RayGeneration
+                | Self::Intersection
+                | Self::AnyHit
+                | Self::ClosestHit
+                | Self::Miss
+                | Self::Callable
+        )
     }
 
     pub const fn has_arrayed_io(self) -> bool {

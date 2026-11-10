@@ -1,6 +1,0 @@
-capabilities = "RAY_QUERY"
-targets = "SPIRV"
-
-[spv]
-version = [1, 4]
-ray_query_initialization_tracking = false

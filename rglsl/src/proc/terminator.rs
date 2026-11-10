@@ -29,6 +29,7 @@ pub fn ensure_block_returns(block: &mut crate::Block) {
             }
         }
         Some(&mut (S::Break | S::Continue | S::Return { .. } | S::Kill | S::Abort { .. })) => (),
+        Some(&mut S::RayPipelineFunction(ref function)) if function.is_terminator() => (),
         Some(
             &mut (S::Emit(_)
             | S::Loop { .. }

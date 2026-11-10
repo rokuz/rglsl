@@ -297,6 +297,9 @@ fn process_workgroup_size_override(
     adjusted_global_expressions: &HandleVec<Expression, Handle<Expression>>,
     ep: &mut crate::EntryPoint,
 ) -> Result<(), PipelineConstantError> {
+    if let Some(ref mut enable) = ep.opacity_micromap {
+        *enable = adjusted_global_expressions[*enable];
+    }
     match ep.workgroup_size_overrides {
         None => {}
         Some(overrides) => {
@@ -693,11 +696,14 @@ fn adjust_expr(new_pos: &HandleVec<Expression, Handle<Expression>>, expr: &mut E
             adjust(pointer);
             adjust(offset);
         }
-        Expression::RayQueryGetIntersection {
+        Expression::RayQueryGet {
             ref mut query,
-            committed: _,
+            value: _,
         } => {
             adjust(query);
+        }
+        Expression::AccelerationStructureFromAddress { ref mut address } => {
+            adjust(address);
         }
         Expression::Literal(_)
         | Expression::FunctionArgument(_)
@@ -705,6 +711,7 @@ fn adjust_expr(new_pos: &HandleVec<Expression, Handle<Expression>>, expr: &mut E
         | Expression::LocalVariable(_)
         | Expression::CallResult(_)
         | Expression::RayQueryProceedResult
+        | Expression::ReportIntersectionResult
         | Expression::Constant(_)
         | Expression::Override(_)
         | Expression::ZeroValue(_)
@@ -715,12 +722,6 @@ fn adjust_expr(new_pos: &HandleVec<Expression, Handle<Expression>>, expr: &mut E
         | Expression::WorkGroupUniformLoadResult { ty: _ }
         | Expression::SubgroupBallotResult
         | Expression::SubgroupOperationResult { .. } => {}
-        Expression::RayQueryVertexPositions {
-            ref mut query,
-            committed: _,
-        } => {
-            adjust(query);
-        }
         Expression::CooperativeLoad { ref mut data, .. } => {
             adjust(&mut data.pointer);
             adjust(&mut data.stride);
@@ -954,22 +955,8 @@ fn adjust_stmt(new_pos: &HandleVec<Expression, Handle<Expression>>, stmt: &mut S
             ref mut fun,
         } => {
             adjust(query);
-            match *fun {
-                crate::RayQueryFunction::Initialize {
-                    ref mut acceleration_structure,
-                    ref mut descriptor,
-                } => {
-                    adjust(acceleration_structure);
-                    adjust(descriptor);
-                }
-                crate::RayQueryFunction::Proceed { ref mut result } => {
-                    adjust(result);
-                }
-                crate::RayQueryFunction::GenerateIntersection { ref mut hit_t } => {
-                    adjust(hit_t);
-                }
-                crate::RayQueryFunction::ConfirmIntersection => {}
-                crate::RayQueryFunction::Terminate => {}
+            for operand in fun.operands_mut() {
+                adjust(operand);
             }
         }
         Statement::CooperativeStore {
@@ -980,17 +967,14 @@ fn adjust_stmt(new_pos: &HandleVec<Expression, Handle<Expression>>, stmt: &mut S
             adjust(&mut data.pointer);
             adjust(&mut data.stride);
         }
-        Statement::RayPipelineFunction(ref mut func) => match *func {
-            crate::RayPipelineFunction::TraceRay {
-                ref mut acceleration_structure,
-                ref mut descriptor,
-                ref mut payload,
-            } => {
-                adjust(acceleration_structure);
-                adjust(descriptor);
-                adjust(payload);
+        Statement::RayPipelineFunction(ref mut func) => {
+            for operand in func.operands_mut() {
+                adjust(operand);
             }
-        },
+            if let Some(result) = func.result_mut() {
+                adjust(result);
+            }
+        }
         Statement::DebugPrintf {
             ref mut arguments, ..
         } => {

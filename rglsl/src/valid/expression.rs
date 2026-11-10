@@ -73,6 +73,8 @@ pub enum ExpressionError {
     InvalidFloatArgument(Handle<crate::Expression>),
     #[error("Type resolution failed")]
     Type(#[from] ResolveError),
+    #[error("The address {0:?} of an acceleration structure must be a `u64` or a `vec2<u32>`")]
+    InvalidAccelerationStructureAddress(Handle<crate::Expression>),
     #[error("Not a global variable")]
     ExpectedGlobalVariable,
     #[error("Not a global variable or a function argument")]
@@ -1313,44 +1315,38 @@ impl super::Validator {
                 }
             }
             E::RayQueryProceedResult => ShaderStages::all(),
-            E::RayQueryGetIntersection {
-                query,
-                committed: _,
-            } => match resolver[query] {
-                Ti::Pointer {
-                    base,
-                    space: crate::AddressSpace::Function,
-                } => match resolver.types[base].inner {
-                    Ti::RayQuery { .. } => ShaderStages::all(),
-                    ref other => {
-                        log::debug!("Intersection result of a pointer to {other:?}");
-                        return Err(ExpressionError::InvalidRayQueryType(query));
+            E::RayQueryGet { query, value } => {
+                let is_query = match resolver[query] {
+                    Ti::Pointer { base, .. } => {
+                        matches!(resolver.types[base].inner, Ti::RayQuery { .. })
                     }
-                },
-                ref other => {
-                    log::debug!("Intersection result of {other:?}");
+                    _ => false,
+                };
+                if !is_query {
                     return Err(ExpressionError::InvalidRayQueryType(query));
                 }
-            },
-            E::RayQueryVertexPositions {
-                query,
-                committed: _,
-            } => match resolver[query] {
-                Ti::Pointer {
-                    base,
-                    space: crate::AddressSpace::Function,
-                } => match resolver.types[base].inner {
-                    Ti::RayQuery {
-                        vertex_return: true,
-                    } => ShaderStages::all(),
-                    ref other => {
-                        log::debug!("Intersection result of a pointer to {other:?}");
+                if let crate::RayQueryValue::Intersection {
+                    value: crate::RayQueryIntersectionValue::TriangleVertexPositions,
+                    ..
+                } = value
+                {
+                    if module.special_types.ray_vertex_return.is_none() {
                         return Err(ExpressionError::InvalidRayQueryType(query));
                     }
-                },
-                ref other => {
-                    log::debug!("Intersection result of {other:?}");
-                    return Err(ExpressionError::InvalidRayQueryType(query));
+                }
+                ShaderStages::all()
+            }
+            E::ReportIntersectionResult => ShaderStages::INTERSECTION,
+            E::AccelerationStructureFromAddress { address } => match resolver[address] {
+                Ti::Scalar(crate::Scalar::U64)
+                | Ti::Vector {
+                    size: crate::VectorSize::Bi,
+                    scalar: crate::Scalar::U32,
+                } => ShaderStages::all(),
+                _ => {
+                    return Err(ExpressionError::InvalidAccelerationStructureAddress(
+                        address,
+                    ))
                 }
             },
             E::SubgroupBallotResult | E::SubgroupOperationResult { .. } => self.subgroup_stages,

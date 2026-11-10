@@ -103,15 +103,22 @@ impl FunctionLowerer<'_, '_> {
             }
             StatementKind::For(ref for_statement) => self.for_loop(for_statement, at),
             StatementKind::Jump(ref jump) => {
-                let statement = match *jump {
-                    JumpStatement::Break => IrStatement::Break,
-                    JumpStatement::Continue => IrStatement::Continue,
-                    JumpStatement::Discard => IrStatement::Kill,
-                    JumpStatement::Return(None) => IrStatement::Return { value: None },
-                    JumpStatement::Return(Some(ref value)) => IrStatement::Return {
-                        value: Some(self.rvalue(value)?),
-                    },
-                };
+                let statement =
+                    match *jump {
+                        JumpStatement::Break => IrStatement::Break,
+                        JumpStatement::Continue => IrStatement::Continue,
+                        JumpStatement::Discard => IrStatement::Kill,
+                        JumpStatement::TerminateRay => IrStatement::RayPipelineFunction(
+                            crate::RayPipelineFunction::TerminateRay { nv: false },
+                        ),
+                        JumpStatement::IgnoreIntersection => IrStatement::RayPipelineFunction(
+                            crate::RayPipelineFunction::IgnoreIntersection { nv: false },
+                        ),
+                        JumpStatement::Return(None) => IrStatement::Return { value: None },
+                        JumpStatement::Return(Some(ref value)) => IrStatement::Return {
+                            value: Some(self.rvalue(value)?),
+                        },
+                    };
                 self.push(statement, at);
                 Ok(())
             }
@@ -221,6 +228,20 @@ impl FunctionLowerer<'_, '_> {
                     }
                     let ty = variable.ty.clone();
                     let ir = self.lw.variable_ir_type(&ty, &variable.qualifiers, at)?;
+                    if ty
+                        .as_opaque()
+                        .is_some_and(rglsl_sema::types::Opaque::is_ray_query)
+                        || ty
+                            .element_type()
+                            .and_then(|element| element.as_opaque())
+                            .is_some_and(rglsl_sema::types::Opaque::is_ray_query)
+                    {
+                        let global = self
+                            .lw
+                            .ray_query_global(declarator.name.node.clone(), ir, at);
+                        self.lw.globals.insert(symbol, GlobalRef::Variable(global));
+                        continue;
+                    }
                     let local = self.local_typed(ir, Some(declarator.name.node.clone()), at);
                     self.variables.insert(symbol, Local::Variable(local));
                     if let Some(ref initializer) = declarator.initializer {
@@ -324,6 +345,11 @@ impl FunctionLowerer<'_, '_> {
                         | IrStatement::Kill
                         | IrStatement::Abort { .. }),
                     ) => false,
+                    Some(&IrStatement::RayPipelineFunction(ref function))
+                        if function.is_terminator() =>
+                    {
+                        false
+                    }
                     _ => true,
                 };
                 cases.push(SwitchCase {

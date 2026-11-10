@@ -44,6 +44,7 @@ impl super::Validator {
             ref doc_comments,
             vulkan_memory_model: _,
             descriptor_heap: _,
+            ray_tracing: _,
         } = module;
 
         // Because types can refer to global expressions and vice versa, to
@@ -253,6 +254,9 @@ impl super::Validator {
                 for size in sizes.iter().filter_map(|x| *x) {
                     validate_const_expr(size)?;
                 }
+            }
+            if let Some(enable) = entry_point.opacity_micromap {
+                validate_const_expr(enable)?;
             }
             for &variable in &entry_point.interface {
                 Self::validate_global_variable_handle(variable, global_variables)?;
@@ -694,6 +698,7 @@ impl super::Validator {
             }
             crate::Expression::AtomicResult { .. }
             | crate::Expression::RayQueryProceedResult
+            | crate::Expression::ReportIntersectionResult
             | crate::Expression::SubgroupBallotResult
             | crate::Expression::SubgroupOperationResult { .. }
             | crate::Expression::WorkGroupUniformLoadResult { .. } => (),
@@ -714,15 +719,11 @@ impl super::Validator {
                 validate_type(ty)?;
                 handle.check_dep(value)?;
             }
-            crate::Expression::RayQueryGetIntersection {
-                query,
-                committed: _,
-            }
-            | crate::Expression::RayQueryVertexPositions {
-                query,
-                committed: _,
-            } => {
+            crate::Expression::RayQueryGet { query, value: _ } => {
                 handle.check_dep(query)?;
+            }
+            crate::Expression::AccelerationStructureFromAddress { address } => {
+                handle.check_dep(address)?;
             }
             crate::Expression::CooperativeLoad { ref data, .. } => {
                 handle.check_dep(data.pointer)?.check_dep(data.stride)?;
@@ -899,23 +900,10 @@ impl super::Validator {
             }
             crate::Statement::RayQuery { query, ref fun } => {
                 validate_expr(query)?;
-                match *fun {
-                    crate::RayQueryFunction::Initialize {
-                        acceleration_structure,
-                        descriptor,
-                    } => {
-                        validate_expr(acceleration_structure)?;
-                        validate_expr(descriptor)?;
-                    }
-                    crate::RayQueryFunction::Proceed { result } => {
-                        validate_expr(result)?;
-                    }
-                    crate::RayQueryFunction::GenerateIntersection { hit_t } => {
-                        validate_expr(hit_t)?;
-                    }
-                    crate::RayQueryFunction::ConfirmIntersection => {}
-                    crate::RayQueryFunction::Terminate => {}
+                for operand in fun.operands() {
+                    validate_expr(operand)?;
                 }
+                validate_expr_opt(fun.result())?;
                 Ok(())
             }
             crate::Statement::SubgroupBallot { result, predicate } => {
@@ -957,18 +945,13 @@ impl super::Validator {
                 validate_expr(data.stride)?;
                 Ok(())
             }
-            crate::Statement::RayPipelineFunction(fun) => match fun {
-                crate::RayPipelineFunction::TraceRay {
-                    acceleration_structure,
-                    descriptor,
-                    payload,
-                } => {
-                    validate_expr(acceleration_structure)?;
-                    validate_expr(descriptor)?;
-                    validate_expr(payload)?;
-                    Ok(())
+            crate::Statement::RayPipelineFunction(ref fun) => {
+                for operand in fun.operands() {
+                    validate_expr(operand)?;
                 }
-            },
+                validate_expr_opt(fun.result())?;
+                Ok(())
+            }
             crate::Statement::DebugPrintf { ref arguments, .. } => {
                 for argument in arguments {
                     if let crate::DebugPrintfArgument::Value(value) = *argument {

@@ -606,6 +606,9 @@ impl FunctionInfo {
                             | crate::TypeInner::SampledImage { .. } => {
                                 super::Capabilities::TEXTURE_AND_SAMPLER_BINDING_ARRAY_NON_UNIFORM_INDEXING
                             }
+                            crate::TypeInner::AccelerationStructure { .. } => {
+                                super::Capabilities::ACCELERATION_STRUCTURE_BINDING_ARRAY
+                            }
                             // If we're anything but an image or sampler, assume we're a buffer and use the address space.
                             _ => {
                                 if let E::GlobalVariable(global_handle) = expression_arena[base] {
@@ -691,7 +694,14 @@ impl FunctionInfo {
                 let var = &resolve_context.global_vars[gh];
                 let uniform = match var.space {
                     // local data is non-uniform
-                    As::Function | As::Private | As::RayPayload | As::IncomingRayPayload => false,
+                    As::Function
+                    | As::Private
+                    | As::RayPayload
+                    | As::IncomingRayPayload
+                    | As::HitAttribute
+                    | As::CallableData
+                    | As::IncomingCallableData => false,
+                    As::ShaderRecord => true,
                     // stage inputs and outputs differ between invocations
                     As::Input | As::Output => false,
                     // workgroup memory is exclusively accessed by the group
@@ -863,7 +873,25 @@ impl FunctionInfo {
                 requirements: UniformityRequirements::empty(),
             },
             E::CallResult(function) => other_functions[function.index()].uniformity.clone(),
-            E::AtomicResult { .. } | E::RayQueryProceedResult => Uniformity {
+            E::AtomicResult { .. } | E::RayQueryProceedResult | E::ReportIntersectionResult => {
+                Uniformity {
+                    non_uniform_result: Some(handle),
+                    requirements: UniformityRequirements::empty(),
+                }
+            }
+            E::AccelerationStructureFromAddress { address } => Uniformity {
+                non_uniform_result: self.add_ref(address),
+                requirements: UniformityRequirements::empty(),
+            },
+            E::RayQueryGet { query, value: _ } => Uniformity {
+                non_uniform_result: self.add_ref(query),
+                requirements: UniformityRequirements::empty(),
+            },
+            E::SubgroupBallotResult => Uniformity {
+                non_uniform_result: Some(handle),
+                requirements: UniformityRequirements::empty(),
+            },
+            E::SubgroupOperationResult { .. } => Uniformity {
                 non_uniform_result: Some(handle),
                 requirements: UniformityRequirements::empty(),
             },
@@ -892,28 +920,6 @@ impl FunctionInfo {
                     requirements: UniformityRequirements::empty(),
                 }
             }
-            E::RayQueryGetIntersection {
-                query,
-                committed: _,
-            } => Uniformity {
-                non_uniform_result: self.add_ref(query),
-                requirements: UniformityRequirements::empty(),
-            },
-            E::SubgroupBallotResult => Uniformity {
-                non_uniform_result: Some(handle),
-                requirements: UniformityRequirements::empty(),
-            },
-            E::SubgroupOperationResult { .. } => Uniformity {
-                non_uniform_result: Some(handle),
-                requirements: UniformityRequirements::empty(),
-            },
-            E::RayQueryVertexPositions {
-                query,
-                committed: _,
-            } => Uniformity {
-                non_uniform_result: self.add_ref(query),
-                requirements: UniformityRequirements::empty(),
-            },
             E::CooperativeLoad { ref data, .. } => Uniformity {
                 non_uniform_result: self.add_ref(data.pointer).or(self.add_ref(data.stride)),
                 requirements: UniformityRequirements::COOP_OPS,
@@ -1227,20 +1233,8 @@ impl FunctionInfo {
                 }
                 S::RayQuery { query, ref fun } => {
                     let _ = self.add_ref(query);
-                    match *fun {
-                        crate::RayQueryFunction::Initialize {
-                            acceleration_structure,
-                            descriptor,
-                        } => {
-                            let _ = self.add_ref(acceleration_structure);
-                            let _ = self.add_ref(descriptor);
-                        }
-                        crate::RayQueryFunction::Proceed { result: _ } => {}
-                        crate::RayQueryFunction::GenerateIntersection { hit_t } => {
-                            let _ = self.add_ref(hit_t);
-                        }
-                        crate::RayQueryFunction::ConfirmIntersection => {}
-                        crate::RayQueryFunction::Terminate => {}
+                    for operand in fun.operands() {
+                        let _ = self.add_ref(operand);
                     }
                     FunctionUniformity::new()
                 }
@@ -1293,18 +1287,29 @@ impl FunctionInfo {
                     exit: ExitFlags::empty(),
                 },
                 S::RayPipelineFunction(ref fun) => {
-                    match *fun {
-                        crate::RayPipelineFunction::TraceRay {
-                            acceleration_structure,
-                            descriptor,
-                            payload,
-                        } => {
-                            let _ = self.add_ref(acceleration_structure);
-                            let _ = self.add_ref(descriptor);
-                            let _ = self.add_ref(payload);
-                        }
+                    let data = match *fun {
+                        crate::RayPipelineFunction::TraceRay { payload, .. } => payload.pointer(),
+                        crate::RayPipelineFunction::ExecuteCallable { data, .. } => data.pointer(),
+                        crate::RayPipelineFunction::ReportIntersection { .. }
+                        | crate::RayPipelineFunction::IgnoreIntersection { .. }
+                        | crate::RayPipelineFunction::TerminateRay { .. } => None,
+                    };
+                    for operand in fun.operands() {
+                        let usage = if Some(operand) == data {
+                            GlobalUse::READ | GlobalUse::WRITE
+                        } else {
+                            GlobalUse::READ
+                        };
+                        let _ = self.add_ref_impl(operand, usage);
                     }
-                    FunctionUniformity::new()
+                    if fun.is_terminator() {
+                        FunctionUniformity {
+                            result: Uniformity::new(),
+                            exit: ExitFlags::MAY_KILL,
+                        }
+                    } else {
+                        FunctionUniformity::new()
+                    }
                 }
                 S::DebugPrintf { ref arguments, .. } => {
                     let mut non_uniform_result = None;

@@ -59,6 +59,7 @@ fn ensure_returns(block: &mut Block, value: Option<Handle<Expression>>) {
             | Statement::Kill
             | Statement::Abort { .. }),
         ) => {}
+        Some(&mut Statement::RayPipelineFunction(ref function)) if function.is_terminator() => {}
         _ => block.push(Statement::Return { value }, Span::UNDEFINED),
     }
 }
@@ -134,6 +135,20 @@ impl<'l, 'a> FunctionLowerer<'l, 'a> {
         handle
     }
 
+    pub(super) fn result_statement(
+        &mut self,
+        result: Expression,
+        statement: impl FnOnce(Handle<Expression>) -> Statement,
+        span: Span,
+    ) -> Handle<Expression> {
+        let emitted = self.emitter.finish(&self.expressions);
+        self.block.extend(emitted);
+        let result = self.unemitted(result, span);
+        self.block.push(statement(result), span);
+        self.emitter.start(&self.expressions);
+        result
+    }
+
     pub(super) fn call_statement(
         &mut self,
         function: Handle<Function>,
@@ -166,16 +181,17 @@ impl<'l, 'a> FunctionLowerer<'l, 'a> {
     }
 
     pub(super) fn terminated(&self) -> bool {
-        matches!(
-            self.block.last(),
+        match self.block.last() {
             Some(
                 &(Statement::Break
-                    | Statement::Continue
-                    | Statement::Return { .. }
-                    | Statement::Kill
-                    | Statement::Abort { .. })
-            )
-        )
+                | Statement::Continue
+                | Statement::Return { .. }
+                | Statement::Kill
+                | Statement::Abort { .. }),
+            ) => true,
+            Some(&Statement::RayPipelineFunction(ref function)) => function.is_terminator(),
+            _ => false,
+        }
     }
 
     pub(super) fn local(
@@ -290,7 +306,17 @@ impl<'a> Lowerer<'a> {
                 return Err(unsupported("`precise`", span));
             }
             let mut ty = self.parameter_type(&parameter.ty, symbol, span)?;
-            let local = if parameter.direction.is_output() {
+            let ray_query = parameter
+                .ty
+                .as_opaque()
+                .is_some_and(rglsl_sema::types::Opaque::is_ray_query);
+            let local = if ray_query {
+                ty = self.insert_type(TypeInner::Pointer {
+                    base: ty,
+                    space: AddressSpace::Private,
+                });
+                Local::Pointer(index)
+            } else if parameter.direction.is_output() {
                 ty = self.insert_type(TypeInner::Pointer {
                     base: ty,
                     space: AddressSpace::Function,
@@ -435,6 +461,7 @@ impl<'a> Lowerer<'a> {
             self.conservative_depth
                 .map(|conservative| EarlyDepthTest::Allow { conservative })
         };
+        let opacity_micromap = self.opacity_micromap(at)?;
         let (geometry, tessellation) = self.stage_info();
         self.module.entry_points.push(EntryPoint {
             name: String::from("main"),
@@ -445,9 +472,10 @@ impl<'a> Lowerer<'a> {
             function,
             mesh_info: None,
             task_payload: None,
-            incoming_ray_payload: None,
+            incoming_ray_payload: self.incoming_ray_payload,
             interface: self.interface.clone(),
             transform_feedback: self.xfb.mode,
+            opacity_micromap,
             quad_control: self.quad_control,
             geometry,
             tessellation,

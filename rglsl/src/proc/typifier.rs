@@ -776,19 +776,61 @@ impl<'a> ResolveContext<'a> {
             crate::Expression::RayQueryProceedResult => {
                 TypeResolution::Value(Ti::Scalar(crate::Scalar::BOOL))
             }
-            crate::Expression::RayQueryGetIntersection { .. } => {
-                let result = self
-                    .special_types
-                    .ray_intersection
-                    .ok_or(ResolveError::MissingSpecialType)?;
-                TypeResolution::Handle(result)
+            crate::Expression::RayQueryGet { value, .. } => {
+                use crate::RayQueryIntersectionValue as Iv;
+                let vector = |size, scalar| Ti::Vector { size, scalar };
+                let f32_3 = vector(crate::VectorSize::Tri, crate::Scalar::F32);
+                let matrix = Ti::Matrix {
+                    columns: crate::VectorSize::Quad,
+                    rows: crate::VectorSize::Tri,
+                    scalar: crate::Scalar::F32,
+                };
+                match value {
+                    crate::RayQueryValue::RayFlags => {
+                        TypeResolution::Value(Ti::Scalar(crate::Scalar::U32))
+                    }
+                    crate::RayQueryValue::RayTMin => {
+                        TypeResolution::Value(Ti::Scalar(crate::Scalar::F32))
+                    }
+                    crate::RayQueryValue::WorldRayOrigin
+                    | crate::RayQueryValue::WorldRayDirection => TypeResolution::Value(f32_3),
+                    crate::RayQueryValue::CandidateAabbOpaque => {
+                        TypeResolution::Value(Ti::Scalar(crate::Scalar::BOOL))
+                    }
+                    crate::RayQueryValue::Intersection { value, .. } => match value {
+                        Iv::Type | Iv::InstanceShaderBindingTableRecordOffset => {
+                            TypeResolution::Value(Ti::Scalar(crate::Scalar::U32))
+                        }
+                        Iv::T => TypeResolution::Value(Ti::Scalar(crate::Scalar::F32)),
+                        Iv::InstanceCustomIndex
+                        | Iv::InstanceId
+                        | Iv::GeometryIndex
+                        | Iv::PrimitiveIndex => {
+                            TypeResolution::Value(Ti::Scalar(crate::Scalar::I32))
+                        }
+                        Iv::Barycentrics => {
+                            TypeResolution::Value(vector(crate::VectorSize::Bi, crate::Scalar::F32))
+                        }
+                        Iv::FrontFace => TypeResolution::Value(Ti::Scalar(crate::Scalar::BOOL)),
+                        Iv::ObjectRayDirection | Iv::ObjectRayOrigin => {
+                            TypeResolution::Value(f32_3)
+                        }
+                        Iv::ObjectToWorld | Iv::WorldToObject => TypeResolution::Value(matrix),
+                        Iv::TriangleVertexPositions => TypeResolution::Handle(
+                            self.special_types
+                                .ray_vertex_return
+                                .ok_or(ResolveError::MissingSpecialType)?,
+                        ),
+                    },
+                }
             }
-            crate::Expression::RayQueryVertexPositions { .. } => {
-                let result = self
-                    .special_types
-                    .ray_vertex_return
-                    .ok_or(ResolveError::MissingSpecialType)?;
-                TypeResolution::Handle(result)
+            crate::Expression::ReportIntersectionResult => {
+                TypeResolution::Value(Ti::Scalar(crate::Scalar::BOOL))
+            }
+            crate::Expression::AccelerationStructureFromAddress { .. } => {
+                TypeResolution::Value(Ti::AccelerationStructure {
+                    vertex_return: false,
+                })
             }
             crate::Expression::SubgroupBallotResult => TypeResolution::Value(Ti::Vector {
                 scalar: crate::Scalar::U32,

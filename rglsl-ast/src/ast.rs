@@ -337,6 +337,16 @@ pub enum StorageQualifier {
     NonPrivate,
     ResourceHeap,
     SamplerHeap,
+    RayPayloadNV,
+    RayPayloadEXT,
+    RayPayloadInNV,
+    RayPayloadInEXT,
+    HitAttributeNV,
+    HitAttributeEXT,
+    CallableDataNV,
+    CallableDataEXT,
+    CallableDataInNV,
+    CallableDataInEXT,
     PerPrimitiveNV,
     PerPrimitiveEXT,
     PerViewNV,
@@ -345,7 +355,7 @@ pub enum StorageQualifier {
 }
 
 impl StorageQualifier {
-    pub const ALL: [Self; 30] = [
+    pub const ALL: [Self; 40] = [
         Self::Const,
         Self::In,
         Self::Out,
@@ -371,6 +381,16 @@ impl StorageQualifier {
         Self::NonPrivate,
         Self::ResourceHeap,
         Self::SamplerHeap,
+        Self::RayPayloadNV,
+        Self::RayPayloadEXT,
+        Self::RayPayloadInNV,
+        Self::RayPayloadInEXT,
+        Self::HitAttributeNV,
+        Self::HitAttributeEXT,
+        Self::CallableDataNV,
+        Self::CallableDataEXT,
+        Self::CallableDataInNV,
+        Self::CallableDataInEXT,
         Self::PerPrimitiveNV,
         Self::PerPrimitiveEXT,
         Self::PerViewNV,
@@ -405,6 +425,16 @@ impl StorageQualifier {
             Self::NonPrivate => "nonprivate",
             Self::ResourceHeap => "resourceheap",
             Self::SamplerHeap => "samplerheap",
+            Self::RayPayloadNV => "rayPayloadNV",
+            Self::RayPayloadEXT => "rayPayloadEXT",
+            Self::RayPayloadInNV => "rayPayloadInNV",
+            Self::RayPayloadInEXT => "rayPayloadInEXT",
+            Self::HitAttributeNV => "hitAttributeNV",
+            Self::HitAttributeEXT => "hitAttributeEXT",
+            Self::CallableDataNV => "callableDataNV",
+            Self::CallableDataEXT => "callableDataEXT",
+            Self::CallableDataInNV => "callableDataInNV",
+            Self::CallableDataInEXT => "callableDataInEXT",
             Self::PerPrimitiveNV => "perprimitiveNV",
             Self::PerPrimitiveEXT => "perprimitiveEXT",
             Self::PerViewNV => "perviewNV",
@@ -797,6 +827,8 @@ pub enum JumpStatement {
     Break,
     Return(Option<Expression>),
     Discard,
+    TerminateRay,
+    IgnoreIntersection,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]

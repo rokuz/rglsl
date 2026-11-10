@@ -235,6 +235,8 @@ impl FromStr for ShaderStage {
             "rmiss" => ShaderStage::Miss,
             "rahit" => ShaderStage::AnyHit,
             "rchit" => ShaderStage::ClosestHit,
+            "rint" => ShaderStage::Intersection,
+            "rcall" => ShaderStage::Callable,
             _ => return Err(anyhow!("Invalid shader stage: {s}")),
         }))
     }

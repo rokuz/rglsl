@@ -20,7 +20,25 @@ pub enum Storage {
     Shared,
     ResourceHeap,
     SamplerHeap,
+    RayPayload,
+    RayPayloadIn,
+    HitAttribute,
+    CallableData,
+    CallableDataIn,
     TaskPayloadShared,
+}
+
+impl Storage {
+    pub const fn is_ray(self) -> bool {
+        matches!(
+            self,
+            Self::RayPayload
+                | Self::RayPayloadIn
+                | Self::HitAttribute
+                | Self::CallableData
+                | Self::CallableDataIn
+        )
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

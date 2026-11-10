@@ -800,126 +800,15 @@ impl super::Instruction {
         instruction
     }
 
-    //
-    //  Ray Query Instructions
-    //
-    #[allow(clippy::too_many_arguments)]
-    pub(super) fn ray_query_initialize(
-        query: Word,
-        acceleration_structure: Word,
-        ray_flags: Word,
-        cull_mask: Word,
-        ray_origin: Word,
-        ray_tmin: Word,
-        ray_dir: Word,
-        ray_tmax: Word,
-    ) -> Self {
-        let mut instruction = Self::new(Op::RayQueryInitializeKHR);
-        instruction.add_operand(query);
-        instruction.add_operand(acceleration_structure);
-        instruction.add_operand(ray_flags);
-        instruction.add_operand(cull_mask);
-        instruction.add_operand(ray_origin);
-        instruction.add_operand(ray_tmin);
-        instruction.add_operand(ray_dir);
-        instruction.add_operand(ray_tmax);
-        instruction
-    }
-
-    pub(super) fn ray_query_proceed(result_type_id: Word, id: Word, query: Word) -> Self {
-        let mut instruction = Self::new(Op::RayQueryProceedKHR);
-        instruction.set_type(result_type_id);
-        instruction.set_result(id);
-        instruction.add_operand(query);
-        instruction
-    }
-
-    pub(super) fn ray_query_generate_intersection(query: Word, hit: Word) -> Self {
-        let mut instruction = Self::new(Op::RayQueryGenerateIntersectionKHR);
-        instruction.add_operand(query);
-        instruction.add_operand(hit);
-        instruction
-    }
-
-    pub(super) fn ray_query_confirm_intersection(query: Word) -> Self {
-        let mut instruction = Self::new(Op::RayQueryConfirmIntersectionKHR);
-        instruction.add_operand(query);
-        instruction
-    }
-
-    pub(super) fn ray_query_return_vertex_position(
-        result_type_id: Word,
-        id: Word,
-        query: Word,
-        intersection: Word,
-    ) -> Self {
-        let mut instruction = Self::new(Op::RayQueryGetIntersectionTriangleVertexPositionsKHR);
-        instruction.set_type(result_type_id);
-        instruction.set_result(id);
-        instruction.add_operand(query);
-        instruction.add_operand(intersection);
-        instruction
-    }
-
-    pub(super) fn ray_query_get_intersection(
-        op: Op,
-        result_type_id: Word,
-        id: Word,
-        query: Word,
-        intersection: Word,
-    ) -> Self {
+    pub(super) fn ray(op: Op, result: Option<(Word, Word)>, operands: &[Word]) -> Self {
         let mut instruction = Self::new(op);
-        instruction.set_type(result_type_id);
-        instruction.set_result(id);
-        instruction.add_operand(query);
-        instruction.add_operand(intersection);
-        instruction
-    }
-
-    pub(super) fn ray_query_get_t_min(result_type_id: Word, id: Word, query: Word) -> Self {
-        let mut instruction = Self::new(Op::RayQueryGetRayTMinKHR);
-        instruction.set_type(result_type_id);
-        instruction.set_result(id);
-        instruction.add_operand(query);
-        instruction
-    }
-
-    pub(super) fn ray_query_terminate(query: Word) -> Self {
-        let mut instruction = Self::new(Op::RayQueryTerminateKHR);
-        instruction.add_operand(query);
-        instruction
-    }
-
-    //
-    //  Ray Tracing Pipeline Instructions
-    //
-
-    #[expect(clippy::too_many_arguments)]
-    pub(super) fn trace_ray(
-        acceleration_structure: Word,
-        ray_flags: Word,
-        cull_mask: Word,
-        sbt_offset: Word,
-        sbt_stride: Word,
-        miss_idx: Word,
-        ray_origin: Word,
-        ray_tmin: Word,
-        ray_dir: Word,
-        ray_tmax: Word,
-        payload: Word,
-    ) -> Self {
-        let mut instruction = Self::new(Op::TraceRayKHR);
-        instruction.add_operand(acceleration_structure);
-        instruction.add_operand(ray_flags);
-        instruction.add_operand(cull_mask);
-        instruction.add_operand(sbt_offset);
-        instruction.add_operand(sbt_stride);
-        instruction.add_operand(miss_idx);
-        instruction.add_operand(ray_origin);
-        instruction.add_operand(ray_tmin);
-        instruction.add_operand(ray_dir);
-        instruction.add_operand(ray_tmax);
-        instruction.add_operand(payload);
+        if let Some((result_type_id, id)) = result {
+            instruction.set_type(result_type_id);
+            instruction.set_result(id);
+        }
+        for &operand in operands {
+            instruction.add_operand(operand);
+        }
         instruction
     }
 

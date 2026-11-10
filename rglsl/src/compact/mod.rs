@@ -164,6 +164,9 @@ pub fn compact(module: &mut crate::Module, keep_unused: KeepUnused) -> Result<()
                     module_tracer.global_expressions_used.insert(size);
                 }
             }
+            if let Some(enable) = e.opacity_micromap {
+                module_tracer.global_expressions_used.insert(enable);
+            }
 
             if let Some(task_payload) = e.task_payload {
                 module_tracer.global_variables_used.insert(task_payload);
@@ -378,6 +381,9 @@ pub fn compact(module: &mut crate::Module, keep_unused: KeepUnused) -> Result<()
                     module_map.global_expressions.adjust(expr)?;
                 }
             }
+        }
+        if let Some(enable) = e.opacity_micromap.as_mut() {
+            module_map.global_expressions.adjust(enable)?;
         }
     }
 
