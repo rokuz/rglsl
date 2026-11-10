@@ -457,8 +457,16 @@ pub enum BuiltIn {
     TessCoord,
     TessLevelOuter,
     TessLevelInner,
-    Layer,
+    Layer {
+        viewport_relative: bool,
+        secondary_view_offset: Option<i32>,
+    },
     ViewportIndex,
+    ViewportMaskNV,
+    SecondaryPositionNV,
+    SecondaryViewportMaskNV,
+    PositionPerViewNV,
+    ViewportMaskPerViewNV,
 
     /// Written in fragment shaders
     FragDepth,
@@ -473,7 +481,9 @@ pub enum BuiltIn {
     /// Read in fragment shaders
     SampleIndex,
     /// Read or written in fragment shaders
-    SampleMask,
+    SampleMask {
+        override_coverage: bool,
+    },
 
     /// Read in compute, task, and mesh shaders
     GlobalInvocationId,
@@ -525,12 +535,9 @@ pub enum BuiltIn {
     PrimitiveIndicesNV,
     MeshViewCountNV,
     MeshViewIndicesNV,
-    ViewportMaskNV,
-    PositionPerViewNV,
     ClipDistancePerViewNV,
     CullDistancePerViewNV,
     LayerPerViewNV,
-    ViewportMaskPerViewNV,
 
     /// Read in all ray tracing pipeline shaders, the id within the number of
     /// rays that this current ray is.
@@ -3007,13 +3014,15 @@ pub struct MeshOutputLayout {
     pub max_primitives: u32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub struct MeshShaderInfo {
     pub extension: MeshShaderExtension,
     pub output: Option<MeshOutputLayout>,
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    pub task_memory: Vec<Handle<GlobalVariable>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

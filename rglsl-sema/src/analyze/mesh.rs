@@ -63,7 +63,6 @@ fn variable_extension(name: &str) -> Option<&'static [&'static str]> {
         | "gl_GlobalInvocationID"
         | "gl_LocalInvocationIndex" => &MESH_ANY,
         "gl_DrawIDARB" => &["GL_ARB_shader_draw_parameters"],
-        "gl_ViewIndex" => &["GL_EXT_multiview"],
         "gl_DeviceIndex" => &["GL_EXT_device_group"],
         _ => return None,
     })
@@ -297,7 +296,10 @@ impl Analyzer<'_> {
                     "mesh view output array size must be gl_MaxMeshViewCountNV or implicitly sized",
                 ),
             ),
-            None => self.error(span, invalid("perviewNV", "requires a view array dimension")),
+            None => self.error(
+                span,
+                invalid("perviewNV", "requires a view array dimension"),
+            ),
         }
     }
 
@@ -429,7 +431,9 @@ impl Analyzer<'_> {
                     TypeKind::Block(id) => self.types.block(id).is_some_and(|block| {
                         block.storage == BlockStorage::Out && !block.qualifiers.per_task
                     }),
-                    _ => variable.qualifiers.storage == Storage::Out && !variable.qualifiers.per_task,
+                    _ => {
+                        variable.qualifiers.storage == Storage::Out && !variable.qualifiers.per_task
+                    }
                 }
             }
             Some(SymbolKind::BlockMember { instance, .. }) => self.is_mesh_output(*instance),
@@ -443,7 +447,8 @@ fn mark_written(target: &Expression, written: &mut BTreeSet<NodeId>) {
     loop {
         match &current.kind {
             ExpressionKind::Parenthesized(inner) => current = inner,
-            ExpressionKind::Subscript { base, .. } | ExpressionKind::FieldSelection { base, .. } => {
+            ExpressionKind::Subscript { base, .. }
+            | ExpressionKind::FieldSelection { base, .. } => {
                 current = base;
             }
             ExpressionKind::Variable(_) => {

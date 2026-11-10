@@ -6234,3 +6234,535 @@ void main() {}
         .windows(2)
         .any(|pair| pair == [(2 << 16) | Op::Capability as u32, 6032]));
 }
+
+fn decoration_operands(module: &dr::Module, id: u32, decoration: Decoration) -> Option<Vec<u32>> {
+    module
+        .annotations
+        .iter()
+        .find(|inst| {
+            inst.class.opcode == Op::Decorate
+                && inst.operands[0] == Operand::IdRef(id)
+                && inst.operands[1] == Operand::Decoration(decoration)
+        })
+        .map(|inst| inst.operands[2..].iter().map(literal).collect())
+}
+
+#[test]
+fn view_index_needs_multiview() {
+    let source = "#version 450
+        #extension GL_EXT_multiview : enable
+        layout(location = 0) out vec4 color;
+        void main() { color = vec4(gl_ViewIndex, 0, 0, 0); }";
+    let module = compile_valid(ShaderStage::Fragment, source);
+    assert!(has_capability(&module, spirv::Capability::MultiView));
+    assert!(extensions_of(&module).contains(&"SPV_KHR_multiview".to_string()));
+    let view = named(&module, "gl_ViewIndex");
+    assert!(has_decoration(&module, view, Decoration::Flat));
+    let module = compile_valid_1_3(ShaderStage::Fragment, source);
+    assert!(has_capability(&module, spirv::Capability::MultiView));
+    assert!(extensions_of(&module).is_empty());
+    let error = parse(
+        ShaderStage::Vertex,
+        "#version 450
+        void main() { gl_Position = vec4(gl_ViewIndex); }",
+    )
+    .unwrap_err();
+    assert!(error.contains("GL_EXT_multiview"), "{error}");
+    let module = compile_valid(
+        ShaderStage::Geometry,
+        "#version 450
+        #extension GL_EXT_multiview : require
+        layout(points) in;
+        layout(points, max_vertices = 1) out;
+        void main() { gl_Layer = gl_ViewIndex; EmitVertex(); }",
+    );
+    let view = named(&module, "gl_ViewIndex");
+    assert!(!has_decoration(&module, view, Decoration::Flat));
+}
+
+#[test]
+fn per_view_attributes_match_glslang() {
+    let module = compile_valid(
+        ShaderStage::Vertex,
+        "#version 450
+        #extension GL_NVX_multiview_per_view_attributes : require
+        void main() {
+            gl_ViewportMaskPerViewNV[0] = 1;
+            gl_PositionPerViewNV[1] = gl_Position;
+        }",
+    );
+    assert!(has_capability(
+        &module,
+        spirv::Capability::PerViewAttributesNV
+    ));
+    assert!(extensions_of(&module).contains(&"SPV_NVX_multiview_per_view_attributes".to_string()));
+    assert_eq!(variable_array_length(&module, "gl_PositionPerViewNV"), 2);
+    assert_eq!(
+        variable_array_length(&module, "gl_ViewportMaskPerViewNV"),
+        1
+    );
+    let error = parse(
+        ShaderStage::Vertex,
+        "#version 450
+        void main() { gl_PositionPerViewNV[0] = vec4(1.0); }",
+    )
+    .unwrap_err();
+    assert!(
+        error.contains("GL_NVX_multiview_per_view_attributes"),
+        "{error}"
+    );
+}
+
+#[test]
+fn per_vertex_members_of_view_extensions() {
+    let module = compile_valid(
+        ShaderStage::TessControl,
+        "#version 450
+        #extension GL_NV_viewport_array2 : require
+        #extension GL_NVX_multiview_per_view_attributes : require
+        layout(vertices = 3) out;
+        void main() {
+            gl_out[gl_InvocationID].gl_ViewportMask[2] = 4;
+            gl_out[gl_InvocationID].gl_PositionPerViewNV[1] = gl_in[0].gl_PositionPerViewNV[3];
+        }",
+    );
+    let built_ins = decorated(&module, Decoration::BuiltIn);
+    for name in [
+        "gl_ViewportMask",
+        "gl_PositionPerViewNV",
+        "gl_ViewportMaskPerViewNV",
+    ] {
+        assert!(built_ins.iter().any(|found| found == name), "{built_ins:?}");
+    }
+    assert!(
+        !built_ins
+            .iter()
+            .any(|found| found.starts_with("gl_Secondary")),
+        "{built_ins:?}"
+    );
+    assert!(has_capability(
+        &module,
+        spirv::Capability::ShaderViewportMaskNV
+    ));
+    assert!(has_capability(
+        &module,
+        spirv::Capability::PerViewAttributesNV
+    ));
+    assert!(!has_capability(
+        &module,
+        spirv::Capability::ShaderStereoViewNV
+    ));
+    let error = parse(
+        ShaderStage::Geometry,
+        "#version 450
+        layout(points) in;
+        layout(points, max_vertices = 1) out;
+        in gl_PerVertex { vec4 gl_Position; vec4 gl_SecondaryPositionNV; } gl_in[];
+        void main() { gl_Position = gl_in[0].gl_SecondaryPositionNV; EmitVertex(); }",
+    )
+    .unwrap_err();
+    assert!(error.contains("GL_NV_stereo_view_rendering"), "{error}");
+}
+
+#[test]
+fn viewport_relative_layer() {
+    let module = compile_valid(
+        ShaderStage::Vertex,
+        "#version 450
+        #extension GL_NV_viewport_array2 : require
+        #extension GL_NV_stereo_view_rendering : require
+        layout(viewport_relative, secondary_view_offset = 3) out highp int gl_Layer;
+        void main() {
+            gl_ViewportMask[0] = 1;
+            gl_SecondaryViewportMaskNV[0] = 1;
+            gl_SecondaryPositionNV = gl_Position;
+        }",
+    );
+    let layer = named(&module, "gl_Layer");
+    assert_eq!(
+        decoration_operands(&module, layer, Decoration::ViewportRelativeNV),
+        Some(Vec::new())
+    );
+    assert_eq!(
+        decoration_operands(&module, layer, Decoration::SecondaryViewportRelativeNV),
+        Some(vec![3])
+    );
+    for capability in [
+        spirv::Capability::ShaderViewportIndexLayerEXT,
+        spirv::Capability::ShaderViewportMaskNV,
+        spirv::Capability::ShaderStereoViewNV,
+    ] {
+        assert!(has_capability(&module, capability), "{capability:?}");
+    }
+    let extensions = extensions_of(&module);
+    for extension in [
+        "SPV_EXT_shader_viewport_index_layer",
+        "SPV_NV_viewport_array2",
+        "SPV_NV_stereo_view_rendering",
+    ] {
+        assert!(
+            extensions.contains(&extension.to_string()),
+            "{extensions:?}"
+        );
+    }
+    let error = parse(
+        ShaderStage::Vertex,
+        "#version 450
+        #extension GL_ARB_shader_viewport_layer_array : require
+        layout(viewport_relative) out highp int gl_Layer;
+        void main() {}",
+    )
+    .unwrap_err();
+    assert!(error.contains("GL_NV_viewport_array2"), "{error}");
+    let error = parse(
+        ShaderStage::Vertex,
+        "#version 450
+        #extension GL_NV_stereo_view_rendering : require
+        layout(secondary_view_offset = -2) out highp int gl_Layer;
+        void main() {}",
+    )
+    .unwrap_err();
+    assert!(error.contains("negative"), "{error}");
+}
+
+#[test]
+fn sample_mask_override_coverage() {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+        #extension GL_NV_sample_mask_override_coverage : enable
+        layout(override_coverage) out int gl_SampleMask[];
+        void main() { gl_SampleMask[0] = gl_SampleMaskIn[0]; }",
+    );
+    let mask = named(&module, "gl_SampleMask");
+    assert!(has_decoration(
+        &module,
+        mask,
+        Decoration::OverrideCoverageNV
+    ));
+    assert!(has_capability(
+        &module,
+        spirv::Capability::SampleMaskOverrideCoverageNV
+    ));
+    let mask_in = named(&module, "gl_SampleMaskIn");
+    assert!(has_decoration(&module, mask_in, Decoration::Flat));
+    assert!(!has_decoration(
+        &module,
+        mask_in,
+        Decoration::OverrideCoverageNV
+    ));
+}
+
+fn compile_mesh(stage: ShaderStage, source: &str, lang_version: (u8, u8)) -> dr::Module {
+    let words = compile_words_with_names(stage, source, lang_version);
+    let env = if lang_version >= (1, 4) {
+        "vulkan1.2"
+    } else {
+        "vulkan1.0"
+    };
+    crate::stage_io::spirv_val_in(&words, &["--target-env", env]);
+    dr::load_words(words).expect("produced SPIR-V does not parse")
+}
+
+fn execution_modes(module: &dr::Module) -> Vec<(spirv::ExecutionMode, Vec<u32>)> {
+    module
+        .execution_modes
+        .iter()
+        .filter_map(|inst| match inst.operands[1] {
+            Operand::ExecutionMode(mode) => Some((
+                mode,
+                inst.operands[2..]
+                    .iter()
+                    .filter_map(|operand| match *operand {
+                        Operand::LiteralBit32(value) => Some(value),
+                        _ => None,
+                    })
+                    .collect(),
+            )),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn ext_mesh_shader_outputs() {
+    let module = compile_mesh(
+        ShaderStage::Mesh,
+        "#version 460
+        #extension GL_EXT_mesh_shader : require
+        layout(local_size_x = 32) in;
+        layout(max_vertices = 64, max_primitives = 126, triangles) out;
+        layout(location = 0) out vec4 color[];
+        layout(location = 1) perprimitiveEXT out vec4 normal[];
+        void main() {
+            uint i = gl_LocalInvocationIndex;
+            SetMeshOutputsEXT(64u, 126u);
+            gl_MeshVerticesEXT[i].gl_Position = vec4(1.0);
+            gl_MeshVerticesEXT[i].gl_ClipDistance[1] = 0.5;
+            gl_MeshPrimitivesEXT[i].gl_CullPrimitiveEXT = true;
+            gl_MeshPrimitivesEXT[i].gl_Layer = 2;
+            gl_PrimitiveTriangleIndicesEXT[i] = uvec3(0, 1, 2);
+            color[i] = vec4(1.0);
+            normal[i] = vec4(0.0);
+        }",
+        (1, 4),
+    );
+    assert_eq!(execution_model(&module), spirv::ExecutionModel::MeshEXT);
+    let modes = execution_modes(&module);
+    for mode in [
+        (spirv::ExecutionMode::LocalSize, vec![32, 1, 1]),
+        (spirv::ExecutionMode::OutputVertices, vec![64]),
+        (spirv::ExecutionMode::OutputPrimitivesEXT, vec![126]),
+        (spirv::ExecutionMode::OutputTrianglesEXT, vec![]),
+    ] {
+        assert!(modes.contains(&mode), "{modes:?}");
+    }
+    assert!(has_capability(&module, spirv::Capability::MeshShadingEXT));
+    assert!(has_capability(&module, spirv::Capability::ClipDistance));
+    assert!(!has_capability(&module, spirv::Capability::CullDistance));
+    assert!(extensions_of(&module).contains(&"SPV_EXT_mesh_shader".to_string()));
+    assert_eq!(instructions(&module, Op::SetMeshOutputsEXT).len(), 1);
+    let per_primitive = decorated(&module, Decoration::PerPrimitiveEXT);
+    for name in [
+        "normal",
+        "gl_PrimitiveID",
+        "gl_Layer",
+        "gl_CullPrimitiveEXT",
+    ] {
+        assert!(
+            per_primitive.contains(&name.to_string()),
+            "{per_primitive:?}"
+        );
+    }
+    assert!(!per_primitive.contains(&"color".to_string()));
+    let indices = named(&module, "gl_PrimitiveTriangleIndicesEXT");
+    let variable = global_value(&module, indices);
+    assert_eq!(
+        variable.operands[0],
+        Operand::StorageClass(spirv::StorageClass::Output)
+    );
+}
+
+#[test]
+fn ext_task_shader_payload() {
+    let module = compile_mesh(
+        ShaderStage::Task,
+        "#version 450
+        #extension GL_EXT_mesh_shader : require
+        layout(local_size_x = 8) in;
+        struct Payload { uint count; vec2 offsets[4]; };
+        taskPayloadSharedEXT Payload payload;
+        void main() {
+            payload.count = gl_WorkGroupID.x;
+            atomicAdd(payload.count, 1u);
+            EmitMeshTasksEXT(2u, 1u, 1u);
+        }",
+        (1, 4),
+    );
+    assert_eq!(execution_model(&module), spirv::ExecutionModel::TaskEXT);
+    let emit = instructions(&module, Op::EmitMeshTasksEXT);
+    assert_eq!(emit.len(), 1);
+    assert_eq!(emit[0].operands.len(), 4);
+    let payload = named(&module, "payload");
+    assert_eq!(emit[0].operands[3], Operand::IdRef(payload));
+    let variable = global_value(&module, payload);
+    assert_eq!(
+        variable.operands[0],
+        Operand::StorageClass(spirv::StorageClass::TaskPayloadWorkgroupEXT)
+    );
+}
+
+#[test]
+fn ext_task_shader_without_payload() {
+    let module = compile_mesh(
+        ShaderStage::Task,
+        "#version 450
+        #extension GL_EXT_mesh_shader : require
+        layout(local_size_x = 1) in;
+        void main() { EmitMeshTasksEXT(1u, 1u, 1u); }",
+        (1, 4),
+    );
+    let emit = instructions(&module, Op::EmitMeshTasksEXT);
+    assert_eq!(emit[0].operands.len(), 3);
+}
+
+#[test]
+fn nv_mesh_shader_built_ins() {
+    let module = compile_mesh(
+        ShaderStage::Mesh,
+        "#version 450
+        #extension GL_NV_mesh_shader : require
+        layout(local_size_x = 32) in;
+        layout(max_vertices = 81, max_primitives = 32, lines) out;
+        layout(location = 0) out block {
+            perprimitiveNV perviewNV vec4 a[][3];
+            vec4 b;
+        } blk[];
+        perviewNV layout(location = 10) out vec4 c[][gl_MaxMeshViewCountNV];
+        void main() {
+            uint i = gl_LocalInvocationID.x;
+            uint view = gl_MeshViewIndicesNV[gl_MeshViewCountNV % 4];
+            gl_MeshVerticesNV[i].gl_PositionPerViewNV[view] = vec4(1.0);
+            gl_MeshPrimitivesNV[i].gl_ViewportMask[0] = 1;
+            gl_PrimitiveIndicesNV[i] = 1u;
+            writePackedPrimitiveIndices4x8NV(0u, 0x01020304u);
+            gl_PrimitiveCountNV = 32u;
+            blk[i].a[view][2] = vec4(1.0);
+            blk[i].b = vec4(2.0);
+            c[i][view] = vec4(3.0);
+        }",
+        (1, 0),
+    );
+    assert_eq!(execution_model(&module), spirv::ExecutionModel::MeshNV);
+    assert!(has_capability(&module, spirv::Capability::MeshShadingNV));
+    assert!(has_capability(
+        &module,
+        spirv::Capability::PerViewAttributesNV
+    ));
+    assert!(has_capability(
+        &module,
+        spirv::Capability::ShaderViewportMaskNV
+    ));
+    assert!(!has_capability(&module, spirv::Capability::ClipDistance));
+    let modes = execution_modes(&module);
+    assert!(modes.contains(&(spirv::ExecutionMode::OutputLinesEXT, vec![])));
+    assert_eq!(
+        instructions(&module, Op::WritePackedPrimitiveIndices4x8NV).len(),
+        1
+    );
+    let indices = named(&module, "gl_PrimitiveIndicesNV");
+    let variable = global_value(&module, indices);
+    let pointer = global_value(&module, variable.result_type.unwrap());
+    let array = global_value(&module, id_operand(&pointer.operands[1]));
+    assert_eq!(constant(&module, &array.operands[1]), 64);
+    let per_view = decorated(&module, Decoration::PerViewNV);
+    for name in ["a", "c", "gl_PositionPerViewNV", "gl_LayerPerViewNV"] {
+        assert!(per_view.contains(&name.to_string()), "{per_view:?}");
+    }
+    assert!(!per_view.contains(&"b".to_string()));
+    let location = |name: &str| {
+        let id = named(&module, name);
+        module
+            .annotations
+            .iter()
+            .find(|inst| {
+                inst.operands[0] == Operand::IdRef(id)
+                    && inst.operands[1] == Operand::Decoration(Decoration::Location)
+            })
+            .map(|inst| literal(&inst.operands[2]))
+    };
+    assert_eq!(location("blk"), Some(0));
+    assert_eq!(location("c"), Some(10));
+}
+
+#[test]
+fn nv_task_memory_blocks() {
+    let module = compile_mesh(
+        ShaderStage::Task,
+        "#version 450
+        #extension GL_NV_mesh_shader : require
+        layout(local_size_x = 32) in;
+        layout(location = 0) taskNV out Task { vec2 dummy; vec2 submesh[3]; uint view; } task;
+        void main() {
+            task.submesh[1] = vec2(1.0);
+            task.view = gl_MeshViewCountNV;
+            gl_TaskCountNV = 3u;
+        }",
+        (1, 0),
+    );
+    assert_eq!(execution_model(&module), spirv::ExecutionModel::TaskNV);
+    let per_task = decorated(&module, Decoration::PerTaskNV);
+    assert_eq!(per_task, ["dummy", "submesh", "view"]);
+    let offsets: Vec<u32> = module
+        .annotations
+        .iter()
+        .filter(|inst| {
+            inst.class.opcode == Op::MemberDecorate
+                && inst.operands[2] == Operand::Decoration(Decoration::Offset)
+        })
+        .map(|inst| literal(&inst.operands[3]))
+        .collect();
+    assert_eq!(offsets, [0, 8, 32]);
+    assert_eq!(decorated(&module, Decoration::BuiltIn).len(), 2);
+}
+
+#[test]
+fn per_primitive_fragment_inputs() {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 460
+        #extension GL_NV_mesh_shader : require
+        layout(location = 0) in B { perprimitiveNV float f; };
+        layout(location = 4) in C { flat centroid float h; };
+        layout(location = 8) out float g;
+        void main() { g = f + h; }",
+    );
+    assert!(has_capability(&module, spirv::Capability::MeshShadingNV));
+    assert_eq!(decorated(&module, Decoration::PerPrimitiveEXT), ["f"]);
+}
+
+#[test]
+fn mesh_shader_errors() {
+    let cases = [
+        (
+            ShaderStage::Mesh,
+            "#version 460
+            #extension GL_EXT_mesh_shader : require
+            layout(local_size_x = 1) in;
+            layout(triangles, max_vertices = 3, max_primitives = 1) out;
+            layout(location = 0) out vec4 v[];
+            void main() { v[0] = v[1]; }",
+            "can only be written",
+        ),
+        (
+            ShaderStage::Mesh,
+            "#version 460
+            #extension GL_EXT_mesh_shader : require
+            layout(local_size_x = 1) in;
+            layout(triangles, max_vertices = 3, max_primitives = 1) out;
+            struct S { int a; };
+            taskPayloadSharedEXT S s;
+            void main() { s.a = 1; }",
+            "taskPayloadSharedEXT",
+        ),
+        (
+            ShaderStage::Mesh,
+            "#version 460
+            #extension GL_EXT_mesh_shader : require
+            layout(local_size_x = 1) in;
+            layout(points, max_vertices = 3, max_primitives = 1) out;
+            void main() { gl_PrimitiveTriangleIndicesEXT[0] = uvec3(0); }",
+            "output primitive",
+        ),
+        (
+            ShaderStage::Mesh,
+            "#version 450
+            #extension GL_NV_mesh_shader : require
+            layout(local_size_x = 1) in;
+            layout(triangles, max_vertices = 3, max_primitives = 1) out;
+            perviewNV layout(location = 0) out vec4 v[];
+            void main() {}",
+            "view array dimension",
+        ),
+        (
+            ShaderStage::Mesh,
+            "#version 460
+            #extension GL_EXT_mesh_shader : require
+            layout(local_size_x = 1) in;
+            layout(triangles, max_vertices = 300, max_primitives = 1) out;
+            void main() {}",
+            "gl_MaxMeshOutputVerticesEXT",
+        ),
+        (
+            ShaderStage::Vertex,
+            "#version 460
+            perprimitiveNV out vec4 v;
+            void main() {}",
+            "perprimitiveNV",
+        ),
+    ];
+    for (stage, source, expected) in cases {
+        let error = parse(stage, source).unwrap_err();
+        assert!(error.contains(expected), "{expected}: {error}");
+    }
+}

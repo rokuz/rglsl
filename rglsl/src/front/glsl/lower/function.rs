@@ -10,7 +10,7 @@ use crate::front::glsl::Error;
 use crate::{
     proc::{ConstantEvaluator, Emitter, ExpressionKind, ExpressionKindTracker},
     AddressSpace, Arena, Block, EarlyDepthTest, EntryPoint, Expression, Function, FunctionArgument,
-    FunctionResult, Handle, LocalVariable, NonUniform, ShaderStage, Span, Statement, TypeInner,
+    FunctionResult, Handle, LocalVariable, NonUniform, Span, Statement, TypeInner,
 };
 
 #[derive(Clone, Copy, Debug)]

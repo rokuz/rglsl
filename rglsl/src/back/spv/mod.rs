@@ -997,6 +997,7 @@ pub struct Writer {
 
     has_ray_tracing_pipeline: bool,
     mesh_extension: Option<crate::MeshShaderExtension>,
+    task_memory_strides: crate::FastHashSet<Handle<crate::Type>>,
 
     ray_tracing_features: crate::RayTracingFeatures,
 

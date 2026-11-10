@@ -124,6 +124,7 @@ impl Writer {
             temp_list: Vec::new(),
             has_ray_tracing_pipeline: false,
             mesh_extension: None,
+            task_memory_strides: crate::FastHashSet::default(),
             ray_tracing_features: crate::RayTracingFeatures::empty(),
             io_f16_polyfills: super::f16_polyfill::F16IoPolyfill::new(
                 options.use_storage_input_output_16,
@@ -239,6 +240,7 @@ impl Writer {
             temp_list: take(&mut self.temp_list).reclaim(),
             has_ray_tracing_pipeline: false,
             mesh_extension: None,
+            task_memory_strides: crate::FastHashSet::default(),
             ray_tracing_features: crate::RayTracingFeatures::empty(),
             io_f16_polyfills: take(&mut self.io_f16_polyfills).reclaim(),
             debug_printf: None,
@@ -1911,7 +1913,9 @@ impl Writer {
             Some(FunctionInterface {
                 varying_ids: &mut interface_ids,
                 stage: entry_point.stage,
-                task_payload: entry_point.task_payload,
+                task_payload: entry_point
+                    .task_payload
+                    .filter(|_| entry_point.mesh_shader.is_none()),
                 mesh_info: entry_point.mesh_info.clone(),
                 workgroup_size: entry_point.workgroup_size,
             }),
@@ -2028,6 +2032,11 @@ impl Writer {
             crate::ShaderStage::Compute => {
                 self.write_workgroup_size(function_id, entry_point)?;
                 spirv::ExecutionModel::GLCompute
+            }
+            crate::ShaderStage::Task | crate::ShaderStage::Mesh
+                if entry_point.mesh_shader.is_some() =>
+            {
+                self.write_mesh_shader_modes(function_id, entry_point)?
             }
             crate::ShaderStage::Task => {
                 let execution_mode = spirv::ExecutionMode::LocalSize;
@@ -3600,8 +3609,8 @@ impl Writer {
             crate::Binding::BuiltIn(built_in) => {
                 use crate::BuiltIn as Bi;
                 let mut others = ArrayVec::new();
-                let mesh_output = stage == crate::ShaderStage::Mesh
-                    && class == spirv::StorageClass::Output;
+                let mesh_output =
+                    stage == crate::ShaderStage::Mesh && class == spirv::StorageClass::Output;
 
                 let built_in = match built_in {
                     Bi::Position { invariant } => {
@@ -3618,6 +3627,9 @@ impl Writer {
                         }
                     }
                     Bi::ViewIndex => {
+                        if self.lang_version() < (1, 3) {
+                            self.use_extension("SPV_KHR_multiview");
+                        }
                         self.require_any("`view_index` built-in", &[spirv::Capability::MultiView])?;
                         BuiltIn::ViewIndex
                     }
@@ -3665,15 +3677,59 @@ impl Writer {
                         others.push(Decoration::Patch);
                         BuiltIn::TessLevelInner
                     }
-                    Bi::Layer | Bi::ViewportIndex => {
-                        self.require_layer_capability(stage, built_in == Bi::Layer)?;
+                    Bi::Layer { .. } => {
+                        self.require_layer_capability(stage, true)?;
                         if mesh_output {
                             others.push(Decoration::PerPrimitiveEXT);
                         }
-                        if built_in == Bi::Layer {
-                            BuiltIn::Layer
+                        BuiltIn::Layer
+                    }
+                    Bi::ViewportIndex => {
+                        self.require_layer_capability(stage, false)?;
+                        if mesh_output {
+                            others.push(Decoration::PerPrimitiveEXT);
+                        }
+                        BuiltIn::ViewportIndex
+                    }
+                    Bi::ViewportMaskNV => {
+                        self.use_extension("SPV_NV_viewport_array2");
+                        self.require_any(
+                            "`gl_ViewportMask`",
+                            &[spirv::Capability::ShaderViewportMaskNV],
+                        )?;
+                        if mesh_output {
+                            others.push(Decoration::PerPrimitiveEXT);
+                        }
+                        BuiltIn::ViewportMaskNV
+                    }
+                    Bi::SecondaryPositionNV | Bi::SecondaryViewportMaskNV => {
+                        self.use_extension("SPV_NV_stereo_view_rendering");
+                        self.require_any(
+                            "stereo view rendering built-ins",
+                            &[spirv::Capability::ShaderStereoViewNV],
+                        )?;
+                        if built_in == Bi::SecondaryPositionNV {
+                            BuiltIn::SecondaryPositionNV
                         } else {
-                            BuiltIn::ViewportIndex
+                            BuiltIn::SecondaryViewportMaskNV
+                        }
+                    }
+                    Bi::PositionPerViewNV | Bi::ViewportMaskPerViewNV => {
+                        self.use_extension("SPV_NVX_multiview_per_view_attributes");
+                        self.require_any(
+                            "per-view attribute built-ins",
+                            &[spirv::Capability::PerViewAttributesNV],
+                        )?;
+                        if stage == crate::ShaderStage::Mesh {
+                            if mesh_output && built_in == Bi::ViewportMaskPerViewNV {
+                                others.push(Decoration::PerPrimitiveEXT);
+                            }
+                            others.push(Decoration::PerViewNV);
+                        }
+                        if built_in == Bi::PositionPerViewNV {
+                            BuiltIn::PositionPerViewNV
+                        } else {
+                            BuiltIn::ViewportMaskPerViewNV
                         }
                     }
                     Bi::VertexIndex => BuiltIn::VertexIndex,
@@ -3728,7 +3784,7 @@ impl Writer {
 
                         BuiltIn::SampleId
                     }
-                    Bi::SampleMask => BuiltIn::SampleMask,
+                    Bi::SampleMask { .. } => BuiltIn::SampleMask,
                     // compute
                     Bi::GlobalInvocationId => BuiltIn::GlobalInvocationId,
                     Bi::LocalInvocationId => BuiltIn::LocalInvocationId,
@@ -3813,41 +3869,20 @@ impl Writer {
                     Bi::PrimitiveIndicesNV => BuiltIn::PrimitiveIndicesNV,
                     Bi::MeshViewCountNV => BuiltIn::MeshViewCountNV,
                     Bi::MeshViewIndicesNV => BuiltIn::MeshViewIndicesNV,
-                    Bi::ViewportMaskNV => {
-                        self.use_extension("SPV_NV_viewport_array2");
-                        self.require_any(
-                            "`gl_ViewportMask`",
-                            &[spirv::Capability::ShaderViewportMaskNV],
-                        )?;
-                        if mesh_output {
-                            others.push(Decoration::PerPrimitiveEXT);
-                        }
-                        BuiltIn::ViewportMaskNV
-                    }
-                    Bi::PositionPerViewNV
-                    | Bi::ClipDistancePerViewNV
-                    | Bi::CullDistancePerViewNV
-                    | Bi::LayerPerViewNV
-                    | Bi::ViewportMaskPerViewNV => {
+                    Bi::ClipDistancePerViewNV | Bi::CullDistancePerViewNV | Bi::LayerPerViewNV => {
                         self.use_extension("SPV_NVX_multiview_per_view_attributes");
                         self.require_any(
                             "per-view attributes",
                             &[spirv::Capability::PerViewAttributesNV],
                         )?;
-                        let primitive = matches!(
-                            built_in,
-                            Bi::LayerPerViewNV | Bi::ViewportMaskPerViewNV
-                        );
-                        if primitive && mesh_output {
+                        if built_in == Bi::LayerPerViewNV && mesh_output {
                             others.push(Decoration::PerPrimitiveEXT);
                         }
                         others.push(Decoration::PerViewNV);
                         match built_in {
-                            Bi::PositionPerViewNV => BuiltIn::PositionPerViewNV,
                             Bi::ClipDistancePerViewNV => BuiltIn::ClipDistancePerViewNV,
                             Bi::CullDistancePerViewNV => BuiltIn::CullDistancePerViewNV,
-                            Bi::LayerPerViewNV => BuiltIn::LayerPerViewNV,
-                            _ => BuiltIn::ViewportMaskPerViewNV,
+                            _ => BuiltIn::LayerPerViewNV,
                         }
                     }
                     Bi::PointIndex => BuiltIn::PrimitivePointIndicesEXT,
@@ -3908,7 +3943,12 @@ impl Writer {
                 // > point type and with Input storage class in a fragment
                 // > shader, must be decorated Flat
                 if class == spirv::StorageClass::Input && stage == crate::ShaderStage::Fragment {
-                    let is_flat = match ir_module.types[ty].inner {
+                    let mut element = ty;
+                    while let crate::TypeInner::Array { base, .. } = ir_module.types[element].inner
+                    {
+                        element = base;
+                    }
+                    let is_flat = match ir_module.types[element].inner {
                         crate::TypeInner::Scalar(scalar)
                         | crate::TypeInner::Vector { scalar, .. } => match scalar.kind {
                             Sk::Uint | Sk::Sint | Sk::Bool => true,
@@ -4013,6 +4053,9 @@ impl Writer {
                 let decorations =
                     self.map_binding(ir_module, stage, class, global_variable.ty, binding)?;
                 self.write_binding(id, decorations);
+                for (decoration, operands) in self.builtin_qualifier_decorations(binding)? {
+                    self.decorate(id, decoration, &operands);
+                }
             }
         }
 
@@ -4277,9 +4320,18 @@ impl Writer {
         }
         let struct_id = self.get_handle_type_id(block.structure)?;
         self.decorate(struct_id, spirv::Decoration::Block, &[]);
+        let task_memory = ir_module.entry_points.iter().any(|entry| {
+            entry
+                .mesh_shader
+                .as_ref()
+                .is_some_and(|mesh| mesh.task_memory.contains(&handle))
+        });
         for (index, member) in members.iter().enumerate() {
             let index = u32::try_from(index)
                 .map_err(|_| Error::Validation("too many members in an interface block"))?;
+            if task_memory {
+                self.write_task_memory_member(ir_module, struct_id, index, member)?;
+            }
             if let Some(offset) = member.xfb_offset {
                 self.annotations.push(Instruction::member_decorate(
                     struct_id,
@@ -4301,6 +4353,21 @@ impl Writer {
                 crate::Binding::BuiltIn(crate::BuiltIn::PointSize) => {
                     Some(spirv::BuiltIn::PointSize)
                 }
+                crate::Binding::BuiltIn(crate::BuiltIn::ViewportMaskNV) => {
+                    Some(spirv::BuiltIn::ViewportMaskNV)
+                }
+                crate::Binding::BuiltIn(crate::BuiltIn::SecondaryPositionNV) => {
+                    Some(spirv::BuiltIn::SecondaryPositionNV)
+                }
+                crate::Binding::BuiltIn(crate::BuiltIn::SecondaryViewportMaskNV) => {
+                    Some(spirv::BuiltIn::SecondaryViewportMaskNV)
+                }
+                crate::Binding::BuiltIn(crate::BuiltIn::PositionPerViewNV) => {
+                    Some(spirv::BuiltIn::PositionPerViewNV)
+                }
+                crate::Binding::BuiltIn(crate::BuiltIn::ViewportMaskPerViewNV) => {
+                    Some(spirv::BuiltIn::ViewportMaskPerViewNV)
+                }
                 _ => None,
             }
             .filter(|_| {
@@ -4317,8 +4384,7 @@ impl Writer {
                     .copied()
                     .unwrap_or(false);
             let decorations = match unused_distance {
-                Some(built_in) => BindingDecorations::BuiltIn(built_in, ArrayVec::new()),
-                None if unused_mesh => {
+                _ if unused_mesh => {
                     let capabilities = self.capabilities_used.clone();
                     let extensions = self.extensions_used.clone();
                     let decorations =
@@ -4327,6 +4393,7 @@ impl Writer {
                     self.extensions_used = extensions;
                     decorations
                 }
+                Some(built_in) => BindingDecorations::BuiltIn(built_in, ArrayVec::new()),
                 None => self.map_binding(ir_module, stage, class, member.ty, binding)?,
             };
             match decorations {
@@ -4342,8 +4409,57 @@ impl Writer {
                 }
                 decorations => self.write_binding_struct_member(struct_id, index, decorations),
             }
+            for (decoration, operands) in self.builtin_qualifier_decorations(binding)? {
+                self.annotations.push(Instruction::member_decorate(
+                    struct_id, index, decoration, &operands,
+                ));
+            }
         }
         Ok(())
+    }
+
+    fn builtin_qualifier_decorations(
+        &mut self,
+        binding: &crate::Binding,
+    ) -> Result<ArrayVec<(spirv::Decoration, ArrayVec<Word, 1>), 2>, Error> {
+        let mut decorations = ArrayVec::new();
+        match *binding {
+            crate::Binding::BuiltIn(crate::BuiltIn::Layer {
+                viewport_relative,
+                secondary_view_offset,
+            }) => {
+                if viewport_relative {
+                    self.use_extension("SPV_NV_viewport_array2");
+                    self.require_any(
+                        "`viewport_relative`",
+                        &[spirv::Capability::ShaderViewportMaskNV],
+                    )?;
+                    decorations.push((spirv::Decoration::ViewportRelativeNV, ArrayVec::new()));
+                }
+                if let Some(offset) = secondary_view_offset {
+                    self.use_extension("SPV_NV_stereo_view_rendering");
+                    self.require_any(
+                        "`secondary_view_offset`",
+                        &[spirv::Capability::ShaderStereoViewNV],
+                    )?;
+                    let mut operands = ArrayVec::new();
+                    operands.push(offset.cast_unsigned());
+                    decorations.push((spirv::Decoration::SecondaryViewportRelativeNV, operands));
+                }
+            }
+            crate::Binding::BuiltIn(crate::BuiltIn::SampleMask {
+                override_coverage: true,
+            }) => {
+                self.use_extension("SPV_NV_sample_mask_override_coverage");
+                self.require_any(
+                    "`override_coverage`",
+                    &[spirv::Capability::SampleMaskOverrideCoverageNV],
+                )?;
+                decorations.push((spirv::Decoration::OverrideCoverageNV, ArrayVec::new()));
+            }
+            _ => {}
+        }
+        Ok(decorations)
     }
 
     /// Write the necessary decorations for a struct member.
@@ -4457,19 +4573,6 @@ impl Writer {
         ep_index: Option<usize>,
         debug_info: &Option<DebugInfo>,
     ) -> Result<(), Error> {
-        fn has_view_index_check(
-            ir_module: &crate::Module,
-            binding: Option<&crate::Binding>,
-            ty: Handle<crate::Type>,
-        ) -> bool {
-            match ir_module.types[ty].inner {
-                crate::TypeInner::Struct { ref members, .. } => members.iter().any(|member| {
-                    has_view_index_check(ir_module, member.binding.as_ref(), member.ty)
-                }),
-                _ => binding == Some(&crate::Binding::BuiltIn(crate::BuiltIn::ViewIndex)),
-            }
-        }
-
         let has_storage_buffers =
             ir_module
                 .global_variables
@@ -4478,11 +4581,6 @@ impl Writer {
                     crate::AddressSpace::Storage { .. } => true,
                     _ => false,
                 });
-        let has_view_index = ir_module
-            .entry_points
-            .iter()
-            .flat_map(|entry| entry.function.arguments.iter())
-            .any(|arg| has_view_index_check(ir_module, arg.binding.as_ref(), arg.ty));
         let rt_uses = ir_module.uses_ray_tracing(ep_index);
         let has_ray_query = rt_uses.queries;
         self.has_ray_tracing_pipeline = rt_uses.pipelines;
@@ -4493,10 +4591,6 @@ impl Writer {
             Instruction::extension("SPV_KHR_storage_buffer_storage_class")
                 .to_words(&mut self.logical_layout.extensions);
         }
-        if has_view_index {
-            Instruction::extension("SPV_KHR_multiview")
-                .to_words(&mut self.logical_layout.extensions)
-        }
         if has_ray_query {
             self.require_ray_queries()?;
         }
@@ -4506,7 +4600,7 @@ impl Writer {
             .iter()
             .enumerate()
             .filter(|&(index, _)| ep_index.is_none_or(|selected| selected == index))
-            .find_map(|(_, entry)| entry.mesh_shader.map(|info| info.extension));
+            .find_map(|(_, entry)| entry.mesh_shader.as_ref().map(|info| info.extension));
         if self.mesh_extension.is_some() || ir_module.uses_mesh_shaders() {
             self.require_mesh_shading()?;
         }

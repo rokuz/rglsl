@@ -1037,6 +1037,7 @@ fn unexpected_task_payload() {
         quad_control: rglsl::QuadControl::default(),
         geometry: None,
         tessellation: None,
+        mesh_shader: None,
     };
     module.entry_points.push(entry_point);
 

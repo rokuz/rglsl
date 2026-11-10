@@ -278,6 +278,13 @@ impl super::Validator {
             if let Some(task_payload) = entry_point.task_payload {
                 Self::validate_global_variable_handle(task_payload, global_variables)?;
             }
+            for &variable in entry_point
+                .mesh_shader
+                .iter()
+                .flat_map(|mesh| &mesh.task_memory)
+            {
+                Self::validate_global_variable_handle(variable, global_variables)?;
+            }
             if let Some(ref mesh_info) = entry_point.mesh_info {
                 Self::validate_global_variable_handle(mesh_info.output_variable, global_variables)?;
                 validate_type(mesh_info.vertex_output_type)?;

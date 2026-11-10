@@ -814,6 +814,7 @@ impl Analyzer<'_> {
         }
         self.no_shader_layouts(&qualifiers);
         self.passthrough_extension(&qualifiers);
+        self.view_layout_extensions(&qualifiers);
         for declarator in &list.declarators {
             self.init_declarator(declarator, &qualifiers, &base);
         }
@@ -1506,6 +1507,7 @@ impl Analyzer<'_> {
         self.no_shader_layouts(&qualifiers);
         self.passthrough_extension(&qualifiers);
         self.mesh_block_storage(structure.name.span, &qualifiers);
+        self.view_layout_extensions(&qualifiers);
         let storage = match qualifiers.storage {
             Storage::TaskPayloadShared => {
                 self.task_payload_checks(structure.name.span, &qualifiers, true);
@@ -1562,7 +1564,15 @@ impl Analyzer<'_> {
         let dimensions = instance
             .map(|instance| self.array_sizes(instance.array.as_ref()))
             .unwrap_or_default();
-        if self.redeclare_mesh_block(declaration, structure, instance, storage, &qualifiers, &members, &dimensions) {
+        if self.redeclare_mesh_block(
+            declaration,
+            structure,
+            instance,
+            storage,
+            &qualifiers,
+            &members,
+            &dimensions,
+        ) {
             return;
         }
         if structure.name.node == "gl_PerVertex" {
@@ -1789,7 +1799,9 @@ impl Analyzer<'_> {
             name: String::from(name),
             reason,
         };
-        let Some((block, variable)) = found.filter(|_| given == instance_name && storage == BlockStorage::Out) else {
+        let Some((block, variable)) =
+            found.filter(|_| given == instance_name && storage == BlockStorage::Out)
+        else {
             self.error(
                 structure.name.span,
                 invalid("there is no such built-in block to redeclare"),

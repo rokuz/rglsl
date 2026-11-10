@@ -65,7 +65,7 @@
                     (
                         name: Some("sample_mask"),
                         ty: 3,
-                        binding: Some(BuiltIn(SampleMask)),
+                        binding: Some(BuiltIn(SampleMask(override_coverage: false))),
                         offset: 4,
                     ),
                     (
@@ -281,7 +281,7 @@
                     (
                         name: Some("sample_mask"),
                         ty: 3,
-                        binding: Some(BuiltIn(SampleMask)),
+                        binding: Some(BuiltIn(SampleMask(override_coverage: false))),
                     ),
                 ],
                 result: Some((

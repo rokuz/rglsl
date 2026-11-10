@@ -235,3 +235,73 @@ impl BlockContext<'_> {
         Ok(None)
     }
 }
+
+impl Writer {
+    pub(super) fn write_mesh_shader_modes(
+        &mut self,
+        function_id: Word,
+        entry_point: &crate::EntryPoint,
+    ) -> Result<spirv::ExecutionModel, Error> {
+        let info = entry_point.mesh_shader.as_ref().ok_or(Error::Validation(
+            "a GLSL mesh or task entry point has no mesh shader info",
+        ))?;
+        self.write_workgroup_size(function_id, entry_point)?;
+        if let Some(output) = info.output {
+            self.write_mode(
+                function_id,
+                ExecutionMode::OutputVertices,
+                &[output.max_vertices],
+            );
+            self.write_mode(
+                function_id,
+                ExecutionMode::OutputPrimitivesEXT,
+                &[output.max_primitives],
+            );
+            let topology = match output.topology {
+                crate::MeshOutputTopology::Points => ExecutionMode::OutputPoints,
+                crate::MeshOutputTopology::Lines => ExecutionMode::OutputLinesEXT,
+                crate::MeshOutputTopology::Triangles => ExecutionMode::OutputTrianglesEXT,
+            };
+            self.write_mode(function_id, topology, &[]);
+        }
+        let nv = info.extension == crate::MeshShaderExtension::Nv;
+        Ok(match (entry_point.stage, nv) {
+            (ShaderStage::Task, false) => spirv::ExecutionModel::TaskEXT,
+            (ShaderStage::Task, true) => spirv::ExecutionModel::TaskNV,
+            (_, false) => spirv::ExecutionModel::MeshEXT,
+            (_, true) => spirv::ExecutionModel::MeshNV,
+        })
+    }
+}
+
+impl Writer {
+    pub(super) fn write_task_memory_member(
+        &mut self,
+        ir_module: &crate::Module,
+        struct_id: Word,
+        index: u32,
+        member: &crate::StructMember,
+    ) -> Result<(), Error> {
+        self.annotations.push(Instruction::member_decorate(
+            struct_id,
+            index,
+            spirv::Decoration::Offset,
+            &[member.offset],
+        ));
+        self.annotations.push(Instruction::member_decorate(
+            struct_id,
+            index,
+            spirv::Decoration::PerTaskNV,
+            &[],
+        ));
+        let mut ty = member.ty;
+        while let crate::TypeInner::Array { base, stride, .. } = ir_module.types[ty].inner {
+            if !self.laid_out_types.contains(ty) && self.task_memory_strides.insert(ty) {
+                let id = self.get_handle_type_id(ty)?;
+                self.decorate(id, spirv::Decoration::ArrayStride, &[stride]);
+            }
+            ty = base;
+        }
+        Ok(())
+    }
+}

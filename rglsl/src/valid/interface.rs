@@ -377,6 +377,29 @@ impl LocationShape {
 ///
 /// SPIR-V accepts a 32-bit integer of either signedness for these. WGSL
 /// declares them as `u32`, GLSL as `int`.
+fn is_array_of(
+    types: &UniqueArena<crate::Type>,
+    ty: &crate::TypeInner,
+    element: &dyn Fn(&crate::TypeInner) -> bool,
+) -> bool {
+    let crate::TypeInner::Array { base, .. } = *ty else {
+        return false;
+    };
+    let inner = &types[base].inner;
+    element(inner) || is_array_of(types, inner, element)
+}
+
+const fn is_pre_rasterization(stage: crate::ShaderStage) -> bool {
+    matches!(
+        stage,
+        crate::ShaderStage::Vertex
+            | crate::ShaderStage::TessControl
+            | crate::ShaderStage::TessEvaluation
+            | crate::ShaderStage::Geometry
+            | crate::ShaderStage::Mesh
+    )
+}
+
 const fn is_index_type(ty: &crate::TypeInner) -> bool {
     matches!(
         *ty,
@@ -419,6 +442,13 @@ impl VaryingContext<'_> {
                     crate::BuiltIn::Barycentric { .. } => {
                         crate::BuiltIn::Barycentric { perspective: false }
                     }
+                    crate::BuiltIn::Layer { .. } => crate::BuiltIn::Layer {
+                        viewport_relative: false,
+                        secondary_view_offset: None,
+                    },
+                    crate::BuiltIn::SampleMask { .. } => crate::BuiltIn::SampleMask {
+                        override_coverage: false,
+                    },
                     x => x,
                 };
 
@@ -499,7 +529,7 @@ impl VaryingContext<'_> {
                             _ => false,
                         },
                     ),
-                    Bi::Layer | Bi::ViewportIndex => (
+                    Bi::Layer { .. } | Bi::ViewportIndex => (
                         match self.stage {
                             St::Vertex
                             | St::TessControl
@@ -522,7 +552,8 @@ impl VaryingContext<'_> {
                         // Always allowed in task/vertex stage. Allowed in mesh stage if there is no task stage in the pipeline.
                         (self.stage == St::Vertex
                             || self.stage == St::Task
-                            || (self.stage == St::Mesh && (!self.has_task_payload || self.interface)))
+                            || (self.stage == St::Mesh
+                                && (!self.has_task_payload || self.interface)))
                             && !self.output,
                         is_index_type(ty_inner),
                     ),
@@ -627,9 +658,40 @@ impl VaryingContext<'_> {
                         self.stage == St::Fragment && !self.output,
                         is_index_type(ty_inner),
                     ),
-                    Bi::SampleMask => (
+                    Bi::SampleMask { .. } => (
                         self.stage == St::Fragment,
-                        *ty_inner == Ti::Scalar(crate::Scalar::U32),
+                        *ty_inner == Ti::Scalar(crate::Scalar::U32)
+                            || is_array_of(self.types, ty_inner, &|inner| is_index_type(inner)),
+                    ),
+                    Bi::ViewportMaskNV
+                    | Bi::SecondaryViewportMaskNV
+                    | Bi::ViewportMaskPerViewNV => (
+                        self.output && is_pre_rasterization(self.stage),
+                        is_array_of(self.types, ty_inner, &|inner| {
+                            *inner == Ti::Scalar(crate::Scalar::I32)
+                        }),
+                    ),
+                    Bi::SecondaryPositionNV | Bi::PositionPerViewNV => (
+                        (self.output && is_pre_rasterization(self.stage))
+                            || (!self.output
+                                && matches!(
+                                    self.stage,
+                                    St::TessControl | St::TessEvaluation | St::Geometry
+                                )),
+                        {
+                            let vec4 = |inner: &Ti| {
+                                *inner
+                                    == Ti::Vector {
+                                        size: Vs::Quad,
+                                        scalar: crate::Scalar::F32,
+                                    }
+                            };
+                            if built_in == Bi::SecondaryPositionNV {
+                                vec4(ty_inner)
+                            } else {
+                                is_array_of(self.types, ty_inner, &vec4)
+                            }
+                        },
                     ),
                     Bi::LocalInvocationIndex => (
                         self.stage.compute_like() && !self.output,
@@ -698,10 +760,9 @@ impl VaryingContext<'_> {
                         self.stage == St::Task && self.output,
                         *ty_inner == Ti::Scalar(crate::Scalar::U32),
                     ),
-                    Bi::PrimitiveCountNV => (
-                        mesh_interface,
-                        *ty_inner == Ti::Scalar(crate::Scalar::U32),
-                    ),
+                    Bi::PrimitiveCountNV => {
+                        (mesh_interface, *ty_inner == Ti::Scalar(crate::Scalar::U32))
+                    }
                     Bi::PrimitiveIndicesNV => {
                         (mesh_interface, array_of(Ti::Scalar(crate::Scalar::U32)))
                     }
@@ -713,14 +774,13 @@ impl VaryingContext<'_> {
                         self.stage.mesh_like() && !self.output,
                         array_of(Ti::Scalar(crate::Scalar::U32)),
                     ),
-                    Bi::ViewportMaskNV | Bi::LayerPerViewNV => (
+                    Bi::LayerPerViewNV => (
                         pre_rasterization_output,
                         array_of(Ti::Scalar(crate::Scalar::I32)),
                     ),
-                    Bi::PositionPerViewNV
-                    | Bi::ClipDistancePerViewNV
-                    | Bi::CullDistancePerViewNV
-                    | Bi::ViewportMaskPerViewNV => (pre_rasterization_output, is_array),
+                    Bi::ClipDistancePerViewNV | Bi::CullDistancePerViewNV => {
+                        (pre_rasterization_output, is_array)
+                    }
                     Bi::MeshTaskSize => (
                         self.stage == St::Task && self.output,
                         *ty_inner
@@ -904,7 +964,9 @@ impl VaryingContext<'_> {
                 };
                 let (ty, ty_inner) = if per_view {
                     if self.stage != crate::ShaderStage::Mesh || !self.output {
-                        return Err(VaryingError::InvalidAttributeInStage("per_view", self.stage));
+                        return Err(VaryingError::InvalidAttributeInStage(
+                            "per_view", self.stage,
+                        ));
                     }
                     match *ty_inner {
                         Ti::Array {
@@ -1030,6 +1092,7 @@ impl VaryingContext<'_> {
                             crate::Interpolation::Flat,
                             Some(crate::Sampling::First | crate::Sampling::Either),
                         ) => None,
+                        (crate::Interpolation::Flat, Some(_)) if self.interface => None,
                         (_, Some(invalid_sampling)) => Some(invalid_sampling),
                     };
                     if let Some(sampling) = invalid_sampling {
@@ -1172,7 +1235,7 @@ impl VaryingContext<'_> {
 }
 
 fn view_element(
-    types: &crate::UniqueArena<crate::Type>,
+    types: &UniqueArena<crate::Type>,
     ty: Handle<crate::Type>,
     per_view: bool,
 ) -> Handle<crate::Type> {
@@ -1284,8 +1347,9 @@ impl VaryingContext<'_> {
                     per_view,
                 };
                 self.validate_impl(ep, member.ty, &binding).map_err(&fail)?;
-                let shape = LocationShape::of(self.types, view_element(self.types, member.ty, per_view))
-                    .ok_or_else(|| fail(VaryingError::NotIOShareableType(member.ty)))?;
+                let shape =
+                    LocationShape::of(self.types, view_element(self.types, member.ty, per_view))
+                        .ok_or_else(|| fail(VaryingError::NotIOShareableType(member.ty)))?;
                 next = next.saturating_add(shape.locations);
             }
         }
@@ -1838,7 +1902,25 @@ impl super::Validator {
 
         Self::validate_stage_info(ep, module)?;
 
+        let glsl_mesh = ep.mesh_shader.is_some();
+        match (ep.stage, &ep.mesh_shader) {
+            (
+                crate::ShaderStage::Mesh,
+                &Some(crate::MeshShaderInfo {
+                    output: Some(_), ..
+                }),
+            )
+            | (
+                crate::ShaderStage::Task | crate::ShaderStage::Fragment,
+                &Some(crate::MeshShaderInfo { output: None, .. }),
+            )
+            | (_, &None) => {}
+            (_, &Some(_)) => {
+                return Err(EntryPointError::UnexpectedMeshShaderAttributes.with_span());
+            }
+        }
         match (ep.stage, &ep.mesh_info) {
+            (crate::ShaderStage::Mesh, &None) if glsl_mesh => {}
             (crate::ShaderStage::Mesh, &None) => {
                 return Err(EntryPointError::ExpectedMeshShaderAttributes.with_span());
             }
@@ -1856,6 +1938,7 @@ impl super::Validator {
         // Validate the task shader payload.
         match ep.stage {
             // Task shaders must produce a payload.
+            crate::ShaderStage::Task if glsl_mesh && ep.task_payload.is_none() => {}
             crate::ShaderStage::Task => {
                 let Some(handle) = ep.task_payload else {
                     return Err(EntryPointError::ExpectedTaskPayload.with_span());
@@ -1975,7 +2058,7 @@ impl super::Validator {
                     return Err(EntryPointError::WrongTaskShaderEntryResult.with_span());
                 }
             }
-        } else if ep.stage == crate::ShaderStage::Task {
+        } else if ep.stage == crate::ShaderStage::Task && !glsl_mesh {
             return Err(EntryPointError::WrongTaskShaderEntryResult.with_span());
         }
 

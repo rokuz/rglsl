@@ -88,6 +88,11 @@ fn per_vertex_builtin(name: &str, invariant: bool) -> Option<BuiltIn> {
         "gl_PointSize" => BuiltIn::PointSize,
         "gl_ClipDistance" => BuiltIn::ClipDistances,
         "gl_CullDistance" => BuiltIn::CullDistance,
+        "gl_ViewportMask" => BuiltIn::ViewportMaskNV,
+        "gl_SecondaryPositionNV" => BuiltIn::SecondaryPositionNV,
+        "gl_SecondaryViewportMaskNV" => BuiltIn::SecondaryViewportMaskNV,
+        "gl_PositionPerViewNV" => BuiltIn::PositionPerViewNV,
+        "gl_ViewportMaskPerViewNV" => BuiltIn::ViewportMaskPerViewNV,
         _ => return None,
     })
 }
@@ -459,7 +464,8 @@ impl<'a> Lowerer<'a> {
         variable.origin == Origin::BuiltIn
             && variable.ty.is_array()
             && self.analysis.types.block(id).is_some_and(|block| {
-                block.name == "gl_PerVertex" || super::mesh::MESH_BLOCKS.contains(&block.name.as_str())
+                block.name == "gl_PerVertex"
+                    || super::mesh::MESH_BLOCKS.contains(&block.name.as_str())
             })
     }
 
@@ -490,8 +496,19 @@ impl<'a> Lowerer<'a> {
             .extensions
             .contains("GL_EXT_fragment_shading_rate");
         for (index, member) in block.members.iter().enumerate() {
-            if member.name == "gl_PrimitiveShadingRateEXT" && !shading_rate {
+            let index = u32::try_from(index).map_err(|_| internal(at))?;
+            let requested = if self.options.stage == ShaderStage::Mesh {
+                member.name != "gl_PrimitiveShadingRateEXT" || shading_rate
+            } else {
+                rglsl_sema::builtins::view_extension(&member.name)
+                    .is_none_or(|extension| analysis.extensions.contains(extension))
+            };
+            if !requested {
                 continue;
+            }
+            let position = u32::try_from(members.len()).map_err(|_| internal(at))?;
+            if position != index {
+                self.member_indices.insert((id, index), position);
             }
             let builtin = per_vertex_builtin(
                 &member.name,
@@ -499,19 +516,23 @@ impl<'a> Lowerer<'a> {
             )
             .or_else(|| match member.name.as_str() {
                 "gl_PrimitiveID" => Some(BuiltIn::PrimitiveIndex),
-                "gl_Layer" => Some(BuiltIn::Layer),
+                "gl_Layer" => Some(BuiltIn::Layer {
+                    viewport_relative: false,
+                    secondary_view_offset: None,
+                }),
                 "gl_ViewportIndex" => Some(BuiltIn::ViewportIndex),
                 name => super::mesh::mesh_builtin(name),
             })
             .ok_or_else(|| unsupported(format_member(&member.name), at))?;
-            let index = u32::try_from(index).map_err(|_| internal(at))?;
             let mut sized = member.ty.clone();
             for (depth, size) in sized.array.iter_mut().enumerate() {
                 if *size == GlslArraySize::Unsized {
                     let used = if depth == 0 {
                         self.member_sizes.get(&(id, index)).copied()
                     } else {
-                        self.member_dimension_sizes.get(&(id, index, depth)).copied()
+                        self.member_dimension_sizes
+                            .get(&(id, index, depth))
+                            .copied()
                     };
                     *size = GlslArraySize::Sized(used.unwrap_or(1));
                 }

@@ -123,6 +123,7 @@ impl Lowerer<'_> {
             ShaderStage::Task => Some(MeshShaderInfo {
                 extension,
                 output: None,
+                task_memory: self.task_memory.clone(),
             }),
             ShaderStage::Mesh => {
                 let layout = &self.stage_layout;
@@ -133,6 +134,7 @@ impl Lowerer<'_> {
                         max_vertices: layout.vertices?,
                         max_primitives: layout.primitives?,
                     }),
+                    task_memory: self.task_memory.clone(),
                 })
             }
             ShaderStage::Fragment => {
@@ -165,6 +167,7 @@ impl Lowerer<'_> {
                         MeshShaderExtension::Ext
                     },
                     output: None,
+                    task_memory: alloc::vec::Vec::new(),
                 })
             }
             _ => None,

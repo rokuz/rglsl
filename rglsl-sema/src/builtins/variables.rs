@@ -46,6 +46,31 @@ out int gl_Layer
 ",
     },
     Group {
+        stages: VERTEX | TESS_EVALUATION | GEOMETRY,
+        since: 450,
+        text: "
+out int gl_ViewportMask[]
+out int gl_SecondaryViewportMaskNV[]
+out vec4 gl_SecondaryPositionNV
+out vec4 gl_PositionPerViewNV[]
+out int gl_ViewportMaskPerViewNV[]
+",
+    },
+    Group {
+        stages: VERTEX | TESS_CONTROL | TESS_EVALUATION | GEOMETRY | MESH,
+        since: 450,
+        text: "
+in int gl_ViewIndex
+",
+    },
+    Group {
+        stages: FRAGMENT,
+        since: 450,
+        text: "
+flat in int gl_ViewIndex
+",
+    },
+    Group {
         stages: TESS_CONTROL,
         since: 450,
         text: "
@@ -118,7 +143,6 @@ out uint gl_PrimitiveIndicesNV[]
 out uint gl_PrimitivePointIndicesEXT[]
 out uvec2 gl_PrimitiveLineIndicesEXT[]
 out uvec3 gl_PrimitiveTriangleIndicesEXT[]
-in int gl_ViewIndex
 ",
     },
     Group {
@@ -263,11 +287,56 @@ perprimitiveNV int gl_PrimitiveShadingRateEXT
 ";
 
 const MESH_BLOCKS: [(&str, &str, &str, bool); 4] = [
-    ("gl_MeshPerVertexNV", "gl_MeshVerticesNV", MESH_PER_VERTEX_NV, false),
-    ("gl_MeshPerPrimitiveNV", "gl_MeshPrimitivesNV", MESH_PER_PRIMITIVE_NV, true),
-    ("gl_MeshPerVertexEXT", "gl_MeshVerticesEXT", PER_VERTEX, false),
-    ("gl_MeshPerPrimitiveEXT", "gl_MeshPrimitivesEXT", MESH_PER_PRIMITIVE_EXT, true),
+    (
+        "gl_MeshPerVertexNV",
+        "gl_MeshVerticesNV",
+        MESH_PER_VERTEX_NV,
+        false,
+    ),
+    (
+        "gl_MeshPerPrimitiveNV",
+        "gl_MeshPrimitivesNV",
+        MESH_PER_PRIMITIVE_NV,
+        true,
+    ),
+    (
+        "gl_MeshPerVertexEXT",
+        "gl_MeshVerticesEXT",
+        PER_VERTEX,
+        false,
+    ),
+    (
+        "gl_MeshPerPrimitiveEXT",
+        "gl_MeshPrimitivesEXT",
+        MESH_PER_PRIMITIVE_EXT,
+        true,
+    ),
 ];
+
+pub fn view_extension(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "gl_ViewIndex" => "GL_EXT_multiview",
+        "gl_ViewportMask" => "GL_NV_viewport_array2",
+        "gl_SecondaryPositionNV" | "gl_SecondaryViewportMaskNV" => "GL_NV_stereo_view_rendering",
+        "gl_PositionPerViewNV" | "gl_ViewportMaskPerViewNV" => {
+            "GL_NVX_multiview_per_view_attributes"
+        }
+        _ => return None,
+    })
+}
+
+const PER_VERTEX_IN: &str = "
+vec4 gl_SecondaryPositionNV
+vec4 gl_PositionPerViewNV[]
+";
+
+const PER_VERTEX_TESS_CONTROL_OUT: &str = "
+int gl_ViewportMask[]
+vec4 gl_SecondaryPositionNV
+int gl_SecondaryViewportMaskNV[]
+vec4 gl_PositionPerViewNV[]
+int gl_ViewportMaskPerViewNV[]
+";
 
 enum Instance {
     Anonymous,
@@ -371,8 +440,14 @@ impl Builder {
             BlockStorage::In => Storage::In,
             _ => Storage::Out,
         };
+        let extension_members = match (instance, storage) {
+            (Instance::Anonymous, _) => "",
+            (Instance::Named(..), BlockStorage::In) => PER_VERTEX_IN,
+            (Instance::Named(..), _) => PER_VERTEX_TESS_CONTROL_OUT,
+        };
         let members: Vec<Member> = PER_VERTEX
             .lines()
+            .chain(extension_members.lines())
             .filter_map(|line| parse_declaration(&words(line)))
             .map(|declared| Member {
                 name: declared.name,

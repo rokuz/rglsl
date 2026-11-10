@@ -5,6 +5,8 @@ pub(crate) mod subgroup;
 mod textures;
 mod variables;
 
+pub use variables::view_extension;
+
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::String;
 use alloc::vec::Vec;

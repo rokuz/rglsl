@@ -338,8 +338,7 @@ impl Analyzer<'_> {
                     && self.options.stage != Stage::Intersection
                 {
                     Place::ReadOnly("cannot modify hitAttributeNV in this stage")
-                } else if storage == Storage::TaskPayloadShared
-                    && self.options.stage == Stage::Mesh
+                } else if storage == Storage::TaskPayloadShared && self.options.stage == Stage::Mesh
                 {
                     Place::ReadOnly(
                         "can't modify variable with storage qualifier taskPayloadSharedEXT in mesh shaders",
@@ -484,6 +483,9 @@ impl Analyzer<'_> {
         {
             self.viewport_layer_extension(expression.span, name);
             self.mesh_variable_extension(expression.span, name);
+            if let Some(extension) = crate::builtins::view_extension(name) {
+                self.require_extension(expression.span, extension, name);
+            }
         }
         let (constant, value) = match self.symbol(id).map(|symbol| &symbol.kind) {
             Some(SymbolKind::Struct(_) | SymbolKind::Reference(_)) => {
@@ -811,6 +813,17 @@ impl Analyzer<'_> {
             return self.reference_field(&base_operand, id, field);
         }
         self.mesh_member_extension(field.span, &base_operand.ty, &field.node);
+        let per_vertex_member = match base_operand.ty.kind {
+            TypeKind::Block(id) => self.types.block(id).is_some_and(|block| {
+                block.name == "gl_PerVertex" && block.member(&field.node).is_some()
+            }),
+            _ => false,
+        };
+        if let Some(extension) =
+            crate::builtins::view_extension(&field.node).filter(|_| per_vertex_member)
+        {
+            self.require_extension(field.span, extension, &field.node);
+        }
         let members = match base_operand.ty.kind {
             TypeKind::Struct(id) => self.types.structure(id).map(|structure| &structure.members),
             TypeKind::Block(id) => self.types.block(id).map(|block| &block.members),

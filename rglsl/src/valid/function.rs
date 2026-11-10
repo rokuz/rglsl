@@ -1423,7 +1423,8 @@ impl super::Validator {
                         }
                     };
                     for operand in function.operands() {
-                        let inner = context.resolve_type_inner(operand, &self.valid_expression_set)?;
+                        let inner =
+                            context.resolve_type_inner(operand, &self.valid_expression_set)?;
                         if *inner != Ti::Scalar(crate::Scalar::U32) {
                             return Err(FunctionError::InvalidMeshFunctionCall(operand)
                                 .with_span_handle(operand, context.expressions));
