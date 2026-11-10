@@ -641,3 +641,107 @@ fn integer_textures_can_be_sampled() {
     assert_eq!(instructions(&module, Op::ImageSampleImplicitLod).len(), 1);
     assert_eq!(instructions(&module, Op::ImageSampleExplicitLod).len(), 1);
 }
+
+/// The members of the block struct named `name`: (offset, matrix stride and
+/// majorness if the member is a matrix).
+fn block_layout(module: &rglsl::Module, name: &str) -> Vec<(u32, Option<(u32, bool)>)> {
+    let (_, ty) = module
+        .types
+        .iter()
+        .filter(|(_, ty)| ty.name.as_deref() == Some(name))
+        .next_back()
+        .unwrap_or_else(|| panic!("no type named {name}"));
+    let rglsl::TypeInner::Struct { ref members, .. } = ty.inner else {
+        panic!("{name} is not a struct");
+    };
+    members
+        .iter()
+        .map(|member| {
+            (
+                member.offset,
+                member
+                    .matrix_layout
+                    .map(|layout| (layout.stride, layout.row_major)),
+            )
+        })
+        .collect()
+}
+
+/// std140, std430 and row_major layouts are computed as glslang computes
+/// them, including two-row matrices and nested structures.
+#[test]
+fn block_layouts_match_glslang() {
+    let source = "#version 450
+        struct Inner { float f; vec3 v; mat2 m2; };
+        struct Small { float a; };
+        layout(std140, binding = 0) uniform U {
+            float a; mat2 m2; mat3 m3; mat4x2 m42; mat2x3 m23; Inner inner; Small small;
+            float after; mat2 arr[3]; vec3 v3; float tail; dmat3 dm;
+        } u;
+        layout(std430, binding = 1) buffer B {
+            float a; mat2 m2; mat3 m3; mat4x2 m42; Small small; float after; mat2 arr[3];
+        } b;
+        layout(std140, row_major, binding = 2) uniform R {
+            float a; mat2 m2; mat3 m3; mat2x4 m24; mat4x2 m42; mat3x2 arr[2];
+        } r;
+        layout(location = 0) out vec4 o;
+        void main() {
+            int i = int(u.a);
+            o = vec4(u.m2[1], u.m42[i]) + vec4(u.inner.m2[i], u.arr[2][1]) + vec4(u.dm[2].xyz, 1.0);
+            o += vec4(b.m2[i], b.arr[1][0]) + vec4(r.m2[1], r.m42[i]) + vec4(r.arr[1][2], r.m24[1].zw);
+            b.m2 = u.m2;
+            b.m42 = r.m42;
+        }";
+    // The module is valid, and the backend accepts it.
+    compile(ShaderStage::Fragment, source);
+
+    let module = parse(ShaderStage::Fragment, source).unwrap();
+    let column = |stride| Some((stride, false));
+    let row = |stride| Some((stride, true));
+    // Offsets and strides are the ones in glslang's output for this shader.
+    assert_eq!(
+        block_layout(&module, "U"),
+        [
+            (0, None),
+            (16, column(16)),
+            (48, column(16)),
+            (96, column(16)),
+            (160, column(16)),
+            (192, None),
+            (256, None),
+            (272, None),
+            (288, column(16)),
+            (384, None),
+            (396, None),
+            (416, column(32)),
+        ]
+    );
+    // `Inner` as laid out inside the std140 block.
+    assert_eq!(
+        block_layout(&module, "Inner"),
+        [(0, None), (16, None), (32, column(16))]
+    );
+    assert_eq!(
+        block_layout(&module, "B"),
+        [
+            (0, None),
+            (8, column(8)),
+            (32, column(16)),
+            (80, column(8)),
+            (112, None),
+            (116, None),
+            (120, column(8)),
+        ]
+    );
+    assert_eq!(
+        block_layout(&module, "R"),
+        [
+            (0, None),
+            (16, row(16)),
+            (48, row(16)),
+            (96, row(16)),
+            (160, row(16)),
+            (192, row(16)),
+        ]
+    );
+}

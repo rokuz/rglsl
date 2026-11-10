@@ -1310,6 +1310,7 @@ impl Frontend {
                         ty,
                         binding: Some(binding),
                         offset: span,
+                        matrix_layout: None,
                     });
 
                     span += ctx.module.types[ty].inner.size(ctx.module.to_ctx());

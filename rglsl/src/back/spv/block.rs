@@ -507,6 +507,17 @@ impl BlockContext<'_> {
             return Ok(None);
         };
 
+        // A matrix with a layout from the front end is a real matrix in
+        // SPIR-V and can be indexed dynamically like any other.
+        if super::helpers::has_explicit_matrix_layout(
+            self.ir_function,
+            self.fun_info,
+            self.ir_module,
+            matrix_pointer,
+        ) {
+            return Ok(None);
+        }
+
         let matrix_type_id = self.get_numeric_type_id(NumericType::Matrix {
             columns,
             rows,
@@ -626,9 +637,13 @@ impl BlockContext<'_> {
             return Ok(None);
         };
 
-        let crate::TypeInner::Struct { .. } = self.ir_module.types[struct_type].inner else {
+        let crate::TypeInner::Struct { ref members, .. } = self.ir_module.types[struct_type].inner
+        else {
             return Ok(None);
         };
+        if members[member_index as usize].matrix_layout.is_some() {
+            return Ok(None);
+        }
 
         let matrix_type_id = self.get_numeric_type_id(NumericType::Matrix {
             columns,

@@ -616,6 +616,14 @@ impl Writer {
                             ..
                         } = ir_module.types[base_type].inner
                         {
+                            if super::helpers::has_explicit_matrix_layout(
+                                ir_function,
+                                info,
+                                ir_module,
+                                base,
+                            ) {
+                                continue;
+                            }
                             self.write_wrapped_matcx2_get_column(ir_module, base_type)?;
                             // If the matrix is *not* directly a member of a struct, then
                             // we additionally require a wrapper function to convert from
@@ -2422,7 +2430,10 @@ impl Writer {
             }
             crate::TypeInner::Struct { ref members, .. } => {
                 let mut needs_std140_type = false;
-                for member in members {
+                // A member whose matrix layout the front end chose is emitted
+                // as it is: the front end is responsible for the layout being
+                // valid in a uniform buffer.
+                for member in members.iter().filter(|m| m.matrix_layout.is_none()) {
                     match module.types[member.ty].inner {
                         // We don't need to write a std140 type for the matrix itself as
                         // it will be decomposed into the parent struct. As a result, the
@@ -3514,6 +3525,7 @@ impl Writer {
                         ty: global_variable.ty,
                         binding: None,
                         offset: 0,
+                        matrix_layout: None,
                     };
                     self.decorate_struct_member(wrapper_type_id, 0, &member, &ir_module.types)?;
 
@@ -3621,11 +3633,27 @@ impl Writer {
             scalar,
         } = *member_array_subty_inner
         {
-            let byte_stride = Alignment::from(rows) * scalar.width as u32;
+            // The front end may have chosen the layout (GLSL `std140`,
+            // `row_major`, ...); otherwise columns are packed at the natural
+            // alignment of the column vector.
+            let (byte_stride, majorness) = match member.matrix_layout {
+                Some(crate::MatrixLayout { stride, row_major }) => (
+                    stride,
+                    if row_major {
+                        Decoration::RowMajor
+                    } else {
+                        Decoration::ColMajor
+                    },
+                ),
+                None => (
+                    Alignment::from(rows) * scalar.width as u32,
+                    Decoration::ColMajor,
+                ),
+            };
             self.annotations.push(Instruction::member_decorate(
                 struct_id,
                 index as u32,
-                Decoration::ColMajor,
+                majorness,
                 &[],
             ));
             self.annotations.push(Instruction::member_decorate(

@@ -149,15 +149,19 @@ pub fn is_uniform_matcx2_struct_member_access(
         {
             if let crate::Expression::AccessIndex {
                 base: parent_pointer,
-                ..
+                index,
             } = ir_function.expressions[pointer]
             {
                 if let crate::TypeInner::Pointer {
                     base: parent_type, ..
                 } = *fun_info[parent_pointer].ty.inner_with(&ir_module.types)
                 {
-                    if let crate::TypeInner::Struct { .. } = ir_module.types[parent_type].inner {
-                        return true;
+                    if let crate::TypeInner::Struct { ref members, .. } =
+                        ir_module.types[parent_type].inner
+                    {
+                        // A matrix whose layout the front end chose is
+                        // emitted as declared, not decomposed.
+                        return members[index as usize].matrix_layout.is_none();
                     }
                 }
             }
@@ -165,6 +169,41 @@ pub fn is_uniform_matcx2_struct_member_access(
     }
 
     false
+}
+
+/// Returns true if `pointer` points into a struct member whose matrix layout
+/// the front end chose ([`StructMember::matrix_layout`]).
+///
+/// Such a matrix is emitted as an ordinary `OpTypeMatrix` member with the
+/// requested `MatrixStride`, so none of the std140 compatibility rewriting of
+/// two-row matrices applies to it.
+///
+/// [`StructMember::matrix_layout`]: crate::StructMember::matrix_layout
+pub fn has_explicit_matrix_layout(
+    ir_function: &crate::Function,
+    fun_info: &crate::valid::FunctionInfo,
+    ir_module: &crate::Module,
+    mut pointer: Handle<crate::Expression>,
+) -> bool {
+    loop {
+        match ir_function.expressions[pointer] {
+            crate::Expression::AccessIndex { base, index } => {
+                if let crate::TypeInner::Pointer {
+                    base: parent_type, ..
+                } = *fun_info[base].ty.inner_with(&ir_module.types)
+                {
+                    if let crate::TypeInner::Struct { ref members, .. } =
+                        ir_module.types[parent_type].inner
+                    {
+                        return members[index as usize].matrix_layout.is_some();
+                    }
+                }
+                pointer = base;
+            }
+            crate::Expression::Access { base, .. } => pointer = base,
+            _ => return false,
+        }
+    }
 }
 
 ///HACK: this is taken from std unstable, remove it when std's floor_char_boundary is stable

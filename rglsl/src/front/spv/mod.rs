@@ -2584,6 +2584,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                 ty,
                 binding,
                 offset,
+                matrix_layout: None,
             });
         }
 

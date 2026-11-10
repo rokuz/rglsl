@@ -76,6 +76,13 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   outputs need no interpolation qualifier (`valid/interface.rs`).
 - **Write-only storage buffers are valid** (`StorageAddressSpaceWriteOnlyNotSupported` is
   removed), **integer textures can be sampled**, and **clip distances may be fragment inputs**.
+- **Block layout is the front end's.** `StructMember::matrix_layout` (new) carries the
+  stride and majorness of a matrix member; the SPIR-V backend emits it as `MatrixStride` and
+  `RowMajor`/`ColMajor` and does not apply its std140 compatibility rewriting of two-row
+  matrices to such members. The validator no longer checks offsets, strides and spans against
+  WGSL alignment rules (`Disalignment::{ArrayStride, StructSpan, MemberOffset,
+  MemberOffsetAfterStruct}` are removed); it checks only that members and array elements do
+  not overlap.
 - **`MathFunction::Outer` typing.** `outer(c, r)` has one row per component of `c` and one
   column per component of `r`, as in GLSL and SPIR-V; upstream had them swapped
   (`proc/overloads/mathfunction.rs`).

@@ -27,6 +27,7 @@
                         ty: 1,
                         binding: None,
                         offset: 0,
+                        matrix_layout: None,
                     ),
                 ],
                 span: 4,

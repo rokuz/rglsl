@@ -18,7 +18,7 @@ use super::{
     error::{Error, ErrorKind},
     Span,
 };
-use crate::{proc::Alignment, Handle, Scalar, Type, TypeInner, UniqueArena};
+use crate::{proc::Alignment, Handle, MatrixLayout, Scalar, Type, TypeInner, UniqueArena};
 
 /// Struct with information needed for defining a struct member.
 ///
@@ -33,6 +33,9 @@ pub struct TypeAlignSpan {
     pub align: Alignment,
     /// The size of the type.
     pub span: u32,
+    /// The layout of the matrix, if the type is a matrix or an array of
+    /// matrices.
+    pub matrix_layout: Option<MatrixLayout>,
 }
 
 /// Returns the type, alignment and span of a struct member according to a [`StructLayout`].
@@ -40,13 +43,18 @@ pub struct TypeAlignSpan {
 /// The functions returns a [`TypeAlignSpan`] which has a `ty` member this
 /// should be used as the struct member type because for example arrays may have
 /// to change the stride and as such need to have a different type.
+///
+/// `row_major` is the block's matrix storage order (`layout(row_major)`).
 pub fn calculate_offset(
     mut ty: Handle<Type>,
     meta: Span,
     layout: StructLayout,
+    row_major: bool,
     types: &mut UniqueArena<Type>,
     errors: &mut Vec<Error>,
 ) -> TypeAlignSpan {
+    let mut matrix_layout = None;
+
     // When using the std430 storage layout, shader storage blocks will be laid out in buffer storage
     // identically to uniform and shader storage blocks using the std140 layout, except
     // that the base alignment and stride of arrays of scalars and vectors in rule 4 and of
@@ -70,9 +78,12 @@ pub fn calculate_offset(
         // 4. If the member is an array of scalars or vectors, the base alignment and array
         // stride are set to match the base alignment of a single array element, according
         // to rules (1), (2), and (3), and rounded up to the base alignment of a vec4.
-        // TODO: Matrices array
+        // 6. and 8. An array of matrices is stored like an array of that many
+        // times as many column (or row) vectors: the element stride is the
+        // size of one matrix, which rule (4) already yields here.
         TypeInner::Array { base, size, .. } => {
-            let info = calculate_offset(base, meta, layout, types, errors);
+            let info = calculate_offset(base, meta, layout, row_major, types, errors);
+            matrix_layout = info.matrix_layout;
 
             let name = types[ty].name.clone();
 
@@ -107,43 +118,33 @@ pub fn calculate_offset(
         }
         // 5. If the member is a column-major matrix with C columns and R rows, the
         // matrix is stored identically to an array of C column vectors with R
-        // components each, according to rule (4)
-        // TODO: Row major matrices
+        // components each, according to rule (4).
+        // 7. If the member is a row-major matrix with C columns and R rows, the
+        // matrix is stored identically to an array of R row vectors with C
+        // components each, according to rule (4).
         TypeInner::Matrix {
             columns,
             rows,
             scalar,
         } => {
-            let mut align = Alignment::from(rows) * Alignment::from_width(scalar.width);
+            let (vector_size, vector_count) = if row_major {
+                (columns, rows)
+            } else {
+                (rows, columns)
+            };
+            let mut align = Alignment::from(vector_size) * Alignment::from_width(scalar.width);
 
             // See comment at the beginning of the function
             if StructLayout::Std430 != layout {
                 align = align.max(Alignment::MIN_UNIFORM);
             }
 
-            // See comment on the error kind
-            if StructLayout::Std140 == layout {
-                // Do the f16 test first, as it's more specific
-                if scalar == Scalar::F16 {
-                    errors.push(Error {
-                        kind: ErrorKind::UnsupportedF16MatrixInStd140 {
-                            columns: columns as u8,
-                            rows: rows as u8,
-                        },
-                        meta,
-                    });
-                }
-                if rows == crate::VectorSize::Bi {
-                    errors.push(Error {
-                        kind: ErrorKind::UnsupportedMatrixWithTwoRowsInStd140 {
-                            columns: columns as u8,
-                        },
-                        meta,
-                    });
-                }
-            }
+            // The alignment of a vector is at least its size, so it is also
+            // the stride of the array of vectors.
+            let stride = align * 1;
+            matrix_layout = Some(MatrixLayout { stride, row_major });
 
-            (align, align * columns as u32)
+            (align, stride * vector_count as u32)
         }
         TypeInner::Struct { ref members, .. } => {
             let mut span = 0;
@@ -152,7 +153,8 @@ pub fn calculate_offset(
             let name = types[ty].name.clone();
 
             for member in members.iter_mut() {
-                let info = calculate_offset(member.ty, meta, layout, types, errors);
+                let info = calculate_offset(member.ty, meta, layout, row_major, types, errors);
+                member.matrix_layout = info.matrix_layout;
 
                 let member_alignment = info.align;
                 span = member_alignment.round_up(span);
@@ -162,6 +164,15 @@ pub fn calculate_offset(
                 member.offset = span;
 
                 span += info.span;
+            }
+
+            // 9. If the member is a structure, the base alignment of the
+            // structure is N, where N is the largest base alignment value of
+            // any of its members, and rounded up to the base alignment of a
+            // vec4. (See the comment at the beginning of the function for
+            // std430.)
+            if StructLayout::Std430 != layout {
+                align = align.max(Alignment::MIN_UNIFORM);
             }
 
             span = align.round_up(span);
@@ -186,5 +197,10 @@ pub fn calculate_offset(
         }
     };
 
-    TypeAlignSpan { ty, align, span }
+    TypeAlignSpan {
+        ty,
+        align,
+        span,
+        matrix_layout,
+    }
 }

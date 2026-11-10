@@ -82,22 +82,6 @@ bitflags::bitflags! {
 #[derive(Clone, Copy, Debug, thiserror::Error)]
 #[cfg_attr(test, derive(PartialEq))]
 pub enum Disalignment {
-    #[error("The array stride {stride} is not a multiple of the required alignment {alignment}")]
-    ArrayStride { stride: u32, alignment: Alignment },
-    #[error("The struct span {span}, is not a multiple of the required alignment {alignment}")]
-    StructSpan { span: u32, alignment: Alignment },
-    #[error("The struct member[{index}] offset {offset} is not a multiple of the required alignment {alignment}")]
-    MemberOffset {
-        index: u32,
-        offset: u32,
-        alignment: Alignment,
-    },
-    #[error("The struct member[{index}] offset {offset} must be at least {expected}")]
-    MemberOffsetAfterStruct {
-        index: u32,
-        offset: u32,
-        expected: u32,
-    },
     #[error("The struct member[{index}] is not statically sized")]
     UnsizedMember { index: u32 },
     #[error("The type is not host-shareable")]
@@ -132,7 +116,7 @@ pub enum TypeError {
         arrayed: bool,
         class: crate::ImageClass,
     },
-    #[error("Array stride {stride} does not match the expected {expected}")]
+    #[error("Array stride {stride} is smaller than the element size {expected}")]
     InvalidArrayStride { stride: u32, expected: u32 },
     #[error("Field '{0}' can't be dynamically-sized, has type {1:?}")]
     InvalidDynamicArray(String, Handle<crate::Type>),
@@ -187,32 +171,23 @@ pub enum ImmediateError {
     InvalidScalar(crate::Scalar),
 }
 
-// Only makes sense if `flags.contains(HOST_SHAREABLE)`
+/// Whether a type can be the type of a uniform or storage buffer.
+///
+/// Only makes sense if `flags.contains(HOST_SHAREABLE)`.
+///
+/// This checks what holds for every buffer: its members are host-shareable
+/// and sized. It does not check offsets, strides and spans against alignment
+/// rules, because those depend on the block layout the shader asked for
+/// (GLSL `std140`, `std430` or `scalar`), which the IR does not record. The
+/// front end computes the layout, [`TypeError::MemberOverlap`] and friends
+/// reject layouts that are not self-consistent, and `spirv-val` checks the
+/// result against the rules of the target environment.
 type LayoutCompatibility = Result<Alignment, (Handle<crate::Type>, Disalignment)>;
 type ImmediateCompatibility = Result<(), ImmediateError>;
 
-fn check_member_layout(
-    accum: &mut LayoutCompatibility,
-    member: &crate::StructMember,
-    member_index: u32,
-    member_layout: LayoutCompatibility,
-    parent_handle: Handle<crate::Type>,
-) {
+fn check_member_layout(accum: &mut LayoutCompatibility, member_layout: LayoutCompatibility) {
     *accum = match (*accum, member_layout) {
-        (Ok(cur_alignment), Ok(alignment)) => {
-            if alignment.is_aligned(member.offset) {
-                Ok(cur_alignment.max(alignment))
-            } else {
-                Err((
-                    parent_handle,
-                    Disalignment::MemberOffset {
-                        index: member_index,
-                        offset: member.offset,
-                        alignment,
-                    },
-                ))
-            }
-        }
+        (Ok(cur_alignment), Ok(alignment)) => Ok(cur_alignment.max(alignment)),
         (Err(e), _) | (_, Err(e)) => Err(e),
     };
 }
@@ -605,31 +580,22 @@ impl super::Validator {
                 }
 
                 let base_layout = self.layouter[base];
+                // Elements must not overlap. Whether the stride also meets
+                // the alignment rules of a buffer depends on its block
+                // layout; see `LayoutCompatibility`.
+                if stride < base_layout.size {
+                    return Err(TypeError::InvalidArrayStride {
+                        stride,
+                        expected: base_layout.size,
+                    });
+                }
                 let general_alignment = base_layout.alignment;
-                let uniform_layout = match base_info.uniform_layout {
-                    Ok(base_alignment) => {
-                        let alignment = base_alignment
-                            .max(general_alignment)
-                            .max(Alignment::MIN_UNIFORM);
-                        if alignment.is_aligned(stride) {
-                            Ok(alignment)
-                        } else {
-                            Err((handle, Disalignment::ArrayStride { stride, alignment }))
-                        }
-                    }
-                    Err(e) => Err(e),
-                };
-                let storage_layout = match base_info.storage_layout {
-                    Ok(base_alignment) => {
-                        let alignment = base_alignment.max(general_alignment);
-                        if alignment.is_aligned(stride) {
-                            Ok(alignment)
-                        } else {
-                            Err((handle, Disalignment::ArrayStride { stride, alignment }))
-                        }
-                    }
-                    Err(e) => Err(e),
-                };
+                let uniform_layout = base_info
+                    .uniform_layout
+                    .map(|base_alignment| base_alignment.max(general_alignment));
+                let storage_layout = base_info
+                    .storage_layout
+                    .map(|base_alignment| base_alignment.max(general_alignment));
 
                 let type_info_mask = match size {
                     crate::ArraySize::Constant(_) => {
@@ -687,7 +653,6 @@ impl super::Validator {
                 ti.uniform_layout = Ok(Alignment::MIN_UNIFORM);
 
                 let mut min_offset = 0;
-                let mut prev_struct_data: Option<(u32, u32)> = None;
 
                 for (i, member) in members.iter().enumerate() {
                     let base_info = &self.types[member.ty.index()];
@@ -774,46 +739,11 @@ impl super::Validator {
                         });
                     }
 
-                    check_member_layout(
-                        &mut ti.uniform_layout,
-                        member,
-                        i as u32,
-                        base_info.uniform_layout,
-                        handle,
-                    );
-                    check_member_layout(
-                        &mut ti.storage_layout,
-                        member,
-                        i as u32,
-                        base_info.storage_layout,
-                        handle,
-                    );
+                    check_member_layout(&mut ti.uniform_layout, base_info.uniform_layout);
+                    check_member_layout(&mut ti.storage_layout, base_info.storage_layout);
                     if base_info.immediates_compatibility.is_err() {
                         ti.immediates_compatibility = base_info.immediates_compatibility.clone();
                     }
-
-                    // Validate rule: If a structure member itself has a structure type S,
-                    // then the number of bytes between the start of that member and
-                    // the start of any following member must be at least roundUp(16, SizeOf(S)).
-                    if let Some((span, offset)) = prev_struct_data {
-                        let diff = member.offset - offset;
-                        let min = Alignment::MIN_UNIFORM.round_up(span);
-                        if diff < min {
-                            ti.uniform_layout = Err((
-                                handle,
-                                Disalignment::MemberOffsetAfterStruct {
-                                    index: i as u32,
-                                    offset: member.offset,
-                                    expected: offset + min,
-                                },
-                            ));
-                        }
-                    };
-
-                    prev_struct_data = match gctx.types[member.ty].inner {
-                        crate::TypeInner::Struct { span, .. } => Some((span, member.offset)),
-                        _ => None,
-                    };
 
                     // The last field may be an unsized array.
                     if !base_info.flags.contains(TypeFlags::SIZED) {
@@ -881,12 +811,6 @@ impl super::Validator {
                             },
                         ));
                     }
-                }
-
-                let alignment = self.layouter[handle].alignment;
-                if !alignment.is_aligned(span) {
-                    ti.uniform_layout = Err((handle, Disalignment::StructSpan { span, alignment }));
-                    ti.storage_layout = Err((handle, Disalignment::StructSpan { span, alignment }));
                 }
 
                 ti

@@ -663,6 +663,30 @@ pub struct StructMember {
     pub binding: Option<Binding>,
     /// Offset from the beginning from the struct.
     pub offset: u32,
+    /// How the matrix in this member is laid out in memory, if the member is
+    /// a matrix or an array of matrices in a uniform or storage buffer.
+    ///
+    /// `None` leaves the layout to the backend: column-major, with each
+    /// column at the natural alignment of its vector type.
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    pub matrix_layout: Option<MatrixLayout>,
+}
+
+/// The memory layout of a matrix in a buffer: [`StructMember::matrix_layout`].
+///
+/// GLSL selects it with the `std140`, `std430`, `scalar`, `row_major` and
+/// `column_major` layout qualifiers. It only describes how the matrix is
+/// stored; the value a shader reads or writes is the same either way.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub struct MatrixLayout {
+    /// The distance in bytes between consecutive columns of a column-major
+    /// matrix, or between consecutive rows of a row-major one.
+    pub stride: u32,
+    /// The matrix is stored row by row rather than column by column.
+    pub row_major: bool,
 }
 
 /// The number of dimensions an image has.

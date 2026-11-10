@@ -556,9 +556,13 @@ impl ParsingContext<'_> {
             }
             _ => unreachable!(),
         };
+        // `column_major` is the default.
+        let row_major = qualifiers.none_layout_qualifier("row_major", &mut frontend.errors);
+        qualifiers.none_layout_qualifier("column_major", &mut frontend.errors);
 
         let mut members = Vec::new();
-        let span = self.parse_struct_declaration_list(frontend, ctx, &mut members, layout)?;
+        let span =
+            self.parse_struct_declaration_list(frontend, ctx, &mut members, layout, row_major)?;
         self.expect(frontend, TokenValue::RightBrace)?;
 
         let mut ty = ctx.module.types.insert(
@@ -633,6 +637,7 @@ impl ParsingContext<'_> {
         ctx: &mut Context,
         members: &mut Vec<StructMember>,
         layout: StructLayout,
+        row_major: bool,
     ) -> Result<u32> {
         let mut span = 0;
         let mut align = Alignment::ONE;
@@ -653,6 +658,7 @@ impl ParsingContext<'_> {
                     ty,
                     meta,
                     layout,
+                    row_major,
                     &mut ctx.module.types,
                     &mut frontend.errors,
                 );
@@ -666,6 +672,7 @@ impl ParsingContext<'_> {
                     ty: info.ty,
                     binding: None,
                     offset: span,
+                    matrix_layout: info.matrix_layout,
                 });
 
                 span += info.span;
