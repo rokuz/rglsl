@@ -175,7 +175,7 @@ impl Lowerer<'_> {
         span: Span,
     ) -> Result<Handle<Type>> {
         let inner = match kind {
-            TypeKind::Error | TypeKind::Void => return Err(internal(span)),
+            TypeKind::Error | TypeKind::Void | TypeKind::String => return Err(internal(span)),
             TypeKind::Scalar(s) => TypeInner::Scalar(scalar(s)),
             TypeKind::Vector { scalar: s, size } => TypeInner::Vector {
                 size: vector_size(size).ok_or_else(|| internal(span))?,
@@ -334,7 +334,7 @@ impl Lowerer<'_> {
             .collect()
     }
 
-    fn layout(
+    pub(super) fn layout(
         &mut self,
         ty: Handle<Type>,
         packing: Packing,

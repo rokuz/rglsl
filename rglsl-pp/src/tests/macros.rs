@@ -140,7 +140,7 @@ fn pasting_errors() {
 
 #[test]
 fn stringification_follows_glslang() {
-    let source = "#version 450\n#define S(x) #x\n#define E(x) S(x)\n#define V 42\nS(a + b) E(V) S( spaced  out )\n";
+    let source = "#version 450\n#extension GL_EXT_debug_printf : enable\n#define S(x) #x\n#define E(x) S(x)\n#define V 42\nS(a + b) E(V) S( spaced  out )\n";
     let result = run(source);
     assert!(errors(&result).is_empty(), "{:?}", result.diagnostics);
     assert_eq!(

@@ -190,6 +190,7 @@ pub const fn is_primary(expression: &Expression) -> bool {
         ExpressionKind::Variable(_)
             | ExpressionKind::Number(_)
             | ExpressionKind::Bool(_)
+            | ExpressionKind::String(_)
             | ExpressionKind::Parenthesized(_)
             | ExpressionKind::FunctionCall(_)
             | ExpressionKind::Subscript { .. }

@@ -133,6 +133,10 @@ impl Writer {
                 options.use_storage_input_output_16,
             ),
             debug_printf: None,
+            debug_printf_strings: crate::FastHashMap::default(),
+            raw_capabilities: crate::FastIndexSet::default(),
+            utf_encoded: crate::FastHashSet::default(),
+            laid_out_copies: crate::FastHashMap::default(),
             task_dispatch_limits: options.task_dispatch_limits,
             mesh_shader_primitive_indices_clamp: options.mesh_shader_primitive_indices_clamp,
         })
@@ -241,6 +245,10 @@ impl Writer {
             has_ray_tracing_pipeline: false,
             io_f16_polyfills: take(&mut self.io_f16_polyfills).reclaim(),
             debug_printf: None,
+            debug_printf_strings: take(&mut self.debug_printf_strings).reclaim(),
+            raw_capabilities: take(&mut self.raw_capabilities).reclaim(),
+            utf_encoded: take(&mut self.utf_encoded).reclaim(),
+            laid_out_copies: take(&mut self.laid_out_copies).reclaim(),
         };
 
         *self = fresh;
@@ -4015,7 +4023,7 @@ impl Writer {
     ///
     /// Emit decorations for the `index`'th member of the struct type
     /// designated by `struct_id`, described by `member`.
-    fn decorate_struct_member(
+    pub(super) fn decorate_struct_member(
         &mut self,
         struct_id: Word,
         index: usize,
@@ -4406,6 +4414,11 @@ impl Writer {
         for capability in self.capabilities_used.iter() {
             Instruction::capability(*capability).to_words(&mut self.logical_layout.capabilities);
         }
+        for &capability in self.raw_capabilities.iter() {
+            let mut instruction = Instruction::new(spirv::Op::Capability);
+            instruction.add_operand(capability);
+            instruction.to_words(&mut self.logical_layout.capabilities);
+        }
         for extension in self.extensions_used.iter() {
             Instruction::extension(extension).to_words(&mut self.logical_layout.extensions);
         }
@@ -4533,9 +4546,7 @@ impl Writer {
 
         let import_id = self.debug_printf.unwrap();
 
-        let string_id = self.id_gen.next();
-        self.debug_strings
-            .push(Instruction::string(string, string_id));
+        let string_id = self.debug_string(string);
 
         let mut operands = Vec::with_capacity(1 + format_params.len());
         operands.push(string_id);

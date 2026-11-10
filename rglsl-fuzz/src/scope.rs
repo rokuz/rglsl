@@ -337,7 +337,14 @@ impl Finder<'_> {
                         .collect()
                 })
                 .unwrap_or_default(),
-            Some(Callee::Constructor(_) | Callee::Length | Callee::NonUniform) | None => Vec::new(),
+            Some(
+                Callee::Constructor(_)
+                | Callee::Length
+                | Callee::NonUniform
+                | Callee::DebugPrintf
+                | Callee::Abort,
+            )
+            | None => Vec::new(),
         };
         (0..count)
             .map(|index| directions.get(index).is_some_and(|d| d.is_output()))
@@ -347,7 +354,10 @@ impl Finder<'_> {
     fn expression(&mut self, expression: &Expression) {
         self.point(expression);
         match &expression.kind {
-            ExpressionKind::Variable(_) | ExpressionKind::Number(_) | ExpressionKind::Bool(_) => {}
+            ExpressionKind::Variable(_)
+            | ExpressionKind::Number(_)
+            | ExpressionKind::Bool(_)
+            | ExpressionKind::String(_) => {}
             ExpressionKind::Parenthesized(inner) => self.expression(inner),
             ExpressionKind::Subscript { base, index } => {
                 self.expression(base);

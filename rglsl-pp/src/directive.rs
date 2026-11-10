@@ -703,7 +703,7 @@ impl Preprocessor<'_> {
             if matches!(behavior, "require" | "enable") {
                 self.report(DiagnosticKind::ExtensionAllEnabled, at);
             } else {
-                self.extensions = [on; 5];
+                self.extensions = [on; crate::preprocessor::TRACKED_EXTENSIONS.len()];
             }
         } else if let Some(index) = TRACKED_EXTENSIONS.iter().position(|known| *known == name) {
             if let Some(slot) = self.extensions.get_mut(index) {

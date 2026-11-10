@@ -193,7 +193,10 @@ impl<'a> Walker<'a> {
     fn expression(&mut self, expression: &'a Expression) {
         self.found.push(expression);
         match &expression.kind {
-            ExpressionKind::Variable(_) | ExpressionKind::Number(_) | ExpressionKind::Bool(_) => {}
+            ExpressionKind::Variable(_)
+            | ExpressionKind::Number(_)
+            | ExpressionKind::Bool(_)
+            | ExpressionKind::String(_) => {}
             ExpressionKind::Parenthesized(inner) => self.expression(inner),
             ExpressionKind::Subscript { base, index } => {
                 self.expression(base);

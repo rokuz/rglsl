@@ -522,6 +522,7 @@ impl fmt::Display for Opaque {
 pub enum TypeKind {
     Error,
     Void,
+    String,
     Scalar(Scalar),
     Vector {
         scalar: Scalar,
@@ -570,6 +571,7 @@ pub struct Type {
 impl Type {
     pub const ERROR: Self = Self::new(TypeKind::Error);
     pub const VOID: Self = Self::new(TypeKind::Void);
+    pub const STRING: Self = Self::new(TypeKind::String);
     pub const BOOL: Self = Self::scalar(Scalar::Bool);
     pub const INT: Self = Self::scalar(Scalar::Int);
     pub const UINT: Self = Self::scalar(Scalar::Uint);
@@ -658,6 +660,10 @@ impl Type {
 
     pub const fn is_void(&self) -> bool {
         matches!(self.kind, TypeKind::Void)
+    }
+
+    pub const fn is_string(&self) -> bool {
+        matches!(self.kind, TypeKind::String)
     }
 
     pub const fn is_array(&self) -> bool {
@@ -925,6 +931,7 @@ impl fmt::Display for TypeDisplay<'_> {
         match self.ty.kind {
             TypeKind::Error => formatter.write_str("<error>")?,
             TypeKind::Void => formatter.write_str("void")?,
+            TypeKind::String => formatter.write_str("string")?,
             TypeKind::Scalar(scalar) => formatter.write_str(scalar.keyword())?,
             TypeKind::Vector { scalar, size } => {
                 write!(formatter, "{}{size}", scalar.vector_prefix())?;

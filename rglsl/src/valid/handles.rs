@@ -234,7 +234,7 @@ impl super::Validator {
                 )?;
             }
 
-            Self::validate_block_handles(body, expressions, functions)?;
+            Self::validate_block_handles(body, expressions, functions, types)?;
 
             if let Some(handle) = *diagnostic_filter_leaf {
                 handle.check_valid_for(diagnostic_filters)?;
@@ -712,8 +712,10 @@ impl super::Validator {
         block: &crate::Block,
         expressions: &Arena<crate::Expression>,
         functions: &Arena<crate::Function>,
+        types: &UniqueArena<crate::Type>,
     ) -> Result<(), InvalidHandleError> {
-        let validate_block = |block| Self::validate_block_handles(block, expressions, functions);
+        let validate_block =
+            |block| Self::validate_block_handles(block, expressions, functions, types);
         let validate_expr = |handle| Self::validate_expression_handle(handle, expressions);
         let validate_expr_opt = |handle_opt| {
             if let Some(handle) = handle_opt {
@@ -942,6 +944,23 @@ impl super::Validator {
                     Ok(())
                 }
             },
+            crate::Statement::DebugPrintf { ref arguments, .. } => {
+                for argument in arguments {
+                    if let crate::DebugPrintfArgument::Value(value) = *argument {
+                        validate_expr(value)?;
+                    }
+                }
+                Ok(())
+            }
+            crate::Statement::Abort {
+                ty, ref arguments, ..
+            } => {
+                Self::validate_type_handle(ty, types)?;
+                for &argument in arguments {
+                    validate_expr(argument)?;
+                }
+                Ok(())
+            }
             crate::Statement::Break
             | crate::Statement::Continue
             | crate::Statement::Kill

@@ -52,6 +52,8 @@ pub enum Callee {
     Constructor(Type),
     Length,
     NonUniform,
+    DebugPrintf,
+    Abort,
 }
 
 #[derive(Debug, Clone, PartialEq)]

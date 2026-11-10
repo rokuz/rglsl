@@ -54,17 +54,21 @@ pub(crate) enum Input {
     Zero(bool),
 }
 
-pub(crate) const TRACKED_EXTENSIONS: [&str; 5] = [
+pub(crate) const TRACKED_EXTENSIONS: [&str; 7] = [
     "GL_EXT_spirv_intrinsics",
     "GL_ARB_shading_language_420pack",
     "GL_GOOGLE_cpp_style_line_directive",
     "GL_GOOGLE_include_directive",
     "GL_ARB_shading_language_include",
+    "GL_EXT_debug_printf",
+    "GL_EXT_abort",
 ];
 
 pub(crate) const SPIRV_INTRINSICS: usize = 0;
 pub(crate) const PACK_420: usize = 1;
 pub(crate) const CPP_STYLE_LINE: usize = 2;
+const DEBUG_PRINTF: usize = 5;
+const ABORT: usize = 6;
 
 pub(crate) struct Preprocessor<'a> {
     pub(crate) options: &'a Options,
@@ -82,7 +86,7 @@ pub(crate) struct Preprocessor<'a> {
     pub(crate) previous_newline: bool,
     pub(crate) expand_depth: usize,
     pub(crate) disable_escapes: bool,
-    pub(crate) extensions: [bool; 5],
+    pub(crate) extensions: [bool; TRACKED_EXTENSIONS.len()],
     pub(crate) include_stack: Vec<FileId>,
     pub(crate) included_once: BTreeSet<FileId>,
     pub(crate) sources: Vec<SourceInfo>,
@@ -179,7 +183,7 @@ pub fn preprocess(
         previous_newline: true,
         expand_depth: 0,
         disable_escapes: false,
-        extensions: [false; 5],
+        extensions: [false; TRACKED_EXTENSIONS.len()],
         include_stack: Vec::new(),
         included_once: BTreeSet::new(),
         sources,
@@ -454,6 +458,21 @@ impl Preprocessor<'_> {
                     continue;
                 }
                 _ => {}
+            }
+            if self.if_depth == 0
+                && (token.kind == Kind::String || stringify_depth > 0)
+                && ![SPIRV_INTRINSICS, DEBUG_PRINTF, ABORT]
+                    .iter()
+                    .any(|&index| self.extension_on(index))
+            {
+                self.report(
+                    DiagnosticKind::ExtensionRequired {
+                        feature: "string literal",
+                        extension: "GL_EXT_debug_printf, GL_EXT_spirv_intrinsics or GL_EXT_abort",
+                    },
+                    token.at,
+                );
+                continue;
             }
             if stringify_depth > 0 {
                 if token.space {

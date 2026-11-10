@@ -155,7 +155,10 @@ const ZERO_OR_ONE_FACTORIES: [Factory; 8] = [
 
 pub fn side_effect_free(expression: &Expression, builtins: &Builtins) -> bool {
     match &expression.kind {
-        ExpressionKind::Variable(_) | ExpressionKind::Number(_) | ExpressionKind::Bool(_) => true,
+        ExpressionKind::Variable(_)
+        | ExpressionKind::Number(_)
+        | ExpressionKind::Bool(_)
+        | ExpressionKind::String(_) => true,
         ExpressionKind::Parenthesized(inner)
         | ExpressionKind::FieldSelection { base: inner, .. } => side_effect_free(inner, builtins),
         ExpressionKind::Subscript { base, index } => {

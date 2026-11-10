@@ -244,7 +244,10 @@ impl Rewriter<'_> {
 
     fn expression(&mut self, expression: &mut Expression) {
         match &mut expression.kind {
-            ExpressionKind::Variable(_) | ExpressionKind::Number(_) | ExpressionKind::Bool(_) => {}
+            ExpressionKind::Variable(_)
+            | ExpressionKind::Number(_)
+            | ExpressionKind::Bool(_)
+            | ExpressionKind::String(_) => {}
             ExpressionKind::Parenthesized(inner) => self.expression(inner),
             ExpressionKind::Subscript { base, index } => {
                 self.expression(base);

@@ -30,6 +30,7 @@ pub use analyzer::{ExpressionInfo, FunctionInfo, GlobalUse, Uniformity, Uniformi
 pub use compose::ComposeError;
 pub use expression::{check_literal_value, LiteralError};
 pub use expression::{ConstExpressionError, ExpressionError};
+pub(crate) use function::abort_message_length;
 pub use function::{CallError, FunctionError, LocalVariableError, SubgroupError};
 pub use immediates::ImmediateSlots;
 pub use interface::{EntryPointError, GlobalVariableError, VaryingError};
