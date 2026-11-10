@@ -1,57 +1,8 @@
-# Binaries
-*.exe
-*.exe~
-*.dll
-*.so
-*.dylib
-
-# Test binary, built with `go test -c`
-*.test
-
-# Output of the go coverage tool
-*.out
-coverage.txt
-
-# Dependency directories
-vendor/
-
-# IDE
-.idea/
-.vscode/
-*.swp
-*.swo
-*~
-
-# OS files
+/target
+**/*.rs.bk
+*/Cargo.lock
+!/Cargo.lock
 .DS_Store
-Thumbs.db
-
-# Build output
-bin/
-dist/
-
-# Debug
-__debug_bin*
-*.log
-
-# Local config
-.env
-.env.local
-
-# AI settings
-.claude/
-.goda/
-.goco/
-.gode/
-
-# Private dev docs
-docs/dev/
-
-# Private project management (status, handoff, kanban)
-.pm/
-
-# Temp folder
-tmp/
-
-# SPIR-V compiled binaries (test artifacts)
-*.spv
+.vscode
+.idea
+.claude/settings.local.json

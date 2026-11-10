@@ -1,0 +1,99 @@
+[workspace]
+resolver = "2"
+members = [
+    "naga",
+    "naga-types",
+    "naga-test",
+    "naga-cli",
+    "naga/fuzz",
+    "naga/hlsl-snapshots",
+    "naga/xtask",
+    "xtask",
+]
+
+[workspace.lints.rust]
+missing_debug_implementations = "warn"
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+ref_as_ptr = "warn"
+# NOTE: clippy configuration values (disallowed-types and
+# large-error-threshold) are in clippy.toml.
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.93"
+keywords = ["shader", "glsl", "spirv"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/rokuz/rglsl"
+# Hard fork of naga 30.0.0 (gfx-rs/wgpu v30.0.0). See UPSTREAM.md.
+version = "30.0.0"
+authors = ["rglsl developers", "gfx-rs developers"]
+
+[workspace.dependencies]
+naga = { version = "30.0.0", path = "./naga" }
+naga-test = { path = "./naga-test" }
+naga-types = { version = "30.0.0", path = "./naga-types" }
+hlsl-snapshots = { path = "naga/hlsl-snapshots" }
+
+anyhow = { version = "1.0.87", default-features = false }
+arbitrary = "1.4.2"
+argh = "0.1.13"
+arrayvec = { version = "0.7.1", default-features = false }
+bincode = "2"
+bit-set = { version = "0.10", default-features = false }
+bitflags = "2.9"
+bytemuck = { version = "1.22", features = [
+    "extern_crate_alloc",
+    "min_const_generics",
+] }
+cfg_aliases = "0.2.1"
+cfg-if = "1"
+codespan-reporting = { version = "0.13", default-features = false }
+diff = "0.1"
+env_logger = { version = "0.11", default-features = false }
+glob = "0.3"
+half = { version = "2.5", default-features = false }
+hashbrown = { version = "0.17", default-features = false, features = [
+    "default-hasher",
+    "inline-more",
+] }
+indexmap = { version = "2.11.4", default-features = false }
+indicatif = "0.18"
+itertools = { version = "0.14" }
+jobserver = "0.1"
+# See https://github.com/rust-fuzz/libfuzzer/issues/126
+libfuzzer-sys = ">0.4.0,<=0.4.7"
+libm = { version = "0.2.6", default-features = false }
+log = "0.4.29"
+nanoserde = "0.2"
+num_cpus = "1"
+num-traits = { version = "0.2.16", default-features = false }
+once_cell = { version = "1.21", default-features = false }
+petgraph = { version = "0.8", default-features = false }
+pico-args = { version = "0.5", features = [
+    "eq-separator",
+    "short-space-opt",
+    "combined-flags",
+] }
+pp-rs = "0.2.1"
+rspirv = "0.13"
+ron = "0.12"
+rustc-hash = { version = "1.1", default-features = false }
+serde_json = "1.0.143"
+serde = { version = "1.0.225", default-features = false }
+shell-words = "1"
+spirv = "0.4"
+strum = { version = "0.28", default-features = false, features = ["derive"] }
+toml = "1.0.0"
+thiserror = { version = "2.0.12", default-features = false }
+unicode-ident = "1.0.5"
+walkdir = "2.3"
+which = "8"
+
+[patch.crates-io]
+env_logger = { version = "0.11", git = "https://github.com/rust-cli/env_logger.git", rev = "d550741" }
+
+[profile.release]
+lto = "thin"
+debug = true

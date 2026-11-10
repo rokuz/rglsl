@@ -1,8 +1,0 @@
-# `gl_PrimitiveID` needs `GL_OES_geometry_shader` before GLSL ES 320.
-
-capabilities = "PRIMITIVE_INDEX"
-targets = "GLSL"
-
-[glsl]
-version.Embedded.version = 310
-version.Embedded.is_webgl = false

@@ -1,0 +1,41 @@
+[graph]
+# Only the library crates matter for licenses, advisories and bans; the tools
+# (xtask, naga-cli, fuzz targets) are not published.
+exclude-unpublished = true
+exclude-dev = true
+
+[bans]
+multiple-versions = "deny"
+skip-tree = [{ name = "rustc-hash", version = "1.1.0" }]
+skip = [
+    # naga -> petgraph (spv-in) uses an older hashbrown
+    { name = "hashbrown", version = "0.15.5" },
+    # used by hashbrown 0.15.5
+    { name = "foldhash", version = "0.1.5" },
+]
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[advisories]
+ignore = []
+
+[licenses]
+allow = [
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "MIT",
+    "Unicode-3.0",
+    "Zlib",
+]
+private = { ignore = true }
+
+[sources]
+allow-git = [
+    # Pending a release for https://github.com/rust-cli/env_logger/commit/143fa647ab33ed3acc9f160dfa3cb075cc62b5a3
+    "https://github.com/rust-cli/env_logger",
+]
+unknown-registry = "deny"
+unknown-git = "deny"
+required-git-spec = "rev"

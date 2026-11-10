@@ -4,294 +4,66 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
 
-permissions:
-  contents: read
-  id-token: write  # Codecov OIDC token
-
-# Pure Go library: everything builds and tests with CGO_ENABLED=0, the way users
-# build it. The race step sets CGO_ENABLED=1 for itself, because the toolchain's
-# -race detector needs cgo.
 env:
-  CGO_ENABLED: "0"
+  CARGO_INCREMENTAL: false
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: full
+  RUSTFLAGS: -D warnings
+  RUSTDOCFLAGS: -D warnings
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  test:
-    name: Test - ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        go: ['1.25']
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Setup Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: ${{ matrix.go }}
-          cache: true
-
-      - name: Download dependencies
-        run: go mod download
-
-      # spirv-val and spirv-dis validate and compare the SPIR-V output; without
-      # them those tests skip. Pinned to the development Vulkan SDK's version.
-      - name: Cache SPIRV-Tools
-        id: spirv-tools-cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ runner.temp }}/spirv-tools
-          key: spirv-tools-v2026.1-${{ runner.os }}-${{ hashFiles('.github/scripts/install-spirv-tools.sh') }}
-
-      - name: Build SPIRV-Tools
-        if: steps.spirv-tools-cache.outputs.cache-hit != 'true'
-        shell: bash
-        run: bash .github/scripts/install-spirv-tools.sh "${{ runner.temp }}/spirv-tools"
-
-      - name: Add SPIRV-Tools to PATH
-        shell: bash
-        run: echo "${{ runner.temp }}/spirv-tools/bin" >> "$GITHUB_PATH"
-
-      - name: Run go vet
-        if: matrix.os == 'ubuntu-latest'
-        run: go vet ./...
-
-      # A missing spirv-val or spirv-dis fails the tests instead of skipping them.
-      - name: Run tests
-        shell: bash
-        env:
-          NAGA_REQUIRE_TOOLS: spirv-val,spirv-dis
-        run: go test -v -count=1 -coverprofile=coverage.txt -covermode=atomic -coverpkg=./... ./...
-
-      # Race detection uses the toolchain's -race (ThreadSanitizer, needs cgo).
-      - name: Run tests with the race detector
-        shell: bash
-        env:
-          CGO_ENABLED: "1"
-          NAGA_REQUIRE_TOOLS: spirv-val,spirv-dis
-        run: go test -race -count=1 ./...
-
-      - name: Verify coverage file
-        if: matrix.os == 'ubuntu-latest'
-        run: ls -la coverage.txt && echo "$(wc -l < coverage.txt) lines"
-
-      - name: Upload coverage to Codecov
-        if: matrix.os == 'ubuntu-latest'
-        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
-        with:
-          use_oidc: true
-          files: ./coverage.txt
-          flags: unittests
-          name: codecov-naga
-
-  lint:
-    name: Lint
+  # Quality gates: fmt, clippy, tests. `unsafe_code` is forbidden through the
+  # workspace lints (and `#![forbid(unsafe_code)]` in naga), so clippy and the
+  # build fail on any unsafe code.
+  check:
+    name: fmt, clippy, test
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v4
+      - name: Install Rust (toolchain from rust-toolchain.toml)
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - run: cargo test --workspace --all-features
 
-      - name: Setup Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: '1.25'
-          cache: true
-
-      # The pinned golangci-lint (version and sha256 live in the action) comes
-      # from the Actions cache, so lint does not depend on GitHub Releases being
-      # reachable on every run; on 2026-11-08 the release download URL returned
-      # 504 for over an hour. Bump golangci-lint in gogpu/.github, then move this
-      # pin. Keep lint-targets on the same commit.
-      - name: Set up golangci-lint
-        uses: gogpu/.github/actions/setup-golangci-lint@cdb7bd4a5bd3852541a05f0fa1fa92b09d1ee732 # main 2026-11-08, golangci-lint v2.15.0
-
-      - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
-        with:
-          install-mode: none
-          args: --timeout=5m
-
-  # Lint for the other desktop targets. golangci-lint type-checks only the
-  # files the target's build compiles, so the darwin and windows files are
-  # never linted by the Linux job above. The code is pure Go (CGO_ENABLED=0),
-  # so GOOS/GOARCH on a Linux runner select exactly those files, with no need
-  # for slower macOS or Windows runners. A file that does not type-check makes
-  # golangci-lint exit non-zero, so a broken target cannot pass as "0 issues".
-  # One GOARCH per GOOS is enough: naga's only arch-specific files are
-  # android/arm64, which is not a desktop target.
-  lint-targets:
-    name: Lint - ${{ matrix.goos }}/${{ matrix.goarch }}
+  deny:
+    name: cargo deny
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { goos: windows, goarch: amd64 }
-          - { goos: darwin, goarch: arm64 }
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Setup Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
         with:
-          go-version: '1.25'
-          cache: true
+          command: check
 
-      - name: Set up golangci-lint
-        uses: gogpu/.github/actions/setup-golangci-lint@cdb7bd4a5bd3852541a05f0fa1fa92b09d1ee732 # main 2026-11-08, golangci-lint v2.15.0
-
-      - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-        with:
-          install-mode: none
-          args: --timeout=5m
-
-  formatting:
-    name: Formatting
+  # Runs the glslang corpus against the pinned oracles and checks that the
+  # committed PROGRESS.md is what the current code produces.
+  corpus:
+    name: glslang corpus
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Setup Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/checkout@v4
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y ninja-build cmake
+      - name: Install Rust (toolchain from rust-toolchain.toml)
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - name: Cache oracles
+        uses: actions/cache@v4
         with:
-          go-version: '1.25'
-          cache: true
-
-      - name: Check formatting
-        run: |
-          if [ -n "$(gofmt -l .)" ]; then
-            echo "ERROR: The following files are not formatted:"
-            gofmt -l .
-            echo ""
-            echo "Run 'go fmt ./...' to fix formatting issues."
-            exit 1
-          fi
-          echo "All files are properly formatted"
-
-  build:
-    name: Build - ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Setup Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+          path: target/oracles
+          key: oracles-${{ runner.os }}-${{ hashFiles('oracles.toml', 'xtask/src/oracles.rs') }}
+      - run: cargo xtask oracles
+      - run: cargo xtask test
+      - name: PROGRESS.md is up to date
+        run: git diff --exit-code PROGRESS.md
+      - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          go-version: '1.25'
-          cache: true
-
-      - name: Build
-        run: go build ./...
-
-      # The browser platform (js && wasm files) is compiled nowhere else in CI.
-      - name: Build for the browser (js/wasm)
-        if: matrix.os == 'ubuntu-latest'
-        env:
-          GOOS: js
-          GOARCH: wasm
-        run: go build ./...
-
-  fuzz:
-    name: Fuzz Test
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Setup Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: '1.25'
-          cache: true
-
-      - name: Run fuzz tests
-        run: go -C wgsl test -fuzz=FuzzLexer -fuzztime=30s || true
-
-  # Dependency freshness check
-  # Uses go-mod-outdated (https://github.com/psampaz/go-mod-outdated)
-  deps:
-    name: Dependencies
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Setup Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: '1.25'
-          cache: true
-
-      # go-mod-outdated is pinned in tools/go.mod (checksums in tools/go.sum,
-      # updated by Dependabot), never installed @latest.
-      - name: Check all dependencies
-        run: |
-          echo "## All Dependencies Status"
-          go list -u -m -json all | go tool -modfile=tools/go.mod go-mod-outdated -style markdown || true
-
-      - name: Check direct dependencies for updates
-        run: |
-          echo "## Direct Dependencies with Available Updates"
-          OUTDATED=$(go list -u -m -json all | go tool -modfile=tools/go.mod go-mod-outdated -update -direct || true)
-          if [ -n "$OUTDATED" ]; then
-            echo "$OUTDATED"
-            echo ""
-            echo "::warning::Some direct dependencies have updates available"
-          else
-            echo "All direct dependencies are up to date (naga is standalone)"
-          fi
-
-      - name: Verify go.mod is tidy
-        run: |
-          go mod tidy
-          go -C tools mod tidy
-          if ! git diff --exit-code -- go.mod tools/go.mod tools/go.sum; then
-            echo "::error::go.mod or tools/go.mod is not tidy — run 'go mod tidy' (and in tools/) and commit"
-            exit 1
-          fi
-
-  # The one check the main-protection ruleset requires, once the ruleset is
-  # switched to it (a settings change, the owner's decision). Every job that
-  # must pass goes into needs, so adding a job or a matrix entry never touches
-  # the ruleset. if: always() and the explicit result check are both needed: a
-  # job skipped because a job it needs failed or was cancelled counts as passed
-  # for a required check, so without them a red PR could go green.
-  required:
-    name: Required checks
-    if: always()
-    needs: [test, lint, lint-targets, formatting, build, fuzz, deps]
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Every required job succeeded
-        env:
-          RESULTS: ${{ join(needs.*.result, ' ') }}
-        run: |
-          echo "results: $RESULTS"
-          for r in $RESULTS; do
-            if [ "$r" != success ]; then
-              echo "::error::a required job ended with: $r"
-              exit 1
-            fi
-          done
+          name: corpus-results
+          path: target/xtask/results.tsv

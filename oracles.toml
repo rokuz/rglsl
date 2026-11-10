@@ -1,0 +1,20 @@
+# Pinned versions of the reference tools ("oracles") used by `cargo xtask test`.
+#
+# `cargo xtask oracles` fetches and builds them into target/oracles/.
+# The SPIRV-Tools and SPIRV-Headers commits are the ones glslang itself pins in
+# its known_good.json, so the validator matches the glslang we compare against.
+#
+# To move a pin: change the commit here, run `cargo xtask oracles` and
+# `cargo xtask test`, and commit the regenerated PROGRESS.md together with this file.
+
+[glslang]
+repo = "https://github.com/KhronosGroup/glslang"
+commit = "b411a8fb8aa0f6ee727df17f3f8eafb3eb85ba9e"
+
+[spirv-tools]
+repo = "https://github.com/KhronosGroup/SPIRV-Tools"
+commit = "ef96ed763b43b59b33b31b362f09a02b729fa1c9"
+
+[spirv-headers]
+repo = "https://github.com/KhronosGroup/SPIRV-Headers"
+commit = "496543121ce6419f23d6fa5d7194ba66c36212d2"
