@@ -961,6 +961,12 @@ pub struct Writer {
     cached_constants: crate::FastHashMap<CachedConstant, Word>,
     global_variables: HandleVec<crate::GlobalVariable, GlobalVariable>,
     std140_compat_uniform_types: crate::FastHashMap<Handle<crate::Type>, Std140CompatTypeInfo>,
+    /// The types of the contents of uniform buffers, storage buffers and
+    /// push constants. Only these get `Offset`, `ArrayStride` and
+    /// `MatrixStride` decorations: SPIR-V does not allow explicit layouts on
+    /// types used in other storage classes, such as stage outputs or workgroup
+    /// memory.
+    laid_out_types: crate::arena::HandleSet<crate::Type>,
     fake_missing_bindings: bool,
     binding_map: BindingMap,
 

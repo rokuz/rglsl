@@ -84,6 +84,8 @@ pub enum VaryingError {
     MemberMissingBinding(u32),
     #[error("Multiple bindings at location {location} are present")]
     BindingCollision { location: u32 },
+    #[error("Location {location} is too large")]
+    LocationTooLarge { location: u32 },
     #[error("Component {component} does not leave room for the value in its location")]
     InvalidComponent { component: u32 },
     #[error("Multiple bindings use the same `blend_src` {blend_src}")]
@@ -240,6 +242,10 @@ struct VaryingContext<'a> {
     interface: bool,
 }
 
+/// Locations are numbered below this. It is glslang's limit, and far above
+/// what any implementation offers.
+const MAX_LOCATIONS: u32 = 4096;
+
 /// How a type occupies the locations it is bound to.
 #[derive(Clone, Copy, Debug)]
 struct LocationShape {
@@ -339,12 +345,14 @@ const fn is_index_type(ty: &crate::TypeInner) -> bool {
 impl VaryingContext<'_> {
     /// Marks `components` consecutive components of `location`, starting at
     /// `first`, as taken. Returns false if any of them already was.
-    fn claim_location(&mut self, location: u32, first: u32, components: u32) -> bool {
+    ///
+    /// `index` is the blend source (GLSL `layout(index = N)`): the two blend
+    /// sources of a fragment output share a location.
+    fn claim_location(&mut self, location: u32, index: u32, first: u32, components: u32) -> bool {
+        let base = (index as usize * MAX_LOCATIONS as usize + location as usize) * 4;
         let mut free = true;
         for component in first..first + components {
-            free &= self
-                .location_mask
-                .insert(location as usize * 4 + component as usize);
+            free &= self.location_mask.insert(base + component as usize);
         }
         free
     }
@@ -877,8 +885,51 @@ impl VaryingContext<'_> {
                     return Err(VaryingError::InvalidPerPrimitive);
                 }
 
-                if blend_src.is_some() {
-                    return Err(VaryingError::BlendSrcNotOnStructMember);
+                // On an argument or a result, a blend source must be a member
+                // of the struct that holds both sources. A variable of its
+                // own carries the index itself (GLSL `layout(index = N)`).
+                let index = match blend_src {
+                    None => 0,
+                    Some(_) if !self.interface => {
+                        return Err(VaryingError::BlendSrcNotOnStructMember)
+                    }
+                    Some(index) => {
+                        if self.stage != crate::ShaderStage::Fragment {
+                            return Err(VaryingError::InvalidAttributeInStage(
+                                "blend_src",
+                                self.stage,
+                            ));
+                        }
+                        if !self.output {
+                            return Err(VaryingError::InvalidInputAttributeInStage(
+                                "blend_src",
+                                self.stage,
+                            ));
+                        }
+                        if index > 1 || location != 0 {
+                            return Err(VaryingError::InvalidBlendSrcIndex {
+                                location,
+                                blend_src: index,
+                            });
+                        }
+                        if !self
+                            .capabilities
+                            .contains(Capabilities::DUAL_SOURCE_BLENDING)
+                        {
+                            return Err(VaryingError::UnsupportedCapability(
+                                Capabilities::DUAL_SOURCE_BLENDING,
+                            ));
+                        }
+                        if index == 1 {
+                            if let Some(dual_source_blending) = self.dual_source_blending.as_mut() {
+                                **dual_source_blending = true;
+                            }
+                        }
+                        index
+                    }
+                };
+                if location >= MAX_LOCATIONS || shape.locations > MAX_LOCATIONS - location {
+                    return Err(VaryingError::LocationTooLarge { location });
                 }
                 // Two variables may share a location if they use different
                 // components of it (`layout(component = N)`).
@@ -890,11 +941,9 @@ impl VaryingContext<'_> {
                         component: first_component,
                     });
                 }
-                for index in 0..shape.locations {
-                    let location = location
-                        .checked_add(index)
-                        .ok_or(VaryingError::BindingCollision { location })?;
-                    if !self.claim_location(location, first_component, shape.components)
+                for offset in 0..shape.locations {
+                    let location = location + offset;
+                    if !self.claim_location(location, index, first_component, shape.components)
                         && self.flags.contains(super::ValidationFlags::BINDINGS)
                     {
                         return Err(VaryingError::BindingCollision { location });
@@ -1021,7 +1070,7 @@ impl VaryingContext<'_> {
                         .with_span());
                     }
                     // Dual blend sources must always be at location 0.
-                    if !self.claim_location(0, 0, 4)
+                    if !self.claim_location(0, 0, 0, 4)
                         && self.flags.contains(super::ValidationFlags::BINDINGS)
                     {
                         return Err(VaryingError::BindingCollision { location: 0 }.with_span());

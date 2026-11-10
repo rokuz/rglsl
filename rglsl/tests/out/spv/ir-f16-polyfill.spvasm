@@ -111,14 +111,6 @@ OpName %321 "vec4_f16"
 OpName %322 "vec4_f32"
 OpName %323 "test_component_access"
 OpName %324 "output"
-OpMemberDecorate %11 0 Offset 0
-OpMemberDecorate %11 1 Offset 4
-OpMemberDecorate %11 2 Offset 8
-OpMemberDecorate %11 3 Offset 16
-OpMemberDecorate %11 4 Offset 24
-OpMemberDecorate %11 5 Offset 32
-OpMemberDecorate %11 6 Offset 48
-OpMemberDecorate %11 7 Offset 64
 OpDecorate %13 Location 0
 OpDecorate %17 Location 1
 OpDecorate %19 Location 2

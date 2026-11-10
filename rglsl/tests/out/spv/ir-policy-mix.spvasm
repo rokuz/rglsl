@@ -28,9 +28,6 @@ OpDecorate %5 ArrayStride 16
 OpMemberDecorate %8 0 Offset 0
 OpDecorate %9 ArrayStride 16
 OpMemberDecorate %11 0 Offset 0
-OpDecorate %13 ArrayStride 4
-OpDecorate %15 ArrayStride 4
-OpDecorate %19 ArrayStride 16
 OpDecorate %21 NonWritable
 OpDecorate %21 DescriptorSet 0
 OpDecorate %21 Binding 0

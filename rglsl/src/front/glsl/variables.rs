@@ -109,6 +109,38 @@ fn location_count(types: &crate::UniqueArena<Type>, ty: Handle<Type>) -> u32 {
     }
 }
 
+/// Makes `global` invariant if it is a user-defined output. Returns whether
+/// it was one.
+fn mark_output_invariant(global: &mut GlobalVariable) -> bool {
+    if global.space != AddressSpace::Output {
+        return false;
+    }
+    match global.io {
+        Some(Binding::Location {
+            ref mut invariant, ..
+        }) => {
+            *invariant = true;
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Whether a value of type `ty` has a floating-point part, which is
+/// interpolated between vertices unless it is qualified otherwise.
+fn contains_float(types: &crate::UniqueArena<Type>, ty: Handle<Type>) -> bool {
+    match types[ty].inner {
+        TypeInner::Scalar(scalar)
+        | TypeInner::Vector { scalar, .. }
+        | TypeInner::Matrix { scalar, .. } => scalar.kind == crate::ScalarKind::Float,
+        TypeInner::Array { base, .. } => contains_float(types, base),
+        TypeInner::Struct { ref members, .. } => members
+            .iter()
+            .any(|member| contains_float(types, member.ty)),
+        _ => false,
+    }
+}
+
 /// Whether `ty` is an opaque type (a texture, a sampler, an acceleration
 /// structure) or an array of one.
 fn is_opaque(types: &crate::UniqueArena<Type>, ty: Handle<Type>) -> bool {
@@ -386,6 +418,14 @@ impl Frontend {
                 kind: ErrorKind::UnknownVariable(name.into()),
                 meta,
             })?;
+
+        // A user-defined output.
+        if let Expression::GlobalVariable(handle) = ctx.expressions[var.expr] {
+            if mark_output_invariant(&mut ctx.module.global_variables[handle]) {
+                return Ok(());
+            }
+        }
+
         match var.entry_arg.map(|index| &mut self.entry_args[index]) {
             Some(&mut EntryArg {
                 binding: Binding::BuiltIn(BuiltIn::Position { ref mut invariant }),
@@ -395,13 +435,16 @@ impl Frontend {
                 *invariant = true;
                 Ok(())
             }
-            // The IR can only mark the position output as invariant. Dropping
-            // the qualifier would silently change the meaning of the shader.
+            // Of the built-in outputs, the IR can only mark the position as
+            // invariant. Dropping the qualifier would silently change the
+            // meaning of the shader.
             Some(&mut EntryArg {
                 storage: StorageQualifier::Output,
                 ..
             }) => Err(Error {
-                kind: ErrorKind::NotImplemented("invariant on outputs other than gl_Position"),
+                kind: ErrorKind::NotImplemented(
+                    "invariant on built-in outputs other than gl_Position",
+                ),
                 meta,
             }),
             _ => Err(Error {
@@ -421,10 +464,25 @@ impl Frontend {
             match arg.binding {
                 Binding::BuiltIn(BuiltIn::Position { ref mut invariant }) => *invariant = true,
                 _ => self.errors.push(Error {
-                    kind: ErrorKind::NotImplemented("invariant on outputs other than gl_Position"),
+                    kind: ErrorKind::NotImplemented(
+                        "invariant on built-in outputs other than gl_Position",
+                    ),
                     meta,
                 }),
             }
+        }
+    }
+
+    /// Applies `#pragma STDGL invariant(all)` to the user-defined outputs.
+    ///
+    /// This runs once the whole shader is parsed, so that it covers outputs
+    /// declared before the pragma as well as after it.
+    pub(super) fn apply_invariant_all(&self, module: &mut crate::Module) {
+        if !self.invariant_all {
+            return;
+        }
+        for &handle in &self.interface {
+            mark_output_invariant(&mut module.global_variables[handle]);
         }
     }
 
@@ -657,13 +715,6 @@ impl Frontend {
         self.check_declared_name(name.as_deref(), meta)?;
 
         let storage = qualifiers.storage.0;
-        if storage == StorageQualifier::Output && self.invariant_all {
-            // See `make_variable_invariant`.
-            return Err(Error {
-                kind: ErrorKind::NotImplemented("invariant on outputs other than gl_Position"),
-                meta,
-            });
-        }
         let (ret, lookup) = match storage {
             StorageQualifier::Input | StorageQualifier::Output => {
                 let input = storage == StorageQualifier::Input;
@@ -685,21 +736,16 @@ impl Frontend {
                     }
                 };
 
-                let interpolation = qualifiers.interpolation.take().map(|(i, _)| i);
-                let sampling = qualifiers.sampling.take().map(|(s, _)| s);
+                let mut interpolation = qualifiers.interpolation.take().map(|(i, _)| i);
+                let mut sampling = qualifiers.sampling.take().map(|(s, _)| s);
+                // Perspective-correct interpolation at the pixel centre is
+                // the default for anything that can be interpolated.
+                if interpolation.is_none() && contains_float(&ctx.module.types, ty) {
+                    interpolation = Some(crate::Interpolation::Perspective);
+                    sampling.get_or_insert(crate::Sampling::Center);
+                }
 
-                let handle = ctx.module.global_variables.append(
-                    GlobalVariable {
-                        name: name.clone(),
-                        space: AddressSpace::Private,
-                        binding: None,
-                        ty,
-                        init,
-                        memory_decorations: crate::MemoryDecorations::empty(),
-                        io: None,
-                    },
-                    meta,
-                );
+                let component = qualifiers.uint_layout_qualifier("component", &mut self.errors);
 
                 let blend_src = qualifiers
                     .layout_qualifiers
@@ -709,30 +755,62 @@ impl Frontend {
                         _ => None,
                     });
 
-                let mut binding = Binding::Location {
-                    location,
-                    interpolation,
-                    sampling,
-                    blend_src,
-                    per_primitive: false,
-                    component: None,
-                    invariant: false,
-                    patch: false,
+                let invariant = match qualifiers.invariant.take() {
+                    Some(invariant_meta) if input => {
+                        self.errors.push(Error {
+                            kind: ErrorKind::SemanticError(
+                                "invariant can only apply to an output".into(),
+                            ),
+                            meta: invariant_meta,
+                        });
+                        false
+                    }
+                    Some(_) => true,
+                    None => false,
                 };
 
-                binding.apply_default_interpolation(&ctx.module.types[ty].inner);
+                if input && init.is_some() {
+                    self.errors.push(Error {
+                        kind: ErrorKind::SemanticError(
+                            "a stage input cannot have an initializer".into(),
+                        ),
+                        meta,
+                    });
+                }
 
-                let idx = self.entry_args.len();
-                self.entry_args.push(EntryArg {
-                    name: name.clone(),
-                    binding,
-                    handle,
-                    storage,
-                });
+                // The variable is the stage input or output itself: it is
+                // declared in the `Input` or `Output` address space, bound to
+                // its location, and listed in the entry point's interface.
+                let handle = ctx.module.global_variables.append(
+                    GlobalVariable {
+                        name: name.clone(),
+                        space: if input {
+                            AddressSpace::Input
+                        } else {
+                            AddressSpace::Output
+                        },
+                        binding: None,
+                        ty,
+                        init: init.filter(|_| !input),
+                        memory_decorations: crate::MemoryDecorations::empty(),
+                        io: Some(Binding::Location {
+                            location,
+                            interpolation,
+                            sampling,
+                            blend_src,
+                            per_primitive: false,
+                            component,
+                            invariant,
+                            patch: false,
+                        }),
+                    },
+                    meta,
+                );
+                self.interface.push(handle);
 
                 let lookup = GlobalLookup {
                     kind: GlobalLookupKind::Variable(handle),
-                    entry_arg: Some(idx),
+                    entry_arg: None,
                     mutable: !input,
                 };
 

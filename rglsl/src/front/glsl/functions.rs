@@ -1381,7 +1381,7 @@ impl Frontend {
             stage: self.meta.stage,
             early_depth_test: Some(crate::EarlyDepthTest::Force)
                 .filter(|_| self.meta.early_fragment_tests),
-            interface: Vec::new(),
+            interface: self.interface.clone(),
             workgroup_size: self.meta.workgroup_size,
             workgroup_size_overrides: None,
             function: Function {

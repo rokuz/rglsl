@@ -297,7 +297,7 @@ fn invariant_is_applied_or_rejected() {
     );
     assert!(decorated(&module, Decoration::Invariant).is_empty());
 
-    // The IR cannot express invariant user outputs yet.
+    // User-defined outputs, whether the pragma comes before or after them.
     for source in [
         "#version 450
         #pragma STDGL invariant(all)
@@ -305,12 +305,33 @@ fn invariant_is_applied_or_rejected() {
         void main() { v = vec4(1.0); gl_Position = vec4(1.0); }",
         "#version 450
         layout(location = 0) out vec4 v;
+        #pragma STDGL invariant(all)
+        void main() { v = vec4(1.0); gl_Position = vec4(1.0); }",
+        "#version 450
+        layout(location = 0) out vec4 v;
         invariant v;
+        invariant gl_Position;
+        void main() { v = vec4(1.0); gl_Position = vec4(1.0); }",
+        "#version 450
+        layout(location = 0) invariant out vec4 v;
+        invariant gl_Position;
         void main() { v = vec4(1.0); gl_Position = vec4(1.0); }",
     ] {
-        let error = parse(ShaderStage::Vertex, source).unwrap_err();
-        assert!(error.contains("invariant"), "{error}");
+        let module = compile(ShaderStage::Vertex, source);
+        let mut invariant = decorated(&module, Decoration::Invariant);
+        invariant.sort_unstable();
+        assert_eq!(invariant, ["gl_Position", "v"]);
     }
+
+    // Only outputs can be invariant.
+    let error = parse(
+        ShaderStage::Fragment,
+        "#version 450
+        layout(location = 0) invariant in vec4 v;
+        void main() {}",
+    )
+    .unwrap_err();
+    assert!(error.contains("invariant"), "{error}");
 }
 
 /// Redeclaring a built-in must not create a user variable with a location.
@@ -485,51 +506,43 @@ fn automatic_locations_match_glslang() {
         auto_map_locations: true,
         ..glsl::Options::from(ShaderStage::Fragment)
     };
-    // Not validated: matrix and array inputs, and overlapping locations, are
-    // not representable in a valid module yet.
+    // Not validated: glslang lets the explicit locations overlap the
+    // automatic ones here, which is not a valid interface.
     let module = glsl::Frontend::default().parse(&options, source).unwrap();
-    let function = &module.entry_points[0].function;
 
-    let location = |binding: &Option<rglsl::Binding>| match *binding {
-        Some(rglsl::Binding::Location { location, .. }) => location,
-        ref other => panic!("not a location: {other:?}"),
+    let locations = |space| -> Vec<(&str, u32)> {
+        let mut locations: Vec<_> = module.entry_points[0]
+            .interface
+            .iter()
+            .map(|&handle| &module.global_variables[handle])
+            .filter(|global| global.space == space)
+            .map(|global| match global.io {
+                Some(rglsl::Binding::Location { location, .. }) => {
+                    (global.name.as_deref().unwrap(), location)
+                }
+                ref other => panic!("not a location: {other:?}"),
+            })
+            .collect();
+        locations.sort_unstable();
+        locations
     };
-    let mut inputs: Vec<(&str, u32)> = function
-        .arguments
-        .iter()
-        .map(|argument| {
-            (
-                argument.name.as_deref().unwrap(),
-                location(&argument.binding),
-            )
-        })
-        .collect();
-    inputs.sort_unstable();
-    // What `glslang -V --auto-map-locations` assigns to this shader. The
-    // frontend passes each element of the array `i3` as its own argument.
+    // What `glslang -V --auto-map-locations` assigns to this shader: `i1`
+    // is a matrix and takes three locations, `i3` an array that takes two.
     assert_eq!(
-        inputs,
+        locations(rglsl::AddressSpace::Input),
         [
             ("i0", 0),
             ("i1", 1),
             ("i2unused", 4),
             ("i3", 5),
-            ("i3", 6),
             ("i5", 7),
             ("iexp", 1),
         ]
     );
-
-    let result = function.result.as_ref().unwrap();
-    let rglsl::TypeInner::Struct { ref members, .. } = module.types[result.ty].inner else {
-        panic!("the entry point returns a struct of outputs");
-    };
-    let mut outputs: Vec<(&str, u32)> = members
-        .iter()
-        .map(|member| (member.name.as_deref().unwrap(), location(&member.binding)))
-        .collect();
-    outputs.sort_unstable();
-    assert_eq!(outputs, [("o0", 0), ("o1", 1), ("oexp", 0)]);
+    assert_eq!(
+        locations(rglsl::AddressSpace::Output),
+        [("o0", 0), ("o1", 1), ("oexp", 0)]
+    );
 
     // Without the option a missing location is an error, as in glslang.
     let error = parse(ShaderStage::Fragment, source).unwrap_err();
@@ -821,4 +834,100 @@ fn vector_from_scalar_bool() {
             o = vec4(a) + vec4(v, 0, 0) + vec4(vec2(bvec2(a)), 0.0, 0.0);
         }",
     );
+}
+
+/// User-defined inputs and outputs are the stage's interface variables
+/// themselves: any type, `component`, structures, and no private copies.
+#[test]
+fn varyings_are_interface_variables() {
+    let module = compile(
+        ShaderStage::Vertex,
+        "#version 450
+        struct Light { vec3 dir; float power; };
+        layout(location = 0) in vec4 a_pos;
+        layout(location = 1) in mat3 a_basis;
+        layout(location = 4) in vec2 a_uv[2];
+        layout(location = 6) in vec3 a_unused;
+        layout(location = 7) in ivec2 a_ids;
+        layout(location = 0) out mat3 v_basis;
+        layout(location = 3) out float v_w[2];
+        layout(location = 5, component = 0) out vec2 v_uv;
+        layout(location = 5, component = 2) out float v_fade;
+        layout(location = 6) flat out ivec2 v_ids;
+        layout(location = 7) out Light v_light;
+        layout(location = 10) centroid out vec4 v_cent;
+        layout(location = 11) noperspective out vec4 v_lin;
+        void helper(out float f) { f = 2.0; }
+        void main() {
+            gl_Position = a_pos;
+            v_basis = a_basis;
+            v_w[0] = a_uv[1].x;
+            helper(v_w[1]);
+            v_uv = a_uv[0];
+            v_fade = 1.0;
+            v_ids = a_ids;
+            v_light.dir = a_basis[1];
+            v_light.power = 3.0;
+            v_cent = a_pos;
+            v_lin = a_pos;
+        }",
+    );
+
+    // The decorations glslang gives the same shader.
+    let location = |name: &str| -> Vec<u32> {
+        let id = module
+            .debug_names
+            .iter()
+            .find(|inst| {
+                inst.class.opcode == Op::Name
+                    && inst.operands[1] == Operand::LiteralString(name.to_string())
+            })
+            .unwrap_or_else(|| panic!("no variable named {name}"))
+            .operands[0]
+            .unwrap_id_ref();
+        module
+            .annotations
+            .iter()
+            .filter(|inst| {
+                inst.class.opcode == Op::Decorate
+                    && inst.operands[0] == Operand::IdRef(id)
+                    && matches!(
+                        inst.operands[1],
+                        Operand::Decoration(Decoration::Location | Decoration::Component)
+                    )
+            })
+            .map(|inst| match inst.operands[2] {
+                Operand::LiteralBit32(value) => value,
+                ref other => panic!("unexpected operand {other:?}"),
+            })
+            .collect()
+    };
+    assert_eq!(location("a_basis"), [1]);
+    assert_eq!(location("a_uv"), [4]);
+    assert_eq!(location("a_unused"), [6]);
+    assert_eq!(location("v_basis"), [0]);
+    assert_eq!(location("v_w"), [3]);
+    assert_eq!(location("v_uv"), [5, 0]);
+    assert_eq!(location("v_fade"), [5, 2]);
+    assert_eq!(location("v_light"), [7]);
+    assert_eq!(decorated(&module, Decoration::Flat), ["v_ids"]);
+    assert_eq!(decorated(&module, Decoration::Centroid), ["v_cent"]);
+    assert_eq!(decorated(&module, Decoration::NoPerspective), ["v_lin"]);
+
+    // No structure outside a buffer has a layout.
+    assert!(module.annotations.iter().all(|inst| !matches!(
+        inst.operands.get(2),
+        Some(&Operand::Decoration(Decoration::Offset))
+    )));
+
+    // Overlapping locations are rejected: the matrix at 1 covers 1..=3.
+    let error = parse(
+        ShaderStage::Vertex,
+        "#version 450
+        layout(location = 1) in mat3 m;
+        layout(location = 3) in vec4 v;
+        void main() { gl_Position = v + vec4(m[0], 1.0); }",
+    )
+    .unwrap_err();
+    assert!(error.contains("BindingCollision"), "{error}");
 }

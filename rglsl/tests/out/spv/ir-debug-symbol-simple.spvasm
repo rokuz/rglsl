@@ -27,10 +27,6 @@ OpName %54 "color"
 OpName %56 "i"
 OpName %58 "ii"
 OpName %74 "loop_bound"
-OpMemberDecorate %5 0 Offset 0
-OpMemberDecorate %5 1 Offset 16
-OpMemberDecorate %7 0 Offset 0
-OpMemberDecorate %7 1 Offset 16
 OpDecorate %11 Location 0
 OpDecorate %14 Location 1
 OpDecorate %16 BuiltIn Position

@@ -28,8 +28,6 @@ changelog was dropped; see upstream for the history before the fork.
 ## Changes made while importing
 
 - New workspace `Cargo.toml` with only the dependencies these crates need.
-- `rglsl/src/front/mod.rs`: the `interpolator` module is also compiled for `glsl-in`
-  (upstream builds it only for `spv-in`/`wgsl-in`, so `glsl-in` alone did not compile).
 - `unsafe_code = "forbid"` in the workspace lints and in the `rglsl` crate's lints.
 - `rglsl/xtask/src/jobserver.rs`: no longer inherits the parent's jobserver
   (`jobserver::Client::from_env` is `unsafe`); it always creates its own.
@@ -83,6 +81,13 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   WGSL alignment rules (`Disalignment::{ArrayStride, StructSpan, MemberOffset,
   MemberOffsetAfterStruct}` are removed); it checks only that members and array elements do
   not overlap.
+- **Stage inputs and outputs can be global variables** (`AddressSpace::Input`/`Output`,
+  `GlobalVariable::io`, `EntryPoint::interface`, and `component`/`invariant`/`patch` on
+  `Binding::Location`); see `docs/design/stage-io.md`. A vertex shader need not return a
+  position. Locations are limited to 4096.
+- **Layout decorations only on buffer contents.** The SPIR-V backend decorates a type with
+  `Offset`, `ArrayStride` and `MatrixStride` only if it is stored in a uniform buffer, a
+  storage buffer or push constants; upstream decorates every struct and array.
 - **`MathFunction::Outer` typing.** `outer(c, r)` has one row per component of `c` and one
   column per component of `r`, as in GLSL and SPIR-V; upstream had them swapped
   (`proc/overloads/mathfunction.rs`).

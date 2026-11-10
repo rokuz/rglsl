@@ -193,6 +193,10 @@ pub struct Frontend {
 
     entry_args: Vec<EntryArg>,
 
+    /// The user-defined stage inputs and outputs, in declaration order: the
+    /// entry point's [`interface`](crate::EntryPoint::interface).
+    interface: Vec<Handle<crate::GlobalVariable>>,
+
     layouter: Layouter,
 
     /// `#pragma STDGL invariant(all)` was seen: every stage output declared
@@ -218,6 +222,7 @@ impl Frontend {
         self.lookup_type.clear();
         self.global_variables.clear();
         self.entry_args.clear();
+        self.interface.clear();
         self.layouter.clear();
         self.invariant_all = false;
         self.block_bools.clear();
@@ -243,6 +248,7 @@ impl Frontend {
         match ctx.parse(self) {
             Ok(mut module) => {
                 self.assign_automatic_bindings(&mut module);
+                self.apply_invariant_all(&mut module);
                 if self.errors.is_empty() {
                     Ok(module)
                 } else {

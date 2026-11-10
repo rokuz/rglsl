@@ -107,6 +107,7 @@ impl Writer {
             cached_constants: crate::FastHashMap::default(),
             global_variables: HandleVec::new(),
             std140_compat_uniform_types: crate::FastHashMap::default(),
+            laid_out_types: crate::arena::HandleSet::new(),
             fake_missing_bindings: options.fake_missing_bindings,
             binding_map: options.binding_map.clone(),
             saved_cached: CachedExpressions::default(),
@@ -206,6 +207,7 @@ impl Writer {
             cached_constants: take(&mut self.cached_constants).reclaim(),
             global_variables: take(&mut self.global_variables).reclaim(),
             std140_compat_uniform_types: take(&mut self.std140_compat_uniform_types).reclaim(),
+            laid_out_types: crate::arena::HandleSet::new(),
             saved_cached: take(&mut self.saved_cached).reclaim(),
             temp_list: take(&mut self.temp_list).reclaim(),
             ray_query_functions: take(&mut self.ray_query_functions).reclaim(),
@@ -2239,7 +2241,9 @@ impl Writer {
             let id = self.id_gen.next();
             let instruction = match ty.inner {
                 crate::TypeInner::Array { base, size, stride } => {
-                    self.decorate(id, Decoration::ArrayStride, &[stride]);
+                    if self.laid_out_types.contains(handle) {
+                        self.decorate(id, Decoration::ArrayStride, &[stride]);
+                    }
 
                     let type_id = self.get_handle_type_id(base);
                     match size.resolve(module.to_ctx())? {
@@ -2282,7 +2286,8 @@ impl Writer {
                             }
                             _ => (),
                         }
-                        self.decorate_struct_member(id, index, member, &module.types)?;
+                        let laid_out = self.laid_out_types.contains(handle);
+                        self.decorate_struct_member(id, index, member, &module.types, laid_out)?;
                         let member_id = self.get_handle_type_id(member.ty);
                         member_ids.push(member_id);
                     }
@@ -2531,6 +2536,7 @@ impl Writer {
                                                 next_index as usize,
                                                 member,
                                                 &module.types,
+                                                true,
                                             )?;
                                             self.get_handle_type_id(member.ty)
                                         }
@@ -3574,7 +3580,13 @@ impl Writer {
                         offset: 0,
                         matrix_layout: None,
                     };
-                    self.decorate_struct_member(wrapper_type_id, 0, &member, &ir_module.types)?;
+                    self.decorate_struct_member(
+                        wrapper_type_id,
+                        0,
+                        &member,
+                        &ir_module.types,
+                        true,
+                    )?;
 
                     Instruction::type_struct(wrapper_type_id, &[inner_type_id])
                         .to_words(&mut self.logical_layout.declarations);
@@ -3650,15 +3662,9 @@ impl Writer {
         index: usize,
         member: &crate::StructMember,
         arena: &UniqueArena<crate::Type>,
+        laid_out: bool,
     ) -> Result<(), Error> {
         use spirv::Decoration;
-
-        self.annotations.push(Instruction::member_decorate(
-            struct_id,
-            index as u32,
-            Decoration::Offset,
-            &[member.offset],
-        ));
 
         if self.flags.contains(WriterFlags::DEBUG) {
             if let Some(ref name) = member.name {
@@ -3666,6 +3672,18 @@ impl Writer {
                     .push(Instruction::member_name(struct_id, index as u32, name));
             }
         }
+
+        // Only the contents of buffers have a layout; see `laid_out_types`.
+        if !laid_out {
+            return Ok(());
+        }
+
+        self.annotations.push(Instruction::member_decorate(
+            struct_id,
+            index as u32,
+            Decoration::Offset,
+            &[member.offset],
+        ));
 
         // Matrices and (potentially nested) arrays of matrices both require decorations,
         // so "see through" any arrays to determine if they're needed.
@@ -3828,6 +3846,17 @@ impl Writer {
                     0,
                     &debug_info_inner,
                 ));
+            }
+        }
+
+        // Find the types that are stored in buffers; see `laid_out_types`.
+        self.laid_out_types = crate::arena::HandleSet::for_arena(&ir_module.types);
+        for (_, var) in ir_module.global_variables.iter() {
+            if let crate::AddressSpace::Uniform
+            | crate::AddressSpace::Storage { .. }
+            | crate::AddressSpace::Immediate = var.space
+            {
+                mark_laid_out(&ir_module.types, &mut self.laid_out_types, var.ty);
             }
         }
 
@@ -4063,4 +4092,26 @@ fn test_write_physical_layout() {
     assert_eq!(writer.physical_layout.bound, 0);
     writer.write_physical_layout();
     assert_eq!(writer.physical_layout.bound, 3);
+}
+
+/// Adds `ty` and every type it contains to `laid_out`.
+fn mark_laid_out(
+    types: &UniqueArena<crate::Type>,
+    laid_out: &mut crate::arena::HandleSet<crate::Type>,
+    ty: Handle<crate::Type>,
+) {
+    if !laid_out.insert(ty) {
+        return;
+    }
+    match types[ty].inner {
+        crate::TypeInner::Array { base, .. } | crate::TypeInner::BindingArray { base, .. } => {
+            mark_laid_out(types, laid_out, base)
+        }
+        crate::TypeInner::Struct { ref members, .. } => {
+            for member in members {
+                mark_laid_out(types, laid_out, member.ty);
+            }
+        }
+        _ => {}
+    }
 }
