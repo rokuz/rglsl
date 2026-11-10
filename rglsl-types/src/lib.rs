@@ -145,10 +145,8 @@ pub enum ShaderStage {
     /// A closest hit shader, in a ray tracing pipeline.
     ClosestHit,
 
-    /// An intersection shader, in a ray tracing pipeline.
     Intersection,
 
-    /// A callable shader, in a ray tracing pipeline.
     Callable,
 }
 
@@ -167,7 +165,6 @@ impl ShaderStage {
         }
     }
 
-    /// A stage of a ray tracing pipeline.
     pub const fn ray_tracing(self) -> bool {
         matches!(
             self,
