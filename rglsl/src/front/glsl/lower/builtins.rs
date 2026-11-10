@@ -203,6 +203,10 @@ impl FunctionLowerer<'_, '_> {
                 self.barrier(name, arguments, at)?;
                 Ok(None)
             }
+            "EmitVertex" | "EndPrimitive" | "EmitStreamVertex" | "EndStreamPrimitive" => {
+                self.primitive_statement(name, arguments, at)?;
+                Ok(None)
+            }
             "modf" | "frexp" => self.split(name, arguments, at).map(Some),
             "atomicAdd" | "atomicMin" | "atomicMax" | "atomicAnd" | "atomicOr" | "atomicXor"
             | "atomicExchange" | "atomicCompSwap" | "atomicLoad" | "atomicStore" => {

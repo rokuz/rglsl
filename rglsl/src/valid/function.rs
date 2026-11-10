@@ -1413,6 +1413,9 @@ impl super::Validator {
                 S::Kill => {
                     stages &= super::ShaderStages::FRAGMENT;
                 }
+                S::EmitVertex { .. } | S::EndPrimitive { .. } => {
+                    stages &= super::ShaderStages::GEOMETRY;
+                }
                 S::DebugPrintf { ref arguments, .. } => {
                     for argument in arguments {
                         if let crate::DebugPrintfArgument::Value(value) = *argument {

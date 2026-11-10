@@ -626,6 +626,8 @@ impl<I: Iterator<Item = u32>> super::Frontend<I> {
             interface: Vec::new(),
             transform_feedback: false,
             quad_control: crate::QuadControl::default(),
+            geometry: None,
+            tessellation: None,
         });
 
         Ok(())

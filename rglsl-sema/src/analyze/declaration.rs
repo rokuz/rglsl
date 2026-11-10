@@ -115,6 +115,7 @@ impl Analyzer<'_> {
             );
         }
         self.record_buffer_defaults(&qualifiers);
+        self.standalone_stage_layout(&qualifiers);
         if qualifiers.storage == Storage::Out {
             if let Some(vertices) = qualifiers
                 .layout_entry("vertices")
@@ -749,6 +750,8 @@ impl Analyzer<'_> {
             self.global_storage_checks(&qualifiers, &base, list.ty.specifier.span, true);
             return;
         }
+        self.no_shader_layouts(&qualifiers);
+        self.passthrough_extension(&qualifiers);
         for declarator in &list.declarators {
             self.init_declarator(declarator, &qualifiers, &base);
         }
@@ -1412,6 +1415,8 @@ impl Analyzer<'_> {
         if qualifiers.nonuniform {
             self.non_uniform_storage_check(Some(&structure.qualifier), &qualifiers);
         }
+        self.no_shader_layouts(&qualifiers);
+        self.passthrough_extension(&qualifiers);
         let storage = match qualifiers.storage {
             Storage::Uniform => BlockStorage::Uniform,
             Storage::Buffer => BlockStorage::Buffer,
@@ -1494,6 +1499,7 @@ impl Analyzer<'_> {
                 return;
             }
             self.redeclared_blocks.push(storage);
+            self.declarations.insert(declaration.id, variable);
             self.redeclare_per_vertex(block, variable, members);
             let sized = matches!(dimensions.first(), Some(ArraySize::Sized(_)));
             if let Some(SymbolKind::Variable(variable)) = self

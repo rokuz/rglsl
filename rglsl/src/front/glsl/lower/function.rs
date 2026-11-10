@@ -435,6 +435,7 @@ impl<'a> Lowerer<'a> {
             self.conservative_depth
                 .map(|conservative| EarlyDepthTest::Allow { conservative })
         };
+        let (geometry, tessellation) = self.stage_info();
         self.module.entry_points.push(EntryPoint {
             name: String::from("main"),
             stage,
@@ -448,6 +449,8 @@ impl<'a> Lowerer<'a> {
             interface: self.interface.clone(),
             transform_feedback: self.xfb.mode,
             quad_control: self.quad_control,
+            geometry,
+            tessellation,
         });
         Ok(())
     }

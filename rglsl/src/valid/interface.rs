@@ -144,6 +144,8 @@ pub enum VaryingError {
     },
     #[error("A block can only be bound to a location, without any other attribute")]
     InvalidBlockBinding,
+    #[error("A per-vertex input or output of this stage must be a sized array")]
+    ArrayedInterfaceNotArray,
 }
 
 #[derive(Clone, Debug, thiserror::Error)]
@@ -182,6 +184,20 @@ pub enum EntryPointError {
     #[error("Capability {0:?} is not supported")]
     UnsupportedCapability(Capabilities),
 
+    #[error("A geometry entry point needs its primitives and vertex count")]
+    ExpectedGeometryInfo,
+    #[error("Only a geometry entry point has primitives and a vertex count")]
+    UnexpectedGeometryInfo,
+    #[error("A tessellation control entry point needs its number of output vertices")]
+    ExpectedOutputVertices,
+    #[error("A tessellation evaluation entry point needs its primitive mode")]
+    ExpectedTessellationPrimitive,
+    #[error("Only tessellation entry points have tessellation modes")]
+    UnexpectedTessellationInfo,
+    #[error("Global variable {0:?} is passed through but is not an input of the entry point")]
+    InvalidPassthrough(Handle<crate::GlobalVariable>),
+    #[error("Stream {1} of global variable {0:?} is not an output of a geometry entry point")]
+    InvalidStream(Handle<crate::GlobalVariable>, u32),
     #[error("mesh shader entry point missing mesh shader attributes")]
     ExpectedMeshShaderAttributes,
     #[error("Non mesh shader entry point cannot have mesh shader attributes")]
@@ -440,6 +456,55 @@ impl VaryingContext<'_> {
                             && !self.output,
                         is_index_type(ty_inner),
                     ),
+                    Bi::InvocationId => (
+                        matches!(self.stage, St::TessControl | St::Geometry) && !self.output,
+                        is_index_type(ty_inner),
+                    ),
+                    Bi::PatchVertices => (
+                        matches!(self.stage, St::TessControl | St::TessEvaluation) && !self.output,
+                        is_index_type(ty_inner),
+                    ),
+                    Bi::TessCoord => (
+                        self.stage == St::TessEvaluation && !self.output,
+                        *ty_inner
+                            == Ti::Vector {
+                                size: Vs::Tri,
+                                scalar: crate::Scalar::F32,
+                            },
+                    ),
+                    Bi::TessLevelOuter | Bi::TessLevelInner => (
+                        (self.stage == St::TessControl && self.output)
+                            || (self.stage == St::TessEvaluation && !self.output),
+                        match *ty_inner {
+                            Ti::Array {
+                                base,
+                                size: crate::ArraySize::Constant(length),
+                                ..
+                            } => {
+                                self.types[base].inner == Ti::Scalar(crate::Scalar::F32)
+                                    && length.get()
+                                        == if built_in == Bi::TessLevelOuter { 4 } else { 2 }
+                            }
+                            _ => false,
+                        },
+                    ),
+                    Bi::Layer | Bi::ViewportIndex => (
+                        match self.stage {
+                            St::Vertex
+                            | St::TessControl
+                            | St::TessEvaluation
+                            | St::Geometry
+                            | St::Mesh => self.output,
+                            St::Fragment => !self.output,
+                            St::Compute
+                            | St::Task
+                            | St::RayGeneration
+                            | St::AnyHit
+                            | St::ClosestHit
+                            | St::Miss => false,
+                        },
+                        is_index_type(ty_inner),
+                    ),
                     Bi::DrawIndex => (
                         // Always allowed in task/vertex stage. Allowed in mesh stage if there is no task stage in the pipeline.
                         (self.stage == St::Vertex
@@ -452,7 +517,8 @@ impl VaryingContext<'_> {
                         // Written by the stages before rasterization, and
                         // readable in the fragment stage.
                         ((self.stage == St::Vertex || self.stage == St::Mesh) && self.output)
-                            || (self.stage == St::Fragment && !self.output),
+                            || (self.stage == St::Fragment && !self.output)
+                            || self.stage.has_arrayed_io(),
                         match *ty_inner {
                             Ti::Array { base, size, .. } => {
                                 self.types[base].inner == Ti::Scalar(crate::Scalar::F32)
@@ -465,7 +531,8 @@ impl VaryingContext<'_> {
                         },
                     ),
                     Bi::PointSize => (
-                        (self.stage == St::Vertex || self.stage == St::Mesh) && self.output,
+                        ((self.stage == St::Vertex || self.stage == St::Mesh) && self.output)
+                            || self.stage.has_arrayed_io(),
                         *ty_inner == Ti::Scalar(crate::Scalar::F32),
                     ),
                     Bi::PointCoord => (
@@ -480,6 +547,7 @@ impl VaryingContext<'_> {
                         match self.stage {
                             St::Vertex | St::Mesh => self.output,
                             St::Fragment => !self.output,
+                            St::TessControl | St::TessEvaluation | St::Geometry => true,
                             St::Compute | St::Task => false,
                             St::RayGeneration | St::AnyHit | St::ClosestHit | St::Miss => false,
                         },
@@ -492,6 +560,7 @@ impl VaryingContext<'_> {
                     Bi::ViewIndex => (
                         match self.stage {
                             St::Vertex | St::Fragment | St::Task | St::Mesh => !self.output,
+                            St::TessControl | St::TessEvaluation | St::Geometry => !self.output,
                             St::Compute
                             | St::RayGeneration
                             | St::AnyHit
@@ -509,8 +578,16 @@ impl VaryingContext<'_> {
                         *ty_inner == Ti::Scalar(crate::Scalar::BOOL),
                     ),
                     Bi::PrimitiveIndex => (
-                        (matches!(self.stage, St::Fragment | St::AnyHit | St::ClosestHit)
-                            && !self.output)
+                        (matches!(
+                            self.stage,
+                            St::Fragment
+                                | St::AnyHit
+                                | St::ClosestHit
+                                | St::TessControl
+                                | St::TessEvaluation
+                                | St::Geometry
+                        ) && !self.output)
+                            || (self.stage == St::Geometry && self.output)
                             || (self.stage == St::Mesh
                                 && self.output
                                 && self.mesh_output_type == MeshOutputType::PrimitiveOutput),
@@ -600,7 +677,14 @@ impl VaryingContext<'_> {
                     ),
                     Bi::RayInvocationId => (
                         match self.stage {
-                            St::Vertex | St::Fragment | St::Compute | St::Mesh | St::Task => false,
+                            St::Vertex
+                            | St::TessControl
+                            | St::TessEvaluation
+                            | St::Geometry
+                            | St::Fragment
+                            | St::Compute
+                            | St::Mesh
+                            | St::Task => false,
                             St::RayGeneration | St::AnyHit | St::ClosestHit | St::Miss => true,
                         },
                         *ty_inner
@@ -611,7 +695,14 @@ impl VaryingContext<'_> {
                     ),
                     Bi::NumRayInvocations => (
                         match self.stage {
-                            St::Vertex | St::Fragment | St::Compute | St::Mesh | St::Task => false,
+                            St::Vertex
+                            | St::TessControl
+                            | St::TessEvaluation
+                            | St::Geometry
+                            | St::Fragment
+                            | St::Compute
+                            | St::Mesh
+                            | St::Task => false,
                             St::RayGeneration | St::AnyHit | St::ClosestHit | St::Miss => true,
                         },
                         *ty_inner
@@ -625,6 +716,9 @@ impl VaryingContext<'_> {
                             St::RayGeneration
                             | St::Miss
                             | St::Vertex
+                            | St::TessControl
+                            | St::TessEvaluation
+                            | St::Geometry
                             | St::Fragment
                             | St::Compute
                             | St::Mesh
@@ -638,6 +732,9 @@ impl VaryingContext<'_> {
                             St::RayGeneration
                             | St::Miss
                             | St::Vertex
+                            | St::TessControl
+                            | St::TessEvaluation
+                            | St::Geometry
                             | St::Fragment
                             | St::Compute
                             | St::Mesh
@@ -650,6 +747,9 @@ impl VaryingContext<'_> {
                         match self.stage {
                             St::RayGeneration
                             | St::Vertex
+                            | St::TessControl
+                            | St::TessEvaluation
+                            | St::Geometry
                             | St::Fragment
                             | St::Compute
                             | St::Mesh
@@ -666,6 +766,9 @@ impl VaryingContext<'_> {
                         match self.stage {
                             St::RayGeneration
                             | St::Vertex
+                            | St::TessControl
+                            | St::TessEvaluation
+                            | St::Geometry
                             | St::Fragment
                             | St::Compute
                             | St::Mesh
@@ -683,6 +786,9 @@ impl VaryingContext<'_> {
                             St::RayGeneration
                             | St::Miss
                             | St::Vertex
+                            | St::TessControl
+                            | St::TessEvaluation
+                            | St::Geometry
                             | St::Fragment
                             | St::Compute
                             | St::Mesh
@@ -700,6 +806,9 @@ impl VaryingContext<'_> {
                             St::RayGeneration
                             | St::Miss
                             | St::Vertex
+                            | St::TessControl
+                            | St::TessEvaluation
+                            | St::Geometry
                             | St::Fragment
                             | St::Compute
                             | St::Mesh
@@ -716,6 +825,9 @@ impl VaryingContext<'_> {
                         match self.stage {
                             St::RayGeneration
                             | St::Vertex
+                            | St::TessControl
+                            | St::TessEvaluation
+                            | St::Geometry
                             | St::Fragment
                             | St::Compute
                             | St::Mesh
@@ -728,6 +840,9 @@ impl VaryingContext<'_> {
                         match self.stage {
                             St::RayGeneration
                             | St::Vertex
+                            | St::TessControl
+                            | St::TessEvaluation
+                            | St::Geometry
                             | St::Fragment
                             | St::Compute
                             | St::Mesh
@@ -741,6 +856,9 @@ impl VaryingContext<'_> {
                             St::RayGeneration
                             | St::Miss
                             | St::Vertex
+                            | St::TessControl
+                            | St::TessEvaluation
+                            | St::Geometry
                             | St::Fragment
                             | St::Compute
                             | St::Mesh
@@ -759,6 +877,9 @@ impl VaryingContext<'_> {
                             St::RayGeneration
                             | St::Miss
                             | St::Vertex
+                            | St::TessControl
+                            | St::TessEvaluation
+                            | St::Geometry
                             | St::Fragment
                             | St::Compute
                             | St::Mesh
@@ -777,6 +898,9 @@ impl VaryingContext<'_> {
                             St::RayGeneration
                             | St::Miss
                             | St::Vertex
+                            | St::TessControl
+                            | St::TessEvaluation
+                            | St::Geometry
                             | St::Fragment
                             | St::Compute
                             | St::Mesh
@@ -832,8 +956,13 @@ impl VaryingContext<'_> {
                         self.stage,
                     ));
                 }
-                if patch {
-                    // Only tessellation stages have per-patch variables.
+                if patch
+                    && !matches!(
+                        (self.stage, self.output),
+                        (crate::ShaderStage::TessControl, true)
+                            | (crate::ShaderStage::TessEvaluation, false)
+                    )
+                {
                     return Err(VaryingError::InvalidAttributeInStage("patch", self.stage));
                 }
                 if per_primitive && !self.capabilities.contains(Capabilities::MESH_SHADER) {
@@ -993,7 +1122,10 @@ impl VaryingContext<'_> {
                 }
 
                 let needs_interpolation = match self.stage {
-                    crate::ShaderStage::Vertex => self.output,
+                    crate::ShaderStage::Vertex
+                    | crate::ShaderStage::TessControl
+                    | crate::ShaderStage::TessEvaluation
+                    | crate::ShaderStage::Geometry => self.output,
                     crate::ShaderStage::Fragment => !self.output && !per_primitive,
                     crate::ShaderStage::Compute
                     | crate::ShaderStage::Task
@@ -1623,6 +1755,61 @@ impl super::Validator {
         Ok(())
     }
 
+    fn validate_stage_info(
+        ep: &crate::EntryPoint,
+        module: &crate::Module,
+    ) -> Result<(), WithSpan<EntryPointError>> {
+        match (ep.stage, &ep.geometry) {
+            (crate::ShaderStage::Geometry, &None) => {
+                return Err(EntryPointError::ExpectedGeometryInfo.with_span());
+            }
+            (crate::ShaderStage::Geometry, &Some(ref geometry)) => {
+                for &handle in &geometry.passthrough {
+                    let valid = module.global_variables[handle].space == crate::AddressSpace::Input
+                        && ep.interface.contains(&handle);
+                    if !valid {
+                        return Err(EntryPointError::InvalidPassthrough(handle).with_span());
+                    }
+                }
+                for &(handle, stream) in &geometry.streams {
+                    let valid = module.global_variables[handle].space
+                        == crate::AddressSpace::Output
+                        && ep.interface.contains(&handle);
+                    if !valid {
+                        return Err(EntryPointError::InvalidStream(handle, stream).with_span());
+                    }
+                }
+            }
+            (_, &Some(_)) => {
+                return Err(EntryPointError::UnexpectedGeometryInfo.with_span());
+            }
+            (_, &None) => {}
+        }
+        match (ep.stage, ep.tessellation) {
+            (
+                crate::ShaderStage::TessControl,
+                Some(crate::TessellationInfo {
+                    output_vertices: Some(_),
+                    ..
+                }),
+            )
+            | (
+                crate::ShaderStage::TessEvaluation,
+                Some(crate::TessellationInfo {
+                    primitive: Some(_), ..
+                }),
+            ) => Ok(()),
+            (crate::ShaderStage::TessControl, _) => {
+                Err(EntryPointError::ExpectedOutputVertices.with_span())
+            }
+            (crate::ShaderStage::TessEvaluation, _) => {
+                Err(EntryPointError::ExpectedTessellationPrimitive.with_span())
+            }
+            (_, Some(_)) => Err(EntryPointError::UnexpectedTessellationInfo.with_span()),
+            (_, None) => Ok(()),
+        }
+    }
+
     pub(super) fn validate_entry_point(
         &mut self,
         ep: &crate::EntryPoint,
@@ -1677,6 +1864,8 @@ impl super::Validator {
         } else if ep.workgroup_size != [0; 3] {
             return Err(EntryPointError::UnexpectedWorkgroupSize.with_span());
         }
+
+        Self::validate_stage_info(ep, module)?;
 
         match (ep.stage, &ep.mesh_info) {
             (crate::ShaderStage::Mesh, &None) => {
@@ -1743,6 +1932,9 @@ impl super::Validator {
                 crate::ShaderStage::AnyHit => ShaderStages::ANY_HIT,
                 crate::ShaderStage::ClosestHit => ShaderStages::CLOSEST_HIT,
                 crate::ShaderStage::Miss => ShaderStages::MISS,
+                crate::ShaderStage::TessControl => ShaderStages::TESS_CONTROL,
+                crate::ShaderStage::TessEvaluation => ShaderStages::TESS_EVALUATION,
+                crate::ShaderStage::Geometry => ShaderStages::GEOMETRY,
             };
 
             if !info.available_stages.contains(stage_bit) {
@@ -1820,6 +2012,8 @@ impl super::Validator {
             let mut seen = crate::FastHashSet::default();
             let mut input_mask = BitSet::new();
             let mut output_mask = BitSet::new();
+            let mut patch_input_mask = BitSet::new();
+            let mut patch_output_mask = BitSet::new();
             let mut input_built_ins = crate::FastHashSet::default();
             let mut output_built_ins = crate::FastHashSet::default();
             for &handle in &ep.interface {
@@ -1836,15 +2030,41 @@ impl super::Validator {
                     return Err(EntryPointError::InterfaceDuplicate(handle)
                         .with_span_handle(handle, &module.global_variables));
                 }
+                let patch = crate::proc::is_patch_variable(&module.types, var);
+                let passthrough = ep
+                    .geometry
+                    .as_ref()
+                    .is_some_and(|geometry| geometry.passthrough.contains(&handle));
+                let arrayed = !passthrough
+                    && crate::proc::is_per_vertex_variable(ep.stage, &module.types, var);
+                let ty = if arrayed {
+                    match module.types[var.ty].inner {
+                        crate::TypeInner::Array {
+                            base,
+                            size: crate::ArraySize::Constant(_),
+                            ..
+                        } => base,
+                        _ => {
+                            return Err(EntryPointError::InterfaceVariable(
+                                handle,
+                                VaryingError::ArrayedInterfaceNotArray,
+                            )
+                            .with_span_handle(handle, &module.global_variables))
+                        }
+                    }
+                } else {
+                    var.ty
+                };
                 let mut ctx = VaryingContext {
                     stage: ep.stage,
                     output,
                     types: &module.types,
                     type_info: &self.types,
-                    location_mask: if output {
-                        &mut output_mask
-                    } else {
-                        &mut input_mask
+                    location_mask: match (output, patch) {
+                        (true, false) => &mut output_mask,
+                        (false, false) => &mut input_mask,
+                        (true, true) => &mut patch_output_mask,
+                        (false, true) => &mut patch_input_mask,
                     },
                     dual_source_blending: Some(&mut info.dual_source_blending),
                     built_ins: if output {
@@ -1858,7 +2078,7 @@ impl super::Validator {
                     has_task_payload: ep.task_payload.is_some(),
                     interface: true,
                 };
-                ctx.validate_interface(ep, var.ty, var.io.as_ref())
+                ctx.validate_interface(ep, ty, var.io.as_ref())
                     .map_err(|e| {
                         EntryPointError::InterfaceVariable(handle, e.into_inner())
                             .with_span_handle(handle, &module.global_variables)

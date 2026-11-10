@@ -2008,8 +2008,25 @@ impl Writer {
             }
         }
 
+        if let Some(ref geometry) = entry_point.geometry {
+            self.write_streams(&geometry.streams)?;
+            self.write_passthrough(&geometry.passthrough)?;
+        }
+
         let exec_model = match entry_point.stage {
             crate::ShaderStage::Vertex => spirv::ExecutionModel::Vertex,
+            crate::ShaderStage::TessControl => {
+                self.write_tessellation_modes(function_id, entry_point.tessellation.as_ref())?;
+                spirv::ExecutionModel::TessellationControl
+            }
+            crate::ShaderStage::TessEvaluation => {
+                self.write_tessellation_modes(function_id, entry_point.tessellation.as_ref())?;
+                spirv::ExecutionModel::TessellationEvaluation
+            }
+            crate::ShaderStage::Geometry => {
+                self.write_geometry_modes(function_id, entry_point.geometry.as_ref())?;
+                spirv::ExecutionModel::Geometry
+            }
             crate::ShaderStage::Fragment => {
                 self.write_execution_mode(function_id, spirv::ExecutionMode::OriginUpperLeft)?;
                 match entry_point.early_depth_test {
@@ -3632,10 +3649,12 @@ impl Writer {
                             others.push(Decoration::Invariant);
                         }
 
-                        if class == spirv::StorageClass::Output {
-                            BuiltIn::Position
-                        } else {
+                        if class == spirv::StorageClass::Input
+                            && stage == crate::ShaderStage::Fragment
+                        {
                             BuiltIn::FragCoord
+                        } else {
+                            BuiltIn::Position
                         }
                     }
                     Bi::ViewIndex => {
@@ -3660,7 +3679,40 @@ impl Writer {
                         BuiltIn::CullDistance
                     }
                     Bi::InstanceIndex => BuiltIn::InstanceIndex,
-                    Bi::PointSize => BuiltIn::PointSize,
+                    Bi::PointSize => {
+                        match stage {
+                            crate::ShaderStage::Geometry => self.require_any(
+                                "`gl_PointSize` in a geometry shader",
+                                &[spirv::Capability::GeometryPointSize],
+                            )?,
+                            crate::ShaderStage::TessControl
+                            | crate::ShaderStage::TessEvaluation => self.require_any(
+                                "`gl_PointSize` in a tessellation shader",
+                                &[spirv::Capability::TessellationPointSize],
+                            )?,
+                            _ => {}
+                        }
+                        BuiltIn::PointSize
+                    }
+                    Bi::InvocationId => BuiltIn::InvocationId,
+                    Bi::PatchVertices => BuiltIn::PatchVertices,
+                    Bi::TessCoord => BuiltIn::TessCoord,
+                    Bi::TessLevelOuter => {
+                        others.push(Decoration::Patch);
+                        BuiltIn::TessLevelOuter
+                    }
+                    Bi::TessLevelInner => {
+                        others.push(Decoration::Patch);
+                        BuiltIn::TessLevelInner
+                    }
+                    Bi::Layer | Bi::ViewportIndex => {
+                        self.require_layer_capability(stage, built_in == Bi::Layer)?;
+                        if built_in == Bi::Layer {
+                            BuiltIn::Layer
+                        } else {
+                            BuiltIn::ViewportIndex
+                        }
+                    }
                     Bi::VertexIndex => BuiltIn::VertexIndex,
                     Bi::DrawIndex => {
                         self.use_extension("SPV_KHR_shader_draw_parameters");
@@ -3676,10 +3728,15 @@ impl Writer {
                     Bi::FrontFacing => BuiltIn::FrontFacing,
                     Bi::PrimitiveIndex => {
                         // Geometry shader capability is required for primitive index
-                        self.require_any(
-                            "`primitive_index` built-in",
-                            &[spirv::Capability::Geometry],
-                        )?;
+                        if !matches!(
+                            stage,
+                            crate::ShaderStage::TessControl | crate::ShaderStage::TessEvaluation
+                        ) {
+                            self.require_any(
+                                "`primitive_index` built-in",
+                                &[spirv::Capability::Geometry],
+                            )?;
+                        }
                         if stage == crate::ShaderStage::Mesh {
                             others.push(Decoration::PerPrimitiveEXT);
                         }
@@ -4135,15 +4192,27 @@ impl Writer {
                 self.map_binding(ir_module, stage, class, global_variable.ty, binding)?;
             self.write_binding(id, decorations);
         }
-        if !self.decorated_blocks.insert(block.structure) {
-            return Ok(());
-        }
-        let struct_id = self.get_handle_type_id(block.structure)?;
-        self.decorate(struct_id, spirv::Decoration::Block, &[]);
         let crate::TypeInner::Struct { ref members, .. } = ir_module.types[block.structure].inner
         else {
             return Err(Error::Validation("an interface block is not a structure"));
         };
+        let unused: Vec<bool> = (0..members.len())
+            .map(|index| {
+                u32::try_from(index).is_ok_and(|index| {
+                    !interface_member_used(ir_module, handle, index, block.arrayed)
+                })
+            })
+            .collect();
+        if !self.decorated_blocks.insert(block.structure) {
+            for (member, &unused) in members.iter().zip(&unused) {
+                if let (Some(binding), false) = (member.binding.as_ref(), unused) {
+                    self.map_binding(ir_module, stage, class, member.ty, binding)?;
+                }
+            }
+            return Ok(());
+        }
+        let struct_id = self.get_handle_type_id(block.structure)?;
+        self.decorate(struct_id, spirv::Decoration::Block, &[]);
         for (index, member) in members.iter().enumerate() {
             let index = u32::try_from(index)
                 .map_err(|_| Error::Validation("too many members in an interface block"))?;
@@ -4165,9 +4234,18 @@ impl Writer {
                 crate::Binding::BuiltIn(crate::BuiltIn::CullDistance) => {
                     Some(spirv::BuiltIn::CullDistance)
                 }
+                crate::Binding::BuiltIn(crate::BuiltIn::PointSize) => {
+                    Some(spirv::BuiltIn::PointSize)
+                }
                 _ => None,
             }
-            .filter(|_| !block.arrayed && !interface_member_used(ir_module, handle, index));
+            .filter(|_| {
+                usize::try_from(index)
+                    .ok()
+                    .and_then(|index| unused.get(index))
+                    .copied()
+                    .unwrap_or(false)
+            });
             let decorations = match unused_distance {
                 Some(built_in) => BindingDecorations::BuiltIn(built_in, ArrayVec::new()),
                 None => self.map_binding(ir_module, stage, class, member.ty, binding)?,
@@ -4828,12 +4906,9 @@ fn interface_member_used(
     module: &crate::Module,
     global: Handle<crate::GlobalVariable>,
     member: u32,
+    arrayed: bool,
 ) -> bool {
-    let functions = module
-        .functions
-        .iter()
-        .map(|(_, function)| function)
-        .chain(module.entry_points.iter().map(|ep| &ep.function));
+    let functions = reachable_functions(module);
     for function in functions {
         let is_global = |pointer: Handle<crate::Expression>| {
             matches!(
@@ -4841,17 +4916,32 @@ fn interface_member_used(
                 crate::Expression::GlobalVariable(found) if found == global
             )
         };
+        let is_element = |pointer: Handle<crate::Expression>| {
+            arrayed
+                && matches!(
+                    function.expressions[pointer],
+                    crate::Expression::Access { base, .. }
+                        | crate::Expression::AccessIndex { base, .. } if is_global(base)
+                )
+        };
+        let is_block = |pointer: Handle<crate::Expression>| {
+            if arrayed {
+                is_element(pointer)
+            } else {
+                is_global(pointer)
+            }
+        };
         for (_, expression) in function.expressions.iter() {
             match *expression {
-                crate::Expression::AccessIndex { base, index } if is_global(base) => {
+                crate::Expression::AccessIndex { base, index } if is_block(base) => {
                     if index == member {
                         return true;
                     }
                 }
-                crate::Expression::Access { base, .. }
-                | crate::Expression::Load { pointer: base }
-                    if is_global(base) =>
-                {
+                crate::Expression::Load { pointer } if is_global(pointer) || is_block(pointer) => {
+                    return true;
+                }
+                crate::Expression::Access { base, .. } if !arrayed && is_global(base) => {
                     return true;
                 }
                 _ => {}
@@ -4859,4 +4949,55 @@ fn interface_member_used(
         }
     }
     false
+}
+
+fn reachable_functions(module: &crate::Module) -> Vec<&crate::Function> {
+    fn calls(block: &crate::Block, found: &mut Vec<Handle<crate::Function>>) {
+        for statement in block.iter() {
+            match *statement {
+                crate::Statement::Call { function, .. } => found.push(function),
+                crate::Statement::Block(ref inner) => calls(inner, found),
+                crate::Statement::If {
+                    ref accept,
+                    ref reject,
+                    ..
+                } => {
+                    calls(accept, found);
+                    calls(reject, found);
+                }
+                crate::Statement::Switch { ref cases, .. } => {
+                    for case in cases {
+                        calls(&case.body, found);
+                    }
+                }
+                crate::Statement::Loop {
+                    ref body,
+                    ref continuing,
+                    ..
+                } => {
+                    calls(body, found);
+                    calls(continuing, found);
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut pending = Vec::new();
+    let mut reached: Vec<&crate::Function> = Vec::new();
+    for entry_point in &module.entry_points {
+        reached.push(&entry_point.function);
+        calls(&entry_point.function.body, &mut pending);
+    }
+    let mut visited = crate::FastHashSet::default();
+    while let Some(handle) = pending.pop() {
+        if !visited.insert(handle) {
+            continue;
+        }
+        let Some(function) = module.functions.try_get(handle).ok() else {
+            continue;
+        };
+        reached.push(function);
+        calls(&function.body, &mut pending);
+    }
+    reached
 }

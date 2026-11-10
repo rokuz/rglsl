@@ -444,6 +444,13 @@ impl Analyzer<'_> {
                 self.require_extension(expression.span, extension, name);
             }
         }
+        if self
+            .symbol(id)
+            .and_then(|symbol| symbol.variable())
+            .is_some_and(|variable| variable.origin == Origin::BuiltIn)
+        {
+            self.viewport_layer_extension(expression.span, name);
+        }
         let (constant, value) = match self.symbol(id).map(|symbol| &symbol.kind) {
             Some(SymbolKind::Struct(_) | SymbolKind::Reference(_)) => {
                 self.error(

@@ -4169,6 +4169,12 @@ impl BlockContext<'_> {
                     self.function.consume(block, Instruction::kill());
                     return Ok(BlockExitDisposition::Discarded);
                 }
+                Statement::EmitVertex { stream } => {
+                    self.write_primitive_operation(&mut block, true, stream)?;
+                }
+                Statement::EndPrimitive { stream } => {
+                    self.write_primitive_operation(&mut block, false, stream)?;
+                }
                 Statement::DebugPrintf {
                     ref format,
                     ref arguments,

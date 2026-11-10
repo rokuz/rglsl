@@ -399,6 +399,9 @@ impl Analyzer<'_> {
         if is_builtin {
             self.builtin_extensions(span, name);
         }
+        if is_builtin && name == "barrier" {
+            self.tessellation_barrier(span);
+        }
         let first_argument = arguments.first().map_or(span, |argument| argument.span);
         let mut failed = false;
         for ((argument, operand), parameter) in

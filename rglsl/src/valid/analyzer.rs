@@ -994,7 +994,9 @@ impl FunctionInfo {
                         exit: ExitFlags::empty(),
                     }
                 }
-                S::Break | S::Continue => FunctionUniformity::new(),
+                S::Break | S::Continue | S::EmitVertex { .. } | S::EndPrimitive { .. } => {
+                    FunctionUniformity::new()
+                }
                 S::Kill => FunctionUniformity {
                     result: Uniformity::new(),
                     exit: if disruptor.is_some() {

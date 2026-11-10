@@ -6,6 +6,7 @@ mod heap;
 mod memory;
 mod reference;
 mod reference_expression;
+mod stage;
 mod statement;
 
 use alloc::collections::{BTreeMap, BTreeSet};
@@ -301,6 +302,7 @@ pub(crate) struct Analyzer<'a> {
     pub buffer_packing: Packing,
     pub buffer_row_major: bool,
     pub vulkan_memory_model: bool,
+    pub stage_layout: stage::StageLayout,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -366,6 +368,7 @@ impl<'a> Analyzer<'a> {
             buffer_packing: Packing::Std430,
             buffer_row_major: false,
             vulkan_memory_model: false,
+            stage_layout: stage::StageLayout::default(),
         }
     }
 
