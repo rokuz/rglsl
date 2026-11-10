@@ -123,7 +123,6 @@ pub use mesh_shader::{MeshReturnInfo, MeshReturnMember};
 pub use spirv::{Capability, SourceLanguage};
 
 use alloc::{string::String, vec::Vec};
-use core::ops;
 
 use spirv::Word;
 use thiserror::Error;
@@ -365,7 +364,11 @@ bitflags::bitflags! {
 
 impl LocalImageType {
     /// Construct a `LocalImageType` from the fields of a `TypeInner::Image`.
-    fn from_inner(dim: crate::ImageDimension, arrayed: bool, class: crate::ImageClass) -> Self {
+    fn from_inner(
+        dim: crate::ImageDimension,
+        arrayed: bool,
+        class: crate::ImageClass,
+    ) -> Result<Self, Error> {
         let make_flags = |multi: bool, other: ImageTypeFlags| -> ImageTypeFlags {
             let mut flags = other;
             flags.set(ImageTypeFlags::ARRAYED, arrayed);
@@ -375,7 +378,7 @@ impl LocalImageType {
 
         let dim = spirv::Dim::from(dim);
 
-        match class {
+        Ok(match class {
             crate::ImageClass::Sampled { kind, multi } => LocalImageType {
                 sampled_type: crate::Scalar { kind, width: 4 },
                 dim,
@@ -408,8 +411,10 @@ impl LocalImageType {
                 flags: make_flags(multi, ImageTypeFlags::empty()),
                 image_format: format.into(),
             },
-            crate::ImageClass::External => unimplemented!(),
-        }
+            crate::ImageClass::External => {
+                return Err(Error::FeatureNotImplemented("external textures"))
+            }
+        })
     }
 }
 
@@ -480,25 +485,6 @@ enum CooperativeType {
     },
 }
 
-impl CooperativeType {
-    const fn from_inner(inner: &crate::TypeInner) -> Option<Self> {
-        match *inner {
-            crate::TypeInner::CooperativeMatrix {
-                columns,
-                rows,
-                scalar,
-                role,
-            } => Some(Self::Matrix {
-                columns,
-                rows,
-                scalar,
-                role,
-            }),
-            _ => None,
-        }
-    }
-}
-
 /// A SPIR-V type constructed during code generation.
 ///
 /// This is the variant of [`LookupType`] used to represent types that might not
@@ -559,7 +545,7 @@ enum LocalType {
     },
     Sampler,
     BindingArray {
-        base: Handle<crate::Type>,
+        base_type_id: Word,
         size: u32,
     },
     AccelerationStructure,
@@ -675,23 +661,24 @@ impl CachedExpressions {
         self.ids.resize(length, 0);
     }
 }
-impl ops::Index<Handle<crate::Expression>> for CachedExpressions {
-    type Output = Word;
-    fn index(&self, h: Handle<crate::Expression>) -> &Word {
-        let id = &self.ids[h];
-        if *id == 0 {
-            unreachable!("Expression {:?} is not cached!", h);
+impl CachedExpressions {
+    fn get(&self, h: Handle<crate::Expression>) -> Result<Word, Error> {
+        match self.ids.get(h) {
+            Some(&id) if id != 0 => Ok(id),
+            _ => Err(Error::Validation(
+                "expression is used before it is evaluated",
+            )),
         }
-        id
     }
-}
-impl ops::IndexMut<Handle<crate::Expression>> for CachedExpressions {
-    fn index_mut(&mut self, h: Handle<crate::Expression>) -> &mut Word {
-        let id = &mut self.ids[h];
-        if *id != 0 {
-            unreachable!("Expression {:?} is already cached!", h);
+
+    fn set(&mut self, h: Handle<crate::Expression>, id: Word) -> Result<(), Error> {
+        match self.ids.get(h) {
+            Some(&0) => {
+                self.ids[h] = id;
+                Ok(())
+            }
+            _ => Err(Error::Validation("expression is evaluated twice")),
         }
-        id
     }
 }
 impl reclaimable::Reclaimable for CachedExpressions {
@@ -920,15 +907,19 @@ impl BlockContext<'_> {
         self.writer.id_gen.next()
     }
 
-    fn get_type_id(&mut self, lookup_type: LookupType) -> Word {
+    fn get_type_id(&mut self, lookup_type: LookupType) -> Result<Word, Error> {
         self.writer.get_type_id(lookup_type)
     }
 
-    fn get_handle_type_id(&mut self, handle: Handle<crate::Type>) -> Word {
+    fn get_localtype_id(&mut self, local: LocalType) -> Word {
+        self.writer.get_localtype_id(local)
+    }
+
+    fn get_handle_type_id(&self, handle: Handle<crate::Type>) -> Result<Word, Error> {
         self.writer.get_handle_type_id(handle)
     }
 
-    fn get_expression_type_id(&mut self, tr: &TypeResolution) -> Word {
+    fn get_expression_type_id(&mut self, tr: &TypeResolution) -> Result<Word, Error> {
         self.writer.get_expression_type_id(tr)
     }
 

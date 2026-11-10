@@ -530,12 +530,12 @@ impl BlockContext<'_> {
         result_type_id: u32,
         block: &mut Block,
     ) -> Result<u32, Error> {
-        let value_id = self.cached[value];
+        let value_id = self.cached.get(value)?;
         let op = match *self.fun_info[value].ty.inner_with(&self.ir_module.types) {
             TypeInner::Scalar(_) => Op::ConvertUToPtr,
             TypeInner::Vector { .. } => Op::Bitcast,
             _ => {
-                let value_type_id = self.get_expression_type_id(&self.fun_info[value].ty);
+                let value_type_id = self.get_expression_type_id(&self.fun_info[value].ty)?;
                 if value_type_id == result_type_id {
                     return Ok(value_id);
                 }
@@ -556,7 +556,7 @@ impl BlockContext<'_> {
         result_type_id: u32,
         block: &mut Block,
     ) -> Result<u32, Error> {
-        let pointer_id = self.cached[pointer];
+        let pointer_id = self.cached.get(pointer)?;
         let op = if split {
             Op::Bitcast
         } else {

@@ -18,7 +18,7 @@ impl BlockContext<'_> {
         });
         let exec_scope_id = self.get_index_constant(spirv::Scope::Subgroup as u32);
         let predicate = if let Some(predicate) = *predicate {
-            self.cached[predicate]
+            self.cached.get(predicate)?
         } else {
             self.writer.get_constant_scalar(crate::Literal::Bool(true))
         };
@@ -29,7 +29,7 @@ impl BlockContext<'_> {
             exec_scope_id,
             predicate,
         ));
-        self.cached[result] = id;
+        self.cached.set(result, id)?;
         Ok(())
     }
     pub(super) fn write_subgroup_operation(
@@ -58,20 +58,28 @@ impl BlockContext<'_> {
 
         let id = self.gen_id();
         let result_ty = &self.fun_info[result].ty;
-        let result_type_id = self.get_expression_type_id(result_ty);
+        let result_type_id = self.get_expression_type_id(result_ty)?;
         let result_ty_inner = result_ty.inner_with(&self.ir_module.types);
 
         let (is_scalar, scalar) = match *result_ty_inner {
             TypeInner::Scalar(kind) => (true, kind),
             TypeInner::Vector { scalar: kind, .. } => (false, kind),
-            _ => unimplemented!(),
+            _ => {
+                return Err(Error::Validation(
+                    "subgroup operation result is not a scalar or vector",
+                ))
+            }
         };
 
         use crate::ScalarKind as sk;
         let spirv_op = match (scalar.kind, *op) {
             (sk::Bool, sg::All) if is_scalar => spirv::Op::GroupNonUniformAll,
             (sk::Bool, sg::Any) if is_scalar => spirv::Op::GroupNonUniformAny,
-            (_, sg::All | sg::Any) => unimplemented!(),
+            (_, sg::All | sg::Any) => {
+                return Err(Error::Validation(
+                    "subgroup vote operand is not a scalar bool",
+                ))
+            }
 
             (sk::Sint | sk::Uint, sg::Add) => spirv::Op::GroupNonUniformIAdd,
             (sk::Float, sg::Add) => spirv::Op::GroupNonUniformFAdd,
@@ -83,7 +91,11 @@ impl BlockContext<'_> {
             (sk::Sint, sg::Min) => spirv::Op::GroupNonUniformSMin,
             (sk::Uint, sg::Min) => spirv::Op::GroupNonUniformUMin,
             (sk::Float, sg::Min) => spirv::Op::GroupNonUniformFMin,
-            (_, sg::Add | sg::Mul | sg::Min | sg::Max) => unimplemented!(),
+            (_, sg::Add | sg::Mul | sg::Min | sg::Max) => {
+                return Err(Error::Validation(
+                    "subgroup arithmetic operand is not numeric",
+                ))
+            }
 
             (sk::Sint | sk::Uint, sg::And) => spirv::Op::GroupNonUniformBitwiseAnd,
             (sk::Sint | sk::Uint, sg::Or) => spirv::Op::GroupNonUniformBitwiseOr,
@@ -91,7 +103,11 @@ impl BlockContext<'_> {
             (sk::Bool, sg::And) => spirv::Op::GroupNonUniformLogicalAnd,
             (sk::Bool, sg::Or) => spirv::Op::GroupNonUniformLogicalOr,
             (sk::Bool, sg::Xor) => spirv::Op::GroupNonUniformLogicalXor,
-            (_, sg::And | sg::Or | sg::Xor) => unimplemented!(),
+            (_, sg::And | sg::Or | sg::Xor) => {
+                return Err(Error::Validation(
+                    "subgroup bitwise operand is not an integer or bool",
+                ))
+            }
         };
 
         let exec_scope_id = self.get_index_constant(spirv::Scope::Subgroup as u32);
@@ -106,7 +122,7 @@ impl BlockContext<'_> {
             }),
         };
 
-        let arg_id = self.cached[argument];
+        let arg_id = self.cached.get(argument)?;
         block.body.push(Instruction::group_non_uniform_arithmetic(
             spirv_op,
             result_type_id,
@@ -115,7 +131,7 @@ impl BlockContext<'_> {
             group_op,
             arg_id,
         ));
-        self.cached[result] = id;
+        self.cached.set(result, id)?;
         Ok(())
     }
     pub(super) fn write_subgroup_gather(
@@ -156,12 +172,12 @@ impl BlockContext<'_> {
 
         let id = self.gen_id();
         let result_ty = &self.fun_info[result].ty;
-        let result_type_id = self.get_expression_type_id(result_ty);
+        let result_type_id = self.get_expression_type_id(result_ty)?;
 
         let exec_scope_id = self.get_index_constant(spirv::Scope::Subgroup as u32);
 
-        let arg_id = self.cached[argument];
-        match *mode {
+        let arg_id = self.cached.get(argument)?;
+        let indexed = match *mode {
             crate::GatherMode::BroadcastFirst => {
                 block
                     .body
@@ -171,36 +187,26 @@ impl BlockContext<'_> {
                         exec_scope_id,
                         arg_id,
                     ));
+                None
             }
-            crate::GatherMode::Broadcast(index)
-            | crate::GatherMode::Shuffle(index)
-            | crate::GatherMode::ShuffleDown(index)
-            | crate::GatherMode::ShuffleUp(index)
-            | crate::GatherMode::ShuffleXor(index)
-            | crate::GatherMode::QuadBroadcast(index) => {
-                let index_id = self.cached[index];
-                let op = match *mode {
-                    crate::GatherMode::BroadcastFirst => unreachable!(),
-                    // Use shuffle to emit broadcast to allow the index to
-                    // be dynamically uniform on Vulkan 1.1. The argument to
-                    // OpGroupNonUniformBroadcast must be a constant pre SPIR-V
-                    // 1.5 (vulkan 1.2)
-                    crate::GatherMode::Broadcast(_) => spirv::Op::GroupNonUniformShuffle,
-                    crate::GatherMode::Shuffle(_) => spirv::Op::GroupNonUniformShuffle,
-                    crate::GatherMode::ShuffleDown(_) => spirv::Op::GroupNonUniformShuffleDown,
-                    crate::GatherMode::ShuffleUp(_) => spirv::Op::GroupNonUniformShuffleUp,
-                    crate::GatherMode::ShuffleXor(_) => spirv::Op::GroupNonUniformShuffleXor,
-                    crate::GatherMode::QuadBroadcast(_) => spirv::Op::GroupNonUniformQuadBroadcast,
-                    crate::GatherMode::QuadSwap(_) => unreachable!(),
-                };
-                block.body.push(Instruction::group_non_uniform_gather(
-                    op,
-                    result_type_id,
-                    id,
-                    exec_scope_id,
-                    arg_id,
-                    index_id,
-                ));
+            // Use shuffle to emit broadcast to allow the index to
+            // be dynamically uniform on Vulkan 1.1. The argument to
+            // OpGroupNonUniformBroadcast must be a constant pre SPIR-V
+            // 1.5 (vulkan 1.2)
+            crate::GatherMode::Broadcast(index) | crate::GatherMode::Shuffle(index) => {
+                Some((spirv::Op::GroupNonUniformShuffle, index))
+            }
+            crate::GatherMode::ShuffleDown(index) => {
+                Some((spirv::Op::GroupNonUniformShuffleDown, index))
+            }
+            crate::GatherMode::ShuffleUp(index) => {
+                Some((spirv::Op::GroupNonUniformShuffleUp, index))
+            }
+            crate::GatherMode::ShuffleXor(index) => {
+                Some((spirv::Op::GroupNonUniformShuffleXor, index))
+            }
+            crate::GatherMode::QuadBroadcast(index) => {
+                Some((spirv::Op::GroupNonUniformQuadBroadcast, index))
             }
             crate::GatherMode::QuadSwap(direction) => {
                 let direction = self.get_index_constant(match direction {
@@ -215,9 +221,21 @@ impl BlockContext<'_> {
                     arg_id,
                     direction,
                 ));
+                None
             }
+        };
+        if let Some((op, index)) = indexed {
+            let index_id = self.cached.get(index)?;
+            block.body.push(Instruction::group_non_uniform_gather(
+                op,
+                result_type_id,
+                id,
+                exec_scope_id,
+                arg_id,
+                index_id,
+            ));
         }
-        self.cached[result] = id;
+        self.cached.set(result, id)?;
         Ok(())
     }
 }

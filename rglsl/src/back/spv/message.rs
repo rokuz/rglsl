@@ -36,7 +36,7 @@ impl Writer {
         if let Some(&id) = self.laid_out_copies.get(&ty) {
             return Ok(id);
         }
-        let normal = self.get_handle_type_id(ty);
+        let normal = self.get_handle_type_id(ty)?;
         if self.laid_out_types.contains(ty) {
             return Ok(normal);
         }
@@ -91,16 +91,17 @@ impl BlockContext<'_> {
         block: &mut Block,
         format: &str,
         arguments: &[DebugPrintfArgument],
-    ) {
+    ) -> Result<(), Error> {
         self.writer.debug_string(format);
         let mut operands = Vec::with_capacity(arguments.len());
         for argument in arguments {
             operands.push(match *argument {
-                DebugPrintfArgument::Value(value) => self.cached[value],
+                DebugPrintfArgument::Value(value) => self.cached.get(value)?,
                 DebugPrintfArgument::String(ref text) => self.writer.debug_string(text),
             });
         }
         self.writer.write_debug_printf(block, format, &operands);
+        Ok(())
     }
 
     pub(super) fn write_abort(
@@ -128,7 +129,7 @@ impl BlockContext<'_> {
             .ty;
         let message_type = self.writer.laid_out_copy(module, ty)?;
         let laid_out_text = self.writer.laid_out_copy(module, text)?;
-        let text_id = self.writer.get_handle_type_id(text);
+        let text_id = self.writer.get_handle_type_id(text)?;
         let packed = self.writer.plain_type_id(text_id);
         self.writer.utf_encoded(packed);
         self.writer.utf_encoded(laid_out_text);
@@ -145,9 +146,9 @@ impl BlockContext<'_> {
         member_types.push(packed);
         values.push(data);
         for &argument in arguments {
-            let type_id = self.get_expression_type_id(&self.fun_info[argument].ty);
+            let type_id = self.get_expression_type_id(&self.fun_info[argument].ty)?;
             member_types.push(type_id);
-            values.push(self.cached[argument]);
+            values.push(self.cached.get(argument)?);
         }
         let value_type = self.gen_id();
         Instruction::type_struct(value_type, &member_types)

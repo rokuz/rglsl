@@ -45,6 +45,10 @@ pub enum PipelineConstantError {
     NegativeWorkgroupSize,
     #[error("max vertices or max primitives is negative")]
     NegativeMeshOutputMax,
+    #[error("override expression refers to an override that is not in the module")]
+    UnresolvedOverride,
+    #[error("{0:?} is not a valid override type")]
+    InvalidOverrideType(Scalar),
 }
 
 /// Compact `module` and replace all overrides with constants.
@@ -183,10 +187,10 @@ pub fn process_overrides<'a>(
                 let c_h = if let Some(new_h) = override_map.get(h) {
                     *new_h
                 } else {
-                    let mut new_h = None;
+                    let mut found = None;
                     for entry in override_iter.by_ref() {
                         let stop = entry.0 == h;
-                        new_h = Some(process_override(
+                        let new_h = process_override(
                             entry,
                             pipeline_constants,
                             &mut module,
@@ -194,12 +198,13 @@ pub fn process_overrides<'a>(
                             &adjusted_global_expressions,
                             &mut adjusted_constant_initializers,
                             &mut global_expression_kind_tracker,
-                        )?);
+                        )?;
                         if stop {
+                            found = Some(new_h);
                             break;
                         }
                     }
-                    new_h.unwrap()
+                    found.ok_or(PipelineConstantError::UnresolvedOverride)?
                 };
                 Expression::Constant(c_h)
             }
@@ -1206,10 +1211,7 @@ fn map_value_to_literal(value: f64, scalar: Scalar) -> Result<Literal, PipelineC
 
             Ok(Literal::F64(value))
         }
-        Scalar::ABSTRACT_FLOAT | Scalar::ABSTRACT_INT => {
-            unreachable!("abstract values should not be validated out of override processing")
-        }
-        _ => unreachable!("unrecognized scalar type for override"),
+        _ => Err(PipelineConstantError::InvalidOverrideType(scalar)),
     }
 }
 

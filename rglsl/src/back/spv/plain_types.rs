@@ -189,7 +189,7 @@ impl Writer {
             Expression::ZeroValue(ty) | Expression::Compose { ty, .. } => ty,
             _ => return Ok(id),
         };
-        let type_id = self.get_handle_type_id(ty);
+        let type_id = self.get_handle_type_id(ty)?;
         let plain = self.plain_type_id(type_id);
         if plain == type_id {
             return Ok(id);

@@ -347,15 +347,44 @@ impl Writer {
         self.extensions_used.insert(extension);
     }
 
-    pub(super) fn get_type_id(&mut self, lookup_ty: LookupType) -> Word {
-        match self.lookup_type.entry(lookup_ty) {
+    pub(super) fn get_type_id(&mut self, lookup_ty: LookupType) -> Result<Word, Error> {
+        match lookup_ty {
+            LookupType::Handle(handle) => self.get_handle_type_id(handle),
+            LookupType::Local(local) => Ok(self.get_localtype_id(local)),
+        }
+    }
+
+    pub(super) fn get_handle_type_id(&self, handle: Handle<crate::Type>) -> Result<Word, Error> {
+        self.lookup_type
+            .get(&LookupType::Handle(handle))
+            .copied()
+            .ok_or(Error::Validation("a type is used before it is declared"))
+    }
+
+    pub(super) fn get_expression_lookup_type(
+        &mut self,
+        tr: &TypeResolution,
+    ) -> Result<LookupType, Error> {
+        match *tr {
+            TypeResolution::Handle(ty_handle) => Ok(LookupType::Handle(ty_handle)),
+            TypeResolution::Value(ref inner) => match self.localtype_from_inner(inner)? {
+                Some(local) => Ok(LookupType::Local(local)),
+                None => Err(Error::Validation(
+                    "an aggregate type is only resolved by handle",
+                )),
+            },
+        }
+    }
+
+    pub(super) fn get_expression_type_id(&mut self, tr: &TypeResolution) -> Result<Word, Error> {
+        let lookup_ty = self.get_expression_lookup_type(tr)?;
+        self.get_type_id(lookup_ty)
+    }
+
+    pub(super) fn get_localtype_id(&mut self, local: LocalType) -> Word {
+        match self.lookup_type.entry(LookupType::Local(local)) {
             Entry::Occupied(e) => *e.get(),
             Entry::Vacant(e) => {
-                let local = match lookup_ty {
-                    LookupType::Handle(_handle) => unreachable!("Handles are populated at start"),
-                    LookupType::Local(local) => local,
-                };
-
                 let id = self.id_gen.next();
                 e.insert(id);
                 self.write_type_declaration_local(id, local);
@@ -364,45 +393,22 @@ impl Writer {
         }
     }
 
-    pub(super) fn get_handle_type_id(&mut self, handle: Handle<crate::Type>) -> Word {
-        self.get_type_id(LookupType::Handle(handle))
-    }
-
-    pub(super) fn get_expression_lookup_type(&mut self, tr: &TypeResolution) -> LookupType {
-        match *tr {
-            TypeResolution::Handle(ty_handle) => LookupType::Handle(ty_handle),
-            TypeResolution::Value(ref inner) => {
-                let inner_local_type = self.localtype_from_inner(inner).unwrap();
-                LookupType::Local(inner_local_type)
-            }
-        }
-    }
-
-    pub(super) fn get_expression_type_id(&mut self, tr: &TypeResolution) -> Word {
-        let lookup_ty = self.get_expression_lookup_type(tr);
-        self.get_type_id(lookup_ty)
-    }
-
-    pub(super) fn get_localtype_id(&mut self, local: LocalType) -> Word {
-        self.get_type_id(LookupType::Local(local))
-    }
-
     pub(super) fn get_pointer_type_id(&mut self, base: Word, class: spirv::StorageClass) -> Word {
         let base = self.pointee_type_id(base, class);
-        self.get_type_id(LookupType::Local(LocalType::Pointer { base, class }))
+        self.get_localtype_id(LocalType::Pointer { base, class })
     }
 
     pub(super) fn get_handle_pointer_type_id(
         &mut self,
         base: Handle<crate::Type>,
         class: spirv::StorageClass,
-    ) -> Word {
-        let base_id = self.get_handle_type_id(base);
-        self.get_pointer_type_id(base_id, class)
+    ) -> Result<Word, Error> {
+        let base_id = self.get_handle_type_id(base)?;
+        Ok(self.get_pointer_type_id(base_id, class))
     }
 
     pub(super) fn get_ray_query_pointer_id(&mut self) -> Word {
-        let rq_id = self.get_type_id(LookupType::Local(LocalType::RayQuery));
+        let rq_id = self.get_localtype_id(LocalType::RayQuery);
         self.get_pointer_type_id(rq_id, spirv::StorageClass::Function)
     }
 
@@ -414,13 +420,13 @@ impl Writer {
         &mut self,
         resolution: &TypeResolution,
         class: spirv::StorageClass,
-    ) -> Word {
-        let resolution_type_id = self.get_expression_type_id(resolution);
-        self.get_pointer_type_id(resolution_type_id, class)
+    ) -> Result<Word, Error> {
+        let resolution_type_id = self.get_expression_type_id(resolution)?;
+        Ok(self.get_pointer_type_id(resolution_type_id, class))
     }
 
     pub(super) fn get_numeric_type_id(&mut self, numeric: NumericType) -> Word {
-        self.get_type_id(LocalType::Numeric(numeric).into())
+        self.get_localtype_id(LocalType::Numeric(numeric))
     }
 
     pub(super) fn get_u32_type_id(&mut self) -> Word {
@@ -512,19 +518,37 @@ impl Writer {
     ///
     /// Otherwise, return `None`. In this case, the type must always be looked
     /// up using a `LookupType::Handle`.
-    fn localtype_from_inner(&mut self, inner: &crate::TypeInner) -> Option<LocalType> {
-        Some(match *inner {
-            crate::TypeInner::Scalar(_)
-            | crate::TypeInner::Atomic(_)
-            | crate::TypeInner::Vector { .. }
-            | crate::TypeInner::Matrix { .. } => {
-                // We expect `NumericType::from_inner` to handle all
-                // these cases, so unwrap.
-                LocalType::Numeric(NumericType::from_inner(inner).unwrap())
+    fn localtype_from_inner(
+        &mut self,
+        inner: &crate::TypeInner,
+    ) -> Result<Option<LocalType>, Error> {
+        Ok(Some(match *inner {
+            crate::TypeInner::Scalar(scalar) | crate::TypeInner::Atomic(scalar) => {
+                LocalType::Numeric(NumericType::Scalar(scalar))
             }
-            crate::TypeInner::CooperativeMatrix { .. } => {
-                LocalType::Cooperative(CooperativeType::from_inner(inner).unwrap())
+            crate::TypeInner::Vector { size, scalar } => {
+                LocalType::Numeric(NumericType::Vector { size, scalar })
             }
+            crate::TypeInner::Matrix {
+                columns,
+                rows,
+                scalar,
+            } => LocalType::Numeric(NumericType::Matrix {
+                columns,
+                rows,
+                scalar,
+            }),
+            crate::TypeInner::CooperativeMatrix {
+                columns,
+                rows,
+                scalar,
+                role,
+            } => LocalType::Cooperative(CooperativeType::Matrix {
+                columns,
+                rows,
+                scalar,
+                role,
+            }),
             crate::TypeInner::Pointer {
                 space: crate::AddressSpace::DescriptorHeap(_),
                 ..
@@ -533,7 +557,7 @@ impl Writer {
             },
             crate::TypeInner::Pointer { base, space } => {
                 let class = map_storage_class(space);
-                let base_type_id = self.get_handle_type_id(base);
+                let base_type_id = self.get_handle_type_id(base)?;
                 LocalType::Pointer {
                     base: self.pointee_type_id(base_type_id, class),
                     class,
@@ -563,14 +587,14 @@ impl Writer {
                 dim,
                 arrayed,
                 class,
-            } => LocalType::Image(LocalImageType::from_inner(dim, arrayed, class)),
+            } => LocalType::Image(LocalImageType::from_inner(dim, arrayed, class)?),
             crate::TypeInner::SampledImage {
                 dim,
                 arrayed,
                 class,
             } => {
                 let image_type_id = self.get_localtype_id(LocalType::Image(
-                    LocalImageType::from_inner(dim, arrayed, class),
+                    LocalImageType::from_inner(dim, arrayed, class)?,
                 ));
                 LocalType::SampledImage { image_type_id }
             }
@@ -582,8 +606,8 @@ impl Writer {
             },
             crate::TypeInner::Array { .. }
             | crate::TypeInner::Struct { .. }
-            | crate::TypeInner::BindingArray { .. } => return None,
-        })
+            | crate::TypeInner::BindingArray { .. } => return Ok(None),
+        }))
     }
 
     /// Resolve the [`BindingInfo`] for a [`crate::ResourceBinding`] from the
@@ -742,8 +766,8 @@ impl Writer {
         right_type: &TypeResolution,
     ) -> Result<(), Error> {
         let return_type_id = self.get_localtype_id(LocalType::Numeric(return_type));
-        let left_type_id = self.get_expression_type_id(left_type);
-        let right_type_id = self.get_expression_type_id(right_type);
+        let left_type_id = self.get_expression_type_id(left_type)?;
+        let right_type_id = self.get_expression_type_id(right_type)?;
 
         // Check if we've already emitted this function.
         let wrapped = WrappedFunction::BinaryOp {
@@ -805,8 +829,8 @@ impl Writer {
             NumericType::Scalar(_) => const_id,
             NumericType::Vector { size, .. } => {
                 let constituent_ids = [const_id; crate::VectorSize::MAX];
-                writer.get_constant_composite(
-                    LookupType::Local(LocalType::Numeric(return_type)),
+                writer.get_local_constant_composite(
+                    LocalType::Numeric(return_type),
                     &constituent_ids[..size as usize],
                 )
             }
@@ -973,7 +997,7 @@ impl Writer {
             ));
         }
         let param_type_id = self.std140_compat_uniform_types[&r#type].type_id;
-        let return_type_id = self.get_handle_type_id(r#type);
+        let return_type_id = self.get_handle_type_id(r#type)?;
 
         let mut function = Function::default();
         let function_type_id = self.get_function_type(LookupFunctionType {
@@ -1034,7 +1058,7 @@ impl Writer {
                 // declared.
                 self.write_wrapped_convert_from_std140_compat_type(ir_module, base)?;
 
-                let element_type_id = self.get_handle_type_id(base);
+                let element_type_id = self.get_handle_type_id(base)?;
                 let std140_info = self.std140_compat_uniform_types.get(&base);
                 let mut element_ids = Vec::new();
                 let size = match size.resolve(ir_module.to_ctx())? {
@@ -1092,7 +1116,7 @@ impl Writer {
                 let mut next_index = 0;
                 for member in members {
                     let member_id = self.id_gen.next();
-                    let member_type_id = self.get_handle_type_id(member.ty);
+                    let member_type_id = self.get_handle_type_id(member.ty)?;
                     match ir_module.types[member.ty].inner {
                         crate::TypeInner::Matrix {
                             columns,
@@ -1215,7 +1239,7 @@ impl Writer {
         };
 
         let mut function = Function::default();
-        let matrix_type_id = self.get_handle_type_id(r#type);
+        let matrix_type_id = self.get_handle_type_id(r#type)?;
         let column_index_type_id = self.get_u32_type_id();
         let column_type_id = self.get_numeric_type_id(NumericType::Vector { size: rows, scalar });
         let matrix_param_id = self.id_gen.next();
@@ -1367,9 +1391,9 @@ impl Writer {
             let class = spirv::StorageClass::Input;
             let handle_ty = ir_module.types[argument.ty].inner.is_handle();
             let argument_type_id = if handle_ty {
-                self.get_handle_pointer_type_id(argument.ty, spirv::StorageClass::UniformConstant)
+                self.get_handle_pointer_type_id(argument.ty, spirv::StorageClass::UniformConstant)?
             } else {
-                self.get_handle_type_id(argument.ty)
+                self.get_handle_type_id(argument.ty)?
             };
 
             if let Some(ref mut iface) = interface {
@@ -1402,7 +1426,7 @@ impl Writer {
                     let struct_id = self.id_gen.next();
                     let mut constituent_ids = Vec::with_capacity(members.len());
                     for member in members {
-                        let type_id = self.get_handle_type_id(member.ty);
+                        let type_id = self.get_handle_type_id(member.ty)?;
                         let name = member.name.as_deref();
                         let binding = member.binding.as_ref().unwrap();
                         let varying_id = self.write_varying(
@@ -1447,7 +1471,7 @@ impl Writer {
                     handle_id: if handle_ty {
                         let id = self.id_gen.next();
                         prelude.body.push(Instruction::load(
-                            self.get_handle_type_id(argument.ty),
+                            self.get_handle_type_id(argument.ty)?,
                             id,
                             argument_id,
                             None,
@@ -1469,7 +1493,7 @@ impl Writer {
                     if let Some(ref binding) = result.binding {
                         has_point_size |=
                             *binding == crate::Binding::BuiltIn(crate::BuiltIn::PointSize);
-                        let type_id = self.get_handle_type_id(result.ty);
+                        let type_id = self.get_handle_type_id(result.ty)?;
                         let varying_id =
                             if *binding == crate::Binding::BuiltIn(crate::BuiltIn::MeshTaskSize) {
                                 0
@@ -1494,7 +1518,7 @@ impl Writer {
                         ir_module.types[result.ty].inner
                     {
                         for member in members {
-                            let type_id = self.get_handle_type_id(member.ty);
+                            let type_id = self.get_handle_type_id(member.ty)?;
                             let name = member.name.as_deref();
                             let binding = member.binding.as_ref().unwrap();
                             has_point_size |=
@@ -1555,7 +1579,7 @@ impl Writer {
                         self.void_type
                     }
                 } else {
-                    self.get_handle_type_id(result.ty)
+                    self.get_handle_type_id(result.ty)?
                 }
             }
             None => self.void_type,
@@ -1632,7 +1656,7 @@ impl Writer {
                 _ => {
                     // Handle globals are pre-emitted and should be loaded automatically.
                     if var.space == crate::AddressSpace::Handle {
-                        let var_type_id = self.get_handle_type_id(var.ty);
+                        let var_type_id = self.get_handle_type_id(var.ty)?;
                         let id = self.id_gen.next();
                         prelude
                             .body
@@ -1645,7 +1669,7 @@ impl Writer {
                             Some(std140_type_info) if var.space == crate::AddressSpace::Uniform => {
                                 self.get_pointer_type_id(std140_type_info.type_id, class)
                             }
-                            _ => self.get_handle_pointer_type_id(var.ty, class),
+                            _ => self.get_handle_pointer_type_id(var.ty, class)?,
                         };
                         let index_id = self.get_index_constant(0);
                         let id = self.id_gen.next();
@@ -1710,7 +1734,7 @@ impl Writer {
                 }
             }
 
-            let type_id = context.get_handle_type_id(variable.ty);
+            let type_id = context.get_handle_type_id(variable.ty)?;
             let converted = context
                 .writer
                 .needs_layout_conversion(type_id, spirv::StorageClass::Function);
@@ -1719,18 +1743,18 @@ impl Writer {
                     let value = context.writer.convert_layout(
                         &mut prelude,
                         type_id,
-                        context.cached[constant],
+                        context.cached.get(constant)?,
                         true,
                     )?;
                     prelude.body.push(Instruction::store(id, value, None));
                     None
                 }
-                Some(constant) => Some(context.cached[constant]),
+                Some(constant) => Some(context.cached.get(constant)?),
                 None => None,
             };
             let pointer_type_id = context
                 .writer
-                .get_handle_pointer_type_id(variable.ty, spirv::StorageClass::Function);
+                .get_handle_pointer_type_id(variable.ty, spirv::StorageClass::Function)?;
             let instruction = Instruction::variable(
                 pointer_type_id,
                 id,
@@ -1850,7 +1874,7 @@ impl Writer {
                     local_invocation_index_id,
                     interface,
                     context.function,
-                ),
+                )?,
                 _ => None,
             };
 
@@ -2351,10 +2375,9 @@ impl Writer {
             LocalType::SampledImage { image_type_id } => {
                 Instruction::type_sampled_image(id, image_type_id)
             }
-            LocalType::BindingArray { base, size } => {
-                let inner_ty = self.get_handle_type_id(base);
+            LocalType::BindingArray { base_type_id, size } => {
                 let scalar_id = self.get_constant_scalar(crate::Literal::U32(size));
-                Instruction::type_array(id, inner_ty, scalar_id)
+                Instruction::type_array(id, base_type_id, scalar_id)
             }
             LocalType::AccelerationStructure => Instruction::type_acceleration_structure(id),
             LocalType::RayQuery => Instruction::type_ray_query(id),
@@ -2386,8 +2409,8 @@ impl Writer {
         {
             let structure = matches!(module.types[base].inner, crate::TypeInner::Struct { .. });
             if !structure {
-                let id = match self.localtype_from_inner(&ty.inner) {
-                    Some(local) => self.get_type_id(LookupType::Local(local)),
+                let id = match self.localtype_from_inner(&ty.inner)? {
+                    Some(local) => self.get_localtype_id(local),
                     None => return Err(Error::Validation("a physical pointer has no type")),
                 };
                 self.lookup_type.insert(LookupType::Handle(handle), id);
@@ -2411,7 +2434,7 @@ impl Writer {
                 return Ok(id);
             }
             let class = spirv::StorageClass::PhysicalStorageBuffer;
-            let base_id = self.get_handle_type_id(base);
+            let base_id = self.get_handle_type_id(base)?;
             let local = LookupType::Local(LocalType::Pointer {
                 base: base_id,
                 class,
@@ -2431,7 +2454,7 @@ impl Writer {
             self.lookup_type.insert(LookupType::Handle(handle), id);
             return Ok(id);
         }
-        let id = if let Some(local) = self.localtype_from_inner(&ty.inner) {
+        let id = if let Some(local) = self.localtype_from_inner(&ty.inner)? {
             // This type can be represented as a `LocalType`, so check if we've
             // already written an instruction for it. If not, do so now, with
             // `write_type_declaration_local`.
@@ -2455,7 +2478,7 @@ impl Writer {
             let id = self.id_gen.next();
             let instruction = match ty.inner {
                 crate::TypeInner::Array { base, size, stride } => {
-                    let type_id = self.get_handle_type_id(base);
+                    let type_id = self.get_handle_type_id(base)?;
                     let (length, count) = if let crate::ArraySize::Pending(length) = size {
                         (Some(self.write_override(length, module, mod_info)?), None)
                     } else {
@@ -2489,7 +2512,7 @@ impl Writer {
                     }
                 }
                 crate::TypeInner::BindingArray { base, size } => {
-                    let type_id = self.get_handle_type_id(base);
+                    let type_id = self.get_handle_type_id(base)?;
                     if let crate::ArraySize::Pending(length) = size {
                         let length_id = self.write_override(length, module, mod_info)?;
                         Instruction::type_array(id, type_id, length_id)
@@ -2518,7 +2541,7 @@ impl Writer {
                     self.heap_struct_layout(module, handle, id)?;
                     for (index, member) in members.iter().enumerate() {
                         self.decorate_struct_member(id, index, member, &module.types, laid_out)?;
-                        let member_id = self.get_handle_type_id(member.ty);
+                        let member_id = self.get_handle_type_id(member.ty)?;
                         member_ids.push(member_id);
                     }
                     self.record_composite_type(
@@ -2794,7 +2817,7 @@ impl Writer {
                                                 &module.types,
                                                 true,
                                             )?;
-                                            self.get_handle_type_id(member.ty)
+                                            self.get_handle_type_id(member.ty)?
                                         }
                                     };
                                 member_ids.push(member_id);
@@ -2970,16 +2993,42 @@ impl Writer {
         &mut self,
         ty: LookupType,
         constituent_ids: &[Word],
-    ) -> Word {
+    ) -> Result<Word, Error> {
+        let handle = match ty {
+            LookupType::Local(local) => {
+                return Ok(self.get_local_constant_composite(local, constituent_ids))
+            }
+            LookupType::Handle(handle) => handle,
+        };
         let composite = CachedConstant::Composite {
             ty,
+            constituent_ids: constituent_ids.to_vec(),
+        };
+        if let Some(&id) = self.cached_constants.get(&composite) {
+            return Ok(id);
+        }
+        let type_id = self.get_handle_type_id(handle)?;
+        let id = self.id_gen.next();
+        self.write_constant_composite(id, type_id, constituent_ids, None);
+        self.cached_constants.insert(composite, id);
+        Ok(id)
+    }
+
+    pub(super) fn get_local_constant_composite(
+        &mut self,
+        local: LocalType,
+        constituent_ids: &[Word],
+    ) -> Word {
+        let composite = CachedConstant::Composite {
+            ty: LookupType::Local(local),
             constituent_ids: constituent_ids.to_vec(),
         };
         if let Some(&id) = self.cached_constants.get(&composite) {
             return id;
         }
         let id = self.id_gen.next();
-        self.write_constant_composite(id, ty, constituent_ids, None);
+        let type_id = self.get_localtype_id(local);
+        self.write_constant_composite(id, type_id, constituent_ids, None);
         self.cached_constants.insert(composite, id);
         id
     }
@@ -2987,7 +3036,7 @@ impl Writer {
     fn write_constant_composite(
         &mut self,
         id: Word,
-        ty: LookupType,
+        type_id: Word,
         constituent_ids: &[Word],
         debug_name: Option<&String>,
     ) {
@@ -2996,7 +3045,6 @@ impl Writer {
                 self.debugs.push(Instruction::name(id, name));
             }
         }
-        let type_id = self.get_type_id(ty);
         Instruction::constant_composite(type_id, id, constituent_ids)
             .to_words(&mut self.logical_layout.declarations);
     }
@@ -3040,7 +3088,7 @@ impl Writer {
                 self.constant_ids[constant.init]
             }
             crate::Expression::ZeroValue(ty) => {
-                let type_id = self.get_handle_type_id(ty);
+                let type_id = self.get_handle_type_id(ty)?;
                 self.get_constant_null(type_id)
             }
             crate::Expression::Compose { .. } | crate::Expression::Splat { .. }
@@ -3057,15 +3105,15 @@ impl Writer {
                 )
                 .map(|component| self.constant_ids[component])
                 .collect();
-                self.get_constant_composite(LookupType::Handle(ty), component_ids.as_slice())
+                self.get_constant_composite(LookupType::Handle(ty), component_ids.as_slice())?
             }
             crate::Expression::Splat { size, value } => {
                 let value_id = self.constant_ids[value];
                 let component_ids = &[value_id; 4][..size as usize];
 
-                let ty = self.get_expression_lookup_type(&mod_info[handle]);
+                let ty = self.get_expression_lookup_type(&mod_info[handle])?;
 
-                self.get_constant_composite(ty, component_ids)
+                self.get_constant_composite(ty, component_ids)?
             }
             crate::Expression::Override(item) => self.write_override(item, ir_module, mod_info)?,
             _ => self.write_spec_operation(handle, ir_module, mod_info)?,
@@ -3159,7 +3207,7 @@ impl Writer {
         local_invocation_index: Option<Word>,
         interface: &mut FunctionInterface,
         function: &mut Function,
-    ) -> Option<Word> {
+    ) -> Result<Option<Word>, Error> {
         let body = ir_module
             .global_variables
             .iter()
@@ -3174,15 +3222,15 @@ impl Writer {
                 // variables in the `Uniform` and `StorageBuffer` address spaces
                 // get wrapped, and we're initializing `WorkGroup` variables.
                 let var_id = self.global_variables[handle].var_id;
-                let var_type_id = self.get_handle_type_id(var.ty);
+                let var_type_id = self.get_handle_type_id(var.ty)?;
                 let var_type_id = self.plain_type_id(var_type_id);
                 let init_word = self.get_constant_null(var_type_id);
-                Instruction::store(var_id, init_word, None)
+                Ok(Instruction::store(var_id, init_word, None))
             })
-            .collect::<Vec<_>>();
+            .collect::<Result<Vec<_>, Error>>()?;
 
         if body.is_empty() {
-            return None;
+            return Ok(None);
         }
 
         let mut pre_if_block = Block::new(entry_id);
@@ -3267,7 +3315,7 @@ impl Writer {
 
         let next_id = self.id_gen.next();
         function.consume(post_if_block, Instruction::branch(next_id));
-        Some(next_id)
+        Ok(Some(next_id))
     }
 
     /// Generate an `OpVariable` for one value in an [`EntryPoint`]'s IO interface.
@@ -3313,7 +3361,7 @@ impl Writer {
 
             ptr_id
         } else {
-            self.get_handle_pointer_type_id(ty, class)
+            self.get_handle_pointer_type_id(ty, class)?
         };
 
         Instruction::variable(pointer_type_id, id, class, None)
@@ -3858,11 +3906,11 @@ impl Writer {
                 if let crate::TypeInner::BindingArray { base, .. } =
                     ir_module.types[global_variable.ty].inner
                 {
-                    let binding_array_type_id =
-                        self.get_type_id(LookupType::Local(LocalType::BindingArray {
-                            base,
-                            size: remapped_binding_array_size,
-                        }));
+                    let base_type_id = self.get_handle_type_id(base)?;
+                    let binding_array_type_id = self.get_localtype_id(LocalType::BindingArray {
+                        base_type_id,
+                        size: remapped_binding_array_size,
+                    });
                     substitute_inner_type_lookup = Some(LookupType::Local(LocalType::Pointer {
                         base: binding_array_type_id,
                         class,
@@ -3883,7 +3931,7 @@ impl Writer {
         };
         let inner_type_id = self.get_type_id(
             substitute_inner_type_lookup.unwrap_or(LookupType::Handle(global_variable.ty)),
-        );
+        )?;
         let inner_type_id = self.pointee_type_id(inner_type_id, class);
 
         // generate the wrapping structure if needed
@@ -3954,7 +4002,7 @@ impl Writer {
                 {
                     let block_id = match std140_struct {
                         Some(id) => id,
-                        None => self.get_handle_type_id(structure),
+                        None => self.get_handle_type_id(structure)?,
                     };
                     if self.buffer_blocks.insert(block_id) {
                         self.decorate(block_id, Decoration::Block, &[]);
@@ -3966,7 +4014,7 @@ impl Writer {
             } else if let Some(std140_id) = std140_struct {
                 self.get_pointer_type_id(std140_id, class)
             } else {
-                self.get_handle_pointer_type_id(global_variable.ty, class)
+                self.get_handle_pointer_type_id(global_variable.ty, class)?
             }
         };
 
@@ -4006,7 +4054,7 @@ impl Writer {
         if !self.decorated_blocks.insert(block.structure) {
             return Ok(());
         }
-        let struct_id = self.get_handle_type_id(block.structure);
+        let struct_id = self.get_handle_type_id(block.structure)?;
         self.decorate(struct_id, spirv::Decoration::Block, &[]);
         let crate::TypeInner::Struct { ref members, .. } = ir_module.types[block.structure].inner
         else {
@@ -4317,7 +4365,7 @@ impl Writer {
                 ..
             } = ty.inner
             {
-                let id = self.get_handle_type_id(handle);
+                let id = self.get_handle_type_id(handle)?;
                 self.physical_type_ids.insert(id);
             }
         }
@@ -4585,15 +4633,17 @@ impl Writer {
         string: &str,
         format_params: &[Word],
     ) {
-        if self.debug_printf.is_none() {
-            self.use_extension("SPV_KHR_non_semantic_info");
-            let import_id = self.id_gen.next();
-            Instruction::ext_inst_import(import_id, "NonSemantic.DebugPrintf")
-                .to_words(&mut self.logical_layout.ext_inst_imports);
-            self.debug_printf = Some(import_id)
-        }
-
-        let import_id = self.debug_printf.unwrap();
+        let import_id = match self.debug_printf {
+            Some(import_id) => import_id,
+            None => {
+                self.use_extension("SPV_KHR_non_semantic_info");
+                let import_id = self.id_gen.next();
+                Instruction::ext_inst_import(import_id, "NonSemantic.DebugPrintf")
+                    .to_words(&mut self.logical_layout.ext_inst_imports);
+                self.debug_printf = Some(import_id);
+                import_id
+            }
+        };
 
         let string_id = self.debug_string(string);
 
