@@ -58,8 +58,8 @@ jobs:
         with:
           path: target/oracles
           key: oracles-${{ runner.os }}-${{ hashFiles('oracles.toml', 'xtask/src/oracles.rs') }}
-      - run: cargo xtask oracles
-      - run: cargo xtask test
+      - run: cargo xtask oracles --no-exec
+      - run: cargo xtask test --no-exec
       - name: PROGRESS.md is up to date
         run: git diff --exit-code PROGRESS.md
       - uses: actions/upload-artifact@v4

@@ -263,11 +263,13 @@ pub struct Reflection {
     pub problems: Vec<String>,
 }
 
+type DecorationList = Vec<(Decoration, Vec<u32>)>;
+
 #[derive(Default)]
 struct Decorations {
-    by_id: BTreeMap<u32, Vec<(Decoration, Vec<u32>)>>,
+    by_id: BTreeMap<u32, DecorationList>,
     builtins: BTreeMap<u32, BuiltIn>,
-    member: BTreeMap<(u32, u32), Vec<(Decoration, Vec<u32>)>>,
+    member: BTreeMap<(u32, u32), DecorationList>,
     member_builtins: BTreeSet<u32>,
 }
 
@@ -551,7 +553,7 @@ pub fn reflect_words(words: &[u32]) -> Result<Reflection, String> {
 }
 
 pub fn reflect_bytes(bytes: &[u8]) -> Result<Reflection, String> {
-    if bytes.len() % 4 != 0 {
+    if !bytes.len().is_multiple_of(4) {
         return Err("SPIR-V size is not a multiple of 4".into());
     }
     let words: Vec<u32> = bytes

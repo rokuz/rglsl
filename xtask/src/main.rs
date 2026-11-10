@@ -8,6 +8,7 @@
 mod corpus;
 mod exec;
 mod fuzz;
+mod fuzz_exec;
 mod oracles;
 mod process;
 mod report;

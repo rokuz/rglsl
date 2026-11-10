@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::{Mutex, PoisonError};
+use std::sync::{Condvar, Mutex, PoisonError};
 use std::time::Duration;
 
 use anyhow::{bail, Result};
@@ -161,7 +161,36 @@ pub struct Executor {
     work: PathBuf,
     dump_shader: PathBuf,
     support: Mutex<BTreeMap<&'static str, bool>>,
+    gpu: Gate,
     pub device: Device,
+}
+
+const GPU_JOBS: usize = 4;
+
+#[derive(Debug, Default)]
+struct Gate {
+    running: Mutex<usize>,
+    freed: Condvar,
+}
+
+impl Gate {
+    fn with<T>(&self, limit: usize, run: impl FnOnce() -> T) -> T {
+        let mut running = self.running.lock().unwrap_or_else(PoisonError::into_inner);
+        while *running >= limit {
+            running = self
+                .freed
+                .wait(running)
+                .unwrap_or_else(PoisonError::into_inner);
+        }
+        *running += 1;
+        drop(running);
+        let result = run();
+        let mut running = self.running.lock().unwrap_or_else(PoisonError::into_inner);
+        *running = running.saturating_sub(1);
+        drop(running);
+        self.freed.notify_one();
+        result
+    }
 }
 
 pub fn amber_tool(root: &Path) -> Option<PathBuf> {
@@ -210,6 +239,7 @@ impl Executor {
             work,
             dump_shader,
             support: Mutex::new(BTreeMap::new()),
+            gpu: Gate::default(),
             device,
         })
     }
@@ -232,7 +262,13 @@ impl Executor {
         );
         let supported = fs::copy(&self.dump_shader, dir.join(format!("{stem}.spv"))).is_ok()
             && fs::write(&script, text).is_ok()
-            && self.amber.run(&script, &[], &dir.join("probe.txt")).is_ok();
+            && self
+                .gpu
+                .with(GPU_JOBS, || {
+                    self.amber
+                        .run(&script, &[], &dir.join(format!("{stem}.txt")))
+                })
+                .is_ok();
         self.support
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -290,8 +326,10 @@ impl Executor {
         });
         let path = dir.join(format!("{tag}.amber"));
         fs::write(&path, script).map_err(|e| e.to_string())?;
-        self.amber
-            .run(&path, &plan.dumps(), &dir.join(format!("{tag}.dump.txt")))
+        self.gpu.with(GPU_JOBS, || {
+            self.amber
+                .run(&path, &plan.dumps(), &dir.join(format!("{tag}.dump.txt")))
+        })
     }
 
     pub fn exec(&self, name: &str, ours: &Path, reference: &Path) -> Outcome {

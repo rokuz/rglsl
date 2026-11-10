@@ -218,7 +218,7 @@ mod tests {
             ],
         };
         assert_eq!(layout.size(0), 40);
-        let values: Vec<Value> = (1..=5).map(|v| Value::Int(v)).collect();
+        let values: Vec<Value> = (1..=5).map(Value::Int).collect();
         let bytes = fill_values(&layout, 0, &values);
         assert_eq!(bytes.len(), 40);
         assert_eq!(&bytes[0..4], &1u32.to_le_bytes());
