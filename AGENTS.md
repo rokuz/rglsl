@@ -11,20 +11,22 @@ goal, the language rules for linkage and `#include`, and the milestones (M0–M9
 
 | Path | What |
 |---|---|
-| `naga/` | the compiler: IR, GLSL frontend (`src/front/glsl`), validator, SPIR-V backend (`src/back/spv`, the only backend) |
-| `naga-types/` | types shared by naga (`ShaderStage`, ...) |
-| `naga-cli/` | upstream naga CLI (to become the `glslangValidator`-compatible tool in M9) |
-| `naga-test/`, `naga/tests/` | upstream snapshot tests |
-| `naga/xtask/` | upstream snapshot validation (`cd naga && cargo xtask validate spv`) |
+| `rglsl/` | the compiler: IR, GLSL frontend (`src/front/glsl`), validator, SPIR-V backend (`src/back/spv`, the only backend) |
+| `rglsl-types/` | types shared by the rglsl crates (`ShaderStage`, ...) |
+| `rglsl-cli/` | the `rglsl` command-line tool (to become `glslangValidator`-compatible in M9) |
+| `rglsl-test/`, `rglsl/tests/` | upstream snapshot tests |
+| `rglsl/xtask/` | snapshot validation (`cd rglsl && cargo xtask validate spv`) |
 | `xtask/` | project automation: `cargo xtask oracles`, `cargo xtask test` |
 | `oracles.toml` | pinned glslang / SPIRV-Tools / SPIRV-Headers commits |
 
 ## Rules
 
 - **Safe Rust only.** `unsafe_code` is forbidden in every crate (workspace lints, and
-  `naga`'s own `[lints]`). Do not add `allow(unsafe_code)`.
+  the `rglsl` crate's own `[lints]`). Do not add `allow(unsafe_code)`.
 - **No panics on user input.** A crash in the corpus run is always a bug.
-- Keep naga's style: arenas, typed handles, exhaustive `match`, `Result` errors.
+- The compiler is called **rglsl** everywhere (crates, binary, docs); "naga" only names
+  the upstream project it was forked from.
+- Keep the IR's style: arenas, typed handles, exhaustive `match`, `Result` errors.
 - SPIR-V is the only output. Do not add other backends; IR features need only be
   expressible in SPIR-V.
 - When changing code that came from upstream, record non-trivial deviations in

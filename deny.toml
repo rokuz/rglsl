@@ -1,6 +1,6 @@
 [graph]
 # Only the library crates matter for licenses, advisories and bans; the tools
-# (xtask, naga-cli, fuzz targets) are not published.
+# (xtask, rglsl-cli, fuzz targets) are not published.
 exclude-unpublished = true
 exclude-dev = true
 
@@ -8,7 +8,7 @@ exclude-dev = true
 multiple-versions = "deny"
 skip-tree = [{ name = "rustc-hash", version = "1.1.0" }]
 skip = [
-    # naga -> petgraph (spv-in) uses an older hashbrown
+    # rglsl -> petgraph (spv-in) uses an older hashbrown
     { name = "hashbrown", version = "0.15.5" },
     # used by hashbrown 0.15.5
     { name = "foldhash", version = "0.1.5" },

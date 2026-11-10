@@ -17,13 +17,21 @@ cherry-picked and recorded below.
 Everything else in the wgpu repository (wgpu, wgpu-core, wgpu-hal, examples, CTS
 runner, ...) is not part of this project.
 
+## Renamed
+
+The compiler is called rglsl. The crates and directories were renamed after the import:
+`naga` → `rglsl`, `naga-types` → `rglsl-types`, `naga-test` → `rglsl-test`, `naga-cli` →
+`rglsl-cli` (binary `rglsl`), `naga-xtask` → `snapshot-xtask`. Paths below use the upstream
+names where they describe what was taken, and the current names otherwise. The upstream
+changelog was dropped; see upstream for the history before the fork.
+
 ## Changes made while importing
 
 - New workspace `Cargo.toml` with only the dependencies these crates need.
-- `naga/src/front/mod.rs`: the `interpolator` module is also compiled for `glsl-in`
+- `rglsl/src/front/mod.rs`: the `interpolator` module is also compiled for `glsl-in`
   (upstream builds it only for `spv-in`/`wgsl-in`, so `glsl-in` alone did not compile).
-- `unsafe_code = "forbid"` in the workspace lints and in `naga`'s lints.
-- `naga/xtask/src/jobserver.rs`: no longer inherits the parent's jobserver
+- `unsafe_code = "forbid"` in the workspace lints and in the `rglsl` crate's lints.
+- `rglsl/xtask/src/jobserver.rs`: no longer inherits the parent's jobserver
   (`jobserver::Client::from_env` is `unsafe`); it always creates its own.
 - Removed `naga/tests/naga/example_wgsl.rs`: it parsed wgpu's `examples/`, which are not
   part of the fork.

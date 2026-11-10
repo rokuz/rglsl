@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   # Quality gates: fmt, clippy, tests. `unsafe_code` is forbidden through the
-  # workspace lints (and `#![forbid(unsafe_code)]` in naga), so clippy and the
+  # workspace lints (and `#![forbid(unsafe_code)]` in rglsl), so clippy and the
   # build fail on any unsafe code.
   check:
     name: fmt, clippy, test

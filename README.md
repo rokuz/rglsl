@@ -11,7 +11,8 @@ It differs from glslang in two ways only, and adds no new syntax:
    the linker supplies the definition.
 2. **`#include` works by default**, with no extension directive.
 
-**Status:** M0 — the naga crates are imported unchanged and the conformance harness runs.
+**Status:** early. The compiler is the forked naga code base reduced to a GLSL frontend, the
+IR and a SPIR-V backend, and the conformance harness runs against glslang.
 See [docs/PLAN.md](docs/PLAN.md) for the plan and milestones and [PROGRESS.md](PROGRESS.md)
 for the current numbers against glslang's test corpus, and [docs/parity/](docs/parity/README.md)
 for the feature-by-feature gap analysis against glslang.

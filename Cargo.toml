@@ -1,12 +1,12 @@
 [workspace]
 resolver = "2"
 members = [
-    "naga",
-    "naga-types",
-    "naga-test",
-    "naga-cli",
-    "naga/fuzz",
-    "naga/xtask",
+    "rglsl",
+    "rglsl-types",
+    "rglsl-test",
+    "rglsl-cli",
+    "rglsl/fuzz",
+    "rglsl/xtask",
     "xtask",
 ]
 
@@ -25,14 +25,14 @@ rust-version = "1.93"
 keywords = ["shader", "glsl", "spirv"]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/rokuz/rglsl"
-# Hard fork of naga 30.0.0 (gfx-rs/wgpu v30.0.0). See UPSTREAM.md.
-version = "30.0.0"
+# rglsl started as a hard fork of naga 30.0.0 (gfx-rs/wgpu v30.0.0). See UPSTREAM.md.
+version = "0.1.0"
 authors = ["rglsl developers", "gfx-rs developers"]
 
 [workspace.dependencies]
-naga = { version = "30.0.0", path = "./naga" }
-naga-test = { path = "./naga-test" }
-naga-types = { version = "30.0.0", path = "./naga-types" }
+rglsl = { version = "0.1.0", path = "./rglsl" }
+rglsl-test = { path = "./rglsl-test" }
+rglsl-types = { version = "0.1.0", path = "./rglsl-types" }
 
 anyhow = { version = "1.0.87", default-features = false }
 arbitrary = "1.4.2"

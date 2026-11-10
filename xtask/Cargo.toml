@@ -8,7 +8,7 @@ publish = false
 
 [dependencies]
 anyhow = { workspace = true, features = ["std"] }
-naga = { workspace = true, features = ["glsl-in", "spv-out"] }
+rglsl = { workspace = true, features = ["glsl-in", "spv-out"] }
 toml.workspace = true
 
 [lints]

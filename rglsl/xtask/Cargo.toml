@@ -1,0 +1,21 @@
+[package]
+name = "snapshot-xtask"
+version = "0.1.0"
+edition = "2021"
+publish = false
+rust-version.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+anyhow.workspace = true
+env_logger = { workspace = true, default-features = false }
+glob.workspace = true
+indicatif.workspace = true
+jobserver.workspace = true
+log.workspace = true
+num_cpus.workspace = true
+pico-args.workspace = true
+shell-words.workspace = true
+which.workspace = true
+
+[lints]
+workspace = true

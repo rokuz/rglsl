@@ -12,10 +12,10 @@
 
 use std::path::Path;
 
-use naga::back::spv;
-use naga::front::glsl;
-use naga::valid::{Capabilities, ValidationFlags, Validator};
-use naga::ShaderStage;
+use rglsl::back::spv;
+use rglsl::front::glsl;
+use rglsl::valid::{Capabilities, ValidationFlags, Validator};
+use rglsl::ShaderStage;
 
 pub const EXIT_ACCEPTED: i32 = 0;
 pub const EXIT_REJECTED: i32 = 1;
