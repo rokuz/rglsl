@@ -409,6 +409,26 @@ pub(super) fn build(
             }
         }
     }
+    if version >= 460 {
+        for (name, value) in super::ray::UINT_CONSTANTS {
+            builder.constant(name, Type::UINT, alloc::vec![Value::Uint(value)]);
+        }
+        builder.constant(
+            "gl_EnableOpacityMicromapEXT",
+            Type::BOOL,
+            alloc::vec![Value::Bool(false)],
+        );
+        for group in super::ray::VARIABLES {
+            if !available(group.stages, stage) {
+                continue;
+            }
+            for line in group.text.lines() {
+                if let Some(declared) = parse_declaration(&words(line)) {
+                    builder.variable(&declared.name, declared.ty, declared.qualifiers, None, true);
+                }
+            }
+        }
+    }
     let patch_vertices = u32::try_from(limits.max_patch_vertices).unwrap_or(0);
     let blocks: &[(BlockStorage, Instance)] = match stage {
         Stage::Vertex => &[(BlockStorage::Out, Instance::Anonymous)],

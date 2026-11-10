@@ -81,7 +81,8 @@ impl ExpressionTracer<'_> {
             | Ex::FunctionArgument(_)
             | Ex::LocalVariable(_)
             | Ex::SubgroupBallotResult
-            | Ex::RayQueryProceedResult => {}
+            | Ex::RayQueryProceedResult
+            | Ex::ReportIntersectionResult => {}
 
             // Expressions can refer to constants and overrides, which can refer
             // in turn to expressions, which complicates our nice one-pass
@@ -187,11 +188,11 @@ impl ExpressionTracer<'_> {
                     Iq::NumLevels | Iq::NumLayers | Iq::NumSamples => {}
                 }
             }
-            Ex::RayQueryVertexPositions {
-                query,
-                committed: _,
-            } => {
+            Ex::RayQueryGet { query, value: _ } => {
                 self.expressions_used.insert(query);
+            }
+            Ex::AccelerationStructureFromAddress { address } => {
+                self.expressions_used.insert(address);
             }
             Ex::Unary { op: _, expr } => {
                 self.expressions_used.insert(expr);
@@ -257,12 +258,6 @@ impl ExpressionTracer<'_> {
             | Ex::SubgroupOperationResult { ty } => {
                 self.types_used.insert(ty);
             }
-            Ex::RayQueryGetIntersection {
-                query,
-                committed: _,
-            } => {
-                self.expressions_used.insert(query);
-            }
             Ex::CooperativeLoad { ref data, .. } => {
                 self.expressions_used.insert(data.pointer);
                 self.expressions_used.insert(data.stride);
@@ -295,7 +290,8 @@ impl ModuleMap {
             | Ex::FunctionArgument(_)
             | Ex::LocalVariable(_)
             | Ex::SubgroupBallotResult
-            | Ex::RayQueryProceedResult => {}
+            | Ex::RayQueryProceedResult
+            | Ex::ReportIntersectionResult => {}
 
             // Expressions that contain handles that need to be adjusted.
             Ex::Constant(ref mut constant) => self.constants.adjust(constant)?,
@@ -447,14 +443,11 @@ impl ModuleMap {
                 adjust(value)?;
                 self.types.adjust(ty)?;
             }
-            Ex::RayQueryGetIntersection {
+            Ex::RayQueryGet {
                 ref mut query,
-                committed: _,
+                value: _,
             } => adjust(query)?,
-            Ex::RayQueryVertexPositions {
-                ref mut query,
-                committed: _,
-            } => adjust(query)?,
+            Ex::AccelerationStructureFromAddress { ref mut address } => adjust(address)?,
             Ex::CooperativeLoad { ref mut data, .. } => {
                 adjust(&mut data.pointer)?;
                 adjust(&mut data.stride)?;

@@ -310,6 +310,8 @@ pub enum OpaqueKind {
     Texture,
     Image,
     SubpassInput,
+    AccelerationStructure,
+    RayQuery,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -403,10 +405,33 @@ impl Opaque {
         }
     }
 
+    pub const fn ray(kind: OpaqueKind) -> Self {
+        Self {
+            kind,
+            sampled: SampledType::Float,
+            dimension: TextureDimension::D2,
+            arrayed: false,
+            shadow: false,
+            multisample: false,
+        }
+    }
+
+    pub const fn is_acceleration_structure(self) -> bool {
+        matches!(self.kind, OpaqueKind::AccelerationStructure)
+    }
+
+    pub const fn is_ray_query(self) -> bool {
+        matches!(self.kind, OpaqueKind::RayQuery)
+    }
+
     pub fn from_keyword(word: &str) -> Option<Self> {
         match word {
             "sampler" => return Some(Self::plain_sampler(false)),
             "samplerShadow" => return Some(Self::plain_sampler(true)),
+            "accelerationStructureEXT" | "accelerationStructureNV" => {
+                return Some(Self::ray(OpaqueKind::AccelerationStructure))
+            }
+            "rayQueryEXT" => return Some(Self::ray(OpaqueKind::RayQuery)),
             _ => {}
         }
         let families = ["sampler", "texture", "image", "subpassInput"];
@@ -501,6 +526,10 @@ impl fmt::Display for Opaque {
                     if self.multisample { "MS" } else { "" }
                 );
             }
+            OpaqueKind::AccelerationStructure => {
+                return formatter.write_str("accelerationStructureEXT");
+            }
+            OpaqueKind::RayQuery => return formatter.write_str("rayQueryEXT"),
             OpaqueKind::CombinedSampler => "sampler",
             OpaqueKind::Texture => "texture",
             OpaqueKind::Image => "image",
@@ -1007,6 +1036,11 @@ pub enum BlockStorage {
     Out,
     ResourceHeap,
     SamplerHeap,
+    RayPayload,
+    RayPayloadIn,
+    HitAttribute,
+    CallableData,
+    CallableDataIn,
 }
 
 impl BlockStorage {

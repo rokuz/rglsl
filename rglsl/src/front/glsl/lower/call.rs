@@ -29,6 +29,14 @@ impl FunctionLowerer<'_, '_> {
             Some(&Callee::Abort) => self.abort(&call.arguments, at).map(|()| None),
             Some(&Callee::Builtin(id)) => self.builtin_call(id, &call.arguments, at),
             Some(&Callee::Constructor(ref ty)) => {
+                if ty
+                    .as_opaque()
+                    .is_some_and(rglsl_sema::types::Opaque::is_acceleration_structure)
+                {
+                    return self
+                        .acceleration_structure_from(&call.arguments, at)
+                        .map(Some);
+                }
                 if ty.is_opaque() {
                     return Err(unsupported(
                         "combined image samplers outside the first argument of a texture function",
@@ -145,6 +153,15 @@ impl FunctionLowerer<'_, '_> {
             .zip(&function.parameters)
             .zip(parameter_types)
         {
+            if parameter.direction == Direction::In
+                && parameter
+                    .ty
+                    .as_opaque()
+                    .is_some_and(rglsl_sema::types::Opaque::is_ray_query)
+            {
+                values.push(self.ray_query_pointer(argument)?);
+                continue;
+            }
             if parameter.direction == Direction::In {
                 let value = self.rvalue(argument)?;
                 let source = match self.expressions[value] {

@@ -61,6 +61,10 @@ pub(super) const fn map_storage_class(space: crate::AddressSpace) -> spirv::Stor
         //accessed in a ray tracing pipeline stage.
         crate::AddressSpace::RayPayload => spirv::StorageClass::RayPayloadKHR,
         crate::AddressSpace::IncomingRayPayload => spirv::StorageClass::IncomingRayPayloadKHR,
+        crate::AddressSpace::HitAttribute => spirv::StorageClass::HitAttributeKHR,
+        crate::AddressSpace::CallableData => spirv::StorageClass::CallableDataKHR,
+        crate::AddressSpace::IncomingCallableData => spirv::StorageClass::IncomingCallableDataKHR,
+        crate::AddressSpace::ShaderRecord => spirv::StorageClass::ShaderRecordBufferKHR,
         crate::AddressSpace::Input => spirv::StorageClass::Input,
         crate::AddressSpace::Output => spirv::StorageClass::Output,
         crate::AddressSpace::PhysicalStorage { .. } => spirv::StorageClass::PhysicalStorageBuffer,
@@ -108,6 +112,7 @@ pub fn global_needs_wrapper(ir_module: &crate::Module, var: &crate::GlobalVariab
     match var.space {
         crate::AddressSpace::Uniform
         | crate::AddressSpace::Storage { .. }
+        | crate::AddressSpace::ShaderRecord
         | crate::AddressSpace::Immediate => {}
         _ => return false,
     };

@@ -2075,31 +2075,7 @@ impl BlockContext<'_> {
                 });
                 id
             }
-            crate::Expression::LocalVariable(variable) => {
-                if let Some(rq_tracker) = self
-                    .function
-                    .ray_query_initialization_tracker_variables
-                    .get(&variable)
-                {
-                    let Some(t_max_tracker) = self
-                        .function
-                        .ray_query_t_max_tracker_variables
-                        .get(&variable)
-                    else {
-                        return Err(Error::Validation(
-                            "ray query has an initialization tracker but no t_max tracker",
-                        ));
-                    };
-                    self.ray_query_tracker_expr.insert(
-                        expr_handle,
-                        super::RayQueryTrackers {
-                            initialized_tracker: rq_tracker.id,
-                            t_max_tracker: t_max_tracker.id,
-                        },
-                    );
-                }
-                self.function.variables[&variable].id
-            }
+            crate::Expression::LocalVariable(variable) => self.function.variables[&variable].id,
             crate::Expression::Load { pointer } => {
                 self.physical_component_load = self.loaded_by_swizzle(expr_handle);
                 let id = self.write_checked_load(
@@ -2116,6 +2092,7 @@ impl BlockContext<'_> {
             | crate::Expression::AtomicResult { .. }
             | crate::Expression::WorkGroupUniformLoadResult { .. }
             | crate::Expression::RayQueryProceedResult
+            | crate::Expression::ReportIntersectionResult
             | crate::Expression::SubgroupBallotResult
             | crate::Expression::SubgroupOperationResult { .. } => self.cached.get(expr_handle)?,
             crate::Expression::As {
@@ -2282,33 +2259,19 @@ impl BlockContext<'_> {
                 self.write_buffer_pointer(descriptor, result_type_id, block)?
             }
             crate::Expression::HeapOffset { .. } => 0,
-            crate::Expression::RayQueryGetIntersection { query, committed } => {
-                let query_id = self.cached.get(query)?;
-                let init_tracker_id = self.ray_query_trackers(query)?;
-                let Some(ray_intersection) = self.ir_module.special_types.ray_intersection else {
-                    return Err(Error::Validation(
-                        "ray query intersection requires the intersection type",
-                    ));
-                };
-                let intersection_type_id = self.get_handle_type_id(ray_intersection)?;
-                let func_id = self
-                    .writer
-                    .write_ray_query_get_intersection_function(committed, intersection_type_id)?;
+            crate::Expression::RayQueryGet { query, value } => {
+                self.write_ray_query_get(query, value, result_type_id, block)?
+            }
+            crate::Expression::AccelerationStructureFromAddress { address } => {
+                let address_id = self.cached.get(address)?;
                 let id = self.gen_id();
-                block.body.push(Instruction::function_call(
-                    intersection_type_id,
+                block.body.push(Instruction::unary(
+                    spirv::Op::ConvertUToAccelerationStructureKHR,
+                    result_type_id,
                     id,
-                    func_id,
-                    &[query_id, init_tracker_id.initialized_tracker],
+                    address_id,
                 ));
                 id
-            }
-            crate::Expression::RayQueryVertexPositions { query, committed } => {
-                self.writer.require_any(
-                    "RayQueryVertexPositions",
-                    &[spirv::Capability::RayQueryPositionFetchKHR],
-                )?;
-                self.write_ray_query_return_vertex_position(query, block, committed)?
             }
             crate::Expression::CooperativeLoad { ref data, .. } => {
                 self.writer.require_any(
@@ -4752,7 +4715,12 @@ impl BlockContext<'_> {
                     };
                 }
                 Statement::RayPipelineFunction(ref fun) => {
-                    self.write_ray_tracing_pipeline_function(fun, &mut block)?;
+                    if let Some(terminator) =
+                        self.write_ray_tracing_pipeline_function(fun, &mut block)?
+                    {
+                        self.function.consume(block, terminator);
+                        return Ok(BlockExitDisposition::Discarded);
+                    }
                 }
             }
         }

@@ -1,161 +1,111 @@
-//! Code for ray tracing pipelines
+use spirv::Op;
 
-use crate::back::spv::{
-    Block, BlockContext, Error, Instruction, LocalType, LookupRaytracingFunction, Writer,
-    WriterFlags,
-};
-
-impl Writer {
-    fn write_trace_ray(
-        &mut self,
-        ir_module: &crate::Module,
-        payload: crate::Handle<crate::GlobalVariable>,
-    ) -> Result<spirv::Word, Error> {
-        if let Some(&word) = self
-            .ray_tracing_functions
-            .get(&LookupRaytracingFunction::TraceRay { payload })
-        {
-            return Ok(word);
-        }
-
-        let acceleration_structure_type_id =
-            self.get_localtype_id(LocalType::AccelerationStructure);
-
-        let Some(ray_desc) = ir_module.special_types.ray_desc else {
-            return Err(Error::Validation(
-                "traceRay requires the ray descriptor type",
-            ));
-        };
-        let ray_desc_type_id = self.get_handle_type_id(ray_desc)?;
-
-        let (func_id, mut function, arg_ids) = self.write_function_signature(
-            &[acceleration_structure_type_id, ray_desc_type_id],
-            self.void_type,
-        );
-
-        let acceleration_structure_id = arg_ids[0];
-        let desc_id = arg_ids[1];
-        let payload_id = self.global_variables[payload].access_id;
-
-        let label_id = self.id_gen.next();
-        let mut block = Block::new(label_id);
-
-        let super::ExtractedRayDesc {
-            ray_flags_id,
-            cull_mask_id,
-            tmin_id,
-            tmax_id,
-            ray_origin_id,
-            ray_dir_id,
-            valid_id,
-        } = self.write_extract_ray_desc(&mut block, desc_id, self.trace_ray_argument_validation);
-
-        let merge_label_id = self.id_gen.next();
-        let merge_block = Block::new(merge_label_id);
-
-        // NOTE: this block will be unreachable if trace ray validation is disabled.
-        let invalid_label_id = self.id_gen.next();
-        let mut invalid_block = Block::new(invalid_label_id);
-
-        let valid_label_id = self.id_gen.next();
-        let mut valid_block = Block::new(valid_label_id);
-
-        match valid_id {
-            Some(all_valid_id) => {
-                block.body.push(Instruction::selection_merge(
-                    merge_label_id,
-                    spirv::SelectionControl::NONE,
-                ));
-                function.consume(
-                    block,
-                    Instruction::branch_conditional(all_valid_id, valid_label_id, invalid_label_id),
-                );
-            }
-            None => {
-                function.consume(block, Instruction::branch(valid_label_id));
-            }
-        }
-
-        let zero = self.get_constant_scalar(crate::Literal::U32(0));
-
-        valid_block.body.push(Instruction::trace_ray(
-            acceleration_structure_id,
-            ray_flags_id,
-            cull_mask_id,
-            zero,
-            zero,
-            zero,
-            ray_origin_id,
-            tmin_id,
-            ray_dir_id,
-            tmax_id,
-            payload_id,
-        ));
-
-        function.consume(valid_block, Instruction::branch(merge_label_id));
-
-        if self.flags.contains(WriterFlags::PRINT_ON_TRACE_RAYS_FAIL) {
-            self.write_debug_printf(
-                &mut invalid_block,
-                "rglsl ignored invalid arguments to traceRay with flags: %u t_min: %f t_max: %f origin: %v4f dir: %v4f",
-                &[
-                    ray_flags_id,
-                    tmin_id,
-                    tmax_id,
-                    ray_origin_id,
-                    ray_dir_id,
-                ],
-            );
-        }
-
-        function.consume(invalid_block, Instruction::branch(merge_label_id));
-
-        function.consume(merge_block, Instruction::return_void());
-
-        function.to_words(&mut self.logical_layout.function_definitions)?;
-
-        self.ray_tracing_functions
-            .insert(LookupRaytracingFunction::TraceRay { payload }, func_id);
-
-        Ok(func_id)
-    }
-}
+use crate::back::spv::{Block, BlockContext, Error, Instruction};
 
 impl BlockContext<'_> {
+    fn ray_tracing_data_id(&mut self, data: crate::RayTracingData) -> Result<spirv::Word, Error> {
+        match data {
+            crate::RayTracingData::Pointer(pointer) => self.cached.get(pointer),
+            crate::RayTracingData::Location(location) => {
+                let location = i32::try_from(location)
+                    .map_err(|_| Error::Validation("a ray tracing location is too large"))?;
+                Ok(self
+                    .writer
+                    .get_constant_scalar(crate::Literal::I32(location)))
+            }
+        }
+    }
+
     pub(in super::super) fn write_ray_tracing_pipeline_function(
         &mut self,
         function: &crate::RayPipelineFunction,
         block: &mut Block,
-    ) -> Result<(), Error> {
+    ) -> Result<Option<Instruction>, Error> {
+        self.writer.require_ray_tracing()?;
         match *function {
             crate::RayPipelineFunction::TraceRay {
                 acceleration_structure,
-                descriptor,
+                flags,
+                cull_mask,
+                sbt_offset,
+                sbt_stride,
+                miss_index,
+                origin,
+                tmin,
+                direction,
+                tmax,
+                time,
                 payload,
             } => {
-                // Checked for when validating the module in `validate_block_impl`.
-                let crate::Expression::GlobalVariable(payload) =
-                    self.ir_function.expressions[payload]
-                else {
-                    return Err(Error::Validation(
-                        "traceRay payload is not a global variable",
-                    ));
+                let mut operands = alloc::vec![self.get_handle_id(acceleration_structure)?];
+                for operand in [
+                    flags, cull_mask, sbt_offset, sbt_stride, miss_index, origin, tmin, direction,
+                    tmax,
+                ]
+                .into_iter()
+                .chain(time)
+                {
+                    operands.push(self.cached.get(operand)?);
+                }
+                operands.push(self.ray_tracing_data_id(payload)?);
+                let op = match (time, payload) {
+                    (Some(_), _) => {
+                        self.writer.require_any(
+                            "ray tracing motion blur",
+                            &[spirv::Capability::RayTracingMotionBlurNV],
+                        )?;
+                        self.writer.use_extension("SPV_NV_ray_tracing_motion_blur");
+                        Op::TraceRayMotionNV
+                    }
+                    (None, crate::RayTracingData::Pointer(_)) => Op::TraceRayKHR,
+                    (None, crate::RayTracingData::Location(_)) => Op::TraceNV,
                 };
-
-                let desc_id = self.cached.get(descriptor)?;
-                let acc_struct_id = self.get_handle_id(acceleration_structure)?;
-
-                let func = self.writer.write_trace_ray(self.ir_module, payload)?;
-
-                let func_id = self.gen_id();
-                block.body.push(Instruction::function_call(
-                    self.writer.void_type,
-                    func_id,
-                    func,
-                    &[acc_struct_id, desc_id],
+                block.body.push(Instruction::ray(op, None, &operands));
+                Ok(None)
+            }
+            crate::RayPipelineFunction::ExecuteCallable { sbt_index, data } => {
+                let operands = [self.cached.get(sbt_index)?, self.ray_tracing_data_id(data)?];
+                let op = match data {
+                    crate::RayTracingData::Pointer(_) => Op::ExecuteCallableKHR,
+                    crate::RayTracingData::Location(_) => Op::ExecuteCallableNV,
+                };
+                block.body.push(Instruction::ray(op, None, &operands));
+                Ok(None)
+            }
+            crate::RayPipelineFunction::ReportIntersection {
+                hit_t,
+                hit_kind,
+                result,
+            } => {
+                let operands = [self.cached.get(hit_t)?, self.cached.get(hit_kind)?];
+                let id = self.gen_id();
+                self.cached.set(result, id)?;
+                let bool_type_id = self.writer.get_bool_type_id();
+                block.body.push(Instruction::ray(
+                    Op::ReportIntersectionKHR,
+                    Some((bool_type_id, id)),
+                    &operands,
                 ));
+                Ok(None)
+            }
+            crate::RayPipelineFunction::IgnoreIntersection { nv: true } => {
+                block
+                    .body
+                    .push(Instruction::ray(Op::IgnoreIntersectionNV, None, &[]));
+                Ok(None)
+            }
+            crate::RayPipelineFunction::TerminateRay { nv: true } => {
+                block
+                    .body
+                    .push(Instruction::ray(Op::TerminateRayNV, None, &[]));
+                Ok(None)
+            }
+            crate::RayPipelineFunction::IgnoreIntersection { nv: false } => {
+                Ok(Some(Instruction::ray(Op::IgnoreIntersectionKHR, None, &[])))
+            }
+            crate::RayPipelineFunction::TerminateRay { nv: false } => {
+                Ok(Some(Instruction::ray(Op::TerminateRayKHR, None, &[])))
             }
         }
-        Ok(())
     }
 }

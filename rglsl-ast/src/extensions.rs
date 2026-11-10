@@ -264,6 +264,10 @@ pub mod names {
     pub const BUFFER_REFERENCE: &str = "GL_EXT_buffer_reference";
     pub const BUFFER_REFERENCE2: &str = "GL_EXT_buffer_reference2";
     pub const BUFFER_REFERENCE_UVEC2: &str = "GL_EXT_buffer_reference_uvec2";
+    pub const RAY_TRACING_NV: &str = "GL_NV_ray_tracing";
+    pub const RAY_TRACING_EXT: &str = "GL_EXT_ray_tracing";
+    pub const RAY_QUERY: &str = "GL_EXT_ray_query";
+    pub const DISPLACEMENT_MICROMAP: &str = "GL_NV_displacement_micromap";
 }
 
 use names::{
@@ -338,6 +342,9 @@ pub enum Feature {
     Float16Arithmetic,
     Int16Arithmetic,
     Int8Arithmetic,
+    AccelerationStructureNv,
+    AccelerationStructureExt,
+    RayQueryType,
 }
 
 impl Feature {
@@ -375,6 +382,13 @@ impl Feature {
                 EXPLICIT_INT16,
             ],
             Self::Int8Arithmetic => &[EXPLICIT_ARITHMETIC_TYPES, NV_GPU_SHADER5, EXPLICIT_INT8],
+            Self::AccelerationStructureNv => &[names::RAY_TRACING_NV],
+            Self::AccelerationStructureExt => &[
+                names::RAY_TRACING_EXT,
+                names::RAY_QUERY,
+                names::DISPLACEMENT_MICROMAP,
+            ],
+            Self::RayQueryType => &[names::RAY_QUERY],
         }
     }
 
@@ -404,7 +418,13 @@ impl Feature {
         let family = |scalars: [&str; 2], stems: [&str; 2]| {
             scalars.contains(&word) || stems.iter().any(|stem| vector(stem))
         };
-        Some(if family(["int64_t", "uint64_t"], ["i64vec", "u64vec"]) {
+        Some(if word == "accelerationStructureNV" {
+            Self::AccelerationStructureNv
+        } else if word == "accelerationStructureEXT" {
+            Self::AccelerationStructureExt
+        } else if word == "rayQueryEXT" {
+            Self::RayQueryType
+        } else if family(["int64_t", "uint64_t"], ["i64vec", "u64vec"]) {
             Self::Int64Type
         } else if family(["int8_t", "uint8_t"], ["i8vec", "u8vec"]) {
             Self::Int8Type

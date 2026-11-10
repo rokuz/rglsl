@@ -337,10 +337,20 @@ pub enum StorageQualifier {
     NonPrivate,
     ResourceHeap,
     SamplerHeap,
+    RayPayloadNV,
+    RayPayloadEXT,
+    RayPayloadInNV,
+    RayPayloadInEXT,
+    HitAttributeNV,
+    HitAttributeEXT,
+    CallableDataNV,
+    CallableDataEXT,
+    CallableDataInNV,
+    CallableDataInEXT,
 }
 
 impl StorageQualifier {
-    pub const ALL: [Self; 25] = [
+    pub const ALL: [Self; 35] = [
         Self::Const,
         Self::In,
         Self::Out,
@@ -366,6 +376,16 @@ impl StorageQualifier {
         Self::NonPrivate,
         Self::ResourceHeap,
         Self::SamplerHeap,
+        Self::RayPayloadNV,
+        Self::RayPayloadEXT,
+        Self::RayPayloadInNV,
+        Self::RayPayloadInEXT,
+        Self::HitAttributeNV,
+        Self::HitAttributeEXT,
+        Self::CallableDataNV,
+        Self::CallableDataEXT,
+        Self::CallableDataInNV,
+        Self::CallableDataInEXT,
     ];
 
     pub const fn keyword(self) -> &'static str {
@@ -395,6 +415,16 @@ impl StorageQualifier {
             Self::NonPrivate => "nonprivate",
             Self::ResourceHeap => "resourceheap",
             Self::SamplerHeap => "samplerheap",
+            Self::RayPayloadNV => "rayPayloadNV",
+            Self::RayPayloadEXT => "rayPayloadEXT",
+            Self::RayPayloadInNV => "rayPayloadInNV",
+            Self::RayPayloadInEXT => "rayPayloadInEXT",
+            Self::HitAttributeNV => "hitAttributeNV",
+            Self::HitAttributeEXT => "hitAttributeEXT",
+            Self::CallableDataNV => "callableDataNV",
+            Self::CallableDataEXT => "callableDataEXT",
+            Self::CallableDataInNV => "callableDataInNV",
+            Self::CallableDataInEXT => "callableDataInEXT",
         }
     }
 
@@ -782,6 +812,8 @@ pub enum JumpStatement {
     Break,
     Return(Option<Expression>),
     Discard,
+    TerminateRay,
+    IgnoreIntersection,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]

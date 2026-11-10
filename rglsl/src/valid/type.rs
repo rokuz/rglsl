@@ -215,6 +215,9 @@ const fn ptr_space_argument_flag(space: crate::AddressSpace) -> TypeFlags {
         | As::Private
         | As::RayPayload
         | As::IncomingRayPayload
+        | As::HitAttribute
+        | As::CallableData
+        | As::IncomingCallableData
         | As::PhysicalStorage { .. } => TypeFlags::ARGUMENT,
         As::Uniform
         | As::Storage { .. }
@@ -224,6 +227,7 @@ const fn ptr_space_argument_flag(space: crate::AddressSpace) -> TypeFlags {
         | As::TaskPayload
         | As::Input
         | As::Output
+        | As::ShaderRecord
         | As::DescriptorHeap(_) => TypeFlags::empty(),
     }
 }

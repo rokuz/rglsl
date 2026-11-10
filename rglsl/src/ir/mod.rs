@@ -362,6 +362,10 @@ pub enum AddressSpace {
     /// Each entrypoint may reference only one variable in this scope, as
     /// only one may be passed as a payload.
     IncomingRayPayload,
+    HitAttribute,
+    CallableData,
+    IncomingCallableData,
+    ShaderRecord,
 
     /// A stage input: a value the previous stage or the pipeline provides.
     ///
@@ -554,6 +558,11 @@ pub enum BuiltIn {
     /// the intersection function if any, otherwise this is 254 (0xFE) for a
     /// front facing triangle and 255 (0xFF) for a back facing triangle
     HitKind,
+    InstanceId,
+    IncomingRayFlags,
+    CullMask,
+    HitTriangleVertexPositions,
+    CurrentRayTime,
 }
 
 /// Number of bytes per scalar.
@@ -2210,26 +2219,21 @@ pub enum Expression {
         offset: Handle<Expression>,
     },
 
-    /// Get the Positions of the triangle hit by the [`RayQuery`]
-    ///
-    /// [`RayQuery`]: Statement::RayQuery
-    RayQueryVertexPositions {
-        query: Handle<Expression>,
-        committed: bool,
-    },
-
     /// Result of a [`Proceed`] [`RayQuery`] statement.
     ///
     /// [`Proceed`]: RayQueryFunction::Proceed
     /// [`RayQuery`]: Statement::RayQuery
     RayQueryProceedResult,
 
-    /// Return an intersection found by `query`.
-    ///
-    /// If `committed` is true, return the committed result available when
-    RayQueryGetIntersection {
+    RayQueryGet {
         query: Handle<Expression>,
-        committed: bool,
+        value: RayQueryValue,
+    },
+
+    ReportIntersectionResult,
+
+    AccelerationStructureFromAddress {
+        address: Handle<Expression>,
     },
 
     /// Result of a [`SubgroupBallot`] statement.
@@ -2298,20 +2302,13 @@ pub struct SwitchCase {
 pub enum RayQueryFunction {
     /// Initialize the `RayQuery` object.
     Initialize {
-        /// The acceleration structure within which this query should search for hits.
-        ///
-        /// The expression must be an [`AccelerationStructure`].
-        ///
-        /// [`AccelerationStructure`]: TypeInner::AccelerationStructure
         acceleration_structure: Handle<Expression>,
-
-        #[allow(rustdoc::private_intra_doc_links)]
-        /// A struct of detailed parameters for the ray query.
-        ///
-        /// This expression should have the struct type given in
-        /// [`SpecialTypes::ray_desc`]. This is available in the WGSL
-        /// front end as the `RayDesc` type.
-        descriptor: Handle<Expression>,
+        flags: Handle<Expression>,
+        cull_mask: Handle<Expression>,
+        origin: Handle<Expression>,
+        tmin: Handle<Expression>,
+        direction: Handle<Expression>,
+        tmax: Handle<Expression>,
     },
 
     /// Start or continue the query given by the statement's [`query`] operand.
@@ -2950,6 +2947,9 @@ pub struct EntryPoint {
     pub interface: Vec<Handle<GlobalVariable>>,
     #[cfg_attr(feature = "deserialize", serde(default))]
     pub transform_feedback: bool,
+    #[cfg_attr(feature = "serialize", serde(skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    pub opacity_micromap: Option<Handle<Expression>>,
     #[cfg_attr(feature = "deserialize", serde(default))]
     #[cfg_attr(
         feature = "serialize",
@@ -3195,30 +3195,6 @@ bitflags::bitflags! {
     }
 }
 
-/// Type of a ray query intersection.
-/// Matching vulkan constants can be found in
-/// <https://github.com/KhronosGroup/SPIRV-Registry/blob/main/extensions/KHR/SPV_KHR_ray_query.asciidoc>
-/// but the actual values are different for candidate intersections.
-#[cfg_attr(feature = "serialize", derive(Serialize))]
-#[cfg_attr(feature = "deserialize", derive(Deserialize))]
-#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub enum RayQueryIntersection {
-    /// No intersection found.
-    /// Matches `RayQueryCommittedIntersectionNoneKHR`.
-    #[default]
-    None = 0,
-    /// Intersecting with triangles.
-    /// Matches `RayQueryCommittedIntersectionTriangleKHR` and `RayQueryCandidateIntersectionTriangleKHR`.
-    Triangle = 1,
-    /// Intersecting with generated primitives.
-    /// Matches `RayQueryCommittedIntersectionGeneratedKHR`.
-    Generated = 2,
-    /// Intersecting with Axis Aligned Bounding Boxes.
-    /// Matches `RayQueryCandidateIntersectionAABBKHR`.
-    Aabb = 3,
-}
-
 /// Doc comments preceding items.
 ///
 /// These can be used to generate automated documentation,
@@ -3286,28 +3262,96 @@ pub struct MeshStageInfo {
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum RayPipelineFunction {
-    /// Traces a ray through the given acceleration structure
     TraceRay {
-        /// The acceleration structure within which this ray should search for hits.
-        ///
-        /// The expression must be an [`AccelerationStructure`].
-        ///
-        /// [`AccelerationStructure`]: TypeInner::AccelerationStructure
         acceleration_structure: Handle<Expression>,
-
-        #[allow(rustdoc::private_intra_doc_links)]
-        /// A struct of detailed parameters for the ray query.
-        ///
-        /// This expression should have the struct type given in
-        /// [`SpecialTypes::ray_desc`]. This is available in the WGSL
-        /// front end as the `RayDesc` type.
-        descriptor: Handle<Expression>,
-
-        /// A pointer in the ray_payload or incoming_ray_payload address spaces
-        payload: Handle<Expression>,
-        // Do we want miss index? What about sbt offset and sbt stride (could be hard to validate)?
-        // https://github.com/gfx-rs/wgpu/issues/8894
+        flags: Handle<Expression>,
+        cull_mask: Handle<Expression>,
+        sbt_offset: Handle<Expression>,
+        sbt_stride: Handle<Expression>,
+        miss_index: Handle<Expression>,
+        origin: Handle<Expression>,
+        tmin: Handle<Expression>,
+        direction: Handle<Expression>,
+        tmax: Handle<Expression>,
+        time: Option<Handle<Expression>>,
+        payload: RayTracingData,
     },
+    ExecuteCallable {
+        sbt_index: Handle<Expression>,
+        data: RayTracingData,
+    },
+    ReportIntersection {
+        hit_t: Handle<Expression>,
+        hit_kind: Handle<Expression>,
+        result: Handle<Expression>,
+    },
+    IgnoreIntersection {
+        nv: bool,
+    },
+    TerminateRay {
+        nv: bool,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub enum RayTracingData {
+    Pointer(Handle<Expression>),
+    Location(u32),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub enum RayQueryValue {
+    RayFlags,
+    RayTMin,
+    WorldRayOrigin,
+    WorldRayDirection,
+    CandidateAabbOpaque,
+    Intersection {
+        committed: bool,
+        value: RayQueryIntersectionValue,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub enum RayQueryIntersectionValue {
+    Type,
+    T,
+    InstanceCustomIndex,
+    InstanceId,
+    InstanceShaderBindingTableRecordOffset,
+    GeometryIndex,
+    PrimitiveIndex,
+    Barycentrics,
+    FrontFace,
+    ObjectRayDirection,
+    ObjectRayOrigin,
+    ObjectToWorld,
+    WorldToObject,
+    TriangleVertexPositions,
+}
+
+bitflags::bitflags! {
+    #[cfg_attr(feature = "serialize", derive(Serialize))]
+    #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+    #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+    #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    pub struct RayTracingFeatures: u8 {
+        const NV = 1;
+        const PAYLOAD_LOCATIONS = 1 << 1;
+        const CULL_MASK = 1 << 2;
+        const POSITION_FETCH = 1 << 3;
+        const PRIMITIVE_CULLING = 1 << 4;
+        const OPACITY_MICROMAP = 1 << 5;
+    }
 }
 
 /// Shader module.
@@ -3409,4 +3453,10 @@ pub struct Module {
     )]
     #[cfg_attr(feature = "deserialize", serde(default))]
     pub descriptor_heap: bool,
+    #[cfg_attr(
+        feature = "serialize",
+        serde(skip_serializing_if = "RayTracingFeatures::is_empty")
+    )]
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    pub ray_tracing: RayTracingFeatures,
 }
