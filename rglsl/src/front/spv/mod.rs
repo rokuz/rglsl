@@ -37,7 +37,7 @@ mod null;
 pub use error::Error;
 
 use alloc::{borrow::ToOwned, string::String, vec, vec::Vec};
-use core::{convert::TryInto, mem, num::NonZeroU32};
+use core::{mem, num::NonZeroU32};
 
 use half::f16;
 use petgraph::graphmap::GraphMap;
@@ -1087,7 +1087,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
         let kind = ctx.module.types[result_lookup_ty.handle]
             .inner
             .scalar_kind()
-            .unwrap();
+            .ok_or(Error::UnsupportedType(result_lookup_ty.handle))?;
 
         let expr = crate::Expression::Unary {
             op,
@@ -1153,7 +1153,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
         let kind = ctx.module.types[expected_lookup_ty.handle]
             .inner
             .scalar_kind()
-            .unwrap();
+            .ok_or(Error::UnsupportedType(expected_lookup_ty.handle))?;
 
         let expr = crate::Expression::Binary {
             op,
@@ -1221,14 +1221,14 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
         let p1_kind = ctx.module.types[p1_lookup_ty.handle]
             .inner
             .scalar_kind()
-            .unwrap();
+            .ok_or(Error::UnsupportedType(p1_lookup_ty.handle))?;
         let p2_lexp = self.lookup_expression.lookup(p2_id)?;
         let right = self.get_expr_handle(p2_id, p2_lexp, ctx, emitter, block, body_idx);
         let p2_lookup_ty = self.lookup_type.lookup(p2_lexp.type_id)?;
         let p2_kind = ctx.module.types[p2_lookup_ty.handle]
             .inner
             .scalar_kind()
-            .unwrap();
+            .ok_or(Error::UnsupportedType(p2_lookup_ty.handle))?;
 
         let expr = crate::Expression::Binary {
             op,
@@ -1375,7 +1375,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                 let size = match size {
                     crate::ArraySize::Constant(size) => size.get(),
                     crate::ArraySize::Pending(_) => {
-                        unreachable!();
+                        return Err(Error::InvalidAccessType(root_type_id))
                     }
                     // A runtime sized array is not a composite type
                     crate::ArraySize::Dynamic => {
@@ -1537,9 +1537,13 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
         globals: &Arena<crate::GlobalVariable>,
         constants: &Arena<crate::Constant>,
         overrides: &Arena<crate::Override>,
-    ) -> Arena<crate::Expression> {
+    ) -> Result<Arena<crate::Expression>, Error> {
         let mut expressions = Arena::new();
-        assert!(self.lookup_expression.is_empty());
+        if !self.lookup_expression.is_empty() {
+            return Err(Error::InternalError(
+                "expression lookup table is not empty at the start of a function",
+            ));
+        }
         // register global variables
         for (&id, var) in self.lookup_variable.iter() {
             let span = globals.get_span(var.handle);
@@ -1576,7 +1580,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
             );
         }
         // done
-        expressions
+        Ok(expressions)
     }
 
     fn switch(&mut self, state: ModuleState, op: spirv::Op) -> Result<(), Error> {
@@ -1647,7 +1651,9 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                 | S::SubgroupGather { .. }
                 | S::RayPipelineFunction(..)
                 | S::DebugPrintf { .. }
-                | S::Abort { .. } => {}
+                | S::Abort { .. }
+                | S::WorkGroupUniformLoad { .. }
+                | S::CooperativeStore { .. } => {}
                 S::Call {
                     function: ref mut callee,
                     ref arguments,
@@ -1677,8 +1683,6 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                         }
                     }
                 }
-                S::WorkGroupUniformLoad { .. } => unreachable!(),
-                S::CooperativeStore { .. } => unreachable!(),
             }
             i += 1;
         }
@@ -1697,7 +1701,9 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                     .lookup_function
                     .iter_mut()
                     .find(|&(_, ref lookup)| lookup.handle == h)
-                    .unwrap();
+                    .ok_or(Error::InternalError(
+                        "function is missing from the function lookup table",
+                    ))?;
                 (fun_id, mem::take(&mut lookup.parameters_sampling))
             }
             None => (0, Vec::new()),
@@ -1837,7 +1843,10 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                     // skip all the fake IDs registered for the entry points
                     continue;
                 }
-                let lookup = self.lookup_function.get_mut(&fun_id).unwrap();
+                let lookup = self
+                    .lookup_function
+                    .get_mut(&fun_id)
+                    .ok_or(Error::InvalidId(fun_id))?;
                 // take out the function from the old array
                 let fun = mem::take(&mut functions[lookup.handle]);
                 // add it to the newly formed arena, and adjust the lookup
@@ -1860,7 +1869,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                 flags,
                 module.global_variables.get_mut(handle),
                 &mut module.types,
-            ) {
+            )? {
                 return Err(Error::InconsistentComparisonSampling(handle));
             }
         }
@@ -2407,7 +2416,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
         let decor = self.future_decor.remove(&id).unwrap_or_default();
         let base = self.lookup_type.lookup(type_id)?.handle;
 
-        self.layouter.update(module.to_ctx()).unwrap();
+        self.layouter.update(module.to_ctx())?;
 
         // HACK if the underlying type is an image or a sampler, let's assume
         //      that we're dealing with a binding-array
@@ -2488,7 +2497,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
         let decor = self.future_decor.remove(&id).unwrap_or_default();
         let base = self.lookup_type.lookup(type_id)?.handle;
 
-        self.layouter.update(module.to_ctx()).unwrap();
+        self.layouter.update(module.to_ctx())?;
 
         // HACK same case as in `parse_type_array()`
         let inner = if let crate::TypeInner::Image { .. } | crate::TypeInner::Sampler { .. } =
@@ -2539,7 +2548,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
             .as_ref()
             .is_some_and(|decor| decor.storage_buffer);
 
-        self.layouter.update(module.to_ctx()).unwrap();
+        self.layouter.update(module.to_ctx())?;
 
         let mut members = Vec::<crate::StructMember>::with_capacity(inst.wc as usize - 2);
         let mut member_lookups = Vec::with_capacity(members.capacity());
@@ -3225,7 +3234,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                 log::debug!("\t\t  access {handle:?} {index:?}");
                 let ty = self.record_atomic_access(ctx, base)?;
                 let crate::TypeInner::Array { base, .. } = ctx.module.types[ty].inner else {
-                    unreachable!("Atomic operations on Access expressions only work for arrays");
+                    return Err(Error::InvalidAccess(ctx.expressions[handle].clone()));
                 };
                 Ok(base)
             }
@@ -3235,13 +3244,15 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                 match ctx.module.types[ty].inner {
                     crate::TypeInner::Struct { ref members, .. } => {
                         let index = index as usize;
+                        let member_ty = members
+                            .get(index)
+                            .ok_or_else(|| Error::InvalidAccess(ctx.expressions[handle].clone()))?
+                            .ty;
                         self.upgrade_atomics.insert_field(ty, index);
-                        Ok(members[index].ty)
+                        Ok(member_ty)
                     }
-                    crate::TypeInner::Array { base, .. } => {
-                        Ok(base)
-                    }
-                    _ => unreachable!("Atomic operations on AccessIndex expressions only work for structs and arrays"),
+                    crate::TypeInner::Array { base, .. } => Ok(base),
+                    _ => Err(Error::InvalidAccess(ctx.expressions[handle].clone())),
                 }
             }
             crate::Expression::GlobalVariable(h) => {
@@ -3269,13 +3280,11 @@ fn resolve_constant(gctx: crate::proc::GlobalCtx, constant: &Constant) -> Option
 }
 
 pub fn parse_u8_slice(data: &[u8], options: &Options) -> Result<crate::Module, Error> {
-    if !data.len().is_multiple_of(4) {
+    let (chunks, &[]) = data.as_chunks::<4>() else {
         return Err(Error::IncompleteData);
-    }
+    };
 
-    let words = data
-        .chunks(4)
-        .map(|c| u32::from_le_bytes(c.try_into().unwrap()));
+    let words = chunks.iter().copied().map(u32::from_le_bytes);
     Frontend::new(words, options).parse()
 }
 

@@ -51,10 +51,10 @@ changelog was dropped; see upstream for the history before the fork.
   `validate` subcommand except `spv`.
 
 - **The WGSL frontend** (`front/wgsl`, the `wgsl-in` feature), the shared WGSL helpers
-  (`common/wgsl`, `keywords`), its fuzz target and its tests (`wgsl_errors.rs`, the
-  WGSL-based tests in `validation.rs` and `spirv_capabilities.rs`). The validator and the
-  constant evaluator still contain WGSL-shaped rules and abstract types; they are removed as
-  they get in the way.
+  (`common/wgsl`, `keywords`, `front::SymbolTable`), its fuzz target and its tests
+  (`wgsl_errors.rs`, the WGSL-based tests in `validation.rs` and `spirv_capabilities.rs`).
+  The validator and the constant evaluator still contain WGSL-shaped rules and abstract
+  types; they are removed as they get in the way.
 - Upstream's 165 WGSL snapshot inputs were converted to serialized IR (`rglsl/tests/in/ir/*.ron`)
   with the WGSL frontend before it was removed, so the SPIR-V backend keeps that coverage.
   The 24 snapshots that embedded the WGSL source as debug information lost it.
@@ -317,6 +317,14 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   an array sized by a specialization constant in push constants (it built a context without
   overrides); such an array covers the rest of the push-constant range, and
   `ImmediateSlots::from_range` saturates instead of overflowing.
+- **No panics in the front ends.** The SPIR-V front end returns an error where upstream
+  panicked on malformed input or a broken invariant (`front/spv`: the new `Error` variants
+  `InvalidImageCoordinateType`, `Layout` and `InternalError`; `atomic_upgrade::Error::
+  StructNotAccessedAtomically`). `ParseErrors::emit_to_writer*`/`emit_to_stderr*` (GLSL) and
+  `spv::Error::emit_to_writer*` return the rendering error instead of panicking, and
+  `emit_to_string*` falls back to the plain message when the source location cannot be
+  rendered. `VertexFormat::min_acceleration_structure_vertex_stride` and
+  `acceleration_structure_stride_alignment` (`rglsl-types`) return `None` for other formats.
 
 ## Cherry-picked upstream commits
 
