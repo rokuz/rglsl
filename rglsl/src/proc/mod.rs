@@ -237,7 +237,8 @@ impl super::AddressSpace {
             | crate::AddressSpace::Private
             | crate::AddressSpace::WorkGroup => Sa::LOAD | Sa::STORE,
             crate::AddressSpace::Uniform => Sa::LOAD,
-            crate::AddressSpace::Storage { access } => access,
+            crate::AddressSpace::Storage { access }
+            | crate::AddressSpace::PhysicalStorage { access, .. } => access,
             crate::AddressSpace::Handle => Sa::LOAD,
             crate::AddressSpace::Immediate => Sa::LOAD,
             // TaskPayload isn't always writable, but this is checked for elsewhere,

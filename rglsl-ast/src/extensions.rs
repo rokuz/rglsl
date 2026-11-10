@@ -261,6 +261,9 @@ pub mod names {
     pub const MESH_SHADER_EXT: &str = "GL_EXT_mesh_shader";
     pub const MESH_SHADER_NV: &str = "GL_NV_mesh_shader";
     pub const BINDLESS_TEXTURE: &str = "GL_ARB_bindless_texture";
+    pub const BUFFER_REFERENCE: &str = "GL_EXT_buffer_reference";
+    pub const BUFFER_REFERENCE2: &str = "GL_EXT_buffer_reference2";
+    pub const BUFFER_REFERENCE_UVEC2: &str = "GL_EXT_buffer_reference_uvec2";
 }
 
 use names::{

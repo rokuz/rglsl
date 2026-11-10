@@ -787,6 +787,16 @@ impl<'a> ResolveContext<'a> {
             crate::Expression::ArrayLength(_) => {
                 TypeResolution::Value(Ti::Scalar(crate::Scalar::U32))
             }
+            crate::Expression::PhysicalPointer { ty, .. } => TypeResolution::Handle(ty),
+            crate::Expression::PhysicalAddress { split: false, .. } => {
+                TypeResolution::Value(Ti::Scalar(crate::Scalar::U64))
+            }
+            crate::Expression::PhysicalAddress { split: true, .. } => {
+                TypeResolution::Value(Ti::Vector {
+                    size: crate::VectorSize::Bi,
+                    scalar: crate::Scalar::U32,
+                })
+            }
             crate::Expression::RayQueryProceedResult => {
                 TypeResolution::Value(Ti::Scalar(crate::Scalar::BOOL))
             }

@@ -76,7 +76,7 @@ impl Analyzer<'_> {
         };
         matches!(
             self.symbol(id).map(|symbol| &symbol.kind),
-            Some(SymbolKind::Struct(_))
+            Some(SymbolKind::Struct(_) | SymbolKind::Reference(_))
         )
     }
 

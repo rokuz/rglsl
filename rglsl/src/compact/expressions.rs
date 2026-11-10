@@ -235,8 +235,12 @@ impl ExpressionTracer<'_> {
             } => {
                 self.expressions_used.insert(expr);
             }
-            Ex::ArrayLength(expr) => {
+            Ex::ArrayLength(expr) | Ex::PhysicalAddress { pointer: expr, .. } => {
                 self.expressions_used.insert(expr);
+            }
+            Ex::PhysicalPointer { value, ty } => {
+                self.expressions_used.insert(value);
+                self.types_used.insert(ty);
             }
             // `CallResult` expressions do contain a function handle, but any used
             // `CallResult` expression should have an associated `ir::Statement::Call`
@@ -420,6 +424,17 @@ impl ModuleMap {
             Ex::WorkGroupUniformLoadResult { ref mut ty } => self.types.adjust(ty),
             Ex::SubgroupOperationResult { ref mut ty } => self.types.adjust(ty),
             Ex::ArrayLength(ref mut expr) => adjust(expr),
+            Ex::PhysicalAddress {
+                ref mut pointer,
+                split: _,
+            } => adjust(pointer),
+            Ex::PhysicalPointer {
+                ref mut value,
+                ref mut ty,
+            } => {
+                adjust(value);
+                self.types.adjust(ty);
+            }
             Ex::RayQueryGetIntersection {
                 ref mut query,
                 committed: _,

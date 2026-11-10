@@ -220,10 +220,12 @@ impl FunctionLowerer<'_, '_> {
                         }
                     }
                     let ty = variable.ty.clone();
-                    let local = self.local(&ty, Some(declarator.name.node.clone()), at)?;
+                    let ir = self.lw.variable_ir_type(&ty, &variable.qualifiers, at)?;
+                    let local = self.local_typed(ir, Some(declarator.name.node.clone()), at);
                     self.variables.insert(symbol, Local::Variable(local));
                     if let Some(ref initializer) = declarator.initializer {
                         let value = self.initializer(initializer, &ty)?;
+                        let value = self.requalify_to(value, ir, at)?;
                         let pointer = self.local_pointer(local, at)?;
                         self.push(IrStatement::Store { pointer, value }, at);
                     }

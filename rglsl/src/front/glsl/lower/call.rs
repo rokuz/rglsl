@@ -133,9 +133,19 @@ impl FunctionLowerer<'_, '_> {
             GlslType,
             bool,
         )> = Vec::new();
-        for (argument, parameter) in arguments.iter().zip(&function.parameters) {
+        let parameter_types: Vec<Handle<crate::Type>> = self.lw.module.functions[handle]
+            .arguments
+            .iter()
+            .map(|argument| argument.ty)
+            .collect();
+        for ((argument, parameter), parameter_ty) in arguments
+            .iter()
+            .zip(&function.parameters)
+            .zip(parameter_types)
+        {
             if parameter.direction == Direction::In {
-                values.push(self.rvalue(argument)?);
+                let value = self.rvalue(argument)?;
+                values.push(self.requalify_to(value, parameter_ty, at)?);
                 continue;
             }
             let argument_info = self.info(argument)?;
@@ -234,6 +244,13 @@ impl FunctionLowerer<'_, '_> {
         arguments: &[AstExpression],
         at: Span,
     ) -> Result<Handle<Expression>> {
+        if let &[ref argument] = arguments {
+            let from_reference = self.info(argument)?.ty.is_reference();
+            let numeric = ty.is_scalar() || ty.is_vector();
+            if ty.is_reference() || (from_reference && numeric) {
+                return self.reference_construct(ty, argument, at);
+            }
+        }
         if ty.is_array() || ty.is_struct() {
             let mut components = Vec::with_capacity(arguments.len());
             for argument in arguments {

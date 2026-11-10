@@ -213,6 +213,28 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   `process_overrides` still bakes values: it also resolves overrides without name or id and
   clears the ids of the overrides it replaced, so the backend writes no spec constant for them.
 
+- **Physical storage buffer pointers** (`GL_EXT_buffer_reference`; `docs/design/buffer-reference.md`).
+  `AddressSpace::PhysicalStorage { alignment, access, qualifiers }` (new) and `PointerQualifiers`
+  (new): a `Pointer` in this space is a data value (8 bytes, 8-aligned) that can be stored,
+  passed and returned; its `base` is the only type handle that may refer forward, which is how
+  recursive types are built (the frontend replaces a placeholder pointer with
+  `UniqueArena::replace`). The handle and type validators check such bases after all types,
+  `compact` keeps them, and empty structs are allowed. `Expression::PhysicalPointer` and
+  `Expression::PhysicalAddress` (new) convert between such pointers, `u64` and `vec2<u32>`.
+  The SPIR-V backend writes `PhysicalStorageBuffer64` addressing, forward pointers, `Block` and
+  layout decorations on pointees, `Aligned` on every access through such a pointer (glslang's
+  value), `AliasedPointer`/`RestrictPointer`, and never null-initializes variables holding one.
+- **Vulkan memory model.** `Module::vulkan_memory_model` (new, serialized only when set)
+  selects `MemoryModel Vulkan`; loads and stores of coherent and volatile memory then carry
+  `MakePointerAvailable`/`MakePointerVisible`, `NonPrivatePointer` and `Volatile` instead of
+  `Coherent`/`Volatile` decorations, and device-scope barriers use `QueueFamily`.
+- **Atomics on plain integers.** `Statement::Atomic` accepts a pointer to an `i32`/`u32`/
+  `i64`/`u64` scalar as well as to an `Atomic`; the SPIR-V backend gives such operations
+  GLSL's scope (`Device`, `QueueFamily` under the Vulkan memory model) and relaxed semantics.
+- **Scalar block layout** (`std140`/`std430`/`scalar` packing in `front/glsl/lower/offset.rs`)
+  and array strides smaller than the natural size of a matrix element (the matrix layout of
+  the member decides the size).
+
 ## Cherry-picked upstream commits
 
 None yet.

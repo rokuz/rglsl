@@ -1336,7 +1336,9 @@ impl<'a> ConstantEvaluator<'a> {
                     self.array_length(expr, span)
                 }
             },
-            Expression::Load { .. } => Err(ConstantEvaluatorError::Load),
+            Expression::Load { .. }
+            | Expression::PhysicalPointer { .. }
+            | Expression::PhysicalAddress { .. } => Err(ConstantEvaluatorError::Load),
             Expression::LocalVariable(_) => Err(ConstantEvaluatorError::LocalVariable),
             Expression::Derivative { .. } => Err(ConstantEvaluatorError::Derivative),
             Expression::CallResult { .. } => Err(ConstantEvaluatorError::Call),

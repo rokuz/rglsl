@@ -506,6 +506,15 @@ impl<'module> ModuleTracer<'module> {
         // global expressions in valid modules, we can do this with a single
         // forward scan of the type arena. The rules further imply that T can
         // only be referred to by expressions after E.
+        for (_handle, ty) in self.module.types.iter() {
+            if let crate::TypeInner::Pointer {
+                base,
+                space: crate::AddressSpace::PhysicalStorage { .. },
+            } = ty.inner
+            {
+                self.types_used.insert(base);
+            }
+        }
         let mut max_dep = Vec::with_capacity(self.module.types.len());
         let mut previous = None;
         for (_handle, ty) in self.module.types.iter() {

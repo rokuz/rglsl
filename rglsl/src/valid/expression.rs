@@ -25,6 +25,8 @@ pub enum ExpressionError {
     InvalidPointerType(Handle<crate::Expression>),
     #[error("Array length of {0:?} can't be done")]
     InvalidArrayType(Handle<crate::Expression>),
+    #[error("Expression {0:?} cannot be converted to or from a physical storage buffer pointer")]
+    InvalidPhysicalPointer(Handle<crate::Expression>),
     #[error("Get intersection of {0:?} can't be done")]
     InvalidRayQueryType(Handle<crate::Expression>),
     #[error("Splatting {0:?} can't be done")]
@@ -1236,6 +1238,42 @@ impl super::Validator {
                     log::debug!("Array length of {other:?}");
                     return Err(ExpressionError::InvalidArrayType(expr));
                 }
+            },
+            E::PhysicalPointer { value, ty } => {
+                let target = matches!(
+                    module.types[ty].inner,
+                    Ti::Pointer {
+                        space: crate::AddressSpace::PhysicalStorage { .. },
+                        ..
+                    }
+                );
+                let source = match resolver[value] {
+                    Ti::Scalar(crate::Scalar::U64) => true,
+                    Ti::Vector {
+                        size: crate::VectorSize::Bi,
+                        scalar: crate::Scalar::U32,
+                    } => true,
+                    Ti::Pointer {
+                        space: crate::AddressSpace::PhysicalStorage { .. },
+                        ..
+                    }
+                    | Ti::ValuePointer {
+                        space: crate::AddressSpace::PhysicalStorage { .. },
+                        ..
+                    } => true,
+                    _ => false,
+                };
+                if !target || !source {
+                    return Err(ExpressionError::InvalidPhysicalPointer(value));
+                }
+                ShaderStages::all()
+            }
+            E::PhysicalAddress { pointer, split: _ } => match resolver[pointer] {
+                Ti::Pointer {
+                    space: crate::AddressSpace::PhysicalStorage { .. },
+                    ..
+                } => ShaderStages::all(),
+                _ => return Err(ExpressionError::InvalidPhysicalPointer(pointer)),
             },
             E::RayQueryProceedResult => ShaderStages::all(),
             E::RayQueryGetIntersection {

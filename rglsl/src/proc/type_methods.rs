@@ -144,6 +144,7 @@ pub fn vector_sizes() -> impl Iterator<Item = ir::VectorSize> + Clone {
 }
 
 const POINTER_SPAN: u32 = 4;
+const PHYSICAL_POINTER_SPAN: u32 = 8;
 
 impl crate::TypeInner {
     /// Return the scalar type of `self`.
@@ -255,6 +256,10 @@ impl crate::TypeInner {
                 scalar,
                 role: _,
             } => Some(columns as u32 * rows as u32 * scalar.width as u32),
+            Self::Pointer {
+                space: crate::AddressSpace::PhysicalStorage { .. },
+                ..
+            } => Some(PHYSICAL_POINTER_SPAN),
             Self::Pointer { .. } | Self::ValuePointer { .. } => Some(POINTER_SPAN),
             Self::Array {
                 base: _,
@@ -429,6 +434,10 @@ impl crate::TypeInner {
             Ti::Struct { ref members, .. } => members
                 .iter()
                 .all(|member| types[member.ty].inner.is_constructible(types)),
+            Ti::Pointer {
+                space: crate::AddressSpace::PhysicalStorage { .. },
+                ..
+            } => true,
             Ti::Atomic(_)
             | Ti::Pointer { .. }
             | Ti::ValuePointer { .. }

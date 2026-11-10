@@ -272,6 +272,18 @@ pub struct TypeQualifier {
     pub qualifiers: Vec<Spanned<SingleTypeQualifier>>,
 }
 
+impl TypeQualifier {
+    pub fn has_layout(&self, name: &str) -> bool {
+        self.qualifiers.iter().any(|single| match single.node {
+            SingleTypeQualifier::Layout(ref layout) => layout
+                .ids
+                .iter()
+                .any(|id| id.name.node.eq_ignore_ascii_case(name)),
+            _ => false,
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SingleTypeQualifier {
     Storage(StorageQualifier),
@@ -317,10 +329,16 @@ pub enum StorageQualifier {
     Writeonly,
     Attribute,
     Varying,
+    DeviceCoherent,
+    QueueFamilyCoherent,
+    WorkgroupCoherent,
+    SubgroupCoherent,
+    ShaderCallCoherent,
+    NonPrivate,
 }
 
 impl StorageQualifier {
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 23] = [
         Self::Const,
         Self::In,
         Self::Out,
@@ -338,6 +356,12 @@ impl StorageQualifier {
         Self::Writeonly,
         Self::Attribute,
         Self::Varying,
+        Self::DeviceCoherent,
+        Self::QueueFamilyCoherent,
+        Self::WorkgroupCoherent,
+        Self::SubgroupCoherent,
+        Self::ShaderCallCoherent,
+        Self::NonPrivate,
     ];
 
     pub const fn keyword(self) -> &'static str {
@@ -359,6 +383,12 @@ impl StorageQualifier {
             Self::Writeonly => "writeonly",
             Self::Attribute => "attribute",
             Self::Varying => "varying",
+            Self::DeviceCoherent => "devicecoherent",
+            Self::QueueFamilyCoherent => "queuefamilycoherent",
+            Self::WorkgroupCoherent => "workgroupcoherent",
+            Self::SubgroupCoherent => "subgroupcoherent",
+            Self::ShaderCallCoherent => "shadercallcoherent",
+            Self::NonPrivate => "nonprivate",
         }
     }
 

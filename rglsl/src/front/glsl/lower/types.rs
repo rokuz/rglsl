@@ -191,6 +191,7 @@ impl Lowerer<'_> {
             TypeKind::Block(_) => {
                 return Err(unsupported("blocks used as values", span));
             }
+            TypeKind::Reference(block) => return self.reference_type(block, span),
             TypeKind::Opaque(opaque) => self.opaque_inner(opaque, depth, comparison, span)?,
         };
         Ok(self.insert_type(inner))

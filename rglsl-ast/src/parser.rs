@@ -447,7 +447,11 @@ impl<'a> Parser<'a> {
             return Ok(AfterQualifier::Type(qualifier));
         };
         if self.at_nth(1, "{") && word != "struct" {
+            let reference = qualifier.has_layout("buffer_reference");
             let kind = self.parse_block(qualifier)?;
+            if reference {
+                self.declare_struct(word);
+            }
             return self
                 .declaration(start, kind)
                 .map(|declaration| AfterQualifier::Declaration(Box::new(declaration)));
@@ -459,6 +463,13 @@ impl<'a> Parser<'a> {
                 identifiers.push(self.identifier()?);
             }
             self.expect(";")?;
+            if qualifier.has_layout("buffer_reference") {
+                for identifier in &identifiers {
+                    if let Some(name) = identifier.span.text(self.source) {
+                        self.declare_struct(name);
+                    }
+                }
+            }
             let kind = DeclarationKind::QualifiedIdentifiers {
                 qualifier,
                 identifiers,

@@ -347,7 +347,9 @@ impl Analyzer<'_> {
                     (place, storage)
                 }
             }
-            SymbolKind::Struct(_) | SymbolKind::BlockName => (Place::Temporary, Storage::None),
+            SymbolKind::Struct(_) | SymbolKind::Reference(_) | SymbolKind::BlockName => {
+                (Place::Temporary, Storage::None)
+            }
         }
     }
 
@@ -420,7 +422,7 @@ impl Analyzer<'_> {
         };
         self.references.insert(expression.id, id);
         let (constant, value) = match self.symbol(id).map(|symbol| &symbol.kind) {
-            Some(SymbolKind::Struct(_)) => {
+            Some(SymbolKind::Struct(_) | SymbolKind::Reference(_)) => {
                 self.error(
                     expression.span,
                     DiagnosticKind::TypeUsedAsValue(String::from(name)),
@@ -461,6 +463,14 @@ impl Analyzer<'_> {
         let (place, storage) = self.variable_place(id);
         let writeonly = self.is_writeonly(id);
         let non_uniform = self.is_non_uniform(id);
+        if ty.is_reference()
+            && self
+                .symbol(id)
+                .and_then(|symbol| symbol.variable())
+                .is_some_and(|variable| variable.qualifiers.needs_vulkan_memory_model())
+        {
+            self.vulkan_memory_model = true;
+        }
         Operand {
             ty,
             constant,
@@ -471,6 +481,7 @@ impl Analyzer<'_> {
             specialization,
             writeonly,
             non_uniform,
+            through_reference: false,
         }
     }
 
@@ -538,6 +549,9 @@ impl Analyzer<'_> {
         let index_operand = self.value_expression(index);
         if base_operand.ty.is_error() {
             return Operand::error();
+        }
+        if let Some(block) = base_operand.ty.as_reference() {
+            return self.reference_index(span, &base_operand, block, &index_operand, index);
         }
         let Some(element) = base_operand.ty.element_type() else {
             self.error(
@@ -629,6 +643,7 @@ impl Analyzer<'_> {
             specialization: false,
             writeonly: base_operand.writeonly,
             non_uniform: base_operand.non_uniform || index_operand.non_uniform,
+            through_reference: base_operand.through_reference,
         }
     }
 
@@ -703,6 +718,7 @@ impl Analyzer<'_> {
             specialization: false,
             writeonly: base.writeonly,
             non_uniform: base.non_uniform,
+            through_reference: base.through_reference,
         })
     }
 
@@ -726,6 +742,9 @@ impl Analyzer<'_> {
         }
         if let Some(operand) = self.swizzle(&base_operand, field) {
             return operand;
+        }
+        if let TypeKind::Reference(id) = base_operand.ty.kind {
+            return self.reference_field(&base_operand, id, field);
         }
         let members = match base_operand.ty.kind {
             TypeKind::Struct(id) => self.types.structure(id).map(|structure| &structure.members),
@@ -786,6 +805,7 @@ impl Analyzer<'_> {
             specialization: false,
             writeonly: base_operand.writeonly || member.qualifiers.writeonly,
             non_uniform: base_operand.non_uniform,
+            through_reference: base_operand.through_reference,
         }
     }
 
@@ -925,6 +945,11 @@ impl Analyzer<'_> {
         }
         if !self.readable(span, &left_operand) || !self.readable(span, &right_operand) {
             return Operand::error();
+        }
+        if left_operand.ty.contains_reference(&self.types)
+            || right_operand.ty.contains_reference(&self.types)
+        {
+            return self.reference_binary(span, operator, &left_operand, &right_operand);
         }
         let constant = left_operand.constant && right_operand.constant;
         let small_allowed = self.small_arithmetic_allowed(&[&left_operand.ty, &right_operand.ty]);
@@ -1080,6 +1105,11 @@ impl Analyzer<'_> {
             return Operand::error();
         }
         let target_type = &target_operand.ty;
+        if target_type.is_reference() {
+            if let Some(binary) = compound_operator(operator) {
+                return self.reference_compound(span, binary, &target_operand, &value_operand);
+            }
+        }
         let Some(binary) = compound_operator(operator) else {
             self.assignment_small_check(span, target_type, "=");
             let assignable = self.converts(&value_operand.ty, target_type)

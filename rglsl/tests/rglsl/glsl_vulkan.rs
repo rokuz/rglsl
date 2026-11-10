@@ -3471,3 +3471,385 @@ fn nonuniform_matrices_and_indexed_temporaries() {
         ]
     );
 }
+
+fn physical_accesses(module: &dr::Module) -> Vec<(Op, u32)> {
+    let mut found = Vec::new();
+    for function in &module.functions {
+        for block in &function.blocks {
+            for inst in &block.instructions {
+                let operands = match inst.class.opcode {
+                    Op::Load => inst.operands.get(1..),
+                    Op::Store => inst.operands.get(2..),
+                    _ => None,
+                };
+                let Some(operands) = operands else {
+                    continue;
+                };
+                if let [Operand::MemoryAccess(access), Operand::LiteralBit32(alignment), ..] =
+                    operands
+                {
+                    if access.contains(spirv::MemoryAccess::ALIGNED) {
+                        found.push((inst.class.opcode, *alignment));
+                    }
+                }
+            }
+        }
+    }
+    found
+}
+
+fn memory_masks(module: &dr::Module) -> Vec<(Op, spirv::MemoryAccess)> {
+    let mut masks = Vec::new();
+    for function in &module.functions {
+        for block in &function.blocks {
+            for inst in &block.instructions {
+                let operand = match inst.class.opcode {
+                    Op::Load => inst.operands.get(1),
+                    Op::Store => inst.operands.get(2),
+                    _ => None,
+                };
+                if let Some(&Operand::MemoryAccess(access)) = operand {
+                    masks.push((inst.class.opcode, access));
+                }
+            }
+        }
+    }
+    masks
+}
+
+fn physical_member_decorations(module: &dr::Module, decoration: Decoration) -> Vec<(String, u32)> {
+    module
+        .annotations
+        .iter()
+        .filter(|inst| {
+            inst.class.opcode == Op::MemberDecorate
+                && inst.operands[2] == Operand::Decoration(decoration)
+        })
+        .map(|inst| {
+            let Operand::LiteralBit32(member) = inst.operands[1] else {
+                panic!("member index");
+            };
+            let value = match inst.operands.get(3) {
+                Some(&Operand::LiteralBit32(value)) => value,
+                _ => 0,
+            };
+            (
+                member_name_of(module, inst.operands[0].unwrap_id_ref(), member),
+                value,
+            )
+        })
+        .collect()
+}
+
+fn constants_64(module: &dr::Module) -> Vec<u64> {
+    module
+        .types_global_values
+        .iter()
+        .filter(|inst| inst.class.opcode == Op::Constant)
+        .filter_map(|inst| match inst.operands.first() {
+            Some(&Operand::LiteralBit64(value)) => Some(value),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn buffer_reference_addressing_model_and_layout() {
+    let module = compile(
+        ShaderStage::Fragment,
+        "#version 450
+        #extension GL_EXT_buffer_reference : enable
+        layout(buffer_reference) buffer Node;
+        layout(buffer_reference, std430) buffer Node {
+            int value;
+            Node next;
+            vec3 position[2];
+            mat3 basis;
+        };
+        layout(binding = 0, std430) buffer Root { Node head; } root;
+        void main() { root.head.next.value = root.head.value; }",
+    );
+    assert!(module.capabilities.iter().any(|inst| inst.operands[0]
+        == Operand::Capability(spirv::Capability::PhysicalStorageBufferAddresses)));
+    let model = &module.memory_model.as_ref().expect("memory model").operands;
+    assert_eq!(
+        model[0],
+        Operand::AddressingModel(spirv::AddressingModel::PhysicalStorageBuffer64)
+    );
+    assert!(!instructions(&module, Op::TypeForwardPointer).is_empty());
+    let offsets = physical_member_decorations(&module, Decoration::Offset);
+    for (name, offset) in [("value", 0), ("next", 8), ("position", 16), ("basis", 48)] {
+        assert!(
+            offsets.contains(&(String::from(name), offset)),
+            "{offsets:?}"
+        );
+    }
+    assert!(
+        physical_member_decorations(&module, Decoration::MatrixStride)
+            .contains(&(String::from("basis"), 16))
+    );
+    assert!(decorated(&module, Decoration::Block).contains(&String::from("Node")));
+}
+
+#[test]
+fn buffer_reference_scalar_layout() {
+    let module = compile(
+        ShaderStage::Fragment,
+        "#version 450
+        #extension GL_EXT_buffer_reference : enable
+        #extension GL_EXT_scalar_block_layout : enable
+        layout(buffer_reference, scalar) buffer S { float a; vec3 b; vec3 c[2]; float d; };
+        layout(binding = 0) buffer Root { S s; } root;
+        void main() { root.s.d = root.s.c[1].y; }",
+    );
+    let offsets = physical_member_decorations(&module, Decoration::Offset);
+    for (name, offset) in [("a", 0), ("b", 4), ("c", 16), ("d", 40)] {
+        assert!(
+            offsets.contains(&(String::from(name), offset)),
+            "{offsets:?}"
+        );
+    }
+    assert_eq!(physical_accesses(&module), [(Op::Load, 4), (Op::Store, 8)]);
+}
+
+#[test]
+fn buffer_reference_aligned_operands() {
+    let module = compile(
+        ShaderStage::Fragment,
+        "#version 450
+        #extension GL_EXT_buffer_reference : enable
+        layout(buffer_reference, std430) buffer B {
+            layout(offset = 0) int a;
+            layout(offset = 4) int b;
+            layout(offset = 8) int c;
+            layout(offset = 16) ivec4 v;
+        };
+        layout(buffer_reference, std430, buffer_reference_align = 8) buffer C { int x; int y; };
+        layout(binding = 0, std430) buffer Root { B r; C s; } root;
+        void main() {
+            root.r.b = root.r.a;
+            root.r.c = root.r.v.y;
+            root.s.y = root.s.x;
+        }",
+    );
+    assert_eq!(
+        physical_accesses(&module),
+        [
+            (Op::Load, 16),
+            (Op::Store, 4),
+            (Op::Load, 4),
+            (Op::Store, 8),
+            (Op::Load, 8),
+            (Op::Store, 4),
+        ]
+    );
+}
+
+#[test]
+fn buffer_reference_loads_of_references_are_aligned_to_eight() {
+    let module = compile(
+        ShaderStage::Fragment,
+        "#version 450
+        #extension GL_EXT_buffer_reference : enable
+        layout(buffer_reference) buffer A;
+        layout(buffer_reference, buffer_reference_align = 4, std430) buffer B { uint x; A a; };
+        layout(buffer_reference, buffer_reference_align = 64, std430) buffer A { uint y; };
+        layout(binding = 0) buffer Root { B b; } root;
+        void main() { root.b.a.y = root.b.x; }",
+    );
+    let mut accesses = physical_accesses(&module);
+    accesses.sort_by_key(|&(op, alignment)| (op as u32, alignment));
+    assert_eq!(accesses, [(Op::Load, 4), (Op::Load, 8), (Op::Store, 64)]);
+}
+
+#[test]
+fn buffer_reference_arithmetic_uses_padded_block_size() {
+    let module = compile(
+        ShaderStage::Fragment,
+        "#version 450
+        #extension GL_EXT_buffer_reference2 : enable
+        #extension GL_EXT_shader_explicit_arithmetic_types_int64 : enable
+        layout(buffer_reference, buffer_reference_align = 8) buffer T { int x; bool y; };
+        layout(buffer_reference) buffer U { int x; };
+        layout(binding = 0) buffer Root { T t; U u; int64_t d; } root;
+        void main() {
+            T t = root.t;
+            t[3].x = 1;
+            (t - 2).x = 2;
+            root.u = root.u + 5;
+            root.d = (t + 1) - t;
+        }",
+    );
+    let constants = constants_64(&module);
+    for expected in [24, 16, 80, 8] {
+        assert!(constants.contains(&expected), "{constants:?}");
+    }
+    assert!(!instructions(&module, Op::ConvertPtrToU).is_empty());
+    assert!(!instructions(&module, Op::ConvertUToPtr).is_empty());
+    assert!(!instructions(&module, Op::SDiv).is_empty());
+}
+
+#[test]
+fn buffer_reference_constant_folding() {
+    let module = compile(
+        ShaderStage::Fragment,
+        "#version 450
+        #extension GL_EXT_buffer_reference2 : enable
+        #extension GL_EXT_shader_explicit_arithmetic_types_int64 : enable
+        layout(buffer_reference, buffer_reference_align = 64) buffer T { int x; };
+        const uint64_t size = uint64_t(T(uint64_t(0)) + 1);
+        layout(location = 0) out vec4 o;
+        void main() { float a[int(size)]; o = vec4(a.length()); }",
+    );
+    let constants: Vec<u32> = module
+        .types_global_values
+        .iter()
+        .filter(|inst| inst.class.opcode == Op::Constant)
+        .filter_map(|inst| match inst.operands.first() {
+            Some(&Operand::LiteralBit32(value)) => Some(value),
+            _ => None,
+        })
+        .collect();
+    assert!(constants.contains(&64), "{constants:?}");
+}
+
+#[test]
+fn buffer_reference_uvec2_conversions_are_bitcasts() {
+    let module = compile(
+        ShaderStage::Fragment,
+        "#version 450
+        #extension GL_EXT_buffer_reference_uvec2 : enable
+        layout(buffer_reference) buffer T { int x; };
+        layout(location = 0) flat in uvec2 address;
+        layout(location = 0) out uvec2 o;
+        void main() { T t = T(address); t.x = 1; o = uvec2(t); }",
+    );
+    assert_eq!(instructions(&module, Op::Bitcast).len(), 2);
+    assert!(instructions(&module, Op::ConvertUToPtr).is_empty());
+}
+
+#[test]
+fn buffer_reference_pointer_decorations() {
+    let module = compile(
+        ShaderStage::Fragment,
+        "#version 450
+        #extension GL_EXT_buffer_reference : enable
+        layout(buffer_reference) readonly buffer T { int x; };
+        layout(binding = 0) buffer Root { T t; int v; } root;
+        int f(const restrict T a) { return a.x; }
+        int g(T b) { return b.x; }
+        T global;
+        void main() {
+            restrict T local = root.t;
+            T plain = root.t;
+            global = plain;
+            root.v = f(local) + g(plain) + global.x;
+        }",
+    );
+    let aliased = decorated(&module, Decoration::AliasedPointer);
+    for name in ["plain", "global", "b"] {
+        assert!(aliased.contains(&String::from(name)), "{aliased:?}");
+    }
+    assert_eq!(decorated(&module, Decoration::RestrictPointer), ["local"]);
+    let restrict = decorated(&module, Decoration::Restrict);
+    assert!(restrict.contains(&String::from("a")), "{restrict:?}");
+    assert!(decorated(&module, Decoration::Aliased).contains(&String::from("b")));
+    assert!(
+        physical_member_decorations(&module, Decoration::NonWritable)
+            .contains(&(String::from("x"), 0))
+    );
+}
+
+#[test]
+fn buffer_reference_coherent_uses_vulkan_memory_model() {
+    let module = compile(
+        ShaderStage::Compute,
+        "#version 450
+        #extension GL_EXT_buffer_reference : require
+        layout(local_size_x = 1) in;
+        layout(buffer_reference, std430) buffer Ref { coherent uint c; volatile uint v; uint p; };
+        layout(push_constant) uniform Push { Ref ref; } pc;
+        void main() { pc.ref.c = pc.ref.v + pc.ref.p; }",
+    );
+    let model = &module.memory_model.as_ref().expect("memory model").operands;
+    assert_eq!(model[1], Operand::MemoryModel(spirv::MemoryModel::Vulkan));
+    let masks = memory_masks(&module);
+    use spirv::MemoryAccess as Ma;
+    assert!(masks.contains(&(
+        Op::Load,
+        Ma::VOLATILE | Ma::ALIGNED | Ma::MAKE_POINTER_VISIBLE | Ma::NON_PRIVATE_POINTER
+    )));
+    assert!(masks.contains(&(Op::Load, Ma::ALIGNED)));
+    assert!(masks.contains(&(
+        Op::Store,
+        Ma::ALIGNED | Ma::MAKE_POINTER_AVAILABLE | Ma::NON_PRIVATE_POINTER
+    )));
+}
+
+#[test]
+fn buffer_reference_atomics() {
+    let module = compile(
+        ShaderStage::Fragment,
+        "#version 450
+        #extension GL_EXT_buffer_reference : enable
+        layout(buffer_reference, std430) buffer T { uint x[]; };
+        layout(binding = 0) buffer Root { T t; } root;
+        layout(location = 0) flat in uint i;
+        void main() { atomicAdd(root.t.x[i], 1u); }",
+    );
+    let atomics = instructions(&module, Op::AtomicIAdd);
+    assert_eq!(atomics.len(), 1);
+    assert_eq!(
+        constant(&module, &atomics[0].operands[1]),
+        spirv::Scope::Device as u32
+    );
+    assert_eq!(constant(&module, &atomics[0].operands[2]), 0);
+}
+
+#[test]
+fn buffer_reference_errors() {
+    let cases = [
+        "layout(buffer_reference) buffer T { int x; };
+        void main() { T a, b; bool c = a == b; }",
+        "layout(buffer_reference) buffer T { int x; };
+        const T a = T(uint64_t(2));
+        void main() {}",
+        "layout(buffer_reference) buffer T { int x[]; };
+        void main() { T a; int n = a.x.length(); }",
+        "layout(buffer_reference) buffer T { int x[]; };
+        void main() { T a; a[1]; }",
+        "layout(buffer_reference) buffer T { int x; };
+        void main() { T a; a + 1; }",
+        "layout(buffer_reference) buffer T { int x; };
+        layout(location = 0) flat in T t;
+        void main() {}",
+        "layout(buffer_reference) uniform T { int x; };
+        void main() {}",
+        "layout(buffer_reference) buffer;
+        void main() {}",
+        "layout(buffer_reference) buffer T { int x; };
+        layout(location = 0) flat in uvec2 u;
+        void main() { T t = T(u); }",
+        "layout(buffer_reference, buffer_reference_align = 3) buffer T { int x; };
+        void main() {}",
+        "layout(buffer_reference) buffer T { int x; };
+        layout(buffer_reference) buffer U { int x; };
+        void main() { T t; U u = t; }",
+        "layout(buffer_reference) writeonly buffer T { int x; };
+        void main() { T t; int v = t.x; }",
+        "layout(buffer_reference) readonly buffer T { int x; };
+        void main() { T t; t.x = 1; }",
+    ];
+    for case in cases {
+        let source = format!(
+            "#version 450
+            #extension GL_EXT_buffer_reference : enable
+            #extension GL_EXT_shader_explicit_arithmetic_types_int64 : enable
+            {case}"
+        );
+        assert!(
+            parse(ShaderStage::Fragment, &source).is_err(),
+            "accepted: {case}"
+        );
+    }
+}

@@ -29,6 +29,7 @@ pub mod analyze;
 pub mod builtins;
 pub mod constant;
 pub mod diagnostic;
+pub mod layout;
 pub mod scope;
 pub mod types;
 

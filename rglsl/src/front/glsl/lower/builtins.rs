@@ -187,6 +187,8 @@ impl FunctionLowerer<'_, '_> {
                 Ok(None)
             }
             "modf" | "frexp" => self.split(name, arguments, at).map(Some),
+            "atomicAdd" | "atomicMin" | "atomicMax" | "atomicAnd" | "atomicOr" | "atomicXor"
+            | "atomicExchange" | "atomicCompSwap" => self.atomic(name, arguments, at).map(Some),
             "uaddCarry" | "usubBorrow" | "umulExtended" | "imulExtended" => {
                 self.wide(name, arguments, at)
             }

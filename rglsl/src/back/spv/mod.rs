@@ -104,6 +104,7 @@ mod index;
 mod instructions;
 mod layout;
 mod mesh_shader;
+mod physical;
 mod plain_types;
 mod ray;
 mod reclaimable;
@@ -878,6 +879,7 @@ struct BlockContext<'w> {
     /// Hash from an expression whose type is a ray query / pointer to a ray query to its tracker.
     /// Note: this is sparse, so can't be a handle vec
     ray_query_tracker_expr: crate::FastHashMap<Handle<crate::Expression>, RayQueryTrackers>,
+    physical_component_load: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -968,6 +970,7 @@ pub struct Writer {
     bounds_check_policies: BoundsCheckPolicies,
     zero_initialize_workgroup_memory: ZeroInitializeWorkgroupMemoryMode,
     force_loop_bounding: bool,
+    vulkan_memory_model: bool,
     use_storage_input_output_16: bool,
     emit_int_div_checks: bool,
     void_type: Word,
@@ -999,6 +1002,9 @@ pub struct Writer {
     plain_types: crate::FastHashMap<Word, Word>,
     decorated_blocks: crate::arena::HandleSet<crate::Type>,
     buffer_blocks: crate::FastHashSet<Word>,
+    physical_pointees: crate::FastHashMap<Handle<crate::Type>, crate::StorageAccess>,
+    forward_pointers: crate::FastHashMap<Handle<crate::Type>, Word>,
+    physical_type_ids: crate::FastHashSet<Word>,
     fake_missing_bindings: bool,
     binding_map: BindingMap,
 

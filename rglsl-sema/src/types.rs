@@ -534,6 +534,7 @@ pub enum TypeKind {
     },
     Struct(StructId),
     Block(BlockId),
+    Reference(BlockId),
     Opaque(Opaque),
 }
 
@@ -612,6 +613,31 @@ impl Type {
 
     pub const fn block(id: BlockId) -> Self {
         Self::new(TypeKind::Block(id))
+    }
+
+    pub const fn reference(id: BlockId) -> Self {
+        Self::new(TypeKind::Reference(id))
+    }
+
+    pub const fn is_reference(&self) -> bool {
+        !self.is_array() && matches!(self.kind, TypeKind::Reference(_))
+    }
+
+    pub const fn as_reference(&self) -> Option<BlockId> {
+        match self.kind {
+            TypeKind::Reference(id) if !self.is_array() => Some(id),
+            _ => None,
+        }
+    }
+
+    pub fn contains_reference(&self, registry: &TypeRegistry) -> bool {
+        match self.kind {
+            TypeKind::Reference(_) => true,
+            TypeKind::Struct(id) => registry
+                .structure(id)
+                .is_some_and(|structure| structure.contains_reference),
+            _ => false,
+        }
     }
 
     pub fn array_of(mut self, size: ArraySize) -> Self {
@@ -747,6 +773,7 @@ impl Type {
             TypeKind::Vector { size, .. } => u32::from(size),
             TypeKind::Matrix { columns, rows, .. } => u32::from(columns) * u32::from(rows),
             TypeKind::Struct(id) => registry.structure(id)?.flattened_size?,
+            TypeKind::Reference(_) => 1,
             _ => return None,
         };
         for dimension in &self.array {
@@ -921,7 +948,7 @@ impl fmt::Display for TypeDisplay<'_> {
                     .and_then(|structure| structure.name.as_deref());
                 formatter.write_str(name.unwrap_or("struct"))?;
             }
-            TypeKind::Block(id) => {
+            TypeKind::Block(id) | TypeKind::Reference(id) => {
                 let name = self.registry.block(id).map(|block| block.name.as_str());
                 formatter.write_str(name.unwrap_or("block"))?;
             }
@@ -951,6 +978,7 @@ pub struct StructType {
     pub members: Vec<Member>,
     pub contains_opaque: bool,
     pub contains_unsized_array: bool,
+    pub contains_reference: bool,
     pub scalars: Vec<Scalar>,
     pub flattened_size: Option<u32>,
 }
@@ -972,12 +1000,45 @@ pub enum BlockStorage {
     Out,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Packing {
+    Std140,
+    Std430,
+    Scalar,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReferenceLayout {
+    pub alignment: u32,
+    pub packing: Packing,
+    pub row_major: bool,
+    pub size: Option<u32>,
+    pub defined: bool,
+}
+
+impl ReferenceLayout {
+    pub fn element_size(&self) -> Option<u32> {
+        let size = self.size?;
+        let mask = self.alignment.checked_sub(1)?;
+        size.checked_add(mask).map(|padded| padded & !mask)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BlockType {
     pub name: String,
     pub storage: BlockStorage,
     pub qualifiers: Qualifiers,
     pub members: Vec<Member>,
+    pub reference: Option<ReferenceLayout>,
+}
+
+impl BlockType {
+    pub fn contains_unsized_array(&self, registry: &TypeRegistry) -> bool {
+        self.members
+            .iter()
+            .any(|member| member.ty.contains_unsized_array(registry))
+    }
 }
 
 impl BlockType {
@@ -1007,11 +1068,13 @@ impl TypeRegistry {
         let id = StructId(u32::try_from(self.structs.len()).ok()?);
         let mut contains_opaque = false;
         let mut contains_unsized_array = false;
+        let mut contains_reference = false;
         let mut scalars = Vec::new();
         let mut flattened_size = Some(0_u32);
         for member in &members {
             contains_opaque |= member.ty.contains_opaque(self);
             contains_unsized_array |= member.ty.contains_unsized_array(self);
+            contains_reference |= member.ty.contains_reference(self);
             for scalar in Scalar::ALL {
                 if member.ty.contains_scalar(self, scalar) && !scalars.contains(&scalar) {
                     scalars.push(scalar);
@@ -1027,6 +1090,7 @@ impl TypeRegistry {
             members,
             contains_opaque,
             contains_unsized_array,
+            contains_reference,
             scalars,
             flattened_size,
         });

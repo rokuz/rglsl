@@ -661,6 +661,18 @@ fn adjust_expr(new_pos: &HandleVec<Expression, Handle<Expression>>, expr: &mut E
         Expression::ArrayLength(ref mut expr) => {
             adjust(expr);
         }
+        Expression::PhysicalAddress {
+            ref mut pointer,
+            split: _,
+        } => {
+            adjust(pointer);
+        }
+        Expression::PhysicalPointer {
+            ref mut value,
+            ty: _,
+        } => {
+            adjust(value);
+        }
         Expression::RayQueryGetIntersection {
             ref mut query,
             committed: _,
