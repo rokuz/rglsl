@@ -6,6 +6,7 @@
 //!   writes `PROGRESS.md`.
 
 mod corpus;
+mod exec;
 mod fuzz;
 mod oracles;
 mod process;
@@ -21,9 +22,12 @@ const USAGE: &str = "\
 usage: cargo xtask <command> [options]
 
 commands:
-  oracles             fetch and build the pinned glslang and spirv-val into target/oracles
+  oracles             fetch and build the pinned oracles into target/oracles: glslang and
+                      spirv-val, and on macOS arm64 the exec oracles (KosmicKrisp, Amber)
       --glslang-dir DIR   use an existing glslang checkout instead of cloning it
                           (its HEAD must be the pinned commit)
+      --no-exec           do not install KosmicKrisp and Amber
+      --exec-only         only install KosmicKrisp and Amber
   test                run the glslang corpus and write PROGRESS.md
       --glslang-dir DIR   glslang checkout whose Test/ and gtests/ are used
                           (default: target/oracles/src/glslang)
@@ -31,14 +35,20 @@ commands:
       --jobs N            number of parallel jobs (default: number of CPUs)
       --timeout SECS      per-process timeout (default: 30)
       --no-progress-file  do not rewrite PROGRESS.md (for filtered or local runs)
+      --no-exec           do not run shaders on the Vulkan driver; PROGRESS.md keeps the
+                          exec results of the last run that had them
   fuzz                compare rglsl with glslang on a directory of shaders
                       (accepted or not, valid SPIR-V, crashes)
       --shaders DIR       the shaders to compare (searched recursively)
+      --exec              also run every shader family of rglsl-fuzz on the Vulkan driver:
+                          a variant whose image differs from its reference is a wrong result
+      --exec-glslang      with --exec, also run the modules glslang compiles
       --jobs N            number of parallel jobs (default: number of CPUs)
       --timeout SECS      per-process timeout (default: 30)
 
 environment:
   RGLSL_GLSLANG, RGLSL_SPIRV_VAL   override the oracle binaries
+  RGLSL_AMBER, RGLSL_VK_ICD        override Amber and the Vulkan driver manifest
 ";
 
 fn main() {
@@ -62,8 +72,17 @@ fn run(args: Vec<String>) -> Result<i32> {
     match command.as_str() {
         "oracles" => {
             let glslang_dir = args.value("--glslang-dir")?.map(PathBuf::from);
+            let no_exec = args.flag("--no-exec");
+            let exec_only = args.flag("--exec-only");
             args.finish()?;
-            oracles::build(&workspace_root()?, glslang_dir.as_deref())?;
+            if no_exec && exec_only {
+                bail!("--no-exec and --exec-only exclude each other");
+            }
+            let selection = oracles::Selection {
+                reference: !exec_only,
+                exec: !no_exec,
+            };
+            oracles::build(&workspace_root()?, glslang_dir.as_deref(), selection)?;
             Ok(0)
         }
         "test" => {
@@ -73,6 +92,7 @@ fn run(args: Vec<String>) -> Result<i32> {
                 jobs: args.parsed("--jobs")?,
                 timeout_secs: args.parsed("--timeout")?.unwrap_or(30),
                 write_progress: !args.flag("--no-progress-file"),
+                exec: !args.flag("--no-exec"),
             };
             args.finish()?;
             runner::run(&workspace_root()?, options)?;
@@ -86,8 +106,13 @@ fn run(args: Vec<String>) -> Result<i32> {
                     .context("--shaders is required")?,
                 jobs: args.parsed("--jobs")?,
                 timeout_secs: args.parsed("--timeout")?.unwrap_or(30),
+                exec: args.flag("--exec"),
+                exec_glslang: args.flag("--exec-glslang"),
             };
             args.finish()?;
+            if options.exec_glslang && !options.exec {
+                bail!("--exec-glslang needs --exec");
+            }
             fuzz::run(&workspace_root()?, options)?;
             Ok(0)
         }

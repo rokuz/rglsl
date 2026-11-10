@@ -19,6 +19,8 @@ pub struct Options {
     pub shaders: PathBuf,
     pub jobs: Option<usize>,
     pub timeout_secs: u64,
+    pub exec: bool,
+    pub exec_glslang: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]

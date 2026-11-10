@@ -18,3 +18,17 @@ commit = "ef96ed763b43b59b33b31b362f09a02b729fa1c9"
 [spirv-headers]
 repo = "https://github.com/KhronosGroup/SPIRV-Headers"
 commit = "496543121ce6419f23d6fa5d7194ba66c36212d2"
+
+[kosmickrisp]
+repo = "https://github.com/rokuz/kosmickrisp-binaries"
+tag = "mesa-mesa-26.2.1"
+asset = "kosmickrisp-macos-arm64.zip"
+sha256 = "378658582554ae1f1fa0b25b47db15363d807e748fa233271ff4d01b599e9282"
+
+[amber]
+repo = "https://github.com/google/amber"
+commit = "c9f1e2871ccbb0b0564c4a33e359801144f6b7c1"
+
+[amber-vulkan-headers]
+repo = "https://github.com/KhronosGroup/Vulkan-Headers"
+commit = "0007545ec811852c8ea6154f201624583c88563f"
