@@ -261,12 +261,6 @@ struct Function {
     signature: Option<Instruction>,
     parameters: Vec<FunctionArgument>,
     variables: crate::FastHashMap<Handle<crate::LocalVariable>, LocalVariable>,
-    /// Map from a local variable that is a ray query to its u32 tracker.
-    ray_query_initialization_tracker_variables:
-        crate::FastHashMap<Handle<crate::LocalVariable>, LocalVariable>,
-    /// Map from a local variable that is a ray query to its tracker for the t max.
-    ray_query_t_max_tracker_variables:
-        crate::FastHashMap<Handle<crate::LocalVariable>, LocalVariable>,
     /// List of local variables used as a counters to ensure that all loops are bounded.
     force_loop_bounding_vars: Vec<LocalVariable>,
 
@@ -598,25 +592,6 @@ struct LookupFunctionType {
     return_type_id: Word,
 }
 
-#[derive(Debug, PartialEq, Clone, Hash, Eq)]
-enum LookupRayQueryFunction {
-    Initialize,
-    Proceed,
-    GenerateIntersection,
-    ConfirmIntersection,
-    GetVertexPositions { committed: bool },
-    GetIntersection { committed: bool },
-    Terminate,
-}
-
-// Just one supported function right now, more in the future.
-#[derive(Debug, PartialEq, Clone, Hash, Eq)]
-enum LookupRaytracingFunction {
-    TraceRay {
-        payload: Handle<crate::GlobalVariable>,
-    },
-}
-
 #[derive(Debug)]
 enum Dimension {
     Scalar,
@@ -887,19 +862,7 @@ struct BlockContext<'w> {
 
     /// Hash from an expression whose type is a ray query / pointer to a ray query to its tracker.
     /// Note: this is sparse, so can't be a handle vec
-    ray_query_tracker_expr: crate::FastHashMap<Handle<crate::Expression>, RayQueryTrackers>,
     physical_component_load: bool,
-}
-
-#[derive(Clone, Copy)]
-struct RayQueryTrackers {
-    // Initialization tracker
-    initialized_tracker: Word,
-    // Tracks the t max from ray query initialize.
-    // Unlike HLSL, spir-v's equivalent getter for the current committed t has UB (instead of just
-    // returning t_max) if there was no previous hit (though in some places it treats the behaviour as
-    // defined), therefore we must track the tmax inputted into ray query initialize.
-    t_max_tracker: Word,
 }
 
 impl BlockContext<'_> {
@@ -1031,11 +994,9 @@ pub struct Writer {
     // Just a temporary list of SPIR-V ids
     temp_list: Vec<Word>,
 
-    ray_query_functions: crate::FastHashMap<LookupRayQueryFunction, Word>,
-
-    ray_tracing_functions: crate::FastHashMap<LookupRaytracingFunction, Word>,
-
     has_ray_tracing_pipeline: bool,
+
+    ray_tracing_features: crate::RayTracingFeatures,
 
     /// F16 I/O polyfill manager for handling `f16` input/output variables
     /// when `StorageInputOutput16` capability is not available.
@@ -1048,10 +1009,6 @@ pub struct Writer {
     raw_capabilities: crate::FastIndexSet<Word>,
     utf_encoded: crate::FastHashSet<Word>,
     laid_out_copies: crate::FastHashMap<Handle<crate::Type>, Word>,
-    pub(crate) ray_query_initialization_tracking: bool,
-
-    /// Whether the arguments to trace ray should be validated
-    pub(crate) trace_ray_argument_validation: bool,
 
     /// See docs in [`Options`]
     task_dispatch_limits: Option<TaskDispatchLimits>,
@@ -1090,20 +1047,6 @@ bitflags::bitflags! {
         ///
         /// [`BuiltIn::FragDepth`]: crate::BuiltIn::FragDepth
         const CLAMP_FRAG_DEPTH = 0x10;
-
-        /// Instead of silently failing if the arguments to generate a ray query are
-        /// invalid, uses debug printf extension to print to the command line
-        ///
-        /// Note: VK_KHR_shader_non_semantic_info must be enabled. This will have no
-        /// effect if `options.ray_query_initialization_tracking` is set to false.
-        const PRINT_ON_RAY_QUERY_INITIALIZATION_FAIL = 0x20;
-
-        /// Instead of silently failing if the arguments to `traceRays` are
-        /// invalid, uses debug printf extension to print to the command line
-        ///
-        /// Note: VK_KHR_shader_non_semantic_info must be enabled. This will have no
-        /// effect if `options.trace_ray_argument_validation` is set to false.
-        const PRINT_ON_TRACE_RAYS_FAIL = 0x40;
 
         const SMALL_TYPE_CAPABILITIES_BY_USE = 0x80;
     }
@@ -1149,13 +1092,6 @@ pub struct Options<'a> {
     /// If set, loops will have code injected into them, forcing the compiler
     /// to think the number of iterations is bounded.
     pub force_loop_bounding: bool,
-
-    /// if set, ray queries will get a variable to track their state to prevent
-    /// misuse.
-    pub ray_query_initialization_tracking: bool,
-
-    /// If set, arguments to `traceRays` calls will be validated.
-    pub trace_ray_argument_validation: bool,
 
     /// Whether to use the `StorageInputOutput16` capability for `f16` shader I/O.
     /// When false, `f16` I/O is polyfilled using `f32` types with conversions.
@@ -1203,8 +1139,6 @@ impl Default for Options<'_> {
             bounds_check_policies: BoundsCheckPolicies::default(),
             zero_initialize_workgroup_memory: ZeroInitializeWorkgroupMemoryMode::Polyfill,
             force_loop_bounding: true,
-            ray_query_initialization_tracking: true,
-            trace_ray_argument_validation: true,
             use_storage_input_output_16: true,
             debug_info: None,
             task_dispatch_limits: None,

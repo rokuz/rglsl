@@ -9,6 +9,7 @@ mod heap;
 mod message;
 mod offset;
 mod prepass;
+mod ray;
 mod reference;
 mod specialization;
 mod statement;
@@ -166,6 +167,8 @@ const fn preprocessor_stage(stage: ShaderStage) -> rglsl_pp::Stage {
         ShaderStage::Miss => rglsl_pp::Stage::Miss,
         ShaderStage::AnyHit => rglsl_pp::Stage::AnyHit,
         ShaderStage::ClosestHit => rglsl_pp::Stage::ClosestHit,
+        ShaderStage::Intersection => rglsl_pp::Stage::Intersection,
+        ShaderStage::Callable => rglsl_pp::Stage::Callable,
     }
 }
 
@@ -180,6 +183,8 @@ const fn stage(stage: ShaderStage) -> rglsl_sema::Stage {
         ShaderStage::Miss => rglsl_sema::Stage::Miss,
         ShaderStage::AnyHit => rglsl_sema::Stage::AnyHit,
         ShaderStage::ClosestHit => rglsl_sema::Stage::ClosestHit,
+        ShaderStage::Intersection => rglsl_sema::Stage::Intersection,
+        ShaderStage::Callable => rglsl_sema::Stage::Callable,
     }
 }
 
@@ -276,6 +281,8 @@ pub(super) struct Lowerer<'a> {
     pub work_group_size: Option<Handle<crate::Override>>,
     pub heap_structs: BTreeMap<StructId, Handle<Type>>,
     pub heap_runtime_offsets: BTreeMap<Handle<GlobalVariable>, &'a rglsl_ast::ast::Expression>,
+    pub ray_data: BTreeMap<(usize, u32), Handle<GlobalVariable>>,
+    pub incoming_ray_payload: Option<Handle<GlobalVariable>>,
     xfb: xfb::Xfb,
 }
 
@@ -339,6 +346,8 @@ impl<'a> Lowerer<'a> {
             work_group_size: None,
             heap_structs: BTreeMap::new(),
             heap_runtime_offsets: BTreeMap::new(),
+            ray_data: BTreeMap::new(),
+            incoming_ray_payload: None,
             xfb: xfb::Xfb::new((options.stage == ShaderStage::Vertex).then_some(0)),
         }
     }
@@ -425,6 +434,7 @@ impl<'a> Lowerer<'a> {
         if !self.errors.is_empty() {
             return Err(core::mem::take(&mut self.errors).into());
         }
+        self.module.ray_tracing = self.ray_tracing_features();
         Ok(self.module)
     }
 

@@ -161,6 +161,9 @@ impl FunctionLowerer<'_, '_> {
         let analysis = self.lw.analysis;
         let function = analysis.builtins.function(id).ok_or_else(|| internal(at))?;
         let name = function.name.as_str();
+        if let Some(result) = self.ray_builtin_call(name, arguments, at)? {
+            return Ok(result);
+        }
         match name {
             "texture"
             | "textureProj"

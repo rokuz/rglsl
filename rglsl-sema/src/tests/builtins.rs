@@ -53,20 +53,20 @@ fn variable_names(builtins: &Builtins) -> BTreeSet<String> {
 #[test]
 fn the_tables_have_the_expected_sizes() {
     let expected = [
-        (Stage::Vertex, 2454, 100, 103),
-        (Stage::TessControl, 2455, 101, 101),
-        (Stage::TessEvaluation, 2454, 104, 104),
-        (Stage::Geometry, 2458, 104, 104),
-        (Stage::Fragment, 2708, 108, 108),
-        (Stage::Compute, 2457, 100, 100),
-        (Stage::Mesh, 2454, 94, 94),
-        (Stage::RayGeneration, 2454, 94, 94),
+        (Stage::Vertex, 2454, 27, 100, 135),
+        (Stage::TessControl, 2455, 27, 101, 133),
+        (Stage::TessEvaluation, 2454, 27, 104, 136),
+        (Stage::Geometry, 2458, 27, 104, 136),
+        (Stage::Fragment, 2708, 27, 108, 140),
+        (Stage::Compute, 2457, 27, 100, 132),
+        (Stage::Mesh, 2454, 27, 94, 126),
+        (Stage::RayGeneration, 2454, 32, 94, 130),
     ];
-    for (stage, functions, variables_450, variables_460) in expected {
+    for (stage, functions, added, variables_450, variables_460) in expected {
         let older = builtins(450, stage);
         let newer = builtins(460, stage);
         assert_eq!(older.functions().len(), functions, "{stage:?}");
-        assert_eq!(newer.functions().len(), functions + 3, "{stage:?}");
+        assert_eq!(newer.functions().len(), functions + added, "{stage:?}");
         assert_eq!(older.variables().count(), variables_450, "{stage:?}");
         assert_eq!(newer.variables().count(), variables_460, "{stage:?}");
     }
@@ -374,7 +374,7 @@ fn every_core_function_name_is_known() {
     for name in names.split_whitespace() {
         assert!(!table.overloads(name).is_empty(), "{name}");
     }
-    assert_eq!(table.function_names().count(), 189);
+    assert_eq!(table.function_names().count(), 213);
 }
 
 fn storage_of(builtins: &Builtins, name: &str) -> Option<Storage> {

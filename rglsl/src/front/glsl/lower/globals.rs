@@ -545,6 +545,11 @@ impl<'a> Lowerer<'a> {
             Storage::Buffer | Storage::Inout | Storage::ResourceHeap | Storage::SamplerHeap => {
                 Err(internal(at))
             }
+            Storage::RayPayload
+            | Storage::RayPayloadIn
+            | Storage::HitAttribute
+            | Storage::CallableData
+            | Storage::CallableDataIn => self.ray_variable(symbol, name, at),
             Storage::None => self.private(symbol, name, declarator, at),
         }
     }
@@ -899,7 +904,15 @@ impl<'a> Lowerer<'a> {
                     at,
                 );
             }
+            BlockStorage::RayPayload
+            | BlockStorage::RayPayloadIn
+            | BlockStorage::HitAttribute
+            | BlockStorage::CallableData
+            | BlockStorage::CallableDataIn => {
+                return self.ray_block(symbol, id, instance_name, at);
+            }
         };
+        let shader_record = rglsl_sema::analyze::is_shader_record(qualifiers);
         let push_constant = qualifiers.has_layout("push_constant");
         if !push_constant && self.is_heap_view(&variable.qualifiers) {
             return self.heap_buffer_array(
@@ -910,7 +923,18 @@ impl<'a> Lowerer<'a> {
                 at,
             );
         }
-        let (packing, row_major) = self.block_packing(qualifiers, buffer, push_constant);
+        let (packing, row_major) = if shader_record {
+            let explicit = qualifiers.layout.iter().any(|entry| {
+                matches!(
+                    entry.name.as_str(),
+                    "std140" | "std430" | "scalar" | "shared" | "packed"
+                )
+            });
+            let (packing, row_major) = self.block_packing(qualifiers, buffer, true);
+            (if explicit { packing } else { Packing::Std430 }, row_major)
+        } else {
+            self.block_packing(qualifiers, buffer, push_constant)
+        };
         let mut ty = self.block_struct(id, packing, row_major, at)?;
         match *variable.ty.array.as_slice() {
             [] => {}
@@ -930,6 +954,8 @@ impl<'a> Lowerer<'a> {
         }
         let space = if push_constant {
             AddressSpace::Immediate
+        } else if shader_record {
+            AddressSpace::ShaderRecord
         } else if buffer {
             AddressSpace::Storage {
                 access: storage_access(qualifiers),
@@ -937,7 +963,7 @@ impl<'a> Lowerer<'a> {
         } else {
             AddressSpace::Uniform
         };
-        let (binding, unbound) = if push_constant {
+        let (binding, unbound) = if push_constant || shader_record {
             (None, None)
         } else {
             self.binding(qualifiers, at)?
@@ -1657,11 +1683,17 @@ impl<'a> Lowerer<'a> {
         output: bool,
         at: Span,
     ) -> Result<Handle<GlobalVariable>> {
-        if let Some(&handle) = self.builtins.get(name) {
+        let (builtin, key) = match super::ray::ray_builtin(name) {
+            Some((builtin, key)) => (builtin, key),
+            None => (
+                builtin_of(name)
+                    .ok_or_else(|| unsupported(format!("the built-in variable `{name}`"), at))?,
+                name,
+            ),
+        };
+        if let Some(&handle) = self.builtins.get(key) {
             return Ok(handle);
         }
-        let builtin = builtin_of(name)
-            .ok_or_else(|| unsupported(format!("the built-in variable `{name}`"), at))?;
         let ir = if super::prepass::CLIP_DISTANCES.contains(&name) {
             let size = self
                 .builtin_sizes
@@ -1678,11 +1710,11 @@ impl<'a> Lowerer<'a> {
             let sized = element.array_of(GlslArraySize::Sized(size));
             self.ir_type(&sized, at)?
         } else {
-            self.ir_type(ty, at)?
+            self.ray_builtin_type(name, ty, at)?
         };
         let handle = self.module.global_variables.append(
             GlobalVariable {
-                name: Some(String::from(name)),
+                name: Some(String::from(key)),
                 space: if output {
                     AddressSpace::Output
                 } else {
@@ -1691,7 +1723,7 @@ impl<'a> Lowerer<'a> {
                 binding: None,
                 ty: ir,
                 init: None,
-                memory_decorations: MemoryDecorations::empty(),
+                memory_decorations: self.ray_builtin_decorations(builtin),
                 io: Some(Binding::BuiltIn(builtin)),
                 xfb: None,
                 input_attachment_index: None,
@@ -1700,7 +1732,7 @@ impl<'a> Lowerer<'a> {
             at,
         );
         self.interface.push(handle);
-        self.builtins.insert(String::from(name), handle);
+        self.builtins.insert(String::from(key), handle);
         Ok(handle)
     }
 

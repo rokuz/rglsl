@@ -32,7 +32,9 @@ fn stage_from_extension(ext: &str) -> Option<ShaderStage> {
         "rmiss" => ShaderStage::Miss,
         "rahit" => ShaderStage::AnyHit,
         "rchit" => ShaderStage::ClosestHit,
-        // No IR stage yet: tesc, tese, geom (M6), rint, rcall (M8).
+        "rint" => ShaderStage::Intersection,
+        "rcall" => ShaderStage::Callable,
+        // No IR stage yet: tesc, tese, geom (M6).
         _ => return None,
     })
 }
@@ -124,8 +126,6 @@ pub fn compile_one(
             | spv::WriterFlags::SMALL_TYPE_CAPABILITIES_BY_USE,
         force_loop_bounding: false,
         zero_initialize_workgroup_memory: spv::ZeroInitializeWorkgroupMemoryMode::None,
-        ray_query_initialization_tracking: false,
-        trace_ray_argument_validation: false,
         mesh_shader_primitive_indices_clamp: false,
         emit_int_div_checks: false,
         ..spv::Options::default()

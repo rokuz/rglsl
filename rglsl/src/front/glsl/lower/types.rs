@@ -259,6 +259,12 @@ impl Lowerer<'_> {
                 "storage images outside uniform declarations",
                 span,
             )),
+            OpaqueKind::AccelerationStructure => Ok(TypeInner::AccelerationStructure {
+                vertex_return: false,
+            }),
+            OpaqueKind::RayQuery => Ok(TypeInner::RayQuery {
+                vertex_return: false,
+            }),
             OpaqueKind::SubpassInput => Ok(TypeInner::Image {
                 dim: ImageDimension::Subpass,
                 arrayed: false,

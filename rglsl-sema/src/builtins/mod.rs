@@ -1,5 +1,6 @@
 mod functions;
 mod limits;
+pub(crate) mod ray;
 mod textures;
 mod variables;
 
@@ -100,13 +101,25 @@ impl Stage {
             Self::Compute => COMPUTE,
             Self::Task => 1 << 6,
             Self::Mesh => 1 << 7,
-            Self::RayGeneration => 1 << 8,
-            Self::Intersection => 1 << 9,
-            Self::AnyHit => 1 << 10,
-            Self::ClosestHit => 1 << 11,
-            Self::Miss => 1 << 12,
-            Self::Callable => 1 << 13,
+            Self::RayGeneration => RAY_GENERATION,
+            Self::Intersection => INTERSECTION,
+            Self::AnyHit => ANY_HIT,
+            Self::ClosestHit => CLOSEST_HIT,
+            Self::Miss => MISS,
+            Self::Callable => CALLABLE,
         }
+    }
+
+    pub const fn ray_tracing(self) -> bool {
+        matches!(
+            self,
+            Self::RayGeneration
+                | Self::Intersection
+                | Self::AnyHit
+                | Self::ClosestHit
+                | Self::Miss
+                | Self::Callable
+        )
     }
 }
 
@@ -116,6 +129,12 @@ const TESS_EVALUATION: u16 = 1 << 2;
 const GEOMETRY: u16 = 1 << 3;
 const FRAGMENT: u16 = 1 << 4;
 const COMPUTE: u16 = 1 << 5;
+const RAY_GENERATION: u16 = 1 << 8;
+const INTERSECTION: u16 = 1 << 9;
+const ANY_HIT: u16 = 1 << 10;
+const CLOSEST_HIT: u16 = 1 << 11;
+const MISS: u16 = 1 << 12;
+const CALLABLE: u16 = 1 << 13;
 const ALL_STAGES: u16 = 0;
 
 const fn available(stages: u16, stage: Stage) -> bool {
@@ -402,7 +421,7 @@ pub struct Builtins {
 impl Builtins {
     pub fn new(version: u32, stage: Stage, limits: &ResourceLimits) -> Self {
         let mut prototypes = Vec::new();
-        for section in functions::SECTIONS {
+        for section in functions::SECTIONS.iter().chain(ray::SECTIONS) {
             if version >= section.since {
                 expand_section(section, &mut prototypes);
             }

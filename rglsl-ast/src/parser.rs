@@ -706,6 +706,7 @@ impl<'a> Parser<'a> {
                     parser.require_type_extension(word, token.span)?;
                     TypeSpecifierNonArray::Basic(basic)
                 } else if is_opaque_type_keyword(word) {
+                    parser.require_type_extension(word, token.span)?;
                     TypeSpecifierNonArray::Opaque(word.to_owned())
                 } else if parser.is_struct_name(word) {
                     TypeSpecifierNonArray::TypeName(word.to_owned())
@@ -857,6 +858,10 @@ impl<'a> Parser<'a> {
             TokenKind::Word("continue") => self.parse_jump(JumpStatement::Continue),
             TokenKind::Word("break") => self.parse_jump(JumpStatement::Break),
             TokenKind::Word("discard") => self.parse_jump(JumpStatement::Discard),
+            TokenKind::Word("terminateRayEXT") => self.parse_jump(JumpStatement::TerminateRay),
+            TokenKind::Word("ignoreIntersectionEXT") => {
+                self.parse_jump(JumpStatement::IgnoreIntersection)
+            }
             TokenKind::Word("return") => self.parse_return(),
             _ => self.parse_simple_statement(),
         }

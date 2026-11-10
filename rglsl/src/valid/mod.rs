@@ -301,6 +301,8 @@ bitflags::bitflags! {
         const ANY_HIT = 0x40;
         const CLOSEST_HIT = 0x80;
         const MISS = 0x100;
+        const INTERSECTION = 0x200;
+        const CALLABLE = 0x400;
         const COMPUTE_LIKE = Self::COMPUTE.bits() | Self::TASK.bits() | Self::MESH.bits();
     }
 }
@@ -372,33 +374,6 @@ pub struct Validator {
     /// [`Expression`]: crate::Expression
     /// [`Statement`]: crate::Statement
     needs_visit: HandleSet<crate::Expression>,
-
-    /// Whether any trace rays call is called, and whether all have vertex return.
-    /// If one call doesn't use vertex ruturn, builtins for triangle vertex positions
-    /// (not yet implemented) are not allowed.
-    trace_rays_vertex_return: TraceRayVertexReturnState,
-
-    /// The type of the ray payload, this must always be the same type in a particular
-    /// entrypoint
-    trace_rays_payload_type: Option<Handle<crate::Type>>,
-}
-
-#[derive(Debug)]
-enum TraceRayVertexReturnState {
-    /// No trace ray calls yet have been found.
-    NoTraceRays,
-    /// Trace ray calls have been found, at least
-    /// one uses an acceleration structure that
-    /// does not have the flag enabling vertex return.
-    #[expect(
-        unused,
-        reason = "Don't yet have vertex return builtins to return this error for."
-    )]
-    NoVertexReturn(crate::Span),
-    /// Trace ray calls have been found, all
-    /// acceleration structures have the flag enabling
-    /// vertex return.
-    VertexReturn,
 }
 
 #[derive(Clone, Debug, thiserror::Error)]
@@ -612,8 +587,6 @@ impl Validator {
             valid_expression_set: HandleSet::new(),
             overrides_resolved: false,
             needs_visit: HandleSet::new(),
-            trace_rays_vertex_return: TraceRayVertexReturnState::NoTraceRays,
-            trace_rays_payload_type: None,
         }
     }
 

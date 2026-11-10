@@ -244,9 +244,12 @@ impl super::AddressSpace {
             // TaskPayload isn't always writable, but this is checked for elsewhere,
             // when not using multiple payloads and matching the entry payload is checked.
             crate::AddressSpace::TaskPayload => Sa::LOAD | Sa::STORE,
-            crate::AddressSpace::RayPayload | crate::AddressSpace::IncomingRayPayload => {
-                Sa::LOAD | Sa::STORE
-            }
+            crate::AddressSpace::RayPayload
+            | crate::AddressSpace::IncomingRayPayload
+            | crate::AddressSpace::HitAttribute
+            | crate::AddressSpace::CallableData
+            | crate::AddressSpace::IncomingCallableData => Sa::LOAD | Sa::STORE,
+            crate::AddressSpace::ShaderRecord => Sa::LOAD,
             crate::AddressSpace::Input => Sa::LOAD,
             crate::AddressSpace::Output => Sa::LOAD | Sa::STORE,
         }
@@ -954,44 +957,26 @@ impl crate::Module {
 
     pub fn uses_ray_tracing(&self, ep_index: Option<usize>) -> RayTracingUses {
         let mut uses = RayTracingUses::default();
-        // Whether this uses ray tracing (unknown whether the usage is pipelines or ray queries).
-        let mut uses_ray_tracing = self.special_types.ray_desc.is_some();
-
-        uses.queries |= self.special_types.ray_intersection.is_some();
-
+        let mut has_acceleration_structure = false;
         for (_, &crate::Type { ref inner, .. }) in self.types.iter() {
-            // Backends do not know whether these have vertex return - that is done by us
             match *inner {
                 crate::TypeInner::AccelerationStructure { .. } => {
-                    uses_ray_tracing = true;
+                    has_acceleration_structure = true;
                 }
                 crate::TypeInner::RayQuery { .. } => uses.queries = true,
                 _ => {}
             }
         }
-
         for (index, ep) in self.entry_points.iter().enumerate() {
             if ep_index.is_some() && ep_index != Some(index) {
                 continue;
             }
-
-            // if we have a ray tracing pipeline shader we are definitely using
-            // pipelines, otherwise, if we have a ray tracing type, we might
-            // be using it in the shader (which would require ray queries),
-            // so we should use queries.
-            if matches!(
-                ep.stage,
-                crate::ShaderStage::RayGeneration
-                    | crate::ShaderStage::AnyHit
-                    | crate::ShaderStage::ClosestHit
-                    | crate::ShaderStage::Miss
-            ) {
+            if ep.stage.ray_tracing() {
                 uses.pipelines = true;
             } else {
-                uses.queries |= uses_ray_tracing;
+                uses.queries |= has_acceleration_structure;
             }
         }
-
         uses
     }
 }
@@ -1051,5 +1036,213 @@ pub fn interface_block(
             arrayed: true,
         }),
         _ => None,
+    }
+}
+
+impl crate::RayTracingData {
+    pub const fn pointer(self) -> Option<crate::Handle<crate::Expression>> {
+        match self {
+            Self::Pointer(pointer) => Some(pointer),
+            Self::Location(_) => None,
+        }
+    }
+
+    pub const fn pointer_mut(&mut self) -> Option<&mut crate::Handle<crate::Expression>> {
+        match *self {
+            Self::Pointer(ref mut pointer) => Some(pointer),
+            Self::Location(_) => None,
+        }
+    }
+}
+
+impl crate::RayPipelineFunction {
+    pub fn operands(&self) -> alloc::vec::Vec<crate::Handle<crate::Expression>> {
+        match *self {
+            Self::TraceRay {
+                acceleration_structure,
+                flags,
+                cull_mask,
+                sbt_offset,
+                sbt_stride,
+                miss_index,
+                origin,
+                tmin,
+                direction,
+                tmax,
+                time,
+                payload,
+            } => [
+                acceleration_structure,
+                flags,
+                cull_mask,
+                sbt_offset,
+                sbt_stride,
+                miss_index,
+                origin,
+                tmin,
+                direction,
+                tmax,
+            ]
+            .into_iter()
+            .chain(time)
+            .chain(payload.pointer())
+            .collect(),
+            Self::ExecuteCallable { sbt_index, data } => {
+                core::iter::once(sbt_index).chain(data.pointer()).collect()
+            }
+            Self::ReportIntersection {
+                hit_t, hit_kind, ..
+            } => alloc::vec![hit_t, hit_kind],
+            Self::IgnoreIntersection { .. } | Self::TerminateRay { .. } => alloc::vec::Vec::new(),
+        }
+    }
+
+    pub fn operands_mut(&mut self) -> alloc::vec::Vec<&mut crate::Handle<crate::Expression>> {
+        match *self {
+            Self::TraceRay {
+                ref mut acceleration_structure,
+                ref mut flags,
+                ref mut cull_mask,
+                ref mut sbt_offset,
+                ref mut sbt_stride,
+                ref mut miss_index,
+                ref mut origin,
+                ref mut tmin,
+                ref mut direction,
+                ref mut tmax,
+                ref mut time,
+                ref mut payload,
+            } => [
+                acceleration_structure,
+                flags,
+                cull_mask,
+                sbt_offset,
+                sbt_stride,
+                miss_index,
+                origin,
+                tmin,
+                direction,
+                tmax,
+            ]
+            .into_iter()
+            .chain(time.as_mut())
+            .chain(payload.pointer_mut())
+            .collect(),
+            Self::ExecuteCallable {
+                ref mut sbt_index,
+                ref mut data,
+            } => core::iter::once(sbt_index)
+                .chain(data.pointer_mut())
+                .collect(),
+            Self::ReportIntersection {
+                ref mut hit_t,
+                ref mut hit_kind,
+                ..
+            } => alloc::vec![hit_t, hit_kind],
+            Self::IgnoreIntersection { .. } | Self::TerminateRay { .. } => alloc::vec::Vec::new(),
+        }
+    }
+
+    pub const fn result(&self) -> Option<crate::Handle<crate::Expression>> {
+        match *self {
+            Self::ReportIntersection { result, .. } => Some(result),
+            Self::TraceRay { .. }
+            | Self::ExecuteCallable { .. }
+            | Self::IgnoreIntersection { .. }
+            | Self::TerminateRay { .. } => None,
+        }
+    }
+
+    pub const fn result_mut(&mut self) -> Option<&mut crate::Handle<crate::Expression>> {
+        match *self {
+            Self::ReportIntersection { ref mut result, .. } => Some(result),
+            Self::TraceRay { .. }
+            | Self::ExecuteCallable { .. }
+            | Self::IgnoreIntersection { .. }
+            | Self::TerminateRay { .. } => None,
+        }
+    }
+
+    pub const fn is_terminator(&self) -> bool {
+        match *self {
+            Self::IgnoreIntersection { nv } | Self::TerminateRay { nv } => !nv,
+            Self::TraceRay { .. }
+            | Self::ExecuteCallable { .. }
+            | Self::ReportIntersection { .. } => false,
+        }
+    }
+}
+
+impl crate::RayQueryFunction {
+    pub fn operands(&self) -> alloc::vec::Vec<crate::Handle<crate::Expression>> {
+        match *self {
+            Self::Initialize {
+                acceleration_structure,
+                flags,
+                cull_mask,
+                origin,
+                tmin,
+                direction,
+                tmax,
+            } => alloc::vec![
+                acceleration_structure,
+                flags,
+                cull_mask,
+                origin,
+                tmin,
+                direction,
+                tmax
+            ],
+            Self::GenerateIntersection { hit_t } => alloc::vec![hit_t],
+            Self::Proceed { .. } | Self::ConfirmIntersection | Self::Terminate => {
+                alloc::vec::Vec::new()
+            }
+        }
+    }
+
+    pub const fn result(&self) -> Option<crate::Handle<crate::Expression>> {
+        match *self {
+            Self::Proceed { result } => Some(result),
+            Self::Initialize { .. }
+            | Self::GenerateIntersection { .. }
+            | Self::ConfirmIntersection
+            | Self::Terminate => None,
+        }
+    }
+
+    pub fn operands_mut(&mut self) -> alloc::vec::Vec<&mut crate::Handle<crate::Expression>> {
+        match *self {
+            Self::Initialize {
+                ref mut acceleration_structure,
+                ref mut flags,
+                ref mut cull_mask,
+                ref mut origin,
+                ref mut tmin,
+                ref mut direction,
+                ref mut tmax,
+            } => alloc::vec![
+                acceleration_structure,
+                flags,
+                cull_mask,
+                origin,
+                tmin,
+                direction,
+                tmax
+            ],
+            Self::Proceed { ref mut result } => alloc::vec![result],
+            Self::GenerateIntersection { ref mut hit_t } => alloc::vec![hit_t],
+            Self::ConfirmIntersection | Self::Terminate => alloc::vec::Vec::new(),
+        }
+    }
+}
+
+pub fn contains_ray_query(
+    types: &crate::UniqueArena<crate::Type>,
+    ty: crate::Handle<crate::Type>,
+) -> bool {
+    match types[ty].inner {
+        crate::TypeInner::RayQuery { .. } => true,
+        crate::TypeInner::Array { base, .. } => contains_ray_query(types, base),
+        _ => false,
     }
 }

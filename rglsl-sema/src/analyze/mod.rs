@@ -4,6 +4,7 @@ mod expression;
 mod extension;
 mod heap;
 mod memory;
+mod ray;
 mod reference;
 mod reference_expression;
 mod statement;
@@ -86,6 +87,7 @@ pub struct Analysis {
     pub diagnostics: Vec<Diagnostic>,
     pub warnings: Vec<Diagnostic>,
     pub vulkan_memory_model: bool,
+    pub primitive_culling: bool,
 }
 
 impl Analysis {
@@ -134,6 +136,8 @@ fn symbol_type(symbols: &[Symbol], types: &TypeRegistry, id: SymbolId) -> Option
         }
     }
 }
+
+pub use ray::is_shader_record;
 
 pub fn analyze(unit: &TranslationUnit, options: &Options) -> Analysis {
     run(unit, options, None)
@@ -301,6 +305,8 @@ pub(crate) struct Analyzer<'a> {
     pub buffer_packing: Packing,
     pub buffer_row_major: bool,
     pub vulkan_memory_model: bool,
+    pub ray_locations: [Vec<u32>; 2],
+    pub primitive_culling: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -366,6 +372,8 @@ impl<'a> Analyzer<'a> {
             buffer_packing: Packing::Std430,
             buffer_row_major: false,
             vulkan_memory_model: false,
+            ray_locations: [Vec::new(), Vec::new()],
+            primitive_culling: false,
         }
     }
 
@@ -543,6 +551,7 @@ impl<'a> Analyzer<'a> {
             diagnostics: self.diagnostics,
             warnings: self.warnings,
             vulkan_memory_model: self.vulkan_memory_model,
+            primitive_culling: self.primitive_culling,
         }
     }
 

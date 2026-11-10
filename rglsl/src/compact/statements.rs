@@ -188,17 +188,14 @@ impl FunctionTracer<'_> {
                         self.expressions_used.insert(data.pointer);
                         self.expressions_used.insert(data.stride);
                     }
-                    St::RayPipelineFunction(func) => match func {
-                        crate::RayPipelineFunction::TraceRay {
-                            acceleration_structure,
-                            descriptor,
-                            payload,
-                        } => {
-                            self.expressions_used.insert(acceleration_structure);
-                            self.expressions_used.insert(descriptor);
-                            self.expressions_used.insert(payload);
+                    St::RayPipelineFunction(ref func) => {
+                        for operand in func.operands() {
+                            self.expressions_used.insert(operand);
                         }
-                    },
+                        if let Some(result) = func.result() {
+                            self.expressions_used.insert(result);
+                        }
+                    }
                     St::DebugPrintf { ref arguments, .. } => {
                         for argument in arguments {
                             if let crate::DebugPrintfArgument::Value(value) = *argument {
@@ -250,21 +247,15 @@ impl FunctionTracer<'_> {
     fn trace_ray_query_function(&mut self, fun: &crate::RayQueryFunction) {
         use crate::RayQueryFunction as Qf;
         match *fun {
-            Qf::Initialize {
-                acceleration_structure,
-                descriptor,
-            } => {
-                self.expressions_used.insert(acceleration_structure);
-                self.expressions_used.insert(descriptor);
+            Qf::Initialize { .. }
+            | Qf::Proceed { .. }
+            | Qf::GenerateIntersection { .. }
+            | Qf::ConfirmIntersection
+            | Qf::Terminate => {
+                for operand in fun.operands().into_iter().chain(fun.result()) {
+                    self.expressions_used.insert(operand);
+                }
             }
-            Qf::Proceed { result } => {
-                self.expressions_used.insert(result);
-            }
-            Qf::GenerateIntersection { hit_t } => {
-                self.expressions_used.insert(hit_t);
-            }
-            Qf::ConfirmIntersection => {}
-            Qf::Terminate => {}
         }
     }
 }
@@ -468,17 +459,14 @@ impl FunctionMap {
                         adjust(&mut data.pointer)?;
                         adjust(&mut data.stride)?;
                     }
-                    St::RayPipelineFunction(ref mut func) => match *func {
-                        crate::RayPipelineFunction::TraceRay {
-                            ref mut acceleration_structure,
-                            ref mut descriptor,
-                            ref mut payload,
-                        } => {
-                            adjust(acceleration_structure)?;
-                            adjust(descriptor)?;
-                            adjust(payload)?;
+                    St::RayPipelineFunction(ref mut func) => {
+                        for operand in func.operands_mut() {
+                            adjust(operand)?;
                         }
-                    },
+                        if let Some(result) = func.result_mut() {
+                            adjust(result)?;
+                        }
+                    }
                     St::DebugPrintf {
                         ref mut arguments, ..
                     } => {
@@ -559,21 +547,15 @@ impl FunctionMap {
     ) -> Result<(), BadHandle> {
         use crate::RayQueryFunction as Qf;
         match *fun {
-            Qf::Initialize {
-                ref mut acceleration_structure,
-                ref mut descriptor,
-            } => {
-                self.expressions.adjust(acceleration_structure)?;
-                self.expressions.adjust(descriptor)?;
+            Qf::Initialize { .. }
+            | Qf::Proceed { .. }
+            | Qf::GenerateIntersection { .. }
+            | Qf::ConfirmIntersection
+            | Qf::Terminate => {
+                for operand in fun.operands_mut() {
+                    self.expressions.adjust(operand)?;
+                }
             }
-            Qf::Proceed { ref mut result } => {
-                self.expressions.adjust(result)?;
-            }
-            Qf::GenerateIntersection { ref mut hit_t } => {
-                self.expressions.adjust(hit_t)?;
-            }
-            Qf::ConfirmIntersection => {}
-            Qf::Terminate => {}
         }
         Ok(())
     }

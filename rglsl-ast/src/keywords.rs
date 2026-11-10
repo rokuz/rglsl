@@ -263,7 +263,15 @@ const EXTENSION_KEYWORDS: [&str; 152] = [
 ];
 
 pub fn is_opaque_type_keyword(word: &str) -> bool {
-    if matches!(word, "atomic_uint" | "sampler" | "samplerShadow") {
+    if matches!(
+        word,
+        "atomic_uint"
+            | "sampler"
+            | "samplerShadow"
+            | "accelerationStructureNV"
+            | "accelerationStructureEXT"
+            | "rayQueryEXT"
+    ) {
         return true;
     }
     if word

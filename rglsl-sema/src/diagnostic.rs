@@ -209,6 +209,19 @@ pub enum DiagnosticKind {
         extension: &'static str,
         feature: String,
     },
+    #[error("`{feature}` is not supported in {stage} shaders")]
+    NotSupportedInStage {
+        feature: String,
+        stage: &'static str,
+    },
+    #[error("overlapping use of location {0}")]
+    OverlappingLocation(u32),
+    #[error("{what} with layout(location = {location})")]
+    RayLocationNotDeclared { what: &'static str, location: u32 },
+    #[error(
+        "ray queries can only be initialized by using the rayQueryInitializeEXT intrinsic: `{0}`"
+    )]
+    RayQueryInitializer(String),
     #[error("{0}")]
     Warning(String),
 }

@@ -1,5 +1,0 @@
-capabilities = "RAY_QUERY"
-targets = "SPIRV"
-
-[spv]
-version = [1, 4]

@@ -316,7 +316,15 @@ impl Analyzer<'_> {
                     Some(BlockStorage::Out) => Storage::Out,
                     Some(BlockStorage::ResourceHeap) => Storage::ResourceHeap,
                     Some(BlockStorage::SamplerHeap) => Storage::SamplerHeap,
+                    Some(ray) => super::ray::storage_of_block(ray).unwrap_or(Storage::None),
                     None => qualifiers.storage,
+                };
+                let shader_record = match variable.ty.kind {
+                    TypeKind::Block(block) => self
+                        .types
+                        .block(block)
+                        .is_some_and(|block| super::ray::is_shader_record(&block.qualifiers)),
+                    _ => false,
                 };
                 let place = if qualifiers.constant {
                     Place::ReadOnly("it is `const`")
@@ -324,6 +332,12 @@ impl Analyzer<'_> {
                     Place::ReadOnly("it is a descriptor heap")
                 } else if storage == Storage::Uniform {
                     Place::ReadOnly("it is a uniform")
+                } else if shader_record {
+                    Place::ReadOnly("can't modify a shaderrecordnv qualified buffer")
+                } else if storage == Storage::HitAttribute
+                    && self.options.stage != Stage::Intersection
+                {
+                    Place::ReadOnly("cannot modify hitAttributeNV in this stage")
                 } else if storage == Storage::In && variable.origin != Origin::Parameter {
                     Place::ReadOnly("it is a shader input")
                 } else if qualifiers.readonly && !variable.ty.is_opaque() {
@@ -427,6 +441,19 @@ impl Analyzer<'_> {
             }
         };
         self.references.insert(expression.id, id);
+        let builtin = self
+            .symbol(id)
+            .and_then(|symbol| symbol.variable())
+            .is_some_and(|variable| variable.origin == Origin::BuiltIn);
+        if builtin {
+            if let Some(extensions) =
+                crate::builtins::ray::variable_extensions(name, self.options.stage)
+            {
+                if !self.require_extensions(expression.span, extensions, name) {
+                    return Operand::error();
+                }
+            }
+        }
         if crate::builtins::needs_memory_scope_semantics(name)
             && self
                 .symbol(id)

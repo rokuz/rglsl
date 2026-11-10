@@ -102,6 +102,8 @@ impl Analyzer<'_> {
 
     fn global_qualifier(&mut self, qualifier: &Spanned<TypeQualifier>) {
         let qualifiers = self.qualifiers(qualifier);
+        self.primitive_culling(qualifier.span, &qualifiers, true);
+        self.shader_record_default(qualifier.span, &qualifiers);
         if self.buffer_reference_layout(&qualifiers) {
             if qualifiers.storage != Storage::Buffer {
                 self.error(
@@ -336,6 +338,18 @@ impl Analyzer<'_> {
                     StorageQualifier::Restrict => result.restrict = true,
                     StorageQualifier::Readonly => result.readonly = true,
                     StorageQualifier::Writeonly => result.writeonly = true,
+                    StorageQualifier::RayPayloadNV
+                    | StorageQualifier::RayPayloadEXT
+                    | StorageQualifier::RayPayloadInNV
+                    | StorageQualifier::RayPayloadInEXT
+                    | StorageQualifier::HitAttributeNV
+                    | StorageQualifier::HitAttributeEXT
+                    | StorageQualifier::CallableDataNV
+                    | StorageQualifier::CallableDataEXT
+                    | StorageQualifier::CallableDataInNV
+                    | StorageQualifier::CallableDataInEXT => {
+                        result.storage = self.ray_storage_qualifier(single.span, *storage);
+                    }
                     StorageQualifier::Attribute | StorageQualifier::Varying => {
                         self.error(
                             single.span,
@@ -731,6 +745,9 @@ impl Analyzer<'_> {
 
     fn init_declarator_list(&mut self, list: &InitDeclaratorList) {
         let qualifiers = self.optional_qualifiers(&list.ty.node);
+        if let Some(qualifier) = list.ty.qualifier.as_ref() {
+            self.primitive_culling(qualifier.span, &qualifiers, false);
+        }
         if qualifiers.nonuniform {
             self.non_uniform_storage_check(list.ty.qualifier.as_ref(), &qualifiers);
         }
@@ -1034,7 +1051,17 @@ impl Analyzer<'_> {
             self.error(name.span, DiagnosticKind::ConstWithoutInitializer);
             qualifiers.constant = false;
         }
-        if qualifiers.storage != Storage::Uniform && ty.contains_opaque(&self.types) {
+        if is_global {
+            self.shader_record_checks(name.span, &qualifiers, false);
+            self.ray_variable_checks(name.span, &qualifiers);
+        }
+        if self.is_ray_query(&ty) && initializer.is_some() {
+            self.error(
+                name.span,
+                DiagnosticKind::RayQueryInitializer(name.node.clone()),
+            );
+        }
+        if qualifiers.storage != Storage::Uniform && self.opaque_outside_uniform(&ty) {
             self.error(name.span, DiagnosticKind::OpaqueNotAllowed(self.show(&ty)));
         } else if qualifiers.storage == Storage::Uniform
             && is_global
@@ -1410,17 +1437,11 @@ impl Analyzer<'_> {
             Storage::ResourceHeap | Storage::SamplerHeap => {
                 self.heap_block_storage(structure.name.span, qualifiers.storage)
             }
-            _ => {
-                self.error(
-                    structure.name.span,
-                    DiagnosticKind::InvalidQualifier {
-                        qualifier: "block",
-                        reason: "a block needs `uniform`, `buffer`, `in` or `out`",
-                    },
-                );
-                BlockStorage::Uniform
-            }
+            _ => self.ray_block_storage(structure.name.span, qualifiers.storage),
         };
+        self.primitive_culling(structure.qualifier.span, &qualifiers, false);
+        self.shader_record_checks(structure.qualifier.span, &qualifiers, true);
+        self.ray_variable_checks(structure.qualifier.span, &qualifiers);
         self.heap_object_check(structure.name.span, &qualifiers);
         let buffer_type = qualifiers.has_layout("buffer_type");
         if buffer_type {

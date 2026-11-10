@@ -232,8 +232,8 @@ pub enum FunctionError {
     InvalidPayloadType,
     #[error("The payload type passed to `traceRay` must be a pointer with an address space of `ray_payload` or `incoming_ray_payload`, instead got {0:?}")]
     InvalidPayloadAddressSpace(crate::AddressSpace),
-    #[error("The payload type ({0:?}) passed to `traceRay` does not match the previous one {1:?}")]
-    MismatchedPayloadType(Handle<crate::Type>, Handle<crate::Type>),
+    #[error("The ray tracing operand {0:?} has the wrong type")]
+    InvalidRayOperand(Handle<crate::Expression>),
     #[error("The payload passed to `traceRay` must be a pointer directly to a global variable")]
     PayloadPointerNotGlobal,
     #[error("The message type {0:?} of an abort does not hold its message and arguments")]
@@ -311,10 +311,8 @@ struct BlockContext<'a> {
     info: &'a FunctionInfo,
     expressions: &'a Arena<crate::Expression>,
     types: &'a UniqueArena<crate::Type>,
-    local_vars: &'a Arena<crate::LocalVariable>,
     global_vars: &'a Arena<crate::GlobalVariable>,
     functions: &'a Arena<crate::Function>,
-    special_types: &'a crate::SpecialTypes,
     prev_infos: &'a [FunctionInfo],
     return_type: Option<Handle<crate::Type>>,
     local_expr_kind: &'a crate::proc::ExpressionKindTracker,
@@ -333,10 +331,8 @@ impl<'a> BlockContext<'a> {
             info,
             expressions: &fun.expressions,
             types: &module.types,
-            local_vars: &fun.local_variables,
             global_vars: &module.global_variables,
             functions: &module.functions,
-            special_types: &module.special_types,
             prev_infos,
             return_type: fun.result.as_ref().map(|fr| fr.ty),
             local_expr_kind,
@@ -1079,8 +1075,8 @@ impl super::Validator {
                             | Ex::PhysicalAddress { .. }
                             | Ex::BufferPointer { .. }
                             | Ex::HeapOffset { .. }
-                            | Ex::RayQueryGetIntersection { .. }
-                            | Ex::RayQueryVertexPositions { .. }
+                            | Ex::RayQueryGet { .. }
+                            | Ex::AccelerationStructureFromAddress { .. }
                             | Ex::CooperativeLoad { .. }
                             | Ex::CooperativeMultiplyAdd { .. } => {
                                 self.emit_expression(handle, context)?
@@ -1089,6 +1085,7 @@ impl super::Validator {
                             | Ex::AtomicResult { .. }
                             | Ex::WorkGroupUniformLoadResult { .. }
                             | Ex::RayQueryProceedResult
+                            | Ex::ReportIntersectionResult
                             | Ex::SubgroupBallotResult
                             | Ex::SubgroupOperationResult { .. } => {
                                 return Err(FunctionError::EmitResult(handle)
@@ -1762,52 +1759,37 @@ impl super::Validator {
                     }
                 }
                 S::RayQuery { query, ref fun } => {
-                    let query_var = match *context.get_expression(query) {
-                        crate::Expression::LocalVariable(var) => &context.local_vars[var],
-                        ref other => {
-                            log::error!("Unexpected ray query expression {other:?}");
-                            return Err(FunctionError::InvalidRayQueryExpression(query)
-                                .with_span_static(span, "invalid query expression"));
-                        }
-                    };
-                    let rq_vertex_return = match context.types[query_var.ty].inner {
-                        Ti::RayQuery { vertex_return } => vertex_return,
-                        ref other => {
-                            log::error!("Unexpected ray query type {other:?}");
-                            return Err(FunctionError::InvalidRayQueryType(query_var.ty)
-                                .with_span_static(span, "invalid query type"));
-                        }
-                    };
+                    let is_query =
+                        match *context.resolve_type_inner(query, &self.valid_expression_set)? {
+                            Ti::Pointer { base, .. } => {
+                                matches!(context.types[base].inner, Ti::RayQuery { .. })
+                            }
+                            _ => false,
+                        };
+                    if !is_query {
+                        return Err(FunctionError::InvalidRayQueryExpression(query)
+                            .with_span_static(span, "invalid query expression"));
+                    }
                     match *fun {
                         crate::RayQueryFunction::Initialize {
                             acceleration_structure,
-                            descriptor,
+                            flags,
+                            cull_mask,
+                            origin,
+                            tmin,
+                            direction,
+                            tmax,
                         } => {
-                            match *context.resolve_type_inner(
-                                acceleration_structure,
-                                &self.valid_expression_set,
-                            )? {
-                                Ti::AccelerationStructure { vertex_return } => {
-                                    if (!vertex_return) && rq_vertex_return {
-                                        return Err(FunctionError::MissingAccelerationStructureVertexReturn(acceleration_structure, query).with_span_static(span, "invalid acceleration structure"));
-                                    }
-                                }
-                                _ => {
-                                    return Err(FunctionError::InvalidAccelerationStructure(
-                                        acceleration_structure,
-                                    )
-                                    .with_span_static(span, "invalid acceleration structure"))
-                                }
-                            }
-                            let desc_ty_given = context
-                                .resolve_type_inner(descriptor, &self.valid_expression_set)?;
-                            let desc_ty_expected = context
-                                .special_types
-                                .ray_desc
-                                .map(|handle| &context.types[handle].inner);
-                            if Some(desc_ty_given) != desc_ty_expected {
-                                return Err(FunctionError::InvalidRayDescriptor(descriptor)
-                                    .with_span_static(span, "invalid ray descriptor"));
+                            self.validate_acceleration_structure(acceleration_structure, context)?;
+                            for (operand, kind) in [
+                                (flags, RayOperand::Uint),
+                                (cull_mask, RayOperand::Uint),
+                                (origin, RayOperand::Vector),
+                                (tmin, RayOperand::Float),
+                                (direction, RayOperand::Vector),
+                                (tmax, RayOperand::Float),
+                            ] {
+                                self.validate_ray_operand(operand, kind, context)?;
                             }
                         }
                         crate::RayQueryFunction::Proceed { result } => {
@@ -1942,83 +1924,78 @@ impl super::Validator {
                 S::RayPipelineFunction(ref fun) => match *fun {
                     crate::RayPipelineFunction::TraceRay {
                         acceleration_structure,
-                        descriptor,
+                        flags,
+                        cull_mask,
+                        sbt_offset,
+                        sbt_stride,
+                        miss_index,
+                        origin,
+                        tmin,
+                        direction,
+                        tmax,
+                        time,
                         payload,
                     } => {
-                        match *context.resolve_type_inner(
-                            acceleration_structure,
-                            &self.valid_expression_set,
-                        )? {
-                            crate::TypeInner::AccelerationStructure { vertex_return } => {
-                                if !vertex_return {
-                                    self.trace_rays_vertex_return =
-                                        super::TraceRayVertexReturnState::NoVertexReturn(span);
-                                } else if let super::TraceRayVertexReturnState::NoTraceRays =
-                                    self.trace_rays_vertex_return
-                                {
-                                    self.trace_rays_vertex_return =
-                                        super::TraceRayVertexReturnState::VertexReturn;
-                                }
-                            }
-                            _ => {
-                                return Err(FunctionError::InvalidAccelerationStructure(
-                                    acceleration_structure,
-                                )
-                                .with_span_handle(acceleration_structure, context.expressions))
-                            }
-                        }
-
-                        let current_payload_ty = match *context
-                            .resolve_type_inner(payload, &self.valid_expression_set)?
+                        stages &= super::ShaderStages::RAY_GENERATION
+                            | super::ShaderStages::CLOSEST_HIT
+                            | super::ShaderStages::MISS;
+                        self.validate_acceleration_structure(acceleration_structure, context)?;
+                        for (operand, kind) in [
+                            (flags, RayOperand::Uint),
+                            (cull_mask, RayOperand::Uint),
+                            (sbt_offset, RayOperand::Uint),
+                            (sbt_stride, RayOperand::Uint),
+                            (miss_index, RayOperand::Uint),
+                            (origin, RayOperand::Vector),
+                            (tmin, RayOperand::Float),
+                            (direction, RayOperand::Vector),
+                            (tmax, RayOperand::Float),
+                        ]
+                        .into_iter()
+                        .chain(time.map(|time| (time, RayOperand::Float)))
                         {
-                            crate::TypeInner::Pointer { base, space } => {
-                                match space {
-                                    AddressSpace::RayPayload | AddressSpace::IncomingRayPayload => {
-                                    }
-                                    space => {
-                                        return Err(FunctionError::InvalidPayloadAddressSpace(
-                                            space,
-                                        )
-                                        .with_span_handle(payload, context.expressions))
-                                    }
-                                }
-                                base
-                            }
-                            _ => {
-                                return Err(FunctionError::InvalidPayloadType
-                                    .with_span_handle(payload, context.expressions))
-                            }
-                        };
-
-                        // spir-v requires a direct reference to a global variable.
-                        let crate::Expression::GlobalVariable(_) = context.expressions[payload]
-                        else {
-                            return Err(FunctionError::PayloadPointerNotGlobal
-                                .with_span_handle(payload, context.expressions));
-                        };
-
-                        let ty = *self
-                            .trace_rays_payload_type
-                            .get_or_insert(current_payload_ty);
-
-                        if ty != current_payload_ty {
-                            return Err(FunctionError::MismatchedPayloadType(
-                                current_payload_ty,
-                                ty,
-                            )
-                            .with_span_handle(ty, context.types));
+                            self.validate_ray_operand(operand, kind, context)?;
                         }
-
-                        let desc_ty_given =
-                            context.resolve_type_inner(descriptor, &self.valid_expression_set)?;
-                        let desc_ty_expected = context
-                            .special_types
-                            .ray_desc
-                            .map(|handle| &context.types[handle].inner);
-                        if Some(desc_ty_given) != desc_ty_expected {
-                            return Err(FunctionError::InvalidRayDescriptor(descriptor)
-                                .with_span_static(span, "invalid ray descriptor"));
+                        if time.is_some() && payload.pointer().is_none() {
+                            return Err(FunctionError::InvalidPayloadType.with_span_static(
+                                span,
+                                "a motion trace needs a payload variable",
+                            ));
                         }
+                        self.validate_ray_data(
+                            payload,
+                            &[AddressSpace::RayPayload, AddressSpace::IncomingRayPayload],
+                            context,
+                        )?;
+                    }
+                    crate::RayPipelineFunction::ExecuteCallable { sbt_index, data } => {
+                        stages &= super::ShaderStages::RAY_GENERATION
+                            | super::ShaderStages::CLOSEST_HIT
+                            | super::ShaderStages::MISS
+                            | super::ShaderStages::CALLABLE;
+                        self.validate_ray_operand(sbt_index, RayOperand::Uint, context)?;
+                        self.validate_ray_data(
+                            data,
+                            &[
+                                AddressSpace::CallableData,
+                                AddressSpace::IncomingCallableData,
+                            ],
+                            context,
+                        )?;
+                    }
+                    crate::RayPipelineFunction::ReportIntersection {
+                        hit_t,
+                        hit_kind,
+                        result,
+                    } => {
+                        stages &= super::ShaderStages::INTERSECTION;
+                        self.validate_ray_operand(hit_t, RayOperand::Float, context)?;
+                        self.validate_ray_operand(hit_kind, RayOperand::Uint, context)?;
+                        self.emit_expression(result, context)?;
+                    }
+                    crate::RayPipelineFunction::IgnoreIntersection { .. }
+                    | crate::RayPipelineFunction::TerminateRay { .. } => {
+                        stages &= super::ShaderStages::ANY_HIT;
                     }
                 },
             }
@@ -2187,5 +2164,79 @@ impl super::Validator {
             }
         }
         Ok(info)
+    }
+}
+
+#[derive(Clone, Copy)]
+enum RayOperand {
+    Uint,
+    Float,
+    Vector,
+}
+
+impl super::Validator {
+    fn validate_acceleration_structure(
+        &self,
+        handle: Handle<crate::Expression>,
+        context: &BlockContext,
+    ) -> Result<(), WithSpan<FunctionError>> {
+        match *context.resolve_type_inner(handle, &self.valid_expression_set)? {
+            crate::TypeInner::AccelerationStructure { .. } => Ok(()),
+            _ => Err(FunctionError::InvalidAccelerationStructure(handle)
+                .with_span_handle(handle, context.expressions)),
+        }
+    }
+
+    fn validate_ray_operand(
+        &self,
+        handle: Handle<crate::Expression>,
+        kind: RayOperand,
+        context: &BlockContext,
+    ) -> Result<(), WithSpan<FunctionError>> {
+        let inner = context.resolve_type_inner(handle, &self.valid_expression_set)?;
+        let valid = match kind {
+            RayOperand::Uint => *inner == crate::TypeInner::Scalar(crate::Scalar::U32),
+            RayOperand::Float => *inner == crate::TypeInner::Scalar(crate::Scalar::F32),
+            RayOperand::Vector => {
+                *inner
+                    == crate::TypeInner::Vector {
+                        size: crate::VectorSize::Tri,
+                        scalar: crate::Scalar::F32,
+                    }
+            }
+        };
+        if valid {
+            Ok(())
+        } else {
+            Err(FunctionError::InvalidRayOperand(handle)
+                .with_span_handle(handle, context.expressions))
+        }
+    }
+
+    fn validate_ray_data(
+        &self,
+        data: crate::RayTracingData,
+        spaces: &[crate::AddressSpace],
+        context: &BlockContext,
+    ) -> Result<(), WithSpan<FunctionError>> {
+        let crate::RayTracingData::Pointer(pointer) = data else {
+            return Ok(());
+        };
+        match *context.resolve_type_inner(pointer, &self.valid_expression_set)? {
+            crate::TypeInner::Pointer { space, .. } if spaces.contains(&space) => {}
+            crate::TypeInner::Pointer { space, .. } => {
+                return Err(FunctionError::InvalidPayloadAddressSpace(space)
+                    .with_span_handle(pointer, context.expressions))
+            }
+            _ => {
+                return Err(FunctionError::InvalidPayloadType
+                    .with_span_handle(pointer, context.expressions))
+            }
+        }
+        match context.expressions[pointer] {
+            crate::Expression::GlobalVariable(_) => Ok(()),
+            _ => Err(FunctionError::PayloadPointerNotGlobal
+                .with_span_handle(pointer, context.expressions)),
+        }
     }
 }

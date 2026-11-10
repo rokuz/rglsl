@@ -138,6 +138,12 @@ pub enum ShaderStage {
 
     /// A closest hit shader, in a ray tracing pipeline.
     ClosestHit,
+
+    /// An intersection shader, in a ray tracing pipeline.
+    Intersection,
+
+    /// A callable shader, in a ray tracing pipeline.
+    Callable,
 }
 
 impl ShaderStage {
@@ -145,8 +151,26 @@ impl ShaderStage {
         match self {
             Self::Vertex | Self::Fragment => false,
             Self::Compute | Self::Task | Self::Mesh => true,
-            Self::RayGeneration | Self::AnyHit | Self::ClosestHit | Self::Miss => false,
+            Self::RayGeneration
+            | Self::AnyHit
+            | Self::ClosestHit
+            | Self::Miss
+            | Self::Intersection
+            | Self::Callable => false,
         }
+    }
+
+    /// A stage of a ray tracing pipeline.
+    pub const fn ray_tracing(self) -> bool {
+        matches!(
+            self,
+            Self::RayGeneration
+                | Self::Intersection
+                | Self::AnyHit
+                | Self::ClosestHit
+                | Self::Miss
+                | Self::Callable
+        )
     }
 
     /// Mesh or task shader

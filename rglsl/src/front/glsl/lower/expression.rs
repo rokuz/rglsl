@@ -412,6 +412,9 @@ impl<'a> FunctionLowerer<'_, 'a> {
             let pointer = self.add(Expression::AccessIndex { base, index }, at)?;
             return Ok(Chain::Place(Place::pointer(pointer, false)));
         }
+        if let Some(chain) = self.ray_builtin_chain(symbol, at)? {
+            return Ok(chain);
+        }
         let global = self.lw.global_ref(symbol, at)?;
         let handle_space = matches!(global, GlobalRef::Variable(handle)
             if self.lw.module.global_variables[handle].space == AddressSpace::Handle);

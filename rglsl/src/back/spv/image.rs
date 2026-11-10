@@ -416,7 +416,10 @@ impl BlockContext<'_> {
             }
             crate::Expression::Access { .. }
             | crate::Expression::AccessIndex { .. }
-            | crate::Expression::Load { .. } => self.cached.get(expr_handle)?,
+            | crate::Expression::Load { .. }
+            | crate::Expression::AccelerationStructureFromAddress { .. } => {
+                self.cached.get(expr_handle)?
+            }
             _ => return Err(Error::Validation("unexpected opaque handle expression")),
         };
 
