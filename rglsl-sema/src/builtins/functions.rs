@@ -1,5 +1,18 @@
 use super::{Section, ALL_STAGES, COMPUTE, FRAGMENT, GEOMETRY, TESS_CONTROL};
 
+const EXPECT_ASSUME: &str = "
+void assumeEXT(bool)
+genB expectEXT(genB, genB)
+genI expectEXT(genI, genI)
+genU expectEXT(genU, genU)
+genI8 expectEXT(genI8, genI8)
+genU8 expectEXT(genU8, genU8)
+genI16 expectEXT(genI16, genI16)
+genU16 expectEXT(genU16, genU16)
+genI64 expectEXT(genI64, genI64)
+genU64 expectEXT(genU64, genU64)
+";
+
 const ANGLE_AND_TRIGONOMETRY: &str = "
 genF radians(genF)
 genF degrees(genF)
@@ -506,4 +519,5 @@ pub(super) const SECTIONS: &[Section] = &[
     Section::new(SCOPED_BARRIERS),
     Section::new(COMPUTE_MEMORY_BARRIERS).in_stages(COMPUTE),
     Section::new(SHADER_INVOCATION_GROUP).since(460),
+    Section::new(EXPECT_ASSUME),
 ];

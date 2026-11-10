@@ -501,7 +501,65 @@ pub struct LayoutQualifierId {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TypeSpecifier {
     pub non_array: TypeSpecifierNonArray,
+    pub parameters: Option<Spanned<TypeParameters>>,
     pub array: Option<Spanned<ArraySpecifier>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TypeParameters {
+    pub element: Option<Box<Spanned<TypeSpecifier>>>,
+    pub values: Vec<Expression>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ParameterizedType {
+    CooperativeMatrix,
+    FloatCooperativeMatrixNv,
+    IntCooperativeMatrixNv,
+    UintCooperativeMatrixNv,
+    CooperativeVectorNv,
+    LongVector,
+    TensorLayoutNv,
+    TensorViewNv,
+}
+
+impl ParameterizedType {
+    pub const ALL: [Self; 8] = [
+        Self::CooperativeMatrix,
+        Self::FloatCooperativeMatrixNv,
+        Self::IntCooperativeMatrixNv,
+        Self::UintCooperativeMatrixNv,
+        Self::CooperativeVectorNv,
+        Self::LongVector,
+        Self::TensorLayoutNv,
+        Self::TensorViewNv,
+    ];
+
+    pub const fn keyword(self) -> &'static str {
+        match self {
+            Self::CooperativeMatrix => "coopmat",
+            Self::FloatCooperativeMatrixNv => "fcoopmatNV",
+            Self::IntCooperativeMatrixNv => "icoopmatNV",
+            Self::UintCooperativeMatrixNv => "ucoopmatNV",
+            Self::CooperativeVectorNv => "coopvecNV",
+            Self::LongVector => "vector",
+            Self::TensorLayoutNv => "tensorLayoutNV",
+            Self::TensorViewNv => "tensorViewNV",
+        }
+    }
+
+    pub fn from_keyword(word: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|kind| kind.keyword() == word)
+    }
+
+    pub const fn is_nv_matrix(self) -> bool {
+        matches!(
+            self,
+            Self::FloatCooperativeMatrixNv
+                | Self::IntCooperativeMatrixNv
+                | Self::UintCooperativeMatrixNv
+        )
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -509,6 +567,7 @@ pub enum TypeSpecifierNonArray {
     Void,
     Basic(BasicType),
     Opaque(String),
+    Parameterized(ParameterizedType),
     Struct(StructSpecifier),
     TypeName(String),
     InlineBlock(Vec<Spanned<StructDeclaration>>),

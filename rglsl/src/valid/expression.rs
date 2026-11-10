@@ -207,6 +207,71 @@ impl core::ops::Index<Handle<crate::Expression>> for ExpressionTypeResolver<'_> 
 }
 
 impl super::Validator {
+    fn validate_long_expression(
+        expression: &crate::Expression,
+        resolver: &ExpressionTypeResolver,
+    ) -> Result<Option<ShaderStages>, ExpressionError> {
+        use crate::{Expression as E, TypeInner as Ti};
+        let long = |handle: Handle<crate::Expression>| {
+            matches!(
+                resolver[handle],
+                Ti::LongVector { .. } | Ti::CooperativeMatrix { .. }
+            )
+        };
+        let shape = |handle: Handle<crate::Expression>| match resolver[handle] {
+            Ti::LongVector { size, class, .. } => Some((Some(size), Some(class))),
+            Ti::CooperativeMatrix { .. } => Some((None, None)),
+            Ti::Scalar(_) => None,
+            _ => Some((None, None)),
+        };
+        let operands: arrayvec::ArrayVec<Handle<crate::Expression>, 4> = match *expression {
+            E::Unary { expr, .. }
+            | E::Derivative { expr, .. }
+            | E::As { expr, .. }
+            | E::Relational { argument: expr, .. } => [expr].into_iter().collect(),
+            E::Binary { left, right, .. } => [left, right].into_iter().collect(),
+            E::Select { accept, reject, .. } => [accept, reject].into_iter().collect(),
+            E::Math {
+                arg,
+                arg1,
+                arg2,
+                arg3,
+                ..
+            } => [Some(arg), arg1, arg2, arg3]
+                .into_iter()
+                .flatten()
+                .collect(),
+            _ => return Ok(None),
+        };
+        if !operands.iter().any(|&operand| long(operand)) {
+            return Ok(None);
+        }
+        let mut expected = None;
+        for &operand in &operands {
+            let Some(current) = shape(operand) else {
+                continue;
+            };
+            match expected {
+                None => expected = Some(current),
+                Some(previous) if previous == current => {}
+                Some(_) => {
+                    if let E::Math {
+                        fun: crate::MathFunction::Ldexp | crate::MathFunction::Frexp,
+                        ..
+                    } = *expression
+                    {
+                        continue;
+                    }
+                    return Err(ExpressionError::InvalidCooperativeOperand(operand));
+                }
+            }
+        }
+        Ok(Some(match *expression {
+            E::Derivative { .. } => ShaderStages::FRAGMENT,
+            _ => ShaderStages::all(),
+        }))
+    }
+
     pub(super) fn validate_const_expression(
         &self,
         handle: Handle<crate::Expression>,
@@ -264,12 +329,18 @@ impl super::Validator {
             info,
         };
 
+        if let Some(stages) = Self::validate_long_expression(expression, &resolver)? {
+            return Ok(stages);
+        }
+
         let stages = match *expression {
             E::Access { base, index } => {
                 let base_type = &resolver[base];
                 match *base_type {
                     Ti::Matrix { .. }
                     | Ti::Vector { .. }
+                    | Ti::LongVector { .. }
+                    | Ti::CooperativeMatrix { .. }
                     | Ti::Array { .. }
                     | Ti::Pointer { .. }
                     | Ti::ValuePointer { size: Some(_), .. }
@@ -334,6 +405,8 @@ impl super::Validator {
                             size: Some(size), ..
                         } => size as u32,
                         Ti::Matrix { columns, .. } => columns as u32,
+                        Ti::LongVector { size, .. } => size.known().unwrap_or(u32::MAX),
+                        Ti::CooperativeMatrix { .. } => u32::MAX,
                         Ti::Array {
                             size: crate::ArraySize::Constant(len),
                             ..
@@ -1360,7 +1433,7 @@ impl super::Validator {
                 }
                 ShaderStages::COMPUTE
             }
-            E::CooperativeMultiplyAdd { a, b, c } => {
+            E::CooperativeMultiplyAdd { a, b, c, .. } => {
                 let roles = [
                     crate::CooperativeRole::A,
                     crate::CooperativeRole::B,
@@ -1368,14 +1441,40 @@ impl super::Validator {
                 ];
                 for (operand, expected_role) in [a, b, c].into_iter().zip(roles) {
                     match resolver[operand] {
+                        Ti::CooperativeMatrix {
+                            class: crate::CooperativeMatrixClass::Nv,
+                            ..
+                        } => {}
                         Ti::CooperativeMatrix { role, .. } if role == expected_role => {}
                         ref other => {
                             log::debug!("{expected_role:?} operand type: {other:?}");
-                            return Err(ExpressionError::InvalidCooperativeOperand(a));
+                            return Err(ExpressionError::InvalidCooperativeOperand(operand));
                         }
                     }
                 }
-                ShaderStages::COMPUTE
+                ShaderStages::all()
+            }
+            E::CooperativeMatrixLength { ty } => match module.types[ty].inner {
+                Ti::CooperativeMatrix { .. } => ShaderStages::all(),
+                _ => return Err(ExpressionError::InvalidCooperativeOperand(root)),
+            },
+            E::Expect { value, expected } => {
+                if resolver[value] != resolver[expected] {
+                    return Err(ExpressionError::InvalidCooperativeOperand(expected));
+                }
+                ShaderStages::all()
+            }
+            E::Replicate { ty, value } => {
+                let scalar = match module.types[ty].inner {
+                    Ti::CooperativeMatrix { scalar, .. }
+                    | Ti::LongVector { scalar, .. }
+                    | Ti::Vector { scalar, .. } => scalar,
+                    _ => return Err(ExpressionError::InvalidCooperativeOperand(root)),
+                };
+                if resolver[value] != Ti::Scalar(scalar) {
+                    return Err(ExpressionError::InvalidCooperativeOperand(value));
+                }
+                ShaderStages::all()
             }
         };
         Ok(stages)

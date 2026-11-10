@@ -146,6 +146,22 @@ pub fn vector_sizes() -> impl Iterator<Item = ir::VectorSize> + Clone {
 const POINTER_SPAN: u32 = 4;
 const PHYSICAL_POINTER_SPAN: u32 = 8;
 
+impl crate::CooperativeSize {
+    pub const fn known(self) -> Option<u32> {
+        match self {
+            Self::Constant(size) => Some(size.get()),
+            Self::Pending(_) => None,
+        }
+    }
+
+    pub const fn known_or_one(self) -> u32 {
+        match self {
+            Self::Constant(size) => size.get(),
+            Self::Pending(_) => 1,
+        }
+    }
+}
+
 impl crate::TypeInner {
     /// Return the scalar type of `self`.
     ///
@@ -162,7 +178,7 @@ impl crate::TypeInner {
         match *self {
             Ti::Scalar(scalar) | Ti::Vector { scalar, .. } => Some(scalar),
             Ti::Matrix { scalar, .. } => Some(scalar),
-            Ti::CooperativeMatrix { scalar, .. } => Some(scalar),
+            Ti::CooperativeMatrix { scalar, .. } | Ti::LongVector { scalar, .. } => Some(scalar),
             _ => None,
         }
     }
@@ -254,8 +270,14 @@ impl crate::TypeInner {
                 columns,
                 rows,
                 scalar,
-                role: _,
-            } => Some(columns as u32 * rows as u32 * scalar.width as u32),
+                ..
+            } => columns
+                .known_or_one()
+                .checked_mul(rows.known_or_one())?
+                .checked_mul(u32::from(scalar.width)),
+            Self::LongVector { size, scalar, .. } => {
+                size.known_or_one().checked_mul(u32::from(scalar.width))
+            }
             Self::Pointer {
                 space: crate::AddressSpace::PhysicalStorage { .. },
                 ..
@@ -447,7 +469,8 @@ impl crate::TypeInner {
             | Ti::Vector { .. }
             | Ti::Matrix { .. }
             | Ti::RayQuery { .. }
-            | Ti::CooperativeMatrix { .. } => true,
+            | Ti::CooperativeMatrix { .. }
+            | Ti::LongVector { .. } => true,
         }
     }
 
@@ -490,6 +513,7 @@ impl crate::TypeInner {
             crate::TypeInner::Vector { size, scalar } => Some((Some(size), scalar)),
             crate::TypeInner::Matrix { .. }
             | crate::TypeInner::CooperativeMatrix { .. }
+            | crate::TypeInner::LongVector { .. }
             | crate::TypeInner::Atomic(_)
             | crate::TypeInner::Pointer { .. }
             | crate::TypeInner::ValuePointer { .. }
@@ -517,6 +541,7 @@ impl crate::TypeInner {
             | crate::TypeInner::Atomic(scalar) => scalar.is_abstract(),
             crate::TypeInner::Array { base, .. } => types[base].inner.is_abstract(types),
             crate::TypeInner::CooperativeMatrix { .. }
+            | crate::TypeInner::LongVector { .. }
             | crate::TypeInner::ValuePointer { .. }
             | crate::TypeInner::Pointer { .. }
             | crate::TypeInner::Struct { .. }

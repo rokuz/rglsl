@@ -723,17 +723,28 @@ fn adjust_expr(new_pos: &HandleVec<Expression, Handle<Expression>>, expr: &mut E
         | Expression::SubgroupBallotResult
         | Expression::SubgroupOperationResult { .. } => {}
         Expression::CooperativeLoad { ref mut data, .. } => {
-            adjust(&mut data.pointer);
-            adjust(&mut data.stride);
+            for operand in data.operands_mut() {
+                adjust(operand);
+            }
         }
         Expression::CooperativeMultiplyAdd {
             ref mut a,
             ref mut b,
             ref mut c,
+            ..
         } => {
             adjust(a);
             adjust(b);
             adjust(c);
+        }
+        Expression::CooperativeMatrixLength { .. } => {}
+        Expression::Replicate { ref mut value, .. } => adjust(value),
+        Expression::Expect {
+            ref mut value,
+            ref mut expected,
+        } => {
+            adjust(value);
+            adjust(expected);
         }
     }
 }
@@ -964,8 +975,9 @@ fn adjust_stmt(new_pos: &HandleVec<Expression, Handle<Expression>>, stmt: &mut S
             ref mut data,
         } => {
             adjust(target);
-            adjust(&mut data.pointer);
-            adjust(&mut data.stride);
+            for operand in data.operands_mut() {
+                adjust(operand);
+            }
         }
         Statement::RayPipelineFunction(ref mut func) => {
             for operand in func.operands_mut() {
@@ -975,6 +987,7 @@ fn adjust_stmt(new_pos: &HandleVec<Expression, Handle<Expression>>, stmt: &mut S
                 adjust(result);
             }
         }
+        Statement::Assume { ref mut condition } => adjust(condition),
         Statement::DebugPrintf {
             ref mut arguments, ..
         } => {

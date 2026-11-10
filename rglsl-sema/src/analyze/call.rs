@@ -228,6 +228,16 @@ impl Analyzer<'_> {
             return Operand::error();
         }
         self.calls.insert(expression.id, Callee::Length);
+        if operand.ty.as_cooperative_matrix().is_some() {
+            return Operand::temporary(Type::INT);
+        }
+        if let Some(ArraySize::Specialized(_)) = operand.ty.sized_vector_length() {
+            self.specialization_uses += 1;
+            return Operand {
+                specialization: true,
+                ..Operand::constant(Type::INT, None)
+            };
+        }
         match operand.ty.length() {
             Some(length) => {
                 let value = i32::try_from(length)
@@ -333,6 +343,14 @@ impl Analyzer<'_> {
             }
         }
         let types: Vec<Type> = operands.iter().map(|operand| operand.ty.clone()).collect();
+        if types
+            .iter()
+            .any(|ty| ty.sized_vector_length().is_some() && !ty.is_array())
+            && self.scopes.function_levels(name).is_empty()
+            && !self.builtins.overloads(name).is_empty()
+        {
+            return self.long_vector_builtin(expression, span, name, arguments, &operands);
+        }
         let levels: Vec<Vec<Candidate>> = self
             .scopes
             .function_levels(name)
@@ -618,12 +636,15 @@ impl Analyzer<'_> {
         Operand::temporary(Type::VOID)
     }
 
-    fn builtin_extensions(&mut self, span: Span, name: &str) {
+    pub(crate) fn builtin_extensions(&mut self, span: Span, name: &str) {
         if matches!(name, "subgroupQuadAll" | "subgroupQuadAny") {
             self.require_extension(span, subgroup::QUAD_CONTROL, name);
         }
         if let Some(extension) = subgroup::function_extension(name) {
             self.require_extension(span, extension, name);
+        }
+        if matches!(name, "expectEXT" | "assumeEXT") {
+            self.require_extension(span, "GL_EXT_expect_assume", name);
         }
     }
 
@@ -929,6 +950,21 @@ impl Analyzer<'_> {
         if operands.iter().any(|operand| operand.ty.is_string()) {
             return fail(self, &ty, "cannot convert a string");
         }
+        if !ty.is_array()
+            && matches!(
+                ty.kind,
+                TypeKind::CooperativeMatrix(_)
+                    | TypeKind::LongVector { .. }
+                    | TypeKind::CooperativeVector { .. }
+            )
+        {
+            let operand = self.cooperative_constructor(span, &ty, &operands);
+            if !operand.ty.is_error() {
+                self.calls
+                    .insert(expression.id, Callee::Constructor(ty.clone()));
+            }
+            return operand;
+        }
         let numeric =
             !ty.is_array() && matches!(ty.kind, TypeKind::Scalar(_) | TypeKind::Vector { .. });
         if ty.is_reference() || numeric {
@@ -1164,7 +1200,7 @@ impl Analyzer<'_> {
         }
     }
 
-    fn fold_constructor(
+    pub(crate) fn fold_constructor(
         &self,
         ty: &Type,
         scalar: Scalar,

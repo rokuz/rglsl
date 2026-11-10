@@ -525,11 +525,24 @@ impl Writer {
                 rows,
                 scalar,
                 role,
+                scope,
+                class,
             } => LocalType::Cooperative(CooperativeType::Matrix {
                 columns,
                 rows,
                 scalar,
                 role,
+                scope,
+                class,
+            }),
+            crate::TypeInner::LongVector {
+                size,
+                scalar,
+                class,
+            } => LocalType::Cooperative(CooperativeType::Vector {
+                size,
+                scalar,
+                class,
             }),
             crate::TypeInner::Pointer {
                 space: crate::AddressSpace::DescriptorHeap(_),
@@ -2288,15 +2301,36 @@ impl Writer {
                 self.use_extension("SPV_KHR_16bit_storage");
             }
             // Cooperative types and ops
-            crate::TypeInner::CooperativeMatrix { .. } => {
-                self.require_any(
-                    "cooperative matrix",
-                    &[spirv::Capability::CooperativeMatrixKHR],
-                )?;
-                self.require_any("memory model", &[spirv::Capability::VulkanMemoryModel])?;
-                self.use_extension("SPV_KHR_cooperative_matrix");
-                self.use_extension("SPV_KHR_vulkan_memory_model");
-            }
+            crate::TypeInner::CooperativeMatrix { class, .. } => match class {
+                crate::CooperativeMatrixClass::Khr => {
+                    self.require_any(
+                        "cooperative matrix",
+                        &[spirv::Capability::CooperativeMatrixKHR],
+                    )?;
+                    self.use_extension("SPV_KHR_cooperative_matrix");
+                }
+                crate::CooperativeMatrixClass::Nv => {
+                    self.require_any(
+                        "cooperative matrix",
+                        &[spirv::Capability::CooperativeMatrixNV],
+                    )?;
+                    self.use_extension("SPV_NV_cooperative_matrix");
+                }
+            },
+            crate::TypeInner::LongVector { size, class, .. } => match class {
+                crate::LongVectorClass::Plain => {
+                    self.require_any("long vector", &[spirv::Capability::LongVectorEXT])?;
+                    self.use_extension("SPV_EXT_long_vector");
+                    let _ = size;
+                }
+                crate::LongVectorClass::CooperativeNv => {
+                    self.require_any(
+                        "cooperative vector",
+                        &[spirv::Capability::CooperativeVectorNV],
+                    )?;
+                    self.use_extension("SPV_NV_cooperative_vector");
+                }
+            },
             _ => {}
         }
         Ok(())
@@ -2329,6 +2363,17 @@ impl Writer {
         instruction.to_words(&mut self.logical_layout.declarations);
     }
 
+    fn cooperative_size_id(&mut self, size: crate::CooperativeSize) -> Word {
+        match size {
+            crate::CooperativeSize::Constant(size) => self.get_index_constant(size.get()),
+            crate::CooperativeSize::Pending(handle) => self
+                .override_ids
+                .get(handle.index())
+                .copied()
+                .unwrap_or_default(),
+        }
+    }
+
     fn write_cooperative_type_declaration_local(&mut self, id: Word, coop: CooperativeType) {
         let instruction = match coop {
             CooperativeType::Matrix {
@@ -2336,15 +2381,56 @@ impl Writer {
                 rows,
                 scalar,
                 role,
+                scope,
+                class,
             } => {
                 let scalar_id =
                     self.get_localtype_id(LocalType::Numeric(NumericType::Scalar(scalar)));
-                let scope_id = self.get_index_constant(spirv::Scope::Subgroup as u32);
-                let columns_id = self.get_index_constant(columns as u32);
-                let rows_id = self.get_index_constant(rows as u32);
-                let role_id =
-                    self.get_index_constant(spirv::CooperativeMatrixUse::from(role) as u32);
-                Instruction::type_coop_matrix(id, scalar_id, scope_id, rows_id, columns_id, role_id)
+                let scope_id = self.cooperative_size_id(scope);
+                let columns_id = self.cooperative_size_id(columns);
+                let rows_id = self.cooperative_size_id(rows);
+                match class {
+                    crate::CooperativeMatrixClass::Khr => {
+                        let role_id =
+                            self.get_index_constant(spirv::CooperativeMatrixUse::from(role) as u32);
+                        Instruction::type_coop_matrix(
+                            id, scalar_id, scope_id, rows_id, columns_id, role_id,
+                        )
+                    }
+                    crate::CooperativeMatrixClass::Nv => {
+                        let mut instruction = Instruction::new(spirv::Op::TypeCooperativeMatrixNV);
+                        instruction.set_result(id);
+                        for operand in [scalar_id, scope_id, rows_id, columns_id] {
+                            instruction.add_operand(operand);
+                        }
+                        instruction
+                    }
+                }
+            }
+            CooperativeType::Vector {
+                size,
+                scalar,
+                class,
+            } => {
+                let scalar_id =
+                    self.get_localtype_id(LocalType::Numeric(NumericType::Scalar(scalar)));
+                match (class, size) {
+                    (crate::LongVectorClass::Plain, crate::CooperativeSize::Constant(size)) => {
+                        let mut instruction = Instruction::new(spirv::Op::TypeVector);
+                        instruction.set_result(id);
+                        instruction.add_operand(scalar_id);
+                        instruction.add_operand(size.get());
+                        instruction
+                    }
+                    _ => {
+                        let size_id = self.cooperative_size_id(size);
+                        let mut instruction = Instruction::new(spirv::Op::TypeVectorIdEXT);
+                        instruction.set_result(id);
+                        instruction.add_operand(scalar_id);
+                        instruction.add_operand(size_id);
+                        instruction
+                    }
+                }
             }
         };
 
@@ -2398,6 +2484,21 @@ impl Writer {
         // because some types which map to the same LocalType have different
         // capability requirements. See https://github.com/gfx-rs/wgpu/issues/5569
         self.request_type_capabilities(&ty.inner)?;
+        let pending = match ty.inner {
+            crate::TypeInner::CooperativeMatrix {
+                columns,
+                rows,
+                scope,
+                ..
+            } => [Some(columns), Some(rows), Some(scope)],
+            crate::TypeInner::LongVector { size, .. } => [Some(size), None, None],
+            _ => [None, None, None],
+        };
+        for size in pending.into_iter().flatten() {
+            if let crate::CooperativeSize::Pending(handle) = size {
+                self.write_override(handle, module, mod_info)?;
+            }
+        }
         if let crate::TypeInner::Pointer {
             base,
             space: crate::AddressSpace::PhysicalStorage { .. },
@@ -2564,6 +2665,7 @@ impl Writer {
                 | crate::TypeInner::Vector { .. }
                 | crate::TypeInner::Matrix { .. }
                 | crate::TypeInner::CooperativeMatrix { .. }
+                | crate::TypeInner::LongVector { .. }
                 | crate::TypeInner::Pointer { .. }
                 | crate::TypeInner::ValuePointer { .. }
                 | crate::TypeInner::Image { .. }
@@ -3115,6 +3217,11 @@ impl Writer {
                 let ty = self.get_expression_lookup_type(&mod_info[handle])?;
 
                 self.get_constant_composite(ty, component_ids)?
+            }
+            crate::Expression::Replicate { ty, value } if !self.is_override_dependent(handle) => {
+                let value_id = self.constant_ids[value];
+                let inner = ir_module.types[ty].inner.clone();
+                self.write_constant_replicate(ty, value_id, &inner)?
             }
             crate::Expression::Override(item) => self.write_override(item, ir_module, mod_info)?,
             _ => self.write_spec_operation(handle, ir_module, mod_info)?,

@@ -920,13 +920,28 @@ impl FunctionInfo {
                     requirements: UniformityRequirements::empty(),
                 }
             }
-            E::CooperativeLoad { ref data, .. } => Uniformity {
-                non_uniform_result: self.add_ref(data.pointer).or(self.add_ref(data.stride)),
-                requirements: UniformityRequirements::COOP_OPS,
-            },
-            E::CooperativeMultiplyAdd { a, b, c } => Uniformity {
+            E::CooperativeLoad { ref data, .. } => {
+                let mut non_uniform_result = None;
+                for operand in data.operands() {
+                    non_uniform_result = non_uniform_result.or(self.add_ref(operand));
+                }
+                Uniformity {
+                    non_uniform_result,
+                    requirements: UniformityRequirements::COOP_OPS,
+                }
+            }
+            E::CooperativeMultiplyAdd { a, b, c, .. } => Uniformity {
                 non_uniform_result: self.add_ref(a).or(self.add_ref(b).or(self.add_ref(c))),
                 requirements: UniformityRequirements::COOP_OPS,
+            },
+            E::CooperativeMatrixLength { .. } => Uniformity::new(),
+            E::Replicate { value, .. } => Uniformity {
+                non_uniform_result: self.add_ref(value),
+                requirements: UniformityRequirements::empty(),
+            },
+            E::Expect { value, expected } => Uniformity {
+                non_uniform_result: self.add_ref(value).or(self.add_ref(expected)),
+                requirements: UniformityRequirements::empty(),
             },
         };
 
@@ -1281,7 +1296,8 @@ impl FunctionInfo {
                         non_uniform_result: self
                             .add_ref(target)
                             .or(self.add_ref_impl(data.pointer, GlobalUse::WRITE))
-                            .or(self.add_ref(data.stride)),
+                            .or(data.stride.and_then(|stride| self.add_ref(stride)))
+                            .or(self.add_ref(data.layout)),
                         requirements: UniformityRequirements::COOP_OPS,
                     },
                     exit: ExitFlags::empty(),
@@ -1311,6 +1327,13 @@ impl FunctionInfo {
                         FunctionUniformity::new()
                     }
                 }
+                S::Assume { condition } => FunctionUniformity {
+                    result: Uniformity {
+                        non_uniform_result: self.add_ref(condition),
+                        requirements: UniformityRequirements::empty(),
+                    },
+                    exit: ExitFlags::empty(),
+                },
                 S::DebugPrintf { ref arguments, .. } => {
                     let mut non_uniform_result = None;
                     for argument in arguments {

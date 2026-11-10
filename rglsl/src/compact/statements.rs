@@ -185,8 +185,7 @@ impl FunctionTracer<'_> {
                     }
                     St::CooperativeStore { target, ref data } => {
                         self.expressions_used.insert(target);
-                        self.expressions_used.insert(data.pointer);
-                        self.expressions_used.insert(data.stride);
+                        self.expressions_used.insert_iter(data.operands());
                     }
                     St::RayPipelineFunction(ref func) => {
                         for operand in func.operands() {
@@ -195,6 +194,9 @@ impl FunctionTracer<'_> {
                         if let Some(result) = func.result() {
                             self.expressions_used.insert(result);
                         }
+                    }
+                    St::Assume { condition } => {
+                        self.expressions_used.insert(condition);
                     }
                     St::DebugPrintf { ref arguments, .. } => {
                         for argument in arguments {
@@ -463,8 +465,9 @@ impl FunctionMap {
                         ref mut data,
                     } => {
                         adjust(target)?;
-                        adjust(&mut data.pointer)?;
-                        adjust(&mut data.stride)?;
+                        for operand in data.operands_mut() {
+                            adjust(operand)?;
+                        }
                     }
                     St::RayPipelineFunction(ref mut func) => {
                         for operand in func.operands_mut() {
@@ -474,6 +477,7 @@ impl FunctionMap {
                             adjust(result)?;
                         }
                     }
+                    St::Assume { ref mut condition } => adjust(condition)?,
                     St::DebugPrintf {
                         ref mut arguments, ..
                     } => {

@@ -466,28 +466,47 @@ impl super::Validator {
                 type_info.immediates_compatibility = immediates_compatibility;
                 type_info
             }
-            Ti::CooperativeMatrix {
-                columns: _,
-                rows: _,
-                scalar,
-                role: _,
-            } => {
+            Ti::CooperativeMatrix { scalar, .. } => {
                 self.require_type_capability(Capabilities::COOPERATIVE_MATRIX)?;
-                // Allow f16 (width 2) and f32 (width 4) for cooperative matrices
-                if scalar.kind != crate::ScalarKind::Float
-                    || (scalar.width != 2 && scalar.width != 4)
-                {
+                if !scalar.kind.is_numeric() {
                     return Err(TypeError::MatrixElementNotFloat);
                 }
                 TypeInfo::new(
                     TypeFlags::DATA
                         | TypeFlags::SIZED
                         | TypeFlags::COPY
-                        | TypeFlags::HOST_SHAREABLE
                         | TypeFlags::ARGUMENT
                         | TypeFlags::CONSTRUCTIBLE
                         | TypeFlags::CREATION_RESOLVED,
                     scalar_alignment(scalar)?,
+                )
+            }
+            Ti::LongVector {
+                size,
+                scalar,
+                class,
+            } => {
+                let _ = self.check_width(scalar)?;
+                let shareable = match class {
+                    crate::LongVectorClass::Plain => TypeFlags::HOST_SHAREABLE,
+                    crate::LongVectorClass::CooperativeNv => TypeFlags::empty(),
+                };
+                let factor = match size.known_or_one() {
+                    1 => Alignment::ONE,
+                    2 => Alignment::TWO,
+                    _ => Alignment::FOUR,
+                };
+                TypeInfo::new(
+                    TypeFlags::DATA
+                        | TypeFlags::SIZED
+                        | TypeFlags::COPY
+                        | TypeFlags::ARGUMENT
+                        | TypeFlags::CONSTRUCTIBLE
+                        | TypeFlags::CREATION_RESOLVED
+                        | shareable,
+                    factor
+                        .checked_mul(scalar_alignment(scalar)?)
+                        .ok_or(WidthError::Invalid(scalar.kind, scalar.width))?,
                 )
             }
             Ti::Atomic(scalar) => {

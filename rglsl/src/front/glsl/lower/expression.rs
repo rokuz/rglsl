@@ -1168,6 +1168,25 @@ impl<'a> FunctionLowerer<'_, 'a> {
         Ok(())
     }
 
+    pub(super) fn replicate(
+        &mut self,
+        value: Handle<Expression>,
+        like: &GlslType,
+        at: Span,
+    ) -> Result<Handle<Expression>> {
+        let ty = self.lw.ir_type(like, at)?;
+        match self.lw.module.types[ty].inner {
+            crate::TypeInner::Vector { size, .. } => {
+                self.add(Expression::Splat { size, value }, at)
+            }
+            crate::TypeInner::LongVector { .. } | crate::TypeInner::CooperativeMatrix { .. } => {
+                self.add(Expression::Replicate { ty, value }, at)
+            }
+            crate::TypeInner::Scalar(_) => Ok(value),
+            _ => Err(internal(at)),
+        }
+    }
+
     pub(super) fn splat(
         &mut self,
         value: Handle<Expression>,
@@ -1189,6 +1208,9 @@ impl<'a> FunctionLowerer<'_, 'a> {
         let value = self.literal(one, at)?;
         match ty.kind {
             TypeKind::Vector { size, .. } => self.splat(value, size, at),
+            TypeKind::LongVector { .. }
+            | TypeKind::CooperativeVector { .. }
+            | TypeKind::CooperativeMatrix(_) => self.replicate(value, ty, at),
             TypeKind::Matrix { columns, rows, .. } => {
                 let column = self.splat(value, rows, at)?;
                 let components = (0..columns).map(|_| column).collect();
@@ -1647,6 +1669,8 @@ impl<'a> FunctionLowerer<'_, 'a> {
                 if let (TypeKind::Vector { size, .. }, true) = (left_ty.kind, right_ty.is_scalar())
                 {
                     right = self.splat(right, size, at)?;
+                } else if left_ty.sized_vector_length().is_some() && right_ty.is_scalar() {
+                    right = self.replicate(right, &left_ty.with_scalar(GlslScalar::Uint), at)?;
                 }
                 return self.add(Expression::Binary { op, left, right }, at);
             }
@@ -1678,7 +1702,22 @@ impl<'a> FunctionLowerer<'_, 'a> {
             );
         }
         let (mut left, mut right) = (left, right);
-        if op != BinaryOperator::Multiply {
+        let long = |ty: &GlslType| {
+            matches!(
+                ty.kind,
+                TypeKind::LongVector { .. } | TypeKind::CooperativeVector { .. }
+            )
+        };
+        let float_scalar = |ty: &GlslType| ty.is_scalar() && ty.is_numeric() && !ty.is_integer();
+        if long(left_ty) && right_ty.is_scalar() {
+            if op != BinaryOperator::Multiply || !float_scalar(right_ty) {
+                right = self.replicate(right, left_ty, at)?;
+            }
+        } else if long(right_ty) && left_ty.is_scalar() {
+            if op != BinaryOperator::Multiply || !float_scalar(left_ty) {
+                left = self.replicate(left, right_ty, at)?;
+            }
+        } else if op != BinaryOperator::Multiply {
             match (left_ty.kind, right_ty.kind) {
                 (TypeKind::Vector { size, .. }, TypeKind::Scalar(_)) => {
                     right = self.splat(right, size, at)?;

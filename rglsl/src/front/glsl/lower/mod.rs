@@ -2,6 +2,7 @@ mod atomic;
 mod builtins;
 mod call;
 mod constant;
+mod cooperative;
 mod expression;
 mod function;
 mod globals;

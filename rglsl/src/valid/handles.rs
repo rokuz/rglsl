@@ -436,7 +436,6 @@ impl super::Validator {
             crate::TypeInner::Scalar { .. }
             | crate::TypeInner::Vector { .. }
             | crate::TypeInner::Matrix { .. }
-            | crate::TypeInner::CooperativeMatrix { .. }
             | crate::TypeInner::ValuePointer { .. }
             | crate::TypeInner::Atomic { .. }
             | crate::TypeInner::Image { .. }
@@ -455,6 +454,21 @@ impl super::Validator {
             | crate::TypeInner::BufferDescriptor { base, space: _ } => {
                 handle.check_dep(base)?;
                 None
+            }
+            crate::TypeInner::CooperativeMatrix {
+                columns,
+                rows,
+                scope,
+                ..
+            } => {
+                let mut max = None;
+                for size in [columns, rows, scope] {
+                    max = max.max(Self::validate_cooperative_size(handle, size, overrides)?);
+                }
+                max
+            }
+            crate::TypeInner::LongVector { size, .. } => {
+                Self::validate_cooperative_size(handle, size, overrides)?
             }
             crate::TypeInner::Array { base, size, .. }
             | crate::TypeInner::BindingArray { base, size, .. } => {
@@ -479,6 +493,22 @@ impl super::Validator {
         };
 
         Ok(max_expr)
+    }
+
+    fn validate_cooperative_size(
+        handle: Handle<crate::Type>,
+        size: crate::CooperativeSize,
+        overrides: &Arena<crate::Override>,
+    ) -> Result<Option<Handle<crate::Expression>>, InvalidHandleError> {
+        match size {
+            crate::CooperativeSize::Pending(h) => {
+                Self::validate_override_handle(h, overrides)?;
+                let r#override = &overrides[h];
+                handle.check_dep(r#override.ty)?;
+                Ok(r#override.init)
+            }
+            crate::CooperativeSize::Constant(_) => Ok(None),
+        }
     }
 
     fn validate_entry_point_index(
@@ -527,6 +557,10 @@ impl super::Validator {
             crate::Expression::ZeroValue(ty) => Some(ty),
             crate::Expression::Compose { ty, ref components } => {
                 handle.check_dep_iter(components.iter().copied())?;
+                Some(ty)
+            }
+            crate::Expression::Replicate { ty, value } => {
+                handle.check_dep(value)?;
                 Some(ty)
             }
             _ => None,
@@ -725,11 +759,22 @@ impl super::Validator {
             crate::Expression::AccelerationStructureFromAddress { address } => {
                 handle.check_dep(address)?;
             }
-            crate::Expression::CooperativeLoad { ref data, .. } => {
-                handle.check_dep(data.pointer)?.check_dep(data.stride)?;
+            crate::Expression::CooperativeLoad { ty, ref data } => {
+                validate_type(ty)?;
+                handle.check_dep_iter(data.operands())?;
             }
-            crate::Expression::CooperativeMultiplyAdd { a, b, c } => {
+            crate::Expression::CooperativeMultiplyAdd { a, b, c, .. } => {
                 handle.check_dep(a)?.check_dep(b)?.check_dep(c)?;
+            }
+            crate::Expression::CooperativeMatrixLength { ty } => {
+                validate_type(ty)?;
+            }
+            crate::Expression::Replicate { ty, value } => {
+                validate_type(ty)?;
+                handle.check_dep(value)?;
+            }
+            crate::Expression::Expect { value, expected } => {
+                handle.check_dep(value)?.check_dep(expected)?;
             }
         }
         Ok(())
@@ -941,8 +986,9 @@ impl super::Validator {
             }
             crate::Statement::CooperativeStore { target, ref data } => {
                 validate_expr(target)?;
-                validate_expr(data.pointer)?;
-                validate_expr(data.stride)?;
+                for operand in data.operands() {
+                    validate_expr(operand)?;
+                }
                 Ok(())
             }
             crate::Statement::RayPipelineFunction(ref fun) => {
@@ -950,6 +996,10 @@ impl super::Validator {
                     validate_expr(operand)?;
                 }
                 validate_expr_opt(fun.result())?;
+                Ok(())
+            }
+            crate::Statement::Assume { condition } => {
+                validate_expr(condition)?;
                 Ok(())
             }
             crate::Statement::DebugPrintf { ref arguments, .. } => {

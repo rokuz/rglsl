@@ -199,7 +199,9 @@ impl BlockContext<'_> {
 
         let (is_scalar, scalar) = match result_ty_inner {
             TypeInner::Scalar(kind) => (true, kind),
-            TypeInner::Vector { scalar: kind, .. } => (false, kind),
+            TypeInner::Vector { scalar: kind, .. } | TypeInner::LongVector { scalar: kind, .. } => {
+                (false, kind)
+            }
             _ => {
                 return Err(Error::Validation(
                     "subgroup operation result is not a scalar or vector",

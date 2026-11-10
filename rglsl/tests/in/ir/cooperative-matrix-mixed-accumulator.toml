@@ -1,6 +1,0 @@
-targets = "SPIRV"
-capabilities = "COOPERATIVE_MATRIX | SHADER_FLOAT16"
-
-[spv]
-debug = false
-version = [1, 4]

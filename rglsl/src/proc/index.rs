@@ -241,6 +241,13 @@ impl crate::TypeInner {
         let known_length = match *self {
             Ti::Vector { size, .. } => size as _,
             Ti::Matrix { columns, .. } => columns as _,
+            Ti::LongVector {
+                size: crate::CooperativeSize::Constant(size),
+                ..
+            } => size.get(),
+            Ti::LongVector { .. } | Ti::CooperativeMatrix { .. } => {
+                return Ok(IndexableLength::Dynamic)
+            }
             Ti::Array { size, .. } | Ti::BindingArray { size, .. } => {
                 return size.to_indexable_length(module);
             }
@@ -255,6 +262,13 @@ impl crate::TypeInner {
                 match *base_inner {
                     Ti::Vector { size, .. } => size as _,
                     Ti::Matrix { columns, .. } => columns as _,
+                    Ti::LongVector {
+                        size: crate::CooperativeSize::Constant(size),
+                        ..
+                    } => size.get(),
+                    Ti::LongVector { .. } | Ti::CooperativeMatrix { .. } => {
+                        return Ok(IndexableLength::Dynamic)
+                    }
                     Ti::Array { size, .. } | Ti::BindingArray { size, .. } => {
                         return size.to_indexable_length(module)
                     }

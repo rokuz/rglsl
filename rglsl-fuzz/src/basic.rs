@@ -224,6 +224,7 @@ pub fn from_specifier(specifier: &TypeSpecifier) -> Option<BasicType> {
 pub const fn specifier(ty: BasicType) -> TypeSpecifier {
     TypeSpecifier {
         non_array: TypeSpecifierNonArray::Basic(ty),
+        parameters: None,
         array: None,
     }
 }

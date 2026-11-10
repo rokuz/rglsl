@@ -52,6 +52,7 @@ pub fn ensure_block_returns(block: &mut crate::Block) {
             | S::CooperativeStore { .. }
             | S::RayPipelineFunction(_)
             | S::DebugPrintf { .. }
+            | S::Assume { .. }
             | S::EmitVertex { .. }
             | S::EndPrimitive { .. }),
         )

@@ -1,4 +1,4 @@
-use crate::ast::{BasicType, SingleTypeQualifier};
+use crate::ast::{BasicType, ParameterizedType, SingleTypeQualifier};
 
 const SAMPLED_SHAPES: [&str; 10] = [
     "1D",
@@ -107,7 +107,7 @@ const EXTENSION_ONLY: [&str; 8] = [
     "tileImageEXT",
 ];
 
-const EXTENSION_KEYWORDS: [&str; 152] = [
+const EXTENSION_KEYWORDS: [&str; 144] = [
     "terminateInvocation",
     "terminateRayEXT",
     "ignoreIntersectionEXT",
@@ -246,20 +246,12 @@ const EXTENSION_KEYWORDS: [&str; 152] = [
     "taskNV",
     "perprimitiveEXT",
     "taskPayloadSharedEXT",
-    "fcoopmatNV",
-    "icoopmatNV",
-    "ucoopmatNV",
-    "coopmat",
     "hitObjectNV",
     "hitObjectAttributeNV",
     "tensorARM",
     "hitObjectEXT",
     "hitObjectAttributeEXT",
     "__function",
-    "tensorLayoutNV",
-    "tensorViewNV",
-    "coopvecNV",
-    "vector",
 ];
 
 pub fn is_opaque_type_keyword(word: &str) -> bool {
@@ -291,7 +283,10 @@ pub fn is_opaque_type_keyword(word: &str) -> bool {
 }
 
 pub fn is_type_keyword(word: &str) -> bool {
-    word == "void" || BasicType::from_keyword(word).is_some() || is_opaque_type_keyword(word)
+    word == "void"
+        || BasicType::from_keyword(word).is_some()
+        || is_opaque_type_keyword(word)
+        || ParameterizedType::from_keyword(word).is_some()
 }
 
 pub fn is_keyword(word: &str) -> bool {

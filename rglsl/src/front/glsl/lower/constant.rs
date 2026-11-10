@@ -1,7 +1,7 @@
 use alloc::vec::Vec;
 
 use rglsl_sema::constant::Value;
-use rglsl_sema::types::{Type as GlslType, TypeKind};
+use rglsl_sema::types::{ArraySize, Type as GlslType, TypeKind};
 
 use super::{internal, Lowerer, Result};
 use crate::{Expression, Handle, Literal, Span};
@@ -45,6 +45,18 @@ pub(super) fn shape(
         TypeKind::Scalar(_) => values.first().copied().map(Shape::Literal),
         TypeKind::Vector { scalar, size } => Some(Shape::Compose(
             (0..usize::from(size))
+                .map(|index| (GlslType::scalar(scalar), index, 1))
+                .collect(),
+        )),
+        TypeKind::LongVector {
+            scalar,
+            size: ArraySize::Sized(size),
+        }
+        | TypeKind::CooperativeVector {
+            scalar,
+            size: ArraySize::Sized(size),
+        } => Some(Shape::Compose(
+            (0..usize::try_from(size).ok()?)
                 .map(|index| (GlslType::scalar(scalar), index, 1))
                 .collect(),
         )),

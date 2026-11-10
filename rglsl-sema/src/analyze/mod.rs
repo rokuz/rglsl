@@ -1,4 +1,5 @@
 mod call;
+mod cooperative;
 mod declaration;
 mod expression;
 mod extension;

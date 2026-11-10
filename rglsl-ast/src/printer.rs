@@ -291,6 +291,7 @@ impl Printer {
             TypeSpecifierNonArray::Opaque(name) | TypeSpecifierNonArray::TypeName(name) => {
                 self.write(name);
             }
+            TypeSpecifierNonArray::Parameterized(kind) => self.write(kind.keyword()),
             TypeSpecifierNonArray::Struct(specifier) => {
                 self.write("struct ");
                 if let Some(name) = &specifier.name {
@@ -302,6 +303,22 @@ impl Printer {
             TypeSpecifierNonArray::InlineBlock(declarations) => {
                 self.struct_declaration_list(declarations);
             }
+        }
+        if let Some(parameters) = &specifier.parameters {
+            self.write("<");
+            let mut first = true;
+            if let Some(element) = &parameters.element {
+                self.type_specifier(element);
+                first = false;
+            }
+            for value in &parameters.values {
+                if !first {
+                    self.write(", ");
+                }
+                first = false;
+                self.expression(value);
+            }
+            self.write(">");
         }
         self.optional_array_specifier(specifier.array.as_deref());
     }

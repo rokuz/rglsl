@@ -1301,3 +1301,71 @@ pub fn contains_ray_query(
         _ => false,
     }
 }
+
+pub fn long_math_result_members(
+    fun: crate::MathFunction,
+    argument: &crate::TypeInner,
+) -> Option<[crate::TypeInner; 2]> {
+    let crate::TypeInner::LongVector {
+        size,
+        scalar: _,
+        class,
+    } = *argument
+    else {
+        return None;
+    };
+    match fun {
+        crate::MathFunction::Modf
+        | crate::MathFunction::AddCarry
+        | crate::MathFunction::SubBorrow
+        | crate::MathFunction::MulExtended => Some([argument.clone(), argument.clone()]),
+        crate::MathFunction::Frexp => Some([
+            argument.clone(),
+            crate::TypeInner::LongVector {
+                size,
+                scalar: crate::Scalar::I32,
+                class,
+            },
+        ]),
+        _ => None,
+    }
+}
+
+pub fn long_math_result(
+    fun: crate::MathFunction,
+    argument: &crate::TypeInner,
+    types: &crate::UniqueArena<crate::Type>,
+) -> Option<crate::Type> {
+    let [first, second] = long_math_result_members(fun, argument)?;
+    let lookup = |inner: crate::TypeInner| types.get(&crate::Type { name: None, inner });
+    let size_of = |inner: &crate::TypeInner| match *inner {
+        crate::TypeInner::LongVector { size, scalar, .. } => {
+            size.known_or_one().checked_mul(u32::from(scalar.width))
+        }
+        _ => None,
+    };
+    let first_size = size_of(&first)?;
+    let second_size = size_of(&second)?;
+    let first = lookup(first)?;
+    let second = lookup(second)?;
+    let offset = first_size.checked_next_multiple_of(32)?;
+    let span = offset
+        .checked_add(second_size)?
+        .checked_next_multiple_of(32)?;
+    let member = |ty, offset| crate::StructMember {
+        name: None,
+        ty,
+        binding: None,
+        offset,
+        matrix_layout: None,
+        xfb_offset: None,
+        heap: None,
+    };
+    Some(crate::Type {
+        name: None,
+        inner: crate::TypeInner::Struct {
+            members: alloc::vec![member(first, 0), member(second, offset)],
+            span,
+        },
+    })
+}

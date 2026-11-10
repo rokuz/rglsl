@@ -566,6 +566,73 @@ pub enum TypeKind {
     Block(BlockId),
     Reference(BlockId),
     Opaque(Opaque),
+    CooperativeMatrix(CooperativeMatrix),
+    LongVector {
+        scalar: Scalar,
+        size: ArraySize,
+    },
+    CooperativeVector {
+        scalar: Scalar,
+        size: ArraySize,
+    },
+    TensorLayout {
+        dimensions: u32,
+        clamp_mode: u32,
+    },
+    TensorView {
+        dimensions: u32,
+        has_dimensions: bool,
+        permutation: [u8; 5],
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum CooperativeUse {
+    A,
+    B,
+    Accumulator,
+    Nv,
+}
+
+impl CooperativeUse {
+    pub const fn from_value(value: i64) -> Option<Self> {
+        match value {
+            0 => Some(Self::A),
+            1 => Some(Self::B),
+            2 => Some(Self::Accumulator),
+            _ => None,
+        }
+    }
+
+    pub const fn value(self) -> u32 {
+        match self {
+            Self::A => 0,
+            Self::B => 1,
+            Self::Accumulator | Self::Nv => 2,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct CooperativeMatrix {
+    pub scalar: Scalar,
+    pub scope: ArraySize,
+    pub rows: ArraySize,
+    pub columns: ArraySize,
+    pub usage: CooperativeUse,
+}
+
+impl CooperativeMatrix {
+    pub fn same_shape(&self, other: &Self) -> bool {
+        self.scope == other.scope
+            && self.rows == other.rows
+            && self.columns == other.columns
+            && self.usage == other.usage
+    }
+
+    pub const fn with_scalar(self, scalar: Scalar) -> Self {
+        Self { scalar, ..self }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -719,8 +786,50 @@ impl Type {
         match self.kind {
             TypeKind::Scalar(scalar)
             | TypeKind::Vector { scalar, .. }
-            | TypeKind::Matrix { scalar, .. } => Some(scalar),
+            | TypeKind::Matrix { scalar, .. }
+            | TypeKind::LongVector { scalar, .. }
+            | TypeKind::CooperativeVector { scalar, .. }
+            | TypeKind::CooperativeMatrix(CooperativeMatrix { scalar, .. }) => Some(scalar),
             _ => None,
+        }
+    }
+
+    pub const fn is_long_vector(&self) -> bool {
+        !self.is_array() && matches!(self.kind, TypeKind::LongVector { .. })
+    }
+
+    pub const fn is_cooperative_vector(&self) -> bool {
+        !self.is_array() && matches!(self.kind, TypeKind::CooperativeVector { .. })
+    }
+
+    pub const fn as_cooperative_matrix(&self) -> Option<CooperativeMatrix> {
+        match self.kind {
+            TypeKind::CooperativeMatrix(matrix) if !self.is_array() => Some(matrix),
+            _ => None,
+        }
+    }
+
+    pub const fn sized_vector_length(&self) -> Option<ArraySize> {
+        match self.kind {
+            TypeKind::LongVector { size, .. } | TypeKind::CooperativeVector { size, .. }
+                if !self.is_array() =>
+            {
+                Some(size)
+            }
+            _ => None,
+        }
+    }
+
+    pub fn contains_cooperative(&self, registry: &TypeRegistry) -> bool {
+        match self.kind {
+            TypeKind::CooperativeMatrix(_) | TypeKind::CooperativeVector { .. } => true,
+            TypeKind::Struct(id) => registry.structure(id).is_some_and(|structure| {
+                structure
+                    .members
+                    .iter()
+                    .any(|member| member.ty.contains_cooperative(registry))
+            }),
+            _ => false,
         }
     }
 
@@ -798,6 +907,14 @@ impl Type {
             TypeKind::Scalar(_) => Some(1),
             TypeKind::Vector { size, .. } => Some(u32::from(size)),
             TypeKind::Matrix { columns, rows, .. } => Some(u32::from(columns) * u32::from(rows)),
+            TypeKind::LongVector {
+                size: ArraySize::Sized(size),
+                ..
+            }
+            | TypeKind::CooperativeVector {
+                size: ArraySize::Sized(size),
+                ..
+            } => Some(size),
             _ => None,
         }
     }
@@ -807,6 +924,14 @@ impl Type {
             TypeKind::Scalar(_) => 1,
             TypeKind::Vector { size, .. } => u32::from(size),
             TypeKind::Matrix { columns, rows, .. } => u32::from(columns) * u32::from(rows),
+            TypeKind::LongVector {
+                size: ArraySize::Sized(size),
+                ..
+            }
+            | TypeKind::CooperativeVector {
+                size: ArraySize::Sized(size),
+                ..
+            } => size,
             TypeKind::Struct(id) => registry.structure(id)?.flattened_size?,
             TypeKind::Reference(_) => 1,
             _ => return None,
@@ -828,7 +953,12 @@ impl Type {
             });
         }
         match self.kind {
-            TypeKind::Vector { scalar, .. } => Some(Self::scalar(scalar)),
+            TypeKind::Vector { scalar, .. }
+            | TypeKind::LongVector { scalar, .. }
+            | TypeKind::CooperativeVector { scalar, .. }
+            | TypeKind::CooperativeMatrix(CooperativeMatrix { scalar, .. }) => {
+                Some(Self::scalar(scalar))
+            }
             TypeKind::Matrix { scalar, rows, .. } => Some(Self::vector(scalar, rows)),
             _ => None,
         }
@@ -866,6 +996,14 @@ impl Type {
         match self.kind {
             TypeKind::Vector { size, .. } => Some(u32::from(size)),
             TypeKind::Matrix { columns, .. } => Some(u32::from(columns)),
+            TypeKind::LongVector {
+                size: ArraySize::Sized(size),
+                ..
+            }
+            | TypeKind::CooperativeVector {
+                size: ArraySize::Sized(size),
+                ..
+            } => Some(size),
             _ => None,
         }
     }
@@ -879,6 +1017,13 @@ impl Type {
                 columns,
                 rows,
             },
+            TypeKind::LongVector { size, .. } => TypeKind::LongVector { scalar, size },
+            TypeKind::CooperativeVector { size, .. } => {
+                TypeKind::CooperativeVector { scalar, size }
+            }
+            TypeKind::CooperativeMatrix(matrix) => {
+                TypeKind::CooperativeMatrix(matrix.with_scalar(scalar))
+            }
             other => other,
         };
         Self {
@@ -908,6 +1053,28 @@ impl Type {
                     ..
                 },
             ) => left_columns == right_columns && left_rows == right_rows,
+            (
+                TypeKind::Vector { size, .. },
+                TypeKind::LongVector {
+                    size: ArraySize::Sized(length),
+                    ..
+                },
+            )
+            | (
+                TypeKind::LongVector {
+                    size: ArraySize::Sized(length),
+                    ..
+                },
+                TypeKind::Vector { size, .. },
+            ) => u32::from(size) == length,
+            (TypeKind::LongVector { size: left, .. }, TypeKind::LongVector { size: right, .. })
+            | (
+                TypeKind::CooperativeVector { size: left, .. },
+                TypeKind::CooperativeVector { size: right, .. },
+            ) => left == right,
+            (TypeKind::CooperativeMatrix(left), TypeKind::CooperativeMatrix(right)) => {
+                left.same_shape(&right)
+            }
             (left, right) => left == right,
         }
     }
@@ -920,7 +1087,30 @@ impl Type {
         if self == target {
             return true;
         }
-        if self.is_array() || target.is_array() || !self.same_shape(target) {
+        if self.is_array() || target.is_array() {
+            return false;
+        }
+        if let (
+            TypeKind::Vector { scalar, size },
+            TypeKind::LongVector {
+                scalar: long,
+                size: ArraySize::Sized(length),
+            },
+        )
+        | (
+            TypeKind::LongVector {
+                scalar: long,
+                size: ArraySize::Sized(length),
+            },
+            TypeKind::Vector { scalar, size },
+        ) = (self.kind, target.kind)
+        {
+            return u32::from(size) == length && scalar == long;
+        }
+        if matches!(self.kind, TypeKind::CooperativeMatrix(_))
+            || matches!(target.kind, TypeKind::CooperativeMatrix(_))
+            || !self.same_shape(target)
+        {
             return false;
         }
         match (self.base_scalar(), target.base_scalar()) {
@@ -989,6 +1179,40 @@ impl fmt::Display for TypeDisplay<'_> {
                 formatter.write_str(name.unwrap_or("block"))?;
             }
             TypeKind::Opaque(opaque) => write!(formatter, "{opaque}")?,
+            TypeKind::CooperativeMatrix(matrix) => {
+                write!(
+                    formatter,
+                    "coopmat<{}, {}, {}, {}, {}>",
+                    matrix.scalar.keyword(),
+                    ShowSize(matrix.scope),
+                    ShowSize(matrix.rows),
+                    ShowSize(matrix.columns),
+                    matrix.usage.value()
+                )?;
+            }
+            TypeKind::LongVector { scalar, size } => {
+                write!(
+                    formatter,
+                    "vector<{}, {}>",
+                    scalar.keyword(),
+                    ShowSize(size)
+                )?;
+            }
+            TypeKind::CooperativeVector { scalar, size } => {
+                write!(
+                    formatter,
+                    "coopvecNV<{}, {}>",
+                    scalar.keyword(),
+                    ShowSize(size)
+                )?;
+            }
+            TypeKind::TensorLayout {
+                dimensions,
+                clamp_mode,
+            } => write!(formatter, "tensorLayoutNV<{dimensions}, {clamp_mode}>")?,
+            TypeKind::TensorView { dimensions, .. } => {
+                write!(formatter, "tensorViewNV<{dimensions}>")?;
+            }
         }
         for dimension in &self.ty.array {
             match dimension {
@@ -998,6 +1222,18 @@ impl fmt::Display for TypeDisplay<'_> {
             }
         }
         Ok(())
+    }
+}
+
+struct ShowSize(ArraySize);
+
+impl fmt::Display for ShowSize {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            ArraySize::Sized(size) => write!(formatter, "{size}"),
+            ArraySize::Specialized(_) => formatter.write_str("spec_const"),
+            ArraySize::Unsized => formatter.write_str("?"),
+        }
     }
 }
 

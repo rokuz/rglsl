@@ -268,6 +268,12 @@ pub mod names {
     pub const RAY_TRACING_EXT: &str = "GL_EXT_ray_tracing";
     pub const RAY_QUERY: &str = "GL_EXT_ray_query";
     pub const DISPLACEMENT_MICROMAP: &str = "GL_NV_displacement_micromap";
+    pub const KHR_COOPERATIVE_MATRIX: &str = "GL_KHR_cooperative_matrix";
+    pub const NV_COOPERATIVE_MATRIX: &str = "GL_NV_cooperative_matrix";
+    pub const NV_INTEGER_COOPERATIVE_MATRIX: &str = "GL_NV_integer_cooperative_matrix";
+    pub const NV_COOPERATIVE_MATRIX2: &str = "GL_NV_cooperative_matrix2";
+    pub const NV_COOPERATIVE_VECTOR: &str = "GL_NV_cooperative_vector";
+    pub const EXT_LONG_VECTOR: &str = "GL_EXT_long_vector";
 }
 
 use names::{
@@ -345,6 +351,12 @@ pub enum Feature {
     AccelerationStructureNv,
     AccelerationStructureExt,
     RayQueryType,
+    CooperativeMatrixType,
+    CooperativeMatrixNvType,
+    IntegerCooperativeMatrixNvType,
+    TensorType,
+    CooperativeVectorType,
+    LongVectorType,
 }
 
 impl Feature {
@@ -389,6 +401,12 @@ impl Feature {
                 names::DISPLACEMENT_MICROMAP,
             ],
             Self::RayQueryType => &[names::RAY_QUERY],
+            Self::CooperativeMatrixType => &[names::KHR_COOPERATIVE_MATRIX],
+            Self::CooperativeMatrixNvType => &[names::NV_COOPERATIVE_MATRIX],
+            Self::IntegerCooperativeMatrixNvType => &[names::NV_INTEGER_COOPERATIVE_MATRIX],
+            Self::TensorType => &[names::NV_COOPERATIVE_MATRIX2],
+            Self::CooperativeVectorType => &[names::NV_COOPERATIVE_VECTOR],
+            Self::LongVectorType => &[names::EXT_LONG_VECTOR],
         }
     }
 
@@ -424,6 +442,18 @@ impl Feature {
             Self::AccelerationStructureExt
         } else if word == "rayQueryEXT" {
             Self::RayQueryType
+        } else if word == "coopmat" {
+            Self::CooperativeMatrixType
+        } else if word == "fcoopmatNV" {
+            Self::CooperativeMatrixNvType
+        } else if word == "icoopmatNV" || word == "ucoopmatNV" {
+            Self::IntegerCooperativeMatrixNvType
+        } else if word == "tensorLayoutNV" || word == "tensorViewNV" {
+            Self::TensorType
+        } else if word == "coopvecNV" {
+            Self::CooperativeVectorType
+        } else if word == "vector" {
+            Self::LongVectorType
         } else if family(["int64_t", "uint64_t"], ["i64vec", "u64vec"]) {
             Self::Int64Type
         } else if family(["int8_t", "uint8_t"], ["i8vec", "u8vec"]) {

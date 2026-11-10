@@ -591,6 +591,9 @@ impl Analyzer<'_> {
                     Type::ERROR
                 }
             },
+            TypeSpecifierNonArray::Parameterized(kind) => {
+                self.parameterized_type(*kind, specifier.parameters.as_ref(), span)
+            }
             TypeSpecifierNonArray::Struct(structure) => self.struct_specifier(structure),
             TypeSpecifierNonArray::TypeName(name) => match self.lookup(name) {
                 Some(Lookup::Symbol(id)) => match self.symbol(id).map(|symbol| &symbol.kind) {

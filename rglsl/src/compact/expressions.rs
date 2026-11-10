@@ -258,14 +258,25 @@ impl ExpressionTracer<'_> {
             | Ex::SubgroupOperationResult { ty } => {
                 self.types_used.insert(ty);
             }
-            Ex::CooperativeLoad { ref data, .. } => {
-                self.expressions_used.insert(data.pointer);
-                self.expressions_used.insert(data.stride);
+            Ex::CooperativeLoad { ty, ref data } => {
+                self.types_used.insert(ty);
+                self.expressions_used.insert_iter(data.operands());
             }
-            Ex::CooperativeMultiplyAdd { a, b, c } => {
+            Ex::CooperativeMultiplyAdd { a, b, c, .. } => {
                 self.expressions_used.insert(a);
                 self.expressions_used.insert(b);
                 self.expressions_used.insert(c);
+            }
+            Ex::CooperativeMatrixLength { ty } => {
+                self.types_used.insert(ty);
+            }
+            Ex::Replicate { ty, value } => {
+                self.types_used.insert(ty);
+                self.expressions_used.insert(value);
+            }
+            Ex::Expect { value, expected } => {
+                self.expressions_used.insert(value);
+                self.expressions_used.insert(expected);
             }
         }
     }
@@ -448,18 +459,39 @@ impl ModuleMap {
                 value: _,
             } => adjust(query)?,
             Ex::AccelerationStructureFromAddress { ref mut address } => adjust(address)?,
-            Ex::CooperativeLoad { ref mut data, .. } => {
-                adjust(&mut data.pointer)?;
-                adjust(&mut data.stride)?;
+            Ex::CooperativeLoad {
+                ref mut ty,
+                ref mut data,
+            } => {
+                self.types.adjust(ty)?;
+                for operand in data.operands_mut() {
+                    adjust(operand)?;
+                }
             }
             Ex::CooperativeMultiplyAdd {
                 ref mut a,
                 ref mut b,
                 ref mut c,
+                ..
             } => {
                 adjust(a)?;
                 adjust(b)?;
                 adjust(c)?;
+            }
+            Ex::CooperativeMatrixLength { ref mut ty } => self.types.adjust(ty)?,
+            Ex::Replicate {
+                ref mut ty,
+                ref mut value,
+            } => {
+                self.types.adjust(ty)?;
+                adjust(value)?;
+            }
+            Ex::Expect {
+                ref mut value,
+                ref mut expected,
+            } => {
+                adjust(value)?;
+                adjust(expected)?;
             }
         }
         Ok(())

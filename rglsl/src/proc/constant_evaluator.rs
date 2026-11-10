@@ -811,7 +811,9 @@ impl ExpressionKindTracker {
                 }
                 expr_type
             }
-            Expression::Splat { value, .. } => self.type_of(value),
+            Expression::Splat { value, .. } | Expression::Replicate { value, .. } => {
+                self.type_of(value)
+            }
             Expression::AccessIndex { base, .. } => self.type_of(base),
             Expression::Access { base, index } => self.type_of(base).max(self.type_of(index)),
             Expression::Swizzle { vector, .. } => self.type_of(vector),
@@ -1264,6 +1266,10 @@ impl<'a> ConstantEvaluator<'a> {
                 let value = self.check_and_get(value)?;
                 self.register_evaluated_expr(Expression::Splat { size, value }, span)
             }
+            Expression::Replicate { ty, value } => {
+                let value = self.check_and_get(value)?;
+                self.register_evaluated_expr(Expression::Replicate { ty, value }, span)
+            }
             Expression::AccessIndex { base, index } => {
                 let base = self.check_and_get(base)?;
 
@@ -1378,9 +1384,10 @@ impl<'a> ConstantEvaluator<'a> {
             Expression::SubgroupOperationResult { .. } => {
                 Err(ConstantEvaluatorError::SubgroupExpression)
             }
-            Expression::CooperativeLoad { .. } | Expression::CooperativeMultiplyAdd { .. } => {
-                Err(ConstantEvaluatorError::CooperativeOperation)
-            }
+            Expression::CooperativeLoad { .. }
+            | Expression::CooperativeMultiplyAdd { .. }
+            | Expression::CooperativeMatrixLength { .. }
+            | Expression::Expect { .. } => Err(ConstantEvaluatorError::CooperativeOperation),
         }
     }
 

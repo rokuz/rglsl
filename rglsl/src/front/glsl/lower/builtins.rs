@@ -17,7 +17,7 @@ use crate::{
     Statement, SwizzleComponent, UnaryOperator,
 };
 
-fn math(name: &str, arguments: usize) -> Option<MathFunction> {
+pub(super) fn math(name: &str, arguments: usize) -> Option<MathFunction> {
     use MathFunction as Mf;
     Some(match name {
         "radians" => Mf::Radians,
@@ -87,7 +87,7 @@ fn math(name: &str, arguments: usize) -> Option<MathFunction> {
     })
 }
 
-fn derivative(name: &str) -> Option<(DerivativeAxis, DerivativeControl)> {
+pub(super) fn derivative(name: &str) -> Option<(DerivativeAxis, DerivativeControl)> {
     let (axis, rest) = if let Some(rest) = name.strip_prefix("dFdx") {
         (DerivativeAxis::X, rest)
     } else if let Some(rest) = name.strip_prefix("dFdy") {
@@ -122,7 +122,7 @@ const fn coordinate_count(opaque: Opaque) -> u32 {
 }
 
 impl FunctionLowerer<'_, '_> {
-    fn math_call(
+    pub(super) fn math_call(
         &mut self,
         fun: MathFunction,
         arguments: &[Handle<Expression>],
@@ -142,7 +142,7 @@ impl FunctionLowerer<'_, '_> {
         )
     }
 
-    fn binary_op(
+    pub(super) fn binary_op(
         &mut self,
         op: BinaryOperator,
         left: Handle<Expression>,
@@ -155,6 +155,7 @@ impl FunctionLowerer<'_, '_> {
     pub(super) fn builtin_call(
         &mut self,
         id: BuiltinFunctionId,
+        call_type: &GlslType,
         arguments: &[AstExpression],
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
@@ -210,6 +211,18 @@ impl FunctionLowerer<'_, '_> {
                 self.primitive_statement(name, arguments, at)?;
                 Ok(None)
             }
+            "expectEXT" => {
+                let value = self.rvalue(arguments.first().ok_or_else(|| internal(at))?)?;
+                let expected = self.rvalue(arguments.get(1).ok_or_else(|| internal(at))?)?;
+                self.add(Expression::Expect { value, expected }, at)
+                    .map(Some)
+            }
+            "assumeEXT" => {
+                let condition = self.rvalue(arguments.first().ok_or_else(|| internal(at))?)?;
+                self.flush();
+                self.push(Statement::Assume { condition }, at);
+                Ok(None)
+            }
             "modf" | "frexp" => self.split(name, arguments, at).map(Some),
             "atomicAdd" | "atomicMin" | "atomicMax" | "atomicAnd" | "atomicOr" | "atomicXor"
             | "atomicExchange" | "atomicCompSwap" | "atomicLoad" | "atomicStore" => {
@@ -219,7 +232,9 @@ impl FunctionLowerer<'_, '_> {
                 self.wide(name, arguments, at)
             }
             _ if super::subgroup::is_subgroup_function(name) => self.subgroup(name, arguments, at),
-            _ => self.generic(name, function, arguments, at).map(Some),
+            _ => self
+                .generic(name, function, call_type, arguments, at)
+                .map(Some),
         }
     }
 
@@ -227,6 +242,7 @@ impl FunctionLowerer<'_, '_> {
         &mut self,
         name: &str,
         function: &Function,
+        call_type: &GlslType,
         arguments: &[AstExpression],
         at: Span,
     ) -> Result<Handle<Expression>> {
@@ -243,6 +259,13 @@ impl FunctionLowerer<'_, '_> {
             let (value, ty) = self.typed(argument)?;
             values.push(value);
             types.push(ty);
+        }
+        let long_shape = types
+            .iter()
+            .find(|ty| ty.sized_vector_length().is_some())
+            .cloned();
+        if let Some(ref shape) = long_shape {
+            return self.long_generic(name, call_type, shape, values, types, at);
         }
         let result = &function.return_type;
         let first_ty = types.first().cloned().unwrap_or(GlslType::VOID);
@@ -797,7 +820,11 @@ impl FunctionLowerer<'_, '_> {
                 MathFunction::Frexp,
             )
         };
-        self.lw.module.generate_predeclared_type(special);
+        if ty.sized_vector_length().is_some() {
+            self.long_math_result(fun, &ty, at)?;
+        } else {
+            self.lw.module.generate_predeclared_type(special);
+        }
         let result = self.math_call(fun, &[value], at)?;
         let fraction = self.add(
             Expression::AccessIndex {
@@ -846,12 +873,16 @@ impl FunctionLowerer<'_, '_> {
             "usubBorrow" => MathFunction::SubBorrow,
             _ => MathFunction::MulExtended,
         };
-        self.lw
-            .module
-            .generate_predeclared_type(PredeclaredType::WideResult {
-                size,
-                scalar: scalar(base),
-            });
+        if ty.sized_vector_length().is_some() {
+            self.long_math_result(fun, &ty, at)?;
+        } else {
+            self.lw
+                .module
+                .generate_predeclared_type(PredeclaredType::WideResult {
+                    size,
+                    scalar: scalar(base),
+                });
+        }
         let result = self.math_call(fun, &[x, y], at)?;
         let high = self.add(
             Expression::AccessIndex {

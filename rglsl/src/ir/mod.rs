@@ -599,15 +599,31 @@ impl From<VectorSize> for u32 {
     }
 }
 
-/// Number of components in a cooperative vector.
-#[repr(u8)]
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum CooperativeSize {
-    Eight = 8,
-    Sixteen = 16,
+    Constant(core::num::NonZeroU32),
+    Pending(Handle<Override>),
+}
+
+#[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub enum CooperativeMatrixClass {
+    Khr,
+    Nv,
+}
+
+#[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub enum LongVectorClass {
+    Plain,
+    CooperativeNv,
 }
 
 /// Primitive type for a scalar.
@@ -993,6 +1009,13 @@ pub enum TypeInner {
         rows: CooperativeSize,
         scalar: Scalar,
         role: CooperativeRole,
+        scope: CooperativeSize,
+        class: CooperativeMatrixClass,
+    },
+    LongVector {
+        size: CooperativeSize,
+        scalar: Scalar,
+        class: LongVectorClass,
     },
     /// Atomic scalar.
     Atomic(Scalar),
@@ -1884,8 +1907,26 @@ bitflags::bitflags! {
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub struct CooperativeData {
     pub pointer: Handle<Expression>,
-    pub stride: Handle<Expression>,
-    pub row_major: bool,
+    pub stride: Option<Handle<Expression>>,
+    pub layout: Handle<Expression>,
+}
+
+impl CooperativeData {
+    pub fn operands(&self) -> impl Iterator<Item = Handle<Expression>> {
+        [Some(self.pointer), self.stride, Some(self.layout)]
+            .into_iter()
+            .flatten()
+    }
+
+    pub fn operands_mut(&mut self) -> impl Iterator<Item = &mut Handle<Expression>> {
+        [
+            Some(&mut self.pointer),
+            self.stride.as_mut(),
+            Some(&mut self.layout),
+        ]
+        .into_iter()
+        .flatten()
+    }
 }
 
 /// An expression that can be evaluated to obtain a value.
@@ -2249,18 +2290,26 @@ pub enum Expression {
         ty: Handle<Type>,
     },
 
-    /// Load a cooperative primitive from memory.
     CooperativeLoad {
-        columns: CooperativeSize,
-        rows: CooperativeSize,
-        role: CooperativeRole,
+        ty: Handle<Type>,
         data: CooperativeData,
     },
-    /// Compute `a * b + c`
     CooperativeMultiplyAdd {
         a: Handle<Expression>,
         b: Handle<Expression>,
         c: Handle<Expression>,
+        saturating: bool,
+    },
+    CooperativeMatrixLength {
+        ty: Handle<Type>,
+    },
+    Replicate {
+        ty: Handle<Type>,
+        value: Handle<Expression>,
+    },
+    Expect {
+        value: Handle<Expression>,
+        expected: Handle<Expression>,
     },
 }
 
@@ -2752,6 +2801,9 @@ pub enum Statement {
     DebugPrintf {
         format: String,
         arguments: Vec<DebugPrintfArgument>,
+    },
+    Assume {
+        condition: Handle<Expression>,
     },
     Abort {
         message: String,

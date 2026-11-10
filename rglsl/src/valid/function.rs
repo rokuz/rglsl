@@ -97,13 +97,17 @@ const fn is_ballot(inner: &crate::TypeInner) -> bool {
 const fn is_scalar_or_vector(inner: &crate::TypeInner) -> bool {
     matches!(
         *inner,
-        crate::TypeInner::Scalar(_) | crate::TypeInner::Vector { .. }
+        crate::TypeInner::Scalar(_)
+            | crate::TypeInner::Vector { .. }
+            | crate::TypeInner::LongVector { .. }
     )
 }
 
 const fn is_numeric(inner: &crate::TypeInner) -> bool {
     match *inner {
-        crate::TypeInner::Scalar(scalar) | crate::TypeInner::Vector { scalar, .. } => matches!(
+        crate::TypeInner::Scalar(scalar)
+        | crate::TypeInner::Vector { scalar, .. }
+        | crate::TypeInner::LongVector { scalar, .. } => matches!(
             scalar.kind,
             crate::ScalarKind::Sint | crate::ScalarKind::Uint | crate::ScalarKind::Float
         ),
@@ -996,7 +1000,8 @@ impl super::Validator {
 
         let (is_scalar, scalar) = match *argument_inner {
             crate::TypeInner::Scalar(scalar) => (true, scalar),
-            crate::TypeInner::Vector { scalar, .. } => (false, scalar),
+            crate::TypeInner::Vector { scalar, .. }
+            | crate::TypeInner::LongVector { scalar, .. } => (false, scalar),
             _ => {
                 log::error!("Subgroup operand type {argument_inner:?}");
                 return Err(SubgroupError::InvalidOperand(argument)
@@ -1200,9 +1205,10 @@ impl super::Validator {
                             | Ex::RayQueryGet { .. }
                             | Ex::AccelerationStructureFromAddress { .. }
                             | Ex::CooperativeLoad { .. }
-                            | Ex::CooperativeMultiplyAdd { .. } => {
-                                self.emit_expression(handle, context)?
-                            }
+                            | Ex::CooperativeMultiplyAdd { .. }
+                            | Ex::CooperativeMatrixLength { .. }
+                            | Ex::Replicate { .. }
+                            | Ex::Expect { .. } => self.emit_expression(handle, context)?,
                             Ex::CallResult(_)
                             | Ex::AtomicResult { .. }
                             | Ex::WorkGroupUniformLoadResult { .. }
@@ -1412,6 +1418,13 @@ impl super::Validator {
                 }
                 S::EmitVertex { .. } | S::EndPrimitive { .. } => {
                     stages &= super::ShaderStages::GEOMETRY;
+                }
+                S::Assume { condition } => {
+                    let ty = context.resolve_type_inner(condition, &self.valid_expression_set)?;
+                    if *ty != Ti::Scalar(crate::Scalar::BOOL) {
+                        return Err(FunctionError::InvalidIfType(condition)
+                            .with_span_handle(condition, context.expressions));
+                    }
                 }
                 S::DebugPrintf { ref arguments, .. } => {
                     for argument in arguments {
