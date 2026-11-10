@@ -287,6 +287,7 @@ impl Decoration {
                 component: None,
                 invariant: false,
                 patch: false,
+                per_view: false,
             }),
             Decoration {
                 built_in: None,
@@ -303,6 +304,7 @@ impl Decoration {
                 component: None,
                 invariant: false,
                 patch: false,
+                per_view: false,
             }),
             _ => Err(Error::MissingDecoration(spirv::Decoration::Location)),
         }
@@ -1653,6 +1655,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                 | S::SubgroupGather { .. }
                 | S::SubgroupFunction { .. }
                 | S::RayPipelineFunction(..)
+                | S::MeshFunction(..)
                 | S::DebugPrintf { .. }
                 | S::Abort { .. }
                 | S::WorkGroupUniformLoad { .. }

@@ -1,4 +1,4 @@
-use super::{Section, ALL_STAGES, COMPUTE, FRAGMENT, GEOMETRY, TESS_CONTROL};
+use super::{Section, ALL_STAGES, COMPUTE, FRAGMENT, GEOMETRY, MESH, TASK, TESS_CONTROL};
 
 const EXPECT_ASSUME: &str = "
 void assumeEXT(bool)
@@ -302,6 +302,15 @@ void memoryBarrierShared()
 void groupMemoryBarrier()
 ";
 
+const MESH_SHADER: &str = "
+void SetMeshOutputsEXT(uint, uint)
+void writePackedPrimitiveIndices4x8NV(uint, uint)
+";
+
+const TASK_SHADER: &str = "
+void EmitMeshTasksEXT(uint, uint, uint)
+";
+
 const SHADER_INVOCATION_GROUP: &str = "
 bool anyInvocation(bool)
 bool allInvocations(bool)
@@ -514,10 +523,12 @@ pub(super) const SECTIONS: &[Section] = &[
         .with_halves()
         .in_stages(FRAGMENT),
     Section::new(GEOMETRY_SHADER).in_stages(GEOMETRY),
-    Section::new(BARRIER).in_stages(TESS_CONTROL | COMPUTE),
+    Section::new(BARRIER).in_stages(TESS_CONTROL | COMPUTE | MESH | TASK),
     Section::new(MEMORY_BARRIERS).in_stages(ALL_STAGES),
     Section::new(SCOPED_BARRIERS),
-    Section::new(COMPUTE_MEMORY_BARRIERS).in_stages(COMPUTE),
+    Section::new(COMPUTE_MEMORY_BARRIERS).in_stages(COMPUTE | MESH | TASK),
+    Section::new(MESH_SHADER).in_stages(MESH),
+    Section::new(TASK_SHADER).in_stages(TASK),
     Section::new(SHADER_INVOCATION_GROUP).since(460),
     Section::new(EXPECT_ASSUME),
 ];

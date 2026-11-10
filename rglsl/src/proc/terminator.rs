@@ -29,6 +29,7 @@ pub fn ensure_block_returns(block: &mut crate::Block) {
             }
         }
         Some(&mut (S::Break | S::Continue | S::Return { .. } | S::Kill | S::Abort { .. })) => (),
+        Some(&mut S::MeshFunction(ref function)) if function.is_terminator() => (),
         Some(&mut S::RayPipelineFunction(ref function)) if function.is_terminator() => (),
         Some(
             &mut (S::Emit(_)
@@ -54,7 +55,8 @@ pub fn ensure_block_returns(block: &mut crate::Block) {
             | S::DebugPrintf { .. }
             | S::Assume { .. }
             | S::EmitVertex { .. }
-            | S::EndPrimitive { .. }),
+            | S::EndPrimitive { .. }
+            | S::MeshFunction(_)),
         )
         | None => block.push(S::Return { value: None }, Default::default()),
     }

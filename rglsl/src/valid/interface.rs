@@ -127,6 +127,8 @@ pub enum VaryingError {
     MissingPerPrimitive,
     #[error("Per vertex fragment inputs must be an array of length 3.")]
     PerVertexNotArrayOfThree,
+    #[error("A per-view output must be an array with one element per view")]
+    PerViewNotArray,
     #[error("Per vertex can only have Center sampling or no sampling modifier")]
     InvalidPerVertexSampling,
     #[error("A block cannot have both built-in and location members")]
@@ -375,6 +377,29 @@ impl LocationShape {
 ///
 /// SPIR-V accepts a 32-bit integer of either signedness for these. WGSL
 /// declares them as `u32`, GLSL as `int`.
+fn is_array_of(
+    types: &UniqueArena<crate::Type>,
+    ty: &crate::TypeInner,
+    element: &dyn Fn(&crate::TypeInner) -> bool,
+) -> bool {
+    let crate::TypeInner::Array { base, .. } = *ty else {
+        return false;
+    };
+    let inner = &types[base].inner;
+    element(inner) || is_array_of(types, inner, element)
+}
+
+const fn is_pre_rasterization(stage: crate::ShaderStage) -> bool {
+    matches!(
+        stage,
+        crate::ShaderStage::Vertex
+            | crate::ShaderStage::TessControl
+            | crate::ShaderStage::TessEvaluation
+            | crate::ShaderStage::Geometry
+            | crate::ShaderStage::Mesh
+    )
+}
+
 const fn is_index_type(ty: &crate::TypeInner) -> bool {
     matches!(
         *ty,
@@ -417,6 +442,13 @@ impl VaryingContext<'_> {
                     crate::BuiltIn::Barycentric { .. } => {
                         crate::BuiltIn::Barycentric { perspective: false }
                     }
+                    crate::BuiltIn::Layer { .. } => crate::BuiltIn::Layer {
+                        viewport_relative: false,
+                        secondary_view_offset: None,
+                    },
+                    crate::BuiltIn::SampleMask { .. } => crate::BuiltIn::SampleMask {
+                        override_coverage: false,
+                    },
                     x => x,
                 };
 
@@ -445,6 +477,17 @@ impl VaryingContext<'_> {
                     return Err(VaryingError::UnsupportedCapability(required));
                 }
 
+                let mesh_interface = self.stage == St::Mesh && self.output && self.interface;
+                let pre_rasterization_output = self.output
+                    && matches!(
+                        self.stage,
+                        St::Vertex | St::TessControl | St::TessEvaluation | St::Geometry | St::Mesh
+                    );
+                let array_of = |element: Ti| match *ty_inner {
+                    Ti::Array { base, .. } => self.types[base].inner == element,
+                    _ => false,
+                };
+                let is_array = matches!(*ty_inner, Ti::Array { .. });
                 let (visible, type_good) = match built_in {
                     Bi::BaseInstance | Bi::BaseVertex | Bi::VertexIndex => (
                         self.stage == St::Vertex && !self.output,
@@ -486,7 +529,7 @@ impl VaryingContext<'_> {
                             _ => false,
                         },
                     ),
-                    Bi::Layer | Bi::ViewportIndex => (
+                    Bi::Layer { .. } | Bi::ViewportIndex => (
                         match self.stage {
                             St::Vertex
                             | St::TessControl
@@ -509,7 +552,8 @@ impl VaryingContext<'_> {
                         // Always allowed in task/vertex stage. Allowed in mesh stage if there is no task stage in the pipeline.
                         (self.stage == St::Vertex
                             || self.stage == St::Task
-                            || (self.stage == St::Mesh && !self.has_task_payload))
+                            || (self.stage == St::Mesh
+                                && (!self.has_task_payload || self.interface)))
                             && !self.output,
                         is_index_type(ty_inner),
                     ),
@@ -598,7 +642,8 @@ impl VaryingContext<'_> {
                             || (self.stage == St::Geometry && self.output)
                             || (self.stage == St::Mesh
                                 && self.output
-                                && self.mesh_output_type == MeshOutputType::PrimitiveOutput),
+                                && self.mesh_output_type == MeshOutputType::PrimitiveOutput)
+                            || mesh_interface,
                         is_index_type(ty_inner),
                     ),
                     Bi::Barycentric { .. } => (
@@ -613,9 +658,40 @@ impl VaryingContext<'_> {
                         self.stage == St::Fragment && !self.output,
                         is_index_type(ty_inner),
                     ),
-                    Bi::SampleMask => (
+                    Bi::SampleMask { .. } => (
                         self.stage == St::Fragment,
-                        *ty_inner == Ti::Scalar(crate::Scalar::U32),
+                        *ty_inner == Ti::Scalar(crate::Scalar::U32)
+                            || is_array_of(self.types, ty_inner, &|inner| is_index_type(inner)),
+                    ),
+                    Bi::ViewportMaskNV
+                    | Bi::SecondaryViewportMaskNV
+                    | Bi::ViewportMaskPerViewNV => (
+                        self.output && is_pre_rasterization(self.stage),
+                        is_array_of(self.types, ty_inner, &|inner| {
+                            *inner == Ti::Scalar(crate::Scalar::I32)
+                        }),
+                    ),
+                    Bi::SecondaryPositionNV | Bi::PositionPerViewNV => (
+                        (self.output && is_pre_rasterization(self.stage))
+                            || (!self.output
+                                && matches!(
+                                    self.stage,
+                                    St::TessControl | St::TessEvaluation | St::Geometry
+                                )),
+                        {
+                            let vec4 = |inner: &Ti| {
+                                *inner
+                                    == Ti::Vector {
+                                        size: Vs::Quad,
+                                        scalar: crate::Scalar::F32,
+                                    }
+                            };
+                            if built_in == Bi::SecondaryPositionNV {
+                                vec4(ty_inner)
+                            } else {
+                                is_array_of(self.types, ty_inner, &vec4)
+                            }
+                        },
                     ),
                     Bi::LocalInvocationIndex => (
                         self.stage.compute_like() && !self.output,
@@ -652,29 +728,59 @@ impl VaryingContext<'_> {
                             },
                     ),
                     Bi::CullPrimitive => (
-                        self.mesh_output_type == MeshOutputType::PrimitiveOutput,
+                        self.mesh_output_type == MeshOutputType::PrimitiveOutput || mesh_interface,
                         *ty_inner == Ti::Scalar(crate::Scalar::BOOL),
                     ),
-                    Bi::PointIndex => (
-                        self.mesh_output_type == MeshOutputType::PrimitiveOutput,
-                        *ty_inner == Ti::Scalar(crate::Scalar::U32),
-                    ),
-                    Bi::LineIndices => (
-                        self.mesh_output_type == MeshOutputType::PrimitiveOutput,
-                        *ty_inner
-                            == Ti::Vector {
+                    Bi::PointIndex | Bi::LineIndices | Bi::TriangleIndices => {
+                        let element = match built_in {
+                            Bi::PointIndex => Ti::Scalar(crate::Scalar::U32),
+                            Bi::LineIndices => Ti::Vector {
                                 size: Vs::Bi,
                                 scalar: crate::Scalar::U32,
                             },
-                    ),
-                    Bi::TriangleIndices => (
-                        self.mesh_output_type == MeshOutputType::PrimitiveOutput,
-                        *ty_inner
-                            == Ti::Vector {
+                            _ => Ti::Vector {
                                 size: Vs::Tri,
                                 scalar: crate::Scalar::U32,
                             },
+                        };
+                        if mesh_interface {
+                            (true, array_of(element))
+                        } else {
+                            (
+                                self.mesh_output_type == MeshOutputType::PrimitiveOutput,
+                                *ty_inner == element,
+                            )
+                        }
+                    }
+                    Bi::PrimitiveShadingRate => (
+                        pre_rasterization_output,
+                        *ty_inner == Ti::Scalar(crate::Scalar::I32),
                     ),
+                    Bi::TaskCountNV => (
+                        self.stage == St::Task && self.output,
+                        *ty_inner == Ti::Scalar(crate::Scalar::U32),
+                    ),
+                    Bi::PrimitiveCountNV => {
+                        (mesh_interface, *ty_inner == Ti::Scalar(crate::Scalar::U32))
+                    }
+                    Bi::PrimitiveIndicesNV => {
+                        (mesh_interface, array_of(Ti::Scalar(crate::Scalar::U32)))
+                    }
+                    Bi::MeshViewCountNV => (
+                        self.stage.mesh_like() && !self.output,
+                        *ty_inner == Ti::Scalar(crate::Scalar::U32),
+                    ),
+                    Bi::MeshViewIndicesNV => (
+                        self.stage.mesh_like() && !self.output,
+                        array_of(Ti::Scalar(crate::Scalar::U32)),
+                    ),
+                    Bi::LayerPerViewNV => (
+                        pre_rasterization_output,
+                        array_of(Ti::Scalar(crate::Scalar::I32)),
+                    ),
+                    Bi::ClipDistancePerViewNV | Bi::CullDistancePerViewNV => {
+                        (pre_rasterization_output, is_array)
+                    }
                     Bi::MeshTaskSize => (
                         self.stage == St::Task && self.output,
                         *ty_inner
@@ -804,6 +910,7 @@ impl VaryingContext<'_> {
                 component,
                 invariant,
                 patch,
+                per_view,
             } => {
                 if invariant && !self.output {
                     return Err(VaryingError::InvalidInputAttributeInStage(
@@ -855,6 +962,23 @@ impl VaryingContext<'_> {
                 } else {
                     (ty, ty_inner)
                 };
+                let (ty, ty_inner) = if per_view {
+                    if self.stage != crate::ShaderStage::Mesh || !self.output {
+                        return Err(VaryingError::InvalidAttributeInStage(
+                            "per_view", self.stage,
+                        ));
+                    }
+                    match *ty_inner {
+                        Ti::Array {
+                            base,
+                            size: crate::ArraySize::Constant(_),
+                            ..
+                        } => (base, &self.types[base].inner),
+                        _ => return Err(VaryingError::PerViewNotArray),
+                    }
+                } else {
+                    (ty, ty_inner)
+                };
 
                 // Only IO-shareable types may be stored in locations: numeric
                 // scalars and vectors, and, for a variable of its own,
@@ -876,7 +1000,9 @@ impl VaryingContext<'_> {
                     if !per_primitive {
                         return Err(VaryingError::MissingPerPrimitive);
                     }
-                } else if self.stage == crate::ShaderStage::Fragment && !self.output {
+                } else if (self.stage == crate::ShaderStage::Fragment && !self.output)
+                    || (self.stage == crate::ShaderStage::Mesh && self.output && self.interface)
+                {
                     // Fragment stage inputs may be `per_primitive`. We'll only
                     // know if these are correct when the whole mesh pipeline is
                     // created and we're paired with a specific mesh or vertex
@@ -966,6 +1092,7 @@ impl VaryingContext<'_> {
                             crate::Interpolation::Flat,
                             Some(crate::Sampling::First | crate::Sampling::Either),
                         ) => None,
+                        (crate::Interpolation::Flat, Some(_)) if self.interface => None,
                         (_, Some(invalid_sampling)) => Some(invalid_sampling),
                     };
                     if let Some(sampling) = invalid_sampling {
@@ -1107,6 +1234,17 @@ impl VaryingContext<'_> {
     }
 }
 
+fn view_element(
+    types: &UniqueArena<crate::Type>,
+    ty: Handle<crate::Type>,
+    per_view: bool,
+) -> Handle<crate::Type> {
+    match types[ty].inner {
+        crate::TypeInner::Array { base, .. } if per_view => base,
+        _ => ty,
+    }
+}
+
 impl VaryingContext<'_> {
     fn validate_interface(
         &mut self,
@@ -1158,6 +1296,7 @@ impl VaryingContext<'_> {
             component: None,
             invariant: false,
             patch: false,
+            per_view: false,
         } = *io
         else {
             return Err(fail(VaryingError::InvalidBlockBinding));
@@ -1183,6 +1322,7 @@ impl VaryingContext<'_> {
                     component: None,
                     invariant,
                     patch,
+                    per_view,
                 }) = member.binding
                 else {
                     return Err(fail(VaryingError::InvalidBlockBinding));
@@ -1204,10 +1344,12 @@ impl VaryingContext<'_> {
                     component: None,
                     invariant,
                     patch,
+                    per_view,
                 };
                 self.validate_impl(ep, member.ty, &binding).map_err(&fail)?;
-                let shape = LocationShape::of(self.types, member.ty)
-                    .ok_or_else(|| fail(VaryingError::NotIOShareableType(member.ty)))?;
+                let shape =
+                    LocationShape::of(self.types, view_element(self.types, member.ty, per_view))
+                        .ok_or_else(|| fail(VaryingError::NotIOShareableType(member.ty)))?;
                 next = next.saturating_add(shape.locations);
             }
         }
@@ -1760,7 +1902,25 @@ impl super::Validator {
 
         Self::validate_stage_info(ep, module)?;
 
+        let glsl_mesh = ep.mesh_shader.is_some();
+        match (ep.stage, &ep.mesh_shader) {
+            (
+                crate::ShaderStage::Mesh,
+                &Some(crate::MeshShaderInfo {
+                    output: Some(_), ..
+                }),
+            )
+            | (
+                crate::ShaderStage::Task | crate::ShaderStage::Fragment,
+                &Some(crate::MeshShaderInfo { output: None, .. }),
+            )
+            | (_, &None) => {}
+            (_, &Some(_)) => {
+                return Err(EntryPointError::UnexpectedMeshShaderAttributes.with_span());
+            }
+        }
         match (ep.stage, &ep.mesh_info) {
+            (crate::ShaderStage::Mesh, &None) if glsl_mesh => {}
             (crate::ShaderStage::Mesh, &None) => {
                 return Err(EntryPointError::ExpectedMeshShaderAttributes.with_span());
             }
@@ -1778,6 +1938,7 @@ impl super::Validator {
         // Validate the task shader payload.
         match ep.stage {
             // Task shaders must produce a payload.
+            crate::ShaderStage::Task if glsl_mesh && ep.task_payload.is_none() => {}
             crate::ShaderStage::Task => {
                 let Some(handle) = ep.task_payload else {
                     return Err(EntryPointError::ExpectedTaskPayload.with_span());
@@ -1897,7 +2058,7 @@ impl super::Validator {
                     return Err(EntryPointError::WrongTaskShaderEntryResult.with_span());
                 }
             }
-        } else if ep.stage == crate::ShaderStage::Task {
+        } else if ep.stage == crate::ShaderStage::Task && !glsl_mesh {
             return Err(EntryPointError::WrongTaskShaderEntryResult.with_span());
         }
 

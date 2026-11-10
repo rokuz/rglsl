@@ -415,6 +415,55 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   (`back/spv/subgroup.rs`). An `Input` global may carry `MemoryDecorations::VOLATILE` (the
   subgroup built-ins of the ray-tracing stages other than any-hit, as glslang declares them): it
   is decorated `Volatile` but not `Coherent`, or loaded `Volatile` under the Vulkan memory model.
+- **Multiview and per-view built-ins** (`GL_EXT_multiview`, `GL_NV_viewport_array2`,
+  `GL_NV_stereo_view_rendering`, `GL_NVX_multiview_per_view_attributes`,
+  `GL_NV_sample_mask_override_coverage`). `BuiltIn::{ViewportMaskNV, SecondaryPositionNV,
+  SecondaryViewportMaskNV, PositionPerViewNV, ViewportMaskPerViewNV}` (new), outputs of the
+  stages before rasterization and, for the two positions, inputs of the tessellation and
+  geometry stages; their types are `int` arrays (any depth) and `vec4` or `vec4` arrays.
+  `BuiltIn::Layer` gains `viewport_relative` and `secondary_view_offset`
+  (`ViewportRelativeNV`, `SecondaryViewportRelativeNV N`) and `BuiltIn::SampleMask` gains
+  `override_coverage` (`OverrideCoverageNV`); the validator ignores them in duplicate checks, and
+  `SampleMask` also accepts an `int`/`uint` array, the GLSL form. The SPIR-V backend declares
+  `SPV_KHR_multiview` for `ViewIndex` before SPIR-V 1.3 only (upstream declared it whenever an
+  entry point argument was `ViewIndex`), adds the NV capabilities and extensions, decorates
+  integer arrays among fragment built-in inputs `Flat`, and adds the capability of an NV member
+  of an interface block only when it is accessed, as for `ClipDistance`.
+- **GLSL mesh and task shaders** (`GL_EXT_mesh_shader`, `GL_NV_mesh_shader`). Upstream's mesh
+  model (the WGSL one: `EntryPoint::mesh_info: MeshStageInfo` with a workgroup output variable
+  copied to the real outputs by a generated wrapper, and a task entry point returning its group
+  count) is kept unchanged for the IR snapshot inputs. The GLSL model is new and is chosen by
+  `EntryPoint::mesh_shader: Option<MeshShaderInfo>` (new, not serialized when `None`): the
+  extension flavour (`MeshShaderExtension::{Ext, Nv}`, selecting `MeshEXT`/`TaskEXT` with
+  `SPV_EXT_mesh_shader`/`MeshShadingEXT` or `MeshNV`/`TaskNV` with `SPV_NV_mesh_shader`/
+  `MeshShadingNV`), the output layout of a mesh entry point (`MeshOutputLayout`: topology,
+  `max_vertices`, `max_primitives`, written as `OutputVertices`, `OutputPrimitivesEXT` and
+  `OutputPoints`/`OutputLinesEXT`/`OutputTrianglesEXT`; the workgroup size goes through
+  `write_workgroup_size` as in compute) and the `taskNV` blocks (`task_memory`), whose members
+  are decorated `Offset` and `PerTaskNV` and their arrays `ArrayStride`. A fragment entry point
+  with `per_primitive` inputs carries it too, without an output layout, to select the
+  capability. With `mesh_shader` the validator does not ask for `mesh_info`, a task payload or
+  a task result, and the backend writes no wrapper: outputs are `Output` globals listed in
+  `EntryPoint::interface` and written directly; a task entry point's `task_payload` is the
+  `taskPayloadSharedEXT` global (`AddressSpace::TaskPayload`). `Statement::MeshFunction(
+  MeshFunction)` (new): `SetMeshOutputs` (`OpSetMeshOutputsEXT`), `EmitMeshTasks`
+  (`OpEmitMeshTasksEXT` with the module's `TaskPayload` global as payload, a block
+  terminator) and `WritePackedPrimitiveIndices` (`OpWritePackedPrimitiveIndices4x8NV`); their
+  operands are `u32` and they restrict a function to the mesh or the task stage.
+  `Binding::Location::per_view` (new, `PerViewNV`, not serialized when false): the outer
+  dimension of the type is the view dimension and takes no locations. `per_primitive` is now
+  also allowed on mesh outputs and decorated there. Outputs of the mesh stage other than
+  standalone built-ins are per-vertex arrays (`proc::is_per_vertex_variable`).
+  `BuiltIn::{PrimitiveShadingRate, TaskCountNV, PrimitiveCountNV, PrimitiveIndicesNV,
+  MeshViewCountNV, MeshViewIndicesNV, ClipDistancePerViewNV, CullDistancePerViewNV,
+  LayerPerViewNV}` (new); `PointIndex`/`LineIndices`/`TriangleIndices` are arrays when
+  declared as interface variables. The backend decorates `PrimitiveId`, `Layer`,
+  `ViewportIndex`, `ViewportMaskNV`, `LayerPerViewNV`, `ViewportMaskPerViewNV`,
+  `CullPrimitive` and `PrimitiveShadingRate` outputs of the mesh stage `PerPrimitiveEXT`, the
+  per-view built-ins `PerViewNV`, does not add `Geometry` for a mesh `PrimitiveId`, and adds the
+  capabilities of the members of a mesh output block only when they are accessed. The
+  validator accepts `Flat` together with `Centroid` or `Sample` on interface variables, as
+  SPIR-V and glslang do. `MeshOutputTopology` derives `Hash`.
 
 ## Cherry-picked upstream commits
 

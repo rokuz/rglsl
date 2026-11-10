@@ -5,6 +5,12 @@ macro_rules! resource_limits {
             $(pub $field: i32,)*
             pub max_compute_work_group_count: [i32; 3],
             pub max_compute_work_group_size: [i32; 3],
+            pub max_mesh_work_group_size_nv: [i32; 3],
+            pub max_task_work_group_size_nv: [i32; 3],
+            pub max_mesh_output_vertices_ext: i32,
+            pub max_mesh_output_primitives_ext: i32,
+            pub max_mesh_work_group_size_ext: [i32; 3],
+            pub max_task_work_group_size_ext: [i32; 3],
         }
 
         impl Default for ResourceLimits {
@@ -13,6 +19,12 @@ macro_rules! resource_limits {
                     $($field: $value,)*
                     max_compute_work_group_count: [65535, 65535, 65535],
                     max_compute_work_group_size: [1024, 1024, 64],
+                    max_mesh_work_group_size_nv: [32, 1, 1],
+                    max_task_work_group_size_nv: [32, 1, 1],
+                    max_mesh_output_vertices_ext: 256,
+                    max_mesh_output_primitives_ext: 256,
+                    max_mesh_work_group_size_ext: [128, 128, 128],
+                    max_task_work_group_size_ext: [128, 128, 128],
                 }
             }
         }
@@ -100,4 +112,7 @@ resource_limits! {
     max_cull_distances: "gl_MaxCullDistances" = 8,
     max_combined_clip_and_cull_distances: "gl_MaxCombinedClipAndCullDistances" = 8,
     max_samples: "gl_MaxSamples" = 4,
+    max_mesh_output_vertices_nv: "gl_MaxMeshOutputVerticesNV" = 256,
+    max_mesh_output_primitives_nv: "gl_MaxMeshOutputPrimitivesNV" = 512,
+    max_mesh_view_count_nv: "gl_MaxMeshViewCountNV" = 4,
 }

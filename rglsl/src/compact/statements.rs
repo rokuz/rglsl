@@ -198,6 +198,11 @@ impl FunctionTracer<'_> {
                     St::Assume { condition } => {
                         self.expressions_used.insert(condition);
                     }
+                    St::MeshFunction(ref function) => {
+                        for operand in function.operands() {
+                            self.expressions_used.insert(operand);
+                        }
+                    }
                     St::DebugPrintf { ref arguments, .. } => {
                         for argument in arguments {
                             if let crate::DebugPrintfArgument::Value(value) = *argument {
@@ -478,6 +483,11 @@ impl FunctionMap {
                         }
                     }
                     St::Assume { ref mut condition } => adjust(condition)?,
+                    St::MeshFunction(ref mut function) => {
+                        for operand in function.operands_mut() {
+                            adjust(operand)?;
+                        }
+                    }
                     St::DebugPrintf {
                         ref mut arguments, ..
                     } => {

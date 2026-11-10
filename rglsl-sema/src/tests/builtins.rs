@@ -53,14 +53,14 @@ fn variable_names(builtins: &Builtins) -> BTreeSet<String> {
 #[test]
 fn the_tables_have_the_expected_sizes() {
     let expected = [
-        (Stage::Vertex, 5882, 27, 156, 191),
-        (Stage::TessControl, 5883, 27, 157, 189),
-        (Stage::TessEvaluation, 5882, 27, 160, 192),
-        (Stage::Geometry, 5886, 27, 158, 190),
-        (Stage::Fragment, 6136, 27, 162, 194),
-        (Stage::Compute, 5886, 27, 156, 188),
-        (Stage::Mesh, 5883, 27, 150, 182),
-        (Stage::RayGeneration, 5882, 32, 148, 184),
+        (Stage::Vertex, 5882, 27, 167, 202),
+        (Stage::TessControl, 5883, 27, 163, 195),
+        (Stage::TessEvaluation, 5882, 27, 171, 203),
+        (Stage::Geometry, 5886, 27, 169, 201),
+        (Stage::Fragment, 6136, 27, 168, 200),
+        (Stage::Compute, 5886, 27, 161, 193),
+        (Stage::Mesh, 5888, 27, 175, 208),
+        (Stage::RayGeneration, 5882, 32, 153, 189),
     ];
     for (stage, functions, added, variables_450, variables_460) in expected {
         let older = builtins(450, stage);
@@ -290,13 +290,16 @@ fn stage_specific_functions_are_gated() {
         }
         assert_eq!(
             !table.overloads("barrier").is_empty(),
-            matches!(stage, Stage::TessControl | Stage::Compute),
+            matches!(
+                stage,
+                Stage::TessControl | Stage::Compute | Stage::Mesh | Stage::Task
+            ),
             "{stage:?}"
         );
         for name in ["memoryBarrierShared", "groupMemoryBarrier"] {
             assert_eq!(
                 !table.overloads(name).is_empty(),
-                stage == Stage::Compute,
+                matches!(stage, Stage::Compute | Stage::Mesh | Stage::Task),
                 "{stage:?} {name}"
             );
         }
@@ -548,7 +551,7 @@ fn constants_take_their_values_from_the_resource_limits() {
     assert_eq!(limits.max_patch_vertices, 32);
     assert_eq!(limits.min_program_texel_offset, -8);
     assert_eq!(limits.max_compute_work_group_size, [1024, 1024, 64]);
-    assert_eq!(limits.integer_constants().len(), 74);
+    assert_eq!(limits.integer_constants().len(), 77);
     limits.max_patch_vertices = 12;
     let table = Builtins::new(450, Stage::TessControl, &limits);
     let value = |name: &str| {

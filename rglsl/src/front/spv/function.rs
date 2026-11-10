@@ -629,6 +629,7 @@ impl<I: Iterator<Item = u32>> super::Frontend<I> {
             quad_control: crate::QuadControl::default(),
             geometry: None,
             tessellation: None,
+            mesh_shader: None,
         });
 
         Ok(())

@@ -4154,6 +4154,12 @@ impl BlockContext<'_> {
                     ref arguments,
                 } => self.write_debug_printf_statement(&mut block, format, arguments)?,
                 Statement::Assume { condition } => self.write_assume(condition, &mut block)?,
+                Statement::MeshFunction(ref function) => {
+                    match self.write_mesh_function(block, function)? {
+                        Some(next) => block = next,
+                        None => return Ok(BlockExitDisposition::Discarded),
+                    }
+                }
                 Statement::Abort {
                     ref message,
                     ty,

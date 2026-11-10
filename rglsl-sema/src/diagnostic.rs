@@ -201,6 +201,8 @@ pub enum DiagnosticKind {
     UnsupportedExtension(String),
     #[error("extension `all` cannot have `{0}` behavior")]
     AllExtensionsEnabled(&'static str),
+    #[error("`{0}`: mesh shader outputs can only be written, not read")]
+    MeshOutputRead(String),
     #[error("extension `{extension}` is not allowed in {stage} shaders")]
     ExtensionStage {
         extension: String,

@@ -735,7 +735,12 @@ impl<'a> FunctionLowerer<'_, 'a> {
                             .ok_or_else(|| internal(at))?;
                         let boolean = block
                             .is_some_and(|block| self.lw.block_bools.contains(&(block, index)));
-                        match self.chain(base)? {
+                        let chain = self.chain(base)?;
+                        let index = block
+                            .and_then(|block| self.lw.member_indices.get(&(block, index)))
+                            .copied()
+                            .unwrap_or(index);
+                        match chain {
                             Chain::Place(place) => {
                                 let base_pointer = self.buffer_pointer(place.pointer, at)?;
                                 let pointer = self.add(

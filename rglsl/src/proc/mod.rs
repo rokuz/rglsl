@@ -1057,7 +1057,12 @@ pub fn is_per_vertex_variable(
 ) -> bool {
     let arrayed_direction = match var.space {
         crate::AddressSpace::Input => stage.has_arrayed_io(),
-        crate::AddressSpace::Output => stage == crate::ShaderStage::TessControl,
+        crate::AddressSpace::Output => {
+            matches!(
+                stage,
+                crate::ShaderStage::TessControl | crate::ShaderStage::Mesh
+            )
+        }
         _ => false,
     };
     arrayed_direction
@@ -1368,4 +1373,40 @@ pub fn long_math_result(
             span,
         },
     })
+}
+
+impl crate::MeshFunction {
+    pub fn operands(&self) -> alloc::vec::Vec<crate::Handle<crate::Expression>> {
+        match *self {
+            Self::SetMeshOutputs {
+                vertex_count,
+                primitive_count,
+            } => alloc::vec![vertex_count, primitive_count],
+            Self::EmitMeshTasks { group_count } => group_count.to_vec(),
+            Self::WritePackedPrimitiveIndices {
+                index_offset,
+                packed_indices,
+            } => alloc::vec![index_offset, packed_indices],
+        }
+    }
+
+    pub fn operands_mut(&mut self) -> alloc::vec::Vec<&mut crate::Handle<crate::Expression>> {
+        match *self {
+            Self::SetMeshOutputs {
+                ref mut vertex_count,
+                ref mut primitive_count,
+            } => alloc::vec![vertex_count, primitive_count],
+            Self::EmitMeshTasks {
+                ref mut group_count,
+            } => group_count.iter_mut().collect(),
+            Self::WritePackedPrimitiveIndices {
+                ref mut index_offset,
+                ref mut packed_indices,
+            } => alloc::vec![index_offset, packed_indices],
+        }
+    }
+
+    pub const fn is_terminator(&self) -> bool {
+        matches!(*self, Self::EmitMeshTasks { .. })
+    }
 }
