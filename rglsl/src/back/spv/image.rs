@@ -1005,7 +1005,7 @@ impl BlockContext<'_> {
         let depth_id = depth_ref.map(|handle| self.cached[handle]);
         let mut mask = spirv::ImageOperands::empty();
         let constant_offset =
-            offset.is_none_or(|offset| self.expression_constness.is_const(offset));
+            offset.is_none_or(|offset| self.expression_constness.is_constant_instruction(offset));
         mask.set(
             spirv::ImageOperands::CONST_OFFSET,
             offset.is_some() && constant_offset,

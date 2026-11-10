@@ -757,6 +757,19 @@ impl BlockContext<'_> {
                     );
                     self.writer
                         .get_constant_composite(LookupType::Handle(ty), &self.temp_list)
+                } else if self.expression_constness.is_specialized(expr_handle) {
+                    self.temp_list.extend(
+                        crate::proc::flatten_compose(
+                            ty,
+                            components,
+                            &self.ir_function.expressions,
+                            &self.ir_module.types,
+                        )
+                        .map(|component| self.cached[component]),
+                    );
+                    let type_id = self.writer.get_handle_type_id(ty);
+                    self.writer
+                        .get_spec_constant_composite(type_id, &self.temp_list)
                 } else {
                     self.temp_list
                         .extend(components.iter().map(|&component| self.cached[component]));
@@ -779,6 +792,9 @@ impl BlockContext<'_> {
                         .writer
                         .get_expression_lookup_type(&self.fun_info[expr_handle].ty);
                     self.writer.get_constant_composite(ty, components)
+                } else if self.expression_constness.is_specialized(expr_handle) {
+                    self.writer
+                        .get_spec_constant_composite(result_type_id, components)
                 } else {
                     let id = self.gen_id();
                     block.body.push(Instruction::composite_construct(
@@ -3453,7 +3469,7 @@ impl BlockContext<'_> {
                 Statement::Emit(ref range) => {
                     for handle in range.clone() {
                         // omit const expressions as we've already cached those
-                        if !self.expression_constness.is_const(handle) {
+                        if !self.expression_constness.is_constant_instruction(handle) {
                             self.cache_expression_value(handle, &mut block)?;
                         }
                     }

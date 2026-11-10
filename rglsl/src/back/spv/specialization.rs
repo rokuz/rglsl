@@ -419,6 +419,30 @@ impl Writer {
         })
     }
 
+    fn low_bits_mask(
+        &mut self,
+        inner: &TypeInner,
+        scalar: Scalar,
+        bytes: u8,
+    ) -> Result<Word, Error> {
+        let mask = (1_u64 << (u32::from(bytes) * 8)) - 1;
+        let literal = match (scalar.kind, scalar.width) {
+            (ScalarKind::Sint, 2) => i16::try_from(mask).ok().map(Literal::I16),
+            (ScalarKind::Sint, 4) => i32::try_from(mask).ok().map(Literal::I32),
+            (ScalarKind::Sint, 8) => i64::try_from(mask).ok().map(Literal::I64),
+            (ScalarKind::Uint, 2) => u16::try_from(mask).ok().map(Literal::U16),
+            (ScalarKind::Uint, 4) => u32::try_from(mask).ok().map(Literal::U32),
+            (ScalarKind::Uint, 8) => Some(Literal::U64(mask)),
+            _ => None,
+        }
+        .ok_or(Error::SpecializationConstant("this conversion"))?;
+        let id = self.get_constant_scalar(literal);
+        Ok(match *inner {
+            TypeInner::Vector { size, .. } => self.splat(id, size, scalar, false),
+            _ => id,
+        })
+    }
+
     pub(super) fn write_spec_operation(
         &mut self,
         handle: Handle<Expression>,
@@ -548,8 +572,20 @@ impl Writer {
                     (ScalarKind::Sint, ScalarKind::Sint | ScalarKind::Uint) => {
                         self.spec_op(type_id, Op::SConvert, &[operand])
                     }
-                    (ScalarKind::Uint, ScalarKind::Sint | ScalarKind::Uint) => {
+                    (ScalarKind::Uint, ScalarKind::Sint | ScalarKind::Uint)
+                        if self.lang_version() >= (1, 4) =>
+                    {
                         self.spec_op(type_id, Op::UConvert, &[operand])
+                    }
+                    (ScalarKind::Uint, ScalarKind::Sint | ScalarKind::Uint)
+                        if target_width < source.width =>
+                    {
+                        self.spec_op(type_id, Op::SConvert, &[operand])
+                    }
+                    (ScalarKind::Uint, ScalarKind::Sint | ScalarKind::Uint) => {
+                        let extended = self.spec_op(type_id, Op::SConvert, &[operand]);
+                        let mask = self.low_bits_mask(&result_inner, target, source.width)?;
+                        self.spec_op(type_id, Op::BitwiseAnd, &[extended, mask])
                     }
                     (ScalarKind::Float, ScalarKind::Float) => {
                         self.spec_op(type_id, Op::FConvert, &[operand])

@@ -798,31 +798,50 @@ struct FunctionArgument {
 /// - OpConstantNull
 struct ExpressionConstnessTracker {
     inner: crate::arena::HandleSet<crate::Expression>,
+    specialized: crate::arena::HandleSet<crate::Expression>,
 }
 
 impl ExpressionConstnessTracker {
     fn from_arena(arena: &crate::Arena<crate::Expression>) -> Self {
         let mut inner = crate::arena::HandleSet::for_arena(arena);
+        let mut specialized = crate::arena::HandleSet::for_arena(arena);
         for (handle, expr) in arena.iter() {
-            let insert = match *expr {
+            let known = |h| inner.contains(h) || specialized.contains(h);
+            let (constant, spec) = match *expr {
                 crate::Expression::Literal(_)
                 | crate::Expression::ZeroValue(_)
-                | crate::Expression::Constant(_) => true,
+                | crate::Expression::Constant(_) => (true, false),
+                crate::Expression::Override(_) => (false, true),
                 crate::Expression::Compose { ref components, .. } => {
-                    components.iter().all(|&h| inner.contains(h))
+                    let all_known = components.iter().all(|&h| known(h));
+                    let any_spec = components.iter().any(|&h| specialized.contains(h));
+                    (all_known && !any_spec, all_known && any_spec)
                 }
-                crate::Expression::Splat { value, .. } => inner.contains(value),
-                _ => false,
+                crate::Expression::Splat { value, .. } => {
+                    (inner.contains(value), specialized.contains(value))
+                }
+                _ => (false, false),
             };
-            if insert {
+            if constant {
                 inner.insert(handle);
             }
+            if spec {
+                specialized.insert(handle);
+            }
         }
-        Self { inner }
+        Self { inner, specialized }
     }
 
     fn is_const(&self, value: Handle<crate::Expression>) -> bool {
         self.inner.contains(value)
+    }
+
+    fn is_specialized(&self, value: Handle<crate::Expression>) -> bool {
+        self.specialized.contains(value)
+    }
+
+    fn is_constant_instruction(&self, value: Handle<crate::Expression>) -> bool {
+        self.is_const(value) || self.is_specialized(value)
     }
 }
 

@@ -2950,3 +2950,87 @@ fn function_variables_have_no_explicit_layout() {
         assert!(!laid_out.contains(&pointer.operands[1].unwrap_id_ref()));
     }
 }
+
+#[test]
+fn unsized_arrays_of_opaque_types_match_glslang() {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+        layout(binding = 0) uniform sampler2D s[];
+        layout(binding = 1) uniform texture2D t[];
+        layout(binding = 2) uniform sampler sm;
+        layout(binding = 3) uniform sampler2D unused[];
+        layout(binding = 4) buffer B { uint n; } b[];
+        layout(location = 0) out vec4 o;
+        void main() {
+            o = texture(s[2], vec2(0.5)) + texture(sampler2D(t[1], sm), vec2(0.5));
+        }",
+    );
+    assert_eq!(array_lengths(&module), [1, 1, 2, 3]);
+    assert!(instructions(&module, Op::TypeRuntimeArray).is_empty());
+    assert!(!has_capability(
+        &module,
+        spirv::Capability::RuntimeDescriptorArray
+    ));
+
+    let error = parse(
+        ShaderStage::Fragment,
+        "#version 450
+        layout(binding = 0) uniform sampler2D s[];
+        layout(location = 0) flat in int i;
+        layout(location = 0) out vec4 o;
+        void main() { o = texture(s[i], vec2(0.5)); }",
+    )
+    .unwrap_err();
+    assert!(error.contains("non-constant"), "{error}");
+}
+
+#[test]
+fn specialization_constant_texture_offsets_are_constant() {
+    let module = compile(
+        ShaderStage::Fragment,
+        r#"#version 450
+layout(constant_id = 1) const int offs = 0;
+layout(binding = 0) uniform sampler2D tex;
+layout(location = 0) out vec4 color_out;
+void main() {
+  color_out = textureLodOffset(tex, vec2(0.0), 0.0, ivec2(offs, offs));
+}
+"#,
+    );
+    let sample = instructions(&module, Op::ImageSampleExplicitLod)[0];
+    assert_eq!(
+        sample.operands[2],
+        Operand::ImageOperands(spirv::ImageOperands::LOD | spirv::ImageOperands::CONST_OFFSET)
+    );
+    let offset = global_value(&module, id_operand(&sample.operands[4]));
+    assert_eq!(offset.class.opcode, Op::SpecConstantComposite);
+    assert!(!module.capabilities.iter().any(
+        |inst| inst.operands[0] == Operand::Capability(spirv::Capability::ImageGatherExtended)
+    ));
+}
+
+#[test]
+fn unsigned_specialization_conversions_avoid_uconvert_before_spirv_1_4() {
+    let source = r#"#version 450
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+layout(local_size_x = 1) in;
+layout(constant_id = 0) const uint su = 0xffffffffu;
+layout(constant_id = 1) const uint16_t su16 = 0x8001us;
+layout(constant_id = 2) const uint64_t su64 = 0x8000000000000001ul;
+const uint16_t u_to_u16 = uint16_t(su);
+const uint u16_to_u = uint(su16);
+const uint u64_to_u = uint(su64);
+const uint64_t u_to_u64 = uint64_t(su);
+layout(std430, binding = 0) buffer Out { uint a; };
+void main() {
+  a = uint(u_to_u16) + u16_to_u + u64_to_u + uint(u_to_u64);
+}
+"#;
+    let old = spec_operations(&compile_for(ShaderStage::Compute, source, (1, 0)));
+    assert!(!old.contains(&Op::UConvert), "{old:?}");
+    assert!(old.contains(&Op::SConvert));
+    assert!(old.contains(&Op::BitwiseAnd));
+    let new = spec_operations(&compile_for(ShaderStage::Compute, source, (1, 4)));
+    assert!(new.contains(&Op::UConvert), "{new:?}");
+}
