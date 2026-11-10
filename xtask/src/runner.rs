@@ -262,8 +262,11 @@ fn run_case(
         OursResult::Accepted => {
             let mut command = Command::new(&env.spirv_val.path);
             command.args(["--target-env", &case.target.spirv_val_env()]);
-            if enables_offset_texture_operand(&case.path) {
+            if enables_extension(&case.path, "GL_EXT_texture_offset_non_const") {
                 command.arg("--allow-offset-texture-operand");
+            }
+            if enables_extension(&case.path, "GL_EXT_scalar_block_layout") {
+                command.arg("--scalar-block-layout");
             }
             command.arg(&out);
             let output = process::run(command, timeout)?;
@@ -340,11 +343,11 @@ fn first_stderr_line(stderr: &str) -> String {
         .to_string()
 }
 
-fn enables_offset_texture_operand(path: &Path) -> bool {
+fn enables_extension(path: &Path, extension: &str) -> bool {
     fs::read_to_string(path).is_ok_and(|source| {
         source.lines().any(|line| {
             let line = line.trim_start();
-            line.starts_with("#extension") && line.contains("GL_EXT_texture_offset_non_const")
+            line.starts_with("#extension") && line.contains(extension)
         })
     })
 }
