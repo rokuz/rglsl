@@ -12,11 +12,14 @@ publish = false
 [lib]
 name = "rglsl_fuzz"
 
+[[bin]]
+name = "rglsl-fuzz"
+path = "src/bin/rglsl-fuzz.rs"
+
 [dependencies]
 rglsl-ast.workspace = true
-
-[dev-dependencies]
 rglsl-sema.workspace = true
+serde_json.workspace = true
 
 [lints]
 workspace = true
