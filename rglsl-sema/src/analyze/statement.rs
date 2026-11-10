@@ -211,13 +211,13 @@ impl Analyzer<'_> {
                 if operand.ty.is_error() {
                     return;
                 }
-                if !operand.constant || !operand.ty.is_scalar_integer() {
+                if !operand.constant || operand.specialization || !operand.ty.is_scalar_integer() {
                     self.error(expression.span, DiagnosticKind::InvalidCaseLabel);
                     return;
                 }
                 match operand.value.as_ref().and_then(Constant::scalar_i64) {
-                    Some(value) if !operand.specialization => Some(value),
-                    _ => return,
+                    Some(value) => Some(value),
+                    None => return,
                 }
             }
         };

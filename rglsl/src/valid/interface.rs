@@ -328,6 +328,11 @@ impl LocationShape {
                     ..element
                 })
             }
+            Ti::Array {
+                base,
+                size: crate::ArraySize::Pending(_),
+                ..
+            } => Self::of(types, base),
             Ti::Struct { ref members, .. } => {
                 let mut shape = Self {
                     locations: 0,

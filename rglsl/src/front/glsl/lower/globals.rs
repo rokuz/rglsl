@@ -12,8 +12,8 @@ use rglsl_sema::types::{
 use rglsl_sema::SymbolId;
 
 use super::types::{image_dimension, sampled_kind};
-use super::xfb;
 use super::{internal, semantic, unsupported, GlobalRef, Initialization, Lowerer, Packing, Result};
+use super::{specialization, xfb};
 use crate::proc::Alignment;
 use crate::{
     AddressSpace, Binding, BuiltIn, ConservativeDepth, GlobalVariable, Handle, ImageClass,
@@ -254,10 +254,16 @@ impl<'a> Lowerer<'a> {
                         "early_fragment_tests" => self.early_fragment_tests = true,
                         "post_depth_coverage" => self.post_depth_coverage = Some(at),
                         "local_size_x_id" | "local_size_y_id" | "local_size_z_id" => {
-                            return Err(unsupported(
-                                "work group sizes given by specialization constants",
-                                at,
-                            ));
+                            let id = xfb::ast_layout_value(self, Some(qualifier), name)
+                                .filter(|value| *value != u32::MAX)
+                                .ok_or_else(|| {
+                                    semantic("the specialization id is out of range", at)
+                                })?;
+                            if let Some(slot) = specialization::local_size_index(name)
+                                .and_then(|index| self.local_size_ids.get_mut(index))
+                            {
+                                *slot = Some(id);
+                            }
                         }
                         _ => {}
                     }
@@ -309,7 +315,8 @@ impl<'a> Lowerer<'a> {
             if let Some(entry) = qualifiers.layout_entry("constant_id") {
                 let id = entry
                     .value
-                    .and_then(|value| u16::try_from(value).ok())
+                    .and_then(|value| u32::try_from(value).ok())
+                    .filter(|value| *value != u32::MAX)
                     .ok_or_else(|| semantic("the `constant_id` is out of range", at))?;
                 let value = variable.value.as_ref().ok_or_else(|| {
                     unsupported("specialization constants without a known default", at)
@@ -327,6 +334,17 @@ impl<'a> Lowerer<'a> {
                 );
                 self.globals.insert(symbol, GlobalRef::Override(handle));
                 return Ok(());
+            }
+            if qualifiers.specialization {
+                if let Some(&Initializer::Expression(ref expression)) = declarator
+                    .initializer
+                    .as_ref()
+                    .map(|initializer| &initializer.node)
+                {
+                    let handle = self.specialization(expression, Some(name), at)?;
+                    self.globals.insert(symbol, GlobalRef::Override(handle));
+                    return Ok(());
+                }
             }
             if let Some(ref value) = variable.value {
                 let ir = self.ir_type(ty, at)?;
@@ -386,7 +404,7 @@ impl<'a> Lowerer<'a> {
             let constant = match initializer.node {
                 Initializer::Expression(ref expression) => analysis
                     .expression(expression.id)
-                    .filter(|info| info.is_constant)
+                    .filter(|info| info.is_constant && !info.is_specialization)
                     .and_then(|info| Some((info.ty.clone(), info.value.clone()?))),
                 Initializer::List(_) => None,
             };
@@ -459,7 +477,7 @@ impl<'a> Lowerer<'a> {
         let location = match qualifiers.layout_entry("location").and_then(|e| e.value) {
             Some(location) => u32::try_from(location).map_err(|_| internal(at))?,
             None if self.options.auto_map_locations => {
-                let count = location_count(&self.module.types, ty);
+                let count = location_count(&self.module, ty);
                 let slot = &mut self.next_location[usize::from(!input)];
                 let location = *slot;
                 *slot = slot.saturating_add(count);
@@ -899,7 +917,7 @@ impl<'a> Lowerer<'a> {
         let member_located = member_locations.iter().any(Option::is_some);
         let per_block = members
             .iter()
-            .map(|member| location_count(&self.module.types, member.ty))
+            .map(|member| location_count(&self.module, member.ty))
             .fold(0, u32::saturating_add);
         let elements = declared
             .array
@@ -934,7 +952,7 @@ impl<'a> Lowerer<'a> {
                 {
                     *slot = location;
                 }
-                next = Some(location.saturating_add(location_count(&self.module.types, member.ty)));
+                next = Some(location.saturating_add(location_count(&self.module, member.ty)));
             }
             if self.options.auto_map_locations {
                 let counter = &mut self.next_location[slot];
@@ -979,7 +997,7 @@ impl<'a> Lowerer<'a> {
                 {
                     *location = next;
                 }
-                next = next.saturating_add(location_count(&self.module.types, member.ty));
+                next = next.saturating_add(location_count(&self.module, member.ty));
             }
             Some(Binding::Location {
                 location: start,
@@ -1346,6 +1364,11 @@ impl<'a> Lowerer<'a> {
         if let Some(found) = self.globals.get(&symbol) {
             return Ok(*found);
         }
+        if self.has_local_size_ids() && self.is_work_group_size(symbol) {
+            let handle = self.work_group_size_override(at)?;
+            self.globals.insert(symbol, GlobalRef::Override(handle));
+            return Ok(GlobalRef::Override(handle));
+        }
         let analysis = self.analysis;
         let record = self.symbol(symbol).ok_or_else(|| internal(at))?;
         let (ty, output, value) = match record.kind {
@@ -1606,7 +1629,8 @@ impl<'a> Lowerer<'a> {
     }
 }
 
-fn location_count(types: &crate::UniqueArena<crate::Type>, ty: Handle<crate::Type>) -> u32 {
+fn location_count(module: &crate::Module, ty: Handle<crate::Type>) -> u32 {
+    let types = &module.types;
     const fn vector_locations(size: crate::VectorSize, scalar: crate::Scalar) -> u32 {
         match (size, scalar.width) {
             (crate::VectorSize::Tri | crate::VectorSize::Quad, 8) => 2,
@@ -1621,14 +1645,15 @@ fn location_count(types: &crate::UniqueArena<crate::Type>, ty: Handle<crate::Typ
             rows,
             scalar,
         } => (columns as u32).saturating_mul(vector_locations(rows, scalar)),
-        TypeInner::Array {
-            base,
-            size: crate::ArraySize::Constant(length),
-            ..
-        } => length.get().saturating_mul(location_count(types, base)),
+        TypeInner::Array { base, size, .. } => match size.resolve(module.to_ctx()) {
+            Ok(crate::proc::IndexableLength::Known(length)) => {
+                length.saturating_mul(location_count(module, base))
+            }
+            _ => 1,
+        },
         TypeInner::Struct { ref members, .. } => members
             .iter()
-            .map(|member| location_count(types, member.ty))
+            .map(|member| location_count(module, member.ty))
             .fold(0, u32::saturating_add),
         _ => 1,
     }

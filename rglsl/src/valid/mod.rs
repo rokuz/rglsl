@@ -348,7 +348,7 @@ pub struct Validator {
     switch_values: FastHashSet<crate::SwitchValue>,
     valid_expression_list: Vec<Handle<crate::Expression>>,
     valid_expression_set: HandleSet<crate::Expression>,
-    override_ids: FastHashSet<u16>,
+    override_ids: FastHashSet<u32>,
 
     /// Treat overrides whose initializers are not fully-evaluated
     /// constant expressions as errors.
@@ -672,13 +672,20 @@ impl Validator {
             return Err(OverrideError::NonConstructibleType);
         }
 
-        match gctx.types[o.ty].inner {
-            crate::TypeInner::Scalar(
+        let scalar = match gctx.types[o.ty].inner {
+            crate::TypeInner::Scalar(scalar) => Some(scalar),
+            crate::TypeInner::Vector { scalar, .. } if o.id.is_none() => Some(scalar),
+            _ => None,
+        };
+        match scalar {
+            Some(
                 crate::Scalar::BOOL
                 | crate::Scalar::I16
                 | crate::Scalar::U16
                 | crate::Scalar::I32
                 | crate::Scalar::U32
+                | crate::Scalar::I64
+                | crate::Scalar::U64
                 | crate::Scalar::F16
                 | crate::Scalar::F32
                 | crate::Scalar::F64,

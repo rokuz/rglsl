@@ -1,14 +1,14 @@
 use alloc::vec::Vec;
 
 use rglsl_ast::ast::{
-    CaseLabel, Condition, Declaration, DeclarationKind, ForStatement, JumpStatement, Statement,
-    StatementKind,
+    CaseLabel, Condition, Declaration, DeclarationKind, ForStatement, Initializer, JumpStatement,
+    Statement, StatementKind,
 };
 use rglsl_sema::constant::Value;
 use rglsl_sema::types::{Scalar as GlslScalar, Type as GlslType};
 
 use super::function::{FunctionLowerer, Local};
-use super::{internal, semantic, unsupported, Result};
+use super::{internal, semantic, unsupported, GlobalRef, Result};
 use crate::{Block, Expression, Statement as IrStatement, SwitchCase, SwitchValue, UnaryOperator};
 
 impl FunctionLowerer<'_, '_> {
@@ -206,6 +206,18 @@ impl FunctionLowerer<'_, '_> {
                     let variable = self.lw.variable(symbol).ok_or_else(|| internal(at))?;
                     if variable.qualifiers.precise {
                         return Err(unsupported("`precise`", at));
+                    }
+                    if variable.qualifiers.specialization {
+                        if let Some(&Initializer::Expression(ref expression)) = declarator
+                            .initializer
+                            .as_ref()
+                            .map(|initializer| &initializer.node)
+                        {
+                            let name = Some(declarator.name.node.clone());
+                            let handle = self.lw.specialization(expression, name, at)?;
+                            self.lw.globals.insert(symbol, GlobalRef::Override(handle));
+                            continue;
+                        }
                     }
                     let ty = variable.ty.clone();
                     let local = self.local(&ty, Some(declarator.name.node.clone()), at)?;

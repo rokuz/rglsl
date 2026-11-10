@@ -654,7 +654,7 @@ impl super::Validator {
 
                 // check constant offset
                 if let Some(const_expr) = offset {
-                    if !expr_kind.is_const(const_expr) {
+                    if !expr_kind.is_const_or_override(const_expr) {
                         return Err(ExpressionError::InvalidSampleOffsetExprType);
                     }
 

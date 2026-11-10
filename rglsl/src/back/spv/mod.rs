@@ -107,6 +107,7 @@ mod mesh_shader;
 mod ray;
 mod reclaimable;
 mod selection;
+mod specialization;
 mod subgroup;
 mod writer;
 
@@ -174,6 +175,8 @@ pub enum Error {
     Validation(&'static str),
     #[error("overrides should not be present at this stage")]
     Override,
+    #[error("{0} is not allowed in a specialization constant")]
+    SpecializationConstant(&'static str),
     #[error(transparent)]
     ResolveArraySizeError(#[from] crate::proc::ResolveArraySizeError),
     #[error("module requires SPIRV-{0}.{1}, which isn't supported")]
@@ -959,6 +962,10 @@ pub struct Writer {
     /// Indexed by const-expression handle indexes
     constant_ids: HandleVec<crate::Expression, Word>,
     cached_constants: crate::FastHashMap<CachedConstant, Word>,
+    override_ids: Vec<Word>,
+    override_dependent: Vec<bool>,
+    spec_defaults: Vec<bool>,
+    spec_composites: crate::FastHashMap<(Word, Vec<Word>), Word>,
     global_variables: HandleVec<crate::GlobalVariable, GlobalVariable>,
     std140_compat_uniform_types: crate::FastHashMap<Handle<crate::Type>, Std140CompatTypeInfo>,
     /// The types of the contents of uniform buffers, storage buffers and

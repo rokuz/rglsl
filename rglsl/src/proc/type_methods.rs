@@ -411,8 +411,8 @@ impl crate::TypeInner {
         match *self {
             Ti::Array { base, size, .. } => {
                 let fixed_size = match size {
-                    ir::ArraySize::Constant(_) => true,
-                    ir::ArraySize::Pending(_) | ir::ArraySize::Dynamic => false,
+                    ir::ArraySize::Constant(_) | ir::ArraySize::Pending(_) => true,
+                    ir::ArraySize::Dynamic => false,
                 };
                 fixed_size && types[base].inner.is_constructible(types)
             }

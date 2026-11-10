@@ -45,6 +45,15 @@ impl FunctionLowerer<'_, '_> {
             let length = i32::try_from(length).map_err(|_| internal(at))?;
             return self.literal(Literal::I32(length), at);
         }
+        if let Some(ArraySize::Specialized(size)) = ty.outer_size() {
+            let handle = self.lw.specialized_size(size, at)?;
+            let value = self.add(Expression::Override(handle), at)?;
+            let size_ty = self.lw.module.overrides[handle].ty;
+            return match self.lw.module.types[size_ty].inner {
+                crate::TypeInner::Scalar(crate::Scalar::I32) => Ok(value),
+                _ => self.as_kind(value, crate::Scalar::I32, at),
+            };
+        }
         if ty.outer_size() == Some(ArraySize::Unsized) {
             if let Some(symbol) = self.lw.variable_symbol(object) {
                 if let Some(name) = self.lw.symbol(symbol).map(|s| s.name.as_str()) {

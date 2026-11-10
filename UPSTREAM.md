@@ -124,6 +124,20 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   as `XfbBuffer`, `XfbStride` and `Offset` on the variable, and `StructMember::xfb_offset` (new)
   as `Offset` on a member of an interface block. The validator allows `xfb` only on `Output`
   globals.
+- **Specialization constants.** The SPIR-V backend writes overrides instead of rejecting them
+  (`back/spv/specialization.rs`): an override with an id is `OpSpecConstant[True/False]` with
+  `SpecId` and its literal default; an override without an id is its initializer; an
+  override-dependent global expression is `OpSpecConstantComposite` or `OpSpecConstantOp`
+  (integer and boolean arithmetic, comparisons, `Select`, conversions, `CompositeExtract`,
+  `VectorShuffle`; floating-point arithmetic is an error); `ArraySize::Pending` is an
+  `OpTypeArray` with the spec constant as length; `EntryPoint::workgroup_size_overrides` is
+  `LocalSizeId` on SPIR-V 1.6 and a `WorkgroupSize` spec-constant composite before. An
+  `Expression::Override` in a function is the spec constant's id. `Override::id` is a `u32`;
+  an override without an id may have a vector type. The validator treats arrays sized by an
+  override as constructible (local variables, zero values), counts their locations as one
+  element, and accepts an override expression as an image sample offset.
+  `process_overrides` still bakes values: it also resolves overrides without name or id and
+  clears the ids of the overrides it replaced, so the backend writes no spec constant for them.
 
 ## Cherry-picked upstream commits
 

@@ -32,6 +32,7 @@ pub struct LayoutEntry {
 pub struct Qualifiers {
     pub storage: Storage,
     pub constant: bool,
+    pub specialization: bool,
     pub centroid: bool,
     pub patch: bool,
     pub sample: bool,

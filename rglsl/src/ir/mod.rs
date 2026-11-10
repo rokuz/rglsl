@@ -1092,7 +1092,7 @@ pub enum Literal {
 pub struct Override {
     pub name: Option<String>,
     /// Pipeline Constant ID.
-    pub id: Option<u16>,
+    pub id: Option<u32>,
     pub ty: Handle<Type>,
 
     /// The default value of the pipeline-overridable constant.

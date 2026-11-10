@@ -105,6 +105,10 @@ impl Writer {
             wrapped_functions: crate::FastHashMap::default(),
             constant_ids: HandleVec::new(),
             cached_constants: crate::FastHashMap::default(),
+            override_ids: Vec::new(),
+            override_dependent: Vec::new(),
+            spec_defaults: Vec::new(),
+            spec_composites: crate::FastHashMap::default(),
             global_variables: HandleVec::new(),
             std140_compat_uniform_types: crate::FastHashMap::default(),
             laid_out_types: crate::arena::HandleSet::new(),
@@ -206,6 +210,10 @@ impl Writer {
             wrapped_functions: take(&mut self.wrapped_functions).reclaim(),
             constant_ids: take(&mut self.constant_ids).reclaim(),
             cached_constants: take(&mut self.cached_constants).reclaim(),
+            override_ids: take(&mut self.override_ids).reclaim(),
+            override_dependent: take(&mut self.override_dependent).reclaim(),
+            spec_defaults: take(&mut self.spec_defaults).reclaim(),
+            spec_composites: take(&mut self.spec_composites).reclaim(),
             global_variables: take(&mut self.global_variables).reclaim(),
             std140_compat_uniform_types: take(&mut self.std140_compat_uniform_types).reclaim(),
             laid_out_types: crate::arena::HandleSet::new(),
@@ -1909,13 +1917,7 @@ impl Writer {
                 spirv::ExecutionModel::Fragment
             }
             crate::ShaderStage::Compute => {
-                let execution_mode = spirv::ExecutionMode::LocalSize;
-                Instruction::execution_mode(
-                    function_id,
-                    execution_mode,
-                    &entry_point.workgroup_size,
-                )
-                .to_words(&mut self.logical_layout.execution_modes);
+                self.write_workgroup_size(function_id, entry_point)?;
                 spirv::ExecutionModel::GLCompute
             }
             crate::ShaderStage::Task => {
@@ -2242,6 +2244,7 @@ impl Writer {
     fn write_type_declaration_arena(
         &mut self,
         module: &crate::Module,
+        mod_info: &ModuleInfo,
         handle: Handle<crate::Type>,
     ) -> Result<Word, Error> {
         let ty = &module.types[handle];
@@ -2279,25 +2282,35 @@ impl Writer {
                     }
 
                     let type_id = self.get_handle_type_id(base);
-                    match size.resolve(module.to_ctx())? {
-                        crate::proc::IndexableLength::Known(length) => {
-                            let length_id = self.get_index_constant(length);
-                            Instruction::type_array(id, type_id, length_id)
-                        }
-                        crate::proc::IndexableLength::Dynamic => {
-                            Instruction::type_runtime_array(id, type_id)
+                    if let crate::ArraySize::Pending(length) = size {
+                        let length_id = self.write_override(length, module, mod_info)?;
+                        Instruction::type_array(id, type_id, length_id)
+                    } else {
+                        match size.resolve(module.to_ctx())? {
+                            crate::proc::IndexableLength::Known(length) => {
+                                let length_id = self.get_index_constant(length);
+                                Instruction::type_array(id, type_id, length_id)
+                            }
+                            crate::proc::IndexableLength::Dynamic => {
+                                Instruction::type_runtime_array(id, type_id)
+                            }
                         }
                     }
                 }
                 crate::TypeInner::BindingArray { base, size } => {
                     let type_id = self.get_handle_type_id(base);
-                    match size.resolve(module.to_ctx())? {
-                        crate::proc::IndexableLength::Known(length) => {
-                            let length_id = self.get_index_constant(length);
-                            Instruction::type_array(id, type_id, length_id)
-                        }
-                        crate::proc::IndexableLength::Dynamic => {
-                            Instruction::type_runtime_array(id, type_id)
+                    if let crate::ArraySize::Pending(length) = size {
+                        let length_id = self.write_override(length, module, mod_info)?;
+                        Instruction::type_array(id, type_id, length_id)
+                    } else {
+                        match size.resolve(module.to_ctx())? {
+                            crate::proc::IndexableLength::Known(length) => {
+                                let length_id = self.get_index_constant(length);
+                                Instruction::type_array(id, type_id, length_id)
+                            }
+                            crate::proc::IndexableLength::Dynamic => {
+                                Instruction::type_runtime_array(id, type_id)
+                            }
                         }
                     }
                 }
@@ -2792,7 +2805,7 @@ impl Writer {
         null_id
     }
 
-    fn write_constant_expr(
+    pub(super) fn write_constant_expr(
         &mut self,
         handle: Handle<crate::Expression>,
         ir_module: &crate::Module,
@@ -2807,6 +2820,11 @@ impl Writer {
             crate::Expression::ZeroValue(ty) => {
                 let type_id = self.get_handle_type_id(ty);
                 self.get_constant_null(type_id)
+            }
+            crate::Expression::Compose { .. } | crate::Expression::Splat { .. }
+                if self.is_override_dependent(handle) =>
+            {
+                self.write_spec_composite(handle, ir_module, mod_info)?
             }
             crate::Expression::Compose { ty, ref components } => {
                 let component_ids: Vec<_> = crate::proc::flatten_compose(
@@ -2827,9 +2845,8 @@ impl Writer {
 
                 self.get_constant_composite(ty, component_ids)
             }
-            _ => {
-                return Err(Error::Override);
-            }
+            crate::Expression::Override(item) => self.write_override(item, ir_module, mod_info)?,
+            _ => self.write_spec_operation(handle, ir_module, mod_info)?,
         };
 
         self.constant_ids[handle] = id;
@@ -3991,10 +4008,13 @@ impl Writer {
         }
 
         self.decorated_blocks = crate::arena::HandleSet::for_arena(&ir_module.types);
+        self.prepare_overrides(ir_module);
+        self.constant_ids
+            .resize(ir_module.global_expressions.len(), 0);
 
         // write all types
         for (handle, _) in ir_module.types.iter() {
-            self.write_type_declaration_arena(ir_module, handle)?;
+            self.write_type_declaration_arena(ir_module, mod_info, handle)?;
         }
 
         // write std140 layout compatible types required by uniforms
@@ -4005,12 +4025,14 @@ impl Writer {
         }
 
         // write all const-expressions as constants
-        self.constant_ids
-            .resize(ir_module.global_expressions.len(), 0);
         for (handle, _) in ir_module.global_expressions.iter() {
-            self.write_constant_expr(handle, ir_module, mod_info)?;
+            if self.constant_ids[handle] == 0 && !self.is_spec_default(handle) {
+                self.write_constant_expr(handle, ir_module, mod_info)?;
+            }
         }
-        debug_assert!(self.constant_ids.iter().all(|&id| id != 0));
+        for (handle, _) in ir_module.overrides.iter() {
+            self.write_override(handle, ir_module, mod_info)?;
+        }
 
         // write the name of constants on their respective const-expression initializer
         if self.flags.contains(WriterFlags::DEBUG) {
