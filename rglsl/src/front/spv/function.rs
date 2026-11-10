@@ -58,7 +58,7 @@ impl<I: Iterator<Item = u32>> super::Frontend<I> {
                     &module.global_variables,
                     &module.constants,
                     &module.overrides,
-                ),
+                )?,
                 named_expressions: crate::NamedExpressions::default(),
                 non_uniform: crate::NonUniformExpressions::default(),
                 body: crate::Block::new(),
@@ -267,7 +267,7 @@ impl<I: Iterator<Item = u32>> super::Frontend<I> {
                     block_ctx
                         .blocks
                         .get_mut(&predecessor)
-                        .unwrap()
+                        .ok_or(Error::InvalidId(predecessor))?
                         .push(crate::Statement::Emit(range), crate::Span::default());
 
                     // At the end of the block that defines it, spill the source
@@ -275,7 +275,7 @@ impl<I: Iterator<Item = u32>> super::Frontend<I> {
                     block_ctx
                         .blocks
                         .get_mut(&source_lexp.block_id)
-                        .unwrap()
+                        .ok_or(Error::InvalidId(source_lexp.block_id))?
                         .push(
                             crate::Statement::Store {
                                 pointer,
@@ -289,17 +289,21 @@ impl<I: Iterator<Item = u32>> super::Frontend<I> {
 
                 // At the end of the phi predecessor block, store the source
                 // value in the phi's value.
-                block_ctx.blocks.get_mut(&predecessor).unwrap().push(
-                    crate::Statement::Store {
-                        pointer: phi_pointer,
-                        value,
-                    },
-                    crate::Span::default(),
-                )
+                block_ctx
+                    .blocks
+                    .get_mut(&predecessor)
+                    .ok_or(Error::InvalidId(predecessor))?
+                    .push(
+                        crate::Statement::Store {
+                            pointer: phi_pointer,
+                            value,
+                        },
+                        crate::Span::default(),
+                    )
             }
         }
 
-        fun.body = block_ctx.lower();
+        fun.body = block_ctx.lower()?;
 
         // done
         let fun_handle = module.functions.append(fun, self.span_from_with_op(start));
@@ -402,7 +406,7 @@ impl<I: Iterator<Item = u32>> super::Frontend<I> {
         // abstraction harder to follow than just writing out what we mean. `Layouter`
         // and `Alignment` cover the worst parts already.
         let mut members = Vec::new();
-        self.layouter.update(module.to_ctx()).unwrap();
+        self.layouter.update(module.to_ctx())?;
         let mut next_member_offset = 0;
         let mut struct_alignment = crate::proc::Alignment::ONE;
         let mut components = Vec::new();
@@ -635,24 +639,26 @@ impl BlockContext<'_> {
     }
 
     /// Consumes the `BlockContext` producing a Ir [`Block`](crate::Block)
-    fn lower(mut self) -> crate::Block {
+    fn lower(mut self) -> Result<crate::Block, Error> {
         fn lower_impl(
             blocks: &mut crate::FastHashMap<spirv::Word, crate::Block>,
             bodies: &[super::Body],
             body_idx: BodyIndex,
-        ) -> crate::Block {
+        ) -> Result<crate::Block, Error> {
             let mut block = crate::Block::new();
 
             for item in bodies[body_idx].data.iter() {
                 match *item {
-                    super::BodyFragment::BlockId(id) => block.append(blocks.get_mut(&id).unwrap()),
+                    super::BodyFragment::BlockId(id) => {
+                        block.append(blocks.get_mut(&id).ok_or(Error::InvalidId(id))?)
+                    }
                     super::BodyFragment::If {
                         condition,
                         accept,
                         reject,
                     } => {
-                        let accept = lower_impl(blocks, bodies, accept);
-                        let reject = lower_impl(blocks, bodies, reject);
+                        let accept = lower_impl(blocks, bodies, accept)?;
+                        let reject = lower_impl(blocks, bodies, reject)?;
 
                         block.push(
                             crate::Statement::If {
@@ -668,8 +674,8 @@ impl BlockContext<'_> {
                         continuing,
                         break_if,
                     } => {
-                        let body = lower_impl(blocks, bodies, body);
-                        let continuing = lower_impl(blocks, bodies, continuing);
+                        let body = lower_impl(blocks, bodies, body)?;
+                        let continuing = lower_impl(blocks, bodies, continuing)?;
 
                         block.push(
                             crate::Statement::Loop {
@@ -685,24 +691,24 @@ impl BlockContext<'_> {
                         ref cases,
                         default,
                     } => {
-                        let mut ir_cases: Vec<_> = cases
+                        let mut ir_cases = cases
                             .iter()
                             .map(|&(value, body_idx)| {
-                                let body = lower_impl(blocks, bodies, body_idx);
+                                let body = lower_impl(blocks, bodies, body_idx)?;
 
                                 // Handle simple cases that would make a fallthrough statement unreachable code
                                 let fall_through = body.last().is_none_or(|s| !s.is_terminator());
 
-                                crate::SwitchCase {
+                                Ok(crate::SwitchCase {
                                     value: crate::SwitchValue::I32(value),
                                     body,
                                     fall_through,
-                                }
+                                })
                             })
-                            .collect();
+                            .collect::<Result<Vec<_>, Error>>()?;
                         ir_cases.push(crate::SwitchCase {
                             value: crate::SwitchValue::Default,
-                            body: lower_impl(blocks, bodies, default),
+                            body: lower_impl(blocks, bodies, default)?,
                             fall_through: false,
                         });
 
@@ -723,7 +729,7 @@ impl BlockContext<'_> {
                 }
             }
 
-            block
+            Ok(block)
         }
 
         lower_impl(&mut self.blocks, &self.bodies, 0)

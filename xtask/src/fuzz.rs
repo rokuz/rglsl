@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Mutex;
+use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
@@ -100,19 +100,29 @@ pub fn run(root: &Path, options: Options) -> Result<()> {
                     &spirv,
                     timeout,
                 ) {
-                    Ok(outcome) => outcomes.lock().unwrap().push(outcome),
+                    Ok(outcome) => outcomes
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .push(outcome),
                     Err(error) => errors
                         .lock()
-                        .unwrap()
+                        .unwrap_or_else(PoisonError::into_inner)
                         .push(error.context(shader.display().to_string())),
                 }
             });
         }
     });
-    if let Some(error) = errors.into_inner().unwrap().into_iter().next() {
+    if let Some(error) = errors
+        .into_inner()
+        .unwrap_or_else(PoisonError::into_inner)
+        .into_iter()
+        .next()
+    {
         return Err(error);
     }
-    let mut outcomes = outcomes.into_inner().unwrap();
+    let mut outcomes = outcomes
+        .into_inner()
+        .unwrap_or_else(PoisonError::into_inner);
     outcomes.sort_by(|a, b| a.shader.cmp(&b.shader));
 
     let report = work.join("report.tsv");

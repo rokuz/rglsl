@@ -1,5 +1,6 @@
 use alloc::{
     borrow::Cow,
+    format,
     string::{String, ToString},
     vec,
     vec::Vec,
@@ -66,39 +67,54 @@ pub struct ParseErrors {
 
 impl ParseErrors {
     #[cfg(feature = "stderr")]
-    pub fn emit_to_writer(&self, writer: &mut impl ErrorWrite, source: &str) {
-        self.emit_to_writer_with_path(writer, source, "glsl");
+    pub fn emit_to_writer(
+        &self,
+        writer: &mut impl ErrorWrite,
+        source: &str,
+    ) -> Result<(), codespan_reporting::files::Error> {
+        self.emit_to_writer_with_path(writer, source, "glsl")
     }
 
     #[cfg(feature = "stderr")]
-    pub fn emit_to_writer_with_path(&self, writer: &mut impl ErrorWrite, source: &str, path: &str) {
+    pub fn emit_to_writer_with_path(
+        &self,
+        writer: &mut impl ErrorWrite,
+        source: &str,
+        path: &str,
+    ) -> Result<(), codespan_reporting::files::Error> {
         let path = path.to_string();
         let files = SimpleFile::new(path, replace_control_chars(source));
         let config = term::Config::default();
 
         for err in &self.errors {
             let diagnostic = Self::make_diagnostic(err);
-            crate::error::emit_to_writer(writer, &config, &files, &diagnostic)
-                .expect("cannot write error");
+            crate::error::emit_to_writer(writer, &config, &files, &diagnostic)?;
         }
+        Ok(())
     }
 
     /// Emits a summary of the errors to standard error stream.
     #[cfg(feature = "stderr")]
-    pub fn emit_to_stderr(&self, source: &str) {
+    pub fn emit_to_stderr(&self, source: &str) -> Result<(), codespan_reporting::files::Error> {
         self.emit_to_stderr_with_path(source, "glsl")
     }
 
     /// Emits a summary of the errors to standard error stream.
     #[cfg(feature = "stderr")]
-    pub fn emit_to_stderr_with_path(&self, source: &str, path: &str) {
+    pub fn emit_to_stderr_with_path(
+        &self,
+        source: &str,
+        path: &str,
+    ) -> Result<(), codespan_reporting::files::Error> {
         cfg_if::cfg_if! {
             if #[cfg(feature = "termcolor")] {
                 let writer = term::termcolor::StandardStream::stderr(term::termcolor::ColorChoice::Auto);
-                self.emit_to_writer_with_path(&mut writer.lock(), source, path);
+                let mut lock = writer.lock();
+                self.emit_to_writer_with_path(&mut lock, source, path)
             } else {
                 let writer = std::io::stderr();
-                self.emit_to_writer_with_path(&mut writer.lock(), source, path);
+                let mut lock = writer.lock();
+                self.emit_to_writer_with_path(&mut lock, source, path)
             }
         }
     }
@@ -113,13 +129,19 @@ impl ParseErrors {
         let config = term::Config::default();
 
         let mut writer = crate::error::DiagnosticBuffer::new();
+        let mut unrendered = String::new();
         for err in &self.errors {
             let diagnostic = Self::make_diagnostic(err);
-            writer
-                .emit_to_self(&config, &files, &diagnostic)
-                .expect("cannot write error");
+            if let Err(render_error) = writer.emit_to_self(&config, &files, &diagnostic) {
+                unrendered.push_str(&format!(
+                    "error: {}\n  = cannot render the source location: {render_error}\n",
+                    err.kind
+                ));
+            }
         }
-        writer.into_string()
+        let mut rendered = writer.into_string();
+        rendered.push_str(&unrendered);
+        rendered
     }
 
     fn make_diagnostic(err: &Error) -> Diagnostic<()> {

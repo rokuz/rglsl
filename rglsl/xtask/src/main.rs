@@ -25,8 +25,6 @@ fn main() -> ExitCode {
         .format_indent(Some(0))
         .init();
 
-    jobserver::init();
-
     let args = Args::parse();
 
     match run(args) {
@@ -41,7 +39,8 @@ fn main() -> ExitCode {
 fn run(args: Args) -> anyhow::Result<()> {
     let Args { subcommand } = args;
 
-    assert!(which("cargo").is_ok());
+    jobserver::init()?;
+    which("cargo")?;
 
     match subcommand {
         Subcommand::All => {

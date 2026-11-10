@@ -11,7 +11,7 @@ pub(crate) fn for_each_file(
     top_dir: impl AsRef<Path>,
     pattern: impl AsRef<Path>,
     mut f: impl FnMut(anyhow::Result<PathBuf>),
-) {
+) -> anyhow::Result<()> {
     fn filter_files(glob: &str, result: glob::GlobResult) -> anyhow::Result<Option<PathBuf>> {
         let path = result.with_context(|| format!("error while iterating over glob {glob:?}"))?;
         let metadata = path
@@ -21,14 +21,16 @@ pub(crate) fn for_each_file(
     }
 
     let pattern_in_dir = top_dir.as_ref().join(pattern.as_ref());
-    let pattern_in_dir = pattern_in_dir.to_str().unwrap();
+    let pattern_in_dir = pattern_in_dir
+        .to_str()
+        .with_context(|| format!("glob pattern {pattern_in_dir:?} is not valid UTF-8"))?;
 
     glob(pattern_in_dir)
-        .context("glob pattern {path:?} is invalid")
-        .unwrap()
+        .with_context(|| format!("glob pattern {pattern_in_dir:?} is invalid"))?
         .for_each(|result| {
             if let Some(result) = filter_files(pattern_in_dir, result).transpose() {
                 f(result);
             }
         });
+    Ok(())
 }

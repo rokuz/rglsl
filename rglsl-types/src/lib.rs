@@ -364,29 +364,29 @@ impl VertexFormat {
     /// slightly different from [`Self::size`] because the alpha component of 4-component formats
     /// are not read in an acceleration structure build, allowing for a smaller stride.
     #[must_use]
-    pub const fn min_acceleration_structure_vertex_stride(&self) -> u64 {
+    pub const fn min_acceleration_structure_vertex_stride(&self) -> Option<u64> {
         match self {
-            Self::Float16x2 | Self::Snorm16x2 => 4,
-            Self::Float32x3 => 12,
-            Self::Float32x2 => 8,
+            Self::Float16x2 | Self::Snorm16x2 => Some(4),
+            Self::Float32x3 => Some(12),
+            Self::Float32x2 => Some(8),
             // This is the minimum value from DirectX
             // > A16 component is ignored, other data can be packed there, such as setting vertex stride to 6 bytes
             //
             // https://microsoft.github.io/DirectX-Specs/d3d/Raytracing.html#d3d12_raytracing_geometry_triangles_desc
             //
             // Vulkan does not express a minimum stride.
-            Self::Float16x4 | Self::Snorm16x4 => 6,
-            _ => unreachable!(),
+            Self::Float16x4 | Self::Snorm16x4 => Some(6),
+            _ => None,
         }
     }
 
     /// Returns the alignment required for `wgpu::BlasTriangleGeometry::vertex_stride`
     #[must_use]
-    pub const fn acceleration_structure_stride_alignment(&self) -> u64 {
+    pub const fn acceleration_structure_stride_alignment(&self) -> Option<u64> {
         match self {
-            Self::Float16x4 | Self::Float16x2 | Self::Snorm16x4 | Self::Snorm16x2 => 2,
-            Self::Float32x2 | Self::Float32x3 => 4,
-            _ => unreachable!(),
+            Self::Float16x4 | Self::Float16x2 | Self::Snorm16x4 | Self::Snorm16x2 => Some(2),
+            Self::Float32x2 | Self::Float32x3 => Some(4),
+            _ => None,
         }
     }
 }

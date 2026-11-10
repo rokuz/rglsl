@@ -1,3 +1,11 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    reason = "test support code fails by panicking"
+)]
+
 mod support;
 
 use std::collections::BTreeSet;

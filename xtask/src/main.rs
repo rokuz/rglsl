@@ -63,7 +63,7 @@ fn run(args: Vec<String>) -> Result<i32> {
         "oracles" => {
             let glslang_dir = args.value("--glslang-dir")?.map(PathBuf::from);
             args.finish()?;
-            oracles::build(&workspace_root(), glslang_dir.as_deref())?;
+            oracles::build(&workspace_root()?, glslang_dir.as_deref())?;
             Ok(0)
         }
         "test" => {
@@ -75,7 +75,7 @@ fn run(args: Vec<String>) -> Result<i32> {
                 write_progress: !args.flag("--no-progress-file"),
             };
             args.finish()?;
-            runner::run(&workspace_root(), options)?;
+            runner::run(&workspace_root()?, options)?;
             Ok(0)
         }
         "fuzz" => {
@@ -88,7 +88,7 @@ fn run(args: Vec<String>) -> Result<i32> {
                 timeout_secs: args.parsed("--timeout")?.unwrap_or(30),
             };
             args.finish()?;
-            fuzz::run(&workspace_root(), options)?;
+            fuzz::run(&workspace_root()?, options)?;
             Ok(0)
         }
         // Internal: compiles one shader in a child process, so that a panic,
@@ -116,11 +116,11 @@ fn run(args: Vec<String>) -> Result<i32> {
     }
 }
 
-fn workspace_root() -> PathBuf {
+fn workspace_root() -> Result<PathBuf> {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .expect("xtask lives in a subdirectory of the workspace")
-        .to_path_buf()
+        .map(Path::to_path_buf)
+        .context("xtask must live in a subdirectory of the workspace")
 }
 
 /// A minimal argument parser: `--name value`, `--name=value`, `--flag` and positionals.

@@ -890,7 +890,9 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
 
                     let result_ty = self.lookup_type.lookup(result_type_id)?;
                     let inner = &ctx.module.types[result_ty.handle].inner;
-                    let kind = inner.scalar_kind().unwrap();
+                    let kind = inner
+                        .scalar_kind()
+                        .ok_or(Error::UnsupportedType(result_ty.handle))?;
                     let size = inner.size(ctx.gctx()) as u8;
 
                     let left_cast = ctx.expressions.append(
@@ -1120,11 +1122,11 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                     let offset_kind = ctx.module.types[offset_lookup_ty.handle]
                         .inner
                         .scalar_kind()
-                        .unwrap();
+                        .ok_or(Error::UnsupportedType(offset_lookup_ty.handle))?;
                     let count_kind = ctx.module.types[count_lookup_ty.handle]
                         .inner
                         .scalar_kind()
-                        .unwrap();
+                        .ok_or(Error::UnsupportedType(count_lookup_ty.handle))?;
 
                     let offset_cast_handle = if offset_kind != crate::ScalarKind::Uint {
                         ctx.expressions.append(
@@ -1188,11 +1190,11 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                     let offset_kind = ctx.module.types[offset_lookup_ty.handle]
                         .inner
                         .scalar_kind()
-                        .unwrap();
+                        .ok_or(Error::UnsupportedType(offset_lookup_ty.handle))?;
                     let count_kind = ctx.module.types[count_lookup_ty.handle]
                         .inner
                         .scalar_kind()
-                        .unwrap();
+                        .ok_or(Error::UnsupportedType(count_lookup_ty.handle))?;
 
                     let offset_cast_handle = if offset_kind != crate::ScalarKind::Uint {
                         ctx.expressions.append(
@@ -1248,7 +1250,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                         fun: match inst.op {
                             Op::BitReverse => crate::MathFunction::ReverseBits,
                             Op::BitCount => crate::MathFunction::CountOneBits,
-                            _ => unreachable!(),
+                            _ => return Err(Error::UnsupportedInstruction(self.state, inst.op)),
                         },
                         arg: base_handle,
                         arg1: None,
@@ -2141,7 +2143,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                     ctx.bodies.push(Body::with_parent(body_idx));
                     ctx.body_for_label.entry(default_id).or_insert(default);
 
-                    let selector_lexp = &self.lookup_expression[&selector];
+                    let selector_lexp = self.lookup_expression.lookup(selector)?;
                     let selector_lty = self.lookup_type.lookup(selector_lexp.type_id)?;
                     let selector_handle = get_expr_handle!(selector, selector_lexp);
                     let selector = match ctx.module.types[selector_lty.handle].inner {
@@ -2163,7 +2165,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                             kind: crate::ScalarKind::Sint,
                             width: _,
                         }) => selector_handle,
-                        ref other => unimplemented!("Unexpected selector {:?}", other),
+                        _ => return Err(Error::UnsupportedType(selector_lty.handle)),
                     };
 
                     // Clear past switch cases to prevent them from entering this one
@@ -2668,7 +2670,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                         Op::GroupNonUniformBitwiseXor | Op::GroupNonUniformLogicalXor => {
                             crate::SubgroupOperation::Xor
                         }
-                        _ => unreachable!(),
+                        _ => return Err(Error::UnsupportedInstruction(self.state, inst.op)),
                     };
 
                     let result_type = self.lookup_type.lookup(result_type_id)?;
@@ -2748,7 +2750,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                             Op::GroupNonUniformQuadBroadcast => {
                                 crate::GatherMode::QuadBroadcast(index_handle)
                             }
-                            _ => unreachable!(),
+                            _ => return Err(Error::UnsupportedInstruction(self.state, inst.op)),
                         }
                     };
 
@@ -2803,7 +2805,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                         0 => crate::Direction::X,
                         1 => crate::Direction::Y,
                         2 => crate::Direction::Diagonal,
-                        _ => unreachable!(),
+                        _ => return Err(Error::InvalidOperand),
                     };
 
                     let result_type = self.lookup_type.lookup(result_type_id)?;
@@ -3082,7 +3084,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                         Op::AtomicAnd => crate::AtomicFunction::And,
                         Op::AtomicOr => crate::AtomicFunction::InclusiveOr,
                         Op::AtomicXor => crate::AtomicFunction::ExclusiveOr,
-                        _ => unreachable!(),
+                        _ => return Err(Error::UnsupportedInstruction(self.state, inst.op)),
                     },
                 )?,
 

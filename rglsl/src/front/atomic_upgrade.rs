@@ -48,6 +48,8 @@ pub enum Error {
     GlobalVariableMissing,
     #[error("atomic compare exchange requires a scalar base type")]
     CompareExchangeNonScalarBaseType,
+    #[error("global or field incorrectly flagged as atomically accessed")]
+    StructNotAccessedAtomically,
 }
 
 #[derive(Clone, Default)]
@@ -189,7 +191,7 @@ impl UpgradeState<'_> {
                 // If no field or subfield of this struct was ever accessed
                 // atomically, no change is needed. We should never have arrived here.
                 let Some(fields) = upgrades.fields.get(&ty) else {
-                    unreachable!("global or field incorrectly flagged as atomically accessed");
+                    return Err(Error::StructNotAccessedAtomically);
                 };
 
                 let mut new_members = members.clone();
