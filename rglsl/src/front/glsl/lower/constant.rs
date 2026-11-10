@@ -6,13 +6,20 @@ use rglsl_sema::types::{Type as GlslType, TypeKind};
 use super::{internal, Lowerer, Result};
 use crate::{Expression, Handle, Literal, Span};
 
-pub(super) const fn literal(value: Value) -> Literal {
+pub(super) fn literal(value: Value) -> Literal {
     match value {
         Value::Bool(value) => Literal::Bool(value),
         Value::Int(value) => Literal::I32(value),
         Value::Uint(value) => Literal::U32(value),
         Value::Float(value) => Literal::F32(value as f32),
         Value::Double(value) => Literal::F64(value),
+        Value::Int16(value) => Literal::I16(value),
+        Value::Uint16(value) => Literal::U16(value),
+        Value::Int64(value) => Literal::I64(value),
+        Value::Uint64(value) => Literal::U64(value),
+        Value::Float16(value) => Literal::F16(half::f16::from_f64(value)),
+        Value::Int8(value) => Literal::I8(value),
+        Value::Uint8(value) => Literal::U8(value),
     }
 }
 

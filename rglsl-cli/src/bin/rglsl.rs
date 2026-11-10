@@ -518,6 +518,10 @@ fn run() -> anyhow::Result<()> {
         input_text,
         language,
     } = parse_input(input_path, input, &params)?;
+    params.spv_out.flags.set(
+        rglsl::back::spv::WriterFlags::SMALL_TYPE_CAPABILITIES_BY_USE,
+        language == rglsl::back::spv::SourceLanguage::GLSL,
+    );
 
     // Include debugging information if requested.
     if args.generate_debug_symbols {

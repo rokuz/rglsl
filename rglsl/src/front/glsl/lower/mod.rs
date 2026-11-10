@@ -69,13 +69,31 @@ pub(super) fn parse(options: &Options, source: &str) -> core::result::Result<Mod
         return Err(errors.into());
     }
     let text = preprocessed.text.as_str();
-    let unit = rglsl_ast::parse(text).map_err(|error| {
-        ParseErrors::from(vec![Error {
+    let (unit, failure) = rglsl_ast::parse_prefix(text);
+    let analysis = rglsl_sema::analyze(&unit, &rglsl_sema::Options::new(stage(options.stage)));
+    if let Some(error) = failure {
+        let earlier = analysis.diagnostics.iter().filter(|diagnostic| {
+            diagnostic.offset(text) < error.span.start
+                && !matches!(
+                    diagnostic.kind,
+                    rglsl_sema::DiagnosticKind::MissingEntryPoint
+                        | rglsl_sema::DiagnosticKind::MissingFunctionBody(_)
+                        | rglsl_sema::DiagnosticKind::MissingVersion
+                )
+                && unit
+                    .external_declarations
+                    .last()
+                    .is_none_or(|last| diagnostic.span.start < external_end(last))
+        });
+        let mut errors: Vec<Error> = earlier
+            .map(|diagnostic| semantic_error(map, text, diagnostic))
+            .collect();
+        errors.push(Error {
             kind: ErrorKind::Syntax(error.kind.to_string()),
             meta: original(map, error.span),
-        }])
-    })?;
-    let analysis = rglsl_sema::analyze(&unit, &rglsl_sema::Options::new(stage(options.stage)));
+        });
+        return Err(errors.into());
+    }
     if !analysis.diagnostics.is_empty() {
         let errors = analysis
             .diagnostics
@@ -94,6 +112,30 @@ pub(super) fn parse(options: &Options, source: &str) -> core::result::Result<Mod
         return Err(errors.into());
     }
     Lowerer::new(&unit, &analysis, options, map).run()
+}
+
+const fn external_end(declaration: &ExternalDeclaration) -> u32 {
+    match *declaration {
+        ExternalDeclaration::Directive(ref directive) => directive.span.end,
+        ExternalDeclaration::FunctionDefinition(ref definition) => definition.span.end,
+        ExternalDeclaration::Declaration(ref declaration) => declaration.span.end,
+        ExternalDeclaration::Semicolon(ref semicolon) => semicolon.span.end,
+    }
+}
+
+fn semantic_error(
+    map: &rglsl_pp::SourceMap,
+    text: &str,
+    diagnostic: &rglsl_sema::Diagnostic,
+) -> Error {
+    let start = diagnostic.offset(text);
+    Error {
+        kind: ErrorKind::SemanticError(Cow::Owned(diagnostic.kind.to_string())),
+        meta: original(
+            map,
+            rglsl_ast::Span::new(start, diagnostic.span.end.max(start)),
+        ),
+    }
 }
 
 fn original(map: &rglsl_pp::SourceMap, span: rglsl_ast::Span) -> Span {

@@ -8,15 +8,16 @@ use alloc::vec::Vec;
 use crate::ast::{
     ArrayDimension, ArraySpecifier, AssignmentOperator, BasicType, BinaryOperator, BlockInstance,
     BlockStructure, CaseLabel, CompoundStatement, Condition, ConditionDeclaration, Declaration,
-    DeclarationKind, Directive, Expression, ExpressionKind, ExternalDeclaration, ForStatement,
-    FullySpecifiedType, FunctionCall, FunctionDefinition, FunctionIdentifier, FunctionPrototype,
-    Identifier, InitDeclarator, InitDeclaratorList, Initializer, JumpStatement, LayoutQualifier,
-    LayoutQualifierId, Node, NodeId, NumericLiteral, ParameterDeclaration, PostfixOperator,
-    PrecisionQualifier, SingleTypeQualifier, Spanned, Statement, StatementKind, StructDeclaration,
-    StructDeclarator, StructSpecifier, TranslationUnit, TypeQualifier, TypeSpecifier,
-    TypeSpecifierNonArray, UnaryOperator,
+    DeclarationKind, Directive, DirectiveKind, Expression, ExpressionKind, ExternalDeclaration,
+    ForStatement, FullySpecifiedType, FunctionCall, FunctionDefinition, FunctionIdentifier,
+    FunctionPrototype, Identifier, InitDeclarator, InitDeclaratorList, Initializer, JumpStatement,
+    LayoutQualifier, LayoutQualifierId, Node, NodeId, NumericLiteral, ParameterDeclaration,
+    PostfixOperator, PrecisionQualifier, SingleTypeQualifier, Spanned, Statement, StatementKind,
+    StructDeclaration, StructDeclarator, StructSpecifier, TranslationUnit, TypeQualifier,
+    TypeSpecifier, TypeSpecifierNonArray, UnaryOperator,
 };
 use crate::error::{ParseError, ParseErrorKind};
+use crate::extensions::{ExtensionState, Feature};
 use crate::keywords::{
     is_opaque_type_keyword, is_reserved_word, is_type_keyword, is_unavailable_word,
 };
@@ -53,10 +54,26 @@ struct Parser<'a> {
     next_id: u32,
     depth: u32,
     struct_scopes: Vec<BTreeSet<&'a str>>,
+    extensions: ExtensionState,
 }
 
 pub fn parse(source: &str) -> core::result::Result<TranslationUnit, ParseError> {
-    let lexed = tokenize(source)?;
+    match parse_prefix(source) {
+        (unit, None) => Ok(unit),
+        (_, Some(error)) => Err(error),
+    }
+}
+
+pub fn parse_prefix(source: &str) -> (TranslationUnit, Option<ParseError>) {
+    let lexed = match tokenize(source) {
+        Ok(lexed) => lexed,
+        Err(error) => {
+            return (
+                TranslationUnit::new(Vec::new(), NodeId::new(0)),
+                Some(error),
+            )
+        }
+    };
     let mut parser = Parser {
         source,
         tokens: lexed.tokens,
@@ -67,18 +84,21 @@ pub fn parse(source: &str) -> core::result::Result<TranslationUnit, ParseError> 
         next_id: 0,
         depth: 0,
         struct_scopes: Vec::from([BTreeSet::new()]),
+        extensions: ExtensionState::new(),
     };
     let mut external_declarations = Vec::new();
+    let mut failure = None;
     while parser.peek().kind != TokenKind::End {
-        let external = parser
-            .parse_external_declaration()
-            .map_err(|error| *error)?;
-        external_declarations.push(external);
+        match parser.parse_external_declaration() {
+            Ok(external) => external_declarations.push(external),
+            Err(error) => {
+                failure = Some(*error);
+                break;
+            }
+        }
     }
-    Ok(TranslationUnit::new(
-        external_declarations,
-        NodeId::new(parser.next_id),
-    ))
+    let unit = TranslationUnit::new(external_declarations, NodeId::new(parser.next_id));
+    (unit, failure)
 }
 
 impl<'a> Parser<'a> {
@@ -239,6 +259,22 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn require_type_extension(&self, word: &str, span: Span) -> Result<()> {
+        if self.extensions.keyword_enabled(word) {
+            return Ok(());
+        }
+        let extensions = Feature::of_type_keyword(word)
+            .map(|feature| feature.extensions().join(", "))
+            .unwrap_or_default();
+        Err(self.error(
+            ParseErrorKind::ExtensionRequired {
+                word: word.to_owned(),
+                extensions,
+            },
+            span,
+        ))
+    }
+
     fn is_struct_name(&self, word: &str) -> bool {
         self.struct_scopes.iter().any(|scope| scope.contains(word))
     }
@@ -301,6 +337,9 @@ impl<'a> Parser<'a> {
                     .get(index)
                     .cloned()
                     .ok_or_else(|| self.unexpected("a declaration"))?;
+                if let DirectiveKind::Extension { name, behavior } = &directive.kind {
+                    self.extensions.apply(name, *behavior);
+                }
                 self.advance();
                 Ok(ExternalDeclaration::Directive(Spanned::new(
                     token.span, directive,
@@ -626,6 +665,7 @@ impl<'a> Parser<'a> {
                 let non_array = if word == "void" {
                     TypeSpecifierNonArray::Void
                 } else if let Some(basic) = BasicType::from_keyword(word) {
+                    parser.require_type_extension(word, token.span)?;
                     TypeSpecifierNonArray::Basic(basic)
                 } else if is_opaque_type_keyword(word) {
                     TypeSpecifierNonArray::Opaque(word.to_owned())

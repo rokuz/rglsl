@@ -187,4 +187,26 @@ pub enum DiagnosticKind {
     MissingFunctionBody(String),
     #[error("#pragma: {0}")]
     InvalidPragma(&'static str),
+    #[error("extension `{0}` is not supported")]
+    UnsupportedExtension(String),
+    #[error("extension `all` cannot have `{0}` behavior")]
+    AllExtensionsEnabled(&'static str),
+    #[error("extension `{extension}` is not allowed in {stage} shaders")]
+    ExtensionStage {
+        extension: String,
+        stage: &'static str,
+    },
+    #[error("extension `{0}` cannot be used together with `{1}`")]
+    ConflictingExtensions(String, &'static str),
+    #[error("extension `{0}` is not allowed when generating SPIR-V")]
+    ExtensionWithoutSpirv(String),
+    #[error("extension `{0}` needs a newer SPIR-V version")]
+    ExtensionSpirvVersion(String),
+    #[error("{feature} requires one of the extensions {extensions}")]
+    ExtensionRequired { feature: String, extensions: String },
+    #[error("extension `{extension}` is being used for {feature}")]
+    ExtensionWarned {
+        extension: &'static str,
+        feature: String,
+    },
 }

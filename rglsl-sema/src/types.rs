@@ -11,38 +11,77 @@ pub enum Scalar {
     Uint,
     Float,
     Double,
+    Int8,
+    Uint8,
+    Int16,
+    Uint16,
+    Int64,
+    Uint64,
+    Float16,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct NumericFeatures {
+    pub explicit_arithmetic: bool,
+    pub half_float: bool,
+    pub int16: bool,
 }
 
 impl Scalar {
-    pub const ALL: [Self; 5] = [Self::Bool, Self::Int, Self::Uint, Self::Float, Self::Double];
+    pub const ALL: [Self; 12] = [
+        Self::Bool,
+        Self::Int,
+        Self::Uint,
+        Self::Float,
+        Self::Double,
+        Self::Int8,
+        Self::Uint8,
+        Self::Int16,
+        Self::Uint16,
+        Self::Int64,
+        Self::Uint64,
+        Self::Float16,
+    ];
 
     pub const fn keyword(self) -> &'static str {
-        match self {
-            Self::Bool => "bool",
-            Self::Int => "int",
-            Self::Uint => "uint",
-            Self::Float => "float",
-            Self::Double => "double",
-        }
+        self.syntax().keyword()
     }
 
     pub const fn vector_prefix(self) -> &'static str {
-        match self {
-            Self::Bool => "bvec",
-            Self::Int => "ivec",
-            Self::Uint => "uvec",
-            Self::Float => "vec",
-            Self::Double => "dvec",
+        self.syntax().vector_prefix()
+    }
+
+    pub const fn matrix_prefix(self) -> &'static str {
+        match self.syntax().matrix_prefix() {
+            Some(prefix) => prefix,
+            None => "mat",
         }
     }
 
-    pub const fn numeric_rank(self) -> Option<u8> {
+    const fn syntax(self) -> rglsl_ast::ast::ScalarType {
+        use rglsl_ast::ast::ScalarType;
         match self {
-            Self::Bool => None,
-            Self::Int => Some(0),
-            Self::Uint => Some(1),
-            Self::Float => Some(2),
-            Self::Double => Some(3),
+            Self::Bool => ScalarType::Bool,
+            Self::Int => ScalarType::Int,
+            Self::Uint => ScalarType::Uint,
+            Self::Float => ScalarType::Float,
+            Self::Double => ScalarType::Double,
+            Self::Int8 => ScalarType::Int8,
+            Self::Uint8 => ScalarType::Uint8,
+            Self::Int16 => ScalarType::Int16,
+            Self::Uint16 => ScalarType::Uint16,
+            Self::Int64 => ScalarType::Int64,
+            Self::Uint64 => ScalarType::Uint64,
+            Self::Float16 => ScalarType::Float16,
+        }
+    }
+
+    pub const fn bits(self) -> u32 {
+        match self {
+            Self::Bool | Self::Int | Self::Uint | Self::Float => 32,
+            Self::Double | Self::Int64 | Self::Uint64 => 64,
+            Self::Int8 | Self::Uint8 => 8,
+            Self::Int16 | Self::Uint16 | Self::Float16 => 16,
         }
     }
 
@@ -51,21 +90,196 @@ impl Scalar {
     }
 
     pub const fn is_integer(self) -> bool {
-        matches!(self, Self::Int | Self::Uint)
+        self.is_signed() || self.is_unsigned()
+    }
+
+    pub const fn is_signed(self) -> bool {
+        matches!(self, Self::Int | Self::Int8 | Self::Int16 | Self::Int64)
+    }
+
+    pub const fn is_unsigned(self) -> bool {
+        matches!(self, Self::Uint | Self::Uint8 | Self::Uint16 | Self::Uint64)
     }
 
     pub const fn is_floating(self) -> bool {
-        matches!(self, Self::Float | Self::Double)
+        matches!(self, Self::Float | Self::Double | Self::Float16)
     }
 
-    pub fn converts_implicitly_to(self, target: Self) -> bool {
-        if self == target {
-            return true;
+    pub const fn is_16bit(self) -> bool {
+        matches!(self, Self::Int16 | Self::Uint16 | Self::Float16)
+    }
+
+    pub const fn is_8bit(self) -> bool {
+        matches!(self, Self::Int8 | Self::Uint8)
+    }
+
+    pub const fn unsigned(self) -> Self {
+        match self {
+            Self::Int => Self::Uint,
+            Self::Int8 => Self::Uint8,
+            Self::Int16 => Self::Uint16,
+            Self::Int64 => Self::Uint64,
+            other => other,
         }
-        match (self.numeric_rank(), target.numeric_rank()) {
-            (Some(from), Some(to)) => from < to,
+    }
+
+    const fn integral_promotion(self, target: Self) -> bool {
+        matches!(target, Self::Int)
+            && matches!(self, Self::Int8 | Self::Int16 | Self::Uint8 | Self::Uint16)
+    }
+
+    const fn floating_promotion(self, target: Self) -> bool {
+        matches!(target, Self::Double) && matches!(self, Self::Float16 | Self::Float)
+    }
+
+    const fn integral_conversion(self, target: Self) -> bool {
+        match self {
+            Self::Int => matches!(target, Self::Uint | Self::Int64 | Self::Uint64),
+            Self::Uint => matches!(target, Self::Int64 | Self::Uint64),
+            Self::Int8 => matches!(
+                target,
+                Self::Uint8 | Self::Int16 | Self::Uint16 | Self::Uint | Self::Int64 | Self::Uint64
+            ),
+            Self::Uint8 => matches!(
+                target,
+                Self::Int16 | Self::Uint16 | Self::Uint | Self::Int64 | Self::Uint64
+            ),
+            Self::Int16 => matches!(
+                target,
+                Self::Uint16 | Self::Uint | Self::Int64 | Self::Uint64
+            ),
+            Self::Uint16 => matches!(target, Self::Uint | Self::Int64 | Self::Uint64),
+            Self::Int64 => matches!(target, Self::Uint64),
             _ => false,
         }
+    }
+
+    const fn floating_conversion(self, target: Self) -> bool {
+        matches!(target, Self::Float) && matches!(self, Self::Float16)
+    }
+
+    const fn floating_integral_conversion(self, target: Self) -> bool {
+        match self {
+            Self::Int | Self::Uint => matches!(target, Self::Float | Self::Double),
+            Self::Int8 | Self::Uint8 | Self::Int16 | Self::Uint16 => {
+                matches!(target, Self::Float16 | Self::Float | Self::Double)
+            }
+            Self::Int64 | Self::Uint64 => matches!(target, Self::Double),
+            _ => false,
+        }
+    }
+
+    pub const fn is_promotion(self, target: Self) -> bool {
+        self.integral_promotion(target) || self.floating_promotion(target)
+    }
+
+    pub const fn is_conversion(self, target: Self) -> bool {
+        self.integral_conversion(target)
+            || self.floating_conversion(target)
+            || self.floating_integral_conversion(target)
+    }
+
+    pub const fn promotes_to(self, target: Self, features: NumericFeatures) -> bool {
+        if self as u8 == target as u8 {
+            return true;
+        }
+        if features.explicit_arithmetic && (self.is_promotion(target) || self.is_conversion(target))
+        {
+            return true;
+        }
+        let int16 = features.int16;
+        let half = features.half_float;
+        match target {
+            Self::Double => match self {
+                Self::Int | Self::Uint | Self::Int64 | Self::Uint64 | Self::Float => true,
+                Self::Int16 | Self::Uint16 => int16,
+                Self::Float16 => half,
+                _ => false,
+            },
+            Self::Float => match self {
+                Self::Int | Self::Uint => true,
+                Self::Int16 | Self::Uint16 => int16,
+                Self::Float16 => half,
+                _ => false,
+            },
+            Self::Uint => match self {
+                Self::Int => true,
+                Self::Int16 | Self::Uint16 => int16,
+                _ => false,
+            },
+            Self::Int => matches!(self, Self::Int16) && int16,
+            Self::Uint64 => match self {
+                Self::Int | Self::Uint | Self::Int64 => true,
+                Self::Int16 | Self::Uint16 => int16,
+                _ => false,
+            },
+            Self::Int64 => match self {
+                Self::Int => true,
+                Self::Int16 => int16,
+                _ => false,
+            },
+            Self::Float16 => matches!(self, Self::Int16 | Self::Uint16) && int16,
+            Self::Uint16 => matches!(self, Self::Int16) && int16,
+            _ => false,
+        }
+    }
+
+    pub const fn converts_implicitly_to(self, target: Self) -> bool {
+        self.promotes_to(
+            target,
+            NumericFeatures {
+                explicit_arithmetic: false,
+                half_float: false,
+                int16: false,
+            },
+        )
+    }
+
+    pub fn common(self, other: Self, features: NumericFeatures) -> Option<Self> {
+        if !self.is_numeric() || !other.is_numeric() {
+            return None;
+        }
+        if self == other {
+            return Some(self);
+        }
+        let reaches = |from: Self, to: Self| from.promotes_to(to, features);
+        for target in [Self::Double, Self::Float, Self::Float16] {
+            if (self == target && reaches(other, target))
+                || (other == target && reaches(self, target))
+            {
+                return Some(target);
+            }
+        }
+        if !self.is_integer()
+            || !other.is_integer()
+            || !(reaches(self, other) || reaches(other, self))
+        {
+            return None;
+        }
+        let wider = |first: Self, second: Self| {
+            if first.bits() < second.bits() {
+                second
+            } else {
+                first
+            }
+        };
+        Some(if self.is_signed() == other.is_signed() {
+            wider(self, other)
+        } else if self.is_unsigned() && self.bits() > other.bits() {
+            self
+        } else if other.is_unsigned() && other.bits() > self.bits() {
+            other
+        } else if self.is_signed() {
+            if self.bits() > other.bits() {
+                self
+            } else {
+                self.unsigned()
+            }
+        } else if other.bits() > self.bits() {
+            other
+        } else {
+            other.unsigned()
+        })
     }
 }
 
@@ -619,6 +833,10 @@ impl Type {
     }
 
     pub fn converts_implicitly_to(&self, target: &Self) -> bool {
+        self.converts_with(target, NumericFeatures::default())
+    }
+
+    pub fn converts_with(&self, target: &Self, features: NumericFeatures) -> bool {
         if self == target {
             return true;
         }
@@ -626,8 +844,23 @@ impl Type {
             return false;
         }
         match (self.base_scalar(), target.base_scalar()) {
-            (Some(from), Some(to)) => from.converts_implicitly_to(to),
+            (Some(from), Some(to)) => from.promotes_to(to, features),
             _ => false,
+        }
+    }
+
+    pub fn contains_scalar_where(&self, registry: &TypeRegistry, test: fn(Scalar) -> bool) -> bool {
+        match self.kind {
+            TypeKind::Struct(id) => registry
+                .structure(id)
+                .is_some_and(|structure| structure.scalars.iter().any(|scalar| test(*scalar))),
+            TypeKind::Block(id) => registry.block(id).is_some_and(|block| {
+                block
+                    .members
+                    .iter()
+                    .any(|member| member.ty.contains_scalar_where(registry, test))
+            }),
+            _ => self.base_scalar().is_some_and(test),
         }
     }
 
@@ -656,11 +889,7 @@ impl fmt::Display for TypeDisplay<'_> {
                 columns,
                 rows,
             } => {
-                let prefix = if scalar == Scalar::Double {
-                    "dmat"
-                } else {
-                    "mat"
-                };
+                let prefix = scalar.matrix_prefix();
                 if columns == rows {
                     write!(formatter, "{prefix}{columns}")?;
                 } else {
@@ -822,6 +1051,13 @@ impl From<rglsl_ast::ast::ScalarType> for Scalar {
             ScalarType::Uint => Self::Uint,
             ScalarType::Float => Self::Float,
             ScalarType::Double => Self::Double,
+            ScalarType::Int8 => Self::Int8,
+            ScalarType::Uint8 => Self::Uint8,
+            ScalarType::Int16 => Self::Int16,
+            ScalarType::Uint16 => Self::Uint16,
+            ScalarType::Int64 => Self::Int64,
+            ScalarType::Uint64 => Self::Uint64,
+            ScalarType::Float16 => Self::Float16,
         }
     }
 }

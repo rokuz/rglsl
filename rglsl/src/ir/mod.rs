@@ -1074,6 +1074,8 @@ pub enum Literal {
     F32(f32),
     /// May not be NaN or infinity.
     F16(f16),
+    U8(u8),
+    I8(i8),
     U16(u16),
     I16(i16),
     U32(u32),

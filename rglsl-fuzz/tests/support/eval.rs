@@ -72,6 +72,7 @@ fn wrap(scalar: ScalarType, value: f64) -> f64 {
         ScalarType::Uint => f64::from((value as i64) as u32),
         ScalarType::Bool => f64::from(u8::from(value != 0.0)),
         ScalarType::Float | ScalarType::Double => value,
+        other => panic!("the fuzzer does not generate {other:?}"),
     }
 }
 
@@ -82,6 +83,7 @@ fn convert(value: f64, from: ScalarType, to: ScalarType) -> f64 {
         ScalarType::Uint if from == ScalarType::Int => f64::from(value as i32 as u32),
         ScalarType::Int | ScalarType::Uint => wrap(to, value.trunc()),
         ScalarType::Float | ScalarType::Double => value,
+        other => panic!("the fuzzer does not generate {other:?}"),
     }
 }
 
@@ -123,6 +125,7 @@ impl Evaluator {
                     NumericKind::Float | NumericKind::Double => {
                         Value::scalar(ScalarType::Float, digits.parse().unwrap())
                     }
+                    other => panic!("the fuzzer does not generate {other:?} literals"),
                 }
             }
             ExpressionKind::Bool(value) => {

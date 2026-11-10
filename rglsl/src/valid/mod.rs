@@ -682,6 +682,10 @@ impl Validator {
                 crate::Scalar::BOOL
                 | crate::Scalar::I16
                 | crate::Scalar::U16
+                | crate::Scalar::I8
+                | crate::Scalar::U8
+                | crate::Scalar::I64
+                | crate::Scalar::U64
                 | crate::Scalar::I32
                 | crate::Scalar::U32
                 | crate::Scalar::F16

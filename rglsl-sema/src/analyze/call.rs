@@ -9,7 +9,7 @@ use crate::builtins::Stage;
 use crate::constant::{fold_builtin, Constant, Value};
 use crate::diagnostic::DiagnosticKind;
 use crate::scope::{Function, Lookup, Parameter, Storage, SymbolKind};
-use crate::types::{ArraySize, Opaque, OpaqueKind, Scalar, Type, TypeKind};
+use crate::types::{ArraySize, NumericFeatures, Opaque, OpaqueKind, Scalar, Type, TypeKind};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Candidate {
@@ -17,51 +17,79 @@ enum Candidate {
     Builtin(crate::builtins::BuiltinFunctionId),
 }
 
-fn convertible(from: &Type, to: &Type) -> bool {
-    from.converts_implicitly_to(to)
+#[derive(Clone, Copy)]
+struct Rules {
+    features: NumericFeatures,
+    explicit: bool,
 }
 
-fn better(from: &Type, first: &Type, second: &Type) -> bool {
+fn convertible(rules: Rules, from: &Type, to: &Type) -> bool {
+    from.converts_with(to, rules.features)
+}
+
+fn better(rules: Rules, from: &Type, first: &Type, second: &Type) -> bool {
     if from == second {
         return from != first;
     }
     if from == first {
         return false;
     }
-    let from_scalar = from.base_scalar();
-    let first_scalar = first.base_scalar();
-    let second_scalar = second.base_scalar();
-    if from_scalar == Some(Scalar::Float)
-        && second_scalar == Some(Scalar::Double)
-        && first_scalar != Some(Scalar::Double)
+    let (Some(from_scalar), Some(first_scalar), Some(second_scalar)) = (
+        from.base_scalar(),
+        first.base_scalar(),
+        second.base_scalar(),
+    ) else {
+        return false;
+    };
+    if rules.explicit {
+        let promotion_first = from_scalar.is_promotion(first_scalar);
+        let promotion_second = from_scalar.is_promotion(second_scalar);
+        if promotion_second {
+            return !promotion_first;
+        }
+        if promotion_first {
+            return false;
+        }
+        return from_scalar.is_conversion(second_scalar)
+            && !from_scalar.is_conversion(first_scalar);
+    }
+    if from_scalar == Scalar::Float
+        && second_scalar == Scalar::Double
+        && first_scalar != Scalar::Double
     {
         return true;
     }
-    second_scalar == Some(Scalar::Float) && first_scalar == Some(Scalar::Double)
+    second_scalar == Scalar::Float && first_scalar == Scalar::Double
 }
 
-fn viable(function: &Function, arguments: &[Type]) -> bool {
+fn viable(rules: Rules, function: &Function, arguments: &[Type]) -> bool {
     function.parameters.len() == arguments.len()
         && function
             .parameters
             .iter()
             .zip(arguments)
             .all(|(parameter, argument)| {
-                (!parameter.direction.is_input() || convertible(argument, &parameter.ty))
-                    && (!parameter.direction.is_output() || convertible(&parameter.ty, argument))
+                (!parameter.direction.is_input() || convertible(rules, argument, &parameter.ty))
+                    && (!parameter.direction.is_output()
+                        || convertible(rules, &parameter.ty, argument))
             })
 }
 
-fn has_better_parameter(arguments: &[Type], first: &Function, second: &Function) -> bool {
+fn has_better_parameter(
+    rules: Rules,
+    arguments: &[Type],
+    first: &Function,
+    second: &Function,
+) -> bool {
     arguments
         .iter()
         .zip(first.parameters.iter().zip(&second.parameters))
-        .any(|(argument, (first, second))| better(argument, &first.ty, &second.ty))
+        .any(|(argument, (first, second))| better(rules, argument, &first.ty, &second.ty))
 }
 
-fn equivalent(arguments: &[Type], first: &Function, second: &Function) -> bool {
-    !has_better_parameter(arguments, first, second)
-        && !has_better_parameter(arguments, second, first)
+fn equivalent(rules: Rules, arguments: &[Type], first: &Function, second: &Function) -> bool {
+    !has_better_parameter(rules, arguments, first, second)
+        && !has_better_parameter(rules, arguments, second, first)
 }
 
 const FOLDED_BUILTINS: [&str; 68] = [
@@ -229,12 +257,16 @@ impl Analyzer<'_> {
     }
 
     fn select(&self, candidates: &[Candidate], arguments: &[Type]) -> Option<(Candidate, bool)> {
+        let rules = Rules {
+            features: self.numeric_features(),
+            explicit: self.explicit_types(),
+        };
         let viable: Vec<Candidate> = candidates
             .iter()
             .copied()
             .filter(|candidate| {
                 self.candidate(*candidate)
-                    .is_some_and(|function| viable(function, arguments))
+                    .is_some_and(|function| viable(rules, function, arguments))
             })
             .collect();
         let mut incumbent = *viable.first()?;
@@ -244,8 +276,8 @@ impl Analyzer<'_> {
             else {
                 continue;
             };
-            if has_better_parameter(arguments, current, challenger)
-                && !has_better_parameter(arguments, challenger, current)
+            if has_better_parameter(rules, arguments, current, challenger)
+                && !has_better_parameter(rules, arguments, challenger, current)
             {
                 incumbent = *candidate;
             }
@@ -254,8 +286,8 @@ impl Analyzer<'_> {
         let tie = viable.iter().any(|candidate| {
             *candidate != incumbent
                 && self.candidate(*candidate).is_some_and(|other| {
-                    has_better_parameter(arguments, best, other)
-                        || equivalent(arguments, best, other)
+                    has_better_parameter(rules, arguments, best, other)
+                        || equivalent(rules, arguments, best, other)
                 })
         });
         Some((incumbent, tie))
@@ -381,6 +413,25 @@ impl Analyzer<'_> {
         }
         if is_builtin && !failed {
             failed = !self.builtin_checks(span, name, &operands);
+            let reason = "{} types can only be in uniform block or buffer storage";
+            if !self.require_small_arithmetic(
+                span,
+                &function.return_type,
+                "built-in function",
+                reason,
+            ) {
+                failed = true;
+            }
+            for operand in &operands {
+                if !self.require_small_arithmetic(
+                    first_argument,
+                    &operand.ty,
+                    "built-in function",
+                    reason,
+                ) {
+                    failed = true;
+                }
+            }
         }
         if failed {
             return Operand::error();
@@ -491,7 +542,10 @@ impl Analyzer<'_> {
         if let Some(index) = offset_index {
             if let Some(operand) = operands.get(index) {
                 if !operand.constant {
-                    if !self.extension_enabled("GL_EXT_texture_offset_non_const") {
+                    if !self
+                        .extensions
+                        .is_requested("GL_EXT_texture_offset_non_const")
+                    {
                         return invalid(self, span, "the offset must be a constant expression");
                     }
                 } else if let Some(constant) = &operand.value {
@@ -633,16 +687,23 @@ impl Analyzer<'_> {
                 scalar: Scalar::Float,
                 ..
             } => !has_scalar(Scalar::is_integer),
-            TypeKind::Scalar(Scalar::Float) => operands
-                .iter()
-                .all(|operand| operand.ty.base_scalar() == Some(Scalar::Double)),
-            TypeKind::Scalar(Scalar::Double) => operands
-                .iter()
-                .all(|operand| operand.ty.base_scalar() == Some(Scalar::Float)),
+            TypeKind::Scalar(target) if target.is_floating() => operands.iter().all(|operand| {
+                operand
+                    .ty
+                    .base_scalar()
+                    .is_some_and(|scalar| scalar.is_floating() && scalar != target)
+            }),
             _ => false,
         };
+        let foldable = ty.is_array()
+            || matches!(ty.kind, TypeKind::Struct(_))
+            || self.small_arithmetic_allowed(&[&ty])
+            || operands
+                .iter()
+                .all(|operand| operand.ty.base_scalar() == ty.base_scalar());
         let constant = operands.iter().all(|operand| operand.constant)
-            && (!any_specialization || keeps_specialization);
+            && (!any_specialization || keeps_specialization)
+            && foldable;
         let count = u32::try_from(operands.len()).unwrap_or(u32::MAX);
         let mut element_types: Vec<Type> = Vec::new();
         if ty.is_array() {
@@ -713,8 +774,26 @@ impl Analyzer<'_> {
             element_types = members;
         }
         if !element_types.is_empty() {
+            if matches!(ty.kind, TypeKind::Struct(_)) {
+                for operand in &operands {
+                    self.require_small_arithmetic(
+                        span,
+                        &operand.ty,
+                        &self.show(&ty),
+                        "can't construct structure containing 16-bit type",
+                    );
+                }
+            }
+            if ty.is_array() {
+                self.require_small_arithmetic(
+                    span,
+                    &ty,
+                    &self.show(&ty),
+                    "{} arrays not supported",
+                );
+            }
             for (operand, element) in operands.iter().zip(&element_types) {
-                if !operand.ty.converts_implicitly_to(element) {
+                if !self.converts(&operand.ty, element) {
                     return fail(
                         self,
                         &ty,
@@ -760,6 +839,14 @@ impl Analyzer<'_> {
             return Operand::error();
         };
         let is_matrix = matches!(ty.kind, TypeKind::Matrix { .. });
+        if ty.is_vector() && operands.len() != 1 {
+            self.require_small_arithmetic(
+                span,
+                &ty,
+                &self.show(&ty),
+                "{} vectors only take vector types",
+            );
+        }
         let mut size = 0_u32;
         let mut full = false;
         let mut over_full = false;

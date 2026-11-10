@@ -1,6 +1,7 @@
 mod declarations;
 mod errors;
 mod expressions;
+mod extensions;
 mod robustness;
 mod statements;
 

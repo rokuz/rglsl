@@ -620,10 +620,7 @@ impl crate::Module {
                 let int_ty = self.types.insert(
                     crate::Type {
                         name: None,
-                        inner: crate::TypeInner::Scalar(crate::Scalar {
-                            kind: crate::ScalarKind::Sint,
-                            width: scalar.width,
-                        }),
+                        inner: crate::TypeInner::Scalar(crate::Scalar::I32),
                     },
                     Span::UNDEFINED,
                 );
@@ -641,18 +638,19 @@ impl crate::Module {
                             name: None,
                             inner: crate::TypeInner::Vector {
                                 size,
-                                scalar: crate::Scalar {
-                                    kind: crate::ScalarKind::Sint,
-                                    width: scalar.width,
-                                },
+                                scalar: crate::Scalar::I32,
                             },
                         },
                         Span::UNDEFINED,
                     );
-                    (vec_float_ty, vec_int_ty, size as u32 * scalar.width as u32)
+                    (vec_float_ty, vec_int_ty, size as u32)
                 } else {
-                    (float_ty, int_ty, scalar.width as u32)
+                    (float_ty, int_ty, 1)
                 };
+                let fract_size = second_offset * scalar.width as u32;
+                let second_offset = fract_size.next_multiple_of(4);
+                let span = (second_offset + fract_size.div_ceil(scalar.width as u32) * 4)
+                    .next_multiple_of(u32::from(scalar.width).max(4));
 
                 crate::Type {
                     name: Some(name),
@@ -675,7 +673,7 @@ impl crate::Module {
                                 xfb_offset: None,
                             },
                         ],
-                        span: second_offset * 2,
+                        span,
                     },
                 }
             }

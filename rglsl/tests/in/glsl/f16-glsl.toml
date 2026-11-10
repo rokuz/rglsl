@@ -1,2 +1,1 @@
 capabilities = "SHADER_FLOAT16"
-expected_error = "unknown type name `float16_t`"

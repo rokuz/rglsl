@@ -655,3 +655,119 @@ fn nesting_up_to_the_parser_limit_is_analysed() {
     let unit = rglsl_ast::parse(&lists).expect("the nested lists parse");
     assert!(!analyze(&unit, &Options::new(Stage::Fragment)).is_ok());
 }
+
+#[test]
+fn extension_warnings_and_implied_extensions_are_recorded() {
+    let analysis = versioned(
+        "#version 450\n#extension GL_EXT_demo : enable\n#extension GL_EXT_shader_subgroup_extended_types_int16 : enable\n#extension GL_EXT_shader_explicit_arithmetic_types_int64 : warn\nvoid main() { int64_t x = 1l; }\n",
+    );
+    assert!(analysis.is_ok(), "{:?}", analysis.diagnostics);
+    let names: Vec<&str> = analysis.extensions.iter().map(String::as_str).collect();
+    assert_eq!(
+        names,
+        [
+            "GL_EXT_shader_explicit_arithmetic_types_int16",
+            "GL_EXT_shader_explicit_arithmetic_types_int64",
+            "GL_EXT_shader_subgroup_extended_types_int16",
+        ]
+    );
+    let warnings: Vec<&DiagnosticKind> = analysis
+        .warnings
+        .iter()
+        .map(|warning| &warning.kind)
+        .collect();
+    assert_eq!(
+        warnings,
+        [
+            &DiagnosticKind::UnsupportedExtension("GL_EXT_demo".to_string()),
+            &DiagnosticKind::ExtensionWarned {
+                extension: "GL_EXT_shader_explicit_arithmetic_types_int64",
+                feature: "64-bit literal".to_string(),
+            },
+        ]
+    );
+}
+
+#[test]
+fn explicit_types_choose_glslang_common_types() {
+    let checked = check(
+        Stage::Fragment,
+        "#extension GL_EXT_shader_explicit_arithmetic_types : enable\nvoid main() {\n    int8_t a = int8_t(1);\n    uint16_t b = uint16_t(2);\n    int64_t c = 3l;\n    uint d = 4u;\n    float16_t h = 1.0hf;\n    a + b;\n    c + d;\n    a + d;\n    b + h;\n    h + 1.0;\n    a * 2;\n}\n",
+    );
+    assert!(
+        checked.analysis.is_ok(),
+        "{:?}",
+        checked.analysis.diagnostics
+    );
+    let types: Vec<Type> = statement_expression_types(&checked);
+    assert_eq!(
+        types,
+        [
+            Type::scalar(Scalar::Uint16),
+            Type::scalar(Scalar::Int64),
+            Type::UINT,
+            Type::scalar(Scalar::Float16),
+            Type::FLOAT,
+            Type::INT,
+        ]
+    );
+}
+
+#[test]
+fn sized_literals_fold_with_their_width() {
+    use crate::constant::Value;
+    let checked = check(
+        Stage::Fragment,
+        "#extension GL_EXT_shader_explicit_arithmetic_types : enable\nvoid main() {\n    0xFFFFFFFFFFFFFFFFul + 2ul;\n    int16_t(-32768s - 1s);\n    uint8_t(250) + uint8_t(10);\n    0.1hf;\n    -0x8000000000000000l;\n}\n",
+    );
+    assert!(
+        checked.analysis.is_ok(),
+        "{:?}",
+        checked.analysis.diagnostics
+    );
+    let values: Vec<Option<Value>> = statement_expressions(&checked)
+        .iter()
+        .map(|expression| {
+            checked
+                .analysis
+                .expression(expression.id)
+                .and_then(|info| info.value.as_ref())
+                .and_then(crate::constant::Constant::first)
+        })
+        .collect();
+    assert_eq!(
+        values,
+        [
+            Some(Value::Uint64(1)),
+            Some(Value::Int16(32767)),
+            Some(Value::Uint8(4)),
+            Some(Value::Float16(half::f16::from_f64(0.1).to_f64())),
+            Some(Value::Int64(i64::MIN)),
+        ]
+    );
+}
+
+fn statement_expressions(checked: &Checked) -> Vec<Expression> {
+    use rglsl_ast::ast::{ExternalDeclaration, StatementKind};
+    let Some(ExternalDeclaration::FunctionDefinition(definition)) =
+        checked.unit.external_declarations.last()
+    else {
+        panic!("the shader ends with a function");
+    };
+    definition
+        .body
+        .statements
+        .iter()
+        .filter_map(|statement| match &statement.kind {
+            StatementKind::Expression(Some(expression)) => Some(expression.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn statement_expression_types(checked: &Checked) -> Vec<Type> {
+    statement_expressions(checked)
+        .iter()
+        .filter_map(|expression| checked.analysis.type_of(expression.id).cloned())
+        .collect()
+}

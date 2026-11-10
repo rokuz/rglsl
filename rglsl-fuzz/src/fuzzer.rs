@@ -666,15 +666,15 @@ fn instantiate(
 
 pub fn random_constant(random: &mut Random, builder: &mut Builder, ty: BasicType) -> Expression {
     let scalar = |random: &mut Random, builder: &mut Builder| match basic::element(ty) {
-        ScalarType::Float | ScalarType::Double => {
+        ScalarType::Float | ScalarType::Double | ScalarType::Float16 => {
             let text = random_float_text(random);
             builder.float(&text)
         }
-        ScalarType::Int => {
+        ScalarType::Int | ScalarType::Int8 | ScalarType::Int16 | ScalarType::Int64 => {
             let value = i64::from(random.next_int(200_000)) - 100_000;
             builder.int(value)
         }
-        ScalarType::Uint => {
+        ScalarType::Uint | ScalarType::Uint8 | ScalarType::Uint16 | ScalarType::Uint64 => {
             let value = u64::from(random.next_int(200_000));
             builder.uint(value)
         }
@@ -718,10 +718,16 @@ fn random_float_text(random: &mut Random) -> String {
 pub fn literal_zero_or_one(builder: &mut Builder, zero: bool, ty: BasicType) -> Expression {
     let digit = if zero { 0 } else { 1 };
     let scalar = |builder: &mut Builder, element: ScalarType| match element {
-        ScalarType::Int => builder.int(digit),
-        ScalarType::Uint => builder.uint(u64::from(!zero)),
+        ScalarType::Int | ScalarType::Int8 | ScalarType::Int16 | ScalarType::Int64 => {
+            builder.int(digit)
+        }
+        ScalarType::Uint | ScalarType::Uint8 | ScalarType::Uint16 | ScalarType::Uint64 => {
+            builder.uint(u64::from(!zero))
+        }
         ScalarType::Bool => builder.boolean(!zero),
-        ScalarType::Float | ScalarType::Double => builder.float(&format!("{digit}.0")),
+        ScalarType::Float | ScalarType::Double | ScalarType::Float16 => {
+            builder.float(&format!("{digit}.0"))
+        }
     };
     if basic::is_scalar(ty) {
         return scalar(builder, basic::element(ty));

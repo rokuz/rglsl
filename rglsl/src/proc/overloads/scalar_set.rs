@@ -58,8 +58,8 @@ define_scalar_set! {
     // In the concrete types, the 32-bit types *must* appear before
     // other sizes, since that is how we represent conversion rank.
     ABSTRACT_INT, ABSTRACT_FLOAT,
-    I32, I16, I64,
-    U32, U16, U64,
+    I32, I16, I64, I8,
+    U32, U16, U64, U8,
     F32, F16, F64,
     BOOL,
 }
@@ -70,6 +70,8 @@ impl ScalarSet {
     pub fn convertible_from(scalar: Scalar) -> Self {
         use Scalar as Sc;
         match scalar {
+            Sc::I8 => Self::I8,
+            Sc::U8 => Self::U8,
             Sc::I16 => Self::I16,
             Sc::I32 => Self::I32,
             Sc::I64 => Self::I64,
@@ -112,9 +114,11 @@ impl ScalarSet {
         .union(Self::F64);
 
     pub const INTEGER: Self = Self::ABSTRACT_INT
+        .union(Self::I8)
         .union(Self::I16)
         .union(Self::I32)
         .union(Self::I64)
+        .union(Self::U8)
         .union(Self::U16)
         .union(Self::U32)
         .union(Self::U64);

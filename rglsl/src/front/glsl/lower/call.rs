@@ -151,9 +151,9 @@ impl FunctionLowerer<'_, '_> {
             match ty.kind {
                 TypeKind::Scalar(_) => components.push(self.scalar_to(value, source, target, at)?),
                 TypeKind::Vector { size, .. } => {
+                    let converted = self.convert(value, ty, &ty.with_scalar(target), at)?;
                     for index in 0..u32::from(size) {
-                        let part = self.component(value, index, at)?;
-                        components.push(self.scalar_to(part, source, target, at)?);
+                        components.push(self.component(converted, index, at)?);
                     }
                 }
                 TypeKind::Matrix { columns, rows, .. } => {

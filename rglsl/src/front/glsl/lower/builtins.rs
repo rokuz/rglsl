@@ -218,15 +218,41 @@ impl FunctionLowerer<'_, '_> {
             _ => None,
         };
         let arg = |index: usize| values.get(index).copied().ok_or_else(|| internal(at));
+        let narrow = first_ty
+            .base_scalar()
+            .filter(|element| element.is_integer() && element.bits() < 32);
+        if let (Some(element), true) = (
+            narrow,
+            matches!(
+                name,
+                "findMSB"
+                    | "findLSB"
+                    | "bitCount"
+                    | "bitfieldReverse"
+                    | "bitfieldExtract"
+                    | "bitfieldInsert"
+            ),
+        ) {
+            return self.narrow_bit_operation(name, &values, element, result, vector, at);
+        }
+        let wide = first_ty
+            .base_scalar()
+            .filter(|element| element.is_integer() && element.bits() == 64);
+        if let (Some(element), true) = (wide, matches!(name, "findMSB" | "findLSB" | "bitCount")) {
+            return self.wide_bit_operation(name, arg(0)?, element, result, vector, at);
+        }
         if let Some((axis, ctrl)) = derivative(name) {
-            return self.add(
-                Expression::Derivative {
-                    axis,
-                    ctrl,
-                    expr: arg(0)?,
-                },
-                at,
-            );
+            let half = first_ty.base_scalar() == Some(GlslScalar::Float16);
+            let mut expr = arg(0)?;
+            if half {
+                expr = self.as_kind(expr, crate::Scalar::F32, at)?;
+            }
+            let value = self.add(Expression::Derivative { axis, ctrl, expr }, at)?;
+            return if half {
+                self.as_kind(value, crate::Scalar::F16, at)
+            } else {
+                Ok(value)
+            };
         }
         match name {
             "isnan" | "isinf" => {
@@ -278,12 +304,23 @@ impl FunctionLowerer<'_, '_> {
                 };
                 return self.binary_op(op, arg(0)?, arg(1)?, at);
             }
-            "floatBitsToInt" | "floatBitsToUint" | "intBitsToFloat" | "uintBitsToFloat" => {
-                let kind = match name {
-                    "floatBitsToInt" => crate::ScalarKind::Sint,
-                    "floatBitsToUint" => crate::ScalarKind::Uint,
-                    _ => crate::ScalarKind::Float,
-                };
+            "floatBitsToInt"
+            | "floatBitsToUint"
+            | "intBitsToFloat"
+            | "uintBitsToFloat"
+            | "doubleBitsToInt64"
+            | "doubleBitsToUint64"
+            | "int64BitsToDouble"
+            | "uint64BitsToDouble"
+            | "halfBitsToInt16"
+            | "halfBitsToUint16"
+            | "float16BitsToInt16"
+            | "float16BitsToUint16"
+            | "int16BitsToFloat16"
+            | "uint16BitsToFloat16"
+            | "int16BitsToHalf"
+            | "uint16BitsToHalf" => {
+                let kind = scalar(result.base_scalar().ok_or_else(|| internal(at))?).kind;
                 return self.add(
                     Expression::As {
                         expr: arg(0)?,
@@ -292,6 +329,22 @@ impl FunctionLowerer<'_, '_> {
                     },
                     at,
                 );
+            }
+            "packFloat2x16" => {
+                let wide = self.as_kind(arg(0)?, crate::Scalar::F32, at)?;
+                return self.math_call(MathFunction::Pack2x16float, &[wide], at);
+            }
+            "unpackFloat2x16" => {
+                let wide = self.math_call(MathFunction::Unpack2x16float, &[arg(0)?], at)?;
+                return self.as_kind(wide, crate::Scalar::F16, at);
+            }
+            "packInt2x32" | "packUint2x32" | "packInt2x16" | "packUint2x16" | "packInt4x16"
+            | "packUint4x16" | "pack16" | "pack32" | "pack64" => {
+                return self.pack_bits(arg(0)?, &first_ty, result, at);
+            }
+            "unpackInt2x32" | "unpackUint2x32" | "unpackInt2x16" | "unpackUint2x16"
+            | "unpackInt4x16" | "unpackUint4x16" | "unpack8" | "unpack16" | "unpack32" => {
+                return self.unpack_bits(arg(0)?, &first_ty, result, at);
             }
             "mod" => {
                 let x = arg(0)?;
@@ -389,6 +442,17 @@ impl FunctionLowerer<'_, '_> {
         }
         let fun = math(name, values.len())
             .ok_or_else(|| unsupported(format!("the built-in function `{name}`"), at))?;
+        if name == "ldexp" {
+            let narrow = types
+                .get(1)
+                .and_then(GlslType::base_scalar)
+                .is_some_and(|exponent| exponent.bits() < 32);
+            if narrow {
+                if let Some(exponent) = values.get_mut(1) {
+                    *exponent = self.as_kind(*exponent, crate::Scalar::I32, at)?;
+                }
+            }
+        }
         if let Some(size) = vector {
             let splatted = matches!(
                 name,
@@ -403,11 +467,272 @@ impl FunctionLowerer<'_, '_> {
             }
         }
         let value = self.math_call(fun, &values, at)?;
-        let unsigned_input = first_ty.base_scalar() == Some(GlslScalar::Uint);
+        let unsigned_input = first_ty.base_scalar().is_some_and(GlslScalar::is_unsigned);
         if matches!(name, "bitCount" | "findLSB" | "findMSB") && unsigned_input {
-            return self.as_kind(value, crate::Scalar::I32, at);
+            let target = scalar(result.base_scalar().ok_or_else(|| internal(at))?);
+            return self.as_kind(value, target, at);
         }
         Ok(value)
+    }
+
+    fn wide_bit_operation(
+        &mut self,
+        name: &str,
+        value: Handle<Expression>,
+        element: GlslScalar,
+        result: &GlslType,
+        vector: Option<u8>,
+        at: Span,
+    ) -> Result<Handle<Expression>> {
+        let result_scalar = scalar(result.base_scalar().ok_or_else(|| internal(at))?);
+        let filled = |lowerer: &mut Self, literal: Literal| -> Result<Handle<Expression>> {
+            let value = lowerer.literal(literal, at)?;
+            match vector {
+                Some(size) => lowerer.splat(value, size, at),
+                None => Ok(value),
+            }
+        };
+        let mut source = value;
+        if name == "findMSB" && element.is_signed() {
+            let amount = filled(self, Literal::U32(63))?;
+            let sign = self.binary_op(BinaryOperator::ShiftRight, source, amount, at)?;
+            source = self.binary_op(BinaryOperator::ExclusiveOr, source, sign, at)?;
+        }
+        let unsigned = self.bitcast(source, crate::ScalarKind::Uint, at)?;
+        let low = self.as_kind(unsigned, crate::Scalar::U32, at)?;
+        let amount = filled(self, Literal::U32(32))?;
+        let shifted = self.binary_op(BinaryOperator::ShiftRight, unsigned, amount, at)?;
+        let high = self.as_kind(shifted, crate::Scalar::U32, at)?;
+        let combined = match name {
+            "bitCount" => {
+                let low = self.math_call(MathFunction::CountOneBits, &[low], at)?;
+                let high = self.math_call(MathFunction::CountOneBits, &[high], at)?;
+                self.binary_op(BinaryOperator::Add, low, high, at)?
+            }
+            _ => {
+                let fun = if name == "findMSB" {
+                    MathFunction::FirstLeadingBit
+                } else {
+                    MathFunction::FirstTrailingBit
+                };
+                let low_bit = self.math_call(fun, &[low], at)?;
+                let high_bit = self.math_call(fun, &[high], at)?;
+                let thirty_two = filled(self, Literal::U32(32))?;
+                let high_bit = self.binary_op(BinaryOperator::Add, high_bit, thirty_two, at)?;
+                let zero = filled(self, Literal::U32(0))?;
+                let (tested, chosen, other) = if name == "findMSB" {
+                    (high, high_bit, low_bit)
+                } else {
+                    (low, low_bit, high_bit)
+                };
+                let condition = self.binary_op(BinaryOperator::NotEqual, tested, zero, at)?;
+                let fallback = if name == "findMSB" {
+                    other
+                } else {
+                    let none = filled(self, Literal::U32(u32::MAX))?;
+                    let high_zero = self.binary_op(BinaryOperator::Equal, high, zero, at)?;
+                    self.add(
+                        Expression::Select {
+                            condition: high_zero,
+                            accept: none,
+                            reject: other,
+                        },
+                        at,
+                    )?
+                };
+                let selected = self.add(
+                    Expression::Select {
+                        condition,
+                        accept: chosen,
+                        reject: fallback,
+                    },
+                    at,
+                )?;
+                self.bitcast(selected, crate::ScalarKind::Sint, at)?
+            }
+        };
+        self.as_kind(combined, result_scalar, at)
+    }
+
+    fn narrow_bit_operation(
+        &mut self,
+        name: &str,
+        values: &[Handle<Expression>],
+        element: GlslScalar,
+        result: &GlslType,
+        vector: Option<u8>,
+        at: Span,
+    ) -> Result<Handle<Expression>> {
+        let arg = |index: usize| values.get(index).copied().ok_or_else(|| internal(at));
+        let narrow = scalar(element);
+        let unsigned_narrow = crate::Scalar {
+            kind: crate::ScalarKind::Uint,
+            width: narrow.width,
+        };
+        let wide = crate::Scalar {
+            kind: narrow.kind,
+            width: 4,
+        };
+        let result_scalar = scalar(result.base_scalar().ok_or_else(|| internal(at))?);
+        match name {
+            "findMSB" | "findLSB" => {
+                let extended = self.as_kind(arg(0)?, wide, at)?;
+                let fun = if name == "findMSB" {
+                    MathFunction::FirstLeadingBit
+                } else {
+                    MathFunction::FirstTrailingBit
+                };
+                let found = self.math_call(fun, &[extended], at)?;
+                self.as_kind(found, result_scalar, at)
+            }
+            "bitCount" => {
+                let unsigned = self.bitcast(arg(0)?, crate::ScalarKind::Uint, at)?;
+                let extended = self.as_kind(unsigned, crate::Scalar::U32, at)?;
+                let counted = self.math_call(MathFunction::CountOneBits, &[extended], at)?;
+                self.as_kind(counted, result_scalar, at)
+            }
+            "bitfieldReverse" => {
+                let unsigned = self.bitcast(arg(0)?, crate::ScalarKind::Uint, at)?;
+                let extended = self.as_kind(unsigned, crate::Scalar::U32, at)?;
+                let reversed = self.math_call(MathFunction::ReverseBits, &[extended], at)?;
+                let amount = self.shift_amount(32 - element.bits(), at)?;
+                let amount = match vector {
+                    Some(size) => self.splat(amount, size, at)?,
+                    None => amount,
+                };
+                let shifted = self.binary_op(BinaryOperator::ShiftRight, reversed, amount, at)?;
+                let truncated = self.as_kind(shifted, unsigned_narrow, at)?;
+                self.bitcast(truncated, narrow.kind, at)
+            }
+            "bitfieldExtract" => {
+                let extended = self.as_kind(arg(0)?, wide, at)?;
+                let offset = self.as_kind(arg(1)?, crate::Scalar::U32, at)?;
+                let count = self.as_kind(arg(2)?, crate::Scalar::U32, at)?;
+                let extracted =
+                    self.math_call(MathFunction::ExtractBits, &[extended, offset, count], at)?;
+                self.as_kind(extracted, narrow, at)
+            }
+            _ => {
+                let base = self.as_kind(arg(0)?, wide, at)?;
+                let insert = self.as_kind(arg(1)?, wide, at)?;
+                let offset = self.as_kind(arg(2)?, crate::Scalar::U32, at)?;
+                let count = self.as_kind(arg(3)?, crate::Scalar::U32, at)?;
+                let inserted =
+                    self.math_call(MathFunction::InsertBits, &[base, insert, offset, count], at)?;
+                self.as_kind(inserted, narrow, at)
+            }
+        }
+    }
+
+    fn bitcast(
+        &mut self,
+        value: Handle<Expression>,
+        kind: crate::ScalarKind,
+        at: Span,
+    ) -> Result<Handle<Expression>> {
+        self.add(
+            Expression::As {
+                expr: value,
+                kind,
+                convert: None,
+            },
+            at,
+        )
+    }
+
+    fn shift_amount(&mut self, amount: u32, at: Span) -> Result<Handle<Expression>> {
+        self.literal(Literal::U32(amount), at)
+    }
+
+    fn pack_bits(
+        &mut self,
+        value: Handle<Expression>,
+        source: &GlslType,
+        result: &GlslType,
+        at: Span,
+    ) -> Result<Handle<Expression>> {
+        let (Some(element), Some(count), Some(target)) = (
+            source.base_scalar(),
+            source.component_count(),
+            result.base_scalar(),
+        ) else {
+            return Err(internal(at));
+        };
+        let element_bits = element.bits();
+        let width = scalar(target).width;
+        let unsigned = self.bitcast(value, crate::ScalarKind::Uint, at)?;
+        let wide = self.as_kind(
+            unsigned,
+            crate::Scalar {
+                kind: crate::ScalarKind::Uint,
+                width,
+            },
+            at,
+        )?;
+        let mut packed = self.add(
+            Expression::AccessIndex {
+                base: wide,
+                index: 0,
+            },
+            at,
+        )?;
+        for index in 1..count {
+            let part = self.add(Expression::AccessIndex { base: wide, index }, at)?;
+            let amount = self.shift_amount(index * element_bits, at)?;
+            let shifted = self.binary_op(BinaryOperator::ShiftLeft, part, amount, at)?;
+            packed = self.binary_op(BinaryOperator::InclusiveOr, packed, shifted, at)?;
+        }
+        let kind = scalar(target).kind;
+        if kind == crate::ScalarKind::Uint {
+            Ok(packed)
+        } else {
+            self.bitcast(packed, kind, at)
+        }
+    }
+
+    fn unpack_bits(
+        &mut self,
+        value: Handle<Expression>,
+        source: &GlslType,
+        result: &GlslType,
+        at: Span,
+    ) -> Result<Handle<Expression>> {
+        let (Some(element), Some(count)) = (result.base_scalar(), result.component_count()) else {
+            return Err(internal(at));
+        };
+        if source.base_scalar().is_none() {
+            return Err(internal(at));
+        }
+        let element_scalar = scalar(element);
+        let unsigned_element = crate::Scalar {
+            kind: crate::ScalarKind::Uint,
+            width: element_scalar.width,
+        };
+        let unsigned = self.bitcast(value, crate::ScalarKind::Uint, at)?;
+        let mut components = Vec::with_capacity(usize::try_from(count).unwrap_or(0));
+        for index in 0..count {
+            let part = if index == 0 {
+                unsigned
+            } else {
+                let amount = self.shift_amount(index * element.bits(), at)?;
+                self.binary_op(BinaryOperator::ShiftRight, unsigned, amount, at)?
+            };
+            components.push(self.as_kind(part, unsigned_element, at)?);
+        }
+        let unsigned_ty = result.with_scalar(match element {
+            GlslScalar::Int8 => GlslScalar::Uint8,
+            GlslScalar::Int16 => GlslScalar::Uint16,
+            GlslScalar::Int64 => GlslScalar::Uint64,
+            GlslScalar::Int => GlslScalar::Uint,
+            other => other,
+        });
+        let ty = self.lw.ir_type(&unsigned_ty, at)?;
+        let composed = self.add(Expression::Compose { ty, components }, at)?;
+        if element_scalar.kind == crate::ScalarKind::Uint {
+            Ok(composed)
+        } else {
+            self.bitcast(composed, element_scalar.kind, at)
+        }
     }
 
     fn split(

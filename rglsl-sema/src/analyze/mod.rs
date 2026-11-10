@@ -1,6 +1,7 @@
 mod call;
 mod declaration;
 mod expression;
+mod extension;
 mod statement;
 
 use alloc::collections::{BTreeMap, BTreeSet};
@@ -9,7 +10,8 @@ use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
-use rglsl_ast::ast::{DirectiveKind, ExtensionBehavior, ExternalDeclaration, NodeId};
+use rglsl_ast::ast::{DirectiveKind, ExternalDeclaration, NodeId};
+use rglsl_ast::extensions::ExtensionState;
 use rglsl_ast::{Span, TranslationUnit};
 
 use crate::builtins::{BuiltinFunctionId, Builtins, ResourceLimits, Stage};
@@ -26,6 +28,7 @@ pub struct Options {
     pub stage: Stage,
     pub relaxed_uniforms: bool,
     pub limits: ResourceLimits,
+    pub spirv_version: Option<(u8, u8)>,
 }
 
 impl Options {
@@ -34,6 +37,7 @@ impl Options {
             stage,
             relaxed_uniforms: false,
             limits: ResourceLimits::default(),
+            spirv_version: None,
         }
     }
 }
@@ -71,6 +75,7 @@ pub struct Analysis {
     pub function_declarations: BTreeMap<NodeId, FunctionId>,
     pub extensions: BTreeSet<String>,
     pub diagnostics: Vec<Diagnostic>,
+    pub warnings: Vec<Diagnostic>,
 }
 
 impl Analysis {
@@ -255,8 +260,9 @@ pub(crate) struct Analyzer<'a> {
     pub calls: BTreeMap<NodeId, Callee>,
     pub declarations: BTreeMap<NodeId, SymbolId>,
     pub function_declarations: BTreeMap<NodeId, FunctionId>,
-    pub extensions: BTreeSet<String>,
+    pub extensions: ExtensionState,
     pub diagnostics: Vec<Diagnostic>,
+    pub warnings: Vec<Diagnostic>,
     pub function: Option<FunctionContext>,
     pub loop_depth: u32,
     pub switches: Vec<SwitchContext>,
@@ -316,8 +322,9 @@ impl<'a> Analyzer<'a> {
             calls: BTreeMap::new(),
             declarations: BTreeMap::new(),
             function_declarations: BTreeMap::new(),
-            extensions: BTreeSet::new(),
+            extensions: ExtensionState::new(),
             diagnostics,
+            warnings: Vec::new(),
             function: None,
             loop_depth: 0,
             switches: Vec::new(),
@@ -346,11 +353,7 @@ impl<'a> Analyzer<'a> {
             match declaration {
                 ExternalDeclaration::Directive(directive) => match &directive.kind {
                     DirectiveKind::Extension { name, behavior } => {
-                        if *behavior == ExtensionBehavior::Disable {
-                            self.extensions.remove(name);
-                        } else {
-                            self.extensions.insert(name.clone());
-                        }
+                        self.extension_directive(directive.span, name, *behavior);
                     }
                     DirectiveKind::Pragma { tokens } => self.pragma(directive.span, tokens),
                     DirectiveKind::Version { .. } => {}
@@ -437,7 +440,10 @@ impl<'a> Analyzer<'a> {
     }
 
     fn check_derivative_group(&mut self, end: Span) {
-        if self.extension_enabled("GL_KHR_compute_shader_derivatives") && !self.khr_derivative_group
+        if self
+            .extensions
+            .is_requested("GL_KHR_compute_shader_derivatives")
+            && !self.khr_derivative_group
         {
             self.error(
                 end,
@@ -505,8 +511,9 @@ impl<'a> Analyzer<'a> {
             calls: self.calls,
             declarations: self.declarations,
             function_declarations: self.function_declarations,
-            extensions: self.extensions,
+            extensions: self.extensions.enabled().map(String::from).collect(),
             diagnostics: self.diagnostics,
+            warnings: self.warnings,
         }
     }
 
@@ -571,7 +578,7 @@ impl<'a> Analyzer<'a> {
     }
 
     pub(crate) fn extension_enabled(&self, name: &str) -> bool {
-        self.extensions.contains(name)
+        self.extensions.is_on(name)
     }
 
     pub(crate) fn scoped<T>(&mut self, body: impl FnOnce(&mut Self) -> T) -> T {

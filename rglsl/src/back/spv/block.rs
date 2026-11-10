@@ -1856,18 +1856,11 @@ impl BlockContext<'_> {
                         ))
                     }
                     Mf::FirstTrailingBit => MathOp::Ext(spirv::GlslStd450Op::FindILsb),
-                    Mf::FirstLeadingBit => {
-                        if arg_ty.scalar_width() == Some(4) {
-                            let thing = match arg_scalar_kind {
-                                Some(crate::ScalarKind::Uint) => spirv::GlslStd450Op::FindUMsb,
-                                Some(crate::ScalarKind::Sint) => spirv::GlslStd450Op::FindSMsb,
-                                other => unimplemented!("Unexpected firstLeadingBit({:?})", other),
-                            };
-                            MathOp::Ext(thing)
-                        } else {
-                            unreachable!("This is validated out until a polyfill is implemented. https://github.com/gfx-rs/wgpu/issues/5276");
-                        }
-                    }
+                    Mf::FirstLeadingBit => match arg_scalar_kind {
+                        Some(crate::ScalarKind::Uint) => MathOp::Ext(spirv::GlslStd450Op::FindUMsb),
+                        Some(crate::ScalarKind::Sint) => MathOp::Ext(spirv::GlslStd450Op::FindSMsb),
+                        _ => return Err(Error::Validation("firstLeadingBit argument")),
+                    },
                     Mf::Pack4x8unorm => MathOp::Ext(spirv::GlslStd450Op::PackUnorm4x8),
                     Mf::Pack4x8snorm => MathOp::Ext(spirv::GlslStd450Op::PackSnorm4x8),
                     Mf::Pack2x16float => MathOp::Ext(spirv::GlslStd450Op::PackHalf2x16),

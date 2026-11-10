@@ -7,8 +7,8 @@ use alloc::vec::Vec;
 use crate::builtins::{Builtins, ResourceLimits, Stage};
 use crate::scope::{Direction, Storage, SymbolKind};
 use crate::types::{
-    ArraySize, Opaque, OpaqueKind, SampledType, Scalar, TextureDimension, Type, TypeKind,
-    TypeRegistry,
+    ArraySize, NumericFeatures, Opaque, OpaqueKind, SampledType, Scalar, TextureDimension, Type,
+    TypeKind, TypeRegistry,
 };
 
 fn builtins(version: u32, stage: Stage) -> Builtins {
@@ -53,14 +53,14 @@ fn variable_names(builtins: &Builtins) -> BTreeSet<String> {
 #[test]
 fn the_tables_have_the_expected_sizes() {
     let expected = [
-        (Stage::Vertex, 1397, 82, 85),
-        (Stage::TessControl, 1398, 83, 83),
-        (Stage::TessEvaluation, 1397, 86, 86),
-        (Stage::Geometry, 1401, 86, 86),
-        (Stage::Fragment, 1591, 90, 90),
-        (Stage::Compute, 1400, 82, 82),
-        (Stage::Mesh, 1397, 76, 76),
-        (Stage::RayGeneration, 1397, 76, 76),
+        (Stage::Vertex, 2166, 82, 85),
+        (Stage::TessControl, 2167, 83, 83),
+        (Stage::TessEvaluation, 2166, 86, 86),
+        (Stage::Geometry, 2170, 86, 86),
+        (Stage::Fragment, 2420, 90, 90),
+        (Stage::Compute, 2169, 82, 82),
+        (Stage::Mesh, 2166, 76, 76),
+        (Stage::RayGeneration, 2166, 76, 76),
     ];
     for (stage, functions, variables_450, variables_460) in expected {
         let older = builtins(450, stage);
@@ -101,7 +101,11 @@ fn generic_prototypes_expand_to_every_size() {
             "float radians(float)",
             "vec2 radians(vec2)",
             "vec3 radians(vec3)",
-            "vec4 radians(vec4)"
+            "vec4 radians(vec4)",
+            "float16_t radians(float16_t)",
+            "f16vec2 radians(f16vec2)",
+            "f16vec3 radians(f16vec3)",
+            "f16vec4 radians(f16vec4)"
         ]
     );
     assert_eq!(
@@ -114,18 +118,26 @@ fn generic_prototypes_expand_to_every_size() {
             "double sqrt(double)",
             "dvec2 sqrt(dvec2)",
             "dvec3 sqrt(dvec3)",
-            "dvec4 sqrt(dvec4)"
+            "dvec4 sqrt(dvec4)",
+            "float16_t sqrt(float16_t)",
+            "f16vec2 sqrt(f16vec2)",
+            "f16vec3 sqrt(f16vec3)",
+            "f16vec4 sqrt(f16vec4)"
         ]
     );
-    assert_eq!(signatures(&table, "mod").len(), 14);
-    assert_eq!(signatures(&table, "mix").len(), 34);
-    assert_eq!(signatures(&table, "min").len(), 28);
-    assert_eq!(signatures(&table, "clamp").len(), 28);
-    assert_eq!(signatures(&table, "matrixCompMult").len(), 18);
-    assert_eq!(signatures(&table, "inverse").len(), 6);
+    assert_eq!(signatures(&table, "mod").len(), 21);
+    assert_eq!(signatures(&table, "mix").len(), 69);
+    assert_eq!(signatures(&table, "min").len(), 77);
+    assert_eq!(signatures(&table, "clamp").len(), 77);
+    assert_eq!(signatures(&table, "matrixCompMult").len(), 27);
+    assert_eq!(signatures(&table, "inverse").len(), 9);
     assert_eq!(
         signatures(&table, "cross"),
-        ["vec3 cross(vec3, vec3)", "dvec3 cross(dvec3, dvec3)"]
+        [
+            "vec3 cross(vec3, vec3)",
+            "dvec3 cross(dvec3, dvec3)",
+            "f16vec3 cross(f16vec3, f16vec3)"
+        ]
     );
     assert!(
         signatures(&table, "outerProduct").contains(&"mat2x3 outerProduct(vec3, vec2)".to_string())
@@ -139,8 +151,8 @@ fn generic_prototypes_expand_to_every_size() {
     assert!(signatures(&table, "umulExtended")
         .contains(&"void umulExtended(uvec2, uvec2, out uvec2, out uvec2)".to_string()));
     assert_eq!(signatures(&table, "any").len(), 3);
-    assert_eq!(signatures(&table, "equal").len(), 15);
-    assert_eq!(signatures(&table, "lessThan").len(), 12);
+    assert_eq!(signatures(&table, "equal").len(), 36);
+    assert_eq!(signatures(&table, "lessThan").len(), 33);
 }
 
 #[test]
@@ -356,7 +368,7 @@ fn every_core_function_name_is_known() {
     for name in names.split_whitespace() {
         assert!(!table.overloads(name).is_empty(), "{name}");
     }
-    assert_eq!(table.function_names().count(), 152);
+    assert_eq!(table.function_names().count(), 184);
 }
 
 fn storage_of(builtins: &Builtins, name: &str) -> Option<Storage> {
@@ -670,8 +682,14 @@ fn implicit_conversions_follow_the_rank() {
         assert!(!from.converts_implicitly_to(Scalar::Bool));
         assert!(!Scalar::Bool.converts_implicitly_to(*from));
     }
-    assert_eq!(Scalar::Bool.numeric_rank(), None);
-    assert!(Scalar::Int.numeric_rank() < Scalar::Double.numeric_rank());
+    assert_eq!(
+        Scalar::Bool.common(Scalar::Bool, NumericFeatures::default()),
+        None
+    );
+    assert_eq!(
+        Scalar::Int.common(Scalar::Double, NumericFeatures::default()),
+        Some(Scalar::Double)
+    );
     let ivec2 = Type::vector(Scalar::Int, 2);
     assert!(ivec2.converts_implicitly_to(&Type::vector(Scalar::Double, 2)));
     assert!(!ivec2.converts_implicitly_to(&Type::vector(Scalar::Float, 3)));

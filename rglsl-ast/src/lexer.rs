@@ -219,9 +219,13 @@ impl<'a> Lexer<'a> {
         let digits_end = end;
         let kind = if is_float {
             match (self.byte_at(end), self.byte_at(end + 1)) {
-                (Some(b'l'), Some(b'f')) | (Some(b'L'), Some(b'F')) => {
+                (Some(b'l' | b'L'), Some(b'f' | b'F')) => {
                     end += 2;
                     NumericKind::Double
+                }
+                (Some(b'h' | b'H'), Some(b'f' | b'F')) => {
+                    end += 2;
+                    NumericKind::Float16
                 }
                 (Some(b'f' | b'F'), _) => {
                     end += 1;
@@ -229,11 +233,21 @@ impl<'a> Lexer<'a> {
                 }
                 _ => NumericKind::Float,
             }
-        } else if matches!(self.byte_at(end), Some(b'u' | b'U')) {
-            end += 1;
-            NumericKind::Uint
         } else {
-            NumericKind::Int
+            let unsigned = matches!(self.byte_at(end), Some(b'u' | b'U'));
+            end += usize::from(unsigned);
+            let long = matches!(self.byte_at(end), Some(b'l' | b'L'));
+            end += usize::from(long);
+            let short = !long && matches!(self.byte_at(end), Some(b's' | b'S'));
+            end += usize::from(short);
+            match (unsigned, long, short) {
+                (false, true, _) => NumericKind::Int64,
+                (true, true, _) => NumericKind::Uint64,
+                (false, false, true) => NumericKind::Int16,
+                (true, false, true) => NumericKind::Uint16,
+                (true, false, false) => NumericKind::Uint,
+                (false, false, false) => NumericKind::Int,
+            }
         };
         let trailing_end = self.digits(end, is_word_continue);
         let digits = self.text(start, digits_end);
