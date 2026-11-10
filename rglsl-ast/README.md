@@ -21,7 +21,11 @@ There is no preprocessor yet: `#version`, `#extension` and `#pragma` lines are p
 external declarations, any other directive is an error. Comments are skipped.
 
 Not accepted yet (extension-only or not available under Vulkan in glslang's grammar): attributes
-`[[...]]`, `spirv_*` qualifiers and types, type parameters `<...>`, `nonuniformEXT`, `demote`,
+`[[...]]`, `spirv_*` qualifiers and types, type parameters `<...>`, `demote`,
 `terminateInvocation`, the ray tracing and mesh shader qualifiers and statements, C-style casts,
 default parameter values, `...` parameters, explicit-arithmetic and half-float types, string
 literals, inline struct blocks in block members.
+
+`nonuniformEXT` is accepted with `GL_EXT_nonuniform_qualifier` as a type qualifier
+(`SingleTypeQualifier::NonUniform`) and as `nonuniformEXT(expr)`, a call of the function
+identifier `nonuniformEXT` (`NON_UNIFORM`).
