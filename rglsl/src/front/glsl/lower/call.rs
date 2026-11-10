@@ -25,6 +25,8 @@ impl FunctionLowerer<'_, '_> {
                 self.user_call(id, &call.arguments, non_uniform, at)
             }
             Some(&Callee::NonUniform) => self.non_uniform_value(&call.arguments, at).map(Some),
+            Some(&Callee::DebugPrintf) => self.debug_printf(&call.arguments, at).map(|()| None),
+            Some(&Callee::Abort) => self.abort(&call.arguments, at).map(|()| None),
             Some(&Callee::Builtin(id)) => self.builtin_call(id, &call.arguments, at),
             Some(&Callee::Constructor(ref ty)) => {
                 if ty.is_opaque() {

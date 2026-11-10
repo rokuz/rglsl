@@ -4114,3 +4114,345 @@ fn subpass_input_errors() {
         assert!(error.contains(expected), "{source}: {error}");
     }
 }
+
+fn message_words(stage: ShaderStage, source: &str, lang_version: (u8, u8)) -> Vec<u32> {
+    let module = parse(stage, source).unwrap_or_else(|e| panic!("shader rejected: {e}"));
+    let info = Validator::new(ValidationFlags::all(), Capabilities::all())
+        .validate(&module)
+        .expect("validated in parse");
+    let options = spv::Options {
+        lang_version,
+        flags: spv::WriterFlags::DEBUG
+            | spv::WriterFlags::LABEL_VARYINGS
+            | spv::WriterFlags::SMALL_TYPE_CAPABILITIES_BY_USE,
+        force_loop_bounding: false,
+        zero_initialize_workgroup_memory: spv::ZeroInitializeWorkgroupMemoryMode::None,
+        ..spv::Options::default()
+    };
+    let words = spv::write_vec(&module, &info, &options, None).expect("SPIR-V backend failed");
+    let env = match lang_version {
+        (1, 4) => "vulkan1.1spv1.4",
+        _ => "vulkan1.0",
+    };
+    crate::stage_io::spirv_val_in(&words, &["--target-env", env, "--scalar-block-layout"]);
+    words
+}
+
+const OP_ABORT: u32 = 5121;
+const OP_CONSTANT_DATA: u32 = 5147;
+
+fn literal_string(words: &[u32]) -> String {
+    let bytes: Vec<u8> = words.iter().flat_map(|word| word.to_le_bytes()).collect();
+    let end = bytes
+        .iter()
+        .position(|&byte| byte == 0)
+        .unwrap_or(bytes.len());
+    String::from_utf8(bytes[..end].to_vec()).unwrap()
+}
+
+fn abort_layout(words: &[u32]) -> Vec<(u32, u32, Vec<u32>)> {
+    let instructions = raw_instructions(words);
+    let message_type = instructions
+        .iter()
+        .find(|(op, _)| *op == OP_ABORT)
+        .map(|(_, operands)| operands[0])
+        .expect("an OpAbortKHR");
+    let mut members: Vec<(u32, u32, Vec<u32>)> = instructions
+        .iter()
+        .filter(|(op, operands)| *op == Op::MemberDecorate as u32 && operands[0] == message_type)
+        .map(|(_, operands)| (operands[1], operands[2], operands[3..].to_vec()))
+        .collect();
+    members.sort();
+    members
+}
+
+fn offsets(layout: &[(u32, u32, Vec<u32>)]) -> Vec<u32> {
+    layout
+        .iter()
+        .filter(|(_, decoration, _)| *decoration == Decoration::Offset as u32)
+        .map(|(_, _, operands)| operands[0])
+        .collect()
+}
+
+#[test]
+fn debug_printf_passes_its_arguments_unchanged() {
+    let source = "#version 450
+#extension GL_EXT_debug_printf : enable
+#extension GL_ARB_gpu_shader_fp64 : enable
+#define FMT \"macro: %d\"
+layout(location = 0) in vec2 v;
+layout(location = 0) out vec4 o;
+void main() {
+    bool b = v.x > 0.0;
+    debugPrintfEXT(\"tab\\t %d %s %s %v2f %f\", b, \"same\", \"same\", v, 1.0lf);
+    debugPrintfEXT(FMT, 4);
+    debugPrintfEXT(\"same\", (1, \"seq\"));
+    o = vec4(v, 0.0, 1.0);
+}
+";
+    let module = compile(ShaderStage::Fragment, source);
+    let imports: Vec<String> = instructions(&module, Op::ExtInstImport)
+        .iter()
+        .map(|inst| match inst.operands[0] {
+            Operand::LiteralString(ref name) => name.clone(),
+            ref other => panic!("{other:?}"),
+        })
+        .collect();
+    assert!(imports.contains(&"NonSemantic.DebugPrintf".to_string()));
+    assert!(module.extensions.iter().any(|inst| {
+        inst.operands[0] == Operand::LiteralString("SPV_KHR_non_semantic_info".to_string())
+    }));
+    let strings: Vec<(u32, String)> = instructions(&module, Op::String)
+        .iter()
+        .map(|inst| match inst.operands[0] {
+            Operand::LiteralString(ref text) => (inst.result_id.unwrap(), text.clone()),
+            ref other => panic!("{other:?}"),
+        })
+        .collect();
+    let texts: Vec<&str> = strings.iter().map(|(_, text)| text.as_str()).collect();
+    assert_eq!(
+        texts,
+        ["tab\t %d %s %s %v2f %f", "same", "macro: %d", "seq"]
+    );
+    let prints = instructions(&module, Op::ExtInst);
+    assert_eq!(prints.len(), 3);
+    let first = prints[0];
+    let same = strings[1].0;
+    assert_eq!(first.operands.len(), 2 + 6);
+    assert_eq!(first.operands[4], Operand::IdRef(same));
+    assert_eq!(first.operands[5], Operand::IdRef(same));
+    let argument_type = |operand: &Operand| {
+        let id = operand.unwrap_id_ref();
+        module
+            .all_inst_iter()
+            .find(|inst| inst.result_id == Some(id))
+            .and_then(|inst| inst.result_type)
+            .map(|ty| {
+                module
+                    .types_global_values
+                    .iter()
+                    .find(|inst| inst.result_id == Some(ty))
+                    .unwrap()
+                    .class
+                    .opcode
+            })
+    };
+    assert_eq!(argument_type(&first.operands[3]), Some(Op::TypeBool));
+    assert_eq!(argument_type(&first.operands[6]), Some(Op::TypeVector));
+    assert_eq!(argument_type(&first.operands[7]), Some(Op::TypeFloat));
+    assert_eq!(prints[2].operands[2], Operand::IdRef(same));
+}
+
+#[test]
+fn abort_packs_its_message_with_scalar_rules() {
+    let source = "#version 450
+#extension GL_EXT_abort : require
+layout(local_size_x = 1) in;
+layout(set = 0, binding = 0) buffer Data {
+    int i; uint u; float f; vec4 v4; ivec3 v3; uvec2 v2; int k;
+} data;
+void main() {
+    abortEXT(\"mixed: %d %v4f %u %v3i %f %v2u\", data.i, data.v4, data.u, data.v3, data.f, data.v2);
+    data.k = 1;
+}
+";
+    for version in [(1, 0), (1, 4)] {
+        let words = message_words(ShaderStage::Compute, source, version);
+        let instructions = raw_instructions(&words);
+        let capabilities: Vec<u32> = instructions
+            .iter()
+            .filter(|(op, _)| *op == Op::Capability as u32)
+            .map(|(_, operands)| operands[0])
+            .collect();
+        for capability in [spirv::Capability::Int8 as u32, 5120, 5146] {
+            assert!(capabilities.contains(&capability), "{capabilities:?}");
+        }
+        let extensions: Vec<String> = instructions
+            .iter()
+            .filter(|(op, _)| *op == Op::Extension as u32)
+            .map(|(_, operands)| literal_string(operands))
+            .collect();
+        assert!(extensions.contains(&"SPV_KHR_abort".to_string()));
+        assert!(extensions.contains(&"SPV_KHR_constant_data".to_string()));
+        let data: Vec<&Vec<u32>> = instructions
+            .iter()
+            .filter(|(op, _)| *op == OP_CONSTANT_DATA)
+            .map(|(_, operands)| operands)
+            .collect();
+        assert_eq!(data.len(), 1);
+        assert_eq!(
+            literal_string(&data[0][2..]),
+            "mixed: %d %v4f %u %v3i %f %v2u"
+        );
+        assert_eq!(data[0].len() - 2, 8);
+        assert_eq!(offsets(&abort_layout(&words)), [0, 32, 36, 52, 56, 68, 72]);
+        let stores = instructions
+            .iter()
+            .filter(|(op, _)| *op == Op::Store as u32)
+            .count();
+        assert_eq!(stores, 0);
+    }
+}
+
+#[test]
+fn abort_lays_out_nested_aggregates() {
+    let source = "#version 450
+#extension GL_EXT_abort : require
+layout(local_size_x = 1) in;
+struct Inner { int i; vec2 v; };
+struct Outer { Inner inner; float arr[3]; mat2 m; };
+layout(set = 0, binding = 0) buffer Data { float seed; } data;
+void main() {
+    float s = data.seed;
+    Inner inner = Inner(int(s), vec2(s));
+    Outer outer = Outer(inner, float[3](s, s, s), mat2(s));
+    vec3 vectors[2] = vec3[2](vec3(s), vec3(s));
+    abortEXT(\"\", inner, outer, vectors, mat3x2(s), bvec3(s > 0.0), s > 1.0);
+}
+";
+    let words = message_words(ShaderStage::Compute, source, (1, 4));
+    let layout = abort_layout(&words);
+    assert_eq!(offsets(&layout), [0, 4, 16, 56, 80, 104, 116]);
+    let matrix_stride: Vec<(u32, u32)> = layout
+        .iter()
+        .filter(|(_, decoration, _)| *decoration == Decoration::MatrixStride as u32)
+        .map(|(member, _, operands)| (*member, operands[0]))
+        .collect();
+    assert_eq!(matrix_stride, [(4, 8)]);
+    let instructions = raw_instructions(&words);
+    let strides: std::collections::BTreeSet<u32> = instructions
+        .iter()
+        .filter(|(op, operands)| {
+            *op == Op::Decorate as u32 && operands[1] == Decoration::ArrayStride as u32
+        })
+        .map(|(_, operands)| operands[2])
+        .collect();
+    assert_eq!(strides.into_iter().collect::<Vec<_>>(), [1, 4, 12]);
+    let utf_encoded = instructions
+        .iter()
+        .filter(|(op, operands)| *op == Op::Decorate as u32 && operands[1] == 5145)
+        .count();
+    assert_eq!(utf_encoded, 2);
+    let selects = instructions
+        .iter()
+        .filter(|(op, _)| *op == Op::Select as u32)
+        .count();
+    assert_eq!(selects, 2);
+}
+
+#[test]
+fn abort_ends_its_block() {
+    let source = "#version 450
+#extension GL_EXT_abort : require
+layout(local_size_x = 1) in;
+layout(set = 0, binding = 0) buffer Data { uint value; } data;
+uint first() {
+    data.value = 1u;
+    abortEXT(\"first: %u\", data.value);
+    return data.value;
+}
+void main() {
+    for (int i = 0; i < 3; i++) {
+        if (i == 2) {
+            abortEXT(\"loop %d\", i);
+        }
+    }
+    switch (data.value) {
+        case 0u: abortEXT(); case 1u: data.value = first(); break;
+    }
+    abortEXT(\"abc\");
+    data.value = 5u;
+}
+";
+    let words = message_words(ShaderStage::Compute, source, (1, 4));
+    let instructions = raw_instructions(&words);
+    let messages: Vec<String> = instructions
+        .iter()
+        .filter(|(op, _)| *op == OP_CONSTANT_DATA)
+        .map(|(_, operands)| literal_string(&operands[2..]))
+        .collect();
+    assert_eq!(messages, ["first: %u", "loop %d", "", "abc"]);
+    assert_eq!(
+        instructions
+            .iter()
+            .filter(|(op, _)| *op == OP_ABORT)
+            .count(),
+        4
+    );
+    assert!(!instructions
+        .iter()
+        .any(|(op, operands)| *op == Op::Constant as u32 && operands[2] == 5));
+}
+
+#[test]
+fn string_literal_misuse_is_rejected() {
+    let cases = [
+        (
+            ShaderStage::Fragment,
+            "#extension GL_EXT_debug_printf : enable\nvoid main() { debugPrintfEXT((\"%d\"), 3); }",
+            "first argument must be a string literal",
+        ),
+        (
+            ShaderStage::Fragment,
+            "#extension GL_EXT_debug_printf : enable\nvoid main() { debugPrintfEXT(); }",
+            "first argument must be a string literal",
+        ),
+        (
+            ShaderStage::Fragment,
+            "#extension GL_EXT_abort : enable\nvoid main() { debugPrintfEXT(\"x\"); }",
+            "GL_EXT_debug_printf",
+        ),
+        (
+            ShaderStage::Compute,
+            "#extension GL_EXT_debug_printf : enable\nvoid main() { abortEXT(\"x\"); }",
+            "GL_EXT_abort",
+        ),
+        (
+            ShaderStage::Compute,
+            "#extension GL_EXT_abort : enable\nvoid main() { abortEXT(\"x\", \"y\"); }",
+            "only the message may be a string",
+        ),
+        (
+            ShaderStage::Compute,
+            "#extension GL_EXT_abort : enable\nlayout(binding = 0) uniform sampler2D t;\nvoid main() { abortEXT(\"x\", t); }",
+            "opaque",
+        ),
+        (
+            ShaderStage::Compute,
+            "#extension GL_EXT_abort : enable\nvoid main() { bool b[2]; abortEXT(\"x\", b); }",
+            "aggregate containing a bool",
+        ),
+        (
+            ShaderStage::Compute,
+            "#extension GL_EXT_abort : enable\nvoid main() { abortEXT(1, 2); }",
+            "first argument must be a string literal",
+        ),
+        (
+            ShaderStage::Fragment,
+            "#extension GL_EXT_debug_printf : enable\nvoid main() { uint u = uint(\"foo\"); }",
+            "cannot convert a string",
+        ),
+        (
+            ShaderStage::Fragment,
+            "#extension GL_EXT_debug_printf : enable\nvoid main() { true ? \"a\" : \"b\"; }",
+            "string",
+        ),
+        (
+            ShaderStage::Fragment,
+            "void main() { \"a\"; }",
+            "string literal",
+        ),
+        (
+            ShaderStage::Fragment,
+            "#extension GL_EXT_debug_printf : enable\nvoid main() { debugPrintfEXT(\"\\xZ\"); }",
+            "hex",
+        ),
+    ];
+    for (stage, body, expected) in cases {
+        let source = format!("#version 450\n{body}\n");
+        let error = parse(stage, &source).unwrap_err();
+        assert!(error.contains(expected), "{source}: {error}");
+    }
+    let guarded = "#version 450\n#ifndef GUARD\n#define GUARD\nvoid main() { \"a\"; }\n#endif\n";
+    parse(ShaderStage::Fragment, guarded).unwrap();
+}

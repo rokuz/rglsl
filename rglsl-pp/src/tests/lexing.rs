@@ -1,3 +1,4 @@
+use alloc::format;
 use alloc::string::String;
 
 use super::{code, errors, expect_code, first_error, lex, run};
@@ -54,7 +55,9 @@ fn large_values_wrap_like_glslang() {
 
 #[test]
 fn strings_keep_their_escapes() {
-    let result = run("#version 450\nprint(\"a\\tb\\\"c\\x41\\101\");\n");
+    let result = run(
+        "#version 450\n#extension GL_EXT_debug_printf : enable\nprint(\"a\\tb\\\"c\\x41\\101\\0d\");\n",
+    );
     assert!(errors(&result).is_empty(), "{:?}", result.diagnostics);
     assert_eq!(
         code(&result.text),
@@ -67,6 +70,41 @@ fn strings_keep_their_escapes() {
     let (kind, line) = first_error("#version 450\nprint(\"open\n);\n");
     assert_eq!(kind, DiagnosticKind::UnterminatedString);
     assert_eq!(line, 2);
+}
+
+#[test]
+fn string_literals_need_an_extension_outside_conditionals() {
+    let (kind, line) = first_error("#version 450\nint a;\nprint(\"text\");\n");
+    assert!(matches!(
+        kind,
+        DiagnosticKind::ExtensionRequired {
+            feature: "string literal",
+            ..
+        }
+    ));
+    assert_eq!(line, 3);
+    let (kind, line) = first_error("#version 450\n#define S(x) #x\n\nS(word);\n");
+    assert!(matches!(kind, DiagnosticKind::ExtensionRequired { .. }));
+    assert_eq!(line, 4);
+    for extension in [
+        "GL_EXT_debug_printf",
+        "GL_EXT_abort",
+        "GL_EXT_spirv_intrinsics",
+    ] {
+        for behavior in ["enable", "require", "warn"] {
+            let source =
+                format!("#version 450\n#extension {extension} : {behavior}\nprint(\"x\");\n");
+            expect_code(&source, "print(\"x\");");
+        }
+    }
+    let disabled = "#version 450\n#extension GL_EXT_debug_printf : enable\n#extension GL_EXT_debug_printf : disable\nprint(\"x\");\n";
+    let (kind, line) = first_error(disabled);
+    assert!(matches!(kind, DiagnosticKind::ExtensionRequired { .. }));
+    assert_eq!(line, 4);
+    expect_code(
+        "#version 450\n#ifndef GUARD\n#define S(x) #x\nprint(\"x\", S(y));\n#endif\n",
+        "print(\"x\", \"y\");",
+    );
 }
 
 #[test]

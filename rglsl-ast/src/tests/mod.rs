@@ -4,6 +4,7 @@ mod expressions;
 mod extensions;
 mod robustness;
 mod statements;
+mod strings;
 
 use alloc::format;
 use alloc::string::String;
@@ -77,6 +78,7 @@ fn shape(expression: &Expression) -> String {
         ExpressionKind::Variable(name) => name.clone(),
         ExpressionKind::Number(literal) => literal.text.clone(),
         ExpressionKind::Bool(value) => format!("{value}"),
+        ExpressionKind::String(value) => format!("{value:?}"),
         ExpressionKind::Parenthesized(inner) => format!("(paren {})", shape(inner)),
         ExpressionKind::Subscript { base, index } => {
             format!("(index {} {})", shape(base), shape(index))

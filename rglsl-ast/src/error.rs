@@ -28,6 +28,12 @@ pub enum ParseErrorKind {
     MalformedDirective(String),
     #[error("unterminated comment")]
     UnterminatedComment,
+    #[error("end of line in string")]
+    UnterminatedString,
+    #[error("invalid escape sequence")]
+    InvalidEscape,
+    #[error("expected hex value in escape sequence")]
+    HexEscapeWithoutDigits,
     #[error("unexpected character `{0}`")]
     UnexpectedCharacter(char),
     #[error("invalid numeric literal `{0}`")]

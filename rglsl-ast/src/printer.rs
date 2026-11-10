@@ -1,3 +1,4 @@
+use alloc::format;
 use alloc::string::String;
 use core::fmt;
 
@@ -494,11 +495,35 @@ impl Printer {
         self.write(")");
     }
 
+    fn string(&mut self, value: &str) {
+        let mut escaped = String::from("\"");
+        for character in value.chars() {
+            match character {
+                '"' => escaped.push_str("\\\""),
+                '\\' => escaped.push_str("\\\\"),
+                '\u{7}' => escaped.push_str("\\a"),
+                '\u{8}' => escaped.push_str("\\b"),
+                '\u{c}' => escaped.push_str("\\f"),
+                '\n' => escaped.push_str("\\n"),
+                '\r' => escaped.push_str("\\r"),
+                '\t' => escaped.push_str("\\t"),
+                '\u{b}' => escaped.push_str("\\v"),
+                _ if character.is_ascii_control() => {
+                    escaped.push_str(&format!("\\{:03o}", u32::from(character)));
+                }
+                _ => escaped.push(character),
+            }
+        }
+        escaped.push('"');
+        self.write(&escaped);
+    }
+
     fn expression(&mut self, expression: &Expression) {
         match &expression.kind {
             ExpressionKind::Variable(name) => self.write(name),
             ExpressionKind::Number(literal) => self.write(&literal.text),
             ExpressionKind::Bool(value) => self.write(if *value { "true" } else { "false" }),
+            ExpressionKind::String(value) => self.string(value),
             ExpressionKind::Parenthesized(inner) => {
                 self.write("(");
                 self.expression(inner);

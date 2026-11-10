@@ -1,7 +1,9 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use rglsl_ast::ast::{Expression, FunctionCall, FunctionIdentifier, Identifier, TypeSpecifier};
+use rglsl_ast::ast::{
+    Expression, ExpressionKind, FunctionCall, FunctionIdentifier, Identifier, TypeSpecifier,
+};
 use rglsl_ast::Span;
 
 use super::{Analyzer, Callee, Operand};
@@ -91,6 +93,9 @@ fn equivalent(rules: Rules, arguments: &[Type], first: &Function, second: &Funct
     !has_better_parameter(rules, arguments, first, second)
         && !has_better_parameter(rules, arguments, second, first)
 }
+
+const DEBUG_PRINTF: &str = "debugPrintfEXT";
+const ABORT: &str = "abortEXT";
 
 const FOLDED_BUILTINS: [&str; 68] = [
     "radians",
@@ -310,6 +315,9 @@ impl Analyzer<'_> {
         if name == rglsl_ast::NON_UNIFORM {
             return self.non_uniform(expression, span, arguments);
         }
+        if name == DEBUG_PRINTF || name == ABORT {
+            return self.message_call(expression, span, name, arguments);
+        }
         let operands: Vec<Operand> = arguments
             .iter()
             .map(|argument| self.expression(argument))
@@ -517,6 +525,94 @@ impl Analyzer<'_> {
         Operand {
             non_uniform: true,
             ..Operand::temporary(operand.ty)
+        }
+    }
+
+    fn message_call(
+        &mut self,
+        expression: &Expression,
+        span: Span,
+        name: &str,
+        arguments: &[Expression],
+    ) -> Operand {
+        let operands: Vec<Operand> = arguments
+            .iter()
+            .map(|argument| self.expression(argument))
+            .collect();
+        let abort = name == ABORT;
+        let (extension, callee) = if abort {
+            ("GL_EXT_abort", Callee::Abort)
+        } else {
+            ("GL_EXT_debug_printf", Callee::DebugPrintf)
+        };
+        let mut failed = !self.require_extension(span, extension, name);
+        let invalid = |analyzer: &mut Self, reason: &'static str| {
+            analyzer.error(
+                span,
+                DiagnosticKind::InvalidBuiltinCall {
+                    name: String::from(name),
+                    reason,
+                },
+            );
+        };
+        let literal = arguments
+            .first()
+            .is_some_and(|argument| matches!(argument.kind, ExpressionKind::String(_)));
+        let optional = abort && arguments.is_empty();
+        if !(literal || optional) {
+            invalid(self, "first argument must be a string literal");
+            failed = true;
+        }
+        for operand in operands.iter().skip(1) {
+            if operand.ty.is_error() {
+                failed = true;
+                continue;
+            }
+            if !self.readable(span, operand) {
+                failed = true;
+                continue;
+            }
+            if !abort {
+                continue;
+            }
+            let reason = if operand.ty.is_string() {
+                Some("argument cannot be a string, only the message may be a string")
+            } else if operand.ty.contains_opaque(&self.types) {
+                Some("argument cannot be an opaque type")
+            } else if self.contains_unsized_array(&operand.ty) {
+                Some("argument cannot be a run-time sized array")
+            } else if operand.ty.contains_scalar(&self.types, Scalar::Bool)
+                && !operand.ty.is_scalar()
+                && !operand.ty.is_vector()
+            {
+                Some("argument cannot be an aggregate containing a bool")
+            } else {
+                None
+            };
+            if let Some(reason) = reason {
+                invalid(self, reason);
+                failed = true;
+            }
+        }
+        if failed || operands.iter().any(|operand| operand.ty.is_error()) {
+            return Operand::error();
+        }
+        self.calls.insert(expression.id, callee);
+        Operand::temporary(Type::VOID)
+    }
+
+    fn contains_unsized_array(&self, ty: &Type) -> bool {
+        if ty.contains_unsized_array(&self.types) {
+            return true;
+        }
+        match ty.kind {
+            TypeKind::Block(id) => self.types.block(id).is_some_and(|block| {
+                block
+                    .members
+                    .iter()
+                    .any(|member| self.contains_unsized_array(&member.ty))
+            }),
+            _ => false,
         }
     }
 
@@ -730,6 +826,9 @@ impl Analyzer<'_> {
         }
         if operands.iter().any(|operand| operand.ty.is_void()) {
             return fail(self, &ty, "an argument is `void`");
+        }
+        if operands.iter().any(|operand| operand.ty.is_string()) {
+            return fail(self, &ty, "cannot convert a string");
         }
         let numeric =
             !ty.is_array() && matches!(ty.kind, TypeKind::Scalar(_) | TypeKind::Vector { .. });

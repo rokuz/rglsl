@@ -12,6 +12,7 @@ pub(crate) enum TokenKind<'a> {
     Number { kind: NumericKind, text: &'a str },
     Punctuator(&'static str),
     Directive(usize),
+    String(usize),
     End,
 }
 
@@ -25,6 +26,7 @@ pub(crate) struct Token<'a> {
 pub(crate) struct Tokens<'a> {
     pub(crate) tokens: Vec<Token<'a>>,
     pub(crate) directives: Vec<Directive>,
+    pub(crate) strings: Vec<String>,
     pub(crate) end: Token<'a>,
 }
 
@@ -57,6 +59,7 @@ struct Lexer<'a> {
     at_line_start: bool,
     tokens: Vec<Token<'a>>,
     directives: Vec<Directive>,
+    strings: Vec<String>,
 }
 
 pub(crate) fn tokenize(source: &str) -> Result<Tokens<'_>, ParseError> {
@@ -74,6 +77,7 @@ pub(crate) fn tokenize(source: &str) -> Result<Tokens<'_>, ParseError> {
         at_line_start: true,
         tokens: Vec::new(),
         directives: Vec::new(),
+        strings: Vec::new(),
     };
     lexer.run()?;
     let end = Token {
@@ -83,6 +87,7 @@ pub(crate) fn tokenize(source: &str) -> Result<Tokens<'_>, ParseError> {
     Ok(Tokens {
         tokens: lexer.tokens,
         directives: lexer.directives,
+        strings: lexer.strings,
         end,
     })
 }
@@ -121,6 +126,7 @@ impl<'a> Lexer<'a> {
                 b'/' if next == Some(b'/') => self.skip_line_comment(),
                 b'/' if next == Some(b'*') => self.skip_block_comment()?,
                 b'#' if self.at_line_start => self.directive()?,
+                b'"' => self.string()?,
                 b'0'..=b'9' => self.number()?,
                 b'.' if next.is_some_and(|digit| digit.is_ascii_digit()) => self.number()?,
                 _ if is_word_start(byte) => self.word(),
@@ -181,6 +187,27 @@ impl<'a> Lexer<'a> {
                 ))
             }
         }
+    }
+
+    fn string(&mut self) -> Result<(), ParseError> {
+        let start = self.offset;
+        let mut end = start + 1;
+        loop {
+            match self.byte_at(end) {
+                Some(b'"') => break,
+                Some(b'\\') if self.byte_at(end + 1).is_some_and(|next| next != b'\n') => end += 2,
+                Some(b'\n') | None => {
+                    return Err(self.error(ParseErrorKind::UnterminatedString, start, end))
+                }
+                Some(_) => end += 1,
+            }
+        }
+        let raw = self.text(start + 1, end);
+        let value = unescape(raw).map_err(|kind| self.error(kind, start, end + 1))?;
+        let index = self.strings.len();
+        self.strings.push(value);
+        self.push(TokenKind::String(index), start, end + 1);
+        Ok(())
     }
 
     fn digits(&self, mut end: usize, accept: impl Fn(u8) -> bool) -> usize {
@@ -306,6 +333,65 @@ impl<'a> Lexer<'a> {
             Err(kind) => Err(self.error(kind, start, raw_end)),
         }
     }
+}
+
+pub(crate) fn unescape(raw: &str) -> Result<String, ParseErrorKind> {
+    let mut value = String::new();
+    let mut terminated = false;
+    let mut characters = raw.chars().peekable();
+    while let Some(character) = characters.next() {
+        let decoded = if character == '\\' {
+            let escaped = characters.next().ok_or(ParseErrorKind::InvalidEscape)?;
+            match escaped {
+                '\'' | '"' | '?' | '\\' => escaped,
+                'a' => '\u{7}',
+                'b' => '\u{8}',
+                'f' => '\u{c}',
+                'n' => '\n',
+                'r' => '\r',
+                't' => '\t',
+                'v' => '\u{b}',
+                'x' => {
+                    let mut code: u32 = 0;
+                    let mut digits = 0;
+                    while let Some(digit) = characters.peek().and_then(|next| next.to_digit(16)) {
+                        code = code.wrapping_mul(16).wrapping_add(digit);
+                        digits += 1;
+                        characters.next();
+                    }
+                    if digits == 0 {
+                        return Err(ParseErrorKind::HexEscapeWithoutDigits);
+                    }
+                    char::from_u32(code & 0xff).unwrap_or('\0')
+                }
+                '0'..='7' => {
+                    let mut code = escaped.to_digit(8).unwrap_or(0);
+                    let mut digits = 1;
+                    while digits < 3 {
+                        match characters.peek().and_then(|next| next.to_digit(8)) {
+                            Some(digit) => {
+                                code = code * 8 + digit;
+                                digits += 1;
+                                characters.next();
+                            }
+                            None => break,
+                        }
+                    }
+                    char::from_u32(code & 0xff).unwrap_or('\0')
+                }
+                _ => return Err(ParseErrorKind::InvalidEscape),
+            }
+        } else {
+            character
+        };
+        if decoded == '\0' {
+            terminated = true;
+        }
+        if !terminated {
+            value.push(decoded);
+        }
+    }
+    Ok(value)
 }
 
 fn parse_directive(name: &str, arguments: &str) -> Result<DirectiveKind, ParseErrorKind> {

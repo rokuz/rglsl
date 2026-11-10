@@ -260,6 +260,7 @@ impl Analyzer<'_> {
             ExpressionKind::Bool(value) => {
                 Operand::constant(Type::BOOL, Some(Constant::single(Value::Bool(*value))))
             }
+            ExpressionKind::String(_) => Operand::constant(Type::STRING, None),
             ExpressionKind::Parenthesized(inner) => self.expression(inner),
             ExpressionKind::Subscript { base, index } => self.subscript(base, index),
             ExpressionKind::FunctionCall(call) => self.call(expression, call),
@@ -913,6 +914,7 @@ impl Analyzer<'_> {
     fn equality_type(&self, left: &Type, right: &Type) -> Option<Type> {
         let comparable = |ty: &Type| {
             !ty.is_void()
+                && !ty.is_string()
                 && !ty.contains_opaque(&self.types)
                 && !matches!(ty.kind, TypeKind::Block(_))
         };
@@ -1047,6 +1049,8 @@ impl Analyzer<'_> {
         }
         if then_operand.ty.contains_opaque(&self.types)
             || else_operand.ty.contains_opaque(&self.types)
+            || then_operand.ty.is_string()
+            || else_operand.ty.is_string()
         {
             return self.invalid_operands(span, "?:", &then_operand.ty, &else_operand.ty);
         }

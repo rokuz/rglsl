@@ -4143,3 +4143,82 @@ layout(location = 0) out vec4 o;
 void main() {
     o = texture(textures[index], vec2(0.5));
 }
+### string literals are statements and sequence operands | frag | ok
+#extension GL_EXT_debug_printf : enable
+void main() {
+    "text";
+    int a = ("text", 1);
+}
+### strings have no operators | frag | 4:InvalidOperands, 5:InvalidOperands, 6:InvalidOperands, 7:InvalidOperand
+#extension GL_EXT_debug_printf : enable
+void main() {
+    "a" + "b";
+    "a" == "b";
+    true ? "a" : "b";
+    -"a";
+}
+### strings convert to nothing | frag | 4:InvalidConstructor, 5:CannotConvert, 6:ConditionNotBool, 7:NoMatchingFunction
+#extension GL_EXT_debug_printf : enable
+void main() {
+    uint u = uint("foo");
+    int i = "bar";
+    if ("baz") {}
+    f("qux");
+}
+void f(int a) {}
+### debugPrintfEXT takes a string literal and any arguments | frag | ok
+#extension GL_EXT_debug_printf : enable
+struct S { int a; bool b; };
+layout(binding = 0) uniform sampler2D tex;
+void main() {
+    S s;
+    debugPrintfEXT("%d %s %f", true, "text", 1.0, s, ivec2(1), tex, (1, "seq"));
+}
+### debugPrintfEXT needs its extension | frag | 4:ExtensionRequired
+#extension GL_EXT_abort : enable
+void main() {
+    debugPrintfEXT("x");
+}
+### debugPrintfEXT format must be a string literal | frag | 4:InvalidBuiltinCall, 5:InvalidBuiltinCall, 6:InvalidBuiltinCall
+#extension GL_EXT_debug_printf : enable
+void main() {
+    debugPrintfEXT(("%d"), 3);
+    debugPrintfEXT(1);
+    debugPrintfEXT();
+}
+### abortEXT may have no message | comp | ok
+#extension GL_EXT_abort : enable
+#extension GL_EXT_buffer_reference : enable
+layout(buffer_reference) buffer R { int v; };
+layout(binding = 0) buffer B { R r; float f[3]; };
+struct S { int a; vec3 b; mat2 m; };
+void main() {
+    S s;
+    abortEXT();
+    abortEXT("message");
+    abortEXT("%d %v3d", true, bvec3(false), r, f, s, dvec2(1.0));
+}
+### abortEXT needs its extension | comp | 4:ExtensionRequired
+#extension GL_EXT_debug_printf : enable
+void main() {
+    abortEXT("x");
+}
+### abortEXT arguments must have a memory layout | comp | 11:InvalidBuiltinCall, 12:InvalidBuiltinCall, 14:InvalidBuiltinCall, 15:InvalidBuiltinCall, 16:InvalidBuiltinCall, 17:InvalidBuiltinCall, 18:InvalidBuiltinCall
+#extension GL_EXT_abort : enable
+layout(binding = 0) buffer B { int i; int unsized[]; } data;
+layout(binding = 1) uniform sampler2D tex;
+struct WithBool { int a; bool b; };
+void main() {
+    WithBool s;
+    bool flags[2];
+    int value = data.i;
+    bvec2 pair = bvec2(true);
+    abortEXT("x", tex);
+    abortEXT("x", data.unsized);
+    abortEXT("x", pair,
+        s);
+    abortEXT("x", flags);
+    abortEXT("x", "y");
+    abortEXT(data.i);
+    abortEXT(("x"));
+}

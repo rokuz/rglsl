@@ -319,7 +319,10 @@ impl FunctionLowerer<'_, '_> {
                         false
                     }
                     Some(
-                        &(IrStatement::Return { .. } | IrStatement::Continue | IrStatement::Kill),
+                        &(IrStatement::Return { .. }
+                        | IrStatement::Continue
+                        | IrStatement::Kill
+                        | IrStatement::Abort { .. }),
                     ) => false,
                     _ => true,
                 };

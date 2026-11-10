@@ -131,6 +131,7 @@ impl Evaluator {
             ExpressionKind::Bool(value) => {
                 Value::scalar(ScalarType::Bool, f64::from(u8::from(*value)))
             }
+            ExpressionKind::String(value) => panic!("cannot evaluate the string {value:?}"),
             ExpressionKind::Parenthesized(inner) => self.eval(inner),
             ExpressionKind::FieldSelection { base, field } => {
                 let base = self.eval(base);

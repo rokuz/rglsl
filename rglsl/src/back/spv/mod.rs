@@ -104,6 +104,7 @@ mod index;
 mod instructions;
 mod layout;
 mod mesh_shader;
+mod message;
 mod physical;
 mod plain_types;
 mod ray;
@@ -155,7 +156,7 @@ struct LogicalLayout {
 
 #[derive(Clone)]
 struct Instruction {
-    op: spirv::Op,
+    op: u32,
     wc: u32,
     type_id: Option<Word>,
     result_id: Option<Word>,
@@ -1036,6 +1037,10 @@ pub struct Writer {
 
     /// Non semantic debug printf extension `OpExtInstImport`
     debug_printf: Option<Word>,
+    debug_printf_strings: crate::FastHashMap<String, Word>,
+    raw_capabilities: crate::FastIndexSet<Word>,
+    utf_encoded: crate::FastHashSet<Word>,
+    laid_out_copies: crate::FastHashMap<Handle<crate::Type>, Word>,
     pub(crate) ray_query_initialization_tracking: bool,
 
     /// Whether the arguments to trace ray should be validated

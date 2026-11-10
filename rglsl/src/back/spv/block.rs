@@ -3989,6 +3989,18 @@ impl BlockContext<'_> {
                     self.function.consume(block, Instruction::kill());
                     return Ok(BlockExitDisposition::Discarded);
                 }
+                Statement::DebugPrintf {
+                    ref format,
+                    ref arguments,
+                } => self.write_debug_printf_statement(&mut block, format, arguments),
+                Statement::Abort {
+                    ref message,
+                    ty,
+                    ref arguments,
+                } => {
+                    self.write_abort(block, message, ty, arguments)?;
+                    return Ok(BlockExitDisposition::Discarded);
+                }
                 Statement::ControlBarrier(flags) => {
                     self.writer.write_control_barrier(flags, &mut block.body);
                 }

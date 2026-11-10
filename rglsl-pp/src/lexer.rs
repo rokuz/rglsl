@@ -912,6 +912,9 @@ impl FileInput {
             self.reset(mark);
             self.report(events, DiagnosticKind::UnterminatedString, at);
         }
+        if let Some(end) = name.find('\0') {
+            name.truncate(end);
+        }
         Token::with_text(Kind::String, &name, at)
     }
 }

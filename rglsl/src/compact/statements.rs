@@ -168,6 +168,21 @@ impl FunctionTracer<'_> {
                             self.expressions_used.insert(payload);
                         }
                     },
+                    St::DebugPrintf { ref arguments, .. } => {
+                        for argument in arguments {
+                            if let crate::DebugPrintfArgument::Value(value) = *argument {
+                                self.expressions_used.insert(value);
+                            }
+                        }
+                    }
+                    St::Abort {
+                        ty, ref arguments, ..
+                    } => {
+                        self.types_used.insert(ty);
+                        for &argument in arguments {
+                            self.expressions_used.insert(argument);
+                        }
+                    }
 
                     // Trivial statements.
                     St::Break
@@ -231,6 +246,7 @@ impl FunctionMap {
         &self,
         function: &mut crate::Function,
         function_map: &HandleMap<crate::Function>,
+        type_map: &HandleMap<crate::Type>,
     ) {
         let block = &mut function.body;
         let mut worklist: Vec<&mut [crate::Statement]> = vec![block];
@@ -406,6 +422,25 @@ impl FunctionMap {
                             adjust(payload);
                         }
                     },
+                    St::DebugPrintf {
+                        ref mut arguments, ..
+                    } => {
+                        for argument in arguments.iter_mut() {
+                            if let crate::DebugPrintfArgument::Value(ref mut value) = *argument {
+                                adjust(value);
+                            }
+                        }
+                    }
+                    St::Abort {
+                        ref mut ty,
+                        ref mut arguments,
+                        ..
+                    } => {
+                        type_map.adjust(ty);
+                        for argument in arguments.iter_mut() {
+                            adjust(argument);
+                        }
+                    }
 
                     // Trivial statements.
                     St::Break

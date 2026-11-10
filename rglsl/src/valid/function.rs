@@ -236,6 +236,57 @@ pub enum FunctionError {
     MismatchedPayloadType(Handle<crate::Type>, Handle<crate::Type>),
     #[error("The payload passed to `traceRay` must be a pointer directly to a global variable")]
     PayloadPointerNotGlobal,
+    #[error("The message type {0:?} of an abort does not hold its message and arguments")]
+    InvalidAbortMessage(Handle<crate::Type>),
+    #[error("The argument {0:?} of an abort does not match its message type")]
+    InvalidAbortArgument(Handle<crate::Expression>),
+}
+
+fn logically_matches(
+    types: &UniqueArena<crate::Type>,
+    left: Handle<crate::Type>,
+    right: Handle<crate::Type>,
+) -> bool {
+    use crate::TypeInner as Ti;
+    if left == right {
+        return true;
+    }
+    match (&types[left].inner, &types[right].inner) {
+        (
+            &Ti::Array {
+                base: left_base,
+                size: left_size,
+                ..
+            },
+            &Ti::Array {
+                base: right_base,
+                size: right_size,
+                ..
+            },
+        ) => left_size == right_size && logically_matches(types, left_base, right_base),
+        (
+            &Ti::Struct {
+                members: ref left_members,
+                ..
+            },
+            &Ti::Struct {
+                members: ref right_members,
+                ..
+            },
+        ) => {
+            left_members.len() == right_members.len()
+                && left_members
+                    .iter()
+                    .zip(right_members)
+                    .all(|(left, right)| logically_matches(types, left.ty, right.ty))
+        }
+        (left, right) => left == right,
+    }
+}
+
+pub(crate) fn abort_message_length(message: &str) -> u32 {
+    let length = u32::try_from(message.len()).unwrap_or(u32::MAX - 4);
+    (length + 1).next_multiple_of(4)
 }
 
 bitflags::bitflags! {
@@ -1043,6 +1094,62 @@ impl super::Validator {
                 }
                 S::Kill => {
                     stages &= super::ShaderStages::FRAGMENT;
+                }
+                S::DebugPrintf { ref arguments, .. } => {
+                    for argument in arguments {
+                        if let crate::DebugPrintfArgument::Value(value) = *argument {
+                            context.resolve_type_inner(value, &self.valid_expression_set)?;
+                        }
+                    }
+                }
+                S::Abort {
+                    ref message,
+                    ty,
+                    ref arguments,
+                } => {
+                    let invalid_message = || {
+                        FunctionError::InvalidAbortMessage(ty)
+                            .with_span_static(span, "invalid abort message")
+                    };
+                    let Ti::Struct { ref members, .. } = context.types[ty].inner else {
+                        return Err(invalid_message());
+                    };
+                    let Some((text, values)) = members.split_first() else {
+                        return Err(invalid_message());
+                    };
+                    let text_ok = match context.types[text.ty].inner {
+                        Ti::Array {
+                            base,
+                            size: crate::ArraySize::Constant(length),
+                            ..
+                        } => {
+                            context.types[base].inner
+                                == Ti::Scalar(crate::Scalar {
+                                    kind: crate::ScalarKind::Sint,
+                                    width: 1,
+                                })
+                                && length.get() == abort_message_length(message)
+                        }
+                        _ => false,
+                    };
+                    if !text_ok || message.contains('\0') || values.len() != arguments.len() {
+                        return Err(invalid_message());
+                    }
+                    for (&argument, member) in arguments.iter().zip(values) {
+                        let matches =
+                            match *context.resolve_type(argument, &self.valid_expression_set)? {
+                                TypeResolution::Handle(handle) => {
+                                    logically_matches(context.types, handle, member.ty)
+                                }
+                                TypeResolution::Value(ref inner) => {
+                                    *inner == context.types[member.ty].inner
+                                }
+                            };
+                        if !matches {
+                            return Err(FunctionError::InvalidAbortArgument(argument)
+                                .with_span_handle(argument, context.expressions));
+                        }
+                    }
                 }
                 S::ControlBarrier(barrier) | S::MemoryBarrier(barrier) => {
                     stages &= super::ShaderStages::COMPUTE_LIKE;

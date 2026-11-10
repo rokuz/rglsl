@@ -1237,6 +1237,38 @@ impl FunctionInfo {
                     }
                     FunctionUniformity::new()
                 }
+                S::DebugPrintf { ref arguments, .. } => {
+                    let mut non_uniform_result = None;
+                    for argument in arguments {
+                        if let crate::DebugPrintfArgument::Value(value) = *argument {
+                            non_uniform_result = non_uniform_result.or(self.add_ref(value));
+                        }
+                    }
+                    FunctionUniformity {
+                        result: Uniformity {
+                            non_uniform_result,
+                            requirements: UniformityRequirements::empty(),
+                        },
+                        exit: ExitFlags::empty(),
+                    }
+                }
+                S::Abort { ref arguments, .. } => {
+                    let mut non_uniform_result = None;
+                    for &argument in arguments {
+                        non_uniform_result = non_uniform_result.or(self.add_ref(argument));
+                    }
+                    FunctionUniformity {
+                        result: Uniformity {
+                            non_uniform_result,
+                            requirements: UniformityRequirements::empty(),
+                        },
+                        exit: if disruptor.is_some() {
+                            ExitFlags::MAY_KILL
+                        } else {
+                            ExitFlags::empty()
+                        },
+                    }
+                }
             };
 
             disruptor = disruptor.or(uniformity.exit_disruptor());

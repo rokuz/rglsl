@@ -56,7 +56,8 @@ fn ensure_returns(block: &mut Block, value: Option<Handle<Expression>>) {
             &mut (Statement::Break
             | Statement::Continue
             | Statement::Return { .. }
-            | Statement::Kill),
+            | Statement::Kill
+            | Statement::Abort { .. }),
         ) => {}
         _ => block.push(Statement::Return { value }, Span::UNDEFINED),
     }
@@ -171,7 +172,8 @@ impl<'l, 'a> FunctionLowerer<'l, 'a> {
                 &(Statement::Break
                     | Statement::Continue
                     | Statement::Return { .. }
-                    | Statement::Kill)
+                    | Statement::Kill
+                    | Statement::Abort { .. })
             )
         )
     }
