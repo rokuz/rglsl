@@ -21,6 +21,10 @@ goal, the language rules for linkage and `#include`, and the milestones (M0–M9
 
 ## Rules
 
+- **No comments.** Do not write comments in code (`//`, `///`, `/* */`), in tests or in
+  scripts, unless the user explicitly asks for one. Names and structure carry the meaning;
+  rationale goes in commit messages and `docs/`. Existing comments are left alone unless the
+  user asks to remove them.
 - **Safe Rust only.** `unsafe_code` is forbidden in every crate (workspace lints, and
   the `rglsl` crate's own `[lints]`). Do not add `allow(unsafe_code)`.
 - **No panics on user input.** A crash in the corpus run is always a bug.
