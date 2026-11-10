@@ -222,9 +222,16 @@ impl FromStr for ShaderStage {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         use rglsl::ShaderStage;
         Ok(Self(match s.to_lowercase().as_str() {
+            // The names are the file extensions glslang uses.
             "frag" | "fragment" => ShaderStage::Fragment,
             "comp" | "compute" => ShaderStage::Compute,
             "vert" | "vertex" => ShaderStage::Vertex,
+            "task" => ShaderStage::Task,
+            "mesh" => ShaderStage::Mesh,
+            "rgen" => ShaderStage::RayGeneration,
+            "rmiss" => ShaderStage::Miss,
+            "rahit" => ShaderStage::AnyHit,
+            "rchit" => ShaderStage::ClosestHit,
             _ => return Err(anyhow!("Invalid shader stage: {s}")),
         }))
     }
@@ -635,13 +642,16 @@ struct Parsed {
 }
 
 fn parse_input(input_path: &Path, input: Vec<u8>, params: &Parameters) -> anyhow::Result<Parsed> {
+    let extension = input_path
+        .extension()
+        .and_then(|extension| extension.to_str());
+    // `shader.frag` is GLSL for the fragment stage, as for glslang.
+    let extension_stage = extension.and_then(|extension| extension.parse::<ShaderStage>().ok());
     let input_kind = match params.input_kind {
         Some(kind) => kind,
-        None => input_path
-            .extension()
-            .context("Input filename has no extension")?
-            .to_str()
-            .context("Input filename not valid unicode")?
+        None if extension_stage.is_some() => InputKind::Glsl,
+        None => extension
+            .context("Input filename has no extension, or it is not valid unicode")?
             .parse()
             .context("Unable to determine --input-kind from filename")?,
     };
@@ -681,7 +691,7 @@ fn parse_input(input_path: &Path, input: Vec<u8>, params: &Parameters) -> anyhow
             }
         }
         InputKind::Glsl => {
-            let shader_stage = match params.shader_stage {
+            let shader_stage = match params.shader_stage.or(extension_stage) {
                 Some(shader_stage) => shader_stage,
                 None => {
                     // filename.shader_stage.glsl -> filename.shader_stage
