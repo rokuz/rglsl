@@ -112,6 +112,7 @@ fn populate_atomic_result() {
                 init: None,
                 memory_decorations: rglsl::MemoryDecorations::empty(),
                 io: None,
+                xfb: None,
             },
             span,
         );
@@ -286,6 +287,7 @@ fn emit_workgroup_uniform_load_result() {
                 init: None,
                 memory_decorations: rglsl::MemoryDecorations::empty(),
                 io: None,
+                xfb: None,
             },
             span,
         );
@@ -456,6 +458,7 @@ impl BindingArrayFixture {
                         binding: None,
                         offset: 0,
                         matrix_layout: None,
+                        xfb_offset: None,
                     }],
                     span: 4,
                 },
@@ -625,6 +628,7 @@ fn invalid_local_var_override_sized_array() {
             init: None,
             memory_decorations: rglsl::MemoryDecorations::empty(),
             io: None,
+            xfb: None,
         },
         span,
     );
@@ -900,6 +904,7 @@ fn invalid_constructor_unsized_struct() {
                     binding: None,
                     offset: 0,
                     matrix_layout: None,
+                    xfb_offset: None,
                 }],
                 span: 4,
             },
@@ -1013,6 +1018,7 @@ fn unexpected_task_payload() {
             init: None,
             memory_decorations: ir::MemoryDecorations::empty(),
             io: None,
+            xfb: None,
         },
         err_span,
     );
@@ -1028,6 +1034,7 @@ fn unexpected_task_payload() {
         task_payload: Some(payload_handle), // invalid for compute stage
         incoming_ray_payload: None,
         interface: Vec::new(),
+        transform_feedback: false,
     };
     module.entry_points.push(entry_point);
 

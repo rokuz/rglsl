@@ -113,6 +113,11 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
 - **Cull distances are supported by the SPIR-V backend** (`Capabilities::CULL_DISTANCE` is in
   `back::spv::supported_capabilities`): every vertex shader declares `gl_PerVertex` with
   `gl_CullDistance`, as glslang does.
+- **Transform feedback.** `EntryPoint::transform_feedback` (new) adds the `TransformFeedback`
+  capability and the `Xfb` execution mode; `GlobalVariable::xfb` (new, `XfbBinding`) is emitted
+  as `XfbBuffer`, `XfbStride` and `Offset` on the variable, and `StructMember::xfb_offset` (new)
+  as `Offset` on a member of an interface block. The validator allows `xfb` only on `Output`
+  globals.
 
 ## Cherry-picked upstream commits
 

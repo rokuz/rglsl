@@ -1428,7 +1428,7 @@ fn invariant_position_in_gl_per_vertex() {
 }
 
 #[test]
-fn post_depth_coverage_and_transform_feedback_are_not_dropped() {
+fn post_depth_coverage_is_not_dropped() {
     let error = parse(
         ShaderStage::Fragment,
         "#version 450
@@ -1449,19 +1449,287 @@ fn post_depth_coverage_and_transform_feedback_are_not_dropped() {
     )
     .unwrap_err();
     assert!(error.contains("post_depth_coverage"), "{error}");
+}
 
-    for source in [
+fn block_variable_decorations(module: &dr::Module, block: &str) -> Vec<(Decoration, Vec<u32>)> {
+    let structure = named(module, block);
+    let pointer = module
+        .types_global_values
+        .iter()
+        .find(|inst| {
+            inst.class.opcode == Op::TypePointer && inst.operands[1] == Operand::IdRef(structure)
+        })
+        .and_then(|inst| inst.result_id)
+        .unwrap_or_else(|| panic!("no pointer to {block}"));
+    let variable = module
+        .types_global_values
+        .iter()
+        .find(|inst| inst.class.opcode == Op::Variable && inst.result_type == Some(pointer))
+        .and_then(|inst| inst.result_id)
+        .unwrap_or_else(|| panic!("no variable of {block}"));
+    let mut decorations: Vec<_> = module
+        .annotations
+        .iter()
+        .filter(|inst| {
+            inst.class.opcode == Op::Decorate && inst.operands[0] == Operand::IdRef(variable)
+        })
+        .map(|inst| {
+            let Operand::Decoration(decoration) = inst.operands[1] else {
+                panic!("OpDecorate without a decoration");
+            };
+            (decoration, inst.operands[2..].iter().map(literal).collect())
+        })
+        .collect();
+    decorations.sort_by_key(|&(decoration, _)| decoration as u32);
+    decorations
+}
+
+fn sorted_variable_decorations(module: &dr::Module, name: &str) -> Vec<(Decoration, Vec<u32>)> {
+    let mut decorations = variable_decorations(module, name);
+    decorations.sort_by_key(|&(decoration, _)| decoration as u32);
+    decorations
+}
+
+fn has_execution_mode(module: &dr::Module, mode: spirv::ExecutionMode) -> bool {
+    module
+        .execution_modes
+        .iter()
+        .any(|inst| inst.operands[1] == Operand::ExecutionMode(mode))
+}
+
+#[test]
+fn transform_feedback_matches_glslang() {
+    let module = compile_valid(
+        ShaderStage::Vertex,
         "#version 450
-        layout(xfb_buffer = 3, xfb_offset = 16) out gl_PerVertex { vec4 gl_Position; };
+        layout(xfb_buffer = 3) out;
+        layout(xfb_stride = 48) out;
+        layout(xfb_offset = 12, location = 0) out float out1;
+        layout(xfb_buffer = 2) out;
+        layout(location = 1) out outXfb {
+            layout(xfb_buffer = 2, xfb_stride = 32, xfb_offset = 8) float out2;
+        };
+        layout(xfb_buffer = 1, location = 3) out outXfb2 {
+            layout(xfb_stride = 64, xfb_offset = 60) float out3;
+        };
+        layout(location = 4, xfb_buffer = 0, xfb_offset = 4) out float out4;
+        layout(location = 5, xfb_buffer = 3, xfb_offset = 0) out struct S { float a; vec2 b; } s;
+        layout(location = 7, xfb_buffer = 0, xfb_offset = 12) out block2 {
+            vec4 v;
+            float u;
+            layout(xfb_offset = 40) vec4 w;
+            vec4 x;
+        };
+        void main() {}",
+    );
+    assert!(has_capability(
+        &module,
+        spirv::Capability::TransformFeedback
+    ));
+    assert!(has_execution_mode(&module, spirv::ExecutionMode::Xfb));
+    let xfb = |location: u32, offset: Option<u32>, buffer: u32, stride: u32| {
+        let mut decorations = vec![(Decoration::Location, vec![location])];
+        decorations.extend(offset.map(|offset| (Decoration::Offset, vec![offset])));
+        decorations.push((Decoration::XfbBuffer, vec![buffer]));
+        decorations.push((Decoration::XfbStride, vec![stride]));
+        decorations
+    };
+    assert_eq!(
+        sorted_variable_decorations(&module, "out1"),
+        xfb(0, Some(12), 3, 48)
+    );
+    assert_eq!(
+        sorted_variable_decorations(&module, "out4"),
+        xfb(4, Some(4), 0, 72)
+    );
+    assert_eq!(
+        sorted_variable_decorations(&module, "s"),
+        xfb(5, Some(0), 3, 48)
+    );
+    assert_eq!(
+        block_variable_decorations(&module, "outXfb"),
+        xfb(1, None, 2, 32)
+    );
+    assert_eq!(
+        block_variable_decorations(&module, "outXfb2"),
+        xfb(3, None, 1, 64)
+    );
+    assert_eq!(
+        block_variable_decorations(&module, "block2"),
+        xfb(7, None, 0, 72)
+    );
+    assert_eq!(
+        member_decorations(&module, "outXfb"),
+        [(0, Decoration::Offset, vec![8])]
+    );
+    assert_eq!(
+        member_decorations(&module, "outXfb2"),
+        [(0, Decoration::Offset, vec![60])]
+    );
+    assert_eq!(
+        member_decorations(&module, "block2")
+            .into_iter()
+            .filter(|&(_, decoration, _)| decoration == Decoration::Offset)
+            .map(|(member, _, offset)| (member, offset[0]))
+            .collect::<Vec<_>>(),
+        [(0, 12), (1, 28), (2, 40), (3, 56)]
+    );
+
+    let module = compile_valid(
+        ShaderStage::Vertex,
+        "#version 450
+        layout(location = 0) out vec4 c;
+        void main() { c = vec4(1.0); gl_Position = c; }",
+    );
+    assert!(!has_capability(
+        &module,
+        spirv::Capability::TransformFeedback
+    ));
+    assert!(!has_execution_mode(&module, spirv::ExecutionMode::Xfb));
+    assert_eq!(
+        sorted_variable_decorations(&module, "c"),
+        [(Decoration::Location, vec![0])]
+    );
+
+    let module = compile_valid(
+        ShaderStage::Vertex,
+        "#version 450
+        layout(xfb_buffer = 1) out;
+        void main() {}",
+    );
+    assert!(has_capability(
+        &module,
+        spirv::Capability::TransformFeedback
+    ));
+    assert!(has_execution_mode(&module, spirv::ExecutionMode::Xfb));
+}
+
+#[test]
+fn transform_feedback_of_gl_per_vertex() {
+    let module = compile_valid(
+        ShaderStage::Vertex,
+        "#version 450
+        layout(xfb_buffer = 1, xfb_stride = 64) out;
+        layout(xfb_buffer = 1, xfb_offset = 16) out gl_PerVertex {
+            float gl_PointSize;
+            vec4 gl_Position;
+        };
+        void main() { gl_Position = vec4(1.0); gl_PointSize = 2.0; }",
+    );
+    assert_eq!(
+        member_decorations(&module, "gl_PerVertex"),
+        [
+            (
+                0,
+                Decoration::BuiltIn,
+                vec![spirv::BuiltIn::Position as u32]
+            ),
+            (0, Decoration::Offset, vec![20]),
+            (
+                1,
+                Decoration::BuiltIn,
+                vec![spirv::BuiltIn::PointSize as u32]
+            ),
+            (1, Decoration::Offset, vec![16]),
+        ]
+    );
+    assert_eq!(
+        block_variable_decorations(&module, "gl_PerVertex"),
+        [
+            (Decoration::XfbBuffer, vec![1]),
+            (Decoration::XfbStride, vec![64])
+        ]
+    );
+
+    let module = compile_valid(
+        ShaderStage::Vertex,
+        "#version 450
+        layout(xfb_buffer = 3, xfb_offset = 16) out gl_PerVertex {
+            layout(xfb_stride = 80) vec4 gl_Position;
+        };
         void main() { gl_Position = vec4(1.0); }",
+    );
+    assert_eq!(
+        block_variable_decorations(&module, "gl_PerVertex"),
+        [
+            (Decoration::XfbBuffer, vec![3]),
+            (Decoration::XfbStride, vec![80])
+        ]
+    );
+
+    let module = compile_valid(
+        ShaderStage::Vertex,
         "#version 450
-        layout(location = 0, xfb_offset = 0) out vec4 v;
-        void main() { v = vec4(1.0); gl_Position = v; }",
-        "#version 450
-        layout(location = 0) out B { layout(xfb_offset = 0) vec4 v; };
-        void main() { v = vec4(1.0); gl_Position = v; }",
+        layout(xfb_buffer = 2) out;
+        layout(location = 5, xfb_stride = 20) out block { float y1; vec4 y2; };
+        void main() { y1 = 7.0; gl_Position = vec4(0.0); }",
+    );
+    assert_eq!(
+        block_variable_decorations(&module, "block"),
+        [
+            (Decoration::Location, vec![5]),
+            (Decoration::XfbBuffer, vec![2]),
+            (Decoration::XfbStride, vec![20])
+        ]
+    );
+    assert_eq!(
+        block_variable_decorations(&module, "gl_PerVertex"),
+        [
+            (Decoration::XfbBuffer, vec![0]),
+            (Decoration::XfbStride, vec![0])
+        ]
+    );
+}
+
+#[test]
+fn transform_feedback_errors() {
+    for (stage, source, expected) in [
+        (
+            ShaderStage::Vertex,
+            "#version 450
+            layout(location = 0, xfb_offset = 0) out vec4 a;
+            layout(location = 1, xfb_offset = 8) out vec4 b;
+            void main() {}",
+            "overlapping offsets",
+        ),
+        (
+            ShaderStage::Vertex,
+            "#version 450
+            layout(location = 0, xfb_offset = 0, xfb_stride = 8) out vec4 a;
+            void main() {}",
+            "xfb_stride is too small",
+        ),
+        (
+            ShaderStage::Vertex,
+            "#version 450
+            layout(xfb_stride = 16) out;
+            layout(location = 0, xfb_stride = 32) out vec4 a;
+            void main() {}",
+            "all stride settings must match",
+        ),
+        (
+            ShaderStage::Vertex,
+            "#version 450
+            layout(location = 0, xfb_offset = 0) in vec4 a;
+            void main() {}",
+            "can only be used on an output",
+        ),
+        (
+            ShaderStage::Vertex,
+            "#version 450
+            layout(location = 0, xfb_offset = 2) out float a;
+            void main() {}",
+            "multiple of size of first component",
+        ),
+        (
+            ShaderStage::Fragment,
+            "#version 450
+            layout(location = 0, xfb_offset = 0) out vec4 a;
+            void main() { a = vec4(1.0); }",
+            "not supported in this stage",
+        ),
     ] {
-        let error = parse(ShaderStage::Vertex, source).unwrap_err();
-        assert!(error.contains("transform feedback"), "{error}");
+        let error = parse(stage, source).unwrap_err();
+        assert!(error.contains(expected), "{error}");
     }
 }

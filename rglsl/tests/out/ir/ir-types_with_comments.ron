@@ -39,6 +39,7 @@
                         binding: None,
                         offset: 0,
                         matrix_layout: None,
+                        xfb_offset: None,
                     ),
                 ],
                 span: 4,
@@ -54,6 +55,7 @@
                         binding: None,
                         offset: 0,
                         matrix_layout: None,
+                        xfb_offset: None,
                     ),
                 ],
                 span: 4,
@@ -88,6 +90,7 @@
             init: None,
             memory_decorations: (""),
             io: None,
+            xfb: None,
         ),
         (
             name: Some("w_mem"),
@@ -97,6 +100,7 @@
             init: None,
             memory_decorations: (""),
             io: None,
+            xfb: None,
         ),
         (
             name: Some("w_mem2"),
@@ -106,6 +110,7 @@
             init: None,
             memory_decorations: (""),
             io: None,
+            xfb: None,
         ),
     ],
     global_expressions: [
@@ -184,6 +189,7 @@
             task_payload: None,
             incoming_ray_payload: None,
             interface: [],
+            transform_feedback: false,
         ),
     ],
     diagnostic_filters: [],

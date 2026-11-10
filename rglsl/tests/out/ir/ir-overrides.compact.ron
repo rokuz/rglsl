@@ -90,6 +90,7 @@
             init: Some(10),
             memory_decorations: (""),
             io: None,
+            xfb: None,
         ),
         (
             name: Some("store_override"),
@@ -99,6 +100,7 @@
             init: None,
             memory_decorations: (""),
             io: None,
+            xfb: None,
         ),
     ],
     global_expressions: [
@@ -229,6 +231,7 @@
             task_payload: None,
             incoming_ray_payload: None,
             interface: [],
+            transform_feedback: false,
         ),
     ],
     diagnostic_filters: [],

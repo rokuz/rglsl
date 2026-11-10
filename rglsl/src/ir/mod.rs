@@ -682,6 +682,8 @@ pub struct StructMember {
     /// column at the natural alignment of its vector type.
     #[cfg_attr(feature = "deserialize", serde(default))]
     pub matrix_layout: Option<MatrixLayout>,
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    pub xfb_offset: Option<u32>,
 }
 
 /// The memory layout of a matrix in a buffer: [`StructMember::matrix_layout`].
@@ -1214,6 +1216,18 @@ pub struct GlobalVariable {
     /// [`Output`]: AddressSpace::Output
     #[cfg_attr(feature = "deserialize", serde(default))]
     pub io: Option<Binding>,
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    pub xfb: Option<XfbBinding>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub struct XfbBinding {
+    pub buffer: u32,
+    pub stride: u32,
+    pub offset: Option<u32>,
 }
 
 /// Variable defined at function level.
@@ -2582,6 +2596,8 @@ pub struct EntryPoint {
     /// [`Output`]: AddressSpace::Output
     #[cfg_attr(feature = "deserialize", serde(default))]
     pub interface: Vec<Handle<GlobalVariable>>,
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    pub transform_feedback: bool,
 }
 
 /// Return types predeclared for the frexp, modf, and atomicCompareExchangeWeak built-in functions.

@@ -10,8 +10,8 @@ Shaders that glslang's own test suite (`gtests/*.FromFile.cpp`) compiles under V
 
 | Stage | Files | accept | diag | valid | interface | exec | link | crashes |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| **all** | 694 | 193 / 694 (27.8 %) | 55 / 143 (38.5 %) | 50 / 50 (100.0 %) | – | – | – | 0 |
-| vert | 68 | 27 / 68 (39.7 %) | 8 / 9 (88.9 %) | 18 / 18 (100.0 %) | – | – | – | 0 |
+| **all** | 694 | 197 / 694 (28.4 %) | 55 / 143 (38.5 %) | 54 / 54 (100.0 %) | – | – | – | 0 |
+| vert | 68 | 31 / 68 (45.6 %) | 8 / 9 (88.9 %) | 22 / 22 (100.0 %) | – | – | – | 0 |
 | tesc | 7 | 1 / 7 (14.3 %) | 0 / 1 (0.0 %) | – | – | – | – | 0 |
 | tese | 4 | 0 / 4 (0.0 %) | – | – | – | – | – | 0 |
 | geom | 4 | 0 / 4 (0.0 %) | – | – | – | – | – | 0 |
@@ -30,7 +30,7 @@ Shaders that glslang's own test suite (`gtests/*.FromFile.cpp`) compiles under V
 
 | | we accept | we reject |
 |---|---:|---:|
-| glslang accepts | 50 | 501 |
+| glslang accepts | 54 | 497 |
 | glslang rejects | 0 | 143 |
 
 ## glslang OpenGL tests, compiled for Vulkan
@@ -39,8 +39,8 @@ Shaders that glslang's own test suite compiles under OpenGL semantics. Here glsl
 
 | Stage | Files | accept | diag | valid | interface | exec | link | crashes |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| **all** | 218 | 170 / 218 (78.0 %) | 68 / 145 (46.9 %) | 25 / 25 (100.0 %) | – | – | – | 0 |
-| vert | 73 | 55 / 73 (75.3 %) | 21 / 35 (60.0 %) | 20 / 20 (100.0 %) | – | – | – | 0 |
+| **all** | 218 | 174 / 218 (79.8 %) | 68 / 145 (46.9 %) | 29 / 29 (100.0 %) | – | – | – | 0 |
+| vert | 73 | 59 / 73 (80.8 %) | 21 / 35 (60.0 %) | 24 / 24 (100.0 %) | – | – | – | 0 |
 | tesc | 6 | 5 / 6 (83.3 %) | 0 / 5 (0.0 %) | – | – | – | – | 0 |
 | tese | 2 | 2 / 2 (100.0 %) | 0 / 2 (0.0 %) | – | – | – | – | 0 |
 | geom | 11 | 6 / 11 (54.5 %) | 0 / 6 (0.0 %) | – | – | – | – | 0 |
@@ -59,7 +59,7 @@ Shaders that glslang's own test suite compiles under OpenGL semantics. Here glsl
 
 | | we accept | we reject |
 |---|---:|---:|
-| glslang accepts | 25 | 48 |
+| glslang accepts | 29 | 44 |
 | glslang rejects | 0 | 145 |
 
 ## Modes

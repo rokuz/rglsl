@@ -67,6 +67,7 @@
                         binding: None,
                         offset: 0,
                         matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("b"),
@@ -74,6 +75,7 @@
                         binding: None,
                         offset: 4,
                         matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("g"),
@@ -81,6 +83,7 @@
                         binding: None,
                         offset: 8,
                         matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("k"),
@@ -88,6 +91,7 @@
                         binding: None,
                         offset: 12,
                         matrix_layout: None,
+                        xfb_offset: None,
                     ),
                 ],
                 span: 16,
@@ -103,6 +107,7 @@
                         binding: None,
                         offset: 0,
                         matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("gamut_conversion_matrix"),
@@ -110,6 +115,7 @@
                         binding: None,
                         offset: 64,
                         matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("src_tf"),
@@ -117,6 +123,7 @@
                         binding: None,
                         offset: 112,
                         matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("dst_tf"),
@@ -124,6 +131,7 @@
                         binding: None,
                         offset: 128,
                         matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("sample_transform"),
@@ -131,6 +139,7 @@
                         binding: None,
                         offset: 144,
                         matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("load_transform"),
@@ -138,6 +147,7 @@
                         binding: None,
                         offset: 168,
                         matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("size"),
@@ -145,6 +155,7 @@
                         binding: None,
                         offset: 192,
                         matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("num_planes"),
@@ -152,6 +163,7 @@
                         binding: None,
                         offset: 200,
                         matrix_layout: None,
+                        xfb_offset: None,
                     ),
                 ],
                 span: 208,
@@ -204,6 +216,7 @@
             init: None,
             memory_decorations: (""),
             io: None,
+            xfb: None,
         ),
         (
             name: Some("samp"),
@@ -216,6 +229,7 @@
             init: None,
             memory_decorations: (""),
             io: None,
+            xfb: None,
         ),
     ],
     global_expressions: [],
@@ -440,6 +454,7 @@
             task_payload: None,
             incoming_ray_payload: None,
             interface: [],
+            transform_feedback: false,
         ),
         (
             name: "vertex_main",
@@ -480,6 +495,7 @@
             task_payload: None,
             incoming_ray_payload: None,
             interface: [],
+            transform_feedback: false,
         ),
         (
             name: "compute_main",
@@ -515,6 +531,7 @@
             task_payload: None,
             incoming_ray_payload: None,
             interface: [],
+            transform_feedback: false,
         ),
     ],
     diagnostic_filters: [],

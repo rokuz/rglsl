@@ -1834,6 +1834,14 @@ impl Writer {
             }
         }
 
+        if entry_point.transform_feedback {
+            self.require_any(
+                "transform feedback",
+                &[spirv::Capability::TransformFeedback],
+            )?;
+            self.write_execution_mode(function_id, spirv::ExecutionMode::Xfb)?;
+        }
+
         let exec_model = match entry_point.stage {
             crate::ShaderStage::Vertex => spirv::ExecutionModel::Vertex,
             crate::ShaderStage::Fragment => {
@@ -3499,6 +3507,18 @@ impl Writer {
             }
         }
 
+        if let Some(xfb) = global_variable.xfb {
+            self.require_any(
+                "transform feedback",
+                &[spirv::Capability::TransformFeedback],
+            )?;
+            self.decorate(id, Decoration::XfbBuffer, &[xfb.buffer]);
+            self.decorate(id, Decoration::XfbStride, &[xfb.stride]);
+            if let Some(offset) = xfb.offset {
+                self.decorate(id, Decoration::Offset, &[offset]);
+            }
+        }
+
         if let crate::AddressSpace::RayPayload | crate::AddressSpace::IncomingRayPayload =
             global_variable.space
         {
@@ -3602,6 +3622,7 @@ impl Writer {
                         binding: None,
                         offset: 0,
                         matrix_layout: None,
+                        xfb_offset: None,
                     };
                     self.decorate_struct_member(
                         wrapper_type_id,
@@ -3701,11 +3722,19 @@ impl Writer {
             return Err(Error::Validation("an interface block is not a structure"));
         };
         for (index, member) in members.iter().enumerate() {
+            let index = u32::try_from(index)
+                .map_err(|_| Error::Validation("too many members in an interface block"))?;
+            if let Some(offset) = member.xfb_offset {
+                self.annotations.push(Instruction::member_decorate(
+                    struct_id,
+                    index,
+                    spirv::Decoration::Offset,
+                    &[offset],
+                ));
+            }
             let Some(ref binding) = member.binding else {
                 continue;
             };
-            let index = u32::try_from(index)
-                .map_err(|_| Error::Validation("too many members in an interface block"))?;
             let unused_distance = match *binding {
                 crate::Binding::BuiltIn(crate::BuiltIn::ClipDistances) => {
                     Some(spirv::BuiltIn::ClipDistance)

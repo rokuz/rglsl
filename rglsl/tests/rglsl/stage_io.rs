@@ -83,6 +83,7 @@ impl Builder {
                 init: None,
                 memory_decorations: rglsl::MemoryDecorations::empty(),
                 io,
+                xfb: None,
             },
             Span::UNDEFINED,
         )
@@ -102,6 +103,7 @@ impl Builder {
                 binding: Some(binding.clone()),
                 offset: 16 * u32::try_from(index).unwrap(),
                 matrix_layout: None,
+                xfb_offset: None,
             })
             .collect::<Vec<_>>();
         let span = 16 * u32::try_from(members.len()).unwrap();
@@ -191,6 +193,7 @@ impl Builder {
             task_payload: None,
             incoming_ray_payload: None,
             interface: self.interface,
+            transform_feedback: false,
         });
         self.module
     }
@@ -530,6 +533,7 @@ fn invalid_interfaces_are_rejected() {
                 init: None,
                 memory_decorations: rglsl::MemoryDecorations::empty(),
                 io: None,
+                xfb: None,
             },
             Span::UNDEFINED,
         );

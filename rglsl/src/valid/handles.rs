@@ -162,6 +162,7 @@ impl super::Validator {
                 init,
                 memory_decorations: _,
                 io: _,
+                xfb: _,
             } = global_variable;
             validate_type(ty)?;
             if let Some(init_expr) = init {

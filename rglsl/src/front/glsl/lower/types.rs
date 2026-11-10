@@ -233,6 +233,7 @@ impl Lowerer<'_> {
                 binding: None,
                 offset,
                 matrix_layout: info.matrix_layout,
+                xfb_offset: None,
             });
             offset = offset.saturating_add(info.span);
         }
@@ -341,6 +342,7 @@ impl Lowerer<'_> {
                 binding: None,
                 offset,
                 matrix_layout: info.matrix_layout,
+                xfb_offset: None,
             });
             offset = offset.saturating_add(info.span);
         }

@@ -12,6 +12,7 @@ use rglsl_sema::types::{
 use rglsl_sema::SymbolId;
 
 use super::types::{image_dimension, sampled_kind};
+use super::xfb;
 use super::{internal, semantic, unsupported, GlobalRef, Initialization, Lowerer, Packing, Result};
 use crate::proc::Alignment;
 use crate::{
@@ -184,10 +185,13 @@ impl<'a> Lowerer<'a> {
                 .iter()
                 .any(|name| name.starts_with("xfb_"))
         }) {
-            return Err(unsupported(
-                "transform feedback (`xfb_*` layout qualifiers)",
-                self.at(qualifier.span),
-            ));
+            if self.xfb.default_buffer.is_none() {
+                return Err(semantic(
+                    "transform feedback qualifier: not supported in this stage",
+                    self.at(qualifier.span),
+                ));
+            }
+            self.xfb.mode = true;
         }
         match declaration.kind {
             DeclarationKind::FunctionPrototype(_) | DeclarationKind::Precision { .. } => Ok(()),
@@ -257,6 +261,19 @@ impl<'a> Lowerer<'a> {
                         }
                         _ => {}
                     }
+                }
+                Ok(())
+            }
+            Some(StorageQualifier::Out) => {
+                let qualifier = Some(qualifier);
+                if let Some(buffer) = xfb::ast_layout_value(self, qualifier, "xfb_buffer") {
+                    self.xfb.default_buffer = Some(buffer);
+                }
+                if let (Some(buffer), Some(stride)) = (
+                    self.xfb.default_buffer,
+                    xfb::ast_layout_value(self, qualifier, "xfb_stride"),
+                ) {
+                    self.xfb_stride(buffer, stride, at)?;
                 }
                 Ok(())
             }
@@ -340,6 +357,7 @@ impl<'a> Lowerer<'a> {
                         init: None,
                         memory_decorations: memory(qualifiers),
                         io: None,
+                        xfb: None,
                     },
                     at,
                 );
@@ -394,6 +412,7 @@ impl<'a> Lowerer<'a> {
                 init,
                 memory_decorations: MemoryDecorations::empty(),
                 io: None,
+                xfb: None,
             },
             at,
         );
@@ -417,6 +436,12 @@ impl<'a> Lowerer<'a> {
         }
         if qualifiers.invariant && input {
             return Err(semantic("invariant can only apply to an output", at));
+        }
+        if input && xfb::has_xfb(qualifiers) {
+            return Err(semantic(
+                "xfb layout qualifier can only be used on an output",
+                at,
+            ));
         }
         let mut declared = variable.ty.clone();
         if declared.outer_size() == Some(GlslArraySize::Unsized) {
@@ -489,6 +514,7 @@ impl<'a> Lowerer<'a> {
                     invariant: qualifiers.invariant,
                     patch: false,
                 }),
+                xfb: None,
             },
             at,
         );
@@ -496,8 +522,19 @@ impl<'a> Lowerer<'a> {
         self.globals.insert(symbol, GlobalRef::Variable(handle));
         if input {
             self.inputs.insert(name);
-        } else {
-            self.outputs.insert(name, handle);
+            return Ok(());
+        }
+        self.outputs.insert(name, handle);
+        let buffer = xfb::layout_value(qualifiers, "xfb_buffer").or(self.xfb.default_buffer);
+        if let Some(buffer) = buffer {
+            let offset = xfb::layout_value(qualifiers, "xfb_offset");
+            if let Some(stride) = xfb::layout_value(qualifiers, "xfb_stride") {
+                self.xfb_stride(buffer, stride, at)?;
+            }
+            if let Some(offset) = offset {
+                self.xfb_capture(buffer, offset, ty, at)?;
+            }
+            self.xfb_global(handle, buffer, offset);
         }
         Ok(())
     }
@@ -595,6 +632,7 @@ impl<'a> Lowerer<'a> {
                 init: None,
                 memory_decorations: memory(qualifiers),
                 io: None,
+                xfb: None,
             },
             at,
         );
@@ -621,6 +659,7 @@ impl<'a> Lowerer<'a> {
             }
             if storage_of(Some(&structure.qualifier)) == Some(StorageQualifier::Out) {
                 self.per_vertex_redeclared = true;
+                self.per_vertex_xfb(structure, at)?;
             }
             return Ok(());
         }
@@ -699,6 +738,7 @@ impl<'a> Lowerer<'a> {
                 init: None,
                 memory_decorations: decorations,
                 io: None,
+                xfb: None,
             },
             at,
         );
@@ -740,6 +780,19 @@ impl<'a> Lowerer<'a> {
             }
         };
         let block_location = explicit(outer, "location")?;
+        if input
+            && (xfb::has_xfb(outer) || block.members.iter().any(|m| xfb::has_xfb(&m.qualifiers)))
+        {
+            return Err(semantic(
+                "xfb layout qualifier can only be used on an output",
+                at,
+            ));
+        }
+        let xfb_buffer = if input {
+            None
+        } else {
+            xfb::layout_value(outer, "xfb_buffer").or(self.xfb.default_buffer)
+        };
         let mut declared = variable.ty.clone();
         if declared.outer_size() == Some(GlslArraySize::Unsized) {
             let size = self.implicit_sizes.get(&symbol).copied().ok_or_else(|| {
@@ -764,6 +817,14 @@ impl<'a> Lowerer<'a> {
             }
             if qualifiers.invariant && input {
                 return Err(semantic("invariant can only apply to an output", at));
+            }
+            if let Some(buffer) = xfb::layout_value(qualifiers, "xfb_buffer") {
+                if xfb_buffer != Some(buffer) {
+                    return Err(semantic(
+                        "xfb_buffer: member cannot contradict block (or what block inherited from global)",
+                        at,
+                    ));
+                }
             }
             let ty = self.ir_type(&member.ty, at)?;
             self.layouter
@@ -804,8 +865,36 @@ impl<'a> Lowerer<'a> {
                 }),
                 offset,
                 matrix_layout: None,
+                xfb_offset: None,
             });
             offset = offset.saturating_add(layout.size);
+        }
+        if let Some(buffer) = xfb_buffer {
+            let explicit: Vec<(Handle<crate::Type>, Option<u32>)> = members
+                .iter()
+                .zip(&block.members)
+                .map(|(member, declared)| {
+                    (
+                        member.ty,
+                        xfb::layout_value(&declared.qualifiers, "xfb_offset"),
+                    )
+                })
+                .collect();
+            let offsets =
+                self.xfb_member_offsets(xfb::layout_value(outer, "xfb_offset"), &explicit, at)?;
+            for ((member, declared), offset) in members.iter_mut().zip(&block.members).zip(offsets)
+            {
+                if let Some(stride) = xfb::layout_value(&declared.qualifiers, "xfb_stride") {
+                    self.xfb_stride(buffer, stride, at)?;
+                }
+                if let Some(offset) = offset {
+                    self.xfb_capture(buffer, offset, member.ty, at)?;
+                }
+                member.xfb_offset = offset;
+            }
+            if let Some(stride) = xfb::layout_value(outer, "xfb_stride") {
+                self.xfb_stride(buffer, stride, at)?;
+            }
         }
         let member_located = member_locations.iter().any(Option::is_some);
         let per_block = members
@@ -927,11 +1016,15 @@ impl<'a> Lowerer<'a> {
                 init: None,
                 memory_decorations: MemoryDecorations::empty(),
                 io,
+                xfb: None,
             },
             at,
         );
         self.interface.push(handle);
         self.globals.insert(symbol, GlobalRef::Variable(handle));
+        if let Some(buffer) = xfb_buffer {
+            self.xfb_global(handle, buffer, None);
+        }
         if !input {
             for member in &block.members {
                 self.block_outputs.insert(member.name.clone());
@@ -975,14 +1068,9 @@ impl<'a> Lowerer<'a> {
         Some((global, u32::try_from(index).ok()?))
     }
 
-    pub(super) fn declare_per_vertex(&mut self) -> Result<()> {
-        if self.options.stage != crate::ShaderStage::Vertex
-            || (self.per_vertex_used.is_empty() && !self.per_vertex_redeclared)
-        {
-            return Ok(());
-        }
+    fn builtin_per_vertex(&self) -> Option<&'a rglsl_sema::types::BlockType> {
         let analysis = self.analysis;
-        let block = analysis
+        analysis
             .symbols
             .iter()
             .filter_map(|symbol| match symbol.kind {
@@ -997,6 +1085,102 @@ impl<'a> Lowerer<'a> {
                 _ => None,
             })
             .find(|block| block.name == "gl_PerVertex" && block.storage == BlockStorage::Out)
+    }
+
+    fn declarator_size(
+        &self,
+        array: Option<&Spanned<rglsl_ast::ast::ArraySpecifier>>,
+    ) -> Option<u32> {
+        array
+            .iter()
+            .flat_map(|array| &array.dimensions)
+            .find_map(|dimension| match dimension.node {
+                rglsl_ast::ast::ArrayDimension::Sized(ref size) => self
+                    .analysis
+                    .expression(size.id)
+                    .and_then(|info| info.value.as_ref())
+                    .and_then(rglsl_sema::constant::Constant::scalar_i64)
+                    .and_then(|size| u32::try_from(size).ok()),
+                rglsl_ast::ast::ArrayDimension::Unsized => None,
+            })
+    }
+
+    fn per_vertex_xfb(&mut self, structure: &'a BlockStructure, at: Span) -> Result<()> {
+        let outer = Some(&structure.qualifier);
+        let Some(buffer) =
+            xfb::ast_layout_value(self, outer, "xfb_buffer").or(self.xfb.default_buffer)
+        else {
+            return Ok(());
+        };
+        let block = self
+            .builtin_per_vertex()
+            .ok_or_else(|| internal(Span::UNDEFINED))?;
+        let mut declared = Vec::new();
+        for member in &structure.members {
+            let qualifier = member.ty.qualifier.as_ref();
+            let offset = xfb::ast_layout_value(self, qualifier, "xfb_offset");
+            let stride = xfb::ast_layout_value(self, qualifier, "xfb_stride");
+            if xfb::ast_layout_value(self, qualifier, "xfb_buffer")
+                .is_some_and(|member_buffer| member_buffer != buffer)
+            {
+                return Err(semantic(
+                    "xfb_buffer: member cannot contradict block (or what block inherited from global)",
+                    at,
+                ));
+            }
+            for declarator in &member.declarators {
+                let name = declarator.name.node.clone();
+                let Some((_, builtin)) = block.member(&name) else {
+                    continue;
+                };
+                let mut glsl = builtin.ty.clone();
+                if glsl.outer_size() == Some(GlslArraySize::Unsized) {
+                    if let (Some(size), Some(first)) = (
+                        self.declarator_size(declarator.array.as_ref()),
+                        glsl.array.first_mut(),
+                    ) {
+                        *first = GlslArraySize::Sized(size);
+                    }
+                }
+                let ty = self.ir_type(&glsl, at)?;
+                declared.push((name, ty, offset, stride));
+            }
+        }
+        let explicit: Vec<(Handle<crate::Type>, Option<u32>)> = declared
+            .iter()
+            .map(|&(_, ty, offset, _)| (ty, offset))
+            .collect();
+        let offsets = self.xfb_member_offsets(
+            xfb::ast_layout_value(self, outer, "xfb_offset"),
+            &explicit,
+            at,
+        )?;
+        let mut per_vertex = xfb::PerVertexXfb {
+            buffer,
+            offsets: alloc::collections::BTreeMap::new(),
+        };
+        for ((name, ty, _, stride), offset) in declared.into_iter().zip(offsets) {
+            let Some(offset) = offset else {
+                continue;
+            };
+            if let Some(stride) = stride {
+                self.xfb_stride(buffer, stride, at)?;
+            }
+            self.xfb_capture(buffer, offset, ty, at)?;
+            per_vertex.offsets.insert(name, offset);
+        }
+        self.xfb.per_vertex = Some(per_vertex);
+        Ok(())
+    }
+
+    pub(super) fn declare_per_vertex(&mut self) -> Result<()> {
+        if self.options.stage != crate::ShaderStage::Vertex
+            || (self.per_vertex_used.is_empty() && !self.per_vertex_redeclared)
+        {
+            return Ok(());
+        }
+        let block = self
+            .builtin_per_vertex()
             .ok_or_else(|| internal(Span::UNDEFINED))?;
         let mut requested: Vec<(String, Span)> = Vec::new();
         self.invariant.retain(|&(ref name, at)| {
@@ -1057,12 +1241,18 @@ impl<'a> Lowerer<'a> {
             let layout = self.layouter[ty];
             offset = layout.alignment.round_up(offset);
             alignment = layout.alignment.max(alignment);
+            let xfb_offset = self
+                .xfb
+                .per_vertex
+                .as_ref()
+                .and_then(|per_vertex| per_vertex.offsets.get(name).copied());
             members.push(crate::StructMember {
                 name: Some(String::from(name)),
                 ty,
                 binding: Some(Binding::BuiltIn(builtin)),
                 offset,
                 matrix_layout: None,
+                xfb_offset,
             });
             offset = offset.saturating_add(layout.size);
             names.push(String::from(name));
@@ -1089,11 +1279,20 @@ impl<'a> Lowerer<'a> {
                 init: None,
                 memory_decorations: MemoryDecorations::empty(),
                 io: None,
+                xfb: None,
             },
             Span::UNDEFINED,
         );
         self.interface.push(handle);
         self.per_vertex = Some((handle, names));
+        if self.xfb.default_buffer.is_some() {
+            let buffer = self
+                .xfb
+                .per_vertex
+                .as_ref()
+                .map_or(0, |per_vertex| per_vertex.buffer);
+            self.xfb_global(handle, buffer, None);
+        }
         Ok(())
     }
 
@@ -1108,19 +1307,7 @@ impl<'a> Lowerer<'a> {
             .symbol(symbol)
             .map(|symbol| symbol.name.clone())
             .ok_or_else(|| internal(at))?;
-        let size = declarator
-            .array
-            .iter()
-            .flat_map(|array| &array.dimensions)
-            .find_map(|dimension| match dimension.node {
-                rglsl_ast::ast::ArrayDimension::Sized(ref size) => self
-                    .analysis
-                    .expression(size.id)
-                    .and_then(|info| info.value.as_ref())
-                    .and_then(rglsl_sema::constant::Constant::scalar_i64)
-                    .and_then(|size| u32::try_from(size).ok()),
-                rglsl_ast::ast::ArrayDimension::Unsized => None,
-            });
+        let size = self.declarator_size(declarator.array.as_ref());
         if let Some(size) = size {
             self.builtin_sizes.insert(name.clone(), size);
         }
@@ -1250,6 +1437,7 @@ impl<'a> Lowerer<'a> {
                 init: None,
                 memory_decorations: MemoryDecorations::empty(),
                 io: Some(Binding::BuiltIn(builtin)),
+                xfb: None,
             },
             at,
         );
@@ -1299,6 +1487,7 @@ impl<'a> Lowerer<'a> {
             });
         }
         self.check_shared_layouts();
+        self.finish_xfb();
         self.assign_bindings();
     }
 

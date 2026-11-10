@@ -8,6 +8,7 @@ mod offset;
 mod prepass;
 mod statement;
 mod types;
+mod xfb;
 
 use alloc::{
     borrow::Cow,
@@ -218,6 +219,7 @@ pub(super) struct Lowerer<'a> {
     pub per_vertex_used: BTreeSet<String>,
     pub per_vertex_redeclared: bool,
     pub block_outputs: BTreeSet<String>,
+    xfb: xfb::Xfb,
 }
 
 impl<'a> Lowerer<'a> {
@@ -262,6 +264,7 @@ impl<'a> Lowerer<'a> {
             per_vertex_used: BTreeSet::new(),
             per_vertex_redeclared: false,
             block_outputs: BTreeSet::new(),
+            xfb: xfb::Xfb::new((options.stage == ShaderStage::Vertex).then_some(0)),
         }
     }
 

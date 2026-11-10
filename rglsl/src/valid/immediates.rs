@@ -212,6 +212,7 @@ mod tests {
             binding: None,
             offset,
             matrix_layout: None,
+            xfb_offset: None,
         };
         let s = add(
             Some("S"),

@@ -62,6 +62,7 @@
             task_payload: None,
             incoming_ray_payload: None,
             interface: [],
+            transform_feedback: false,
         ),
     ],
     diagnostic_filters: [],

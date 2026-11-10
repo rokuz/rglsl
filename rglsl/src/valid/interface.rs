@@ -51,6 +51,8 @@ pub enum GlobalVariableError {
     CoherentNotSupported,
     #[error("`@volatile` requires the MEMORY_DECORATION_VOLATILE capability")]
     VolatileNotSupported,
+    #[error("Transform feedback decorations are only valid for stage outputs")]
+    InvalidTransformFeedback,
 }
 
 #[derive(Clone, Debug, thiserror::Error)]
@@ -1236,6 +1238,9 @@ impl super::Validator {
         use super::TypeFlags;
 
         log::debug!("var {var:?}");
+        if var.xfb.is_some() && var.space != crate::AddressSpace::Output {
+            return Err(GlobalVariableError::InvalidTransformFeedback);
+        }
         let inner_ty = match gctx.types[var.ty].inner {
             // A binding array is (mostly) supposed to behave the same as a
             // series of individually bound resources, so we can (mostly)

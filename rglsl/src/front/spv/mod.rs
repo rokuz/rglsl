@@ -2591,6 +2591,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                 binding,
                 offset,
                 matrix_layout: None,
+                xfb_offset: None,
             });
         }
 
@@ -3036,6 +3037,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                     init,
                     memory_decorations: dec.flags.to_memory_decorations(),
                     io: None,
+                    xfb: None,
                 };
                 (Variable::Global, var)
             }
@@ -3085,6 +3087,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                     init: None,
                     memory_decorations: crate::MemoryDecorations::empty(),
                     io: None,
+                    xfb: None,
                 };
 
                 let inner = Variable::Input(crate::FunctionArgument {
@@ -3147,6 +3150,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                     init,
                     memory_decorations: crate::MemoryDecorations::empty(),
                     io: None,
+                    xfb: None,
                 };
                 let inner = Variable::Output(crate::FunctionResult { ty, binding });
                 (inner, var)

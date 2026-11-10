@@ -1350,6 +1350,7 @@ fn uniform_control_flow() {
             binding: None,
             memory_decorations: crate::MemoryDecorations::empty(),
             io: None,
+            xfb: None,
         },
         Default::default(),
     );
@@ -1362,6 +1363,7 @@ fn uniform_control_flow() {
             space: crate::AddressSpace::Uniform,
             memory_decorations: crate::MemoryDecorations::empty(),
             io: None,
+            xfb: None,
         },
         Default::default(),
     );

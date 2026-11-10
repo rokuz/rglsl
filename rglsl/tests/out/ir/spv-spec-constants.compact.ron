@@ -44,6 +44,7 @@
                         binding: None,
                         offset: 0,
                         matrix_layout: None,
+                        xfb_offset: None,
                     ),
                 ],
                 span: 8,
@@ -79,6 +80,7 @@
                         ))),
                         offset: 0,
                         matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("gl_PointSize"),
@@ -86,6 +88,7 @@
                         binding: None,
                         offset: 16,
                         matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("gl_ClipDistance"),
@@ -93,6 +96,7 @@
                         binding: None,
                         offset: 20,
                         matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("gl_CullDistance"),
@@ -100,6 +104,7 @@
                         binding: None,
                         offset: 24,
                         matrix_layout: None,
+                        xfb_offset: None,
                     ),
                 ],
                 span: 32,
@@ -126,6 +131,7 @@
                         binding: None,
                         offset: 0,
                         matrix_layout: None,
+                        xfb_offset: None,
                     ),
                 ],
                 span: 64,
@@ -141,6 +147,7 @@
                         binding: None,
                         offset: 0,
                         matrix_layout: None,
+                        xfb_offset: None,
                     ),
                 ],
                 span: 64,
@@ -165,6 +172,7 @@
                         )),
                         offset: 0,
                         matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("gl_Position"),
@@ -174,6 +182,7 @@
                         ))),
                         offset: 16,
                         matrix_layout: None,
+                        xfb_offset: None,
                     ),
                 ],
                 span: 32,
@@ -229,6 +238,7 @@
             init: None,
             memory_decorations: (""),
             io: None,
+            xfb: None,
         ),
         (
             name: Some("Vertex_Uv"),
@@ -238,6 +248,7 @@
             init: None,
             memory_decorations: (""),
             io: None,
+            xfb: None,
         ),
         (
             name: Some("Vertex_Position"),
@@ -247,6 +258,7 @@
             init: None,
             memory_decorations: (""),
             io: None,
+            xfb: None,
         ),
         (
             name: Some(""),
@@ -259,6 +271,7 @@
             init: None,
             memory_decorations: (""),
             io: None,
+            xfb: None,
         ),
         (
             name: Some(""),
@@ -268,6 +281,7 @@
             init: Some(11),
             memory_decorations: (""),
             io: None,
+            xfb: None,
         ),
         (
             name: Some(""),
@@ -280,6 +294,7 @@
             init: None,
             memory_decorations: (""),
             io: None,
+            xfb: None,
         ),
         (
             name: Some(""),
@@ -292,6 +307,7 @@
             init: None,
             memory_decorations: (""),
             io: None,
+            xfb: None,
         ),
         (
             name: Some("Vertex_Normal"),
@@ -301,6 +317,7 @@
             init: None,
             memory_decorations: (""),
             io: None,
+            xfb: None,
         ),
     ],
     global_expressions: [
@@ -658,6 +675,7 @@
             task_payload: None,
             incoming_ray_payload: None,
             interface: [],
+            transform_feedback: false,
         ),
     ],
     diagnostic_filters: [],

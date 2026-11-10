@@ -46,6 +46,7 @@
                         binding: None,
                         offset: 0,
                         matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("cull_mask"),
@@ -53,6 +54,7 @@
                         binding: None,
                         offset: 4,
                         matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("tmin"),
@@ -60,6 +62,7 @@
                         binding: None,
                         offset: 8,
                         matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("tmax"),
@@ -67,6 +70,7 @@
                         binding: None,
                         offset: 12,
                         matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("origin"),
@@ -74,6 +78,7 @@
                         binding: None,
                         offset: 16,
                         matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("dir"),
@@ -81,6 +86,7 @@
                         binding: None,
                         offset: 32,
                         matrix_layout: None,
+                        xfb_offset: None,
                     ),
                 ],
                 span: 48,
@@ -116,6 +122,7 @@
             init: None,
             memory_decorations: (""),
             io: None,
+            xfb: None,
         ),
     ],
     global_expressions: [],
@@ -275,6 +282,7 @@
             task_payload: None,
             incoming_ray_payload: None,
             interface: [],
+            transform_feedback: false,
         ),
     ],
     diagnostic_filters: [],

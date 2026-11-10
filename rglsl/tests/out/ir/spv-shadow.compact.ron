@@ -81,6 +81,7 @@
                         binding: None,
                         offset: 0,
                         matrix_layout: None,
+                        xfb_offset: None,
                     ),
                 ],
                 span: 16,
@@ -107,6 +108,7 @@
                         binding: None,
                         offset: 0,
                         matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("pos"),
@@ -114,6 +116,7 @@
                         binding: None,
                         offset: 64,
                         matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("color"),
@@ -121,6 +124,7 @@
                         binding: None,
                         offset: 80,
                         matrix_layout: None,
+                        xfb_offset: None,
                     ),
                 ],
                 span: 96,
@@ -144,6 +148,7 @@
                         binding: None,
                         offset: 0,
                         matrix_layout: None,
+                        xfb_offset: None,
                     ),
                 ],
                 span: 96,
@@ -274,6 +279,7 @@
             init: None,
             memory_decorations: (""),
             io: None,
+            xfb: None,
         ),
         (
             name: Some("sampler_shadow"),
@@ -286,6 +292,7 @@
             init: None,
             memory_decorations: (""),
             io: None,
+            xfb: None,
         ),
         (
             name: Some("u_globals"),
@@ -298,6 +305,7 @@
             init: None,
             memory_decorations: (""),
             io: None,
+            xfb: None,
         ),
         (
             name: Some("s_lights"),
@@ -312,6 +320,7 @@
             init: None,
             memory_decorations: (""),
             io: None,
+            xfb: None,
         ),
         (
             name: Some("in_position_fs"),
@@ -321,6 +330,7 @@
             init: None,
             memory_decorations: (""),
             io: None,
+            xfb: None,
         ),
         (
             name: Some("in_normal_fs"),
@@ -330,6 +340,7 @@
             init: None,
             memory_decorations: (""),
             io: None,
+            xfb: None,
         ),
         (
             name: Some("out_color_fs"),
@@ -339,6 +350,7 @@
             init: None,
             memory_decorations: (""),
             io: None,
+            xfb: None,
         ),
     ],
     global_expressions: [
@@ -1067,6 +1079,7 @@
             task_payload: None,
             incoming_ray_payload: None,
             interface: [],
+            transform_feedback: false,
         ),
     ],
     diagnostic_filters: [],

@@ -415,6 +415,7 @@ impl<'a> Lowerer<'a> {
             task_payload: None,
             incoming_ray_payload: None,
             interface: self.interface.clone(),
+            transform_feedback: self.xfb.mode,
         });
         Ok(())
     }
