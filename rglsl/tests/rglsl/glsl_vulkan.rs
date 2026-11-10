@@ -1733,3 +1733,198 @@ fn transform_feedback_errors() {
         assert!(error.contains(expected), "{error}");
     }
 }
+
+fn type_instruction(module: &dr::Module, id: u32) -> &dr::Instruction {
+    module
+        .types_global_values
+        .iter()
+        .find(|inst| inst.result_id == Some(id))
+        .unwrap_or_else(|| panic!("no type %{id}"))
+}
+
+fn variable_type(module: &dr::Module, name: &str) -> (spirv::StorageClass, Vec<Op>) {
+    let id = named(module, name);
+    let variable = module
+        .types_global_values
+        .iter()
+        .find(|inst| inst.class.opcode == Op::Variable && inst.result_id == Some(id))
+        .unwrap_or_else(|| panic!("{name} is not a global variable"));
+    let pointer = type_instruction(module, variable.result_type.expect("typed"));
+    let Operand::StorageClass(class) = pointer.operands[0] else {
+        panic!("not a pointer");
+    };
+    let mut chain = Vec::new();
+    let mut current = type_instruction(module, pointer.operands[1].unwrap_id_ref());
+    loop {
+        chain.push(current.class.opcode);
+        match current.class.opcode {
+            Op::TypeArray | Op::TypeSampledImage => {
+                current = type_instruction(module, current.operands[0].unwrap_id_ref());
+            }
+            _ => break,
+        }
+    }
+    (class, chain)
+}
+
+#[test]
+fn combined_samplers_match_glslang() {
+    let source = "#version 450
+        layout(binding = 1) uniform sampler2D explicit1;
+        uniform sampler2D unusedSampler;
+        uniform U0 { vec4 a; } u0;
+        uniform sampler2DShadow shadow;
+        layout(set = 1) uniform isampler2DArray layers[3];
+        uniform sampler samp;
+        uniform texture2D tex;
+        uniform sampler2DMS multi;
+        layout(location = 0) in vec4 i0;
+        layout(location = 0) out vec4 o0;
+        void main() {
+            o0 = texture(explicit1, i0.xy) + u0.a + vec4(texture(shadow, i0.xyz))
+                + vec4(texelFetch(layers[1], ivec3(0), 0)) + texture(sampler2D(tex, samp), i0.xy)
+                + texelFetch(multi, ivec2(0), 1) + vec4(textureSize(explicit1, 0), 0.0, 0.0);
+        }";
+    let options = glsl::Options {
+        auto_map_bindings: true,
+        ..glsl::Options::from(ShaderStage::Fragment)
+    };
+    let module = glsl::Frontend::default().parse(&options, source).unwrap();
+    let info = Validator::new(ValidationFlags::all(), Capabilities::all())
+        .validate(&module)
+        .unwrap();
+    let mut bindings: Vec<(&str, u32, u32)> = module
+        .global_variables
+        .iter()
+        .filter_map(|(_, global)| {
+            let binding = global.binding.as_ref()?;
+            Some((global.name.as_deref()?, binding.group, binding.binding))
+        })
+        .collect();
+    bindings.sort_unstable();
+    assert_eq!(
+        bindings,
+        [
+            ("explicit1", 0, 1),
+            ("layers", 1, 0),
+            ("multi", 0, 5),
+            ("samp", 0, 3),
+            ("shadow", 0, 2),
+            ("tex", 0, 4),
+            ("u0", 0, 0),
+            ("unusedSampler", 0, 0),
+        ]
+    );
+
+    let words = spv::write_vec(
+        &module,
+        &info,
+        &spv::Options {
+            flags: spv::WriterFlags::DEBUG,
+            ..spv::Options::default()
+        },
+        None,
+    )
+    .expect("SPIR-V backend failed");
+    crate::stage_io::spirv_val(&words);
+    let module = dr::load_words(words).expect("produced SPIR-V does not parse");
+    let sampled = vec![Op::TypeSampledImage, Op::TypeImage];
+    for name in ["explicit1", "unusedSampler", "shadow", "multi"] {
+        assert_eq!(
+            variable_type(&module, name),
+            (spirv::StorageClass::UniformConstant, sampled.clone()),
+            "{name}"
+        );
+    }
+    assert_eq!(
+        variable_type(&module, "layers"),
+        (
+            spirv::StorageClass::UniformConstant,
+            vec![Op::TypeArray, Op::TypeSampledImage, Op::TypeImage]
+        )
+    );
+    assert_eq!(
+        variable_type(&module, "tex"),
+        (spirv::StorageClass::UniformConstant, vec![Op::TypeImage])
+    );
+    assert_eq!(
+        sorted_variable_decorations(&module, "shadow"),
+        [
+            (Decoration::Binding, vec![2]),
+            (Decoration::DescriptorSet, vec![0])
+        ]
+    );
+    let depth: Vec<u32> = instructions(&module, Op::TypeImage)
+        .iter()
+        .map(|inst| literal(&inst.operands[2]))
+        .collect();
+    assert!(depth.contains(&1) && depth.contains(&0));
+    assert_eq!(instructions(&module, Op::SampledImage).len(), 1);
+    assert_eq!(instructions(&module, Op::Image).len(), 3);
+    assert!(has_capability(&module, spirv::Capability::ImageQuery));
+}
+
+#[test]
+fn combined_samplers_as_function_parameters() {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+        layout(binding = 0) uniform sampler2D single;
+        layout(binding = 1) uniform sampler2D many[4];
+        layout(binding = 2) uniform samplerCubeShadow cube;
+        layout(location = 0) flat in int index;
+        layout(location = 0) out vec4 o;
+        vec4 sampleIt(sampler2D s) { return texture(s, vec2(0.5)) + texelFetch(s, ivec2(0), 0); }
+        vec4 forward(sampler2D s) { return sampleIt(s); }
+        float compare(samplerCubeShadow s) { return texture(s, vec4(1.0)); }
+        void main() {
+            o = forward(single) + sampleIt(many[2]) + sampleIt(many[index]) + compare(cube);
+        }",
+    );
+    let parameters = instructions(&module, Op::FunctionParameter);
+    assert_eq!(parameters.len(), 3);
+    for parameter in parameters {
+        let pointer = type_instruction(&module, parameter.result_type.expect("typed"));
+        assert_eq!(pointer.class.opcode, Op::TypePointer);
+        assert_eq!(
+            pointer.operands[0],
+            Operand::StorageClass(spirv::StorageClass::UniformConstant)
+        );
+        let pointee = type_instruction(&module, pointer.operands[1].unwrap_id_ref());
+        assert_eq!(pointee.class.opcode, Op::TypeSampledImage);
+    }
+    assert!(instructions(&module, Op::SampledImage).is_empty());
+    assert_eq!(instructions(&module, Op::FunctionCall).len(), 5);
+}
+
+#[test]
+fn sampler_constructors_at_point_of_use() {
+    let error = parse(
+        ShaderStage::Fragment,
+        "#version 450
+        layout(binding = 0) uniform texture2D t;
+        layout(binding = 1) uniform sampler s;
+        layout(location = 0) out vec4 o;
+        vec4 f(sampler2D x) { return texture(x, vec2(0.5)); }
+        void main() { o = f(sampler2D(t, s)); }",
+    )
+    .unwrap_err();
+    assert!(error.contains("point of use"), "{error}");
+
+    compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+        layout(binding = 0) uniform texture2D t;
+        layout(binding = 1) uniform sampler s;
+        layout(binding = 2) uniform texture2DArray ta;
+        layout(binding = 3) uniform samplerShadow ss;
+        layout(binding = 4) uniform texture2DArray depth;
+        layout(location = 0) out vec4 o;
+        void main() {
+            o = texture(sampler2D(t, s), vec2(0.5))
+                + texelFetchOffset(sampler2D(t, s), ivec2(1), 0, ivec2(1))
+                + vec4(textureSize(sampler2DArray(ta, s), 0), 0.0)
+                + vec4(texture(sampler2DArrayShadow(depth, ss), vec4(0.5)));
+        }",
+    );
+}

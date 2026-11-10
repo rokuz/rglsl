@@ -821,7 +821,21 @@ impl super::Validator {
                 dim,
                 arrayed,
                 class,
+            }
+            | Ti::SampledImage {
+                dim,
+                arrayed,
+                class,
             } => {
+                if matches!(gctx.types[handle].inner, Ti::SampledImage { .. })
+                    && matches!(class, crate::ImageClass::Storage { .. })
+                {
+                    return Err(TypeError::UnsupportedImageType {
+                        dim,
+                        arrayed,
+                        class,
+                    });
+                }
                 if arrayed && matches!(dim, crate::ImageDimension::D3) {
                     return Err(TypeError::UnsupportedImageType {
                         dim,

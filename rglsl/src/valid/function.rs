@@ -1073,7 +1073,7 @@ impl super::Validator {
                     let value_tr = context.resolve_type(value, &self.valid_expression_set)?;
                     let value_ty = value_tr.inner_with(context.types);
                     match *value_ty {
-                        Ti::Image { .. } | Ti::Sampler { .. } => {
+                        Ti::Image { .. } | Ti::SampledImage { .. } | Ti::Sampler { .. } => {
                             return Err(FunctionError::InvalidStoreTexture {
                                 actual: value,
                                 actual_ty: value_ty.clone(),

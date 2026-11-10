@@ -542,7 +542,7 @@
                 ),
                 ImageSample(
                     image: 1,
-                    sampler: 0,
+                    sampler: Some(0),
                     gather: None,
                     coordinate: 31,
                     array_index: Some(33),

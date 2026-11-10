@@ -572,7 +572,8 @@ impl FunctionInfo {
                                     super::Capabilities::TEXTURE_AND_SAMPLER_BINDING_ARRAY_NON_UNIFORM_INDEXING
                                 }
                             },
-                            crate::TypeInner::Sampler { .. } => {
+                            crate::TypeInner::Sampler { .. }
+                            | crate::TypeInner::SampledImage { .. } => {
                                 super::Capabilities::TEXTURE_AND_SAMPLER_BINDING_ARRAY_NON_UNIFORM_INDEXING
                             }
                             // If we're anything but an image or sampler, assume we're a buffer and use the address space.
@@ -712,17 +713,19 @@ impl FunctionInfo {
                 clamp_to_edge: _,
             } => {
                 let image_storage = GlobalOrArgument::from_expression(expression_arena, image)?;
-                let sampler_storage = GlobalOrArgument::from_expression(expression_arena, sampler)?;
-
-                match (image_storage, sampler_storage) {
-                    (GlobalOrArgument::Global(image), GlobalOrArgument::Global(sampler)) => {
-                        self.sampling_set.insert(SamplingKey { image, sampler });
-                    }
-                    _ => {
-                        self.sampling.insert(Sampling {
-                            image: image_storage,
-                            sampler: sampler_storage,
-                        });
+                if let Some(sampler) = sampler {
+                    let sampler_storage =
+                        GlobalOrArgument::from_expression(expression_arena, sampler)?;
+                    match (image_storage, sampler_storage) {
+                        (GlobalOrArgument::Global(image), GlobalOrArgument::Global(sampler)) => {
+                            self.sampling_set.insert(SamplingKey { image, sampler });
+                        }
+                        _ => {
+                            self.sampling.insert(Sampling {
+                                image: image_storage,
+                                sampler: sampler_storage,
+                            });
+                        }
                     }
                 }
 
@@ -738,7 +741,7 @@ impl FunctionInfo {
                 Uniformity {
                     non_uniform_result: self
                         .add_ref(image)
-                        .or(self.add_ref(sampler))
+                        .or(sampler.and_then(|h| self.add_ref(h)))
                         .or(self.add_ref(coordinate))
                         .or(array_nur)
                         .or(level_nur)

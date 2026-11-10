@@ -510,6 +510,7 @@ impl crate::TypeInner {
             | Self::Struct { .. } => true,
             Self::Array { .. }
             | Self::Image { .. }
+            | Self::SampledImage { .. }
             | Self::Sampler { .. }
             | Self::AccelerationStructure { .. }
             | Self::RayQuery { .. }

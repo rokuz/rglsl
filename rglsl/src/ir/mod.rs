@@ -1008,6 +1008,12 @@ pub enum TypeInner {
     /// Can be used to sample values from images.
     Sampler { comparison: bool },
 
+    SampledImage {
+        dim: ImageDimension,
+        arrayed: bool,
+        class: ImageClass,
+    },
+
     /// Opaque object representing an acceleration structure of geometry.
     AccelerationStructure { vertex_return: bool },
 
@@ -1766,7 +1772,7 @@ pub enum Expression {
     /// Sample a point from a sampled or a depth image.
     ImageSample {
         image: Handle<Expression>,
-        sampler: Handle<Expression>,
+        sampler: Option<Handle<Expression>>,
         /// If Some(), this operation is a gather operation
         /// on the selected component.
         gather: Option<SwizzleComponent>,

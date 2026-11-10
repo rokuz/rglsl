@@ -563,19 +563,36 @@ impl super::Validator {
             } => {
                 // check the validity of expressions
                 let image_ty = Self::global_var_ty(module, function, image)?;
-                let sampler_ty = Self::global_var_ty(module, function, sampler)?;
-
-                let comparison = match module.types[sampler_ty].inner {
-                    Ti::Sampler { comparison } => comparison,
-                    _ => return Err(ExpressionError::ExpectedSamplerType(sampler_ty)),
+                let comparison = match sampler {
+                    Some(sampler) => {
+                        let sampler_ty = Self::global_var_ty(module, function, sampler)?;
+                        match module.types[sampler_ty].inner {
+                            Ti::Sampler { comparison } => Some(comparison),
+                            _ => return Err(ExpressionError::ExpectedSamplerType(sampler_ty)),
+                        }
+                    }
+                    None => None,
                 };
 
-                let (class, dim) = match module.types[image_ty].inner {
-                    Ti::Image {
-                        class,
-                        arrayed,
-                        dim,
-                    } => {
+                let (class, dim, comparison) = match (comparison, &module.types[image_ty].inner) {
+                    (
+                        Some(_),
+                        &Ti::Image {
+                            class,
+                            arrayed,
+                            dim,
+                        },
+                    )
+                    | (
+                        None,
+                        &Ti::SampledImage {
+                            class,
+                            arrayed,
+                            dim,
+                        },
+                    ) => {
+                        let comparison =
+                            comparison.unwrap_or(matches!(class, crate::ImageClass::Depth { .. }));
                         // check the array property
                         if arrayed != array_index.is_some() {
                             return Err(ExpressionError::InvalidImageArrayIndex);
@@ -589,7 +606,7 @@ impl super::Validator {
                                 _ => return Err(ExpressionError::InvalidImageArrayIndexType(expr)),
                             }
                         }
-                        (class, dim)
+                        (class, dim, comparison)
                     }
                     _ => return Err(ExpressionError::ExpectedImageType(image_ty)),
                 };
@@ -828,11 +845,16 @@ impl super::Validator {
                 level,
             } => {
                 let ty = Self::global_var_ty(module, function, image)?;
-                let Ti::Image {
+                let (Ti::Image {
                     class,
                     arrayed,
                     dim,
-                } = module.types[ty].inner
+                }
+                | Ti::SampledImage {
+                    class,
+                    arrayed,
+                    dim,
+                }) = module.types[ty].inner
                 else {
                     return Err(ExpressionError::ExpectedImageType(ty));
                 };
@@ -886,7 +908,7 @@ impl super::Validator {
             E::ImageQuery { image, query } => {
                 let ty = Self::global_var_ty(module, function, image)?;
                 match module.types[ty].inner {
-                    Ti::Image { class, arrayed, .. } => {
+                    Ti::Image { class, arrayed, .. } | Ti::SampledImage { class, arrayed, .. } => {
                         let good = match query {
                             crate::ImageQuery::NumLayers => arrayed,
                             crate::ImageQuery::Size { level: None } => true,

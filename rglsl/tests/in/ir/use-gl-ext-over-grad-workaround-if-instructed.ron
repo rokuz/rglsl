@@ -93,7 +93,7 @@
                     GlobalVariable(1),
                     ImageSample(
                         image: 4,
-                        sampler: 5,
+                        sampler: Some(5),
                         gather: None,
                         coordinate: 1,
                         array_index: Some(2),

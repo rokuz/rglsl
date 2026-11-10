@@ -534,7 +534,9 @@ fn adjust_expr(new_pos: &HandleVec<Expression, Handle<Expression>>, expr: &mut E
             clamp_to_edge: _,
         } => {
             adjust(image);
-            adjust(sampler);
+            if let Some(e) = sampler.as_mut() {
+                adjust(e);
+            }
             adjust(coordinate);
             if let Some(e) = array_index.as_mut() {
                 adjust(e);

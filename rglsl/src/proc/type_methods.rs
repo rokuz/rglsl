@@ -271,6 +271,7 @@ impl crate::TypeInner {
             }
             Self::Struct { span, .. } => Some(span),
             Self::Image { .. }
+            | Self::SampledImage { .. }
             | Self::Sampler { .. }
             | Self::AccelerationStructure { .. }
             | Self::RayQuery { .. }
@@ -422,6 +423,7 @@ impl crate::TypeInner {
             | Ti::Pointer { .. }
             | Ti::ValuePointer { .. }
             | Ti::Image { .. }
+            | Ti::SampledImage { .. }
             | Ti::Sampler { .. }
             | Ti::AccelerationStructure { .. }
             | Ti::BindingArray { .. } => false,
@@ -478,6 +480,7 @@ impl crate::TypeInner {
             | crate::TypeInner::Array { .. }
             | crate::TypeInner::Struct { .. }
             | crate::TypeInner::Image { .. }
+            | crate::TypeInner::SampledImage { .. }
             | crate::TypeInner::Sampler { .. }
             | crate::TypeInner::AccelerationStructure { .. }
             | crate::TypeInner::RayQuery { .. }
@@ -501,6 +504,7 @@ impl crate::TypeInner {
             | crate::TypeInner::Pointer { .. }
             | crate::TypeInner::Struct { .. }
             | crate::TypeInner::Image { .. }
+            | crate::TypeInner::SampledImage { .. }
             | crate::TypeInner::Sampler { .. }
             | crate::TypeInner::AccelerationStructure { .. }
             | crate::TypeInner::RayQuery { .. }

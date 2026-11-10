@@ -198,10 +198,26 @@ impl Lowerer<'_> {
                     class,
                 })
             }
-            OpaqueKind::CombinedSampler => Err(unsupported(
-                "combined image samplers (`sampler2D` and similar) until the IR has sampled image types",
-                span,
-            )),
+            OpaqueKind::CombinedSampler => {
+                let class = if opaque.shadow {
+                    if opaque.sampled != SampledType::Float {
+                        return Err(internal(span));
+                    }
+                    ImageClass::Depth {
+                        multi: opaque.multisample,
+                    }
+                } else {
+                    ImageClass::Sampled {
+                        kind: sampled_kind(opaque.sampled),
+                        multi: opaque.multisample,
+                    }
+                };
+                Ok(TypeInner::SampledImage {
+                    dim: image_dimension(opaque, span)?,
+                    arrayed: opaque.arrayed,
+                    class,
+                })
+            }
             OpaqueKind::Image => Err(unsupported(
                 "storage images outside uniform declarations",
                 span,

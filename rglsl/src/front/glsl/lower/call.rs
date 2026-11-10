@@ -8,7 +8,7 @@ use rglsl_sema::{Callee, FunctionId};
 use super::expression::Place;
 use super::function::FunctionLowerer;
 use super::types::scalar;
-use super::{internal, unsupported, Result};
+use super::{internal, semantic, unsupported, Result};
 use crate::{Expression, Handle, Literal, Span, Statement};
 
 impl FunctionLowerer<'_, '_> {
@@ -76,6 +76,17 @@ impl FunctionLowerer<'_, '_> {
             .functions
             .get(&id)
             .ok_or_else(|| unsupported("calls to `main` or to functions without a body", at))?;
+        for argument in arguments {
+            let inner = super::prepass::strip(argument);
+            if let Some(&Callee::Constructor(ref ty)) = analysis.calls.get(&inner.id) {
+                if ty.is_opaque() {
+                    return Err(semantic(
+                        "sampler constructor must appear at point of use",
+                        self.at(inner.span),
+                    ));
+                }
+            }
+        }
         let mut values = Vec::with_capacity(arguments.len());
         let mut writebacks: Vec<(Place, Handle<crate::LocalVariable>, GlslType, GlslType)> =
             Vec::new();

@@ -464,7 +464,7 @@
                     ),
                     ImageSample(
                         image: 36,
-                        sampler: 38,
+                        sampler: Some(38),
                         gather: Some(X),
                         coordinate: 16,
                         array_index: None,
@@ -493,7 +493,7 @@
                     ),
                     ImageSample(
                         image: 43,
-                        sampler: 45,
+                        sampler: Some(45),
                         gather: Some(X),
                         coordinate: 16,
                         array_index: None,
@@ -522,7 +522,7 @@
                     ),
                     ImageSample(
                         image: 50,
-                        sampler: 52,
+                        sampler: Some(52),
                         gather: Some(X),
                         coordinate: 16,
                         array_index: None,
@@ -552,7 +552,7 @@
                     Literal(F32(0.0)),
                     ImageSample(
                         image: 57,
-                        sampler: 59,
+                        sampler: Some(59),
                         gather: Some(X),
                         coordinate: 16,
                         array_index: None,
@@ -582,7 +582,7 @@
                     Literal(F32(0.0)),
                     ImageSample(
                         image: 65,
-                        sampler: 67,
+                        sampler: Some(67),
                         gather: Some(X),
                         coordinate: 16,
                         array_index: None,
@@ -612,7 +612,7 @@
                     Literal(F32(0.0)),
                     ImageSample(
                         image: 73,
-                        sampler: 75,
+                        sampler: Some(75),
                         gather: Some(X),
                         coordinate: 16,
                         array_index: None,
@@ -857,7 +857,7 @@
                     ),
                     ImageSample(
                         image: 144,
-                        sampler: 146,
+                        sampler: Some(146),
                         gather: None,
                         coordinate: 16,
                         array_index: None,
@@ -886,7 +886,7 @@
                     ),
                     ImageSample(
                         image: 151,
-                        sampler: 153,
+                        sampler: Some(153),
                         gather: None,
                         coordinate: 16,
                         array_index: None,
@@ -915,7 +915,7 @@
                     ),
                     ImageSample(
                         image: 158,
-                        sampler: 160,
+                        sampler: Some(160),
                         gather: None,
                         coordinate: 16,
                         array_index: None,
@@ -945,7 +945,7 @@
                     Literal(F32(0.0)),
                     ImageSample(
                         image: 165,
-                        sampler: 167,
+                        sampler: Some(167),
                         gather: None,
                         coordinate: 16,
                         array_index: None,
@@ -975,7 +975,7 @@
                     Literal(F32(0.0)),
                     ImageSample(
                         image: 173,
-                        sampler: 175,
+                        sampler: Some(175),
                         gather: None,
                         coordinate: 16,
                         array_index: None,
@@ -1005,7 +1005,7 @@
                     Literal(F32(0.0)),
                     ImageSample(
                         image: 181,
-                        sampler: 183,
+                        sampler: Some(183),
                         gather: None,
                         coordinate: 16,
                         array_index: None,
@@ -1035,7 +1035,7 @@
                     Literal(F32(0.0)),
                     ImageSample(
                         image: 189,
-                        sampler: 191,
+                        sampler: Some(191),
                         gather: None,
                         coordinate: 16,
                         array_index: None,
@@ -1065,7 +1065,7 @@
                     Literal(F32(0.0)),
                     ImageSample(
                         image: 197,
-                        sampler: 199,
+                        sampler: Some(199),
                         gather: None,
                         coordinate: 16,
                         array_index: None,
@@ -1095,7 +1095,7 @@
                     Literal(F32(0.0)),
                     ImageSample(
                         image: 205,
-                        sampler: 207,
+                        sampler: Some(207),
                         gather: None,
                         coordinate: 16,
                         array_index: None,
@@ -1125,7 +1125,7 @@
                     Literal(F32(0.0)),
                     ImageSample(
                         image: 213,
-                        sampler: 215,
+                        sampler: Some(215),
                         gather: None,
                         coordinate: 16,
                         array_index: None,
@@ -1155,7 +1155,7 @@
                     Literal(F32(0.0)),
                     ImageSample(
                         image: 221,
-                        sampler: 223,
+                        sampler: Some(223),
                         gather: None,
                         coordinate: 16,
                         array_index: None,
@@ -1185,7 +1185,7 @@
                     Literal(F32(0.0)),
                     ImageSample(
                         image: 229,
-                        sampler: 231,
+                        sampler: Some(231),
                         gather: None,
                         coordinate: 16,
                         array_index: None,
@@ -1214,7 +1214,7 @@
                     ),
                     ImageSample(
                         image: 237,
-                        sampler: 239,
+                        sampler: Some(239),
                         gather: None,
                         coordinate: 16,
                         array_index: None,
@@ -1246,7 +1246,7 @@
                     ),
                     ImageSample(
                         image: 244,
-                        sampler: 246,
+                        sampler: Some(246),
                         gather: None,
                         coordinate: 16,
                         array_index: None,
@@ -1278,7 +1278,7 @@
                     ),
                     ImageSample(
                         image: 251,
-                        sampler: 253,
+                        sampler: Some(253),
                         gather: None,
                         coordinate: 16,
                         array_index: None,
@@ -1311,7 +1311,7 @@
                     Literal(F32(0.0)),
                     ImageSample(
                         image: 258,
-                        sampler: 260,
+                        sampler: Some(260),
                         gather: None,
                         coordinate: 16,
                         array_index: None,
@@ -1341,7 +1341,7 @@
                     Literal(F32(0.0)),
                     ImageSample(
                         image: 266,
-                        sampler: 268,
+                        sampler: Some(268),
                         gather: None,
                         coordinate: 16,
                         array_index: None,
@@ -1371,7 +1371,7 @@
                     Literal(F32(0.0)),
                     ImageSample(
                         image: 274,
-                        sampler: 276,
+                        sampler: Some(276),
                         gather: None,
                         coordinate: 16,
                         array_index: None,

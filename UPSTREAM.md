@@ -113,6 +113,12 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
 - **Cull distances are supported by the SPIR-V backend** (`Capabilities::CULL_DISTANCE` is in
   `back::spv::supported_capabilities`): every vertex shader declares `gl_PerVertex` with
   `gl_CullDistance`, as glslang does.
+- **Combined image samplers.** `TypeInner::SampledImage { dim, arrayed, class }` (new) is a
+  handle type (`OpTypeSampledImage`), valid in the `Handle` address space, in binding arrays
+  and as a function argument. `ImageSample::sampler` is optional: `None` samples a
+  `SampledImage` directly; `ImageLoad` and `ImageQuery` accept one, and the SPIR-V backend
+  extracts the image with `OpImage`. A call passes an element of a binding array of handles
+  by pointer (`OpAccessChain`), as handle arguments are pointers.
 - **Transform feedback.** `EntryPoint::transform_feedback` (new) adds the `TransformFeedback`
   capability and the `Xfb` execution mode; `GlobalVariable::xfb` (new, `XfbBinding`) is emitted
   as `XfbBuffer`, `XfbStride` and `Offset` on the variable, and `StructMember::xfb_offset` (new)

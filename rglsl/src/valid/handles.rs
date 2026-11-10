@@ -404,6 +404,7 @@ impl super::Validator {
             | crate::TypeInner::ValuePointer { .. }
             | crate::TypeInner::Atomic { .. }
             | crate::TypeInner::Image { .. }
+            | crate::TypeInner::SampledImage { .. }
             | crate::TypeInner::Sampler { .. }
             | crate::TypeInner::AccelerationStructure { .. }
             | crate::TypeInner::RayQuery { .. } => None,
@@ -555,7 +556,7 @@ impl super::Validator {
             } => {
                 handle
                     .check_dep(image)?
-                    .check_dep(sampler)?
+                    .check_dep_opt(sampler)?
                     .check_dep(coordinate)?
                     .check_dep_opt(array_index)?
                     .check_dep_opt(offset)?;

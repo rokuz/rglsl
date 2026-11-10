@@ -41,7 +41,10 @@ impl crate::TypeInner {
     /// Returns true if a variable of this type is a handle.
     pub const fn is_handle(&self) -> bool {
         match *self {
-            Self::Image { .. } | Self::Sampler { .. } | Self::AccelerationStructure { .. } => true,
+            Self::Image { .. }
+            | Self::SampledImage { .. }
+            | Self::Sampler { .. }
+            | Self::AccelerationStructure { .. } => true,
             _ => false,
         }
     }

@@ -6,7 +6,8 @@ use spirv::Word;
 
 use super::{
     selection::{MergeTuple, Selection},
-    Block, BlockContext, Error, IdGenerator, Instruction, LocalType, LookupType, NumericType,
+    Block, BlockContext, Error, IdGenerator, Instruction, LocalImageType, LocalType, LookupType,
+    NumericType,
 };
 use crate::arena::Handle;
 
@@ -396,6 +397,34 @@ impl BlockContext<'_> {
         id
     }
 
+    pub(super) fn get_image_id(
+        &mut self,
+        expr_handle: Handle<crate::Expression>,
+        block: &mut Block,
+    ) -> Word {
+        let id = self.get_handle_id(expr_handle);
+        match *self.fun_info[expr_handle]
+            .ty
+            .inner_with(&self.ir_module.types)
+        {
+            crate::TypeInner::SampledImage {
+                dim,
+                arrayed,
+                class,
+            } => {
+                let image_type_id = self.get_type_id(LookupType::Local(LocalType::Image(
+                    LocalImageType::from_inner(dim, arrayed, class),
+                )));
+                let image_id = self.gen_id();
+                block
+                    .body
+                    .push(Instruction::image_of_sampled(image_type_id, image_id, id));
+                image_id
+            }
+            _ => id,
+        }
+    }
+
     /// Generate a vector or scalar 'one' for arithmetic on `coordinates`.
     ///
     /// If `coordinates` is a scalar, return a scalar one. Otherwise, return
@@ -730,10 +759,11 @@ impl BlockContext<'_> {
         sample: Option<Handle<crate::Expression>>,
         block: &mut Block,
     ) -> Result<Word, Error> {
-        let image_id = self.get_handle_id(image);
+        let image_id = self.get_image_id(image, block);
         let image_type = self.fun_info[image].ty.inner_with(&self.ir_module.types);
         let image_class = match *image_type {
-            crate::TypeInner::Image { class, .. } => class,
+            crate::TypeInner::Image { class, .. }
+            | crate::TypeInner::SampledImage { class, .. } => class,
             _ => return Err(Error::Validation("image type")),
         };
 
@@ -804,7 +834,7 @@ impl BlockContext<'_> {
         &mut self,
         result_type_id: Word,
         image: Handle<crate::Expression>,
-        sampler: Handle<crate::Expression>,
+        sampler: Option<Handle<crate::Expression>>,
         gather: Option<crate::SwizzleComponent>,
         coordinate: Handle<crate::Expression>,
         array_index: Option<Handle<crate::Expression>>,
@@ -816,15 +846,25 @@ impl BlockContext<'_> {
     ) -> Result<Word, Error> {
         use super::instructions::SampleLod;
         // image
-        let image_id = self.get_handle_id(image);
-        let image_type = self.fun_info[image].ty.handle().unwrap();
+        let handle_id = self.get_handle_id(image);
+        let (dim, arrayed, class) = match *self.fun_info[image].ty.inner_with(&self.ir_module.types)
+        {
+            crate::TypeInner::Image {
+                dim,
+                arrayed,
+                class,
+            }
+            | crate::TypeInner::SampledImage {
+                dim,
+                arrayed,
+                class,
+            } => (dim, arrayed, class),
+            _ => return Err(Error::Validation("image type")),
+        };
         // SPIR-V doesn't know about our `Depth` class, and it returns
         // `vec4<f32>`, so we need to grab the first component out of it.
-        let needs_sub_access = match self.ir_module.types[image_type].inner {
-            crate::TypeInner::Image {
-                class: crate::ImageClass::Depth { .. },
-                ..
-            } => depth_ref.is_none() && gather.is_none(),
+        let needs_sub_access = match class {
+            crate::ImageClass::Depth { .. } => depth_ref.is_none() && gather.is_none(),
             _ => false,
         };
         let sample_result_type_id = if needs_sub_access {
@@ -836,12 +876,22 @@ impl BlockContext<'_> {
             result_type_id
         };
 
-        // OpTypeSampledImage
-        let image_type_id = self.get_handle_type_id(image_type);
+        let image_type_id = self.get_type_id(LookupType::Local(LocalType::Image(
+            LocalImageType::from_inner(dim, arrayed, class),
+        )));
         let sampled_image_type_id =
             self.get_type_id(LookupType::Local(LocalType::SampledImage { image_type_id }));
-
-        let sampler_id = self.get_handle_id(sampler);
+        let image_id = match sampler {
+            Some(_) => handle_id,
+            None if clamp_to_edge => {
+                let id = self.gen_id();
+                block
+                    .body
+                    .push(Instruction::image_of_sampled(image_type_id, id, handle_id));
+                id
+            }
+            None => 0,
+        };
 
         let coordinates = self.write_image_coordinates(coordinate, array_index, block)?;
         let coordinates_id = if clamp_to_edge {
@@ -936,13 +986,20 @@ impl BlockContext<'_> {
             coordinates.value_id
         };
 
-        let sampled_image_id = self.gen_id();
-        block.body.push(Instruction::sampled_image(
-            sampled_image_type_id,
-            sampled_image_id,
-            image_id,
-            sampler_id,
-        ));
+        let sampled_image_id = match sampler {
+            Some(sampler) => {
+                let sampler_id = self.get_handle_id(sampler);
+                let sampled_image_id = self.gen_id();
+                block.body.push(Instruction::sampled_image(
+                    sampled_image_type_id,
+                    sampled_image_id,
+                    image_id,
+                    sampler_id,
+                ));
+                sampled_image_id
+            }
+            None => handle_id,
+        };
         let id = self.gen_id();
 
         let depth_id = depth_ref.map(|handle| self.cached[handle]);
@@ -1116,10 +1173,15 @@ impl BlockContext<'_> {
     ) -> Result<Word, Error> {
         use crate::{ImageClass as Ic, ImageDimension as Id, ImageQuery as Iq};
 
-        let image_id = self.get_handle_id(image);
-        let image_type = self.fun_info[image].ty.handle().unwrap();
-        let (dim, arrayed, class) = match self.ir_module.types[image_type].inner {
+        let image_id = self.get_image_id(image, block);
+        let (dim, arrayed, class) = match *self.fun_info[image].ty.inner_with(&self.ir_module.types)
+        {
             crate::TypeInner::Image {
+                dim,
+                arrayed,
+                class,
+            }
+            | crate::TypeInner::SampledImage {
                 dim,
                 arrayed,
                 class,

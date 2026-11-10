@@ -514,6 +514,16 @@ impl Writer {
                 arrayed,
                 class,
             } => LocalType::Image(LocalImageType::from_inner(dim, arrayed, class)),
+            crate::TypeInner::SampledImage {
+                dim,
+                arrayed,
+                class,
+            } => {
+                let image_type_id = self.get_localtype_id(LocalType::Image(
+                    LocalImageType::from_inner(dim, arrayed, class),
+                ));
+                LocalType::SampledImage { image_type_id }
+            }
             crate::TypeInner::Sampler { comparison: _ } => LocalType::Sampler,
             crate::TypeInner::AccelerationStructure { .. } => LocalType::AccelerationStructure,
             crate::TypeInner::RayQuery { .. } => LocalType::RayQuery,
@@ -2042,6 +2052,11 @@ impl Writer {
                 dim,
                 arrayed,
                 class,
+            }
+            | crate::TypeInner::SampledImage {
+                dim,
+                arrayed,
+                class,
             } => {
                 let sampled = match class {
                     crate::ImageClass::Sampled { .. } => true,
@@ -2325,6 +2340,7 @@ impl Writer {
                 | crate::TypeInner::Pointer { .. }
                 | crate::TypeInner::ValuePointer { .. }
                 | crate::TypeInner::Image { .. }
+                | crate::TypeInner::SampledImage { .. }
                 | crate::TypeInner::Sampler { .. }
                 | crate::TypeInner::AccelerationStructure { .. }
                 | crate::TypeInner::RayQuery { .. } => unreachable!(),

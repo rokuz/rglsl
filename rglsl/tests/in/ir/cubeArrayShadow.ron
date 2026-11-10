@@ -112,7 +112,7 @@
                     Literal(F32(1.0)),
                     ImageSample(
                         image: 4,
-                        sampler: 5,
+                        sampler: Some(5),
                         gather: None,
                         coordinate: 3,
                         array_index: Some(6),

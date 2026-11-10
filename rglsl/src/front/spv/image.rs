@@ -798,7 +798,7 @@ impl<I: Iterator<Item = u32>> super::Frontend<I> {
 
         let expr = crate::Expression::ImageSample {
             image: si_lexp.image,
-            sampler: si_lexp.sampler,
+            sampler: Some(si_lexp.sampler),
             gather,
             coordinate,
             array_index,

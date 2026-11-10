@@ -175,7 +175,8 @@ impl FunctionLowerer<'_, '_> {
             | "textureProjGradOffset"
             | "textureGather"
             | "textureGatherOffset" => self.sample(name, function, arguments, at).map(Some),
-            "texelFetch" => self.fetch(arguments, at).map(Some),
+            "texelFetch" => self.fetch(arguments, false, at).map(Some),
+            "texelFetchOffset" => self.fetch(arguments, true, at).map(Some),
             "textureSize" | "textureQueryLevels" | "textureSamples" | "imageSize" => {
                 self.query(name, arguments, at).map(Some)
             }
@@ -498,15 +499,16 @@ impl FunctionLowerer<'_, '_> {
         }
         let ty = self.info(argument)?.ty.clone();
         match ty.as_opaque() {
-            Some(opaque) if opaque.kind == OpaqueKind::Image => Ok(Sampled {
-                image: self.rvalue(argument)?,
-                sampler: None,
-                opaque,
-            }),
-            Some(opaque) if opaque.kind == OpaqueKind::CombinedSampler => Err(unsupported(
-                "combined image samplers (`sampler2D` and similar) until the IR has sampled image types",
-                at,
-            )),
+            Some(opaque)
+                if opaque.kind == OpaqueKind::Image
+                    || opaque.kind == OpaqueKind::CombinedSampler =>
+            {
+                Ok(Sampled {
+                    image: self.rvalue(argument)?,
+                    sampler: None,
+                    opaque,
+                })
+            }
             _ => Err(unsupported("this texture argument", at)),
         }
     }
@@ -586,7 +588,9 @@ impl FunctionLowerer<'_, '_> {
             sampler,
             opaque,
         } = self.sampled(first, at)?;
-        let sampler = sampler.ok_or_else(|| internal(at))?;
+        if sampler.is_none() && opaque.kind != OpaqueKind::CombinedSampler {
+            return Err(internal(at));
+        }
         let gather = name.starts_with("textureGather");
         let proj = name.contains("Proj");
         let lod = name.contains("Lod");
@@ -696,7 +700,12 @@ impl FunctionLowerer<'_, '_> {
         self.rvalue(value)
     }
 
-    fn fetch(&mut self, arguments: &[AstExpression], at: Span) -> Result<Handle<Expression>> {
+    fn fetch(
+        &mut self,
+        arguments: &[AstExpression],
+        offset: bool,
+        at: Span,
+    ) -> Result<Handle<Expression>> {
         let first = arguments.first().ok_or_else(|| internal(at))?;
         let Sampled { image, opaque, .. } = self.sampled(first, at)?;
         if opaque.is_buffer() {
@@ -705,11 +714,17 @@ impl FunctionLowerer<'_, '_> {
         let coordinate_argument = arguments.get(1).ok_or_else(|| internal(at))?;
         let (coordinate, ty) = self.typed(coordinate_argument)?;
         let size = ty.component_count().ok_or_else(|| internal(at))?;
-        let (point, array_index) = self.split_coordinate(coordinate, size, opaque, false, at)?;
+        let (mut point, array_index) =
+            self.split_coordinate(coordinate, size, opaque, false, at)?;
         let extra = match arguments.get(2) {
             Some(argument) => Some(self.rvalue(argument)?),
             None => None,
         };
+        if offset {
+            let offset = arguments.get(3).ok_or_else(|| internal(at))?;
+            let offset = self.rvalue(offset)?;
+            point = self.binary_op(BinaryOperator::Add, point, offset, at)?;
+        }
         let (sample, level) = if opaque.multisample {
             (extra, None)
         } else {

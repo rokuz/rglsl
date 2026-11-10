@@ -267,6 +267,7 @@ impl Layouter {
                     }
                 }
                 Ti::Image { .. }
+                | Ti::SampledImage { .. }
                 | Ti::Sampler { .. }
                 | Ti::AccelerationStructure { .. }
                 | Ti::RayQuery { .. }

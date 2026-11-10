@@ -497,16 +497,18 @@ impl<'a> ResolveContext<'a> {
                 gather: Some(_),
                 ..
             } => match *past(image)?.inner_with(types) {
-                Ti::Image { class, .. } => TypeResolution::Value(Ti::Vector {
-                    scalar: crate::Scalar {
-                        kind: match class {
-                            crate::ImageClass::Sampled { kind, multi: _ } => kind,
-                            _ => crate::ScalarKind::Float,
+                Ti::Image { class, .. } | Ti::SampledImage { class, .. } => {
+                    TypeResolution::Value(Ti::Vector {
+                        scalar: crate::Scalar {
+                            kind: match class {
+                                crate::ImageClass::Sampled { kind, multi: _ } => kind,
+                                _ => crate::ScalarKind::Float,
+                            },
+                            width: 4,
                         },
-                        width: 4,
-                    },
-                    size: crate::VectorSize::Quad,
-                }),
+                        size: crate::VectorSize::Quad,
+                    })
+                }
                 ref other => {
                     log::error!("Image type {other:?}");
                     return Err(ResolveError::InvalidImage(image));
@@ -514,21 +516,23 @@ impl<'a> ResolveContext<'a> {
             },
             crate::Expression::ImageSample { image, .. }
             | crate::Expression::ImageLoad { image, .. } => match *past(image)?.inner_with(types) {
-                Ti::Image { class, .. } => TypeResolution::Value(match class {
-                    crate::ImageClass::Depth { multi: _ } => Ti::Scalar(crate::Scalar::F32),
-                    crate::ImageClass::Sampled { kind, multi: _ } => Ti::Vector {
-                        scalar: crate::Scalar { kind, width: 4 },
-                        size: crate::VectorSize::Quad,
-                    },
-                    crate::ImageClass::Storage { format, .. } => Ti::Vector {
-                        scalar: format.into(),
-                        size: crate::VectorSize::Quad,
-                    },
-                    crate::ImageClass::External => Ti::Vector {
-                        scalar: crate::Scalar::F32,
-                        size: crate::VectorSize::Quad,
-                    },
-                }),
+                Ti::Image { class, .. } | Ti::SampledImage { class, .. } => {
+                    TypeResolution::Value(match class {
+                        crate::ImageClass::Depth { multi: _ } => Ti::Scalar(crate::Scalar::F32),
+                        crate::ImageClass::Sampled { kind, multi: _ } => Ti::Vector {
+                            scalar: crate::Scalar { kind, width: 4 },
+                            size: crate::VectorSize::Quad,
+                        },
+                        crate::ImageClass::Storage { format, .. } => Ti::Vector {
+                            scalar: format.into(),
+                            size: crate::VectorSize::Quad,
+                        },
+                        crate::ImageClass::External => Ti::Vector {
+                            scalar: crate::Scalar::F32,
+                            size: crate::VectorSize::Quad,
+                        },
+                    })
+                }
                 ref other => {
                     log::error!("Image type {other:?}");
                     return Err(ResolveError::InvalidImage(image));
@@ -536,7 +540,7 @@ impl<'a> ResolveContext<'a> {
             },
             crate::Expression::ImageQuery { image, query } => TypeResolution::Value(match query {
                 crate::ImageQuery::Size { level: _ } => match *past(image)?.inner_with(types) {
-                    Ti::Image { dim, .. } => match dim {
+                    Ti::Image { dim, .. } | Ti::SampledImage { dim, .. } => match dim {
                         crate::ImageDimension::D1 => Ti::Scalar(crate::Scalar::U32),
                         crate::ImageDimension::D2 | crate::ImageDimension::Cube => Ti::Vector {
                             size: crate::VectorSize::Bi,

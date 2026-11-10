@@ -158,7 +158,7 @@
                     ),
                     ImageSample(
                         image: 1,
-                        sampler: 2,
+                        sampler: Some(2),
                         gather: None,
                         coordinate: 3,
                         array_index: None,
@@ -215,7 +215,7 @@
                     ),
                     ImageSample(
                         image: 0,
-                        sampler: 1,
+                        sampler: Some(1),
                         gather: None,
                         coordinate: 3,
                         array_index: None,
@@ -279,7 +279,7 @@
                     ),
                     ImageSample(
                         image: 0,
-                        sampler: 1,
+                        sampler: Some(1),
                         gather: None,
                         coordinate: 6,
                         array_index: None,
@@ -296,7 +296,7 @@
                     ),
                     ImageSample(
                         image: 8,
-                        sampler: 9,
+                        sampler: Some(9),
                         gather: None,
                         coordinate: 11,
                         array_index: None,

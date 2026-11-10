@@ -1296,7 +1296,8 @@ impl super::Validator {
                                 unreachable!("binding arrays of external images are not supported");
                             }
                         },
-                        crate::TypeInner::Sampler { .. } => {
+                        crate::TypeInner::Sampler { .. }
+                        | crate::TypeInner::SampledImage { .. } => {
                             if !self
                                 .capabilities
                                 .contains(Capabilities::TEXTURE_AND_SAMPLER_BINDING_ARRAY)
@@ -1396,6 +1397,7 @@ impl super::Validator {
                         _ => {}
                     },
                     crate::TypeInner::Sampler { .. }
+                    | crate::TypeInner::SampledImage { .. }
                     | crate::TypeInner::AccelerationStructure { .. }
                     | crate::TypeInner::RayQuery { .. } => {}
                     _ => {

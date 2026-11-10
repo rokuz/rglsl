@@ -3857,10 +3857,37 @@ impl BlockContext<'_> {
                     result,
                 } => {
                     let id = self.gen_id();
-                    self.temp_list.clear();
+                    let mut argument_ids = Vec::with_capacity(arguments.len());
                     for &argument in arguments {
-                        self.temp_list.push(self.cached[argument]);
+                        let argument_id = match self.ir_function.expressions[argument] {
+                            crate::Expression::Access { base, .. }
+                            | crate::Expression::AccessIndex { base, .. }
+                                if matches!(
+                                    *self.fun_info[base].ty.inner_with(&self.ir_module.types),
+                                    crate::TypeInner::BindingArray { .. }
+                                ) =>
+                            {
+                                match self.write_access_chain(
+                                    argument,
+                                    &mut block,
+                                    AccessTypeAdjustment::IntroducePointer(
+                                        spirv::StorageClass::UniformConstant,
+                                    ),
+                                )? {
+                                    ExpressionPointer::Ready { pointer_id } => pointer_id,
+                                    ExpressionPointer::Conditional { .. } => {
+                                        return Err(Error::FeatureNotImplemented(
+                                            "Texture array out-of-bounds handling",
+                                        ));
+                                    }
+                                }
+                            }
+                            _ => self.cached[argument],
+                        };
+                        argument_ids.push(argument_id);
                     }
+                    self.temp_list.clear();
+                    self.temp_list.extend(argument_ids);
 
                     let type_id = match result {
                         Some(expr) => {
