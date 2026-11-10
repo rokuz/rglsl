@@ -5202,3 +5202,440 @@ fn heap_resources_are_not_passed_to_user_functions() {
     .unwrap_err();
     assert!(error.contains("descriptor heap resource"), "{error}");
 }
+
+fn execution_mode_operands(module: &dr::Module, mode: spirv::ExecutionMode) -> Option<Vec<u32>> {
+    module
+        .execution_modes
+        .iter()
+        .find(|inst| inst.operands[1] == Operand::ExecutionMode(mode))
+        .map(|inst| {
+            inst.operands[2..]
+                .iter()
+                .filter_map(|operand| match *operand {
+                    Operand::LiteralBit32(value) => Some(value),
+                    _ => None,
+                })
+                .collect()
+        })
+}
+
+fn execution_model(module: &dr::Module) -> spirv::ExecutionModel {
+    match module.entry_points[0].operands[0] {
+        Operand::ExecutionModel(model) => model,
+        ref other => panic!("unexpected entry point operand {other:?}"),
+    }
+}
+
+fn variable_array_length(module: &dr::Module, name: &str) -> u32 {
+    let variable = module
+        .types_global_values
+        .iter()
+        .find(|inst| {
+            inst.class.opcode == Op::Variable
+                && inst.result_id.is_some_and(|id| name_of(module, id) == name)
+        })
+        .unwrap_or_else(|| panic!("{name} is not declared"));
+    let pointer = module
+        .types_global_values
+        .iter()
+        .find(|inst| inst.result_id == variable.result_type)
+        .expect("a variable has a pointer type");
+    let pointee = pointer.operands[1].unwrap_id_ref();
+    let array = module
+        .types_global_values
+        .iter()
+        .find(|inst| inst.result_id == Some(pointee))
+        .expect("the pointee is declared");
+    assert_eq!(array.class.opcode, Op::TypeArray, "{name}");
+    constant(module, &array.operands[1])
+}
+
+#[test]
+fn geometry_execution_modes_and_capabilities() {
+    let module = compile_valid(
+        ShaderStage::Geometry,
+        "#version 450 core
+        layout(triangles) in;
+        layout(line_strip) out;
+        layout(max_vertices = 127) out;
+        layout(invocations = 4) in;
+        void main() {
+            gl_PointSize = gl_in[1].gl_PointSize;
+            gl_Layer = 2;
+            gl_ViewportIndex = 3;
+        }",
+    );
+    assert_eq!(execution_model(&module), spirv::ExecutionModel::Geometry);
+    assert_eq!(
+        execution_mode_operands(&module, spirv::ExecutionMode::Triangles),
+        Some(Vec::new())
+    );
+    assert_eq!(
+        execution_mode_operands(&module, spirv::ExecutionMode::Invocations),
+        Some(vec![4])
+    );
+    assert_eq!(
+        execution_mode_operands(&module, spirv::ExecutionMode::OutputLineStrip),
+        Some(Vec::new())
+    );
+    assert_eq!(
+        execution_mode_operands(&module, spirv::ExecutionMode::OutputVertices),
+        Some(vec![127])
+    );
+    for capability in [
+        spirv::Capability::Geometry,
+        spirv::Capability::GeometryPointSize,
+        spirv::Capability::MultiViewport,
+    ] {
+        assert!(has_capability(&module, capability), "{capability:?}");
+    }
+    assert!(!has_capability(&module, spirv::Capability::ClipDistance));
+    assert_eq!(variable_array_length(&module, "gl_in"), 3);
+}
+
+#[test]
+fn geometry_invocations_default_to_one() {
+    let module = compile_valid(
+        ShaderStage::Geometry,
+        "#version 450
+        layout(points) in;
+        layout(points, max_vertices = 1) out;
+        void main() { gl_Position = gl_in[0].gl_Position; EmitVertex(); EndPrimitive(); }",
+    );
+    assert_eq!(
+        execution_mode_operands(&module, spirv::ExecutionMode::Invocations),
+        Some(vec![1])
+    );
+    assert_eq!(instructions(&module, Op::EmitVertex).len(), 1);
+    assert_eq!(instructions(&module, Op::EndPrimitive).len(), 1);
+    assert!(!has_capability(&module, spirv::Capability::GeometryStreams));
+    assert!(!has_capability(
+        &module,
+        spirv::Capability::GeometryPointSize
+    ));
+}
+
+#[test]
+fn geometry_streams() {
+    let module = compile_valid(
+        ShaderStage::Geometry,
+        "#version 450
+        layout(points) in;
+        layout(points, max_vertices = 2) out;
+        layout(location = 3) out vec4 early;
+        layout(stream = 1) out;
+        layout(location = 0) out vec4 a;
+        layout(stream = 0, location = 1) out vec4 b;
+        void main() {
+            a = vec4(1.0);
+            EmitStreamVertex(1);
+            EndStreamPrimitive(1);
+            b = vec4(2.0);
+            EmitVertex();
+        }",
+    );
+    assert!(has_capability(&module, spirv::Capability::GeometryStreams));
+    let emits = instructions(&module, Op::EmitStreamVertex);
+    assert_eq!(emits.len(), 1);
+    assert_eq!(constant(&module, &emits[0].operands[0]), 1);
+    assert_eq!(instructions(&module, Op::EndStreamPrimitive).len(), 1);
+    let streams: Vec<(String, u32)> = module
+        .annotations
+        .iter()
+        .filter(|inst| inst.operands[1] == Operand::Decoration(Decoration::Stream))
+        .map(|inst| {
+            let Operand::LiteralBit32(stream) = inst.operands[2] else {
+                panic!("Stream takes a literal");
+            };
+            (name_of(&module, inst.operands[0].unwrap_id_ref()), stream)
+        })
+        .collect();
+    for (name, stream) in [("early", 0), ("a", 1), ("b", 0)] {
+        assert!(
+            streams.contains(&(name.to_string(), stream)),
+            "{name} {stream} in {streams:?}"
+        );
+    }
+}
+
+#[test]
+fn geometry_per_vertex_inputs_take_element_locations() {
+    let module = compile_valid(
+        ShaderStage::Geometry,
+        "#version 450
+        layout(lines_adjacency) in;
+        layout(triangle_strip, max_vertices = 4) out;
+        layout(location = 0) in vec4 a[];
+        layout(location = 1) in vec2 b[4];
+        layout(location = 2) in Block { vec4 c; flat int d; } blocks[];
+        layout(location = 0) out vec4 color;
+        void main() {
+            for (int i = 0; i < 4; ++i) {
+                color = a[i] + vec4(b[i], blocks[i].c.xy) + vec4(blocks[i].d);
+                gl_Position = gl_in[i].gl_Position;
+                gl_PrimitiveID = gl_PrimitiveIDIn;
+                EmitVertex();
+            }
+        }",
+    );
+    assert!(has_execution_mode(
+        &module,
+        spirv::ExecutionMode::InputLinesAdjacency
+    ));
+    assert_eq!(variable_array_length(&module, "a"), 4);
+    assert_eq!(variable_array_length(&module, "blocks"), 4);
+    let primitive_ids = module
+        .annotations
+        .iter()
+        .filter(|inst| inst.operands.get(2) == Some(&Operand::BuiltIn(spirv::BuiltIn::PrimitiveId)))
+        .count();
+    assert_eq!(primitive_ids, 2);
+}
+
+#[test]
+fn tessellation_control_interface() {
+    let module = compile_valid(
+        ShaderStage::TessControl,
+        "#version 450 core
+        layout(vertices = 4) out;
+        layout(location = 1) patch out vec4 patchOut;
+        struct S { float sMem1; float sMem2; };
+        layout(location = 12) patch out TheBlock { float bMem1; float bMem2; S s; } tcBlock[2];
+        layout(location = 0) in vec3 inNormal[];
+        layout(location = 0) out vec3 outNormal[];
+        void main() {
+            gl_out[gl_InvocationID].gl_Position = gl_in[gl_InvocationID].gl_Position;
+            outNormal[gl_InvocationID] = inNormal[gl_InvocationID];
+            barrier();
+            if (gl_InvocationID == 0) {
+                patchOut = vec4(outNormal[1], 1.0);
+                gl_TessLevelOuter[0] = 1.0;
+                gl_TessLevelInner[1] = float(gl_PatchVerticesIn);
+            }
+        }",
+    );
+    assert_eq!(
+        execution_model(&module),
+        spirv::ExecutionModel::TessellationControl
+    );
+    assert_eq!(
+        execution_mode_operands(&module, spirv::ExecutionMode::OutputVertices),
+        Some(vec![4])
+    );
+    assert!(has_capability(&module, spirv::Capability::Tessellation));
+    assert!(!has_capability(
+        &module,
+        spirv::Capability::TessellationPointSize
+    ));
+    let patch = decorated(&module, Decoration::Patch);
+    for name in [
+        "patchOut",
+        "bMem1",
+        "bMem2",
+        "s",
+        "gl_TessLevelOuter",
+        "gl_TessLevelInner",
+    ] {
+        assert!(patch.contains(&name.to_string()), "{name} in {patch:?}");
+    }
+    assert!(!patch.contains(&"outNormal".to_string()));
+    let locations = decorated(&module, Decoration::Location);
+    for name in ["patchOut", "tcBlock", "inNormal", "outNormal"] {
+        assert!(locations.contains(&name.to_string()), "{name}");
+    }
+    assert_eq!(variable_array_length(&module, "gl_in"), 32);
+    assert_eq!(variable_array_length(&module, "gl_out"), 4);
+    assert_eq!(variable_array_length(&module, "inNormal"), 32);
+    assert_eq!(variable_array_length(&module, "outNormal"), 4);
+    let barriers = instructions(&module, Op::ControlBarrier);
+    assert_eq!(barriers.len(), 1);
+    assert_eq!(
+        constant(&module, &barriers[0].operands[0]),
+        spirv::Scope::Workgroup as u32
+    );
+}
+
+#[test]
+fn tessellation_evaluation_modes() {
+    let module = compile_valid(
+        ShaderStage::TessEvaluation,
+        "#version 450
+        layout(isolines, fractional_odd_spacing, cw, point_mode) in;
+        layout(location = 0) in vec4 inColor[];
+        layout(location = 1) patch in vec4 patchColor;
+        layout(location = 0) out vec4 color;
+        void main() {
+            color = inColor[0] * gl_TessCoord.x + patchColor + vec4(gl_TessLevelOuter[1]);
+            gl_Position = gl_in[1].gl_Position;
+            gl_PointSize = 2.0;
+        }",
+    );
+    for mode in [
+        spirv::ExecutionMode::Isolines,
+        spirv::ExecutionMode::SpacingFractionalOdd,
+        spirv::ExecutionMode::VertexOrderCw,
+        spirv::ExecutionMode::PointMode,
+    ] {
+        assert!(has_execution_mode(&module, mode), "{mode:?}");
+    }
+    assert!(has_capability(
+        &module,
+        spirv::Capability::TessellationPointSize
+    ));
+    let defaults = compile_valid(
+        ShaderStage::TessEvaluation,
+        "#version 450
+        layout(triangles) in;
+        void main() { gl_Position = gl_in[0].gl_Position * gl_TessCoord.x; }",
+    );
+    for mode in [
+        spirv::ExecutionMode::Triangles,
+        spirv::ExecutionMode::SpacingEqual,
+        spirv::ExecutionMode::VertexOrderCcw,
+    ] {
+        assert!(has_execution_mode(&defaults, mode), "{mode:?}");
+    }
+    assert!(!has_execution_mode(
+        &defaults,
+        spirv::ExecutionMode::PointMode
+    ));
+}
+
+#[test]
+fn layer_before_rasterization_needs_an_extension() {
+    let error = parse(
+        ShaderStage::TessEvaluation,
+        "#version 450
+        layout(triangles) in;
+        void main() { gl_Layer = 1; }",
+    )
+    .unwrap_err();
+    assert!(
+        error.contains("GL_ARB_shader_viewport_layer_array"),
+        "{error}"
+    );
+    let module = compile_valid(
+        ShaderStage::TessEvaluation,
+        "#version 450
+        #extension GL_ARB_shader_viewport_layer_array : require
+        layout(triangles) in;
+        void main() { gl_Layer = 1; gl_ViewportIndex = 2; }",
+    );
+    assert!(has_capability(
+        &module,
+        spirv::Capability::ShaderViewportIndexLayerEXT
+    ));
+    assert!(!has_capability(&module, spirv::Capability::Geometry));
+}
+
+#[test]
+fn geometry_passthrough() {
+    let module = compile_valid(
+        ShaderStage::Geometry,
+        "#version 450
+        #extension GL_NV_geometry_shader_passthrough : require
+        layout(triangles) in;
+        layout(passthrough) in gl_PerVertex { vec4 gl_Position; };
+        layout(passthrough, location = 0) in Inputs { vec2 texcoord; vec4 baseColor; };
+        void main() {}",
+    );
+    assert!(has_capability(
+        &module,
+        spirv::Capability::GeometryShaderPassthroughNV
+    ));
+    let passthrough = module
+        .annotations
+        .iter()
+        .filter(|inst| inst.operands[1] == Operand::Decoration(Decoration::PassthroughNV))
+        .count();
+    assert_eq!(passthrough, 2);
+    assert!(has_execution_mode(
+        &module,
+        spirv::ExecutionMode::OutputTriangleStrip
+    ));
+    assert_eq!(
+        execution_mode_operands(&module, spirv::ExecutionMode::OutputVertices),
+        Some(vec![3])
+    );
+}
+
+#[test]
+fn geometry_and_tessellation_rejections() {
+    let cases = [
+        (
+            ShaderStage::Geometry,
+            "layout(triangles) in;\nlayout(points) out;\nvoid main() {}",
+            "max_vertices",
+        ),
+        (
+            ShaderStage::Geometry,
+            "layout(points, max_vertices = 1) out;\nvoid main() {}",
+            "input layout primitive",
+        ),
+        (
+            ShaderStage::TessControl,
+            "void main() {}",
+            "layout(vertices=...)",
+        ),
+        (
+            ShaderStage::TessEvaluation,
+            "void main() {}",
+            "input layout primitive",
+        ),
+        (
+            ShaderStage::TessEvaluation,
+            "layout(triangles) in;\nlayout(equal_spacing) in float f[];\nvoid main() {}",
+            "standalone",
+        ),
+        (
+            ShaderStage::TessEvaluation,
+            "layout(triangles) in;\nlayout(quads) in;\nvoid main() {}",
+            "previously set input primitive",
+        ),
+        (
+            ShaderStage::Geometry,
+            "layout(triangles) in;\nlayout(triangles, max_vertices = 1) out;\nvoid main() {}",
+            "cannot apply to 'out'",
+        ),
+        (
+            ShaderStage::Geometry,
+            "layout(triangles) in;\nlayout(points, max_vertices = 1000) out;\nvoid main() {}",
+            "gl_MaxGeometryOutputVertices",
+        ),
+        (
+            ShaderStage::TessControl,
+            "layout(vertices = 4) out;\nvoid main() { if (gl_InvocationID == 0) barrier(); }",
+            "flow control",
+        ),
+        (
+            ShaderStage::TessControl,
+            "layout(vertices = 4) out;\nvoid f() { barrier(); }\nvoid main() { f(); }",
+            "must be in main()",
+        ),
+        (
+            ShaderStage::TessControl,
+            "layout(vertices = 4) out;\nvoid main() { if (gl_InvocationID == 1) return; barrier(); }",
+            "after a return",
+        ),
+        (
+            ShaderStage::Geometry,
+            "layout(triangles) in;\nlayout(points, max_vertices = 4) out;\nvoid main() { int s = 1; EmitStreamVertex(s); }",
+            "constant integral expression",
+        ),
+        (
+            ShaderStage::Geometry,
+            "layout(triangles) in;\nlayout(points, max_vertices = 1) out;\nlayout(passthrough) in Inputs { vec2 t; };\nvoid main() {}",
+            "GL_NV_geometry_shader_passthrough",
+        ),
+        (
+            ShaderStage::Vertex,
+            "void main() { EmitVertex(); }",
+            "EmitVertex",
+        ),
+    ];
+    for (stage, body, expected) in cases {
+        let source = format!("#version 450\n{body}\n");
+        let error = parse(stage, &source).unwrap_err();
+        assert!(error.contains(expected), "{source}: {error}");
+    }
+}

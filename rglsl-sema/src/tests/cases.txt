@@ -4387,3 +4387,122 @@ void main() {}
 layout(local_size_x = 1) in;
 layout(binding = 0, std430) buffer B { bool a[3]; bvec2 v[2][2]; bool r[]; } b;
 void main() { b.a[1] = true; b.r[0] = b.v[1][0].y; bool copy[3] = b.a; b.a = copy; }
+### stage layout on a declaration | tese | 3:InvalidQualifier
+layout(triangles) in;
+layout(equal_spacing) in float f1[];
+void main() {}
+### geometry layout on a block | geom | 4:InvalidQualifier
+layout(triangles) in;
+layout(points, max_vertices = 1) out;
+layout(invocations = 2) in B { vec4 v; } b[];
+void main() {}
+### changed input primitive | geom | 3:InvalidQualifier
+layout(triangles) in;
+layout(lines) in;
+layout(points, max_vertices = 1) out;
+void main() {}
+### repeated input primitive | geom | ok
+layout(triangles) in;
+layout(triangles) in;
+layout(points, max_vertices = 1) out;
+void main() {}
+### output primitive on input | geom | 3:InvalidQualifier
+layout(triangles) in;
+layout(line_strip) in;
+layout(points, max_vertices = 1) out;
+void main() {}
+### input primitive on output | geom | 3:InvalidQualifier
+layout(triangles) in;
+layout(triangles, max_vertices = 1) out;
+void main() {}
+### too many output vertices | geom | 3:InvalidQualifier
+layout(triangles) in;
+layout(points, max_vertices = 257) out;
+void main() {}
+### changed output vertices | geom | 4:InvalidQualifier
+layout(triangles) in;
+layout(points, max_vertices = 4) out;
+layout(max_vertices = 5) out;
+void main() {}
+### invocations on output | geom | 3:InvalidQualifier
+layout(triangles) in;
+layout(invocations = 2) out;
+layout(points, max_vertices = 1) out;
+void main() {}
+### zero invocations | geom | 2:InvalidQualifier
+layout(triangles, invocations = 0) in;
+layout(points, max_vertices = 1) out;
+void main() {}
+### zero output vertices | tesc | 2:InvalidQualifier
+layout(vertices = 0) out;
+void main() {}
+### vertices on input | tesc | 2:InvalidQualifier
+layout(vertices = 4) in;
+void main() {}
+### vertex order on output | tese | 3:InvalidQualifier
+layout(triangles) in;
+layout(cw) out;
+void main() {}
+### changed spacing | tese | 3:InvalidQualifier
+layout(triangles, equal_spacing) in;
+layout(fractional_odd_spacing) in;
+void main() {}
+### tessellation evaluation layout | tese | ok
+layout(quads, fractional_even_spacing, ccw, point_mode) in;
+void main() {}
+### tessellation control barrier in flow control | tesc | 4:InvalidQualifier
+layout(vertices = 4) out;
+void main() {
+    if (gl_InvocationID == 0) barrier();
+}
+### tessellation control barrier in a loop | tesc | 4:InvalidQualifier
+layout(vertices = 4) out;
+void main() {
+    for (int i = 0; i < 2; ++i) barrier();
+}
+### tessellation control barrier outside main | tesc | 3:InvalidQualifier
+layout(vertices = 4) out;
+void f() { barrier(); }
+void main() { f(); }
+### tessellation control barrier after return | tesc | 5:InvalidQualifier
+layout(vertices = 4) out;
+void main() {
+    if (gl_InvocationID == 1) return;
+    barrier();
+}
+### tessellation control barrier in main | tesc | ok
+layout(vertices = 4) out;
+void main() {
+    { barrier(); }
+}
+### compute barrier in flow control | comp | ok
+layout(local_size_x = 1) in;
+void main() {
+    if (gl_LocalInvocationIndex == 0u) barrier();
+}
+### layer in a vertex shader | vert | 2:ExtensionRequired
+void main() { gl_Layer = 1; }
+### viewport index in tessellation evaluation | tese | 4:ExtensionRequired
+layout(triangles) in;
+void main() {
+    gl_ViewportIndex = 1;
+}
+### layer with the extension | tese | ok
+#extension GL_ARB_shader_viewport_layer_array : require
+layout(triangles) in;
+void main() { gl_Layer = 1; gl_ViewportIndex = 2; }
+### layer in a geometry shader | geom | ok
+layout(triangles) in;
+layout(points, max_vertices = 1) out;
+void main() { gl_Layer = 1; gl_ViewportIndex = 2; }
+### passthrough needs the extension | geom | 4:ExtensionRequired
+layout(triangles) in;
+layout(points, max_vertices = 1) out;
+layout(passthrough) in Inputs { vec2 t; };
+void main() {}
+### passthrough with the extension | geom | ok
+#extension GL_NV_geometry_shader_passthrough : require
+layout(triangles) in;
+layout(passthrough) in gl_PerVertex { vec4 gl_Position; };
+layout(passthrough) in Inputs { vec2 t; };
+void main() {}
