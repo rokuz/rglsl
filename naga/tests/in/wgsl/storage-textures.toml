@@ -1,1 +1,1 @@
-targets = "IR | ANALYSIS | SPIRV | METAL | HLSL"
+targets = "IR | ANALYSIS | SPIRV"

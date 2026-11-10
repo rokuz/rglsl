@@ -1,7 +1,4 @@
-targets = "SPIRV | METAL"
+targets = "SPIRV"
 
 [spv]
-emit_int_div_checks = false
-
-[msl]
 emit_int_div_checks = false

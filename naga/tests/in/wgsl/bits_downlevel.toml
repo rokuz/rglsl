@@ -1,4 +1,1 @@
-targets = "GLSL"
-
-[glsl]
-version.Desktop = 330
+targets = ""

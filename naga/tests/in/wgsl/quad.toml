@@ -1,9 +1,4 @@
-targets = "SPIRV | METAL | GLSL | DOT | HLSL | WGSL"
-
-[glsl]
-version.Embedded = { is_webgl = false, version = 300 }
-writer_flags = ""
-zero_initialize_workgroup_memory = true
+targets = "SPIRV"
 
 [spv]
 adjust_coordinate_space = true

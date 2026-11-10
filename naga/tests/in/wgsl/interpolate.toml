@@ -1,8 +1,4 @@
-targets = "SPIRV | METAL | HLSL | WGSL"
-
-[glsl]
-version.Desktop = 400
-zero_initialize_workgroup_memory = true
+targets = "SPIRV"
 
 [spv]
 adjust_coordinate_space = true

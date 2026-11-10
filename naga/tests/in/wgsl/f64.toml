@@ -1,9 +1,5 @@
 capabilities = "FLOAT64"
-targets = "SPIRV | GLSL | HLSL | WGSL"
-
-[glsl]
-version.Desktop = 420
-zero_initialize_workgroup_memory = true
+targets = "SPIRV"
 
 [spv]
 version = [1, 0]

@@ -1,4 +1,4 @@
-targets = "SPIRV | METAL"
+targets = "SPIRV"
 
 [bounds_check_policies]
 index = "ReadZeroSkipWrite"

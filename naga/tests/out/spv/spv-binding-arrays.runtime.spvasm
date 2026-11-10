@@ -1,0 +1,79 @@
+; SPIR-V
+; Version: 1.1
+; Generator: rspirv
+; Bound: 50
+OpCapability Shader
+OpCapability ShaderNonUniform
+OpExtension "SPV_EXT_descriptor_indexing"
+%1 = OpExtInstImport "GLSL.std.450"
+OpMemoryModel Logical GLSL450
+OpEntryPoint Fragment %45 "main" %37 %40 %43
+OpExecutionMode %45 OriginUpperLeft
+OpDecorate %16 DescriptorSet 0
+OpDecorate %16 Binding 0
+OpDecorate %18 DescriptorSet 0
+OpDecorate %18 Binding 1
+OpDecorate %31 NonUniform
+OpDecorate %32 NonUniform
+OpDecorate %37 Location 0
+OpDecorate %40 Location 1
+OpDecorate %40 Flat
+OpDecorate %43 Location 0
+%2 = OpTypeVoid
+%4 = OpTypeFloat 32
+%3 = OpTypeVector %4 2
+%5 = OpTypeInt 32 0
+%6 = OpTypeImage %4 2D 0 0 0 1 Unknown
+%7 = OpTypeRuntimeArray %6
+%8 = OpTypeSampler
+%9 = OpTypeVector %4 4
+%11 = OpTypePointer Private %3
+%12 = OpConstantNull  %3
+%10 = OpVariable  %11  Private %12
+%14 = OpTypePointer Private %5
+%15 = OpConstantNull  %5
+%13 = OpVariable  %14  Private %15
+%17 = OpTypePointer UniformConstant %7
+%16 = OpVariable  %17  UniformConstant
+%19 = OpTypePointer UniformConstant %8
+%18 = OpVariable  %19  UniformConstant
+%21 = OpTypePointer Private %9
+%22 = OpConstantNull  %9
+%20 = OpVariable  %21  Private %22
+%25 = OpTypeFunction %2
+%30 = OpTypePointer UniformConstant %6
+%33 = OpTypeSampledImage %6
+%38 = OpTypePointer Input %3
+%37 = OpVariable  %38  Input
+%41 = OpTypePointer Input %5
+%40 = OpVariable  %41  Input
+%44 = OpTypePointer Output %9
+%43 = OpVariable  %44  Output
+%24 = OpFunction  %2  None %25
+%23 = OpLabel
+%26 = OpLoad  %8  %18
+OpBranch %27
+%27 = OpLabel
+%28 = OpLoad  %3  %10
+%29 = OpLoad  %5  %13
+%31 = OpAccessChain  %30  %16 %29
+%32 = OpLoad  %6  %31
+%34 = OpSampledImage  %33  %32 %26
+%35 = OpImageSampleImplicitLod  %9  %34 %28
+OpStore %20 %35
+OpReturn
+OpFunctionEnd
+%45 = OpFunction  %2  None %25
+%36 = OpLabel
+%39 = OpLoad  %3  %37
+%42 = OpLoad  %5  %40
+%46 = OpLoad  %8  %18
+OpBranch %47
+%47 = OpLabel
+OpStore %10 %39
+OpStore %13 %42
+%48 = OpFunctionCall  %2  %24
+%49 = OpLoad  %9  %20
+OpStore %43 %49
+OpReturn
+OpFunctionEnd

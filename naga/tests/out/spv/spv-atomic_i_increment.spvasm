@@ -1,0 +1,116 @@
+; SPIR-V
+; Version: 1.1
+; Generator: rspirv
+; Bound: 74
+OpCapability Shader
+OpExtension "SPV_KHR_storage_buffer_storage_class"
+%1 = OpExtInstImport "GLSL.std.450"
+OpMemoryModel Logical GLSL450
+OpEntryPoint GLCompute %69 "stage::test_atomic_i_increment"
+OpExecutionMode %69 LocalSize 32 1 1
+OpMemberDecorate %5 0 Offset 0
+OpMemberDecorate %6 0 Offset 0
+OpDecorate %12 DescriptorSet 0
+OpDecorate %12 Binding 0
+OpDecorate %13 Block
+OpMemberDecorate %13 0 Offset 0
+OpDecorate %15 NonWritable
+OpDecorate %15 DescriptorSet 0
+OpDecorate %15 Binding 1
+OpDecorate %16 Block
+OpMemberDecorate %16 0 Offset 0
+%2 = OpTypeVoid
+%3 = OpTypeInt 32 0
+%4 = OpTypeBool
+%5 = OpTypeStruct %3
+%6 = OpTypeStruct %3
+%7 = OpConstant  %3  0
+%8 = OpConstantFalse  %4
+%9 = OpConstant  %3  1
+%10 = OpConstantTrue  %4
+%11 = OpConstantNull  %3
+%13 = OpTypeStruct %6
+%14 = OpTypePointer StorageBuffer %13
+%12 = OpVariable  %14  StorageBuffer
+%16 = OpTypeStruct %5
+%17 = OpTypePointer StorageBuffer %16
+%15 = OpVariable  %17  StorageBuffer
+%20 = OpTypeFunction %2
+%21 = OpTypePointer StorageBuffer %6
+%23 = OpTypePointer StorageBuffer %5
+%26 = OpTypePointer Function %3
+%27 = OpConstantNull  %3
+%29 = OpConstantNull  %3
+%31 = OpTypePointer StorageBuffer %3
+%36 = OpTypeVector %3 2
+%37 = OpTypePointer Function %36
+%38 = OpTypeVector %4 2
+%39 = OpConstantComposite  %36  %7 %7
+%40 = OpConstant  %3  4294967295
+%41 = OpConstantComposite  %36  %40 %40
+%63 = OpTypeInt 32 1
+%62 = OpConstant  %63  1
+%19 = OpFunction  %2  None %20
+%18 = OpLabel
+%25 = OpVariable  %26  Function %27
+%28 = OpVariable  %26  Function %29
+%42 = OpVariable  %37  Function %41
+%22 = OpAccessChain  %21  %12 %7
+%24 = OpAccessChain  %23  %15 %7
+OpBranch %30
+%30 = OpLabel
+OpStore %25 %7
+OpBranch %32
+%32 = OpLabel
+OpLoopMerge %33 %35 None
+OpBranch %43
+%43 = OpLabel
+%44 = OpLoad  %36  %42
+%45 = OpIEqual  %38  %39 %44
+%46 = OpAll  %4  %45
+OpSelectionMerge %47 None
+OpBranchConditional %46 %33 %47
+%47 = OpLabel
+%48 = OpCompositeExtract  %3  %44 1
+%49 = OpIEqual  %4  %48 %7
+%50 = OpSelect  %3  %49 %9 %7
+%51 = OpCompositeConstruct  %36  %50 %9
+%52 = OpISub  %36  %44 %51
+OpStore %42 %52
+OpBranch %34
+%34 = OpLabel
+%53 = OpLoad  %3  %25
+%54 = OpAccessChain  %31  %24 %7
+%55 = OpLoad  %3  %54
+%56 = OpUGreaterThanEqual  %4  %53 %55
+OpSelectionMerge %57 None
+OpBranchConditional %56 %58 %59
+%58 = OpLabel
+OpStore %28 %11
+OpBranch %57
+%59 = OpLabel
+%61 = OpAccessChain  %31  %22 %7
+%60 = OpAtomicIAdd  %3  %61 %62 %7 %9
+%64 = OpIAdd  %3  %53 %9
+OpStore %28 %64
+OpBranch %57
+%57 = OpLabel
+%65 = OpLoad  %3  %28
+%66 = OpSelect  %4  %56 %8 %10
+OpBranch %35
+%35 = OpLabel
+%67 = OpLogicalNot  %4  %66
+OpStore %25 %65
+OpBranchConditional %67 %33 %32
+%33 = OpLabel
+OpReturn
+OpFunctionEnd
+%69 = OpFunction  %2  None %20
+%68 = OpLabel
+%70 = OpAccessChain  %21  %12 %7
+%71 = OpAccessChain  %23  %15 %7
+OpBranch %72
+%72 = OpLabel
+%73 = OpFunctionCall  %2  %19
+OpReturn
+OpFunctionEnd

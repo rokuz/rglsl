@@ -1,0 +1,70 @@
+; SPIR-V
+; Version: 1.1
+; Generator: rspirv
+; Bound: 46
+OpCapability Shader
+%1 = OpExtInstImport "GLSL.std.450"
+OpMemoryModel Logical GLSL450
+OpEntryPoint Vertex %38 "main" %29 %32 %34 %36
+OpMemberDecorate %6 0 Offset 0
+OpMemberDecorate %6 1 Offset 8
+OpDecorate %29 Location 0
+OpDecorate %32 Location 1
+OpDecorate %34 Location 0
+OpDecorate %36 BuiltIn Position
+%2 = OpTypeVoid
+%3 = OpTypeFloat 32
+%4 = OpTypeVector %3 2
+%5 = OpTypeVector %3 4
+%6 = OpTypeStruct %4 %5
+%7 = OpConstant  %3  1.2
+%9 = OpTypePointer Private %4
+%10 = OpConstantNull  %4
+%8 = OpVariable  %9  Private %10
+%11 = OpVariable  %9  Private %10
+%12 = OpVariable  %9  Private %10
+%14 = OpTypePointer Private %5
+%15 = OpConstantNull  %5
+%13 = OpVariable  %14  Private %15
+%18 = OpTypeFunction %2
+%19 = OpConstant  %3  0
+%20 = OpConstant  %3  1
+%30 = OpTypePointer Input %4
+%29 = OpVariable  %30  Input
+%32 = OpVariable  %30  Input
+%35 = OpTypePointer Output %4
+%34 = OpVariable  %35  Output
+%37 = OpTypePointer Output %5
+%36 = OpVariable  %37  Output
+%17 = OpFunction  %2  None %18
+%16 = OpLabel
+OpBranch %21
+%21 = OpLabel
+%22 = OpLoad  %4  %11
+OpStore %12 %22
+%23 = OpLoad  %4  %8
+%24 = OpVectorTimesScalar  %4  %23 %7
+%25 = OpCompositeExtract  %3  %24 0
+%26 = OpCompositeExtract  %3  %24 1
+%27 = OpCompositeConstruct  %5  %25 %26 %19 %20
+OpStore %13 %27
+OpReturn
+OpFunctionEnd
+%38 = OpFunction  %2  None %18
+%28 = OpLabel
+%31 = OpLoad  %4  %29
+%33 = OpLoad  %4  %32
+OpBranch %39
+%39 = OpLabel
+OpStore %8 %31
+OpStore %11 %33
+%40 = OpFunctionCall  %2  %17
+%41 = OpLoad  %4  %12
+%42 = OpLoad  %5  %13
+%43 = OpCompositeConstruct  %6  %41 %42
+%44 = OpCompositeExtract  %4  %43 0
+OpStore %34 %44
+%45 = OpCompositeExtract  %5  %43 1
+OpStore %36 %45
+OpReturn
+OpFunctionEnd

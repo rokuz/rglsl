@@ -1,1 +1,1 @@
-targets = "IR | WGSL"
+targets = "IR"

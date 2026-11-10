@@ -25,6 +25,10 @@ impl<T> HandleSet<T> {
         }
     }
 
+    #[cfg_attr(
+        not(feature = "spv-in"),
+        allow(dead_code, reason = "only the SPIR-V frontend uses this")
+    )]
     pub fn is_empty(&self) -> bool {
         self.members.is_empty()
     }

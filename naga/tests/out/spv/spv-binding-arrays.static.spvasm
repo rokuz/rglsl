@@ -1,0 +1,65 @@
+; SPIR-V
+; Version: 1.1
+; Generator: rspirv
+; Bound: 45
+OpCapability Shader
+%1 = OpExtInstImport "GLSL.std.450"
+OpMemoryModel Logical GLSL450
+OpEntryPoint Fragment %41 "main" %39
+OpExecutionMode %41 OriginUpperLeft
+OpDecorate %17 DescriptorSet 0
+OpDecorate %17 Binding 0
+OpDecorate %19 DescriptorSet 0
+OpDecorate %19 Binding 1
+OpDecorate %39 Location 0
+%2 = OpTypeVoid
+%3 = OpTypeFloat 32
+%4 = OpTypeVector %3 2
+%5 = OpTypeVector %3 4
+%6 = OpTypeInt 32 1
+%7 = OpTypeImage %3 2D 0 0 0 1 Unknown
+%10 = OpTypeInt 32 0
+%9 = OpConstant  %10  256
+%8 = OpTypeArray %7 %9
+%11 = OpTypeSampler
+%12 = OpTypeArray %11 %9
+%13 = OpConstant  %3  0.5
+%14 = OpConstantComposite  %4  %13 %13
+%15 = OpConstant  %3  0
+%16 = OpConstant  %6  1
+%18 = OpTypePointer UniformConstant %8
+%17 = OpVariable  %18  UniformConstant
+%20 = OpTypePointer UniformConstant %12
+%19 = OpVariable  %20  UniformConstant
+%22 = OpTypePointer Private %5
+%23 = OpConstantNull  %5
+%21 = OpVariable  %22  Private %23
+%26 = OpTypeFunction %2
+%28 = OpTypePointer UniformConstant %7
+%29 = OpConstant  %10  1
+%32 = OpTypePointer UniformConstant %11
+%35 = OpTypeSampledImage %7
+%40 = OpTypePointer Output %5
+%39 = OpVariable  %40  Output
+%25 = OpFunction  %2  None %26
+%24 = OpLabel
+OpBranch %27
+%27 = OpLabel
+%30 = OpAccessChain  %28  %17 %29
+%31 = OpLoad  %7  %30
+%33 = OpAccessChain  %32  %19 %29
+%34 = OpLoad  %11  %33
+%36 = OpSampledImage  %35  %31 %34
+%37 = OpImageSampleExplicitLod  %5  %36 %14 Lod %15
+OpStore %21 %37
+OpReturn
+OpFunctionEnd
+%41 = OpFunction  %2  None %26
+%38 = OpLabel
+OpBranch %42
+%42 = OpLabel
+%43 = OpFunctionCall  %2  %25
+%44 = OpLoad  %5  %21
+OpStore %39 %44
+OpReturn
+OpFunctionEnd

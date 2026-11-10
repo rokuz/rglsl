@@ -21,20 +21,7 @@ all-features = true
 
 [features]
 default = []
-dot-out = []
 glsl-in = ["dep:pp-rs"]
-glsl-out = []
-
-## Enables outputting to the Metal Shading Language (MSL).
-##
-## This enables MSL output regardless of the target platform.
-## If you want to enable it only when targeting iOS/tvOS/watchOS/macOS, use `naga/msl-out-if-target-apple`.
-msl-out = []
-
-## Enables outputting to the Metal Shading Language (MSL) only if the target platform is iOS/tvOS/watchOS/macOS.
-##
-## If you want to enable MSL output it regardless of the target platform, use `naga/msl-out`.
-msl-out-if-target-apple = []
 
 serialize = [
     "dep:serde",
@@ -60,18 +47,6 @@ arbitrary = [
 spv-in = ["dep:petgraph", "petgraph/graphmap", "dep:spirv"]
 spv-out = ["dep:spirv"]
 wgsl-in = ["dep:unicode-ident"]
-wgsl-out = []
-
-## Enables outputting to HLSL (Microsoft's High-Level Shader Language).
-##
-## This enables HLSL output regardless of the target platform.
-## If you want to enable it only when targeting Windows, use `hlsl-out-if-target-windows`.
-hlsl-out = []
-
-## Enables outputting to HLSL (Microsoft's High-Level Shader Language) only if the target platform is Windows.
-##
-## If you want to enable HLSL output it regardless of the target platform, use `naga/hlsl-out`.
-hlsl-out-if-target-windows = []
 
 ## Enables colored output through codespan-reporting and termcolor.
 termcolor = ["codespan-reporting/termcolor"]
@@ -98,7 +73,6 @@ rustc-hash.workspace = true
 libm = { workspace = true, default-features = false }
 log.workspace = true
 num-traits.workspace = true
-once_cell = { workspace = true, features = ["alloc", "race"] }
 spirv = { workspace = true, optional = true }
 thiserror.workspace = true
 serde = { workspace = true, features = ["alloc", "derive"], optional = true }
@@ -110,11 +84,9 @@ unicode-ident = { workspace = true, optional = true }
 cfg_aliases.workspace = true
 
 [dev-dependencies]
-bytemuck.workspace = true
 diff.workspace = true
 env_logger.workspace = true
 hashbrown = { workspace = true, features = ["serde"] }
-hlsl-snapshots.workspace = true
 itertools.workspace = true
 naga-test.workspace = true
 ron.workspace = true

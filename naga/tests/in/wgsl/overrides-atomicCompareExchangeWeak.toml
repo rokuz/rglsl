@@ -1,5 +1,5 @@
 pipeline_constants = { o = 2.0 }
-targets = "IR | SPIRV | METAL"
+targets = "IR | SPIRV"
 
 [spv]
 separate_entry_points = true

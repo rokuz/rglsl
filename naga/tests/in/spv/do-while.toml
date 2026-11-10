@@ -1,4 +1,4 @@
-targets = "METAL | GLSL | HLSL | WGSL"
+targets = ""
 
 [spv-in]
 adjust_coordinate_space = true

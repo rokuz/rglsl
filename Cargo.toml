@@ -6,7 +6,6 @@ members = [
     "naga-test",
     "naga-cli",
     "naga/fuzz",
-    "naga/hlsl-snapshots",
     "naga/xtask",
     "xtask",
 ]
@@ -34,7 +33,6 @@ authors = ["rglsl developers", "gfx-rs developers"]
 naga = { version = "30.0.0", path = "./naga" }
 naga-test = { path = "./naga-test" }
 naga-types = { version = "30.0.0", path = "./naga-types" }
-hlsl-snapshots = { path = "naga/hlsl-snapshots" }
 
 anyhow = { version = "1.0.87", default-features = false }
 arbitrary = "1.4.2"
@@ -43,10 +41,6 @@ arrayvec = { version = "0.7.1", default-features = false }
 bincode = "2"
 bit-set = { version = "0.10", default-features = false }
 bitflags = "2.9"
-bytemuck = { version = "1.22", features = [
-    "extern_crate_alloc",
-    "min_const_generics",
-] }
 cfg_aliases = "0.2.1"
 cfg-if = "1"
 codespan-reporting = { version = "0.13", default-features = false }
@@ -66,10 +60,8 @@ jobserver = "0.1"
 libfuzzer-sys = ">0.4.0,<=0.4.7"
 libm = { version = "0.2.6", default-features = false }
 log = "0.4.29"
-nanoserde = "0.2"
 num_cpus = "1"
 num-traits = { version = "0.2.16", default-features = false }
-once_cell = { version = "1.21", default-features = false }
 petgraph = { version = "0.8", default-features = false }
 pico-args = { version = "0.5", features = [
     "eq-separator",

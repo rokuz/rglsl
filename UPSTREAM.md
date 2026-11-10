@@ -12,7 +12,7 @@ cherry-picked and recorded below.
 | Repository | https://github.com/gfx-rs/wgpu |
 | Tag | `v30.0.0` |
 | Commit | `8bf3e5ff4ab45e2c150e0d6c70d01d25f5b126c1` |
-| Crates taken | `naga` (with `naga/fuzz`, `naga/hlsl-snapshots`, `naga/xtask`), `naga-types`, `naga-test`, `naga-cli` |
+| Crates taken | `naga` (with `naga/fuzz`, `naga/xtask`), `naga-types`, `naga-test`, `naga-cli` |
 
 Everything else in the wgpu repository (wgpu, wgpu-core, wgpu-hal, examples, CTS
 runner, ...) is not part of this project.
@@ -28,10 +28,25 @@ runner, ...) is not part of this project.
 - Removed `naga/tests/naga/example_wgsl.rs`: it parsed wgpu's `examples/`, which are not
   part of the fork.
 
+## Removed from upstream
+
+- **All backends except SPIR-V**: `back/{msl,hlsl,glsl,wgsl,dot}`, `back/continue_forward.rs`,
+  the crate features `msl-out`, `hlsl-out`, `glsl-out`, `wgsl-out`, `dot-out` (and the
+  `*-if-target-*` variants), the `naga-types` modules `glsl`, `hlsl`, `msl`, and the
+  `hlsl-snapshots` crate.
+- Helpers only those backends used: `proc::Namer` and `NameKey`, `proc::KeywordSet`, the
+  WGSL keyword sets, `RacyLock` (and the `once_cell` dependency), `back::FunctionCtx`,
+  `back::Level`, `Baked`, `proc::index::{find_checked_indexes, access_needs_check,
+  bounds_check_iter, oob_local_types}`.
+- Snapshot tests: outputs and parameters for the removed backends, the `Targets` flags for
+  them, and the SPIRV-Cross step (`*.spvasm.glsl`). GLSL and SPIR-V inputs now produce
+  SPIR-V snapshots (they used to produce WGSL).
+- `naga-cli`: the output formats and options of the removed backends. `naga-xtask`: every
+  `validate` subcommand except `spv`.
+
 ## Deviations from upstream behaviour
 
-Changes to shared code (IR, validator, SPIR-V backend) that make it differ from naga. The
-other backends (MSL, HLSL, GLSL, WGSL) are not adapted and may not handle these cases.
+Changes to shared code (IR, validator, SPIR-V backend) that make it differ from naga.
 
 - **Index built-ins may be signed.** The validator accepts `i32` as well as `u32` for
   `VertexIndex`, `InstanceIndex`, `BaseVertex`, `BaseInstance`, `DrawIndex`, `PrimitiveIndex`,

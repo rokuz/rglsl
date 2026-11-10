@@ -1,5 +1,5 @@
 capabilities = "DRAW_INDEX"
-targets = "SPIRV | WGSL"
+targets = "SPIRV"
 
 [spv]
 version = [1, 4]

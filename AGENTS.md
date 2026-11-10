@@ -11,7 +11,7 @@ goal, the language rules for linkage and `#include`, and the milestones (M0–M9
 
 | Path | What |
 |---|---|
-| `naga/` | the compiler: IR, GLSL frontend (`src/front/glsl`), validator, SPIR-V backend (`src/back/spv`) |
+| `naga/` | the compiler: IR, GLSL frontend (`src/front/glsl`), validator, SPIR-V backend (`src/back/spv`, the only backend) |
 | `naga-types/` | types shared by naga (`ShaderStage`, ...) |
 | `naga-cli/` | upstream naga CLI (to become the `glslangValidator`-compatible tool in M9) |
 | `naga-test/`, `naga/tests/` | upstream snapshot tests |
@@ -25,6 +25,8 @@ goal, the language rules for linkage and `#include`, and the milestones (M0–M9
   `naga`'s own `[lints]`). Do not add `allow(unsafe_code)`.
 - **No panics on user input.** A crash in the corpus run is always a bug.
 - Keep naga's style: arenas, typed handles, exhaustive `match`, `Result` errors.
+- SPIR-V is the only output. Do not add other backends; IR features need only be
+  expressible in SPIR-V.
 - When changing code that came from upstream, record non-trivial deviations in
   [UPSTREAM.md](UPSTREAM.md).
 - A change that moves corpus numbers must commit the regenerated `PROGRESS.md`

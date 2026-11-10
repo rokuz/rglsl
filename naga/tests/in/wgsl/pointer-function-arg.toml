@@ -1,1 +1,1 @@
-targets = "METAL | GLSL | HLSL | WGSL"
+targets = ""

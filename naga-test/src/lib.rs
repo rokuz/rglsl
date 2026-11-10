@@ -27,24 +27,14 @@ bitflags::bitflags! {
         const ANALYSIS = 1 << 1;
 
         const SPIRV = 1 << 2;
-        const METAL = 1 << 3;
-        const GLSL = 1 << 4;
-        const DOT = 1 << 5;
-        const HLSL = 1 << 6;
-        const WGSL = 1 << 7;
         const NO_VALIDATION = 1 << 8;
     }
 }
 
 impl Targets {
-    /// Defaults for `spv` and `glsl` snapshots.
-    pub fn non_wgsl_default() -> Self {
-        Targets::WGSL
-    }
-
-    /// Defaults for `wgsl` snapshots.
-    pub fn wgsl_default() -> Self {
-        Targets::HLSL | Targets::SPIRV | Targets::GLSL | Targets::METAL | Targets::WGSL
+    /// The default for every snapshot: SPIR-V, the only backend.
+    pub fn default_targets() -> Self {
+        Targets::SPIRV
     }
 }
 
@@ -188,25 +178,6 @@ impl SpirvOutParameters {
 
 #[derive(Debug, Default, serde::Deserialize)]
 #[serde(default)]
-pub struct WgslOutParameters {
-    pub explicit_types: bool,
-}
-impl From<&WgslOutParameters> for naga::back::wgsl::WriterFlags {
-    fn from(value: &WgslOutParameters) -> Self {
-        let mut flags = Self::empty();
-        flags.set(Self::EXPLICIT_TYPES, value.explicit_types);
-        flags
-    }
-}
-
-#[derive(Debug, Default, serde::Deserialize)]
-pub struct FragmentModule {
-    pub path: String,
-    pub entry_point: String,
-}
-
-#[derive(Debug, Default, serde::Deserialize)]
-#[serde(default)]
 pub struct Parameters {
     // -- validation options --
     //
@@ -224,32 +195,10 @@ pub struct Parameters {
     // -- SPIR-V options --
     pub spv: SpirvOutParameters,
 
-    /// Defaults to [`Targets::non_wgsl_default()`] for `spv` and `glsl` snapshots,
-    /// and [`Targets::wgsl_default()`] for `wgsl` snapshots.
+    /// Defaults to [`Targets::default_targets()`].
     pub targets: Option<Targets>,
 
-    // -- MSL options --
-    pub msl: naga::back::msl::Options,
-    #[serde(default)]
-    pub msl_pipeline: naga::back::msl::PipelineOptions,
-
-    // -- GLSL options --
-    pub glsl: naga::back::glsl::Options,
-    pub glsl_exclude_list: naga::FastHashSet<String>,
-    pub glsl_multiview: Option<core::num::NonZeroU32>,
-
-    // -- HLSL options --
-    pub hlsl: naga::back::hlsl::Options,
-
-    // -- WGSL options --
-    pub wgsl: WgslOutParameters,
-
     // -- General options --
-
-    // Allow backends to be aware of the fragment module.
-    // Is the name of a WGSL file in the same directory as the test file.
-    pub fragment_module: Option<FragmentModule>,
-
     pub bounds_check_policies: naga::proc::BoundsCheckPolicies,
     pub pipeline_constants: naga::back::PipelineConstants,
 
@@ -457,9 +406,9 @@ impl Input {
                 .to_str()
                 .unwrap()
             {
-                "wgsl" => params.targets = Some(Targets::wgsl_default()),
-                "spvasm" => params.targets = Some(Targets::non_wgsl_default()),
-                "vert" | "frag" | "comp" => params.targets = Some(Targets::non_wgsl_default()),
+                "wgsl" | "spvasm" | "vert" | "frag" | "comp" => {
+                    params.targets = Some(Targets::default_targets())
+                }
                 e => {
                     panic!("Unknown extension: {e}");
                 }

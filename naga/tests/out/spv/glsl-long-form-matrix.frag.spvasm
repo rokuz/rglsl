@@ -1,0 +1,70 @@
+; SPIR-V
+; Version: 1.1
+; Generator: rspirv
+; Bound: 57
+OpCapability Shader
+%1 = OpExtInstImport "GLSL.std.450"
+OpMemoryModel Logical GLSL450
+OpEntryPoint Fragment %54 "main"
+OpExecutionMode %54 OriginUpperLeft
+%2 = OpTypeVoid
+%5 = OpTypeFloat 32
+%4 = OpTypeVector %5 2
+%3 = OpTypeMatrix %4 2
+%7 = OpTypeVector %5 4
+%6 = OpTypeMatrix %7 2
+%9 = OpTypeVector %5 3
+%8 = OpTypeMatrix %9 3
+%10 = OpTypeMatrix %7 4
+%13 = OpTypeFunction %2
+%14 = OpConstant  %5  1
+%15 = OpConstant  %5  0
+%16 = OpConstantComposite  %4  %14 %15
+%17 = OpConstantComposite  %4  %15 %14
+%18 = OpConstantComposite  %3  %16 %17
+%19 = OpConstant  %5  2
+%20 = OpConstantComposite  %4  %14 %14
+%21 = OpConstantComposite  %4  %19 %19
+%22 = OpConstantComposite  %3  %20 %21
+%23 = OpConstantComposite  %7  %14 %15 %15 %15
+%24 = OpConstantComposite  %7  %15 %14 %15 %15
+%25 = OpConstantComposite  %6  %23 %24
+%26 = OpConstant  %5  3
+%27 = OpConstant  %5  4
+%28 = OpConstantComposite  %4  %14 %19
+%29 = OpConstantComposite  %4  %26 %27
+%30 = OpConstantComposite  %3  %28 %29
+%31 = OpConstantComposite  %9  %14 %19 %26
+%32 = OpConstantComposite  %9  %14 %14 %14
+%33 = OpConstantComposite  %8  %31 %32 %32
+%34 = OpConstantComposite  %9  %19 %19 %14
+%35 = OpConstantComposite  %8  %34 %32 %32
+%36 = OpConstantComposite  %7  %19 %19 %14 %14
+%37 = OpConstantComposite  %7  %14 %14 %19 %19
+%38 = OpConstantComposite  %7  %14 %14 %14 %14
+%39 = OpConstantComposite  %10  %36 %37 %38 %38
+%41 = OpTypePointer Function %3
+%44 = OpTypePointer Function %6
+%48 = OpTypePointer Function %8
+%51 = OpTypePointer Function %10
+%12 = OpFunction  %2  None %13
+%11 = OpLabel
+%49 = OpVariable  %48  Function %35
+%45 = OpVariable  %41  Function %30
+%40 = OpVariable  %41  Function %18
+%50 = OpVariable  %51  Function %39
+%46 = OpVariable  %41  Function %30
+%42 = OpVariable  %41  Function %22
+%47 = OpVariable  %48  Function %33
+%43 = OpVariable  %44  Function %25
+OpBranch %52
+%52 = OpLabel
+OpReturn
+OpFunctionEnd
+%54 = OpFunction  %2  None %13
+%53 = OpLabel
+OpBranch %55
+%55 = OpLabel
+%56 = OpFunctionCall  %2  %12
+OpReturn
+OpFunctionEnd

@@ -27,14 +27,9 @@ test = false
 [dependencies]
 naga = { workspace = true, features = [
     "wgsl-in",
-    "wgsl-out",
     "glsl-in",
-    "glsl-out",
     "spv-in",
     "spv-out",
-    "msl-out",
-    "hlsl-out",
-    "dot-out",
     "serialize",
     "deserialize",
     "termcolor",

@@ -445,7 +445,6 @@ fn incompatible_interpolation_and_sampling_types() {
                 source,
                 module,
                 interpolate_attr,
-                entry_point: _,
             } = DummyInterpolationShader::new(interpolation, sampling);
             Some((
                 source,
@@ -496,52 +495,11 @@ fn incompatible_interpolation_and_sampling_types() {
     }
 }
 
-#[test]
-fn no_flat_first_in_glsl() {
-    use dummy_interpolation_shader::DummyInterpolationShader;
-
-    let DummyInterpolationShader {
-        source: _,
-        module,
-        interpolate_attr,
-        entry_point,
-    } = DummyInterpolationShader::new(naga::Interpolation::Flat, Some(naga::Sampling::First));
-
-    let mut validator = naga::valid::Validator::new(Default::default(), Default::default());
-    let module_info = validator.validate(&module).unwrap();
-
-    let options = Default::default();
-    let pipeline_options = naga::back::glsl::PipelineOptions {
-        shader_stage: naga::ShaderStage::Fragment,
-        entry_point: entry_point.to_owned(),
-        multiview: None,
-    };
-    let mut glsl_writer = naga::back::glsl::Writer::new(
-        String::new(),
-        &module,
-        &module_info,
-        &options,
-        &pipeline_options,
-        Default::default(),
-    )
-    .unwrap();
-
-    let err = glsl_writer.write().expect_err(&format!(
-        "`{interpolate_attr}` should fail backend validation"
-    ));
-
-    assert!(matches!(
-        err,
-        naga::back::glsl::Error::FirstSamplingNotSupported
-    ));
-}
-
 mod dummy_interpolation_shader {
     pub struct DummyInterpolationShader {
         pub source: String,
         pub module: naga::Module,
         pub interpolate_attr: String,
-        pub entry_point: &'static str,
     }
 
     impl DummyInterpolationShader {
@@ -598,7 +556,6 @@ fn main(input: VertexOutput) {{
                 source,
                 module,
                 interpolate_attr,
-                entry_point: "main",
             }
         }
     }

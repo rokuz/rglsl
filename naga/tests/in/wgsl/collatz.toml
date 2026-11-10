@@ -1,4 +1,4 @@
-targets = "SPIRV | METAL | IR | ANALYSIS | HLSL | WGSL"
+targets = "SPIRV | IR | ANALYSIS"
 
 [spv]
 debug = true

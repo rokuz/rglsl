@@ -1,0 +1,100 @@
+; SPIR-V
+; Version: 1.1
+; Generator: rspirv
+; Bound: 68
+OpCapability Shader
+%1 = OpExtInstImport "GLSL.std.450"
+OpMemoryModel Logical GLSL450
+OpEntryPoint Fragment %65 "main"
+OpExecutionMode %65 OriginUpperLeft
+%2 = OpTypeVoid
+%3 = OpTypeFloat 32
+%4 = OpTypeInt 32 1
+%7 = OpTypeFunction %2
+%8 = OpConstant  %3  1
+%9 = OpConstant  %3  0.25
+%10 = OpConstant  %3  1.5
+%11 = OpConstant  %4  20
+%12 = OpConstant  %4  0
+%13 = OpConstant  %4  25
+%14 = OpConstant  %4  1
+%15 = OpConstant  %3  0.01
+%16 = OpConstant  %3  0.02
+%18 = OpTypePointer Function %3
+%22 = OpTypePointer Function %4
+%30 = OpTypeInt 32 0
+%31 = OpTypeVector %30 2
+%32 = OpTypePointer Function %31
+%33 = OpTypeBool
+%34 = OpTypeVector %33 2
+%35 = OpConstant  %30  0
+%36 = OpConstantComposite  %31  %35 %35
+%37 = OpConstant  %30  1
+%38 = OpConstant  %30  4294967295
+%39 = OpConstantComposite  %31  %38 %38
+%6 = OpFunction  %2  None %7
+%5 = OpLabel
+%19 = OpVariable  %18  Function %9
+%21 = OpVariable  %22  Function %11
+%17 = OpVariable  %18  Function %8
+%20 = OpVariable  %18  Function %10
+%40 = OpVariable  %32  Function %39
+OpBranch %23
+%23 = OpLabel
+OpStore %21 %12
+%24 = OpLoad  %3  %20
+%25 = OpFSub  %3  %24 %8
+OpStore %20 %25
+OpBranch %26
+%26 = OpLabel
+OpLoopMerge %27 %29 None
+OpBranch %41
+%41 = OpLabel
+%42 = OpLoad  %31  %40
+%43 = OpIEqual  %34  %36 %42
+%44 = OpAll  %33  %43
+OpSelectionMerge %45 None
+OpBranchConditional %44 %27 %45
+%45 = OpLabel
+%46 = OpCompositeExtract  %30  %42 1
+%47 = OpIEqual  %33  %46 %35
+%48 = OpSelect  %30  %47 %37 %35
+%49 = OpCompositeConstruct  %31  %48 %37
+%50 = OpISub  %31  %42 %49
+OpStore %40 %50
+OpBranch %28
+%28 = OpLabel
+%51 = OpLoad  %4  %21
+%52 = OpSLessThan  %33  %51 %13
+%53 = OpLogicalNot  %33  %52
+OpSelectionMerge %54 None
+OpBranchConditional %53 %55 %54
+%55 = OpLabel
+OpBranch %27
+%54 = OpLabel
+OpBranch %56
+%56 = OpLabel
+%58 = OpLoad  %3  %17
+%59 = OpFSub  %3  %58 %16
+OpStore %17 %59
+OpBranch %57
+%57 = OpLabel
+OpBranch %29
+%29 = OpLabel
+%60 = OpLoad  %4  %21
+%61 = OpIAdd  %4  %60 %14
+OpStore %21 %61
+%62 = OpLoad  %3  %19
+%63 = OpFAdd  %3  %62 %15
+OpStore %19 %63
+OpBranch %26
+%27 = OpLabel
+OpReturn
+OpFunctionEnd
+%65 = OpFunction  %2  None %7
+%64 = OpLabel
+OpBranch %66
+%66 = OpLabel
+%67 = OpFunctionCall  %2  %6
+OpReturn
+OpFunctionEnd

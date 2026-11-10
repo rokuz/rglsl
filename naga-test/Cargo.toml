@@ -18,14 +18,9 @@ naga = { workspace = true, features = [
     "serialize",
     "deserialize",
     "glsl-in",
-    "glsl-out",
     "spv-in",
     "spv-out",
     "wgsl-in",
-    "wgsl-out",
-    "msl-out",
-    "dot-out",
-    "hlsl-out",
 ] }
 spirv = { workspace = true, features = ["deserialize"] }
 ron.workspace = true

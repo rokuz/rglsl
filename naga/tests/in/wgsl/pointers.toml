@@ -1,5 +1,5 @@
 bounds_check_policies = []
-targets = "SPIRV | WGSL"
+targets = "SPIRV"
 
 [spv]
 adjust_coordinate_space = false

@@ -9,14 +9,7 @@ Usage: xtask <COMMAND>
 Commands:
   all
   validate
-    dot
-    glsl
-    hlsl
-      dxc
-      fxc
-    msl
     spv
-    wgsl
 
 Options:
   -h, --help  Print help
@@ -75,12 +68,6 @@ impl Subcommand {
 #[derive(Debug)]
 pub(crate) enum ValidateSubcommand {
     Spirv,
-    Metal,
-    Glsl,
-    Dot,
-    Wgsl,
-    Hlsl(ValidateHlslCommand),
-    All,
 }
 
 impl ValidateSubcommand {
@@ -94,70 +81,8 @@ impl ValidateSubcommand {
                 ensure_remaining_args_empty(args)?;
                 Ok(Self::Spirv)
             }
-            "msl" => {
-                ensure_remaining_args_empty(args)?;
-                Ok(Self::Metal)
-            }
-            "glsl" => {
-                ensure_remaining_args_empty(args)?;
-                Ok(Self::Glsl)
-            }
-            "dot" => {
-                ensure_remaining_args_empty(args)?;
-                Ok(Self::Dot)
-            }
-            "wgsl" => {
-                ensure_remaining_args_empty(args)?;
-                Ok(Self::Wgsl)
-            }
-            "hlsl" => Ok(Self::Hlsl(ValidateHlslCommand::parse(args)?)),
-            "all" => {
-                ensure_remaining_args_empty(args)?;
-                Ok(Self::All)
-            }
             other => {
                 bail!("unrecognized `validate` subcommand {other:?}; see `--help` for more details")
-            }
-        }
-    }
-
-    pub(crate) fn all() -> impl Iterator<Item = Self> {
-        [
-            Self::Spirv,
-            Self::Metal,
-            Self::Glsl,
-            Self::Dot,
-            Self::Wgsl,
-            Self::Hlsl(ValidateHlslCommand::Dxc),
-            Self::Hlsl(ValidateHlslCommand::Fxc),
-        ]
-        .into_iter()
-    }
-}
-
-#[derive(Debug)]
-pub(crate) enum ValidateHlslCommand {
-    Dxc,
-    Fxc,
-}
-
-impl ValidateHlslCommand {
-    fn parse(mut args: Arguments) -> anyhow::Result<Self> {
-        let subcmd = args
-            .subcommand()
-            .context("failed to parse `hlsl` subcommand")?
-            .context("no `hlsl` subcommand specified; see `--help` for more details")?;
-        match &*subcmd {
-            "dxc" => {
-                ensure_remaining_args_empty(args)?;
-                Ok(Self::Dxc)
-            }
-            "fxc" => {
-                ensure_remaining_args_empty(args)?;
-                Ok(Self::Fxc)
-            }
-            other => {
-                bail!("unrecognized `hlsl` subcommand {other:?}; see `--help` for more details")
             }
         }
     }

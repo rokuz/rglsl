@@ -1,5 +1,2 @@
-targets = "HLSL"
+targets = ""
 capabilities = "PRIMITIVE_INDEX"
-
-[hlsl]
-shader_model = "V5_0"

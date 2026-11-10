@@ -52,16 +52,6 @@ struct Args {
     #[argh(option)]
     entry_point: Option<String>,
 
-    /// the shader profile to use, for example `es`, `core`, `es330`, if translating to GLSL
-    #[argh(option)]
-    profile: Option<GlslProfileArg>,
-
-    /// the shader model to use if targeting HLSL
-    ///
-    /// May be `50`, `51`, or `60`
-    #[argh(option)]
-    shader_model: Option<ShaderModelArg>,
-
     /// the SPIR-V version to use if targeting SPIR-V
     ///
     /// For example, 1.0, 1.4, etc
@@ -78,18 +68,10 @@ struct Args {
     #[argh(option)]
     input_kind: Option<InputKind>,
 
-    /// the metal version to use, for example, 1.0, 1.1, 1.2, etc.
-    #[argh(option)]
-    metal_version: Option<MslVersionArg>,
-
     /// if the selected frontends/backends support coordinate space conversions,
     /// disable them
     #[argh(switch)]
     keep_coordinate_space: bool,
-
-    /// in dot output, include only the control flow graph
-    #[argh(switch)]
-    dot_cfg_only: bool,
 
     /// specify file path to process STDIN as
     #[argh(option)]
@@ -204,31 +186,6 @@ impl FromStr for BoundsCheckPolicyArg {
     }
 }
 
-/// Newtype so we can implement [`FromStr`] for `ShaderModel`.
-#[derive(Debug, Clone)]
-struct ShaderModelArg(naga::back::hlsl::ShaderModel);
-
-impl FromStr for ShaderModelArg {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        use naga::back::hlsl::ShaderModel;
-        Ok(Self(match s.to_lowercase().as_str() {
-            "50" => ShaderModel::V5_0,
-            "51" => ShaderModel::V5_1,
-            "60" => ShaderModel::V6_0,
-            "61" => ShaderModel::V6_1,
-            "62" => ShaderModel::V6_2,
-            "63" => ShaderModel::V6_3,
-            "64" => ShaderModel::V6_4,
-            "65" => ShaderModel::V6_5,
-            "66" => ShaderModel::V6_6,
-            "67" => ShaderModel::V6_7,
-            _ => return Err(format!("Invalid value for --shader-model: {s}")),
-        }))
-    }
-}
-
 #[derive(Debug, Clone)]
 struct SpirvVersionArg(u8, u8);
 
@@ -282,49 +239,6 @@ impl FromStr for InputKind {
             "wgsl" => InputKind::Wgsl,
             _ => return Err(anyhow!("Invalid value for --input-kind: {s}")),
         })
-    }
-}
-
-/// Newtype so we can implement [`FromStr`] for [`naga::back::glsl::Version`].
-#[derive(Clone, Debug)]
-struct GlslProfileArg(naga::back::glsl::Version);
-
-impl FromStr for GlslProfileArg {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        use naga::back::glsl::Version;
-        Ok(Self(if let Some(s) = s.strip_prefix("core") {
-            Version::Desktop(s.parse().unwrap_or(330))
-        } else if let Some(s) = s.strip_prefix("es") {
-            Version::new_gles(s.parse().unwrap_or(310))
-        } else {
-            return Err(format!("Unknown profile: {s}"));
-        }))
-    }
-}
-
-/// Newtype so we can implement [`FromStr`] for a Metal Language Version.
-#[derive(Clone, Debug)]
-struct MslVersionArg((u8, u8));
-
-impl FromStr for MslVersionArg {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let mut iter = s.split('.');
-
-        let check_value = |iter: &mut core::str::Split<_>| {
-            iter.next()
-                .ok_or_else(|| format!("Invalid value for --metal-version: {s}"))?
-                .parse::<u8>()
-                .map_err(|err| format!("Invalid value for --metal-version: '{s}': {err}"))
-        };
-
-        let major = check_value(&mut iter)?;
-        let minor = check_value(&mut iter)?;
-
-        Ok(Self((major, minor)))
     }
 }
 
@@ -410,10 +324,6 @@ struct Parameters<'a> {
     overrides: naga::back::PipelineConstants,
     spv_in: naga::front::spv::Options,
     spv_out: naga::back::spv::Options<'a>,
-    dot: naga::back::dot::Options,
-    msl: naga::back::msl::Options,
-    glsl: naga::back::glsl::Options,
-    hlsl: naga::back::hlsl::Options,
     input_kind: Option<InputKind>,
     shader_stage: Option<ShaderStage>,
     defines: FastHashMap<String, String>,
@@ -544,29 +454,14 @@ fn run() -> anyhow::Result<()> {
     };
 
     params.entry_point.clone_from(&args.entry_point);
-    if let Some(ref version) = args.profile {
-        params.glsl.version = version.0;
-    }
-    if let Some(ref model) = args.shader_model {
-        params.hlsl.shader_model = model.0;
-    }
-    if let Some(ref version) = args.metal_version {
-        params.msl.lang_version = version.0;
-    }
     if let Some(ref version) = args.spirv_version {
         params.spv_out.lang_version = (version.0, version.1);
     }
     params.keep_coordinate_space = args.keep_coordinate_space;
 
-    params.dot.cfg_only = args.dot_cfg_only;
-
     params.spv_out.bounds_check_policies = params.bounds_check_policies;
     params.spv_out.flags.set(
         naga::back::spv::WriterFlags::ADJUST_COORDINATE_SPACE,
-        !params.keep_coordinate_space,
-    );
-    params.glsl.writer_flags.set(
-        naga::back::glsl::WriterFlags::ADJUST_COORDINATE_SPACE,
         !params.keep_coordinate_space,
     );
 
@@ -575,10 +470,6 @@ fn run() -> anyhow::Result<()> {
 
     params.spv_out.mesh_shader_primitive_indices_clamp = args.validate_mesh_output;
     params.spv_out.task_dispatch_limits = args.task_limits.0;
-    params.msl.mesh_shader_primitive_indices_clamp = args.validate_mesh_output;
-    params.msl.task_dispatch_limits = args.task_limits.0;
-    params.hlsl.mesh_shader_primitive_indices_clamp = args.validate_mesh_output;
-    params.hlsl.task_dispatch_limits = args.task_limits.0;
 
     if args.bulk_validate {
         return bulk_validate(&args, &params);
@@ -637,12 +528,7 @@ fn run() -> anyhow::Result<()> {
         .fold(params.capabilities, |caps, path| {
             use naga::valid::Capabilities as C;
             let allowed = match Path::new(path).extension().and_then(|ex| ex.to_str()) {
-                Some("wgsl") => naga::back::wgsl::supported_capabilities(),
-                Some("metal") => naga::back::msl::supported_capabilities(),
-                Some("hlsl") => naga::back::hlsl::supported_capabilities(),
                 Some("spv") | Some("spirv") => naga::back::spv::supported_capabilities(),
-                Some("glsl") | Some("frag") | Some("vert") | Some("comp") | Some("task")
-                | Some("mesh") => naga::back::glsl::supported_capabilities(),
                 _ => C::all() - C::TEXTURE_EXTERNAL,
             };
             caps & allowed
@@ -859,30 +745,6 @@ fn write_output(
             let mut file = fs::File::create(output_path)?;
             bincode::serde::encode_into_std_write(module, &mut file, bincode::config::standard())?;
         }
-        "metal" => {
-            use naga::back::msl;
-
-            let mut options = params.msl.clone();
-            options.bounds_check_policies = params.bounds_check_policies;
-
-            let info = info.as_ref().ok_or(CliError(
-                "Generating metal output requires validation to \
-                 succeed, and it failed in a previous step",
-            ))?;
-
-            let (module, info) = naga::back::pipeline_constants::process_overrides(
-                module,
-                info,
-                entry_point.filter(|_| params.compact),
-                &params.overrides,
-            )
-            .unwrap_pretty();
-
-            let pipeline_options = msl::PipelineOptions::default();
-            let (msl, _) =
-                msl::write_string(&module, &info, &options, &pipeline_options).unwrap_pretty();
-            fs::write(output_path, msl)?;
-        }
         "spv" => {
             use naga::back::spv;
 
@@ -914,104 +776,6 @@ fn write_output(
                 });
 
             fs::write(output_path, bytes.as_slice())?;
-        }
-        stage @ ("vert" | "frag" | "comp") => {
-            use naga::back::glsl;
-
-            let file_ext_stage = match stage {
-                "vert" => naga::ShaderStage::Vertex,
-                "frag" => naga::ShaderStage::Fragment,
-                "comp" => naga::ShaderStage::Compute,
-                _ => unreachable!(),
-            };
-
-            let (ep_stage, ep_name) = match entry_point {
-                Some((stage, name)) => {
-                    if stage != file_ext_stage {
-                        eprintln!(
-                            "warning: the shader stage `{stage:?}` of the selected entry point \
-                                `{name}` in the input file does not match the shader stage \
-                                implied by the file name",
-                        );
-                    }
-                    (stage, name.to_string())
-                }
-                _ => (file_ext_stage, "main".to_string()),
-            };
-
-            let pipeline_options = glsl::PipelineOptions {
-                entry_point: ep_name,
-                shader_stage: ep_stage,
-                multiview: None,
-            };
-
-            let info = info.as_ref().ok_or(CliError(
-                "Generating glsl output requires validation to \
-                 succeed, and it failed in a previous step",
-            ))?;
-
-            let (module, info) = naga::back::pipeline_constants::process_overrides(
-                module,
-                info,
-                entry_point.filter(|_| params.compact),
-                &params.overrides,
-            )
-            .unwrap_pretty();
-
-            let mut buffer = String::new();
-            let mut writer = glsl::Writer::new(
-                &mut buffer,
-                &module,
-                &info,
-                &params.glsl,
-                &pipeline_options,
-                params.bounds_check_policies,
-            )
-            .unwrap_pretty();
-            writer.write()?;
-            fs::write(output_path, buffer)?;
-        }
-        "dot" => {
-            use naga::back::dot;
-
-            let output = dot::write(module, info.as_ref(), params.dot.clone())?;
-            fs::write(output_path, output)?;
-        }
-        "hlsl" => {
-            use naga::back::hlsl;
-
-            let info = info.as_ref().ok_or(CliError(
-                "Generating hlsl output requires validation to \
-                 succeed, and it failed in a previous step",
-            ))?;
-
-            let (module, info) = naga::back::pipeline_constants::process_overrides(
-                module,
-                info,
-                entry_point.filter(|_| params.compact),
-                &params.overrides,
-            )
-            .unwrap_pretty();
-
-            let mut buffer = String::new();
-            let pipeline_options = Default::default();
-            let mut writer = hlsl::Writer::new(&mut buffer, &params.hlsl, &pipeline_options);
-            writer.write(&module, &info, None).unwrap_pretty();
-            fs::write(output_path, buffer)?;
-        }
-        "wgsl" => {
-            use naga::back::wgsl;
-
-            let wgsl = wgsl::write_string(
-                module,
-                info.as_ref().ok_or(CliError(
-                    "Generating wgsl output requires validation to \
-                     succeed, and it failed in a previous step",
-                ))?,
-                wgsl::WriterFlags::empty(),
-            )
-            .unwrap_pretty();
-            fs::write(output_path, wgsl)?;
         }
         other => {
             println!("Unknown output extension: {other}");

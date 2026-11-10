@@ -1,0 +1,118 @@
+; SPIR-V
+; Version: 1.1
+; Generator: rspirv
+; Bound: 80
+OpCapability Shader
+%1 = OpExtInstImport "GLSL.std.450"
+OpMemoryModel Logical GLSL450
+OpEntryPoint Fragment %76 "main"
+OpExecutionMode %76 OriginUpperLeft
+OpDecorate %6 ArrayStride 16
+OpMemberDecorate %9 0 Offset 0
+OpDecorate %11 DescriptorSet 1
+OpDecorate %11 Binding 0
+OpDecorate %12 Block
+OpMemberDecorate %12 0 Offset 0
+%2 = OpTypeVoid
+%3 = OpTypeInt 32 1
+%5 = OpTypeFloat 32
+%4 = OpTypeVector %5 4
+%8 = OpTypeInt 32 0
+%7 = OpConstant  %8  42
+%6 = OpTypeArray %4 %7
+%9 = OpTypeStruct %6
+%10 = OpConstant  %3  42
+%12 = OpTypeStruct %9
+%13 = OpTypePointer Uniform %12
+%11 = OpVariable  %13  Uniform
+%16 = OpTypeFunction %4
+%17 = OpTypePointer Uniform %9
+%18 = OpConstant  %8  0
+%20 = OpConstant  %5  0
+%21 = OpConstantComposite  %4  %20 %20 %20 %20
+%22 = OpConstant  %3  0
+%23 = OpConstant  %3  1
+%25 = OpTypePointer Function %4
+%27 = OpTypePointer Function %3
+%29 = OpTypePointer Uniform %6
+%34 = OpTypeVector %8 2
+%35 = OpTypePointer Function %34
+%36 = OpTypeBool
+%37 = OpTypeVector %36 2
+%38 = OpConstantComposite  %34  %18 %18
+%39 = OpConstant  %8  1
+%40 = OpConstant  %8  4294967295
+%41 = OpConstantComposite  %34  %40 %40
+%62 = OpTypePointer Uniform %4
+%71 = OpTypeFunction %2
+%15 = OpFunction  %4  None %16
+%14 = OpLabel
+%24 = OpVariable  %25  Function %21
+%26 = OpVariable  %27  Function %22
+%42 = OpVariable  %35  Function %41
+%19 = OpAccessChain  %17  %11 %18
+OpBranch %28
+%28 = OpLabel
+OpBranch %30
+%30 = OpLabel
+OpLoopMerge %31 %33 None
+OpBranch %43
+%43 = OpLabel
+%44 = OpLoad  %34  %42
+%45 = OpIEqual  %37  %38 %44
+%46 = OpAll  %36  %45
+OpSelectionMerge %47 None
+OpBranchConditional %46 %31 %47
+%47 = OpLabel
+%48 = OpCompositeExtract  %8  %44 1
+%49 = OpIEqual  %36  %48 %18
+%50 = OpSelect  %8  %49 %39 %18
+%51 = OpCompositeConstruct  %34  %50 %39
+%52 = OpISub  %34  %44 %51
+OpStore %42 %52
+OpBranch %32
+%32 = OpLabel
+%53 = OpLoad  %3  %26
+%54 = OpSLessThan  %36  %53 %10
+%55 = OpLogicalNot  %36  %54
+OpSelectionMerge %56 None
+OpBranchConditional %55 %57 %56
+%57 = OpLabel
+OpBranch %31
+%56 = OpLabel
+OpBranch %58
+%58 = OpLabel
+%60 = OpLoad  %4  %24
+%61 = OpLoad  %3  %26
+%63 = OpAccessChain  %62  %19 %18 %61
+%64 = OpLoad  %4  %63
+%65 = OpFAdd  %4  %60 %64
+OpStore %24 %65
+OpBranch %59
+%59 = OpLabel
+OpBranch %33
+%33 = OpLabel
+%66 = OpLoad  %3  %26
+%67 = OpIAdd  %3  %66 %23
+OpStore %26 %67
+OpBranch %30
+%31 = OpLabel
+%68 = OpLoad  %4  %24
+OpReturnValue %68
+OpFunctionEnd
+%70 = OpFunction  %2  None %71
+%69 = OpLabel
+%72 = OpAccessChain  %17  %11 %18
+OpBranch %73
+%73 = OpLabel
+%74 = OpFunctionCall  %4  %15
+OpReturn
+OpFunctionEnd
+%76 = OpFunction  %2  None %71
+%75 = OpLabel
+%77 = OpAccessChain  %17  %11 %18
+OpBranch %78
+%78 = OpLabel
+%79 = OpFunctionCall  %2  %70
+OpReturn
+OpFunctionEnd

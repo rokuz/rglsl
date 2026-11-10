@@ -5,9 +5,7 @@
 mod constant_evaluator;
 mod emitter;
 pub mod index;
-mod keyword_set;
 mod layouter;
-mod namer;
 mod overloads;
 mod terminator;
 mod type_methods;
@@ -18,9 +16,7 @@ pub use constant_evaluator::{
 };
 pub use emitter::Emitter;
 pub use index::{BoundsCheckPolicies, BoundsCheckPolicy, IndexableLength, IndexableLengthError};
-pub use keyword_set::{CaseInsensitiveKeywordSet, KeywordSet};
 pub use layouter::{Alignment, LayoutError, LayoutErrorInner, Layouter, TypeLayout};
-pub use namer::{EntryPointIndex, ExternalTextureNameKey, NameKey, Namer};
 pub use overloads::{Conclusion, MissingSpecialType, OverloadSet, Rule};
 pub use terminator::ensure_block_returns;
 use thiserror::Error;
@@ -503,15 +499,7 @@ impl GlobalCtx<'_> {
     /// consider changing `valid::expression::validate_constant_shift_amounts` to use that
     /// support.
     #[cfg_attr(
-        not(any(
-            feature = "glsl-in",
-            feature = "spv-in",
-            feature = "wgsl-in",
-            glsl_out,
-            hlsl_out,
-            msl_out,
-            wgsl_out
-        )),
+        not(any(feature = "glsl-in", feature = "spv-in", feature = "wgsl-in")),
         allow(dead_code)
     )]
     pub(super) fn get_const_val<T, E>(
@@ -1003,64 +991,5 @@ impl crate::MeshOutputTopology {
 impl crate::AddressSpace {
     pub const fn is_workgroup_like(self) -> bool {
         matches!(self, Self::WorkGroup | Self::TaskPayload)
-    }
-}
-
-impl TryFrom<crate::ScalarKind> for nt::glsl::GlslScalarKind {
-    type Error = ();
-
-    fn try_from(value: crate::ScalarKind) -> Result<Self, Self::Error> {
-        Ok(match value {
-            crate::ScalarKind::Sint => nt::glsl::GlslScalarKind::Sint,
-            crate::ScalarKind::Uint => nt::glsl::GlslScalarKind::Uint,
-            crate::ScalarKind::Float => nt::glsl::GlslScalarKind::Float,
-            _ => return Err(()),
-        })
-    }
-}
-
-impl From<crate::VectorSize> for nt::glsl::GlslVectorSize {
-    fn from(val: crate::VectorSize) -> Self {
-        match val {
-            crate::VectorSize::Bi => nt::glsl::GlslVectorSize::Bi,
-            crate::VectorSize::Tri => nt::glsl::GlslVectorSize::Tri,
-            crate::VectorSize::Quad => nt::glsl::GlslVectorSize::Quad,
-        }
-    }
-}
-
-impl TryFrom<crate::Scalar> for nt::glsl::GlslScalar {
-    type Error = ();
-
-    fn try_from(value: crate::Scalar) -> Result<Self, Self::Error> {
-        Ok(nt::glsl::GlslScalar {
-            kind: value.kind.try_into()?,
-            width: value.width,
-        })
-    }
-}
-
-impl TryFrom<&crate::TypeInner> for nt::glsl::GlslUniformType {
-    type Error = ();
-    fn try_from(value: &crate::TypeInner) -> Result<Self, Self::Error> {
-        match *value {
-            crate::TypeInner::Scalar(scalar) => {
-                Ok(nt::glsl::GlslUniformType::Scalar(scalar.try_into()?))
-            }
-            crate::TypeInner::Vector { size, scalar } => Ok(nt::glsl::GlslUniformType::Vector {
-                size: size.into(),
-                scalar: scalar.try_into()?,
-            }),
-            crate::TypeInner::Matrix {
-                columns,
-                rows,
-                scalar,
-            } => Ok(nt::glsl::GlslUniformType::Matrix {
-                columns: columns.into(),
-                rows: rows.into(),
-                scalar: scalar.try_into()?,
-            }),
-            _ => Err(()),
-        }
     }
 }

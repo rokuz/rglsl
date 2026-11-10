@@ -3,7 +3,7 @@
 use crate::proc::{GlobalCtx, Rule, TypeResolution};
 use crate::{Handle, Scalar, Type};
 
-#[cfg(any(feature = "wgsl-in", feature = "wgsl-out"))]
+#[cfg(feature = "wgsl-in")]
 use crate::common::wgsl::TypeContext;
 
 use core::fmt;
@@ -60,10 +60,10 @@ impl fmt::Display for DiagnosticDisplay<(&TypeResolution, GlobalCtx<'_>)> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let (resolution, ctx) = self.0;
 
-        #[cfg(any(feature = "wgsl-in", feature = "wgsl-out"))]
+        #[cfg(feature = "wgsl-in")]
         ctx.write_type_resolution(resolution, f)?;
 
-        #[cfg(not(any(feature = "wgsl-in", feature = "wgsl-out")))]
+        #[cfg(not(feature = "wgsl-in"))]
         {
             let _ = ctx;
             write!(f, "{resolution:?}")?;
@@ -77,10 +77,10 @@ impl fmt::Display for DiagnosticDisplay<(Handle<Type>, GlobalCtx<'_>)> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let (handle, ref ctx) = self.0;
 
-        #[cfg(any(feature = "wgsl-in", feature = "wgsl-out"))]
+        #[cfg(feature = "wgsl-in")]
         ctx.write_type(handle, f)?;
 
-        #[cfg(not(any(feature = "wgsl-in", feature = "wgsl-out")))]
+        #[cfg(not(feature = "wgsl-in"))]
         {
             let _ = ctx;
             write!(f, "{handle:?}")?;
@@ -94,10 +94,10 @@ impl fmt::Display for DiagnosticDisplay<(&str, &Rule, GlobalCtx<'_>)> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let (name, rule, ref ctx) = self.0;
 
-        #[cfg(any(feature = "wgsl-in", feature = "wgsl-out"))]
+        #[cfg(feature = "wgsl-in")]
         ctx.write_type_rule(name, rule, f)?;
 
-        #[cfg(not(any(feature = "wgsl-in", feature = "wgsl-out")))]
+        #[cfg(not(feature = "wgsl-in"))]
         {
             let _ = ctx;
             write!(f, "{name}({:?}) -> {:?}", rule.arguments, rule.conclusion)?;
@@ -111,12 +111,12 @@ impl fmt::Display for DiagnosticDisplay<Scalar> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let scalar = self.0;
 
-        #[cfg(any(feature = "wgsl-in", feature = "wgsl-out"))]
+        #[cfg(feature = "wgsl-in")]
         f.write_str(&crate::common::wgsl::TryToWgsl::to_wgsl_for_diagnostics(
             scalar,
         ))?;
 
-        #[cfg(not(any(feature = "wgsl-in", feature = "wgsl-out")))]
+        #[cfg(not(feature = "wgsl-in"))]
         write!(f, "{scalar:?}")?;
 
         Ok(())

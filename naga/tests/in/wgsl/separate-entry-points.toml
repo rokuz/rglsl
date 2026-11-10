@@ -1,4 +1,4 @@
-targets = "SPIRV | GLSL"
+targets = "SPIRV"
 
 [spv]
 separate_entry_points = true

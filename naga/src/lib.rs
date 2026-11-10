@@ -1,67 +1,49 @@
 /*!
-Naga can be used to translate source code written in one shading language to another.
+A Vulkan GLSL to SPIR-V compiler: a hard fork of naga.
 
 # Example
 
-The following example translates WGSL to GLSL.
-It requires the features `"wgsl-in"` and `"glsl-out"` to be enabled.
+The following example compiles a GLSL fragment shader to SPIR-V.
+It requires the features `"glsl-in"` and `"spv-out"` to be enabled.
 
 */
 // If we don't have the required front- and backends, don't try to build this example.
-#![cfg_attr(all(feature = "wgsl-in", feature = "glsl-out"), doc = "```")]
-#![cfg_attr(not(all(feature = "wgsl-in", feature = "glsl-out")), doc = "```ignore")]
+#![cfg_attr(all(feature = "glsl-in", feature = "spv-out"), doc = "```")]
+#![cfg_attr(not(all(feature = "glsl-in", feature = "spv-out")), doc = "```ignore")]
 /*!
-let wgsl_source = "
-@fragment
-fn main_fs() -> @location(0) vec4<f32> {
-    return vec4<f32>(1.0, 1.0, 1.0, 1.0);
+let glsl_source = "
+#version 450
+layout(location = 0) out vec4 color;
+void main() {
+    color = vec4(1.0);
 }
 ";
 
 // Parse the source into a Module.
-let module: naga::Module = naga::front::wgsl::parse_str(wgsl_source)?;
+let mut frontend = naga::front::glsl::Frontend::default();
+let options = naga::front::glsl::Options::from(naga::ShaderStage::Fragment);
+let module: naga::Module = frontend
+    .parse(&options, glsl_source)
+    .map_err(|errors| format!("{errors:?}"))?;
 
 // Validate the module.
-// Validation can be made less restrictive by changing the ValidationFlags.
 let module_info: naga::valid::ModuleInfo =
     naga::valid::Validator::new(
         naga::valid::ValidationFlags::all(),
         naga::valid::Capabilities::all(),
     )
-    .subgroup_stages(naga::valid::ShaderStages::all())
-    .subgroup_operations(naga::valid::SubgroupOperationSet::all())
     .validate(&module)?;
 
 // Translate the module.
-use naga::back::glsl;
-let mut glsl_source = String::new();
-glsl::Writer::new(
-    &mut glsl_source,
+let words: Vec<u32> = naga::back::spv::write_vec(
     &module,
     &module_info,
-    &glsl::Options::default(),
-    &glsl::PipelineOptions {
-        entry_point: "main_fs".into(),
-        shader_stage: naga::ShaderStage::Fragment,
-        multiview: None,
-    },
-    naga::proc::BoundsCheckPolicies::default(),
-)?.write()?;
+    &naga::back::spv::Options::default(),
+    None,
+)?;
 
-assert_eq!(glsl_source, "\
-#version 310 es
-
-precision highp float;
-precision highp int;
-
-layout(location = 0) out vec4 _fs2p_location0;
-
-void main() {
-    _fs2p_location0 = vec4(1.0, 1.0, 1.0, 1.0);
-    return;
-}
-
-");
+// A SPIR-V module starts with the magic number.
+assert_eq!(words[0], 0x0723_0203);
 
 # Ok::<(), Box<dyn core::error::Error>>(())
 ```
@@ -120,7 +102,6 @@ pub mod ir;
 pub mod keywords;
 mod non_max_u32;
 pub mod proc;
-mod racy_lock;
 mod span;
 pub mod valid;
 
