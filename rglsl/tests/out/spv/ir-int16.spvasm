@@ -10,7 +10,6 @@ OpCapability StorageInputOutput16
 OpCapability GroupNonUniform
 OpCapability GroupNonUniformArithmetic
 OpCapability GroupNonUniformBallot
-OpCapability GroupNonUniformShuffle
 OpExtension "SPV_KHR_16bit_storage"
 %1 = OpExtInstImport "GLSL.std.450"
 OpMemoryModel Logical GLSL450
@@ -531,7 +530,7 @@ OpStore %361 %392
 %394 = OpGroupNonUniformBroadcastFirst  %3  %270 %393
 OpStore %361 %394
 %395 = OpLoad  %3  %361
-%396 = OpGroupNonUniformShuffle  %3  %270 %395 %20
+%396 = OpGroupNonUniformBroadcast  %3  %270 %395 %20
 OpStore %361 %396
 %397 = OpUConvert  %4  %356
 OpStore %363 %397

@@ -4506,3 +4506,118 @@ layout(triangles) in;
 layout(passthrough) in gl_PerVertex { vec4 gl_Position; };
 layout(passthrough) in Inputs { vec2 t; };
 void main() {}
+### subgroup variables need the basic extension | comp | 4:ExtensionRequired, 5:ExtensionRequired
+layout(local_size_x = 1) in;
+void main() {
+    uint size = gl_SubgroupSize;
+    uint id = gl_SubgroupID;
+}
+### subgroup extensions imply the basic one | comp | ok
+#extension GL_KHR_shader_subgroup_vote : enable
+layout(local_size_x = 1) in;
+void main() {
+    uint size = gl_SubgroupSize + gl_NumSubgroups;
+    bool all = subgroupAll(size > 1u) && subgroupElect();
+    subgroupMemoryBarrierShared();
+}
+### subgroup masks need the ballot extension | frag | 5:ExtensionRequired
+#extension GL_KHR_shader_subgroup_basic : enable
+layout(location = 0) out uvec4 color;
+void main() {
+    color = gl_SubgroupEqMask;
+}
+### compute subgroup variables are not declared in fragment shaders | frag | 4:UndeclaredIdentifier, 5:NoMatchingFunction
+#extension GL_KHR_shader_subgroup_basic : enable
+void main() {
+    uint count = gl_NumSubgroups;
+    subgroupMemoryBarrierShared();
+}
+### subgroup functions name their extension | comp | 5:ExtensionRequired, 6:ExtensionRequired, 7:ExtensionRequired
+#extension GL_KHR_shader_subgroup_basic : enable
+layout(local_size_x = 1) in;
+void main() {
+    float sum = subgroupAdd(1.0);
+    float other = subgroupShuffle(1.0, 0u);
+    uvec4 ballot = subgroupPartitionNV(1.0);
+}
+### every subgroup extension enables its functions | comp | ok
+#extension GL_KHR_shader_subgroup_arithmetic : enable
+#extension GL_KHR_shader_subgroup_ballot : enable
+#extension GL_KHR_shader_subgroup_shuffle : enable
+#extension GL_KHR_shader_subgroup_shuffle_relative : enable
+#extension GL_KHR_shader_subgroup_clustered : enable
+#extension GL_KHR_shader_subgroup_quad : enable
+#extension GL_KHR_shader_subgroup_rotate : enable
+#extension GL_NV_shader_subgroup_partitioned : enable
+layout(local_size_x = 1) in;
+void main() {
+    vec4 v = vec4(1.0);
+    uvec4 ballot = subgroupBallot(true) | subgroupPartitionNV(v);
+    v = subgroupInclusiveMul(v) + subgroupClusteredMin(v, 2u) + subgroupShuffleUp(v, 1u);
+    v += subgroupQuadBroadcast(v, 1u) + subgroupRotate(v, 1u) + subgroupClusteredRotate(v, 1u, 2u);
+    v += subgroupPartitionedInclusiveMaxNV(v, ballot) + subgroupBroadcast(v, 0u);
+    bvec2 b = subgroupClusteredXor(bvec2(true), 4u);
+    uint count = subgroupBallotExclusiveBitCount(ballot) + subgroupBallotFindMSB(ballot);
+}
+### bitwise subgroup operations do not take floats | comp | 6:NoMatchingFunction
+#extension GL_KHR_shader_subgroup_arithmetic : enable
+layout(local_size_x = 1) in;
+void main() {
+    float f = 1.0;
+    f = subgroupAnd(f);
+}
+### the cluster size is a constant power of two | comp | 7:InvalidBuiltinCall, 8:InvalidBuiltinCall, 9:InvalidBuiltinCall
+#extension GL_KHR_shader_subgroup_clustered : enable
+layout(local_size_x = 1) in;
+void main() {
+    uint size = 2u;
+    const uint three = 3u;
+    float a = subgroupClusteredAdd(1.0, size);
+    float b = subgroupClusteredAdd(1.0, three);
+    float c = subgroupClusteredAdd(1.0, 0u);
+}
+### extended types need the subgroup extended types extension | comp | 6:ExtensionRequired
+#extension GL_KHR_shader_subgroup_arithmetic : enable
+#extension GL_EXT_shader_explicit_arithmetic_types_int16 : enable
+layout(local_size_x = 1) in;
+void main() {
+    int16_t sum = subgroupAdd(int16_t(1));
+}
+### extended types with their extension | comp | ok
+#extension GL_KHR_shader_subgroup_arithmetic : enable
+#extension GL_EXT_shader_subgroup_extended_types_int16 : enable
+layout(local_size_x = 1) in;
+void main() {
+    int16_t sum = subgroupAdd(int16_t(1));
+}
+### quad control functions need both extensions | frag | 4:ExtensionRequired, 5:ExtensionRequired
+#extension GL_KHR_shader_subgroup_vote : enable
+void main() {
+    bool a = subgroupQuadAll(true);
+    bool b = subgroupQuadAny(false);
+}
+### quad control layouts need the extension | frag | 2:ExtensionRequired
+layout(full_quads) in;
+void main() {}
+### shader ballot variables and functions need their extension | comp | 5:ExtensionRequired, 6:ExtensionRequired
+#extension GL_ARB_gpu_shader_int64 : enable
+layout(local_size_x = 1) in;
+void main() {
+    uint64_t mask = gl_SubGroupEqMaskARB;
+    uint64_t ballot = ballotARB(true);
+}
+### shader ballot and group vote with their extensions | comp | ok
+#extension GL_ARB_gpu_shader_int64 : enable
+#extension GL_ARB_shader_ballot : enable
+#extension GL_ARB_shader_group_vote : enable
+layout(local_size_x = 1) in;
+void main() {
+    uint64_t mask = gl_SubGroupEqMaskARB | ballotARB(true);
+    float first = readFirstInvocationARB(1.0) + readInvocationARB(2.0, gl_SubGroupInvocationARB);
+    bool any = anyInvocationARB(true) && allInvocationsEqualARB(false);
+}
+### amd shader ballot needs its extension | comp | 4:ExtensionRequired
+layout(local_size_x = 1) in;
+void main() {
+    float least = minInvocationsAMD(1.0);
+}

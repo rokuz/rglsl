@@ -13,6 +13,7 @@ mod reference;
 mod specialization;
 mod stage;
 mod statement;
+mod subgroup;
 mod types;
 mod xfb;
 
@@ -76,7 +77,13 @@ pub(super) fn parse(options: &Options, source: &str) -> core::result::Result<Mod
     }
     let text = preprocessed.text.as_str();
     let (unit, failure) = rglsl_ast::parse_prefix(text);
-    let analysis = rglsl_sema::analyze(&unit, &rglsl_sema::Options::new(stage(options.stage)));
+    let analysis = rglsl_sema::analyze(
+        &unit,
+        &rglsl_sema::Options {
+            spirv_version: options.spirv_version,
+            ..rglsl_sema::Options::new(stage(options.stage))
+        },
+    );
     if let Some(error) = failure {
         let earlier = analysis.diagnostics.iter().filter(|diagnostic| {
             diagnostic.offset(text) < error.span.start
@@ -270,6 +277,7 @@ pub(super) struct Lowerer<'a> {
     pub uniform_defaults: BlockDefaults,
     pub buffer_defaults: BlockDefaults,
     pub early_fragment_tests: bool,
+    pub quad_control: crate::QuadControl,
     pub conservative_depth: Option<ConservativeDepth>,
     pub post_depth_coverage: Option<Span>,
     pub per_vertex: Option<(Handle<GlobalVariable>, Vec<String>)>,
@@ -334,6 +342,7 @@ impl<'a> Lowerer<'a> {
             uniform_defaults: BlockDefaults::default(),
             buffer_defaults: BlockDefaults::default(),
             early_fragment_tests: false,
+            quad_control: crate::QuadControl::default(),
             conservative_depth: None,
             post_depth_coverage: None,
             per_vertex: None,

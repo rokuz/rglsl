@@ -436,20 +436,14 @@ impl VaryingContext<'_> {
                     Bi::NumSubgroups
                     | Bi::SubgroupId
                     | Bi::SubgroupSize
-                    | Bi::SubgroupInvocationId => Capabilities::SUBGROUP,
+                    | Bi::SubgroupInvocationId
+                    | Bi::SubgroupMask(_)
+                    | Bi::ShaderBallot(_) => Capabilities::SUBGROUP,
                     Bi::DrawIndex => Capabilities::DRAW_INDEX,
                     _ => Capabilities::empty(),
                 };
                 if !self.capabilities.contains(required) {
                     return Err(VaryingError::UnsupportedCapability(required));
-                }
-
-                if matches!(
-                    built_in,
-                    crate::BuiltIn::SubgroupId | crate::BuiltIn::SubgroupInvocationId
-                ) && ep.workgroup_size[1..].iter().any(|&s| s > 1)
-                {
-                    return Err(VaryingError::InvalidMultiDimensionalSubgroupBuiltIn);
                 }
 
                 let (visible, type_good) = match built_in {
@@ -635,20 +629,19 @@ impl VaryingContext<'_> {
                         self.stage.compute_like() && !self.output,
                         *ty_inner == Ti::Scalar(crate::Scalar::U32),
                     ),
-                    Bi::SubgroupSize | Bi::SubgroupInvocationId => (
-                        match self.stage {
-                            St::Compute
-                            | St::Fragment
-                            | St::Task
-                            | St::Mesh
-                            | St::RayGeneration
-                            | St::AnyHit
-                            | St::ClosestHit
-                            | St::Miss => !self.output,
-                            St::TessControl | St::TessEvaluation | St::Geometry => !self.output,
-                            St::Vertex => false,
-                        },
-                        *ty_inner == Ti::Scalar(crate::Scalar::U32),
+                    Bi::SubgroupSize
+                    | Bi::SubgroupInvocationId
+                    | Bi::ShaderBallot(crate::ShaderBallot::Size)
+                    | Bi::ShaderBallot(crate::ShaderBallot::InvocationId) => {
+                        (!self.output, *ty_inner == Ti::Scalar(crate::Scalar::U32))
+                    }
+                    Bi::SubgroupMask(_) | Bi::ShaderBallot(crate::ShaderBallot::Mask(_)) => (
+                        !self.output,
+                        *ty_inner
+                            == Ti::Vector {
+                                size: Vs::Quad,
+                                scalar: crate::Scalar::U32,
+                            },
                     ),
                     Bi::CullPrimitive => (
                         self.mesh_output_type == MeshOutputType::PrimitiveOutput,
@@ -1653,7 +1646,10 @@ impl super::Validator {
             }
         }
 
+        let volatile_input = var.space == crate::AddressSpace::Input
+            && var.memory_decorations == crate::MemoryDecorations::VOLATILE;
         if !var.memory_decorations.is_empty()
+            && !volatile_input
             && !matches!(
                 var.space,
                 crate::AddressSpace::Storage { .. }

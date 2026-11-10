@@ -448,6 +448,7 @@ impl<'a> Lowerer<'a> {
             incoming_ray_payload: None,
             interface: self.interface.clone(),
             transform_feedback: self.xfb.mode,
+            quad_control: self.quad_control,
             geometry,
             tessellation,
         });

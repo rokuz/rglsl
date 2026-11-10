@@ -5639,3 +5639,393 @@ fn geometry_and_tessellation_rejections() {
         assert!(error.contains(expected), "{source}: {error}");
     }
 }
+
+fn parse_for_spirv(stage: ShaderStage, source: &str, version: (u8, u8)) -> Result<(), String> {
+    glsl::Frontend::default()
+        .parse(
+            &glsl::Options {
+                spirv_version: Some(version),
+                ..glsl::Options::from(stage)
+            },
+            source,
+        )
+        .map(|_| ())
+        .map_err(|errors| {
+            errors
+                .errors
+                .first()
+                .map_or_else(String::new, |e| e.kind.to_string())
+        })
+}
+
+fn is_constant(module: &dr::Module, operand: &Operand) -> bool {
+    let Operand::IdRef(id) = *operand else {
+        return false;
+    };
+    module
+        .types_global_values
+        .iter()
+        .any(|inst| inst.result_id == Some(id) && inst.class.opcode == Op::Constant)
+}
+
+fn group_operation(
+    module: &dr::Module,
+    op: Op,
+) -> Vec<(u32, Option<spirv::GroupOperation>, Vec<u32>)> {
+    instructions(module, op)
+        .into_iter()
+        .map(|inst| {
+            let scope = constant(module, &inst.operands[0]);
+            let group = inst.operands.iter().find_map(|operand| match *operand {
+                Operand::GroupOperation(group) => Some(group),
+                _ => None,
+            });
+            let extra = inst.operands[1..]
+                .iter()
+                .filter(|operand| !matches!(operand, Operand::GroupOperation(_)))
+                .skip(1)
+                .filter(|operand| is_constant(module, operand))
+                .map(|operand| constant(module, operand))
+                .collect();
+            (scope, group, extra)
+        })
+        .collect()
+}
+
+#[test]
+fn subgroup_operations_match_glslang() {
+    use spirv::{Capability as C, GroupOperation as G};
+    let module = compile_valid_1_3(
+        ShaderStage::Compute,
+        "#version 450
+        #extension GL_KHR_shader_subgroup_arithmetic : enable
+        #extension GL_KHR_shader_subgroup_ballot : enable
+        #extension GL_KHR_shader_subgroup_clustered : enable
+        #extension GL_KHR_shader_subgroup_shuffle : enable
+        #extension GL_KHR_shader_subgroup_vote : enable
+        #extension GL_KHR_shader_subgroup_quad : enable
+        layout(local_size_x = 8, local_size_y = 8) in;
+        layout(std430, binding = 0) buffer B { vec4 f; uvec4 u; bool b; uint i; };
+        void main() {
+            f = subgroupInclusiveAdd(f) + subgroupClusteredMax(f, 4u);
+            u = subgroupExclusiveOr(u) ^ subgroupBallot(b);
+            f.x = subgroupBroadcast(f.x, 3u) + subgroupShuffleXor(f.y, i);
+            b = subgroupAllEqual(f) && subgroupElect() && subgroupInverseBallot(u);
+            i = subgroupBallotInclusiveBitCount(u) + gl_SubgroupID + gl_NumSubgroups;
+            f = subgroupQuadSwapDiagonal(f);
+            subgroupBarrier();
+        }",
+    );
+    assert_eq!(
+        group_operation(&module, Op::GroupNonUniformFAdd),
+        [(3, Some(G::InclusiveScan), vec![])]
+    );
+    assert_eq!(
+        group_operation(&module, Op::GroupNonUniformFMax),
+        [(3, Some(G::ClusteredReduce), vec![4])]
+    );
+    assert_eq!(
+        group_operation(&module, Op::GroupNonUniformBitwiseOr),
+        [(3, Some(G::ExclusiveScan), vec![])]
+    );
+    assert_eq!(
+        group_operation(&module, Op::GroupNonUniformBroadcast),
+        [(3, None, vec![3])]
+    );
+    assert_eq!(
+        group_operation(&module, Op::GroupNonUniformShuffleXor).len(),
+        1
+    );
+    assert_eq!(
+        group_operation(&module, Op::GroupNonUniformBallotBitCount),
+        [(3, Some(G::InclusiveScan), vec![])]
+    );
+    assert_eq!(
+        group_operation(&module, Op::GroupNonUniformAllEqual).len(),
+        1
+    );
+    assert_eq!(group_operation(&module, Op::GroupNonUniformElect).len(), 1);
+    assert_eq!(
+        group_operation(&module, Op::GroupNonUniformInverseBallot).len(),
+        1
+    );
+    assert_eq!(
+        group_operation(&module, Op::GroupNonUniformQuadSwap),
+        [(3, None, vec![2])]
+    );
+    let barriers = instructions(&module, Op::ControlBarrier);
+    assert_eq!(barriers.len(), 1);
+    assert_eq!(constant(&module, &barriers[0].operands[0]), 3);
+    assert_eq!(constant(&module, &barriers[0].operands[1]), 3);
+    assert_eq!(
+        capabilities_of(&module),
+        sorted(vec![
+            C::Shader,
+            C::GroupNonUniform,
+            C::GroupNonUniformVote,
+            C::GroupNonUniformArithmetic,
+            C::GroupNonUniformBallot,
+            C::GroupNonUniformShuffle,
+            C::GroupNonUniformClustered,
+            C::GroupNonUniformQuad,
+        ])
+    );
+}
+
+#[test]
+fn subgroup_builtins_are_flat_in_fragment_shaders() {
+    use spirv::BuiltIn as Bi;
+    let module = compile_valid_1_3(
+        ShaderStage::Fragment,
+        "#version 450
+        #extension GL_KHR_shader_subgroup_ballot : enable
+        layout(location = 0) out uvec4 data;
+        void main() {
+            data = gl_SubgroupEqMask + gl_SubgroupLtMask
+                + uvec4(gl_SubgroupSize, gl_SubgroupInvocationID, 0, 0);
+        }",
+    );
+    for (name, builtin) in [
+        ("gl_SubgroupSize", Bi::SubgroupSize),
+        ("gl_SubgroupInvocationID", Bi::SubgroupLocalInvocationId),
+        ("gl_SubgroupEqMask", Bi::SubgroupEqMask),
+        ("gl_SubgroupLtMask", Bi::SubgroupLtMask),
+    ] {
+        assert_eq!(
+            sorted_variable_decorations(&module, name),
+            [
+                (Decoration::BuiltIn, vec![builtin as u32]),
+                (Decoration::Flat, vec![]),
+            ],
+            "{name}"
+        );
+    }
+    assert!(capabilities_of(&module).contains(&spirv::Capability::GroupNonUniformBallot));
+}
+
+#[test]
+fn shader_ballot_uses_the_khr_extensions() {
+    use spirv::Capability as C;
+    let module = compile_valid(
+        ShaderStage::Compute,
+        "#version 450
+        #extension GL_ARB_gpu_shader_int64 : enable
+        #extension GL_ARB_shader_ballot : enable
+        #extension GL_ARB_shader_group_vote : enable
+        layout(local_size_x = 8) in;
+        layout(std430, binding = 0) buffer B { vec4 f; uint64_t m; bool b; };
+        void main() {
+            m = ballotARB(b) + gl_SubGroupGeMaskARB;
+            f.xy = readInvocationARB(f.xy, gl_SubGroupInvocationARB) + readFirstInvocationARB(f.zw);
+            b = anyInvocationARB(b) || allInvocationsEqualARB(b);
+        }",
+    );
+    assert_eq!(instructions(&module, Op::SubgroupBallotKHR).len(), 1);
+    assert_eq!(
+        instructions(&module, Op::SubgroupReadInvocationKHR).len(),
+        2
+    );
+    assert_eq!(
+        instructions(&module, Op::SubgroupFirstInvocationKHR).len(),
+        2
+    );
+    assert_eq!(instructions(&module, Op::SubgroupAnyKHR).len(), 1);
+    assert_eq!(instructions(&module, Op::SubgroupAllEqualKHR).len(), 1);
+    assert_eq!(
+        extensions_of(&module),
+        ["SPV_KHR_shader_ballot", "SPV_KHR_subgroup_vote"]
+    );
+    assert_eq!(
+        capabilities_of(&module),
+        sorted(vec![
+            C::Shader,
+            C::Int64,
+            C::SubgroupBallotKHR,
+            C::SubgroupVoteKHR
+        ])
+    );
+    assert_eq!(
+        sorted_variable_decorations(&module, "gl_SubGroupGeMaskARB"),
+        [(
+            Decoration::BuiltIn,
+            vec![spirv::BuiltIn::SubgroupGeMask as u32]
+        )]
+    );
+}
+
+#[test]
+fn rotate_partition_and_quad_control_match_glslang() {
+    use spirv::{Capability as C, GroupOperation as G};
+    let module = compile_valid_1_3(
+        ShaderStage::Fragment,
+        "#version 460
+        #extension GL_KHR_shader_subgroup_rotate : enable
+        #extension GL_KHR_shader_subgroup_vote : enable
+        #extension GL_NV_shader_subgroup_partitioned : enable
+        #extension GL_EXT_shader_quad_control : enable
+        layout(full_quads) in;
+        layout(quad_derivatives) in;
+        layout(location = 0) flat in uint value;
+        layout(location = 0) out uint result;
+        void main() {
+            uvec4 groups = subgroupPartitionNV(value);
+            result = subgroupClusteredRotate(value, 1u, 4u) + subgroupRotate(value, 2u)
+                + subgroupPartitionedExclusiveAddNV(value, groups);
+            if (subgroupQuadAll(value > 0u)) { result = 0u; }
+        }",
+    );
+    let rotates = instructions(&module, Op::GroupNonUniformRotateKHR);
+    assert_eq!(rotates.len(), 2);
+    assert!(rotates
+        .iter()
+        .any(|inst| inst.operands.len() == 4 && constant(&module, &inst.operands[3]) == 4));
+    assert_eq!(
+        instructions(&module, Op::GroupNonUniformPartitionNV).len(),
+        1
+    );
+    assert_eq!(
+        group_operation(&module, Op::GroupNonUniformIAdd),
+        [(3, Some(G::PartitionedExclusiveScanEXT), vec![])]
+    );
+    let quad = instructions(&module, Op::GroupNonUniformQuadAllKHR);
+    assert_eq!(quad.len(), 1);
+    assert_eq!(quad[0].operands.len(), 1);
+    assert!(has_execution_mode(
+        &module,
+        spirv::ExecutionMode::QuadDerivativesKHR
+    ));
+    assert!(has_execution_mode(
+        &module,
+        spirv::ExecutionMode::RequireFullQuadsKHR
+    ));
+    assert_eq!(
+        extensions_of(&module),
+        [
+            "SPV_KHR_quad_control",
+            "SPV_KHR_subgroup_rotate",
+            "SPV_NV_shader_subgroup_partitioned"
+        ]
+    );
+    let capabilities = capabilities_of(&module);
+    for capability in [
+        C::GroupNonUniformRotateKHR,
+        C::GroupNonUniformPartitionedNV,
+        C::QuadControlKHR,
+        C::GroupNonUniformVote,
+    ] {
+        assert!(capabilities.contains(&capability), "{capability:?}");
+    }
+}
+
+#[test]
+fn amd_shader_ballot_uses_group_operations() {
+    let module = compile_valid(
+        ShaderStage::Compute,
+        "#version 450
+        #extension GL_AMD_shader_ballot : enable
+        layout(local_size_x = 8) in;
+        layout(std430, binding = 0) buffer B { vec2 f; int i; };
+        void main() {
+            f = minInvocationsInclusiveScanAMD(f);
+            i = addInvocationsNonUniformAMD(i);
+        }",
+    );
+    let mins = instructions(&module, Op::GroupFMin);
+    assert_eq!(mins.len(), 2);
+    assert_eq!(
+        mins[0].operands[1],
+        Operand::GroupOperation(spirv::GroupOperation::InclusiveScan)
+    );
+    assert_eq!(instructions(&module, Op::GroupIAddNonUniformAMD).len(), 1);
+    assert_eq!(extensions_of(&module), ["SPV_AMD_shader_ballot"]);
+    assert!(capabilities_of(&module).contains(&spirv::Capability::Groups));
+}
+
+#[test]
+fn subgroup_features_are_checked_like_glslang() {
+    let cases = [
+        (
+            "void main() { uint size = gl_SubgroupSize; }",
+            "GL_KHR_shader_subgroup_basic",
+        ),
+        (
+            "#extension GL_KHR_shader_subgroup_basic : enable\nvoid main() { subgroupAll(true); }",
+            "GL_KHR_shader_subgroup_vote",
+        ),
+        (
+            "#extension GL_KHR_shader_subgroup_vote : enable\nvoid main() { subgroupQuadAll(true); }",
+            "GL_EXT_shader_quad_control",
+        ),
+        (
+            "#extension GL_KHR_shader_subgroup_clustered : enable\nvoid main() { subgroupClusteredAdd(1.0, 3u); }",
+            "power of 2",
+        ),
+        (
+            "#extension GL_KHR_shader_subgroup_clustered : enable\nvoid main() { uint s = 2u; subgroupClusteredAdd(1.0, s); }",
+            "compile-time constant",
+        ),
+        (
+            "#extension GL_KHR_shader_subgroup_ballot : enable\nvoid main() { uint id = 2u; subgroupBroadcast(1.0, id); }",
+            "compile-time constant",
+        ),
+        (
+            "#extension GL_EXT_shader_explicit_arithmetic_types_int8 : enable\n#extension GL_KHR_shader_subgroup_arithmetic : enable\nvoid main() { subgroupAdd(int8_t(1)); }",
+            "GL_EXT_shader_subgroup_extended_types_int8",
+        ),
+    ];
+    for (body, expected) in cases {
+        let source = format!("#version 450\n{body}\n");
+        let error = parse_for_spirv(ShaderStage::Compute, &source, (1, 3)).unwrap_err();
+        assert!(error.contains(expected), "{body}: {error}");
+    }
+    let dynamic_broadcast = "#version 450
+        #extension GL_KHR_shader_subgroup_ballot : enable
+        void main() { uint id = 2u; subgroupBroadcast(1.0, id); }";
+    parse_for_spirv(ShaderStage::Compute, dynamic_broadcast, (1, 5)).unwrap();
+    let old_spirv = "#version 450
+        #extension GL_KHR_shader_subgroup_vote : enable
+        void main() { subgroupAll(true); }";
+    let error = parse_for_spirv(ShaderStage::Compute, old_spirv, (1, 0)).unwrap_err();
+    assert!(error.contains("SPIR-V 1.3"), "{error}");
+    let fragment = "#version 450
+        #extension GL_KHR_shader_subgroup_basic : enable
+        void main() { uint n = gl_NumSubgroups; }";
+    let error = parse_for_spirv(ShaderStage::Fragment, fragment, (1, 3)).unwrap_err();
+    assert!(error.contains("gl_NumSubgroups"), "{error}");
+}
+
+#[test]
+fn subgroup_builtins_are_volatile_in_ray_tracing_stages() {
+    let source = "#version 460
+        #extension GL_EXT_ray_tracing : enable
+        #extension GL_KHR_shader_subgroup_ballot : enable
+        layout(binding = 0, std430) buffer B { uvec4 v; };
+        void main() { v = gl_SubgroupEqMask + uvec4(gl_SubgroupSize); }";
+    let words = compile_words_with_names(ShaderStage::RayGeneration, source, (1, 4));
+    crate::stage_io::spirv_val_in(&words, &["--target-env", "vulkan1.2"]);
+    let module = dr::load_words(words).expect("produced SPIR-V does not parse");
+    for name in ["gl_SubgroupEqMask", "gl_SubgroupSize"] {
+        assert!(
+            sorted_variable_decorations(&module, name).contains(&(Decoration::Volatile, vec![])),
+            "{name}"
+        );
+        assert!(
+            !sorted_variable_decorations(&module, name).contains(&(Decoration::Coherent, vec![])),
+            "{name}"
+        );
+    }
+    let model = source.replacen(
+        "#version 460\n",
+        "#version 460\n#pragma use_vulkan_memory_model\n",
+        1,
+    );
+    let words = compile_words_with_names(ShaderStage::RayGeneration, &model, (1, 4));
+    crate::stage_io::spirv_val_in(&words, &["--target-env", "vulkan1.2"]);
+    let module = dr::load_words(words).expect("produced SPIR-V does not parse");
+    let loads = instructions(&module, Op::Load);
+    assert_eq!(loads.len(), 2);
+    assert!(loads
+        .iter()
+        .all(|load| load.operands.last()
+            == Some(&Operand::MemoryAccess(spirv::MemoryAccess::VOLATILE))));
+}

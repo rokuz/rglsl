@@ -215,6 +215,7 @@ impl FunctionLowerer<'_, '_> {
             "uaddCarry" | "usubBorrow" | "umulExtended" | "imulExtended" => {
                 self.wide(name, arguments, at)
             }
+            _ if super::subgroup::is_subgroup_function(name) => self.subgroup(name, arguments, at),
             _ => self.generic(name, function, arguments, at).map(Some),
         }
     }
@@ -670,7 +671,7 @@ impl FunctionLowerer<'_, '_> {
         self.literal(Literal::U32(amount), at)
     }
 
-    fn pack_bits(
+    pub(super) fn pack_bits(
         &mut self,
         value: Handle<Expression>,
         source: &GlslType,

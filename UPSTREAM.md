@@ -363,6 +363,37 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   `SPV_EXT_shader_viewport_index_layer`) before SPIR-V 1.5, `ShaderLayer`/
   `ShaderViewportIndex` after, in the vertex and tessellation stages, as glslang does;
   `PrimitiveId` adds `Geometry` except in the tessellation stages.
+- **Subgroups** (`GL_KHR_shader_subgroup_*`, `GL_KHR_shader_subgroup_rotate`,
+  `GL_EXT_shader_subgroup_extended_types_*`, `GL_EXT_shader_quad_control`,
+  `GL_NV_shader_subgroup_partitioned`, `GL_ARB_shader_ballot`, `GL_ARB_shader_group_vote`,
+  `GL_AMD_shader_ballot` reductions). `CollectiveOperation` loses its explicit discriminants and
+  gains `ClusteredReduce(u32)` and `PartitionedReduce`/`PartitionedInclusiveScan`/
+  `PartitionedExclusiveScan` (with the partition ballot); `GatherMode::Rotate { delta,
+  cluster_size }` (new); `Statement::SubgroupFunction { fun, result }` (new) with
+  `SubgroupFunction` (new): `Elect`, `AllEqual`, `QuadAll`/`QuadAny`, `InverseBallot`,
+  `BallotBitExtract`, `BallotBitCount` (reduce or scan), `BallotFindLsb`/`BallotFindMsb`,
+  `Partition`, the `SPV_KHR_shader_ballot`/`SPV_KHR_subgroup_vote` operations `KhrBallot`,
+  `KhrReadInvocation`, `KhrReadFirstInvocation`, `KhrAll`, `KhrAny`, `KhrAllEqual`, and
+  `Group { op, collective_op, argument, non_uniform }` (`OpGroup*` or
+  `OpGroup*NonUniformAMD`); its result is a `SubgroupOperationResult`. `proc/subgroup.rs`
+  (new) lists the operand handles of these for handle validation, `compact`,
+  `process_overrides` and the uniformity analysis. `BuiltIn::SubgroupMask(SubgroupMask)` and
+  `BuiltIn::ShaderBallot(ShaderBallot)` (new) are the `gl_Subgroup*Mask` and
+  `gl_SubGroup*ARB` inputs (the latter declare `SubgroupBallotKHR` instead of
+  `GroupNonUniform`). `EntryPoint::quad_control` (new, `QuadControl`, not serialized when
+  default) writes `QuadDerivativesKHR`/`RequireFullQuadsKHR`. The validator accepts subgroup
+  operations in every stage, every scan of every operation, bitwise operations on integers of
+  any width and on booleans, booleans in gathers, and a non-constant `Broadcast` index (SPIR-V
+  1.5; the frontend checks it for older targets); `SubgroupOperationSet` is `u16` with
+  `CLUSTERED`, `ROTATE`, `PARTITIONED` and `QUAD_CONTROL`; the WGSL rule that rejected
+  `SubgroupId`/`SubgroupInvocationId` with a multi-dimensional workgroup and the vertex-stage
+  restriction of `SubgroupSize`/`SubgroupInvocationId` are gone. The SPIR-V backend writes
+  `GatherMode::Broadcast` as `OpGroupNonUniformBroadcast` (upstream used a shuffle), declares
+  `GroupNonUniform` together with the specific capability as glslang does, and splits the
+  `SPV_KHR_shader_ballot` reads and the AMD group operations into components as glslang does
+  (`back/spv/subgroup.rs`). An `Input` global may carry `MemoryDecorations::VOLATILE` (the
+  subgroup built-ins of the ray-tracing stages other than any-hit, as glslang declares them): it
+  is decorated `Volatile` but not `Coherent`, or loaded `Volatile` under the Vulkan memory model.
 
 ## Cherry-picked upstream commits
 

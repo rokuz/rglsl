@@ -133,6 +133,16 @@ impl Analyzer<'_> {
         }
         self.input_layout(qualifier.span, &qualifiers);
         self.derivative_layout(qualifier.span, &qualifiers);
+        for entry in &qualifiers.layout {
+            let name = entry.name.to_ascii_lowercase();
+            if matches!(name.as_str(), "full_quads" | "quad_derivatives") {
+                self.require_extension(
+                    qualifier.span,
+                    crate::builtins::subgroup::QUAD_CONTROL,
+                    &name,
+                );
+            }
+        }
         let names = ["local_size_x", "local_size_y", "local_size_z"];
         let identifiers = ["local_size_x_id", "local_size_y_id", "local_size_z_id"];
         for index in 0..3 {

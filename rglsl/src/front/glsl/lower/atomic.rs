@@ -122,7 +122,7 @@ impl FunctionLowerer<'_, '_> {
         })
     }
 
-    fn push_with_result(
+    pub(super) fn push_with_result(
         &mut self,
         result: Expression,
         statement: impl FnOnce(Handle<Expression>) -> Statement,

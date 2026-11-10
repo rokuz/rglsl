@@ -76,6 +76,41 @@ pub enum SubgroupError {
     InvalidInvocationIdExprType(Handle<crate::Expression>),
 }
 
+const fn is_bool(inner: &crate::TypeInner) -> bool {
+    matches!(*inner, crate::TypeInner::Scalar(crate::Scalar::BOOL))
+}
+
+const fn is_u32(inner: &crate::TypeInner) -> bool {
+    matches!(*inner, crate::TypeInner::Scalar(crate::Scalar::U32))
+}
+
+const fn is_ballot(inner: &crate::TypeInner) -> bool {
+    matches!(
+        *inner,
+        crate::TypeInner::Vector {
+            size: crate::VectorSize::Quad,
+            scalar: crate::Scalar::U32,
+        }
+    )
+}
+
+const fn is_scalar_or_vector(inner: &crate::TypeInner) -> bool {
+    matches!(
+        *inner,
+        crate::TypeInner::Scalar(_) | crate::TypeInner::Vector { .. }
+    )
+}
+
+const fn is_numeric(inner: &crate::TypeInner) -> bool {
+    match *inner {
+        crate::TypeInner::Scalar(scalar) | crate::TypeInner::Vector { scalar, .. } => matches!(
+            scalar.kind,
+            crate::ScalarKind::Sint | crate::ScalarKind::Uint | crate::ScalarKind::Float
+        ),
+        _ => false,
+    }
+}
+
 #[derive(Clone, Debug, thiserror::Error)]
 #[cfg_attr(test, derive(PartialEq))]
 pub enum LocalVariableError {
@@ -317,7 +352,6 @@ struct BlockContext<'a> {
     special_types: &'a crate::SpecialTypes,
     prev_infos: &'a [FunctionInfo],
     return_type: Option<Handle<crate::Type>>,
-    local_expr_kind: &'a crate::proc::ExpressionKindTracker,
 }
 
 impl<'a> BlockContext<'a> {
@@ -326,7 +360,6 @@ impl<'a> BlockContext<'a> {
         module: &'a crate::Module,
         info: &'a FunctionInfo,
         prev_infos: &'a [FunctionInfo],
-        local_expr_kind: &'a crate::proc::ExpressionKindTracker,
     ) -> Self {
         Self {
             abilities: ControlFlowAbility::RETURN,
@@ -339,7 +372,6 @@ impl<'a> BlockContext<'a> {
             special_types: &module.special_types,
             prev_infos,
             return_type: fun.result.as_ref().map(|fr| fr.ty),
-            local_expr_kind,
         }
     }
 
@@ -902,6 +934,60 @@ impl super::Validator {
 
         Ok(())
     }
+    fn subgroup_operand(
+        &self,
+        operand: Handle<crate::Expression>,
+        context: &BlockContext,
+        accept: fn(&crate::TypeInner) -> bool,
+    ) -> Result<(), WithSpan<FunctionError>> {
+        let inner = context.resolve_type_inner(operand, &self.valid_expression_set)?;
+        if accept(inner) {
+            Ok(())
+        } else {
+            log::error!("Subgroup operand type {inner:?}");
+            Err(SubgroupError::InvalidOperand(operand)
+                .with_span_handle(operand, context.expressions)
+                .into_other())
+        }
+    }
+
+    fn subgroup_result(
+        &mut self,
+        result: Handle<crate::Expression>,
+        context: &BlockContext,
+        accept: impl Fn(&crate::TypeInner) -> bool,
+    ) -> Result<(), WithSpan<FunctionError>> {
+        self.emit_expression(result, context)?;
+        match context.expressions[result] {
+            crate::Expression::SubgroupOperationResult { ty }
+                if accept(&context.types[ty].inner) =>
+            {
+                Ok(())
+            }
+            _ => Err(SubgroupError::ResultTypeMismatch(result)
+                .with_span_handle(result, context.expressions)
+                .into_other()),
+        }
+    }
+
+    fn validate_collective_operation(
+        &self,
+        collective_op: &crate::CollectiveOperation,
+        context: &BlockContext,
+    ) -> Result<(), WithSpan<FunctionError>> {
+        use crate::CollectiveOperation as co;
+        match *collective_op {
+            co::Reduce | co::InclusiveScan | co::ExclusiveScan => Ok(()),
+            co::ClusteredReduce(size) if size.is_power_of_two() => Ok(()),
+            co::ClusteredReduce(_) => Err(SubgroupError::UnknownOperation.with_span().into_other()),
+            co::PartitionedReduce(ballot)
+            | co::PartitionedInclusiveScan(ballot)
+            | co::PartitionedExclusiveScan(ballot) => {
+                self.subgroup_operand(ballot, context, is_ballot)
+            }
+        }
+    }
+
     fn validate_subgroup_operation(
         &mut self,
         op: &crate::SubgroupOperation,
@@ -928,9 +1014,7 @@ impl super::Validator {
         match (scalar.kind, *op) {
             (sk::Bool, sg::All | sg::Any) if is_scalar => {}
             (sk::Sint | sk::Uint | sk::Float, sg::Add | sg::Mul | sg::Min | sg::Max) => {}
-            // Subgroup bitwise ops require >= 32-bit integers because HLSL's
-            // WaveActiveBitAnd/Or/Xor don't support 16-bit types.
-            (sk::Sint | sk::Uint, sg::And | sg::Or | sg::Xor) if scalar.width >= 4 => {}
+            (sk::Sint | sk::Uint | sk::Bool, sg::And | sg::Or | sg::Xor) => {}
 
             (_, _) => {
                 log::error!("Subgroup operand type {argument_inner:?}");
@@ -940,39 +1024,16 @@ impl super::Validator {
             }
         };
 
-        use crate::CollectiveOperation as co;
-        match (*collective_op, *op) {
-            (
-                co::Reduce,
-                sg::All
-                | sg::Any
-                | sg::Add
-                | sg::Mul
-                | sg::Min
-                | sg::Max
-                | sg::And
-                | sg::Or
-                | sg::Xor,
-            ) => {}
-            (co::InclusiveScan | co::ExclusiveScan, sg::Add | sg::Mul) => {}
-
-            (_, _) => {
-                return Err(SubgroupError::UnknownOperation.with_span().into_other());
-            }
-        };
-
-        self.emit_expression(result, context)?;
-        match context.expressions[result] {
-            crate::Expression::SubgroupOperationResult { ty }
-                if { &context.types[ty].inner == argument_inner } => {}
-            _ => {
-                return Err(SubgroupError::ResultTypeMismatch(result)
-                    .with_span_handle(result, context.expressions)
-                    .into_other())
-            }
+        if matches!(*op, sg::All | sg::Any) && *collective_op != crate::CollectiveOperation::Reduce
+        {
+            return Err(SubgroupError::UnknownOperation.with_span().into_other());
         }
-        Ok(())
+        self.validate_collective_operation(collective_op, context)?;
+
+        let argument_inner = argument_inner.clone();
+        self.subgroup_result(result, context, |inner| *inner == argument_inner)
     }
+
     fn validate_subgroup_gather(
         &mut self,
         mode: &crate::GatherMode,
@@ -980,61 +1041,122 @@ impl super::Validator {
         result: Handle<crate::Expression>,
         context: &BlockContext,
     ) -> Result<(), WithSpan<FunctionError>> {
-        match *mode {
-            crate::GatherMode::BroadcastFirst => {}
-            crate::GatherMode::Broadcast(index)
-            | crate::GatherMode::Shuffle(index)
-            | crate::GatherMode::ShuffleDown(index)
-            | crate::GatherMode::ShuffleUp(index)
-            | crate::GatherMode::ShuffleXor(index)
-            | crate::GatherMode::QuadBroadcast(index) => {
-                let index_ty = context.resolve_type_inner(index, &self.valid_expression_set)?;
-                match *index_ty {
-                    crate::TypeInner::Scalar(crate::Scalar::U32) => {}
-                    _ => {
-                        log::error!(
-                            "Subgroup gather index type {index_ty:?}, expected unsigned int"
-                        );
-                        return Err(SubgroupError::InvalidOperand(argument)
-                            .with_span_handle(index, context.expressions)
-                            .into_other());
-                    }
-                }
+        if let Some(index) = mode.index() {
+            self.subgroup_operand(index, context, is_u32)?;
+        }
+        if let crate::GatherMode::Rotate {
+            cluster_size: Some(size),
+            ..
+        } = *mode
+        {
+            if !size.is_power_of_two() {
+                return Err(SubgroupError::UnknownOperation.with_span().into_other());
             }
-            crate::GatherMode::QuadSwap(_) => {}
         }
-        match *mode {
-            crate::GatherMode::Broadcast(index) | crate::GatherMode::QuadBroadcast(index) => {
-                if !context.local_expr_kind.is_const(index) {
-                    return Err(SubgroupError::InvalidInvocationIdExprType(index)
-                        .with_span_handle(index, context.expressions)
-                        .into_other());
-                }
-            }
-            _ => {}
-        }
-        let argument_inner = context.resolve_type_inner(argument, &self.valid_expression_set)?;
-        if !matches!(*argument_inner,
-            crate::TypeInner::Scalar ( scalar, .. ) | crate::TypeInner::Vector { scalar, .. }
-            if matches!(scalar.kind, crate::ScalarKind::Uint | crate::ScalarKind::Sint | crate::ScalarKind::Float)
-        ) {
-            log::error!("Subgroup gather operand type {argument_inner:?}");
-            return Err(SubgroupError::InvalidOperand(argument)
-                .with_span_handle(argument, context.expressions)
-                .into_other());
-        }
+        self.subgroup_operand(argument, context, is_scalar_or_vector)?;
+        let argument_inner = context
+            .resolve_type_inner(argument, &self.valid_expression_set)?
+            .clone();
+        self.subgroup_result(result, context, |inner| *inner == argument_inner)
+    }
 
-        self.emit_expression(result, context)?;
-        match context.expressions[result] {
-            crate::Expression::SubgroupOperationResult { ty }
-                if { &context.types[ty].inner == argument_inner } => {}
-            _ => {
-                return Err(SubgroupError::ResultTypeMismatch(result)
-                    .with_span_handle(result, context.expressions)
-                    .into_other())
+    fn validate_subgroup_function(
+        &mut self,
+        fun: &crate::SubgroupFunction,
+        result: Handle<crate::Expression>,
+        context: &BlockContext,
+    ) -> Result<(), WithSpan<FunctionError>> {
+        use crate::SubgroupFunction as Sf;
+        let same_as = |value: Handle<crate::Expression>| {
+            context
+                .resolve_type_inner(value, &self.valid_expression_set)
+                .cloned()
+        };
+        match *fun {
+            Sf::Elect => self.subgroup_result(result, context, is_bool),
+            Sf::AllEqual(value) => {
+                self.subgroup_operand(value, context, is_scalar_or_vector)?;
+                self.subgroup_result(result, context, is_bool)
+            }
+            Sf::QuadAll(value)
+            | Sf::QuadAny(value)
+            | Sf::KhrAll(value)
+            | Sf::KhrAny(value)
+            | Sf::KhrAllEqual(value) => {
+                self.subgroup_operand(value, context, is_bool)?;
+                self.subgroup_result(result, context, is_bool)
+            }
+            Sf::InverseBallot(ballot) => {
+                self.subgroup_operand(ballot, context, is_ballot)?;
+                self.subgroup_result(result, context, is_bool)
+            }
+            Sf::BallotBitExtract { ballot, index } => {
+                self.subgroup_operand(ballot, context, is_ballot)?;
+                self.subgroup_operand(index, context, is_u32)?;
+                self.subgroup_result(result, context, is_bool)
+            }
+            Sf::BallotBitCount {
+                ballot,
+                ref collective_op,
+            } => {
+                self.subgroup_operand(ballot, context, is_ballot)?;
+                if !matches!(
+                    *collective_op,
+                    crate::CollectiveOperation::Reduce
+                        | crate::CollectiveOperation::InclusiveScan
+                        | crate::CollectiveOperation::ExclusiveScan
+                ) {
+                    return Err(SubgroupError::UnknownOperation.with_span().into_other());
+                }
+                self.subgroup_result(result, context, is_u32)
+            }
+            Sf::BallotFindLsb(ballot) | Sf::BallotFindMsb(ballot) => {
+                self.subgroup_operand(ballot, context, is_ballot)?;
+                self.subgroup_result(result, context, is_u32)
+            }
+            Sf::Partition(value) => {
+                self.subgroup_operand(value, context, is_scalar_or_vector)?;
+                self.subgroup_result(result, context, is_ballot)
+            }
+            Sf::KhrBallot(value) => {
+                self.subgroup_operand(value, context, is_bool)?;
+                self.subgroup_result(result, context, is_ballot)
+            }
+            Sf::KhrReadInvocation { argument, index } => {
+                self.subgroup_operand(argument, context, is_numeric)?;
+                self.subgroup_operand(index, context, is_u32)?;
+                let expected = same_as(argument)?;
+                self.subgroup_result(result, context, |inner| *inner == expected)
+            }
+            Sf::KhrReadFirstInvocation(argument) => {
+                self.subgroup_operand(argument, context, is_numeric)?;
+                let expected = same_as(argument)?;
+                self.subgroup_result(result, context, |inner| *inner == expected)
+            }
+            Sf::Group {
+                op,
+                ref collective_op,
+                argument,
+                non_uniform: _,
+            } => {
+                if !matches!(
+                    op,
+                    crate::SubgroupOperation::Add
+                        | crate::SubgroupOperation::Min
+                        | crate::SubgroupOperation::Max
+                ) || !matches!(
+                    *collective_op,
+                    crate::CollectiveOperation::Reduce
+                        | crate::CollectiveOperation::InclusiveScan
+                        | crate::CollectiveOperation::ExclusiveScan
+                ) {
+                    return Err(SubgroupError::UnknownOperation.with_span().into_other());
+                }
+                self.subgroup_operand(argument, context, is_numeric)?;
+                let expected = same_as(argument)?;
+                self.subgroup_result(result, context, |inner| *inner == expected)
             }
         }
-        Ok(())
     }
 
     #[allow(clippy::large_stack_frames)] // TODO(https://github.com/gfx-rs/wgpu/issues/9456)
@@ -1881,7 +2003,7 @@ impl super::Validator {
                         )
                         .with_span_static(span, "missing capability for this operation"));
                     }
-                    let operation = op.required_operations();
+                    let operation = op.required_operations() | collective_op.required_operations();
                     if !self.subgroup_operations.contains(operation) {
                         return Err(FunctionError::InvalidSubgroup(
                             SubgroupError::UnsupportedOperation(operation),
@@ -1910,6 +2032,23 @@ impl super::Validator {
                         .with_span_static(span, "support for this operation is not present"));
                     }
                     self.validate_subgroup_gather(mode, argument, result, context)?;
+                }
+                S::SubgroupFunction { ref fun, result } => {
+                    stages &= self.subgroup_stages;
+                    if !self.capabilities.contains(super::Capabilities::SUBGROUP) {
+                        return Err(FunctionError::MissingCapability(
+                            super::Capabilities::SUBGROUP,
+                        )
+                        .with_span_static(span, "missing capability for this operation"));
+                    }
+                    let operation = fun.required_operations();
+                    if !self.subgroup_operations.contains(operation) {
+                        return Err(FunctionError::InvalidSubgroup(
+                            SubgroupError::UnsupportedOperation(operation),
+                        )
+                        .with_span_static(span, "support for this operation is not present"));
+                    }
+                    self.validate_subgroup_function(fun, result, context)?;
                 }
                 S::CooperativeStore { target, ref data } => {
                     stages &= super::ShaderStages::COMPUTE;
@@ -2177,7 +2316,7 @@ impl super::Validator {
             let stages = self
                 .validate_block(
                     &fun.body,
-                    &BlockContext::new(fun, module, &info, &mod_info.functions, &local_expr_kind),
+                    &BlockContext::new(fun, module, &info, &mod_info.functions),
                 )?
                 .stages;
             info.available_stages &= stages;

@@ -18,8 +18,8 @@ use super::{specialization, xfb};
 use crate::proc::Alignment;
 use crate::{
     AddressSpace, Binding, BuiltIn, ConservativeDepth, GlobalVariable, Handle, ImageClass,
-    Interpolation, MemoryDecorations, ResourceBinding, Sampling, Span, StorageAccess,
-    StorageFormat, TypeInner,
+    Interpolation, MemoryDecorations, ResourceBinding, Sampling, ShaderBallot, Span, StorageAccess,
+    StorageFormat, SubgroupMask, TypeInner,
 };
 
 fn layout_names(qualifier: Option<&Spanned<TypeQualifier>>) -> Vec<&str> {
@@ -202,6 +202,37 @@ fn builtin_of(name: &str) -> Option<BuiltIn> {
         "gl_TessLevelInner" => BuiltIn::TessLevelInner,
         "gl_Layer" => BuiltIn::Layer,
         "gl_ViewportIndex" => BuiltIn::ViewportIndex,
+        "gl_SubgroupSize" => BuiltIn::SubgroupSize,
+        "gl_SubgroupInvocationID" => BuiltIn::SubgroupInvocationId,
+        "gl_NumSubgroups" => BuiltIn::NumSubgroups,
+        "gl_SubgroupID" => BuiltIn::SubgroupId,
+        "gl_SubGroupSizeARB" => BuiltIn::ShaderBallot(ShaderBallot::Size),
+        "gl_SubGroupInvocationARB" => BuiltIn::ShaderBallot(ShaderBallot::InvocationId),
+        _ => {
+            if let Some(mask) = name
+                .strip_prefix("gl_Subgroup")
+                .and_then(|rest| rest.strip_suffix("Mask"))
+                .and_then(subgroup_mask)
+            {
+                BuiltIn::SubgroupMask(mask)
+            } else {
+                let mask = name
+                    .strip_prefix("gl_SubGroup")
+                    .and_then(|rest| rest.strip_suffix("MaskARB"))
+                    .and_then(subgroup_mask)?;
+                BuiltIn::ShaderBallot(ShaderBallot::Mask(mask))
+            }
+        }
+    })
+}
+
+fn subgroup_mask(name: &str) -> Option<SubgroupMask> {
+    Some(match name {
+        "Eq" => SubgroupMask::Eq,
+        "Ge" => SubgroupMask::Ge,
+        "Gt" => SubgroupMask::Gt,
+        "Le" => SubgroupMask::Le,
+        "Lt" => SubgroupMask::Lt,
         _ => return None,
     })
 }
@@ -426,6 +457,8 @@ impl<'a> Lowerer<'a> {
                 for name in names {
                     match name {
                         "early_fragment_tests" => self.early_fragment_tests = true,
+                        "quad_derivatives" => self.quad_control.quad_derivatives = true,
+                        "full_quads" => self.quad_control.require_full_quads = true,
                         "post_depth_coverage" => self.post_depth_coverage = Some(at),
                         "local_size_x_id" | "local_size_y_id" | "local_size_z_id" => {
                             let id = xfb::ast_layout_value(self, Some(qualifier), name)
@@ -1656,7 +1689,7 @@ impl<'a> Lowerer<'a> {
         }
         let analysis = self.analysis;
         let record = self.symbol(symbol).ok_or_else(|| internal(at))?;
-        let (ty, output, value) = match record.kind {
+        let (ty, output, value, volatile) = match record.kind {
             SymbolKind::Variable(ref variable) => {
                 if variable.origin != Origin::BuiltIn {
                     return Err(internal(at));
@@ -1668,6 +1701,7 @@ impl<'a> Lowerer<'a> {
                     variable.ty.clone(),
                     variable.qualifiers.storage == Storage::Out,
                     variable.value.as_ref(),
+                    variable.qualifiers.volatile,
                 )
             }
             SymbolKind::BlockMember { instance, index } => {
@@ -1680,7 +1714,12 @@ impl<'a> Lowerer<'a> {
                     .members
                     .get(usize::try_from(index).map_err(|_| internal(at))?)
                     .ok_or_else(|| internal(at))?;
-                (member.ty.clone(), block.storage == BlockStorage::Out, None)
+                (
+                    member.ty.clone(),
+                    block.storage == BlockStorage::Out,
+                    None,
+                    false,
+                )
             }
             SymbolKind::Struct(_)
             | SymbolKind::Reference(_)
@@ -1702,7 +1741,7 @@ impl<'a> Lowerer<'a> {
                 );
                 GlobalRef::Constant(handle)
             }
-            None => GlobalRef::Variable(self.builtin_variable(&name, &ty, output, at)?),
+            None => GlobalRef::Variable(self.builtin_variable(&name, &ty, output, volatile, at)?),
         };
         self.globals.insert(symbol, found);
         Ok(found)
@@ -1713,6 +1752,7 @@ impl<'a> Lowerer<'a> {
         name: &str,
         ty: &GlslType,
         output: bool,
+        volatile: bool,
         at: Span,
     ) -> Result<Handle<GlobalVariable>> {
         if let Some(&handle) = self.builtins.get(name) {
@@ -1735,6 +1775,8 @@ impl<'a> Lowerer<'a> {
             let element = GlslType::scalar(Scalar::Float);
             let sized = element.array_of(GlslArraySize::Sized(size));
             self.ir_type(&sized, at)?
+        } else if let BuiltIn::ShaderBallot(ShaderBallot::Mask(_)) = builtin {
+            self.ir_type(&GlslType::vector(Scalar::Uint, 4), at)?
         } else {
             self.ir_type(ty, at)?
         };
@@ -1749,7 +1791,11 @@ impl<'a> Lowerer<'a> {
                 binding: None,
                 ty: ir,
                 init: None,
-                memory_decorations: MemoryDecorations::empty(),
+                memory_decorations: if volatile {
+                    MemoryDecorations::VOLATILE
+                } else {
+                    MemoryDecorations::empty()
+                },
                 io: Some(Binding::BuiltIn(builtin)),
                 xfb: None,
                 input_attachment_index: None,

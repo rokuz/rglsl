@@ -925,29 +925,28 @@ impl super::Validator {
             }
             crate::Statement::SubgroupCollectiveOperation {
                 op: _,
-                collective_op: _,
+                ref collective_op,
                 argument,
                 result,
             } => {
+                validate_expr_opt(collective_op.partition())?;
                 validate_expr(argument)?;
                 validate_expr(result)?;
                 Ok(())
             }
             crate::Statement::SubgroupGather {
-                mode,
+                ref mode,
                 argument,
                 result,
             } => {
                 validate_expr(argument)?;
-                match mode {
-                    crate::GatherMode::BroadcastFirst => {}
-                    crate::GatherMode::Broadcast(index)
-                    | crate::GatherMode::Shuffle(index)
-                    | crate::GatherMode::ShuffleDown(index)
-                    | crate::GatherMode::ShuffleUp(index)
-                    | crate::GatherMode::ShuffleXor(index)
-                    | crate::GatherMode::QuadBroadcast(index) => validate_expr(index)?,
-                    crate::GatherMode::QuadSwap(_) => {}
+                validate_expr_opt(mode.index())?;
+                validate_expr(result)?;
+                Ok(())
+            }
+            crate::Statement::SubgroupFunction { ref fun, result } => {
+                for operand in fun.operands() {
+                    validate_expr_opt(operand)?;
                 }
                 validate_expr(result)?;
                 Ok(())

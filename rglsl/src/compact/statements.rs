@@ -156,31 +156,31 @@ impl FunctionTracer<'_> {
                     }
                     St::SubgroupCollectiveOperation {
                         op: _,
-                        collective_op: _,
+                        ref collective_op,
                         argument,
                         result,
                     } => {
+                        if let Some(ballot) = collective_op.partition() {
+                            self.expressions_used.insert(ballot);
+                        }
                         self.expressions_used.insert(argument);
                         self.expressions_used.insert(result);
                     }
                     St::SubgroupGather {
-                        mode,
+                        ref mode,
                         argument,
                         result,
                     } => {
-                        match mode {
-                            crate::GatherMode::BroadcastFirst => {}
-                            crate::GatherMode::Broadcast(index)
-                            | crate::GatherMode::Shuffle(index)
-                            | crate::GatherMode::ShuffleDown(index)
-                            | crate::GatherMode::ShuffleUp(index)
-                            | crate::GatherMode::ShuffleXor(index)
-                            | crate::GatherMode::QuadBroadcast(index) => {
-                                self.expressions_used.insert(index);
-                            }
-                            crate::GatherMode::QuadSwap(_) => {}
+                        if let Some(index) = mode.index() {
+                            self.expressions_used.insert(index);
                         }
                         self.expressions_used.insert(argument);
+                        self.expressions_used.insert(result);
+                    }
+                    St::SubgroupFunction { ref fun, result } => {
+                        for operand in fun.operands().into_iter().flatten() {
+                            self.expressions_used.insert(operand);
+                        }
                         self.expressions_used.insert(result);
                     }
                     St::CooperativeStore { target, ref data } => {
@@ -437,10 +437,13 @@ impl FunctionMap {
                     }
                     St::SubgroupCollectiveOperation {
                         op: _,
-                        collective_op: _,
+                        ref mut collective_op,
                         ref mut argument,
                         ref mut result,
                     } => {
+                        if let Some(ballot) = collective_op.partition_mut() {
+                            adjust(ballot)?;
+                        }
                         adjust(argument)?;
                         adjust(result)?;
                     }
@@ -449,17 +452,19 @@ impl FunctionMap {
                         ref mut argument,
                         ref mut result,
                     } => {
-                        match *mode {
-                            crate::GatherMode::BroadcastFirst => {}
-                            crate::GatherMode::Broadcast(ref mut index)
-                            | crate::GatherMode::Shuffle(ref mut index)
-                            | crate::GatherMode::ShuffleDown(ref mut index)
-                            | crate::GatherMode::ShuffleUp(ref mut index)
-                            | crate::GatherMode::ShuffleXor(ref mut index)
-                            | crate::GatherMode::QuadBroadcast(ref mut index) => adjust(index)?,
-                            crate::GatherMode::QuadSwap(_) => {}
+                        if let Some(index) = mode.index_mut() {
+                            adjust(index)?;
                         }
                         adjust(argument)?;
+                        adjust(result)?;
+                    }
+                    St::SubgroupFunction {
+                        ref mut fun,
+                        ref mut result,
+                    } => {
+                        for operand in fun.operands_mut().into_iter().flatten() {
+                            adjust(operand)?;
+                        }
                         adjust(result)?;
                     }
                     St::CooperativeStore {

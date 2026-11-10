@@ -391,6 +391,28 @@ pub enum DescriptorHeap {
     Sampler,
 }
 
+#[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub enum SubgroupMask {
+    Eq,
+    Ge,
+    Gt,
+    Le,
+    Lt,
+}
+
+#[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub enum ShaderBallot {
+    Size,
+    InvocationId,
+    Mask(SubgroupMask),
+}
+
 /// Built-in inputs and outputs.
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
@@ -470,6 +492,8 @@ pub enum BuiltIn {
     SubgroupSize,
     /// Read in compute, fragment, task, and mesh shaders
     SubgroupInvocationId,
+    SubgroupMask(SubgroupMask),
+    ShaderBallot(ShaderBallot),
 
     /// Written in task shaders
     MeshTaskSize,
@@ -1743,6 +1767,10 @@ pub enum GatherMode {
     QuadBroadcast(Handle<Expression>),
     /// Each gathers from the opposite quad lane along the given direction
     QuadSwap(Direction),
+    Rotate {
+        delta: Handle<Expression>,
+        cluster_size: Option<u32>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
@@ -1776,9 +1804,51 @@ pub enum SubgroupOperation {
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum CollectiveOperation {
-    Reduce = 0,
-    InclusiveScan = 1,
-    ExclusiveScan = 2,
+    Reduce,
+    InclusiveScan,
+    ExclusiveScan,
+    ClusteredReduce(u32),
+    PartitionedReduce(Handle<Expression>),
+    PartitionedInclusiveScan(Handle<Expression>),
+    PartitionedExclusiveScan(Handle<Expression>),
+}
+
+#[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub enum SubgroupFunction {
+    Elect,
+    AllEqual(Handle<Expression>),
+    QuadAll(Handle<Expression>),
+    QuadAny(Handle<Expression>),
+    InverseBallot(Handle<Expression>),
+    BallotBitExtract {
+        ballot: Handle<Expression>,
+        index: Handle<Expression>,
+    },
+    BallotBitCount {
+        ballot: Handle<Expression>,
+        collective_op: CollectiveOperation,
+    },
+    BallotFindLsb(Handle<Expression>),
+    BallotFindMsb(Handle<Expression>),
+    Partition(Handle<Expression>),
+    KhrBallot(Handle<Expression>),
+    KhrReadInvocation {
+        argument: Handle<Expression>,
+        index: Handle<Expression>,
+    },
+    KhrReadFirstInvocation(Handle<Expression>),
+    KhrAll(Handle<Expression>),
+    KhrAny(Handle<Expression>),
+    KhrAllEqual(Handle<Expression>),
+    Group {
+        op: SubgroupOperation,
+        collective_op: CollectiveOperation,
+        argument: Handle<Expression>,
+        non_uniform: bool,
+    },
 }
 
 bitflags::bitflags! {
@@ -2673,6 +2743,10 @@ pub enum Statement {
         /// [`SubgroupOperationResult`]: Expression::SubgroupOperationResult
         result: Handle<Expression>,
     },
+    SubgroupFunction {
+        fun: SubgroupFunction,
+        result: Handle<Expression>,
+    },
     /// Store a cooperative primitive into memory.
     CooperativeStore {
         target: Handle<Expression>,
@@ -2876,6 +2950,12 @@ pub struct EntryPoint {
     pub interface: Vec<Handle<GlobalVariable>>,
     #[cfg_attr(feature = "deserialize", serde(default))]
     pub transform_feedback: bool,
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    #[cfg_attr(
+        feature = "serialize",
+        serde(skip_serializing_if = "QuadControl::is_default")
+    )]
+    pub quad_control: QuadControl,
     #[cfg_attr(feature = "serialize", serde(skip_serializing_if = "Option::is_none"))]
     #[cfg_attr(feature = "deserialize", serde(default))]
     pub geometry: Option<GeometryInfo>,
@@ -2972,6 +3052,15 @@ pub enum TessellationSpacing {
 pub enum TessellationVertexOrder {
     Cw,
     Ccw,
+}
+
+#[derive(Clone, Copy, Debug, Default, Hash, Eq, PartialEq)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub struct QuadControl {
+    pub quad_derivatives: bool,
+    pub require_full_quads: bool,
 }
 
 /// Return types predeclared for the frexp, modf, and atomicCompareExchangeWeak built-in functions.
