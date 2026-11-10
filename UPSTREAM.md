@@ -124,6 +124,19 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   as `XfbBuffer`, `XfbStride` and `Offset` on the variable, and `StructMember::xfb_offset` (new)
   as `Offset` on a member of an interface block. The validator allows `xfb` only on `Output`
   globals.
+- **GLSL constant folding follows glslang** (`proc/constant_evaluator.rs`, GLSL behaviour):
+  built-ins outside their domain or overflowing fold to NaN or infinity (`asin`, `acos`,
+  `acosh`, `atanh`, `log`, `log2`, `sqrt`, `pow`, `exp`, `exp2`, `sinh`, `cosh`, `degrees`,
+  `dot`, `length`, `normalize`), `clamp` is `min(max(x, low), high)` even when `low > high`,
+  32-bit shifts use the amount modulo 32, and integer division and remainder by zero give
+  `0x7FFFFFFF`/`0xFFFFFFFF` and the dividend. A math function the evaluator cannot fold (for
+  example on `f64`) stays a run-time expression. Float literals may be NaN or infinite, and the
+  validator no longer rejects constant shift amounts at least as wide as the operand or a
+  constant zero divisor (SPIR-V leaves both undefined).
+- **Extended integer arithmetic.** `MathFunction::{AddCarry, SubBorrow, MulExtended}` (new)
+  return `PredeclaredType::WideResult` (new, a `{ low, high }` struct) and are written as
+  `OpIAddCarry`, `OpISubBorrow` and `OpUMulExtended`/`OpSMulExtended`. `Refract` also accepts
+  scalars.
 
 ## Cherry-picked upstream commits
 

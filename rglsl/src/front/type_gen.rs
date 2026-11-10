@@ -679,6 +679,32 @@ impl crate::Module {
                     },
                 }
             }
+            crate::PredeclaredType::WideResult { size, scalar } => {
+                let inner = match size {
+                    Some(size) => crate::TypeInner::Vector { size, scalar },
+                    None => crate::TypeInner::Scalar(scalar),
+                };
+                let width = u32::from(scalar.width);
+                let second_offset = size.map_or(width, |size| size as u32 * width);
+                let member_ty = self
+                    .types
+                    .insert(crate::Type { name: None, inner }, Span::UNDEFINED);
+                let member = |name: &str, offset: u32| crate::StructMember {
+                    name: Some(name.to_string()),
+                    ty: member_ty,
+                    binding: None,
+                    offset,
+                    matrix_layout: None,
+                    xfb_offset: None,
+                };
+                crate::Type {
+                    name: Some(name),
+                    inner: crate::TypeInner::Struct {
+                        members: vec![member("low", 0), member("high", second_offset)],
+                        span: second_offset * 2,
+                    },
+                }
+            }
         };
 
         let handle = self.types.insert(ty, Span::UNDEFINED);

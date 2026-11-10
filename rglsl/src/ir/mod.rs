@@ -1466,6 +1466,9 @@ pub enum MathFunction {
     InsertBits,
     FirstTrailingBit,
     FirstLeadingBit,
+    AddCarry,
+    SubBorrow,
+    MulExtended,
     // data packing
     Pack4x8snorm,
     Pack4x8unorm,
@@ -2622,6 +2625,10 @@ pub enum PredeclaredType {
         scalar: Scalar,
     },
     FrexpResult {
+        size: Option<VectorSize>,
+        scalar: Scalar,
+    },
+    WideResult {
         size: Option<VectorSize>,
         scalar: Scalar,
     },

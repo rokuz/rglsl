@@ -17,6 +17,7 @@ impl ir::PredeclaredType {
             }
             Pt::ModfResult { size, scalar } => frexp_mod_name("modf", size, scalar),
             Pt::FrexpResult { size, scalar } => frexp_mod_name("frexp", size, scalar),
+            Pt::WideResult { size, scalar } => wide_name(size, scalar),
         }
     }
 }
@@ -29,5 +30,20 @@ fn frexp_mod_name(function: &str, size: Option<ir::VectorSize>, scalar: ir::Scal
             format!("__{function}_result_vec{size}_f{bits}")
         }
         None => format!("__{function}_result_f{bits}"),
+    }
+}
+
+fn wide_name(size: Option<ir::VectorSize>, scalar: ir::Scalar) -> String {
+    let kind = match scalar.kind {
+        ir::ScalarKind::Sint => "i",
+        _ => "u",
+    };
+    let bits = 8 * scalar.width;
+    match size {
+        Some(size) => {
+            let size = size as u8;
+            format!("__wide_result_vec{size}_{kind}{bits}")
+        }
+        None => format!("__wide_result_{kind}{bits}"),
     }
 }

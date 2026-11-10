@@ -3092,6 +3092,11 @@ void main() { x[8] = 1.0; y[1] = 1.0; z[2] = 1.0; w[2] = 1.0; v[5] = 1.0; u[6] =
 ### const division by zero | frag | ok
 float x[1 / 0];
 void main() {}
+### const shift by at least the width wraps the amount | frag | 5:IndexOutOfRange
+const int a = (1 << 33) + (8 >> 34) + int(1u << 32) + (-8 >> 33) + 2;
+const int b = (5 / 0 == 2147483647 && 5 % 0 == 5 && 5u / 0u == 0xFFFFFFFFu) ? 2 : 9;
+float x[a + b];
+void main() { x[4] = 1.0; x[5] = 1.0; }
 ### const float size | frag | ok
 float x[int(1.5 + 1.5)];
 void main() { x[2] = 1.0; }

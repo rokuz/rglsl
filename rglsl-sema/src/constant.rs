@@ -164,16 +164,17 @@ pub fn fold_unary(operator: UnaryOperator, operand: &Constant) -> Option<Constan
     Some(Constant::new(values))
 }
 
-fn fold_int(operator: BinaryOperator, left: i32, right: i32) -> Option<Value> {
-    let shift = u32::try_from(right).ok();
+const fn fold_int(operator: BinaryOperator, left: i32, right: i32) -> Option<Value> {
     Some(match operator {
         BinaryOperator::Add => Value::Int(left.wrapping_add(right)),
         BinaryOperator::Subtract => Value::Int(left.wrapping_sub(right)),
         BinaryOperator::Multiply => Value::Int(left.wrapping_mul(right)),
-        BinaryOperator::Divide => Value::Int(left.checked_div(right)?),
-        BinaryOperator::Modulo => Value::Int(left.checked_rem(right)?),
-        BinaryOperator::ShiftLeft => Value::Int(left.checked_shl(shift?)?),
-        BinaryOperator::ShiftRight => Value::Int(left.checked_shr(shift?)?),
+        BinaryOperator::Divide if right == 0 => Value::Int(i32::MAX),
+        BinaryOperator::Divide => Value::Int(left.wrapping_div(right)),
+        BinaryOperator::Modulo if right == 0 => Value::Int(left),
+        BinaryOperator::Modulo => Value::Int(left.wrapping_rem(right)),
+        BinaryOperator::ShiftLeft => Value::Int(left.wrapping_shl(right.cast_unsigned())),
+        BinaryOperator::ShiftRight => Value::Int(left.wrapping_shr(right.cast_unsigned())),
         BinaryOperator::BitAnd => Value::Int(left & right),
         BinaryOperator::BitOr => Value::Int(left | right),
         BinaryOperator::BitXor => Value::Int(left ^ right),
@@ -190,10 +191,10 @@ fn fold_uint(operator: BinaryOperator, left: u32, right: u32) -> Option<Value> {
         BinaryOperator::Add => Value::Uint(left.wrapping_add(right)),
         BinaryOperator::Subtract => Value::Uint(left.wrapping_sub(right)),
         BinaryOperator::Multiply => Value::Uint(left.wrapping_mul(right)),
-        BinaryOperator::Divide => Value::Uint(left.checked_div(right)?),
-        BinaryOperator::Modulo => Value::Uint(left.checked_rem(right)?),
-        BinaryOperator::ShiftLeft => Value::Uint(left.checked_shl(right)?),
-        BinaryOperator::ShiftRight => Value::Uint(left.checked_shr(right)?),
+        BinaryOperator::Divide => Value::Uint(left.checked_div(right).unwrap_or(u32::MAX)),
+        BinaryOperator::Modulo => Value::Uint(left.checked_rem(right).unwrap_or(left)),
+        BinaryOperator::ShiftLeft => Value::Uint(left.wrapping_shl(right)),
+        BinaryOperator::ShiftRight => Value::Uint(left.wrapping_shr(right)),
         BinaryOperator::BitAnd => Value::Uint(left & right),
         BinaryOperator::BitOr => Value::Uint(left | right),
         BinaryOperator::BitXor => Value::Uint(left ^ right),
@@ -236,7 +237,7 @@ fn fold_pair(operator: BinaryOperator, left: Value, right: Value) -> Option<Valu
                 BinaryOperator::ShiftLeft | BinaryOperator::ShiftRight
             ) =>
         {
-            fold_int(operator, left, i32::try_from(right).ok()?)
+            fold_int(operator, left, right.cast_signed())
         }
         (Value::Uint(left), Value::Int(right))
             if matches!(
@@ -244,7 +245,7 @@ fn fold_pair(operator: BinaryOperator, left: Value, right: Value) -> Option<Valu
                 BinaryOperator::ShiftLeft | BinaryOperator::ShiftRight
             ) =>
         {
-            fold_uint(operator, left, u32::try_from(right).ok()?)
+            fold_uint(operator, left, right.cast_unsigned())
         }
         (Value::Float(left), Value::Float(right)) => fold_float(operator, left, right, false),
         (Value::Double(left), Value::Double(right)) => fold_float(operator, left, right, true),

@@ -1928,3 +1928,77 @@ fn sampler_constructors_at_point_of_use() {
         }",
     );
 }
+
+fn constant_words(module: &dr::Module) -> Vec<u32> {
+    module
+        .types_global_values
+        .iter()
+        .filter(|inst| inst.class.opcode == Op::Constant)
+        .filter_map(|inst| match inst.operands[0] {
+            Operand::LiteralBit32(value) => Some(value),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn constant_folding_follows_glslang_outside_the_domain() {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+        layout(location = 0) out vec4 o;
+        layout(location = 1) out ivec4 i;
+        void main() {
+            float x = asin(2.0) + acos(-3.0) + log(-1.0) + log2(0.0) + sqrt(-4.0)
+                + acosh(0.5) + atanh(2.0) + exp(1000.0) + exp2(1000.0) + cosh(1000.0)
+                + sinh(1000.0) + pow(-2.0, 0.5) + inversesqrt(0.0) + 0.0 / 0.0
+                + length(vec2(1e30)) + dot(vec2(1e30), vec2(1e30)) + normalize(vec2(0.0)).x;
+            o = vec4(x, clamp(1.0, 3.0, 2.0), float(sqrt(4.0lf) + floor(1.5lf)), 0.0);
+            int s = (1 << 33) + (7 >> 40) + (-8 >> 33) + int(1u << 32) + clamp(1, 3, 2) + 5 % 0;
+            i = ivec4(s, 5 / 0, int(5u / 0u), 0);
+        }",
+    );
+    let words = constant_words(&module);
+    for expected in [6_u32, i32::MAX.cast_unsigned(), u32::MAX, 2.0_f32.to_bits()] {
+        assert!(words.contains(&expected), "{expected:#x} in {words:x?}");
+    }
+    assert!(
+        words.iter().any(|&word| f32::from_bits(word).is_nan()),
+        "{words:x?}"
+    );
+}
+
+#[test]
+fn extended_integer_arithmetic_and_scalar_refract() {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+        layout(location = 0) flat in uvec2 a;
+        layout(location = 1) flat in ivec3 b;
+        layout(location = 2) in float f;
+        layout(location = 0) out uvec4 o;
+        layout(location = 1) out ivec3 p;
+        layout(location = 2) out float r;
+        void main() {
+            uint carry;
+            uvec2 borrow;
+            uint sum = uaddCarry(a.x, a.y, carry);
+            uvec2 difference = usubBorrow(a, a.yx, borrow);
+            uvec4 product = uvec4(0u);
+            umulExtended(a.x, 7u, product.x, product.y);
+            ivec3 high, low;
+            imulExtended(b, b.zyx, high, low);
+            o = uvec4(sum + carry, difference + borrow, 0u) + product;
+            p = high + low;
+            r = refract(f, 1.0, 0.5);
+        }",
+    );
+    for op in [
+        Op::IAddCarry,
+        Op::ISubBorrow,
+        Op::UMulExtended,
+        Op::SMulExtended,
+    ] {
+        assert_eq!(instructions(&module, op).len(), 1, "{op:?}");
+    }
+}

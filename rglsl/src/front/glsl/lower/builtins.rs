@@ -186,6 +186,9 @@ impl FunctionLowerer<'_, '_> {
                 Ok(None)
             }
             "modf" | "frexp" => self.split(name, arguments, at).map(Some),
+            "uaddCarry" | "usubBorrow" | "umulExtended" | "imulExtended" => {
+                self.wide(name, arguments, at)
+            }
             _ => self.generic(name, function, arguments, at).map(Some),
         }
     }
@@ -381,9 +384,6 @@ impl FunctionLowerer<'_, '_> {
                     let product = self.binary_op(BinaryOperator::Multiply, scaled, n, at)?;
                     return self.binary_op(BinaryOperator::Subtract, i, product, at);
                 }
-                "refract" => {
-                    return Err(unsupported("`refract` on scalars", at));
-                }
                 _ => {}
             }
         }
@@ -468,6 +468,65 @@ impl FunctionLowerer<'_, '_> {
         let other = self.convert(other, &other_ty, &output_ty, at)?;
         self.store(&place, other, at)?;
         Ok(fraction)
+    }
+
+    fn wide(
+        &mut self,
+        name: &str,
+        arguments: &[AstExpression],
+        at: Span,
+    ) -> Result<Option<Handle<Expression>>> {
+        let &[ref x, ref y, ref outputs @ ..] = arguments else {
+            return Err(internal(at));
+        };
+        let (x, ty) = self.typed(x)?;
+        let (y, _) = self.typed(y)?;
+        let base = ty.base_scalar().ok_or_else(|| internal(at))?;
+        let size = match ty.kind {
+            TypeKind::Vector { size, .. } => vector_size(size),
+            _ => None,
+        };
+        let fun = match name {
+            "uaddCarry" => MathFunction::AddCarry,
+            "usubBorrow" => MathFunction::SubBorrow,
+            _ => MathFunction::MulExtended,
+        };
+        self.lw
+            .module
+            .generate_predeclared_type(PredeclaredType::WideResult {
+                size,
+                scalar: scalar(base),
+            });
+        let result = self.math_call(fun, &[x, y], at)?;
+        let high = self.add(
+            Expression::AccessIndex {
+                base: result,
+                index: 1,
+            },
+            at,
+        )?;
+        let low = self.add(
+            Expression::AccessIndex {
+                base: result,
+                index: 0,
+            },
+            at,
+        )?;
+        let (stored, returned) = if fun == MathFunction::MulExtended {
+            (&[high, low][..], None)
+        } else {
+            (&[high][..], Some(low))
+        };
+        if outputs.len() != stored.len() {
+            return Err(internal(at));
+        }
+        for (output, &half) in outputs.iter().zip(stored) {
+            let output_ty = self.info(output)?.ty.clone();
+            let place = self.place(output)?;
+            let half = self.convert(half, &ty, &output_ty, at)?;
+            self.store(&place, half, at)?;
+        }
+        Ok(returned)
     }
 
     fn sampled(&mut self, argument: &AstExpression, at: Span) -> Result<Sampled> {

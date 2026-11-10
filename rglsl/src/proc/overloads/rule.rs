@@ -86,6 +86,14 @@ impl Conclusion {
         Conclusion::Predeclared(predeclared)
     }
 
+    pub const fn for_wide(size: ConstructorSize, scalar: ir::Scalar) -> Self {
+        let size = match size {
+            ConstructorSize::Vector(size) => Some(size),
+            ConstructorSize::Scalar | ConstructorSize::Matrix { .. } => None,
+        };
+        Conclusion::Predeclared(ir::PredeclaredType::WideResult { size, scalar })
+    }
+
     pub fn into_resolution(
         self,
         special_types: &ir::SpecialTypes,
