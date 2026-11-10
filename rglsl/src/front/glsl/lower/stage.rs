@@ -310,6 +310,14 @@ impl<'a> Lowerer<'a> {
         Ok(())
     }
 
+    const fn layout_missing(&self) -> bool {
+        match self.options.stage {
+            ShaderStage::Geometry => self.stage_layout.input_primitive.is_none(),
+            ShaderStage::TessControl => self.stage_layout.vertices.is_none(),
+            _ => false,
+        }
+    }
+
     pub(super) fn check_stage_layout(&mut self) {
         let layout = &self.stage_layout;
         let missing: &[(bool, &str)] = match self.options.stage {
@@ -428,6 +436,7 @@ impl<'a> Lowerer<'a> {
         let input = block.storage == BlockStorage::In;
         let size = match variable.ty.outer_size() {
             Some(GlslArraySize::Sized(size)) => size,
+            _ if self.layout_missing() => 1,
             _ => {
                 return Err(semantic(
                     format_size_error(&record.name, self.options.stage),
