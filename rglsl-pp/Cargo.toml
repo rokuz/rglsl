@@ -1,0 +1,25 @@
+[package]
+name = "rglsl-pp"
+version.workspace = true
+authors = ["rglsl developers"]
+edition.workspace = true
+rust-version.workspace = true
+description = "GLSL preprocessor with #include and source maps for rglsl"
+repository.workspace = true
+keywords.workspace = true
+license.workspace = true
+
+[lib]
+name = "rglsl_pp"
+
+[features]
+std = []
+
+[dependencies]
+
+[[example]]
+name = "compare"
+required-features = ["std"]
+
+[lints]
+workspace = true

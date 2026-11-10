@@ -6,6 +6,7 @@ members = [
     "rglsl-test",
     "rglsl-ast",
     "rglsl-sema",
+    "rglsl-pp",
     "rglsl-cli",
     "rglsl-fuzz",
     "rglsl/fuzz",
@@ -36,6 +37,7 @@ authors = ["rglsl developers", "gfx-rs developers"]
 rglsl = { version = "0.1.0", path = "./rglsl" }
 rglsl-ast = { version = "0.1.0", path = "./rglsl-ast" }
 rglsl-sema = { version = "0.1.0", path = "./rglsl-sema" }
+rglsl-pp = { version = "0.1.0", path = "./rglsl-pp" }
 rglsl-test = { path = "./rglsl-test" }
 rglsl-types = { version = "0.1.0", path = "./rglsl-types" }
 
