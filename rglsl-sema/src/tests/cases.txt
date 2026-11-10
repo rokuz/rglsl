@@ -4822,3 +4822,108 @@ void main() {}
 ### override coverage needs its extension | frag | 2:ExtensionRequired
 layout(override_coverage) out int gl_SampleMask[];
 void main() { gl_SampleMask[0] = 1; }
+### mesh shader built-ins and layouts | mesh 460 | ok
+#extension GL_EXT_mesh_shader : require
+layout(local_size_x = 32) in;
+layout(max_vertices = 64, max_primitives = 32, triangles) out;
+layout(location = 0) out vec4 color[];
+layout(location = 1) perprimitiveEXT out vec4 normal[];
+void main() {
+    uint i = gl_LocalInvocationIndex + gl_WorkGroupID.x + gl_NumWorkGroups.x;
+    SetMeshOutputsEXT(64u, 32u);
+    gl_MeshVerticesEXT[i].gl_Position = vec4(1.0);
+    gl_MeshPrimitivesEXT[i].gl_CullPrimitiveEXT = true;
+    gl_PrimitiveTriangleIndicesEXT[i] = uvec3(0, 1, 2);
+    color[i] = vec4(1.0);
+    normal[i] = vec4(0.0);
+}
+### mesh shader outputs cannot be read | mesh 460 | 7:MeshOutputRead, 8:MeshOutputRead
+#extension GL_EXT_mesh_shader : require
+layout(local_size_x = 1) in;
+layout(max_vertices = 3, max_primitives = 1, triangles) out;
+layout(location = 0) out vec4 v[];
+void main() {
+    v[0] += vec4(1.0);
+    v[1] = v[2];
+}
+### mesh shader outputs must be arrays | mesh 460 | 5:InvalidInterfaceArray
+#extension GL_EXT_mesh_shader : require
+layout(local_size_x = 1) in;
+layout(max_vertices = 3, max_primitives = 1, triangles) out;
+layout(location = 0) out vec4 v;
+void main() {}
+### mesh shader output arrays take the layout size | mesh 460 | 5:InvalidInterfaceArray
+#extension GL_EXT_mesh_shader : require
+layout(local_size_x = 1) in;
+layout(max_vertices = 3, max_primitives = 1, triangles) out;
+layout(location = 0) perprimitiveEXT out vec4 v[3];
+void main() {}
+### index built-in of another primitive | mesh 460 | 5:InvalidQualifier
+#extension GL_EXT_mesh_shader : require
+layout(local_size_x = 1) in;
+layout(max_vertices = 3, max_primitives = 1, lines) out;
+void main() { gl_PrimitiveTriangleIndicesEXT[0] = uvec3(0); }
+### task payload is read-only in mesh shaders | mesh 460 | 7:NotAnLValue
+#extension GL_EXT_mesh_shader : require
+layout(local_size_x = 1) in;
+layout(max_vertices = 3, max_primitives = 1, triangles) out;
+struct S { int a; };
+taskPayloadSharedEXT S s;
+void main() { s.a = 1; }
+### task payload can be written in task shaders | task 460 | ok
+#extension GL_EXT_mesh_shader : require
+layout(local_size_x = 1) in;
+struct S { int a; };
+taskPayloadSharedEXT S s;
+void main() {
+    s.a = 1;
+    atomicAdd(s.a, 1);
+    EmitMeshTasksEXT(1u, 1u, 1u);
+}
+### task payload needs a variable | task 460 | 3:InvalidQualifier
+#extension GL_EXT_mesh_shader : require
+taskPayloadSharedEXT float;
+void main() {}
+### per-view outputs need a view dimension | mesh 450 | 5:InvalidQualifier, 6:InvalidQualifier
+#extension GL_NV_mesh_shader : require
+layout(local_size_x = 1) in;
+layout(max_vertices = 3, max_primitives = 1, triangles) out;
+perviewNV layout(location = 0) out vec4 a[];
+perviewNV layout(location = 1) out vec4 b[][3];
+void main() {}
+### NV mesh shader built-ins | mesh 450 | ok
+#extension GL_NV_mesh_shader : require
+layout(local_size_x = 32) in;
+layout(max_vertices = 81, max_primitives = 32, triangles) out;
+void main() {
+    uint view = gl_MeshViewIndicesNV[gl_MeshViewCountNV % gl_MaxMeshViewCountNV];
+    gl_MeshVerticesNV[0].gl_PositionPerViewNV[view] = vec4(1.0);
+    gl_MeshPrimitivesNV[0].gl_LayerPerViewNV[view] = 1;
+    gl_PrimitiveIndicesNV[95] = 1u;
+    gl_PrimitiveCountNV = 32u;
+    writePackedPrimitiveIndices4x8NV(0u, 1u);
+}
+### NV task shader built-ins | task 450 | ok
+#extension GL_NV_mesh_shader : require
+layout(local_size_x = 32) in;
+taskNV out Task { uint view; } task;
+void main() {
+    task.view = gl_MeshViewCountNV;
+    gl_TaskCountNV = 1u;
+}
+### mesh built-ins need the extension | mesh 460 | 4:ExtensionRequired
+#extension GL_NV_mesh_shader : require
+layout(local_size_x = 1) in;
+void main() { SetMeshOutputsEXT(0u, 0u); }
+### mesh qualifiers outside mesh stages | vert | 2:InvalidQualifier
+perprimitiveNV out vec4 v;
+void main() {}
+### perprimitive fragment inputs need the extension | frag | 2:ExtensionRequired
+layout(location = 0) perprimitiveEXT in vec4 v;
+layout(location = 0) out vec4 o;
+void main() { o = v; }
+### NV derivative groups only in compute shaders | mesh 450 | 4:InvalidQualifier
+#extension GL_EXT_mesh_shader : require
+#extension GL_NV_compute_shader_derivatives : require
+layout(derivative_group_linearNV) in;
+void main() {}

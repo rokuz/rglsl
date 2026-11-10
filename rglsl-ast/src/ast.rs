@@ -347,10 +347,15 @@ pub enum StorageQualifier {
     CallableDataEXT,
     CallableDataInNV,
     CallableDataInEXT,
+    PerPrimitiveNV,
+    PerPrimitiveEXT,
+    PerViewNV,
+    TaskNV,
+    TaskPayloadSharedEXT,
 }
 
 impl StorageQualifier {
-    pub const ALL: [Self; 35] = [
+    pub const ALL: [Self; 40] = [
         Self::Const,
         Self::In,
         Self::Out,
@@ -386,6 +391,11 @@ impl StorageQualifier {
         Self::CallableDataEXT,
         Self::CallableDataInNV,
         Self::CallableDataInEXT,
+        Self::PerPrimitiveNV,
+        Self::PerPrimitiveEXT,
+        Self::PerViewNV,
+        Self::TaskNV,
+        Self::TaskPayloadSharedEXT,
     ];
 
     pub const fn keyword(self) -> &'static str {
@@ -425,6 +435,11 @@ impl StorageQualifier {
             Self::CallableDataEXT => "callableDataEXT",
             Self::CallableDataInNV => "callableDataInNV",
             Self::CallableDataInEXT => "callableDataInEXT",
+            Self::PerPrimitiveNV => "perprimitiveNV",
+            Self::PerPrimitiveEXT => "perprimitiveEXT",
+            Self::PerViewNV => "perviewNV",
+            Self::TaskNV => "taskNV",
+            Self::TaskPayloadSharedEXT => "taskPayloadSharedEXT",
         }
     }
 

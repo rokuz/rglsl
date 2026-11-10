@@ -625,6 +625,7 @@ impl Analyzer<'_> {
         if let Some(extension) = subgroup::function_extension(name) {
             self.require_extension(span, extension, name);
         }
+        self.mesh_function_extension(span, name);
     }
 
     fn subgroup_checks(&mut self, span: Span, name: &str, operands: &[Operand]) -> bool {
@@ -741,7 +742,10 @@ impl Analyzer<'_> {
             }
         } else if name.starts_with("atomic") {
             if first.is_some_and(|operand| {
-                !matches!(operand.storage, Storage::Buffer | Storage::Shared)
+                !matches!(
+                    operand.storage,
+                    Storage::Buffer | Storage::Shared | Storage::TaskPayloadShared
+                )
             }) {
                 return invalid(
                     self,

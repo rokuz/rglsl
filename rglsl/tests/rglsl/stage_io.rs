@@ -201,6 +201,7 @@ impl Builder {
             quad_control: rglsl::QuadControl::default(),
             geometry: None,
             tessellation: None,
+            mesh_shader: None,
         });
         self.module
     }
@@ -216,6 +217,7 @@ fn location(location: u32) -> Binding {
         component: None,
         invariant: false,
         patch: false,
+        per_view: false,
     }
 }
 
@@ -231,6 +233,7 @@ fn located(location: u32, interpolation: Option<rglsl::Interpolation>) -> Bindin
         component: None,
         invariant: false,
         patch: false,
+        per_view: false,
     }
 }
 
@@ -413,6 +416,7 @@ fn vertex_module() -> Module {
         component: Some(component),
         invariant,
         patch: false,
+        per_view: false,
     };
     b.variable("v_uv", AddressSpace::Output, vec2, shared(0, false));
     b.variable("v_fade", AddressSpace::Output, float, shared(2, true));
@@ -592,6 +596,7 @@ fn invalid_interfaces_are_rejected() {
                 component: Some(1),
                 invariant: false,
                 patch: false,
+                per_view: false,
             },
         );
     })
@@ -668,6 +673,7 @@ fn block_module() -> Module {
         component: None,
         invariant: false,
         patch: false,
+        per_view: false,
     };
     let located_block = b.block_type(
         "Blk",
@@ -949,6 +955,7 @@ fn patch(location: u32) -> Binding {
         component: None,
         invariant: false,
         patch: true,
+        per_view: false,
     }
 }
 

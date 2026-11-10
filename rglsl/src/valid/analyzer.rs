@@ -1311,6 +1311,23 @@ impl FunctionInfo {
                         FunctionUniformity::new()
                     }
                 }
+                S::MeshFunction(ref function) => {
+                    let mut non_uniform_result = None;
+                    for operand in function.operands() {
+                        non_uniform_result = non_uniform_result.or(self.add_ref(operand));
+                    }
+                    FunctionUniformity {
+                        result: Uniformity {
+                            non_uniform_result,
+                            requirements: UniformityRequirements::empty(),
+                        },
+                        exit: if function.is_terminator() {
+                            ExitFlags::MAY_KILL
+                        } else {
+                            ExitFlags::empty()
+                        },
+                    }
+                }
                 S::DebugPrintf { ref arguments, .. } => {
                     let mut non_uniform_result = None;
                     for argument in arguments {

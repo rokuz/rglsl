@@ -456,6 +456,13 @@ pub fn compact(module: &mut crate::Module, keep_unused: KeepUnused) -> Result<()
         if let Some(ref mut task_payload) = entry.task_payload {
             module_map.globals.adjust(task_payload)?;
         }
+        for variable in entry
+            .mesh_shader
+            .iter_mut()
+            .flat_map(|mesh| &mut mesh.task_memory)
+        {
+            module_map.globals.adjust(variable)?;
+        }
         if let Some(ref mut mesh_info) = entry.mesh_info {
             module_map.globals.adjust(&mut mesh_info.output_variable)?;
             module_map.types.adjust(&mut mesh_info.vertex_output_type)?;

@@ -6,6 +6,7 @@ mod expression;
 mod function;
 mod globals;
 mod heap;
+mod mesh;
 mod message;
 mod offset;
 mod prepass;
@@ -280,6 +281,9 @@ pub(super) struct Lowerer<'a> {
     pub implicit_sizes: BTreeMap<SymbolId, u32>,
     pub variably_indexed: BTreeSet<SymbolId>,
     pub member_sizes: BTreeMap<(BlockId, u32), u32>,
+    pub member_dimension_sizes: BTreeMap<(BlockId, u32, usize), u32>,
+    pub task_payload: Option<Handle<GlobalVariable>>,
+    pub task_memory: Vec<Handle<GlobalVariable>>,
     pub member_indices: BTreeMap<(BlockId, u32), u32>,
     pub invariant_all: bool,
     pub invariant: Vec<(String, Span)>,
@@ -350,6 +354,9 @@ impl<'a> Lowerer<'a> {
             implicit_sizes: BTreeMap::new(),
             variably_indexed: BTreeSet::new(),
             member_sizes: BTreeMap::new(),
+            member_dimension_sizes: BTreeMap::new(),
+            task_payload: None,
+            task_memory: Vec::new(),
             member_indices: BTreeMap::new(),
             invariant_all: false,
             invariant: Vec::new(),
@@ -411,9 +418,6 @@ impl<'a> Lowerer<'a> {
     }
 
     fn run(mut self) -> core::result::Result<Module, ParseErrors> {
-        if matches!(self.options.stage, ShaderStage::Task | ShaderStage::Mesh) {
-            return Err(vec![unsupported("task and mesh shaders", Span::UNDEFINED)].into());
-        }
         let unit = self.unit;
         let mut definitions: Vec<&'a Node<FunctionDefinition>> = Vec::new();
         for declaration in &unit.external_declarations {

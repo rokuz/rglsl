@@ -123,6 +123,8 @@ impl Writer {
             gl450_ext_inst_id,
             temp_list: Vec::new(),
             has_ray_tracing_pipeline: false,
+            mesh_extension: None,
+            task_memory_strides: crate::FastHashSet::default(),
             ray_tracing_features: crate::RayTracingFeatures::empty(),
             io_f16_polyfills: super::f16_polyfill::F16IoPolyfill::new(
                 options.use_storage_input_output_16,
@@ -237,6 +239,8 @@ impl Writer {
             saved_cached: take(&mut self.saved_cached).reclaim(),
             temp_list: take(&mut self.temp_list).reclaim(),
             has_ray_tracing_pipeline: false,
+            mesh_extension: None,
+            task_memory_strides: crate::FastHashSet::default(),
             ray_tracing_features: crate::RayTracingFeatures::empty(),
             io_f16_polyfills: take(&mut self.io_f16_polyfills).reclaim(),
             debug_printf: None,
@@ -337,6 +341,24 @@ impl Writer {
     }
 
     /// Indicate that the code uses the given extension.
+    pub(super) fn require_mesh_shading(&mut self) -> Result<(), Error> {
+        match self.mesh_extension {
+            Some(crate::MeshShaderExtension::Nv) => {
+                self.use_extension("SPV_NV_mesh_shader");
+                self.require_any("NV mesh shaders", &[spirv::Capability::MeshShadingNV])
+            }
+            Some(crate::MeshShaderExtension::Ext) | None => {
+                self.use_extension("SPV_EXT_mesh_shader");
+                self.require_any("mesh shaders", &[spirv::Capability::MeshShadingEXT])?;
+                let lang_version = self.lang_version();
+                if lang_version.0 <= 1 && lang_version.1 < 4 {
+                    return Err(Error::SpirvVersionTooLow(1, 4));
+                }
+                Ok(())
+            }
+        }
+    }
+
     pub(super) fn use_extension(&mut self, extension: &'static str) {
         self.extensions_used.insert(extension);
     }
@@ -1891,7 +1913,9 @@ impl Writer {
             Some(FunctionInterface {
                 varying_ids: &mut interface_ids,
                 stage: entry_point.stage,
-                task_payload: entry_point.task_payload,
+                task_payload: entry_point
+                    .task_payload
+                    .filter(|_| entry_point.mesh_shader.is_none()),
                 mesh_info: entry_point.mesh_info.clone(),
                 workgroup_size: entry_point.workgroup_size,
             }),
@@ -2008,6 +2032,11 @@ impl Writer {
             crate::ShaderStage::Compute => {
                 self.write_workgroup_size(function_id, entry_point)?;
                 spirv::ExecutionModel::GLCompute
+            }
+            crate::ShaderStage::Task | crate::ShaderStage::Mesh
+                if entry_point.mesh_shader.is_some() =>
+            {
+                self.write_mesh_shader_modes(function_id, entry_point)?
             }
             crate::ShaderStage::Task => {
                 let execution_mode = spirv::ExecutionMode::LocalSize;
@@ -3498,6 +3527,7 @@ impl Writer {
                 component,
                 invariant,
                 patch,
+                per_view,
             } => {
                 let mut others = ArrayVec::new();
                 if invariant {
@@ -3556,8 +3586,18 @@ impl Writer {
                         }
                     }
                 }
-                if per_primitive && stage == crate::ShaderStage::Fragment {
+                if per_primitive
+                    && (stage == crate::ShaderStage::Fragment
+                        || (stage == crate::ShaderStage::Mesh
+                            && class == spirv::StorageClass::Output))
+                {
+                    if stage == crate::ShaderStage::Fragment {
+                        self.require_mesh_shading()?;
+                    }
                     others.push(Decoration::PerPrimitiveEXT);
+                }
+                if per_view {
+                    others.push(Decoration::PerViewNV);
                 }
                 Ok(BindingDecorations::Location {
                     location,
@@ -3569,6 +3609,8 @@ impl Writer {
             crate::Binding::BuiltIn(built_in) => {
                 use crate::BuiltIn as Bi;
                 let mut others = ArrayVec::new();
+                let mesh_output =
+                    stage == crate::ShaderStage::Mesh && class == spirv::StorageClass::Output;
 
                 let built_in = match built_in {
                     Bi::Position { invariant } => {
@@ -3637,10 +3679,16 @@ impl Writer {
                     }
                     Bi::Layer { .. } => {
                         self.require_layer_capability(stage, true)?;
+                        if mesh_output {
+                            others.push(Decoration::PerPrimitiveEXT);
+                        }
                         BuiltIn::Layer
                     }
                     Bi::ViewportIndex => {
                         self.require_layer_capability(stage, false)?;
+                        if mesh_output {
+                            others.push(Decoration::PerPrimitiveEXT);
+                        }
                         BuiltIn::ViewportIndex
                     }
                     Bi::ViewportMaskNV => {
@@ -3649,6 +3697,9 @@ impl Writer {
                             "`gl_ViewportMask`",
                             &[spirv::Capability::ShaderViewportMaskNV],
                         )?;
+                        if mesh_output {
+                            others.push(Decoration::PerPrimitiveEXT);
+                        }
                         BuiltIn::ViewportMaskNV
                     }
                     Bi::SecondaryPositionNV | Bi::SecondaryViewportMaskNV => {
@@ -3669,6 +3720,12 @@ impl Writer {
                             "per-view attribute built-ins",
                             &[spirv::Capability::PerViewAttributesNV],
                         )?;
+                        if stage == crate::ShaderStage::Mesh {
+                            if mesh_output && built_in == Bi::ViewportMaskPerViewNV {
+                                others.push(Decoration::PerPrimitiveEXT);
+                            }
+                            others.push(Decoration::PerViewNV);
+                        }
                         if built_in == Bi::PositionPerViewNV {
                             BuiltIn::PositionPerViewNV
                         } else {
@@ -3694,6 +3751,7 @@ impl Writer {
                                 stage,
                                 crate::ShaderStage::TessControl
                                     | crate::ShaderStage::TessEvaluation
+                                    | crate::ShaderStage::Mesh
                             )
                         {
                             self.require_any(
@@ -3794,6 +3852,38 @@ impl Writer {
                     Bi::CullPrimitive => {
                         others.push(Decoration::PerPrimitiveEXT);
                         BuiltIn::CullPrimitiveEXT
+                    }
+                    Bi::PrimitiveShadingRate => {
+                        self.use_extension("SPV_KHR_fragment_shading_rate");
+                        self.require_any(
+                            "`gl_PrimitiveShadingRateEXT`",
+                            &[spirv::Capability::FragmentShadingRateKHR],
+                        )?;
+                        if mesh_output {
+                            others.push(Decoration::PerPrimitiveEXT);
+                        }
+                        BuiltIn::PrimitiveShadingRateKHR
+                    }
+                    Bi::TaskCountNV => BuiltIn::TaskCountNV,
+                    Bi::PrimitiveCountNV => BuiltIn::PrimitiveCountNV,
+                    Bi::PrimitiveIndicesNV => BuiltIn::PrimitiveIndicesNV,
+                    Bi::MeshViewCountNV => BuiltIn::MeshViewCountNV,
+                    Bi::MeshViewIndicesNV => BuiltIn::MeshViewIndicesNV,
+                    Bi::ClipDistancePerViewNV | Bi::CullDistancePerViewNV | Bi::LayerPerViewNV => {
+                        self.use_extension("SPV_NVX_multiview_per_view_attributes");
+                        self.require_any(
+                            "per-view attributes",
+                            &[spirv::Capability::PerViewAttributesNV],
+                        )?;
+                        if built_in == Bi::LayerPerViewNV && mesh_output {
+                            others.push(Decoration::PerPrimitiveEXT);
+                        }
+                        others.push(Decoration::PerViewNV);
+                        match built_in {
+                            Bi::ClipDistancePerViewNV => BuiltIn::ClipDistancePerViewNV,
+                            Bi::CullDistancePerViewNV => BuiltIn::CullDistancePerViewNV,
+                            _ => BuiltIn::LayerPerViewNV,
+                        }
                     }
                     Bi::PointIndex => BuiltIn::PrimitivePointIndicesEXT,
                     Bi::LineIndices => BuiltIn::PrimitiveLineIndicesEXT,
@@ -4230,9 +4320,18 @@ impl Writer {
         }
         let struct_id = self.get_handle_type_id(block.structure)?;
         self.decorate(struct_id, spirv::Decoration::Block, &[]);
+        let task_memory = ir_module.entry_points.iter().any(|entry| {
+            entry
+                .mesh_shader
+                .as_ref()
+                .is_some_and(|mesh| mesh.task_memory.contains(&handle))
+        });
         for (index, member) in members.iter().enumerate() {
             let index = u32::try_from(index)
                 .map_err(|_| Error::Validation("too many members in an interface block"))?;
+            if task_memory {
+                self.write_task_memory_member(ir_module, struct_id, index, member)?;
+            }
             if let Some(offset) = member.xfb_offset {
                 self.annotations.push(Instruction::member_decorate(
                     struct_id,
@@ -4278,7 +4377,22 @@ impl Writer {
                     .copied()
                     .unwrap_or(false)
             });
+            let unused_mesh = stage == crate::ShaderStage::Mesh
+                && usize::try_from(index)
+                    .ok()
+                    .and_then(|index| unused.get(index))
+                    .copied()
+                    .unwrap_or(false);
             let decorations = match unused_distance {
+                _ if unused_mesh => {
+                    let capabilities = self.capabilities_used.clone();
+                    let extensions = self.extensions_used.clone();
+                    let decorations =
+                        self.map_binding(ir_module, stage, class, member.ty, binding)?;
+                    self.capabilities_used = capabilities;
+                    self.extensions_used = extensions;
+                    decorations
+                }
                 Some(built_in) => BindingDecorations::BuiltIn(built_in, ArrayVec::new()),
                 None => self.map_binding(ir_module, stage, class, member.ty, binding)?,
             };
@@ -4481,13 +4595,14 @@ impl Writer {
             self.require_ray_queries()?;
         }
         self.write_ray_tracing_features()?;
-        if ir_module.uses_mesh_shaders() {
-            self.use_extension("SPV_EXT_mesh_shader");
-            self.require_any("Mesh Shaders", &[spirv::Capability::MeshShadingEXT])?;
-            let lang_version = self.lang_version();
-            if lang_version.0 <= 1 && lang_version.1 < 4 {
-                return Err(Error::SpirvVersionTooLow(1, 4));
-            }
+        self.mesh_extension = ir_module
+            .entry_points
+            .iter()
+            .enumerate()
+            .filter(|&(index, _)| ep_index.is_none_or(|selected| selected == index))
+            .find_map(|(_, entry)| entry.mesh_shader.as_ref().map(|info| info.extension));
+        if self.mesh_extension.is_some() || ir_module.uses_mesh_shaders() {
+            self.require_mesh_shading()?;
         }
         Instruction::type_void(self.void_type).to_words(&mut self.logical_layout.declarations);
         Instruction::ext_inst_import(self.gl450_ext_inst_id, "GLSL.std.450")

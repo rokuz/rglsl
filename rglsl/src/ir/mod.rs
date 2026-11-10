@@ -529,6 +529,16 @@ pub enum BuiltIn {
     /// Written to a workgroup variable in mesh shaders
     Primitives,
 
+    PrimitiveShadingRate,
+    TaskCountNV,
+    PrimitiveCountNV,
+    PrimitiveIndicesNV,
+    MeshViewCountNV,
+    MeshViewIndicesNV,
+    ClipDistancePerViewNV,
+    CullDistancePerViewNV,
+    LayerPerViewNV,
+
     /// Read in all ray tracing pipeline shaders, the id within the number of
     /// rays that this current ray is.
     RayInvocationId,
@@ -1306,6 +1316,13 @@ pub enum Binding {
         /// tessellation shaders).
         #[cfg_attr(feature = "deserialize", serde(default))]
         patch: bool,
+
+        #[cfg_attr(feature = "deserialize", serde(default))]
+        #[cfg_attr(
+            feature = "serialize",
+            serde(skip_serializing_if = "core::ops::Not::not")
+        )]
+        per_view: bool,
     },
 }
 
@@ -2717,6 +2734,7 @@ pub enum Statement {
     },
     /// A ray tracing pipeline shader intrinsic.
     RayPipelineFunction(RayPipelineFunction),
+    MeshFunction(MeshFunction),
     /// Calculate a bitmask using a boolean from each active thread in the subgroup
     SubgroupBallot {
         /// The [`SubgroupBallotResult`] expression representing this load's result.
@@ -2972,6 +2990,57 @@ pub struct EntryPoint {
     #[cfg_attr(feature = "serialize", serde(skip_serializing_if = "Option::is_none"))]
     #[cfg_attr(feature = "deserialize", serde(default))]
     pub tessellation: Option<TessellationInfo>,
+    #[cfg_attr(feature = "serialize", serde(skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    pub mesh_shader: Option<MeshShaderInfo>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub enum MeshShaderExtension {
+    Ext,
+    Nv,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub struct MeshOutputLayout {
+    pub topology: MeshOutputTopology,
+    pub max_vertices: u32,
+    pub max_primitives: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub struct MeshShaderInfo {
+    pub extension: MeshShaderExtension,
+    pub output: Option<MeshOutputLayout>,
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    pub task_memory: Vec<Handle<GlobalVariable>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub enum MeshFunction {
+    SetMeshOutputs {
+        vertex_count: Handle<Expression>,
+        primitive_count: Handle<Expression>,
+    },
+    EmitMeshTasks {
+        group_count: [Handle<Expression>; 3],
+    },
+    WritePackedPrimitiveIndices {
+        index_offset: Handle<Expression>,
+        packed_indices: Handle<Expression>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3228,7 +3297,7 @@ pub struct DocComments {
 }
 
 /// The output topology for a mesh shader. Note that mesh shaders don't allow things like triangle-strips.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]

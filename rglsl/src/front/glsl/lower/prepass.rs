@@ -155,6 +155,24 @@ impl<'a> Lowerer<'a> {
                         let entry = self.member_sizes.entry(member).or_insert(0);
                         *entry = (*entry).max(size);
                     }
+                    let mut depth = 0_usize;
+                    let mut inner = strip(base);
+                    while let ExpressionKind::Subscript {
+                        base: ref outer, ..
+                    } = inner.kind
+                    {
+                        depth += 1;
+                        inner = strip(outer);
+                    }
+                    if depth > 0 {
+                        if let Some((block, member)) = self.block_member_of(inner) {
+                            let entry = self
+                                .member_dimension_sizes
+                                .entry((block, member, depth))
+                                .or_insert(0);
+                            *entry = (*entry).max(size);
+                        }
+                    }
                     let Some(symbol) = symbol else {
                         continue;
                     };

@@ -206,6 +206,7 @@ impl Lowerer<'_> {
             component: None,
             invariant: false,
             patch: false,
+            per_view: false,
         });
         let handle = self.module.global_variables.append(
             GlobalVariable {
