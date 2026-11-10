@@ -97,6 +97,16 @@ fn resolution_inner<'a>(module: &'a Module, resolution: &'a TypeResolution) -> &
 }
 
 impl Writer {
+    pub(super) fn written_override_id(
+        &self,
+        handle: Handle<crate::Override>,
+    ) -> Result<Word, Error> {
+        match self.override_ids.get(handle.index()).copied() {
+            Some(id) if id != 0 => Ok(id),
+            _ => Err(Error::Validation("override is not written")),
+        }
+    }
+
     pub(super) fn prepare_overrides(&mut self, module: &Module) {
         self.override_ids.clear();
         self.override_ids.resize(module.overrides.len(), 0);

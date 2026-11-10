@@ -4694,7 +4694,7 @@ mod tests {
                 ref ty,
             } = self.expressions[expr]
             else {
-                unreachable!()
+                panic!("unexpected test expression")
             };
 
             match self.types[*ty].inner {
@@ -4702,7 +4702,7 @@ mod tests {
                     .iter()
                     .map(|&comp| {
                         let Expression::Literal(Literal::F32(v)) = self.expressions[comp] else {
-                            unreachable!()
+                            panic!("unexpected test expression")
                         };
                         v
                     })
@@ -4711,7 +4711,7 @@ mod tests {
                     .iter()
                     .flat_map(|&comp| self.flatten(comp))
                     .collect(),
-                _ => unreachable!(),
+                _ => panic!("unexpected test expression"),
             }
         }
 
@@ -4720,7 +4720,7 @@ mod tests {
                 2 => VectorSize::Bi,
                 3 => VectorSize::Tri,
                 4 => VectorSize::Quad,
-                _ => unreachable!(),
+                _ => panic!("unexpected test expression"),
             }
         }
     }

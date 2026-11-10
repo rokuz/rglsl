@@ -456,7 +456,7 @@ impl Writer {
                     self.heap_op(Op::IMul, inner, Value::Known(count.get()))
                 }
                 crate::ArraySize::Pending(handle) => {
-                    let count = self.override_ids.get(handle.index()).copied().unwrap_or(0);
+                    let count = self.written_override_id(handle)?;
                     self.heap_op(Op::IMul, inner, Value::Id(count))
                 }
                 crate::ArraySize::Dynamic => inner,
@@ -491,7 +491,7 @@ impl Writer {
                         self.heap_op(Op::IMul, stride, Value::Known(count.get()))
                     }
                     crate::ArraySize::Pending(handle) => {
-                        let count = self.override_ids.get(handle.index()).copied().unwrap_or(0);
+                        let count = self.written_override_id(handle)?;
                         self.heap_op(Op::IMul, stride, Value::Id(count))
                     }
                     crate::ArraySize::Dynamic => stride,

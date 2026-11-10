@@ -20,6 +20,12 @@ unsafe_code = "forbid"
 
 [workspace.lints.clippy]
 ref_as_ptr = "warn"
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+unreachable = "deny"
+unimplemented = "deny"
+todo = "deny"
 # NOTE: clippy configuration values (disallowed-types and
 # large-error-threshold) are in clippy.toml.
 

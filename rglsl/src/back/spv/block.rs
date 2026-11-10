@@ -760,12 +760,7 @@ impl BlockContext<'_> {
                 let init = self.ir_module.constants[handle].init;
                 self.writer.constant_ids[init]
             }
-            crate::Expression::Override(handle) => {
-                match self.writer.override_ids.get(handle.index()).copied() {
-                    Some(id) if id != 0 => id,
-                    _ => return Err(Error::Validation("override is not written")),
-                }
-            }
+            crate::Expression::Override(handle) => self.writer.written_override_id(handle)?,
             crate::Expression::ZeroValue(_) => self.writer.get_constant_null(result_type_id),
             crate::Expression::Compose { ty, ref components } => {
                 self.temp_list.clear();

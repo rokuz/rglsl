@@ -32,6 +32,11 @@ goal, the language rules for linkage and `#include`, and the milestones (M0–M9
 - **Safe Rust only.** `unsafe_code` is forbidden in every crate (workspace lints, and
   the `rglsl` crate's own `[lints]`). Do not add `allow(unsafe_code)`.
 - **No panics on user input.** A crash in the corpus run is always a bug.
+- **No `unwrap` or other panics in non-test code.** `unwrap`, `expect`, `panic!`,
+  `unreachable!`, `unimplemented!` and `todo!` are denied by clippy in every crate; return a
+  `Result` instead, and never a silent default that hides a broken invariant. Tests may use
+  them (`clippy.toml`). The only exception is the arena handle overflow in
+  `Handle::from_usize`, an allocation limit like `Vec::push`.
 - The compiler is called **rglsl** everywhere (crates, binary, docs); "naga" only names
   the upstream project it was forked from.
 - Keep the IR's style: arenas, typed handles, exhaustive `match`, `Result` errors.
