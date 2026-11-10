@@ -182,7 +182,10 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   `VectorShuffle`; floating-point arithmetic is an error); `ArraySize::Pending` is an
   `OpTypeArray` with the spec constant as length; `EntryPoint::workgroup_size_overrides` is
   `LocalSizeId` on SPIR-V 1.6 and a `WorkgroupSize` spec-constant composite before. An
-  `Expression::Override` in a function is the spec constant's id. `Override::id` is a `u32`;
+  `Expression::Override` in a function is the spec constant's id, and a `Compose` or `Splat`
+  of overrides and constants in a function is an `OpSpecConstantComposite`, so it can be a
+  `ConstOffset`. Before SPIR-V 1.4 an unsigned integer conversion is `SConvert`, masked with
+  `BitwiseAnd` when it widens, because `UConvert` needs `Kernel` there. `Override::id` is a `u32`;
   an override without an id may have a vector type. The validator treats arrays sized by an
   override as constructible (local variables, zero values), counts their locations as one
   element, and accepts an override expression as an image sample offset.
