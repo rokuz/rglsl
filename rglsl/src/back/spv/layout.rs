@@ -100,13 +100,13 @@ impl Instruction {
         }
     }
 
-    pub(super) fn set_type(&mut self, id: Word) {
+    pub(super) const fn set_type(&mut self, id: Word) {
         if self.type_id.replace(id).is_none() {
             self.wc += 1;
         }
     }
 
-    pub(super) fn set_result(&mut self, id: Word) {
+    pub(super) const fn set_result(&mut self, id: Word) {
         if self.result_id.replace(id).is_none() {
             self.wc += 1;
         }

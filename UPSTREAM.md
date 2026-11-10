@@ -325,6 +325,15 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   `emit_to_string*` falls back to the plain message when the source location cannot be
   rendered. `VertexFormat::min_acceleration_structure_vertex_stride` and
   `acceleration_structure_stride_alignment` (`rglsl-types`) return `None` for other formats.
+- **No panics in the SPIR-V backend.** `back/spv` returns `Error::Validation` for a broken
+  invariant of the validated module and `Error::FeatureNotImplemented` for external textures
+  and the other unimplemented operations where upstream used `unwrap`, `expect`,
+  `unreachable!`, `unimplemented!` or `assert!`. Cached expression ids, type ids of type
+  handles and expression type resolutions, `Writer::get_constant_composite` and
+  `Function::to_words` are fallible; `LocalType::BindingArray` holds the base type id instead of
+  its handle; an abstract scalar reaching a type or constant declaration makes
+  `Writer::write` fail. `process_overrides` reports the new `PipelineConstantError` variants
+  `UnresolvedOverride` and `InvalidOverrideType` instead of panicking.
 
 ## Cherry-picked upstream commits
 
