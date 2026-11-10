@@ -240,18 +240,21 @@ impl Lowerer<'_> {
         let mut alignment = Alignment::ONE;
         for member in &structure.members {
             let ty = self.ir_type(&member.ty, span)?;
-            let info = self.layout(ty, Packing::Std140, false, span)?;
-            offset = info.align.round_up(offset);
-            alignment = info.align.max(alignment);
+            self.layouter
+                .update(self.module.to_ctx())
+                .map_err(|_| internal(span))?;
+            let layout = self.layouter[ty];
+            offset = layout.alignment.round_up(offset);
+            alignment = layout.alignment.max(alignment);
             members.push(StructMember {
                 name: Some(member.name.clone()),
-                ty: info.ty,
+                ty,
                 binding: None,
                 offset,
-                matrix_layout: info.matrix_layout,
+                matrix_layout: None,
                 xfb_offset: None,
             });
-            offset = offset.saturating_add(info.span);
+            offset = offset.saturating_add(layout.size);
         }
         let span_bytes = alignment.round_up(offset);
         let handle = self.module.types.insert(
@@ -286,7 +289,41 @@ impl Lowerer<'_> {
         );
         match errors.into_iter().next() {
             Some(error) => Err(error),
-            None => Ok(info),
+            None => {
+                self.record_relayout(info.ty, ty);
+                Ok(info)
+            }
+        }
+    }
+
+    fn record_relayout(&mut self, laid: Handle<Type>, plain: Handle<Type>) {
+        if laid == plain || self.relayout.insert(laid, plain).is_some() {
+            return;
+        }
+        let types = &self.module.types;
+        let pairs: Vec<(Handle<Type>, Handle<Type>)> =
+            match (&types[laid].inner, &types[plain].inner) {
+                (
+                    &TypeInner::Struct {
+                        members: ref laid_members,
+                        ..
+                    },
+                    &TypeInner::Struct {
+                        members: ref plain_members,
+                        ..
+                    },
+                ) => laid_members
+                    .iter()
+                    .zip(plain_members)
+                    .map(|(laid, plain)| (laid.ty, plain.ty))
+                    .collect(),
+                (&TypeInner::Array { base: laid, .. }, &TypeInner::Array { base: plain, .. }) => {
+                    alloc::vec![(laid, plain)]
+                }
+                _ => Vec::new(),
+            };
+        for (laid, plain) in pairs {
+            self.record_relayout(laid, plain);
         }
     }
 

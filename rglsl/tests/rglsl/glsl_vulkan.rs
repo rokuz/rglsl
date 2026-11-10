@@ -2029,3 +2029,48 @@ fn resources_may_share_a_binding() {
         );
     }
 }
+
+#[test]
+fn structs_cross_between_buffers_and_functions() {
+    let module = compile_valid(
+        ShaderStage::Compute,
+        "#version 450
+        layout(local_size_x = 1) in;
+        struct Inner { float f[3]; mat2 m; };
+        struct S { int a; Inner inner[2]; vec3 v; };
+        layout(binding = 0) uniform U { S s; float g[4]; } u;
+        layout(std430, binding = 1) buffer B { S s; S arr[]; } b;
+        void set(out S x) { x = u.s; }
+        S make(S x) { x.a += 1; return x; }
+        void main() {
+            S local = u.s;
+            float g[4] = u.g;
+            local.a += int(g[1]);
+            b.s = make(local);
+            b.arr[1] = b.s;
+            set(b.arr[2]);
+            b.arr[0].inner[1] = u.s.inner[0];
+            if (b.arr[0] == local) { b.s.a = 3; }
+        }",
+    );
+    let laid_out: Vec<u32> = module
+        .annotations
+        .iter()
+        .filter(|inst| inst.operands.get(2) == Some(&Operand::Decoration(Decoration::Offset)))
+        .map(|inst| inst.operands[0].unwrap_id_ref())
+        .collect();
+    for parameter in instructions(&module, Op::FunctionParameter) {
+        let mut ty = type_instruction(&module, parameter.result_type.expect("typed"));
+        if ty.class.opcode == Op::TypePointer {
+            ty = type_instruction(&module, ty.operands[1].unwrap_id_ref());
+        }
+        assert_eq!(ty.class.opcode, Op::TypeStruct);
+        assert!(!laid_out.contains(&ty.result_id.expect("a type")));
+    }
+    let names: Vec<String> = instructions(&module, Op::TypeStruct)
+        .iter()
+        .map(|inst| name_of(&module, inst.result_id.expect("a type")))
+        .filter(|name| name == "S")
+        .collect();
+    assert_eq!(names.len(), 3);
+}

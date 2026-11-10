@@ -582,6 +582,99 @@ impl<'a> FunctionLowerer<'_, 'a> {
         }
     }
 
+    fn buffer_pointee(&self, pointer: Handle<Expression>) -> Option<Handle<crate::Type>> {
+        let module = &self.lw.module;
+        let element = |ty: Handle<crate::Type>| match module.types[ty].inner {
+            crate::TypeInner::Array { base, .. } | crate::TypeInner::BindingArray { base, .. } => {
+                Some(base)
+            }
+            _ => None,
+        };
+        match self.expressions[pointer] {
+            Expression::GlobalVariable(handle) => {
+                let global = &module.global_variables[handle];
+                match global.space {
+                    AddressSpace::Uniform
+                    | AddressSpace::Storage { .. }
+                    | AddressSpace::Immediate => Some(global.ty),
+                    _ => None,
+                }
+            }
+            Expression::AccessIndex { base, index } => {
+                let ty = self.buffer_pointee(base)?;
+                match module.types[ty].inner {
+                    crate::TypeInner::Struct { ref members, .. } => usize::try_from(index)
+                        .ok()
+                        .and_then(|index| members.get(index))
+                        .map(|member| member.ty),
+                    _ => element(ty),
+                }
+            }
+            Expression::Access { base, .. } => element(self.buffer_pointee(base)?),
+            _ => None,
+        }
+    }
+
+    fn relayout(
+        &mut self,
+        value: Handle<Expression>,
+        from: Handle<crate::Type>,
+        to: Handle<crate::Type>,
+        at: Span,
+    ) -> Result<Handle<Expression>> {
+        if from == to {
+            return Ok(value);
+        }
+        let types = &self.lw.module.types;
+        let parts: Vec<(Handle<crate::Type>, Handle<crate::Type>)> =
+            match (&types[from].inner, &types[to].inner) {
+                (
+                    &crate::TypeInner::Struct {
+                        members: ref from_members,
+                        ..
+                    },
+                    &crate::TypeInner::Struct {
+                        members: ref to_members,
+                        ..
+                    },
+                ) if from_members.len() == to_members.len() => from_members
+                    .iter()
+                    .zip(to_members)
+                    .map(|(from, to)| (from.ty, to.ty))
+                    .collect(),
+                (
+                    &crate::TypeInner::Array {
+                        base: from_base,
+                        size: crate::ArraySize::Constant(from_size),
+                        ..
+                    },
+                    &crate::TypeInner::Array {
+                        base: to_base,
+                        size: crate::ArraySize::Constant(to_size),
+                        ..
+                    },
+                ) if from_size == to_size => {
+                    (0..from_size.get()).map(|_| (from_base, to_base)).collect()
+                }
+                _ => return Err(internal(at)),
+            };
+        let mut components = Vec::with_capacity(parts.len());
+        for (index, (from, to)) in (0_u32..).zip(parts) {
+            let part = self.add(Expression::AccessIndex { base: value, index }, at)?;
+            components.push(self.relayout(part, from, to, at)?);
+        }
+        self.add(Expression::Compose { ty: to, components }, at)
+    }
+
+    fn laid_out_place(&self, place: &Place) -> Option<(Handle<crate::Type>, Handle<crate::Type>)> {
+        if place.swizzle.is_some() {
+            return None;
+        }
+        let laid = self.buffer_pointee(place.pointer)?;
+        let plain = self.lw.relayout.get(&laid).copied()?;
+        Some((laid, plain))
+    }
+
     pub(super) fn load(&mut self, place: &Place, at: Span) -> Result<Handle<Expression>> {
         let mut value = self.add(
             Expression::Load {
@@ -589,6 +682,9 @@ impl<'a> FunctionLowerer<'_, 'a> {
             },
             at,
         )?;
+        if let Some((laid, plain)) = self.laid_out_place(place) {
+            value = self.relayout(value, laid, plain, at)?;
+        }
         if let Some(ref components) = place.swizzle {
             let size = vector_size(u8::try_from(components.len()).unwrap_or(0))
                 .ok_or_else(|| internal(at))?;
@@ -613,11 +709,14 @@ impl<'a> FunctionLowerer<'_, 'a> {
         value: Handle<Expression>,
         at: Span,
     ) -> Result<()> {
-        let value = if place.boolean {
+        let mut value = if place.boolean {
             self.as_kind(value, crate::Scalar::U32, at)?
         } else {
             value
         };
+        if let Some((laid, plain)) = self.laid_out_place(place) {
+            value = self.relayout(value, plain, laid, at)?;
+        }
         match place.swizzle {
             Some(ref components) => {
                 for (position, component) in (0_u32..).zip(components) {
