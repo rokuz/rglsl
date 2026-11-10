@@ -613,10 +613,13 @@ pub enum ScalarType {
     Int64,
     Uint64,
     Float16,
+    BFloat16,
+    FloatE4M3,
+    FloatE5M2,
 }
 
 impl ScalarType {
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 15] = [
         Self::Bool,
         Self::Int,
         Self::Uint,
@@ -629,6 +632,9 @@ impl ScalarType {
         Self::Int64,
         Self::Uint64,
         Self::Float16,
+        Self::BFloat16,
+        Self::FloatE4M3,
+        Self::FloatE5M2,
     ];
 
     pub const fn keyword(self) -> &'static str {
@@ -645,6 +651,9 @@ impl ScalarType {
             Self::Int64 => "int64_t",
             Self::Uint64 => "uint64_t",
             Self::Float16 => "float16_t",
+            Self::BFloat16 => "bfloat16_t",
+            Self::FloatE4M3 => "floate4m3_t",
+            Self::FloatE5M2 => "floate5m2_t",
         }
     }
 
@@ -662,6 +671,9 @@ impl ScalarType {
             Self::Int64 => "i64vec",
             Self::Uint64 => "u64vec",
             Self::Float16 => "f16vec",
+            Self::BFloat16 => "bf16vec",
+            Self::FloatE4M3 => "fe4m3vec",
+            Self::FloatE5M2 => "fe5m2vec",
         }
     }
 

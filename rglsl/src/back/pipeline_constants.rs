@@ -746,6 +746,7 @@ fn adjust_expr(new_pos: &HandleVec<Expression, Handle<Expression>>, expr: &mut E
             adjust(value);
             adjust(expected);
         }
+        Expression::Convert { ref mut expr, .. } => adjust(expr),
         Expression::CooperativeVectorLoad {
             ref mut pointer,
             ref mut offset,

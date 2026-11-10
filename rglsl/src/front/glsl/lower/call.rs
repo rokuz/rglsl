@@ -450,6 +450,17 @@ impl FunctionLowerer<'_, '_> {
                 self.replicate(converted, ty, at)
             }
             [(value, ref from)] if from.same_shape(ty) => self.convert(value, from, ty, at),
+            [(expr, ref from)] if from.as_cooperative_matrix().is_some() => {
+                let ty = self.lw.ir_type(ty, at)?;
+                self.add(
+                    Expression::Convert {
+                        expr,
+                        ty,
+                        saturating: false,
+                    },
+                    at,
+                )
+            }
             _ if ty.as_cooperative_matrix().is_some() => Err(internal(at)),
             _ => {
                 let mut components = self.flatten(values, target, at)?;

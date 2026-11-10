@@ -30,6 +30,9 @@ pub(super) const fn scalar(scalar: GlslScalar) -> Scalar {
         GlslScalar::Uint64 => Scalar::U64,
         GlslScalar::Int8 => Scalar::I8,
         GlslScalar::Uint8 => Scalar::U8,
+        GlslScalar::BFloat16 => Scalar::BF16,
+        GlslScalar::FloatE4M3 => Scalar::FE4M3,
+        GlslScalar::FloatE5M2 => Scalar::FE5M2,
     }
 }
 

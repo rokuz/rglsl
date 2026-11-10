@@ -357,6 +357,9 @@ pub enum Feature {
     TensorType,
     CooperativeVectorType,
     LongVectorType,
+    BFloat16Type,
+    FloatE4M3Type,
+    FloatE5M2Type,
 }
 
 impl Feature {
@@ -407,6 +410,9 @@ impl Feature {
             Self::TensorType => &[names::NV_COOPERATIVE_MATRIX2],
             Self::CooperativeVectorType => &[names::NV_COOPERATIVE_VECTOR],
             Self::LongVectorType => &[names::EXT_LONG_VECTOR],
+            Self::BFloat16Type => &["GL_EXT_bfloat16"],
+            Self::FloatE4M3Type => &["GL_EXT_float_e4m3"],
+            Self::FloatE5M2Type => &["GL_EXT_float_e5m2"],
         }
     }
 
@@ -454,6 +460,12 @@ impl Feature {
             Self::CooperativeVectorType
         } else if word == "vector" {
             Self::LongVectorType
+        } else if word == "bfloat16_t" || vector("bf16vec") {
+            Self::BFloat16Type
+        } else if word == "floate4m3_t" || vector("fe4m3vec") {
+            Self::FloatE4M3Type
+        } else if word == "floate5m2_t" || vector("fe5m2vec") {
+            Self::FloatE5M2Type
         } else if family(["int64_t", "uint64_t"], ["i64vec", "u64vec"]) {
             Self::Int64Type
         } else if family(["int8_t", "uint8_t"], ["i8vec", "u8vec"]) {

@@ -107,7 +107,7 @@ const EXTENSION_ONLY: [&str; 8] = [
     "tileImageEXT",
 ];
 
-const EXTENSION_KEYWORDS: [&str; 139] = [
+const EXTENSION_KEYWORDS: [&str; 127] = [
     "terminateInvocation",
     "terminateRayEXT",
     "ignoreIntersectionEXT",
@@ -141,18 +141,6 @@ const EXTENSION_KEYWORDS: [&str; 139] = [
     "u64image2DMS",
     "i64image2DMSArray",
     "u64image2DMSArray",
-    "bfloat16_t",
-    "bf16vec2",
-    "bf16vec3",
-    "bf16vec4",
-    "floate5m2_t",
-    "fe5m2vec2",
-    "fe5m2vec3",
-    "fe5m2vec4",
-    "floate4m3_t",
-    "fe4m3vec2",
-    "fe4m3vec3",
-    "fe4m3vec4",
     "floate2m1_t",
     "fe2m1vec2",
     "fe2m1vec3",

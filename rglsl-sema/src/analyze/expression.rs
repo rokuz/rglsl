@@ -126,6 +126,10 @@ pub(crate) fn binary_types(
     if left.is_array() || right.is_array() {
         return None;
     }
+    let encoded = |ty: &Type| ty.base_scalar().is_some_and(Scalar::is_encoded_float);
+    if encoded(left) || encoded(right) {
+        return None;
+    }
     if let Some(result) = cooperative_binary_types(operator, left, right, features) {
         return result;
     }
@@ -978,7 +982,7 @@ impl Analyzer<'_> {
         if !self.require_lvalue(span, &value) {
             return Operand::error();
         }
-        if !value.ty.is_numeric() || !self.small_arithmetic_allowed(&[&value.ty]) {
+        if !value.ty.is_arithmetic() || !self.small_arithmetic_allowed(&[&value.ty]) {
             self.error(
                 span,
                 DiagnosticKind::InvalidOperand {
@@ -1006,7 +1010,7 @@ impl Analyzer<'_> {
             return Operand::error();
         }
         let valid = match operator {
-            UnaryOperator::Plus | UnaryOperator::Minus => value.ty.is_numeric(),
+            UnaryOperator::Plus | UnaryOperator::Minus => value.ty.is_arithmetic(),
             UnaryOperator::LogicalNot => value.ty.is_bool(),
             UnaryOperator::BitNot => {
                 value.ty.is_integer() && !matches!(value.ty.kind, TypeKind::Matrix { .. })

@@ -20,6 +20,9 @@ pub enum Scalar {
     Int64,
     Uint64,
     Float16,
+    BFloat16,
+    FloatE4M3,
+    FloatE5M2,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
@@ -30,7 +33,7 @@ pub struct NumericFeatures {
 }
 
 impl Scalar {
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 15] = [
         Self::Bool,
         Self::Int,
         Self::Uint,
@@ -43,6 +46,9 @@ impl Scalar {
         Self::Int64,
         Self::Uint64,
         Self::Float16,
+        Self::BFloat16,
+        Self::FloatE4M3,
+        Self::FloatE5M2,
     ];
 
     pub const fn keyword(self) -> &'static str {
@@ -75,6 +81,9 @@ impl Scalar {
             Self::Int64 => ScalarType::Int64,
             Self::Uint64 => ScalarType::Uint64,
             Self::Float16 => ScalarType::Float16,
+            Self::BFloat16 => ScalarType::BFloat16,
+            Self::FloatE4M3 => ScalarType::FloatE4M3,
+            Self::FloatE5M2 => ScalarType::FloatE5M2,
         }
     }
 
@@ -83,7 +92,8 @@ impl Scalar {
             Self::Bool | Self::Int | Self::Uint | Self::Float => 32,
             Self::Double | Self::Int64 | Self::Uint64 => 64,
             Self::Int8 | Self::Uint8 => 8,
-            Self::Int16 | Self::Uint16 | Self::Float16 => 16,
+            Self::Int16 | Self::Uint16 | Self::Float16 | Self::BFloat16 => 16,
+            Self::FloatE4M3 | Self::FloatE5M2 => 8,
         }
     }
 
@@ -181,9 +191,20 @@ impl Scalar {
             || self.floating_integral_conversion(target)
     }
 
+    pub const fn is_encoded_float(self) -> bool {
+        matches!(self, Self::BFloat16 | Self::FloatE4M3 | Self::FloatE5M2)
+    }
+
     pub const fn promotes_to(self, target: Self, features: NumericFeatures) -> bool {
         if self as u8 == target as u8 {
             return true;
+        }
+        match self {
+            Self::BFloat16 => return matches!(target, Self::Float | Self::Double),
+            Self::FloatE4M3 | Self::FloatE5M2 => {
+                return matches!(target, Self::Float16 | Self::Float | Self::Double)
+            }
+            _ => {}
         }
         if features.explicit_arithmetic && (self.is_promotion(target) || self.is_conversion(target))
         {
@@ -845,6 +866,11 @@ impl Type {
         self.scalar_type().is_some_and(Scalar::is_numeric)
     }
 
+    pub fn is_arithmetic(&self) -> bool {
+        self.scalar_type()
+            .is_some_and(|scalar| scalar.is_numeric() && !scalar.is_encoded_float())
+    }
+
     pub fn is_integer(&self) -> bool {
         self.scalar_type().is_some_and(Scalar::is_integer)
     }
@@ -1426,6 +1452,9 @@ impl From<rglsl_ast::ast::ScalarType> for Scalar {
             ScalarType::Int64 => Self::Int64,
             ScalarType::Uint64 => Self::Uint64,
             ScalarType::Float16 => Self::Float16,
+            ScalarType::BFloat16 => Self::BFloat16,
+            ScalarType::FloatE4M3 => Self::FloatE4M3,
+            ScalarType::FloatE5M2 => Self::FloatE5M2,
         }
     }
 }

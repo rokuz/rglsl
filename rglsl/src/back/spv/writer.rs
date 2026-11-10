@@ -2190,6 +2190,31 @@ impl Writer {
                 Some(Instruction::type_float(id, bits))
             }
             Sk::Bool => Some(Instruction::type_bool(id)),
+            Sk::BFloat | Sk::FloatE4M3 | Sk::FloatE5M2 => {
+                let encoding = match scalar.kind {
+                    Sk::BFloat => {
+                        self.capabilities_used
+                            .insert(spirv::Capability::BFloat16TypeKHR);
+                        self.use_extension("SPV_KHR_bfloat16");
+                        spirv::FPEncoding::BFloat16KHR
+                    }
+                    Sk::FloatE4M3 => {
+                        self.capabilities_used.insert(spirv::Capability::Float8EXT);
+                        self.use_extension("SPV_EXT_float8");
+                        spirv::FPEncoding::Float8E4M3EXT
+                    }
+                    _ => {
+                        self.capabilities_used.insert(spirv::Capability::Float8EXT);
+                        self.use_extension("SPV_EXT_float8");
+                        spirv::FPEncoding::Float8E5M2EXT
+                    }
+                };
+                let mut instruction = Instruction::new(spirv::Op::TypeFloat);
+                instruction.set_result(id);
+                instruction.add_operand(bits);
+                instruction.add_operand(encoding as u32);
+                Some(instruction)
+            }
             Sk::AbstractInt | Sk::AbstractFloat => None,
         }
     }
@@ -2199,6 +2224,19 @@ impl Writer {
         | crate::TypeInner::LongVector { scalar, .. } = *inner
         {
             self.request_type_capabilities(&crate::TypeInner::Scalar(scalar))?;
+        }
+        if let crate::TypeInner::CooperativeMatrix { scalar, .. } = *inner {
+            match scalar.kind {
+                crate::ScalarKind::BFloat => self.require_any(
+                    "bfloat16 cooperative matrices",
+                    &[spirv::Capability::BFloat16CooperativeMatrixKHR],
+                )?,
+                crate::ScalarKind::FloatE4M3 | crate::ScalarKind::FloatE5M2 => self.require_any(
+                    "float8 cooperative matrices",
+                    &[spirv::Capability::Float8CooperativeMatrixEXT],
+                )?,
+                _ => {}
+            }
         }
         match *inner {
             crate::TypeInner::Image {
@@ -3095,6 +3133,10 @@ impl Writer {
             crate::Literal::F16(value) => {
                 let low = value.to_bits();
                 Instruction::constant_16bit(type_id, id, low as u32)
+            }
+            crate::Literal::BF16(value) => Instruction::constant_16bit(type_id, id, value as u32),
+            crate::Literal::FE4M3(value) | crate::Literal::FE5M2(value) => {
+                Instruction::constant_16bit(type_id, id, value as u32)
             }
             crate::Literal::U8(value) => Instruction::constant_16bit(type_id, id, value as u32),
             crate::Literal::I8(value) => {
@@ -4064,7 +4106,7 @@ impl Writer {
                         crate::TypeInner::Scalar(scalar)
                         | crate::TypeInner::Vector { scalar, .. } => match scalar.kind {
                             Sk::Uint | Sk::Sint | Sk::Bool => true,
-                            Sk::Float => false,
+                            Sk::Float | Sk::BFloat | Sk::FloatE4M3 | Sk::FloatE5M2 => false,
                             Sk::AbstractInt | Sk::AbstractFloat => {
                                 return Err(Error::Validation(
                                     "Abstract types should not appear in IR presented to backends",

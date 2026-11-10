@@ -454,7 +454,10 @@ pub fn literal_text(ty: rglsl_ast::ast::BasicType, values: &[String]) -> String 
             }
             rglsl_ast::ast::ScalarType::Float
             | rglsl_ast::ast::ScalarType::Double
-            | rglsl_ast::ast::ScalarType::Float16 => float_literal(value),
+            | rglsl_ast::ast::ScalarType::Float16
+            | rglsl_ast::ast::ScalarType::BFloat16
+            | rglsl_ast::ast::ScalarType::FloatE4M3
+            | rglsl_ast::ast::ScalarType::FloatE5M2 => float_literal(value),
             rglsl_ast::ast::ScalarType::Uint
             | rglsl_ast::ast::ScalarType::Uint8
             | rglsl_ast::ast::ScalarType::Uint16

@@ -683,6 +683,20 @@ impl<'a> ResolveContext<'a> {
             } => {
                 use crate::proc::OverloadSet as _;
 
+                if let (
+                    crate::MathFunction::Dot,
+                    &Ti::Vector {
+                        scalar:
+                            scalar @ crate::Scalar {
+                                kind: crate::ScalarKind::BFloat,
+                                ..
+                            },
+                        ..
+                    },
+                ) = (fun, past(arg)?.inner_with(types))
+                {
+                    return Ok(TypeResolution::Value(Ti::Scalar(scalar)));
+                }
                 if let Ti::LongVector { scalar, .. } = *past(arg)?.inner_with(types) {
                     if let Some(result) =
                         crate::proc::long_math_result(fun, past(arg)?.inner_with(types), types)
@@ -920,7 +934,8 @@ impl<'a> ResolveContext<'a> {
             crate::Expression::CooperativeMultiplyAdd { c, .. } => past(c)?.clone(),
             crate::Expression::Expect { value, .. } => past(value)?.clone(),
             crate::Expression::CooperativeVectorLoad { ty, .. }
-            | crate::Expression::CooperativeVectorMatMul { ty, .. } => TypeResolution::Handle(ty),
+            | crate::Expression::CooperativeVectorMatMul { ty, .. }
+            | crate::Expression::Convert { ty, .. } => TypeResolution::Handle(ty),
             crate::Expression::CooperativeMatrixLength { .. } => {
                 TypeResolution::Value(Ti::Scalar(crate::Scalar::U32))
             }

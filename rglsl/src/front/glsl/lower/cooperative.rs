@@ -415,6 +415,23 @@ impl FunctionLowerer<'_, '_> {
                 self.store(&place, value, at)?;
                 Ok(None)
             }
+            CooperativeCall::SaturatedConvert => {
+                let target = argument(0)?;
+                let target_ty = self.info(target)?.ty.clone();
+                let ty = self.lw.ir_type(&target_ty, at)?;
+                let place = self.place(target)?;
+                let expr = self.rvalue(argument(1)?)?;
+                let value = self.add(
+                    Expression::Convert {
+                        expr,
+                        ty,
+                        saturating: true,
+                    },
+                    at,
+                )?;
+                self.store(&place, value, at)?;
+                Ok(None)
+            }
             CooperativeCall::MulAdd { saturating, .. } => {
                 let a = self.rvalue(argument(0)?)?;
                 let b = self.rvalue(argument(1)?)?;

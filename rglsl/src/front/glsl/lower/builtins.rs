@@ -379,7 +379,19 @@ impl FunctionLowerer<'_, '_> {
             | "int16BitsToFloat16"
             | "uint16BitsToFloat16"
             | "int16BitsToHalf"
-            | "uint16BitsToHalf" => {
+            | "uint16BitsToHalf"
+            | "bfloat16BitsToIntEXT"
+            | "bfloat16BitsToUintEXT"
+            | "intBitsToBFloat16EXT"
+            | "uintBitsToBFloat16EXT"
+            | "floate4m3BitsToIntEXT"
+            | "floate4m3BitsToUintEXT"
+            | "intBitsToFloate4m3EXT"
+            | "uintBitsToFloate4m3EXT"
+            | "floate5m2BitsToIntEXT"
+            | "floate5m2BitsToUintEXT"
+            | "intBitsToFloate5m2EXT"
+            | "uintBitsToFloate5m2EXT" => {
                 let kind = scalar(result.base_scalar().ok_or_else(|| internal(at))?).kind;
                 return self.add(
                     Expression::As {

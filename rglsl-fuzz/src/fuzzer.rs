@@ -678,7 +678,12 @@ fn instantiate(
 
 pub fn random_constant(random: &mut Random, builder: &mut Builder, ty: BasicType) -> Expression {
     let scalar = |random: &mut Random, builder: &mut Builder| match basic::element(ty) {
-        ScalarType::Float | ScalarType::Double | ScalarType::Float16 => {
+        ScalarType::Float
+        | ScalarType::Double
+        | ScalarType::Float16
+        | ScalarType::BFloat16
+        | ScalarType::FloatE4M3
+        | ScalarType::FloatE5M2 => {
             let text = random_float_text(random);
             builder.float(&text)
         }
@@ -737,9 +742,12 @@ pub fn literal_zero_or_one(builder: &mut Builder, zero: bool, ty: BasicType) -> 
             builder.uint(u64::from(!zero))
         }
         ScalarType::Bool => builder.boolean(!zero),
-        ScalarType::Float | ScalarType::Double | ScalarType::Float16 => {
-            builder.float(&format!("{digit}.0"))
-        }
+        ScalarType::Float
+        | ScalarType::Double
+        | ScalarType::Float16
+        | ScalarType::BFloat16
+        | ScalarType::FloatE4M3
+        | ScalarType::FloatE5M2 => builder.float(&format!("{digit}.0")),
     };
     if basic::is_scalar(ty) {
         return scalar(builder, basic::element(ty));

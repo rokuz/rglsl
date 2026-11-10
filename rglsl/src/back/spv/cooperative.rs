@@ -344,6 +344,24 @@ impl BlockContext<'_> {
             return Ok(expr_id);
         }
         let id = self.gen_id();
+        let float =
+            |kind: Sk| matches!(kind, Sk::Float | Sk::BFloat | Sk::FloatE4M3 | Sk::FloatE5M2);
+        if convert.is_some() && (float(source.kind) || float(kind)) && source.kind != Sk::Bool {
+            let op = match (float(source.kind), kind) {
+                (true, Sk::Sint) => Some(Op::ConvertFToS),
+                (true, Sk::Uint) => Some(Op::ConvertFToU),
+                (true, _) if float(kind) => Some(Op::FConvert),
+                (false, _) if source.kind == Sk::Sint && float(kind) => Some(Op::ConvertSToF),
+                (false, _) if source.kind == Sk::Uint && float(kind) => Some(Op::ConvertUToF),
+                _ => None,
+            };
+            if let Some(op) = op {
+                block
+                    .body
+                    .push(Instruction::unary(op, result_type_id, id, expr_id));
+                return Ok(id);
+            }
+        }
         let op = match (source.kind, kind, convert) {
             (_, _, None) => Op::Bitcast,
             (Sk::Bool, Sk::Bool, _) => Op::CopyObject,
@@ -625,5 +643,67 @@ impl BlockContext<'_> {
         )?;
         self.writer.use_extension("SPV_NV_cooperative_vector");
         Ok(())
+    }
+
+    pub(super) fn write_convert(
+        &mut self,
+        expr: Handle<Expression>,
+        ty: Handle<crate::Type>,
+        saturating: bool,
+        result_type_id: Word,
+        block: &mut Block,
+    ) -> Result<Word, Error> {
+        let source_inner = self.fun_info[expr]
+            .ty
+            .inner_with(&self.ir_module.types)
+            .clone();
+        let target_inner = self.ir_module.types[ty].inner.clone();
+        let (Some(source), Some(target)) = (source_inner.scalar(), target_inner.scalar()) else {
+            return Err(Error::Validation("conversion of a non-numeric value"));
+        };
+        let use_changes = match (&source_inner, &target_inner) {
+            (
+                &TypeInner::CooperativeMatrix { role: from, .. },
+                &TypeInner::CooperativeMatrix { role: to, .. },
+            ) => from != to,
+            _ => false,
+        };
+        if use_changes {
+            self.writer.require_any(
+                "cooperative matrix conversions",
+                &[spirv::Capability::CooperativeMatrixConversionsNV],
+            )?;
+            self.writer.use_extension("SPV_NV_cooperative_matrix2");
+        }
+        let id = if source == target {
+            let expr_id = self.cached.get(expr)?;
+            if !use_changes {
+                return Ok(expr_id);
+            }
+            let id = self.gen_id();
+            block.body.push(Instruction::unary(
+                Op::CooperativeMatrixConvertNV,
+                result_type_id,
+                id,
+                expr_id,
+            ));
+            id
+        } else {
+            self.write_cooperative_cast(
+                expr,
+                source,
+                (target.kind, Some(target.width)),
+                block,
+                result_type_id,
+            )?
+        };
+        if saturating {
+            self.writer.decorate(
+                id,
+                spirv::Decoration::SaturatedToLargestFloat8NormalConversionEXT,
+                &[],
+            );
+        }
+        Ok(id)
     }
 }

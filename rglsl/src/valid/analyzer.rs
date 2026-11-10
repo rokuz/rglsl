@@ -943,6 +943,10 @@ impl FunctionInfo {
                 non_uniform_result: self.add_ref(value).or(self.add_ref(expected)),
                 requirements: UniformityRequirements::empty(),
             },
+            E::Convert { expr, .. } => Uniformity {
+                non_uniform_result: self.add_ref(expr),
+                requirements: UniformityRequirements::empty(),
+            },
             E::CooperativeVectorLoad {
                 pointer, offset, ..
             } => Uniformity {

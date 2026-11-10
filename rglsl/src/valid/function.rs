@@ -1210,6 +1210,7 @@ impl super::Validator {
                             | Ex::CooperativeMatrixLength { .. }
                             | Ex::Replicate { .. }
                             | Ex::Expect { .. }
+                            | Ex::Convert { .. }
                             | Ex::CooperativeVectorLoad { .. }
                             | Ex::CooperativeVectorMatMul { .. } => {
                                 self.emit_expression(handle, context)?

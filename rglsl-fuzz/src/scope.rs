@@ -337,7 +337,11 @@ impl Finder<'_> {
                         .collect()
                 })
                 .unwrap_or_default(),
-            Some(Callee::Cooperative(rglsl_sema::CooperativeCall::Load { .. })) => {
+            Some(Callee::Cooperative(
+                rglsl_sema::CooperativeCall::Load { .. }
+                | rglsl_sema::CooperativeCall::VectorLoad
+                | rglsl_sema::CooperativeCall::SaturatedConvert,
+            )) => {
                 vec![Direction::Out]
             }
             Some(

@@ -307,7 +307,12 @@ impl LocationShape {
             let (float, non_interpolable) = match scalar.kind {
                 Sk::Float => (true, scalar.width == 8),
                 Sk::Sint | Sk::Uint => (false, true),
-                Sk::Bool | Sk::AbstractInt | Sk::AbstractFloat => return None,
+                Sk::Bool
+                | Sk::AbstractInt
+                | Sk::AbstractFloat
+                | Sk::BFloat
+                | Sk::FloatE4M3
+                | Sk::FloatE5M2 => return None,
             };
             // A double takes two components, so a `dvec3` or `dvec4` spills
             // into a second location.

@@ -287,6 +287,10 @@ impl ExpressionTracer<'_> {
                 self.expressions_used.insert(pointer);
                 self.expressions_used.insert(offset);
             }
+            Ex::Convert { expr, ty, .. } => {
+                self.types_used.insert(ty);
+                self.expressions_used.insert(expr);
+            }
             Ex::CooperativeVectorMatMul { ty, ref operation } => {
                 self.types_used.insert(ty);
                 self.expressions_used.insert_iter(operation.operands());
@@ -514,6 +518,14 @@ impl ModuleMap {
                 self.types.adjust(ty)?;
                 adjust(pointer)?;
                 adjust(offset)?;
+            }
+            Ex::Convert {
+                ref mut expr,
+                ref mut ty,
+                ..
+            } => {
+                self.types.adjust(ty)?;
+                adjust(expr)?;
             }
             Ex::CooperativeVectorMatMul {
                 ref mut ty,

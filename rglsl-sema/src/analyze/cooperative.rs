@@ -44,6 +44,9 @@ const fn coopmat_scalar(scalar: Scalar) -> bool {
         scalar,
         Scalar::Float
             | Scalar::Float16
+            | Scalar::BFloat16
+            | Scalar::FloatE4M3
+            | Scalar::FloatE5M2
             | Scalar::Int
             | Scalar::Int8
             | Scalar::Int16

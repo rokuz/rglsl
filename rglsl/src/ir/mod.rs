@@ -661,6 +661,9 @@ pub enum ScalarKind {
     Float,
     /// Boolean type.
     Bool,
+    BFloat,
+    FloatE4M3,
+    FloatE5M2,
 
     /// WGSL abstract integer type.
     ///
@@ -1237,6 +1240,9 @@ pub enum Literal {
     Bool(bool),
     AbstractInt(i64),
     AbstractFloat(f64),
+    BF16(u16),
+    FE4M3(u8),
+    FE5M2(u8),
 }
 
 /// Pipeline-overridable constant.
@@ -2503,6 +2509,11 @@ pub enum Expression {
     CooperativeVectorMatMul {
         ty: Handle<Type>,
         operation: CooperativeVectorMatMul,
+    },
+    Convert {
+        expr: Handle<Expression>,
+        ty: Handle<Type>,
+        saturating: bool,
     },
 }
 

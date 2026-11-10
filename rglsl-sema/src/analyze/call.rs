@@ -651,6 +651,14 @@ impl Analyzer<'_> {
         if matches!(name, "expectEXT" | "assumeEXT") {
             self.require_extension(span, "GL_EXT_expect_assume", name);
         }
+        let lower = name.to_ascii_lowercase();
+        if lower.contains("bfloat16") {
+            self.require_extension(span, "GL_EXT_bfloat16", name);
+        } else if lower.contains("floate4m3") {
+            self.require_extension(span, "GL_EXT_float_e4m3", name);
+        } else if lower.contains("floate5m2") {
+            self.require_extension(span, "GL_EXT_float_e5m2", name);
+        }
         self.mesh_function_extension(span, name);
     }
 
@@ -958,6 +966,15 @@ impl Analyzer<'_> {
         }
         if operands.iter().any(|operand| operand.ty.is_string()) {
             return fail(self, &ty, "cannot convert a string");
+        }
+        let encoded = |ty: &Type| ty.base_scalar().is_some_and(Scalar::is_encoded_float);
+        let boolean = |ty: &Type| ty.base_scalar() == Some(Scalar::Bool);
+        if !ty.is_array()
+            && operands.iter().any(|operand| {
+                (encoded(&ty) && boolean(&operand.ty)) || (boolean(&ty) && encoded(&operand.ty))
+            })
+        {
+            return fail(self, &ty, "can't convert");
         }
         if !ty.is_array()
             && matches!(

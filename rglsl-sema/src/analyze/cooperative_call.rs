@@ -20,6 +20,7 @@ pub enum CooperativeCall {
     VectorMatMul { bias: bool },
     VectorOuterProduct,
     VectorReduceSum,
+    SaturatedConvert,
 }
 
 pub(crate) fn cooperative_function(name: &str) -> bool {
@@ -37,6 +38,7 @@ pub(crate) fn cooperative_function(name: &str) -> bool {
             | "coopVecMatMulAddNV"
             | "coopVecOuterProductAccumulateNV"
             | "coopVecReduceSumAccumulateNV"
+            | "saturatedConvertEXT"
     )
 }
 
@@ -89,6 +91,9 @@ impl Analyzer<'_> {
             .collect();
         if operands.iter().any(|operand| operand.ty.is_error()) {
             return Operand::error();
+        }
+        if name == "saturatedConvertEXT" {
+            return self.saturated_convert(expression, span, arguments, &operands);
         }
         if name.starts_with("coopVec") {
             return self.cooperative_vector_call(expression, span, name, arguments, &operands);
@@ -513,6 +518,67 @@ impl Analyzer<'_> {
             return Operand::error();
         }
         self.calls.insert(expression.id, Callee::Cooperative(call));
+        Operand::temporary(Type::VOID)
+    }
+
+    fn saturated_convert(
+        &mut self,
+        expression: &Expression,
+        span: Span,
+        arguments: &[Expression],
+        operands: &[Operand],
+    ) -> Operand {
+        let name = "saturatedConvertEXT";
+        let [target, source] = operands else {
+            return self.cooperative_error(span, name, "requires exactly two parameters");
+        };
+        let float8 = |ty: &Type| {
+            ty.base_scalar()
+                .is_some_and(|scalar| matches!(scalar, Scalar::FloatE4M3 | Scalar::FloatE5M2))
+        };
+        if !float8(&target.ty) {
+            return self.cooperative_error(
+                span,
+                name,
+                "first parameter must have floate5m2 or floate4m3 basic type",
+            );
+        }
+        if float8(&source.ty) {
+            return self.cooperative_error(
+                span,
+                name,
+                "second parameter must not have floate5m2 or floate4m3 basic type",
+            );
+        }
+        let shape_matches = match (
+            target.ty.as_cooperative_matrix(),
+            source.ty.as_cooperative_matrix(),
+        ) {
+            (Some(left), Some(right)) => {
+                left.scope == right.scope
+                    && left.rows == right.rows
+                    && left.columns == right.columns
+            }
+            (None, None) => {
+                target.ty.same_shape(&source.ty) && source.ty.is_numeric() && !source.ty.is_bool()
+            }
+            _ => false,
+        };
+        if !shape_matches {
+            return self.cooperative_error(
+                span,
+                name,
+                "types must match other than scalar type and coopmat Use",
+            );
+        }
+        let first = arguments.first().map_or(span, |argument| argument.span);
+        if !self.require_lvalue(first, target) {
+            return Operand::error();
+        }
+        self.calls.insert(
+            expression.id,
+            Callee::Cooperative(CooperativeCall::SaturatedConvert),
+        );
         Operand::temporary(Type::VOID)
     }
 }

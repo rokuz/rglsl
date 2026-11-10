@@ -783,6 +783,10 @@ impl super::Validator {
             crate::Expression::Expect { value, expected } => {
                 handle.check_dep(value)?.check_dep(expected)?;
             }
+            crate::Expression::Convert { expr, ty, .. } => {
+                validate_type(ty)?;
+                handle.check_dep(expr)?;
+            }
             crate::Expression::CooperativeVectorLoad {
                 ty,
                 pointer,

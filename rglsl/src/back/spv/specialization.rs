@@ -31,6 +31,8 @@ fn literal_words(literal: Literal) -> Vec<Word> {
             vec![bits as u32, (bits >> 32) as u32]
         }
         Literal::Bool(value) => vec![u32::from(value)],
+        Literal::BF16(value) => vec![u32::from(value)],
+        Literal::FE4M3(value) | Literal::FE5M2(value) => vec![u32::from(value)],
     }
 }
 

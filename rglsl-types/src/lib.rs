@@ -4,6 +4,7 @@ extern crate alloc;
 #[cfg(feature = "std")]
 extern crate std;
 
+pub mod small_float;
 pub mod spv;
 
 /// Create a Markdown link definition referring to the `wgpu` crate.

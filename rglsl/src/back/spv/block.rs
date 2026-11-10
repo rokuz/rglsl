@@ -1396,6 +1396,18 @@ impl BlockContext<'_> {
                 arg3,
             } => {
                 use crate::MathFunction as Mf;
+                let bfloat_dot = fun == Mf::Dot
+                    && self.fun_info[arg]
+                        .ty
+                        .inner_with(&self.ir_module.types)
+                        .scalar_kind()
+                        == Some(crate::ScalarKind::BFloat);
+                if bfloat_dot {
+                    self.writer.require_any(
+                        "bfloat16 dot product",
+                        &[spirv::Capability::BFloat16DotProductKHR],
+                    )?;
+                }
                 enum MathOp {
                     Ext(spirv::GlslStd450Op),
                     Custom(Instruction),
@@ -1555,6 +1567,14 @@ impl BlockContext<'_> {
                             scalar:
                                 crate::Scalar {
                                     kind: crate::ScalarKind::Float,
+                                    ..
+                                },
+                            ..
+                        }
+                        | crate::TypeInner::Vector {
+                            scalar:
+                                crate::Scalar {
+                                    kind: crate::ScalarKind::BFloat,
                                     ..
                                 },
                             ..
@@ -2323,6 +2343,11 @@ impl BlockContext<'_> {
             crate::Expression::CooperativeVectorLoad {
                 pointer, offset, ..
             } => self.write_cooperative_vector_load(pointer, offset, result_type_id, block)?,
+            crate::Expression::Convert {
+                expr,
+                ty,
+                saturating,
+            } => self.write_convert(expr, ty, saturating, result_type_id, block)?,
             crate::Expression::CooperativeVectorMatMul { ref operation, .. } => self
                 .write_cooperative_vector_mat_mul(expr_handle, operation, result_type_id, block)?,
         };
@@ -2458,6 +2483,19 @@ impl BlockContext<'_> {
         let expr_id = self.cached.get(expr)?;
         let ty = self.fun_info[expr].ty.inner_with(&self.ir_module.types);
 
+        let small =
+            |kind: crate::ScalarKind| matches!(kind, Sk::BFloat | Sk::FloatE4M3 | Sk::FloatE5M2);
+        if let crate::TypeInner::Scalar(scalar) | crate::TypeInner::Vector { scalar, .. } = *ty {
+            if small(scalar.kind) || small(kind) {
+                return self.write_cooperative_cast(
+                    expr,
+                    scalar,
+                    (kind, convert),
+                    block,
+                    result_type_id,
+                );
+            }
+        }
         if let crate::TypeInner::LongVector { scalar, .. }
         | crate::TypeInner::CooperativeMatrix { scalar, .. } = *ty
         {
@@ -2574,7 +2612,12 @@ impl BlockContext<'_> {
                 let op = match src_scalar.kind {
                     Sk::Sint | Sk::Uint => spirv::Op::INotEqual,
                     Sk::Float => spirv::Op::FUnordNotEqual,
-                    Sk::Bool | Sk::AbstractInt | Sk::AbstractFloat => {
+                    Sk::Bool
+                    | Sk::AbstractInt
+                    | Sk::AbstractFloat
+                    | Sk::BFloat
+                    | Sk::FloatE4M3
+                    | Sk::FloatE5M2 => {
                         return Err(Error::Validation(
                             "conversion to bool from a non-numeric value",
                         ))

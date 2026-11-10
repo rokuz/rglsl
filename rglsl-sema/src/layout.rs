@@ -23,8 +23,8 @@ const fn scalar_size(scalar: Scalar) -> u32 {
     match scalar {
         Scalar::Bool | Scalar::Int | Scalar::Uint | Scalar::Float => 4,
         Scalar::Double | Scalar::Int64 | Scalar::Uint64 => 8,
-        Scalar::Int16 | Scalar::Uint16 | Scalar::Float16 => 2,
-        Scalar::Int8 | Scalar::Uint8 => 1,
+        Scalar::Int16 | Scalar::Uint16 | Scalar::Float16 | Scalar::BFloat16 => 2,
+        Scalar::Int8 | Scalar::Uint8 | Scalar::FloatE4M3 | Scalar::FloatE5M2 => 1,
     }
 }
 
