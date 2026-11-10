@@ -112,7 +112,7 @@ pub fn inject_builtin(
         | "textureProjLod"
         | "textureProjLodOffset"
         | "textureProjOffset" => {
-            let f = |kind, dim, arrayed, multi, shadow| {
+            let f = |kind, dim, arrayed, multi, shadow: bool| {
                 for bits in 0..=0b11 {
                     let variant = bits & 0b1 != 0;
                     let bias = bits & 0b10 != 0;
@@ -148,7 +148,6 @@ pub fn inject_builtin(
                     let builtin = MacroCall::Texture {
                         proj,
                         offset,
-                        shadow,
                         level_type,
                     };
 
@@ -180,8 +179,8 @@ pub fn inject_builtin(
                         continue;
                     }
 
-                    // TODO: glsl supports using bias with depth samplers but naga doesn't
-                    if bias && shadow {
+                    // samplerCubeArrayShadow has no bias overload either
+                    if bias && shadow && arrayed && dim == Dim::Cube {
                         continue;
                     }
 
@@ -1548,7 +1547,6 @@ pub enum MacroCall {
     Texture {
         proj: bool,
         offset: bool,
-        shadow: bool,
         level_type: TextureLevelType,
     },
     TextureSize {
@@ -1606,7 +1604,6 @@ impl MacroCall {
             MacroCall::Texture {
                 proj,
                 offset,
-                shadow,
                 level_type,
             } => {
                 let mut coords = args[1];
@@ -1667,31 +1664,14 @@ impl MacroCall {
 
                     TextureLevelType::Lod => {
                         num_args += 1;
-
-                        if shadow {
-                            log::debug!("Assuming LOD {:?} is zero", args[2],);
-
-                            SampleLevel::Zero
-                        } else {
-                            SampleLevel::Exact(args[2])
-                        }
+                        SampleLevel::Exact(args[2])
                     }
 
                     TextureLevelType::Grad => {
                         num_args += 2;
-
-                        if shadow {
-                            log::debug!(
-                                "Assuming gradients {:?} and {:?} are not greater than 1",
-                                args[2],
-                                args[3],
-                            );
-                            SampleLevel::Zero
-                        } else {
-                            SampleLevel::Gradient {
-                                x: args[2],
-                                y: args[3],
-                            }
+                        SampleLevel::Gradient {
+                            x: args[2],
+                            y: args[3],
                         }
                     }
                 };
@@ -2035,8 +2015,12 @@ impl MacroCall {
             )?,
             MacroCall::Barrier => {
                 ctx.emit_restart();
+                // GLSL `barrier()` in a compute shader synchronizes the
+                // invocations of the work group and makes their writes to
+                // `shared` variables visible. It is not a subgroup barrier
+                // and says nothing about buffer or image memory.
                 ctx.body.push(
-                    crate::Statement::ControlBarrier(crate::Barrier::all()),
+                    crate::Statement::ControlBarrier(crate::Barrier::WORK_GROUP),
                     meta,
                 );
                 return Ok(None);

@@ -48,7 +48,9 @@ impl crate::Binding {
 
         if let Some(crate::ScalarKind::Float) = ty.scalar_kind() {
             *interpolation = Some(crate::Interpolation::Perspective);
-            *sampling = Some(crate::Sampling::Center);
+            // Keep an explicit sampling qualifier: GLSL allows `sample in vec4 v;`
+            // and `centroid in vec4 v;` without an interpolation qualifier.
+            sampling.get_or_insert(crate::Sampling::Center);
         }
     }
 }

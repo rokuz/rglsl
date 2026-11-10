@@ -28,6 +28,23 @@ runner, ...) is not part of this project.
 - Removed `naga/tests/naga/example_wgsl.rs`: it parsed wgpu's `examples/`, which are not
   part of the fork.
 
+## Deviations from upstream behaviour
+
+Changes to shared code (IR, validator, SPIR-V backend) that make it differ from naga. The
+other backends (MSL, HLSL, GLSL, WGSL) are not adapted and may not handle these cases.
+
+- **Index built-ins may be signed.** The validator accepts `i32` as well as `u32` for
+  `VertexIndex`, `InstanceIndex`, `BaseVertex`, `BaseInstance`, `DrawIndex`, `PrimitiveIndex`,
+  `SampleIndex` and `ViewIndex` (`valid/interface.rs`). GLSL declares them as `int`.
+- **Depth-comparison sampling accepts any level.** `ImageSample` with a `depth_ref` may use
+  `Exact` (with a float level), `Gradient` or `Bias`; `Bias` is allowed for every
+  non-multisampled image. The errors `InvalidDepthSampleLevel` and
+  `InvalidSampleLevelBiasDimension` are removed (`valid/expression.rs`, `back/spv/image.rs`).
+- **`MathFunction::Outer` typing.** `outer(c, r)` has one row per component of `c` and one
+  column per component of `r`, as in GLSL and SPIR-V; upstream had them swapped
+  (`proc/overloads/mathfunction.rs`).
+- **Default interpolation keeps an explicit sampling** (`front/interpolator.rs`).
+
 ## Cherry-picked upstream commits
 
 None yet.

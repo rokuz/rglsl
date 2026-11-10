@@ -176,6 +176,10 @@ pub struct Frontend {
 
     layouter: Layouter,
 
+    /// `#pragma STDGL invariant(all)` was seen: every stage output declared
+    /// from here on is invariant.
+    invariant_all: bool,
+
     errors: Vec<Error>,
 }
 
@@ -188,6 +192,7 @@ impl Frontend {
         self.global_variables.clear();
         self.entry_args.clear();
         self.layouter.clear();
+        self.invariant_all = false;
     }
 
     /// Parses a shader either outputting a shader [`Module`] or a list of

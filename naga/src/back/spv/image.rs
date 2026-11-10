@@ -1009,32 +1009,26 @@ impl BlockContext<'_> {
 
                 let mut lod_id = self.cached[lod_handle];
                 // SPIR-V expects the LOD to be a float for all image classes.
-                // lod_id, however, will be an integer for depth images,
-                // therefore we must do a conversion.
-                if matches!(
-                    self.ir_module.types[image_type].inner,
-                    crate::TypeInner::Image {
-                        class: crate::ImageClass::Depth { .. },
+                // The IR allows an integer level for depth images (as WGSL
+                // has it), which must be converted.
+                let convert_op = match *self.fun_info[lod_handle]
+                    .ty
+                    .inner_with(&self.ir_module.types)
+                {
+                    crate::TypeInner::Scalar(crate::Scalar {
+                        kind: crate::ScalarKind::Uint,
                         ..
-                    }
-                ) {
+                    }) => Some(spirv::Op::ConvertUToF),
+                    crate::TypeInner::Scalar(crate::Scalar {
+                        kind: crate::ScalarKind::Sint,
+                        ..
+                    }) => Some(spirv::Op::ConvertSToF),
+                    _ => None,
+                };
+                if let Some(convert_op) = convert_op {
                     let lod_f32_id = self.gen_id();
                     let f32_type_id =
                         self.get_numeric_type_id(NumericType::Scalar(crate::Scalar::F32));
-                    let convert_op = match *self.fun_info[lod_handle]
-                        .ty
-                        .inner_with(&self.ir_module.types)
-                    {
-                        crate::TypeInner::Scalar(crate::Scalar {
-                            kind: crate::ScalarKind::Uint,
-                            width: 4,
-                        }) => spirv::Op::ConvertUToF,
-                        crate::TypeInner::Scalar(crate::Scalar {
-                            kind: crate::ScalarKind::Sint,
-                            width: 4,
-                        }) => spirv::Op::ConvertSToF,
-                        _ => unreachable!(),
-                    };
                     block.body.push(Instruction::unary(
                         convert_op,
                         f32_type_id,

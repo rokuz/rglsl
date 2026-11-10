@@ -115,8 +115,6 @@ pub enum ExpressionError {
     InvalidSampleOffset(crate::ImageDimension, Handle<crate::Expression>),
     #[error("Depth reference {0:?} is not a scalar float")]
     InvalidDepthReference(Handle<crate::Expression>),
-    #[error("Depth sample level can only be Auto or Zero")]
-    InvalidDepthSampleLevel,
     #[error("Gather level can only be Zero")]
     InvalidGatherLevel,
     #[error("Gather component {0:?} doesn't exist in the image")]
@@ -127,8 +125,6 @@ pub enum ExpressionError {
     InvalidSampleLevelExactType(Handle<crate::Expression>),
     #[error("Sample level (bias) type {0:?} is not a scalar float")]
     InvalidSampleLevelBiasType(Handle<crate::Expression>),
-    #[error("Bias can't be done for image dimension {0:?}")]
-    InvalidSampleLevelBiasDimension(crate::ImageDimension),
     #[error("Sample level (gradient) of {1:?} doesn't match the image dimension {0:?}")]
     InvalidSampleLevelGradientType(crate::ImageDimension, Handle<crate::Expression>),
     #[error("Clamping sample coordinate to edge is not supported with {0}")]
@@ -666,10 +662,12 @@ impl super::Validator {
                         }) => {}
                         _ => return Err(ExpressionError::InvalidDepthReference(expr)),
                     }
-                    match level {
-                        crate::SampleLevel::Auto | crate::SampleLevel::Zero => {}
-                        _ => return Err(ExpressionError::InvalidDepthSampleLevel),
-                    }
+                    // Any `level` is valid with a depth reference: SPIR-V has
+                    // `OpImageSampleDrefExplicitLod` with `Lod` or `Grad`
+                    // operands and `OpImageSampleDrefImplicitLod` with `Bias`,
+                    // and GLSL exposes them as `textureLod`, `textureGrad` and
+                    // `texture(..., bias)` on shadow samplers. (WGSL only has
+                    // the automatic and zero levels.)
                 }
 
                 if let Some(component) = gather {
@@ -749,9 +747,11 @@ impl super::Validator {
                     crate::SampleLevel::Zero => ShaderStages::all(),
                     crate::SampleLevel::Exact(expr) => {
                         match class {
+                            // WGSL gives depth textures an integer level,
+                            // GLSL a float one, like every other texture.
                             crate::ImageClass::Depth { .. } => match resolver[expr] {
                                 Ti::Scalar(Sc {
-                                    kind: Sk::Sint | Sk::Uint,
+                                    kind: Sk::Sint | Sk::Uint | Sk::Float,
                                     ..
                                 }) => {}
                                 _ => {
@@ -776,17 +776,12 @@ impl super::Validator {
                             }) => {}
                             _ => return Err(ExpressionError::InvalidSampleLevelBiasType(expr)),
                         }
+                        // SPIR-V allows a bias on every implicit-LOD sample of
+                        // a non-multisampled image, whatever its dimension or
+                        // sampled type, and with or without a depth reference.
                         match class {
-                            crate::ImageClass::Sampled {
-                                kind: Sk::Float,
-                                multi: false,
-                            } => {
-                                if dim == crate::ImageDimension::D1 {
-                                    return Err(ExpressionError::InvalidSampleLevelBiasDimension(
-                                        dim,
-                                    ));
-                                }
-                            }
+                            crate::ImageClass::Sampled { multi: false, .. }
+                            | crate::ImageClass::Depth { multi: false } => {}
                             _ => return Err(ExpressionError::InvalidImageClass(class)),
                         }
                         ShaderStages::FRAGMENT

@@ -114,7 +114,9 @@ impl Frontend {
                     size: VectorSize::Quad,
                     scalar: Scalar::F32,
                 },
-                builtin: BuiltIn::Position { invariant: false },
+                builtin: BuiltIn::Position {
+                    invariant: self.invariant_all,
+                },
                 mutable: true,
                 storage: StorageQualifier::Output,
             },
@@ -211,8 +213,19 @@ impl Frontend {
                     _ => return Ok(None),
                 };
 
+                // GLSL declares the index built-ins as `int`; only
+                // `gl_LocalInvocationIndex` is `uint`.
+                let inner = match builtin {
+                    BuiltIn::LocalInvocationIndex => TypeInner::Scalar(Scalar::U32),
+                    BuiltIn::Barycentric { .. } => TypeInner::Vector {
+                        size: VectorSize::Tri,
+                        scalar: Scalar::F32,
+                    },
+                    _ => TypeInner::Scalar(Scalar::I32),
+                };
+
                 BuiltInData {
-                    inner: TypeInner::Scalar(Scalar::U32),
+                    inner,
                     builtin,
                     mutable: false,
                     storage: StorageQualifier::Input,
@@ -229,16 +242,74 @@ impl Frontend {
         name: &str,
         meta: Span,
     ) -> Result<()> {
-        if let Some(var) = self.lookup_variable(ctx, name, meta)? {
-            if let Some(index) = var.entry_arg {
-                if let Binding::BuiltIn(BuiltIn::Position { ref mut invariant }) =
-                    self.entry_args[index].binding
-                {
-                    *invariant = true;
-                }
+        let var = self
+            .lookup_variable(ctx, name, meta)?
+            .ok_or_else(|| Error {
+                kind: ErrorKind::UnknownVariable(name.into()),
+                meta,
+            })?;
+        match var.entry_arg.map(|index| &mut self.entry_args[index]) {
+            Some(&mut EntryArg {
+                binding: Binding::BuiltIn(BuiltIn::Position { ref mut invariant }),
+                storage: StorageQualifier::Output,
+                ..
+            }) => {
+                *invariant = true;
+                Ok(())
+            }
+            // The IR can only mark the position output as invariant. Dropping
+            // the qualifier would silently change the meaning of the shader.
+            Some(&mut EntryArg {
+                storage: StorageQualifier::Output,
+                ..
+            }) => Err(Error {
+                kind: ErrorKind::NotImplemented("invariant on outputs other than gl_Position"),
+                meta,
+            }),
+            _ => Err(Error {
+                kind: ErrorKind::SemanticError("invariant can only apply to an output".into()),
+                meta,
+            }),
+        }
+    }
+
+    /// Handles `#pragma STDGL invariant(all)`: every output is invariant.
+    pub(crate) fn set_invariant_all(&mut self, meta: Span) {
+        self.invariant_all = true;
+        for arg in &mut self.entry_args {
+            if arg.storage != StorageQualifier::Output {
+                continue;
+            }
+            match arg.binding {
+                Binding::BuiltIn(BuiltIn::Position { ref mut invariant }) => *invariant = true,
+                _ => self.errors.push(Error {
+                    kind: ErrorKind::NotImplemented("invariant on outputs other than gl_Position"),
+                    meta,
+                }),
             }
         }
-        Ok(())
+    }
+
+    /// Rejects declarations of names that GLSL reserves.
+    ///
+    /// Identifiers starting with `gl_` are reserved. GLSL allows a few built-in
+    /// variables to be redeclared (`out float gl_ClipDistance[4];`,
+    /// `layout(depth_less) out float gl_FragDepth;`), which is not supported
+    /// yet; treating such a declaration as a new user variable would silently
+    /// give it a location instead of its built-in meaning.
+    fn check_declared_name(&mut self, name: Option<&str>, meta: Span) -> Result<()> {
+        match name {
+            Some(name) if name.starts_with("gl_") => Err(Error {
+                kind: ErrorKind::SemanticError(
+                    format!(
+                        "'{name}': identifiers starting with \"gl_\" are reserved (redeclaring built-in variables is not supported yet)"
+                    )
+                    .into(),
+                ),
+                meta,
+            }),
+            _ => Ok(()),
+        }
     }
 
     pub(crate) fn field_selection(
@@ -423,7 +494,16 @@ impl Frontend {
             meta,
         }: VarDeclaration,
     ) -> Result<GlobalOrConstant> {
+        self.check_declared_name(name.as_deref(), meta)?;
+
         let storage = qualifiers.storage.0;
+        if storage == StorageQualifier::Output && self.invariant_all {
+            // See `make_variable_invariant`.
+            return Err(Error {
+                kind: ErrorKind::NotImplemented("invariant on outputs other than gl_Position"),
+                meta,
+            });
+        }
         let (ret, lookup) = match storage {
             StorageQualifier::Input | StorageQualifier::Output => {
                 let input = storage == StorageQualifier::Input;
@@ -667,6 +747,8 @@ impl Frontend {
         ctx: &mut Context,
         decl: VarDeclaration,
     ) -> Result<Handle<Expression>> {
+        self.check_declared_name(decl.name.as_deref(), decl.meta)?;
+
         let storage = decl.qualifiers.storage;
         let mutable = match storage.0 {
             StorageQualifier::AddressSpace(AddressSpace::Function) => true,

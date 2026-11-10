@@ -167,7 +167,7 @@ impl ParsingContext<'_> {
     pub fn parse_init_declarator_list(
         &mut self,
         frontend: &mut Frontend,
-        mut ty: Handle<Type>,
+        base_ty: Handle<Type>,
         ctx: &mut DeclarationContext,
     ) -> Result<()> {
         // init_declarator_list:
@@ -208,6 +208,10 @@ impl ParsingContext<'_> {
                 }
             };
             let mut meta = token.meta;
+
+            // An array specifier belongs to its own declarator only: in
+            // `float a, b[2], c;` the type of `c` is `float`.
+            let mut ty = base_ty;
 
             // array_specifier
             // array_specifier EQUAL initializer

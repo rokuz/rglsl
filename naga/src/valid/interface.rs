@@ -228,6 +228,17 @@ struct VaryingContext<'a> {
     has_task_payload: bool,
 }
 
+/// Whether `ty` can hold an index built-in such as `VertexIndex`.
+///
+/// SPIR-V accepts a 32-bit integer of either signedness for these. WGSL
+/// declares them as `u32`, GLSL as `int`.
+const fn is_index_type(ty: &crate::TypeInner) -> bool {
+    matches!(
+        *ty,
+        crate::TypeInner::Scalar(crate::Scalar::U32 | crate::Scalar::I32)
+    )
+}
+
 impl VaryingContext<'_> {
     fn validate_impl(
         &mut self,
@@ -289,12 +300,12 @@ impl VaryingContext<'_> {
                 let (visible, type_good) = match built_in {
                     Bi::BaseInstance | Bi::BaseVertex | Bi::VertexIndex => (
                         self.stage == St::Vertex && !self.output,
-                        *ty_inner == Ti::Scalar(crate::Scalar::U32),
+                        is_index_type(ty_inner),
                     ),
                     Bi::InstanceIndex => (
                         matches!(self.stage, St::Vertex | St::AnyHit | St::ClosestHit)
                             && !self.output,
-                        *ty_inner == Ti::Scalar(crate::Scalar::U32),
+                        is_index_type(ty_inner),
                     ),
                     Bi::DrawIndex => (
                         // Always allowed in task/vertex stage. Allowed in mesh stage if there is no task stage in the pipeline.
@@ -302,7 +313,7 @@ impl VaryingContext<'_> {
                             || self.stage == St::Task
                             || (self.stage == St::Mesh && !self.has_task_payload))
                             && !self.output,
-                        *ty_inner == Ti::Scalar(crate::Scalar::U32),
+                        is_index_type(ty_inner),
                     ),
                     Bi::ClipDistances | Bi::CullDistance => (
                         (self.stage == St::Vertex || self.stage == St::Mesh) && self.output,
@@ -351,7 +362,7 @@ impl VaryingContext<'_> {
                             | St::ClosestHit
                             | St::Miss => false,
                         },
-                        *ty_inner == Ti::Scalar(crate::Scalar::U32),
+                        is_index_type(ty_inner),
                     ),
                     Bi::FragDepth => (
                         self.stage == St::Fragment && self.output,
@@ -367,7 +378,7 @@ impl VaryingContext<'_> {
                             || (self.stage == St::Mesh
                                 && self.output
                                 && self.mesh_output_type == MeshOutputType::PrimitiveOutput),
-                        *ty_inner == Ti::Scalar(crate::Scalar::U32),
+                        is_index_type(ty_inner),
                     ),
                     Bi::Barycentric { .. } => (
                         self.stage == St::Fragment && !self.output,
@@ -379,7 +390,7 @@ impl VaryingContext<'_> {
                     ),
                     Bi::SampleIndex => (
                         self.stage == St::Fragment && !self.output,
-                        *ty_inner == Ti::Scalar(crate::Scalar::U32),
+                        is_index_type(ty_inner),
                     ),
                     Bi::SampleMask => (
                         self.stage == St::Fragment,

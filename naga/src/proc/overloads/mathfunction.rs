@@ -149,8 +149,12 @@ fn outer() -> List {
             float_scalars_unimplemented_abstract(),
         )
         .map(|(cols, rows, scalar)| {
-            let left = ir::TypeInner::Vector { size: cols, scalar };
-            let right = ir::TypeInner::Vector { size: rows, scalar };
+            // `outer(c, r)` is the linear-algebra product `c * r^T`: the left
+            // operand is a column (one component per row of the result) and
+            // the right operand has one component per column. This is what
+            // GLSL `outerProduct` and SPIR-V `OpOuterProduct` specify.
+            let left = ir::TypeInner::Vector { size: rows, scalar };
+            let right = ir::TypeInner::Vector { size: cols, scalar };
             let result = ir::TypeInner::Matrix {
                 columns: cols,
                 rows,

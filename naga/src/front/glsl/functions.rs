@@ -15,9 +15,9 @@ use super::{
     Frontend, Result,
 };
 use crate::{
-    front::glsl::types::type_power, proc::ensure_block_returns, AddressSpace, Block, EntryPoint,
-    Expression, Function, FunctionArgument, FunctionResult, Handle, Literal, LocalVariable, Scalar,
-    ScalarKind, Span, Statement, StructMember, Type, TypeInner,
+    front::glsl::types::type_power, proc::ensure_block_returns, Block, EntryPoint, Expression,
+    Function, FunctionArgument, FunctionResult, Handle, Literal, LocalVariable, Scalar, ScalarKind,
+    Span, Statement, StructMember, Type, TypeInner,
 };
 
 /// Struct detailing a store operation that must happen after a function call
@@ -884,11 +884,18 @@ impl Frontend {
         let original_ty = ctx.resolve_type(original, meta)?;
         let original_pointer_space = original_ty.pointer_space();
 
-        // The type of a possible spill variable needed for a proxy write
+        // GLSL passes `out` and `inout` arguments by value: the argument is
+        // copied into the parameter on entry (`inout` only) and copied back to
+        // the l-value when the function returns. So every such argument is
+        // spilled into a local of its own, which is what is passed to the
+        // callee. Passing the l-value's own pointer instead would let two
+        // parameters alias (`f(x, x)`), would let the callee observe writes to
+        // a global it also received as an argument, and could not express
+        // l-values that are not whole variables (`a[i]`, `s.m`, `v.x`, `v.xy`).
+        //
+        // This is the type of that spill variable.
         let mut maybe_ty = match *original_ty {
-            // If the argument is to be passed as a pointer but the type of the
-            // expression returns a vector it must mean that it was for example
-            // swizzled and it must be spilled into a local before calling
+            // A swizzle is not a pointer but a vector value.
             TypeInner::Vector { size, scalar } => Some(ctx.module.types.insert(
                 Type {
                     name: None,
@@ -896,15 +903,8 @@ impl Frontend {
                 },
                 Span::default(),
             )),
-            // If the argument is a pointer whose address space isn't `Function`, an
-            // indirection through a local variable is needed to align the address
-            // spaces of the call argument and the overload parameter.
-            TypeInner::Pointer { base, space } if space != AddressSpace::Function => Some(base),
-            TypeInner::ValuePointer {
-                size,
-                scalar,
-                space,
-            } if space != AddressSpace::Function => {
+            TypeInner::Pointer { base, .. } => Some(base),
+            TypeInner::ValuePointer { size, scalar, .. } => {
                 let inner = match size {
                     Some(size) => TypeInner::Vector { size, scalar },
                     None => TypeInner::Scalar(scalar),

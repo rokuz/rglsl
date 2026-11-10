@@ -1,3 +1,4 @@
+mod glsl_vulkan;
 mod snapshots;
 mod spirv_capabilities;
 mod spirv_roundtrip;

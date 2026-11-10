@@ -1,7 +1,7 @@
-use alloc::{string::String, vec};
+use alloc::{string::String, vec, vec::Vec};
 use core::iter::Peekable;
 
-use pp_rs::token::{PreprocessorError, Token as PPToken, TokenValue as PPTokenValue};
+use pp_rs::token::{PreprocessorError, Punct, Token as PPToken, TokenValue as PPTokenValue};
 
 use super::{
     ast::{FunctionKind, Profile, TypeQualifiers},
@@ -345,7 +345,7 @@ impl Frontend {
 
                 match tokens.next() {
                     Some(PPToken {
-                        value: PPTokenValue::Punct(pp_rs::token::Punct::Colon),
+                        value: PPTokenValue::Punct(Punct::Colon),
                         ..
                     }) => {}
                     Some(PPToken { value, location }) => self.errors.push(Error {
@@ -399,7 +399,28 @@ impl Frontend {
                 }
             }
             DirectiveKind::Pragma => {
-                // TODO: handle some common pragmas?
+                // `#pragma STDGL invariant(all)` is the only pragma that changes
+                // the meaning of a shader. Other pragmas are ignored, as GLSL
+                // requires for pragmas an implementation does not know.
+                let values: Vec<PPTokenValue> = tokens.map(|token| token.value).collect();
+                match *values {
+                    [PPTokenValue::Ident(ref stdgl), PPTokenValue::Ident(ref name), PPTokenValue::Punct(Punct::LeftParen), ref argument, PPTokenValue::Punct(Punct::RightParen)]
+                        if stdgl == "STDGL" && name == "invariant" =>
+                    {
+                        match *argument {
+                            PPTokenValue::Ident(ref all) if all == "all" => {
+                                self.set_invariant_all(meta)
+                            }
+                            _ => self.errors.push(Error {
+                                kind: ErrorKind::SemanticError(
+                                    "Invalid STDGL invariant declaration (expected 'all')".into(),
+                                ),
+                                meta,
+                            }),
+                        }
+                    }
+                    _ => {}
+                }
             }
         }
     }
