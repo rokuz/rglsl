@@ -171,8 +171,6 @@ pub enum EntryPointError {
     InvalidGlobalUsage(Handle<crate::GlobalVariable>, GlobalUse),
     #[error("More than 1 immediate data variable is used")]
     MoreThanOneImmediateUsed,
-    #[error("Bindings for {0:?} conflict with other resource")]
-    BindingCollision(Handle<crate::GlobalVariable>),
     #[error("Argument {0} varying error")]
     Argument(u32, #[source] VaryingError),
     #[error(transparent)]
@@ -1846,7 +1844,6 @@ impl super::Validator {
             }
         }
 
-        self.ep_resource_bindings.clear();
         for (var_handle, var) in module.global_variables.iter() {
             let usage = info[var_handle];
             if usage.is_empty() {
@@ -1937,15 +1934,6 @@ impl super::Validator {
                 log::warn!("\tAllowed usage: {allowed_usage:?}, requested: {usage:?}");
                 return Err(EntryPointError::InvalidGlobalUsage(var_handle, usage)
                     .with_span_handle(var_handle, &module.global_variables));
-            }
-
-            if let Some(ref bind) = var.binding {
-                if !self.ep_resource_bindings.insert(*bind) {
-                    if self.flags.contains(super::ValidationFlags::BINDINGS) {
-                        return Err(EntryPointError::BindingCollision(var_handle)
-                            .with_span_handle(var_handle, &module.global_variables));
-                    }
-                }
             }
         }
 

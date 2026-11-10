@@ -344,7 +344,6 @@ pub struct Validator {
     types: Vec<r#type::TypeInfo>,
     layouter: Layouter,
     location_mask: BitSet,
-    ep_resource_bindings: FastHashSet<crate::ResourceBinding>,
     switch_values: FastHashSet<crate::SwitchValue>,
     valid_expression_list: Vec<Handle<crate::Expression>>,
     valid_expression_set: HandleSet<crate::Expression>,
@@ -592,7 +591,6 @@ impl Validator {
             types: Vec::new(),
             layouter: Layouter::default(),
             location_mask: BitSet::new(),
-            ep_resource_bindings: FastHashSet::default(),
             switch_values: FastHashSet::default(),
             valid_expression_list: Vec::new(),
             valid_expression_set: HandleSet::new(),
@@ -621,7 +619,6 @@ impl Validator {
         self.types.clear();
         self.layouter.clear();
         self.location_mask.make_empty();
-        self.ep_resource_bindings.clear();
         self.switch_values.clear();
         self.valid_expression_list.clear();
         self.valid_expression_set.clear();

@@ -132,6 +132,9 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   of struct type is not wrapped in another struct: the struct itself (or its std140-compatible
   variant) is decorated `Block`, as glslang does, unless another type contains the struct
   (`back/spv/helpers.rs`, `global_needs_wrapper`). Only globals of other types are wrapped.
+- **Resources may share a binding.** The validator no longer rejects two resources of an entry
+  point with the same group and binding (`EntryPointError::BindingCollision` is gone): glslang
+  accepts them for Vulkan, where descriptor aliasing is legal.
 
 ## Cherry-picked upstream commits
 

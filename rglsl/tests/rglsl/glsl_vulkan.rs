@@ -2008,3 +2008,28 @@ fn buffer_blocks_decorate_their_own_struct() {
         .count();
     assert_eq!(wrappers, 0);
 }
+
+#[test]
+fn resources_may_share_a_binding() {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 460
+        layout(location = 0) in vec2 uv;
+        layout(set = 0, binding = 0) uniform texture2D t;
+        layout(set = 0, binding = 0) uniform sampler s;
+        layout(binding = 4) uniform sampler2D c;
+        layout(binding = 4) uniform U { vec4 v; };
+        layout(location = 0) out vec4 o;
+        void main() { o = texture(sampler2D(t, s), uv) + texture(c, uv) + v; }",
+    );
+    for (name, binding) in [("t", 0), ("s", 0), ("c", 4), ("", 4)] {
+        assert_eq!(
+            sorted_variable_decorations(&module, name),
+            [
+                (Decoration::Binding, vec![binding]),
+                (Decoration::DescriptorSet, vec![0])
+            ],
+            "{name}"
+        );
+    }
+}
