@@ -124,10 +124,25 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   as `XfbBuffer`, `XfbStride` and `Offset` on the variable, and `StructMember::xfb_offset` (new)
   as `Offset` on a member of an interface block. The validator allows `xfb` only on `Output`
   globals.
-- **No automatic `NonUniform`.** The SPIR-V backend no longer decorates accesses to binding
-  arrays indexed by a non-uniform value with `NonUniform` (and no longer requires
-  `ShaderNonUniform`); glslang emits them only for `nonuniformEXT`.
-  `Writer::decorate_non_uniform_binding_array_access` remains for an explicit request.
+- **No automatic `NonUniform`; explicit non-uniformity instead.** The SPIR-V backend no
+  longer decorates accesses to binding arrays indexed by a value the uniformity analysis
+  finds non-uniform; glslang emits `NonUniform` only for `nonuniformEXT`.
+  `Function::non_uniform` (new, `NonUniformExpressions`: expression handles with
+  `NonUniform` flags `VALUE`, `ACCESS`, `SAMPLED_IMAGE`) says which results the source makes
+  non-uniform; handle validation, `compact` and `process_overrides` keep it consistent, and
+  it is not serialized when empty. The backend decorates the instruction computing a `VALUE`
+  expression (or a decorated `OpCopyObject` of a handle global or argument used as an image
+  operand), the `OpAccessChain` of an `ACCESS` pointer or binding array element, the
+  `OpImage` extracted from a `VALUE` combined sampler and the `OpSampledImage` of a
+  `SAMPLED_IMAGE` sample, and declares `ShaderNonUniform`
+  (`Writer::decorate_non_uniform`, replacing `decorate_non_uniform_binding_array_access`).
+  See `docs/design/nonuniform.md`.
+- **Descriptor indexing capabilities.** A runtime-sized `BindingArray` declares
+  `RuntimeDescriptorArray`; a dynamic index into a binding array declares the
+  `*ArrayNonUniformIndexing` capability of its element kind when the access is marked
+  `ACCESS`, and `UniformTexelBufferArrayDynamicIndexing` or
+  `StorageTexelBufferArrayDynamicIndexing` otherwise, with `SPV_EXT_descriptor_indexing`
+  before SPIR-V 1.5 (`back/spv/block.rs`, `binding_array_capability`).
 - **Buffer blocks decorate their own struct.** A `Uniform`, `Storage` or `Immediate` global
   of struct type is not wrapped in another struct: the struct itself (or its std140-compatible
   variant) is decorated `Block`, as glslang does, unless another type contains the struct
