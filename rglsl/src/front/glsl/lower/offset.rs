@@ -13,12 +13,9 @@ equivalent to bytes.
 
 use alloc::vec::Vec;
 
-use super::{
-    ast::StructLayout,
-    error::{Error, ErrorKind},
-    Span,
-};
-use crate::{proc::Alignment, Handle, MatrixLayout, Scalar, Type, TypeInner, UniqueArena};
+use super::Packing;
+use crate::front::glsl::{Error, ErrorKind};
+use crate::{proc::Alignment, Handle, MatrixLayout, Scalar, Span, Type, TypeInner, UniqueArena};
 
 /// Struct with information needed for defining a struct member.
 ///
@@ -38,7 +35,7 @@ pub struct TypeAlignSpan {
     pub matrix_layout: Option<MatrixLayout>,
 }
 
-/// Returns the type, alignment and span of a struct member according to a [`StructLayout`].
+/// Returns the type, alignment and span of a struct member according to a [`Packing`].
 ///
 /// The functions returns a [`TypeAlignSpan`] which has a `ty` member this
 /// should be used as the struct member type because for example arrays may have
@@ -48,7 +45,7 @@ pub struct TypeAlignSpan {
 pub fn calculate_offset(
     mut ty: Handle<Type>,
     meta: Span,
-    layout: StructLayout,
+    layout: Packing,
     row_major: bool,
     types: &mut UniqueArena<Type>,
     errors: &mut Vec<Error>,
@@ -88,7 +85,7 @@ pub fn calculate_offset(
             let name = types[ty].name.clone();
 
             // See comment at the beginning of the function
-            let (align, stride) = if StructLayout::Std430 == layout {
+            let (align, stride) = if Packing::Std430 == layout {
                 (info.align, info.align.round_up(info.span))
             } else {
                 let align = info.align.max(Alignment::MIN_UNIFORM);
@@ -135,7 +132,7 @@ pub fn calculate_offset(
             let mut align = Alignment::from(vector_size) * Alignment::from_width(scalar.width);
 
             // See comment at the beginning of the function
-            if StructLayout::Std430 != layout {
+            if Packing::Std430 != layout {
                 align = align.max(Alignment::MIN_UNIFORM);
             }
 
@@ -171,7 +168,7 @@ pub fn calculate_offset(
             // any of its members, and rounded up to the base alignment of a
             // vec4. (See the comment at the beginning of the function for
             // std430.)
-            if StructLayout::Std430 != layout {
+            if Packing::Std430 != layout {
                 align = align.max(Alignment::MIN_UNIFORM);
             }
 

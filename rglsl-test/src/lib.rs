@@ -187,6 +187,8 @@ pub struct Parameters {
     pub mesh_output_validation: bool,
     #[serde(default = "default_task_limits")]
     pub task_limits: Option<rglsl::back::TaskDispatchLimits>,
+
+    pub expected_error: Option<String>,
 }
 
 fn default_task_limits() -> Option<rglsl::back::TaskDispatchLimits> {

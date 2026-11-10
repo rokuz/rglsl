@@ -692,7 +692,6 @@ fn parse_input(input_path: &Path, input: Vec<u8>, params: &Parameters) -> anyhow
                             defines: params.defines.clone(),
                             auto_map_bindings: params.auto_map_bindings,
                             auto_map_locations: params.auto_map_locations,
-                            pipeline: rglsl::front::glsl::Pipeline::Legacy,
                         },
                         &input,
                     )

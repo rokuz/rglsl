@@ -1,4 +1,4 @@
-#version 440 core
+#version 450
 
 void testBinOpVecFloat(vec4 a, float b) {
     vec4 v;

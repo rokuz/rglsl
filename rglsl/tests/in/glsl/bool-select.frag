@@ -1,4 +1,4 @@
-#version 440 core
+#version 450
 precision highp float;
 
 layout(location = 0) out vec4 o_color;

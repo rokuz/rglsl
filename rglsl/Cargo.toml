@@ -17,7 +17,7 @@ all-features = true
 
 [features]
 default = []
-glsl-in = ["dep:pp-rs", "dep:rglsl-ast", "dep:rglsl-pp", "dep:rglsl-sema"]
+glsl-in = ["dep:rglsl-ast", "dep:rglsl-pp", "dep:rglsl-sema"]
 
 serialize = [
     "dep:serde",
@@ -75,7 +75,6 @@ spirv = { workspace = true, optional = true }
 thiserror.workspace = true
 serde = { workspace = true, features = ["alloc", "derive"], optional = true }
 petgraph = { workspace = true, optional = true }
-pp-rs = { workspace = true, optional = true }
 
 [build-dependencies]
 cfg_aliases.workspace = true

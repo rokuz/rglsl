@@ -13,7 +13,6 @@ use rglsl_sema::SymbolId;
 
 use super::types::{image_dimension, sampled_kind};
 use super::{internal, semantic, unsupported, GlobalRef, Initialization, Lowerer, Packing, Result};
-use crate::front::glsl::variables::{contains_float, location_count};
 use crate::proc::Alignment;
 use crate::{
     AddressSpace, Binding, BuiltIn, ConservativeDepth, GlobalVariable, Handle, ImageClass,
@@ -1415,5 +1414,46 @@ impl<'a> Lowerer<'a> {
             self.module.global_variables.get_mut(handle).binding =
                 Some(ResourceBinding { group, binding });
         }
+    }
+}
+
+fn location_count(types: &crate::UniqueArena<crate::Type>, ty: Handle<crate::Type>) -> u32 {
+    const fn vector_locations(size: crate::VectorSize, scalar: crate::Scalar) -> u32 {
+        match (size, scalar.width) {
+            (crate::VectorSize::Tri | crate::VectorSize::Quad, 8) => 2,
+            _ => 1,
+        }
+    }
+
+    match types[ty].inner {
+        TypeInner::Vector { size, scalar } => vector_locations(size, scalar),
+        TypeInner::Matrix {
+            columns,
+            rows,
+            scalar,
+        } => (columns as u32).saturating_mul(vector_locations(rows, scalar)),
+        TypeInner::Array {
+            base,
+            size: crate::ArraySize::Constant(length),
+            ..
+        } => length.get().saturating_mul(location_count(types, base)),
+        TypeInner::Struct { ref members, .. } => members
+            .iter()
+            .map(|member| location_count(types, member.ty))
+            .fold(0, u32::saturating_add),
+        _ => 1,
+    }
+}
+
+fn contains_float(types: &crate::UniqueArena<crate::Type>, ty: Handle<crate::Type>) -> bool {
+    match types[ty].inner {
+        TypeInner::Scalar(scalar)
+        | TypeInner::Vector { scalar, .. }
+        | TypeInner::Matrix { scalar, .. } => scalar.kind == crate::ScalarKind::Float,
+        TypeInner::Array { base, .. } => contains_float(types, base),
+        TypeInner::Struct { ref members, .. } => members
+            .iter()
+            .any(|member| contains_float(types, member.ty)),
+        _ => false,
     }
 }

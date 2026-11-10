@@ -1,4 +1,4 @@
-#version 440 core
+#version 450
 
 struct Mat4x3 { vec4 mx; vec4 my; vec4 mz; };
 void Fma(inout Mat4x3 d, Mat4x3 m, float s) { d.mx += m.mx * s; d.my += m.my * s; d.mz += m.mz * s; }

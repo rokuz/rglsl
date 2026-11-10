@@ -260,122 +260,71 @@ fn convert_snapshots_glsl() {
             ext => panic!("Unknown extension for glsl file {ext}"),
         };
 
-        let mut parser = rglsl::front::glsl::Frontend::default();
-        let mut module = parser
-            .parse(
-                &rglsl::front::glsl::Options {
-                    // Many of these inputs leave out locations.
-                    auto_map_locations: true,
-                    ..rglsl::front::glsl::Options::from(stage)
-                },
-                &input.read_source(DIR_IN, true),
-            )
-            .unwrap();
+        let source = input.read_source(DIR_IN, true);
+        let options = rglsl::front::glsl::Options {
+            // Many of these inputs leave out locations.
+            auto_map_locations: true,
+            ..rglsl::front::glsl::Options::from(stage)
+        };
+        let result = rglsl::front::glsl::Frontend::default().parse(&options, &source);
+        if let Some(expected) = input.read_parameters(DIR_IN).expected_error {
+            let Err(errors) = result else {
+                panic!("{file_name:?} was expected to fail with {expected:?}");
+            };
+            assert!(
+                errors
+                    .errors
+                    .iter()
+                    .any(|error| error.kind.to_string().contains(&expected)),
+                "{file_name:?}: expected an error containing {expected:?}, got {errors}"
+            );
+            continue;
+        }
+        let mut module = result.unwrap_or_else(|errors| {
+            panic!("{file_name:?}: {}", errors.emit_to_string(&source));
+        });
 
+        validate_with_pinned_spirv_val(&input, &module);
         check_targets(&input, &mut module, None);
     }
 }
 
-#[cfg_attr(miri, ignore)]
-#[test]
-fn glsl_snapshot_inputs_through_ast_pipeline() {
-    use std::process::Command;
-
+fn validate_with_pinned_spirv_val(input: &Input, module: &rglsl::Module) {
     let validator = std::path::Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../target/oracles/bin/spirv-val"
     ));
-    let output_dir =
-        std::env::temp_dir().join(format!("rglsl-ast-snapshots-{}", std::process::id()));
-    std::fs::create_dir_all(&output_dir).unwrap();
-    let mut accepted = 0;
-    let mut valid = 0;
-    let mut rejected = Vec::new();
-    let mut invalid = Vec::new();
-    for input in Input::files_in_dir("glsl", &["vert", "frag", "comp"], DIR_IN) {
-        let file_name = input.file_name.display().to_string();
-        let stage = match input
-            .file_name
-            .extension()
-            .and_then(|s| s.to_str())
-            .unwrap()
-        {
-            "vert" => rglsl::ShaderStage::Vertex,
-            "frag" => rglsl::ShaderStage::Fragment,
-            _ => rglsl::ShaderStage::Compute,
-        };
-        let options = rglsl::front::glsl::Options {
-            auto_map_locations: true,
-            pipeline: rglsl::front::glsl::Pipeline::Ast,
-            ..rglsl::front::glsl::Options::from(stage)
-        };
-        let source = input.read_source(DIR_IN, true);
-        let module = match rglsl::front::glsl::Frontend::default().parse(&options, &source) {
-            Ok(module) => module,
-            Err(errors) => {
-                rejected.push(format!("{file_name}: {}", errors.errors[0].kind));
-                continue;
-            }
-        };
-        let info = match rglsl::valid::Validator::new(
-            rglsl::valid::ValidationFlags::all(),
-            rglsl::valid::Capabilities::all(),
-        )
-        .validate(&module)
-        {
-            Ok(info) => info,
-            Err(error) => {
-                rejected.push(format!("{file_name}: {:?}", error.into_inner()));
-                continue;
-            }
-        };
-        let words = match rglsl::back::spv::write_vec(
-            &module,
-            &info,
-            &rglsl::back::spv::Options::default(),
-            None,
-        ) {
-            Ok(words) => words,
-            Err(error) => {
-                rejected.push(format!("{file_name}: {error}"));
-                continue;
-            }
-        };
-        accepted += 1;
-        if !validator.exists() {
-            continue;
-        }
-        let path = output_dir.join(format!("{file_name}.spv"));
-        let bytes: Vec<u8> = words.iter().flat_map(|word| word.to_le_bytes()).collect();
-        std::fs::write(&path, bytes).unwrap();
-        let status = Command::new(validator)
-            .args(["--target-env", "vulkan1.0"])
-            .arg(&path)
-            .output()
-            .unwrap();
-        if status.status.success() {
-            valid += 1;
-        } else {
-            invalid.push(format!(
-                "{file_name}: {}",
-                String::from_utf8_lossy(&status.stderr)
-            ));
-        }
-    }
-    let _ = std::fs::remove_dir_all(&output_dir);
     if !validator.exists() {
         println!(
             "spirv-val not found at {}: SPIR-V not validated",
             validator.display()
         );
+        return;
     }
-    println!("ast pipeline: {accepted} accepted, {valid} valid");
-    for line in &rejected {
-        println!("rejected {line}");
-    }
+    let name = input.file_name.display().to_string();
+    let info = rglsl::valid::Validator::new(
+        rglsl::valid::ValidationFlags::all(),
+        rglsl::valid::Capabilities::all(),
+    )
+    .validate(module)
+    .unwrap_or_else(|error| panic!("{name}: {:?}", error.into_inner()));
+    let words =
+        rglsl::back::spv::write_vec(module, &info, &rglsl::back::spv::Options::default(), None)
+            .unwrap_or_else(|error| panic!("{name}: {error}"));
+    let output_dir = std::env::temp_dir().join(format!("rglsl-snapshots-{}", std::process::id()));
+    std::fs::create_dir_all(&output_dir).unwrap();
+    let path = output_dir.join(format!("{name}.spv"));
+    let bytes: Vec<u8> = words.iter().flat_map(|word| word.to_le_bytes()).collect();
+    std::fs::write(&path, bytes).unwrap();
+    let output = std::process::Command::new(validator)
+        .args(["--target-env", "vulkan1.0"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&path);
     assert!(
-        invalid.is_empty(),
-        "invalid SPIR-V:\n{}",
-        invalid.join("\n")
+        output.status.success(),
+        "{name}: invalid SPIR-V:\n{}",
+        String::from_utf8_lossy(&output.stderr)
     );
 }

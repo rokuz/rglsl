@@ -75,7 +75,6 @@ pico-args = { version = "0.5", features = [
     "short-space-opt",
     "combined-flags",
 ] }
-pp-rs = "0.2.1"
 rspirv = "0.13"
 ron = "0.12"
 rustc-hash = { version = "1.1", default-features = false }

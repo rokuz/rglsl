@@ -1,56 +1,52 @@
 ; SPIR-V
 ; Version: 1.1
 ; Generator: rspirv
-; Bound: 37
+; Bound: 33
 OpCapability Shader
 %1 = OpExtInstImport "GLSL.std.450"
 OpMemoryModel Logical GLSL450
-OpEntryPoint Vertex %31 "main" %29 %8 %10 %11
-OpDecorate %8 Location 0
-OpDecorate %10 Location 1
+OpEntryPoint Vertex %19 "main" %11 %13 %14 %16
 OpDecorate %11 Location 0
-OpDecorate %29 BuiltIn Position
+OpDecorate %13 Location 1
+OpDecorate %14 Location 0
+OpDecorate %9 Block
+OpMemberDecorate %9 0 BuiltIn Position
+OpMemberDecorate %9 1 BuiltIn PointSize
+OpMemberDecorate %9 2 BuiltIn ClipDistance
+OpMemberDecorate %9 3 BuiltIn CullDistance
 %2 = OpTypeVoid
 %3 = OpTypeFloat 32
 %4 = OpTypeVector %3 2
 %5 = OpTypeVector %3 4
-%6 = OpTypeStruct %5
-%7 = OpConstant  %3  1.2
-%9 = OpTypePointer Input %4
-%8 = OpVariable  %9  Input
-%10 = OpVariable  %9  Input
-%12 = OpTypePointer Output %4
-%11 = OpVariable  %12  Output
-%14 = OpTypePointer Private %5
-%15 = OpConstantNull  %5
-%13 = OpVariable  %14  Private %15
-%18 = OpTypeFunction %2
-%19 = OpConstant  %3  0
-%20 = OpConstant  %3  1
-%30 = OpTypePointer Output %5
-%29 = OpVariable  %30  Output
-%17 = OpFunction  %2  None %18
-%16 = OpLabel
-OpBranch %21
-%21 = OpLabel
-%22 = OpLoad  %4  %10
-OpStore %11 %22
-%23 = OpLoad  %4  %8
-%24 = OpVectorTimesScalar  %4  %23 %7
-%25 = OpCompositeExtract  %3  %24 0
-%26 = OpCompositeExtract  %3  %24 1
-%27 = OpCompositeConstruct  %5  %25 %26 %19 %20
-OpStore %13 %27
-OpReturn
-OpFunctionEnd
-%31 = OpFunction  %2  None %18
-%28 = OpLabel
-OpBranch %32
-%32 = OpLabel
-%33 = OpFunctionCall  %2  %17
-%34 = OpLoad  %5  %13
-%35 = OpCompositeConstruct  %6  %34
-%36 = OpCompositeExtract  %5  %35 0
-OpStore %29 %36
+%8 = OpTypeInt 32 0
+%7 = OpConstant  %8  1
+%6 = OpTypeArray %3 %7
+%9 = OpTypeStruct %5 %3 %6 %6
+%10 = OpConstant  %3  1.2
+%12 = OpTypePointer Input %4
+%11 = OpVariable  %12  Input
+%13 = OpVariable  %12  Input
+%15 = OpTypePointer Output %4
+%14 = OpVariable  %15  Output
+%17 = OpTypePointer Output %9
+%16 = OpVariable  %17  Output
+%20 = OpTypeFunction %2
+%21 = OpConstant  %3  0
+%22 = OpConstant  %3  1
+%25 = OpTypePointer Output %5
+%31 = OpConstant  %8  0
+%19 = OpFunction  %2  None %20
+%18 = OpLabel
+OpBranch %23
+%23 = OpLabel
+%24 = OpLoad  %4  %13
+OpStore %14 %24
+%26 = OpLoad  %4  %11
+%27 = OpVectorTimesScalar  %4  %26 %10
+%28 = OpCompositeExtract  %3  %27 0
+%29 = OpCompositeExtract  %3  %27 1
+%30 = OpCompositeConstruct  %5  %28 %29 %21 %22
+%32 = OpAccessChain  %25  %16 %31
+OpStore %32 %30
 OpReturn
 OpFunctionEnd

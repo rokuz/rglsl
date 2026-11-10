@@ -11,7 +11,8 @@ goal, the language rules for linkage and `#include`, and the milestones (M0–M9
 
 | Path | What |
 |---|---|
-| `rglsl/` | the compiler: IR, GLSL frontend (`src/front/glsl`), validator, SPIR-V backend (`src/back/spv`, the only backend) |
+| `rglsl/` | the compiler: IR, GLSL frontend (`src/front/glsl`: lowering of `rglsl-sema`'s analysis to IR), validator, SPIR-V backend (`src/back/spv`, the only backend) |
+| `rglsl-pp/` | GLSL preprocessor: macros, conditionals, `#include`, source map |
 | `rglsl-ast/` | GLSL AST, parser and printer; shared by the compiler frontend and the fuzzer |
 | `rglsl-sema/` | semantic analysis over the AST: scopes, types, built-ins, expression typing, diagnostics |
 | `rglsl-fuzz/` | port of GraphicsFuzz's variant generator (Apache-2.0; see `docs/design/fuzzer.md`) |

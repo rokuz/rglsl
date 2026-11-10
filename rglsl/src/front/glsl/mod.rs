@@ -5,39 +5,20 @@ To begin, take a look at the documentation for the [`Frontend`].
 
 # Supported versions
 ## Vulkan
-- 440 (partial)
 - 450
 - 460
 
 [glsl]: https://www.khronos.org/registry/OpenGL/index_gl.php
 */
 
-pub use ast::{Precision, Profile};
-pub use error::{Error, ErrorKind, ExpectedToken, ParseErrors};
-pub use token::TokenValue;
+pub use error::{Error, ErrorKind, ParseErrors};
 
-use alloc::{string::String, vec::Vec};
+use alloc::string::String;
 
-use crate::{proc::Layouter, FastHashMap, FastHashSet, Handle, Module, ShaderStage, Span, Type};
-use ast::{EntryArg, FunctionDeclaration, GlobalLookup};
-use parser::ParsingContext;
+use crate::{FastHashMap, Module, ShaderStage};
 
-mod ast;
-mod builtins;
-mod context;
 mod error;
-mod functions;
-mod lex;
 mod lower;
-mod offset;
-mod parser;
-#[cfg(test)]
-mod parser_tests;
-mod token;
-mod types;
-mod variables;
-
-type Result<T> = core::result::Result<T, Error>;
 
 /// Per-shader options passed to [`parse`](Frontend::parse).
 ///
@@ -76,14 +57,6 @@ pub struct Options {
     /// locations are not taken into account, so they can overlap automatic
     /// ones.
     pub auto_map_locations: bool,
-    pub pipeline: Pipeline,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Pipeline {
-    #[default]
-    Legacy,
-    Ast,
 }
 
 impl From<ShaderStage> for Options {
@@ -93,64 +66,6 @@ impl From<ShaderStage> for Options {
             defines: FastHashMap::default(),
             auto_map_bindings: false,
             auto_map_locations: false,
-            pipeline: Pipeline::Legacy,
-        }
-    }
-}
-
-/// Additional information about the GLSL shader.
-///
-/// Stores additional information about the GLSL shader which might not be
-/// stored in the shader [`Module`].
-#[derive(Debug)]
-pub struct ShaderMetadata {
-    /// The GLSL version specified in the shader through the use of the
-    /// `#version` preprocessor directive.
-    pub version: u16,
-    /// The GLSL profile specified in the shader through the use of the
-    /// `#version` preprocessor directive.
-    pub profile: Profile,
-    /// The shader stage in the pipeline, passed to the [`parse`](Frontend::parse)
-    /// method via the [`Options`] struct.
-    pub stage: ShaderStage,
-
-    /// The workgroup size for compute shaders, defaults to `[1; 3]` for
-    /// compute shaders and `[0; 3]` for non compute shaders.
-    pub workgroup_size: [u32; 3],
-    /// Whether or not early fragment tests where requested by the shader.
-    /// Defaults to `false`.
-    pub early_fragment_tests: bool,
-
-    /// The shader can request extensions via the
-    /// `#extension` preprocessor directive, in the directive a behavior
-    /// parameter is used to control whether the extension should be disabled,
-    /// warn on usage, enabled if possible or required.
-    ///
-    /// This field only stores extensions which were required or requested to
-    /// be enabled if possible and they are supported.
-    pub extensions: FastHashSet<String>,
-}
-
-impl ShaderMetadata {
-    fn reset(&mut self, stage: ShaderStage) {
-        self.version = 0;
-        self.profile = Profile::Core;
-        self.stage = stage;
-        self.workgroup_size = [u32::from(stage.compute_like()); 3];
-        self.early_fragment_tests = false;
-        self.extensions.clear();
-    }
-}
-
-impl Default for ShaderMetadata {
-    fn default() -> Self {
-        ShaderMetadata {
-            version: 0,
-            profile: Profile::Core,
-            stage: ShaderStage::Vertex,
-            workgroup_size: [0; 3],
-            early_fragment_tests: false,
-            extensions: FastHashSet::default(),
         }
     }
 }
@@ -163,11 +78,6 @@ impl Default for ShaderMetadata {
 ///
 /// To parse a shader simply call the [`parse`](Frontend::parse) method with a
 /// [`Options`] struct and a [`&str`](str) holding the glsl code.
-///
-/// The `Frontend` also provides the [`metadata`](Frontend::metadata) to get some
-/// further information about the previously parsed shader, like version and
-/// extensions used (see the documentation for
-/// [`ShaderMetadata`] to see all the returned information)
 ///
 /// # Example usage
 /// ```rust
@@ -184,107 +94,16 @@ impl Default for ShaderMetadata {
 /// let options = Options::from(ShaderStage::Vertex);
 /// frontend.parse(&options, glsl);
 /// ```
-///
-/// # Reusability
-///
-/// If there's a need to parse more than one shader reusing the same `Frontend`
-/// instance may be beneficial since internal allocations will be reused.
-///
-/// Calling the [`parse`](Frontend::parse) method multiple times will reset the
-/// `Frontend` so no extra care is needed when reusing.
 #[derive(Debug, Default)]
-pub struct Frontend {
-    meta: ShaderMetadata,
-
-    lookup_function: FastHashMap<String, FunctionDeclaration>,
-    lookup_type: FastHashMap<String, Handle<Type>>,
-
-    global_variables: Vec<(String, GlobalLookup)>,
-
-    entry_args: Vec<EntryArg>,
-
-    /// The user-defined stage inputs and outputs, in declaration order: the
-    /// entry point's [`interface`](crate::EntryPoint::interface).
-    interface: Vec<Handle<crate::GlobalVariable>>,
-
-    layouter: Layouter,
-
-    /// `#pragma STDGL invariant(all)` was seen: every stage output declared
-    /// from here on is invariant.
-    invariant_all: bool,
-
-    /// Block members that are booleans in the source and unsigned integers
-    /// in the block's type: (the block's variable, the member's index).
-    block_bools: FastHashSet<(Handle<crate::GlobalVariable>, u32)>,
-
-    /// Automatic bindings and locations; see [`Options::auto_map_bindings`]
-    /// and [`Options::auto_map_locations`].
-    auto_map: variables::AutoMap,
-
-    errors: Vec<Error>,
-}
+#[non_exhaustive]
+pub struct Frontend;
 
 impl Frontend {
-    fn reset(&mut self, stage: ShaderStage) {
-        self.meta.reset(stage);
-
-        self.lookup_function.clear();
-        self.lookup_type.clear();
-        self.global_variables.clear();
-        self.entry_args.clear();
-        self.interface.clear();
-        self.layouter.clear();
-        self.invariant_all = false;
-        self.block_bools.clear();
-        self.auto_map = variables::AutoMap::default();
-    }
-
     /// Parses a shader either outputting a shader [`Module`] or a list of
     /// [`Error`]s.
     ///
     /// Multiple calls using the same `Frontend` and different shaders are supported.
-    pub fn parse(
-        &mut self,
-        options: &Options,
-        source: &str,
-    ) -> core::result::Result<Module, ParseErrors> {
-        self.reset(options.stage);
-        if options.pipeline == Pipeline::Ast {
-            return lower::parse(options, source);
-        }
-        self.auto_map.bindings = options.auto_map_bindings;
-        self.auto_map.locations = options.auto_map_locations;
-
-        let lexer = lex::Lexer::new(source, &options.defines);
-        let mut ctx = ParsingContext::new(lexer);
-
-        match ctx.parse(self) {
-            Ok(mut module) => {
-                self.assign_automatic_bindings(&mut module);
-                self.apply_invariant_all(&mut module);
-                if self.errors.is_empty() {
-                    Ok(module)
-                } else {
-                    Err(core::mem::take(&mut self.errors).into())
-                }
-            }
-            Err(e) => {
-                self.errors.push(e);
-                Err(core::mem::take(&mut self.errors).into())
-            }
-        }
-    }
-
-    /// Returns additional information about the parsed shader which might not
-    /// be stored in the [`Module`], see the documentation for
-    /// [`ShaderMetadata`] for more information about the returned data.
-    ///
-    /// # Notes
-    ///
-    /// Following an unsuccessful parsing the state of the returned information
-    /// is undefined, it might contain only partial information about the
-    /// current shader, the previous shader or both.
-    pub const fn metadata(&self) -> &ShaderMetadata {
-        &self.meta
+    pub fn parse(&mut self, options: &Options, source: &str) -> Result<Module, ParseErrors> {
+        lower::parse(options, source)
     }
 }

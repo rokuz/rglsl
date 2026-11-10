@@ -4,6 +4,7 @@ mod constant;
 mod expression;
 mod function;
 mod globals;
+mod offset;
 mod prepass;
 mod statement;
 mod types;

@@ -1,12 +1,12 @@
 ; SPIR-V
 ; Version: 1.1
 ; Generator: rspirv
-; Bound: 64
+; Bound: 60
 OpCapability Shader
 %1 = OpExtInstImport "GLSL.std.450"
 OpMemoryModel Logical GLSL450
-OpEntryPoint GLCompute %61 "main"
-OpExecutionMode %61 LocalSize 1 1 1
+OpEntryPoint GLCompute %7 "main"
+OpExecutionMode %7 LocalSize 1 1 1
 %2 = OpTypeVoid
 %4 = OpTypeFloat 32
 %3 = OpTypeVector %4 4
@@ -16,79 +16,72 @@ OpExecutionMode %61 LocalSize 1 1 1
 %10 = OpConstantComposite  %3  %9 %9 %9 %9
 %11 = OpConstant  %5  0
 %12 = OpConstant  %5  4
-%13 = OpConstant  %5  1
-%14 = OpConstant  %4  1
-%15 = OpConstantComposite  %3  %14 %14 %14 %14
+%13 = OpConstant  %4  1
+%14 = OpConstantComposite  %3  %13 %13 %13 %13
+%15 = OpConstant  %5  1
 %17 = OpTypePointer Function %3
-%19 = OpTypePointer Function %5
-%21 = OpConstantNull  %3
-%27 = OpTypeInt 32 0
-%28 = OpTypeVector %27 2
-%29 = OpTypePointer Function %28
-%30 = OpTypeBool
-%31 = OpTypeVector %30 2
-%32 = OpConstant  %27  0
-%33 = OpConstantComposite  %28  %32 %32
-%34 = OpConstant  %27  1
-%35 = OpConstant  %27  4294967295
-%36 = OpConstantComposite  %28  %35 %35
+%18 = OpConstantNull  %3
+%20 = OpTypePointer Function %5
+%21 = OpConstantNull  %5
+%23 = OpConstantNull  %3
+%29 = OpTypeInt 32 0
+%30 = OpTypeVector %29 2
+%31 = OpTypePointer Function %30
+%32 = OpTypeBool
+%33 = OpTypeVector %32 2
+%34 = OpConstant  %29  0
+%35 = OpConstantComposite  %30  %34 %34
+%36 = OpConstant  %29  1
+%37 = OpConstant  %29  4294967295
+%38 = OpConstantComposite  %30  %37 %37
 %7 = OpFunction  %2  None %8
 %6 = OpLabel
-%16 = OpVariable  %17  Function %10
-%18 = OpVariable  %19  Function %11
-%20 = OpVariable  %17  Function %21
-%37 = OpVariable  %29  Function %36
-OpBranch %22
-%22 = OpLabel
-OpBranch %23
-%23 = OpLabel
-OpLoopMerge %24 %26 None
-OpBranch %38
-%38 = OpLabel
-%39 = OpLoad  %28  %37
-%40 = OpIEqual  %31  %33 %39
-%41 = OpAll  %30  %40
-OpSelectionMerge %42 None
-OpBranchConditional %41 %24 %42
-%42 = OpLabel
-%43 = OpCompositeExtract  %27  %39 1
-%44 = OpIEqual  %30  %43 %32
-%45 = OpSelect  %27  %44 %34 %32
-%46 = OpCompositeConstruct  %28  %45 %34
-%47 = OpISub  %28  %39 %46
-OpStore %37 %47
+%16 = OpVariable  %17  Function %18
+%19 = OpVariable  %20  Function %21
+%22 = OpVariable  %17  Function %23
+%39 = OpVariable  %31  Function %38
+OpBranch %24
+%24 = OpLabel
+OpStore %16 %10
+OpStore %19 %11
 OpBranch %25
 %25 = OpLabel
-%48 = OpLoad  %5  %18
-%49 = OpSLessThan  %30  %48 %12
-%50 = OpLogicalNot  %30  %49
-OpSelectionMerge %51 None
-OpBranchConditional %50 %52 %51
-%52 = OpLabel
-OpBranch %24
-%51 = OpLabel
-OpBranch %53
-%53 = OpLabel
-OpStore %20 %15
-%55 = OpLoad  %3  %16
-%56 = OpLoad  %3  %20
-%57 = OpFAdd  %3  %55 %56
-OpStore %16 %57
-OpBranch %54
+OpLoopMerge %26 %28 None
+OpBranch %40
+%40 = OpLabel
+%41 = OpLoad  %30  %39
+%42 = OpIEqual  %33  %35 %41
+%43 = OpAll  %32  %42
+OpSelectionMerge %44 None
+OpBranchConditional %43 %26 %44
+%44 = OpLabel
+%45 = OpCompositeExtract  %29  %41 1
+%46 = OpIEqual  %32  %45 %34
+%47 = OpSelect  %29  %46 %36 %34
+%48 = OpCompositeConstruct  %30  %47 %36
+%49 = OpISub  %30  %41 %48
+OpStore %39 %49
+OpBranch %27
+%27 = OpLabel
+%50 = OpLoad  %5  %19
+%51 = OpSLessThan  %32  %50 %12
+%52 = OpLogicalNot  %32  %51
+OpSelectionMerge %53 None
+OpBranchConditional %52 %54 %53
 %54 = OpLabel
 OpBranch %26
+%53 = OpLabel
+OpStore %22 %14
+%55 = OpLoad  %3  %16
+%56 = OpLoad  %3  %22
+%57 = OpFAdd  %3  %55 %56
+OpStore %16 %57
+OpBranch %28
+%28 = OpLabel
+%58 = OpLoad  %5  %19
+%59 = OpIAdd  %5  %58 %15
+OpStore %19 %59
+OpBranch %25
 %26 = OpLabel
-%58 = OpLoad  %5  %18
-%59 = OpIAdd  %5  %58 %13
-OpStore %18 %59
-OpBranch %23
-%24 = OpLabel
-OpReturn
-OpFunctionEnd
-%61 = OpFunction  %2  None %8
-%60 = OpLabel
-OpBranch %62
-%62 = OpLabel
-%63 = OpFunctionCall  %2  %7
 OpReturn
 OpFunctionEnd

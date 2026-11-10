@@ -59,6 +59,19 @@ changelog was dropped; see upstream for the history before the fork.
   with the WGSL frontend before it was removed, so the SPIR-V backend keeps that coverage.
   The 24 snapshots that embedded the WGSL source as debug information lost it.
 
+- **The GLSL frontend's parser and one-pass lowering** (`front/glsl/{lex,token,ast,parser,
+  parser/*,parser_tests,context,functions,builtins,types,variables}.rs`), the
+  `ShaderMetadata`, `Profile`, `Precision`, `TokenValue` and `ExpectedToken` types,
+  `Frontend::metadata`, the `ErrorKind` variants only that parser produced, and the `pp-rs`
+  dependency. The frontend is now `rglsl-pp` → `rglsl-ast` → `rglsl-sema` →
+  `front/glsl/lower` (`docs/design/lowering.md`). Kept from upstream: `Options` (with
+  `Options::from(stage)`), `Frontend::parse`, `Error`, `ErrorKind` (`Unsupported`, `Syntax`,
+  `SemanticError`, `InternalError`), `ParseErrors` with its emitters, and the block layout
+  computation of `offset.rs` (now `front/glsl/lower/offset.rs`).
+- Upstream's GLSL snapshot inputs without a `#version`, or with `#version 440`, now declare
+  `#version 450`; `declarations.frag` (a fragment output block, which GLSL rejects) was
+  deleted.
+
 ## Deviations from upstream behaviour
 
 Changes to shared code (IR, validator, SPIR-V backend) that make it differ from naga.
@@ -97,6 +110,9 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   column per component of `r`, as in GLSL and SPIR-V; upstream had them swapped
   (`proc/overloads/mathfunction.rs`).
 - **Default interpolation keeps an explicit sampling** (`front/interpolator.rs`).
+- **Cull distances are supported by the SPIR-V backend** (`Capabilities::CULL_DISTANCE` is in
+  `back::spv::supported_capabilities`): every vertex shader declares `gl_PerVertex` with
+  `gl_CullDistance`, as glslang does.
 
 ## Cherry-picked upstream commits
 

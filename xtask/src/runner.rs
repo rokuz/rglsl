@@ -22,7 +22,6 @@ pub struct Options {
     pub jobs: Option<usize>,
     pub timeout_secs: u64,
     pub write_progress: bool,
-    pub pipeline: String,
 }
 
 /// What glslang did with a shader.
@@ -173,7 +172,7 @@ pub fn run(root: &Path, options: Options) -> Result<()> {
             scope.spawn(|| loop {
                 let index = next.fetch_add(1, Ordering::Relaxed);
                 let Some(case) = cases.get(index) else { break };
-                match run_case(&env, &self_exe, &work_dir, case, timeout, &options.pipeline) {
+                match run_case(&env, &self_exe, &work_dir, case, timeout) {
                     Ok(result) => results.lock().unwrap()[index] = Some(result),
                     Err(err) => errors.lock().unwrap().push(err.context(case.name.clone())),
                 }
@@ -217,7 +216,6 @@ fn run_case(
     work_dir: &Path,
     case: &Case,
     timeout: Duration,
-    pipeline: &str,
 ) -> Result<CaseResult> {
     let oracle = run_oracle(env, work_dir, case, timeout)?;
 
@@ -230,7 +228,6 @@ fn run_case(
             "--spv",
             &format!("{}.{}", case.target.spirv.0, case.target.spirv.1),
         ])
-        .args(["--pipeline", pipeline])
         .arg("--out")
         .arg(&out);
     if case.target.automap {

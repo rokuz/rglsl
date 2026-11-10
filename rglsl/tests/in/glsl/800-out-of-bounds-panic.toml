@@ -1,1 +1,1 @@
-capabilities = "IMMEDIATES"
+capabilities = "IMMEDIATES | CLIP_DISTANCES | CULL_DISTANCE"

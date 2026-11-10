@@ -1,4 +1,4 @@
-#version 440 core
+#version 450
 precision mediump float;
 
 // WGSL doesn't have 1D depth, 1D array or 2D multisampled array textures.

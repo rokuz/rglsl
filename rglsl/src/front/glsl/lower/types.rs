@@ -6,9 +6,8 @@ use rglsl_sema::types::{
     StructId, TextureDimension, Type as GlslType, TypeKind,
 };
 
+use super::offset::{calculate_offset, TypeAlignSpan};
 use super::{internal, unsupported, Lowerer, Packing, Result};
-use crate::front::glsl::ast::StructLayout;
-use crate::front::glsl::offset::calculate_offset;
 use crate::{
     proc::Alignment, ArraySize, Handle, ImageClass, ImageDimension, Scalar, ScalarKind, Span,
     StructMember, Type, TypeInner, VectorSize,
@@ -258,16 +257,12 @@ impl Lowerer<'_> {
         packing: Packing,
         row_major: bool,
         span: Span,
-    ) -> Result<crate::front::glsl::offset::TypeAlignSpan> {
-        let layout = match packing {
-            Packing::Std140 => StructLayout::Std140,
-            Packing::Std430 => StructLayout::Std430,
-        };
+    ) -> Result<TypeAlignSpan> {
         let mut errors = Vec::new();
         let info = calculate_offset(
             ty,
             span,
-            layout,
+            packing,
             row_major,
             &mut self.module.types,
             &mut errors,
