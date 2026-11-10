@@ -129,13 +129,6 @@ impl fmt::Debug for DiagnosticDebug<(&Conclusion, &UniqueArena<ir::Type>)> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let (conclusion, ctx) = self.0;
 
-        #[cfg(feature = "wgsl-in")]
-        {
-            use crate::common::wgsl::TypeContext;
-            ctx.write_type_conclusion(conclusion, f)?;
-        }
-
-        #[cfg(not(feature = "wgsl-in"))]
         {
             let _ = ctx;
             write!(f, "{conclusion:?}")?;

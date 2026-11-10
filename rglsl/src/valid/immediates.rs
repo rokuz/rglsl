@@ -187,10 +187,39 @@ mod tests {
 
     #[test]
     fn from_type_excludes_struct_padding() {
-        let module = crate::front::wgsl::parse_str("struct S { a: f32, b: vec4<f32> }").unwrap();
-        let struct_ty = (module.types.iter().map(|ty| ty.1))
-            .find(|ty| ty.name.as_deref() == Some("S"))
-            .unwrap();
+        // struct S { a: f32, b: vec4<f32> }, laid out with `b` aligned to 16.
+        let mut module = crate::Module::default();
+        let mut add = |name: Option<&str>, inner| {
+            module.types.insert(
+                crate::Type {
+                    name: name.map(Into::into),
+                    inner,
+                },
+                crate::Span::UNDEFINED,
+            )
+        };
+        let float = add(None, crate::TypeInner::Scalar(crate::Scalar::F32));
+        let vec4 = add(
+            None,
+            crate::TypeInner::Vector {
+                size: crate::VectorSize::Quad,
+                scalar: crate::Scalar::F32,
+            },
+        );
+        let member = |name: &str, ty, offset| crate::StructMember {
+            name: Some(name.into()),
+            ty,
+            binding: None,
+            offset,
+        };
+        let s = add(
+            Some("S"),
+            crate::TypeInner::Struct {
+                members: alloc::vec![member("a", float, 0), member("b", vec4, 16)],
+                span: 32,
+            },
+        );
+        let struct_ty = &module.types[s];
         let slots = ImmediateSlots::from_type(&struct_ty.inner, 0, &module.types, module.to_ctx());
         assert_eq!(slots, ImmediateSlots::from_raw(0b1111_0001));
     }

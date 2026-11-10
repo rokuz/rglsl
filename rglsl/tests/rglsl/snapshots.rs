@@ -175,31 +175,27 @@ fn write_output_spv_inner(
     input.write_output_file("spv", extension, dis, DIR_OUT);
 }
 
+/// Compiles the serialized IR modules in `tests/in/ir`.
+///
+/// These inputs are upstream's WGSL snapshot inputs, parsed by the WGSL
+/// frontend this project no longer has. They keep the SPIR-V backend and the
+/// validator covered for IR that the GLSL frontend does not produce yet.
 // While we _can_ run this test under miri, it is extremely slow (>5 minutes),
-// and rglsl isn't the primary target for miri testing, so we disable it.
+// so we disable it.
 #[cfg_attr(miri, ignore)]
 #[test]
-fn convert_snapshots_wgsl() {
+fn convert_snapshots_ir() {
     let _ = env_logger::try_init();
 
-    for input in Input::files_in_dir("wgsl", &["wgsl"], DIR_IN) {
+    for input in Input::files_in_dir("ir", &["ron"], DIR_IN) {
         let source = input.read_source(DIR_IN, true);
-        // crlf will make the large split output different on different platform
-        let source = source.replace('\r', "");
-
-        let params = input.read_parameters(DIR_IN);
-
-        let mut frontend = rglsl::front::wgsl::Frontend::new_with_options((&params.wgsl_in).into());
-        match frontend.parse(&source) {
-            Ok(mut module) => check_targets(&input, &mut module, Some(&source)),
-            Err(e) => panic!(
-                "{}",
-                e.emit_to_string_with_path(
-                    &source,
-                    &input.input_path(DIR_IN).display().to_string()
-                )
-            ),
-        }
+        let mut module: rglsl::Module = ron::de::from_str(&source).unwrap_or_else(|error| {
+            panic!(
+                "{}: not a serialized module: {error}",
+                input.input_path(DIR_IN).display()
+            )
+        });
+        check_targets(&input, &mut module, None);
     }
 }
 

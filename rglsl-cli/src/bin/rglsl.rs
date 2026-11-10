@@ -64,7 +64,7 @@ struct Args {
     #[argh(option)]
     shader_stage: Option<ShaderStage>,
 
-    /// the kind of input, e.g. 'glsl', 'wgsl', 'spv', or 'bin'.
+    /// the kind of input: 'glsl', 'spv', or 'bin'.
     #[argh(option)]
     input_kind: Option<InputKind>,
 
@@ -243,7 +243,6 @@ enum InputKind {
     Bincode,
     Glsl,
     SpirV,
-    Wgsl,
 }
 impl FromStr for InputKind {
     type Err = anyhow::Error;
@@ -253,7 +252,6 @@ impl FromStr for InputKind {
             "bin" => InputKind::Bincode,
             "glsl" => InputKind::Glsl,
             "spv" => InputKind::SpirV,
-            "wgsl" => InputKind::Wgsl,
             _ => return Err(anyhow!("Invalid value for --input-kind: {s}")),
         })
     }
@@ -667,29 +665,6 @@ fn parse_input(input_path: &Path, input: Vec<u8>, params: &Parameters) -> anyhow
             input_text: None,
             language: rglsl::back::spv::SourceLanguage::Unknown,
         },
-        InputKind::Wgsl => {
-            let input = String::from_utf8(input)?;
-            let options = rglsl::front::wgsl::Options {
-                parse_doc_comments: false,
-                capabilities: params.capabilities,
-            };
-            let mut frontend = rglsl::front::wgsl::Frontend::new_with_options(options);
-            let result = frontend.parse(&input);
-            match result {
-                Ok(v) => Parsed {
-                    module: v,
-                    input_text: Some(input),
-                    language: rglsl::back::spv::SourceLanguage::WGSL,
-                },
-                Err(ref e) => {
-                    let message = anyhow!(
-                        "Could not parse WGSL:\n{}",
-                        e.emit_to_string_with_path(&input, &input_path.display().to_string())
-                    );
-                    return Err(message);
-                }
-            }
-        }
         InputKind::Glsl => {
             let shader_stage = match params.shader_stage.or(extension_stage) {
                 Some(shader_stage) => shader_stage,

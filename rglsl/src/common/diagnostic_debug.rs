@@ -1,8 +1,5 @@
 //! Displaying rglsl IR terms in debugging output.
 
-#[cfg(feature = "wgsl-in")]
-use crate::common::wgsl::TypeContext;
-
 use crate::proc::TypeResolution;
 use crate::{Handle, Scalar, Type, TypeInner, UniqueArena};
 
@@ -22,10 +19,6 @@ impl fmt::Debug for DiagnosticDebug<(Handle<Type>, &UniqueArena<Type>)> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let (handle, ctx) = self.0;
 
-        #[cfg(feature = "wgsl-in")]
-        ctx.write_type(handle, f)?;
-
-        #[cfg(not(feature = "wgsl-in"))]
         {
             let _ = ctx;
             write!(f, "{handle:?}")?;
@@ -39,10 +32,6 @@ impl fmt::Debug for DiagnosticDebug<(&TypeInner, &UniqueArena<Type>)> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let (inner, ctx) = self.0;
 
-        #[cfg(feature = "wgsl-in")]
-        ctx.write_type_inner(inner, f)?;
-
-        #[cfg(not(feature = "wgsl-in"))]
         {
             let _ = ctx;
             write!(f, "{inner:?}")?;
@@ -56,10 +45,6 @@ impl fmt::Debug for DiagnosticDebug<(&TypeResolution, &UniqueArena<Type>)> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let (resolution, ctx) = self.0;
 
-        #[cfg(feature = "wgsl-in")]
-        ctx.write_type_resolution(resolution, f)?;
-
-        #[cfg(not(feature = "wgsl-in"))]
         {
             let _ = ctx;
             write!(f, "{resolution:?}")?;
@@ -73,12 +58,6 @@ impl fmt::Debug for DiagnosticDebug<Scalar> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let scalar = self.0;
 
-        #[cfg(feature = "wgsl-in")]
-        f.write_str(&crate::common::wgsl::TryToWgsl::to_wgsl_for_diagnostics(
-            scalar,
-        ))?;
-
-        #[cfg(not(feature = "wgsl-in"))]
         write!(f, "{scalar:?}")?;
 
         Ok(())

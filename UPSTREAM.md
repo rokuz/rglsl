@@ -52,6 +52,15 @@ changelog was dropped; see upstream for the history before the fork.
 - `naga-cli`: the output formats and options of the removed backends. `naga-xtask`: every
   `validate` subcommand except `spv`.
 
+- **The WGSL frontend** (`front/wgsl`, the `wgsl-in` feature), the shared WGSL helpers
+  (`common/wgsl`, `keywords`), its fuzz target and its tests (`wgsl_errors.rs`, the
+  WGSL-based tests in `validation.rs` and `spirv_capabilities.rs`). The validator and the
+  constant evaluator still contain WGSL-shaped rules and abstract types; they are removed as
+  they get in the way.
+- Upstream's 165 WGSL snapshot inputs were converted to serialized IR (`rglsl/tests/in/ir/*.ron`)
+  with the WGSL frontend before it was removed, so the SPIR-V backend keeps that coverage.
+  The 24 snapshots that embedded the WGSL source as debug information lost it.
+
 ## Deviations from upstream behaviour
 
 Changes to shared code (IR, validator, SPIR-V backend) that make it differ from naga.

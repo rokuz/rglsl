@@ -22,7 +22,6 @@ test = false
 
 [dependencies]
 rglsl = { workspace = true, features = [
-    "wgsl-in",
     "glsl-in",
     "spv-in",
     "spv-out",

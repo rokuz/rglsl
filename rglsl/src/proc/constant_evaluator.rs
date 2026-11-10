@@ -21,9 +21,6 @@ use crate::{
     ScalarKind, Span, Type, TypeInner, UnaryOperator,
 };
 
-#[cfg(feature = "wgsl-in")]
-use crate::common::wgsl::TryToWgsl;
-
 /// A macro that allows dollar signs (`$`) to be emitted by other macros. Useful for generating
 /// `macro_rules!` items that, in turn, emit their own `macro_rules!` items.
 ///
@@ -2383,10 +2380,6 @@ impl<'a> ConstantEvaluator<'a> {
         let make_error = || -> Result<_, ConstantEvaluatorError> {
             let from = format!("{:?} {:?}", expr, self.expressions[expr]);
 
-            #[cfg(feature = "wgsl-in")]
-            let to = target.to_wgsl_for_diagnostics();
-
-            #[cfg(not(feature = "wgsl-in"))]
             let to = format!("{target:?}");
 
             Err(ConstantEvaluatorError::InvalidCastArg { from, to })

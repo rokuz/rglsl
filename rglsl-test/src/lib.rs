@@ -78,20 +78,6 @@ pub struct WriterSharedOptions {
 
 #[derive(Debug, Default, serde::Deserialize)]
 #[serde(default)]
-pub struct WgslInParameters {
-    pub parse_doc_comments: bool,
-}
-impl From<&WgslInParameters> for rglsl::front::wgsl::Options {
-    fn from(value: &WgslInParameters) -> Self {
-        Self {
-            parse_doc_comments: value.parse_doc_comments,
-            capabilities: rglsl::valid::Capabilities::all(),
-        }
-    }
-}
-
-#[derive(Debug, Default, serde::Deserialize)]
-#[serde(default)]
 pub struct SpirvInParameters {
     pub adjust_coordinate_space: bool,
 }
@@ -184,10 +170,6 @@ pub struct Parameters {
     // Capabilities to enable. Defaults to `Capabilities::default()`.
     pub capabilities: Option<rglsl::valid::Capabilities>,
 
-    // -- wgsl-in options --
-    #[serde(rename = "wgsl-in")]
-    pub wgsl_in: WgslInParameters,
-
     // -- spirv-in options --
     #[serde(rename = "spv-in")]
     pub spv_in: SpirvInParameters,
@@ -219,8 +201,7 @@ fn default_task_limits() -> Option<rglsl::back::TaskDispatchLimits> {
 pub struct Input {
     /// The subdirectory of `tests/in` to which this input belongs, if any.
     ///
-    /// If the subdirectory is omitted, we assume that the output goes
-    /// to "wgsl".
+    /// Output file names are prefixed with it.
     pub subdirectory: PathBuf,
 
     /// The input filename name, without a directory.
@@ -230,8 +211,8 @@ pub struct Input {
     /// `file_name`'s existing extension, rather than replacing it.
     ///
     /// This is used by `convert_snapshots_glsl`, which wants to take input files
-    /// like `210-bevy-2d-shader.frag` and just add `.wgsl` to it, producing
-    /// `210-bevy-2d-shader.frag.wgsl`.
+    /// like `210-bevy-2d-shader.frag` and just add `.spvasm` to it, producing
+    /// `210-bevy-2d-shader.frag.spvasm`.
     pub keep_input_extension: bool,
 }
 
@@ -406,7 +387,7 @@ impl Input {
                 .to_str()
                 .unwrap()
             {
-                "wgsl" | "spvasm" | "vert" | "frag" | "comp" => {
+                "ron" | "spvasm" | "vert" | "frag" | "comp" => {
                     params.targets = Some(Targets::default_targets())
                 }
                 e => {

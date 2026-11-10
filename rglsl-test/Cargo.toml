@@ -20,7 +20,6 @@ rglsl = { workspace = true, features = [
     "glsl-in",
     "spv-in",
     "spv-out",
-    "wgsl-in",
 ] }
 spirv = { workspace = true, features = ["deserialize"] }
 ron.workspace = true

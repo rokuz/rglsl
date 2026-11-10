@@ -8,8 +8,8 @@ fn words_to_bytes(words: &[u32]) -> Vec<u8> {
 
 #[test]
 fn atomic_compare_exchange_roundtrip_to_spirv() {
-    let source = include_str!("../in/wgsl/atomicCompareExchange.wgsl");
-    let module = rglsl::front::wgsl::parse_str(source).unwrap();
+    let source = include_str!("../in/ir/atomicCompareExchange.ron");
+    let module: rglsl::Module = ron::de::from_str(source).unwrap();
 
     let mut validator = rglsl::valid::Validator::new(
         rglsl::valid::ValidationFlags::all(),

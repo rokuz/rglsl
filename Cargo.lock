@@ -544,7 +544,6 @@ dependencies = [
  "spirv",
  "strum",
  "thiserror",
- "unicode-ident",
  "walkdir",
 ]
 

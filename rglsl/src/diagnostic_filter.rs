@@ -4,10 +4,6 @@ use alloc::boxed::Box;
 
 use crate::{Arena, Handle};
 
-#[cfg(feature = "wgsl-in")]
-use crate::FastIndexMap;
-#[cfg(feature = "wgsl-in")]
-use crate::Span;
 #[cfg(feature = "arbitrary")]
 use arbitrary::Arbitrary;
 #[cfg(feature = "deserialize")]
@@ -100,112 +96,6 @@ impl StandardFilterableTriggeringRule {
 pub struct DiagnosticFilter {
     pub new_severity: Severity,
     pub triggering_rule: FilterableTriggeringRule,
-}
-
-/// Determines whether [`DiagnosticFilterMap::add`] should consider full duplicates a conflict.
-///
-/// In WGSL, directive position does not consider this case a conflict, while attribute position
-/// does.
-#[cfg(feature = "wgsl-in")]
-pub(crate) enum ShouldConflictOnFullDuplicate {
-    /// Use this for attributes in WGSL.
-    Yes,
-    /// Use this for directives in WGSL.
-    No,
-}
-
-/// A map from diagnostic filters to their severity and span.
-///
-/// Front ends can use this to collect the set of filters applied to a
-/// particular language construct, and detect duplicate/conflicting filters.
-///
-/// For example, WGSL has global diagnostic filters that apply to the entire
-/// module, and diagnostic range filter attributes that apply to a specific
-/// function, statement, or other smaller construct. The set of filters applied
-/// to any given construct must not conflict, but they can be overridden by
-/// filters on other constructs nested within it. A front end can use a
-/// `DiagnosticFilterMap` to collect the filters applied to a single construct,
-/// using the [`add`] method's error checking to forbid conflicts.
-///
-/// For each filter it contains, a `DiagnosticFilterMap` records the requested
-/// severity, and the source span of the filter itself.
-///
-/// [`add`]: DiagnosticFilterMap::add
-#[derive(Clone, Debug, Default)]
-#[cfg(feature = "wgsl-in")]
-pub(crate) struct DiagnosticFilterMap(FastIndexMap<FilterableTriggeringRule, (Severity, Span)>);
-
-#[cfg(feature = "wgsl-in")]
-impl DiagnosticFilterMap {
-    pub(crate) fn new() -> Self {
-        Self::default()
-    }
-
-    /// Add the given `diagnostic_filter` parsed at the given `span` to this map.
-    pub(crate) fn add(
-        &mut self,
-        diagnostic_filter: DiagnosticFilter,
-        span: Span,
-        should_conflict_on_full_duplicate: ShouldConflictOnFullDuplicate,
-    ) -> Result<(), ConflictingDiagnosticRuleError> {
-        use indexmap::map::Entry;
-
-        let &mut Self(ref mut diagnostic_filters) = self;
-        let DiagnosticFilter {
-            new_severity,
-            triggering_rule,
-        } = diagnostic_filter;
-
-        match diagnostic_filters.entry(triggering_rule.clone()) {
-            Entry::Vacant(entry) => {
-                entry.insert((new_severity, span));
-            }
-            Entry::Occupied(entry) => {
-                let &(first_severity, first_span) = entry.get();
-                let should_conflict_on_full_duplicate = match should_conflict_on_full_duplicate {
-                    ShouldConflictOnFullDuplicate::Yes => true,
-                    ShouldConflictOnFullDuplicate::No => false,
-                };
-                if first_severity != new_severity || should_conflict_on_full_duplicate {
-                    return Err(ConflictingDiagnosticRuleError {
-                        triggering_rule_spans: [first_span, span],
-                    });
-                }
-            }
-        }
-        Ok(())
-    }
-
-    /// Were any rules specified?
-    pub(crate) fn is_empty(&self) -> bool {
-        let &Self(ref map) = self;
-        map.is_empty()
-    }
-
-    /// Returns the spans of all contained rules.
-    pub(crate) fn spans(&self) -> impl Iterator<Item = Span> + '_ {
-        let &Self(ref map) = self;
-        map.iter().map(|(_, &(_, span))| span)
-    }
-}
-
-#[cfg(feature = "wgsl-in")]
-impl IntoIterator for DiagnosticFilterMap {
-    type Item = (FilterableTriggeringRule, (Severity, Span));
-
-    type IntoIter = indexmap::map::IntoIter<FilterableTriggeringRule, (Severity, Span)>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        let Self(this) = self;
-        this.into_iter()
-    }
-}
-
-/// An error returned by [`DiagnosticFilterMap::add`] when it encounters conflicting rules.
-#[cfg(feature = "wgsl-in")]
-#[derive(Clone, Debug)]
-pub(crate) struct ConflictingDiagnosticRuleError {
-    pub triggering_rule_spans: [Span; 2],
 }
 
 /// Represents a single parent-linking node in a tree of [`DiagnosticFilter`]s backed by a

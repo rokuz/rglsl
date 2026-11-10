@@ -79,7 +79,6 @@ spirv = "0.4"
 strum = { version = "0.28", default-features = false, features = ["derive"] }
 toml = "1.0.0"
 thiserror = { version = "2.0.12", default-features = false }
-unicode-ident = "1.0.5"
 walkdir = "2.3"
 which = "8"
 

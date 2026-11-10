@@ -16,7 +16,7 @@ libfuzzer-sys.workspace = true
 
 [target.'cfg(not(any(target_arch = "wasm32", target_os = "ios", target_os = "visionos")))'.dependencies.rglsl]
 workspace = true
-features = ["arbitrary", "spv-in", "wgsl-in", "glsl-in"]
+features = ["arbitrary", "spv-in", "glsl-in"]
 
 [build-dependencies]
 cfg_aliases.workspace = true
@@ -24,13 +24,6 @@ cfg_aliases.workspace = true
 [[bin]]
 name = "spv_parser"
 path = "fuzz_targets/spv_parser.rs"
-bench = false
-test = false
-doc = false
-
-[[bin]]
-name = "wgsl_parser"
-path = "fuzz_targets/wgsl_parser.rs"
 bench = false
 test = false
 doc = false

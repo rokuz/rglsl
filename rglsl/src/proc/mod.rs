@@ -498,10 +498,7 @@ impl GlobalCtx<'_> {
     /// This currently only evaluates scalar expressions. If adding support for vectors,
     /// consider changing `valid::expression::validate_constant_shift_amounts` to use that
     /// support.
-    #[cfg_attr(
-        not(any(feature = "glsl-in", feature = "spv-in", feature = "wgsl-in")),
-        allow(dead_code)
-    )]
+    #[cfg_attr(not(any(feature = "glsl-in", feature = "spv-in")), allow(dead_code))]
     pub(super) fn get_const_val<T, E>(
         &self,
         handle: crate::Handle<crate::Expression>,

@@ -42,7 +42,6 @@ arbitrary = [
 ]
 spv-in = ["dep:petgraph", "petgraph/graphmap", "dep:spirv"]
 spv-out = ["dep:spirv"]
-wgsl-in = ["dep:unicode-ident"]
 
 ## Enables colored output through codespan-reporting and termcolor.
 termcolor = ["codespan-reporting/termcolor"]
@@ -74,7 +73,6 @@ thiserror.workspace = true
 serde = { workspace = true, features = ["alloc", "derive"], optional = true }
 petgraph = { workspace = true, optional = true }
 pp-rs = { workspace = true, optional = true }
-unicode-ident = { workspace = true, optional = true }
 
 [build-dependencies]
 cfg_aliases.workspace = true
