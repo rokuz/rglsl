@@ -334,6 +334,27 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   its handle; an abstract scalar reaching a type or constant declaration makes
   `Writer::write` fail. `process_overrides` reports the new `PipelineConstantError` variants
   `UnresolvedOverride` and `InvalidOverrideType` instead of panicking.
+- **Ray tracing in SPIR-V shape** ([docs/design/ray-tracing.md](docs/design/ray-tracing.md)).
+  `ShaderStage::{Intersection, Callable}` and `ShaderStage::ray_tracing`; address spaces
+  `HitAttribute`, `CallableData`, `IncomingCallableData`, `ShaderRecord`; payload and callable
+  data locations in `GlobalVariable::io`. `RayPipelineFunction::TraceRay` takes the ten operands
+  of `OpTraceRayKHR`, an optional motion `time` and a `RayTracingData` (payload pointer or NV
+  location) instead of a `RayDesc`; new `ExecuteCallable`, `ReportIntersection` (with
+  `Expression::ReportIntersectionResult`), `IgnoreIntersection` and `TerminateRay` (block
+  terminators unless `nv`). `RayQueryFunction::Initialize` takes the six ray operands instead of a
+  `RayDesc`; `Expression::RayQueryGetIntersection` and `RayQueryVertexPositions` are replaced by
+  `RayQueryGet { query, value: RayQueryValue }`, and the `RayQueryIntersection` enum is removed.
+  `Expression::AccelerationStructureFromAddress`, `BuiltIn::{InstanceId, IncomingRayFlags,
+  CullMask, HitTriangleVertexPositions, CurrentRayTime}`, `Module::ray_tracing:
+  RayTracingFeatures` and `EntryPoint::opacity_micromap` are new. The SPIR-V backend writes the
+  instructions directly: the ray query state tracking, the trace argument validation, their
+  helper functions and the options `ray_query_initialization_tracking`,
+  `trace_ray_argument_validation`, `PRINT_ON_RAY_QUERY_INITIALIZATION_FAIL` and
+  `PRINT_ON_TRACE_RAYS_FAIL` are removed, with the WGSL-converted ray snapshot tests. The
+  validator drops the WGSL rule that every trace uses one payload type, accepts ray queries in
+  `Private` globals and pointer parameters, and checks the operand types of every ray instruction.
+  Without the Vulkan memory model only `coherent` and `volatile` decorate `Coherent`, as glslang's
+  `TranslateMemoryDecoration` (the scoped coherence qualifiers did before).
 
 ## Cherry-picked upstream commits
 

@@ -57,3 +57,28 @@ impl Writer {
         Ok(())
     }
 }
+
+const OPACITY_MICROMAP_ID: spirv::Word = 6031;
+const OPACITY_MICROMAP_EXECUTION_MODE: spirv::Word = 6032;
+
+impl Writer {
+    pub(super) fn write_opacity_micromap_mode(
+        &mut self,
+        function_id: spirv::Word,
+        entry_point: &crate::EntryPoint,
+    ) -> Result<(), Error> {
+        let Some(enable) = entry_point.opacity_micromap else {
+            return Ok(());
+        };
+        let enable = self.written(enable)?;
+        self.raw_capabilities
+            .insert(OPACITY_MICROMAP_EXECUTION_MODE);
+        self.use_extension("SPV_KHR_opacity_micromap");
+        let mut instruction = super::Instruction::new(spirv::Op::ExecutionModeId);
+        instruction.add_operand(function_id);
+        instruction.add_operand(OPACITY_MICROMAP_ID);
+        instruction.add_operand(enable);
+        instruction.to_words(&mut self.logical_layout.execution_modes);
+        Ok(())
+    }
+}

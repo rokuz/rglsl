@@ -297,6 +297,9 @@ fn process_workgroup_size_override(
     adjusted_global_expressions: &HandleVec<Expression, Handle<Expression>>,
     ep: &mut crate::EntryPoint,
 ) -> Result<(), PipelineConstantError> {
+    if let Some(ref mut enable) = ep.opacity_micromap {
+        *enable = adjusted_global_expressions[*enable];
+    }
     match ep.workgroup_size_overrides {
         None => {}
         Some(overrides) => {

@@ -255,6 +255,9 @@ impl super::Validator {
                     validate_const_expr(size)?;
                 }
             }
+            if let Some(enable) = entry_point.opacity_micromap {
+                validate_const_expr(enable)?;
+            }
             for &variable in &entry_point.interface {
                 Self::validate_global_variable_handle(variable, global_variables)?;
             }

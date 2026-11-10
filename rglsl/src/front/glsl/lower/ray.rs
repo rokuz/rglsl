@@ -576,3 +576,67 @@ impl FunctionLowerer<'_, '_> {
         self.add(Expression::AccelerationStructureFromAddress { address }, at)
     }
 }
+
+impl Lowerer<'_> {
+    pub(super) fn builtin_override(
+        &mut self,
+        symbol: SymbolId,
+        variable: &rglsl_sema::scope::Variable,
+        at: Span,
+    ) -> Result<Option<GlobalRef>> {
+        let Some(id) = variable
+            .qualifiers
+            .layout_entry("constant_id")
+            .and_then(|entry| entry.value)
+        else {
+            return Ok(None);
+        };
+        let id =
+            u32::try_from(id).map_err(|_| semantic("the `constant_id` is out of range", at))?;
+        let name = self.symbol(symbol).map(|symbol| symbol.name.clone());
+        let values = variable
+            .value
+            .as_ref()
+            .map(|value| value.values.clone())
+            .unwrap_or_default();
+        let ty = self.ir_type(&variable.ty, at)?;
+        let init = self.global_constant(&variable.ty, &values, at)?;
+        let handle = self.module.overrides.append(
+            crate::Override {
+                name,
+                id: Some(id),
+                ty,
+                init: Some(init),
+            },
+            at,
+        );
+        let found = GlobalRef::Override(handle);
+        self.globals.insert(symbol, found);
+        Ok(Some(found))
+    }
+
+    pub(super) fn opacity_micromap(&mut self, at: Span) -> Result<Option<Handle<Expression>>> {
+        if !self
+            .analysis
+            .extensions
+            .contains("GL_EXT_opacity_micromap_ray_query_mode")
+        {
+            return Ok(None);
+        }
+        let analysis = self.analysis;
+        let Some(symbol) = analysis
+            .builtins
+            .variables()
+            .find(|&(name, _)| name == "gl_EnableOpacityMicromapEXT")
+            .map(|(_, symbol)| symbol)
+        else {
+            return Ok(None);
+        };
+        let expression = match self.global_ref(symbol, at)? {
+            GlobalRef::Constant(handle) => Expression::Constant(handle),
+            GlobalRef::Override(handle) => Expression::Override(handle),
+            GlobalRef::Variable(_) => return Err(internal(at)),
+        };
+        Ok(Some(self.module.global_expressions.append(expression, at)))
+    }
+}

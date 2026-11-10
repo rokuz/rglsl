@@ -236,18 +236,18 @@ impl Analyzer<'_> {
         matches!(ty.kind, TypeKind::Opaque(opaque) if opaque.kind == OpaqueKind::RayQuery)
     }
 
-    pub(crate) fn acceleration_structure_constructor(&mut self, operands: &[Operand]) -> bool {
+    pub(crate) fn acceleration_structure_constructor(operands: &[Operand]) -> bool {
         match operands {
             [operand] => {
                 !operand.ty.is_array()
-                    && match operand.ty.kind {
-                        TypeKind::Scalar(Scalar::Uint64) => true,
-                        TypeKind::Vector {
-                            scalar: Scalar::Uint,
-                            size: 2,
-                        } => true,
-                        _ => false,
-                    }
+                    && matches!(
+                        operand.ty.kind,
+                        TypeKind::Scalar(Scalar::Uint64)
+                            | TypeKind::Vector {
+                                scalar: Scalar::Uint,
+                                size: 2,
+                            }
+                    )
             }
             _ => false,
         }
@@ -401,5 +401,92 @@ impl Analyzer<'_> {
                 },
             );
         }
+    }
+}
+
+pub(crate) const ENABLE_OPACITY_MICROMAP: &str = "gl_EnableOpacityMicromapEXT";
+
+impl Analyzer<'_> {
+    pub(crate) fn opacity_micromap_specialization(
+        &mut self,
+        span: Span,
+        qualifiers: &Qualifiers,
+        identifier: &str,
+    ) -> bool {
+        if identifier != ENABLE_OPACITY_MICROMAP {
+            return false;
+        }
+        let Some(id) = self.redeclared_opacity_micromap() else {
+            return false;
+        };
+        let entry = qualifiers.layout_entry("constant_id").cloned();
+        let valid = entry.is_some()
+            && qualifiers.storage == Storage::None
+            && !qualifiers.constant
+            && qualifiers.layout.len() == 1;
+        if !valid {
+            self.opacity_micromap_error(span);
+            return true;
+        }
+        if let Some(crate::scope::SymbolKind::Variable(variable)) =
+            self.symbol_mut(id).map(|symbol| &mut symbol.kind)
+        {
+            variable.qualifiers.specialization = true;
+            variable.qualifiers.layout.extend(entry);
+        }
+        true
+    }
+
+    pub(crate) fn opacity_micromap_constant(
+        &mut self,
+        span: Span,
+        qualifiers: &Qualifiers,
+        ty: &Type,
+        value: Option<&Constant>,
+    ) -> Option<crate::scope::SymbolId> {
+        let id = self.redeclared_opacity_micromap()?;
+        if qualifiers.has_layout("constant_id") {
+            self.error(
+                span,
+                DiagnosticKind::InvalidQualifier {
+                    qualifier: ENABLE_OPACITY_MICROMAP,
+                    reason: "cannot restate the type or specify a value with constant_id; use `layout(constant_id = N) gl_EnableOpacityMicromapEXT;`",
+                },
+            );
+            return Some(id);
+        }
+        let value = value.filter(|_| {
+            qualifiers.constant && qualifiers.storage == Storage::None && *ty == Type::BOOL
+        });
+        let Some(value) = value else {
+            self.opacity_micromap_error(span);
+            return Some(id);
+        };
+        if let Some(crate::scope::SymbolKind::Variable(variable)) =
+            self.symbol_mut(id).map(|symbol| &mut symbol.kind)
+        {
+            variable.value = Some(value.clone());
+        }
+        Some(id)
+    }
+
+    fn redeclared_opacity_micromap(&self) -> Option<crate::scope::SymbolId> {
+        if !self.scopes.is_global() {
+            return None;
+        }
+        match self.scopes.lookup_level(ENABLE_OPACITY_MICROMAP) {
+            Some((0, crate::scope::Lookup::Symbol(id))) => Some(id),
+            _ => None,
+        }
+    }
+
+    fn opacity_micromap_error(&mut self, span: Span) {
+        self.error(
+            span,
+            DiagnosticKind::InvalidQualifier {
+                qualifier: ENABLE_OPACITY_MICROMAP,
+                reason: "can only be redeclared as `const bool gl_EnableOpacityMicromapEXT = <true|false>;` or `layout(constant_id = N) gl_EnableOpacityMicromapEXT;`",
+            },
+        );
     }
 }

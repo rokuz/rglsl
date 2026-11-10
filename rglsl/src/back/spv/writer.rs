@@ -1913,6 +1913,7 @@ impl Writer {
             )?;
             self.write_execution_mode(function_id, spirv::ExecutionMode::Xfb)?;
         }
+        self.write_opacity_micromap_mode(function_id, entry_point)?;
 
         let exec_model = match entry_point.stage {
             crate::ShaderStage::Vertex => spirv::ExecutionModel::Vertex,

@@ -823,7 +823,7 @@ impl Analyzer<'_> {
         };
         if let Some(opaque) = ty.as_opaque() {
             if opaque.kind == OpaqueKind::AccelerationStructure {
-                if !self.acceleration_structure_constructor(&operands) {
+                if !Self::acceleration_structure_constructor(&operands) {
                     return fail(self, &ty, "cannot construct with these arguments");
                 }
                 self.calls

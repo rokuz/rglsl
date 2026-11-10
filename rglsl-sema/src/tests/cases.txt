@@ -4387,3 +4387,149 @@ void main() {}
 layout(local_size_x = 1) in;
 layout(binding = 0, std430) buffer B { bool a[3]; bvec2 v[2][2]; bool r[]; } b;
 void main() { b.a[1] = true; b.r[0] = b.v[1][0].y; bool copy[3] = b.a; b.a = copy; }
+### ray payload needs an extension | rgen 460 | 2:ExtensionRequired
+rayPayloadEXT vec4 payload;
+void main() {}
+### ray payload in a ray generation shader | rgen 460 | ok
+#extension GL_EXT_ray_tracing : enable
+layout(location = 0) rayPayloadEXT vec4 payload;
+void main() {}
+### incoming ray payload in a ray generation shader | rgen 460 | 3:NotSupportedInStage
+#extension GL_EXT_ray_tracing : enable
+rayPayloadInEXT vec4 payload;
+void main() {}
+### hit attributes in a miss shader | rmiss 460 | 3:NotSupportedInStage
+#extension GL_NV_ray_tracing : enable
+hitAttributeNV vec4 attributes;
+void main() {}
+### hit attributes are read-only in a closest-hit shader | rchit 460 | 5:NotAnLValue
+#extension GL_EXT_ray_tracing : enable
+hitAttributeEXT vec2 attributes;
+void main() {
+    attributes.x = 1.0;
+}
+### hit attributes are written in an intersection shader | rint 460 | ok
+#extension GL_EXT_ray_tracing : enable
+hitAttributeEXT vec2 attributes;
+void main() {
+    attributes = vec2(1.0);
+    reportIntersectionEXT(0.5, 1u);
+}
+### overlapping payload locations | rchit 460 | 4:OverlappingLocation
+#extension GL_EXT_ray_tracing : enable
+layout(location = 2) rayPayloadEXT vec4 payload;
+layout(location = 2) rayPayloadInEXT block { vec4 data; };
+void main() {}
+### trace without a payload at its location | rgen 460 | 5:RayLocationNotDeclared
+#extension GL_EXT_ray_tracing : enable
+layout(binding = 0) uniform accelerationStructureEXT scene;
+void main() {
+    traceRayEXT(scene, 0u, 255u, 0u, 1u, 0u, vec3(0.0), 0.0, vec3(1.0), 1.0, 0);
+}
+### trace with a payload | rgen 460 | ok
+#extension GL_EXT_ray_tracing : enable
+layout(binding = 0) uniform accelerationStructureEXT scene;
+layout(location = 3) rayPayloadEXT vec4 payload;
+void main() {
+    traceRayEXT(scene, gl_RayFlagsOpaqueEXT, 255u, 0u, 1u, 0u, vec3(0.0), 0.0, vec3(1.0), 1.0, 3);
+}
+### trace in an any-hit shader | rahit 460 | 5:NoMatchingFunction
+#extension GL_EXT_ray_tracing : enable
+layout(binding = 0) uniform accelerationStructureEXT scene;
+void main() {
+    traceRayEXT(scene, 0u, 255u, 0u, 1u, 0u, vec3(0.0), 0.0, vec3(1.0), 1.0, 0);
+}
+### terminateRayEXT outside any-hit shaders | rchit 460 | 4:NotSupportedInStage
+#extension GL_EXT_ray_tracing : enable
+void main() {
+    terminateRayEXT;
+}
+### ignoreIntersectionEXT in an any-hit shader | rahit 460 | ok
+#extension GL_EXT_ray_tracing : enable
+void main() {
+    if (gl_PrimitiveID == 1) {
+        ignoreIntersectionEXT;
+    }
+    terminateRayEXT;
+}
+### ray tracing built-ins need their extension | rchit 460 | 4:ExtensionRequired
+#extension GL_EXT_ray_tracing : enable
+void main() {
+    uint mask = gl_CullMaskEXT;
+}
+### primitive culling flags need their extension | rgen 460 | 4:ExtensionRequired
+#extension GL_EXT_ray_tracing : enable
+void main() {
+    uint flags = gl_RayFlagsSkipAABBEXT;
+}
+### hit kind is not declared in a miss shader | rmiss 460 | 4:UndeclaredIdentifier
+#extension GL_EXT_ray_tracing : enable
+void main() {
+    uint kind = gl_HitKindEXT;
+}
+### acceleration structures are uniforms | rgen 460 | 5:OpaqueNotAllowed
+#extension GL_EXT_ray_tracing : enable
+layout(binding = 0) uniform accelerationStructureEXT scene;
+void main() {
+    accelerationStructureEXT copy = scene;
+}
+### acceleration structures from an address | rgen 460 | ok
+#extension GL_EXT_ray_tracing : enable
+layout(location = 0) rayPayloadEXT vec4 payload;
+layout(shaderRecordEXT) buffer Record { uvec2 handle; };
+void main() {
+    traceRayEXT(accelerationStructureEXT(handle), 0u, 255u, 0u, 1u, 0u, vec3(0.0), 0.0, vec3(1.0), 1.0, 0);
+}
+### shader record buffers are read-only | rgen 460 | 5:NotAnLValue
+#extension GL_EXT_ray_tracing : enable
+layout(shaderRecordEXT) buffer Record { float value; };
+void main() {
+    value = 1.0;
+}
+### shader record blocks cannot have a binding | rgen 460 | 3:InvalidQualifier
+#extension GL_EXT_ray_tracing : enable
+layout(binding = 0, shaderRecordEXT) buffer Record { float value; };
+void main() {}
+### primitive culling must be standalone | rgen 460 | 4:InvalidQualifier
+#extension GL_EXT_ray_tracing : enable
+#extension GL_EXT_ray_flags_primitive_culling : enable
+layout(primitive_culling, binding = 0) uniform accelerationStructureEXT scene;
+void main() {}
+### ray queries cannot be initialized by assignment | comp 460 | 5:RayQueryInitializer
+#extension GL_EXT_ray_query : enable
+void main() {
+    rayQueryEXT first;
+    rayQueryEXT second = first;
+}
+### ray query committed argument must be constant | comp 460 | 7:InvalidBuiltinCall
+#extension GL_EXT_ray_query : enable
+layout(binding = 0) uniform accelerationStructureEXT scene;
+void main() {
+    rayQueryEXT query;
+    bool committed = true;
+    float t = rayQueryGetIntersectionTEXT(query, committed);
+}
+### ray query functions in a fragment shader | frag 460 | ok
+#extension GL_EXT_ray_query : enable
+layout(binding = 0) uniform accelerationStructureEXT scene;
+layout(location = 0) out vec4 color;
+void main() {
+    rayQueryEXT query;
+    rayQueryInitializeEXT(query, scene, gl_RayFlagsNoneEXT, 0xFF, vec3(0.0), 0.0, vec3(1.0), 10.0);
+    while (rayQueryProceedEXT(query)) {
+        if (rayQueryGetIntersectionTypeEXT(query, false) == gl_RayQueryCandidateIntersectionAABBEXT) {
+            rayQueryGenerateIntersectionEXT(query, 0.5);
+        }
+    }
+    color = vec4(rayQueryGetIntersectionTEXT(query, true));
+}
+### opacity micromap enable redeclared as non-const | comp 460 | 4:InvalidQualifier
+#extension GL_EXT_ray_query : enable
+#extension GL_EXT_opacity_micromap_ray_query_mode : enable
+bool gl_EnableOpacityMicromapEXT = true;
+void main() {}
+### opacity micromap enable as a specialization constant | comp 460 | ok
+#extension GL_EXT_ray_query : enable
+#extension GL_EXT_opacity_micromap_ray_query_mode : enable
+layout(constant_id = 2) gl_EnableOpacityMicromapEXT;
+void main() {}

@@ -2855,6 +2855,9 @@ pub struct EntryPoint {
     pub interface: Vec<Handle<GlobalVariable>>,
     #[cfg_attr(feature = "deserialize", serde(default))]
     pub transform_feedback: bool,
+    #[cfg_attr(feature = "serialize", serde(skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    pub opacity_micromap: Option<Handle<Expression>>,
 }
 
 /// Return types predeclared for the frexp, modf, and atomicCompareExchangeWeak built-in functions.

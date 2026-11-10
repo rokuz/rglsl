@@ -197,6 +197,7 @@ impl Builder {
             incoming_ray_payload: None,
             interface: self.interface,
             transform_feedback: false,
+            opacity_micromap: None,
         });
         self.module
     }

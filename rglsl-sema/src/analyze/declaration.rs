@@ -89,6 +89,13 @@ impl Analyzer<'_> {
                     return;
                 }
                 for identifier in identifiers {
+                    if self.opacity_micromap_specialization(
+                        identifier.span,
+                        &qualifiers,
+                        &identifier.node,
+                    ) {
+                        continue;
+                    }
                     if self.lookup(&identifier.node).is_none() {
                         self.error(
                             identifier.span,
@@ -1017,6 +1024,16 @@ impl Analyzer<'_> {
         if broken {
             self.declare_variable(declarator, ty, qualifiers, None);
             return;
+        }
+        if name.node == super::ray::ENABLE_OPACITY_MICROMAP {
+            let value = initializer
+                .as_ref()
+                .filter(|(_, operand)| operand.constant && !operand.specialization)
+                .and_then(|(_, operand)| operand.value.as_ref());
+            if let Some(id) = self.opacity_micromap_constant(name.span, &qualifiers, &ty, value) {
+                self.declarations.insert(declarator.id, id);
+                return;
+            }
         }
         if qualifiers.has_layout("buffer_reference") {
             self.error(

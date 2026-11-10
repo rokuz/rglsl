@@ -461,6 +461,7 @@ impl<'a> Lowerer<'a> {
             self.conservative_depth
                 .map(|conservative| EarlyDepthTest::Allow { conservative })
         };
+        let opacity_micromap = self.opacity_micromap(at)?;
         self.module.entry_points.push(EntryPoint {
             name: String::from("main"),
             stage,
@@ -473,6 +474,7 @@ impl<'a> Lowerer<'a> {
             incoming_ray_payload: self.incoming_ray_payload,
             interface: self.interface.clone(),
             transform_feedback: self.xfb.mode,
+            opacity_micromap,
         });
         Ok(())
     }

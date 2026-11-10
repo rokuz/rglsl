@@ -1033,6 +1033,7 @@ fn unexpected_task_payload() {
         incoming_ray_payload: None,
         interface: Vec::new(),
         transform_feedback: false,
+        opacity_micromap: None,
     };
     module.entry_points.push(entry_point);
 

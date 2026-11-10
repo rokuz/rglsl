@@ -5202,3 +5202,208 @@ fn heap_resources_are_not_passed_to_user_functions() {
     .unwrap_err();
     assert!(error.contains("descriptor heap resource"), "{error}");
 }
+
+fn storage_classes(module: &dr::Module) -> Vec<spirv::StorageClass> {
+    module
+        .types_global_values
+        .iter()
+        .filter(|inst| inst.class.opcode == Op::Variable)
+        .filter_map(|inst| match inst.operands[0] {
+            Operand::StorageClass(class) => Some(class),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn trace_ray_takes_every_operand_and_the_payload_variable() {
+    let module = compile(
+        ShaderStage::RayGeneration,
+        r#"#version 460
+#extension GL_EXT_ray_tracing : enable
+layout(binding = 0) uniform accelerationStructureEXT scene;
+layout(location = 1) rayPayloadEXT vec4 payload;
+layout(location = 2) rayPayloadEXT float other;
+layout(shaderRecordEXT) buffer Record { vec3 origin; };
+void main() {
+    traceRayEXT(scene, gl_RayFlagsOpaqueEXT, 0x7Fu, 3u, 4u, 5u, origin, 0.5, vec3(1.0), 7.0, 2);
+}
+"#,
+    );
+    let traces = instructions(&module, Op::TraceRayKHR);
+    assert_eq!(traces.len(), 1);
+    let operands = &traces[0].operands;
+    assert_eq!(constant(&module, &operands[1]), 1);
+    assert_eq!(constant(&module, &operands[2]), 0x7F);
+    assert_eq!(constant(&module, &operands[3]), 3);
+    assert_eq!(constant(&module, &operands[4]), 4);
+    assert_eq!(constant(&module, &operands[5]), 5);
+    assert_eq!(name_of(&module, operands[10].unwrap_id_ref()), "other");
+    assert!(decorated(&module, Decoration::Location).is_empty());
+    let classes = storage_classes(&module);
+    assert!(classes.contains(&spirv::StorageClass::RayPayloadKHR));
+    assert!(classes.contains(&spirv::StorageClass::ShaderRecordBufferKHR));
+    assert!(capabilities(&module).contains(&spirv::Capability::RayTracingKHR));
+}
+
+#[test]
+fn nv_ray_tracing_uses_locations() {
+    let module = compile(
+        ShaderStage::RayGeneration,
+        r#"#version 460
+#extension GL_NV_ray_tracing : enable
+layout(binding = 0) uniform accelerationStructureNV scene;
+layout(location = 3) rayPayloadNV vec4 payload;
+void main() {
+    traceNV(scene, 0u, 0xFFu, 0u, 1u, 0u, vec3(0.0), 0.5, vec3(1.0), 7.0, 3);
+}
+"#,
+    );
+    let traces = instructions(&module, Op::TraceNV);
+    assert_eq!(traces.len(), 1);
+    assert_eq!(constant(&module, &traces[0].operands[10]), 3);
+    assert_eq!(decorated(&module, Decoration::Location), ["payload"]);
+    assert!(capabilities(&module).contains(&spirv::Capability::RayTracingNV));
+}
+
+#[test]
+fn any_hit_terminators_end_the_block() {
+    let module = compile(
+        ShaderStage::AnyHit,
+        r#"#version 460
+#extension GL_EXT_ray_tracing : enable
+layout(location = 0) rayPayloadInEXT vec4 payload;
+void main() {
+    if (gl_PrimitiveID == 1) {
+        ignoreIntersectionEXT;
+    }
+    payload = vec4(1.0);
+    terminateRayEXT;
+}
+"#,
+    );
+    assert_eq!(instructions(&module, Op::IgnoreIntersectionKHR).len(), 1);
+    assert_eq!(instructions(&module, Op::TerminateRayKHR).len(), 1);
+    assert!(instructions(&module, Op::Return).is_empty());
+}
+
+#[test]
+fn intersection_reports_hits_and_hit_attributes() {
+    let module = compile(
+        ShaderStage::Intersection,
+        r#"#version 460
+#extension GL_EXT_ray_tracing : enable
+hitAttributeEXT vec2 attributes;
+void main() {
+    attributes = vec2(0.25);
+    bool accepted = reportIntersectionEXT(gl_RayTmaxEXT, 1u);
+}
+"#,
+    );
+    assert_eq!(instructions(&module, Op::ReportIntersectionKHR).len(), 1);
+    assert!(storage_classes(&module).contains(&spirv::StorageClass::HitAttributeKHR));
+    assert_eq!(decorated(&module, Decoration::Volatile), ["gl_RayTmaxEXT"]);
+}
+
+#[test]
+fn callable_data_follows_the_location() {
+    let module = compile(
+        ShaderStage::Callable,
+        r#"#version 460
+#extension GL_EXT_ray_tracing : enable
+layout(location = 0) callableDataEXT vec4 outgoing;
+layout(location = 1) callableDataInEXT Data { uint value; };
+void main() {
+    value = 256u;
+    executeCallableEXT(2u, 0);
+}
+"#,
+    );
+    let calls = instructions(&module, Op::ExecuteCallableKHR);
+    assert_eq!(calls.len(), 1);
+    assert_eq!(
+        name_of(&module, calls[0].operands[1].unwrap_id_ref()),
+        "outgoing"
+    );
+    let classes = storage_classes(&module);
+    assert!(classes.contains(&spirv::StorageClass::CallableDataKHR));
+    assert!(classes.contains(&spirv::StorageClass::IncomingCallableDataKHR));
+}
+
+#[test]
+fn transposed_matrices_read_the_same_builtin() {
+    let module = compile(
+        ShaderStage::ClosestHit,
+        r#"#version 460
+#extension GL_EXT_ray_tracing : enable
+layout(location = 0) rayPayloadInEXT vec4 payload;
+void main() {
+    mat3x4 a = gl_ObjectToWorld3x4EXT;
+    mat4x3 b = gl_ObjectToWorldEXT;
+    payload = a[0] + vec4(b[0], gl_HitTEXT + gl_RayTmaxEXT);
+}
+"#,
+    );
+    assert_eq!(decorated(&module, Decoration::BuiltIn).len(), 2);
+    assert_eq!(instructions(&module, Op::Transpose).len(), 1);
+}
+
+#[test]
+fn ray_queries_are_private_and_passed_by_pointer() {
+    let module = compile(
+        ShaderStage::Compute,
+        r#"#version 460
+#extension GL_EXT_ray_query : enable
+layout(local_size_x = 1) in;
+layout(binding = 0) uniform accelerationStructureEXT scene;
+layout(binding = 1) buffer Out { float t; };
+void advance(rayQueryEXT query) {
+    rayQueryProceedEXT(query);
+}
+void main() {
+    rayQueryEXT query;
+    rayQueryInitializeEXT(query, scene, gl_RayFlagsNoneEXT, 0xFF, vec3(0.0), 0.0, vec3(1.0), 10.0);
+    advance(query);
+    t = rayQueryGetIntersectionTEXT(query, true) + rayQueryGetRayTMinEXT(query);
+}
+"#,
+    );
+    assert!(storage_classes(&module).contains(&spirv::StorageClass::Private));
+    assert_eq!(instructions(&module, Op::RayQueryInitializeKHR).len(), 1);
+    assert_eq!(instructions(&module, Op::RayQueryProceedKHR).len(), 1);
+    let getters = instructions(&module, Op::RayQueryGetIntersectionTKHR);
+    assert_eq!(getters.len(), 1);
+    assert_eq!(constant(&module, &getters[0].operands[1]), 1);
+    assert_eq!(instructions(&module, Op::RayQueryGetRayTMinKHR).len(), 1);
+    assert!(capabilities(&module).contains(&spirv::Capability::RayQueryKHR));
+}
+
+#[test]
+fn opacity_micromap_ray_query_mode_names_the_constant() {
+    let module = parse(
+        ShaderStage::Compute,
+        r#"#version 460
+#extension GL_EXT_ray_query : enable
+#extension GL_EXT_opacity_micromap_ray_query_mode : enable
+layout(local_size_x = 1) in;
+const bool gl_EnableOpacityMicromapEXT = true;
+void main() {}
+"#,
+    )
+    .unwrap_or_else(|e| panic!("shader rejected: {e}"));
+    assert!(module.entry_points[0].opacity_micromap.is_some());
+    let info = Validator::new(ValidationFlags::all(), Capabilities::all())
+        .validate(&module)
+        .expect("validated in parse");
+    let words = spv::write_vec(&module, &info, &spv::Options::default(), None)
+        .expect("SPIR-V backend failed");
+    let execution_mode_id = (4 << 16) | Op::ExecutionModeId as u32;
+    let position = words
+        .iter()
+        .position(|&word| word == execution_mode_id)
+        .expect("no OpExecutionModeId");
+    assert_eq!(words.get(position + 2), Some(&6031));
+    assert!(words
+        .windows(2)
+        .any(|pair| pair == [(2 << 16) | Op::Capability as u32, 6032]));
+}

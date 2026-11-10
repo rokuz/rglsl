@@ -1632,6 +1632,9 @@ impl<'a> Lowerer<'a> {
                 if variable.origin != Origin::BuiltIn {
                     return Err(internal(at));
                 }
+                if let Some(handle) = self.builtin_override(symbol, variable, at)? {
+                    return Ok(handle);
+                }
                 (
                     variable.ty.clone(),
                     variable.qualifiers.storage == Storage::Out,
