@@ -1,4 +1,11 @@
 #![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    reason = "test support code fails by panicking"
+)]
+#![allow(
     dead_code,
     unused_imports,
     reason = "A lot of the code can be unused based on configuration flags; \

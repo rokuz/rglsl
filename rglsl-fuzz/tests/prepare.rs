@@ -1,3 +1,11 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    reason = "test support code fails by panicking"
+)]
+
 use rglsl_fuzz::{analyze_shader, parse_shader, prepare_reference, ShaderJob};
 use rglsl_sema::Stage;
 use serde_json::Value;
