@@ -99,7 +99,7 @@ in bool gl_HelperInvocation
 ",
     },
     Group {
-        stages: COMPUTE,
+        stages: COMPUTE | MESH | TASK,
         since: 450,
         text: "
 in uvec3 gl_NumWorkGroups
@@ -107,6 +107,42 @@ in uvec3 gl_WorkGroupID
 in uvec3 gl_LocalInvocationID
 in uvec3 gl_GlobalInvocationID
 in uint gl_LocalInvocationIndex
+",
+    },
+    Group {
+        stages: MESH,
+        since: 450,
+        text: "
+out uint gl_PrimitiveCountNV
+out uint gl_PrimitiveIndicesNV[]
+out uint gl_PrimitivePointIndicesEXT[]
+out uvec2 gl_PrimitiveLineIndicesEXT[]
+out uvec3 gl_PrimitiveTriangleIndicesEXT[]
+in int gl_ViewIndex
+",
+    },
+    Group {
+        stages: TASK,
+        since: 450,
+        text: "
+out uint gl_TaskCountNV
+",
+    },
+    Group {
+        stages: MESH | TASK,
+        since: 450,
+        text: "
+in uint gl_MeshViewCountNV
+in uint gl_MeshViewIndicesNV[4]
+in int gl_DeviceIndex
+in int gl_DrawIDARB
+",
+    },
+    Group {
+        stages: MESH | TASK,
+        since: 460,
+        text: "
+in int gl_DrawID
 ",
     },
     Group {
@@ -199,6 +235,40 @@ float gl_ClipDistance[]
 float gl_CullDistance[]
 ";
 
+const MESH_PER_VERTEX_NV: &str = "
+vec4 gl_Position
+float gl_PointSize
+float gl_ClipDistance[]
+float gl_CullDistance[]
+perviewNV vec4 gl_PositionPerViewNV[4]
+perviewNV float gl_ClipDistancePerViewNV[4][]
+perviewNV float gl_CullDistancePerViewNV[4][]
+";
+
+const MESH_PER_PRIMITIVE_NV: &str = "
+perprimitiveNV int gl_PrimitiveID
+perprimitiveNV int gl_Layer
+perprimitiveNV int gl_ViewportIndex
+perprimitiveNV int gl_ViewportMask[]
+perprimitiveNV perviewNV int gl_LayerPerViewNV[4]
+perprimitiveNV perviewNV int gl_ViewportMaskPerViewNV[4][]
+";
+
+const MESH_PER_PRIMITIVE_EXT: &str = "
+perprimitiveNV int gl_PrimitiveID
+perprimitiveNV int gl_Layer
+perprimitiveNV int gl_ViewportIndex
+perprimitiveNV bool gl_CullPrimitiveEXT
+perprimitiveNV int gl_PrimitiveShadingRateEXT
+";
+
+const MESH_BLOCKS: [(&str, &str, &str, bool); 4] = [
+    ("gl_MeshPerVertexNV", "gl_MeshVerticesNV", MESH_PER_VERTEX_NV, false),
+    ("gl_MeshPerPrimitiveNV", "gl_MeshPrimitivesNV", MESH_PER_PRIMITIVE_NV, true),
+    ("gl_MeshPerVertexEXT", "gl_MeshVerticesEXT", PER_VERTEX, false),
+    ("gl_MeshPerPrimitiveEXT", "gl_MeshPrimitivesEXT", MESH_PER_PRIMITIVE_EXT, true),
+];
+
 enum Instance {
     Anonymous,
     Named(&'static str, ArraySize),
@@ -214,7 +284,7 @@ fn parse_declaration(line: &[&str]) -> Option<Declared> {
     let mut qualifiers = Qualifiers::default();
     let mut ty = None;
     let mut name = None;
-    let mut array = None;
+    let mut dimensions = Vec::new();
     let mut iterator = line.iter().copied().peekable();
     while let Some(word) = iterator.next() {
         match word {
@@ -223,12 +293,14 @@ fn parse_declaration(line: &[&str]) -> Option<Declared> {
             "patch" => qualifiers.patch = true,
             "flat" => qualifiers.interpolation = Some(InterpolationQualifier::Flat),
             "volatile" => qualifiers.volatile = true,
+            "perprimitiveNV" => qualifiers.per_primitive = true,
+            "perviewNV" => qualifiers.per_view = true,
             "[" => {
                 let next = iterator.next()?;
                 if next == "]" {
-                    array = Some(ArraySize::Unsized);
+                    dimensions.push(ArraySize::Unsized);
                 } else {
-                    array = Some(ArraySize::Sized(next.parse().ok()?));
+                    dimensions.push(ArraySize::Sized(next.parse().ok()?));
                     iterator.next();
                 }
             }
@@ -236,10 +308,7 @@ fn parse_declaration(line: &[&str]) -> Option<Declared> {
             _ => name = Some(String::from(word)),
         }
     }
-    let mut ty = ty?;
-    if let Some(size) = array {
-        ty = ty.array_of(size);
-    }
+    let ty = ty?.with_dimensions(&dimensions);
     Some(Declared {
         qualifiers,
         ty,
@@ -342,6 +411,44 @@ impl Builder {
         }
         Some(())
     }
+
+    fn mesh_block(
+        &mut self,
+        types: &mut TypeRegistry,
+        block_name: &str,
+        instance: &str,
+        text: &str,
+        per_primitive: bool,
+    ) -> Option<()> {
+        let members: Vec<Member> = text
+            .lines()
+            .filter_map(|line| parse_declaration(&words(line)))
+            .map(|declared| Member {
+                name: declared.name,
+                ty: declared.ty,
+                qualifiers: Qualifiers {
+                    storage: Storage::Out,
+                    ..declared.qualifiers
+                },
+            })
+            .collect();
+        let qualifiers = Qualifiers {
+            storage: Storage::Out,
+            per_primitive,
+            ..Qualifiers::default()
+        };
+        let block = types.add_block(BlockType {
+            name: String::from(block_name),
+            storage: BlockStorage::Out,
+            qualifiers: qualifiers.clone(),
+            members,
+            reference: None,
+            buffer_type: false,
+        })?;
+        let ty = Type::block(block).array_of(ArraySize::Unsized);
+        self.variable(instance, ty, qualifiers, None, true);
+        Some(())
+    }
 }
 
 pub(super) const MEMORY_SCOPE_CONSTANTS: [(&str, i32); 18] = [
@@ -392,7 +499,17 @@ pub(super) fn build(
         Type::vector(Scalar::Int, 3),
         triple(limits.max_compute_work_group_size),
     );
-    if stage == Stage::Compute {
+    builder.constant(
+        "gl_MaxMeshWorkGroupSizeNV",
+        Type::vector(Scalar::Int, 3),
+        triple(limits.max_mesh_work_group_size_nv),
+    );
+    builder.constant(
+        "gl_MaxTaskWorkGroupSizeNV",
+        Type::vector(Scalar::Int, 3),
+        triple(limits.max_task_work_group_size_nv),
+    );
+    if matches!(stage, Stage::Compute | Stage::Mesh | Stage::Task) {
         builder.constant(
             "gl_WorkGroupSize",
             Type::vector(Scalar::Uint, 3),
@@ -440,6 +557,11 @@ pub(super) fn build(
     };
     for (storage, instance) in blocks {
         builder.per_vertex(types, *storage, instance);
+    }
+    if stage == Stage::Mesh {
+        for (block, instance, text, per_primitive) in MESH_BLOCKS {
+            builder.mesh_block(types, block, instance, text, per_primitive);
+        }
     }
     (builder.symbols, builder.scope)
 }

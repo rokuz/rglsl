@@ -107,7 +107,7 @@ const EXTENSION_ONLY: [&str; 8] = [
     "tileImageEXT",
 ];
 
-const EXTENSION_KEYWORDS: [&str; 152] = [
+const EXTENSION_KEYWORDS: [&str; 147] = [
     "terminateInvocation",
     "terminateRayEXT",
     "ignoreIntersectionEXT",
@@ -241,11 +241,6 @@ const EXTENSION_KEYWORDS: [&str; 152] = [
     "accelerationStructureNV",
     "accelerationStructureEXT",
     "rayQueryEXT",
-    "perprimitiveNV",
-    "perviewNV",
-    "taskNV",
-    "perprimitiveEXT",
-    "taskPayloadSharedEXT",
     "fcoopmatNV",
     "icoopmatNV",
     "ucoopmatNV",

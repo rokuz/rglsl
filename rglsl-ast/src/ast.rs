@@ -337,10 +337,15 @@ pub enum StorageQualifier {
     NonPrivate,
     ResourceHeap,
     SamplerHeap,
+    PerPrimitiveNV,
+    PerPrimitiveEXT,
+    PerViewNV,
+    TaskNV,
+    TaskPayloadSharedEXT,
 }
 
 impl StorageQualifier {
-    pub const ALL: [Self; 25] = [
+    pub const ALL: [Self; 30] = [
         Self::Const,
         Self::In,
         Self::Out,
@@ -366,6 +371,11 @@ impl StorageQualifier {
         Self::NonPrivate,
         Self::ResourceHeap,
         Self::SamplerHeap,
+        Self::PerPrimitiveNV,
+        Self::PerPrimitiveEXT,
+        Self::PerViewNV,
+        Self::TaskNV,
+        Self::TaskPayloadSharedEXT,
     ];
 
     pub const fn keyword(self) -> &'static str {
@@ -395,6 +405,11 @@ impl StorageQualifier {
             Self::NonPrivate => "nonprivate",
             Self::ResourceHeap => "resourceheap",
             Self::SamplerHeap => "samplerheap",
+            Self::PerPrimitiveNV => "perprimitiveNV",
+            Self::PerPrimitiveEXT => "perprimitiveEXT",
+            Self::PerViewNV => "perviewNV",
+            Self::TaskNV => "taskNV",
+            Self::TaskPayloadSharedEXT => "taskPayloadSharedEXT",
         }
     }
 

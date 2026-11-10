@@ -343,6 +343,22 @@ impl Analyzer<'_> {
                         );
                         result.shader_call_coherent = true;
                     }
+                    StorageQualifier::PerPrimitiveNV | StorageQualifier::PerPrimitiveEXT => {
+                        self.mesh_qualifier(single.span, *storage);
+                        result.per_primitive = true;
+                    }
+                    StorageQualifier::PerViewNV => {
+                        self.mesh_qualifier(single.span, *storage);
+                        result.per_view = true;
+                    }
+                    StorageQualifier::TaskNV => {
+                        self.mesh_qualifier(single.span, *storage);
+                        result.per_task = true;
+                    }
+                    StorageQualifier::TaskPayloadSharedEXT => {
+                        self.mesh_qualifier(single.span, *storage);
+                        result.storage = Storage::TaskPayloadShared;
+                    }
                     StorageQualifier::Volatile => result.volatile = true,
                     StorageQualifier::Restrict => result.restrict = true,
                     StorageQualifier::Readonly => result.readonly = true,

@@ -20,6 +20,7 @@ pub enum Storage {
     Shared,
     ResourceHeap,
     SamplerHeap,
+    TaskPayloadShared,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -52,6 +53,9 @@ pub struct Qualifiers {
     pub subgroup_coherent: bool,
     pub shader_call_coherent: bool,
     pub nonprivate: bool,
+    pub per_primitive: bool,
+    pub per_view: bool,
+    pub per_task: bool,
     pub interpolation: Option<InterpolationQualifier>,
     pub precision: Option<PrecisionQualifier>,
     pub layout: Vec<LayoutEntry>,
