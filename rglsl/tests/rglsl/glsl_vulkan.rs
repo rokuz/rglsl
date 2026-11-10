@@ -2123,6 +2123,24 @@ fn buffer_textures_and_images_match_glslang() {
     assert_eq!(instructions(&module, Op::ImageWrite).len(), 2);
 }
 
+fn compile_with_offsets(stage: ShaderStage, source: &str) -> dr::Module {
+    let module = parse(stage, source).unwrap_or_else(|e| panic!("shader rejected: {e}"));
+    let info = Validator::new(ValidationFlags::all(), Capabilities::all())
+        .validate(&module)
+        .expect("validated in parse");
+    let words = spv::write_vec(&module, &info, &spv::Options::default(), None)
+        .expect("SPIR-V backend failed");
+    crate::stage_io::spirv_val_in(
+        &words,
+        &[
+            "--target-env",
+            "vulkan1.0",
+            "--allow-offset-texture-operand",
+        ],
+    );
+    dr::load_words(words).expect("produced SPIR-V does not parse")
+}
+
 fn image_operands(inst: &dr::Instruction) -> spirv::ImageOperands {
     inst.operands
         .iter()
@@ -2164,7 +2182,7 @@ fn non_constant_texture_offsets() {
         ]
     );
 
-    let module = compile(
+    let module = compile_with_offsets(
         ShaderStage::Vertex,
         "#version 450
         #extension GL_EXT_texture_offset_non_const : enable
@@ -2828,4 +2846,107 @@ void main() { tile[0] = M * 2; a = tile[0]; }
     assert!(instructions(&module, Op::SpecConstantOp).is_empty());
     let array = instructions(&module, Op::TypeArray)[0];
     assert_eq!(constant(&module, &array.operands[1]), 8);
+}
+
+#[test]
+fn arrays_of_buffer_blocks_match_glslang() {
+    let source = "#version 450
+        layout(local_size_x = 1) in;
+        struct S { vec4 x; float y[2]; };
+        uniform U { vec4 a; S s; } u[4];
+        layout(std430) buffer B { float f; vec4 r[]; } b[2];
+        layout(std430) buffer C { uint n; } c[];
+        uniform I { vec4 sized[]; vec4 one[]; } implicit;
+        layout(push_constant) uniform P { int i; } pc;
+        void main() {
+            S t = u[pc.i].s;
+            b[1].r[pc.i] = u[2].a + t.x + implicit.sized[3] + implicit.one[0];
+            b[0].f = float(b[1].r.length()) + u[pc.i].s.y[1];
+            c[3].n = 1u;
+        }";
+    let options = glsl::Options {
+        auto_map_bindings: true,
+        ..glsl::Options::from(ShaderStage::Compute)
+    };
+    let module = glsl::Frontend::default().parse(&options, source).unwrap();
+    let info = Validator::new(ValidationFlags::all(), Capabilities::all())
+        .validate(&module)
+        .unwrap();
+    let words = spv::write_vec(
+        &module,
+        &info,
+        &spv::Options {
+            flags: spv::WriterFlags::DEBUG,
+            ..spv::Options::default()
+        },
+        None,
+    )
+    .expect("SPIR-V backend failed");
+    crate::stage_io::spirv_val(&words);
+    let module = dr::load_words(words).expect("produced SPIR-V does not parse");
+    for (name, binding) in [("u", 0), ("b", 1), ("c", 2), ("implicit", 3)] {
+        assert_eq!(
+            sorted_variable_decorations(&module, name),
+            [
+                (Decoration::Binding, vec![binding]),
+                (Decoration::DescriptorSet, vec![0])
+            ],
+            "{name}"
+        );
+    }
+    let mut blocks = decorated(&module, Decoration::Block);
+    blocks.sort_unstable();
+    assert_eq!(blocks, ["B", "C", "I", "P", "U"]);
+    assert_eq!(array_lengths(&module), [1, 1, 2, 2, 2, 4, 4, 4, 4]);
+}
+
+#[test]
+fn function_variables_have_no_explicit_layout() {
+    let module = parse(
+        ShaderStage::Compute,
+        "#version 450 core
+        layout(local_size_x = 64) in;
+        layout(set = 0, binding = 0, std430) buffer foo { int x[4]; } f;
+        struct Bar { uint x; uint y; uint z[2]; };
+        struct Small { int a; };
+        layout(set = 0, binding = 1, std430) buffer foo2 { uvec4 a; Bar b; uint c; Small s; };
+        void main() {
+            int x[4] = f.x;
+            x[1] = 2;
+            f.x = x;
+            Bar new_bar;
+            b = new_bar;
+            Small small = s;
+            s = small;
+        }",
+    )
+    .unwrap_or_else(|e| panic!("shader rejected: {e}"));
+    let info = Validator::new(ValidationFlags::all(), Capabilities::all())
+        .validate(&module)
+        .unwrap();
+    let options = spv::Options {
+        lang_version: (1, 6),
+        flags: spv::WriterFlags::DEBUG,
+        ..spv::Options::default()
+    };
+    let words = spv::write_vec(&module, &info, &options, None).expect("SPIR-V backend failed");
+    crate::stage_io::spirv_val_in(&words, &["--target-env", "vulkan1.3"]);
+    let module = dr::load_words(words).expect("produced SPIR-V does not parse");
+    let laid_out: Vec<u32> = module
+        .annotations
+        .iter()
+        .filter(|inst| match inst.class.opcode {
+            Op::Decorate => inst.operands[1] == Operand::Decoration(Decoration::ArrayStride),
+            Op::MemberDecorate => inst.operands[2] == Operand::Decoration(Decoration::Offset),
+            _ => false,
+        })
+        .map(|inst| inst.operands[0].unwrap_id_ref())
+        .collect();
+    let function_pointers = module.types_global_values.iter().filter(|inst| {
+        inst.class.opcode == Op::TypePointer
+            && inst.operands[0] == Operand::StorageClass(spirv::StorageClass::Function)
+    });
+    for pointer in function_pointers {
+        assert!(!laid_out.contains(&pointer.operands[1].unwrap_id_ref()));
+    }
 }

@@ -232,6 +232,10 @@ fn block_location(location: u32) -> Binding {
 }
 
 pub(crate) fn spirv_val(words: &[u32]) {
+    spirv_val_in(words, &["--target-env", "vulkan1.0"]);
+}
+
+pub(crate) fn spirv_val_in(words: &[u32], arguments: &[&str]) {
     let validator = std::path::Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../target/oracles/bin/spirv-val"
@@ -248,7 +252,7 @@ pub(crate) fn spirv_val(words: &[u32]) {
     let bytes: Vec<u8> = words.iter().flat_map(|word| word.to_le_bytes()).collect();
     std::fs::write(&path, bytes).unwrap();
     let output = std::process::Command::new(validator)
-        .args(["--target-env", "vulkan1.0"])
+        .args(arguments)
         .arg(&path)
         .output()
         .unwrap();

@@ -2,8 +2,8 @@ use alloc::vec::Vec;
 use core::num::NonZeroU32;
 
 use rglsl_sema::types::{
-    ArraySize as GlslArraySize, BlockId, Opaque, OpaqueKind, SampledType, Scalar as GlslScalar,
-    StructId, TextureDimension, Type as GlslType, TypeKind,
+    ArraySize as GlslArraySize, BlockId, BlockStorage, Opaque, OpaqueKind, SampledType,
+    Scalar as GlslScalar, StructId, TextureDimension, Type as GlslType, TypeKind,
 };
 
 use super::offset::{calculate_offset, TypeAlignSpan};
@@ -14,6 +14,8 @@ use crate::{
     proc::Alignment, ArraySize, Handle, ImageClass, ImageDimension, Scalar, ScalarKind, Span,
     StructMember, Type, TypeInner, VectorSize,
 };
+
+const UNLAID_PADDING: u32 = 1;
 
 pub(super) const fn scalar(scalar: GlslScalar) -> Scalar {
     match scalar {
@@ -130,7 +132,7 @@ impl Lowerer<'_> {
             self.layouter
                 .update(self.module.to_ctx())
                 .map_err(|_| internal(span))?;
-            let stride = self.layouter[ty].to_stride();
+            let stride = self.layouter[ty].to_stride().saturating_add(UNLAID_PADDING);
             ty = self.insert_type(TypeInner::Array {
                 base: ty,
                 size,
@@ -277,7 +279,7 @@ impl Lowerer<'_> {
             });
             offset = offset.saturating_add(layout.size);
         }
-        let span_bytes = alignment.round_up(offset);
+        let span_bytes = alignment.round_up(offset).saturating_add(UNLAID_PADDING);
         let handle = self.module.types.insert(
             Type {
                 name: structure.name.clone(),
@@ -381,16 +383,31 @@ impl Lowerer<'_> {
         let mut members = Vec::with_capacity(block.members.len());
         let mut offset = 0_u32;
         let mut alignment = Alignment::ONE;
-        for (index, member) in block.members.iter().enumerate() {
-            let index = u32::try_from(index).map_err(|_| internal(span))?;
-            let lowered = match member.ty.kind {
-                TypeKind::Scalar(GlslScalar::Bool) if !member.ty.is_array() => {
+        let last = block.members.len().saturating_sub(1);
+        for (position, member) in block.members.iter().enumerate() {
+            let index = u32::try_from(position).map_err(|_| internal(span))?;
+            let runtime = block.storage == BlockStorage::Buffer && position == last;
+            let sized;
+            let member_ty = match member.ty.outer_size() {
+                Some(GlslArraySize::Unsized) if !runtime => {
+                    let size = self.member_sizes.get(&(id, index)).copied().unwrap_or(1);
+                    let mut ty = member.ty.clone();
+                    if let Some(first) = ty.array.first_mut() {
+                        *first = GlslArraySize::Sized(size);
+                    }
+                    sized = ty;
+                    &sized
+                }
+                _ => &member.ty,
+            };
+            let lowered = match member_ty.kind {
+                TypeKind::Scalar(GlslScalar::Bool) if !member_ty.is_array() => {
                     Some(GlslType::scalar(GlslScalar::Uint))
                 }
                 TypeKind::Vector {
                     scalar: GlslScalar::Bool,
                     size,
-                } if !member.ty.is_array() => Some(GlslType::vector(GlslScalar::Uint, size)),
+                } if !member_ty.is_array() => Some(GlslType::vector(GlslScalar::Uint, size)),
                 _ => None,
             };
             let ty = match lowered {
@@ -399,16 +416,16 @@ impl Lowerer<'_> {
                     self.ir_type(&lowered, span)?
                 }
                 None => {
-                    if contains_bool(&member.ty, &analysis.types) {
+                    if contains_bool(member_ty, &analysis.types) {
                         return Err(unsupported(
                             "booleans inside arrays or structures in a block",
                             span,
                         ));
                     }
-                    if member.ty.contains_opaque(&analysis.types) {
+                    if member_ty.contains_opaque(&analysis.types) {
                         return Err(unsupported("opaque types in blocks", span));
                     }
-                    self.ir_type(&member.ty, span)?
+                    self.ir_type(member_ty, span)?
                 }
             };
             let qualifiers = &member.qualifiers;

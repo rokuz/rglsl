@@ -261,9 +261,11 @@ fn run_case(
     let spirv_val = match ours {
         OursResult::Accepted => {
             let mut command = Command::new(&env.spirv_val.path);
-            command
-                .args(["--target-env", &case.target.spirv_val_env()])
-                .arg(&out);
+            command.args(["--target-env", &case.target.spirv_val_env()]);
+            if enables_offset_texture_operand(&case.path) {
+                command.arg("--allow-offset-texture-operand");
+            }
+            command.arg(&out);
             let output = process::run(command, timeout)?;
             let ok = matches!(output.exit, Exit::Code(0));
             if !ok {
@@ -336,6 +338,15 @@ fn first_stderr_line(stderr: &str) -> String {
         .unwrap_or("")
         .trim()
         .to_string()
+}
+
+fn enables_offset_texture_operand(path: &Path) -> bool {
+    fs::read_to_string(path).is_ok_and(|source| {
+        source.lines().any(|line| {
+            let line = line.trim_start();
+            line.starts_with("#extension") && line.contains("GL_EXT_texture_offset_non_const")
+        })
+    })
 }
 
 #[cfg(test)]
