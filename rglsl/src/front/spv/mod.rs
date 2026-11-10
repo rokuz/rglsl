@@ -175,7 +175,9 @@ impl crate::ImageDimension {
     const fn required_coordinate_size(&self) -> Option<crate::VectorSize> {
         match *self {
             crate::ImageDimension::D1 | crate::ImageDimension::Buffer => None,
-            crate::ImageDimension::D2 => Some(crate::VectorSize::Bi),
+            crate::ImageDimension::D2 | crate::ImageDimension::Subpass => {
+                Some(crate::VectorSize::Bi)
+            }
             crate::ImageDimension::D3 => Some(crate::VectorSize::Tri),
             crate::ImageDimension::Cube => Some(crate::VectorSize::Tri),
         }
@@ -3038,6 +3040,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                     memory_decorations: dec.flags.to_memory_decorations(),
                     io: None,
                     xfb: None,
+                    input_attachment_index: None,
                 };
                 (Variable::Global, var)
             }
@@ -3088,6 +3091,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                     memory_decorations: crate::MemoryDecorations::empty(),
                     io: None,
                     xfb: None,
+                    input_attachment_index: None,
                 };
 
                 let inner = Variable::Input(crate::FunctionArgument {
@@ -3151,6 +3155,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                     memory_decorations: crate::MemoryDecorations::empty(),
                     io: None,
                     xfb: None,
+                    input_attachment_index: None,
                 };
                 let inner = Variable::Output(crate::FunctionResult { ty, binding });
                 (inner, var)

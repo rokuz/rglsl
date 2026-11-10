@@ -1354,6 +1354,7 @@ fn uniform_control_flow() {
             memory_decorations: crate::MemoryDecorations::empty(),
             io: None,
             xfb: None,
+            input_attachment_index: None,
         },
         Default::default(),
     );
@@ -1367,6 +1368,7 @@ fn uniform_control_flow() {
             memory_decorations: crate::MemoryDecorations::empty(),
             io: None,
             xfb: None,
+            input_attachment_index: None,
         },
         Default::default(),
     );

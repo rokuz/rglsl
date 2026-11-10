@@ -544,7 +544,9 @@ impl<'a> ResolveContext<'a> {
                         crate::ImageDimension::D1 | crate::ImageDimension::Buffer => {
                             Ti::Scalar(crate::Scalar::U32)
                         }
-                        crate::ImageDimension::D2 | crate::ImageDimension::Cube => Ti::Vector {
+                        crate::ImageDimension::D2
+                        | crate::ImageDimension::Cube
+                        | crate::ImageDimension::Subpass => Ti::Vector {
                             size: crate::VectorSize::Bi,
                             scalar: crate::Scalar::U32,
                         },

@@ -521,6 +521,15 @@ impl crate::TypeInner {
     fn addresses_image(&self, dim: crate::ImageDimension) -> bool {
         let dim = match dim {
             crate::ImageDimension::Buffer => crate::ImageDimension::D1,
+            crate::ImageDimension::Subpass => {
+                return matches!(
+                    *self,
+                    Self::Vector {
+                        size: crate::VectorSize::Bi,
+                        scalar: crate::Scalar::I32,
+                    }
+                );
+            }
             other => other,
         };
         self.image_storage_coordinates() == Some(dim)

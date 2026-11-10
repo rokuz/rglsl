@@ -796,20 +796,29 @@ impl BlockContext<'_> {
     ) -> Result<Word, Error> {
         let image_id = self.get_image_id(image, block)?;
         let image_type = self.fun_info[image].ty.inner_with(&self.ir_module.types);
-        let image_class = match *image_type {
-            crate::TypeInner::Image { class, .. }
-            | crate::TypeInner::SampledImage { class, .. } => class,
+        let (image_class, dim) = match *image_type {
+            crate::TypeInner::Image { class, dim, .. }
+            | crate::TypeInner::SampledImage { class, dim, .. } => (class, dim),
             _ => return Err(Error::Validation("image type")),
         };
+        let subpass = dim == crate::ImageDimension::Subpass;
 
-        let access = Load::from_image_expr(self, image_id, image_class, result_type_id)?;
+        let mut access = Load::from_image_expr(self, image_id, image_class, result_type_id)?;
+        if subpass {
+            access.opcode = spirv::Op::ImageRead;
+        }
         let coordinates = self.write_image_coordinates(coordinate, array_index, block)?;
 
         let level_id = level.map(|expr| self.cached[expr]);
         let sample_id = sample.map(|expr| self.cached[expr]);
 
+        let policy = if subpass {
+            crate::proc::BoundsCheckPolicy::Unchecked
+        } else {
+            self.writer.bounds_check_policies.image_load
+        };
         // Perform the access, according to the bounds check policy.
-        let access_id = match self.writer.bounds_check_policies.image_load {
+        let access_id = match policy {
             crate::proc::BoundsCheckPolicy::Restrict => {
                 let (coords, level_id, sample_id) = self.write_restricted_coordinates(
                     image_id,
@@ -1256,6 +1265,7 @@ impl BlockContext<'_> {
                     Id::D1 | Id::Buffer => 1,
                     Id::D2 | Id::Cube => 2,
                     Id::D3 => 3,
+                    Id::Subpass => return Err(Error::Validation("subpass input query")),
                 };
                 let array_coords = usize::from(arrayed);
                 let vector_size = match dim_coords + array_coords {
@@ -1338,6 +1348,7 @@ impl BlockContext<'_> {
                     Id::D1 | Id::Buffer => crate::VectorSize::Bi,
                     Id::D2 | Id::Cube => crate::VectorSize::Tri,
                     Id::D3 => crate::VectorSize::Quad,
+                    Id::Subpass => return Err(Error::Validation("subpass input query")),
                 };
                 let extended_size_type_id = self.get_numeric_type_id(NumericType::Vector {
                     size: vec_size,

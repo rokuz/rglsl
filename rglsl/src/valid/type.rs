@@ -862,6 +862,17 @@ impl super::Validator {
                         class,
                     });
                 }
+                if dim == crate::ImageDimension::Subpass
+                    && (arrayed
+                        || matches!(gctx.types[handle].inner, Ti::SampledImage { .. })
+                        || !matches!(class, crate::ImageClass::Sampled { .. }))
+                {
+                    return Err(TypeError::UnsupportedImageType {
+                        dim,
+                        arrayed,
+                        class,
+                    });
+                }
                 if arrayed && matches!(dim, crate::ImageDimension::D3) {
                     return Err(TypeError::UnsupportedImageType {
                         dim,

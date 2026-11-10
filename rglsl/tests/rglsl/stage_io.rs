@@ -84,6 +84,7 @@ impl Builder {
                 memory_decorations: rglsl::MemoryDecorations::empty(),
                 io,
                 xfb: None,
+                input_attachment_index: None,
             },
             Span::UNDEFINED,
         )
@@ -538,6 +539,7 @@ fn invalid_interfaces_are_rejected() {
                 memory_decorations: rglsl::MemoryDecorations::empty(),
                 io: None,
                 xfb: None,
+                input_attachment_index: None,
             },
             Span::UNDEFINED,
         );

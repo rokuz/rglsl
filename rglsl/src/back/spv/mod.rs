@@ -373,7 +373,14 @@ impl LocalImageType {
             crate::ImageClass::Sampled { kind, multi } => LocalImageType {
                 sampled_type: crate::Scalar { kind, width: 4 },
                 dim,
-                flags: make_flags(multi, ImageTypeFlags::SAMPLED),
+                flags: make_flags(
+                    multi,
+                    if dim == spirv::Dim::DimSubpassData {
+                        ImageTypeFlags::empty()
+                    } else {
+                        ImageTypeFlags::SAMPLED
+                    },
+                ),
                 image_format: spirv::ImageFormat::Unknown,
             },
             crate::ImageClass::Depth { multi } => LocalImageType {

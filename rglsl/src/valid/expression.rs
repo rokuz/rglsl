@@ -505,7 +505,7 @@ impl super::Validator {
                     crate::ImageDimension::D1 => 1,
                     crate::ImageDimension::D2 => 2,
                     crate::ImageDimension::D3 | crate::ImageDimension::Cube => 3,
-                    crate::ImageDimension::Buffer => {
+                    crate::ImageDimension::Buffer | crate::ImageDimension::Subpass => {
                         return Err(ExpressionError::InvalidImageCoordinateType(dim, coordinate))
                     }
                 };
@@ -558,7 +558,8 @@ impl super::Validator {
                         crate::ImageDimension::D2 | crate::ImageDimension::Cube => {}
                         crate::ImageDimension::D1
                         | crate::ImageDimension::D3
-                        | crate::ImageDimension::Buffer => {
+                        | crate::ImageDimension::Buffer
+                        | crate::ImageDimension::Subpass => {
                             return Err(ExpressionError::InvalidGatherDimension(dim))
                         }
                     };
@@ -771,7 +772,11 @@ impl super::Validator {
                         return Err(ExpressionError::MissingImageLevelSelector);
                     }
                 }
-                ShaderStages::all()
+                if dim == crate::ImageDimension::Subpass {
+                    ShaderStages::FRAGMENT
+                } else {
+                    ShaderStages::all()
+                }
             }
             E::ImageQuery { image, query } => {
                 let ty = Self::global_var_ty(module, function, image)?;
@@ -803,7 +808,7 @@ impl super::Validator {
                             crate::ImageQuery::NumLevels => class.has_levels(dim),
                             crate::ImageQuery::NumSamples => class.is_multisampled(),
                         };
-                        if !good {
+                        if !good || dim == crate::ImageDimension::Subpass {
                             return Err(ExpressionError::InvalidImageClass(class));
                         }
                     }

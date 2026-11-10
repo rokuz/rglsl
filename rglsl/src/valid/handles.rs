@@ -163,6 +163,7 @@ impl super::Validator {
                 memory_decorations: _,
                 io: _,
                 xfb: _,
+                input_attachment_index: _,
             } = global_variable;
             validate_type(ty)?;
             if let Some(init_expr) = init {
