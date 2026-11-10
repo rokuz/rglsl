@@ -119,7 +119,9 @@ pub fn compile_one(
     // injected bounds or loop checks, workgroup memory left uninitialized.
     let options = spv::Options {
         lang_version,
-        flags: spv::WriterFlags::DEBUG | spv::WriterFlags::LABEL_VARYINGS,
+        flags: spv::WriterFlags::DEBUG
+            | spv::WriterFlags::LABEL_VARYINGS
+            | spv::WriterFlags::SMALL_TYPE_CAPABILITIES_BY_USE,
         force_loop_bounding: false,
         zero_initialize_workgroup_memory: spv::ZeroInitializeWorkgroupMemoryMode::None,
         ray_query_initialization_tracking: false,

@@ -75,6 +75,7 @@ fn sample_value(ty: BasicType) -> Value {
             ScalarType::Int => index as f64 * 3.0 - 2.0,
             ScalarType::Uint => index as f64 * 5.0 + 1.0,
             ScalarType::Bool => (index % 2) as f64,
+            other => panic!("the fuzzer does not generate {other:?}"),
         })
         .collect();
     Value::new(ty, data)
@@ -89,6 +90,7 @@ fn literal_text(value: &Value, ty: BasicType) -> String {
             ScalarType::Int => format!("{}", *x as i64),
             ScalarType::Uint => format!("{}u", *x as u64),
             ScalarType::Bool => String::from(if *x != 0.0 { "true" } else { "false" }),
+            other => panic!("the fuzzer does not generate {other:?}"),
         })
         .collect();
     format!("{ty}({})", parts.join(", "))

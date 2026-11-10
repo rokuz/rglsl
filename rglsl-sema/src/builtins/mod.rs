@@ -125,6 +125,7 @@ const fn available(stages: u16, stage: Stage) -> bool {
 struct Section {
     text: &'static str,
     doubles: bool,
+    halves: bool,
     stages: u16,
     since: u32,
 }
@@ -134,6 +135,7 @@ impl Section {
         Self {
             text,
             doubles: false,
+            halves: false,
             stages: ALL_STAGES,
             since: 450,
         }
@@ -142,6 +144,13 @@ impl Section {
     const fn with_doubles(self) -> Self {
         Self {
             doubles: true,
+            ..self
+        }
+    }
+
+    const fn with_halves(self) -> Self {
+        Self {
+            halves: true,
             ..self
         }
     }
@@ -195,7 +204,10 @@ fn words(text: &str) -> Vec<&str> {
     found
 }
 
-const SIZED_STEMS: [&str; 7] = ["vec", "ivec", "uvec", "bvec", "dvec", "mat", "dmat"];
+const SIZED_STEMS: [&str; 15] = [
+    "vec", "ivec", "uvec", "bvec", "dvec", "mat", "dmat", "f16vec", "f16mat", "i64vec", "u64vec",
+    "i16vec", "u16vec", "i8vec", "u8vec",
+];
 
 #[derive(Clone, Copy, Default)]
 struct Sizes {
@@ -212,6 +224,13 @@ fn generic_scalar(word: &str) -> Option<(&'static str, &'static str)> {
         "genI" => ("int", "ivec"),
         "genU" => ("uint", "uvec"),
         "genB" => ("bool", "bvec"),
+        "genH" => ("float16_t", "f16vec"),
+        "genI64" => ("int64_t", "i64vec"),
+        "genU64" => ("uint64_t", "u64vec"),
+        "genI16" => ("int16_t", "i16vec"),
+        "genU16" => ("uint16_t", "u16vec"),
+        "genI8" => ("int8_t", "i8vec"),
+        "genU8" => ("uint8_t", "u8vec"),
         _ => return None,
     })
 }
@@ -246,16 +265,21 @@ fn substitute(word: &str, sizes: Sizes) -> String {
     }
 }
 
-fn double_word(word: &str) -> String {
+fn variant_word(word: &str, half: bool) -> String {
     use alloc::format;
+    let (generic, scalar, prefix) = if half {
+        ("genH", "float16_t", "f16")
+    } else {
+        ("genD", "double", "d")
+    };
     match word {
-        "genF" => String::from("genD"),
-        "float" => String::from("double"),
+        "genF" => String::from(generic),
+        "float" => String::from(scalar),
         _ if matches!(shaped(word), Some(("vec" | "mat", _)))
             || (parse_type(word).is_some()
                 && (word.starts_with("vec") || word.starts_with("mat"))) =>
         {
-            format!("d{word}")
+            format!("{prefix}{word}")
         }
         _ => String::from(word),
     }
@@ -334,11 +358,14 @@ fn expand_section(section: &Section, prototypes: &mut Vec<Prototype>) {
             continue;
         }
         expand_line(&line, section.stages, prototypes);
-        if section.doubles {
-            let doubled: Vec<String> = line.iter().map(|word| double_word(word)).collect();
-            let doubled: Vec<&str> = doubled.iter().map(String::as_str).collect();
-            if doubled != line {
-                expand_line(&doubled, section.stages, prototypes);
+        for (enabled, half) in [(section.doubles, false), (section.halves, true)] {
+            if !enabled {
+                continue;
+            }
+            let variant: Vec<String> = line.iter().map(|word| variant_word(word, half)).collect();
+            let variant: Vec<&str> = variant.iter().map(String::as_str).collect();
+            if variant != line {
+                expand_line(&variant, section.stages, prototypes);
             }
         }
     }

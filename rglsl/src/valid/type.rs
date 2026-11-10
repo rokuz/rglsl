@@ -265,7 +265,7 @@ impl super::Validator {
         &self,
         scalar: crate::Scalar,
     ) -> Result<ImmediateCompatibility, WidthError> {
-        let mut immediates_compatibility = Ok(());
+        let immediates_compatibility = Ok(());
         let good = match scalar.kind {
             crate::ScalarKind::Bool => scalar.width == crate::BOOL_WIDTH,
             crate::ScalarKind::Float => match scalar.width {
@@ -286,22 +286,26 @@ impl super::Validator {
                         });
                     }
 
-                    immediates_compatibility = Err(ImmediateError::InvalidScalar(scalar));
-
                     true
                 }
                 _ => scalar.width == 4,
             },
             crate::ScalarKind::Sint => {
-                if scalar.width == 2 {
+                if scalar.width == 1 {
+                    if !self.capabilities.contains(Capabilities::SHADER_INT16) {
+                        return Err(WidthError::MissingCapability {
+                            name: "i8",
+                            flag: "SHADER_INT16",
+                        });
+                    }
+                    true
+                } else if scalar.width == 2 {
                     if !self.capabilities.contains(Capabilities::SHADER_INT16) {
                         return Err(WidthError::MissingCapability {
                             name: "i16",
                             flag: "SHADER_INT16",
                         });
                     }
-
-                    immediates_compatibility = Err(ImmediateError::InvalidScalar(scalar));
 
                     true
                 } else if scalar.width == 8 {
@@ -317,15 +321,21 @@ impl super::Validator {
                 }
             }
             crate::ScalarKind::Uint => {
-                if scalar.width == 2 {
+                if scalar.width == 1 {
+                    if !self.capabilities.contains(Capabilities::SHADER_INT16) {
+                        return Err(WidthError::MissingCapability {
+                            name: "u8",
+                            flag: "SHADER_INT16",
+                        });
+                    }
+                    true
+                } else if scalar.width == 2 {
                     if !self.capabilities.contains(Capabilities::SHADER_INT16) {
                         return Err(WidthError::MissingCapability {
                             name: "u16",
                             flag: "SHADER_INT16",
                         });
                     }
-
-                    immediates_compatibility = Err(ImmediateError::InvalidScalar(scalar));
 
                     true
                 } else if scalar.width == 8 {

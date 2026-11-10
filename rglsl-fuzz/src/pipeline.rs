@@ -117,9 +117,13 @@ pub fn gl_uniform_function_name(ty: BasicType, array: bool) -> String {
         _ => name.push_str(&basic::num_elements(ty).to_string()),
     }
     name.push_str(match basic::element(ty) {
-        ScalarType::Float | ScalarType::Double => "f",
-        ScalarType::Uint => "ui",
-        ScalarType::Int | ScalarType::Bool => "i",
+        ScalarType::Float | ScalarType::Double | ScalarType::Float16 => "f",
+        ScalarType::Uint | ScalarType::Uint8 | ScalarType::Uint16 | ScalarType::Uint64 => "ui",
+        ScalarType::Int
+        | ScalarType::Bool
+        | ScalarType::Int8
+        | ScalarType::Int16
+        | ScalarType::Int64 => "i",
     });
     if basic::is_matrix(ty) || array {
         name.push('v');
@@ -316,8 +320,8 @@ impl PipelineInfo {
 
     pub fn zero_unset_uniforms(&mut self, unit: &TranslationUnit) -> Result<(), Error> {
         self.set_uniforms(unit, &mut |scalar| match scalar {
-            ScalarType::Float | ScalarType::Double => float_value(0.0),
-            ScalarType::Int | ScalarType::Uint | ScalarType::Bool => Value::from(0),
+            ScalarType::Float | ScalarType::Double | ScalarType::Float16 => float_value(0.0),
+            _ => Value::from(0),
         })
     }
 
@@ -327,8 +331,17 @@ impl PipelineInfo {
         random: &mut Random,
     ) -> Result<(), Error> {
         self.set_uniforms(unit, &mut |scalar| match scalar {
-            ScalarType::Float | ScalarType::Double => float_value(random.next_float()),
-            ScalarType::Int | ScalarType::Uint => Value::from(random.next_int(1 << 15)),
+            ScalarType::Float | ScalarType::Double | ScalarType::Float16 => {
+                float_value(random.next_float())
+            }
+            ScalarType::Int
+            | ScalarType::Uint
+            | ScalarType::Int8
+            | ScalarType::Int16
+            | ScalarType::Int64
+            | ScalarType::Uint8
+            | ScalarType::Uint16
+            | ScalarType::Uint64 => Value::from(random.next_int(1 << 15)),
             ScalarType::Bool => Value::from(random.next_int(2)),
         })
     }

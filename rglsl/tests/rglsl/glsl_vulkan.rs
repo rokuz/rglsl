@@ -38,7 +38,9 @@ fn compile(stage: ShaderStage, source: &str) -> dr::Module {
         .validate(&module)
         .expect("validated in parse");
     let options = spv::Options {
-        flags: spv::WriterFlags::DEBUG | spv::WriterFlags::LABEL_VARYINGS,
+        flags: spv::WriterFlags::DEBUG
+            | spv::WriterFlags::LABEL_VARYINGS
+            | spv::WriterFlags::SMALL_TYPE_CAPABILITIES_BY_USE,
         force_loop_bounding: false,
         zero_initialize_workgroup_memory: spv::ZeroInitializeWorkgroupMemoryMode::None,
         ..spv::Options::default()
@@ -1034,7 +1036,9 @@ fn compile_valid(stage: ShaderStage, source: &str) -> dr::Module {
         .validate(&module)
         .expect("validated in parse");
     let options = spv::Options {
-        flags: spv::WriterFlags::DEBUG | spv::WriterFlags::LABEL_VARYINGS,
+        flags: spv::WriterFlags::DEBUG
+            | spv::WriterFlags::LABEL_VARYINGS
+            | spv::WriterFlags::SMALL_TYPE_CAPABILITIES_BY_USE,
         ..spv::Options::default()
     };
     let words = spv::write_vec(&module, &info, &options, None).expect("SPIR-V backend failed");
@@ -2188,4 +2192,214 @@ fn non_constant_texture_offsets() {
         &module,
         spirv::Capability::ImageGatherExtended
     ));
+}
+
+fn capabilities_of(module: &dr::Module) -> Vec<spirv::Capability> {
+    let mut found: Vec<spirv::Capability> = module
+        .capabilities
+        .iter()
+        .filter_map(|inst| match inst.operands[0] {
+            Operand::Capability(capability) => Some(capability),
+            _ => None,
+        })
+        .collect();
+    found.sort_by_key(|capability| *capability as u32);
+    found
+}
+
+fn extensions_of(module: &dr::Module) -> Vec<String> {
+    let mut found: Vec<String> = module
+        .extensions
+        .iter()
+        .filter_map(|inst| match inst.operands[0] {
+            Operand::LiteralString(ref name) => Some(name.clone()),
+            _ => None,
+        })
+        .filter(|name| name != "SPV_KHR_storage_buffer_storage_class")
+        .collect();
+    found.sort();
+    found
+}
+
+fn sorted(mut capabilities: Vec<spirv::Capability>) -> Vec<spirv::Capability> {
+    capabilities.sort_by_key(|capability| *capability as u32);
+    capabilities
+}
+
+#[test]
+fn sixteen_bit_storage_without_arithmetic_matches_glslang() {
+    use spirv::Capability as C;
+    {
+        let module = compile_valid(
+            ShaderStage::Fragment,
+            "#version 450
+            #extension GL_EXT_shader_16bit_storage : enable
+            layout(binding = 0) uniform U { float16_t a; f16vec2 b; u16vec2 c; };
+            layout(binding = 1) buffer B { float16_t o; f16vec2 p; u16vec2 q; };
+            layout(push_constant) uniform P { float16_t h; } pc;
+            void main() {
+                o = a;
+                p = f16vec2(vec2(b) * 2.0);
+                q = c;
+                o = pc.h;
+                vec4 x = vec4(a, b, 1.0);
+            }",
+        );
+        assert_eq!(
+            capabilities_of(&module),
+            sorted(vec![
+                C::Shader,
+                C::StorageBuffer16BitAccess,
+                C::UniformAndStorageBuffer16BitAccess,
+                C::StoragePushConstant16,
+            ])
+        );
+        assert_eq!(extensions_of(&module), ["SPV_KHR_16bit_storage"]);
+    }
+}
+
+#[test]
+fn explicit_arithmetic_types_capabilities_match_glslang() {
+    use spirv::Capability as C;
+    {
+        let module = compile_valid(
+            ShaderStage::Fragment,
+            "#version 450
+            #extension GL_EXT_shader_explicit_arithmetic_types : enable
+            layout(location = 0) in f16vec2 inp;
+            layout(location = 1) flat in int64_t big;
+            layout(location = 0) out f16vec4 outp;
+            layout(binding = 0) uniform U { uint8_t small; int8_t value; };
+            void main() {
+                float16_t scale = float16_t(small) + float16_t(big);
+                outp = f16vec4(inp * scale, inp.yx);
+                int8_t doubled = value * int8_t(2);
+            }",
+        );
+        assert_eq!(
+            capabilities_of(&module),
+            sorted(vec![
+                C::Shader,
+                C::Float16,
+                C::Int64,
+                C::Int8,
+                C::StorageInputOutput16,
+                C::UniformAndStorageBuffer8BitAccess,
+            ])
+        );
+        assert_eq!(
+            extensions_of(&module),
+            ["SPV_KHR_16bit_storage", "SPV_KHR_8bit_storage"]
+        );
+    }
+}
+
+#[test]
+fn eight_bit_storage_conversions_need_no_int8() {
+    use spirv::Capability as C;
+    {
+        let module = compile_valid(
+            ShaderStage::Compute,
+            "#version 450
+            #extension GL_EXT_shader_8bit_storage : enable
+            layout(local_size_x = 1) in;
+            layout(binding = 0) uniform U { uint8_t a; i8vec2 b; };
+            layout(binding = 1) buffer B { uint total; int8_t copy; };
+            void main() {
+                total = uint(a) + uint(b.x);
+                copy = b.y;
+            }",
+        );
+        assert_eq!(
+            capabilities_of(&module),
+            sorted(vec![
+                C::Shader,
+                C::UniformAndStorageBuffer8BitAccess,
+                C::StorageBuffer8BitAccess,
+            ])
+        );
+        assert_eq!(extensions_of(&module), ["SPV_KHR_8bit_storage"]);
+    }
+}
+
+#[test]
+fn sized_integer_built_ins_produce_valid_spirv() {
+    {
+        let module = compile_valid(
+            ShaderStage::Compute,
+            "#version 450
+            #extension GL_EXT_shader_explicit_arithmetic_types : enable
+            layout(local_size_x = 1) in;
+            layout(binding = 0) buffer B {
+                int64_t wide;
+                i16vec2 pair;
+                int8_t narrow;
+                uint packed;
+                f16vec2 halves;
+                double real;
+            };
+            void main() {
+                wide = int64_t(bitCount(wide)) + findMSB(wide) + findLSB(uint64_t(wide));
+                narrow = bitfieldReverse(narrow) + int8_t(findMSB(narrow));
+                pair = unpack16(pack32(pair));
+                packed = packFloat2x16(halves);
+                halves = unpackFloat2x16(packed);
+                wide = packInt2x32(unpackInt2x32(wide)) + doubleBitsToInt64(real);
+                pair = halfBitsToInt16(halves) + i16vec2(bitfieldExtract(pair.x, 1s, 2s));
+            }",
+        );
+        assert!(has_capability(&module, spirv::Capability::Int64));
+        assert!(has_capability(&module, spirv::Capability::Int16));
+        assert!(has_capability(&module, spirv::Capability::Int8));
+    }
+}
+
+#[test]
+fn sixteen_bit_types_need_their_extension() {
+    {
+        let error = parse(
+            ShaderStage::Fragment,
+            "#version 450
+            #extension GL_EXT_shader_16bit_storage : enable
+            layout(binding = 0) buffer B { float16_t a; };
+            void main() { a = a * a; }",
+        )
+        .unwrap_err();
+        assert!(error.contains("cannot be applied"), "{error}");
+        assert!(parse(
+            ShaderStage::Fragment,
+            "#version 450
+            void main() { int64_t x = 1l; }",
+        )
+        .is_err());
+        let error = parse(
+            ShaderStage::Fragment,
+            "#version 450
+            #extension GL_EXT_unknown_thing : require
+            void main() {}",
+        )
+        .unwrap_err();
+        assert!(error.contains("GL_EXT_unknown_thing"), "{error}");
+    }
+}
+
+#[test]
+fn analysis_errors_before_a_syntax_error_are_reported_first() {
+    {
+        let source = "#version 450
+#extension GL_EXT_shader_16bit_storage : enable
+void f(float16_t x) {}
+f16mat2 m;
+void main() {}
+";
+        let errors = glsl::Frontend::default()
+            .parse(&glsl::Options::from(ShaderStage::Fragment), source)
+            .unwrap_err();
+        let lines: Vec<u32> = errors
+            .errors
+            .iter()
+            .map(|error| error.meta.location(source).line_number)
+            .collect();
+        assert_eq!(lines, [3, 4]);
+    }
 }

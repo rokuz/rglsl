@@ -222,14 +222,16 @@ impl<'a> FunctionLowerer<'_, 'a> {
         target: crate::Scalar,
         at: Span,
     ) -> Result<Handle<Expression>> {
-        self.add(
-            Expression::As {
-                expr: value,
-                kind: target.kind,
-                convert: Some(target.width),
-            },
-            at,
-        )
+        let expression = Expression::As {
+            expr: value,
+            kind: target.kind,
+            convert: Some(target.width),
+        };
+        if self.lw.folds_conversions_to(target) {
+            self.add(expression, at)
+        } else {
+            Ok(self.unemitted(expression, at))
+        }
     }
 
     pub(super) fn convert(
@@ -839,8 +841,8 @@ impl<'a> FunctionLowerer<'_, 'a> {
                             at,
                         )
                     }
-                    _ if base == GlslScalar::Uint => {
-                        let zero = Literal::zero(crate::Scalar::U32).ok_or_else(|| internal(at))?;
+                    _ if base.is_unsigned() => {
+                        let zero = Literal::zero(scalar(base)).ok_or_else(|| internal(at))?;
                         let zero = self.filled(&ty, zero, at)?;
                         self.add(
                             Expression::Binary {

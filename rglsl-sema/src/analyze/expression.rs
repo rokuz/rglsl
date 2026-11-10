@@ -12,56 +12,66 @@ use crate::builtins::Stage;
 use crate::constant::{fold_binary, fold_unary, Constant, Value};
 use crate::diagnostic::DiagnosticKind;
 use crate::scope::{Lookup, Origin, Qualifiers, Storage, SymbolId, SymbolKind};
-use crate::types::{ArraySize, BlockStorage, Scalar, Type, TypeKind};
+use crate::types::{ArraySize, BlockStorage, NumericFeatures, Scalar, Type, TypeKind};
+use rglsl_ast::extensions::Feature;
 
 const SWIZZLE_SETS: [&str; 3] = ["xyzw", "rgba", "stpq"];
 
-fn literal(number: &NumericLiteral) -> Option<Operand> {
-    let digits = number.digits();
-    Some(match number.kind {
-        NumericKind::Int | NumericKind::Uint => {
-            let parsed = if let Some(hex) = digits
-                .strip_prefix("0x")
-                .or_else(|| digits.strip_prefix("0X"))
-            {
-                u64::from_str_radix(hex, 16)
-            } else if digits.len() > 1 && digits.starts_with('0') {
-                u64::from_str_radix(digits, 8)
-            } else {
-                digits.parse::<u64>()
-            };
-            let bits = u32::try_from(parsed.ok()?).ok()?;
-            if number.kind == NumericKind::Int {
-                let value = Constant::single(Value::Int(bits.cast_signed()));
-                Operand::constant(Type::INT, Some(value))
-            } else {
-                let value = Constant::single(Value::Uint(bits));
-                Operand::constant(Type::UINT, Some(value))
-            }
-        }
-        NumericKind::Float => {
-            let value = digits
-                .parse::<f64>()
-                .ok()
-                .map(|value| Constant::single(Value::Float(value)));
-            Operand::constant(Type::FLOAT, value)
-        }
-        NumericKind::Double => {
-            let value = digits
-                .parse::<f64>()
-                .ok()
-                .map(|value| Constant::single(Value::Double(value)));
-            Operand::constant(Type::DOUBLE, value)
-        }
-    })
+fn parse_integer(digits: &str) -> Option<u64> {
+    if let Some(hex) = digits
+        .strip_prefix("0x")
+        .or_else(|| digits.strip_prefix("0X"))
+    {
+        u64::from_str_radix(hex, 16).ok()
+    } else if digits.len() > 1 && digits.starts_with('0') {
+        u64::from_str_radix(digits, 8).ok()
+    } else {
+        digits.parse::<u64>().ok()
+    }
 }
 
-const fn common_scalar(left: Scalar, right: Scalar) -> Option<Scalar> {
-    match (left.numeric_rank(), right.numeric_rank()) {
-        (Some(left_rank), Some(right_rank)) => {
-            Some(if left_rank >= right_rank { left } else { right })
+fn literal(number: &NumericLiteral) -> Option<Operand> {
+    let digits = number.digits();
+    let integer = |scalar: Scalar, limit: u64| {
+        let parsed = parse_integer(digits)?;
+        let decimal = !digits.starts_with('0') || digits.len() == 1;
+        if parsed > limit && (decimal || parsed > u64::from(u32::MAX)) {
+            return None;
         }
-        _ => None,
+        let value = Value::integer(scalar, i128::from(parsed));
+        Some(Operand::constant(
+            Type::scalar(scalar),
+            Some(Constant::single(value)),
+        ))
+    };
+    let floating = |scalar: Scalar| {
+        let value = digits
+            .parse::<f64>()
+            .ok()
+            .map(|value| Constant::single(Value::floating(scalar, value)));
+        Some(Operand::constant(Type::scalar(scalar), value))
+    };
+    match number.kind {
+        NumericKind::Int => integer(Scalar::Int, u64::from(u32::MAX)),
+        NumericKind::Uint => integer(Scalar::Uint, u64::from(u32::MAX)),
+        NumericKind::Int16 => integer(Scalar::Int16, u64::from(u16::MAX)),
+        NumericKind::Uint16 => integer(Scalar::Uint16, u64::from(u16::MAX)),
+        NumericKind::Int64 => integer(Scalar::Int64, u64::MAX),
+        NumericKind::Uint64 => integer(Scalar::Uint64, u64::MAX),
+        NumericKind::Float => floating(Scalar::Float),
+        NumericKind::Double => floating(Scalar::Double),
+        NumericKind::Float16 => floating(Scalar::Float16),
+    }
+}
+
+const fn literal_feature(kind: NumericKind) -> Option<(Feature, &'static str)> {
+    match kind {
+        NumericKind::Int64 => Some((Feature::Int64Literal, "64-bit literal")),
+        NumericKind::Uint64 => Some((Feature::Int64Literal, "64-bit unsigned literal")),
+        NumericKind::Int16 => Some((Feature::Int16Literal, "16-bit literal")),
+        NumericKind::Uint16 => Some((Feature::Int16Literal, "16-bit unsigned literal")),
+        NumericKind::Float16 => Some((Feature::Float16Literal, "half floating-point suffix")),
+        NumericKind::Int | NumericKind::Uint | NumericKind::Float | NumericKind::Double => None,
     }
 }
 
@@ -109,7 +119,9 @@ pub(crate) fn binary_types(
     operator: BinaryOperator,
     left: &Type,
     right: &Type,
+    features: NumericFeatures,
 ) -> Option<BinaryResult> {
+    let common_scalar = |left: Scalar, right: Scalar| left.common(right, features);
     use BinaryOperator as Op;
     if left.is_array() || right.is_array() {
         return None;
@@ -234,10 +246,15 @@ impl Analyzer<'_> {
         let span = expression.span;
         match &expression.kind {
             ExpressionKind::Variable(name) => self.variable(expression, name),
-            ExpressionKind::Number(number) => literal(number).unwrap_or_else(|| {
-                self.error(span, DiagnosticKind::LiteralTooBig(number.text.clone()));
-                Operand::error()
-            }),
+            ExpressionKind::Number(number) => {
+                if let Some((feature, what)) = literal_feature(number.kind) {
+                    self.require_feature(span, feature, what);
+                }
+                literal(number).unwrap_or_else(|| {
+                    self.error(span, DiagnosticKind::LiteralTooBig(number.text.clone()));
+                    Operand::error()
+                })
+            }
             ExpressionKind::Bool(value) => {
                 Operand::constant(Type::BOOL, Some(Constant::single(Value::Bool(*value))))
             }
@@ -552,6 +569,14 @@ impl Analyzer<'_> {
                 self.error(span, DiagnosticKind::VariableIndexIntoUnsizedArray);
             }
         }
+        if base_operand.ty.is_vector() {
+            self.require_small_arithmetic(
+                span,
+                &base_operand.ty,
+                "[",
+                "does not operate on types containing {}",
+            );
+        }
         let constant = base_operand.constant && index_operand.constant;
         let value = if constant {
             let size = element
@@ -612,6 +637,14 @@ impl Analyzer<'_> {
                 DiagnosticKind::InvalidSwizzle(field.node.clone()),
             );
             return Some(Operand::error());
+        }
+        if base.ty.is_vector() && indices.len() != 1 {
+            self.require_small_arithmetic(
+                field.span,
+                &base.ty,
+                ".",
+                "can't swizzle types containing {}",
+            );
         }
         if indices.is_empty() {
             indices.push(0);
@@ -749,7 +782,7 @@ impl Analyzer<'_> {
         if !self.require_lvalue(span, &value) {
             return Operand::error();
         }
-        if !value.ty.is_numeric() {
+        if !value.ty.is_numeric() || !self.small_arithmetic_allowed(&[&value.ty]) {
             self.error(
                 span,
                 DiagnosticKind::InvalidOperand {
@@ -781,7 +814,7 @@ impl Analyzer<'_> {
             }
             UnaryOperator::Increment | UnaryOperator::Decrement => false,
         };
-        if !valid {
+        if !valid || !self.small_arithmetic_allowed(&[&value.ty]) {
             self.error(
                 span,
                 DiagnosticKind::InvalidOperand {
@@ -832,13 +865,16 @@ impl Analyzer<'_> {
         if !comparable(left) || !comparable(right) {
             return None;
         }
-        if left.converts_implicitly_to(right) {
-            Some(right.clone())
-        } else if right.converts_implicitly_to(left) {
-            Some(left.clone())
-        } else {
-            None
+        if left == right {
+            return Some(left.clone());
         }
+        if left.is_array() || right.is_array() || !left.same_shape(right) {
+            return None;
+        }
+        let scalar = left
+            .base_scalar()?
+            .common(right.base_scalar()?, self.numeric_features())?;
+        Some(left.with_scalar(scalar))
     }
 
     fn binary(
@@ -857,7 +893,10 @@ impl Analyzer<'_> {
             return Operand::error();
         }
         let constant = left_operand.constant && right_operand.constant;
-        let result = if matches!(operator, BinaryOperator::Equal | BinaryOperator::NotEqual) {
+        let small_allowed = self.small_arithmetic_allowed(&[&left_operand.ty, &right_operand.ty]);
+        let result = if !small_allowed {
+            None
+        } else if matches!(operator, BinaryOperator::Equal | BinaryOperator::NotEqual) {
             self.equality_type(&left_operand.ty, &right_operand.ty)
                 .map(|common| BinaryResult {
                     ty: Type::BOOL,
@@ -866,7 +905,12 @@ impl Analyzer<'_> {
                     foldable: true,
                 })
         } else {
-            binary_types(operator, &left_operand.ty, &right_operand.ty)
+            binary_types(
+                operator,
+                &left_operand.ty,
+                &right_operand.ty,
+                self.numeric_features(),
+            )
         };
         let Some(result) = result else {
             return self.invalid_operands(
@@ -940,9 +984,9 @@ impl Analyzer<'_> {
         {
             return self.invalid_operands(span, "?:", &then_operand.ty, &else_operand.ty);
         }
-        let ty = if then_operand.ty.converts_implicitly_to(&else_operand.ty) {
+        let ty = if self.converts(&then_operand.ty, &else_operand.ty) {
             else_operand.ty.clone()
-        } else if else_operand.ty.converts_implicitly_to(&then_operand.ty) {
+        } else if self.converts(&else_operand.ty, &then_operand.ty) {
             then_operand.ty.clone()
         } else {
             return self.invalid_operands(span, "?:", &then_operand.ty, &else_operand.ty);
@@ -996,7 +1040,8 @@ impl Analyzer<'_> {
         }
         let target_type = &target_operand.ty;
         let Some(binary) = compound_operator(operator) else {
-            let assignable = value_operand.ty.converts_implicitly_to(target_type)
+            self.assignment_small_check(span, target_type, "=");
+            let assignable = self.converts(&value_operand.ty, target_type)
                 && !target_type.is_void()
                 && !target_type.contains_opaque(&self.types)
                 && !matches!(target_type.kind, TypeKind::Block(_));
@@ -1013,8 +1058,13 @@ impl Analyzer<'_> {
             self.record_conversion(value, &value_operand.ty, target_type);
             return Operand::temporary(target_type.clone());
         };
-        let result = binary_types(binary, target_type, &value_operand.ty)
-            .filter(|result| result.ty == *target_type && result.left == *target_type);
+        let result = binary_types(
+            binary,
+            target_type,
+            &value_operand.ty,
+            self.numeric_features(),
+        )
+        .filter(|result| result.ty == *target_type && result.left == *target_type);
         let Some(result) = result else {
             return self.invalid_operands(span, operator.symbol(), target_type, &value_operand.ty);
         };

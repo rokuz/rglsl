@@ -107,6 +107,7 @@ mod mesh_shader;
 mod ray;
 mod reclaimable;
 mod selection;
+mod small_types;
 mod subgroup;
 mod writer;
 
@@ -1047,6 +1048,8 @@ bitflags::bitflags! {
         /// Note: VK_KHR_shader_non_semantic_info must be enabled. This will have no
         /// effect if `options.trace_ray_argument_validation` is set to false.
         const PRINT_ON_TRACE_RAYS_FAIL = 0x40;
+
+        const SMALL_TYPE_CAPABILITIES_BY_USE = 0x80;
     }
 }
 

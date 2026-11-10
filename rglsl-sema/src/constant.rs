@@ -11,6 +11,29 @@ pub enum Value {
     Uint(u32),
     Float(f64),
     Double(f64),
+    Int8(i8),
+    Uint8(u8),
+    Int16(i16),
+    Uint16(u16),
+    Int64(i64),
+    Uint64(u64),
+    Float16(f64),
+}
+
+fn round_to_half(value: f64) -> f64 {
+    half::f16::from_f64(value).to_f64()
+}
+
+fn round_to_single(value: f64) -> f64 {
+    f64::from(value as f32)
+}
+
+const fn truncate_float(value: f64) -> i128 {
+    if value.is_nan() {
+        0
+    } else {
+        value as i128
+    }
 }
 
 impl Value {
@@ -21,35 +44,71 @@ impl Value {
             Self::Uint(_) => Scalar::Uint,
             Self::Float(_) => Scalar::Float,
             Self::Double(_) => Scalar::Double,
+            Self::Int8(_) => Scalar::Int8,
+            Self::Uint8(_) => Scalar::Uint8,
+            Self::Int16(_) => Scalar::Int16,
+            Self::Uint16(_) => Scalar::Uint16,
+            Self::Int64(_) => Scalar::Int64,
+            Self::Uint64(_) => Scalar::Uint64,
+            Self::Float16(_) => Scalar::Float16,
         }
     }
 
-    pub const fn zero(scalar: Scalar) -> Self {
+    pub fn integer(scalar: Scalar, wide: i128) -> Self {
         match scalar {
-            Scalar::Bool => Self::Bool(false),
-            Scalar::Int => Self::Int(0),
-            Scalar::Uint => Self::Uint(0),
-            Scalar::Float => Self::Float(0.0),
-            Scalar::Double => Self::Double(0.0),
+            Scalar::Bool => Self::Bool(wide != 0),
+            Scalar::Int => Self::Int(wide as i32),
+            Scalar::Uint => Self::Uint(wide as u32),
+            Scalar::Int8 => Self::Int8(wide as i8),
+            Scalar::Uint8 => Self::Uint8(wide as u8),
+            Scalar::Int16 => Self::Int16(wide as i16),
+            Scalar::Uint16 => Self::Uint16(wide as u16),
+            Scalar::Int64 => Self::Int64(wide as i64),
+            Scalar::Uint64 => Self::Uint64(wide as u64),
+            Scalar::Float | Scalar::Double | Scalar::Float16 => Self::floating(scalar, wide as f64),
         }
     }
 
-    pub const fn one(scalar: Scalar) -> Self {
+    pub fn floating(scalar: Scalar, value: f64) -> Self {
         match scalar {
-            Scalar::Bool => Self::Bool(true),
-            Scalar::Int => Self::Int(1),
-            Scalar::Uint => Self::Uint(1),
-            Scalar::Float => Self::Float(1.0),
-            Scalar::Double => Self::Double(1.0),
+            Scalar::Float => Self::Float(round_to_single(value)),
+            Scalar::Double => Self::Double(value),
+            Scalar::Float16 => Self::Float16(round_to_half(value)),
+            _ => Self::integer(scalar, truncate_float(value)),
         }
     }
 
-    pub const fn as_i64(self) -> Option<i64> {
+    pub const fn wide(self) -> Option<i128> {
+        Some(match self {
+            Self::Int(value) => value as i128,
+            Self::Uint(value) => value as i128,
+            Self::Int8(value) => value as i128,
+            Self::Uint8(value) => value as i128,
+            Self::Int16(value) => value as i128,
+            Self::Uint16(value) => value as i128,
+            Self::Int64(value) => value as i128,
+            Self::Uint64(value) => value as i128,
+            _ => return None,
+        })
+    }
+
+    pub const fn float(self) -> Option<f64> {
         match self {
-            Self::Int(value) => Some(value as i64),
-            Self::Uint(value) => Some(value as i64),
+            Self::Float(value) | Self::Double(value) | Self::Float16(value) => Some(value),
             _ => None,
         }
+    }
+
+    pub fn zero(scalar: Scalar) -> Self {
+        Self::integer(scalar, 0)
+    }
+
+    pub fn one(scalar: Scalar) -> Self {
+        Self::integer(scalar, 1)
+    }
+
+    pub fn as_i64(self) -> Option<i64> {
+        self.wide().and_then(|value| i64::try_from(value).ok())
     }
 
     pub const fn as_bool(self) -> Option<bool> {
@@ -62,40 +121,31 @@ impl Value {
     fn as_f64(self) -> f64 {
         match self {
             Self::Bool(value) => f64::from(u8::from(value)),
-            Self::Int(value) => f64::from(value),
-            Self::Uint(value) => f64::from(value),
-            Self::Float(value) | Self::Double(value) => value,
+            Self::Float(value) | Self::Double(value) | Self::Float16(value) => value,
+            other => other.wide().map_or(0.0, |value| value as f64),
         }
     }
 
     pub fn convert(self, target: Scalar) -> Self {
-        match target {
-            Scalar::Bool => Self::Bool(match self {
+        if target == Scalar::Bool {
+            return Self::Bool(match self {
                 Self::Bool(value) => value,
-                Self::Int(value) => value != 0,
-                Self::Uint(value) => value != 0,
-                Self::Float(value) | Self::Double(value) => value != 0.0,
-            }),
-            Scalar::Int => Self::Int(match self {
-                Self::Bool(value) => i32::from(value),
-                Self::Int(value) => value,
-                Self::Uint(value) => value as i32,
-                Self::Float(value) | Self::Double(value) => value as i32,
-            }),
-            Scalar::Uint => Self::Uint(match self {
-                Self::Bool(value) => u32::from(value),
-                Self::Int(value) => value as u32,
-                Self::Uint(value) => value,
-                Self::Float(value) | Self::Double(value) => {
-                    if value < 0.0 {
-                        (value as i64) as u32
-                    } else {
-                        value as u32
-                    }
+                other => other.as_f64() != 0.0,
+            });
+        }
+        if target.is_floating() {
+            return Self::floating(target, self.as_f64());
+        }
+        match self {
+            Self::Bool(value) => Self::integer(target, i128::from(value)),
+            Self::Float(value) | Self::Double(value) | Self::Float16(value) => {
+                if value < 0.0 && target.is_unsigned() {
+                    Self::integer(target, i128::from(value as i64))
+                } else {
+                    Self::integer(target, truncate_float(value))
                 }
-            }),
-            Scalar::Float => Self::Float(f64::from(self.as_f64() as f32)),
-            Scalar::Double => Self::Double(self.as_f64()),
+            }
+            other => Self::integer(target, other.wide().unwrap_or(0)),
         }
     }
 }
@@ -149,34 +199,42 @@ pub fn fold_unary(operator: UnaryOperator, operand: &Constant) -> Option<Constan
     let values = operand
         .values
         .iter()
-        .map(|value| match (operator, *value) {
-            (UnaryOperator::Plus, value) => Some(value),
-            (UnaryOperator::Minus, Value::Int(value)) => Some(Value::Int(value.wrapping_neg())),
-            (UnaryOperator::Minus, Value::Uint(value)) => Some(Value::Uint(value.wrapping_neg())),
-            (UnaryOperator::Minus, Value::Float(value)) => Some(Value::Float(-value)),
-            (UnaryOperator::Minus, Value::Double(value)) => Some(Value::Double(-value)),
-            (UnaryOperator::LogicalNot, Value::Bool(value)) => Some(Value::Bool(!value)),
-            (UnaryOperator::BitNot, Value::Int(value)) => Some(Value::Int(!value)),
-            (UnaryOperator::BitNot, Value::Uint(value)) => Some(Value::Uint(!value)),
-            _ => None,
+        .map(|value| {
+            let scalar = value.scalar();
+            match (operator, *value) {
+                (UnaryOperator::Plus, value) => Some(value),
+                (UnaryOperator::LogicalNot, Value::Bool(value)) => Some(Value::Bool(!value)),
+                (UnaryOperator::Minus, value) => match (value.wide(), value.float()) {
+                    (Some(wide), _) => Some(Value::integer(scalar, wide.wrapping_neg())),
+                    (_, Some(number)) => Some(Value::floating(scalar, -number)),
+                    _ => None,
+                },
+                (UnaryOperator::BitNot, value) => {
+                    value.wide().map(|wide| Value::integer(scalar, !wide))
+                }
+                _ => None,
+            }
         })
         .collect::<Option<Vec<_>>>()?;
     Some(Constant::new(values))
 }
 
-fn fold_int(operator: BinaryOperator, left: i32, right: i32) -> Option<Value> {
-    let shift = u32::try_from(right).ok();
+fn fold_integer(
+    operator: BinaryOperator,
+    scalar: Scalar,
+    left: i128,
+    right: i128,
+) -> Option<Value> {
+    let wrap = |value: i128| Value::integer(scalar, value);
     Some(match operator {
-        BinaryOperator::Add => Value::Int(left.wrapping_add(right)),
-        BinaryOperator::Subtract => Value::Int(left.wrapping_sub(right)),
-        BinaryOperator::Multiply => Value::Int(left.wrapping_mul(right)),
-        BinaryOperator::Divide => Value::Int(left.checked_div(right)?),
-        BinaryOperator::Modulo => Value::Int(left.checked_rem(right)?),
-        BinaryOperator::ShiftLeft => Value::Int(left.checked_shl(shift?)?),
-        BinaryOperator::ShiftRight => Value::Int(left.checked_shr(shift?)?),
-        BinaryOperator::BitAnd => Value::Int(left & right),
-        BinaryOperator::BitOr => Value::Int(left | right),
-        BinaryOperator::BitXor => Value::Int(left ^ right),
+        BinaryOperator::Add => wrap(left.wrapping_add(right)),
+        BinaryOperator::Subtract => wrap(left.wrapping_sub(right)),
+        BinaryOperator::Multiply => wrap(left.wrapping_mul(right)),
+        BinaryOperator::Divide => wrap(left.checked_div(right)?),
+        BinaryOperator::Modulo => wrap(left.checked_rem(right)?),
+        BinaryOperator::BitAnd => wrap(left & right),
+        BinaryOperator::BitOr => wrap(left | right),
+        BinaryOperator::BitXor => wrap(left ^ right),
         BinaryOperator::Less => Value::Bool(left < right),
         BinaryOperator::Greater => Value::Bool(left > right),
         BinaryOperator::LessEqual => Value::Bool(left <= right),
@@ -185,34 +243,22 @@ fn fold_int(operator: BinaryOperator, left: i32, right: i32) -> Option<Value> {
     })
 }
 
-fn fold_uint(operator: BinaryOperator, left: u32, right: u32) -> Option<Value> {
+fn fold_shift(operator: BinaryOperator, left: Value, right: Value) -> Option<Value> {
+    let scalar = left.scalar();
+    let value = left.wide()?;
+    let amount = u32::try_from(right.wide()?).ok()?;
+    if amount >= scalar.bits() {
+        return None;
+    }
     Some(match operator {
-        BinaryOperator::Add => Value::Uint(left.wrapping_add(right)),
-        BinaryOperator::Subtract => Value::Uint(left.wrapping_sub(right)),
-        BinaryOperator::Multiply => Value::Uint(left.wrapping_mul(right)),
-        BinaryOperator::Divide => Value::Uint(left.checked_div(right)?),
-        BinaryOperator::Modulo => Value::Uint(left.checked_rem(right)?),
-        BinaryOperator::ShiftLeft => Value::Uint(left.checked_shl(right)?),
-        BinaryOperator::ShiftRight => Value::Uint(left.checked_shr(right)?),
-        BinaryOperator::BitAnd => Value::Uint(left & right),
-        BinaryOperator::BitOr => Value::Uint(left | right),
-        BinaryOperator::BitXor => Value::Uint(left ^ right),
-        BinaryOperator::Less => Value::Bool(left < right),
-        BinaryOperator::Greater => Value::Bool(left > right),
-        BinaryOperator::LessEqual => Value::Bool(left <= right),
-        BinaryOperator::GreaterEqual => Value::Bool(left >= right),
+        BinaryOperator::ShiftLeft => Value::integer(scalar, value << amount),
+        BinaryOperator::ShiftRight => Value::integer(scalar, value >> amount),
         _ => return None,
     })
 }
 
-fn fold_float(operator: BinaryOperator, left: f64, right: f64, double: bool) -> Option<Value> {
-    let wrap = |value: f64| {
-        if double {
-            Value::Double(value)
-        } else {
-            Value::Float(value)
-        }
-    };
+fn fold_float(operator: BinaryOperator, scalar: Scalar, left: f64, right: f64) -> Option<Value> {
+    let wrap = |value: f64| Value::floating(scalar, value);
     Some(match operator {
         BinaryOperator::Add => wrap(left + right),
         BinaryOperator::Subtract => wrap(left - right),
@@ -227,27 +273,23 @@ fn fold_float(operator: BinaryOperator, left: f64, right: f64, double: bool) -> 
 }
 
 fn fold_pair(operator: BinaryOperator, left: Value, right: Value) -> Option<Value> {
+    if matches!(
+        operator,
+        BinaryOperator::ShiftLeft | BinaryOperator::ShiftRight
+    ) {
+        return fold_shift(operator, left, right);
+    }
+    if left.scalar() != right.scalar() {
+        return None;
+    }
+    let scalar = left.scalar();
+    if let (Some(left), Some(right)) = (left.wide(), right.wide()) {
+        return fold_integer(operator, scalar, left, right);
+    }
+    if let (Some(left), Some(right)) = (left.float(), right.float()) {
+        return fold_float(operator, scalar, left, right);
+    }
     match (left, right) {
-        (Value::Int(left), Value::Int(right)) => fold_int(operator, left, right),
-        (Value::Uint(left), Value::Uint(right)) => fold_uint(operator, left, right),
-        (Value::Int(left), Value::Uint(right))
-            if matches!(
-                operator,
-                BinaryOperator::ShiftLeft | BinaryOperator::ShiftRight
-            ) =>
-        {
-            fold_int(operator, left, i32::try_from(right).ok()?)
-        }
-        (Value::Uint(left), Value::Int(right))
-            if matches!(
-                operator,
-                BinaryOperator::ShiftLeft | BinaryOperator::ShiftRight
-            ) =>
-        {
-            fold_uint(operator, left, u32::try_from(right).ok()?)
-        }
-        (Value::Float(left), Value::Float(right)) => fold_float(operator, left, right, false),
-        (Value::Double(left), Value::Double(right)) => fold_float(operator, left, right, true),
         (Value::Bool(left), Value::Bool(right)) => Some(Value::Bool(match operator {
             BinaryOperator::LogicalAnd => left && right,
             BinaryOperator::LogicalOr => left || right,
@@ -284,13 +326,12 @@ pub fn fold_binary(
 }
 
 fn compare(left: Value, right: Value) -> Option<core::cmp::Ordering> {
-    match (left, right) {
-        (Value::Int(left), Value::Int(right)) => Some(left.cmp(&right)),
-        (Value::Uint(left), Value::Uint(right)) => Some(left.cmp(&right)),
-        (Value::Float(left), Value::Float(right)) | (Value::Double(left), Value::Double(right)) => {
-            left.partial_cmp(&right)
-        }
-        _ => None,
+    if left.scalar() != right.scalar() {
+        return None;
+    }
+    match (left.wide(), right.wide()) {
+        (Some(left), Some(right)) => Some(left.cmp(&right)),
+        _ => left.float()?.partial_cmp(&right.float()?),
     }
 }
 
@@ -311,12 +352,15 @@ fn larger(left: Value, right: Value) -> Option<Value> {
 }
 
 fn absolute(value: Value) -> Option<Value> {
-    Some(match value {
-        Value::Int(value) => Value::Int(value.wrapping_abs()),
-        Value::Float(value) => Value::Float(if value < 0.0 { -value } else { value }),
-        Value::Double(value) => Value::Double(if value < 0.0 { -value } else { value }),
-        _ => return None,
-    })
+    let scalar = value.scalar();
+    if scalar.is_signed() {
+        return Some(Value::integer(scalar, value.wide()?.wrapping_abs()));
+    }
+    let number = value.float()?;
+    Some(Value::floating(
+        scalar,
+        if number < 0.0 { -number } else { number },
+    ))
 }
 
 fn truncated(value: f64) -> Option<f64> {
@@ -331,11 +375,7 @@ fn truncated(value: f64) -> Option<f64> {
 }
 
 fn rounded(name: &str, value: Value) -> Option<Value> {
-    let (number, double) = match value {
-        Value::Float(number) => (number, false),
-        Value::Double(number) => (number, true),
-        _ => return None,
-    };
+    let number = value.float()?;
     let whole = truncated(number)?;
     let result = match name {
         "trunc" => whole,
@@ -347,18 +387,15 @@ fn rounded(name: &str, value: Value) -> Option<Value> {
         "sign" => 0.0,
         _ => return None,
     };
-    Some(if double {
-        Value::Double(result)
-    } else {
-        Value::Float(result)
-    })
+    Some(Value::floating(value.scalar(), result))
 }
 
 fn sign(value: Value) -> Option<Value> {
-    match value {
-        Value::Int(number) => Some(Value::Int(number.signum())),
-        other => rounded("sign", other),
+    let scalar = value.scalar();
+    if scalar.is_signed() {
+        return Some(Value::integer(scalar, value.wide()?.signum()));
     }
+    rounded("sign", value)
 }
 
 pub fn fold_builtin(name: &str, arguments: &[Constant]) -> Option<Constant> {

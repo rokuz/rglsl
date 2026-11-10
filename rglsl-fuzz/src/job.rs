@@ -452,11 +452,17 @@ pub fn literal_text(ty: rglsl_ast::ast::BasicType, values: &[String]) -> String 
             rglsl_ast::ast::ScalarType::Bool => {
                 if value.trim() == "1" { "true" } else { "false" }.to_owned()
             }
-            rglsl_ast::ast::ScalarType::Float | rglsl_ast::ast::ScalarType::Double => {
-                float_literal(value)
-            }
-            rglsl_ast::ast::ScalarType::Uint => format!("{}u", value.trim_start_matches('-')),
-            rglsl_ast::ast::ScalarType::Int => value.clone(),
+            rglsl_ast::ast::ScalarType::Float
+            | rglsl_ast::ast::ScalarType::Double
+            | rglsl_ast::ast::ScalarType::Float16 => float_literal(value),
+            rglsl_ast::ast::ScalarType::Uint
+            | rglsl_ast::ast::ScalarType::Uint8
+            | rglsl_ast::ast::ScalarType::Uint16
+            | rglsl_ast::ast::ScalarType::Uint64 => format!("{}u", value.trim_start_matches('-')),
+            rglsl_ast::ast::ScalarType::Int
+            | rglsl_ast::ast::ScalarType::Int8
+            | rglsl_ast::ast::ScalarType::Int16
+            | rglsl_ast::ast::ScalarType::Int64 => value.clone(),
         })
         .collect();
     match literals.as_slice() {

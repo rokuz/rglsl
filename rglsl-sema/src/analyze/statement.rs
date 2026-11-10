@@ -140,7 +140,7 @@ impl Analyzer<'_> {
                         declaration.name.span,
                         DiagnosticKind::ConditionNotBool(self.show(&ty)),
                     );
-                } else if !operand.ty.is_error() && !operand.ty.converts_implicitly_to(&ty) {
+                } else if !operand.ty.is_error() && !self.converts(&operand.ty, &ty) {
                     self.error(
                         declaration.name.span,
                         DiagnosticKind::CannotConvert {
@@ -286,11 +286,14 @@ impl Analyzer<'_> {
                 if let Some(function) = &mut self.function {
                     function.returns_value = true;
                 }
+                if !operand.ty.is_error() {
+                    self.assignment_small_check(value_span, &operand.ty, "return");
+                }
                 if expected.is_void() {
                     self.error(value_span, DiagnosticKind::VoidReturnWithValue);
                 } else if !operand.ty.is_error()
                     && !expected.is_error()
-                    && !operand.ty.converts_implicitly_to(&expected)
+                    && !self.converts(&operand.ty, &expected)
                 {
                     self.error(
                         value_span,

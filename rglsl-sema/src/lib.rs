@@ -38,5 +38,6 @@ mod tests;
 pub use analyze::{analyze, analyze_with_builtins, Analysis, Callee, ExpressionInfo, Options};
 pub use builtins::{BuiltinFunctionId, Builtins, ResourceLimits, Stage};
 pub use diagnostic::{Diagnostic, DiagnosticKind};
+pub use rglsl_ast::extensions;
 pub use scope::{FunctionId, SymbolId};
-pub use types::{Type, TypeKind, TypeRegistry};
+pub use types::{NumericFeatures, Type, TypeKind, TypeRegistry};

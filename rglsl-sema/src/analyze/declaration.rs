@@ -765,6 +765,7 @@ impl Analyzer<'_> {
             self.error(name.span, DiagnosticKind::UniformOutsideBlock);
         }
         self.global_storage_checks(&qualifiers, &ty, name.span, false);
+        self.storage_small_check(name.span, &ty, qualifiers.storage);
         if !is_global
             && (qualifiers.interpolation.is_some()
                 || qualifiers.centroid
@@ -900,7 +901,7 @@ impl Analyzer<'_> {
                 }
             }
         }
-        if operand.ty.converts_implicitly_to(ty) && !operand.ty.is_void() {
+        if self.converts(&operand.ty, ty) && !operand.ty.is_void() {
             return true;
         }
         self.error(
@@ -1046,7 +1047,7 @@ impl Analyzer<'_> {
             constant &= operand.constant;
             if operand.ty.is_error() {
                 failed = true;
-            } else if !element.is_error() && !operand.ty.converts_implicitly_to(&element) {
+            } else if !element.is_error() && !self.converts(&operand.ty, &element) {
                 let unsized_match = element.outer_size() == Some(ArraySize::Unsized)
                     && operand.ty.kind == element.kind
                     && operand.ty.array.get(1..) == element.array.get(1..);
@@ -1396,6 +1397,13 @@ impl Analyzer<'_> {
                 },
             );
         }
+        let described = self.show(&ty);
+        self.require_small_arithmetic(
+            parameter.span,
+            &ty,
+            &described,
+            "{} types can only be in uniform block or buffer storage",
+        );
         Some(Parameter {
             name,
             ty,

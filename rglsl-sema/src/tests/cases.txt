@@ -3855,3 +3855,153 @@ void main() {}
 #extension GL_KHR_compute_shader_derivatives : require
 layout(local_size_x = 2, local_size_y = 2) in;
 void main() {}
+### unknown extension required | frag | 2:UnsupportedExtension
+#extension GL_FOO_bar : require
+void main() {}
+### unknown extension enabled is a warning | frag | ok
+#extension GL_FOO_bar : enable
+void main() {}
+### extension all cannot be enabled | frag | 2:AllExtensionsEnabled
+#extension all : enable
+void main() {}
+### extension all can warn | frag | ok
+#extension all : warn
+void main() {}
+### mesh shader extension outside mesh stages | vert | 2:ExtensionStage
+#extension GL_EXT_mesh_shader : enable
+void main() {}
+### bindless textures are not allowed with spir-v | frag | 2:ExtensionWithoutSpirv
+#extension GL_ARB_bindless_texture : enable
+void main() {}
+### explicit arithmetic types convert implicitly | frag | ok
+#extension GL_EXT_shader_explicit_arithmetic_types : enable
+void main() {
+    int8_t a = int8_t(1);
+    int b = a;
+    int16_t c = int16_t(2);
+    int64_t d = c;
+    float16_t h = 1.0hf;
+    float f = h;
+    double g = h;
+    uint64_t u = 5ul;
+    i64vec2 v = i64vec2(1l, 2l);
+    u = u + 1;
+    float16_t k = h * h + float16_t(c);
+    uint16_t w = 3us + 4us;
+    int16_t s = -1s;
+}
+### small integers need explicit arithmetic to convert | frag | 5:CannotConvert
+#extension GL_EXT_shader_8bit_storage : enable
+layout(binding = 0) buffer B { int8_t a; int b; };
+void main() {
+    b = a;
+}
+### sized literals need their extension | frag | 3:ExtensionRequired, 4:ExtensionRequired, 5:ExtensionRequired
+void main() {
+    int a = int(1l);
+    int b = int(1s);
+    float c = float(1.0hf);
+}
+### sized literals are allowed with a warning | frag | ok
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : warn
+void main() {
+    int a = int(1l);
+}
+### arb int64 has no implicit unsigned promotion | frag | 6:InvalidOperands
+#extension GL_ARB_gpu_shader_int64 : enable
+void main() {
+    int64_t a = 1l;
+    uint b = 2u;
+    int64_t c = a + b;
+    int64_t d = a + 1;
+}
+### explicit int64 promotes unsigned operands | frag | ok
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : enable
+void main() {
+    int64_t a = 1l;
+    uint b = 2u;
+    int64_t c = a + b;
+    uint64_t e = 1ul + b;
+    bool f = a == b;
+}
+### half storage forbids arithmetic | frag | 5:InvalidOperands, 6:ExtensionRequired, 8:ExtensionRequired, 9:InvalidOperand, 10:ExtensionRequired
+#extension GL_EXT_shader_16bit_storage : enable
+layout(binding = 0) buffer B { float16_t a; f16vec2 v; float16_t r[2]; };
+void main() {
+    a = a + a;
+    float16_t local;
+    a = v.x;
+    v = v.yx;
+    a = -a;
+    a = v[1];
+}
+### half storage allows conversions and copies | frag | ok
+#extension GL_EXT_shader_16bit_storage : enable
+layout(binding = 0) uniform U { float16_t a; f16vec2 v; };
+layout(binding = 1) buffer B { float16_t o; f16vec2 p; i16vec2 q; };
+void main() {
+    o = a;
+    p = f16vec2(vec2(v) * 2.0);
+    float x = float(a);
+    vec4 y = vec4(a, v, 1.0);
+    q = i16vec2(ivec2(1, 2));
+}
+### half storage forbids half parameters | frag | 3:ExtensionRequired
+#extension GL_EXT_shader_16bit_storage : enable
+void f(float16_t x) {}
+void main() {}
+### half storage forbids half built-in calls | frag | 5:ExtensionRequired, 5:ExtensionRequired, 5:ExtensionRequired
+#extension GL_EXT_shader_16bit_storage : enable
+layout(binding = 0) buffer B { float16_t a; };
+void main() {
+    float x = float(max(a, a));
+}
+### half storage forbids struct assignment | frag | 7:ExtensionRequired
+#extension GL_EXT_shader_16bit_storage : enable
+struct S { float16_t x; };
+layout(binding = 0) buffer B { S s; };
+layout(binding = 1) buffer C { S t; };
+void main() {
+    s = t;
+}
+### subgroup extended types imply half arithmetic | comp | ok
+#extension GL_EXT_shader_subgroup_extended_types_float16 : enable
+void main() {
+    float16_t x = 1.0hf;
+    x = x * x;
+}
+### explicit types built-in functions | frag | ok
+#extension GL_EXT_shader_explicit_arithmetic_types : enable
+void main() {
+    f16vec2 h = f16vec2(1.0hf, 2.0hf);
+    uint p = packFloat2x16(h);
+    h = unpackFloat2x16(p);
+    int16_t i = float16BitsToInt16(h.x);
+    i16vec2 j = halfBitsToInt16(h);
+    int64_t q = packInt2x32(ivec2(1, 2));
+    i16vec2 u = unpack16(7);
+    u8vec4 w = unpack8(7u);
+    float16_t s = sin(h.x);
+    int64_t m = max(q, 3l);
+    uint64_t n = doubleBitsToUint64(1.0lf);
+    int64_t c = bitCount(q);
+    i8vec2 b = bitfieldReverse(i8vec2(1, 2));
+    f16mat2 x = inverse(f16mat2(1.0hf));
+    float16_t d = dot(h, h);
+}
+### explicit types constant expressions | frag | ok
+#extension GL_EXT_shader_explicit_arithmetic_types : enable
+const int64_t big = 0x7FFFFFFFFFFFFFFFl;
+const uint8_t wrapped = uint8_t(300);
+const int16_t negative = -32768s;
+const float16_t half_value = 0.5hf + 0.25hf;
+layout(constant_id = 1) const uint64_t spec = 3ul;
+int values[int(big - 0x7FFFFFFFFFFFFFFDl)];
+void main() {
+    int count = values.length();
+}
+### explicit types are numeric operands | frag | 4:InvalidOperands
+#extension GL_EXT_shader_explicit_arithmetic_types : enable
+void main() {
+    float16_t x = 1.0hf + 1;
+}

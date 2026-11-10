@@ -7,6 +7,8 @@ use rglsl_sema::types::{
 };
 
 use super::offset::{calculate_offset, TypeAlignSpan};
+use rglsl_ast::extensions::Feature;
+
 use super::{internal, unsupported, Lowerer, Packing, Result};
 use crate::{
     proc::Alignment, ArraySize, Handle, ImageClass, ImageDimension, Scalar, ScalarKind, Span,
@@ -20,6 +22,13 @@ pub(super) const fn scalar(scalar: GlslScalar) -> Scalar {
         GlslScalar::Uint => Scalar::U32,
         GlslScalar::Float => Scalar::F32,
         GlslScalar::Double => Scalar::F64,
+        GlslScalar::Float16 => Scalar::F16,
+        GlslScalar::Int16 => Scalar::I16,
+        GlslScalar::Uint16 => Scalar::U16,
+        GlslScalar::Int64 => Scalar::I64,
+        GlslScalar::Uint64 => Scalar::U64,
+        GlslScalar::Int8 => Scalar::I8,
+        GlslScalar::Uint8 => Scalar::U8,
     }
 }
 
@@ -65,6 +74,19 @@ fn contains_bool(ty: &GlslType, registry: &rglsl_sema::TypeRegistry) -> bool {
 }
 
 impl Lowerer<'_> {
+    pub(super) fn folds_conversions_to(&self, target: Scalar) -> bool {
+        let feature = match (target.kind, target.width) {
+            (ScalarKind::Float, 2) => Feature::Float16Arithmetic,
+            (_, 2) => Feature::Int16Arithmetic,
+            (_, 1) => Feature::Int8Arithmetic,
+            _ => return true,
+        };
+        feature
+            .extensions()
+            .iter()
+            .any(|name| self.analysis.extensions.contains(*name))
+    }
+
     pub(super) fn insert_type(&mut self, inner: TypeInner) -> Handle<Type> {
         self.module
             .types

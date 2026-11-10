@@ -2009,10 +2009,13 @@ impl Writer {
                     64 => Some(spirv::Capability::Int64),
                     _ => None,
                 };
-                if let Some(cap) = cap {
+                let by_use = self
+                    .flags
+                    .contains(WriterFlags::SMALL_TYPE_CAPABILITIES_BY_USE);
+                if let Some(cap) = cap.filter(|_| !by_use || bits == 64) {
                     self.capabilities_used.insert(cap);
                 }
-                if bits == 16 {
+                if bits == 16 && !by_use {
                     self.capabilities_used
                         .insert(spirv::Capability::StorageBuffer16BitAccess);
                     self.capabilities_used
@@ -2028,7 +2031,11 @@ impl Writer {
                 if bits == 64 {
                     self.capabilities_used.insert(spirv::Capability::Float64);
                 }
-                if bits == 16 {
+                if bits == 16
+                    && !self
+                        .flags
+                        .contains(WriterFlags::SMALL_TYPE_CAPABILITIES_BY_USE)
+                {
                     self.capabilities_used.insert(spirv::Capability::Float16);
                     self.capabilities_used
                         .insert(spirv::Capability::StorageBuffer16BitAccess);
@@ -2144,7 +2151,11 @@ impl Writer {
                 scalar: crate::Scalar::F16,
                 ..
             }
-            | crate::TypeInner::Scalar(crate::Scalar::F16) => {
+            | crate::TypeInner::Scalar(crate::Scalar::F16)
+                if !self
+                    .flags
+                    .contains(WriterFlags::SMALL_TYPE_CAPABILITIES_BY_USE) =>
+            {
                 self.require_any("16 bit floating-point", &[spirv::Capability::Float16])?;
                 self.use_extension("SPV_KHR_16bit_storage");
             }
@@ -2160,7 +2171,10 @@ impl Writer {
             | crate::TypeInner::Scalar(crate::Scalar {
                 kind: crate::ScalarKind::Sint | crate::ScalarKind::Uint,
                 width: 2,
-            }) => {
+            }) if !self
+                .flags
+                .contains(WriterFlags::SMALL_TYPE_CAPABILITIES_BY_USE) =>
+            {
                 self.require_any("16 bit integer", &[spirv::Capability::Int16])?;
                 self.use_extension("SPV_KHR_16bit_storage");
             }
@@ -2714,6 +2728,10 @@ impl Writer {
             crate::Literal::F16(value) => {
                 let low = value.to_bits();
                 Instruction::constant_16bit(type_id, id, low as u32)
+            }
+            crate::Literal::U8(value) => Instruction::constant_16bit(type_id, id, value as u32),
+            crate::Literal::I8(value) => {
+                Instruction::constant_16bit(type_id, id, value as i32 as u32)
             }
             crate::Literal::U16(value) => Instruction::constant_16bit(type_id, id, value as u32),
             crate::Literal::I16(value) => {
@@ -4090,6 +4108,33 @@ impl Writer {
             ep_instruction.to_words(&mut self.logical_layout.entry_points);
         }
 
+        if self
+            .flags
+            .contains(WriterFlags::SMALL_TYPE_CAPABILITIES_BY_USE)
+        {
+            let mut annotations = Vec::new();
+            for annotation in self.annotations.iter() {
+                annotation.to_words(&mut annotations);
+            }
+            let usage = super::small_types::usage(
+                &self.logical_layout.declarations,
+                &self.logical_layout.function_definitions,
+                &annotations,
+            );
+            for capability in usage.capabilities {
+                self.capabilities_used.insert(capability);
+            }
+            let incorporated = self.lang_version() >= (1, 3);
+            for extension in usage.extensions {
+                let core = match extension {
+                    "SPV_KHR_16bit_storage" => incorporated,
+                    _ => self.lang_version() >= (1, 5),
+                };
+                if !core {
+                    self.use_extension(extension);
+                }
+            }
+        }
         for capability in self.capabilities_used.iter() {
             Instruction::capability(*capability).to_words(&mut self.logical_layout.capabilities);
         }

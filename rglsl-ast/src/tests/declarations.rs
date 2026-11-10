@@ -357,7 +357,6 @@ fn opaque_type_keywords() {
         "texture",
         "isampler",
         "texture2DRect",
-        "samplerExternalOES",
         "packed",
     ] {
         assert!(!is_reserved_word(word), "{word}");

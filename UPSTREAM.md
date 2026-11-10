@@ -143,6 +143,24 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
 - **Non-constant sample offsets.** `ImageSample::offset` may be any expression, not only a
   const-expression; the SPIR-V backend emits a constant one as `ConstOffset` and another as
   `Offset` with the `ImageGatherExtended` capability, as glslang does.
+- **8-bit integers.** `Literal::I8`/`U8` and `Scalar::I8`/`U8` exist; the validator accepts
+  width 1 for integers (behind `SHADER_INT16`), the constant evaluator folds them, overload
+  resolution knows them (`proc/overloads/scalar_set.rs`), and the SPIR-V backend writes them.
+- **Sized types are not restricted to WGSL rules.** The constant evaluator casts between
+  64-bit and every other scalar instead of failing, and converts `f16` without `unwrap`
+  (saturating like `as`). 8- and 16-bit types are allowed in immediates (push constants),
+  overrides may be 8- and 64-bit integers, and derivatives accept `f16`
+  (`valid/type.rs`, `valid/mod.rs`, `valid/expression.rs`).
+- **`frexp` exponents are `i32`** for every float width, as SPIR-V's `FrexpStruct` requires
+  (`front/type_gen.rs`); upstream used an exponent as wide as the fraction.
+- **`FindUMsb`/`FindSMsb` for every integer width** in the SPIR-V backend instead of an
+  `unreachable!` for non-32-bit arguments (the GLSL front end widens them first).
+- **Capabilities of 8- and 16-bit types by use.** With
+  `WriterFlags::SMALL_TYPE_CAPABILITIES_BY_USE` the SPIR-V backend does not request
+  `Float16`/`Int16`/`Int8` and the storage capabilities when a type is declared; it derives
+  them after writing the module, as glslang does (`back/spv/small_types.rs`): storage
+  capabilities from the storage class of each variable, arithmetic capabilities from the
+  instructions that use the types.
 
 ## Cherry-picked upstream commits
 

@@ -23,6 +23,14 @@ impl crate::ScalarKind {
 }
 
 impl crate::Scalar {
+    pub const I8: Self = Self {
+        kind: crate::ScalarKind::Sint,
+        width: 1,
+    };
+    pub const U8: Self = Self {
+        kind: crate::ScalarKind::Uint,
+        width: 1,
+    };
     pub const I16: Self = Self {
         kind: crate::ScalarKind::Sint,
         width: 2,
@@ -118,6 +126,8 @@ pub fn concrete_int_scalars() -> impl Iterator<Item = ir::Scalar> {
         ir::Scalar::U16,
         ir::Scalar::I64,
         ir::Scalar::U64,
+        ir::Scalar::I8,
+        ir::Scalar::U8,
     ]
     .into_iter()
 }

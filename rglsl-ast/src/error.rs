@@ -44,4 +44,6 @@ pub enum ParseErrorKind {
     SourceTooLarge,
     #[error("the source has too many syntax nodes")]
     TooManyNodes,
+    #[error("`{word}` requires one of the extensions: {extensions}")]
+    ExtensionRequired { word: String, extensions: String },
 }
