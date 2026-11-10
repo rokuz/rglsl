@@ -10,11 +10,11 @@ Shaders that glslang's own test suite (`gtests/*.FromFile.cpp`) compiles under V
 
 | Stage | Files | accept | diag | valid | interface | exec | link | crashes |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| **all** | 694 | 378 / 694 (54.5 %) | 71 / 143 (49.7 %) | 235 / 235 (100.0 %) | – | – | – | 0 |
+| **all** | 694 | 379 / 694 (54.6 %) | 71 / 143 (49.7 %) | 236 / 236 (100.0 %) | – | – | – | 0 |
 | vert | 68 | 46 / 68 (67.6 %) | 8 / 9 (88.9 %) | 37 / 37 (100.0 %) | – | – | – | 0 |
 | tesc | 7 | 4 / 7 (57.1 %) | 1 / 1 (100.0 %) | 3 / 3 (100.0 %) | – | – | – | 0 |
 | tese | 4 | 3 / 4 (75.0 %) | – | 3 / 3 (100.0 %) | – | – | – | 0 |
-| geom | 4 | 2 / 4 (50.0 %) | – | 2 / 2 (100.0 %) | – | – | – | 0 |
+| geom | 4 | 3 / 4 (75.0 %) | – | 3 / 3 (100.0 %) | – | – | – | 0 |
 | frag | 207 | 131 / 207 (63.3 %) | 28 / 33 (84.8 %) | 98 / 98 (100.0 %) | – | – | – | 0 |
 | comp | 296 | 166 / 296 (56.1 %) | 29 / 75 (38.7 %) | 91 / 91 (100.0 %) | – | – | – | 0 |
 | mesh | 20 | 4 / 20 (20.0 %) | 0 / 4 (0.0 %) | – | – | – | – | 0 |
@@ -30,7 +30,7 @@ Shaders that glslang's own test suite (`gtests/*.FromFile.cpp`) compiles under V
 
 | | we accept | we reject |
 |---|---:|---:|
-| glslang accepts | 235 | 316 |
+| glslang accepts | 236 | 315 |
 | glslang rejects | 0 | 143 |
 
 ## glslang OpenGL tests, compiled for Vulkan
