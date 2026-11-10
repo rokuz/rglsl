@@ -44,6 +44,16 @@ impl<'a> Lowerer<'a> {
         let mut edges: Vec<(SymbolId, SymbolId)> = Vec::new();
         for expression in rglsl_ast::expressions(self.unit) {
             match expression.kind {
+                ExpressionKind::Variable(_) => {
+                    let Some(&symbol) = analysis.references.get(&expression.id) else {
+                        continue;
+                    };
+                    if self.is_per_vertex_member(symbol) {
+                        if let Some(symbol) = self.symbol(symbol) {
+                            self.per_vertex_used.insert(symbol.name.clone());
+                        }
+                    }
+                }
                 ExpressionKind::FunctionCall(ref call) => {
                     match analysis.calls.get(&expression.id) {
                         Some(&Callee::Constructor(ref ty)) => {

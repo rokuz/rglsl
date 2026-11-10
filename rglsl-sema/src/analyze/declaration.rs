@@ -10,7 +10,7 @@ use rglsl_ast::ast::{
 };
 use rglsl_ast::Span;
 
-use super::{Analyzer, FunctionContext, Operand};
+use super::{Analyzer, DerivativeGroup, FunctionContext, Operand};
 use crate::builtins::Stage;
 use crate::constant::{Constant, Value};
 use crate::diagnostic::DiagnosticKind;
@@ -112,11 +112,26 @@ impl Analyzer<'_> {
             return;
         }
         self.input_layout(qualifier.span, &qualifiers);
+        self.derivative_layout(qualifier.span, &qualifiers);
+        let names = ["local_size_x", "local_size_y", "local_size_z"];
+        let identifiers = ["local_size_x_id", "local_size_y_id", "local_size_z_id"];
+        for index in 0..3 {
+            if let (Some(name), Some(identifier)) = (names.get(index), identifiers.get(index)) {
+                if let Some(entry) = qualifiers.layout_entry(name) {
+                    if let Some(slot) = self.local_size.get_mut(index) {
+                        *slot = entry.value.and_then(|value| u32::try_from(value).ok());
+                    }
+                }
+                if qualifiers.has_layout(identifier) {
+                    if let Some(slot) = self.local_size_specialized.get_mut(index) {
+                        *slot = true;
+                    }
+                }
+            }
+        }
         let Some(id) = self.work_group_size else {
             return;
         };
-        let names = ["local_size_x", "local_size_y", "local_size_z"];
-        let identifiers = ["local_size_x_id", "local_size_y_id", "local_size_z_id"];
         if names
             .iter()
             .chain(&identifiers)
@@ -144,6 +159,45 @@ impl Analyzer<'_> {
             {
                 *slot = Value::Uint(value);
             }
+        }
+    }
+
+    fn derivative_layout(&mut self, span: Span, qualifiers: &Qualifiers) {
+        if !matches!(
+            self.options.stage,
+            Stage::Compute | Stage::Task | Stage::Mesh
+        ) {
+            return;
+        }
+        let mut quads = false;
+        let mut linear = false;
+        for entry in &qualifiers.layout {
+            match entry.name.to_ascii_lowercase().as_str() {
+                "derivative_group_quadskhr" => {
+                    quads = true;
+                    self.khr_derivative_group = true;
+                }
+                "derivative_group_linearkhr" => {
+                    linear = true;
+                    self.khr_derivative_group = true;
+                }
+                "derivative_group_quadsnv" => quads = true,
+                "derivative_group_linearnv" => linear = true,
+                _ => {}
+            }
+        }
+        let group = match (quads, linear) {
+            (false, false) => return,
+            (true, false) => DerivativeGroup::Quads,
+            (false, true) => DerivativeGroup::Linear,
+            (true, true) => {
+                self.error(span, both_derivative_groups());
+                return;
+            }
+        };
+        match self.derivative_group {
+            Some(previous) if previous != group => self.error(span, both_derivative_groups()),
+            _ => self.derivative_group = Some(group),
         }
     }
 
@@ -1514,5 +1568,12 @@ impl Analyzer<'_> {
             let close = Span::new(prototype.span.end.saturating_sub(1), prototype.span.end);
             self.error(close, DiagnosticKind::FunctionWithoutReturn(function.name));
         }
+    }
+}
+
+const fn both_derivative_groups() -> DiagnosticKind {
+    DiagnosticKind::InvalidQualifier {
+        qualifier: "derivative_group_quads* and derivative_group_linear*",
+        reason: "cannot be both specified",
     }
 }

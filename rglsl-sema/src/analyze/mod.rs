@@ -273,6 +273,16 @@ pub(crate) struct Analyzer<'a> {
     pub main: Option<FunctionId>,
     pub redeclared_blocks: Vec<BlockStorage>,
     pub recovered: BTreeSet<SymbolId>,
+    pub derivative_group: Option<DerivativeGroup>,
+    pub khr_derivative_group: bool,
+    pub local_size: [Option<u32>; 3],
+    pub local_size_specialized: [bool; 3],
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DerivativeGroup {
+    Quads,
+    Linear,
 }
 
 impl<'a> Analyzer<'a> {
@@ -324,21 +334,27 @@ impl<'a> Analyzer<'a> {
             main: None,
             redeclared_blocks: Vec::new(),
             recovered: BTreeSet::new(),
+            derivative_group: None,
+            khr_derivative_group: false,
+            local_size: [None; 3],
+            local_size_specialized: [false; 3],
         }
     }
 
     fn unit(&mut self, unit: &TranslationUnit) {
         for declaration in &unit.external_declarations {
             match declaration {
-                ExternalDeclaration::Directive(directive) => {
-                    if let DirectiveKind::Extension { name, behavior } = &directive.kind {
+                ExternalDeclaration::Directive(directive) => match &directive.kind {
+                    DirectiveKind::Extension { name, behavior } => {
                         if *behavior == ExtensionBehavior::Disable {
                             self.extensions.remove(name);
                         } else {
                             self.extensions.insert(name.clone());
                         }
                     }
-                }
+                    DirectiveKind::Pragma { tokens } => self.pragma(directive.span, tokens),
+                    DirectiveKind::Version { .. } => {}
+                },
                 ExternalDeclaration::FunctionDefinition(definition) => {
                     self.function_definition(definition);
                 }
@@ -369,17 +385,110 @@ impl<'a> Analyzer<'a> {
         for (span, name) in missing {
             self.error(span, DiagnosticKind::MissingFunctionBody(name));
         }
+        let end = unit
+            .external_declarations
+            .last()
+            .map_or(0, |declaration| match declaration {
+                ExternalDeclaration::Directive(directive) => directive.span.end,
+                ExternalDeclaration::FunctionDefinition(definition) => definition.span.end,
+                ExternalDeclaration::Declaration(declaration) => declaration.span.end,
+                ExternalDeclaration::Semicolon(semicolon) => semicolon.span.end,
+            });
         if !self.main_defined {
-            let end =
-                unit.external_declarations
-                    .last()
-                    .map_or(0, |declaration| match declaration {
-                        ExternalDeclaration::Directive(directive) => directive.span.end,
-                        ExternalDeclaration::FunctionDefinition(definition) => definition.span.end,
-                        ExternalDeclaration::Declaration(declaration) => declaration.span.end,
-                        ExternalDeclaration::Semicolon(semicolon) => semicolon.span.end,
-                    });
             self.error(Span::new(end, end), DiagnosticKind::MissingEntryPoint);
+        }
+        self.check_derivative_group(Span::new(end, end));
+    }
+
+    fn pragma(&mut self, span: Span, tokens: &[String]) {
+        let words: Vec<&str> = tokens.iter().map(String::as_str).collect();
+        if words.first() != Some(&"STDGL") {
+            return;
+        }
+        if words.len() > 5 {
+            self.error(span, DiagnosticKind::InvalidPragma("extra tokens"));
+        }
+        let [_, kind, open, argument, close, ..] = words.as_slice() else {
+            self.error(
+                span,
+                DiagnosticKind::InvalidPragma("truncated STDGL declaration"),
+            );
+            return;
+        };
+        if *open != "(" && *close != ")" {
+            self.error(
+                span,
+                DiagnosticKind::InvalidPragma("invalid STDGL declaration"),
+            );
+        }
+        if *kind != "invariant" {
+            self.error(
+                span,
+                DiagnosticKind::InvalidPragma("unknown STDGL declaration"),
+            );
+        } else if *argument != "all" {
+            self.error(
+                span,
+                DiagnosticKind::InvalidPragma(
+                    "invalid STDGL invariant declaration: expected `all`",
+                ),
+            );
+        }
+    }
+
+    fn check_derivative_group(&mut self, end: Span) {
+        if self.extension_enabled("GL_KHR_compute_shader_derivatives") && !self.khr_derivative_group
+        {
+            self.error(
+                end,
+                DiagnosticKind::InvalidQualifier {
+                    qualifier: "GL_KHR_compute_shader_derivatives",
+                    reason: "requires one of derivative_group_quadsKHR or derivative_group_linearKHR layout qualifiers",
+                },
+            );
+        }
+        let size = |index: usize| -> Option<u32> {
+            if self
+                .local_size_specialized
+                .get(index)
+                .copied()
+                .unwrap_or(true)
+            {
+                None
+            } else {
+                Some(self.local_size.get(index).copied().flatten().unwrap_or(1))
+            }
+        };
+        match self.derivative_group {
+            Some(DerivativeGroup::Quads) => {
+                if [size(0), size(1)]
+                    .iter()
+                    .flatten()
+                    .any(|size| size % 2 != 0)
+                {
+                    self.error(
+                        end,
+                        DiagnosticKind::InvalidQualifier {
+                            qualifier: "derivative_group_quads",
+                            reason: "requires local_size_x and local_size_y to be multiple of two",
+                        },
+                    );
+                }
+            }
+            Some(DerivativeGroup::Linear) => {
+                if let (Some(x), Some(y), Some(z)) = (size(0), size(1), size(2)) {
+                    if x.wrapping_mul(y).wrapping_mul(z) % 4 != 0 {
+                        self.error(
+                            end,
+                            DiagnosticKind::InvalidQualifier {
+                                qualifier: "derivative_group_linear",
+                                reason: "requires total group size to be multiple of four",
+                            },
+                        );
+                    }
+                }
+            }
+            None => {}
         }
     }
 

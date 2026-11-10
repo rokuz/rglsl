@@ -212,6 +212,11 @@ pub(super) struct Lowerer<'a> {
     pub buffer_defaults: BlockDefaults,
     pub early_fragment_tests: bool,
     pub conservative_depth: Option<ConservativeDepth>,
+    pub post_depth_coverage: Option<Span>,
+    pub per_vertex: Option<(Handle<GlobalVariable>, Vec<String>)>,
+    pub per_vertex_used: BTreeSet<String>,
+    pub per_vertex_redeclared: bool,
+    pub block_outputs: BTreeSet<String>,
 }
 
 impl<'a> Lowerer<'a> {
@@ -251,6 +256,11 @@ impl<'a> Lowerer<'a> {
             buffer_defaults: BlockDefaults::default(),
             early_fragment_tests: false,
             conservative_depth: None,
+            post_depth_coverage: None,
+            per_vertex: None,
+            per_vertex_used: BTreeSet::new(),
+            per_vertex_redeclared: false,
+            block_outputs: BTreeSet::new(),
         }
     }
 
@@ -298,6 +308,8 @@ impl<'a> Lowerer<'a> {
                 self.report(result);
             }
         }
+        let result = self.declare_per_vertex();
+        self.report(result);
         let order = match self.function_order(&definitions) {
             Ok(order) => order,
             Err(error) => return Err(vec![error].into()),

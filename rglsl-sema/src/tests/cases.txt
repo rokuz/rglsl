@@ -3793,3 +3793,65 @@ void main() {
     vec4 b[][] = vec4[][](vec4[2](vec4(0.0), vec4(1.0)), vec4[2](vec4(0.0), vec4(1.0)));
     b[1][2] = vec4(0.0);
 }
+### STDGL pragma truncated | vert | 2:InvalidPragma
+#pragma STDGL
+void main() {}
+### STDGL pragma with an open parenthesis only | vert | 2:InvalidPragma
+#pragma STDGL invariant(
+void main() {}
+### STDGL pragma with an unknown declaration | vert | 2:InvalidPragma
+#pragma STDGL something (all)
+void main() {}
+### STDGL invariant with another argument | vert | 2:InvalidPragma
+#pragma STDGL invariant ( some )
+void main() {}
+### STDGL pragma with extra tokens | vert | 2:InvalidPragma
+#pragma STDGL invariant(all) now
+void main() {}
+### STDGL invariant all | vert | ok
+#pragma STDGL invariant(all)
+void main() {}
+### other pragmas are not checked | vert | ok
+#pragma optimize(off)
+#pragma something else
+void main() {}
+### both derivative groups in one declaration | comp | 4:InvalidQualifier
+#extension GL_KHR_compute_shader_derivatives : require
+layout(local_size_x = 2, local_size_y = 2) in;
+layout(derivative_group_quadsKHR, derivative_group_linearKHR) in;
+void main() {}
+### derivative groups in two declarations | comp | 5:InvalidQualifier
+#extension GL_KHR_compute_shader_derivatives : require
+layout(local_size_x = 2, local_size_y = 2) in;
+layout(derivative_group_quadsKHR) in;
+layout(derivative_group_linearKHR) in;
+void main() {}
+### derivative quads need even sizes | comp | 5:InvalidQualifier
+#extension GL_KHR_compute_shader_derivatives : require
+layout(local_size_x = 3, local_size_y = 2) in;
+layout(derivative_group_quadsKHR) in;
+void main() {}
+### derivative quads with even sizes | comp | ok
+#extension GL_KHR_compute_shader_derivatives : require
+layout(local_size_x = 4, local_size_y = 2) in;
+layout(derivative_group_quadsKHR) in;
+void main() {}
+### derivative quads with a specialized size | comp | ok
+#extension GL_KHR_compute_shader_derivatives : require
+layout(local_size_x_id = 0, local_size_y = 2) in;
+layout(derivative_group_quadsKHR) in;
+void main() {}
+### derivative linear needs a multiple of four | comp | 5:InvalidQualifier
+#extension GL_KHR_compute_shader_derivatives : require
+layout(local_size_x = 3, local_size_y = 2) in;
+layout(derivative_group_linearKHR) in;
+void main() {}
+### derivative linear with a multiple of four | comp | ok
+#extension GL_KHR_compute_shader_derivatives : require
+layout(local_size_x = 6, local_size_y = 2) in;
+layout(derivative_group_linearKHR) in;
+void main() {}
+### KHR compute shader derivatives need a derivative group | comp | 4:InvalidQualifier
+#extension GL_KHR_compute_shader_derivatives : require
+layout(local_size_x = 2, local_size_y = 2) in;
+void main() {}

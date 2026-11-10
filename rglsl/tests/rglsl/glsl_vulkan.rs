@@ -99,11 +99,36 @@ fn decorated(module: &dr::Module, decoration: Decoration) -> Vec<String> {
     module
         .annotations
         .iter()
-        .filter(|inst| {
-            inst.class.opcode == Op::Decorate && inst.operands[1] == Operand::Decoration(decoration)
+        .filter_map(|inst| match inst.class.opcode {
+            Op::Decorate if inst.operands[1] == Operand::Decoration(decoration) => {
+                Some(name_of(module, inst.operands[0].unwrap_id_ref()))
+            }
+            Op::MemberDecorate if inst.operands[2] == Operand::Decoration(decoration) => {
+                let Operand::LiteralBit32(member) = inst.operands[1] else {
+                    return None;
+                };
+                Some(member_name_of(
+                    module,
+                    inst.operands[0].unwrap_id_ref(),
+                    member,
+                ))
+            }
+            _ => None,
         })
-        .map(|inst| name_of(module, inst.operands[0].unwrap_id_ref()))
         .collect()
+}
+
+fn member_name_of(module: &dr::Module, id: u32, member: u32) -> String {
+    module
+        .debug_names
+        .iter()
+        .find(|inst| {
+            inst.class.opcode == Op::MemberName
+                && inst.operands[0] == Operand::IdRef(id)
+                && inst.operands[1] == Operand::LiteralBit32(member)
+        })
+        .map(|inst| inst.operands[2].unwrap_literal_string().to_string())
+        .unwrap_or_default()
 }
 
 fn name_of(module: &dr::Module, id: u32) -> String {
@@ -400,8 +425,16 @@ fn gl_names_are_reserved() {
                 let module = compile(stage, source);
                 assert_eq!(
                     decorated(&module, Decoration::BuiltIn),
-                    ["gl_ClipDistance", "gl_Position"]
+                    [
+                        "gl_Position",
+                        "gl_PointSize",
+                        "gl_ClipDistance",
+                        "gl_CullDistance"
+                    ]
                 );
+                assert!(module.types_global_values.iter().any(|inst| {
+                    inst.class.opcode == Op::TypeArray && constant(&module, &inst.operands[1]) == 4
+                }));
                 continue;
             }
             let error = parse(stage, source).unwrap_err();
@@ -1069,6 +1102,463 @@ fn switch_fall_through_after_grouped_labels() {
                     assert_ne!(Some(last.operands[0].unwrap_id_ref()), label);
                 }
             }
+        }
+    });
+}
+
+fn ast_only(test: impl Fn()) {
+    PIPELINE.set(glsl::Pipeline::Ast);
+    test();
+}
+
+fn compile_valid(stage: ShaderStage, source: &str) -> dr::Module {
+    let module = parse(stage, source).unwrap_or_else(|e| panic!("shader rejected: {e}"));
+    let info = Validator::new(ValidationFlags::all(), Capabilities::all())
+        .validate(&module)
+        .expect("validated in parse");
+    let options = spv::Options {
+        flags: spv::WriterFlags::DEBUG | spv::WriterFlags::LABEL_VARYINGS,
+        ..spv::Options::default()
+    };
+    let words = spv::write_vec(&module, &info, &options, None).expect("SPIR-V backend failed");
+    crate::stage_io::spirv_val(&words);
+    dr::load_words(words).expect("produced SPIR-V does not parse")
+}
+
+fn named(module: &dr::Module, name: &str) -> u32 {
+    module
+        .debug_names
+        .iter()
+        .find(|inst| {
+            inst.class.opcode == Op::Name
+                && inst.operands[1] == Operand::LiteralString(name.to_string())
+        })
+        .unwrap_or_else(|| panic!("nothing named {name}"))
+        .operands[0]
+        .unwrap_id_ref()
+}
+
+fn literal(operand: &Operand) -> u32 {
+    match *operand {
+        Operand::LiteralBit32(value) => value,
+        Operand::BuiltIn(built_in) => built_in as u32,
+        ref other => panic!("unexpected operand {other:?}"),
+    }
+}
+
+fn variable_decorations(module: &dr::Module, name: &str) -> Vec<(Decoration, Vec<u32>)> {
+    let id = named(module, name);
+    module
+        .annotations
+        .iter()
+        .filter(|inst| inst.class.opcode == Op::Decorate && inst.operands[0] == Operand::IdRef(id))
+        .map(|inst| {
+            let Operand::Decoration(decoration) = inst.operands[1] else {
+                panic!("OpDecorate without a decoration");
+            };
+            (decoration, inst.operands[2..].iter().map(literal).collect())
+        })
+        .collect()
+}
+
+fn member_decorations(module: &dr::Module, name: &str) -> Vec<(u32, Decoration, Vec<u32>)> {
+    let id = named(module, name);
+    let mut decorations: Vec<_> = module
+        .annotations
+        .iter()
+        .filter(|inst| {
+            inst.class.opcode == Op::MemberDecorate && inst.operands[0] == Operand::IdRef(id)
+        })
+        .map(|inst| {
+            let Operand::Decoration(decoration) = inst.operands[2] else {
+                panic!("OpMemberDecorate without a decoration");
+            };
+            (
+                literal(&inst.operands[1]),
+                decoration,
+                inst.operands[3..].iter().map(literal).collect(),
+            )
+        })
+        .collect();
+    decorations.sort_by_key(|&(member, decoration, _)| (member, decoration as u32));
+    decorations
+}
+
+fn struct_members(module: &dr::Module, name: &str) -> Vec<String> {
+    let id = named(module, name);
+    let mut members: Vec<(u32, String)> = module
+        .debug_names
+        .iter()
+        .filter(|inst| {
+            inst.class.opcode == Op::MemberName && inst.operands[0] == Operand::IdRef(id)
+        })
+        .map(|inst| {
+            (
+                literal(&inst.operands[1]),
+                inst.operands[2].unwrap_literal_string().to_string(),
+            )
+        })
+        .collect();
+    members.sort();
+    members.into_iter().map(|(_, name)| name).collect()
+}
+
+fn array_lengths(module: &dr::Module) -> Vec<u32> {
+    let mut lengths: Vec<u32> = module
+        .types_global_values
+        .iter()
+        .filter(|inst| inst.class.opcode == Op::TypeArray)
+        .map(|inst| constant(module, &inst.operands[1]))
+        .collect();
+    lengths.sort_unstable();
+    lengths
+}
+
+fn has_capability(module: &dr::Module, capability: spirv::Capability) -> bool {
+    module
+        .capabilities
+        .iter()
+        .any(|inst| inst.operands[0] == Operand::Capability(capability))
+}
+
+#[test]
+fn user_interface_blocks_match_glslang() {
+    let source = "#version 450
+        layout(location = 0) in vec4 p;
+        out VS_OUT {
+            layout(location = 1) vec4 a;
+            layout(location = 3) vec2 b;
+            layout(location = 4) flat int c;
+            layout(location = 5) noperspective float d;
+            layout(location = 6) invariant vec4 g;
+        } vs_out;
+        layout(location = 7) out Blk {
+            centroid vec3 e;
+            layout(location = 9, component = 2) vec2 f;
+            mat2 m;
+            float h[2];
+            sample vec4 s;
+        };
+        void main() {
+            gl_Position = p;
+            vs_out.a = p;
+            vs_out.c = 1;
+            e = p.xyz;
+            f = p.zw;
+            h[1] = p.x;
+        }";
+    each_pipeline(|| {
+        compile_valid(
+            ShaderStage::Vertex,
+            "#version 450
+            layout(location = 0) in vec2 uv;
+            layout(location = 0) out VS_OUT { vec2 TexCoords; } vs_out;
+            void main() { gl_Position = vec4(0.0); vs_out.TexCoords = uv; }",
+        );
+    });
+    ast_only(|| {
+        let module = compile_valid(ShaderStage::Vertex, source);
+        let location = |member, location| (member, Decoration::Location, vec![location]);
+        let flag = |member, decoration| (member, decoration, vec![]);
+        assert_eq!(
+            member_decorations(&module, "VS_OUT"),
+            [
+                location(0, 1),
+                location(1, 3),
+                flag(2, Decoration::Flat),
+                location(2, 4),
+                flag(3, Decoration::NoPerspective),
+                location(3, 5),
+                flag(4, Decoration::Invariant),
+                location(4, 6),
+            ]
+        );
+        assert_eq!(
+            member_decorations(&module, "Blk"),
+            [
+                flag(0, Decoration::Centroid),
+                location(0, 7),
+                location(1, 9),
+                (1, Decoration::Component, vec![2]),
+                location(2, 10),
+                location(3, 12),
+                flag(4, Decoration::Sample),
+                location(4, 14),
+            ]
+        );
+        assert_eq!(
+            variable_decorations(&module, "VS_OUT"),
+            [(Decoration::Block, vec![])]
+        );
+        assert!(variable_decorations(&module, "vs_out").is_empty());
+        assert!(module.annotations.iter().all(|inst| !matches!(
+            inst.operands.get(2),
+            Some(&Operand::Decoration(Decoration::Offset))
+        )));
+    });
+}
+
+#[test]
+fn interface_blocks_at_a_location() {
+    ast_only(|| {
+        let module = compile_valid(
+            ShaderStage::Fragment,
+            "#version 450
+            layout(location = 2) in VS_OUT { vec4 a; vec2 b; flat int c; } vs_in;
+            layout(location = 0) out vec4 o;
+            void main() { o = vs_in.a + vec4(vs_in.b, float(vs_in.c), 0.0); }",
+        );
+        assert_eq!(
+            variable_decorations(&module, "vs_in"),
+            [(Decoration::Location, vec![2])]
+        );
+        assert_eq!(
+            member_decorations(&module, "VS_OUT"),
+            [(2, Decoration::Flat, vec![])]
+        );
+
+        let module = compile_valid(
+            ShaderStage::Vertex,
+            "#version 450 core
+            layout(location = 0) in vec2 aTexCoords;
+            layout(location = 0) out VS_OUT { vec2 TexCoords; } vs_out[2];
+            layout(location = 2) out vec4 after;
+            void main() {
+                gl_Position = vec4(0.0);
+                vs_out[1].TexCoords = aTexCoords;
+                after = vec4(1.0);
+            }",
+        );
+        assert_eq!(
+            variable_decorations(&module, "vs_out"),
+            [(Decoration::Location, vec![0])]
+        );
+        assert!(member_decorations(&module, "VS_OUT").is_empty());
+
+        let error = parse(
+            ShaderStage::Vertex,
+            "#version 450
+            layout(location = 0) out VS_OUT { vec2 a; } vs_out[2];
+            layout(location = 1) out vec4 overlapping;
+            void main() { gl_Position = vec4(0.0); }",
+        )
+        .unwrap_err();
+        assert!(error.contains("BindingCollision"), "{error}");
+    });
+}
+
+#[test]
+fn interface_block_locations_follow_glslang() {
+    ast_only(|| {
+        for (source, expected) in [
+            (
+                "#version 450
+                out B { layout(location = 1) vec4 a; vec4 b; } b;
+                void main() { gl_Position = vec4(0.0); }",
+                "either the block needs a location",
+            ),
+            (
+                "#version 450
+                out B { layout(location = 1) vec4 a; } b[2];
+                void main() { gl_Position = vec4(0.0); }",
+                "new locations are needed for each block element",
+            ),
+            (
+                "#version 450
+                out B { vec4 a; } b;
+                void main() { gl_Position = vec4(0.0); }",
+                "requires a location",
+            ),
+            (
+                "#version 450
+                layout(location = 0) invariant out B { vec4 a; } b;
+                void main() { gl_Position = vec4(0.0); }",
+                "invariant",
+            ),
+        ] {
+            let error = parse(ShaderStage::Vertex, source).unwrap_err();
+            assert!(error.contains(expected), "{error}");
+        }
+
+        let options = glsl::Options {
+            auto_map_locations: true,
+            ..options(ShaderStage::Vertex)
+        };
+        let module = glsl::Frontend::default()
+            .parse(
+                &options,
+                "#version 450
+                out A { layout(location = 7) vec4 a; layout(location = 8) vec4 b; } a;
+                out B { vec4 c; mat2 d; } b;
+                out vec4 e;
+                void main() { gl_Position = vec4(0.0); }",
+            )
+            .unwrap();
+        let io: Vec<_> = module.entry_points[0]
+            .interface
+            .iter()
+            .map(|&handle| &module.global_variables[handle])
+            .filter_map(|global| match global.io {
+                Some(rglsl::Binding::Location { location, .. }) => {
+                    Some((global.name.clone().unwrap_or_default(), location))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(io, [("b".to_string(), 2), ("e".to_string(), 5)]);
+    });
+}
+
+#[test]
+fn gl_per_vertex_matches_glslang() {
+    let unused = "#version 450
+        layout(location = 0) in vec4 p;
+        void main() { }";
+    let implicit = "#version 450
+        layout(location = 0) in vec4 p;
+        void main() { gl_Position = p; gl_ClipDistance[2] = 1.0; }";
+    let redeclared = "#version 450
+        layout(location = 0) in vec4 p;
+        out gl_PerVertex { float gl_PointSize; vec4 gl_Position; float gl_CullDistance[]; };
+        void main() { gl_Position = p; gl_CullDistance[2] = 1.0; }";
+    let redeclared_unused = "#version 450
+        out gl_PerVertex { vec4 gl_Position; float gl_PointSize; };
+        void main() { }";
+    each_pipeline(|| {
+        compile_valid(ShaderStage::Vertex, unused);
+    });
+    ast_only(|| {
+        let module = compile_valid(ShaderStage::Vertex, unused);
+        assert!(!module.debug_names.iter().any(|inst| {
+            inst.operands.get(1) == Some(&Operand::LiteralString("gl_PerVertex".to_string()))
+        }));
+
+        let module = compile_valid(ShaderStage::Vertex, implicit);
+        assert_eq!(
+            struct_members(&module, "gl_PerVertex"),
+            [
+                "gl_Position",
+                "gl_PointSize",
+                "gl_ClipDistance",
+                "gl_CullDistance"
+            ]
+        );
+        assert_eq!(array_lengths(&module), [1, 3]);
+        assert!(has_capability(&module, spirv::Capability::ClipDistance));
+        assert!(!has_capability(&module, spirv::Capability::CullDistance));
+        let built_in =
+            |member, built_in: spirv::BuiltIn| (member, Decoration::BuiltIn, vec![built_in as u32]);
+        assert_eq!(
+            member_decorations(&module, "gl_PerVertex"),
+            [
+                built_in(0, spirv::BuiltIn::Position),
+                built_in(1, spirv::BuiltIn::PointSize),
+                built_in(2, spirv::BuiltIn::ClipDistance),
+                built_in(3, spirv::BuiltIn::CullDistance),
+            ]
+        );
+        assert_eq!(
+            variable_decorations(&module, "gl_PerVertex"),
+            [(Decoration::Block, vec![])]
+        );
+
+        let module = compile_valid(ShaderStage::Vertex, redeclared);
+        assert_eq!(
+            struct_members(&module, "gl_PerVertex"),
+            ["gl_Position", "gl_PointSize", "gl_CullDistance"]
+        );
+        assert_eq!(array_lengths(&module), [3]);
+        assert!(has_capability(&module, spirv::Capability::CullDistance));
+
+        let module = compile_valid(ShaderStage::Vertex, redeclared_unused);
+        assert_eq!(
+            struct_members(&module, "gl_PerVertex"),
+            ["gl_Position", "gl_PointSize"]
+        );
+    });
+}
+
+#[test]
+fn invariant_position_in_gl_per_vertex() {
+    let sources = [
+        "#version 450
+        out gl_PerVertex { invariant vec4 gl_Position; float gl_ClipDistance[3]; };
+        void main() { gl_Position = vec4(1.0); gl_ClipDistance[1] = 0.0; }",
+        "#version 450
+        out gl_PerVertex { vec4 gl_Position; };
+        invariant gl_Position;
+        void main() { gl_Position = vec4(1.0); }",
+        "#version 450
+        invariant gl_Position;
+        void main() { gl_Position = vec4(1.0); gl_PointSize = 1.0; }",
+    ];
+    each_pipeline(|| {
+        let module = compile_valid(ShaderStage::Vertex, sources[2]);
+        assert_eq!(decorated(&module, Decoration::Invariant), ["gl_Position"]);
+    });
+    ast_only(|| {
+        for source in sources {
+            let module = compile_valid(ShaderStage::Vertex, source);
+            assert_eq!(decorated(&module, Decoration::Invariant), ["gl_Position"]);
+        }
+        let module = compile_valid(ShaderStage::Vertex, sources[0]);
+        assert_eq!(
+            member_decorations(&module, "gl_PerVertex"),
+            [
+                (
+                    0,
+                    Decoration::BuiltIn,
+                    vec![spirv::BuiltIn::Position as u32]
+                ),
+                (0, Decoration::Invariant, vec![]),
+                (
+                    1,
+                    Decoration::BuiltIn,
+                    vec![spirv::BuiltIn::ClipDistance as u32]
+                ),
+            ]
+        );
+        assert_eq!(array_lengths(&module), [3]);
+    });
+}
+
+#[test]
+fn post_depth_coverage_and_transform_feedback_are_not_dropped() {
+    ast_only(|| {
+        let error = parse(
+            ShaderStage::Fragment,
+            "#version 450
+            #extension GL_EXT_post_depth_coverage : enable
+            layout(post_depth_coverage) in;
+            void main() {}",
+        )
+        .unwrap_err();
+        assert!(error.contains("requires early_fragment_tests"), "{error}");
+
+        let error = parse(
+            ShaderStage::Fragment,
+            "#version 450
+            #extension GL_EXT_post_depth_coverage : enable
+            layout(early_fragment_tests) in;
+            layout(post_depth_coverage) in;
+            void main() {}",
+        )
+        .unwrap_err();
+        assert!(error.contains("post_depth_coverage"), "{error}");
+
+        for source in [
+            "#version 450
+            layout(xfb_buffer = 3, xfb_offset = 16) out gl_PerVertex { vec4 gl_Position; };
+            void main() { gl_Position = vec4(1.0); }",
+            "#version 450
+            layout(location = 0, xfb_offset = 0) out vec4 v;
+            void main() { v = vec4(1.0); gl_Position = v; }",
+            "#version 450
+            layout(location = 0) out B { layout(xfb_offset = 0) vec4 v; };
+            void main() { v = vec4(1.0); gl_Position = v; }",
+        ] {
+            let error = parse(ShaderStage::Vertex, source).unwrap_err();
+            assert!(error.contains("transform feedback"), "{error}");
         }
     });
 }

@@ -125,6 +125,21 @@ pub enum VaryingError {
     PerVertexNotArrayOfThree,
     #[error("Per vertex can only have Center sampling or no sampling modifier")]
     InvalidPerVertexSampling,
+    #[error("A block cannot have both built-in and location members")]
+    MixedBlockBindings,
+    #[error("The members of an array of blocks cannot have locations of their own")]
+    MemberLocationInBlockArray,
+    #[error(
+        "Member {member} of a block at location {block} is at location {found}, not {expected}"
+    )]
+    BlockMemberLocation {
+        member: u32,
+        block: u32,
+        expected: u32,
+        found: u32,
+    },
+    #[error("A block can only be bound to a location, without any other attribute")]
+    InvalidBlockBinding,
 }
 
 #[derive(Clone, Debug, thiserror::Error)]
@@ -1102,6 +1117,114 @@ impl VaryingContext<'_> {
     }
 }
 
+impl VaryingContext<'_> {
+    fn validate_interface(
+        &mut self,
+        ep: &crate::EntryPoint,
+        ty: Handle<crate::Type>,
+        io: Option<&crate::Binding>,
+    ) -> Result<(), WithSpan<VaryingError>> {
+        let Some(block) = crate::proc::interface_block(self.types, ty) else {
+            return self.validate(ep, ty, io);
+        };
+        let span_context = self.types.get_span_context(ty);
+        let fail = |error: VaryingError| error.with_span_context(span_context.clone());
+        let crate::TypeInner::Struct { ref members, .. } = self.types[block.structure].inner else {
+            return Err(fail(VaryingError::InvalidType(ty)));
+        };
+        let mut built_in = false;
+        let mut located = false;
+        for (index, member) in members.iter().enumerate() {
+            match member.binding {
+                None => {
+                    return Err(fail(VaryingError::MemberMissingBinding(
+                        u32::try_from(index).unwrap_or(u32::MAX),
+                    )))
+                }
+                Some(crate::Binding::BuiltIn(_)) => built_in = true,
+                Some(crate::Binding::Location { .. }) => located = true,
+            }
+        }
+        if built_in && located {
+            return Err(fail(VaryingError::MixedBlockBindings));
+        }
+        let Some(io) = io else {
+            if located && block.arrayed {
+                return Err(fail(VaryingError::MemberLocationInBlockArray));
+            }
+            for member in members {
+                if let Some(ref binding) = member.binding {
+                    self.validate_impl(ep, member.ty, binding).map_err(&fail)?;
+                }
+            }
+            return Ok(());
+        };
+        let crate::Binding::Location {
+            location: start,
+            interpolation: None,
+            sampling: None,
+            blend_src: None,
+            per_primitive: false,
+            component: None,
+            invariant: false,
+            patch: false,
+        } = *io
+        else {
+            return Err(fail(VaryingError::InvalidBlockBinding));
+        };
+        if built_in {
+            return Err(fail(VaryingError::InvalidBlockBinding));
+        }
+        let total = LocationShape::of(self.types, ty)
+            .ok_or_else(|| fail(VaryingError::NotIOShareableType(ty)))?
+            .locations;
+        if start >= MAX_LOCATIONS || total > MAX_LOCATIONS - start {
+            return Err(fail(VaryingError::LocationTooLarge { location: start }));
+        }
+        let mut next = start;
+        for element in 0..block.elements {
+            for (index, member) in members.iter().enumerate() {
+                let Some(crate::Binding::Location {
+                    location: declared,
+                    interpolation,
+                    sampling,
+                    blend_src,
+                    per_primitive,
+                    component: None,
+                    invariant,
+                    patch,
+                }) = member.binding
+                else {
+                    return Err(fail(VaryingError::InvalidBlockBinding));
+                };
+                if element == 0 && declared != next {
+                    return Err(fail(VaryingError::BlockMemberLocation {
+                        member: u32::try_from(index).unwrap_or(u32::MAX),
+                        block: start,
+                        expected: next,
+                        found: declared,
+                    }));
+                }
+                let binding = crate::Binding::Location {
+                    location: next,
+                    interpolation,
+                    sampling,
+                    blend_src,
+                    per_primitive,
+                    component: None,
+                    invariant,
+                    patch,
+                };
+                self.validate_impl(ep, member.ty, &binding).map_err(&fail)?;
+                let shape = LocationShape::of(self.types, member.ty)
+                    .ok_or_else(|| fail(VaryingError::NotIOShareableType(member.ty)))?;
+                next = next.saturating_add(shape.locations);
+            }
+        }
+        Ok(())
+    }
+}
+
 impl super::Validator {
     pub(super) fn validate_global_var(
         &self,
@@ -1693,10 +1816,11 @@ impl super::Validator {
                     has_task_payload: ep.task_payload.is_some(),
                     interface: true,
                 };
-                ctx.validate(ep, var.ty, var.io.as_ref()).map_err(|e| {
-                    EntryPointError::InterfaceVariable(handle, e.into_inner())
-                        .with_span_handle(handle, &module.global_variables)
-                })?;
+                ctx.validate_interface(ep, var.ty, var.io.as_ref())
+                    .map_err(|e| {
+                        EntryPointError::InterfaceVariable(handle, e.into_inner())
+                            .with_span_handle(handle, &module.global_variables)
+                    })?;
             }
         }
 

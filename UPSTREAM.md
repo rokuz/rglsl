@@ -85,6 +85,11 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   `GlobalVariable::io`, `EntryPoint::interface`, and `component`/`invariant`/`patch` on
   `Binding::Location`); see `docs/design/stage-io.md`. A vertex shader need not return a
   position. Locations are limited to 4096.
+- **Interface blocks.** An `Input`/`Output` global whose type is a struct, or an array of
+  structs, with member bindings is a block (`proc::interface_block`): the validator checks each
+  member like a variable, plus block rules (`valid/interface.rs`), and the SPIR-V backend
+  decorates the struct `Block` with the bindings on the members (`back/spv/writer.rs`,
+  `write_interface_block`). Upstream cannot express stage blocks.
 - **Layout decorations only on buffer contents.** The SPIR-V backend decorates a type with
   `Offset`, `ArrayStride` and `MatrixStride` only if it is stored in a uniform buffer, a
   storage buffer or push constants; upstream decorates every struct and array.

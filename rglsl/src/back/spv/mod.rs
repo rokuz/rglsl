@@ -967,6 +967,7 @@ pub struct Writer {
     /// types used in other storage classes, such as stage outputs or workgroup
     /// memory.
     laid_out_types: crate::arena::HandleSet<crate::Type>,
+    decorated_blocks: crate::arena::HandleSet<crate::Type>,
     fake_missing_bindings: bool,
     binding_map: BindingMap,
 

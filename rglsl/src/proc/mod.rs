@@ -992,3 +992,39 @@ impl crate::AddressSpace {
         matches!(self, Self::WorkGroup | Self::TaskPayload)
     }
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct InterfaceBlock {
+    pub structure: crate::Handle<crate::Type>,
+    pub elements: u32,
+    pub arrayed: bool,
+}
+
+pub fn interface_block(
+    types: &crate::UniqueArena<crate::Type>,
+    ty: crate::Handle<crate::Type>,
+) -> Option<InterfaceBlock> {
+    let has_bindings = |handle: crate::Handle<crate::Type>| match types[handle].inner {
+        crate::TypeInner::Struct { ref members, .. } => {
+            members.iter().any(|member| member.binding.is_some())
+        }
+        _ => false,
+    };
+    match types[ty].inner {
+        crate::TypeInner::Struct { .. } if has_bindings(ty) => Some(InterfaceBlock {
+            structure: ty,
+            elements: 1,
+            arrayed: false,
+        }),
+        crate::TypeInner::Array {
+            base,
+            size: crate::ArraySize::Constant(length),
+            ..
+        } if has_bindings(base) => Some(InterfaceBlock {
+            structure: base,
+            elements: length.get(),
+            arrayed: true,
+        }),
+        _ => None,
+    }
+}

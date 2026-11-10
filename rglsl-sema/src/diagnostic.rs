@@ -185,4 +185,6 @@ pub enum DiagnosticKind {
     InvalidInterfaceArray { name: String, reason: &'static str },
     #[error("function `{0}` is called but has no body")]
     MissingFunctionBody(String),
+    #[error("#pragma: {0}")]
+    InvalidPragma(&'static str),
 }

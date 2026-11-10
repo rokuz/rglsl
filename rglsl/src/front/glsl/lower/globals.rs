@@ -1,4 +1,4 @@
-use alloc::{format, string::String, vec::Vec};
+use alloc::{format, string::String, vec, vec::Vec};
 
 use rglsl_ast::ast::{
     BlockInstance, BlockStructure, Declaration, DeclarationKind, InitDeclarator,
@@ -7,13 +7,14 @@ use rglsl_ast::ast::{
 };
 use rglsl_sema::scope::{Origin, Qualifiers, Storage, SymbolKind};
 use rglsl_sema::types::{
-    ArraySize as GlslArraySize, BlockStorage, OpaqueKind, Type as GlslType, TypeKind,
+    ArraySize as GlslArraySize, BlockId, BlockStorage, OpaqueKind, Type as GlslType, TypeKind,
 };
 use rglsl_sema::SymbolId;
 
 use super::types::{image_dimension, sampled_kind};
 use super::{internal, semantic, unsupported, GlobalRef, Initialization, Lowerer, Packing, Result};
 use crate::front::glsl::variables::{contains_float, location_count};
+use crate::proc::Alignment;
 use crate::{
     AddressSpace, Binding, BuiltIn, ConservativeDepth, GlobalVariable, Handle, ImageClass,
     Interpolation, MemoryDecorations, ResourceBinding, Sampling, Span, StorageAccess,
@@ -53,6 +54,21 @@ fn storage_of(qualifier: Option<&Spanned<TypeQualifier>>) -> Option<StorageQuali
             ) => Some(storage),
             _ => None,
         })
+}
+
+const PER_VERTEX: [&str; 4] = [
+    "gl_Position",
+    "gl_PointSize",
+    "gl_ClipDistance",
+    "gl_CullDistance",
+];
+
+const fn interpolation_of(qualifier: InterpolationQualifier) -> Interpolation {
+    match qualifier {
+        InterpolationQualifier::Flat => Interpolation::Flat,
+        InterpolationQualifier::Noperspective => Interpolation::Linear,
+        InterpolationQualifier::Smooth => Interpolation::Perspective,
+    }
 }
 
 fn image_format(word: &str) -> Option<StorageFormat> {
@@ -150,6 +166,30 @@ fn builtin_of(name: &str) -> Option<BuiltIn> {
 
 impl<'a> Lowerer<'a> {
     pub(super) fn global_declaration(&mut self, declaration: &'a Declaration) -> Result<()> {
+        let qualifiers: Vec<&Spanned<TypeQualifier>> = match declaration.kind {
+            DeclarationKind::InitDeclaratorList(ref list) => list.ty.qualifier.iter().collect(),
+            DeclarationKind::Block { ref structure, .. } => core::iter::once(&structure.qualifier)
+                .chain(
+                    structure
+                        .members
+                        .iter()
+                        .filter_map(|member| member.ty.qualifier.as_ref()),
+                )
+                .collect(),
+            DeclarationKind::Qualifier(ref qualifier)
+            | DeclarationKind::QualifiedIdentifiers { ref qualifier, .. } => vec![qualifier],
+            DeclarationKind::FunctionPrototype(_) | DeclarationKind::Precision { .. } => Vec::new(),
+        };
+        if let Some(qualifier) = qualifiers.into_iter().find(|&qualifier| {
+            layout_names(Some(qualifier))
+                .iter()
+                .any(|name| name.starts_with("xfb_"))
+        }) {
+            return Err(unsupported(
+                "transform feedback (`xfb_*` layout qualifiers)",
+                self.at(qualifier.span),
+            ));
+        }
         match declaration.kind {
             DeclarationKind::FunctionPrototype(_) | DeclarationKind::Precision { .. } => Ok(()),
             DeclarationKind::InitDeclaratorList(ref list) => {
@@ -209,6 +249,7 @@ impl<'a> Lowerer<'a> {
                 for name in names {
                     match name {
                         "early_fragment_tests" => self.early_fragment_tests = true,
+                        "post_depth_coverage" => self.post_depth_coverage = Some(at),
                         "local_size_x_id" | "local_size_y_id" | "local_size_z_id" => {
                             return Err(unsupported(
                                 "work group sizes given by specialization constants",
@@ -233,6 +274,9 @@ impl<'a> Lowerer<'a> {
         let Some(&symbol) = self.analysis.declarations.get(&declarator.id) else {
             return Ok(());
         };
+        if self.is_per_vertex_member(symbol) {
+            return self.builtin_redeclaration(symbol, list, declarator, at);
+        }
         let Some(variable) = self.variable(symbol) else {
             return Ok(());
         };
@@ -404,11 +448,7 @@ impl<'a> Lowerer<'a> {
                 ))
             }
         };
-        let mut interpolation = qualifiers.interpolation.map(|i| match i {
-            InterpolationQualifier::Flat => Interpolation::Flat,
-            InterpolationQualifier::Noperspective => Interpolation::Linear,
-            InterpolationQualifier::Smooth => Interpolation::Perspective,
-        });
+        let mut interpolation = qualifiers.interpolation.map(interpolation_of);
         let mut sampling = if qualifiers.sample {
             Some(Sampling::Sample)
         } else if qualifiers.centroid {
@@ -579,12 +619,9 @@ impl<'a> Lowerer<'a> {
                 if has_qualifier(qualifier, |q| matches!(q, SingleTypeQualifier::Precise)) {
                     return Err(unsupported("`precise`", at));
                 }
-                if has_qualifier(qualifier, |q| matches!(q, SingleTypeQualifier::Invariant)) {
-                    for declarator in &member.declarators {
-                        self.invariant
-                            .push((declarator.name.node.clone(), self.at(declarator.name.span)));
-                    }
-                }
+            }
+            if storage_of(Some(&structure.qualifier)) == Some(StorageQualifier::Out) {
+                self.per_vertex_redeclared = true;
             }
             return Ok(());
         }
@@ -602,7 +639,8 @@ impl<'a> Lowerer<'a> {
             BlockStorage::Uniform => false,
             BlockStorage::Buffer => true,
             BlockStorage::In | BlockStorage::Out => {
-                return Err(unsupported("user-defined interface blocks", at));
+                let name = instance.map(|instance| instance.name.node.clone());
+                return self.interface_block(symbol, id, name, at);
             }
         };
         let push_constant = qualifiers.has_layout("push_constant");
@@ -669,6 +707,394 @@ impl<'a> Lowerer<'a> {
             self.unbound.push((handle, set));
         }
         self.globals.insert(symbol, GlobalRef::Variable(handle));
+        Ok(())
+    }
+
+    fn interface_block(
+        &mut self,
+        symbol: SymbolId,
+        id: BlockId,
+        name: Option<String>,
+        at: Span,
+    ) -> Result<()> {
+        let analysis = self.analysis;
+        let variable = self.variable(symbol).ok_or_else(|| internal(at))?;
+        let block = analysis.types.block(id).ok_or_else(|| internal(at))?;
+        let input = block.storage == BlockStorage::In;
+        let outer = &block.qualifiers;
+        if outer.patch || block.members.iter().any(|member| member.qualifiers.patch) {
+            return Err(unsupported("`patch`", at));
+        }
+        if outer.precise || block.members.iter().any(|member| member.qualifiers.precise) {
+            return Err(unsupported("`precise`", at));
+        }
+        if outer.invariant {
+            return Err(semantic(
+                "cannot use invariant qualifier on an interface block",
+                at,
+            ));
+        }
+        let explicit = |qualifiers: &Qualifiers, name: &str| -> Result<Option<u32>> {
+            match qualifiers.layout_entry(name).and_then(|entry| entry.value) {
+                Some(value) => u32::try_from(value).map(Some).map_err(|_| internal(at)),
+                None => Ok(None),
+            }
+        };
+        let block_location = explicit(outer, "location")?;
+        let mut declared = variable.ty.clone();
+        if declared.outer_size() == Some(GlslArraySize::Unsized) {
+            let size = self.implicit_sizes.get(&symbol).copied().ok_or_else(|| {
+                unsupported(
+                    "stage inputs and outputs without a size or a constant index",
+                    at,
+                )
+            })?;
+            if let Some(first) = declared.array.first_mut() {
+                *first = GlslArraySize::Sized(size);
+            }
+        }
+        let arrayed = declared.is_array();
+        let mut members = Vec::with_capacity(block.members.len());
+        let mut offset = 0_u32;
+        let mut alignment = Alignment::ONE;
+        let mut member_locations = Vec::with_capacity(block.members.len());
+        for member in &block.members {
+            let qualifiers = &member.qualifiers;
+            if member.ty.outer_size() == Some(GlslArraySize::Unsized) {
+                return Err(unsupported("unsized arrays in interface blocks", at));
+            }
+            if qualifiers.invariant && input {
+                return Err(semantic("invariant can only apply to an output", at));
+            }
+            let ty = self.ir_type(&member.ty, at)?;
+            self.layouter
+                .update(self.module.to_ctx())
+                .map_err(|_| internal(at))?;
+            let layout = self.layouter[ty];
+            offset = layout.alignment.round_up(offset);
+            alignment = layout.alignment.max(alignment);
+            let mut interpolation = qualifiers
+                .interpolation
+                .or(outer.interpolation)
+                .map(interpolation_of);
+            let mut sampling = if qualifiers.sample || outer.sample {
+                Some(Sampling::Sample)
+            } else if qualifiers.centroid || outer.centroid {
+                Some(Sampling::Centroid)
+            } else {
+                None
+            };
+            if interpolation.is_none() && contains_float(&self.module.types, ty) {
+                interpolation = Some(Interpolation::Perspective);
+                sampling.get_or_insert(Sampling::Center);
+            }
+            let component = explicit(qualifiers, "component")?;
+            member_locations.push(explicit(qualifiers, "location")?);
+            members.push(crate::StructMember {
+                name: Some(member.name.clone()),
+                ty,
+                binding: Some(Binding::Location {
+                    location: 0,
+                    interpolation,
+                    sampling,
+                    blend_src: None,
+                    per_primitive: false,
+                    component,
+                    invariant: !input && (qualifiers.invariant || self.invariant_all),
+                    patch: false,
+                }),
+                offset,
+                matrix_layout: None,
+            });
+            offset = offset.saturating_add(layout.size);
+        }
+        let member_located = member_locations.iter().any(Option::is_some);
+        let per_block = members
+            .iter()
+            .map(|member| location_count(&self.module.types, member.ty))
+            .fold(0, u32::saturating_add);
+        let elements = declared
+            .array
+            .iter()
+            .map(|size| match *size {
+                GlslArraySize::Sized(size) => size,
+                _ => 1,
+            })
+            .fold(1, u32::saturating_mul);
+        let total = per_block.saturating_mul(elements);
+        let slot = usize::from(!input);
+        let io = if member_located {
+            if arrayed {
+                return Err(semantic(
+                    "cannot use in a block array where new locations are needed for each block element",
+                    at,
+                ));
+            }
+            if block_location.is_none() && member_locations.iter().any(Option::is_none) {
+                return Err(semantic(
+                    "either the block needs a location, or all members need a location, or no members have a location",
+                    at,
+                ));
+            }
+            let mut next = block_location;
+            for (member, explicit) in members.iter_mut().zip(&member_locations) {
+                let location = explicit.or(next).ok_or_else(|| internal(at))?;
+                if let Some(Binding::Location {
+                    location: ref mut slot,
+                    ..
+                }) = member.binding
+                {
+                    *slot = location;
+                }
+                next = Some(location.saturating_add(location_count(&self.module.types, member.ty)));
+            }
+            if self.options.auto_map_locations {
+                let counter = &mut self.next_location[slot];
+                *counter = counter.saturating_add(total);
+            }
+            None
+        } else {
+            let start = match block_location {
+                Some(location) => location,
+                None if self.options.auto_map_locations => {
+                    let counter = &mut self.next_location[slot];
+                    let location = *counter;
+                    *counter = counter.saturating_add(total);
+                    location
+                }
+                None => {
+                    return Err(semantic(
+                        "SPIR-V requires a location for user inputs and outputs",
+                        at,
+                    ))
+                }
+            };
+            if members.iter().any(|member| {
+                matches!(
+                    member.binding,
+                    Some(Binding::Location {
+                        component: Some(_),
+                        ..
+                    })
+                )
+            }) {
+                return Err(semantic(
+                    "a block member with a component needs a location",
+                    at,
+                ));
+            }
+            let mut next = start;
+            for member in &mut members {
+                if let Some(Binding::Location {
+                    ref mut location, ..
+                }) = member.binding
+                {
+                    *location = next;
+                }
+                next = next.saturating_add(location_count(&self.module.types, member.ty));
+            }
+            Some(Binding::Location {
+                location: start,
+                interpolation: None,
+                sampling: None,
+                blend_src: None,
+                per_primitive: false,
+                component: None,
+                invariant: false,
+                patch: false,
+            })
+        };
+        let structure = self.module.types.insert(
+            crate::Type {
+                name: Some(block.name.clone()),
+                inner: TypeInner::Struct {
+                    members,
+                    span: alignment.round_up(offset),
+                },
+            },
+            at,
+        );
+        let ty = self.wrap_arrays(structure, &declared.array, at)?;
+        let handle = self.module.global_variables.append(
+            GlobalVariable {
+                name,
+                space: if input {
+                    AddressSpace::Input
+                } else {
+                    AddressSpace::Output
+                },
+                binding: None,
+                ty,
+                init: None,
+                memory_decorations: MemoryDecorations::empty(),
+                io,
+            },
+            at,
+        );
+        self.interface.push(handle);
+        self.globals.insert(symbol, GlobalRef::Variable(handle));
+        if !input {
+            for member in &block.members {
+                self.block_outputs.insert(member.name.clone());
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn is_per_vertex_member(&self, symbol: SymbolId) -> bool {
+        if self.options.stage != crate::ShaderStage::Vertex {
+            return false;
+        }
+        let Some(&SymbolKind::BlockMember { instance, .. }) =
+            self.symbol(symbol).map(|symbol| &symbol.kind)
+        else {
+            return false;
+        };
+        let Some(variable) = self.variable(instance) else {
+            return false;
+        };
+        let TypeKind::Block(id) = variable.ty.kind else {
+            return false;
+        };
+        variable.origin == Origin::BuiltIn
+            && !variable.ty.is_array()
+            && self.analysis.types.block(id).is_some_and(|block| {
+                block.name == "gl_PerVertex" && block.storage == BlockStorage::Out
+            })
+    }
+
+    pub(super) fn per_vertex_member(
+        &self,
+        symbol: SymbolId,
+    ) -> Option<(Handle<GlobalVariable>, u32)> {
+        let (global, ref members) = *self.per_vertex.as_ref()?;
+        if !self.is_per_vertex_member(symbol) {
+            return None;
+        }
+        let name = &self.symbol(symbol)?.name;
+        let index = members.iter().position(|member| member == name)?;
+        Some((global, u32::try_from(index).ok()?))
+    }
+
+    pub(super) fn declare_per_vertex(&mut self) -> Result<()> {
+        if self.options.stage != crate::ShaderStage::Vertex
+            || (self.per_vertex_used.is_empty() && !self.per_vertex_redeclared)
+        {
+            return Ok(());
+        }
+        let analysis = self.analysis;
+        let block = analysis
+            .symbols
+            .iter()
+            .filter_map(|symbol| match symbol.kind {
+                SymbolKind::Variable(ref variable)
+                    if variable.origin == Origin::BuiltIn && !variable.ty.is_array() =>
+                {
+                    match variable.ty.kind {
+                        TypeKind::Block(id) => analysis.types.block(id),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            })
+            .find(|block| block.name == "gl_PerVertex" && block.storage == BlockStorage::Out)
+            .ok_or_else(|| internal(Span::UNDEFINED))?;
+        let mut requested: Vec<(String, Span)> = Vec::new();
+        self.invariant.retain(|&(ref name, at)| {
+            let per_vertex = PER_VERTEX.contains(&name.as_str());
+            if per_vertex {
+                requested.push((name.clone(), at));
+            }
+            !per_vertex
+        });
+        let mut members = Vec::new();
+        let mut names = Vec::new();
+        let mut offset = 0_u32;
+        let mut alignment = Alignment::ONE;
+        for name in PER_VERTEX {
+            let Some((_, member)) = block.member(name) else {
+                continue;
+            };
+            let at = requested
+                .iter()
+                .find(|&&(ref requested, _)| requested == name)
+                .map_or(Span::UNDEFINED, |&(_, at)| at);
+            let used = self.per_vertex_used.contains(name);
+            let invariant = member.qualifiers.invariant
+                || self.invariant_all
+                || requested
+                    .iter()
+                    .any(|&(ref requested, _)| requested == name);
+            let builtin = match name {
+                "gl_Position" => BuiltIn::Position { invariant },
+                _ => {
+                    if invariant && used {
+                        return Err(unsupported(
+                            "invariant on built-in outputs other than gl_Position",
+                            at,
+                        ));
+                    }
+                    builtin_of(name).ok_or_else(|| internal(at))?
+                }
+            };
+            let ty = if super::prepass::CLIP_DISTANCES.contains(&name) {
+                let size = match member.ty.outer_size() {
+                    Some(GlslArraySize::Sized(size)) => Some(size),
+                    _ => None,
+                }
+                .or_else(|| self.builtin_sizes.get(name).copied())
+                .or((!used).then_some(1))
+                .ok_or_else(|| {
+                    unsupported(format!("`{name}` without a size or a constant index"), at)
+                })?;
+                let element = GlslType::scalar(rglsl_sema::types::Scalar::Float);
+                self.ir_type(&element.array_of(GlslArraySize::Sized(size)), at)?
+            } else {
+                self.ir_type(&member.ty, at)?
+            };
+            self.layouter
+                .update(self.module.to_ctx())
+                .map_err(|_| internal(at))?;
+            let layout = self.layouter[ty];
+            offset = layout.alignment.round_up(offset);
+            alignment = layout.alignment.max(alignment);
+            members.push(crate::StructMember {
+                name: Some(String::from(name)),
+                ty,
+                binding: Some(Binding::BuiltIn(builtin)),
+                offset,
+                matrix_layout: None,
+            });
+            offset = offset.saturating_add(layout.size);
+            names.push(String::from(name));
+        }
+        if members.is_empty() {
+            return Ok(());
+        }
+        let ty = self.module.types.insert(
+            crate::Type {
+                name: Some(String::from("gl_PerVertex")),
+                inner: TypeInner::Struct {
+                    members,
+                    span: alignment.round_up(offset),
+                },
+            },
+            Span::UNDEFINED,
+        );
+        let handle = self.module.global_variables.append(
+            GlobalVariable {
+                name: None,
+                space: AddressSpace::Output,
+                binding: None,
+                ty,
+                init: None,
+                memory_decorations: MemoryDecorations::empty(),
+                io: None,
+            },
+            Span::UNDEFINED,
+        );
+        self.interface.push(handle);
+        self.per_vertex = Some((handle, names));
         Ok(())
     }
 
@@ -862,6 +1288,17 @@ impl<'a> Lowerer<'a> {
                 }
             }
         }
+        if let Some(at) = self.post_depth_coverage {
+            let implied = self
+                .analysis
+                .extensions
+                .contains("GL_ARB_post_depth_coverage");
+            self.errors.push(if self.early_fragment_tests || implied {
+                unsupported("the `post_depth_coverage` layout qualifier", at)
+            } else {
+                semantic("post_depth_coverage requires early_fragment_tests", at)
+            });
+        }
         self.check_shared_layouts();
         self.assign_bindings();
     }
@@ -920,6 +1357,12 @@ impl<'a> Lowerer<'a> {
         }
         if self.inputs.contains(name) {
             return Err(semantic("invariant can only apply to an output", at));
+        }
+        if self.block_outputs.contains(name) {
+            return Err(unsupported(
+                "invariant on a member of an output block outside the block",
+                at,
+            ));
         }
         let Some(&handle) = self.builtins.get(name) else {
             return Ok(());

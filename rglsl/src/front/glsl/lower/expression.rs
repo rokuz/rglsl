@@ -319,6 +319,11 @@ impl<'a> FunctionLowerer<'_, 'a> {
                 return Ok(Chain::Place(Place::pointer(pointer, boolean)));
             }
         }
+        if let Some((global, index)) = self.lw.per_vertex_member(symbol) {
+            let base = self.add(Expression::GlobalVariable(global), at)?;
+            let pointer = self.add(Expression::AccessIndex { base, index }, at)?;
+            return Ok(Chain::Place(Place::pointer(pointer, false)));
+        }
         let global = self.lw.global_ref(symbol, at)?;
         let handle_space = matches!(global, GlobalRef::Variable(handle)
             if self.lw.module.global_variables[handle].space == AddressSpace::Handle);

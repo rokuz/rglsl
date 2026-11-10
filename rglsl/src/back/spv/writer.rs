@@ -108,6 +108,7 @@ impl Writer {
             global_variables: HandleVec::new(),
             std140_compat_uniform_types: crate::FastHashMap::default(),
             laid_out_types: crate::arena::HandleSet::new(),
+            decorated_blocks: crate::arena::HandleSet::new(),
             fake_missing_bindings: options.fake_missing_bindings,
             binding_map: options.binding_map.clone(),
             saved_cached: CachedExpressions::default(),
@@ -208,6 +209,7 @@ impl Writer {
             global_variables: take(&mut self.global_variables).reclaim(),
             std140_compat_uniform_types: take(&mut self.std140_compat_uniform_types).reclaim(),
             laid_out_types: crate::arena::HandleSet::new(),
+            decorated_blocks: crate::arena::HandleSet::new(),
             saved_cached: take(&mut self.saved_cached).reclaim(),
             temp_list: take(&mut self.temp_list).reclaim(),
             ray_query_functions: take(&mut self.ray_query_functions).reclaim(),
@@ -3461,6 +3463,7 @@ impl Writer {
     fn write_global_variable(
         &mut self,
         ir_module: &crate::Module,
+        handle: Handle<crate::GlobalVariable>,
         global_variable: &crate::GlobalVariable,
         interface_stage: Option<crate::ShaderStage>,
     ) -> Result<Word, Error> {
@@ -3475,13 +3478,25 @@ impl Writer {
             let stage = interface_stage.ok_or(Error::Validation(
                 "an input or output variable is not in the interface of an entry point",
             ))?;
-            let binding = global_variable
-                .io
-                .as_ref()
-                .ok_or(Error::FeatureNotImplemented("input and output blocks"))?;
-            let decorations =
-                self.map_binding(ir_module, stage, class, global_variable.ty, binding)?;
-            self.write_binding(id, decorations);
+            if let Some(block) = crate::proc::interface_block(&ir_module.types, global_variable.ty)
+            {
+                self.write_interface_block(
+                    ir_module,
+                    handle,
+                    global_variable,
+                    block,
+                    stage,
+                    class,
+                    id,
+                )?;
+            } else {
+                let binding = global_variable.io.as_ref().ok_or(Error::Validation(
+                    "an input or output variable has no binding",
+                ))?;
+                let decorations =
+                    self.map_binding(ir_module, stage, class, global_variable.ty, binding)?;
+                self.write_binding(id, decorations);
+            }
         }
 
         if let crate::AddressSpace::RayPayload | crate::AddressSpace::IncomingRayPayload =
@@ -3658,6 +3673,68 @@ impl Writer {
         Instruction::variable(pointer_type_id, id, class, init_word)
             .to_words(&mut self.logical_layout.declarations);
         Ok(id)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn write_interface_block(
+        &mut self,
+        ir_module: &crate::Module,
+        handle: Handle<crate::GlobalVariable>,
+        global_variable: &crate::GlobalVariable,
+        block: crate::proc::InterfaceBlock,
+        stage: crate::ShaderStage,
+        class: spirv::StorageClass,
+        id: Word,
+    ) -> Result<(), Error> {
+        if let Some(ref binding) = global_variable.io {
+            let decorations =
+                self.map_binding(ir_module, stage, class, global_variable.ty, binding)?;
+            self.write_binding(id, decorations);
+        }
+        if !self.decorated_blocks.insert(block.structure) {
+            return Ok(());
+        }
+        let struct_id = self.get_handle_type_id(block.structure);
+        self.decorate(struct_id, spirv::Decoration::Block, &[]);
+        let crate::TypeInner::Struct { ref members, .. } = ir_module.types[block.structure].inner
+        else {
+            return Err(Error::Validation("an interface block is not a structure"));
+        };
+        for (index, member) in members.iter().enumerate() {
+            let Some(ref binding) = member.binding else {
+                continue;
+            };
+            let index = u32::try_from(index)
+                .map_err(|_| Error::Validation("too many members in an interface block"))?;
+            let unused_distance = match *binding {
+                crate::Binding::BuiltIn(crate::BuiltIn::ClipDistances) => {
+                    Some(spirv::BuiltIn::ClipDistance)
+                }
+                crate::Binding::BuiltIn(crate::BuiltIn::CullDistance) => {
+                    Some(spirv::BuiltIn::CullDistance)
+                }
+                _ => None,
+            }
+            .filter(|_| !block.arrayed && !interface_member_used(ir_module, handle, index));
+            let decorations = match unused_distance {
+                Some(built_in) => BindingDecorations::BuiltIn(built_in, ArrayVec::new()),
+                None => self.map_binding(ir_module, stage, class, member.ty, binding)?,
+            };
+            match decorations {
+                BindingDecorations::Location { others, .. } if global_variable.io.is_some() => {
+                    for other in others {
+                        self.annotations.push(Instruction::member_decorate(
+                            struct_id,
+                            index,
+                            other,
+                            &[],
+                        ));
+                    }
+                }
+                decorations => self.write_binding_struct_member(struct_id, index, decorations),
+            }
+        }
+        Ok(())
     }
 
     /// Write the necessary decorations for a struct member.
@@ -3868,6 +3945,8 @@ impl Writer {
             }
         }
 
+        self.decorated_blocks = crate::arena::HandleSet::for_arena(&ir_module.types);
+
         // write all types
         for (handle, _) in ir_module.types.iter() {
             self.write_type_declaration_arena(ir_module, handle)?;
@@ -3920,7 +3999,7 @@ impl Writer {
                     }
                     .filter(|ep| in_interface(ep))
                     .map(|ep| ep.stage);
-                    let id = self.write_global_variable(ir_module, var, interface_stage)?;
+                    let id = self.write_global_variable(ir_module, handle, var, interface_stage)?;
                     GlobalVariable::new(id)
                 }
             };
@@ -4122,4 +4201,41 @@ fn mark_laid_out(
         }
         _ => {}
     }
+}
+
+fn interface_member_used(
+    module: &crate::Module,
+    global: Handle<crate::GlobalVariable>,
+    member: u32,
+) -> bool {
+    let functions = module
+        .functions
+        .iter()
+        .map(|(_, function)| function)
+        .chain(module.entry_points.iter().map(|ep| &ep.function));
+    for function in functions {
+        let is_global = |pointer: Handle<crate::Expression>| {
+            matches!(
+                function.expressions[pointer],
+                crate::Expression::GlobalVariable(found) if found == global
+            )
+        };
+        for (_, expression) in function.expressions.iter() {
+            match *expression {
+                crate::Expression::AccessIndex { base, index } if is_global(base) => {
+                    if index == member {
+                        return true;
+                    }
+                }
+                crate::Expression::Access { base, .. }
+                | crate::Expression::Load { pointer: base }
+                    if is_global(base) =>
+                {
+                    return true;
+                }
+                _ => {}
+            }
+        }
+    }
+    false
 }

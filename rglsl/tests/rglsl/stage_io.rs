@@ -9,7 +9,7 @@ use rglsl::{
     back::spv,
     valid::{Capabilities, ValidationFlags, Validator},
     AddressSpace, Binding, BuiltIn, EntryPoint, Expression, Function, GlobalVariable, Handle,
-    Module, Scalar, ShaderStage, Span, Statement, Type, TypeInner, VectorSize,
+    Module, Scalar, ShaderStage, Span, Statement, StructMember, Type, TypeInner, VectorSize,
 };
 use rspirv::dr::{self, Operand};
 use spirv::{Decoration, Op, StorageClass};
@@ -64,6 +64,16 @@ impl Builder {
         ty: Handle<Type>,
         io: Binding,
     ) -> Handle<GlobalVariable> {
+        self.global(name, space, ty, Some(io))
+    }
+
+    fn global(
+        &mut self,
+        name: &str,
+        space: AddressSpace,
+        ty: Handle<Type>,
+        io: Option<Binding>,
+    ) -> Handle<GlobalVariable> {
         self.module.global_variables.append(
             GlobalVariable {
                 name: Some(name.into()),
@@ -72,10 +82,78 @@ impl Builder {
                 ty,
                 init: None,
                 memory_decorations: rglsl::MemoryDecorations::empty(),
-                io: Some(io),
+                io,
             },
             Span::UNDEFINED,
         )
+    }
+
+    fn block_type(
+        &mut self,
+        name: &str,
+        members: &[(&str, Handle<Type>, Binding)],
+    ) -> Handle<Type> {
+        let members = members
+            .iter()
+            .enumerate()
+            .map(|(index, &(name, ty, ref binding))| StructMember {
+                name: Some(name.into()),
+                ty,
+                binding: Some(binding.clone()),
+                offset: 16 * u32::try_from(index).unwrap(),
+                matrix_layout: None,
+            })
+            .collect::<Vec<_>>();
+        let span = 16 * u32::try_from(members.len()).unwrap();
+        self.module.types.insert(
+            Type {
+                name: Some(name.into()),
+                inner: TypeInner::Struct { members, span },
+            },
+            Span::UNDEFINED,
+        )
+    }
+
+    fn block(
+        &mut self,
+        name: &str,
+        space: AddressSpace,
+        ty: Handle<Type>,
+        io: Option<Binding>,
+    ) -> Handle<GlobalVariable> {
+        let handle = self.global(name, space, ty, io);
+        self.interface.push(handle);
+        handle
+    }
+
+    fn store_member(
+        &mut self,
+        block: Handle<GlobalVariable>,
+        element: Option<u32>,
+        member: u32,
+        ty: Handle<Type>,
+    ) {
+        let expressions = &mut self.function.expressions;
+        let mut base = expressions.append(Expression::GlobalVariable(block), Span::UNDEFINED);
+        let value = expressions.append(Expression::ZeroValue(ty), Span::UNDEFINED);
+        let start = expressions.len();
+        if let Some(index) = element {
+            base = expressions.append(Expression::AccessIndex { base, index }, Span::UNDEFINED);
+        }
+        let pointer = expressions.append(
+            Expression::AccessIndex {
+                base,
+                index: member,
+            },
+            Span::UNDEFINED,
+        );
+        let range = expressions.range_from(start);
+        self.function
+            .body
+            .push(Statement::Emit(range), Span::UNDEFINED);
+        self.function
+            .body
+            .push(Statement::Store { pointer, value }, Span::UNDEFINED);
     }
 
     /// Appends `*to = *from;` to the entry point.
@@ -131,6 +209,54 @@ fn location(location: u32) -> Binding {
     }
 }
 
+fn located(location: u32, interpolation: Option<rglsl::Interpolation>) -> Binding {
+    Binding::Location {
+        location,
+        interpolation,
+        sampling: interpolation
+            .filter(|&i| i != rglsl::Interpolation::Flat)
+            .map(|_| rglsl::Sampling::Center),
+        blend_src: None,
+        per_primitive: false,
+        component: None,
+        invariant: false,
+        patch: false,
+    }
+}
+
+fn block_location(location: u32) -> Binding {
+    located(location, None)
+}
+
+pub(crate) fn spirv_val(words: &[u32]) {
+    let validator = std::path::Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../target/oracles/bin/spirv-val"
+    ));
+    if !validator.exists() {
+        println!("spirv-val not found at {}", validator.display());
+        return;
+    }
+    let path = std::env::temp_dir().join(format!(
+        "rglsl-stage-io-{}-{:?}.spv",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    let bytes: Vec<u8> = words.iter().flat_map(|word| word.to_le_bytes()).collect();
+    std::fs::write(&path, bytes).unwrap();
+    let output = std::process::Command::new(validator)
+        .args(["--target-env", "vulkan1.0"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&path);
+    assert!(
+        output.status.success(),
+        "spirv-val: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 fn validate(module: &Module) -> Result<rglsl::valid::ModuleInfo, String> {
     Validator::new(ValidationFlags::all(), Capabilities::all())
         .validate(module)
@@ -144,7 +270,47 @@ fn compile(module: &Module) -> dr::Module {
         ..spv::Options::default()
     };
     let words = spv::write_vec(module, &info, &options, None).expect("SPIR-V backend failed");
+    spirv_val(&words);
     dr::load_words(words).expect("produced SPIR-V does not parse")
+}
+
+fn member_decorations(module: &dr::Module, name: &str) -> Vec<(u32, Decoration, Vec<u32>)> {
+    let id = module
+        .debug_names
+        .iter()
+        .find(|inst| {
+            inst.class.opcode == Op::Name
+                && inst.operands[1] == Operand::LiteralString(name.to_string())
+        })
+        .unwrap_or_else(|| panic!("nothing named {name}"))
+        .operands[0]
+        .unwrap_id_ref();
+    let mut decorations: Vec<_> = module
+        .annotations
+        .iter()
+        .filter(|inst| {
+            inst.class.opcode == Op::MemberDecorate && inst.operands[0] == Operand::IdRef(id)
+        })
+        .map(|inst| {
+            let Operand::LiteralBit32(member) = inst.operands[1] else {
+                panic!("OpMemberDecorate without a member");
+            };
+            let Operand::Decoration(decoration) = inst.operands[2] else {
+                panic!("OpMemberDecorate without a decoration");
+            };
+            let operands = inst.operands[3..]
+                .iter()
+                .map(|operand| match *operand {
+                    Operand::LiteralBit32(value) => value,
+                    Operand::BuiltIn(built_in) => built_in as u32,
+                    ref other => panic!("unexpected decoration operand {other:?}"),
+                })
+                .collect();
+            (member, decoration, operands)
+        })
+        .collect();
+    decorations.sort_by_key(|&(member, decoration, _)| (member, decoration as u32));
+    decorations
 }
 
 /// The decorations of the variable named `name`, with their literal operands.
@@ -414,4 +580,325 @@ fn invalid_interfaces_are_rejected() {
     })
     .unwrap_err();
     assert!(error.contains("InvalidComponent"), "{error}");
+}
+
+fn per_vertex(b: &mut Builder) -> Handle<GlobalVariable> {
+    let vec4 = b.vector(VectorSize::Quad);
+    let float = b.ty(TypeInner::Scalar(Scalar::F32));
+    let distances = b.ty(TypeInner::Array {
+        base: float,
+        size: rglsl::ArraySize::Constant(1.try_into().unwrap()),
+        stride: 4,
+    });
+    let ty = b.block_type(
+        "gl_PerVertex",
+        &[
+            (
+                "gl_Position",
+                vec4,
+                Binding::BuiltIn(BuiltIn::Position { invariant: true }),
+            ),
+            ("gl_PointSize", float, Binding::BuiltIn(BuiltIn::PointSize)),
+            (
+                "gl_ClipDistance",
+                distances,
+                Binding::BuiltIn(BuiltIn::ClipDistances),
+            ),
+            (
+                "gl_CullDistance",
+                distances,
+                Binding::BuiltIn(BuiltIn::CullDistance),
+            ),
+        ],
+    );
+    b.block("", AddressSpace::Output, ty, None)
+}
+
+fn block_module() -> Module {
+    let mut b = Builder::new();
+    let vec4 = b.vector(VectorSize::Quad);
+    let vec3 = b.vector(VectorSize::Tri);
+    let vec2 = b.vector(VectorSize::Bi);
+    let int = b.ty(TypeInner::Scalar(Scalar::I32));
+    let mat2 = b.ty(TypeInner::Matrix {
+        columns: VectorSize::Bi,
+        rows: VectorSize::Bi,
+        scalar: Scalar::F32,
+    });
+    let perspective = Some(rglsl::Interpolation::Perspective);
+    let flat = Some(rglsl::Interpolation::Flat);
+
+    b.variable("a_position", AddressSpace::Input, vec4, location(0));
+    let gl = per_vertex(&mut b);
+
+    let members = b.block_type(
+        "VS_OUT",
+        &[
+            ("a", vec4, located(1, perspective)),
+            ("b", vec2, located(3, perspective)),
+            ("c", int, located(4, flat)),
+            ("d", vec4, located(5, Some(rglsl::Interpolation::Linear))),
+        ],
+    );
+    let vs_out = b.block("vs_out", AddressSpace::Output, members, None);
+
+    let centroid = Binding::Location {
+        location: 7,
+        interpolation: perspective,
+        sampling: Some(rglsl::Sampling::Centroid),
+        blend_src: None,
+        per_primitive: false,
+        component: None,
+        invariant: false,
+        patch: false,
+    };
+    let located_block = b.block_type(
+        "Blk",
+        &[
+            ("e", vec3, centroid),
+            ("m", mat2, located(8, perspective)),
+            ("f", vec4, located(10, flat)),
+        ],
+    );
+    let blk = b.block(
+        "",
+        AddressSpace::Output,
+        located_block,
+        Some(block_location(7)),
+    );
+
+    let element = b.block_type("Arr", &[("t", vec2, located(11, perspective))]);
+    let elements = b.ty(TypeInner::Array {
+        base: element,
+        size: rglsl::ArraySize::Constant(2.try_into().unwrap()),
+        stride: 16,
+    });
+    let arr = b.block(
+        "arr",
+        AddressSpace::Output,
+        elements,
+        Some(block_location(11)),
+    );
+
+    b.store_member(gl, None, 0, vec4);
+    b.store_member(vs_out, None, 2, int);
+    b.store_member(blk, None, 1, mat2);
+    b.store_member(arr, Some(1), 0, vec2);
+    b.finish(ShaderStage::Vertex)
+}
+
+#[test]
+fn interface_blocks_are_emitted_as_blocks() {
+    let module = compile(&block_module());
+
+    for name in ["gl_PerVertex", "VS_OUT", "Blk", "Arr"] {
+        assert_eq!(
+            decorations(&module, name),
+            [(Decoration::Block, vec![])],
+            "{name}"
+        );
+    }
+    let built_in = |built_in: spirv::BuiltIn| (Decoration::BuiltIn, vec![built_in as u32]);
+    let member =
+        |index: u32, (decoration, operands): (Decoration, Vec<u32>)| (index, decoration, operands);
+    let location = |location| (Decoration::Location, vec![location]);
+    assert_eq!(
+        member_decorations(&module, "gl_PerVertex"),
+        [
+            member(0, built_in(spirv::BuiltIn::Position)),
+            member(0, (Decoration::Invariant, vec![])),
+            member(1, built_in(spirv::BuiltIn::PointSize)),
+            member(2, built_in(spirv::BuiltIn::ClipDistance)),
+            member(3, built_in(spirv::BuiltIn::CullDistance)),
+        ]
+    );
+    assert_eq!(
+        member_decorations(&module, "VS_OUT"),
+        [
+            member(0, location(1)),
+            member(1, location(3)),
+            member(2, (Decoration::Flat, vec![])),
+            member(2, location(4)),
+            member(3, (Decoration::NoPerspective, vec![])),
+            member(3, location(5)),
+        ]
+    );
+    assert!(decorations(&module, "vs_out").is_empty());
+    assert_eq!(
+        member_decorations(&module, "Blk"),
+        [
+            member(0, (Decoration::Centroid, vec![])),
+            member(2, (Decoration::Flat, vec![])),
+        ]
+    );
+    assert!(member_decorations(&module, "Arr").is_empty());
+    assert_eq!(decorations(&module, "arr"), [location(11)]);
+
+    assert!(module.capabilities.iter().all(|inst| !matches!(
+        inst.operands[0],
+        Operand::Capability(spirv::Capability::ClipDistance | spirv::Capability::CullDistance)
+    )));
+    assert!(module.annotations.iter().all(|inst| !matches!(
+        inst.operands.get(2),
+        Some(&Operand::Decoration(Decoration::Offset))
+    )));
+    let chains = module
+        .all_inst_iter()
+        .filter(|inst| inst.class.opcode == Op::AccessChain)
+        .count();
+    assert_eq!(chains, 4);
+    let variables = module
+        .types_global_values
+        .iter()
+        .filter(|inst| {
+            inst.class.opcode == Op::Variable
+                && inst.operands[0] == Operand::StorageClass(StorageClass::Output)
+        })
+        .count();
+    assert_eq!(variables, 4);
+    assert_eq!(module.entry_points[0].operands.len() - 3, 5);
+}
+
+#[test]
+fn fragment_input_blocks() {
+    let mut b = Builder::new();
+    let vec4 = b.vector(VectorSize::Quad);
+    let int = b.ty(TypeInner::Scalar(Scalar::I32));
+    let ty = b.block_type(
+        "VS_OUT",
+        &[
+            (
+                "a",
+                vec4,
+                located(2, Some(rglsl::Interpolation::Perspective)),
+            ),
+            ("c", int, located(3, Some(rglsl::Interpolation::Flat))),
+        ],
+    );
+    let input = b.block("vs_in", AddressSpace::Input, ty, Some(block_location(2)));
+    let output = b.variable("o", AddressSpace::Output, vec4, location(0));
+    let expressions = &mut b.function.expressions;
+    let base = expressions.append(Expression::GlobalVariable(input), Span::UNDEFINED);
+    let target = expressions.append(Expression::GlobalVariable(output), Span::UNDEFINED);
+    let start = expressions.len();
+    let pointer = expressions.append(Expression::AccessIndex { base, index: 0 }, Span::UNDEFINED);
+    let value = expressions.append(Expression::Load { pointer }, Span::UNDEFINED);
+    let range = expressions.range_from(start);
+    b.function
+        .body
+        .push(Statement::Emit(range), Span::UNDEFINED);
+    b.function.body.push(
+        Statement::Store {
+            pointer: target,
+            value,
+        },
+        Span::UNDEFINED,
+    );
+    let module = compile(&b.finish(ShaderStage::Fragment));
+    assert_eq!(
+        decorations(&module, "vs_in"),
+        [(Decoration::Location, vec![2])]
+    );
+    assert_eq!(
+        member_decorations(&module, "VS_OUT"),
+        [(1, Decoration::Flat, vec![])]
+    );
+}
+
+#[test]
+fn invalid_blocks_are_rejected() {
+    let vertex = |build: &dyn Fn(&mut Builder)| {
+        let mut b = Builder::new();
+        build(&mut b);
+        validate(&b.finish(ShaderStage::Vertex))
+    };
+    let perspective = Some(rglsl::Interpolation::Perspective);
+
+    let error = vertex(&|b| {
+        let vec4 = b.vector(VectorSize::Quad);
+        let ty = b.block_type(
+            "Mixed",
+            &[
+                (
+                    "gl_Position",
+                    vec4,
+                    Binding::BuiltIn(BuiltIn::Position { invariant: false }),
+                ),
+                ("a", vec4, located(0, perspective)),
+            ],
+        );
+        b.block("", AddressSpace::Output, ty, None);
+    })
+    .unwrap_err();
+    assert!(error.contains("MixedBlockBindings"), "{error}");
+
+    let error = vertex(&|b| {
+        let vec4 = b.vector(VectorSize::Quad);
+        let ty = b.block_type(
+            "B",
+            &[
+                ("a", vec4, located(4, perspective)),
+                ("b", vec4, located(6, perspective)),
+            ],
+        );
+        b.block("", AddressSpace::Output, ty, Some(block_location(4)));
+    })
+    .unwrap_err();
+    assert!(error.contains("BlockMemberLocation"), "{error}");
+
+    let error = vertex(&|b| {
+        let vec4 = b.vector(VectorSize::Quad);
+        let ty = b.block_type("B", &[("a", vec4, located(0, perspective))]);
+        let array = b.ty(TypeInner::Array {
+            base: ty,
+            size: rglsl::ArraySize::Constant(2.try_into().unwrap()),
+            stride: 16,
+        });
+        b.block("b", AddressSpace::Output, array, None);
+    })
+    .unwrap_err();
+    assert!(error.contains("MemberLocationInBlockArray"), "{error}");
+
+    let error = vertex(&|b| {
+        let vec4 = b.vector(VectorSize::Quad);
+        let ty = b.block_type("B", &[("a", vec4, located(0, perspective))]);
+        let array = b.ty(TypeInner::Array {
+            base: ty,
+            size: rglsl::ArraySize::Constant(2.try_into().unwrap()),
+            stride: 16,
+        });
+        b.block("b", AddressSpace::Output, array, Some(block_location(0)));
+        b.variable("v", AddressSpace::Output, vec4, location(1));
+    })
+    .unwrap_err();
+    assert!(error.contains("BindingCollision"), "{error}");
+
+    let error = vertex(&|b| {
+        let vec4 = b.vector(VectorSize::Quad);
+        per_vertex(b);
+        b.variable(
+            "gl_Position",
+            AddressSpace::Output,
+            vec4,
+            Binding::BuiltIn(BuiltIn::Position { invariant: false }),
+        );
+    })
+    .unwrap_err();
+    assert!(error.contains("DuplicateBuiltIn"), "{error}");
+
+    let error = vertex(&|b| {
+        let vec4 = b.vector(VectorSize::Quad);
+        let ty = b.block_type("B", &[("a", vec4, located(0, None))]);
+        b.block("", AddressSpace::Output, ty, None);
+    })
+    .unwrap_err();
+    assert!(error.contains("MissingInterpolation"), "{error}");
+
+    let error = vertex(&|b| {
+        let vec4 = b.vector(VectorSize::Quad);
+        let ty = b.block_type("B", &[("a", vec4, located(0, perspective))]);
+        b.block("", AddressSpace::Output, ty, Some(location(0)));
+    })
+    .unwrap_err();
+    assert!(error.contains("InvalidBlockBinding"), "{error}");
 }
