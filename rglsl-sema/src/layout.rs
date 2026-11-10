@@ -155,7 +155,7 @@ fn layout_with_depth(
             alignment: 4,
             size: 4,
         }),
-        TypeKind::Error | TypeKind::Void => None,
+        TypeKind::Error | TypeKind::Void | TypeKind::String => None,
     }
 }
 

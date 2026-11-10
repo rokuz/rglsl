@@ -980,6 +980,22 @@ fn adjust_stmt(new_pos: &HandleVec<Expression, Handle<Expression>>, stmt: &mut S
                 adjust(payload);
             }
         },
+        Statement::DebugPrintf {
+            ref mut arguments, ..
+        } => {
+            for argument in arguments.iter_mut() {
+                if let crate::DebugPrintfArgument::Value(ref mut value) = *argument {
+                    adjust(value);
+                }
+            }
+        }
+        Statement::Abort {
+            ref mut arguments, ..
+        } => {
+            for argument in arguments.iter_mut() {
+                adjust(argument);
+            }
+        }
         Statement::Break
         | Statement::Continue
         | Statement::Kill

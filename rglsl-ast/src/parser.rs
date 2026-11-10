@@ -50,6 +50,7 @@ struct Parser<'a> {
     source: &'a str,
     tokens: Vec<Token<'a>>,
     directives: Vec<Directive>,
+    strings: Vec<String>,
     end: Token<'a>,
     cursor: usize,
     previous_end: u32,
@@ -80,6 +81,7 @@ pub fn parse_prefix(source: &str) -> (TranslationUnit, Option<ParseError>) {
         source,
         tokens: lexed.tokens,
         directives: lexed.directives,
+        strings: lexed.strings,
         end: lexed.end,
         cursor: 0,
         previous_end: 0,
@@ -179,6 +181,7 @@ impl<'a> Parser<'a> {
             TokenKind::Word(text) | TokenKind::Number { text, .. } => format!("`{text}`"),
             TokenKind::Punctuator(text) => format!("`{text}`"),
             TokenKind::Directive(_) => String::from("a preprocessor directive"),
+            TokenKind::String(_) => String::from("a string literal"),
             TokenKind::End => String::from("the end of the source"),
         };
         self.error(
@@ -1331,6 +1334,11 @@ impl<'a> Parser<'a> {
                     text: text.to_owned(),
                 };
                 self.measured(start, ExpressionKind::Number(literal), 0)
+            }
+            TokenKind::String(index) => {
+                self.advance();
+                let value = self.strings.get(index).cloned().unwrap_or_default();
+                self.measured(start, ExpressionKind::String(value), 0)
             }
             TokenKind::Punctuator("(") => self.parse_parenthesized(),
             TokenKind::Word("true") => {

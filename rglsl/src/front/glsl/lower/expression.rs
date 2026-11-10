@@ -187,6 +187,7 @@ impl<'a> FunctionLowerer<'_, 'a> {
                 }
             }
             ExpressionKind::Number(_) | ExpressionKind::Bool(_) => return Err(internal(at)),
+            ExpressionKind::String(_) => return Ok(None),
             ExpressionKind::Parenthesized(ref inner) => return self.value_converted(inner),
             ExpressionKind::FunctionCall(ref call) => return self.call(expression, call),
             ExpressionKind::Postfix {
@@ -295,7 +296,7 @@ impl<'a> FunctionLowerer<'_, 'a> {
         expression: &AstExpression,
     ) -> Result<Option<Handle<Expression>>> {
         let info = self.info(expression)?;
-        if info.ty.is_void() {
+        if info.ty.is_void() || info.ty.is_string() {
             return self.value(expression);
         }
         self.rvalue(expression).map(Some)
@@ -1283,9 +1284,10 @@ impl<'a> FunctionLowerer<'_, 'a> {
 
     pub(super) fn pure(&self, expression: &AstExpression) -> bool {
         match expression.kind {
-            ExpressionKind::Variable(_) | ExpressionKind::Number(_) | ExpressionKind::Bool(_) => {
-                true
-            }
+            ExpressionKind::Variable(_)
+            | ExpressionKind::Number(_)
+            | ExpressionKind::Bool(_)
+            | ExpressionKind::String(_) => true,
             ExpressionKind::Parenthesized(ref inner) => self.pure(inner),
             ExpressionKind::Subscript {
                 ref base,

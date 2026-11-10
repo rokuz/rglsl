@@ -2656,6 +2656,24 @@ pub enum Statement {
         target: Handle<Expression>,
         data: CooperativeData,
     },
+    DebugPrintf {
+        format: String,
+        arguments: Vec<DebugPrintfArgument>,
+    },
+    Abort {
+        message: String,
+        ty: Handle<Type>,
+        arguments: Vec<Handle<Expression>>,
+    },
+}
+
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub enum DebugPrintfArgument {
+    Value(Handle<Expression>),
+    String(String),
 }
 
 /// A function argument.

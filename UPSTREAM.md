@@ -279,6 +279,20 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
 - **Scalar block layout** (`std140`/`std430`/`scalar` packing in `front/glsl/lower/offset.rs`)
   and array strides smaller than the natural size of a matrix element (the matrix layout of
   the member decides the size).
+- **Debug printf and abort** (`GL_EXT_debug_printf`, `GL_EXT_abort`;
+  `docs/design/strings.md`). `Statement::DebugPrintf { format, arguments }` (new, with
+  `DebugPrintfArgument::{Value, String}`) is written as `OpExtInst NonSemantic.DebugPrintf`
+  with `OpString`s, deduplicated by text (the existing ray-query and ray-tracing validation
+  printfs share the cache). `Statement::Abort { message, ty, arguments }` (new) is a block
+  terminator like `Kill` (`proc::ensure_block_returns`, the uniformity analysis); `ty` is the
+  scalar-laid-out message struct, checked by the validator (`FunctionError::
+  InvalidAbortMessage`, `InvalidAbortArgument`), kept by `compact` (`adjust_body` now also
+  takes the type map) and validated by the handle validator (`validate_block_handles` takes
+  the type arena). The SPIR-V backend writes `OpConstantDataKHR`, a laid-out copy of the
+  message type, `UTFEncodedKHR`, `OpCompositeConstruct` and `OpAbortKHR` with `AbortKHR`,
+  `ConstantDataKHR`, `Int8` (`back/spv/message.rs`). `back::spv::Instruction` holds a raw
+  opcode (`Instruction::raw`) and the writer a list of raw capabilities, because the `spirv`
+  crate does not know these opcodes, capabilities and the decoration.
 
 ## Cherry-picked upstream commits
 

@@ -122,6 +122,6 @@ impl FunctionMap {
             .collect();
 
         // Adjust statements.
-        self.adjust_body(function, &module_map.functions);
+        self.adjust_body(function, &module_map.functions, &module_map.types);
     }
 }

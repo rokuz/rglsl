@@ -6,6 +6,7 @@ mod expression;
 mod function;
 mod globals;
 mod heap;
+mod message;
 mod offset;
 mod prepass;
 mod reference;

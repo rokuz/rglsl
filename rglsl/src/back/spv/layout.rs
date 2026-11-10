@@ -87,6 +87,10 @@ impl super::reclaimable::Reclaimable for LogicalLayout {
 
 impl Instruction {
     pub(super) const fn new(op: Op) -> Self {
+        Self::raw(op as u32)
+    }
+
+    pub(super) const fn raw(op: u32) -> Self {
         Instruction {
             op,
             wc: 1, // Always start at 1 for the first word (OP + WC),
@@ -120,7 +124,7 @@ impl Instruction {
     }
 
     pub(super) fn to_words(&self, sink: &mut impl Extend<Word>) {
-        sink.extend(Some((self.wc << 16) | self.op as u32));
+        sink.extend(Some((self.wc << 16) | self.op));
         sink.extend(self.type_id);
         sink.extend(self.result_id);
         sink.extend(self.operands.iter().cloned());
@@ -135,7 +139,7 @@ impl Instruction {
         inst_index += 1;
 
         assert_eq!(wc, words.len() as u16);
-        assert_eq!(op, self.op as u16);
+        assert_eq!(u32::from(op), self.op);
 
         if let Some(type_id) = self.type_id {
             assert_eq!(words[inst_index], type_id);

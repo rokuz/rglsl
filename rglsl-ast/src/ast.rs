@@ -826,6 +826,7 @@ pub enum ExpressionKind {
     Variable(String),
     Number(NumericLiteral),
     Bool(bool),
+    String(String),
     Parenthesized(Box<Expression>),
     Subscript {
         base: Box<Expression>,

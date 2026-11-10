@@ -117,8 +117,8 @@ fn unexpected_characters() {
     assert_eq!(found.kind, ParseErrorKind::UnexpectedCharacter('\u{e9}'));
     assert_eq!(found.position, position(2, 5));
     assert_eq!(
-        error("int a = \"text\";").kind,
-        ParseErrorKind::UnexpectedCharacter('"')
+        error("int a = \"text").kind,
+        ParseErrorKind::UnterminatedString
     );
 }
 
