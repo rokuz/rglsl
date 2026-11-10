@@ -815,7 +815,9 @@ impl ExpressionKindTracker {
             Expression::Literal(_) | Expression::ZeroValue(_) | Expression::Constant(_) => {
                 ExpressionKind::Const
             }
-            Expression::Override(_) => ExpressionKind::Override,
+            Expression::Override(_) | Expression::CooperativeMatrixLength { .. } => {
+                ExpressionKind::Override
+            }
             Expression::Compose { ref components, .. } => {
                 let mut expr_type = ExpressionKind::Const;
                 for component in components {

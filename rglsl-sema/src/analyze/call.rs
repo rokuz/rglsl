@@ -228,10 +228,21 @@ impl Analyzer<'_> {
             return Operand::error();
         }
         self.calls.insert(expression.id, Callee::Length);
-        if operand.ty.as_cooperative_matrix().is_some() {
+        let matrix_usage = operand
+            .ty
+            .as_cooperative_matrix()
+            .map(|matrix| matrix.usage);
+        if matrix_usage.is_some_and(|usage| usage != crate::types::CooperativeUse::Nv) {
             return Operand::temporary(Type::INT);
         }
-        if let Some(ArraySize::Specialized(_)) = operand.ty.sized_vector_length() {
+        let specialized = matrix_usage.is_some()
+            || matches!(
+                operand.ty.sized_vector_length(),
+                Some(ArraySize::Specialized(_))
+            )
+            || (operand.ty.length().is_none()
+                && matches!(operand.ty.outer_size(), Some(ArraySize::Specialized(_))));
+        if specialized {
             self.specialization_uses += 1;
             return Operand {
                 specialization: true,
@@ -244,13 +255,6 @@ impl Analyzer<'_> {
                     .ok()
                     .map(|length| Constant::single(Value::Int(length)));
                 Operand::constant(Type::INT, value)
-            }
-            None if matches!(operand.ty.outer_size(), Some(ArraySize::Specialized(_))) => {
-                self.specialization_uses += 1;
-                Operand {
-                    specialization: true,
-                    ..Operand::constant(Type::INT, None)
-                }
             }
             None if operand.ty.is_array() => {
                 let resizable = matches!(

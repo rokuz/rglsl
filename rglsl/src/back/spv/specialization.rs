@@ -467,6 +467,17 @@ impl Writer {
         };
         let not_allowed = Error::SpecializationConstant;
         let id = match module.global_expressions[handle] {
+            Expression::CooperativeMatrixLength { ty } => {
+                let matrix_type = self.get_handle_type_id(ty)?;
+                let opcode = match module.types[ty].inner {
+                    TypeInner::CooperativeMatrix {
+                        class: crate::CooperativeMatrixClass::Nv,
+                        ..
+                    } => Op::CooperativeMatrixLengthNV,
+                    _ => Op::CooperativeMatrixLengthKHR,
+                };
+                self.spec_op(type_id, opcode, &[matrix_type])
+            }
             Expression::Unary { op, expr } => {
                 let operand = self.written(expr)?;
                 let (_, scalar) = operand_inner(expr);

@@ -4927,3 +4927,66 @@ void main() { o = v; }
 #extension GL_NV_compute_shader_derivatives : require
 layout(derivative_group_linearNV) in;
 void main() {}
+### long vector arithmetic | comp 460 | ok
+#extension GL_EXT_long_vector : require
+#extension GL_KHR_memory_scope_semantics : require
+layout(local_size_x = 1) in;
+void main() {
+    vector<float, 7> a = vector<float, 7>(1.0);
+    vector<float, 7> b = a * 2.0 + a;
+    float c = dot(a, b) + float(b.length());
+}
+### long vector size must be constant | comp 460 | 6:InvalidTypeParameters
+#extension GL_EXT_long_vector : require
+layout(local_size_x = 1) in;
+void main() {
+    int n = 3;
+    vector<float, n> a;
+}
+### KHR cooperative matrix multiply-add | comp 450 | ok
+#extension GL_KHR_cooperative_matrix : require
+#extension GL_KHR_memory_scope_semantics : require
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+layout(local_size_x = 32) in;
+layout(set = 0, binding = 0) buffer Data { float16_t x[]; } data;
+void main() {
+    coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseA> a;
+    coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseB> b;
+    coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator> c = coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator>(0.0);
+    coopMatLoad(a, data.x, 0, 16, gl_CooperativeMatrixLayoutRowMajor);
+    coopMatLoad(b, data.x, 0, 16, gl_CooperativeMatrixLayoutRowMajor);
+    c = coopMatMulAdd(a, b, c);
+    int n = c.length();
+}
+### cooperative matrix operands must share a type | comp 450 | 9:InvalidOperands
+#extension GL_KHR_cooperative_matrix : require
+#extension GL_KHR_memory_scope_semantics : require
+layout(local_size_x = 32) in;
+void main() {
+    coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator> a;
+    coopmat<float, gl_ScopeSubgroup, 8, 8, gl_MatrixUseAccumulator> b;
+    coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator> c;
+    c = a + b;
+}
+### bfloat16 has no arithmetic | comp 450 | 7:InvalidOperands
+#extension GL_EXT_bfloat16 : require
+layout(local_size_x = 1) in;
+void main() {
+    bfloat16_t a = bfloat16_t(1.0);
+    bfloat16_t b = a;
+    b = a + b;
+}
+### float8 converts to float | comp 450 | ok
+#extension GL_EXT_float_e4m3 : require
+layout(local_size_x = 1) in;
+void main() {
+    floate4m3_t a = floate4m3_t(256.0);
+    float b = float(a);
+}
+### expect and assume | comp 450 | ok
+#extension GL_EXT_expect_assume : require
+layout(local_size_x = 1) in;
+void main() {
+    int a = expectEXT(1, 1);
+    assumeEXT(a == 1);
+}
