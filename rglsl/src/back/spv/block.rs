@@ -2599,7 +2599,8 @@ impl BlockContext<'_> {
             (Sk::Float, Sk::Sint | Sk::Uint, Some(width)) => {
                 let dst_scalar = crate::Scalar { kind, width };
                 let (min, max) =
-                    crate::proc::min_max_float_representable_by(src_scalar, dst_scalar);
+                    crate::proc::min_max_float_representable_by(src_scalar, dst_scalar)
+                        .ok_or(Error::Validation("unsupported float to integer conversion"))?;
                 let expr_type_id = self.get_expression_type_id(&self.fun_info[expr].ty);
 
                 let maybe_splat_const = |writer: &mut Writer, const_id| match src_size {

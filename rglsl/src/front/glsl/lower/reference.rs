@@ -139,7 +139,10 @@ impl Lowerer<'_> {
                 if self.module.types.get(&resolved).is_some() {
                     return Err(internal(span));
                 }
-                self.module.types.replace(pointer, resolved);
+                self.module
+                    .types
+                    .replace(pointer, resolved)
+                    .map_err(|_| internal(span))?;
                 Ok(pointer)
             }
             None => {

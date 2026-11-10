@@ -1,5 +1,5 @@
 use super::{HandleMap, HandleSet, ModuleMap};
-use crate::arena::{Arena, Handle};
+use crate::arena::{Arena, BadHandle, Handle};
 
 pub struct ExpressionTracer<'tracer> {
     pub constants: &'tracer Arena<crate::Constant>,
@@ -285,10 +285,8 @@ impl ModuleMap {
         &self,
         expr: &mut crate::Expression,
         operand_map: &HandleMap<crate::Expression>,
-    ) {
-        let adjust = |expr: &mut Handle<crate::Expression>| {
-            operand_map.adjust(expr);
-        };
+    ) -> Result<(), BadHandle> {
+        let adjust = |expr: &mut Handle<crate::Expression>| operand_map.adjust(expr);
 
         use crate::Expression as Ex;
         match *expr {
@@ -300,40 +298,40 @@ impl ModuleMap {
             | Ex::RayQueryProceedResult => {}
 
             // Expressions that contain handles that need to be adjusted.
-            Ex::Constant(ref mut constant) => self.constants.adjust(constant),
-            Ex::Override(ref mut r#override) => self.overrides.adjust(r#override),
-            Ex::ZeroValue(ref mut ty) => self.types.adjust(ty),
+            Ex::Constant(ref mut constant) => self.constants.adjust(constant)?,
+            Ex::Override(ref mut r#override) => self.overrides.adjust(r#override)?,
+            Ex::ZeroValue(ref mut ty) => self.types.adjust(ty)?,
             Ex::Compose {
                 ref mut ty,
                 ref mut components,
             } => {
-                self.types.adjust(ty);
+                self.types.adjust(ty)?;
                 for component in components {
-                    adjust(component);
+                    adjust(component)?;
                 }
             }
             Ex::Access {
                 ref mut base,
                 ref mut index,
             } => {
-                adjust(base);
-                adjust(index);
+                adjust(base)?;
+                adjust(index)?;
             }
             Ex::AccessIndex {
                 ref mut base,
                 index: _,
-            } => adjust(base),
+            } => adjust(base)?,
             Ex::Splat {
                 size: _,
                 ref mut value,
-            } => adjust(value),
+            } => adjust(value)?,
             Ex::Swizzle {
                 size: _,
                 ref mut vector,
                 pattern: _,
-            } => adjust(vector),
-            Ex::GlobalVariable(ref mut handle) => self.globals.adjust(handle),
-            Ex::Load { ref mut pointer } => adjust(pointer),
+            } => adjust(vector)?,
+            Ex::GlobalVariable(ref mut handle) => self.globals.adjust(handle)?,
+            Ex::Load { ref mut pointer } => adjust(pointer)?,
             Ex::ImageSample {
                 ref mut image,
                 ref mut sampler,
@@ -345,13 +343,13 @@ impl ModuleMap {
                 ref mut depth_ref,
                 clamp_to_edge: _,
             } => {
-                adjust(image);
-                operand_map.adjust_option(sampler);
-                adjust(coordinate);
-                operand_map.adjust_option(array_index);
-                operand_map.adjust_option(offset);
-                self.adjust_sample_level(level, operand_map);
-                operand_map.adjust_option(depth_ref);
+                adjust(image)?;
+                operand_map.adjust_option(sampler)?;
+                adjust(coordinate)?;
+                operand_map.adjust_option(array_index)?;
+                operand_map.adjust_option(offset)?;
+                self.adjust_sample_level(level, operand_map)?;
+                operand_map.adjust_option(depth_ref)?;
             }
             Ex::ImageLoad {
                 ref mut image,
@@ -360,49 +358,49 @@ impl ModuleMap {
                 ref mut sample,
                 ref mut level,
             } => {
-                adjust(image);
-                adjust(coordinate);
-                operand_map.adjust_option(array_index);
-                operand_map.adjust_option(sample);
-                operand_map.adjust_option(level);
+                adjust(image)?;
+                adjust(coordinate)?;
+                operand_map.adjust_option(array_index)?;
+                operand_map.adjust_option(sample)?;
+                operand_map.adjust_option(level)?;
             }
             Ex::ImageQuery {
                 ref mut image,
                 ref mut query,
             } => {
-                adjust(image);
-                self.adjust_image_query(query, operand_map);
+                adjust(image)?;
+                self.adjust_image_query(query, operand_map)?;
             }
             Ex::Unary {
                 op: _,
                 ref mut expr,
-            } => adjust(expr),
+            } => adjust(expr)?,
             Ex::Binary {
                 op: _,
                 ref mut left,
                 ref mut right,
             } => {
-                adjust(left);
-                adjust(right);
+                adjust(left)?;
+                adjust(right)?;
             }
             Ex::Select {
                 ref mut condition,
                 ref mut accept,
                 ref mut reject,
             } => {
-                adjust(condition);
-                adjust(accept);
-                adjust(reject);
+                adjust(condition)?;
+                adjust(accept)?;
+                adjust(reject)?;
             }
             Ex::Derivative {
                 axis: _,
                 ctrl: _,
                 ref mut expr,
-            } => adjust(expr),
+            } => adjust(expr)?,
             Ex::Relational {
                 fun: _,
                 ref mut argument,
-            } => adjust(argument),
+            } => adjust(argument)?,
             Ex::Math {
                 fun: _,
                 ref mut arg,
@@ -410,101 +408,104 @@ impl ModuleMap {
                 ref mut arg2,
                 ref mut arg3,
             } => {
-                adjust(arg);
-                operand_map.adjust_option(arg1);
-                operand_map.adjust_option(arg2);
-                operand_map.adjust_option(arg3);
+                adjust(arg)?;
+                operand_map.adjust_option(arg1)?;
+                operand_map.adjust_option(arg2)?;
+                operand_map.adjust_option(arg3)?;
             }
             Ex::As {
                 ref mut expr,
                 kind: _,
                 convert: _,
-            } => adjust(expr),
+            } => adjust(expr)?,
             Ex::CallResult(ref mut function) => {
-                self.functions.adjust(function);
+                self.functions.adjust(function)?;
             }
             Ex::AtomicResult {
                 ref mut ty,
                 comparison: _,
-            } => self.types.adjust(ty),
-            Ex::WorkGroupUniformLoadResult { ref mut ty } => self.types.adjust(ty),
-            Ex::SubgroupOperationResult { ref mut ty } => self.types.adjust(ty),
-            Ex::ArrayLength(ref mut expr) => adjust(expr),
+            } => self.types.adjust(ty)?,
+            Ex::WorkGroupUniformLoadResult { ref mut ty } => self.types.adjust(ty)?,
+            Ex::SubgroupOperationResult { ref mut ty } => self.types.adjust(ty)?,
+            Ex::ArrayLength(ref mut expr) => adjust(expr)?,
             Ex::PhysicalAddress {
                 ref mut pointer,
                 split: _,
-            } => adjust(pointer),
-            Ex::BufferPointer { ref mut descriptor } => adjust(descriptor),
+            } => adjust(pointer)?,
+            Ex::BufferPointer { ref mut descriptor } => adjust(descriptor)?,
             Ex::HeapOffset {
                 ref mut pointer,
                 ref mut offset,
             } => {
-                adjust(pointer);
-                adjust(offset);
+                adjust(pointer)?;
+                adjust(offset)?;
             }
             Ex::PhysicalPointer {
                 ref mut value,
                 ref mut ty,
             } => {
-                adjust(value);
-                self.types.adjust(ty);
+                adjust(value)?;
+                self.types.adjust(ty)?;
             }
             Ex::RayQueryGetIntersection {
                 ref mut query,
                 committed: _,
-            } => adjust(query),
+            } => adjust(query)?,
             Ex::RayQueryVertexPositions {
                 ref mut query,
                 committed: _,
-            } => adjust(query),
+            } => adjust(query)?,
             Ex::CooperativeLoad { ref mut data, .. } => {
-                adjust(&mut data.pointer);
-                adjust(&mut data.stride);
+                adjust(&mut data.pointer)?;
+                adjust(&mut data.stride)?;
             }
             Ex::CooperativeMultiplyAdd {
                 ref mut a,
                 ref mut b,
                 ref mut c,
             } => {
-                adjust(a);
-                adjust(b);
-                adjust(c);
+                adjust(a)?;
+                adjust(b)?;
+                adjust(c)?;
             }
         }
+        Ok(())
     }
 
     fn adjust_sample_level(
         &self,
         level: &mut crate::SampleLevel,
         operand_map: &HandleMap<crate::Expression>,
-    ) {
+    ) -> Result<(), BadHandle> {
         let adjust = |expr: &mut Handle<crate::Expression>| operand_map.adjust(expr);
 
         use crate::SampleLevel as Sl;
         match *level {
             Sl::Auto | Sl::Zero => {}
-            Sl::Exact(ref mut expr) => adjust(expr),
-            Sl::Bias(ref mut expr) => adjust(expr),
+            Sl::Exact(ref mut expr) => adjust(expr)?,
+            Sl::Bias(ref mut expr) => adjust(expr)?,
             Sl::Gradient {
                 ref mut x,
                 ref mut y,
             } => {
-                adjust(x);
-                adjust(y);
+                adjust(x)?;
+                adjust(y)?;
             }
         }
+        Ok(())
     }
 
     fn adjust_image_query(
         &self,
         query: &mut crate::ImageQuery,
         operand_map: &HandleMap<crate::Expression>,
-    ) {
+    ) -> Result<(), BadHandle> {
         use crate::ImageQuery as Iq;
 
         match *query {
-            Iq::Size { ref mut level } => operand_map.adjust_option(level),
+            Iq::Size { ref mut level } => operand_map.adjust_option(level)?,
             Iq::NumLevels | Iq::NumLayers | Iq::NumSamples => {}
         }
+        Ok(())
     }
 }

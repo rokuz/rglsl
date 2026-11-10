@@ -66,19 +66,15 @@ impl ConstructorSet {
     ///
     /// Members are produced as singleton, in order from most general to least.
     pub fn members(self) -> impl Iterator<Item = ConstructorSet> {
-        OneBitsIter::new(self.bits() as u64).map(|bit| Self::from_bits(bit as u16).unwrap())
+        OneBitsIter::new(self.bits() as u64).map(|bit| Self::from_bits_retain(bit as u16))
     }
 
     /// Return the size of the sole element of `self`.
-    ///
-    /// # Panics
-    ///
-    /// Panic if `self` is not a singleton.
-    pub fn size(self) -> ConstructorSize {
+    pub const fn size(self) -> Option<ConstructorSize> {
         use ir::VectorSize as Vs;
         use ConstructorSize as Cs;
 
-        match self {
+        Some(match self {
             ConstructorSet::SCALAR => Cs::Scalar,
             ConstructorSet::VEC2 => Cs::Vector(Vs::Bi),
             ConstructorSet::VEC3 => Cs::Vector(Vs::Tri),
@@ -119,8 +115,8 @@ impl ConstructorSet {
                 columns: Vs::Quad,
                 rows: Vs::Quad,
             },
-            _ => unreachable!("ConstructorSet was not a singleton"),
-        }
+            _ => return None,
+        })
     }
 }
 

@@ -109,6 +109,17 @@ impl<T> Handle<T> {
         Handle::new(handle_index)
     }
 
+    pub(crate) const fn erase_type(self) -> Handle<()> {
+        Handle::new(self.index)
+    }
+
+    pub(super) fn try_from_usize(index: usize) -> Option<Self> {
+        u32::try_from(index)
+            .ok()
+            .and_then(Index::new)
+            .map(Handle::new)
+    }
+
     /// Write this handle's index to `formatter`, preceded by `prefix`.
     pub fn write_prefixed(
         &self,

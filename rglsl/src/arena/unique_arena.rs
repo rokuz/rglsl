@@ -3,7 +3,10 @@
 use alloc::vec::Vec;
 use core::{fmt, hash, ops};
 
-use super::handle::{BadHandle, Handle, Index};
+use super::{
+    handle::{BadHandle, Handle},
+    Range,
+};
 use crate::{FastIndexSet, Span};
 
 /// An arena whose elements are guaranteed to be unique.
@@ -78,10 +81,11 @@ impl<T> UniqueArena<T> {
     }
 
     pub(crate) fn drain_all(&mut self) -> UniqueArenaDrain<'_, T> {
+        let handles = Range::full_range_from_size(self.set.len());
         UniqueArenaDrain {
             inner_elts: self.set.drain(..),
             inner_spans: self.span_info.drain(..),
-            index: Index::new(0).unwrap(),
+            handles,
         }
     }
 }
@@ -89,22 +93,17 @@ impl<T> UniqueArena<T> {
 pub struct UniqueArenaDrain<'a, T> {
     inner_elts: indexmap::set::Drain<'a, T>,
     inner_spans: alloc::vec::Drain<'a, Span>,
-    index: Index,
+    handles: Range<T>,
 }
 
 impl<T> Iterator for UniqueArenaDrain<'_, T> {
     type Item = (Handle<T>, T, Span);
 
     fn next(&mut self) -> Option<Self::Item> {
-        match self.inner_elts.next() {
-            Some(elt) => {
-                let handle = Handle::new(self.index);
-                self.index = self.index.checked_add(1).unwrap();
-                let span = self.inner_spans.next().unwrap();
-                Some((handle, elt, span))
-            }
-            None => None,
-        }
+        let elt = self.inner_elts.next()?;
+        let handle = self.handles.next()?;
+        let span = self.inner_spans.next().unwrap_or_default();
+        Some((handle, elt, span))
     }
 }
 
@@ -112,10 +111,8 @@ impl<T: Eq + hash::Hash> UniqueArena<T> {
     /// Returns an iterator over the items stored in this arena, returning both
     /// the item's handle and a reference to it.
     pub fn iter(&self) -> impl DoubleEndedIterator<Item = (Handle<T>, &T)> + ExactSizeIterator {
-        self.set.iter().enumerate().map(|(i, v)| {
-            let index = Index::new(i as u32).unwrap();
-            (Handle::new(index), v)
-        })
+        let handles = Range::full_range_from_size(self.set.len());
+        self.set.iter().zip(handles).map(|(v, handle)| (handle, v))
     }
 
     /// Insert a new value into the arena.
@@ -151,11 +148,16 @@ impl<T: Eq + hash::Hash> UniqueArena<T> {
     ///
     /// - if the old value is not in the arena
     /// - if the new value already exists in the arena
-    pub fn replace(&mut self, old: Handle<T>, new: T) {
-        let (index, added) = self.set.insert_full(new);
-        assert!(added && index == self.set.len() - 1);
-
-        self.set.swap_remove_index(old.index()).unwrap();
+    pub fn replace(&mut self, old: Handle<T>, new: T) -> Result<(), ReplaceError> {
+        self.check_contains_handle(old)?;
+        let (_, added) = self.set.insert_full(new);
+        if !added {
+            return Err(ReplaceError::AlreadyPresent);
+        }
+        match self.set.swap_remove_index(old.index()) {
+            Some(_) => Ok(()),
+            None => Err(BadHandle::new(old).into()),
+        }
     }
 
     /// Return this arena's handle for `value`, if present.
@@ -165,7 +167,7 @@ impl<T: Eq + hash::Hash> UniqueArena<T> {
     pub fn get(&self, value: &T) -> Option<Handle<T>> {
         self.set
             .get_index_of(value)
-            .map(|index| Handle::from_usize(index))
+            .and_then(Handle::try_from_usize)
     }
 
     /// Return this arena's value at `handle`, if that is a valid handle.
@@ -183,6 +185,14 @@ impl<T: Eq + hash::Hash> UniqueArena<T> {
             Err(BadHandle::new(handle))
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, thiserror::Error, PartialEq)]
+pub enum ReplaceError {
+    #[error(transparent)]
+    BadHandle(#[from] BadHandle),
+    #[error("The replacement value is already present in the arena")]
+    AlreadyPresent,
 }
 
 impl<T> Default for UniqueArena<T> {

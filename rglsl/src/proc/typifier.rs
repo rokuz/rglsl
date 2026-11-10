@@ -87,7 +87,7 @@ use crate::{
 ///
 /// [`TypeInner::Pointer`]: crate::TypeInner::Pointer
 /// [`TypeInner::ValuePointer`]: crate::TypeInner::ValuePointer
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serialize", derive(serde::Serialize))]
 #[cfg_attr(feature = "deserialize", derive(serde::Deserialize))]
 pub enum TypeResolution {
@@ -121,52 +121,6 @@ impl TypeResolution {
         match *self {
             Self::Handle(handle) => &arena[handle].inner,
             Self::Value(ref inner) => inner,
-        }
-    }
-}
-
-// Clone is only implemented for numeric variants of `TypeInner`.
-impl Clone for TypeResolution {
-    fn clone(&self) -> Self {
-        use crate::TypeInner as Ti;
-        match *self {
-            Self::Handle(handle) => Self::Handle(handle),
-            Self::Value(ref v) => Self::Value(match *v {
-                Ti::Scalar(scalar) => Ti::Scalar(scalar),
-                Ti::Vector { size, scalar } => Ti::Vector { size, scalar },
-                Ti::Matrix {
-                    rows,
-                    columns,
-                    scalar,
-                } => Ti::Matrix {
-                    rows,
-                    columns,
-                    scalar,
-                },
-                Ti::CooperativeMatrix {
-                    columns,
-                    rows,
-                    scalar,
-                    role,
-                } => Ti::CooperativeMatrix {
-                    columns,
-                    rows,
-                    scalar,
-                    role,
-                },
-                Ti::Pointer { base, space } => Ti::Pointer { base, space },
-                Ti::ValuePointer {
-                    size,
-                    scalar,
-                    space,
-                } => Ti::ValuePointer {
-                    size,
-                    scalar,
-                    space,
-                },
-                Ti::Array { base, size, stride } => Ti::Array { base, size, stride },
-                _ => unreachable!("Unexpected clone type: {:?}", v),
-            }),
         }
     }
 }
@@ -734,7 +688,9 @@ impl<'a> ResolveContext<'a> {
                     return Err(ResolveError::BuiltinArgumentsInvalid(format!("{fun:?}")));
                 }
 
-                let rule = overloads.most_preferred();
+                let rule = overloads
+                    .most_preferred()
+                    .ok_or_else(|| ResolveError::BuiltinArgumentsInvalid(format!("{fun:?}")))?;
 
                 rule.conclusion.into_resolution(self.special_types)?
             }

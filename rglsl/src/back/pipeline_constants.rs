@@ -11,7 +11,7 @@ use thiserror::Error;
 use super::PipelineConstants;
 use crate::{
     arena::HandleVec,
-    compact::{compact, KeepUnused},
+    compact::{compact, CompactError, KeepUnused},
     ir,
     proc::{ConstantEvaluator, ConstantEvaluatorError, Emitter},
     valid::{Capabilities, ModuleInfo, ValidationError, ValidationFlags, Validator},
@@ -41,6 +41,8 @@ pub enum PipelineConstantError {
     ConstantEvaluatorError(#[from] ConstantEvaluatorError),
     #[error(transparent)]
     ValidationError(#[from] WithSpan<ValidationError>),
+    #[error(transparent)]
+    CompactError(#[from] CompactError),
     #[error("workgroup_size override isn't strictly positive")]
     NegativeWorkgroupSize,
     #[error("max vertices or max primitives is negative")]
@@ -113,7 +115,7 @@ pub fn process_overrides<'a>(
     // Compact the module to remove anything not reachable from an entry point.
     // This is necessary because we may not have values for overrides that are
     // not reachable from the/an entry point.
-    compact(&mut module, KeepUnused::No);
+    compact(&mut module, KeepUnused::No)?;
 
     // If there are no overrides in the module, then we can skip the rest.
     if module.overrides.is_empty() {
