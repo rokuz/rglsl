@@ -3390,3 +3390,33 @@ fn descriptor_indexing_is_core_in_spirv_1_5() {
     assert!(!uses_descriptor_indexing(&module));
     assert!(capabilities(&module).contains(&spirv::Capability::ShaderNonUniform));
 }
+
+#[test]
+fn nonuniform_matrices_and_indexed_temporaries() {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+        #extension GL_EXT_nonuniform_qualifier : require
+        layout(location = 0) flat in int index;
+        layout(location = 0) out vec4 o;
+        void main() {
+            nonuniformEXT int n = index;
+            nonuniformEXT mat2 m = mat2(float(index));
+            mat2 sum = m + mat2(2.0);
+            mat2 product = m * mat2(2.0);
+            int picked = int[3](1, 2, 3)[n];
+            o = vec4(sum[0], product[1]) + vec4(picked);
+        }",
+    );
+    assert_eq!(
+        non_uniform_ops(&module),
+        [
+            Op::Load,
+            Op::FAdd,
+            Op::FAdd,
+            Op::CompositeConstruct,
+            Op::Load,
+            Op::Load,
+        ]
+    );
+}

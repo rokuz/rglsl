@@ -866,3 +866,32 @@ void main() {
     }
     assert!(!checked.is_constant("nonuniformEXT(u)"));
 }
+
+#[test]
+fn nonuniform_matrix_products_are_uniform_as_in_glslang() {
+    let checked = accepted(
+        Stage::Fragment,
+        "#extension GL_EXT_nonuniform_qualifier : enable
+layout(location = 0) in vec2 v;
+void main() {
+    nonuniformEXT mat2 m = mat2(1.0);
+    mat2 a = m * mat2(2.0);
+    vec2 b = m * v;
+    vec2 c = v * m;
+    mat2 d = m * 2.0;
+    mat2 e = m + mat2(2.0);
+}
+",
+    );
+    let non_uniform = |text: &str| {
+        checked
+            .analysis
+            .expression(checked.expression(text).id)
+            .is_some_and(|info| info.non_uniform)
+    };
+    assert!(!non_uniform("m * mat2(2.0)"));
+    assert!(non_uniform("m * v"));
+    assert!(non_uniform("v * m"));
+    assert!(non_uniform("m * 2.0"));
+    assert!(non_uniform("m + mat2(2.0)"));
+}

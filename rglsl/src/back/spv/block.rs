@@ -1109,6 +1109,7 @@ impl BlockContext<'_> {
                             } => {
                                 //TODO: why not just rely on `Fadd` for matrices?
                                 self.write_matrix_matrix_column_op(
+                                    expr_handle,
                                     block,
                                     id,
                                     result_type_id,
@@ -1118,7 +1119,7 @@ impl BlockContext<'_> {
                                     rows,
                                     scalar.width,
                                     spirv::Op::FAdd,
-                                );
+                                )?;
 
                                 self.cached[expr_handle] = id;
                                 return Ok(());
@@ -1138,6 +1139,7 @@ impl BlockContext<'_> {
                                 scalar,
                             } => {
                                 self.write_matrix_matrix_column_op(
+                                    expr_handle,
                                     block,
                                     id,
                                     result_type_id,
@@ -1147,7 +1149,7 @@ impl BlockContext<'_> {
                                     rows,
                                     scalar.width,
                                     spirv::Op::FSub,
-                                );
+                                )?;
 
                                 self.cached[expr_handle] = id;
                                 return Ok(());
@@ -3111,6 +3113,7 @@ impl BlockContext<'_> {
     #[allow(clippy::too_many_arguments)]
     fn write_matrix_matrix_column_op(
         &mut self,
+        expr_handle: Handle<crate::Expression>,
         block: &mut Block,
         result_id: Word,
         result_type_id: Word,
@@ -3120,8 +3123,11 @@ impl BlockContext<'_> {
         rows: crate::VectorSize,
         width: u8,
         op: spirv::Op,
-    ) {
+    ) -> Result<(), Error> {
         self.temp_list.clear();
+        let non_uniform = self
+            .non_uniform(expr_handle)
+            .contains(crate::NonUniform::VALUE);
 
         let vector_type_id = self.get_numeric_type_id(NumericType::Vector {
             size: rows,
@@ -3152,6 +3158,9 @@ impl BlockContext<'_> {
                 column_id_left,
                 column_id_right,
             ));
+            if non_uniform {
+                self.writer.decorate_non_uniform(column_id_res)?;
+            }
 
             self.temp_list.push(column_id_res);
         }
@@ -3161,6 +3170,7 @@ impl BlockContext<'_> {
             result_id,
             &self.temp_list,
         ));
+        Ok(())
     }
 
     /// Build the instructions for vector - scalar multiplication

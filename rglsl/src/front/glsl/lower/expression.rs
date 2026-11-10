@@ -24,6 +24,7 @@ pub(super) struct Place {
     pub swizzle: Option<Vec<u32>>,
     pub boolean: bool,
     pub non_uniform: bool,
+    pub spilled: bool,
 }
 
 impl Place {
@@ -33,6 +34,14 @@ impl Place {
             swizzle: None,
             boolean,
             non_uniform: false,
+            spilled: false,
+        }
+    }
+
+    fn child(&self, pointer: Handle<Expression>, boolean: bool) -> Self {
+        Self {
+            spilled: self.spilled,
+            ..Self::pointer(pointer, boolean)
         }
     }
 }
@@ -432,7 +441,7 @@ impl<'a> FunctionLowerer<'_, 'a> {
         let non_uniform = self.info(expression)?.non_uniform;
         Ok(match chain {
             Chain::Place(mut place) => {
-                place.non_uniform = non_uniform;
+                place.non_uniform = non_uniform && !place.spilled;
                 Chain::Place(place)
             }
             Chain::Value(value) => {
@@ -515,7 +524,7 @@ impl<'a> FunctionLowerer<'_, 'a> {
                                         at,
                                     )?;
                                     self.inherit_access(pointer, place.pointer, false);
-                                    Ok(Chain::Place(Place::pointer(pointer, place.boolean)))
+                                    Ok(Chain::Place(place.child(pointer, place.boolean)))
                                 }
                                 None => {
                                     let vector = self.load(&place, at)?;
@@ -556,7 +565,7 @@ impl<'a> FunctionLowerer<'_, 'a> {
                             }
                         };
                         self.inherit_access(pointer, place.pointer, dynamic && index_non_uniform);
-                        Ok(Chain::Place(Place::pointer(pointer, place.boolean)))
+                        Ok(Chain::Place(place.child(pointer, place.boolean)))
                     }
                     Chain::Value(value) => match constant {
                         Some(index) => Ok(Chain::Value(
@@ -580,7 +589,10 @@ impl<'a> FunctionLowerer<'_, 'a> {
                                     },
                                     at,
                                 )?;
-                                Ok(Chain::Place(Place::pointer(pointer, false)))
+                                Ok(Chain::Place(Place {
+                                    spilled: true,
+                                    ..Place::pointer(pointer, false)
+                                }))
                             }
                         }
                     },
@@ -624,13 +636,14 @@ impl<'a> FunctionLowerer<'_, 'a> {
                                             at,
                                         )?;
                                         self.inherit_access(pointer, place.pointer, false);
-                                        Ok(Chain::Place(Place::pointer(pointer, place.boolean)))
+                                        Ok(Chain::Place(place.child(pointer, place.boolean)))
                                     }
                                     _ => Ok(Chain::Place(Place {
                                         pointer: place.pointer,
                                         swizzle: Some(composed),
                                         boolean: place.boolean,
                                         non_uniform: false,
+                                        spilled: place.spilled,
                                     })),
                                 }
                             }
@@ -675,7 +688,7 @@ impl<'a> FunctionLowerer<'_, 'a> {
                                     at,
                                 )?;
                                 self.inherit_access(pointer, place.pointer, false);
-                                Ok(Chain::Place(Place::pointer(pointer, boolean)))
+                                Ok(Chain::Place(place.child(pointer, boolean)))
                             }
                             Chain::Value(value) => Ok(Chain::Value(
                                 self.add(Expression::AccessIndex { base: value, index }, at)?,

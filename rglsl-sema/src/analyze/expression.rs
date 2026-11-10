@@ -956,8 +956,12 @@ impl Analyzer<'_> {
         };
         self.record_conversion(left, &left_operand.ty, &result.left);
         self.record_conversion(right, &right_operand.ty, &result.right);
-        let non_uniform = (left_operand.non_uniform && left_operand.ty == result.left)
-            || (right_operand.non_uniform && right_operand.ty == result.right);
+        let matrix_product = operator == BinaryOperator::Multiply
+            && matches!(left_operand.ty.kind, TypeKind::Matrix { .. })
+            && matches!(right_operand.ty.kind, TypeKind::Matrix { .. });
+        let non_uniform = !matrix_product
+            && ((left_operand.non_uniform && left_operand.ty == result.left)
+                || (right_operand.non_uniform && right_operand.ty == result.right));
         let floating_specialization = (left_operand.specialization || right_operand.specialization)
             && result.left.base_scalar().is_some_and(Scalar::is_floating);
         let constant = constant && !floating_specialization;
