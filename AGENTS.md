@@ -40,8 +40,9 @@ goal, the language rules for linkage and `#include`, and the milestones (M0–M9
 - The compiler is called **rglsl** everywhere (crates, binary, docs); "naga" only names
   the upstream project it was forked from.
 - Keep the IR's style: arenas, typed handles, exhaustive `match`, `Result` errors.
-- SPIR-V is the only output. Do not add other backends; IR features need only be
-  expressible in SPIR-V.
+- SPIR-V is the only output for now. Do not add other backends yet; a Metal (MSL) backend may
+  come later. IR features must be expressible in SPIR-V; keep SPIR-V encodings (opcodes,
+  decorations, capabilities, raw words) in `back/spv`, not in the IR, when that costs nothing.
 - When changing code that came from upstream, record non-trivial deviations in
   [UPSTREAM.md](UPSTREAM.md).
 - A change that moves corpus numbers must commit the regenerated `PROGRESS.md`
