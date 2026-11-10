@@ -477,6 +477,9 @@ impl Analyzer<'_> {
             .is_some_and(|variable| variable.origin == Origin::BuiltIn)
         {
             self.viewport_layer_extension(expression.span, name);
+            if let Some(extension) = crate::builtins::view_extension(name) {
+                self.require_extension(expression.span, extension, name);
+            }
         }
         let (constant, value) = match self.symbol(id).map(|symbol| &symbol.kind) {
             Some(SymbolKind::Struct(_) | SymbolKind::Reference(_)) => {
@@ -802,6 +805,17 @@ impl Analyzer<'_> {
         }
         if let TypeKind::Reference(id) = base_operand.ty.kind {
             return self.reference_field(&base_operand, id, field);
+        }
+        let per_vertex_member = match base_operand.ty.kind {
+            TypeKind::Block(id) => self.types.block(id).is_some_and(|block| {
+                block.name == "gl_PerVertex" && block.member(&field.node).is_some()
+            }),
+            _ => false,
+        };
+        if let Some(extension) =
+            crate::builtins::view_extension(&field.node).filter(|_| per_vertex_member)
+        {
+            self.require_extension(field.span, extension, &field.node);
         }
         let members = match base_operand.ty.kind {
             TypeKind::Struct(id) => self.types.structure(id).map(|structure| &structure.members),

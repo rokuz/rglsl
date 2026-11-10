@@ -415,6 +415,20 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   (`back/spv/subgroup.rs`). An `Input` global may carry `MemoryDecorations::VOLATILE` (the
   subgroup built-ins of the ray-tracing stages other than any-hit, as glslang declares them): it
   is decorated `Volatile` but not `Coherent`, or loaded `Volatile` under the Vulkan memory model.
+- **Multiview and per-view built-ins** (`GL_EXT_multiview`, `GL_NV_viewport_array2`,
+  `GL_NV_stereo_view_rendering`, `GL_NVX_multiview_per_view_attributes`,
+  `GL_NV_sample_mask_override_coverage`). `BuiltIn::{ViewportMaskNV, SecondaryPositionNV,
+  SecondaryViewportMaskNV, PositionPerViewNV, ViewportMaskPerViewNV}` (new), outputs of the
+  stages before rasterization and, for the two positions, inputs of the tessellation and
+  geometry stages; their types are `int` arrays (any depth) and `vec4` or `vec4` arrays.
+  `BuiltIn::Layer` gains `viewport_relative` and `secondary_view_offset`
+  (`ViewportRelativeNV`, `SecondaryViewportRelativeNV N`) and `BuiltIn::SampleMask` gains
+  `override_coverage` (`OverrideCoverageNV`); the validator ignores them in duplicate checks, and
+  `SampleMask` also accepts an `int`/`uint` array, the GLSL form. The SPIR-V backend declares
+  `SPV_KHR_multiview` for `ViewIndex` before SPIR-V 1.3 only (upstream declared it whenever an
+  entry point argument was `ViewIndex`), adds the NV capabilities and extensions, decorates
+  integer arrays among fragment built-in inputs `Flat`, and adds the capability of an NV member
+  of an interface block only when it is accessed, as for `ClipDistance`.
 
 ## Cherry-picked upstream commits
 

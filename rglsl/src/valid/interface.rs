@@ -375,6 +375,29 @@ impl LocationShape {
 ///
 /// SPIR-V accepts a 32-bit integer of either signedness for these. WGSL
 /// declares them as `u32`, GLSL as `int`.
+fn is_array_of(
+    types: &UniqueArena<crate::Type>,
+    ty: &crate::TypeInner,
+    element: &dyn Fn(&crate::TypeInner) -> bool,
+) -> bool {
+    let crate::TypeInner::Array { base, .. } = *ty else {
+        return false;
+    };
+    let inner = &types[base].inner;
+    element(inner) || is_array_of(types, inner, element)
+}
+
+const fn is_pre_rasterization(stage: crate::ShaderStage) -> bool {
+    matches!(
+        stage,
+        crate::ShaderStage::Vertex
+            | crate::ShaderStage::TessControl
+            | crate::ShaderStage::TessEvaluation
+            | crate::ShaderStage::Geometry
+            | crate::ShaderStage::Mesh
+    )
+}
+
 const fn is_index_type(ty: &crate::TypeInner) -> bool {
     matches!(
         *ty,
@@ -417,6 +440,13 @@ impl VaryingContext<'_> {
                     crate::BuiltIn::Barycentric { .. } => {
                         crate::BuiltIn::Barycentric { perspective: false }
                     }
+                    crate::BuiltIn::Layer { .. } => crate::BuiltIn::Layer {
+                        viewport_relative: false,
+                        secondary_view_offset: None,
+                    },
+                    crate::BuiltIn::SampleMask { .. } => crate::BuiltIn::SampleMask {
+                        override_coverage: false,
+                    },
                     x => x,
                 };
 
@@ -486,7 +516,7 @@ impl VaryingContext<'_> {
                             _ => false,
                         },
                     ),
-                    Bi::Layer | Bi::ViewportIndex => (
+                    Bi::Layer { .. } | Bi::ViewportIndex => (
                         match self.stage {
                             St::Vertex
                             | St::TessControl
@@ -613,9 +643,40 @@ impl VaryingContext<'_> {
                         self.stage == St::Fragment && !self.output,
                         is_index_type(ty_inner),
                     ),
-                    Bi::SampleMask => (
+                    Bi::SampleMask { .. } => (
                         self.stage == St::Fragment,
-                        *ty_inner == Ti::Scalar(crate::Scalar::U32),
+                        *ty_inner == Ti::Scalar(crate::Scalar::U32)
+                            || is_array_of(self.types, ty_inner, &|inner| is_index_type(inner)),
+                    ),
+                    Bi::ViewportMaskNV
+                    | Bi::SecondaryViewportMaskNV
+                    | Bi::ViewportMaskPerViewNV => (
+                        self.output && is_pre_rasterization(self.stage),
+                        is_array_of(self.types, ty_inner, &|inner| {
+                            *inner == Ti::Scalar(crate::Scalar::I32)
+                        }),
+                    ),
+                    Bi::SecondaryPositionNV | Bi::PositionPerViewNV => (
+                        (self.output && is_pre_rasterization(self.stage))
+                            || (!self.output
+                                && matches!(
+                                    self.stage,
+                                    St::TessControl | St::TessEvaluation | St::Geometry
+                                )),
+                        {
+                            let vec4 = |inner: &Ti| {
+                                *inner
+                                    == Ti::Vector {
+                                        size: Vs::Quad,
+                                        scalar: crate::Scalar::F32,
+                                    }
+                            };
+                            if built_in == Bi::SecondaryPositionNV {
+                                vec4(ty_inner)
+                            } else {
+                                is_array_of(self.types, ty_inner, &vec4)
+                            }
+                        },
                     ),
                     Bi::LocalInvocationIndex => (
                         self.stage.compute_like() && !self.output,

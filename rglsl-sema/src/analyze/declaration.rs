@@ -776,6 +776,7 @@ impl Analyzer<'_> {
         }
         self.no_shader_layouts(&qualifiers);
         self.passthrough_extension(&qualifiers);
+        self.view_layout_extensions(&qualifiers);
         for declarator in &list.declarators {
             self.init_declarator(declarator, &qualifiers, &base);
         }
@@ -1461,6 +1462,7 @@ impl Analyzer<'_> {
         }
         self.no_shader_layouts(&qualifiers);
         self.passthrough_extension(&qualifiers);
+        self.view_layout_extensions(&qualifiers);
         let storage = match qualifiers.storage {
             Storage::Uniform => BlockStorage::Uniform,
             Storage::Buffer => BlockStorage::Buffer,

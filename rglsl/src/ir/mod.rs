@@ -457,8 +457,16 @@ pub enum BuiltIn {
     TessCoord,
     TessLevelOuter,
     TessLevelInner,
-    Layer,
+    Layer {
+        viewport_relative: bool,
+        secondary_view_offset: Option<i32>,
+    },
     ViewportIndex,
+    ViewportMaskNV,
+    SecondaryPositionNV,
+    SecondaryViewportMaskNV,
+    PositionPerViewNV,
+    ViewportMaskPerViewNV,
 
     /// Written in fragment shaders
     FragDepth,
@@ -473,7 +481,9 @@ pub enum BuiltIn {
     /// Read in fragment shaders
     SampleIndex,
     /// Read or written in fragment shaders
-    SampleMask,
+    SampleMask {
+        override_coverage: bool,
+    },
 
     /// Read in compute, task, and mesh shaders
     GlobalInvocationId,
