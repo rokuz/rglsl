@@ -15,5 +15,8 @@ name = "rglsl_fuzz"
 [dependencies]
 rglsl-ast.workspace = true
 
+[dev-dependencies]
+rglsl-sema.workspace = true
+
 [lints]
 workspace = true

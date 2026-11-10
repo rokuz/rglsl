@@ -572,6 +572,7 @@ name = "rglsl-fuzz"
 version = "0.1.0"
 dependencies = [
  "rglsl-ast",
+ "rglsl-sema",
 ]
 
 [[package]]
@@ -582,6 +583,14 @@ dependencies = [
  "cfg_aliases",
  "libfuzzer-sys",
  "rglsl",
+]
+
+[[package]]
+name = "rglsl-sema"
+version = "0.1.0"
+dependencies = [
+ "rglsl-ast",
+ "thiserror",
 ]
 
 [[package]]

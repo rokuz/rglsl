@@ -1,0 +1,3795 @@
+### undeclared identifier | frag | 3:UndeclaredIdentifier
+void main() {
+    float a = b;
+}
+### declared identifier | frag | ok
+void main() {
+    float b = 1.0;
+    float a = b;
+}
+### use before declaration | frag | 3:UndeclaredIdentifier
+void main() {
+    a = 1.0;
+}
+float a;
+### initializer does not see its own variable | frag | 3:UndeclaredIdentifier
+void main() {
+    float fresh = fresh;
+}
+### redeclaration in the same scope | frag | 4:Redeclaration
+void main() {
+    float a;
+    int a;
+}
+### shadowing in an inner scope | frag | ok
+void main() {
+    float a;
+    {
+        int a;
+        a = 1;
+    }
+    a = 1.0;
+}
+### global redeclaration | frag | 3:Redeclaration
+float a;
+int a;
+void main() {}
+### local shadows global | frag | ok
+float a;
+void main() {
+    int a = 1;
+    a += 1;
+}
+### parameter redeclared in the body | frag | 3:Redeclaration
+void f(int a) {
+    float a;
+}
+void main() {}
+### parameter shadowed in a nested block | frag | ok
+void f(int a) {
+    {
+        float a;
+    }
+}
+void main() {}
+### duplicate parameter names | frag | 2:Redeclaration
+void f(int a, float a) {}
+void main() {}
+### for init and body share a scope | frag | 4:Redeclaration
+void main() {
+    for (int i = 0; i < 2; ++i) {
+        int i;
+    }
+}
+### for body nested block may shadow | frag | ok
+void main() {
+    for (int i = 0; i < 2; ++i) {
+        {
+            int i;
+        }
+    }
+}
+### for variable is gone after the loop | frag | 4:UndeclaredIdentifier
+void main() {
+    for (int i = 0; i < 2; ++i) {}
+    i = 1;
+}
+### two loops reuse a name | frag | ok
+void main() {
+    for (int i = 0; i < 2; ++i) {}
+    for (int i = 0; i < 2; ++i) {}
+}
+### while condition declaration and body share a scope | frag | 5:Redeclaration
+void main() {
+    int n = 3;
+    while (bool more = n > 0) {
+        int more;
+        --n;
+    }
+}
+### if branches have their own scopes | frag | ok
+void main() {
+    if (true) {
+        int a;
+    } else {
+        float a;
+    }
+}
+### branch variable is not visible afterwards | frag | 4:UndeclaredIdentifier
+void main() {
+    if (true) { int a; }
+    a = 1;
+}
+### switch body is one scope | frag | 8:Redeclaration
+void main() {
+    int s = 1;
+    switch (s) {
+    case 0:
+        int a;
+    case 1:
+        float a;
+    }
+}
+### function and variable with one name | frag | 3:Redeclaration
+float f;
+void f() {}
+void main() {}
+### variable after function with one name | frag | 3:Redeclaration
+void f() {}
+float f;
+void main() {}
+### local variable hides a function | frag | 5:NotAFunction
+float f(float x) { return x; }
+void main() {
+    float f = 1.0;
+    f(2.0);
+}
+### struct name used as a value | frag | 4:TypeUsedAsValue
+struct S { float a; };
+void main() {
+    int x = S + 1;
+}
+### struct name as a statement | frag | ok
+struct S { float a; };
+void main() {
+    S;
+}
+### struct redeclared | frag | 3:Redeclaration
+struct S { float a; };
+struct S { int b; };
+void main() {}
+### struct declared in a function | frag | ok
+void main() {
+    struct S { float a; };
+    S s;
+    s.a = 1.0;
+}
+### local struct is not visible outside | frag | 5:NotAFunction
+void main() {
+    { struct S { float a; }; }
+    float S = 1.0;
+    S(1.0);
+}
+### function name is not a variable | frag | 4:UndeclaredIdentifier
+float f(float x) { return x; }
+void main() {
+    float a = f;
+}
+### arithmetic on scalars | frag | ok
+void main() {
+    int i = 1 + 2;
+    uint u = 1u + 2;
+    float f = 1 + 2.0;
+    double d = 1.0 + 2.0lf;
+    f = i * f;
+    d = u / d;
+}
+### arithmetic on bool | frag | 3:InvalidOperands
+void main() {
+    bool b = true + false;
+}
+### arithmetic with bool and int | frag | 3:InvalidOperands
+void main() {
+    int i = 1 + true;
+}
+### vector and scalar arithmetic | frag | ok
+void main() {
+    vec3 v = vec3(1.0) * 2.0;
+    v = 2 * v;
+    v = v + v;
+    ivec2 i = ivec2(1) - 1;
+    vec2 w = ivec2(1) * 1.5;
+}
+### vectors of different sizes | frag | 3:InvalidOperands
+void main() {
+    vec3 v = vec3(1.0) + vec2(1.0);
+}
+### matrix products | frag | ok
+void main() {
+    mat3 m = mat3(1.0);
+    vec3 v = vec3(1.0);
+    vec3 a = m * v;
+    vec3 b = v * m;
+    mat3 c = m * m;
+    mat2x3 d = mat2x3(1.0);
+    mat4x3 e = d * mat4x2(1.0);
+    vec2 f = v * d;
+    vec3 g = d * vec2(1.0);
+    mat3 h = m + m;
+    mat3 k = m * 2.0;
+    mat3 l = m / m;
+    dmat3 n = m * dmat3(1.0);
+}
+### matrix product with the wrong shape | frag | 4:InvalidOperands
+void main() {
+    mat2x3 d = mat2x3(1.0);
+    mat2x3 e = d * d;
+}
+### matrix times vector of the wrong size | frag | 4:InvalidOperands
+void main() {
+    mat2x3 d = mat2x3(1.0);
+    vec3 e = d * vec3(1.0);
+}
+### matrix plus vector | frag | 3:InvalidOperands
+void main() {
+    mat3 m = mat3(1.0) + vec3(1.0);
+}
+### matrix plus matrix of another shape | frag | 3:InvalidOperands
+void main() {
+    mat3 m = mat3(1.0) + mat2(1.0);
+}
+### modulo on integers | frag | ok
+void main() {
+    int a = 7 % 3;
+    uint b = 7u % 3;
+    ivec2 c = ivec2(7) % 3;
+    ivec2 d = ivec2(7) % ivec2(3);
+}
+### modulo on floats | frag | 3:InvalidOperands
+void main() {
+    float a = 7.0 % 3.0;
+}
+### modulo on int and float | frag | 3:InvalidOperands
+void main() {
+    float a = 7 % 3.0;
+}
+### shifts | frag | ok
+void main() {
+    int a = 1 << 2;
+    uint b = 1u << 2;
+    int c = 1 << 2u;
+    ivec2 d = ivec2(1) << 2;
+    ivec2 e = ivec2(1) << ivec2(2);
+    uvec2 f = uvec2(1) >> ivec2(2);
+    a <<= 1u;
+}
+### shift of a float | frag | 3:InvalidOperands
+void main() {
+    float a = 1.0 << 2;
+}
+### shift by a float | frag | 3:InvalidOperands
+void main() {
+    int a = 1 << 2.0;
+}
+### scalar shifted by a vector | frag | 3:InvalidOperands
+void main() {
+    ivec2 a = 1 << ivec2(2);
+}
+### bitwise operators | frag | ok
+void main() {
+    int a = 1 & 2;
+    uint b = 1u | 2;
+    ivec2 c = ivec2(1) ^ 3;
+    uvec2 d = uvec2(1) & uvec2(3);
+    int e = ~a;
+    uvec2 f = ~d;
+}
+### bitwise on floats | frag | 3:InvalidOperands
+void main() {
+    float a = 1.0 & 2.0;
+}
+### bitwise on bool | frag | 3:InvalidOperands
+void main() {
+    bool a = true & false;
+}
+### bitwise not on a float | frag | 3:InvalidOperand
+void main() {
+    float a = ~1.0;
+}
+### logical operators | frag | ok
+void main() {
+    bool a = true && false;
+    bool b = a || !a;
+    bool c = a ^^ b;
+}
+### logical and on ints | frag | 3:InvalidOperands
+void main() {
+    bool a = 1 && 2;
+}
+### logical or on vectors | frag | 3:InvalidOperands
+void main() {
+    bvec2 a = bvec2(true) || bvec2(false);
+}
+### logical not on an int | frag | 3:InvalidOperand
+void main() {
+    bool a = !1;
+}
+### logical not on a vector | frag | 3:InvalidOperand
+void main() {
+    bvec2 a = !bvec2(true);
+}
+### relational operators | frag | ok
+void main() {
+    bool a = 1 < 2;
+    bool b = 1u >= 2;
+    bool c = 1 <= 2.0;
+    bool d = 1.0 > 2.0lf;
+}
+### relational on vectors | frag | 3:InvalidOperands
+void main() {
+    bool a = vec2(1.0) < vec2(2.0);
+}
+### relational on bool | frag | 3:InvalidOperands
+void main() {
+    bool a = true < false;
+}
+### equality | frag | ok
+struct S { float a; int b; };
+void main() {
+    bool a = 1 == 2;
+    bool b = vec2(1.0) == vec2(2.0);
+    bool c = mat2(1.0) != mat2(2.0);
+    bool d = S(1.0, 2) == S(1.0, 3);
+    float x[2] = float[2](1.0, 2.0);
+    float y[2] = float[2](1.0, 2.0);
+    bool e = x == y;
+    bool f = true != false;
+    bool g = 1 == 1.0;
+    bool h = ivec2(1) == vec2(1.0);
+}
+### equality of different shapes | frag | 3:InvalidOperands
+void main() {
+    bool a = vec2(1.0) == vec3(2.0);
+}
+### equality of arrays of different sizes | frag | 5:InvalidOperands
+void main() {
+    float x[2] = float[2](1.0, 2.0);
+    float y[3] = float[3](1.0, 2.0, 3.0);
+    bool e = x == y;
+}
+### equality of different structs | frag | 5:InvalidOperands
+struct S { float a; };
+struct T { float a; };
+void main() {
+    bool d = S(1.0) == T(1.0);
+}
+### equality of bool and int | frag | 3:InvalidOperands
+void main() {
+    bool a = true == 1;
+}
+### equality of samplers | frag | 5:InvalidOperands
+layout(binding = 0) uniform sampler2D s;
+layout(binding = 1) uniform sampler2D t;
+void main() {
+    bool a = s == t;
+}
+### unary minus and plus | frag | ok
+void main() {
+    int a = -1;
+    vec2 b = -vec2(1.0);
+    mat2 c = +mat2(1.0);
+    uint d = -1u;
+}
+### unary minus on bool | frag | 3:InvalidOperand
+void main() {
+    bool a = -true;
+}
+### increment and decrement | frag | ok
+void main() {
+    int a = 1;
+    a++; ++a; a--; --a;
+    vec2 b = vec2(1.0);
+    b++;
+    mat2 c = mat2(1.0);
+    --c;
+    uint d = 1u;
+    d++;
+}
+### increment of bool | frag | 4:InvalidOperand
+void main() {
+    bool a = true;
+    a++;
+}
+### increment of a temporary | frag | 3:NotAnLValue
+void main() {
+    (1 + 2)++;
+}
+### increment of a constant | frag | 4:NotAnLValue
+void main() {
+    const int a = 1;
+    ++a;
+}
+### ternary | frag | ok
+void main() {
+    bool c = true;
+    float a = c ? 1.0 : 2.0;
+    float b = c ? 1 : 2.0;
+    vec2 d = c ? vec2(1.0) : vec2(2.0);
+    uint e = c ? 1 : 2u;
+}
+### ternary condition not bool | frag | 3:ConditionNotBool
+void main() {
+    float a = 1 ? 1.0 : 2.0;
+}
+### ternary condition vector | frag | 3:ConditionNotBool
+void main() {
+    vec2 a = bvec2(true) ? vec2(1.0) : vec2(2.0);
+}
+### ternary branches incompatible | frag | 3:InvalidOperands
+void main() {
+    float a = true ? 1.0 : vec2(2.0);
+}
+### ternary branches bool and int | frag | 3:InvalidOperands
+void main() {
+    int a = true ? 1 : false;
+}
+### comma | frag | ok
+void main() {
+    int a;
+    float b = (a = 1, 2.0);
+}
+### assignment | frag | ok
+struct S { float a; };
+void main() {
+    float a;
+    a = 1;
+    vec2 b;
+    b = vec2(1);
+    S s;
+    s = S(1.0);
+    float x[2];
+    x = float[2](1.0, 2.0);
+    double d;
+    d = a;
+    uint u;
+    u = 1;
+}
+### assignment narrowing | frag | 4:CannotConvert
+void main() {
+    int a;
+    a = 1.0;
+}
+### assignment uint to int | frag | 4:CannotConvert
+void main() {
+    int a;
+    a = 1u;
+}
+### assignment double to float | frag | 4:CannotConvert
+void main() {
+    float a;
+    a = 1.0lf;
+}
+### assignment of a different shape | frag | 4:CannotConvert
+void main() {
+    vec3 a;
+    a = vec2(1.0);
+}
+### assignment to a constant | frag | 4:NotAnLValue
+void main() {
+    const float a = 1.0;
+    a = 2.0;
+}
+### assignment to an input | frag | 4:NotAnLValue
+layout(location = 0) in vec4 color;
+void main() {
+    color = vec4(1.0);
+}
+### assignment to an input component | frag | 4:NotAnLValue
+layout(location = 0) in vec4 color;
+void main() {
+    color.x = 1.0;
+}
+### assignment to an output | frag | ok
+layout(location = 0) out vec4 color;
+void main() {
+    color = vec4(1.0);
+    color.x = 0.5;
+    color.zw = vec2(0.0);
+}
+### assignment to a uniform block member | frag | 4:NotAnLValue
+layout(binding = 0) uniform U { float a; };
+void main() {
+    a = 1.0;
+}
+### assignment to a named uniform block member | frag | 4:NotAnLValue
+layout(binding = 0) uniform U { float a; } u;
+void main() {
+    u.a = 1.0;
+}
+### assignment to a buffer member | frag | ok
+layout(binding = 0) buffer B { float a; float data[]; } b;
+void main() {
+    b.a = 1.0;
+    b.data[3] = 2.0;
+}
+### assignment to a readonly buffer member | frag | 4:NotAnLValue
+layout(binding = 0) buffer B { readonly float a; float c; } b;
+void main() {
+    b.a = 1.0;
+}
+### assignment to a member of a readonly buffer | frag | 4:NotAnLValue
+layout(binding = 0) readonly buffer B { float a; } b;
+void main() {
+    b.a = 1.0;
+}
+### assignment to a swizzle with repeated components | frag | 4:NotAnLValue
+void main() {
+    vec4 a;
+    a.xx = vec2(1.0);
+}
+### assignment to a swizzle | frag | ok
+void main() {
+    vec4 a;
+    a.yx = vec2(1.0);
+    a.wzyx = a;
+}
+### assignment to a temporary | frag | 4:NotAnLValue
+void main() {
+    float a;
+    (a + 1.0) = 2.0;
+}
+### assignment to a call result | frag | 4:NotAnLValue
+float f() { return 1.0; }
+void main() {
+    f() = 2.0;
+}
+### assignment to a const parameter | frag | 3:NotAnLValue
+void f(const float a) {
+    a = 1.0;
+}
+void main() {}
+### assignment to an in parameter | frag | ok
+void f(in float a, float b) {
+    a = 1.0;
+    b = a;
+}
+void main() {}
+### assignment to gl_FragCoord | frag | 3:NotAnLValue
+void main() {
+    gl_FragCoord = vec4(1.0);
+}
+### assignment to gl_FragDepth | frag | ok
+void main() {
+    gl_FragDepth = 0.5;
+}
+### assignment to a sampler | frag | 5:NotAnLValue
+layout(binding = 0) uniform sampler2D s;
+layout(binding = 1) uniform sampler2D t;
+void main() {
+    s = t;
+}
+### compound assignment | frag | ok
+void main() {
+    float a = 1.0;
+    a += 1;
+    a *= 2.0;
+    vec3 v = vec3(1.0);
+    v *= 2.0;
+    v *= mat3(1.0);
+    v += v;
+    int i = 1;
+    i %= 2;
+    i |= 1;
+    i <<= 2;
+    mat3 m = mat3(1.0);
+    m *= m;
+    m *= 2.0;
+}
+### compound assignment that would narrow | frag | 4:InvalidOperands
+void main() {
+    int a = 1;
+    a += 1.0;
+}
+### compound assignment scalar by vector | frag | 4:InvalidOperands
+void main() {
+    float a = 1.0;
+    a *= vec2(1.0);
+}
+### compound assignment vector by matrix of the wrong shape | frag | 4:InvalidOperands
+void main() {
+    vec3 v = vec3(1.0);
+    v *= mat2x3(1.0);
+}
+### compound modulo on float | frag | 4:InvalidOperands
+void main() {
+    float a = 1.0;
+    a %= 2.0;
+}
+### compound assignment to a constant | frag | 4:NotAnLValue
+void main() {
+    const int a = 1;
+    a += 1;
+}
+### initializer conversions | frag | ok
+void main() {
+    float a = 1;
+    uint b = 1;
+    double c = 1.0;
+    double d = 1u;
+    vec2 e = ivec2(1);
+    dvec3 f = vec3(1.0);
+    dmat2 g = mat2(1.0);
+    uvec2 h = ivec2(1);
+}
+### initializer that narrows | frag | 3:CannotConvert
+void main() {
+    int a = 1.5;
+}
+### initializer bool from int | frag | 3:CannotConvert
+void main() {
+    bool a = 1;
+}
+### initializer int from bool | frag | 3:CannotConvert
+void main() {
+    int a = true;
+}
+### initializer of the wrong shape | frag | 3:CannotConvert
+void main() {
+    vec3 a = 1.0;
+}
+### initializer ivec from vec | frag | 3:CannotConvert
+void main() {
+    ivec2 a = vec2(1.0);
+}
+### user function call | frag | ok
+float f(float a, int b) { return a + b; }
+void main() {
+    float x = f(1.0, 2);
+    x = f(1, 2);
+}
+### too few arguments | frag | 4:NoMatchingFunction
+float f(float a, int b) { return a; }
+void main() {
+    float x = f(1.0);
+}
+### too many arguments | frag | 4:NoMatchingFunction
+float f(float a) { return a; }
+void main() {
+    float x = f(1.0, 2.0);
+}
+### argument that cannot be converted | frag | 4:NoMatchingFunction
+float f(int a) { return 1.0; }
+void main() {
+    float x = f(1.0);
+}
+### unknown function | frag | 3:NoMatchingFunction
+void main() {
+    float x = nothing(1.0);
+}
+### call before declaration | frag | 3:NoMatchingFunction
+void main() {
+    f();
+}
+void f() {}
+### call after a prototype | frag | ok
+void f();
+void main() {
+    f();
+}
+void f() {}
+### exact match wins | frag | ok
+float f(float a) { return a; }
+int f(int a) { return a; }
+void main() {
+    int x = f(1);
+    float y = f(1.0);
+}
+### best match by conversion to float rather than double | frag | ok
+float f(float a) { return a; }
+double f(double a) { return a; }
+void main() {
+    float x = f(1);
+}
+### ambiguous call | frag | 5:AmbiguousCall
+void f(float a, int b) {}
+void f(int a, float b) {}
+void main() {
+    f(1, 1);
+}
+### ambiguous call between uint and float | frag | 5:AmbiguousCall
+void f(uint a) {}
+void f(float a) {}
+void main() {
+    f(1);
+}
+### float prefers double | frag | ok
+void f(double a) {}
+void main() {
+    f(1.0);
+}
+### out argument must be an lvalue | frag | 4:NotAnLValue
+void f(out float a) { a = 1.0; }
+void main() {
+    f(1.0);
+}
+### inout argument must be an lvalue | frag | 5:NotAnLValue
+void f(inout float a) { a = 1.0; }
+void main() {
+    const float c = 1.0;
+    f(c);
+}
+### out argument converts back | frag | ok
+void f(out int a) { a = 1; }
+void main() {
+    float x;
+    f(x);
+}
+### out argument cannot convert back | frag | 5:NoMatchingFunction
+void f(out float a) { a = 1.0; }
+void main() {
+    int x;
+    f(x);
+}
+### inout needs both conversions | frag | 5:NoMatchingFunction
+void f(inout float a) { a = 1.0; }
+void main() {
+    int x = 1;
+    f(x);
+}
+### array argument | frag | ok
+float f(float a[3]) { return a[0]; }
+void main() {
+    float x[3] = float[3](1.0, 2.0, 3.0);
+    float y = f(x);
+}
+### array argument of the wrong size | frag | 5:NoMatchingFunction
+float f(float a[3]) { return a[0]; }
+void main() {
+    float x[2] = float[2](1.0, 2.0);
+    float y = f(x);
+}
+### struct argument | frag | ok
+struct S { float a; };
+float f(S s) { return s.a; }
+void main() {
+    float y = f(S(1.0));
+}
+### user overload hides built-in overloads | frag | 4:NoMatchingFunction
+float sin(int a, int b) { return 1.0; }
+void main() {
+    float x = sin(1);
+}
+### user overload keeps exact built-in match | frag | ok
+float sin(int a, int b) { return 1.0; }
+void main() {
+    float x = sin(1.0);
+}
+### built-in with implicit conversion | frag | ok
+void main() {
+    float a = sin(1);
+    vec2 b = max(vec2(1.0), 2);
+    float c = pow(2, 3);
+    double d = sqrt(4.0lf);
+    float e = clamp(1, 0.0, 2.0);
+    int f = max(1, 2);
+    uint g = min(1u, 2);
+}
+### built-in with no overload | frag | 3:NoMatchingFunction
+void main() {
+    float a = sin(true);
+}
+### double has no trigonometry | frag | 3:NoMatchingFunction
+void main() {
+    double a = sin(1.0lf);
+}
+### built-in with mismatched vector sizes | frag | 3:NoMatchingFunction
+void main() {
+    vec3 a = max(vec3(1.0), vec2(1.0));
+}
+### noise functions are removed | frag | 3:NoMatchingFunction
+void main() {
+    float a = noise1(1.0);
+}
+### derivatives outside fragment shaders | vert | 3:NoMatchingFunction
+void main() {
+    float a = dFdx(1.0);
+}
+### derivatives in fragment shaders | frag | ok
+layout(location = 0) in vec2 uv;
+void main() {
+    vec2 a = dFdx(uv) + dFdy(uv) + fwidth(uv) + dFdxFine(uv) + fwidthCoarse(uv);
+}
+### texture functions | frag | ok
+layout(binding = 0) uniform sampler2D s;
+layout(binding = 1) uniform sampler2DShadow sh;
+layout(binding = 2) uniform samplerCube c;
+layout(binding = 3) uniform isampler2DArray ia;
+layout(binding = 4) uniform sampler2DMS ms;
+layout(binding = 5) uniform samplerBuffer sb;
+layout(binding = 6) uniform usampler3D u3;
+void main() {
+    vec4 a = texture(s, vec2(0.0));
+    a = texture(s, vec2(0.0), 1.0);
+    float b = texture(sh, vec3(0.0));
+    a = texture(c, vec3(0.0));
+    ivec4 d = texture(ia, vec3(0.0));
+    a = texelFetch(ms, ivec2(0), 1);
+    a = texelFetch(sb, 0);
+    a = texelFetch(s, ivec2(0), 0);
+    uvec4 e = textureLod(u3, vec3(0.0), 0.0);
+    a = textureProj(s, vec3(0.0));
+    a = textureProj(s, vec4(0.0));
+    a = textureGrad(s, vec2(0.0), vec2(0.0), vec2(0.0));
+    a = textureOffset(s, vec2(0.0), ivec2(1));
+    a = textureGather(s, vec2(0.0));
+    a = textureGather(s, vec2(0.0), 1);
+    a = textureGatherOffset(s, vec2(0.0), ivec2(1));
+    ivec2 f = textureSize(s, 0);
+    ivec2 g = textureSize(ms);
+    int h = textureSize(sb);
+    ivec3 i = textureSize(ia, 0);
+    int j = textureQueryLevels(s);
+    vec2 k = textureQueryLod(s, vec2(0.0));
+    int l = textureSamples(ms);
+}
+### texture with the wrong coordinate size | frag | 4:NoMatchingFunction
+layout(binding = 0) uniform sampler2D s;
+void main() {
+    vec4 a = texture(s, vec3(0.0));
+}
+### texture bias outside fragment shaders | vert | 4:NoMatchingFunction
+layout(binding = 0) uniform sampler2D s;
+void main() {
+    vec4 a = texture(s, vec2(0.0), 1.0);
+}
+### textureQueryLod outside fragment shaders | vert | 4:NoMatchingFunction
+layout(binding = 0) uniform sampler2D s;
+void main() {
+    vec2 a = textureQueryLod(s, vec2(0.0));
+}
+### texture offset must be constant | frag | 5:InvalidBuiltinCall
+layout(binding = 0) uniform sampler2D s;
+void main() {
+    ivec2 offset = ivec2(1);
+    vec4 a = textureOffset(s, vec2(0.0), offset);
+}
+### separate texture and sampler | frag | ok
+layout(binding = 0) uniform texture2D t;
+layout(binding = 1) uniform sampler s;
+layout(binding = 2) uniform samplerShadow ss;
+layout(binding = 3) uniform textureCube tc;
+layout(binding = 4) uniform itexture2DArray ta;
+void main() {
+    vec4 a = texture(sampler2D(t, s), vec2(0.0));
+    float b = texture(sampler2DShadow(t, ss), vec3(0.0));
+    a = texture(samplerCube(tc, s), vec3(0.0));
+    ivec4 c = texture(isampler2DArray(ta, s), vec3(0.0));
+}
+### sampler constructor with one argument | frag | 4:InvalidConstructor
+layout(binding = 0) uniform texture2D t;
+void main() {
+    sampler2D(t);
+}
+### sampler constructor with the wrong texture | frag | 5:InvalidConstructor
+layout(binding = 0) uniform texture3D t;
+layout(binding = 1) uniform sampler s;
+void main() {
+    sampler2D(t, s);
+}
+### sampler constructor with two samplers | frag | 4:InvalidConstructor
+layout(binding = 1) uniform sampler s;
+void main() {
+    sampler2D(s, s);
+}
+### texture functions on a bare texture need an extension | frag | 4:NoMatchingFunction
+layout(binding = 0) uniform texture2D t;
+void main() {
+    vec4 a = texelFetch(t, ivec2(0), 0);
+}
+### texel fetch on a texture buffer | frag | ok
+layout(binding = 0) uniform textureBuffer t;
+void main() {
+    vec4 a = texelFetch(t, 0);
+}
+### image functions | comp | ok
+layout(local_size_x = 1) in;
+layout(binding = 0, rgba8) uniform image2D img;
+layout(binding = 1, r32i) uniform iimage2D counter;
+layout(binding = 2, r32ui) uniform uimage3D volume;
+layout(binding = 3, rgba8) uniform readonly image2D source;
+layout(binding = 4, rgba8) uniform writeonly image2D target;
+void main() {
+    vec4 a = imageLoad(img, ivec2(0));
+    imageStore(img, ivec2(0), a);
+    ivec2 size = imageSize(img);
+    int b = imageAtomicAdd(counter, ivec2(0), 1);
+    uint c = imageAtomicExchange(volume, ivec3(0), 1u);
+    b = imageAtomicCompSwap(counter, ivec2(0), 1, 2);
+    a = imageLoad(source, ivec2(0));
+    imageStore(target, ivec2(0), a);
+}
+### image store to a readonly image | comp | 5:InvalidBuiltinCall
+layout(local_size_x = 1) in;
+layout(binding = 3, rgba8) uniform readonly image2D source;
+void main() {
+    imageStore(source, ivec2(0), vec4(0.0));
+}
+### image load from a writeonly image | comp | 5:InvalidBuiltinCall
+layout(local_size_x = 1) in;
+layout(binding = 3, rgba8) uniform writeonly image2D target;
+void main() {
+    vec4 a = imageLoad(target, ivec2(0));
+}
+### image store with the wrong texel type | comp | 5:NoMatchingFunction
+layout(local_size_x = 1) in;
+layout(binding = 1, r32i) uniform iimage2D counter;
+void main() {
+    imageStore(counter, ivec2(0), vec4(0.0));
+}
+### atomic memory functions | comp | ok
+layout(local_size_x = 1) in;
+layout(binding = 0) buffer B { int a; uint b; };
+shared int s;
+void main() {
+    int x = atomicAdd(a, 1);
+    uint y = atomicExchange(b, 2u);
+    x = atomicCompSwap(s, 1, 2);
+}
+### atomic memory function on a local | comp | 5:InvalidBuiltinCall
+layout(local_size_x = 1) in;
+void main() {
+    int local = 0;
+    int x = atomicAdd(local, 1);
+}
+### atomic counters are removed | frag | 2:RemovedUnderVulkan
+layout(binding = 0) uniform atomic_uint counter;
+void main() {}
+### interpolation functions | frag | ok
+layout(location = 0) in vec4 color;
+layout(location = 1) in float values[2];
+void main() {
+    vec4 a = interpolateAtCentroid(color);
+    a = interpolateAtSample(color, 1);
+    a = interpolateAtOffset(color, vec2(0.0));
+    float b = interpolateAtCentroid(values[1]);
+    b = interpolateAtCentroid(color.x);
+}
+### interpolation of a local | frag | 4:InvalidBuiltinCall
+void main() {
+    float local = 1.0;
+    float a = interpolateAtCentroid(local);
+}
+### geometry functions | geom | ok
+layout(triangles) in;
+layout(triangle_strip, max_vertices = 3) out;
+void main() {
+    for (int i = 0; i < gl_in.length(); ++i) {
+        gl_Position = gl_in[i].gl_Position;
+        EmitVertex();
+    }
+    EndPrimitive();
+    EmitStreamVertex(0);
+    EndStreamPrimitive(0);
+}
+### geometry functions in a vertex shader | vert | 3:NoMatchingFunction
+void main() {
+    EmitVertex();
+}
+### geometry input index out of range | geom | 5:IndexOutOfRange
+layout(triangles) in;
+layout(triangle_strip, max_vertices = 3) out;
+void main() {
+    gl_Position = gl_in[3].gl_Position;
+}
+### barrier in compute shaders | comp | ok
+layout(local_size_x = 1) in;
+void main() {
+    barrier();
+    memoryBarrier();
+    memoryBarrierShared();
+    groupMemoryBarrier();
+    memoryBarrierBuffer();
+    memoryBarrierImage();
+}
+### barrier in a fragment shader | frag | 3:NoMatchingFunction
+void main() {
+    barrier();
+}
+### atomic counter barrier is removed | comp | 4:NoMatchingFunction
+layout(local_size_x = 1) in;
+void main() {
+    memoryBarrierAtomicCounter();
+}
+### subpass load | frag | ok
+layout(input_attachment_index = 0, binding = 0) uniform subpassInput color;
+layout(input_attachment_index = 1, binding = 1) uniform isubpassInputMS ids;
+void main() {
+    vec4 a = subpassLoad(color);
+    ivec4 b = subpassLoad(ids, 1);
+}
+### subpass load with a sample on a single-sample input | frag | 4:NoMatchingFunction
+layout(input_attachment_index = 0, binding = 0) uniform subpassInput color;
+void main() {
+    vec4 a = subpassLoad(color, 1);
+}
+### invocation group functions need 460 | frag | 3:NoMatchingFunction
+void main() {
+    bool a = anyInvocation(true);
+}
+### invocation group functions in 460 | frag 460 | ok
+void main() {
+    bool a = anyInvocation(true) && allInvocations(true) && allInvocationsEqual(true);
+}
+### integer functions | frag | ok
+void main() {
+    uint carry;
+    uint a = uaddCarry(1u, 2u, carry);
+    int msb; int lsb;
+    imulExtended(1, 2, msb, lsb);
+    int b = bitfieldExtract(7, 0, 2);
+    uint c = bitfieldInsert(1u, 2u, 0, 2);
+    ivec2 d = bitCount(uvec2(3u));
+    int e = findMSB(4u);
+    ivec3 f = findLSB(ivec3(4));
+    int g = floatBitsToInt(1.0);
+    float h = uintBitsToFloat(1u);
+}
+### common functions | frag | ok
+void main() {
+    float a = mix(1.0, 2.0, 0.5);
+    vec3 b = mix(vec3(1.0), vec3(2.0), 0.5);
+    vec3 c = mix(vec3(1.0), vec3(2.0), bvec3(true));
+    ivec2 d = mix(ivec2(1), ivec2(2), bvec2(true));
+    float e = step(0.5, 1.0);
+    vec2 f = smoothstep(0.0, 1.0, vec2(0.5));
+    float whole;
+    float g = modf(1.5, whole);
+    int exponent;
+    float h = frexp(1.5, exponent);
+    bool i = isnan(1.0);
+    bvec2 j = isinf(vec2(1.0));
+    float k = length(vec3(1.0)) + dot(vec2(1.0), vec2(1.0)) + distance(1.0, 2.0);
+    vec3 l = cross(vec3(1.0), vec3(1.0));
+    mat3 m = inverse(mat3(1.0));
+    mat2x3 n = transpose(mat3x2(1.0));
+    mat3x2 o = outerProduct(vec2(1.0), vec3(1.0));
+    float p = determinant(mat4(1.0));
+    bvec3 q = lessThan(vec3(1.0), vec3(2.0));
+    bool r = any(q) || all(q);
+    bvec3 s = not(q);
+    uint t = packUnorm4x8(vec4(1.0));
+    vec2 u = unpackHalf2x16(1u);
+    dvec2 v = mix(dvec2(1.0), dvec2(2.0), 0.5lf);
+}
+### cross needs vec3 | frag | 3:NoMatchingFunction
+void main() {
+    vec2 l = cross(vec2(1.0), vec2(1.0));
+}
+### inverse needs a square matrix | frag | 3:NoMatchingFunction
+void main() {
+    mat2x3 m = inverse(mat2x3(1.0));
+}
+### any on a scalar | frag | 3:NoMatchingFunction
+void main() {
+    bool r = any(true);
+}
+### lessThan on scalars | frag | 3:NoMatchingFunction
+void main() {
+    bool q = lessThan(1.0, 2.0);
+}
+### scalar constructors | frag | ok
+void main() {
+    float a = float(1);
+    int b = int(1.5);
+    bool c = bool(1);
+    uint d = uint(true);
+    float e = float(vec3(1.0));
+    double f = double(1);
+    int g = int(mat2(1.0));
+}
+### scalar constructor with too many arguments | frag | 3:InvalidConstructor
+void main() {
+    float a = float(1.0, 2.0);
+}
+### scalar constructor without arguments | frag | 3:InvalidConstructor
+void main() {
+    float a = float();
+}
+### vector constructors | frag | ok
+void main() {
+    vec3 a = vec3(1.0);
+    vec3 b = vec3(1.0, 2.0, 3.0);
+    vec3 c = vec3(vec2(1.0), 3.0);
+    vec3 d = vec3(vec4(1.0));
+    vec4 e = vec4(vec2(1.0), vec2(2.0));
+    ivec2 f = ivec2(1.5, true);
+    vec4 g = vec4(mat2(1.0));
+    bvec2 h = bvec2(1, 0.0);
+    vec4 i = vec4(1, vec3(2.0));
+    vec2 j = vec2(vec3(1.0));
+    vec4 k = vec4(vec3(1.0), vec2(1.0));
+}
+### vector constructor with too few components | frag | 3:InvalidConstructor
+void main() {
+    vec3 a = vec3(1.0, 2.0);
+}
+### vector constructor with too many arguments | frag | 3:InvalidConstructor
+void main() {
+    vec3 a = vec3(1.0, 2.0, 3.0, 4.0);
+}
+### vector constructor with an unused argument | frag | 3:InvalidConstructor
+void main() {
+    vec2 a = vec2(vec2(1.0), 3.0);
+}
+### vector constructor from a struct | frag | 4:InvalidConstructor
+struct S { float a; float b; };
+void main() {
+    vec2 a = vec2(S(1.0, 2.0));
+}
+### vector constructor from an array | frag | 4:InvalidConstructor
+void main() {
+    float x[2] = float[2](1.0, 2.0);
+    vec2 a = vec2(x);
+}
+### vector constructor from a sampler | frag | 4:InvalidConstructor
+layout(binding = 0) uniform sampler2D s;
+void main() {
+    vec2 a = vec2(s);
+}
+### matrix constructors | frag | ok
+void main() {
+    mat2 a = mat2(1.0);
+    mat2 b = mat2(1.0, 2.0, 3.0, 4.0);
+    mat2 c = mat2(vec2(1.0), vec2(2.0));
+    mat3 d = mat3(a);
+    mat2 e = mat2(mat4(1.0));
+    mat2x3 f = mat2x3(vec3(1.0), vec3(2.0));
+    mat2 g = mat2(vec4(1.0));
+    mat3 h = mat3(vec4(1.0), vec4(1.0), 1.0);
+    dmat2 i = dmat2(a);
+    mat2 j = mat2(1, 2, 3, 4);
+}
+### matrix constructor with too few components | frag | 3:InvalidConstructor
+void main() {
+    mat2 a = mat2(1.0, 2.0);
+}
+### matrix constructor from a vector that is too small | frag | 3:InvalidConstructor
+void main() {
+    mat2 a = mat2(vec2(1.0));
+}
+### matrix constructor with too many arguments | frag | 3:InvalidConstructor
+void main() {
+    mat2 a = mat2(1.0, 2.0, 3.0, 4.0, 5.0);
+}
+### matrix constructor from a matrix and more | frag | 3:InvalidConstructor
+void main() {
+    mat3 a = mat3(mat2(1.0), 1.0);
+}
+### struct constructors | frag | ok
+struct Inner { vec2 a; };
+struct S { float a; int b; Inner c; float d[2]; };
+void main() {
+    S s = S(1.0, 2, Inner(vec2(1.0)), float[2](1.0, 2.0));
+    S t = S(1, 2, Inner(ivec2(1)), float[2](1.0, 2.0));
+}
+### struct constructor with too few arguments | frag | 4:InvalidConstructor
+struct S { float a; int b; };
+void main() {
+    S s = S(1.0);
+}
+### struct constructor with too many arguments | frag | 4:InvalidConstructor
+struct S { float a; int b; };
+void main() {
+    S s = S(1.0, 2, 3);
+}
+### struct constructor with an inconvertible argument | frag | 4:InvalidConstructor
+struct S { float a; int b; };
+void main() {
+    S s = S(1.0, 2.0);
+}
+### array constructors | frag | ok
+void main() {
+    float a[3] = float[3](1.0, 2.0, 3.0);
+    float b[] = float[](1.0, 2.0);
+    float c[2] = float[](1, 2);
+    vec2 d[2] = vec2[2](vec2(1.0), vec2(2.0));
+    float e[2][3] = float[2][3](float[3](1.0, 2.0, 3.0), float[3](1.0, 2.0, 3.0));
+    int f = b.length();
+    float[2] g = float[2](1.0, 2.0);
+}
+### array constructor with too few arguments | frag | 3:InvalidConstructor
+void main() {
+    float a[3] = float[3](1.0, 2.0);
+}
+### array constructor with too many arguments | frag | 3:InvalidConstructor
+void main() {
+    float a[2] = float[2](1.0, 2.0, 3.0);
+}
+### array constructor with an inconvertible element | frag | 3:InvalidConstructor
+void main() {
+    int a[2] = int[2](1, 2.0);
+}
+### array initializer of the wrong size | frag | 3:CannotConvert
+void main() {
+    float a[3] = float[2](1.0, 2.0);
+}
+### initializer lists | frag | ok
+struct S { float a; ivec2 b; };
+void main() {
+    float a[3] = { 1.0, 2.0, 3.0 };
+    vec3 b = { 1.0, 2.0, 3.0 };
+    S c = { 1.0, { 1, 2 } };
+    float d[] = { 1.0, 2.0 };
+    mat2 e = { { 1.0, 2.0 }, { 3.0, 4.0 } };
+    S f[2] = { { 1.0, { 1, 2 } }, { 2.0, { 3, 4 } } };
+}
+### initializer list of the wrong length | frag | 3:InvalidConstructor
+void main() {
+    float a[3] = { 1.0, 2.0 };
+}
+### initializer list with an inconvertible element | frag | 3:CannotConvert
+void main() {
+    int a[2] = { 1, 2.5 };
+}
+### struct member selection | frag | ok
+struct Inner { vec2 a; };
+struct S { float a; Inner b; };
+void main() {
+    S s;
+    s.a = 1.0;
+    s.b.a.x = 2.0;
+    float c = s.b.a.y;
+}
+### unknown struct member | frag | 5:NoSuchField
+struct S { float a; };
+void main() {
+    S s;
+    s.b = 1.0;
+}
+### member selection on a float array | frag | 4:InvalidFieldSelection
+void main() {
+    float a[2];
+    a.x = 1.0;
+}
+### member selection on a matrix | frag | 4:InvalidFieldSelection
+void main() {
+    mat2 a;
+    a.x = vec2(1.0);
+}
+### swizzles | frag | ok
+void main() {
+    vec4 a = vec4(1.0);
+    vec2 b = a.xy;
+    vec3 c = a.rgb;
+    vec4 d = a.stpq;
+    float e = a.w;
+    vec4 f = a.xxyy;
+    ivec3 g = ivec3(1).zyx;
+    bvec2 h = bvec4(true).ab;
+    vec2 i = a.xyz.yz;
+    float j = 1.0;
+    vec3 k = j.xxx;
+}
+### swizzle mixing component sets | frag | 4:InvalidSwizzle
+void main() {
+    vec4 a = vec4(1.0);
+    vec2 b = a.xg;
+}
+### swizzle beyond the vector size | frag | 4:InvalidSwizzle
+void main() {
+    vec2 a = vec2(1.0);
+    float b = a.z;
+}
+### swizzle that is too long | frag | 4:InvalidSwizzle
+void main() {
+    vec4 a = vec4(1.0);
+    a.xyzwx;
+}
+### swizzle with a leading unknown letter | frag | 4:InvalidSwizzle
+void main() {
+    vec4 a = vec4(1.0);
+    float b = a.kx;
+}
+### swizzle with trailing unknown letters is truncated as in glslang | frag | ok
+void main() {
+    vec4 a = vec4(1.0);
+    float b = a.k;
+    float c = a.xk;
+    vec2 d = a.xyk;
+}
+### length method | frag | ok
+void main() {
+    float a[3];
+    int b = a.length();
+    vec3 c;
+    int d = c.length();
+    mat3x2 e;
+    int f = e.length();
+    int g = e[0].length();
+    float h[a.length()];
+    float i[2][5];
+    int j = i[1].length();
+}
+### length of a scalar | frag | 4:InvalidLength
+void main() {
+    float a;
+    int b = a.length();
+}
+### length with an argument | frag | 4:InvalidLength
+void main() {
+    float a[3];
+    int b = a.length(1);
+}
+### unknown method | frag | 4:UnknownMethod
+void main() {
+    float a[3];
+    int b = a.size();
+}
+### length of a runtime array | frag | ok
+layout(binding = 0) buffer B { float data[]; } b;
+void main() {
+    int n = b.data.length();
+}
+### indexing | frag | ok
+void main() {
+    float a[3];
+    a[0] = 1.0;
+    a[2u] = 1.0;
+    vec3 b;
+    b[1] = 2.0;
+    mat3 c;
+    c[2] = b;
+    c[1][0] = 1.0;
+    int i = 1;
+    a[i] = b[i];
+    float d[2][3];
+    d[1][2] = 1.0;
+}
+### index that is not an integer | frag | 4:IndexNotInteger
+void main() {
+    float a[3];
+    a[1.0] = 1.0;
+}
+### index that is a bool | frag | 4:IndexNotInteger
+void main() {
+    float a[3];
+    a[true] = 1.0;
+}
+### index that is a vector | frag | 4:IndexNotInteger
+void main() {
+    float a[3];
+    a[ivec2(1)] = 1.0;
+}
+### indexing a scalar | frag | 4:NotIndexable
+void main() {
+    float a;
+    a[0] = 1.0;
+}
+### indexing a struct | frag | 5:NotIndexable
+struct S { float a; };
+void main() {
+    S s;
+    s[0] = 1.0;
+}
+### constant array index out of range | frag | 4:IndexOutOfRange
+void main() {
+    float a[3];
+    a[3] = 1.0;
+}
+### negative array index | frag | 4:IndexOutOfRange
+void main() {
+    float a[3];
+    a[-1] = 1.0;
+}
+### constant vector index out of range | frag | 4:IndexOutOfRange
+void main() {
+    vec3 a;
+    a[3] = 1.0;
+}
+### constant matrix index out of range | frag | 4:IndexOutOfRange
+void main() {
+    mat2x4 a;
+    a[2] = vec4(1.0);
+}
+### matrix column component out of range | frag | 4:IndexOutOfRange
+void main() {
+    mat4x2 a;
+    a[3][2] = 1.0;
+}
+### constant expression index out of range | frag | 5:IndexOutOfRange
+void main() {
+    const int n = 2;
+    float a[3];
+    a[n + 1] = 1.0;
+}
+### unsized array indexed by a variable | frag | 5:VariableIndexIntoUnsizedArray
+float a[];
+void main() {
+    int i = 1;
+    a[i] = 1.0;
+}
+### unsized array indexed by constants | frag | ok
+float a[];
+void main() {
+    a[4] = 1.0;
+    a[1] = a[4];
+}
+### if condition | frag | ok
+void main() {
+    if (1 < 2) {}
+    if (true) {} else {}
+}
+### if condition not bool | frag | 3:ConditionNotBool
+void main() {
+    if (1) {}
+}
+### if condition vector | frag | 3:ConditionNotBool
+void main() {
+    if (bvec2(true)) {}
+}
+### while condition not bool | frag | 3:ConditionNotBool
+void main() {
+    while (1.0) {}
+}
+### do while condition not bool | frag | 3:ConditionNotBool
+void main() {
+    do {} while (1);
+}
+### for condition not bool | frag | 3:ConditionNotBool
+void main() {
+    for (int i = 0; i; ++i) {}
+}
+### for without a condition | frag | ok
+void main() {
+    for (;;) { break; }
+}
+### switch | frag | ok
+void main() {
+    int a = 1;
+    uint b = 2u;
+    switch (a) {
+    case 0:
+    case 1:
+        break;
+    default:
+        break;
+    }
+    switch (b) {
+    case 1u:
+        break;
+    }
+    switch (a + 1) {
+    case 2 + 3:
+        break;
+    }
+}
+### switch on a float | frag | 3:SwitchSelectorNotInteger
+void main() {
+    switch (1.0) {
+    case 0:
+        break;
+    }
+}
+### switch on a vector | frag | 3:SwitchSelectorNotInteger
+void main() {
+    switch (ivec2(1)) {
+    case 0:
+        break;
+    }
+}
+### case label not constant | frag | 5:InvalidCaseLabel
+void main() {
+    int a = 1;
+    switch (a) {
+    case a:
+        break;
+    }
+}
+### case label not an integer | frag | 5:InvalidCaseLabel
+void main() {
+    int a = 1;
+    switch (a) {
+    case 1.0:
+        break;
+    }
+}
+### duplicate case label | frag | 7:DuplicateCaseLabel
+void main() {
+    int a = 1;
+    switch (a) {
+    case 1:
+        break;
+    case 1:
+        break;
+    }
+}
+### duplicate case label by value | frag | 8:DuplicateCaseLabel
+void main() {
+    int a = 1;
+    const int two = 2;
+    switch (a) {
+    case 2:
+        break;
+    case two:
+        break;
+    }
+}
+### duplicate default | frag | 7:DuplicateCaseLabel
+void main() {
+    int a = 1;
+    switch (a) {
+    default:
+        break;
+    default:
+        break;
+    }
+}
+### break and continue | frag | ok
+void main() {
+    for (int i = 0; i < 2; ++i) {
+        if (i == 0) continue;
+        break;
+    }
+    while (true) { break; }
+    do { continue; } while (false);
+    switch (1) { case 1: break; }
+    for (;;) { switch (1) { case 1: continue; } }
+}
+### break outside a loop | frag | 3:BreakOutsideLoop
+void main() {
+    break;
+}
+### continue outside a loop | frag | 3:ContinueOutsideLoop
+void main() {
+    continue;
+}
+### continue in a switch | frag | 4:ContinueOutsideLoop
+void main() {
+    switch (1) {
+    case 1: continue;
+    }
+}
+### return | frag | ok
+float f() { return 1; }
+int g() { return 1; }
+vec2 h() { return vec2(1.0); }
+void k() { return; }
+double l() { return 1.0; }
+void main() { return; }
+### return of an inconvertible value | frag | 2:ReturnTypeMismatch
+int f() { return 1.0; }
+void main() {}
+### return of the wrong shape | frag | 2:ReturnTypeMismatch
+vec2 f() { return vec3(1.0); }
+void main() {}
+### return without a value | frag | 2:MissingReturnValue, 2:FunctionWithoutReturn
+float f() { return; }
+void main() {}
+### return a value from void | frag | 2:VoidReturnWithValue
+void f() { return 1.0; }
+void main() {}
+### return a value from main | frag | 2:VoidReturnWithValue
+void main() { return 1; }
+### function without a return | frag | 2:FunctionWithoutReturn
+float f() { }
+void main() {}
+### discard in a fragment shader | frag | ok
+void main() {
+    discard;
+}
+### discard in a vertex shader | vert | 3:DiscardOutsideFragment
+void main() {
+    discard;
+}
+### discard in a compute shader | comp | 4:DiscardOutsideFragment
+layout(local_size_x = 1) in;
+void main() {
+    discard;
+}
+### main with a parameter | frag | 2:InvalidMain
+void main(int a) {}
+### main returning a value | frag | 2:InvalidMain
+int main() { return 1; }
+### missing main | frag | 0:MissingEntryPoint
+void f() {}
+### main declared but not defined | frag | 0:MissingEntryPoint
+void main();
+### const needs an initializer | frag | 3:ConstWithoutInitializer
+void main() {
+    const float a;
+}
+### global const needs an initializer | frag | 2:ConstWithoutInitializer
+const float a;
+void main() {}
+### global const needs a constant initializer | frag | 3:NonConstantInitializer
+float a = 1.0;
+const float b = a;
+void main() {}
+### local const may have a runtime initializer | frag | ok
+layout(location = 0) in float v;
+void main() {
+    const float a = v * 2.0;
+}
+### local const with a runtime initializer is not a constant expression | frag | 5:ArraySizeNotConstant
+layout(location = 0) in flat int v;
+void main() {
+    const int n = v;
+    float a[n];
+}
+### global with a runtime initializer | frag | ok
+layout(location = 0) in float v;
+float a = sin(1.0);
+float b = a;
+void main() {}
+### constant expressions | frag | ok
+const int a = 2;
+const int b = a * 3 + 1;
+const float c = float(b) / 2.0;
+const ivec2 d = ivec2(a, b);
+const int e = d.y - d.x;
+const bool f = a < b && true;
+const int g = f ? 4 : 5;
+const float h[3] = float[3](1.0, 2.0, 3.0);
+const int i = h.length();
+const uint j = 3u << 1;
+const int k = max(a, 7);
+const int l = int[2](5, 6)[1];
+struct S { int x; int y; };
+const S m = S(8, 9);
+const int n = m.y;
+float array1[b];
+float array2[e];
+float array3[g];
+float array4[i];
+float array5[j];
+float array6[k];
+float array7[l];
+float array8[n];
+void main() {
+    array1[6] = 1.0;
+    array2[4] = 1.0;
+    array3[3] = 1.0;
+    array4[2] = 1.0;
+    array5[5] = 1.0;
+    array6[6] = 1.0;
+    array7[5] = 1.0;
+    array8[8] = 1.0;
+}
+### constant expression sizes are exact | frag | 5:IndexOutOfRange
+const int a = 2;
+float values[a * 3 + 1];
+void main() {
+    values[7] = 1.0;
+}
+### array size not constant | frag | 4:ArraySizeNotConstant
+void main() {
+    int n = 3;
+    float a[n];
+}
+### array size not an integer | frag | 3:ArraySizeNotConstant
+void main() {
+    float a[2.0];
+}
+### array size zero | frag | 3:ArraySizeNotPositive
+void main() {
+    float a[0];
+}
+### array size negative | frag | 3:ArraySizeNotPositive
+void main() {
+    float a[-2];
+}
+### array size from a constant expression that is zero | frag | 3:ArraySizeNotPositive
+const int n = 2;
+float a[n - 2];
+void main() {}
+### array size from a uint | frag | ok
+float a[3u];
+void main() {}
+### unsized arrays | frag | ok
+float a[];
+void main() {
+    float b[] = float[](1.0, 2.0);
+    a[1] = b[0];
+}
+### unsized array parameter | frag | 2:InvalidParameter
+void f(float a[]) {}
+void main() {}
+### unsized struct member | frag | 2:InvalidStructMember
+struct S { float a[]; };
+void main() {}
+### unsized inner dimension | frag | 2:UnsizedArrayNotAllowed
+float a[2][];
+void main() {}
+### arrays of arrays | frag | ok
+float a[2][3];
+float[3] b[2];
+void main() {
+    a[1][2] = b[1][2];
+    a[1] = b[0];
+    a = b;
+}
+### void variable | frag | 3:VoidVariable
+void main() {
+    void a;
+}
+### void parameter with a name | frag | 2:InvalidParameter
+void f(void a) {}
+void main() {}
+### void parameter list | frag | ok
+void f(void) {}
+void main() { f(); }
+### void struct member | frag | 2:InvalidStructMember
+struct S { void a; };
+void main() {}
+### duplicate struct member | frag | 2:InvalidStructMember
+struct S { float a; int a; };
+void main() {}
+### opaque local variable | frag | 3:OpaqueNotAllowed
+void main() {
+    sampler2D s;
+}
+### opaque global without uniform | frag | 2:OpaqueNotAllowed
+sampler2D s;
+void main() {}
+### opaque uniform | frag | ok
+layout(binding = 0) uniform sampler2D s;
+layout(binding = 1) uniform sampler2D many[4];
+void main() {}
+### opaque in parameter | frag | ok
+layout(binding = 0) uniform sampler2D s;
+vec4 f(sampler2D t, in sampler2D u) { return texture(t, vec2(0.0)); }
+void main() {
+    vec4 a = f(s, s);
+}
+### opaque out parameter | frag | 2:InvalidParameter
+void f(out sampler2D t) {}
+void main() {}
+### struct with a sampler as a local | frag | 4:OpaqueNotAllowed
+struct S { sampler2D s; };
+void main() {
+    S a;
+}
+### struct with a sampler as a uniform | frag | ok
+struct S { sampler2D s; };
+uniform S a;
+void main() {}
+### opaque block member | frag | 2:InvalidStructMember
+layout(binding = 0) uniform U { sampler2D s; };
+void main() {}
+### non-opaque uniform outside a block | frag | 2:UniformOutsideBlock
+uniform float a;
+void main() {}
+### non-opaque uniform struct outside a block | frag | 3:UniformOutsideBlock
+struct S { float a; };
+uniform S s;
+void main() {}
+### uniform struct mixing opaque and non-opaque | frag | 3:UniformOutsideBlock
+struct S { float a; sampler2D s; };
+uniform S s;
+void main() {}
+### uniform block | frag | ok
+layout(binding = 0) uniform U { float a; vec4 b; mat4 c; } u;
+layout(binding = 1) uniform V { float d; };
+void main() {
+    float x = u.a + d;
+}
+### block members are not visible without the instance | frag | 4:UndeclaredIdentifier
+layout(binding = 0) uniform U { float a; } u;
+void main() {
+    float x = a;
+}
+### anonymous block member clashes with a global | frag | 3:Redeclaration
+float a;
+layout(binding = 0) uniform U { float a; };
+void main() {}
+### block instance arrays | frag | ok
+layout(binding = 0) uniform U { float a; } u[2];
+void main() {
+    float x = u[1].a;
+}
+### block member storage contradicts the block | frag | 2:InvalidStructMember
+layout(binding = 0) uniform U { in float a; };
+void main() {}
+### buffer outside a block | frag | 2:InvalidQualifier
+buffer float a;
+void main() {}
+### inputs and outputs | frag | ok
+layout(location = 0) in vec4 a;
+layout(location = 1) in flat int b;
+layout(location = 2) flat in ivec2 c;
+layout(location = 3) centroid in vec2 d;
+layout(location = 4) noperspective in float e;
+layout(location = 0) out vec4 f;
+layout(location = 1) out ivec4 g;
+void main() {}
+### integer fragment input must be flat | frag | 2:InvalidQualifier
+layout(location = 0) in int a;
+void main() {}
+### double fragment input must be flat | frag | 2:InvalidQualifier
+layout(location = 0) in double a;
+void main() {}
+### user input in a compute shader | comp | 3:InvalidQualifier
+layout(local_size_x = 1) in;
+in float a;
+void main() {}
+### struct as a vertex input | vert | 3:InvalidQualifier
+struct S { float a; };
+layout(location = 0) in S s;
+void main() {}
+### boolean output | vert | 2:InvalidQualifier
+layout(location = 0) out bool a;
+void main() {}
+### storage qualifier on a local | frag | 3:InvalidQualifier
+void main() {
+    uniform float a;
+}
+### initializer on an input | frag | 2:InitializerNotAllowed
+layout(location = 0) in float a = 1.0;
+void main() {}
+### memory qualifier on a plain variable | frag | 2:InvalidQualifier
+readonly float a;
+void main() {}
+### attribute is removed | vert | 2:InvalidQualifier
+attribute vec4 a;
+void main() {}
+### varying is removed | vert | 2:InvalidQualifier
+varying vec4 a;
+void main() {}
+### vertex built-ins | vert | ok
+void main() {
+    gl_Position = vec4(float(gl_VertexIndex), float(gl_InstanceIndex), 0.0, 1.0);
+    gl_PointSize = 1.0;
+    gl_ClipDistance[0] = 1.0;
+    gl_CullDistance[1] = 1.0;
+}
+### OpenGL vertex ids are not available | vert | 3:UndeclaredIdentifier
+void main() {
+    int a = gl_VertexID;
+}
+### gl_InstanceID is not available | vert | 3:UndeclaredIdentifier
+void main() {
+    int a = gl_InstanceID;
+}
+### draw parameters need 460 | vert | 3:UndeclaredIdentifier
+void main() {
+    int a = gl_BaseVertex;
+}
+### draw parameters in 460 | vert 460 | ok
+void main() {
+    int a = gl_BaseVertex + gl_BaseInstance + gl_DrawID;
+}
+### fragment built-ins | frag | ok
+void main() {
+    vec4 a = gl_FragCoord;
+    bool b = gl_FrontFacing;
+    vec2 c = gl_PointCoord;
+    int d = gl_PrimitiveID + gl_SampleID + gl_Layer + gl_ViewportIndex;
+    vec2 e = gl_SamplePosition;
+    gl_SampleMask[0] = gl_SampleMaskIn[0];
+    bool f = gl_HelperInvocation;
+    float g = gl_ClipDistance[0] + gl_CullDistance[0];
+    gl_FragDepth = a.z;
+}
+### gl_FragColor is not available | frag | 3:UndeclaredIdentifier
+void main() {
+    gl_FragColor = vec4(1.0);
+}
+### gl_Position in a fragment shader | frag | 3:UndeclaredIdentifier
+void main() {
+    vec4 a = gl_Position;
+}
+### compute built-ins | comp | ok
+layout(local_size_x = 4, local_size_y = 2) in;
+float values[gl_WorkGroupSize.x * gl_WorkGroupSize.y];
+void main() {
+    uvec3 a = gl_NumWorkGroups + gl_WorkGroupID + gl_LocalInvocationID + gl_GlobalInvocationID;
+    uint b = gl_LocalInvocationIndex;
+    uvec3 c = gl_WorkGroupSize;
+    values[7] = 1.0;
+}
+### gl_WorkGroupSize sizes arrays exactly | comp | 5:IndexOutOfRange
+layout(local_size_x = 4, local_size_y = 2) in;
+float values[gl_WorkGroupSize.x * gl_WorkGroupSize.y];
+void main() {
+    values[8] = 1.0;
+}
+### gl_WorkGroupSize before the local size | comp | 2:WorkGroupSizeNotDeclared
+float values[gl_WorkGroupSize.x];
+layout(local_size_x = 4) in;
+void main() {}
+### gl_WorkGroupSize is constant | comp | 4:NotAnLValue
+layout(local_size_x = 4) in;
+void main() {
+    gl_WorkGroupSize = uvec3(1u);
+}
+### compute built-ins in a fragment shader | frag | 3:UndeclaredIdentifier
+void main() {
+    uvec3 a = gl_GlobalInvocationID;
+}
+### built-in constants | frag | ok
+float a[gl_MaxDrawBuffers];
+float b[gl_MaxClipDistances];
+void main() {
+    a[31] = 1.0;
+    b[7] = 1.0;
+    int c = gl_MaxTextureImageUnits + gl_MaxCombinedTextureImageUnits + gl_MaxVertexAttribs;
+    ivec3 d = gl_MaxComputeWorkGroupCount + gl_MaxComputeWorkGroupSize;
+    int e = gl_MinProgramTexelOffset + gl_MaxProgramTexelOffset + gl_MaxPatchVertices;
+}
+### built-in constants have their default values | frag | 4:IndexOutOfRange
+float a[gl_MaxDrawBuffers];
+void main() {
+    a[32] = 1.0;
+}
+### built-in constants are constant | frag | 3:NotAnLValue
+void main() {
+    gl_MaxDrawBuffers = 1;
+}
+### tessellation control built-ins | tesc | ok
+layout(vertices = 3) out;
+void main() {
+    gl_out[gl_InvocationID].gl_Position = gl_in[gl_InvocationID].gl_Position;
+    gl_TessLevelOuter[0] = 1.0;
+    gl_TessLevelInner[1] = 1.0;
+    int a = gl_PatchVerticesIn + gl_PrimitiveID;
+    float b = gl_in[31].gl_PointSize;
+}
+### tessellation level index out of range | tesc | 4:IndexOutOfRange
+layout(vertices = 3) out;
+void main() {
+    gl_TessLevelOuter[4] = 1.0;
+}
+### tessellation evaluation built-ins | tese | ok
+layout(triangles) in;
+void main() {
+    gl_Position = gl_in[0].gl_Position * gl_TessCoord.x;
+    float a = gl_TessLevelOuter[3] + gl_TessLevelInner[1];
+    int b = gl_PatchVerticesIn + gl_PrimitiveID;
+}
+### tessellation levels are inputs in the evaluation shader | tese | 4:NotAnLValue
+layout(triangles) in;
+void main() {
+    gl_TessLevelOuter[0] = 1.0;
+}
+### geometry built-ins | geom | ok
+layout(points) in;
+layout(points, max_vertices = 1) out;
+void main() {
+    gl_Position = gl_in[0].gl_Position;
+    gl_PointSize = gl_in[0].gl_PointSize;
+    gl_PrimitiveID = gl_PrimitiveIDIn;
+    gl_Layer = gl_InvocationID;
+    gl_ViewportIndex = 0;
+    gl_ClipDistance[0] = gl_in[0].gl_ClipDistance[0];
+    EmitVertex();
+}
+### redeclared gl_PerVertex | vert | ok
+out gl_PerVertex {
+    vec4 gl_Position;
+    float gl_PointSize;
+};
+void main() {
+    gl_Position = vec4(0.0);
+    gl_PointSize = 1.0;
+}
+### redeclared gl_PerVertex drops members | vert | 6:UndeclaredIdentifier
+out gl_PerVertex {
+    vec4 gl_Position;
+};
+void main() {
+    gl_PointSize = 1.0;
+}
+### redeclared built-in variable | frag | ok
+layout(origin_upper_left) in vec4 gl_FragCoord;
+layout(depth_greater) out float gl_FragDepth;
+void main() {
+    gl_FragDepth = gl_FragCoord.z;
+}
+### precision statements and qualifiers | frag | ok
+precision highp float;
+precision mediump int;
+void main() {
+    mediump float a = 1.0;
+    lowp int b = 1;
+    highp vec2 c = vec2(a);
+}
+### invariant and precise | vert | ok
+invariant gl_Position;
+layout(location = 0) out vec4 color;
+invariant color;
+void main() {
+    precise float a = 1.0;
+    gl_Position = vec4(a);
+    color = vec4(a);
+}
+### invariant on an unknown name | vert | 2:UndeclaredIdentifier
+invariant nothing;
+void main() {}
+### specialization constants | frag | ok
+layout(constant_id = 0) const int a = 3;
+layout(constant_id = 1) const float b = 1.5;
+float values[a];
+float more[a + 2];
+void main() {
+    values[2] = b;
+    more[6] = 1.0;
+    switch (1) { case a: break; }
+}
+### specialization constant sized arrays are checked against the default | frag | 5:IndexOutOfRange
+layout(constant_id = 0) const int a = 3;
+float values[a];
+void main() {
+    values[3] = 1.0;
+}
+### function prototypes and definitions | frag | ok
+float f(float a);
+float f(float a);
+float f(float b) { return b; }
+void main() {
+    float x = f(1.0);
+}
+### function defined twice | frag | 3:FunctionRedefinition
+float f(float a) { return a; }
+float f(float b) { return b; }
+void main() {}
+### overload with another return type | frag | 3:ConflictingFunctionDeclaration, 3:FunctionRedefinition
+float f(float a) { return a; }
+int f(float a) { return 1; }
+void main() {}
+### prototype with other parameter qualifiers | frag | 3:ConflictingFunctionDeclaration
+void f(out float a);
+void f(in float a) {}
+void main() {}
+### overloads by parameter type | frag | ok
+float f(float a) { return a; }
+float f(int a) { return 1.0; }
+float f(float a, float b) { return a; }
+float f(vec2 a) { return a.x; }
+void main() {}
+### redefining a built-in with another return type | frag | 2:ConflictingFunctionDeclaration
+int sin(float a) { return 1; }
+void main() {}
+### called function without a body | frag | 0:MissingFunctionBody
+float f(float a);
+void main() {
+    float x = f(1.0);
+}
+### calling an expression | frag | 4:InvalidCallee
+void main() {
+    float a[2];
+    a[0](1.0);
+}
+### void value in an expression | frag | 4:InvalidOperands
+void f() {}
+void main() {
+    float a = 1.0 + f();
+}
+### void value as an initializer | frag | 4:CannotConvert
+void f() {}
+void main() {
+    float a = f();
+}
+### void value as a condition | frag | 4:ConditionNotBool
+void f() {}
+void main() {
+    if (f()) {}
+}
+### literals | frag | ok
+void main() {
+    int a = 0x1F;
+    int b = 017;
+    uint c = 0xFFFFFFFFu;
+    float d = 1.5e3;
+    float e = .5f;
+    float f = 1.;
+    double g = 1.0LF;
+    int h[0x4];
+    h[3] = b;
+    float i[017];
+    i[14] = d;
+}
+### octal literal sizes an array | frag | 4:IndexOutOfRange
+void main() {
+    float i[017];
+    i[15] = 1.0;
+}
+### layout qualifier values | frag | ok
+const int base = 2;
+layout(location = base + 1) in vec4 a;
+layout(binding = base, set = 1) uniform U { float b; };
+void main() {}
+### layout qualifier value not constant | frag | 3:LayoutValueNotConstant
+int n = 1;
+layout(location = n) in vec4 a;
+void main() {}
+### layout qualifier value negative | frag | 2:LayoutValueNegative
+layout(location = -1) in vec4 a;
+void main() {}
+### case label outside a switch | frag | 3:CaseOutsideSwitch
+void main() {
+    case 1: ;
+}
+### case label nested in a block | frag | 5:CaseOutsideSwitch
+void main() {
+    switch (1) {
+    case 0:
+        { case 1: ; }
+    }
+}
+### version 460 | frag 460 | ok
+void main() {}
+### ternary lvalue | frag | 2:NotAnLValue
+void main() { float a; float b; (true ? a : b) = 1.0; }
+### comma lvalue | frag | 2:NotAnLValue
+void main() { float a; float b; (a, b) = 1.0; }
+### const array element assign | frag | 2:NotAnLValue
+void main() { const float a[2] = float[2](1.0, 2.0); a[0] = 1.0; }
+### out arg swizzle | frag | ok
+void f(out vec2 a) { a = vec2(1.0); }
+void main() { vec4 v; f(v.xy); }
+### out arg dup swizzle | frag | 3:NotAnLValue
+void f(out vec2 a) { a = vec2(1.0); }
+void main() { vec4 v; f(v.xx); }
+### out arg uniform | frag | 4:NotAnLValue
+layout(binding=0) uniform U { float u; };
+void f(out float a) { a = 1.0; }
+void main() { f(u); }
+### const sin global | frag | ok
+const float x = sin(1.0);
+const vec3 v = normalize(vec3(1.0));
+const float y = length(v) + dot(v, v) + pow(2.0, 3.0) + exp(1.0) + sqrt(4.0) + floor(1.5) + mix(1.0, 2.0, 0.5);
+float a[int(y) + 5];
+void main() {}
+### const from texture | frag | 3:NonConstantInitializer
+layout(binding=0) uniform sampler2D s;
+const vec4 x = texture(s, vec2(0.0));
+void main() {}
+### const from user function | frag | 3:NonConstantInitializer
+float f() { return 1.0; }
+const float x = f();
+void main() {}
+### const local from user function | frag | ok
+float f() { return 1.0; }
+void main() { const float x = f(); float a[2]; }
+### array size from builtin call | frag | ok
+float a[int(max(2.0, 3.0))];
+float b[abs(-3)];
+float c[int(floor(2.5))];
+float d[int(sqrt(16.0))];
+void main() { a[2] = 1.0; b[2] = 1.0; c[1] = 1.0; d[3] = 1.0; }
+### switch last label no statement | frag | ok
+void main() { int a = 1; switch (a) { case 1: } }
+### switch decl before case | frag | ok
+void main() { int a = 1; switch (a) { int b; case 1: break; } }
+### switch statement before case | frag | 2:StatementBeforeCase
+void main() { int a = 1; switch (a) { a = 2; case 1: break; } }
+### switch uint selector int label | frag | ok
+void main() { uint a = 1u; switch (a) { case 1: break; } }
+### switch int selector uint label | frag | ok
+void main() { int a = 1; switch (a) { case 1u: break; } }
+### switch const selector | frag | ok
+void main() { switch (1) { case 1: break; default: break; } }
+### switch bool | frag | 2:SwitchSelectorNotInteger
+void main() { switch (true) { case 1: break; } }
+### nested struct def | frag | 2:NestedStructDefinition
+struct A { struct B { float x; } b; float y; };
+void main() { A a; a.b.x = 1.0; }
+### anonymous struct var | frag | ok
+struct { float x; } s;
+void main() { s.x = 1.0; }
+### struct member struct array | frag | ok
+struct B { float x; };
+struct A { B b[2]; };
+void main() { A a; a.b[1].x = 1.0; A c = A(B[2](B(1.0), B(2.0))); }
+### struct with sampler param | frag | ok
+struct S { sampler2D s; };
+void f(S s) {}
+void main() {}
+### struct eq with sampler | frag | 5:InvalidOperands
+struct S { sampler2D s; };
+uniform S a;
+uniform S b;
+void main() { bool c = a == b; }
+### param named as function | frag | ok
+void f(int f) { f = 1; }
+void main() {}
+### variable named as struct | frag | ok
+struct S { float a; };
+void main() { float S = 1.0; S += 1.0; }
+### struct named as global variable | frag | 3:Redeclaration
+float S;
+struct S { float a; };
+void main() {}
+### struct named as function | frag | 3:Redeclaration
+void S() {}
+struct S { float a; };
+void main() {}
+### function named as struct | frag | 3:Redeclaration
+struct S { float a; };
+void S() {}
+void main() {}
+### local function prototype | frag | ok
+void main() { void f(); }
+### local function prototype call | frag | ok
+void f() {}
+void main() { void g(); f(); }
+### return void call | frag | 3:VoidReturnWithValue
+void f() {}
+void g() { return f(); }
+void main() {}
+### int literal overflow | frag | 2:LiteralTooBig
+void main() { int a = 4294967296; }
+### int literal max | frag | ok
+void main() { int a = 4294967295; uint b = 4294967295u; int c = 0xFFFFFFFF; int d = 2147483648; }
+### int eq uint | frag | ok
+void main() { bool a = 1 == 1u; bool b = 1u < 2; }
+### for float | frag | ok
+void main() { for (float f = 0.0; f < 1.0; f += 0.1) {} }
+### while int decl | frag | 2:ConditionNotBool
+void main() { while (int i = 1) {} }
+### while bool decl from int | frag | 2:CannotConvert
+void main() { while (bool b = 1) {} }
+### sampler ternary | frag | 4:InvalidOperands
+layout(binding=0) uniform sampler2D s;
+layout(binding=1) uniform sampler2D t;
+void main() { vec4 a = texture(true ? s : t, vec2(0.0)); }
+### sampler array param | frag | ok
+layout(binding=0) uniform sampler2D s[2];
+vec4 f(sampler2D t[2]) { return texture(t[0], vec2(0.0)); }
+void main() { vec4 a = f(s); }
+### sampler array index var | frag | ok
+layout(binding=0) uniform sampler2D s[2];
+layout(location=0) in flat int i;
+void main() { vec4 a = texture(s[i], vec2(0.0)); }
+### function returning array | frag | ok
+float[2] f() { return float[2](1.0, 2.0); }
+void main() { float a[2] = f(); float b = f()[1]; }
+### function returning struct | frag | ok
+struct S { float a; };
+S f() { return S(1.0); }
+void main() { float a = f().a; }
+### function returning sampler | frag | 3:OpaqueNotAllowed
+layout(binding=0) uniform sampler2D s;
+sampler2D f() { return s; }
+void main() {}
+### void array | frag | 2:VoidVariable
+void main() { void a[2]; }
+### array of void fn | frag | ok
+void[2] f() {}
+void main() {}
+### unsized local | frag | ok
+void main() { float a[]; a[2] = 1.0; }
+### unsized local length | frag | 2:InvalidLength
+void main() { float a[]; int n = a.length(); }
+### unsized global length | frag | 3:InvalidLength
+float a[];
+void main() { a[3] = 1.0; int n = a.length(); }
+### array assign unsized | frag | 3:CannotConvert
+float a[];
+void main() { float b[2]; a[1] = 1.0; b = a; }
+### array compare unsized | frag | ok
+float a[];
+float c[];
+void main() { a[1] = 1.0; c[1] = 2.0; bool b = a == c; }
+### redeclare unsized with size | frag | ok
+float a[];
+float a[4];
+void main() { a[3] = 1.0; }
+### redeclare unsized with smaller size | frag | ok
+float a[];
+void f() { a[5] = 1.0; }
+float a[4];
+void main() {}
+### redeclare sized | frag | 3:Redeclaration
+float a[4];
+float a[4];
+void main() {}
+### redeclare other type | frag | 3:Redeclaration
+float a[];
+int a[4];
+void main() {}
+### nested block | frag | 2:NestedStructDefinition
+layout(binding=0) uniform U { struct T { float x; } t; };
+void main() {}
+### block struct member | frag | ok
+struct T { float x; };
+layout(binding=0) uniform U { T t; T ts[2]; } u;
+void main() { float a = u.t.x + u.ts[1].x; }
+### block name reuse | frag | 3:InvalidBlock
+layout(binding=0) uniform U { float a; } u;
+layout(binding=1) uniform U { float b; } v;
+void main() {}
+### block name same as variable | frag | 3:InvalidBlock
+float U;
+layout(binding=0) uniform U { float a; } u;
+void main() {}
+### block instance clash | frag | 3:Redeclaration
+float u;
+layout(binding=0) uniform U { float a; } u;
+void main() {}
+### buffer unsized not last | frag | ok
+layout(binding=0) buffer B { float a[]; float b; } b;
+void main() {}
+### uniform block unsized | frag | ok
+layout(binding=0) uniform B { float a[]; } b;
+void main() { float x = b.a[2]; }
+### uniform block unsized var index | frag | 4:VariableIndexIntoUnsizedArray
+layout(binding=0) uniform B { float a[]; } b;
+layout(location=0) in flat int i;
+void main() { float x = b.a[i]; }
+### buffer unsized var index | frag | ok
+layout(binding=0) buffer B { float a[]; } b;
+layout(location=0) in flat int i;
+void main() { float x = b.a[i]; }
+### block in function | frag | 2:InvalidQualifier
+void main() { uniform B { float a; } b; }
+### block with in | frag | ok
+layout(location=0) in B { vec4 a; flat int b; } b;
+void main() { vec4 x = b.a; }
+### block out frag | frag | 2:InvalidBlock
+layout(location=0) out B { vec4 a; } b;
+void main() {}
+### block assign whole | frag | 4:CannotConvert
+layout(binding=0) buffer B { float a; } b;
+layout(binding=1) buffer C { float a; } c;
+void main() { b = c; }
+### block compare | frag | 3:InvalidOperands
+layout(binding=0) uniform B { float a; } b[2];
+void main() { bool x = b[0] == b[1]; }
+### block as arg | frag | 4:NoMatchingFunction
+layout(binding=0) uniform B { float a; } b;
+void f(float x) {}
+void main() { f(b); }
+### length fn name | frag | ok
+void main() { float a = length(vec2(1.0)); float b[2]; int n = b.length(); }
+### struct ctor nested conversion | frag | ok
+struct I { vec2 v; };
+struct S { I i; };
+void main() { S s = S(I(ivec2(1))); }
+### struct ctor wrong struct | frag | 5:InvalidConstructor
+struct I { vec2 v; };
+struct J { vec2 v; };
+struct S { I i; };
+void main() { S s = S(J(vec2(1.0))); }
+### not builtin | frag | ok
+void main() { bvec2 a = not(bvec2(true)); bool b = !true; }
+### vector compare | frag | ok
+void main() { bvec2 a = lessThan(ivec2(1), ivec2(2)); bvec2 b = equal(bvec2(true), bvec2(false)); bvec2 c = lessThan(uvec2(1), uvec2(2)); bvec2 d = lessThan(ivec2(1), uvec2(2)); }
+### lessThan mixed float int | frag | ok
+void main() { bvec2 d = lessThan(ivec2(1), vec2(2)); }
+### max int float | frag | ok
+void main() { float a = max(1, 2.0); }
+### max uint int | frag | ok
+void main() { uint a = max(1u, 2); }
+### clamp mixed | frag | ok
+void main() { float a = clamp(1, 0u, 2.0); }
+### mix int | frag | ok
+void main() { float a = mix(1, 2, 0.5); int b = mix(1, 2, true); }
+### pow int | frag | 2:CannotConvert
+void main() { int a = pow(2, 3); }
+### abs uint | frag | 2:CannotConvert
+void main() { uint a = abs(1u); }
+### mod int | frag | ok
+void main() { float a = mod(5, 3); }
+### dot int | frag | ok
+void main() { float a = dot(ivec2(1), ivec2(2)); }
+### length int | frag | ok
+void main() { float a = length(1); }
+### atan overloads | frag | ok
+void main() { float a = atan(1.0); float b = atan(1.0, 2.0); vec2 c = atan(vec2(1.0), vec2(2.0)); }
+### atan mixed | frag | 2:NoMatchingFunction
+void main() { vec2 c = atan(vec2(1.0), 2.0); }
+### step overloads | frag | 2:NoMatchingFunction
+void main() { vec2 a = step(0.5, vec2(1.0)); vec2 b = step(vec2(0.5), 1.0); }
+### refract | frag | 2:NoMatchingFunction
+void main() { vec3 a = refract(vec3(1.0), vec3(1.0), 1.0); vec3 b = refract(vec3(1.0), vec3(1.0), vec3(1.0)); }
+### matrix index var lvalue | frag | ok
+void main() { mat3 m; int i = 1; m[i][i] = 1.0; m[i] = vec3(1.0); }
+### vector index var | frag | ok
+void main() { vec3 v; int i = 1; v[i] = 1.0; float f = v[i]; }
+### swizzle index | frag | ok
+void main() { vec3 v; v.xy[1] = 1.0; }
+### constant vec index out of range | frag | 2:IndexOutOfRange
+void main() { const vec3 v = vec3(1.0); float f = v[3]; }
+### const array const index oob | frag | 2:IndexOutOfRange
+void main() { const float a[2] = float[2](1.0, 2.0); float f = a[2]; }
+### index uint const big | frag | 2:IndexOutOfRange
+void main() { float a[2]; a[4000000000u] = 1.0; }
+### literal vector index | frag | ok
+void main() { float f = vec3(1.0)[1]; float g = vec3(1.0).y; float h = mat2(1.0)[1][0]; }
+### array of arrays index | frag | 2:IndexOutOfRange
+void main() { float a[2][3]; a[2][0] = 1.0; }
+### array of arrays inner index | frag | 2:IndexOutOfRange
+void main() { float a[2][3]; a[1][3] = 1.0; }
+### a.length no parens | frag | 2:InvalidFieldSelection
+void main() { float a[2]; int n = a.length; }
+### length on struct | frag | 3:InvalidLength
+struct S { float a; };
+void main() { S s; int n = s.length(); }
+### method on call | frag | ok
+float[2] f() { return float[2](1.0, 2.0); }
+void main() { int n = f().length(); }
+### postfix on swizzle | frag | 2:NotAnLValue
+void main() { vec3 v = vec3(1.0); v.x++; v.xy++; --v.zz; }
+### neg on struct | frag | 3:InvalidOperand
+struct S { float a; };
+void main() { S s; S t = -s; }
+### neg on array | frag | 2:InvalidOperand
+void main() { float a[2]; float b[2] = -a; }
+### add arrays | frag | 2:InvalidOperands
+void main() { float a[2]; float b[2]; float c[2] = a + b; }
+### add structs | frag | 3:InvalidOperands
+struct S { float a; };
+void main() { S s; S t = s + s; }
+### logical not int vec | frag | 2:InvalidOperand
+void main() { bool b = !0; }
+### compare struct lt | frag | 3:InvalidOperands
+struct S { float a; };
+void main() { S s; bool b = s < s; }
+### discard in function | frag | ok
+void f() { discard; }
+void main() { f(); }
+### return in loop | frag | ok
+int f() { for (;;) { return 1; } }
+void main() {}
+### missing return in branch only | frag | ok
+int f(bool b) { if (b) return 1; }
+void main() {}
+### nonvoid no return but discard | frag | 2:FunctionWithoutReturn
+int f() { discard; }
+void main() {}
+### main with return type and params both | frag | 2:InvalidMain
+float main(float a) { return a; }
+### main overload | frag | 3:InvalidMain
+void main() {}
+void main(int a) {}
+### main prototype then def | frag | ok
+void main();
+void main() {}
+### main called | frag | 2:NoMatchingFunction
+void f() { main(); }
+void main() {}
+### gl_ prefix user var | frag | 2:ReservedIdentifier
+void main() { float gl_Foo = 1.0; }
+### double underscore | frag | ok
+void main() { float a__b = 1.0; }
+### user func gl_ | frag | ok
+void gl_Foo() {}
+void main() {}
+### in struct with int needs flat | frag | 3:InvalidQualifier
+struct S { int a; };
+layout(location=0) in S s;
+void main() {}
+### out int vertex no flat | vert | ok
+layout(location=0) out int a;
+void main() { a = 1; gl_Position = vec4(0.0); }
+### in uint vec flat ok | frag | ok
+layout(location=0) flat in uvec2 a;
+void main() {}
+### in bool | frag | 2:InvalidQualifier
+layout(location=0) in bool a;
+void main() {}
+### out bool frag | frag | 2:InvalidQualifier
+layout(location=0) out bool a;
+void main() {}
+### out double frag | frag | 2:InvalidQualifier
+layout(location=0) out double a;
+void main() {}
+### out struct frag | frag | 3:InvalidQualifier
+struct S { vec4 a; };
+layout(location=0) out S s;
+void main() {}
+### out matrix frag | frag | 2:InvalidQualifier
+layout(location=0) out mat2 a;
+void main() {}
+### in sampler | frag | 2:OpaqueNotAllowed, 2:InvalidQualifier
+layout(location=0) in sampler2D a;
+void main() {}
+### in array vertex | vert | ok
+layout(location=0) in vec4 a[2];
+void main() { gl_Position = a[1]; }
+### centroid vertex in | vert | 2:InvalidQualifier
+layout(location=0) centroid in vec4 a;
+void main() { gl_Position = a; }
+### const in global | frag | 2:ConstWithoutInitializer
+const in float a;
+void main() {}
+### uniform initializer | frag | 2:InitializerNotAllowed
+layout(binding=0) uniform sampler2D s = 1;
+void main() {}
+### in out both | frag | 2:InvalidQualifier
+in out float a;
+void main() {}
+### inout global | frag | 2:InvalidQualifier
+inout float a;
+void main() {}
+### const param out | frag | 2:InvalidParameter
+void f(const out float a) {}
+void main() {}
+### uniform param | frag | 2:InvalidParameter
+void f(uniform float a) {}
+void main() {}
+### param default precision | frag | ok
+void f(highp float a, const in mediump vec2 b, inout lowp int c) {}
+void main() {}
+### shared in frag | frag | 2:InvalidQualifier
+shared float a;
+void main() {}
+### shared in comp | comp | ok
+layout(local_size_x=1) in;
+shared float a;
+shared float b[4];
+void main() { a = 1.0; b[2] = a; }
+### shared local | comp | 3:InvalidQualifier
+layout(local_size_x=1) in;
+void main() { shared float a; }
+### readonly image param | comp | 6:InvalidQualifier
+layout(local_size_x=1) in;
+layout(binding=0, rgba8) uniform readonly image2D img;
+vec4 f(readonly image2D i) { return imageLoad(i, ivec2(0)); }
+void g(image2D i) { imageStore(i, ivec2(0), vec4(0.0)); }
+void main() { vec4 a = f(img); g(img); }
+### image without format | comp | 3:InvalidQualifier
+layout(local_size_x=1) in;
+layout(binding=0) uniform image2D img;
+void main() {}
+### image writeonly no format | comp | ok
+layout(local_size_x=1) in;
+layout(binding=0) uniform writeonly image2D img;
+void main() { imageStore(img, ivec2(0), vec4(0.0)); }
+### flat on local | frag | 2:InvalidQualifier
+void main() { flat int a; }
+### invariant local | frag | 2:InvalidQualifier
+void main() { invariant float a; }
+### centroid uniform | frag | ok
+centroid uniform sampler2D s;
+void main() {}
+### patch in frag | frag | 2:InvalidQualifier
+layout(location=0) patch in vec4 a;
+void main() {}
+### patch out tesc | tesc | ok
+layout(vertices=3) out;
+layout(location=0) patch out vec4 a;
+void main() { a = vec4(1.0); }
+### tesc out per-vertex index | tesc | 4:PerVertexOutputIndex
+layout(vertices=3) out;
+layout(location=0) out vec4 a[];
+void main() { a[gl_InvocationID] = vec4(1.0); a[0] = vec4(1.0); }
+### tesc out unsized whole | tesc | ok
+layout(vertices=3) out;
+layout(location=0) out vec4 a[];
+void main() { int n = a.length(); int m = gl_out.length(); int k = gl_in.length(); }
+### geom in length | geom | 5:IndexOutOfRange
+layout(triangles) in;
+layout(triangle_strip, max_vertices=3) out;
+layout(location=0) in vec4 c[];
+void main() { int n = c.length(); vec4 x = c[2]; vec4 y = c[3]; }
+### geom in before layout | geom | 3:VariableIndexIntoUnsizedArray
+layout(location=0) in vec4 c[];
+void f() { int i = 1; vec4 x = c[i]; }
+layout(triangles) in;
+layout(triangle_strip, max_vertices=3) out;
+void main() {}
+### geom in sized mismatch | geom | 4:InvalidInterfaceArray
+layout(triangles) in;
+layout(triangle_strip, max_vertices=3) out;
+layout(location=0) in vec4 c[2];
+void main() {}
+### geom in not array | geom | 4:InvalidInterfaceArray
+layout(triangles) in;
+layout(triangle_strip, max_vertices=3) out;
+layout(location=0) in vec4 c;
+void main() {}
+### vert gl_in | vert | 2:UndeclaredIdentifier
+void main() { gl_Position = gl_in[0].gl_Position; }
+### frag gl_SampleMask var index | frag | ok
+layout(location=0) flat in int i;
+void main() { gl_SampleMask[i] = 1; }
+### frag clip distance var index | frag | 3:VariableIndexIntoUnsizedArray
+layout(location=0) flat in int i;
+void main() { float a = gl_ClipDistance[i]; }
+### frag clip distance const oob | frag | 2:IndexOutOfRange
+void main() { float a = gl_ClipDistance[8]; }
+### vert clip distance sized redeclare | vert | ok
+out float gl_ClipDistance[4];
+void main() { gl_ClipDistance[3] = 1.0; gl_Position = vec4(0.0); }
+### write gl_PointCoord | frag | 2:NotAnLValue
+void main() { gl_PointCoord = vec2(0.0); }
+### write gl_FrontFacing | frag | 2:NotAnLValue
+void main() { gl_FrontFacing = true; }
+### write gl_VertexIndex | vert | 2:NotAnLValue
+void main() { gl_VertexIndex = 1; }
+### write gl_NumWorkGroups | comp | 3:NotAnLValue
+layout(local_size_x=1) in;
+void main() { gl_NumWorkGroups = uvec3(1); }
+### read out var | frag | ok
+layout(location=0) out vec4 c;
+void main() { c = vec4(1.0); vec4 d = c; c += d; }
+### gl_Position read vert | vert | ok
+void main() { gl_Position = vec4(1.0); vec4 a = gl_Position; }
+### gl_MaxVaryingFloats | frag | 2:UndeclaredIdentifier
+void main() { int a = gl_MaxVaryingFloats; }
+### gl_MaxLights etc | frag | ok
+void main() { int a = gl_MaxLights + gl_MaxClipPlanes + gl_MaxTextureUnits + gl_MaxTextureCoords + gl_MaxVaryingVectors + gl_MaxVertexUniformVectors + gl_MaxFragmentUniformVectors; }
+### all gl_Max | frag | 2:UndeclaredIdentifier
+void main() { int a = gl_MaxVertexOutputComponents + gl_MaxGeometryInputComponents + gl_MaxImageUnits + gl_MaxSamples + gl_MaxTransformFeedbackBuffers + gl_MaxCullDistances + gl_MaxCombinedClipAndCullDistances + gl_MaxAtomicCounterBindings + gl_MaxViewports + gl_MaxVertexOutputVectors; }
+### gl_MaxFragmentInputVectors | frag | 2:UndeclaredIdentifier
+void main() { int a = gl_MaxFragmentInputVectors; }
+### gl_ param | frag | 2:ReservedIdentifier
+void f(float gl_a) {}
+void main() {}
+### gl_ struct | frag | ok
+struct gl_S { float a; };
+void main() {}
+### gl_ struct member | frag | ok
+struct S { float gl_a; };
+void main() {}
+### gl_ block | frag | 2:InvalidBlock
+layout(binding=0) uniform gl_B { float a; } b;
+void main() {}
+### gl_ block member | frag | 2:ReservedIdentifier
+layout(binding=0) uniform B { float gl_a; } b;
+void main() {}
+### gl_ block instance | frag | 2:ReservedIdentifier
+layout(binding=0) uniform B { float a; } gl_b;
+void main() {}
+### gl_ function proto | frag | ok
+void gl_f();
+void main() {}
+### gl_ local in nested scope | frag | 2:ReservedIdentifier
+void main() { { int gl_x; } }
+### shared block | comp | ok
+layout(local_size_x=1) in;
+shared struct S { float a; } s;
+void main() {}
+### shared with init | comp | 3:InitializerNotAllowed
+layout(local_size_x=1) in;
+shared float a = 1.0;
+void main() {}
+### shared sampler | comp | 3:OpaqueNotAllowed
+layout(local_size_x=1) in;
+shared sampler2D s;
+void main() {}
+### patch vert | vert | 2:InvalidQualifier
+layout(location=0) patch out vec4 a;
+void main() { gl_Position = vec4(0.0); }
+### patch in tese | tese | ok
+layout(triangles) in;
+layout(location=0) patch in vec4 a;
+void main() { gl_Position = a; }
+### patch out tese | tese | 3:InvalidQualifier
+layout(triangles) in;
+layout(location=0) patch out vec4 a;
+void main() { gl_Position = vec4(0.0); }
+### patch in tesc | tesc | 3:InvalidQualifier
+layout(vertices=3) out;
+layout(location=0) patch in vec4 a;
+void main() {}
+### patch local | tesc | 3:InvalidQualifier
+layout(vertices=3) out;
+void main() { patch float a; }
+### tesc in not array | tesc | 3:InvalidInterfaceArray
+layout(vertices=3) out;
+layout(location=0) in vec4 a;
+void main() {}
+### tesc in array ok | tesc | ok
+layout(vertices=3) out;
+layout(location=0) in vec4 a[];
+void main() { vec4 x = a[31]; int n = a.length(); float b[a.length()]; b[31] = 1.0; }
+### tesc in array oob | tesc | 4:IndexOutOfRange
+layout(vertices=3) out;
+layout(location=0) in vec4 a[];
+void main() { vec4 x = a[32]; }
+### tesc in sized other | tesc | 3:InvalidInterfaceArray
+layout(vertices=3) out;
+layout(location=0) in vec4 a[3];
+void main() { vec4 x = a[2]; }
+### tesc out not array | tesc | 3:InvalidInterfaceArray
+layout(vertices=3) out;
+layout(location=0) out vec4 a;
+void main() {}
+### tesc out sized mismatch | tesc | 3:InvalidInterfaceArray
+layout(vertices=3) out;
+layout(location=0) out vec4 a[4];
+void main() {}
+### tesc out before vertices | tesc | 3:VariableIndexIntoUnsizedArray
+layout(location=0) out vec4 a[];
+void f() { a[gl_InvocationID] = vec4(1.0); }
+layout(vertices=3) out;
+void main() {}
+### tesc out length const | tesc | ok
+layout(vertices=3) out;
+layout(location=0) out vec4 a[];
+void main() { float b[a.length()]; b[2] = 1.0; float c[gl_out.length()]; c[2] = 1.0; }
+### tesc out length oob | tesc | 4:IndexOutOfRange
+layout(vertices=3) out;
+layout(location=0) out vec4 a[];
+void main() { float b[a.length()]; b[3] = 1.0; }
+### tesc gl_out other index | tesc | 3:PerVertexOutputIndex
+layout(vertices=3) out;
+void main() { gl_out[0].gl_Position = vec4(1.0); }
+### tesc gl_out read other index | tesc | ok
+layout(vertices=3) out;
+void main() { vec4 a = gl_out[0].gl_Position; gl_out[gl_InvocationID].gl_Position = a; }
+### tesc out via function out arg | tesc | 5:PerVertexOutputIndex
+layout(vertices=3) out;
+layout(location=0) out vec4 a[];
+void f(out vec4 x) { x = vec4(1.0); }
+void main() { f(a[1]); f(a[gl_InvocationID]); }
+### tese in arrays | tese | 4:InvalidInterfaceArray
+layout(triangles) in;
+layout(location=0) in vec4 a[];
+layout(location=1) in vec4 b;
+void main() { gl_Position = a[0]; }
+### tese out array | tese | ok
+layout(triangles) in;
+layout(location=0) out vec4 a[2];
+void main() { a[1] = vec4(1.0); gl_Position = vec4(0.0); }
+### geom in block array | geom | ok
+layout(triangles) in;
+layout(triangle_strip, max_vertices=3) out;
+layout(location=0) in B { vec4 c; } b[];
+void main() { vec4 x = b[2].c; int n = b.length(); }
+### geom in block not array | geom | 4:InvalidInterfaceArray
+layout(triangles) in;
+layout(triangle_strip, max_vertices=3) out;
+layout(location=0) in B { vec4 c; } b;
+void main() {}
+### geom in anon block | geom | 4:InvalidInterfaceArray
+layout(triangles) in;
+layout(triangle_strip, max_vertices=3) out;
+layout(location=0) in B { vec4 c; };
+void main() {}
+### geom gl_in length before layout | geom | 2:InvalidLength
+void f() { int n = gl_in.length(); }
+layout(triangles) in;
+layout(triangle_strip, max_vertices=3) out;
+void main() {}
+### geom gl_in const idx before layout | geom | ok
+void f() { vec4 p = gl_in[5].gl_Position; }
+layout(triangles) in;
+layout(triangle_strip, max_vertices=3) out;
+void main() {}
+### geom in length array size | geom | ok
+layout(lines) in;
+layout(line_strip, max_vertices=2) out;
+layout(location=0) in vec4 c[];
+float x[c.length()];
+void main() { x[1] = 1.0; }
+### geom out array | geom | ok
+layout(points) in;
+layout(points, max_vertices=1) out;
+layout(location=0) out vec4 c[2];
+void main() { c[1] = vec4(1.0); }
+### vert clip distance oob | vert | 2:IndexOutOfRange
+void main() { gl_ClipDistance[8] = 1.0; gl_Position = vec4(0.0); }
+### vert cull distance oob | vert | 2:IndexOutOfRange
+void main() { gl_CullDistance[8] = 1.0; gl_Position = vec4(0.0); }
+### vert clip var index | vert | 3:VariableIndexIntoUnsizedArray
+layout(location=0) in int i;
+void main() { gl_ClipDistance[i] = 1.0; gl_Position = vec4(0.0); }
+### frag sample mask oob | frag | 2:IndexOutOfRange
+void main() { gl_SampleMask[1] = 1; }
+### frag sample mask in oob | frag | 2:IndexOutOfRange
+void main() { int a = gl_SampleMaskIn[1]; }
+### frag sample mask in var | frag | ok
+layout(location=0) flat in int i;
+void main() { int a = gl_SampleMaskIn[i]; }
+### geom clip in member oob | geom | 4:IndexOutOfRange
+layout(points) in;
+layout(points, max_vertices=1) out;
+void main() { float a = gl_in[0].gl_ClipDistance[8]; }
+### precise local | frag | ok
+void main() { precise float a = 1.0; }
+### const local in | frag | 2:InvalidQualifier
+void main() { const in float a = 1.0; }
+### out local | frag | 2:InvalidQualifier
+void main() { out float a; }
+### centroid local | frag | 2:InvalidQualifier
+void main() { centroid float a; }
+### sample local | frag | 2:InvalidQualifier
+void main() { sample float a; }
+### sample in frag | frag | ok
+layout(location=0) sample in vec4 a;
+void main() {}
+### centroid out frag | frag | 2:InvalidQualifier
+layout(location=0) centroid out vec4 a;
+void main() {}
+### flat out frag | frag | 2:InvalidQualifier
+layout(location=0) flat out vec4 a;
+void main() {}
+### smooth int in | frag | 2:InvalidQualifier
+layout(location=0) smooth in int a;
+void main() {}
+### noperspective int | frag | 2:InvalidQualifier
+layout(location=0) noperspective in ivec2 a;
+void main() {}
+### flat and centroid | frag | ok
+layout(location=0) flat centroid in int a;
+void main() {}
+### in block vert | vert | 2:InvalidBlock
+layout(location=0) in B { vec4 a; } b;
+void main() { gl_Position = b.a; }
+### out block vert | vert | ok
+layout(location=0) out B { vec4 a; flat int i; } b;
+void main() { b.a = vec4(0.0); gl_Position = b.a; }
+### in block frag int no flat | frag | ok
+layout(location=0) in B { int i; } b;
+void main() {}
+### unsized return | frag | 2:UnsizedArrayNotAllowed, 2:ReturnTypeMismatch
+float[] f() { return float[2](1.0, 2.0); }
+void main() {}
+### unsized param | frag | 2:InvalidParameter
+void f(float a[], int n) {}
+void main() {}
+### unsized local init from call | frag | ok
+float[2] f() { return float[2](1.0, 2.0); }
+void main() { float a[] = f(); a[1] = 1.0; int n = a.length(); float b[a.length()]; }
+### unsized local init oob | frag | 2:IndexOutOfRange
+void main() { float a[] = float[](1.0, 2.0); a[2] = 1.0; }
+### array init wrong elem type | frag | 2:CannotConvert
+void main() { int a[2] = float[2](1.0, 2.0); }
+### array assign conv | frag | 2:CannotConvert
+void main() { float a[2]; a = int[2](1, 2); }
+### array param conv | frag | 3:NoMatchingFunction
+void f(float a[2]) {}
+void main() { f(int[2](1, 2)); }
+### proto param names differ | frag | ok
+float f(float a, int b);
+float f(float x, int y) { return x; }
+void main() {}
+### overload on out only | frag | 3:ConflictingFunctionDeclaration, 3:FunctionRedefinition
+void f(float a) {}
+void f(out float a) { a = 1.0; }
+void main() {}
+### overload on const only | frag | 3:FunctionRedefinition
+void f(float a) {}
+void f(const float a) {}
+void main() {}
+### overload array sizes | frag | ok
+void f(float a[2]) {}
+void f(float a[3]) {}
+void main() { float x[3]; f(x); }
+### return type array mismatch | frag | 3:ConflictingFunctionDeclaration, 3:ReturnTypeMismatch
+float[2] f();
+float[3] f() { return float[3](1.0, 2.0, 3.0); }
+void main() {}
+### void arg | frag | 4:NoMatchingFunction
+void g() {}
+void f(float a) {}
+void main() { f(g()); }
+### void ctor arg | frag | 3:InvalidConstructor
+void g() {}
+void main() { float a = float(g()); }
+### void in vec ctor | frag | 3:InvalidConstructor
+void g() {}
+void main() { vec2 a = vec2(1.0, g()); }
+### user max hides builtin | frag | ok
+float max(float a) { return a; }
+void main() { float x = max(1, 2); }
+### user max exact builtin still | frag | ok
+float max(float a) { return a; }
+void main() { float x = max(1.0, 2.0); int y = max(1, 2); }
+### overload float double int arg | frag | ok
+void f(float a) {}
+void f(double a) {}
+void main() { f(1); f(1u); f(1.0); f(1.0lf); }
+### overload uint double | frag | 4:AmbiguousCall
+void f(uint a) {}
+void f(double a) {}
+void main() { f(1); }
+### overload two args mixed | frag | ok
+void f(float a, float b) {}
+void f(double a, double b) {}
+void main() { f(1, 2); f(1.0, 2); f(1, 2.0lf); }
+### overload two args cross | frag | 4:AmbiguousCall
+void f(int a, double b) {}
+void f(float a, float b) {}
+void main() { f(1, 2); }
+### overload vec | frag | ok
+void f(vec2 a) {}
+void f(dvec2 a) {}
+void f(ivec2 a) {}
+void main() { f(ivec2(1)); f(uvec2(1)); f(vec2(1)); }
+### overload out conversions | frag | 4:AmbiguousCall
+void f(out float a) { a = 1.0; }
+void f(out int a) { a = 1; }
+void main() { double d; f(d); }
+### overload out exact | frag | ok
+void f(out float a) { a = 1.0; }
+void f(out int a) { a = 1; }
+void main() { float d; f(d); int i; f(i); }
+### overload struct | frag | ok
+struct S { float a; };
+struct T { float a; };
+void f(S s) {}
+void f(T t) {}
+void main() { f(S(1.0)); f(T(1.0)); }
+### call with struct mismatch | frag | 5:NoMatchingFunction
+struct S { float a; };
+struct T { float a; };
+void f(S s) {}
+void main() { f(T(1.0)); }
+### builtin out lvalue | frag | 2:NotAnLValue
+void main() { float a = modf(1.5, 1.0); }
+### builtin out conversion | frag | 2:AmbiguousCall
+void main() { double w; float a = modf(1.5, w); }
+### builtin out int for float | frag | 2:NoMatchingFunction
+void main() { int w; float a = modf(1.5, w); }
+### frexp out float | frag | ok
+void main() { float e; float a = frexp(1.5, e); }
+### uaddCarry int | frag | ok
+void main() { uint c; uint a = uaddCarry(1, 2, c); }
+### uaddCarry out int | frag | 2:NoMatchingFunction
+void main() { int c; uint a = uaddCarry(1u, 2u, c); }
+### bitCount float | frag | 2:NoMatchingFunction
+void main() { int a = bitCount(1.0); }
+### texture int coords | frag | 3:NoMatchingFunction
+layout(binding=0) uniform sampler2D s;
+void main() { vec4 a = texture(s, ivec2(0)); vec4 b = texelFetch(s, ivec2(0), 0u); }
+### texelFetch float coords | frag | 3:NoMatchingFunction
+layout(binding=0) uniform sampler2D s;
+void main() { vec4 b = texelFetch(s, vec2(0), 0); }
+### textureLod int lod | frag | ok
+layout(binding=0) uniform sampler2D s;
+void main() { vec4 a = textureLod(s, vec2(0.0), 1); }
+### texture result type | frag | ok
+layout(binding=0) uniform isampler2D s;
+void main() { vec4 a = texture(s, vec2(0.0)); }
+### texture result type bad | frag | 3:CannotConvert
+layout(binding=0) uniform sampler2D s;
+void main() { ivec4 a = texture(s, vec2(0.0)); }
+### shadow samplers | frag | ok
+layout(binding=0) uniform sampler2DShadow a;
+layout(binding=1) uniform samplerCubeShadow b;
+layout(binding=2) uniform sampler2DArrayShadow c;
+layout(binding=3) uniform samplerCubeArrayShadow d;
+layout(binding=4) uniform sampler1DShadow e;
+layout(binding=5) uniform sampler1DArrayShadow f;
+void main() {
+  float r = texture(a, vec3(0.0)) + texture(b, vec4(0.0)) + texture(c, vec4(0.0)) + texture(d, vec4(0.0), 1.0) + texture(e, vec3(0.0)) + texture(f, vec3(0.0));
+  r += textureLod(a, vec3(0.0), 0.0) + textureProj(a, vec4(0.0)) + textureGrad(b, vec4(0.0), vec3(0.0), vec3(0.0)) + textureOffset(a, vec3(0.0), ivec2(0));
+  vec4 g = textureGather(a, vec2(0.0), 0.5) + textureGather(b, vec3(0.0), 0.5) + textureGatherOffset(c, vec3(0.0), 0.5, ivec2(0));
+  r += texture(a, vec3(0.0), 1.0) + textureProjLod(a, vec4(0.0), 0.0) + textureProjGradOffset(a, vec4(0.0), vec2(0.0), vec2(0.0), ivec2(0));
+  r += textureGrad(c, vec4(0.0), vec2(0.0), vec2(0.0)) + textureLod(e, vec3(0.0), 0.0) + textureLod(f, vec3(0.0), 0.0);
+}
+### shadow lod not available | frag | 3:NoMatchingFunction
+layout(binding=2) uniform sampler2DArrayShadow c;
+void main() { float r = textureLod(c, vec4(0.0), 0.0); }
+### cube shadow lod | frag | 3:NoMatchingFunction
+layout(binding=1) uniform samplerCubeShadow b;
+void main() { float r = textureLod(b, vec4(0.0), 0.0); }
+### array shadow bias | frag | 3:NoMatchingFunction
+layout(binding=2) uniform sampler2DArrayShadow c;
+void main() { float r = texture(c, vec4(0.0), 1.0); }
+### texture families misc | frag | 16:InvalidConstructor
+layout(binding=0) uniform sampler1D a;
+layout(binding=1) uniform sampler1DArray b;
+layout(binding=2) uniform sampler3D c;
+layout(binding=3) uniform samplerCubeArray d;
+layout(binding=4) uniform sampler2DMSArray e;
+layout(binding=5) uniform usamplerBuffer f;
+layout(binding=6) uniform isamplerCube g;
+void main() {
+  vec4 r = texture(a, 0.0) + texture(b, vec2(0.0)) + texture(c, vec3(0.0)) + texture(d, vec4(0.0)) + texelFetch(e, ivec3(0), 0);
+  uvec4 u = texelFetch(f, 0); ivec4 i = textureLod(g, vec3(0.0), 0.0);
+  r += textureProj(a, vec2(0.0)) + textureProj(a, vec4(0.0)) + textureProj(c, vec4(0.0)) + textureProjOffset(a, vec2(0.0), 1) + textureLodOffset(c, vec3(0.0), 0.0, ivec3(0));
+  r += texelFetchOffset(a, 0, 0, 1) + texelFetchOffset(b, ivec2(0), 0, 1) + textureGradOffset(b, vec2(0.0), 0.0, 0.0, 1) + textureGather(d, vec4(0.0)) + textureGather(d, vec4(0.0), 2);
+  int n = textureSize(a, 0) + textureSize(f) + textureQueryLevels(d) + textureSamples(e); ivec2 m = textureSize(b, 0) + textureSize(g, 0); ivec3 k = textureSize(c, 0) + textureSize(d, 0) + textureSize(e);
+  vec2 q = textureQueryLod(a, 0.0) + textureQueryLod(d, vec3(0.0)) + textureQueryLod(b, 0.0);
+  ivec4 go[1]; r += textureGatherOffsets(sampler2D(0), vec2(0.0), ivec2[4](ivec2(0), ivec2(0), ivec2(0), ivec2(0)));
+}
+### gather offsets | frag | ok
+layout(binding=0) uniform sampler2D s;
+void main() { const ivec2 o[4] = ivec2[4](ivec2(0), ivec2(1), ivec2(2), ivec2(3)); vec4 r = textureGatherOffsets(s, vec2(0.0), o) + textureGatherOffsets(s, vec2(0.0), o, 1); }
+### gather offsets not const | frag | 3:InvalidBuiltinCall
+layout(binding=0) uniform sampler2D s;
+void main() { ivec2 o[4]; vec4 r = textureGatherOffsets(s, vec2(0.0), o); }
+### gather offset non const | frag | ok
+layout(binding=0) uniform sampler2D s;
+void main() { ivec2 o; vec4 r = textureGatherOffset(s, vec2(0.0), o); }
+### gather comp not const | frag | 3:InvalidBuiltinCall
+layout(binding=0) uniform sampler2D s;
+void main() { int c = 1; vec4 r = textureGather(s, vec2(0.0), c); }
+### gather comp range | frag | 3:InvalidBuiltinCall
+layout(binding=0) uniform sampler2D s;
+void main() { vec4 r = textureGather(s, vec2(0.0), 4); }
+### texture offset range | frag | 3:InvalidBuiltinCall
+layout(binding=0) uniform sampler2D s;
+void main() { vec4 r = textureOffset(s, vec2(0.0), ivec2(8)); }
+### texelFetchOffset non const | frag | 3:InvalidBuiltinCall
+layout(binding=0) uniform sampler2D s;
+void main() { ivec2 o; vec4 r = texelFetchOffset(s, ivec2(0), 0, o); }
+### textureProjOffset non const | frag | 3:InvalidBuiltinCall, 3:InvalidBuiltinCall, 3:InvalidBuiltinCall
+layout(binding=0) uniform sampler2D s;
+void main() { ivec2 o; vec4 r = textureProjOffset(s, vec3(0.0), o) + textureLodOffset(s, vec2(0.0), 0.0, o) + textureGradOffset(s, vec2(0.0), vec2(0.0), vec2(0.0), o); }
+### image misc | comp | ok
+layout(local_size_x=1) in;
+layout(binding=0, rgba8) uniform image1D a;
+layout(binding=1, rgba8) uniform image3D b;
+layout(binding=2, rgba8) uniform imageCube c;
+layout(binding=3, rgba8) uniform image2DArray d;
+layout(binding=4, rgba8) uniform imageCubeArray e;
+layout(binding=5, rgba8) uniform imageBuffer f;
+layout(binding=6, rgba8) uniform image2DMS g;
+layout(binding=7, r32f) uniform image2D h;
+void main() {
+  vec4 r = imageLoad(a, 0) + imageLoad(b, ivec3(0)) + imageLoad(c, ivec3(0)) + imageLoad(d, ivec3(0)) + imageLoad(e, ivec3(0)) + imageLoad(f, 0) + imageLoad(g, ivec2(0), 1);
+  int n = imageSize(a) + imageSize(f) + imageSamples(g); ivec2 m = imageSize(c) + imageSize(g); ivec3 k = imageSize(b) + imageSize(d) + imageSize(e);
+  float x = imageAtomicExchange(h, ivec2(0), 1.0);
+}
+### imageAtomicAdd float | comp | 4:NoMatchingFunction
+layout(local_size_x=1) in;
+layout(binding=7, r32f) uniform image2D h;
+void main() { float x = imageAtomicAdd(h, ivec2(0), 1.0); }
+### imageAtomic wrong format | comp | 4:InvalidBuiltinCall
+layout(local_size_x=1) in;
+layout(binding=7, rgba8i) uniform iimage2D h;
+void main() { int x = imageAtomicAdd(h, ivec2(0), 1); }
+### imageLoad uint coord | comp | 4:NoMatchingFunction
+layout(local_size_x=1) in;
+layout(binding=7, r32f) uniform image2D h;
+void main() { vec4 x = imageLoad(h, uvec2(0)); }
+### atomic on buffer array elem | comp | ok
+layout(local_size_x=1) in;
+layout(binding=0) buffer B { int a[4]; uint b; } blk;
+void main() { atomicAdd(blk.a[1], 1); atomicOr(blk.b, 1u); atomicMin(blk.b, 1); }
+### atomic uniform | comp | 4:NotAnLValue
+layout(local_size_x=1) in;
+layout(binding=0) uniform B { int a; } blk;
+void main() { atomicAdd(blk.a, 1); }
+### interpolate swizzle etc | frag | ok
+layout(location=0) in vec4 a;
+layout(location=1) in S { vec2 v; } s;
+void main() { vec2 x = interpolateAtCentroid(a.xy); vec2 y = interpolateAtCentroid(s.v); float z = interpolateAtSample(a[1], 0); }
+### interpolate expr | frag | 3:InvalidBuiltinCall
+layout(location=0) in vec4 a;
+void main() { vec4 x = interpolateAtCentroid(a * 2.0); }
+### interpolate out | frag | 3:InvalidBuiltinCall
+layout(location=0) out vec4 a;
+void main() { vec4 x = interpolateAtCentroid(a); }
+### interpolate int | frag | 3:CannotConvert
+layout(location=0) flat in int a;
+void main() { int x = interpolateAtCentroid(a); }
+### EmitStreamVertex non const | geom | ok
+layout(points) in;
+layout(points, max_vertices=1) out;
+void main() { int s = 0; EmitStreamVertex(s); }
+### subpassLoad vert | vert | 2:InvalidQualifier, 3:NoMatchingFunction
+layout(input_attachment_index=0, binding=0) uniform subpassInput s;
+void main() { gl_Position = subpassLoad(s); }
+### subpass in vert decl | vert | 2:InvalidQualifier
+layout(input_attachment_index=0, binding=0) uniform subpassInput s;
+void main() { gl_Position = vec4(0.0); }
+### const param array size | frag | 2:ArraySizeNotConstant
+void f(const int n) { float a[n]; }
+void main() {}
+### const param init const | frag | ok
+void f(const int n) { const int m = n; }
+void main() {}
+### const global from const | frag | ok
+const int a = 1;
+const int b = a + 1;
+const float c[b] = float[b](1.0, 2.0);
+const float d = c[1] * 2.0;
+const vec2 e = vec2(c[0], d);
+const float g = e.y;
+float h[int(g)];
+void main() { h[3] = 1.0; }
+### const struct array | frag | ok
+struct S { int a[2]; vec2 b; };
+const S s = S(int[2](3, 4), vec2(1.0));
+float x[s.a[1]];
+void main() { x[3] = 1.0; }
+### const struct array oob | frag | 5:IndexOutOfRange
+struct S { int a[2]; vec2 b; };
+const S s = S(int[2](3, 4), vec2(1.0));
+float x[s.a[1]];
+void main() { x[4] = 1.0; }
+### const mat | frag | ok
+const mat2 m = mat2(1.0, 2.0, 3.0, 4.0);
+float x[int(m[1][0])];
+float y[int(m[1].y)];
+float z[int(mat3(m)[2][2]) + int(mat2(5.0)[1][1]) + int(mat2(5.0)[0][1])];
+void main() { x[2] = 1.0; y[3] = 1.0; z[5] = 1.0; }
+### const mat oob | frag | 4:IndexOutOfRange
+const mat2 m = mat2(1.0, 2.0, 3.0, 4.0);
+float x[int(m[1][0])];
+void main() { x[3] = 1.0; }
+### const ternary | frag | ok
+const int a = true ? 3 : 4;
+const int b = false ? 3 : 4;
+float x[a]; float y[b];
+void main() { x[2] = 1.0; y[3] = 1.0; }
+### const shift etc | frag | ok
+float x[(1 << 3) | 1];
+float y[17 % 5];
+float z[-(-3)];
+float w[~(-4)];
+float v[int(true) + int(2.9) + int(3u)];
+float u[uint(7)];
+void main() { x[8] = 1.0; y[1] = 1.0; z[2] = 1.0; w[2] = 1.0; v[5] = 1.0; u[6] = 1.0; }
+### const division by zero | frag | ok
+float x[1 / 0];
+void main() {}
+### const float size | frag | ok
+float x[int(1.5 + 1.5)];
+void main() { x[2] = 1.0; }
+### const bool ops | frag | ok
+const bool a = (1 < 2) && !(2 >= 3) || (1 == 2) ^^ true;
+float x[a ? 2 : 5];
+void main() { x[1] = 1.0; }
+### const vec eq | frag | ok
+const bool a = ivec2(1, 2) == ivec2(1, 2);
+float x[a ? 2 : 5];
+void main() { x[1] = 1.0; }
+### const vec arith | frag | ok
+const ivec3 v = ivec3(1, 2, 3) * 2 + ivec3(1);
+float x[v.z];
+void main() { x[6] = 1.0; }
+### const vec arith oob | frag | 4:IndexOutOfRange
+const ivec3 v = ivec3(1, 2, 3) * 2 + ivec3(1);
+float x[v.z];
+void main() { x[7] = 1.0; }
+### const length of ctor | frag | ok
+float x[float[3](1.0, 2.0, 3.0).length()];
+float y[vec4(1.0).length()];
+float z[mat3x2(1.0).length()];
+void main() { x[2] = 1.0; y[3] = 1.0; z[2] = 1.0; }
+### const builtin min max clamp abs | frag | ok
+float a[min(3, 7)]; float b[max(3, 7)]; float c[clamp(9, 1, 4)]; float d[abs(-6)]; float e[int(max(2.5, 1.0) * 2.0)];
+void main() { a[2] = 1.0; b[6] = 1.0; c[3] = 1.0; d[5] = 1.0; e[4] = 1.0; }
+### const builtin oob | frag | 3:IndexOutOfRange
+float a[min(3, 7)];
+void main() { a[3] = 1.0; }
+### const builtin other | frag | 4:ArraySizeNotConstant, 4:ArraySizeNotConstant, 5:IndexOutOfRange, 5:IndexOutOfRange
+float a[int(floor(3.7))]; float b[int(ceil(3.2))]; float c[int(sqrt(16.0))]; float d[int(pow(2.0, 3.0))]; float e[int(length(vec2(3.0, 4.0)))]; float f[int(dot(vec2(1.0, 2.0), vec2(3.0, 4.0)))];
+float g[int(round(2.5))]; float h[int(sign(-2.0)) + 2]; float i[int(mod(7.0, 4.0))]; float j[int(mix(2.0, 4.0, 0.5))]; float k[int(step(1.0, 2.0)) + 1]; float l[int(fract(1.5) * 4.0)];
+float m[bitCount(7)]; float n[findMSB(8)]; float o[int(trunc(2.9))]; float p[int(exp2(3.0))]; float q[int(log2(8.0))];
+void main() { a[2] = 1.0; b[3] = 1.0; c[3] = 1.0; d[7] = 1.0; e[4] = 1.0; f[10] = 1.0; g[1] = 1.0; h[0] = 1.0; i[2] = 1.0; j[2] = 1.0; k[1] = 1.0; l[1] = 1.0; m[2] = 1.0; n[2] = 1.0; o[1] = 1.0; p[7] = 1.0; q[2] = 1.0; }
+### const user struct compare | frag | ok
+struct S { int a; };
+const bool b = S(1) == S(1);
+float x[b ? 2 : 3];
+void main() { x[1] = 1.0; }
+### array size uint big | frag | 2:ArraySizeNotPositive
+float x[4294967295u];
+void main() {}
+### array size const index var of const array | frag | ok
+const int sizes[3] = int[3](2, 3, 4);
+float x[sizes[2]];
+void main() { x[3] = 1.0; }
+### global non const array size from global | frag | 3:ArraySizeNotConstant
+int n = 3;
+float x[n];
+void main() {}
+### uniform array size | frag | 3:ArraySizeNotConstant
+layout(binding=0) uniform U { int n; };
+void main() { float x[n]; }
+### case label const expr | frag | ok
+const int k = 2;
+void main() { int a = 1; switch (a) { case k + 1: break; case k * 2: break; case 3 + 1 - 4: break; } }
+### case label duplicate expr | frag | 3:DuplicateCaseLabel
+const int k = 2;
+void main() { int a = 1; switch (a) { case k + 1: break; case 3: break; } }
+### case float const | frag | ok
+void main() { int a = 1; switch (a) { case int(1.0): break; } }
+### nested switch labels | frag | ok
+void main() { int a = 1; switch (a) { case 1: switch (a) { case 1: break; } break; } }
+### switch in loop break continue | frag | ok
+void main() { for (int i = 0; i < 3; ++i) { switch (i) { case 0: continue; default: break; } } }
+### case in if in switch | frag | 2:CaseOutsideSwitch
+void main() { int a = 1; switch (a) { case 0: if (a == 1) { case 1: a = 2; } } }
+### case after nested loop | frag | ok
+void main() { int a = 1; switch (a) { case 0: for (;;) { break; } case 1: break; } }
+### default only | frag | ok
+void main() { int a = 1; switch (a) { default: a = 2; } }
+### empty switch | frag | ok
+void main() { int a = 1; switch (a) { } }
+### do while scope | frag | 2:UndeclaredIdentifier
+void main() { do { int a = 1; } while (a == 1); }
+### do while body var shadow | frag | ok
+void main() { int a = 0; do { int a = 1; } while (a == 0); }
+### for init expr | frag | ok
+void main() { int i; for (i = 0; i < 3; i++) {} for (; i < 5;) { i++; } }
+### for cond decl | frag | ok
+void main() { for (int i = 0; bool b = i < 3; ++i) { } }
+### for body single decl | frag | ok
+void main() { for (int i = 0; i < 3; ++i) int j = i; }
+### while body shadows nothing | frag | ok
+void main() { int n = 2; while (n > 0) { int n2 = n; --n; } }
+### if decl body | frag | ok
+void main() { if (true) int a = 1; else int a = 2; }
+### return in void main expr void | frag | 3:VoidReturnWithValue
+void f() {}
+void main() { return f(); }
+### return array | frag | 3:ReturnTypeMismatch
+float[2] f() { float a[2]; return a; }
+float[2] g() { float a[3]; return a; }
+void main() {}
+### return struct conv | frag | 4:ReturnTypeMismatch
+struct S { float a; };
+struct T { float a; };
+S f() { return T(1.0); }
+void main() {}
+### return vec conv | frag | 4:ReturnTypeMismatch
+vec2 f() { return ivec2(1); }
+dvec2 g() { return vec2(1.0); }
+ivec2 h() { return uvec2(1); }
+void main() {}
+### expr statement types | frag | ok
+void main() { 1; 1.0; true; vec2(1.0); 1 + 2; }
+### assign in condition | frag | 2:ConditionNotBool
+void main() { bool b; if (b = true) {} int i; if (i = 1) {} }
+### chained assign | frag | ok
+void main() { float a; float b; a = b = 1.0; int i; a = i = 1; }
+### chained assign bad | frag | 2:CannotConvert
+void main() { float a; int i; i = a = 1.0; }
+### assign struct array | frag | ok
+struct S { float a[2]; };
+void main() { S s; S t; s = t; s.a = t.a; s.a[1] = 1.0; }
+### assign array diff size | frag | 2:CannotConvert
+void main() { float a[2]; float b[3]; a = b; }
+### assign array of arrays | frag | 2:CannotConvert
+void main() { float a[2][3]; float b[2][3]; float c[3][2]; a = b; a[0] = b[1]; a = c; }
+### compare array of arrays | frag | ok
+void main() { float a[2][3]; float b[2][3]; bool c = a == b; bool d = a[0] != b[1]; }
+### compare matrices sizes | frag | 2:InvalidOperands
+void main() { bool a = mat2(1.0) == mat3(1.0); }
+### compare mixed vec | frag | 2:InvalidOperands
+void main() { bool a = vec2(1.0) == ivec2(1); bool b = uvec2(1) != ivec2(1); bool c = dvec2(1.0) == vec2(1.0); bool d = bvec2(true) == ivec2(1); }
+### ternary struct array | frag | ok
+struct S { float a; };
+void main() { S s; S t; S u = true ? s : t; float a[2]; float b[2]; float c[2] = true ? a : b; }
+### ternary array sizes | frag | 2:InvalidOperands
+void main() { float a[2]; float b[3]; bool c = (true ? a : b)[0] > 0.0; }
+### ternary void | frag | ok
+void f() {}
+void main() { true ? f() : f(); }
+### ternary mixed vec | frag | ok
+void main() { vec2 a = true ? vec2(1.0) : ivec2(1); dvec2 b = true ? vec2(1.0) : dvec2(1.0); }
+### ternary nested | frag | ok
+void main() { float a = true ? false ? 1.0 : 2.0 : 3.0; int b = true ? 1 : false ? 2 : 3; }
+### comma types | frag | ok
+void main() { int a; float b = (a = 1, 2.0, 3.0); int c = (1, 2); }
+### comma const array size | frag | 2:ArraySizeNotConstant
+void main() { float a[(1, 2)]; }
+### unary on uint | frag | ok
+void main() { uint a = -1u; uint b = ~1u; uint c = +1u; a++; --a; }
+### unary on double mat | frag | ok
+void main() { dmat2 a = -dmat2(1.0); a++; dvec2 b = -dvec2(1.0); }
+### not on bvec builtin | frag | ok
+void main() { bvec2 a = bvec2(true); bool b = !a.x; }
+### bitwise mixed sign | frag | 2:CannotConvert
+void main() { uint a = 1u & 1; int b = 1 | 2; uint c = 1 ^ 1u; ivec2 d = ivec2(1) & uvec2(1); }
+### bitwise mixed vec to int vec | frag | ok
+void main() { uvec2 d = ivec2(1) & uvec2(1); uvec2 e = uvec2(1) | 1; uvec2 f = 1 | uvec2(1); }
+### shift mixed | frag | ok
+void main() { uint a = 1u << 1; int b = 1 << 1u; uint c = 1 << 1u; }
+### shift vec by vec diff | frag | 2:InvalidOperands
+void main() { ivec2 a = ivec2(1) << ivec3(1); }
+### shift assign vec | frag | 2:InvalidOperands
+void main() { ivec2 a = ivec2(1); a <<= ivec2(1); a >>= 1; a <<= uvec2(1); int b = 1; b <<= ivec2(1); }
+### mod vec scalar | frag | ok
+void main() { ivec2 a = ivec2(5) % 2; ivec2 b = 5 % ivec2(2); uvec2 c = uvec2(5) % 2; uvec2 d = ivec2(5) % uvec2(2); }
+### mod mat | frag | 2:InvalidOperands
+void main() { mat2 a = mat2(1.0) % mat2(1.0); }
+### div mat | frag | ok
+void main() { mat2 a = mat2(1.0) / mat2(2.0); mat2 b = 1.0 / mat2(2.0); mat2 c = mat2(1.0) / 2.0; mat2x3 d = mat2x3(1.0) + mat2x3(1.0); mat2x3 e = mat2x3(1.0) - 1.0; }
+### mul mat shapes more | frag | ok
+void main() { mat4x2 a = mat3x2(1.0) * mat4x3(1.0); vec4 b = vec2(1.0) * mat4x2(1.0); vec2 c = mat4x2(1.0) * vec4(1.0); mat2 d = mat3x2(1.0) * mat2x3(1.0); }
+### mul int vec by mat | frag | ok
+void main() { vec2 a = ivec2(1) * mat2(1.0); mat2 b = 2 * mat2(1.0); dmat2 c = mat2(1.0) * dmat2(1.0); dvec2 d = dmat2(1.0) * vec2(1.0); }
+### mul vec by vec diff | frag | 2:InvalidOperands
+void main() { vec2 a = vec2(1.0) * vec3(1.0); }
+### mul assign mat vec | frag | 2:InvalidOperands
+void main() { mat2 m = mat2(1.0); m *= vec2(1.0); }
+### mul assign vec mat nonsquare | frag | 2:InvalidOperands
+void main() { vec2 v = vec2(1.0); v *= mat2(1.0); vec3 w = vec3(1.0); w *= mat3x2(1.0); }
+### add assign vec scalar types | frag | 2:InvalidOperands
+void main() { vec2 v = vec2(1.0); v += 1; v -= 1u; ivec2 i = ivec2(1); i += 1u; }
+### add assign double from float | frag | 2:InvalidOperands
+void main() { double d = 1.0; d += 1.0; d *= 2; float f = 1.0; f += 1.0lf; }
+### uint assign from int expr | frag | 2:InvalidOperands
+void main() { uint u = 1u; u += 1; u = u + 1; int i = 1; i += 1u; }
+### int from uint expr | frag | 2:CannotConvert
+void main() { int i = 1 + 1u; }
+### bool ops with vec compare | frag | ok
+void main() { bool a = all(lessThan(vec2(1.0), vec2(2.0))) && any(equal(ivec2(1), ivec2(2))); }
+### precedence relational chain | frag | 2:InvalidOperands
+void main() { bool a = 1 < 2 == true; bool b = 1 < 2 < 3; }
+### struct member is array length | frag | ok
+struct S { float a[3]; };
+void main() { S s; int n = s.a.length(); float b[s.a.length()]; b[2] = 1.0; }
+### struct in struct ctor conv fail | frag | 4:InvalidConstructor
+struct I { ivec2 v; };
+struct S { I i; };
+void main() { S s = S(I(vec2(1.0))); }
+### struct ctor array member size | frag | 3:InvalidConstructor
+struct S { float a[2]; };
+void main() { S s = S(float[3](1.0, 2.0, 3.0)); }
+### struct ctor from struct same | frag | 3:InvalidConstructor
+struct S { float a; };
+void main() { S s = S(1.0); S t = S(s); }
+### struct single member ctor from struct | frag | ok
+struct I { float a; };
+struct S { I i; };
+void main() { I i = I(1.0); S s = S(i); }
+### array ctor nested unsized | frag | ok
+void main() { float a[][2] = float[][2](float[2](1.0, 2.0), float[2](3.0, 4.0)); float b[2][2] = float[][](float[2](1.0, 2.0), float[2](3.0, 4.0)); }
+### array ctor of structs conv | frag | ok
+struct S { float a; };
+void main() { S a[2] = S[2](S(1.0), S(2)); S b[] = S[](S(1.0)); }
+### array ctor elem vec size | frag | 2:InvalidConstructor
+void main() { vec2 a[2] = vec2[2](vec2(1.0), vec3(1.0)); }
+### array ctor zero args | frag | 2:InvalidConstructor
+void main() { float a[] = float[](); }
+### array ctor from array | frag | 2:InvalidConstructor
+void main() { float a[2] = float[2](1.0, 2.0); float b[2] = float[2](a); }
+### vec ctor from bool vec | frag | ok
+void main() { vec2 a = vec2(bvec2(true)); ivec3 b = ivec3(bvec3(false)); bvec2 c = bvec2(vec2(1.0)); uvec4 d = uvec4(ivec2(1), vec2(1.0)); }
+### vec ctor from mat partial | frag | ok
+void main() { vec3 a = vec3(mat2(1.0)); vec2 b = vec2(mat3(1.0)); }
+### vec ctor mat then more | frag | 2:InvalidConstructor
+void main() { vec4 a = vec4(mat2(1.0), 1.0); }
+### vec ctor scalar then mat | frag | ok
+void main() { vec4 a = vec4(1.0, mat2(1.0)); }
+### mat ctor from vec and scalars | frag | ok
+void main() { mat2 a = mat2(vec3(1.0), 1.0); mat3 b = mat3(vec2(1.0), vec2(1.0), vec2(1.0), vec3(1.0)); mat2x3 c = mat2x3(1.0, vec2(1.0), vec3(1.0)); }
+### mat ctor from int vecs | frag | ok
+void main() { mat2 a = mat2(ivec2(1), ivec2(2)); dmat3 b = dmat3(1); mat4 c = mat4(dmat2(1.0)); }
+### mat ctor bool | frag | ok
+void main() { mat2 a = mat2(true); }
+### mat ctor too many vec | frag | ok
+void main() { mat2 a = mat2(vec3(1.0), vec3(1.0)); }
+### mat ctor mat plus scalar first | frag | 2:InvalidConstructor
+void main() { mat3 a = mat3(1.0, mat2(1.0)); }
+### scalar ctor from struct | frag | 3:InvalidConstructor
+struct S { float a; };
+void main() { float a = float(S(1.0)); }
+### scalar ctor from array | frag | 2:InvalidConstructor
+void main() { float a = float(float[1](1.0)); }
+### ctor of sampler from int | frag | 2:InvalidConstructor, 2:OpaqueNotAllowed
+void main() { sampler2D s = sampler2D(1); }
+### bool ctor from vec | frag | ok
+void main() { bool a = bool(vec2(1.0)); int b = int(bvec3(true)); }
+### field on call result | frag | 4:NotAnLValue
+struct S { vec2 v; };
+S f() { return S(vec2(1.0)); }
+void main() { float a = f().v.x; f().v.x = 1.0; }
+### index on call result lvalue | frag | 3:NotAnLValue
+float[2] f() { return float[2](1.0, 2.0); }
+void main() { f()[0] = 1.0; }
+### swizzle on ctor lvalue | frag | 2:NotAnLValue
+void main() { vec2(1.0).x = 1.0; }
+### swizzle lvalue out arg nested | frag | ok
+void f(out float a) { a = 1.0; }
+void main() { vec4 v; f(v.x); f(v.xy.y); f(v[1]); mat2 m; f(m[1][0]); f(m[1].y); }
+### increment swizzle dup | frag | 2:NotAnLValue
+void main() { vec4 v = vec4(1.0); v.xx++; }
+### struct member of const | frag | 3:NotAnLValue
+struct S { float a; };
+void main() { const S s = S(1.0); s.a = 2.0; }
+### uniform sampler array elem assign | frag | 3:NotAnLValue
+layout(binding=0) uniform sampler2D s[2];
+void main() { s[0] = s[1]; }
+### out param sampler arg | frag | 4:NoMatchingFunction
+layout(binding=0) uniform sampler2D s;
+void f(sampler2D t) {}
+void main() { f(s); f(1); }
+### in block member write | frag | 3:NotAnLValue
+layout(location=0) in B { vec4 a; } b;
+void main() { b.a = vec4(1.0); }
+### out block member write vert | vert | ok
+layout(location=0) out B { vec4 a; } b;
+void main() { b.a = vec4(1.0); b.a.x += 1.0; gl_Position = b.a; }
+### buffer block array elem write | frag | ok
+layout(binding=0) buffer B { vec4 a[4]; } b[2];
+void main() { b[1].a[2] = vec4(1.0); b[0].a[1].x = 1.0; }
+### readonly block array | frag | 3:NotAnLValue
+layout(binding=0) readonly buffer B { vec4 a[4]; } b[2];
+void main() { b[1].a[2] = vec4(1.0); }
+### writeonly buffer read | frag | 3:WriteOnlyRead
+layout(binding=0) writeonly buffer B { vec4 a; } b;
+void main() { vec4 x = b.a; }
+### writeonly buffer write | frag | ok
+layout(binding=0) writeonly buffer B { vec4 a; } b;
+void main() { b.a = vec4(1.0); }
+### writeonly member read | frag | 3:WriteOnlyRead
+layout(binding=0) buffer B { writeonly vec4 a; vec4 c; } b;
+void main() { vec4 x = b.a + b.c; }
+### readonly writeonly member | frag | ok
+layout(binding=0) buffer B { readonly writeonly vec4 a; } b;
+void main() { int n = b.a.length(); }
+### uniform block readonly | frag | ok
+layout(binding=0) readonly uniform B { vec4 a; } b;
+void main() {}
+### uniform block member memory | frag | ok
+layout(binding=0) uniform B { readonly vec4 a; } b;
+void main() {}
+### buffer runtime array of struct | frag | ok
+struct S { vec4 a; };
+layout(binding=0) buffer B { int n; S s[]; } b;
+void main() { b.s[b.n].a = vec4(1.0); int l = b.s.length(); }
+### buffer runtime array not last | frag | ok
+layout(binding=0) buffer B { float a[]; int n; } b;
+void main() {}
+### buffer runtime array length const use | frag | 3:ArraySizeNotConstant
+layout(binding=0) buffer B { float a[]; } b;
+void main() { float x[b.a.length()]; }
+### buffer runtime array whole assign | frag | 3:CannotConvert
+layout(binding=0) buffer B { float a[]; } b;
+void main() { float x[2]; x = b.a; }
+### buffer runtime array as arg | frag | 4:NoMatchingFunction
+layout(binding=0) buffer B { float a[]; } b;
+void f(float x[2]) {}
+void main() { f(b.a); }
+### block array unsized | frag | ok
+layout(binding=0) uniform B { float a; } b[];
+void main() { float x = b[1].a; }
+### block array non const index uniform | frag | ok
+layout(binding=0) uniform B { float a; } b[2];
+layout(location=0) flat in int i;
+void main() { float x = b[i].a; }
+### block array const oob | frag | 3:IndexOutOfRange
+layout(binding=0) uniform B { float a; } b[2];
+void main() { float x = b[2].a; }
+### block member name clash across blocks | frag | 3:Redeclaration
+layout(binding=0) uniform A { float x; };
+layout(binding=1) uniform B { float x; };
+void main() {}
+### block member same as instance other | frag | 3:Redeclaration
+layout(binding=0) uniform A { float x; } a;
+layout(binding=1) uniform B { float a; };
+void main() {}
+### block dup member | frag | 2:InvalidStructMember, 2:Redeclaration
+layout(binding=0) uniform A { float x; int x; };
+void main() {}
+### block void member | frag | 2:InvalidStructMember
+layout(binding=0) uniform A { void x; };
+void main() {}
+### block of block-typed struct sampler | frag | 3:InvalidStructMember
+struct S { sampler2D s; };
+layout(binding=0) uniform A { S s; };
+void main() {}
+### block bool member | frag | ok
+layout(binding=0) uniform A { bool b; bvec2 c; };
+void main() { if (b && c.x) {} }
+### in block with struct | frag | ok
+struct S { vec4 a; };
+layout(location=0) in B { S s; vec2 v[2]; } b;
+void main() { vec4 x = b.s.a + b.v[1].xyxy; }
+### specialization constant expressions | frag | ok
+layout(constant_id = 0) const float sf = 1.5;
+layout(constant_id = 1) const int si = 2;
+layout(constant_id = 2) const bool sb = true;
+layout(constant_id = 3) const double sd = 2.5;
+const float a4 = float(sd);
+const vec2 a5 = vec2(sf);
+const vec2 a6 = vec2(sf, 1.0);
+const ivec2 a9 = ivec2(si, 1);
+const float a13 = sb ? 1.0 : 2.0;
+const float a14 = sb ? sf : 2.0;
+const double a22 = sf;
+const uint a23 = si;
+const ivec2 a26 = ivec2(si) * 2;
+const float a27 = vec2(sf).x;
+const int a30 = si > 1 ? si : 3;
+const bvec2 a31 = bvec2(sb, false);
+const bool a32 = !sb && sb || sb ^^ true;
+const bool a33 = si == 2;
+const int a37 = int(sb);
+float sized[si + 2];
+void main() { sized[100] = 1.0; }
+### specialization constant float arithmetic is not constant | frag | 3:NonConstantInitializer
+layout(constant_id = 0) const float sf = 1.5;
+const float a1 = sf * 2.0;
+void main() {}
+### specialization constant negation of a float is not constant | frag | 3:NonConstantInitializer
+layout(constant_id = 0) const float sf = 1.5;
+const float a2 = -sf;
+void main() {}
+### specialization constant int to float is not constant | frag | 3:NonConstantInitializer, 4:NonConstantInitializer, 5:NonConstantInitializer
+layout(constant_id = 1) const int si = 2;
+const float a3 = float(si);
+const float a24 = si;
+const vec2 a7 = vec2(si);
+void main() {}
+### specialization constant float to int is not constant | frag | 3:NonConstantInitializer, 4:NonConstantInitializer, 5:NonConstantInitializer
+layout(constant_id = 0) const float sf = 1.5;
+const int a8 = int(sf);
+const bool a11 = sf < 2.0;
+const bool a12 = bool(sf);
+void main() {}
+### specialization constant in a built-in call is not constant | frag | 3:NonConstantInitializer
+layout(constant_id = 1) const int si = 2;
+const int a15 = max(si, 3);
+void main() {}
+### specialization constant aggregates are not constant | frag | 5:NonConstantInitializer, 6:NonConstantInitializer, 7:NonConstantInitializer
+layout(constant_id = 1) const int si = 2;
+layout(constant_id = 0) const float sf = 1.5;
+struct S { int x; };
+const S a18 = S(si);
+const mat2 a19 = mat2(sf);
+const int a17 = int[2](si, 3)[0];
+void main() {}
+### folded built-ins are constant | frag | ok
+const float a = sin(1.0) + cos(1.0) + exp(1.0) + log(2.0) + sqrt(2.0) + pow(2.0, 0.5) + radians(90.0) + atan(1.0, 2.0);
+const vec3 b = normalize(vec3(1.0)) + cross(vec3(1.0), vec3(2.0)) + reflect(vec3(1.0), vec3(0.0, 1.0, 0.0));
+const float c = length(b) + dot(b, b) + distance(b, b) + mix(1.0, 2.0, 0.5) + clamp(1.0, 0.0, 2.0) + smoothstep(0.0, 1.0, 0.5);
+const bvec2 d = lessThan(vec2(1.0), vec2(2.0));
+const bool e = any(d) && all(d) && isnan(1.0);
+const int f = floatBitsToInt(1.0);
+const mat2 h = matrixCompMult(mat2(1.0), mat2(2.0)) + outerProduct(vec2(1.0), vec2(2.0));
+void main() {}
+### bit functions are not folded | frag | 2:NonConstantInitializer
+const int a = bitCount(7);
+void main() {}
+### findMSB is not folded | frag | 2:NonConstantInitializer
+const int a = findMSB(8);
+void main() {}
+### matrix functions are not folded | frag | 2:NonConstantInitializer
+const float a = determinant(mat2(1.0));
+void main() {}
+### inverse is not folded | frag | 2:NonConstantInitializer
+const mat2 a = inverse(mat2(1.0));
+void main() {}
+### transpose is not folded | frag | 2:NonConstantInitializer
+const mat2 a = transpose(mat2(1.0));
+void main() {}
+### fma is not folded | frag | 2:NonConstantInitializer
+const float a = fma(1.0, 2.0, 3.0);
+void main() {}
+### pack 4x8 is not folded | frag | 2:NonConstantInitializer
+const uint a = packUnorm4x8(vec4(1.0));
+void main() {}
+### bitfieldExtract not folded | frag | 2:NonConstantInitializer
+const int a = bitfieldExtract(7, 0, 2);
+void main() {}
+### ldexp not folded | frag | 2:NonConstantInitializer
+const float a = ldexp(1.0, 2);
+void main() {}
+### array size from unfolded builtin | frag | 2:ArraySizeNotConstant
+float a[bitCount(7)];
+void main() {}
+### derivative of a constant folds | frag | ok
+const float a = dFdx(1.0);
+void main() {}
+### not folds | frag | ok
+const bvec2 a = not(bvec2(true));
+void main() {}
+### pack 2x16 is not folded | frag | 2:NonConstantInitializer
+const uint g = packUnorm2x16(vec2(1.0));
+void main() {}
+### multiline binary operator at line end | frag | 3:InvalidOperands
+void main() {
+    bool a = true +
+        false;
+}
+### multiline binary operator at line start | frag | 4:InvalidOperands
+void main() {
+    bool a = true
+        + false;
+}
+### multiline assignment operator | frag | 5:CannotConvert
+void main() {
+    int a;
+    a
+      =
+        1.5;
+}
+### multiline ternary | frag | 4:ConditionNotBool
+void main() {
+    float a = 1
+        ? 2.0
+        : 3.0;
+}
+### multiline initializer conversion | frag | 3:CannotConvert
+void main() {
+    int a =
+        1.5;
+}
+### multiline initializer second declarator | frag | 4:CannotConvert
+void main() {
+    int a = 1,
+        b =
+            2.5;
+}
+### multiline initializer list | frag | 4:CannotConvert
+void main() {
+    float a[2] = {
+        1.0,
+        true
+    };
+}
+### multiline nested initializer list | frag | 4:CannotConvert
+struct S { float a; ivec2 b; };
+void main() {
+    S s[2] = {
+        { 1.0, { 1, 2 } },
+        { 2.0, { 3, 4.5 } }
+    };
+}
+### multiline if condition | frag | 3:ConditionNotBool
+void main() {
+    if (
+        1
+    ) {}
+}
+### multiline while condition | frag | 4:ConditionNotBool
+void main() {
+    while (
+        1
+    ) {}
+}
+### multiline do while | frag | 7:ConditionNotBool
+void main() {
+    do {
+    } while (
+        1
+    )
+    ;
+}
+### multiline switch | frag | 3:SwitchSelectorNotInteger
+void main() {
+    switch (
+        1.0
+    ) {
+    case 1:
+        break;
+    }
+}
+### multiline return | frag | 3:ReturnTypeMismatch
+int f() {
+    return
+        1.5;
+}
+void main() {}
+### multiline call | frag | 6:NoMatchingFunction
+void f(int a) {}
+void main() {
+    f(
+        1.5
+    );
+}
+### multiline subscript | frag | 6:IndexNotInteger
+void main() {
+    float a[2];
+    a
+        [
+            1.5
+        ] = 1.0;
+}
+### multiline index out of range | frag | 5:IndexOutOfRange
+void main() {
+    float a[2];
+    float b = a
+        [2];
+}
+### multiline postfix increment | frag | 5:NotAnLValue
+void main() {
+    const int a = 1;
+    a
+        ++;
+}
+### multiline field | frag | 5:InvalidSwizzle
+void main() {
+    vec2 a;
+    float b = a
+        .z;
+}
+### multiline out argument | frag | 4:NotAnLValue
+void f(int a, out float b) { b = 1.0; }
+void main() {
+    f(1,
+        2.0);
+}
+### multiline compound assignment | frag | 5:InvalidOperands
+void main() {
+    int a = 1;
+    a
+        +=
+        1.5;
+}
+### multiline array size | frag | 4:ArraySizeNotConstant
+void main() {
+    float a[
+        1.5
+    ];
+}
+### multiline function header | frag | 4:FunctionWithoutReturn
+float f(
+    float a
+)
+{
+}
+void main() {}
+### multiline const global | frag | 4:NonConstantInitializer
+float g = 1.0;
+const float
+    a
+    =
+    g;
+void main() {}
+### comment before operator | frag | 4:InvalidOperands
+void main() {
+    bool a = true /* note */
+        /* more */ + false;
+}
+### block name as variable | frag | 3:UndeclaredIdentifier
+layout(binding=0) uniform Block { float a; } inst;
+void main() { float x = Block.a; }
+### block name then variable | frag | 3:Redeclaration
+layout(binding=0) uniform Block { float a; } inst;
+float Block;
+void main() {}
+### block name then struct | frag | 3:Redeclaration
+layout(binding=0) uniform Block { float a; } inst;
+struct Block { float b; };
+void main() {}
+### block name then function | frag | 3:Redeclaration
+layout(binding=0) uniform Block { float a; } inst;
+void Block() {}
+void main() {}
+### block instance same as block name | frag | 2:Redeclaration
+layout(binding=0) uniform Block { float a; } Block;
+void main() {}
+### block instance same as other block name | frag | 3:Redeclaration
+layout(binding=0) uniform A { float a; } x;
+layout(binding=1) uniform B { float b; } A;
+void main() {}
+### block name local shadow | frag | ok
+layout(binding=0) uniform Block { float a; } inst;
+void main() { float Block = inst.a; Block += 1.0; }
+### block name reused other interface | frag | ok
+layout(binding=0) uniform Block { float a; } u;
+layout(binding=1) buffer Block { float b; } v;
+void main() {}
+### undeclared used twice | frag | 3:UndeclaredIdentifier
+void main() {
+    float a = nope;
+    float b = nope;
+}
+### undeclared in two functions | frag | 2:UndeclaredIdentifier, 3:UndeclaredIdentifier
+void f() { float a = nope; }
+void main() { float b = nope; }
+### function with missing body unreachable | frag | ok
+float helper(float a);
+float unused() { return helper(1.0); }
+void main() {}
+### function with missing body reachable indirectly | frag | 0:MissingFunctionBody
+float helper(float a);
+float used() { return helper(1.0); }
+void main() { float a = used(); }
+### function with missing body from global initializer | frag | 0:MissingFunctionBody
+float helper(float a);
+float g = helper(1.0);
+void main() {}
+### gl_PerVertex redeclared twice | vert | 3:InvalidBlock
+out gl_PerVertex { vec4 gl_Position; };
+out gl_PerVertex { vec4 gl_Position; };
+void main() { gl_Position = vec4(0.0); }
+### gl_PerVertex in with user name | geom | 4:InvalidBlock
+layout(points) in;
+layout(points, max_vertices = 1) out;
+in gl_PerVertex { vec4 gl_Position; } mine[];
+void main() {}
+### gl_PerVertex in fragment | frag | 2:InvalidBlock
+in gl_PerVertex { vec4 gl_Position; };
+void main() {}
+### gl_PerVertex in redeclared keeps out members | geom | ok
+layout(points) in;
+layout(points, max_vertices = 1) out;
+in gl_PerVertex { vec4 gl_Position; } gl_in[];
+void main() { gl_Position = gl_in[0].gl_Position; gl_PointSize = 1.0; EmitVertex(); }
+### gl_PerVertex in redeclared drops in member | geom | 5:NoSuchField
+layout(points) in;
+layout(points, max_vertices = 1) out;
+in gl_PerVertex { vec4 gl_Position; } gl_in[];
+void main() { gl_PointSize = gl_in[0].gl_PointSize; }
+### gl_PerVertex out sized | tesc | ok
+layout(vertices = 3) out;
+out gl_PerVertex { vec4 gl_Position; } gl_out[3];
+void main() { gl_out[gl_InvocationID].gl_Position = gl_in[gl_InvocationID].gl_Position; }
+### geometry input redeclared with wrong size | geom | 5:InvalidInterfaceArray, 5:Redeclaration
+layout(location = 0) in vec4 color[];
+layout(triangles) in;
+layout(triangle_strip, max_vertices = 3) out;
+layout(location = 0) in vec4 color[2];
+void main() {}
+### tess control parenthesized invocation id | tesc | ok
+layout(vertices = 3) out;
+layout(location = 0) out vec4 color[];
+void main() { color[(gl_InvocationID)] = vec4(1.0); }
+### unsized array of arrays initializer | frag | ok
+void main() {
+    vec4 a[][2] = vec4[][2](vec4[2](vec4(0.0), vec4(1.0)));
+    vec4 b[][] = vec4[][](vec4[2](vec4(0.0), vec4(1.0)), vec4[2](vec4(0.0), vec4(1.0)));
+    vec4 c[2][] = vec4[][](vec4[2](vec4(0.0), vec4(1.0)), vec4[2](vec4(0.0), vec4(1.0)));
+    b[1][1] = a[0][1] + c[1][0];
+}
+### unsized array of arrays initializer oob | frag | 4:IndexOutOfRange
+void main() {
+    vec4 b[][] = vec4[][](vec4[2](vec4(0.0), vec4(1.0)), vec4[2](vec4(0.0), vec4(1.0)));
+    b[1][2] = vec4(0.0);
+}

@@ -32,6 +32,7 @@ mod lexer;
 mod parser;
 mod printer;
 mod span;
+mod walk;
 
 #[cfg(test)]
 mod tests;
@@ -41,3 +42,4 @@ pub use error::{ParseError, ParseErrorKind};
 pub use parser::{parse, MAX_EXPRESSION_HEIGHT, MAX_NESTING_DEPTH};
 pub use printer::print;
 pub use span::{line_column, LineColumn, Span};
+pub use walk::expressions;
