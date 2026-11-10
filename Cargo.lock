@@ -585,6 +585,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "rglsl-pp"
+version = "0.1.0"
+
+[[package]]
 name = "rglsl-test"
 version = "0.1.0"
 dependencies = [
