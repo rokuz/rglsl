@@ -548,6 +548,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "rglsl-ast"
+version = "0.1.0"
+dependencies = [
+ "thiserror",
+]
+
+[[package]]
 name = "rglsl-cli"
 version = "0.1.0"
 dependencies = [
@@ -562,6 +569,13 @@ dependencies = [
 
 [[package]]
 name = "rglsl-fuzz"
+version = "0.1.0"
+dependencies = [
+ "rglsl-ast",
+]
+
+[[package]]
+name = "rglsl-libfuzzer"
 version = "0.1.0"
 dependencies = [
  "arbitrary",

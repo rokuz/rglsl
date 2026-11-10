@@ -1,0 +1,7 @@
+rglsl-fuzz
+
+This crate is a derivative work of GraphicsFuzz (https://github.com/google/graphicsfuzz),
+Copyright The GraphicsFuzz Project Authors, licensed under the Apache License, Version 2.0.
+
+The shaders under tests/data/450 are copied unchanged from GraphicsFuzz
+(shaders/src/main/glsl/samples/450) and keep their original license headers.

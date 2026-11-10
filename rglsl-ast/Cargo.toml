@@ -1,0 +1,19 @@
+[package]
+name = "rglsl-ast"
+version.workspace = true
+authors = ["rglsl developers"]
+edition.workspace = true
+rust-version.workspace = true
+description = "Syntax tree, parser and printer for Vulkan GLSL"
+repository.workspace = true
+keywords.workspace = true
+license.workspace = true
+
+[lib]
+name = "rglsl_ast"
+
+[dependencies]
+thiserror.workspace = true
+
+[lints]
+workspace = true

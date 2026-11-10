@@ -4,7 +4,9 @@ members = [
     "rglsl",
     "rglsl-types",
     "rglsl-test",
+    "rglsl-ast",
     "rglsl-cli",
+    "rglsl-fuzz",
     "rglsl/fuzz",
     "rglsl/xtask",
     "xtask",
@@ -31,6 +33,7 @@ authors = ["rglsl developers", "gfx-rs developers"]
 
 [workspace.dependencies]
 rglsl = { version = "0.1.0", path = "./rglsl" }
+rglsl-ast = { version = "0.1.0", path = "./rglsl-ast" }
 rglsl-test = { path = "./rglsl-test" }
 rglsl-types = { version = "0.1.0", path = "./rglsl-types" }
 

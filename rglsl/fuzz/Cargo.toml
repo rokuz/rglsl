@@ -1,5 +1,5 @@
 [package]
-name = "rglsl-fuzz"
+name = "rglsl-libfuzzer"
 version.workspace = true
 authors.workspace = true
 publish = false

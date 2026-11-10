@@ -1,0 +1,19 @@
+[package]
+name = "rglsl-fuzz"
+version = "0.1.0"
+authors = ["rglsl developers", "The GraphicsFuzz Project Authors"]
+edition.workspace = true
+rust-version.workspace = true
+description = "GLSL variant generator for metamorphic compiler testing, ported from GraphicsFuzz"
+repository.workspace = true
+license = "Apache-2.0"
+publish = false
+
+[lib]
+name = "rglsl_fuzz"
+
+[dependencies]
+rglsl-ast.workspace = true
+
+[lints]
+workspace = true
