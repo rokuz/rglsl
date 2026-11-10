@@ -30,6 +30,8 @@ pub(super) struct FunctionLowerer<'l, 'a> {
     pub variables: BTreeMap<SymbolId, Local>,
     pub specializing: bool,
     pub non_uniform: crate::NonUniformExpressions,
+    pub physical_bases: BTreeMap<Handle<Expression>, Handle<crate::Type>>,
+    pub argument_types: Vec<Handle<crate::Type>>,
 }
 
 fn ensure_returns(block: &mut Block, value: Option<Handle<Expression>>) {
@@ -75,6 +77,8 @@ impl<'l, 'a> FunctionLowerer<'l, 'a> {
             variables: BTreeMap::new(),
             specializing: false,
             non_uniform: crate::NonUniformExpressions::default(),
+            physical_bases: BTreeMap::new(),
+            argument_types: Vec::new(),
         }
     }
 
@@ -189,6 +193,22 @@ impl<'l, 'a> FunctionLowerer<'l, 'a> {
         ))
     }
 
+    pub(super) fn local_typed(
+        &mut self,
+        ty: Handle<crate::Type>,
+        name: Option<String>,
+        span: Span,
+    ) -> Handle<LocalVariable> {
+        self.locals.append(
+            LocalVariable {
+                name,
+                ty,
+                init: None,
+            },
+            span,
+        )
+    }
+
     pub(super) fn local_pointer(
         &mut self,
         local: Handle<LocalVariable>,
@@ -237,6 +257,14 @@ impl<'a> Lowerer<'a> {
     ) -> Result<Handle<crate::Type>> {
         let depth = symbol.is_some_and(|symbol| self.depth.contains(&symbol));
         let comparison = symbol.is_some_and(|symbol| self.comparison.contains(&symbol));
+        if let Some(qualifiers) = symbol
+            .and_then(|symbol| self.variable(symbol))
+            .map(|variable| &variable.qualifiers)
+        {
+            if ty.is_reference() {
+                return self.variable_ir_type(ty, qualifiers, span);
+            }
+        }
         self.ir_type_with(ty, depth, comparison, span)
     }
 
@@ -338,6 +366,7 @@ impl<'a> Lowerer<'a> {
             Vec::new()
         };
         let mut lowerer = FunctionLowerer::new(self);
+        lowerer.argument_types = arguments.iter().map(|argument| argument.ty).collect();
         for (((parameter, local), symbol), index) in function
             .parameters
             .iter()
@@ -355,7 +384,8 @@ impl<'a> Lowerer<'a> {
                         && (!parameter.qualifiers.constant || parameter.qualifiers.nonuniform)
                         && parameter.direction == Direction::In =>
                 {
-                    let variable = lowerer.local(&parameter.ty, parameter.name.clone(), at)?;
+                    let ty = lowerer.lw.parameter_type(&parameter.ty, Some(symbol), at)?;
+                    let variable = lowerer.local_typed(ty, parameter.name.clone(), at);
                     let pointer = lowerer.local_pointer(variable, at)?;
                     let value = lowerer.add(Expression::FunctionArgument(index), at)?;
                     lowerer.push(Statement::Store { pointer, value }, at);

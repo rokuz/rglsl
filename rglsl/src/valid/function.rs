@@ -426,24 +426,37 @@ impl super::Validator {
     ) -> Result<(), WithSpan<FunctionError>> {
         // The `pointer` operand must be a pointer to an atomic value.
         let pointer_inner = context.resolve_type_inner(pointer, &self.valid_expression_set)?;
-        let crate::TypeInner::Pointer {
-            base: pointer_base,
-            space: pointer_space,
-        } = *pointer_inner
-        else {
-            log::error!("Atomic operation on type {:?}", *pointer_inner);
-            return Err(AtomicError::InvalidPointer(pointer)
-                .with_span_handle(pointer, context.expressions)
-                .into_other());
-        };
-        let crate::TypeInner::Atomic(pointer_scalar) = context.types[pointer_base].inner else {
-            log::error!(
-                "Atomic pointer to type {:?}",
-                context.types[pointer_base].inner
-            );
-            return Err(AtomicError::InvalidPointer(pointer)
-                .with_span_handle(pointer, context.expressions)
-                .into_other());
+        let (pointer_scalar, pointer_space) = match *pointer_inner {
+            crate::TypeInner::Pointer { base, space } => match context.types[base].inner {
+                crate::TypeInner::Atomic(scalar) => (scalar, space),
+                crate::TypeInner::Scalar(
+                    scalar @ crate::Scalar {
+                        kind: crate::ScalarKind::Sint | crate::ScalarKind::Uint,
+                        width: 4 | 8,
+                    },
+                ) => (scalar, space),
+                ref other => {
+                    log::error!("Atomic pointer to type {other:?}");
+                    return Err(AtomicError::InvalidPointer(pointer)
+                        .with_span_handle(pointer, context.expressions)
+                        .into_other());
+                }
+            },
+            crate::TypeInner::ValuePointer {
+                size: None,
+                scalar:
+                    scalar @ crate::Scalar {
+                        kind: crate::ScalarKind::Sint | crate::ScalarKind::Uint,
+                        width: 4 | 8,
+                    },
+                space,
+            } => (scalar, space),
+            ref other => {
+                log::error!("Atomic operation on type {other:?}");
+                return Err(AtomicError::InvalidPointer(pointer)
+                    .with_span_handle(pointer, context.expressions)
+                    .into_other());
+            }
         };
 
         // The `value` operand must be a scalar of the same type as the atomic.
@@ -817,6 +830,8 @@ impl super::Validator {
                             | Ex::Math { .. }
                             | Ex::As { .. }
                             | Ex::ArrayLength(_)
+                            | Ex::PhysicalPointer { .. }
+                            | Ex::PhysicalAddress { .. }
                             | Ex::RayQueryGetIntersection { .. }
                             | Ex::RayQueryVertexPositions { .. }
                             | Ex::CooperativeLoad { .. }
@@ -1063,6 +1078,13 @@ impl super::Validator {
                             crate::Expression::LocalVariable(_)
                             | crate::Expression::GlobalVariable(_)
                             | crate::Expression::FunctionArgument(_) => break,
+                            _ if matches!(
+                                context.resolve_pointer_type(current).pointer_space(),
+                                Some(AddressSpace::PhysicalStorage { .. })
+                            ) =>
+                            {
+                                break
+                            }
                             _ => {
                                 return Err(FunctionError::InvalidStorePointer(current)
                                     .with_span_handle(pointer, context.expressions))
@@ -1838,7 +1860,12 @@ impl super::Validator {
 
         for (index, argument) in fun.arguments.iter().enumerate() {
             match module.types[argument.ty].inner.pointer_space() {
-                Some(crate::AddressSpace::Private | crate::AddressSpace::Function) | None => {}
+                Some(
+                    crate::AddressSpace::Private
+                    | crate::AddressSpace::Function
+                    | crate::AddressSpace::PhysicalStorage { .. },
+                )
+                | None => {}
                 Some(other) => {
                     return Err(FunctionError::InvalidArgumentPointerSpace {
                         index,

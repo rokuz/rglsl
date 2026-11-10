@@ -1,3 +1,4 @@
+mod atomic;
 mod builtins;
 mod call;
 mod constant;
@@ -6,6 +7,7 @@ mod function;
 mod globals;
 mod offset;
 mod prepass;
+mod reference;
 mod specialization;
 mod statement;
 mod types;
@@ -207,11 +209,7 @@ pub(super) enum GlobalRef {
     Override(Handle<crate::Override>),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Packing {
-    Std140,
-    Std430,
-}
+pub(super) use rglsl_sema::types::Packing;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub(super) struct BlockDefaults {
@@ -237,6 +235,9 @@ pub(super) struct Lowerer<'a> {
     pub errors: Vec<Error>,
     pub structs: BTreeMap<StructId, Handle<Type>>,
     pub relayout: BTreeMap<Handle<Type>, Handle<Type>>,
+    pub references: BTreeMap<(BlockId, crate::PointerQualifiers), Handle<Type>>,
+    pub references_in_progress: BTreeSet<BlockId>,
+    pub qualified_references: BTreeMap<Handle<Type>, Handle<Type>>,
     pub block_bools: BTreeSet<(BlockId, u32)>,
     pub globals: BTreeMap<SymbolId, GlobalRef>,
     pub functions: BTreeMap<FunctionId, Handle<crate::Function>>,
@@ -286,11 +287,17 @@ impl<'a> Lowerer<'a> {
             unit,
             analysis,
             options,
-            module: Module::default(),
+            module: Module {
+                vulkan_memory_model: analysis.vulkan_memory_model,
+                ..Module::default()
+            },
             layouter: Layouter::default(),
             errors: Vec::new(),
             structs: BTreeMap::new(),
             relayout: BTreeMap::new(),
+            references: BTreeMap::new(),
+            references_in_progress: BTreeSet::new(),
+            qualified_references: BTreeMap::new(),
             block_bools: BTreeSet::new(),
             globals: BTreeMap::new(),
             functions: BTreeMap::new(),

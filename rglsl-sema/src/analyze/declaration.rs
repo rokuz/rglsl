@@ -83,7 +83,10 @@ impl Analyzer<'_> {
                 qualifier,
                 identifiers,
             } => {
-                self.qualifiers(qualifier);
+                let qualifiers = self.qualifiers(qualifier);
+                if self.forward_references(qualifier, &qualifiers, identifiers) {
+                    return;
+                }
                 for identifier in identifiers {
                     if self.lookup(&identifier.node).is_none() {
                         self.error(
@@ -98,6 +101,19 @@ impl Analyzer<'_> {
 
     fn global_qualifier(&mut self, qualifier: &Spanned<TypeQualifier>) {
         let qualifiers = self.qualifiers(qualifier);
+        if self.buffer_reference_layout(&qualifiers) {
+            if qualifiers.storage != Storage::Buffer {
+                self.error(
+                    qualifier.span,
+                    super::reference::invalid("can only be used with buffer"),
+                );
+            }
+            self.error(
+                qualifier.span,
+                super::reference::invalid("cannot declare a default, can only be used on a block"),
+            );
+        }
+        self.record_buffer_defaults(&qualifiers);
         if qualifiers.storage == Storage::Out {
             if let Some(vertices) = qualifiers
                 .layout_entry("vertices")
@@ -285,6 +301,34 @@ impl Analyzer<'_> {
                     StorageQualifier::Patch => result.patch = true,
                     StorageQualifier::Sample => result.sample = true,
                     StorageQualifier::Coherent => result.coherent = true,
+                    StorageQualifier::DeviceCoherent => {
+                        self.require_scope_extension(single.span, storage.keyword());
+                        result.device_coherent = true;
+                    }
+                    StorageQualifier::QueueFamilyCoherent => {
+                        self.require_scope_extension(single.span, storage.keyword());
+                        result.queue_family_coherent = true;
+                    }
+                    StorageQualifier::WorkgroupCoherent => {
+                        self.require_scope_extension(single.span, storage.keyword());
+                        result.workgroup_coherent = true;
+                    }
+                    StorageQualifier::SubgroupCoherent => {
+                        self.require_scope_extension(single.span, storage.keyword());
+                        result.subgroup_coherent = true;
+                    }
+                    StorageQualifier::NonPrivate => {
+                        self.require_scope_extension(single.span, storage.keyword());
+                        result.nonprivate = true;
+                    }
+                    StorageQualifier::ShaderCallCoherent => {
+                        self.require_extension(
+                            single.span,
+                            "GL_EXT_ray_tracing",
+                            "shadercallcoherent",
+                        );
+                        result.shader_call_coherent = true;
+                    }
                     StorageQualifier::Volatile => result.volatile = true,
                     StorageQualifier::Restrict => result.restrict = true,
                     StorageQualifier::Readonly => result.readonly = true,
@@ -471,6 +515,7 @@ impl Analyzer<'_> {
             TypeSpecifierNonArray::TypeName(name) => match self.lookup(name) {
                 Some(Lookup::Symbol(id)) => match self.symbol(id).map(|symbol| &symbol.kind) {
                     Some(SymbolKind::Struct(structure)) => Type::structure(*structure),
+                    Some(SymbolKind::Reference(block)) => Type::reference(*block),
                     _ => {
                         self.error(span, DiagnosticKind::NotAType(name.clone()));
                         Type::ERROR
@@ -526,6 +571,15 @@ impl Analyzer<'_> {
                     }
                 }
                 qualifiers.readonly |= block.readonly;
+                qualifiers.coherent |= block.coherent;
+                qualifiers.volatile |= block.volatile;
+                qualifiers.restrict |= block.restrict;
+                qualifiers.device_coherent |= block.device_coherent;
+                qualifiers.queue_family_coherent |= block.queue_family_coherent;
+                qualifiers.workgroup_coherent |= block.workgroup_coherent;
+                qualifiers.subgroup_coherent |= block.subgroup_coherent;
+                qualifiers.shader_call_coherent |= block.shader_call_coherent;
+                qualifiers.nonprivate |= block.nonprivate;
                 qualifiers.writeonly |= block.writeonly;
             }
             for declarator in &declaration.declarators {
@@ -611,7 +665,7 @@ impl Analyzer<'_> {
         }
         let invalid = |qualifier, reason| DiagnosticKind::InvalidQualifier { qualifier, reason };
         let is_image = matches!(ty.kind, TypeKind::Opaque(opaque) if opaque.is_image());
-        if qualifiers.has_memory_qualifier() && !is_image {
+        if qualifiers.has_memory_qualifier() && !is_image && !ty.is_reference() {
             self.error(
                 span,
                 invalid(
@@ -821,6 +875,35 @@ impl Analyzer<'_> {
         if broken {
             self.declare_variable(declarator, ty, qualifiers, None);
             return;
+        }
+        if qualifiers.has_layout("buffer_reference") {
+            self.error(
+                name.span,
+                super::reference::invalid("can only be used with a block"),
+            );
+        }
+        if ty.contains_reference(&self.types) {
+            if qualifiers.constant {
+                self.error(
+                    name.span,
+                    DiagnosticKind::InvalidQualifier {
+                        qualifier: "const",
+                        reason: "variables with reference type can't have qualifier 'const'",
+                    },
+                );
+                qualifiers.constant = false;
+            }
+            if matches!(ty.kind, TypeKind::Reference(_))
+                && matches!(qualifiers.storage, Storage::In | Storage::Out)
+            {
+                self.error(
+                    name.span,
+                    DiagnosticKind::InvalidQualifier {
+                        qualifier: "in",
+                        reason: "cannot contain any structs with buffer_reference",
+                    },
+                );
+            }
         }
         if qualifiers.constant && initializer.is_none() {
             self.error(name.span, DiagnosticKind::ConstWithoutInitializer);
@@ -1300,37 +1383,50 @@ impl Analyzer<'_> {
                 invalid("this kind of block is not supported in this stage"),
             );
         }
-        match self.scopes.lookup_in_current(&block_name.node) {
-            None => {
-                let symbol =
-                    self.add_symbol(&block_name.node, block_name.span, SymbolKind::BlockName);
-                let _ = self.scopes.declare(&block_name.node, symbol);
+        let reference = self.reference_block(structure, storage, &qualifiers, &members);
+        if reference.is_none() {
+            match self.scopes.lookup_in_current(&block_name.node) {
+                None => {
+                    let symbol =
+                        self.add_symbol(&block_name.node, block_name.span, SymbolKind::BlockName);
+                    let _ = self.scopes.declare(&block_name.node, symbol);
+                }
+                Some(Lookup::Symbol(id))
+                    if matches!(
+                        self.symbol(id).map(|symbol| &symbol.kind),
+                        Some(SymbolKind::BlockName)
+                    ) => {}
+                Some(_) => self.error(block_name.span, invalid("the name is already used")),
             }
-            Some(Lookup::Symbol(id))
-                if matches!(
-                    self.symbol(id).map(|symbol| &symbol.kind),
-                    Some(SymbolKind::BlockName)
-                ) => {}
-            Some(_) => self.error(block_name.span, invalid("the name is already used")),
-        }
-        let used = self.block_names.entry(block_name.node.clone()).or_default();
-        if used.contains(&storage) {
-            self.error(
-                block_name.span,
-                invalid("the block name is already used in this interface"),
-            );
-        } else {
-            used.push(storage);
+            let used = self.block_names.entry(block_name.node.clone()).or_default();
+            if used.contains(&storage) {
+                self.error(
+                    block_name.span,
+                    invalid("the block name is already used in this interface"),
+                );
+            } else {
+                used.push(storage);
+            }
         }
         let member_names: Vec<String> = members.iter().map(|member| member.name.clone()).collect();
-        let Some(block) = self.types.add_block(BlockType {
-            name: structure.name.node.clone(),
-            storage,
-            qualifiers: qualifiers.clone(),
-            members,
-        }) else {
-            return;
+        let block = match reference {
+            Some(block) => block,
+            None => {
+                let Some(block) = self.types.add_block(BlockType {
+                    name: structure.name.node.clone(),
+                    storage,
+                    qualifiers: qualifiers.clone(),
+                    members,
+                    reference: None,
+                }) else {
+                    return;
+                };
+                block
+            }
         };
+        if reference.is_some() && instance.is_none() {
+            return;
+        }
         let mut ty = Type::block(block).with_dimensions(&dimensions);
         match instance {
             Some(instance) => {

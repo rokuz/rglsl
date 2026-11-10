@@ -233,6 +233,7 @@ impl Builder {
             storage,
             qualifiers: qualifiers.clone(),
             members,
+            reference: None,
         })?;
         match instance {
             Instance::Anonymous => {

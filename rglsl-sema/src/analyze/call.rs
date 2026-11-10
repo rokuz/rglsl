@@ -242,7 +242,7 @@ impl Analyzer<'_> {
                     (operand.storage, self.options.stage),
                     (Storage::In, Stage::Geometry) | (Storage::Out, Stage::TessControl)
                 ) && operand.ty.outer_size() == Some(ArraySize::Unsized);
-                let runtime = operand.storage == Storage::Buffer
+                let runtime = (operand.storage == Storage::Buffer && !operand.through_reference)
                     || matches!(operand.storage, Storage::In | Storage::Out);
                 if !runtime || resizable {
                     self.error(
@@ -317,7 +317,7 @@ impl Analyzer<'_> {
         if let Some(Lookup::Symbol(id)) = self.lookup(name) {
             let is_struct = matches!(
                 self.symbol(id).map(|symbol| &symbol.kind),
-                Some(SymbolKind::Struct(_))
+                Some(SymbolKind::Struct(_) | SymbolKind::Reference(_))
             );
             if !is_struct {
                 self.error(span, DiagnosticKind::NotAFunction(String::from(name)));
@@ -730,6 +730,17 @@ impl Analyzer<'_> {
         }
         if operands.iter().any(|operand| operand.ty.is_void()) {
             return fail(self, &ty, "an argument is `void`");
+        }
+        let numeric =
+            !ty.is_array() && matches!(ty.kind, TypeKind::Scalar(_) | TypeKind::Vector { .. });
+        if ty.is_reference() || numeric {
+            if let Some(operand) = self.reference_constructor(span, &ty, &operands) {
+                if !operand.ty.is_error() {
+                    self.calls
+                        .insert(expression.id, Callee::Constructor(ty.clone()));
+                }
+                return operand;
+            }
         }
         let any_specialization = operands.iter().any(|operand| operand.specialization);
         let has_scalar = |test: fn(Scalar) -> bool| {

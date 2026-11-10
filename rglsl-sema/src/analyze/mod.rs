@@ -2,6 +2,8 @@ mod call;
 mod declaration;
 mod expression;
 mod extension;
+mod reference;
+mod reference_expression;
 mod statement;
 
 use alloc::collections::{BTreeMap, BTreeSet};
@@ -21,7 +23,7 @@ use crate::scope::{
     Function, FunctionId, Lookup, Origin, Qualifiers, Scopes, Storage, Symbol, SymbolId,
     SymbolKind, Variable,
 };
-use crate::types::{BlockStorage, Type, TypeKind, TypeRegistry};
+use crate::types::{BlockStorage, Packing, Type, TypeKind, TypeRegistry};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Options {
@@ -79,6 +81,7 @@ pub struct Analysis {
     pub extensions: BTreeSet<String>,
     pub diagnostics: Vec<Diagnostic>,
     pub warnings: Vec<Diagnostic>,
+    pub vulkan_memory_model: bool,
 }
 
 impl Analysis {
@@ -112,6 +115,7 @@ fn symbol_type(symbols: &[Symbol], types: &TypeRegistry, id: SymbolId) -> Option
     match &symbol.kind {
         SymbolKind::Variable(variable) => Some(variable.ty.clone()),
         SymbolKind::Struct(structure) => Some(Type::structure(*structure)),
+        SymbolKind::Reference(block) => Some(Type::reference(*block)),
         SymbolKind::BlockName => None,
         SymbolKind::BlockMember { instance, index } => {
             let instance = symbols.get(usize::try_from(instance.index()).ok()?)?;
@@ -211,6 +215,7 @@ pub(crate) struct Operand {
     pub specialization: bool,
     pub writeonly: bool,
     pub non_uniform: bool,
+    pub through_reference: bool,
 }
 
 impl Operand {
@@ -229,6 +234,7 @@ impl Operand {
             specialization: false,
             writeonly: false,
             non_uniform: false,
+            through_reference: false,
         }
     }
 
@@ -288,6 +294,9 @@ pub(crate) struct Analyzer<'a> {
     pub khr_derivative_group: bool,
     pub local_size: [Option<u32>; 3],
     pub local_size_specialized: [bool; 3],
+    pub buffer_packing: Packing,
+    pub buffer_row_major: bool,
+    pub vulkan_memory_model: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -350,6 +359,9 @@ impl<'a> Analyzer<'a> {
             khr_derivative_group: false,
             local_size: [None; 3],
             local_size_specialized: [false; 3],
+            buffer_packing: Packing::Std430,
+            buffer_row_major: false,
+            vulkan_memory_model: false,
         }
     }
 
@@ -410,6 +422,13 @@ impl<'a> Analyzer<'a> {
 
     fn pragma(&mut self, span: Span, tokens: &[String]) {
         let words: Vec<&str> = tokens.iter().map(String::as_str).collect();
+        if words.first() == Some(&"use_vulkan_memory_model") {
+            if words.len() != 1 {
+                self.error(span, DiagnosticKind::InvalidPragma("extra tokens"));
+            }
+            self.vulkan_memory_model = true;
+            return;
+        }
         if words.first() != Some(&"STDGL") {
             return;
         }
@@ -519,6 +538,7 @@ impl<'a> Analyzer<'a> {
             extensions: self.extensions.enabled().map(String::from).collect(),
             diagnostics: self.diagnostics,
             warnings: self.warnings,
+            vulkan_memory_model: self.vulkan_memory_model,
         }
     }
 

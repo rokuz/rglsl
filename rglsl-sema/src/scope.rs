@@ -6,7 +6,7 @@ use rglsl_ast::ast::{InterpolationQualifier, NodeId, PrecisionQualifier};
 use rglsl_ast::Span;
 
 use crate::constant::Constant;
-use crate::types::{StructId, Type};
+use crate::types::{BlockId, StructId, Type};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub enum Storage {
@@ -44,6 +44,12 @@ pub struct Qualifiers {
     pub coherent: bool,
     pub volatile: bool,
     pub restrict: bool,
+    pub device_coherent: bool,
+    pub queue_family_coherent: bool,
+    pub workgroup_coherent: bool,
+    pub subgroup_coherent: bool,
+    pub shader_call_coherent: bool,
+    pub nonprivate: bool,
     pub interpolation: Option<InterpolationQualifier>,
     pub precision: Option<PrecisionQualifier>,
     pub layout: Vec<LayoutEntry>,
@@ -59,7 +65,23 @@ impl Qualifiers {
     }
 
     pub const fn has_memory_qualifier(&self) -> bool {
-        self.readonly || self.writeonly || self.coherent || self.volatile || self.restrict
+        self.readonly
+            || self.writeonly
+            || self.coherent
+            || self.volatile
+            || self.restrict
+            || self.needs_vulkan_memory_model()
+    }
+
+    pub const fn needs_vulkan_memory_model(&self) -> bool {
+        self.coherent
+            || self.volatile
+            || self.device_coherent
+            || self.queue_family_coherent
+            || self.workgroup_coherent
+            || self.subgroup_coherent
+            || self.shader_call_coherent
+            || self.nonprivate
     }
 }
 
@@ -103,6 +125,7 @@ pub enum SymbolKind {
     Variable(Variable),
     BlockMember { instance: SymbolId, index: u32 },
     Struct(StructId),
+    Reference(BlockId),
     BlockName,
 }
 

@@ -364,7 +364,7 @@ impl<'a> Lowerer<'a> {
                         "std430" => defaults.packing = Some(Packing::Std430),
                         "row_major" => defaults.row_major = Some(true),
                         "column_major" => defaults.row_major = Some(false),
-                        "scalar" => return Err(unsupported("the `scalar` block layout", at)),
+                        "scalar" => defaults.packing = Some(Packing::Scalar),
                         _ => {}
                     }
                 }
@@ -519,14 +519,18 @@ impl<'a> Lowerer<'a> {
         let analysis = self.analysis;
         let variable = self.variable(symbol).ok_or_else(|| internal(at))?;
         let ty = &variable.ty;
-        let ir = self.ir_type(ty, at)?;
+        let ir = self.variable_ir_type(ty, &variable.qualifiers, at)?;
         let mut init = None;
         let mut runtime = None;
         if let Some(ref initializer) = declarator.initializer {
             let constant = match initializer.node {
                 Initializer::Expression(ref expression) => analysis
                     .expression(expression.id)
-                    .filter(|info| info.is_constant && !info.is_specialization)
+                    .filter(|info| {
+                        info.is_constant
+                            && !info.is_specialization
+                            && !info.ty.contains_reference(&analysis.types)
+                    })
                     .and_then(|info| Some((info.ty.clone(), info.value.clone()?))),
                 Initializer::List(_) => None,
             };
@@ -843,7 +847,7 @@ impl<'a> Lowerer<'a> {
             match entry.name.as_str() {
                 "std140" | "shared" | "packed" => packing = Some(Packing::Std140),
                 "std430" => packing = Some(Packing::Std430),
-                "scalar" => return Err(unsupported("the `scalar` block layout", at)),
+                "scalar" => packing = Some(Packing::Scalar),
                 "row_major" => row_major = Some(true),
                 "column_major" => row_major = Some(false),
                 _ => {}
@@ -1531,7 +1535,9 @@ impl<'a> Lowerer<'a> {
                     .ok_or_else(|| internal(at))?;
                 (member.ty.clone(), block.storage == BlockStorage::Out, None)
             }
-            SymbolKind::Struct(_) | SymbolKind::BlockName => return Err(internal(at)),
+            SymbolKind::Struct(_) | SymbolKind::Reference(_) | SymbolKind::BlockName => {
+                return Err(internal(at))
+            }
         };
         let name = record.name.clone();
         let found = match value {

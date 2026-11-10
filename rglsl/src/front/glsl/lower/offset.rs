@@ -70,9 +70,17 @@ pub fn calculate_offset(
             size,
             scalar: Scalar { width, .. },
         } => (
-            Alignment::from(size) * Alignment::from_width(width),
+            if layout == Packing::Scalar {
+                Alignment::from_width(width)
+            } else {
+                Alignment::from(size) * Alignment::from_width(width)
+            },
             size as u32 * width as u32,
         ),
+        TypeInner::Pointer {
+            space: crate::AddressSpace::PhysicalStorage { .. },
+            ..
+        } => (Alignment::EIGHT, 8),
         // 4. If the member is an array of scalars or vectors, the base alignment and array
         // stride are set to match the base alignment of a single array element, according
         // to rules (1), (2), and (3), and rounded up to the base alignment of a vec4.
@@ -86,19 +94,24 @@ pub fn calculate_offset(
             let name = types[ty].name.clone();
 
             // See comment at the beginning of the function
-            let (align, stride) = if Packing::Std430 == layout {
-                (info.align, info.align.round_up(info.span))
-            } else {
+            let (align, stride) = if Packing::Std140 == layout {
                 let align = info.align.max(Alignment::MIN_UNIFORM);
                 (align, align.round_up(info.span))
+            } else {
+                (info.align, info.align.round_up(info.span))
             };
 
-            let span = match size {
-                crate::ArraySize::Constant(size) => size.get() * stride,
+            let count = match size {
+                crate::ArraySize::Constant(size) => size.get(),
                 crate::ArraySize::Pending(handle) => {
-                    pending.get(handle.index()).copied().unwrap_or(1) * stride
+                    pending.get(handle.index()).copied().unwrap_or(1)
                 }
-                crate::ArraySize::Dynamic => stride,
+                crate::ArraySize::Dynamic => 1,
+            };
+            let span = if layout == Packing::Scalar {
+                count.saturating_sub(1) * stride + info.span
+            } else {
+                count * stride
             };
 
             let ty_span = types.get_span(ty);
@@ -132,16 +145,21 @@ pub fn calculate_offset(
             } else {
                 (rows, columns)
             };
-            let mut align = Alignment::from(vector_size) * Alignment::from_width(scalar.width);
+            let mut align = if layout == Packing::Scalar {
+                Alignment::from_width(scalar.width)
+            } else {
+                Alignment::from(vector_size) * Alignment::from_width(scalar.width)
+            };
 
-            // See comment at the beginning of the function
-            if Packing::Std430 != layout {
+            if Packing::Std140 == layout {
                 align = align.max(Alignment::MIN_UNIFORM);
             }
 
-            // The alignment of a vector is at least its size, so it is also
-            // the stride of the array of vectors.
-            let stride = align * 1;
+            let stride = if layout == Packing::Scalar {
+                vector_size as u32 * scalar.width as u32
+            } else {
+                align * 1
+            };
             matrix_layout = Some(MatrixLayout { stride, row_major });
 
             (align, stride * vector_count as u32)
@@ -172,11 +190,13 @@ pub fn calculate_offset(
             // any of its members, and rounded up to the base alignment of a
             // vec4. (See the comment at the beginning of the function for
             // std430.)
-            if Packing::Std430 != layout {
+            if Packing::Std140 == layout {
                 align = align.max(Alignment::MIN_UNIFORM);
             }
 
-            span = align.round_up(span);
+            if layout != Packing::Scalar {
+                span = align.round_up(span);
+            }
 
             let ty_span = types.get_span(ty);
             ty = types.insert(

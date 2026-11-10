@@ -209,4 +209,6 @@ pub enum DiagnosticKind {
         extension: &'static str,
         feature: String,
     },
+    #[error("{0}")]
+    Warning(String),
 }

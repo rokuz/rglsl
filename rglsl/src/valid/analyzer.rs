@@ -671,7 +671,7 @@ impl FunctionInfo {
                     As::Uniform | As::Immediate => true,
                     // storage data is only uniform when read-only
                     As::Storage { access } => !access.contains(crate::StorageAccess::STORE),
-                    As::Handle => false,
+                    As::Handle | As::PhysicalStorage { .. } => false,
                 };
                 Uniformity {
                     non_uniform_result: if uniform { None } else { Some(handle) },
@@ -848,6 +848,12 @@ impl FunctionInfo {
                 non_uniform_result: self.add_ref_impl(expr, GlobalUse::QUERY),
                 requirements: UniformityRequirements::empty(),
             },
+            E::PhysicalPointer { value: expr, .. } | E::PhysicalAddress { pointer: expr, .. } => {
+                Uniformity {
+                    non_uniform_result: self.add_ref(expr),
+                    requirements: UniformityRequirements::empty(),
+                }
+            }
             E::RayQueryGetIntersection {
                 query,
                 committed: _,

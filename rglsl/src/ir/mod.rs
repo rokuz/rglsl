@@ -372,6 +372,11 @@ pub enum AddressSpace {
     ///
     /// Bound and listed like an [`Input`](Self::Input).
     Output,
+    PhysicalStorage {
+        alignment: u32,
+        access: StorageAccess,
+        qualifiers: PointerQualifiers,
+    },
 }
 
 /// Built-in inputs and outputs.
@@ -733,6 +738,24 @@ bitflags::bitflags! {
         const STORE = 0x2;
         /// Storage can be used as a target for atomic ops.
         const ATOMIC = 0x4;
+    }
+}
+
+bitflags::bitflags! {
+    #[cfg_attr(feature = "serialize", derive(Serialize))]
+    #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+    #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+    #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    pub struct PointerQualifiers: u16 {
+        const RESTRICT = 0x1;
+        const COHERENT = 0x2;
+        const DEVICE_COHERENT = 0x4;
+        const QUEUE_FAMILY_COHERENT = 0x8;
+        const WORKGROUP_COHERENT = 0x10;
+        const SUBGROUP_COHERENT = 0x20;
+        const SHADER_CALL_COHERENT = 0x40;
+        const VOLATILE = 0x80;
+        const NONPRIVATE = 0x100;
     }
 }
 
@@ -1952,6 +1975,14 @@ pub enum Expression {
     /// This doesn't match the semantics of spirv's `OpArrayLength`, which must be passed
     /// a pointer to a structure containing a runtime array in its' last field.
     ArrayLength(Handle<Expression>),
+    PhysicalPointer {
+        value: Handle<Expression>,
+        ty: Handle<Type>,
+    },
+    PhysicalAddress {
+        pointer: Handle<Expression>,
+        split: bool,
+    },
 
     /// Get the Positions of the triangle hit by the [`RayQuery`]
     ///
@@ -2963,4 +2994,10 @@ pub struct Module {
     pub diagnostic_filter_leaf: Option<Handle<DiagnosticFilterNode>>,
     /// Doc comments.
     pub doc_comments: Option<Box<DocComments>>,
+    #[cfg_attr(
+        feature = "serialize",
+        serde(skip_serializing_if = "core::ops::Not::not")
+    )]
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    pub vulkan_memory_model: bool,
 }

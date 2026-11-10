@@ -167,7 +167,7 @@ impl<'a> FunctionLowerer<'_, 'a> {
                 let handle = self.lw.specialization(expression, None, at)?;
                 return self.add(Expression::Override(handle), at).map(Some);
             }
-        } else if info.is_constant {
+        } else if info.is_constant && !info.ty.contains_reference(&self.lw.analysis.types) {
             if let Some(ref value) = info.value {
                 return self.constant(&info.ty, &value.values, at).map(Some);
             }
@@ -175,10 +175,17 @@ impl<'a> FunctionLowerer<'_, 'a> {
         let value = match expression.kind {
             ExpressionKind::Variable(_)
             | ExpressionKind::Subscript { .. }
-            | ExpressionKind::FieldSelection { .. } => match self.chain(expression)? {
-                Chain::Place(place) => self.load(&place, at)?,
-                Chain::Value(value) => value,
-            },
+            | ExpressionKind::FieldSelection { .. } => {
+                let value = match self.chain(expression)? {
+                    Chain::Place(place) => self.load(&place, at)?,
+                    Chain::Value(value) => value,
+                };
+                if info.ty.is_reference() {
+                    self.unqualify(value, at)?
+                } else {
+                    value
+                }
+            }
             ExpressionKind::Number(_) | ExpressionKind::Bool(_) => return Err(internal(at)),
             ExpressionKind::Parenthesized(ref inner) => return self.value_converted(inner),
             ExpressionKind::FunctionCall(ref call) => return self.call(expression, call),
@@ -506,6 +513,19 @@ impl<'a> FunctionLowerer<'_, 'a> {
             } => {
                 let base_ty = self.info(base)?.ty.clone();
                 let index_non_uniform = self.info(index)?.non_uniform;
+                if base_ty.is_reference() {
+                    let reference = match self.chain(base)? {
+                        Chain::Place(place) => self.load(&place, at)?,
+                        Chain::Value(value) => value,
+                    };
+                    let (index, index_ty) = self.typed(index)?;
+                    return Ok(Chain::Value(self.reference_offset(
+                        (reference, &base_ty),
+                        (index, &index_ty),
+                        false,
+                        at,
+                    )?));
+                }
                 let constant = self.constant_index(index);
                 let chain = self.chain(base)?;
                 let binding_array = base_ty.is_array() && base_ty.is_opaque();
@@ -652,6 +672,17 @@ impl<'a> FunctionLowerer<'_, 'a> {
                             }
                         }
                     }
+                    TypeKind::Reference(block) if !base_ty.is_array() => {
+                        let index = self
+                            .lw
+                            .analysis
+                            .types
+                            .block(block)
+                            .and_then(|b| b.member(&field.node))
+                            .and_then(|(index, _)| u32::try_from(index).ok())
+                            .ok_or_else(|| internal(at))?;
+                        self.reference_member(base, block, index, at)
+                    }
                     TypeKind::Struct(_) | TypeKind::Block(_) if !base_ty.is_array() => {
                         let analysis = self.lw.analysis;
                         let (index, block) = match base_ty.kind {
@@ -740,7 +771,10 @@ impl<'a> FunctionLowerer<'_, 'a> {
         }
     }
 
-    fn buffer_pointee(&self, pointer: Handle<Expression>) -> Option<Handle<crate::Type>> {
+    pub(super) fn buffer_pointee(
+        &self,
+        pointer: Handle<Expression>,
+    ) -> Option<Handle<crate::Type>> {
         let module = &self.lw.module;
         let element = |ty: Handle<crate::Type>| match module.types[ty].inner {
             crate::TypeInner::Array { base, .. } | crate::TypeInner::BindingArray { base, .. } => {
@@ -769,7 +803,12 @@ impl<'a> FunctionLowerer<'_, 'a> {
                 }
             }
             Expression::Access { base, .. } => element(self.buffer_pointee(base)?),
-            _ => None,
+            Expression::PhysicalPointer { value, .. }
+                if !self.physical_bases.contains_key(&pointer) =>
+            {
+                self.buffer_pointee(value)
+            }
+            _ => self.physical_bases.get(&pointer).copied(),
         }
     }
 
@@ -880,6 +919,50 @@ impl<'a> FunctionLowerer<'_, 'a> {
         };
         if let Some((laid, plain)) = self.laid_out_place(place) {
             value = self.relayout(value, plain, laid, at)?;
+        }
+        if place.swizzle.is_none() {
+            value = self.store_qualified(place.pointer, value, at)?;
+        }
+        if let Some(ref components) = place.swizzle {
+            if let Some(pattern) = self.full_physical_swizzle(place.pointer, components) {
+                let size = vector_size(u8::try_from(components.len()).unwrap_or(0))
+                    .ok_or_else(|| internal(at))?;
+                let previous = self.add(
+                    Expression::Load {
+                        pointer: place.pointer,
+                    },
+                    at,
+                )?;
+                self.unemitted(
+                    Expression::Swizzle {
+                        size,
+                        vector: previous,
+                        pattern: [
+                            SwizzleComponent::X,
+                            SwizzleComponent::Y,
+                            SwizzleComponent::Z,
+                            SwizzleComponent::W,
+                        ],
+                    },
+                    at,
+                );
+                let value = self.unemitted(
+                    Expression::Swizzle {
+                        size,
+                        vector: value,
+                        pattern,
+                    },
+                    at,
+                );
+                self.push(
+                    Statement::Store {
+                        pointer: place.pointer,
+                        value,
+                    },
+                    at,
+                );
+                return Ok(());
+            }
         }
         match place.swizzle {
             Some(ref components) => {
@@ -1162,6 +1245,16 @@ impl<'a> FunctionLowerer<'_, 'a> {
         let place = self.place(target)?;
         let result = match compound(operator) {
             None => self.rvalue(value)?,
+            Some(operator) if target_ty.is_reference() => {
+                let old = self.load(&place, at)?;
+                let (right, right_ty) = self.typed(value)?;
+                self.reference_offset(
+                    (old, &target_ty),
+                    (right, &right_ty),
+                    operator == AstBinary::Subtract,
+                    at,
+                )?
+            }
             Some(operator) => {
                 let old = self.load(&place, at)?;
                 let value_info = self.info(value)?;
@@ -1224,6 +1317,21 @@ impl<'a> FunctionLowerer<'_, 'a> {
         }
         let (left, left_ty) = self.typed(left)?;
         let (right, right_ty) = self.typed(right)?;
+        match (left_ty.is_reference(), right_ty.is_reference()) {
+            (true, true) => return self.reference_difference((left, &left_ty), right, at),
+            (true, false) => {
+                return self.reference_offset(
+                    (left, &left_ty),
+                    (right, &right_ty),
+                    operator == AstBinary::Subtract,
+                    at,
+                )
+            }
+            (false, true) => {
+                return self.reference_offset((right, &right_ty), (left, &left_ty), false, at)
+            }
+            (false, false) => {}
+        }
         self.binary(operator, (left, &left_ty), (right, &right_ty), at)
     }
 

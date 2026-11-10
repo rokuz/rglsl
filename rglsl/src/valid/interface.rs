@@ -1338,7 +1338,7 @@ impl super::Validator {
         let type_info = &self.types[inner_ty.index()];
 
         let (required_type_flags, is_resource) = match var.space {
-            crate::AddressSpace::Function => {
+            crate::AddressSpace::Function | crate::AddressSpace::PhysicalStorage { .. } => {
                 return Err(GlobalVariableError::InvalidUsage(var.space))
             }
             crate::AddressSpace::Storage { access: _ } => {
@@ -1868,7 +1868,9 @@ impl super::Validator {
             }
 
             let allowed_usage = match var.space {
-                crate::AddressSpace::Function => unreachable!(),
+                crate::AddressSpace::Function | crate::AddressSpace::PhysicalStorage { .. } => {
+                    GlobalUse::empty()
+                }
                 crate::AddressSpace::Uniform => GlobalUse::READ | GlobalUse::QUERY,
                 crate::AddressSpace::Storage { access } => storage_usage(access),
                 crate::AddressSpace::Handle => match module.types[var.ty].inner {

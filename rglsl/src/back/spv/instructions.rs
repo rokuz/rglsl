@@ -395,6 +395,16 @@ impl super::Instruction {
         instruction
     }
 
+    pub(super) fn type_forward_pointer(
+        pointer_id: Word,
+        storage_class: spirv::StorageClass,
+    ) -> Self {
+        let mut instruction = Self::new(Op::TypeForwardPointer);
+        instruction.add_operand(pointer_id);
+        instruction.add_operand(storage_class as u32);
+        instruction
+    }
+
     pub(super) fn type_function(id: Word, return_type_id: Word, parameter_ids: &[Word]) -> Self {
         let mut instruction = Self::new(Op::TypeFunction);
         instruction.set_result(id);
@@ -410,6 +420,13 @@ impl super::Instruction {
     //
     //  Constant-Creation Instructions
     //
+
+    pub(super) fn undef(result_type_id: Word, id: Word) -> Self {
+        let mut instruction = Self::new(Op::Undef);
+        instruction.set_type(result_type_id);
+        instruction.set_result(id);
+        instruction
+    }
 
     pub(super) fn constant_null(result_type_id: Word, id: Word) -> Self {
         let mut instruction = Self::new(Op::ConstantNull);

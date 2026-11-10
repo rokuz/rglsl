@@ -43,6 +43,7 @@ impl super::Validator {
             ref diagnostic_filters,
             ref diagnostic_filter_leaf,
             ref doc_comments,
+            vulkan_memory_model: _,
         } = module;
 
         // Because types can refer to global expressions and vice versa, to
@@ -93,6 +94,13 @@ impl super::Validator {
             // types and expressions behind `global_exprs_iter`, and none of
             // those refer to `th`/`t`, because they passed the same checks
             // before we reached `th`/`t`.
+            if let crate::TypeInner::Pointer {
+                base,
+                space: crate::AddressSpace::PhysicalStorage { .. },
+            } = t.inner
+            {
+                types.check_contains_handle(base)?;
+            }
             if let Some(max_expr) = Self::validate_type_handles((th, t), overrides)? {
                 max_expr.check_valid_for(global_expressions)?;
                 // Since `t` refers to `max_expr`, if we want our invariants to
@@ -413,6 +421,13 @@ impl super::Validator {
             | crate::TypeInner::Sampler { .. }
             | crate::TypeInner::AccelerationStructure { .. }
             | crate::TypeInner::RayQuery { .. } => None,
+            crate::TypeInner::Pointer {
+                base,
+                space: crate::AddressSpace::PhysicalStorage { .. },
+            } => {
+                let _ = base;
+                None
+            }
             crate::TypeInner::Pointer { base, space: _ } => {
                 handle.check_dep(base)?;
                 None
@@ -664,6 +679,13 @@ impl super::Validator {
             | crate::Expression::WorkGroupUniformLoadResult { .. } => (),
             crate::Expression::ArrayLength(array) => {
                 handle.check_dep(array)?;
+            }
+            crate::Expression::PhysicalAddress { pointer, split: _ } => {
+                handle.check_dep(pointer)?;
+            }
+            crate::Expression::PhysicalPointer { value, ty } => {
+                validate_type(ty)?;
+                handle.check_dep(value)?;
             }
             crate::Expression::RayQueryGetIntersection {
                 query,

@@ -782,6 +782,27 @@ impl Validator {
             self.types[handle.index()] = ty_info;
         }
 
+        for (handle, ty) in module.types.iter() {
+            if let crate::TypeInner::Pointer {
+                base,
+                space: crate::AddressSpace::PhysicalStorage { .. },
+            } = ty.inner
+            {
+                let data = self
+                    .types
+                    .get(base.index())
+                    .is_some_and(|info| info.flags.contains(TypeFlags::DATA));
+                if !data {
+                    return Err(ValidationError::Type {
+                        handle,
+                        name: ty.name.clone().unwrap_or_default(),
+                        source: TypeError::InvalidPhysicalPointee(base),
+                    }
+                    .with_span_handle(handle, &module.types));
+                }
+            }
+        }
+
         {
             let t = crate::Arena::new();
             let resolve_context = crate::proc::ResolveContext::with_locals(module, &t, &[]);

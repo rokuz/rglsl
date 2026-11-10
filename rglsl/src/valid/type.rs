@@ -137,6 +137,10 @@ pub enum TypeError {
     },
     #[error("Structure types must have at least one member")]
     EmptyStruct,
+    #[error("The alignment {0} of a physical storage buffer pointer is not a power of two")]
+    InvalidPhysicalAlignment(u32),
+    #[error("The pointee {0:?} of a physical storage buffer pointer is not a data type")]
+    InvalidPhysicalPointee(Handle<crate::Type>),
     #[error("Invalid `@blend_src` structure: {0}")]
     InvalidBlendSrc(super::VaryingError),
     #[error(transparent)]
@@ -203,7 +207,11 @@ fn check_member_layout(accum: &mut LayoutCompatibility, member_layout: LayoutCom
 const fn ptr_space_argument_flag(space: crate::AddressSpace) -> TypeFlags {
     use crate::AddressSpace as As;
     match space {
-        As::Function | As::Private | As::RayPayload | As::IncomingRayPayload => TypeFlags::ARGUMENT,
+        As::Function
+        | As::Private
+        | As::RayPayload
+        | As::IncomingRayPayload
+        | As::PhysicalStorage { .. } => TypeFlags::ARGUMENT,
         As::Uniform
         | As::Storage { .. }
         | As::Handle
@@ -499,6 +507,24 @@ impl super::Validator {
                     Alignment::from_width(scalar.width),
                 )
             }
+            Ti::Pointer {
+                space: crate::AddressSpace::PhysicalStorage { alignment, .. },
+                ..
+            } => {
+                if !alignment.is_power_of_two() {
+                    return Err(TypeError::InvalidPhysicalAlignment(alignment));
+                }
+                TypeInfo::new(
+                    TypeFlags::DATA
+                        | TypeFlags::SIZED
+                        | TypeFlags::COPY
+                        | TypeFlags::HOST_SHAREABLE
+                        | TypeFlags::ARGUMENT
+                        | TypeFlags::CONSTRUCTIBLE
+                        | TypeFlags::CREATION_RESOLVED,
+                    Alignment::EIGHT,
+                )
+            }
             Ti::Pointer { base, space } => {
                 use crate::AddressSpace as As;
 
@@ -595,7 +621,8 @@ impl super::Validator {
                 // Elements must not overlap. Whether the stride also meets
                 // the alignment rules of a buffer depends on its block
                 // layout; see `LayoutCompatibility`.
-                if stride < base_layout.size {
+                let matrix_element = matches!(gctx.types[base].inner, Ti::Matrix { .. });
+                if stride < base_layout.size && !matrix_element {
                     return Err(TypeError::InvalidArrayStride {
                         stride,
                         expected: base_layout.size,
@@ -647,10 +674,6 @@ impl super::Validator {
                 }
             }
             Ti::Struct { ref members, span } => {
-                if members.is_empty() {
-                    return Err(TypeError::EmptyStruct);
-                }
-
                 let mut blend_src_types = [None, None];
                 let mut non_blend_src_location = None;
 

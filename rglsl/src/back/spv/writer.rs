@@ -93,6 +93,7 @@ impl Writer {
             bounds_check_policies: options.bounds_check_policies,
             zero_initialize_workgroup_memory: options.zero_initialize_workgroup_memory,
             force_loop_bounding: options.force_loop_bounding,
+            vulkan_memory_model: false,
             ray_query_initialization_tracking: options.ray_query_initialization_tracking,
             trace_ray_argument_validation: options.trace_ray_argument_validation,
             use_storage_input_output_16: options.use_storage_input_output_16,
@@ -116,6 +117,9 @@ impl Writer {
             plain_types: crate::FastHashMap::default(),
             decorated_blocks: crate::arena::HandleSet::new(),
             buffer_blocks: crate::FastHashSet::default(),
+            physical_pointees: crate::FastHashMap::default(),
+            forward_pointers: crate::FastHashMap::default(),
+            physical_type_ids: crate::FastHashSet::default(),
             fake_missing_bindings: options.fake_missing_bindings,
             binding_map: options.binding_map.clone(),
             saved_cached: CachedExpressions::default(),
@@ -183,6 +187,7 @@ impl Writer {
             bounds_check_policies: self.bounds_check_policies,
             zero_initialize_workgroup_memory: self.zero_initialize_workgroup_memory,
             force_loop_bounding: self.force_loop_bounding,
+            vulkan_memory_model: false,
             ray_query_initialization_tracking: self.ray_query_initialization_tracking,
             trace_ray_argument_validation: self.trace_ray_argument_validation,
             use_storage_input_output_16: self.use_storage_input_output_16,
@@ -224,6 +229,9 @@ impl Writer {
             plain_types: take(&mut self.plain_types).reclaim(),
             decorated_blocks: crate::arena::HandleSet::new(),
             buffer_blocks: crate::FastHashSet::default(),
+            physical_pointees: take(&mut self.physical_pointees).reclaim(),
+            forward_pointers: take(&mut self.forward_pointers).reclaim(),
+            physical_type_ids: take(&mut self.physical_type_ids).reclaim(),
             saved_cached: take(&mut self.saved_cached).reclaim(),
             temp_list: take(&mut self.temp_list).reclaim(),
             ray_query_functions: take(&mut self.ray_query_functions).reclaim(),
@@ -1398,6 +1406,7 @@ impl Writer {
                 ep_context.argument_ids.push(id);
             } else {
                 let argument_id = self.id_gen.next();
+                self.decorate_pointer_parameter(&ir_module.types, argument.ty, argument_id);
                 let instruction = Instruction::function_parameter(argument_type_id, argument_id);
                 if self.flags.contains(WriterFlags::DEBUG) {
                     if let Some(ref name) = argument.name {
@@ -1639,6 +1648,7 @@ impl Writer {
                 &ir_function.expressions,
             ),
             ray_query_tracker_expr: crate::FastHashMap::default(),
+            physical_component_load: false,
         };
 
         // fill up the pre-emitted and const expressions
@@ -1653,6 +1663,9 @@ impl Writer {
 
         for (handle, variable) in ir_function.local_variables.iter() {
             let id = context.gen_id();
+            context
+                .writer
+                .decorate_pointer_variable(&ir_module.types, variable.ty, id);
 
             if context.writer.flags.contains(WriterFlags::DEBUG) {
                 if let Some(ref name) = variable.name {
@@ -1689,7 +1702,11 @@ impl Writer {
                     crate::TypeInner::RayQuery { .. } => None,
                     _ => {
                         let plain = context.writer.plain_type_id(type_id);
-                        Some(context.writer.write_constant_null(plain))
+                        if context.writer.contains_physical_type(plain) {
+                            None
+                        } else {
+                            Some(context.writer.write_constant_null(plain))
+                        }
                     }
                 }),
             );
@@ -2305,6 +2322,58 @@ impl Writer {
         // because some types which map to the same LocalType have different
         // capability requirements. See https://github.com/gfx-rs/wgpu/issues/5569
         self.request_type_capabilities(&ty.inner)?;
+        if let crate::TypeInner::Pointer {
+            base,
+            space: crate::AddressSpace::PhysicalStorage { .. },
+        } = ty.inner
+        {
+            let structure = matches!(module.types[base].inner, crate::TypeInner::Struct { .. });
+            if !structure {
+                let id = match self.localtype_from_inner(&ty.inner) {
+                    Some(local) => self.get_type_id(LookupType::Local(local)),
+                    None => return Err(Error::Validation("a physical pointer has no type")),
+                };
+                self.lookup_type.insert(LookupType::Handle(handle), id);
+                return Ok(id);
+            }
+            if !self.lookup_type.contains_key(&LookupType::Handle(base)) {
+                let id = match self.forward_pointers.get(&base) {
+                    Some(&id) => id,
+                    None => {
+                        let id = self.id_gen.next();
+                        Instruction::type_forward_pointer(
+                            id,
+                            spirv::StorageClass::PhysicalStorageBuffer,
+                        )
+                        .to_words(&mut self.logical_layout.declarations);
+                        self.forward_pointers.insert(base, id);
+                        id
+                    }
+                };
+                self.lookup_type.insert(LookupType::Handle(handle), id);
+                return Ok(id);
+            }
+            let class = spirv::StorageClass::PhysicalStorageBuffer;
+            let base_id = self.get_handle_type_id(base);
+            let local = LookupType::Local(LocalType::Pointer {
+                base: base_id,
+                class,
+            });
+            let id = match self.lookup_type.get(&local) {
+                Some(&id) => id,
+                None => {
+                    let id = self.id_gen.next();
+                    Instruction::type_forward_pointer(id, class)
+                        .to_words(&mut self.logical_layout.declarations);
+                    Instruction::type_pointer(id, class, base_id)
+                        .to_words(&mut self.logical_layout.declarations);
+                    self.lookup_type.insert(local, id);
+                    id
+                }
+            };
+            self.lookup_type.insert(LookupType::Handle(handle), id);
+            return Ok(id);
+        }
         let id = if let Some(local) = self.localtype_from_inner(&ty.inner) {
             // This type can be represented as a `LocalType`, so check if we've
             // already written an instruction for it. If not, do so now, with
@@ -2432,6 +2501,19 @@ impl Writer {
 
         // Add this handle as a new alias for that type.
         self.lookup_type.insert(LookupType::Handle(handle), id);
+
+        if let Some(&access) = self.physical_pointees.get(&handle) {
+            self.decorate_physical_pointee(module, handle, id, access);
+        }
+        if let Some(pointer_id) = self.forward_pointers.remove(&handle) {
+            let class = spirv::StorageClass::PhysicalStorageBuffer;
+            Instruction::type_pointer(pointer_id, class, id)
+                .to_words(&mut self.logical_layout.declarations);
+            self.lookup_type.insert(
+                LookupType::Local(LocalType::Pointer { base: id, class }),
+                pointer_id,
+            );
+        }
 
         if self.flags.contains(WriterFlags::DEBUG) {
             if let Some(ref name) = ty.name {
@@ -2864,12 +2946,21 @@ impl Writer {
         if let Some(&id) = self.cached_constants.get(&null) {
             return id;
         }
-        let id = self.write_constant_null(type_id);
+        let id = if self.contains_physical_type(type_id) {
+            let id = self.id_gen.next();
+            Instruction::undef(type_id, id).to_words(&mut self.logical_layout.declarations);
+            id
+        } else {
+            self.write_constant_null(type_id)
+        };
         self.cached_constants.insert(null, id);
         id
     }
 
     pub(super) fn write_constant_null(&mut self, type_id: Word) -> Word {
+        if self.contains_physical_type(type_id) {
+            return self.get_constant_null(type_id);
+        }
         let null_id = self.id_gen.next();
         Instruction::constant_null(type_id, null_id)
             .to_words(&mut self.logical_layout.declarations);
@@ -2931,7 +3022,7 @@ impl Writer {
         body: &mut Vec<Instruction>,
     ) {
         let memory_scope = if flags.contains(crate::Barrier::STORAGE) {
-            spirv::Scope::Device
+            self.device_scope()
         } else if flags.contains(crate::Barrier::SUB_GROUP) {
             spirv::Scope::Subgroup
         } else {
@@ -2987,7 +3078,8 @@ impl Writer {
             flags.contains(crate::Barrier::TEXTURE),
         );
         let mem_scope_id = if flags.contains(crate::Barrier::STORAGE) {
-            self.get_index_constant(spirv::Scope::Device as u32)
+            let scope = self.device_scope();
+            self.get_index_constant(scope as u32)
         } else if flags.contains(crate::Barrier::SUB_GROUP) {
             self.get_index_constant(spirv::Scope::Subgroup as u32)
         } else {
@@ -3654,12 +3746,14 @@ impl Writer {
         if global_variable
             .memory_decorations
             .contains(crate::MemoryDecorations::COHERENT)
+            && !self.vulkan_memory_model
         {
             self.decorate(id, Decoration::Coherent, &[]);
         }
         if global_variable
             .memory_decorations
             .contains(crate::MemoryDecorations::VOLATILE)
+            && !self.vulkan_memory_model
         {
             self.decorate(id, Decoration::Volatile, &[]);
         }
@@ -3811,12 +3905,16 @@ impl Writer {
         };
 
         let init_word = match (global_variable.space, self.zero_initialize_workgroup_memory) {
+            _ if self.contains_physical_type(inner_type_id) => init_word,
             (crate::AddressSpace::Private, _)
             | (crate::AddressSpace::WorkGroup, super::ZeroInitializeWorkgroupMemoryMode::Native) => {
                 init_word.or_else(|| Some(self.get_constant_null(inner_type_id)))
             }
             _ => init_word,
         };
+        if global_variable.space == crate::AddressSpace::Private {
+            self.decorate_pointer_variable(&ir_module.types, global_variable.ty, id);
+        }
 
         Instruction::variable(pointer_type_id, id, class, init_word)
             .to_words(&mut self.logical_layout.declarations);
@@ -4092,6 +4190,36 @@ impl Writer {
 
         // Find the types that are stored in buffers; see `laid_out_types`.
         self.laid_out_types = crate::arena::HandleSet::for_arena(&ir_module.types);
+        self.physical_pointees.clear();
+        self.forward_pointers.clear();
+        self.vulkan_memory_model = ir_module.vulkan_memory_model;
+        if self.vulkan_memory_model {
+            self.capabilities_used
+                .insert(spirv::Capability::VulkanMemoryModel);
+            if self.lang_version() < (1, 5) {
+                self.use_extension("SPV_KHR_vulkan_memory_model");
+            }
+        }
+        for (_, ty) in ir_module.types.iter() {
+            if let crate::TypeInner::Pointer {
+                base,
+                space: crate::AddressSpace::PhysicalStorage { access, .. },
+            } = ty.inner
+            {
+                mark_laid_out(&ir_module.types, &mut self.laid_out_types, base);
+                *self
+                    .physical_pointees
+                    .entry(base)
+                    .or_insert(crate::StorageAccess::empty()) |= access;
+            }
+        }
+        if !self.physical_pointees.is_empty() {
+            self.capabilities_used
+                .insert(spirv::Capability::PhysicalStorageBufferAddresses);
+            if self.lang_version() < (1, 5) {
+                self.use_extension("SPV_KHR_physical_storage_buffer");
+            }
+        }
         for (_, var) in ir_module.global_variables.iter() {
             if let crate::AddressSpace::Uniform
             | crate::AddressSpace::Storage { .. }
@@ -4109,6 +4237,17 @@ impl Writer {
         // write all types
         for (handle, _) in ir_module.types.iter() {
             self.write_type_declaration_arena(ir_module, mod_info, handle)?;
+        }
+        self.physical_type_ids.clear();
+        for (handle, ty) in ir_module.types.iter() {
+            if let crate::TypeInner::Pointer {
+                space: crate::AddressSpace::PhysicalStorage { .. },
+                ..
+            } = ty.inner
+            {
+                let id = self.get_handle_type_id(handle);
+                self.physical_type_ids.insert(id);
+            }
         }
 
         // write std140 layout compatible types required by uniforms
@@ -4247,7 +4386,14 @@ impl Writer {
                 .to_words(&mut self.logical_layout.capabilities);
         }
 
-        let addressing_model = spirv::AddressingModel::Logical;
+        let addressing_model = if self
+            .capabilities_used
+            .contains(&spirv::Capability::PhysicalStorageBufferAddresses)
+        {
+            spirv::AddressingModel::PhysicalStorageBuffer64
+        } else {
+            spirv::AddressingModel::Logical
+        };
         let memory_model = if self
             .capabilities_used
             .contains(&spirv::Capability::VulkanMemoryModel)
@@ -4383,6 +4529,39 @@ fn test_write_physical_layout() {
     assert_eq!(writer.physical_layout.bound, 0);
     writer.write_physical_layout();
     assert_eq!(writer.physical_layout.bound, 3);
+}
+
+impl Writer {
+    fn decorate_physical_pointee(
+        &mut self,
+        module: &crate::Module,
+        handle: Handle<crate::Type>,
+        id: Word,
+        access: crate::StorageAccess,
+    ) {
+        let crate::TypeInner::Struct { ref members, .. } = module.types[handle].inner else {
+            return;
+        };
+        if self.buffer_blocks.insert(id) {
+            self.decorate(id, spirv::Decoration::Block, &[]);
+        }
+        let mut decorations = Vec::new();
+        if !access.contains(crate::StorageAccess::STORE) {
+            decorations.push(spirv::Decoration::NonWritable);
+        }
+        if !access.contains(crate::StorageAccess::LOAD) {
+            decorations.push(spirv::Decoration::NonReadable);
+        }
+        for index in 0..members.len() {
+            let Ok(index) = u32::try_from(index) else {
+                break;
+            };
+            for decoration in &decorations {
+                self.annotations
+                    .push(Instruction::member_decorate(id, index, *decoration, &[]));
+            }
+        }
+    }
 }
 
 /// Adds `ty` and every type it contains to `laid_out`.

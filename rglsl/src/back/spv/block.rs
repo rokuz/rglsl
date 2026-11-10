@@ -2015,7 +2015,15 @@ impl BlockContext<'_> {
                 self.function.variables[&variable].id
             }
             crate::Expression::Load { pointer } => {
-                self.write_checked_load(pointer, block, AccessTypeAdjustment::None, result_type_id)?
+                self.physical_component_load = self.loaded_by_swizzle(expr_handle);
+                let id = self.write_checked_load(
+                    pointer,
+                    block,
+                    AccessTypeAdjustment::None,
+                    result_type_id,
+                )?;
+                self.physical_component_load = false;
+                id
             }
             crate::Expression::FunctionArgument(index) => self.function.parameter_id(index),
             crate::Expression::CallResult(_)
@@ -2163,6 +2171,25 @@ impl BlockContext<'_> {
                 id
             }
             crate::Expression::ArrayLength(expr) => self.write_runtime_array_length(expr, block)?,
+            crate::Expression::PhysicalPointer { value, ty: _ } => {
+                if matches!(
+                    self.ir_function.expressions[value],
+                    crate::Expression::Access { .. } | crate::Expression::AccessIndex { .. }
+                ) {
+                    match self.write_access_chain(value, block, AccessTypeAdjustment::None)? {
+                        ExpressionPointer::Ready { pointer_id } => self.cached[value] = pointer_id,
+                        ExpressionPointer::Conditional { .. } => {
+                            return Err(Error::Validation(
+                                "a checked access cannot be converted to a physical pointer",
+                            ))
+                        }
+                    }
+                }
+                self.write_physical_pointer(value, result_type_id, block)?
+            }
+            crate::Expression::PhysicalAddress { pointer, split } => {
+                self.write_physical_address(pointer, split, result_type_id, block)?
+            }
             crate::Expression::RayQueryGetIntersection { query, committed } => {
                 let query_id = self.cached[query];
                 let init_tracker_id = *self
@@ -2775,6 +2802,18 @@ impl BlockContext<'_> {
                 crate::Expression::FunctionArgument(index) => {
                     break self.function.parameter_id(index);
                 }
+                _ if matches!(
+                    *self.fun_info[expr_handle]
+                        .ty
+                        .inner_with(&self.ir_module.types),
+                    crate::TypeInner::Pointer {
+                        space: crate::AddressSpace::PhysicalStorage { .. },
+                        ..
+                    }
+                ) =>
+                {
+                    break self.cached[expr_handle];
+                }
                 ref other => unimplemented!("Unexpected pointer expression {:?}", other),
             }
         };
@@ -2973,7 +3012,12 @@ impl BlockContext<'_> {
                             semantics_id,
                         )
                     } else {
-                        Instruction::load(load_type_id, id, pointer_id, None)
+                        let mut instruction = Instruction::load(load_type_id, id, pointer_id, None);
+                        let component = self.physical_component_load;
+                        for operand in self.memory_access(pointer, component, false) {
+                            instruction.add_operand(operand);
+                        }
+                        instruction
                     };
                     block.body.push(instruction);
                     id
@@ -3986,7 +4030,16 @@ impl BlockContext<'_> {
                                     value_id,
                                 )
                             } else {
-                                Instruction::store(pointer_id, value_id, None)
+                                let mut instruction =
+                                    Instruction::store(pointer_id, value_id, None);
+                                let swizzled = matches!(
+                                    self.ir_function.expressions[value],
+                                    crate::Expression::Swizzle { .. }
+                                );
+                                for operand in self.memory_access(pointer, swizzled, true) {
+                                    instruction.add_operand(operand);
+                                }
+                                instruction
                             };
                             block.body.push(instruction);
                         }
@@ -4105,7 +4158,10 @@ impl BlockContext<'_> {
                         .inner_with(&self.ir_module.types)
                         .pointer_space()
                         .unwrap();
-                    let (semantics, scope) = space.to_spirv_semantics_and_scope();
+                    let (semantics, scope) = match self.glsl_atomic_semantics(pointer) {
+                        Some(found) => found,
+                        None => space.to_spirv_semantics_and_scope(),
+                    };
                     let scope_constant_id = self.get_scope_constant(scope as u32);
                     let semantics_id = self.get_index_constant(semantics.bits());
                     let value_id = self.cached[value];

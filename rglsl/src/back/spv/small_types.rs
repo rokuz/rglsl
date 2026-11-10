@@ -201,6 +201,11 @@ pub(super) fn usage(declarations: &[Word], functions: &[Word], annotations: &[Wo
             _ => None,
         };
         if let (Some(info), Some(id)) = (info, first) {
+            if let TypeInfo::Pointer(storage, _) = info {
+                if storage == class(StorageClass::PhysicalStorageBuffer) {
+                    variables.push((id, Some(storage)));
+                }
+            }
             module.types.insert(id, info);
             continue;
         }
@@ -296,7 +301,9 @@ pub(super) fn usage(declarations: &[Word], functions: &[Word], annotations: &[Wo
                 Some(Capability::StoragePushConstant8)
             } else if storage == class(StorageClass::Uniform) {
                 Some(Capability::UniformAndStorageBuffer8BitAccess)
-            } else if storage == class(StorageClass::StorageBuffer) {
+            } else if storage == class(StorageClass::StorageBuffer)
+                || storage == class(StorageClass::PhysicalStorageBuffer)
+            {
                 Some(Capability::StorageBuffer8BitAccess)
             } else {
                 None
