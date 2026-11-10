@@ -25,6 +25,8 @@ use crate::lexer::{tokenize, Token, TokenKind};
 use crate::span::Span;
 
 pub const MAX_NESTING_DEPTH: u32 = 256;
+pub const NON_UNIFORM: &str = "nonuniformEXT";
+const NON_UNIFORM_EXTENSION: &str = "GL_EXT_nonuniform_qualifier";
 pub const MAX_EXPRESSION_HEIGHT: u32 = 512;
 
 type Result<T> = core::result::Result<T, Box<ParseError>>;
@@ -275,6 +277,19 @@ impl<'a> Parser<'a> {
         ))
     }
 
+    fn require_non_uniform(&self, span: Span) -> Result<()> {
+        if self.extensions.is_on(NON_UNIFORM_EXTENSION) {
+            return Ok(());
+        }
+        Err(self.error(
+            ParseErrorKind::ExtensionRequired {
+                word: NON_UNIFORM.to_owned(),
+                extensions: NON_UNIFORM_EXTENSION.to_owned(),
+            },
+            span,
+        ))
+    }
+
     fn is_struct_name(&self, word: &str) -> bool {
         self.struct_scopes.iter().any(|scope| scope.contains(word))
     }
@@ -309,6 +324,9 @@ impl<'a> Parser<'a> {
         let TokenKind::Word(word) = self.peek().kind else {
             return false;
         };
+        if word == NON_UNIFORM && self.at_nth(1, "(") {
+            return false;
+        }
         if matches!(word, "precision" | "struct" | "layout" | "subroutine")
             || SingleTypeQualifier::from_keyword(word).is_some()
         {
@@ -597,7 +615,12 @@ impl<'a> Parser<'a> {
             } else if word == "subroutine" {
                 self.advance();
                 SingleTypeQualifier::Subroutine(self.parse_type_name_list()?)
+            } else if word == NON_UNIFORM && self.at_nth(1, "(") {
+                break;
             } else if let Some(single) = SingleTypeQualifier::from_keyword(word) {
+                if single == SingleTypeQualifier::NonUniform {
+                    self.require_non_uniform(self.peek().span)?;
+                }
                 self.advance();
                 single
             } else {
@@ -1292,6 +1315,15 @@ impl<'a> Parser<'a> {
             TokenKind::Word("false") => {
                 self.advance();
                 self.measured(start, ExpressionKind::Bool(false), 0)
+            }
+            TokenKind::Word(NON_UNIFORM) if self.at_nth(1, "(") => {
+                self.require_non_uniform(token.span)?;
+                self.advance();
+                let function = Spanned::new(
+                    token.span,
+                    FunctionIdentifier::Function(NON_UNIFORM.to_owned()),
+                );
+                self.parse_call(start, function, 0)
             }
             TokenKind::Word(word) if self.starts_constructor(word) => self.parse_constructor(),
             TokenKind::Word(word) if !is_reserved_word(word) => {

@@ -281,6 +281,7 @@ pub enum SingleTypeQualifier {
     Interpolation(InterpolationQualifier),
     Invariant,
     Precise,
+    NonUniform,
 }
 
 impl SingleTypeQualifier {
@@ -288,6 +289,7 @@ impl SingleTypeQualifier {
         match word {
             "invariant" => Some(Self::Invariant),
             "precise" => Some(Self::Precise),
+            "nonuniformEXT" => Some(Self::NonUniform),
             _ => StorageQualifier::from_keyword(word)
                 .map(Self::Storage)
                 .or_else(|| PrecisionQualifier::from_keyword(word).map(Self::Precision))

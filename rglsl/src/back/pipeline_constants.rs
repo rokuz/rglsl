@@ -467,6 +467,13 @@ fn process_function(
             .named_expressions
             .insert(adjusted_local_expressions[expr_h], name);
     }
+    let non_uniform = mem::take(&mut function.non_uniform);
+    for (expr_h, flags) in non_uniform {
+        *function
+            .non_uniform
+            .entry(adjusted_local_expressions[expr_h])
+            .or_default() |= flags;
+    }
 
     Ok(())
 }

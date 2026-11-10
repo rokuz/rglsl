@@ -152,6 +152,18 @@ impl Lowerer<'_> {
         }
     }
 
+    pub(super) fn unsized_binding_array(
+        &mut self,
+        symbol: rglsl_sema::SymbolId,
+        span: Span,
+    ) -> Result<ArraySize> {
+        if self.variably_indexed.contains(&symbol) {
+            return Ok(ArraySize::Dynamic);
+        }
+        let size = self.implicit_sizes.get(&symbol).copied().unwrap_or(1);
+        self.array_size(GlslArraySize::Sized(size), span)
+    }
+
     fn base_type(
         &mut self,
         kind: TypeKind,

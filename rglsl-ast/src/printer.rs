@@ -264,6 +264,7 @@ impl Printer {
                 }
                 SingleTypeQualifier::Invariant => self.write("invariant"),
                 SingleTypeQualifier::Precise => self.write("precise"),
+                SingleTypeQualifier::NonUniform => self.write("nonuniformEXT"),
                 SingleTypeQualifier::Layout(layout) => {
                     self.write("layout(");
                     self.separated(&layout.ids, |printer, id| {

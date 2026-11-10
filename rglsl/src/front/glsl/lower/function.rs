@@ -10,7 +10,7 @@ use crate::front::glsl::Error;
 use crate::{
     proc::{ConstantEvaluator, Emitter, ExpressionKind, ExpressionKindTracker},
     AddressSpace, Arena, Block, EarlyDepthTest, EntryPoint, Expression, Function, FunctionArgument,
-    FunctionResult, Handle, LocalVariable, ShaderStage, Span, Statement, TypeInner,
+    FunctionResult, Handle, LocalVariable, NonUniform, ShaderStage, Span, Statement, TypeInner,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -29,6 +29,7 @@ pub(super) struct FunctionLowerer<'l, 'a> {
     pub block: Block,
     pub variables: BTreeMap<SymbolId, Local>,
     pub specializing: bool,
+    pub non_uniform: crate::NonUniformExpressions,
 }
 
 fn ensure_returns(block: &mut Block, value: Option<Handle<Expression>>) {
@@ -73,7 +74,21 @@ impl<'l, 'a> FunctionLowerer<'l, 'a> {
             block: Block::new(),
             variables: BTreeMap::new(),
             specializing: false,
+            non_uniform: crate::NonUniformExpressions::default(),
         }
+    }
+
+    pub(super) fn mark(&mut self, expression: Handle<Expression>, flags: NonUniform) {
+        if !flags.is_empty() {
+            *self.non_uniform.entry(expression).or_default() |= flags;
+        }
+    }
+
+    pub(super) fn marked(&self, expression: Handle<Expression>) -> NonUniform {
+        self.non_uniform
+            .get(&expression)
+            .copied()
+            .unwrap_or_default()
     }
 
     pub(super) fn at(&self, span: rglsl_ast::Span) -> Span {
@@ -206,6 +221,7 @@ impl<'l, 'a> FunctionLowerer<'l, 'a> {
             local_variables: self.locals,
             expressions: self.expressions,
             named_expressions: crate::NamedExpressions::default(),
+            non_uniform: self.non_uniform,
             body,
             diagnostic_filter_leaf: None,
         }
@@ -336,7 +352,7 @@ impl<'a> Lowerer<'a> {
             let local = match local {
                 Local::Value(_)
                     if !opaque
-                        && !parameter.qualifiers.constant
+                        && (!parameter.qualifiers.constant || parameter.qualifiers.nonuniform)
                         && parameter.direction == Direction::In =>
                 {
                     let variable = lowerer.local(&parameter.ty, parameter.name.clone(), at)?;

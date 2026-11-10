@@ -307,6 +307,9 @@ impl Analyzer<'_> {
         name: &str,
         arguments: &[Expression],
     ) -> Operand {
+        if name == rglsl_ast::NON_UNIFORM {
+            return self.non_uniform(expression, span, arguments);
+        }
         let operands: Vec<Operand> = arguments
             .iter()
             .map(|argument| self.expression(argument))
@@ -464,7 +467,56 @@ impl Analyzer<'_> {
         Operand {
             constant,
             value,
+            non_uniform: !is_builtin && function.return_qualifiers.nonuniform,
             ..Operand::temporary(function.return_type)
+        }
+    }
+
+    fn non_uniform(
+        &mut self,
+        expression: &Expression,
+        span: Span,
+        arguments: &[Expression],
+    ) -> Operand {
+        let operands: Vec<Operand> = arguments
+            .iter()
+            .map(|argument| self.expression(argument))
+            .collect();
+        if operands.iter().any(|operand| operand.ty.is_error()) {
+            return Operand::error();
+        }
+        let reason = match operands.as_slice() {
+            [] => Some("not enough data provided for construction"),
+            [_, _, ..] => Some("too many arguments"),
+            [operand] if operand.ty.is_void() => Some("cannot convert a void"),
+            [operand] if operand.ty.outer_size() == Some(ArraySize::Unsized) => {
+                Some("array argument must be sized")
+            }
+            [operand] if operand.ty.is_array() => {
+                Some("array constructor needs one argument per array element")
+            }
+            [_] => None,
+        };
+        if let Some(reason) = reason {
+            self.error(
+                span,
+                DiagnosticKind::InvalidConstructor {
+                    ty: String::from(rglsl_ast::NON_UNIFORM),
+                    reason,
+                },
+            );
+            return Operand::error();
+        }
+        let Some(operand) = operands.into_iter().next() else {
+            return Operand::error();
+        };
+        if !self.readable(span, &operand) {
+            return Operand::error();
+        }
+        self.calls.insert(expression.id, Callee::NonUniform);
+        Operand {
+            non_uniform: true,
+            ..Operand::temporary(operand.ty)
         }
     }
 

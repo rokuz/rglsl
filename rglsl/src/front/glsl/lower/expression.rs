@@ -14,8 +14,8 @@ use super::specialization::is_direct;
 use super::types::{scalar, vector_size};
 use super::{internal, semantic, unsupported, GlobalRef, Result};
 use crate::{
-    AddressSpace, BinaryOperator, Expression, Handle, Literal, RelationalFunction, Span, Statement,
-    SwizzleComponent, UnaryOperator,
+    AddressSpace, BinaryOperator, Expression, Handle, Literal, NonUniform, RelationalFunction,
+    Span, Statement, SwizzleComponent, UnaryOperator,
 };
 
 #[derive(Clone, Debug)]
@@ -23,6 +23,8 @@ pub(super) struct Place {
     pub pointer: Handle<Expression>,
     pub swizzle: Option<Vec<u32>>,
     pub boolean: bool,
+    pub non_uniform: bool,
+    pub spilled: bool,
 }
 
 impl Place {
@@ -31,6 +33,15 @@ impl Place {
             pointer,
             swizzle: None,
             boolean,
+            non_uniform: false,
+            spilled: false,
+        }
+    }
+
+    fn child(&self, pointer: Handle<Expression>, boolean: bool) -> Self {
+        Self {
+            spilled: self.spilled,
+            ..Self::pointer(pointer, boolean)
         }
     }
 }
@@ -181,13 +192,25 @@ impl<'a> FunctionLowerer<'_, 'a> {
             } => match operator {
                 AstUnary::Increment => self.increment(operand, true, false, at)?,
                 AstUnary::Decrement => self.increment(operand, false, false, at)?,
-                _ => self.unary(operator, operand, at)?,
+                _ => {
+                    let value = self.unary(operator, operand, at)?;
+                    if info.non_uniform {
+                        self.mark_value(value);
+                    }
+                    value
+                }
             },
             ExpressionKind::Binary {
                 operator,
                 ref left,
                 ref right,
-            } => self.binary_expression(operator, left, right, at)?,
+            } => {
+                let value = self.binary_expression(operator, left, right, at)?;
+                if info.non_uniform {
+                    self.mark_operation(value);
+                }
+                value
+            }
             ExpressionKind::Conditional {
                 ref condition,
                 ref then_expression,
@@ -201,14 +224,63 @@ impl<'a> FunctionLowerer<'_, 'a> {
                 ref value,
             } => self.assignment(operator, target, value, at)?,
             ExpressionKind::Sequence(ref expressions) => {
-                let mut last = None;
-                for expression in expressions {
-                    last = self.value_converted(expression)?;
+                let Some((final_expression, leading)) = expressions.split_last() else {
+                    return Err(internal(at));
+                };
+                for expression in leading {
+                    self.value_converted(expression)?;
                 }
-                return Ok(last);
+                return self.sequence_result(final_expression);
             }
         };
         Ok(Some(value))
+    }
+
+    fn sequence_result(
+        &mut self,
+        expression: &AstExpression,
+    ) -> Result<Option<Handle<Expression>>> {
+        let inner = super::prepass::strip(expression);
+        let info = self.info(expression)?;
+        let lvalue = matches!(
+            inner.kind,
+            ExpressionKind::Variable(_)
+                | ExpressionKind::Subscript { .. }
+                | ExpressionKind::FieldSelection { .. }
+        );
+        if !lvalue || info.is_constant || info.is_specialization || info.conversion.is_some() {
+            return self.value_converted(expression);
+        }
+        match self.chain(inner)? {
+            Chain::Place(mut place) => {
+                place.non_uniform = false;
+                let at = self.at(expression.span);
+                self.load(&place, at).map(Some)
+            }
+            Chain::Value(value) => Ok(Some(value)),
+        }
+    }
+
+    fn mark_operation(&mut self, value: Handle<Expression>) {
+        match self.expressions[value] {
+            Expression::Binary { .. }
+            | Expression::Unary { .. }
+            | Expression::Relational { .. } => {
+                self.mark(value, NonUniform::VALUE);
+            }
+            Expression::Compose { ref components, .. } => {
+                let parts: Vec<Handle<Expression>> = components
+                    .iter()
+                    .copied()
+                    .filter(|&part| matches!(self.expressions[part], Expression::Binary { .. }))
+                    .collect();
+                for part in parts {
+                    self.mark(part, NonUniform::VALUE);
+                }
+                self.mark(value, NonUniform::VALUE);
+            }
+            _ => {}
+        }
     }
 
     fn value_converted(
@@ -365,6 +437,65 @@ impl<'a> FunctionLowerer<'_, 'a> {
     }
 
     pub(super) fn chain(&mut self, expression: &AstExpression) -> Result<Chain> {
+        let chain = self.chain_parts(expression)?;
+        let non_uniform = self.info(expression)?.non_uniform;
+        Ok(match chain {
+            Chain::Place(mut place) => {
+                place.non_uniform = non_uniform && !place.spilled;
+                Chain::Place(place)
+            }
+            Chain::Value(value) => {
+                if non_uniform {
+                    self.mark_value(value);
+                }
+                Chain::Value(value)
+            }
+        })
+    }
+
+    pub(super) fn mark_value(&mut self, value: Handle<Expression>) {
+        let decorated = match self.expressions[value] {
+            Expression::Literal(_)
+            | Expression::Constant(_)
+            | Expression::Override(_)
+            | Expression::ZeroValue(_)
+            | Expression::GlobalVariable(_)
+            | Expression::LocalVariable(_) => false,
+            Expression::AccessIndex { base, .. } => self.is_binding_array(base),
+            _ => true,
+        };
+        if decorated {
+            self.mark(value, NonUniform::VALUE);
+        }
+    }
+
+    fn is_binding_array(&self, base: Handle<Expression>) -> bool {
+        let Expression::GlobalVariable(global) = self.expressions[base] else {
+            return false;
+        };
+        let ty = self.lw.module.global_variables[global].ty;
+        matches!(
+            self.lw.module.types[ty].inner,
+            crate::TypeInner::BindingArray { .. }
+        )
+    }
+
+    fn inherit_access(
+        &mut self,
+        pointer: Handle<Expression>,
+        base: Handle<Expression>,
+        index: bool,
+    ) {
+        let own = if index {
+            NonUniform::ACCESS
+        } else {
+            NonUniform::empty()
+        };
+        let flags = (self.marked(base) & NonUniform::ACCESS) | own;
+        self.mark(pointer, flags);
+    }
+
+    fn chain_parts(&mut self, expression: &AstExpression) -> Result<Chain> {
         let at = self.at(expression.span);
         match expression.kind {
             ExpressionKind::Parenthesized(ref inner) => self.chain(inner),
@@ -374,6 +505,7 @@ impl<'a> FunctionLowerer<'_, 'a> {
                 ref index,
             } => {
                 let base_ty = self.info(base)?.ty.clone();
+                let index_non_uniform = self.info(index)?.non_uniform;
                 let constant = self.constant_index(index);
                 let chain = self.chain(base)?;
                 let binding_array = base_ty.is_array() && base_ty.is_opaque();
@@ -391,7 +523,8 @@ impl<'a> FunctionLowerer<'_, 'a> {
                                         },
                                         at,
                                     )?;
-                                    Ok(Chain::Place(Place::pointer(pointer, place.boolean)))
+                                    self.inherit_access(pointer, place.pointer, false);
+                                    Ok(Chain::Place(place.child(pointer, place.boolean)))
                                 }
                                 None => {
                                     let vector = self.load(&place, at)?;
@@ -406,26 +539,33 @@ impl<'a> FunctionLowerer<'_, 'a> {
                                 }
                             };
                         }
-                        let pointer = match constant {
-                            Some(index) => self.add(
-                                Expression::AccessIndex {
-                                    base: place.pointer,
-                                    index,
-                                },
-                                at,
-                            )?,
-                            None => {
-                                let index = self.rvalue(index)?;
+                        let (pointer, dynamic) = match constant {
+                            Some(index) => (
                                 self.add(
-                                    Expression::Access {
+                                    Expression::AccessIndex {
                                         base: place.pointer,
                                         index,
                                     },
                                     at,
-                                )?
+                                )?,
+                                false,
+                            ),
+                            None => {
+                                let index = self.rvalue(index)?;
+                                (
+                                    self.add(
+                                        Expression::Access {
+                                            base: place.pointer,
+                                            index,
+                                        },
+                                        at,
+                                    )?,
+                                    true,
+                                )
                             }
                         };
-                        Ok(Chain::Place(Place::pointer(pointer, place.boolean)))
+                        self.inherit_access(pointer, place.pointer, dynamic && index_non_uniform);
+                        Ok(Chain::Place(place.child(pointer, place.boolean)))
                     }
                     Chain::Value(value) => match constant {
                         Some(index) => Ok(Chain::Value(
@@ -434,9 +574,12 @@ impl<'a> FunctionLowerer<'_, 'a> {
                         None => {
                             let index = self.rvalue(index)?;
                             if base_ty.is_vector() || binding_array {
-                                Ok(Chain::Value(
-                                    self.add(Expression::Access { base: value, index }, at)?,
-                                ))
+                                let access =
+                                    self.add(Expression::Access { base: value, index }, at)?;
+                                if binding_array && index_non_uniform {
+                                    self.mark(access, NonUniform::ACCESS);
+                                }
+                                Ok(Chain::Value(access))
                             } else {
                                 let pointer = self.spill(value, &base_ty, at)?;
                                 let pointer = self.add(
@@ -446,7 +589,10 @@ impl<'a> FunctionLowerer<'_, 'a> {
                                     },
                                     at,
                                 )?;
-                                Ok(Chain::Place(Place::pointer(pointer, false)))
+                                Ok(Chain::Place(Place {
+                                    spilled: true,
+                                    ..Place::pointer(pointer, false)
+                                }))
                             }
                         }
                     },
@@ -489,12 +635,15 @@ impl<'a> FunctionLowerer<'_, 'a> {
                                             },
                                             at,
                                         )?;
-                                        Ok(Chain::Place(Place::pointer(pointer, place.boolean)))
+                                        self.inherit_access(pointer, place.pointer, false);
+                                        Ok(Chain::Place(place.child(pointer, place.boolean)))
                                     }
                                     _ => Ok(Chain::Place(Place {
                                         pointer: place.pointer,
                                         swizzle: Some(composed),
                                         boolean: place.boolean,
+                                        non_uniform: false,
+                                        spilled: place.spilled,
                                     })),
                                 }
                             }
@@ -538,7 +687,8 @@ impl<'a> FunctionLowerer<'_, 'a> {
                                     },
                                     at,
                                 )?;
-                                Ok(Chain::Place(Place::pointer(pointer, boolean)))
+                                self.inherit_access(pointer, place.pointer, false);
+                                Ok(Chain::Place(place.child(pointer, boolean)))
                             }
                             Chain::Value(value) => Ok(Chain::Value(
                                 self.add(Expression::AccessIndex { base: value, index }, at)?,
@@ -690,6 +840,9 @@ impl<'a> FunctionLowerer<'_, 'a> {
             },
             at,
         )?;
+        if place.non_uniform {
+            self.mark(value, NonUniform::VALUE);
+        }
         if let Some((laid, plain)) = self.laid_out_place(place) {
             value = self.relayout(value, laid, plain, at)?;
         }
@@ -704,6 +857,9 @@ impl<'a> FunctionLowerer<'_, 'a> {
                 },
                 at,
             )?;
+            if place.non_uniform {
+                self.mark(value, NonUniform::VALUE);
+            }
         }
         if place.boolean {
             value = self.as_kind(value, crate::Scalar::BOOL, at)?;
@@ -735,6 +891,7 @@ impl<'a> FunctionLowerer<'_, 'a> {
                         },
                         at,
                     )?;
+                    self.inherit_access(pointer, place.pointer, false);
                     let part = self.add(
                         Expression::AccessIndex {
                             base: value,
@@ -819,6 +976,9 @@ impl<'a> FunctionLowerer<'_, 'a> {
             },
             at,
         )?;
+        if place.non_uniform {
+            self.mark_operation(new);
+        }
         self.store(&place, new, at)?;
         Ok(if postfix { old } else { new })
     }
@@ -1004,8 +1164,18 @@ impl<'a> FunctionLowerer<'_, 'a> {
             None => self.rvalue(value)?,
             Some(operator) => {
                 let old = self.load(&place, at)?;
+                let value_info = self.info(value)?;
+                let value_non_uniform = value_info.non_uniform
+                    && value_info
+                        .conversion
+                        .as_ref()
+                        .is_none_or(|target| *target == value_info.ty);
                 let (right, right_ty) = self.typed(value)?;
-                self.binary(operator, (old, &target_ty), (right, &right_ty), at)?
+                let result = self.binary(operator, (old, &target_ty), (right, &right_ty), at)?;
+                if place.non_uniform || value_non_uniform {
+                    self.mark_operation(result);
+                }
+                result
             }
         };
         self.store(&place, result, at)?;

@@ -692,6 +692,9 @@ impl<'a> Lowerer<'a> {
         };
         let binding = value("binding")?;
         let set = value("set")?;
+        if binding.is_none() && self.analysis.extensions.contains("GL_EXT_descriptor_heap") {
+            return Err(unsupported("descriptor heaps", at));
+        }
         match binding {
             Some(binding) => Ok((
                 Some(ResourceBinding {
@@ -756,8 +759,7 @@ impl<'a> Lowerer<'a> {
                 });
             }
             [GlslArraySize::Unsized] => {
-                let size = self.implicit_sizes.get(&symbol).copied().unwrap_or(1);
-                let size = self.array_size(GlslArraySize::Sized(size), at)?;
+                let size = self.unsized_binding_array(symbol, at)?;
                 handle_ty = self.insert_type(TypeInner::BindingArray {
                     base: handle_ty,
                     size,
@@ -861,10 +863,7 @@ impl<'a> Lowerer<'a> {
             [size] => {
                 let size = match size {
                     GlslArraySize::Sized(_) => self.array_size(size, at)?,
-                    GlslArraySize::Unsized => {
-                        let size = self.implicit_sizes.get(&symbol).copied().unwrap_or(1);
-                        self.array_size(GlslArraySize::Sized(size), at)?
-                    }
+                    GlslArraySize::Unsized => self.unsized_binding_array(symbol, at)?,
                     GlslArraySize::Specialized(_) => self.array_size(size, at)?,
                 };
                 ty = self.insert_type(TypeInner::BindingArray { base: ty, size });

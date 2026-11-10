@@ -771,3 +771,127 @@ fn statement_expression_types(checked: &Checked) -> Vec<Type> {
         .filter_map(|expression| checked.analysis.type_of(expression.id).cloned())
         .collect()
 }
+
+#[test]
+fn nonuniform_propagates_as_in_glslang() {
+    let checked = accepted(
+        Stage::Fragment,
+        "#extension GL_EXT_nonuniform_qualifier : enable
+layout(location = 0) flat in int i;
+layout(location = 1) nonuniformEXT flat in int ni;
+layout(binding = 0) uniform sampler2D textures[];
+layout(binding = 1) uniform U { vec4 v; } blocks[];
+layout(location = 0) out vec4 o;
+struct S { int a; float b[2]; };
+nonuniformEXT int f(int x) { return x; }
+int g(int x) { return x; }
+void main() {
+    nonuniformEXT vec4 nv = vec4(1.0);
+    nonuniformEXT S ns;
+    int u = i;
+    vec4 uv = vec4(0.0);
+    bool c = u > 0;
+    float f1 = ni + 1.0;
+    float f2 = float(ni) * 2.0;
+    int t1 = c ? ni : u;
+    int t2 = (u, ni);
+    int t3 = -ni;
+    bool t4 = ni == u;
+    bool t5 = ni < u && c;
+    vec2 t6 = nv.xy;
+    int t7 = abs(ni);
+    ivec2 t8 = ivec2(ni);
+    int t9 = f(u);
+    int t10 = g(ni);
+    int t11 = ns.a;
+    float t12 = ns.b[u];
+    float t13 = uv[ni];
+    vec4 t14 = blocks[ni].v;
+    vec4 t15 = blocks[u].v;
+    vec4 t16 = texture(textures[nonuniformEXT(u)], vec2(0.5));
+    int t17 = nonuniformEXT(u) + u;
+    int t18 = u++;
+    nonuniformEXT int nl = i;
+    int t19 = nl++;
+    u = ni;
+    o = vec4(t17);
+}
+",
+    );
+    let non_uniform = |text: &str| {
+        checked
+            .analysis
+            .expression(checked.expression(text).id)
+            .is_some_and(|info| info.non_uniform)
+    };
+    for text in [
+        "ni",
+        "nv",
+        "ns",
+        "-ni",
+        "ni == u",
+        "ni < u",
+        "ni < u && c",
+        "nv.xy",
+        "f(u)",
+        "ns.a",
+        "ns.b",
+        "ns.b[u]",
+        "uv[ni]",
+        "blocks[ni]",
+        "blocks[ni].v",
+        "nonuniformEXT(u)",
+        "textures[nonuniformEXT(u)]",
+        "nonuniformEXT(u) + u",
+        "nl++",
+    ] {
+        assert!(non_uniform(text), "{text} should be non-uniform");
+    }
+    for text in [
+        "u",
+        "ni + 1.0",
+        "float(ni)",
+        "float(ni) * 2.0",
+        "c ? ni : u",
+        "abs(ni)",
+        "ivec2(ni)",
+        "g(ni)",
+        "blocks[u].v",
+        "texture(textures[nonuniformEXT(u)], vec2(0.5))",
+        "u++",
+        "u = ni",
+        "(u, ni)",
+    ] {
+        assert!(!non_uniform(text), "{text} should be uniform");
+    }
+    assert!(!checked.is_constant("nonuniformEXT(u)"));
+}
+
+#[test]
+fn nonuniform_matrix_products_are_uniform_as_in_glslang() {
+    let checked = accepted(
+        Stage::Fragment,
+        "#extension GL_EXT_nonuniform_qualifier : enable
+layout(location = 0) in vec2 v;
+void main() {
+    nonuniformEXT mat2 m = mat2(1.0);
+    mat2 a = m * mat2(2.0);
+    vec2 b = m * v;
+    vec2 c = v * m;
+    mat2 d = m * 2.0;
+    mat2 e = m + mat2(2.0);
+}
+",
+    );
+    let non_uniform = |text: &str| {
+        checked
+            .analysis
+            .expression(checked.expression(text).id)
+            .is_some_and(|info| info.non_uniform)
+    };
+    assert!(!non_uniform("m * mat2(2.0)"));
+    assert!(non_uniform("m * v"));
+    assert!(non_uniform("v * m"));
+    assert!(non_uniform("m * 2.0"));
+    assert!(non_uniform("m + mat2(2.0)"));
+}

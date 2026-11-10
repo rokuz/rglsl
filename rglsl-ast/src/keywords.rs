@@ -107,11 +107,10 @@ const EXTENSION_ONLY: [&str; 8] = [
     "tileImageEXT",
 ];
 
-const EXTENSION_KEYWORDS: [&str; 155] = [
+const EXTENSION_KEYWORDS: [&str; 154] = [
     "terminateInvocation",
     "terminateRayEXT",
     "ignoreIntersectionEXT",
-    "nonuniformEXT",
     "demote",
     "devicecoherent",
     "queuefamilycoherent",

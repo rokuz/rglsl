@@ -2373,6 +2373,10 @@ impl Writer {
                                 Instruction::type_array(id, type_id, length_id)
                             }
                             crate::proc::IndexableLength::Dynamic => {
+                                self.require_descriptor_indexing(
+                                    "runtime-sized binding arrays",
+                                    spirv::Capability::RuntimeDescriptorArray,
+                                )?;
                                 Instruction::type_runtime_array(id, type_id)
                             }
                         }
@@ -4311,10 +4315,26 @@ impl Writer {
         &self.capabilities_used
     }
 
-    pub fn decorate_non_uniform_binding_array_access(&mut self, id: Word) -> Result<(), Error> {
-        self.require_any("NonUniformEXT", &[spirv::Capability::ShaderNonUniform])?;
-        self.use_extension("SPV_EXT_descriptor_indexing");
+    pub(super) fn decorate_non_uniform(&mut self, id: Word) -> Result<(), Error> {
+        self.require_any("NonUniform", &[spirv::Capability::ShaderNonUniform])?;
+        self.use_descriptor_indexing();
         self.decorate(id, spirv::Decoration::NonUniform, &[]);
+        Ok(())
+    }
+
+    pub(super) fn use_descriptor_indexing(&mut self) {
+        if self.lang_version() < (1, 5) {
+            self.use_extension("SPV_EXT_descriptor_indexing");
+        }
+    }
+
+    pub(super) fn require_descriptor_indexing(
+        &mut self,
+        what: &'static str,
+        capability: spirv::Capability,
+    ) -> Result<(), Error> {
+        self.require_any(what, &[capability])?;
+        self.use_descriptor_indexing();
         Ok(())
     }
 

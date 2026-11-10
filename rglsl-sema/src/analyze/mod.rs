@@ -48,6 +48,7 @@ pub enum Callee {
     Builtin(BuiltinFunctionId),
     Constructor(Type),
     Length,
+    NonUniform,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -56,6 +57,7 @@ pub struct ExpressionInfo {
     pub is_lvalue: bool,
     pub is_constant: bool,
     pub is_specialization: bool,
+    pub non_uniform: bool,
     pub value: Option<Constant>,
     pub conversion: Option<Type>,
     pub output_conversion: Option<Type>,
@@ -208,6 +210,7 @@ pub(crate) struct Operand {
     pub storage: Storage,
     pub specialization: bool,
     pub writeonly: bool,
+    pub non_uniform: bool,
 }
 
 impl Operand {
@@ -225,6 +228,7 @@ impl Operand {
             storage: Storage::None,
             specialization: false,
             writeonly: false,
+            non_uniform: false,
         }
     }
 

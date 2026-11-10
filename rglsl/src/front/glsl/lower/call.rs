@@ -9,7 +9,7 @@ use super::expression::Place;
 use super::function::FunctionLowerer;
 use super::types::scalar;
 use super::{internal, semantic, unsupported, Result};
-use crate::{Expression, Handle, Literal, Span, Statement};
+use crate::{Expression, Handle, Literal, NonUniform, Span, Statement};
 
 impl FunctionLowerer<'_, '_> {
     pub(super) fn call(
@@ -20,7 +20,11 @@ impl FunctionLowerer<'_, '_> {
         let at = self.at(expression.span);
         let analysis = self.lw.analysis;
         match analysis.calls.get(&expression.id) {
-            Some(&Callee::Function(id)) => self.user_call(id, &call.arguments, at),
+            Some(&Callee::Function(id)) => {
+                let non_uniform = self.info(expression)?.non_uniform;
+                self.user_call(id, &call.arguments, non_uniform, at)
+            }
+            Some(&Callee::NonUniform) => self.non_uniform_value(&call.arguments, at).map(Some),
             Some(&Callee::Builtin(id)) => self.builtin_call(id, &call.arguments, at),
             Some(&Callee::Constructor(ref ty)) => {
                 if ty.is_opaque() {
@@ -72,10 +76,35 @@ impl FunctionLowerer<'_, '_> {
         self.as_kind(length, crate::Scalar::I32, at)
     }
 
+    fn non_uniform_value(
+        &mut self,
+        arguments: &[AstExpression],
+        at: Span,
+    ) -> Result<Handle<Expression>> {
+        let argument = arguments.first().ok_or_else(|| internal(at))?;
+        let (value, ty) = self.typed(argument)?;
+        let shared = self.tracker.is_const_or_override(value)
+            || matches!(
+                self.expressions[value],
+                Expression::FunctionArgument(_)
+                    | Expression::GlobalVariable(_)
+                    | Expression::LocalVariable(_)
+            );
+        let value = if shared && !ty.is_opaque() {
+            let pointer = self.spill(value, &ty, at)?;
+            self.add(Expression::Load { pointer }, at)?
+        } else {
+            value
+        };
+        self.mark(value, NonUniform::VALUE);
+        Ok(value)
+    }
+
     fn user_call(
         &mut self,
         id: FunctionId,
         arguments: &[AstExpression],
+        non_uniform: bool,
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
         let analysis = self.lw.analysis;
@@ -97,14 +126,21 @@ impl FunctionLowerer<'_, '_> {
             }
         }
         let mut values = Vec::with_capacity(arguments.len());
-        let mut writebacks: Vec<(Place, Handle<crate::LocalVariable>, GlslType, GlslType)> =
-            Vec::new();
+        let mut writebacks: Vec<(
+            Place,
+            Handle<crate::LocalVariable>,
+            GlslType,
+            GlslType,
+            bool,
+        )> = Vec::new();
         for (argument, parameter) in arguments.iter().zip(&function.parameters) {
             if parameter.direction == Direction::In {
                 values.push(self.rvalue(argument)?);
                 continue;
             }
-            let argument_ty = self.info(argument)?.ty.clone();
+            let argument_info = self.info(argument)?;
+            let argument_ty = argument_info.ty.clone();
+            let argument_non_uniform = argument_info.non_uniform;
             let place = self.place(argument)?;
             let local = self.local(&parameter.ty, None, at)?;
             if parameter.direction == Direction::Inout {
@@ -114,12 +150,24 @@ impl FunctionLowerer<'_, '_> {
                 self.push(Statement::Store { pointer, value }, at);
             }
             values.push(self.local_pointer(local, at)?);
-            writebacks.push((place, local, parameter.ty.clone(), argument_ty));
+            writebacks.push((
+                place,
+                local,
+                parameter.ty.clone(),
+                argument_ty,
+                argument_non_uniform,
+            ));
         }
         let result = self.call_statement(handle, values, !function.return_type.is_void(), at);
-        for (place, local, parameter_ty, argument_ty) in writebacks {
+        if let (Some(result), true) = (result, non_uniform) {
+            self.mark(result, NonUniform::VALUE);
+        }
+        for (place, local, parameter_ty, argument_ty, argument_non_uniform) in writebacks {
             let pointer = self.local_pointer(local, at)?;
             let value = self.add(Expression::Load { pointer }, at)?;
+            if argument_non_uniform {
+                self.mark(value, NonUniform::VALUE);
+            }
             let value = self.convert(value, &parameter_ty, &argument_ty, at)?;
             self.store(&place, value, at)?;
         }

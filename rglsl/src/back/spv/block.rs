@@ -714,8 +714,27 @@ impl BlockContext<'_> {
         Ok(Some(result_id))
     }
 
-    /// Cache an expression for a value.
     pub(super) fn cache_expression_value(
+        &mut self,
+        expr_handle: Handle<crate::Expression>,
+        block: &mut Block,
+    ) -> Result<(), Error> {
+        self.write_expression_value(expr_handle, block)?;
+        if self
+            .non_uniform(expr_handle)
+            .contains(crate::NonUniform::VALUE)
+            && self.produces_instruction(expr_handle)
+        {
+            let id = self.cached.ids[expr_handle];
+            if id != 0 {
+                self.writer.decorate_non_uniform(id)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Cache an expression for a value.
+    fn write_expression_value(
         &mut self,
         expr_handle: Handle<crate::Expression>,
         block: &mut Block,
@@ -1090,6 +1109,7 @@ impl BlockContext<'_> {
                             } => {
                                 //TODO: why not just rely on `Fadd` for matrices?
                                 self.write_matrix_matrix_column_op(
+                                    expr_handle,
                                     block,
                                     id,
                                     result_type_id,
@@ -1099,7 +1119,7 @@ impl BlockContext<'_> {
                                     rows,
                                     scalar.width,
                                     spirv::Op::FAdd,
-                                );
+                                )?;
 
                                 self.cached[expr_handle] = id;
                                 return Ok(());
@@ -1119,6 +1139,7 @@ impl BlockContext<'_> {
                                 scalar,
                             } => {
                                 self.write_matrix_matrix_column_op(
+                                    expr_handle,
                                     block,
                                     id,
                                     result_type_id,
@@ -1128,7 +1149,7 @@ impl BlockContext<'_> {
                                     rows,
                                     scalar.width,
                                     spirv::Op::FSub,
-                                );
+                                )?;
 
                                 self.cached[expr_handle] = id;
                                 return Ok(());
@@ -2034,6 +2055,7 @@ impl BlockContext<'_> {
                 depth_ref,
                 clamp_to_edge,
             } => self.write_image_sample(
+                expr_handle,
                 result_type_id,
                 image,
                 sampler,
@@ -2235,6 +2257,96 @@ impl BlockContext<'_> {
 
         self.cached[expr_handle] = id;
         Ok(())
+    }
+
+    pub(super) fn non_uniform(&self, expr_handle: Handle<crate::Expression>) -> crate::NonUniform {
+        self.ir_function
+            .non_uniform
+            .get(&expr_handle)
+            .copied()
+            .unwrap_or_default()
+    }
+
+    fn produces_instruction(&self, expr_handle: Handle<crate::Expression>) -> bool {
+        let shared = matches!(
+            self.ir_function.expressions[expr_handle],
+            crate::Expression::Literal(_)
+                | crate::Expression::Constant(_)
+                | crate::Expression::Override(_)
+                | crate::Expression::ZeroValue(_)
+                | crate::Expression::GlobalVariable(_)
+                | crate::Expression::LocalVariable(_)
+                | crate::Expression::FunctionArgument(_)
+        );
+        !shared
+            && !self.expression_constness.is_const(expr_handle)
+            && !self.expression_constness.is_specialized(expr_handle)
+    }
+
+    fn binding_array_capability(
+        &mut self,
+        base: Handle<crate::Expression>,
+        non_uniform: bool,
+    ) -> Result<(), Error> {
+        use spirv::Capability as Cap;
+        let mut ty = self.fun_info[base].ty.inner_with(&self.ir_module.types);
+        let mut space = None;
+        if let crate::TypeInner::Pointer {
+            base,
+            space: pointer_space,
+        } = *ty
+        {
+            ty = &self.ir_module.types[base].inner;
+            space = Some(pointer_space);
+        }
+        let crate::TypeInner::BindingArray { base: element, .. } = *ty else {
+            return Ok(());
+        };
+        let buffer = |dim| dim == crate::ImageDimension::Buffer;
+        let (dynamic, nonuniform) = match self.ir_module.types[element].inner {
+            crate::TypeInner::Image {
+                dim,
+                class: crate::ImageClass::Storage { .. },
+                ..
+            } if buffer(dim) => (
+                Some(Cap::StorageTexelBufferArrayDynamicIndexing),
+                Cap::StorageTexelBufferArrayNonUniformIndexing,
+            ),
+            crate::TypeInner::Image { dim, .. } | crate::TypeInner::SampledImage { dim, .. }
+                if buffer(dim) =>
+            {
+                (
+                    Some(Cap::UniformTexelBufferArrayDynamicIndexing),
+                    Cap::UniformTexelBufferArrayNonUniformIndexing,
+                )
+            }
+            crate::TypeInner::Image {
+                class: crate::ImageClass::Storage { .. },
+                ..
+            } => (None, Cap::StorageImageArrayNonUniformIndexing),
+            crate::TypeInner::Image { .. } | crate::TypeInner::SampledImage { .. } => {
+                (None, Cap::SampledImageArrayNonUniformIndexing)
+            }
+            crate::TypeInner::Struct { .. } => match space {
+                Some(crate::AddressSpace::Storage { .. }) => {
+                    (None, Cap::StorageBufferArrayNonUniformIndexing)
+                }
+                Some(crate::AddressSpace::Uniform) => {
+                    (None, Cap::UniformBufferArrayNonUniformIndexing)
+                }
+                _ => return Ok(()),
+            },
+            _ => return Ok(()),
+        };
+        if non_uniform {
+            self.writer
+                .require_descriptor_indexing("non-uniform indexing of binding arrays", nonuniform)
+        } else if let Some(dynamic) = dynamic {
+            self.writer
+                .require_descriptor_indexing("dynamic indexing of binding arrays", dynamic)
+        } else {
+            Ok(())
+        }
     }
 
     /// Helper which focuses on generating the `As` expressions and the various conversions
@@ -2523,6 +2635,9 @@ impl BlockContext<'_> {
         block: &mut Block,
         type_adjustment: AccessTypeAdjustment,
     ) -> Result<ExpressionPointer, Error> {
+        let non_uniform_access = self
+            .non_uniform(expr_handle)
+            .contains(crate::NonUniform::ACCESS);
         let result_type_id = {
             let resolution = &self.fun_info[expr_handle].ty;
             match type_adjustment {
@@ -2573,6 +2688,11 @@ impl BlockContext<'_> {
 
             expr_handle = match self.ir_function.expressions[expr_handle] {
                 crate::Expression::Access { base, index } => {
+                    let non_uniform_index = self
+                        .non_uniform(expr_handle)
+                        .contains(crate::NonUniform::ACCESS)
+                        && !self.non_uniform(base).contains(crate::NonUniform::ACCESS);
+                    self.binding_array_capability(base, non_uniform_index)?;
                     let index = GuardedIndex::Expression(index);
                     let index_id =
                         self.write_access_chain_index(base, index, &mut accumulated_checks, block)?;
@@ -2668,6 +2788,9 @@ impl BlockContext<'_> {
             let pointer_id = self.gen_id();
             let access =
                 Instruction::access_chain(result_type_id, pointer_id, root_id, &self.temp_list);
+            if non_uniform_access {
+                self.writer.decorate_non_uniform(pointer_id)?;
+            }
 
             // If we generated some bounds checks, we need to leave it to our
             // caller to generate the branch, the access, the load or store, and
@@ -3029,6 +3152,7 @@ impl BlockContext<'_> {
     #[allow(clippy::too_many_arguments)]
     fn write_matrix_matrix_column_op(
         &mut self,
+        expr_handle: Handle<crate::Expression>,
         block: &mut Block,
         result_id: Word,
         result_type_id: Word,
@@ -3038,8 +3162,11 @@ impl BlockContext<'_> {
         rows: crate::VectorSize,
         width: u8,
         op: spirv::Op,
-    ) {
+    ) -> Result<(), Error> {
         self.temp_list.clear();
+        let non_uniform = self
+            .non_uniform(expr_handle)
+            .contains(crate::NonUniform::VALUE);
 
         let vector_type_id = self.get_numeric_type_id(NumericType::Vector {
             size: rows,
@@ -3070,6 +3197,9 @@ impl BlockContext<'_> {
                 column_id_left,
                 column_id_right,
             ));
+            if non_uniform {
+                self.writer.decorate_non_uniform(column_id_res)?;
+            }
 
             self.temp_list.push(column_id_res);
         }
@@ -3079,6 +3209,7 @@ impl BlockContext<'_> {
             result_id,
             &self.temp_list,
         ));
+        Ok(())
     }
 
     /// Build the instructions for vector - scalar multiplication
@@ -3924,6 +4055,9 @@ impl BlockContext<'_> {
                     let type_id = match result {
                         Some(expr) => {
                             self.cached[expr] = id;
+                            if self.non_uniform(expr).contains(crate::NonUniform::VALUE) {
+                                self.writer.decorate_non_uniform(id)?;
+                            }
                             self.get_expression_type_id(&self.fun_info[expr].ty)
                         }
                         None => self.writer.void_type,

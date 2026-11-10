@@ -341,9 +341,48 @@ impl Analyzer<'_> {
                 }
                 SingleTypeQualifier::Invariant => result.invariant = true,
                 SingleTypeQualifier::Precise => result.precise = true,
+                SingleTypeQualifier::NonUniform => result.nonuniform = true,
             }
         }
         result
+    }
+
+    fn non_uniform_storage_check(
+        &mut self,
+        qualifier: Option<&Spanned<TypeQualifier>>,
+        qualifiers: &Qualifiers,
+    ) {
+        let allowed =
+            !qualifiers.constant && matches!(qualifiers.storage, Storage::None | Storage::In);
+        if !allowed {
+            self.non_uniform_error(
+                qualifier,
+                "for non-parameter, can only apply to 'in' or no storage qualifier",
+            );
+        }
+    }
+
+    fn non_uniform_error(
+        &mut self,
+        qualifier: Option<&Spanned<TypeQualifier>>,
+        reason: &'static str,
+    ) {
+        let span = qualifier.and_then(|qualifier| {
+            qualifier
+                .qualifiers
+                .iter()
+                .find(|single| single.node == SingleTypeQualifier::NonUniform)
+                .map(|single| single.span)
+        });
+        if let Some(span) = span {
+            self.error(
+                span,
+                DiagnosticKind::InvalidQualifier {
+                    qualifier: "nonuniformEXT",
+                    reason,
+                },
+            );
+        }
     }
 
     fn optional_qualifiers(&mut self, ty: &FullySpecifiedType) -> Qualifiers {
@@ -455,6 +494,13 @@ impl Analyzer<'_> {
         let mut members: Vec<Member> = Vec::new();
         for declaration in declarations {
             let mut qualifiers = self.optional_qualifiers(&declaration.ty.node);
+            if qualifiers.nonuniform {
+                self.non_uniform_error(
+                    declaration.ty.qualifier.as_ref(),
+                    "not allowed on block or structure members",
+                );
+                qualifiers.nonuniform = false;
+            }
             if matches!(
                 declaration.ty.specifier.non_array,
                 TypeSpecifierNonArray::Struct(_)
@@ -540,6 +586,9 @@ impl Analyzer<'_> {
 
     fn init_declarator_list(&mut self, list: &InitDeclaratorList) {
         let qualifiers = self.optional_qualifiers(&list.ty.node);
+        if qualifiers.nonuniform {
+            self.non_uniform_storage_check(list.ty.qualifier.as_ref(), &qualifiers);
+        }
         let base = self.type_specifier(&list.ty.specifier);
         if list.declarators.is_empty() {
             self.global_storage_checks(&qualifiers, &base, list.ty.specifier.span, true);
@@ -1137,6 +1186,9 @@ impl Analyzer<'_> {
         instance: Option<&Spanned<BlockInstance>>,
     ) {
         let qualifiers = self.qualifiers(&structure.qualifier);
+        if qualifiers.nonuniform {
+            self.non_uniform_storage_check(Some(&structure.qualifier), &qualifiers);
+        }
         let storage = match qualifiers.storage {
             Storage::Uniform => BlockStorage::Uniform,
             Storage::Buffer => BlockStorage::Buffer,
@@ -1456,6 +1508,12 @@ impl Analyzer<'_> {
     ) -> Option<FunctionId> {
         let name = &prototype.name;
         let return_qualifiers = self.optional_qualifiers(&prototype.return_type.node);
+        if return_qualifiers.nonuniform {
+            self.non_uniform_storage_check(
+                prototype.return_type.qualifier.as_ref(),
+                &return_qualifiers,
+            );
+        }
         let return_type = self.type_specifier(&prototype.return_type.specifier);
         let close = Span::new(prototype.span.end.saturating_sub(1), prototype.span.end);
         if return_type.array.contains(&ArraySize::Unsized) {
