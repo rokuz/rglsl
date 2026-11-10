@@ -596,14 +596,13 @@ impl super::Validator {
 
                 // check sampling and comparison properties
                 let image_depth = match class {
+                    // Integer textures can be sampled as well as float ones
+                    // (GLSL `isampler*` and `usampler*`).
                     crate::ImageClass::Sampled {
-                        kind: crate::ScalarKind::Float,
+                        kind:
+                            crate::ScalarKind::Float | crate::ScalarKind::Uint | crate::ScalarKind::Sint,
                         multi: false,
                     } => false,
-                    crate::ImageClass::Sampled {
-                        kind: crate::ScalarKind::Uint | crate::ScalarKind::Sint,
-                        multi: false,
-                    } if gather.is_some() => false,
                     crate::ImageClass::External => false,
                     crate::ImageClass::Depth { multi: false } => true,
                     _ => return Err(ExpressionError::InvalidImageClass(class)),

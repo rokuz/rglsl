@@ -72,6 +72,10 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   `Exact` (with a float level), `Gradient` or `Bias`; `Bias` is allowed for every
   non-multisampled image. The errors `InvalidDepthSampleLevel` and
   `InvalidSampleLevelBiasDimension` are removed (`valid/expression.rs`, `back/spv/image.rs`).
+- **`flat` is required on fragment inputs only**, for integers and doubles; vertex and mesh
+  outputs need no interpolation qualifier (`valid/interface.rs`).
+- **Write-only storage buffers are valid** (`StorageAddressSpaceWriteOnlyNotSupported` is
+  removed), **integer textures can be sampled**, and **clip distances may be fragment inputs**.
 - **`MathFunction::Outer` typing.** `outer(c, r)` has one row per component of `c` and one
   column per component of `r`, as in GLSL and SPIR-V; upstream had them swapped
   (`proc/overloads/mathfunction.rs`).

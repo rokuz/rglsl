@@ -41,8 +41,6 @@ pub enum GlobalVariableError {
     InitializerType,
     #[error("Initializer can't be used with address space {0:?}")]
     InitializerNotAllowed(crate::AddressSpace),
-    #[error("Storage address space doesn't support write-only access")]
-    StorageAddressSpaceWriteOnlyNotSupported,
     #[error("Type is not valid for use as a immediate data")]
     InvalidImmediateType(#[source] ImmediateError),
     #[error("Task payload must not be zero-sized")]
@@ -72,7 +70,7 @@ pub enum VaryingError {
         interpolation: crate::Interpolation,
         sampling: crate::Sampling,
     },
-    #[error("`@interpolate(flat) must be explicitly specified for integer I/O")]
+    #[error("integer and double-precision fragment shader inputs must be qualified as `flat`")]
     InvalidInterpolationForInteger,
     #[error("Interpolation must be specified on vertex shader outputs and fragment shader inputs")]
     MissingInterpolation,
@@ -316,7 +314,10 @@ impl VaryingContext<'_> {
                         is_index_type(ty_inner),
                     ),
                     Bi::ClipDistances | Bi::CullDistance => (
-                        (self.stage == St::Vertex || self.stage == St::Mesh) && self.output,
+                        // Written by the stages before rasterization, and
+                        // readable in the fragment stage.
+                        ((self.stage == St::Vertex || self.stage == St::Mesh) && self.output)
+                            || (self.stage == St::Fragment && !self.output),
                         match *ty_inner {
                             Ti::Array { base, size, .. } => {
                                 self.types[base].inner == Ti::Scalar(crate::Scalar::F32)
@@ -805,23 +806,35 @@ impl VaryingContext<'_> {
                 }
 
                 if interpolation != Some(crate::Interpolation::PerVertex) {
-                    match ty_inner.scalar_kind() {
-                        Some(crate::ScalarKind::Float) => {
+                    // Integers and doubles cannot be interpolated: where they
+                    // enter the fragment stage they must be `flat` (Vulkan
+                    // VUID-StandaloneSpirv-Flat-04744). The outputs of the
+                    // stages before rasterization need no qualifier.
+                    let fragment_input = self.stage == crate::ShaderStage::Fragment
+                        && !self.output
+                        && !per_primitive;
+                    let must_be_flat = match ty_inner.scalar() {
+                        Some(crate::Scalar {
+                            kind: crate::ScalarKind::Float,
+                            width,
+                        }) => {
                             // Default interpolation is applied in the front end.
                             if needs_interpolation && interpolation.is_none() {
                                 return Err(VaryingError::MissingInterpolation);
                             }
+                            width == 8
                         }
-                        Some(crate::ScalarKind::Sint | crate::ScalarKind::Uint) => {
-                            // Integers do not have a default interpolation; `flat` must be
-                            // specified explicitly.
-                            if needs_interpolation
-                                && interpolation != Some(crate::Interpolation::Flat)
-                            {
-                                return Err(VaryingError::InvalidInterpolationForInteger);
-                            }
-                        }
+                        Some(crate::Scalar {
+                            kind: crate::ScalarKind::Sint | crate::ScalarKind::Uint,
+                            ..
+                        }) => true,
                         Some(_) | None => return Err(VaryingError::InvalidType(ty)),
+                    };
+                    if must_be_flat
+                        && fragment_input
+                        && interpolation != Some(crate::Interpolation::Flat)
+                    {
+                        return Err(VaryingError::InvalidInterpolationForInteger);
                     }
                 }
             }
@@ -1010,7 +1023,7 @@ impl super::Validator {
             crate::AddressSpace::Function => {
                 return Err(GlobalVariableError::InvalidUsage(var.space))
             }
-            crate::AddressSpace::Storage { access } => {
+            crate::AddressSpace::Storage { access: _ } => {
                 if let Err((ty_handle, disalignment)) = type_info.storage_layout {
                     if self.flags.contains(super::ValidationFlags::STRUCT_LAYOUTS) {
                         return Err(GlobalVariableError::Alignment(
@@ -1019,9 +1032,6 @@ impl super::Validator {
                             disalignment,
                         ));
                     }
-                }
-                if access == crate::StorageAccess::STORE {
-                    return Err(GlobalVariableError::StorageAddressSpaceWriteOnlyNotSupported);
                 }
                 (
                     TypeFlags::DATA | TypeFlags::HOST_SHAREABLE | TypeFlags::CREATION_RESOLVED,

@@ -571,3 +571,73 @@ fn loose_uniforms_are_rejected() {
         void main() { o = color + texture(sampler2D(t, s), vec2(0.0)); }",
     );
 }
+
+/// Integers and doubles must be `flat` only where they enter the fragment
+/// stage; vertex outputs need no qualifier.
+#[test]
+fn flat_is_required_on_fragment_inputs_only() {
+    let module = compile(
+        ShaderStage::Vertex,
+        "#version 450
+        layout(location = 0) out int a;
+        layout(location = 1) out uvec2 b;
+        layout(location = 2) flat out int c;
+        void main() { a = 1; b = uvec2(2); c = 3; gl_Position = vec4(0.0); }",
+    );
+    assert_eq!(decorated(&module, Decoration::Flat), ["c"]);
+
+    compile(
+        ShaderStage::Fragment,
+        "#version 450
+        layout(location = 0) flat in int a;
+        layout(location = 0) out vec4 o;
+        void main() { o = vec4(a); }",
+    );
+    for ty in ["int", "uvec3", "double"] {
+        let error = parse(
+            ShaderStage::Fragment,
+            &format!(
+                "#version 450
+                layout(location = 0) in {ty} a;
+                layout(location = 0) out vec4 o;
+                void main() {{ o = vec4(1.0); }}"
+            ),
+        )
+        .unwrap_err();
+        assert!(error.contains("InvalidInterpolationForInteger"), "{error}");
+    }
+}
+
+/// `writeonly` buffer blocks are valid and are marked `NonReadable`.
+#[test]
+fn write_only_buffer_blocks() {
+    let module = compile(
+        ShaderStage::Compute,
+        "#version 450
+        layout(local_size_x = 1) in;
+        layout(std430, binding = 0) writeonly buffer B { float d[]; } b;
+        void main() { b.d[0] = 1.0; }",
+    );
+    assert_eq!(decorated(&module, Decoration::NonReadable), ["b"]);
+}
+
+/// Integer textures can be sampled, not only fetched.
+#[test]
+fn integer_textures_can_be_sampled() {
+    let module = compile(
+        ShaderStage::Fragment,
+        "#version 450
+        layout(binding = 0) uniform itexture2D t;
+        layout(binding = 1) uniform utexture2D u;
+        layout(binding = 2) uniform sampler s;
+        layout(location = 0) in vec2 c;
+        layout(location = 0) out vec4 o;
+        void main() {
+            ivec4 a = texture(isampler2D(t, s), c);
+            uvec4 b = textureLod(usampler2D(u, s), c, 0.0);
+            o = vec4(a) + vec4(b);
+        }",
+    );
+    assert_eq!(instructions(&module, Op::ImageSampleImplicitLod).len(), 1);
+    assert_eq!(instructions(&module, Op::ImageSampleExplicitLod).len(), 1);
+}
