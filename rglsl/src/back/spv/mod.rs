@@ -104,6 +104,7 @@ mod index;
 mod instructions;
 mod layout;
 mod mesh_shader;
+mod plain_types;
 mod ray;
 mod reclaimable;
 mod selection;
@@ -994,6 +995,8 @@ pub struct Writer {
     /// types used in other storage classes, such as stage outputs or workgroup
     /// memory.
     laid_out_types: crate::arena::HandleSet<crate::Type>,
+    composite_types: crate::FastHashMap<Word, plain_types::CompositeType>,
+    plain_types: crate::FastHashMap<Word, Word>,
     decorated_blocks: crate::arena::HandleSet<crate::Type>,
     buffer_blocks: crate::FastHashSet<Word>,
     fake_missing_bindings: bool,

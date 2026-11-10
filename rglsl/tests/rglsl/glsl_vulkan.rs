@@ -2076,7 +2076,7 @@ fn structs_cross_between_buffers_and_functions() {
         .map(|inst| name_of(&module, inst.result_id.expect("a type")))
         .filter(|name| name == "S")
         .collect();
-    assert_eq!(names.len(), 3);
+    assert_eq!(names.len(), 4);
 }
 
 #[test]
@@ -2897,7 +2897,7 @@ fn arrays_of_buffer_blocks_match_glslang() {
     let mut blocks = decorated(&module, Decoration::Block);
     blocks.sort_unstable();
     assert_eq!(blocks, ["B", "C", "I", "P", "U"]);
-    assert_eq!(array_lengths(&module), [1, 1, 2, 2, 2, 4, 4, 4, 4]);
+    assert_eq!(array_lengths(&module), [1, 2, 2, 2, 4, 4, 4]);
 }
 
 #[test]
@@ -2948,6 +2948,57 @@ fn function_variables_have_no_explicit_layout() {
     });
     for pointer in function_pointers {
         assert!(!laid_out.contains(&pointer.operands[1].unwrap_id_ref()));
+    }
+    assert!(!instructions(&module, Op::CopyLogical).is_empty());
+}
+
+#[test]
+fn layout_free_copies_before_spirv_1_4() {
+    let source = "#version 450 core
+        layout(local_size_x = 64) in;
+        layout(set = 0, binding = 0, std430) buffer foo { int x[4]; } f;
+        struct Inner { uint a; uint b[2]; };
+        struct Bar { uint x; Inner inner[2]; };
+        layout(set = 0, binding = 1, std430) buffer foo2 { Bar b; Bar bars[]; };
+        shared int tile[4];
+        struct Holder { int v[4]; };
+        shared Holder holder;
+        int global_copy[4] = int[4](1, 2, 3, 4);
+        void main() {
+            holder.v = f.x;
+            Holder local_holder = holder;
+            f.x = local_holder.v;
+            int x[4] = f.x;
+            x[1] = 2;
+            f.x = x;
+            tile = f.x;
+            global_copy = tile;
+            Bar copy = b;
+            copy.inner[1].b[0] = uint(global_copy[gl_LocalInvocationIndex % 4u]);
+            bars[1] = copy;
+            uint dynamic = b.inner[gl_LocalInvocationIndex % 2u].b[1];
+            int y[4] = int[4](5, 6, 7, 8);
+            int spilled = int[4](1, 2, 3, int(dynamic))[gl_LocalInvocationIndex % 4u];
+            f.x[0] = int(dynamic) + x[gl_LocalInvocationIndex % 4u] + spilled + y[dynamic];
+        }";
+    let module =
+        parse(ShaderStage::Compute, source).unwrap_or_else(|e| panic!("shader rejected: {e}"));
+    let info = Validator::new(ValidationFlags::all(), Capabilities::all())
+        .validate(&module)
+        .unwrap();
+    for (lang_version, env) in [((1, 0), "vulkan1.0"), ((1, 6), "vulkan1.3")] {
+        let options = spv::Options {
+            lang_version,
+            flags: spv::WriterFlags::DEBUG,
+            ..spv::Options::default()
+        };
+        let words = spv::write_vec(&module, &info, &options, None).expect("SPIR-V backend failed");
+        crate::stage_io::spirv_val_in(&words, &["--target-env", env]);
+        let spirv = dr::load_words(words).expect("produced SPIR-V does not parse");
+        assert_eq!(
+            instructions(&spirv, Op::CopyLogical).is_empty(),
+            lang_version < (1, 4)
+        );
     }
 }
 

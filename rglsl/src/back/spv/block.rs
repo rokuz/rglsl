@@ -868,7 +868,7 @@ impl BlockContext<'_> {
                                 // can do is spill the value to a new temporary variable,
                                 // at which point we can get a pointer to that and just
                                 // use `OpAccessChain` in the usual way.
-                                self.spill_to_internal_variable(base, block);
+                                self.spill_to_internal_variable(base, block)?;
 
                                 // Since the base was spilled, mark this access to it as
                                 // spilled, too.
@@ -2811,6 +2811,19 @@ impl BlockContext<'_> {
                 ),
                 None => (result_type_id, access_type_adjustment),
             };
+            let class = match access_type_adjustment {
+                AccessTypeAdjustment::IntroducePointer(class) => Some(class),
+                _ => self.pointer_class(pointer),
+            };
+            let plain_load = wrapped_load.is_none()
+                && class.is_some_and(|class| {
+                    self.writer.needs_layout_conversion(result_type_id, class)
+                });
+            let load_type_id = if plain_load {
+                self.writer.plain_type_id(result_type_id)
+            } else {
+                load_type_id
+            };
 
             let load_id = match self.write_access_chain(pointer, block, access_type_adjustment)? {
                 ExpressionPointer::Ready { pointer_id } => {
@@ -2882,12 +2895,28 @@ impl BlockContext<'_> {
                     ));
                     Ok(result_id)
                 }
+                None if plain_load => {
+                    self.writer
+                        .convert_layout(block, result_type_id, load_id, false)
+                }
                 None => Ok(load_id),
             }
         }
     }
 
-    fn spill_to_internal_variable(&mut self, base: Handle<crate::Expression>, block: &mut Block) {
+    fn pointer_class(&self, pointer: Handle<crate::Expression>) -> Option<spirv::StorageClass> {
+        match *self.fun_info[pointer].ty.inner_with(&self.ir_module.types) {
+            crate::TypeInner::Pointer { space, .. }
+            | crate::TypeInner::ValuePointer { space, .. } => Some(map_storage_class(space)),
+            _ => None,
+        }
+    }
+
+    fn spill_to_internal_variable(
+        &mut self,
+        base: Handle<crate::Expression>,
+        block: &mut Block,
+    ) -> Result<(), Error> {
         use indexmap::map::Entry;
 
         // Make sure we have an internal variable to spill `base` to.
@@ -2938,10 +2967,20 @@ impl BlockContext<'_> {
         // variable for `a` has already been declared, but it is still essential
         // that we store `a` into it, so that `a[z]` sees this iteration's value
         // of `a`.
-        let base_id = self.cached[base];
+        let mut base_id = self.cached[base];
+        let base_type_id = self.get_expression_type_id(&self.fun_info[base].ty);
+        if self
+            .writer
+            .needs_layout_conversion(base_type_id, spirv::StorageClass::Function)
+        {
+            base_id = self
+                .writer
+                .convert_layout(block, base_type_id, base_id, true)?;
+        }
         block
             .body
             .push(Instruction::store(spill_variable_id, base_id, None));
+        Ok(())
     }
 
     /// Generate an access to a spilled temporary, if necessary.
@@ -3775,7 +3814,18 @@ impl BlockContext<'_> {
                     self.writer.write_memory_barrier(flags, &mut block);
                 }
                 Statement::Store { pointer, value } => {
-                    let value_id = self.cached[value];
+                    let mut value_id = self.cached[value];
+                    if let Some(class) = self.pointer_class(pointer) {
+                        let value_type_id = self.get_expression_type_id(&self.fun_info[value].ty);
+                        if self.writer.needs_layout_conversion(value_type_id, class) {
+                            value_id = self.writer.convert_layout(
+                                &mut block,
+                                value_type_id,
+                                value_id,
+                                true,
+                            )?;
+                        }
+                    }
                     match self.write_access_chain(
                         pointer,
                         &mut block,

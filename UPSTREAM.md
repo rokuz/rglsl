@@ -105,7 +105,13 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   `write_interface_block`). Upstream cannot express stage blocks.
 - **Layout decorations only on buffer contents.** The SPIR-V backend decorates a type with
   `Offset`, `ArrayStride` and `MatrixStride` only if it is stored in a uniform buffer, a
-  storage buffer or push constants; upstream decorates every struct and array.
+  storage buffer or push constants; upstream decorates every struct and array. Pointers in
+  other storage classes (`back/spv/plain_types.rs`) point to an undecorated twin of such a
+  type, or of any struct or array containing one; loads and stores through them convert
+  between the twins with `OpCopyLogical` from SPIR-V 1.4 and member by member before.
+- **The workgroup zero-initialisation polyfill reuses a declared `LocalInvocationIndex`**
+  input global instead of declaring a second one, which Vulkan forbids
+  (VUID-StandaloneSpirv-OpEntryPoint-09658).
 - **`MathFunction::Outer` typing.** `outer(c, r)` has one row per component of `c` and one
   column per component of `r`, as in GLSL and SPIR-V; upstream had them swapped
   (`proc/overloads/mathfunction.rs`).

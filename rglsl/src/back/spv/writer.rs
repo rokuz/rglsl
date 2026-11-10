@@ -112,6 +112,8 @@ impl Writer {
             global_variables: HandleVec::new(),
             std140_compat_uniform_types: crate::FastHashMap::default(),
             laid_out_types: crate::arena::HandleSet::new(),
+            composite_types: crate::FastHashMap::default(),
+            plain_types: crate::FastHashMap::default(),
             decorated_blocks: crate::arena::HandleSet::new(),
             buffer_blocks: crate::FastHashSet::default(),
             fake_missing_bindings: options.fake_missing_bindings,
@@ -218,6 +220,8 @@ impl Writer {
             global_variables: take(&mut self.global_variables).reclaim(),
             std140_compat_uniform_types: take(&mut self.std140_compat_uniform_types).reclaim(),
             laid_out_types: crate::arena::HandleSet::new(),
+            composite_types: take(&mut self.composite_types).reclaim(),
+            plain_types: take(&mut self.plain_types).reclaim(),
             decorated_blocks: crate::arena::HandleSet::new(),
             buffer_blocks: crate::FastHashSet::default(),
             saved_cached: take(&mut self.saved_cached).reclaim(),
@@ -362,6 +366,7 @@ impl Writer {
     }
 
     pub(super) fn get_pointer_type_id(&mut self, base: Word, class: spirv::StorageClass) -> Word {
+        let base = self.pointee_type_id(base, class);
         self.get_type_id(LookupType::Local(LocalType::Pointer { base, class }))
     }
 
@@ -499,10 +504,11 @@ impl Writer {
                 LocalType::Cooperative(CooperativeType::from_inner(inner).unwrap())
             }
             crate::TypeInner::Pointer { base, space } => {
+                let class = map_storage_class(space);
                 let base_type_id = self.get_handle_type_id(base);
                 LocalType::Pointer {
-                    base: base_type_id,
-                    class: map_storage_class(space),
+                    base: self.pointee_type_id(base_type_id, class),
+                    class,
                 }
             }
             crate::TypeInner::ValuePointer {
@@ -1654,7 +1660,24 @@ impl Writer {
                 }
             }
 
-            let init_word = variable.init.map(|constant| context.cached[constant]);
+            let type_id = context.get_handle_type_id(variable.ty);
+            let converted = context
+                .writer
+                .needs_layout_conversion(type_id, spirv::StorageClass::Function);
+            let init_word = match variable.init {
+                Some(constant) if converted => {
+                    let value = context.writer.convert_layout(
+                        &mut prelude,
+                        type_id,
+                        context.cached[constant],
+                        true,
+                    )?;
+                    prelude.body.push(Instruction::store(id, value, None));
+                    None
+                }
+                Some(constant) => Some(context.cached[constant]),
+                None => None,
+            };
             let pointer_type_id = context
                 .writer
                 .get_handle_pointer_type_id(variable.ty, spirv::StorageClass::Function);
@@ -1665,8 +1688,8 @@ impl Writer {
                 init_word.or_else(|| match ir_module.types[variable.ty].inner {
                     crate::TypeInner::RayQuery { .. } => None,
                     _ => {
-                        let type_id = context.get_handle_type_id(variable.ty);
-                        Some(context.writer.write_constant_null(type_id))
+                        let plain = context.writer.plain_type_id(type_id);
+                        Some(context.writer.write_constant_null(plain))
                     }
                 }),
             );
@@ -2306,24 +2329,36 @@ impl Writer {
             let id = self.id_gen.next();
             let instruction = match ty.inner {
                 crate::TypeInner::Array { base, size, stride } => {
-                    if self.laid_out_types.contains(handle) {
-                        self.decorate(id, Decoration::ArrayStride, &[stride]);
-                    }
-
                     let type_id = self.get_handle_type_id(base);
-                    if let crate::ArraySize::Pending(length) = size {
-                        let length_id = self.write_override(length, module, mod_info)?;
-                        Instruction::type_array(id, type_id, length_id)
+                    let (length, count) = if let crate::ArraySize::Pending(length) = size {
+                        (Some(self.write_override(length, module, mod_info)?), None)
                     } else {
                         match size.resolve(module.to_ctx())? {
                             crate::proc::IndexableLength::Known(length) => {
-                                let length_id = self.get_index_constant(length);
-                                Instruction::type_array(id, type_id, length_id)
+                                (Some(self.get_index_constant(length)), Some(length))
                             }
-                            crate::proc::IndexableLength::Dynamic => {
-                                Instruction::type_runtime_array(id, type_id)
-                            }
+                            crate::proc::IndexableLength::Dynamic => (None, None),
                         }
+                    };
+                    let laid_out = self.laid_out_types.contains(handle);
+                    if laid_out {
+                        self.decorate(id, Decoration::ArrayStride, &[stride]);
+                    }
+                    self.record_composite_type(
+                        id,
+                        super::plain_types::CompositeType {
+                            shape: super::plain_types::CompositeShape::Array {
+                                element: type_id,
+                                length,
+                                count,
+                            },
+                            name: ty.name.clone(),
+                            laid_out,
+                        },
+                    );
+                    match length {
+                        Some(length_id) => Instruction::type_array(id, type_id, length_id),
+                        None => Instruction::type_runtime_array(id, type_id),
                     }
                 }
                 crate::TypeInner::BindingArray { base, size } => {
@@ -2348,12 +2383,26 @@ impl Writer {
                     span: _,
                 } => {
                     let mut member_ids = Vec::with_capacity(members.len());
+                    let laid_out = self.laid_out_types.contains(handle);
                     for (index, member) in members.iter().enumerate() {
-                        let laid_out = self.laid_out_types.contains(handle);
                         self.decorate_struct_member(id, index, member, &module.types, laid_out)?;
                         let member_id = self.get_handle_type_id(member.ty);
                         member_ids.push(member_id);
                     }
+                    self.record_composite_type(
+                        id,
+                        super::plain_types::CompositeType {
+                            shape: super::plain_types::CompositeShape::Struct {
+                                members: member_ids.clone(),
+                                member_names: members
+                                    .iter()
+                                    .map(|member| member.name.clone())
+                                    .collect(),
+                            },
+                            name: ty.name.clone(),
+                            laid_out,
+                        },
+                    );
                     Instruction::type_struct(id, member_ids.as_slice())
                 }
 
@@ -2970,6 +3019,7 @@ impl Writer {
                 // get wrapped, and we're initializing `WorkGroup` variables.
                 let var_id = self.global_variables[handle].var_id;
                 let var_type_id = self.get_handle_type_id(var.ty);
+                let var_type_id = self.plain_type_id(var_type_id);
                 let init_word = self.get_constant_null(var_type_id);
                 Instruction::store(var_id, init_word, None)
             })
@@ -2981,8 +3031,27 @@ impl Writer {
 
         let mut pre_if_block = Block::new(entry_id);
 
+        let declared = ir_module.global_variables.iter().find_map(|(handle, var)| {
+            matches!(
+                var.io,
+                Some(crate::Binding::BuiltIn(
+                    crate::BuiltIn::LocalInvocationIndex
+                ))
+            )
+            .then(|| self.global_variables[handle].var_id)
+        });
         let local_invocation_index = if let Some(local_invocation_index) = local_invocation_index {
             local_invocation_index
+        } else if let Some(varying_id) = declared {
+            let u32_ty_id = self.get_u32_type_id();
+            let id = self.id_gen.next();
+            pre_if_block
+                .body
+                .push(Instruction::load(u32_ty_id, id, varying_id, None));
+            if !interface.varying_ids.contains(&varying_id) {
+                interface.varying_ids.push(varying_id);
+            }
+            id
         } else {
             let varying_id = self.id_gen.next();
             let class = spirv::StorageClass::Input;
@@ -3642,12 +3711,17 @@ impl Writer {
             }
         };
 
-        let init_word = global_variable
-            .init
-            .map(|constant| self.constant_ids[constant]);
+        let init_word = match global_variable.init {
+            Some(constant) if !super::plain_types::has_explicit_layout(class) => {
+                Some(self.plain_constant(ir_module, constant)?)
+            }
+            Some(constant) => Some(self.constant_ids[constant]),
+            None => None,
+        };
         let inner_type_id = self.get_type_id(
             substitute_inner_type_lookup.unwrap_or(LookupType::Handle(global_variable.ty)),
         );
+        let inner_type_id = self.pointee_type_id(inner_type_id, class);
 
         // generate the wrapping structure if needed
         let pointer_type_id = if global_needs_wrapper(ir_module, global_variable) {
