@@ -1209,7 +1209,11 @@ impl super::Validator {
                             | Ex::CooperativeMultiplyAdd { .. }
                             | Ex::CooperativeMatrixLength { .. }
                             | Ex::Replicate { .. }
-                            | Ex::Expect { .. } => self.emit_expression(handle, context)?,
+                            | Ex::Expect { .. }
+                            | Ex::CooperativeVectorLoad { .. }
+                            | Ex::CooperativeVectorMatMul { .. } => {
+                                self.emit_expression(handle, context)?
+                            }
                             Ex::CallResult(_)
                             | Ex::AtomicResult { .. }
                             | Ex::WorkGroupUniformLoadResult { .. }
@@ -1419,6 +1423,11 @@ impl super::Validator {
                 }
                 S::EmitVertex { .. } | S::EndPrimitive { .. } => {
                     stages &= super::ShaderStages::GEOMETRY;
+                }
+                S::CooperativeVector(ref function) => {
+                    for operand in function.operands() {
+                        context.resolve_type_inner(operand, &self.valid_expression_set)?;
+                    }
                 }
                 S::Assume { condition } => {
                     let ty = context.resolve_type_inner(condition, &self.valid_expression_set)?;

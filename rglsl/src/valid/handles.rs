@@ -783,6 +783,18 @@ impl super::Validator {
             crate::Expression::Expect { value, expected } => {
                 handle.check_dep(value)?.check_dep(expected)?;
             }
+            crate::Expression::CooperativeVectorLoad {
+                ty,
+                pointer,
+                offset,
+            } => {
+                validate_type(ty)?;
+                handle.check_dep(pointer)?.check_dep(offset)?;
+            }
+            crate::Expression::CooperativeVectorMatMul { ty, ref operation } => {
+                validate_type(ty)?;
+                handle.check_dep_iter(operation.operands())?;
+            }
         }
         Ok(())
     }
@@ -1003,6 +1015,12 @@ impl super::Validator {
                     validate_expr(operand)?;
                 }
                 validate_expr_opt(fun.result())?;
+                Ok(())
+            }
+            crate::Statement::CooperativeVector(ref function) => {
+                for operand in function.operands() {
+                    validate_expr(operand)?;
+                }
                 Ok(())
             }
             crate::Statement::Assume { condition } => {

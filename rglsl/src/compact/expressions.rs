@@ -278,6 +278,19 @@ impl ExpressionTracer<'_> {
                 self.expressions_used.insert(value);
                 self.expressions_used.insert(expected);
             }
+            Ex::CooperativeVectorLoad {
+                ty,
+                pointer,
+                offset,
+            } => {
+                self.types_used.insert(ty);
+                self.expressions_used.insert(pointer);
+                self.expressions_used.insert(offset);
+            }
+            Ex::CooperativeVectorMatMul { ty, ref operation } => {
+                self.types_used.insert(ty);
+                self.expressions_used.insert_iter(operation.operands());
+            }
         }
     }
 }
@@ -492,6 +505,24 @@ impl ModuleMap {
             } => {
                 adjust(value)?;
                 adjust(expected)?;
+            }
+            Ex::CooperativeVectorLoad {
+                ref mut ty,
+                ref mut pointer,
+                ref mut offset,
+            } => {
+                self.types.adjust(ty)?;
+                adjust(pointer)?;
+                adjust(offset)?;
+            }
+            Ex::CooperativeVectorMatMul {
+                ref mut ty,
+                ref mut operation,
+            } => {
+                self.types.adjust(ty)?;
+                for operand in operation.operands_mut() {
+                    adjust(operand)?;
+                }
             }
         }
         Ok(())

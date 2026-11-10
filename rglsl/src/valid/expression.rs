@@ -1462,6 +1462,15 @@ impl super::Validator {
                 Ti::CooperativeMatrix { .. } => ShaderStages::all(),
                 _ => return Err(ExpressionError::InvalidCooperativeOperand(root)),
             },
+            E::CooperativeVectorLoad { ty, .. } | E::CooperativeVectorMatMul { ty, .. } => {
+                match module.types[ty].inner {
+                    Ti::LongVector {
+                        class: crate::LongVectorClass::CooperativeNv,
+                        ..
+                    } => ShaderStages::all(),
+                    _ => return Err(ExpressionError::InvalidCooperativeOperand(root)),
+                }
+            }
             E::Expect { value, expected } => {
                 if resolver[value] != resolver[expected] {
                     return Err(ExpressionError::InvalidCooperativeOperand(expected));

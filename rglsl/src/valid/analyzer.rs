@@ -943,6 +943,22 @@ impl FunctionInfo {
                 non_uniform_result: self.add_ref(value).or(self.add_ref(expected)),
                 requirements: UniformityRequirements::empty(),
             },
+            E::CooperativeVectorLoad {
+                pointer, offset, ..
+            } => Uniformity {
+                non_uniform_result: self.add_ref(pointer).or(self.add_ref(offset)),
+                requirements: UniformityRequirements::empty(),
+            },
+            E::CooperativeVectorMatMul { ref operation, .. } => {
+                let mut non_uniform_result = None;
+                for operand in operation.operands() {
+                    non_uniform_result = non_uniform_result.or(self.add_ref(operand));
+                }
+                Uniformity {
+                    non_uniform_result,
+                    requirements: UniformityRequirements::empty(),
+                }
+            }
         };
 
         let ty = resolve_context.resolve(expression, |h| Ok(&self[h].ty))?;
@@ -1325,6 +1341,25 @@ impl FunctionInfo {
                         }
                     } else {
                         FunctionUniformity::new()
+                    }
+                }
+                S::CooperativeVector(ref function) => {
+                    let mut non_uniform_result = None;
+                    let written = function.writes();
+                    for operand in function.operands() {
+                        let reference = if operand == written {
+                            self.add_ref_impl(operand, GlobalUse::WRITE)
+                        } else {
+                            self.add_ref(operand)
+                        };
+                        non_uniform_result = non_uniform_result.or(reference);
+                    }
+                    FunctionUniformity {
+                        result: Uniformity {
+                            non_uniform_result,
+                            requirements: UniformityRequirements::empty(),
+                        },
+                        exit: ExitFlags::empty(),
                     }
                 }
                 S::Assume { condition } => FunctionUniformity {

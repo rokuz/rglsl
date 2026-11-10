@@ -746,6 +746,21 @@ fn adjust_expr(new_pos: &HandleVec<Expression, Handle<Expression>>, expr: &mut E
             adjust(value);
             adjust(expected);
         }
+        Expression::CooperativeVectorLoad {
+            ref mut pointer,
+            ref mut offset,
+            ..
+        } => {
+            adjust(pointer);
+            adjust(offset);
+        }
+        Expression::CooperativeVectorMatMul {
+            ref mut operation, ..
+        } => {
+            for operand in operation.operands_mut() {
+                adjust(operand);
+            }
+        }
     }
 }
 
@@ -993,6 +1008,11 @@ fn adjust_stmt(new_pos: &HandleVec<Expression, Handle<Expression>>, stmt: &mut S
             }
         }
         Statement::Assume { ref mut condition } => adjust(condition),
+        Statement::CooperativeVector(ref mut function) => {
+            for operand in function.operands_mut() {
+                adjust(operand);
+            }
+        }
         Statement::DebugPrintf {
             ref mut arguments, ..
         } => {

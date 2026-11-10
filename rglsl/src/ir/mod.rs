@@ -1932,6 +1932,163 @@ bitflags::bitflags! {
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub struct CooperativeVectorBias {
+    pub pointer: Handle<Expression>,
+    pub offset: Handle<Expression>,
+    pub interpretation: Handle<Expression>,
+}
+
+#[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub struct CooperativeVectorMatMul {
+    pub input: Handle<Expression>,
+    pub input_interpretation: Handle<Expression>,
+    pub matrix: Handle<Expression>,
+    pub matrix_offset: Handle<Expression>,
+    pub matrix_interpretation: Handle<Expression>,
+    pub bias: Option<CooperativeVectorBias>,
+    pub rows: Handle<Expression>,
+    pub columns: Handle<Expression>,
+    pub layout: Handle<Expression>,
+    pub transpose: Handle<Expression>,
+    pub stride: Handle<Expression>,
+}
+
+impl CooperativeVectorMatMul {
+    pub fn operands(&self) -> impl Iterator<Item = Handle<Expression>> {
+        let bias = self
+            .bias
+            .map(|bias| [bias.pointer, bias.offset, bias.interpretation]);
+        [
+            self.input,
+            self.input_interpretation,
+            self.matrix,
+            self.matrix_offset,
+            self.matrix_interpretation,
+            self.rows,
+            self.columns,
+            self.layout,
+            self.transpose,
+            self.stride,
+        ]
+        .into_iter()
+        .chain(bias.into_iter().flatten())
+    }
+
+    pub fn operands_mut(&mut self) -> impl Iterator<Item = &mut Handle<Expression>> {
+        let bias = self.bias.as_mut().map(|bias| {
+            [
+                &mut bias.pointer,
+                &mut bias.offset,
+                &mut bias.interpretation,
+            ]
+        });
+        [
+            &mut self.input,
+            &mut self.input_interpretation,
+            &mut self.matrix,
+            &mut self.matrix_offset,
+            &mut self.matrix_interpretation,
+            &mut self.rows,
+            &mut self.columns,
+            &mut self.layout,
+            &mut self.transpose,
+            &mut self.stride,
+        ]
+        .into_iter()
+        .chain(bias.into_iter().flatten())
+    }
+}
+
+#[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub enum CooperativeVectorFunction {
+    Store {
+        value: Handle<Expression>,
+        pointer: Handle<Expression>,
+        offset: Handle<Expression>,
+    },
+    OuterProductAccumulate {
+        a: Handle<Expression>,
+        b: Handle<Expression>,
+        matrix: Handle<Expression>,
+        offset: Handle<Expression>,
+        stride: Handle<Expression>,
+        layout: Handle<Expression>,
+        interpretation: Handle<Expression>,
+    },
+    ReduceSumAccumulate {
+        value: Handle<Expression>,
+        pointer: Handle<Expression>,
+        offset: Handle<Expression>,
+    },
+}
+
+impl CooperativeVectorFunction {
+    pub fn operands(&self) -> Vec<Handle<Expression>> {
+        match *self {
+            Self::Store {
+                value,
+                pointer,
+                offset,
+            }
+            | Self::ReduceSumAccumulate {
+                value,
+                pointer,
+                offset,
+            } => alloc::vec![value, pointer, offset],
+            Self::OuterProductAccumulate {
+                a,
+                b,
+                matrix,
+                offset,
+                stride,
+                layout,
+                interpretation,
+            } => alloc::vec![a, b, matrix, offset, stride, layout, interpretation],
+        }
+    }
+
+    pub fn operands_mut(&mut self) -> Vec<&mut Handle<Expression>> {
+        match *self {
+            Self::Store {
+                ref mut value,
+                ref mut pointer,
+                ref mut offset,
+            }
+            | Self::ReduceSumAccumulate {
+                ref mut value,
+                ref mut pointer,
+                ref mut offset,
+            } => alloc::vec![value, pointer, offset],
+            Self::OuterProductAccumulate {
+                ref mut a,
+                ref mut b,
+                ref mut matrix,
+                ref mut offset,
+                ref mut stride,
+                ref mut layout,
+                ref mut interpretation,
+            } => alloc::vec![a, b, matrix, offset, stride, layout, interpretation],
+        }
+    }
+
+    pub const fn writes(&self) -> Handle<Expression> {
+        match *self {
+            Self::Store { pointer, .. } | Self::ReduceSumAccumulate { pointer, .. } => pointer,
+            Self::OuterProductAccumulate { matrix, .. } => matrix,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub struct CooperativeData {
     pub pointer: Handle<Expression>,
     pub stride: Option<Handle<Expression>>,
@@ -2337,6 +2494,15 @@ pub enum Expression {
     Expect {
         value: Handle<Expression>,
         expected: Handle<Expression>,
+    },
+    CooperativeVectorLoad {
+        ty: Handle<Type>,
+        pointer: Handle<Expression>,
+        offset: Handle<Expression>,
+    },
+    CooperativeVectorMatMul {
+        ty: Handle<Type>,
+        operation: CooperativeVectorMatMul,
     },
 }
 
@@ -2833,6 +2999,7 @@ pub enum Statement {
     Assume {
         condition: Handle<Expression>,
     },
+    CooperativeVector(CooperativeVectorFunction),
     Abort {
         message: String,
         ty: Handle<Type>,

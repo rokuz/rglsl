@@ -481,4 +481,149 @@ impl BlockContext<'_> {
         block.body.push(instruction);
         Ok(())
     }
+
+    pub(super) fn write_cooperative_vector_load(
+        &mut self,
+        pointer: Handle<Expression>,
+        offset: Handle<Expression>,
+        result_type_id: Word,
+        block: &mut Block,
+    ) -> Result<Word, Error> {
+        let memory = self.memory_access(pointer, false, false);
+        let pointer_id = self.cooperative_pointer(pointer, block)?;
+        let offset_id = self.cached.get(offset)?;
+        let id = self.gen_id();
+        let mut instruction = Instruction::new(Op::CooperativeVectorLoadNV);
+        instruction.set_type(result_type_id);
+        instruction.set_result(id);
+        instruction.add_operand(pointer_id);
+        instruction.add_operand(offset_id);
+        instruction.add_operands(memory);
+        block.body.push(instruction);
+        Ok(id)
+    }
+
+    pub(super) fn write_cooperative_vector_mat_mul(
+        &mut self,
+        expr_handle: Handle<Expression>,
+        operation: &crate::CooperativeVectorMatMul,
+        result_type_id: Word,
+        block: &mut Block,
+    ) -> Result<Word, Error> {
+        let matrix_id = self.cooperative_pointer(operation.matrix, block)?;
+        let bias = match operation.bias {
+            Some(bias) => Some((
+                self.cooperative_pointer(bias.pointer, block)?,
+                self.cached.get(bias.offset)?,
+                self.cached.get(bias.interpretation)?,
+            )),
+            None => None,
+        };
+        let id = self.gen_id();
+        let mut instruction = Instruction::new(if bias.is_some() {
+            Op::CooperativeVectorMatrixMulAddNV
+        } else {
+            Op::CooperativeVectorMatrixMulNV
+        });
+        instruction.set_type(result_type_id);
+        instruction.set_result(id);
+        instruction.add_operand(self.cached.get(operation.input)?);
+        instruction.add_operand(self.cached.get(operation.input_interpretation)?);
+        instruction.add_operand(matrix_id);
+        instruction.add_operand(self.cached.get(operation.matrix_offset)?);
+        instruction.add_operand(self.cached.get(operation.matrix_interpretation)?);
+        if let Some((pointer, offset, interpretation)) = bias {
+            instruction.add_operand(pointer);
+            instruction.add_operand(offset);
+            instruction.add_operand(interpretation);
+        }
+        for operand in [
+            operation.rows,
+            operation.columns,
+            operation.layout,
+            operation.transpose,
+            operation.stride,
+        ] {
+            instruction.add_operand(self.cached.get(operand)?);
+        }
+        use spirv::CooperativeMatrixOperands as Operands;
+        let mut operands = Operands::empty();
+        if self.signed(operation.input) {
+            operands |= Operands::MATRIX_B_SIGNED_COMPONENTS_KHR;
+        }
+        if self.signed(expr_handle) {
+            operands |= Operands::MATRIX_RESULT_SIGNED_COMPONENTS_KHR;
+        }
+        if !operands.is_empty() {
+            instruction.add_operand(operands.bits());
+        }
+        block.body.push(instruction);
+        Ok(id)
+    }
+
+    pub(super) fn write_cooperative_vector_function(
+        &mut self,
+        function: &crate::CooperativeVectorFunction,
+        block: &mut Block,
+    ) -> Result<(), Error> {
+        use crate::CooperativeVectorFunction as Cvf;
+        match *function {
+            Cvf::Store {
+                value,
+                pointer,
+                offset,
+            } => {
+                let memory = self.memory_access(pointer, false, true);
+                let pointer_id = self.cooperative_pointer(pointer, block)?;
+                let mut instruction = Instruction::new(Op::CooperativeVectorStoreNV);
+                instruction.add_operand(pointer_id);
+                instruction.add_operand(self.cached.get(offset)?);
+                instruction.add_operand(self.cached.get(value)?);
+                instruction.add_operands(memory);
+                block.body.push(instruction);
+            }
+            Cvf::OuterProductAccumulate {
+                a,
+                b,
+                matrix,
+                offset,
+                stride,
+                layout,
+                interpretation,
+            } => {
+                self.require_cooperative_vector_training()?;
+                let pointer_id = self.cooperative_pointer(matrix, block)?;
+                let mut instruction =
+                    Instruction::new(Op::CooperativeVectorOuterProductAccumulateNV);
+                instruction.add_operand(pointer_id);
+                for operand in [offset, a, b, layout, interpretation, stride] {
+                    instruction.add_operand(self.cached.get(operand)?);
+                }
+                block.body.push(instruction);
+            }
+            Cvf::ReduceSumAccumulate {
+                value,
+                pointer,
+                offset,
+            } => {
+                self.require_cooperative_vector_training()?;
+                let pointer_id = self.cooperative_pointer(pointer, block)?;
+                let mut instruction = Instruction::new(Op::CooperativeVectorReduceSumAccumulateNV);
+                instruction.add_operand(pointer_id);
+                instruction.add_operand(self.cached.get(offset)?);
+                instruction.add_operand(self.cached.get(value)?);
+                block.body.push(instruction);
+            }
+        }
+        Ok(())
+    }
+
+    fn require_cooperative_vector_training(&mut self) -> Result<(), Error> {
+        self.writer.require_any(
+            "cooperative vector training",
+            &[spirv::Capability::CooperativeVectorTrainingNV],
+        )?;
+        self.writer.use_extension("SPV_NV_cooperative_vector");
+        Ok(())
+    }
 }

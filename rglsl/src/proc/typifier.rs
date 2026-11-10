@@ -919,6 +919,8 @@ impl<'a> ResolveContext<'a> {
             | crate::Expression::Replicate { ty, .. } => TypeResolution::Handle(ty),
             crate::Expression::CooperativeMultiplyAdd { c, .. } => past(c)?.clone(),
             crate::Expression::Expect { value, .. } => past(value)?.clone(),
+            crate::Expression::CooperativeVectorLoad { ty, .. }
+            | crate::Expression::CooperativeVectorMatMul { ty, .. } => TypeResolution::Handle(ty),
             crate::Expression::CooperativeMatrixLength { .. } => {
                 TypeResolution::Value(Ti::Scalar(crate::Scalar::U32))
             }

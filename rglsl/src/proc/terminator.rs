@@ -54,6 +54,7 @@ pub fn ensure_block_returns(block: &mut crate::Block) {
             | S::RayPipelineFunction(_)
             | S::DebugPrintf { .. }
             | S::Assume { .. }
+            | S::CooperativeVector(_)
             | S::EmitVertex { .. }
             | S::EndPrimitive { .. }
             | S::MeshFunction(_)),

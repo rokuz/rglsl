@@ -198,6 +198,9 @@ impl FunctionTracer<'_> {
                     St::Assume { condition } => {
                         self.expressions_used.insert(condition);
                     }
+                    St::CooperativeVector(ref function) => {
+                        self.expressions_used.insert_iter(function.operands());
+                    }
                     St::MeshFunction(ref function) => {
                         for operand in function.operands() {
                             self.expressions_used.insert(operand);
@@ -483,6 +486,11 @@ impl FunctionMap {
                         }
                     }
                     St::Assume { ref mut condition } => adjust(condition)?,
+                    St::CooperativeVector(ref mut function) => {
+                        for operand in function.operands_mut() {
+                            adjust(operand)?;
+                        }
+                    }
                     St::MeshFunction(ref mut function) => {
                         for operand in function.operands_mut() {
                             adjust(operand)?;

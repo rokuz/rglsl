@@ -407,7 +407,11 @@ impl Analyzer<'_> {
                 };
             }
         }
-        let Some(needed) = ty.component_count() else {
+        let nominal = ty
+            .sized_vector_length()
+            .and_then(ArraySize::nominal)
+            .filter(|size| *size > 0);
+        let Some(needed) = ty.component_count().or(nominal) else {
             return fail(
                 self,
                 "a vector with a specialization-constant size takes one argument",
@@ -429,7 +433,7 @@ impl Analyzer<'_> {
         if size < needed {
             return fail(self, "not enough components");
         }
-        let value = if constant {
+        let value = if constant && ty.component_count().is_some() {
             self.fold_constructor(ty, target, needed, operands)
         } else {
             None

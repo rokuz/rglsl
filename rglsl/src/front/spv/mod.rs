@@ -1660,7 +1660,8 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                 | S::Abort { .. }
                 | S::WorkGroupUniformLoad { .. }
                 | S::CooperativeStore { .. }
-                | S::Assume { .. } => {}
+                | S::Assume { .. }
+                | S::CooperativeVector(_) => {}
                 S::Call {
                     function: ref mut callee,
                     ref arguments,

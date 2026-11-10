@@ -9,8 +9,9 @@ use super::function::FunctionLowerer;
 use super::types::scalar;
 use super::{internal, unsupported, Result};
 use crate::{
-    BinaryOperator, CooperativeData, Expression, Handle, MathFunction, RelationalFunction, Span,
-    Statement, UnaryOperator,
+    BinaryOperator, CooperativeData, CooperativeVectorBias, CooperativeVectorFunction,
+    CooperativeVectorMatMul, Expression, Handle, MathFunction, RelationalFunction, Span, Statement,
+    UnaryOperator,
 };
 
 const REPLICATED: [&str; 7] = ["min", "max", "clamp", "mix", "step", "smoothstep", "mod"];
@@ -300,6 +301,120 @@ impl FunctionLowerer<'_, '_> {
                 }
                 Ok(None)
             }
+            CooperativeCall::VectorLoad => {
+                let pointer = self.array_pointer(argument(1)?, at)?;
+                let offset = self.rvalue(argument(2)?)?;
+                let vector = argument(0)?;
+                let vector_ty = self.info(vector)?.ty.clone();
+                let ty = self.lw.ir_type(&vector_ty, at)?;
+                let place = self.place(vector)?;
+                let value = self.add(
+                    Expression::CooperativeVectorLoad {
+                        ty,
+                        pointer,
+                        offset,
+                    },
+                    at,
+                )?;
+                self.store(&place, value, at)?;
+                Ok(None)
+            }
+            CooperativeCall::VectorStore | CooperativeCall::VectorReduceSum => {
+                let value = self.rvalue(argument(0)?)?;
+                let pointer = self.array_pointer(argument(1)?, at)?;
+                let offset = self.rvalue(argument(2)?)?;
+                let function = if kind == CooperativeCall::VectorStore {
+                    CooperativeVectorFunction::Store {
+                        value,
+                        pointer,
+                        offset,
+                    }
+                } else {
+                    CooperativeVectorFunction::ReduceSumAccumulate {
+                        value,
+                        pointer,
+                        offset,
+                    }
+                };
+                self.push(Statement::CooperativeVector(function), at);
+                Ok(None)
+            }
+            CooperativeCall::VectorOuterProduct => {
+                let a = self.rvalue(argument(0)?)?;
+                let b = self.rvalue(argument(1)?)?;
+                let matrix = self.array_pointer(argument(2)?, at)?;
+                let offset = self.rvalue(argument(3)?)?;
+                let stride = self.rvalue(argument(4)?)?;
+                let layout = self.rvalue(argument(5)?)?;
+                let interpretation = self.rvalue(argument(6)?)?;
+                self.push(
+                    Statement::CooperativeVector(
+                        CooperativeVectorFunction::OuterProductAccumulate {
+                            a,
+                            b,
+                            matrix,
+                            offset,
+                            stride,
+                            layout,
+                            interpretation,
+                        },
+                    ),
+                    at,
+                );
+                Ok(None)
+            }
+            CooperativeCall::VectorMatMul { bias } => {
+                let input = self.rvalue(argument(1)?)?;
+                let input_interpretation = self.rvalue(argument(2)?)?;
+                let matrix = self.array_pointer(argument(3)?, at)?;
+                let matrix_offset = self.rvalue(argument(4)?)?;
+                let matrix_interpretation = self.rvalue(argument(5)?)?;
+                let (bias, rest) = if bias {
+                    let pointer = self.array_pointer(argument(6)?, at)?;
+                    let offset = self.rvalue(argument(7)?)?;
+                    let interpretation = self.rvalue(argument(8)?)?;
+                    (
+                        Some(CooperativeVectorBias {
+                            pointer,
+                            offset,
+                            interpretation,
+                        }),
+                        9,
+                    )
+                } else {
+                    (None, 6)
+                };
+                let rows = self.rvalue(argument(rest)?)?;
+                let columns = self.rvalue(argument(rest + 1)?)?;
+                let layout = self.rvalue(argument(rest + 2)?)?;
+                let transpose = self.rvalue(argument(rest + 3)?)?;
+                let stride = self.rvalue(argument(rest + 4)?)?;
+                let result = argument(0)?;
+                let result_ty = self.info(result)?.ty.clone();
+                let ty = self.lw.ir_type(&result_ty, at)?;
+                let place = self.place(result)?;
+                let value = self.add(
+                    Expression::CooperativeVectorMatMul {
+                        ty,
+                        operation: CooperativeVectorMatMul {
+                            input,
+                            input_interpretation,
+                            matrix,
+                            matrix_offset,
+                            matrix_interpretation,
+                            bias,
+                            rows,
+                            columns,
+                            layout,
+                            transpose,
+                            stride,
+                        },
+                    },
+                    at,
+                )?;
+                self.store(&place, value, at)?;
+                Ok(None)
+            }
             CooperativeCall::MulAdd { saturating, .. } => {
                 let a = self.rvalue(argument(0)?)?;
                 let b = self.rvalue(argument(1)?)?;
@@ -316,6 +431,14 @@ impl FunctionLowerer<'_, '_> {
                 .map(Some)
             }
         }
+    }
+
+    fn array_pointer(&mut self, buffer: &AstExpression, at: Span) -> Result<Handle<Expression>> {
+        let place = self.place(buffer)?;
+        if place.swizzle.is_some() {
+            return Err(internal(at));
+        }
+        Ok(place.pointer)
     }
 
     fn cooperative_data(

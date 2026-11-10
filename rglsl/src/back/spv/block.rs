@@ -2320,6 +2320,11 @@ impl BlockContext<'_> {
             crate::Expression::Expect { value, expected } => {
                 self.write_expect(value, expected, result_type_id, block)?
             }
+            crate::Expression::CooperativeVectorLoad {
+                pointer, offset, ..
+            } => self.write_cooperative_vector_load(pointer, offset, result_type_id, block)?,
+            crate::Expression::CooperativeVectorMatMul { ref operation, .. } => self
+                .write_cooperative_vector_mat_mul(expr_handle, operation, result_type_id, block)?,
         };
 
         self.cached.set(expr_handle, id)?;
@@ -4154,6 +4159,9 @@ impl BlockContext<'_> {
                     ref arguments,
                 } => self.write_debug_printf_statement(&mut block, format, arguments)?,
                 Statement::Assume { condition } => self.write_assume(condition, &mut block)?,
+                Statement::CooperativeVector(ref function) => {
+                    self.write_cooperative_vector_function(function, &mut block)?;
+                }
                 Statement::MeshFunction(ref function) => {
                     match self.write_mesh_function(block, function)? {
                         Some(next) => block = next,

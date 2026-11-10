@@ -7,6 +7,7 @@ use rglsl_ast::Span;
 use super::{Analyzer, Callee, Operand};
 use crate::constant::Value;
 use crate::diagnostic::DiagnosticKind;
+use crate::scope::Storage;
 use crate::types::{CooperativeUse, Scalar, Type, TypeKind};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -14,6 +15,11 @@ pub enum CooperativeCall {
     Load { nv: bool },
     Store { nv: bool },
     MulAdd { nv: bool, saturating: bool },
+    VectorLoad,
+    VectorStore,
+    VectorMatMul { bias: bool },
+    VectorOuterProduct,
+    VectorReduceSum,
 }
 
 pub(crate) fn cooperative_function(name: &str) -> bool {
@@ -25,10 +31,24 @@ pub(crate) fn cooperative_function(name: &str) -> bool {
             | "coopMatLoadNV"
             | "coopMatStoreNV"
             | "coopMatMulAddNV"
+            | "coopVecLoadNV"
+            | "coopVecStoreNV"
+            | "coopVecMatMulNV"
+            | "coopVecMatMulAddNV"
+            | "coopVecOuterProductAccumulateNV"
+            | "coopVecReduceSumAccumulateNV"
     )
 }
 
 const SATURATING_ACCUMULATION: i64 = 0x10;
+
+type VectorArguments = (
+    CooperativeCall,
+    &'static [usize],
+    &'static [usize],
+    &'static [usize],
+    &'static [(usize, &'static str)],
+);
 
 impl Analyzer<'_> {
     fn cooperative_error(&mut self, span: Span, name: &str, reason: &'static str) -> Operand {
@@ -69,6 +89,9 @@ impl Analyzer<'_> {
             .collect();
         if operands.iter().any(|operand| operand.ty.is_error()) {
             return Operand::error();
+        }
+        if name.starts_with("coopVec") {
+            return self.cooperative_vector_call(expression, span, name, arguments, &operands);
         }
         let nv = name.ends_with("NV");
         let extension = if nv {
@@ -278,5 +301,218 @@ impl Analyzer<'_> {
             None => false,
         };
         Some((CooperativeCall::MulAdd { nv, saturating }, c_type))
+    }
+
+    fn require_storage(&mut self, span: Span, name: &str, buffer: &Operand) -> bool {
+        let valid_element = buffer
+            .ty
+            .element_type()
+            .filter(|_| buffer.ty.is_array())
+            .is_some_and(|ty| {
+                !ty.is_array()
+                    && match ty.kind {
+                        TypeKind::Scalar(scalar) => scalar.is_numeric(),
+                        TypeKind::Vector { scalar, .. } => scalar.is_numeric(),
+                        _ => false,
+                    }
+            });
+        if !valid_element {
+            self.error(span, DiagnosticKind::NoMatchingFunction(String::from(name)));
+            return false;
+        }
+        if !matches!(buffer.storage, Storage::Buffer | Storage::Shared) && !buffer.through_reference
+        {
+            self.cooperative_error(
+                span,
+                name,
+                "buffer argument must be in buffer or shared storage",
+            );
+            return false;
+        }
+        true
+    }
+
+    fn cooperative_vector_call(
+        &mut self,
+        expression: &Expression,
+        span: Span,
+        name: &str,
+        arguments: &[Expression],
+        operands: &[Operand],
+    ) -> Operand {
+        let vector = |operand: &Operand| operand.ty.is_cooperative_vector();
+        let mismatch = |analyzer: &mut Self| {
+            analyzer.error(span, DiagnosticKind::NoMatchingFunction(String::from(name)));
+            Operand::error()
+        };
+        let (call, offsets, uints, ints, constants): VectorArguments = match name {
+            "coopVecLoadNV" | "coopVecStoreNV" => {
+                let [value, buffer, offset] = operands else {
+                    return mismatch(self);
+                };
+                if !vector(value) || !offset.ty.is_scalar_integer() {
+                    return mismatch(self);
+                }
+                if !self.require_storage(span, name, buffer) {
+                    return Operand::error();
+                }
+                if name == "coopVecLoadNV" {
+                    let first = arguments.first().map_or(span, |argument| argument.span);
+                    if !self.require_lvalue(first, value) {
+                        return Operand::error();
+                    }
+                    (CooperativeCall::VectorLoad, &[2], &[], &[], &[])
+                } else {
+                    (CooperativeCall::VectorStore, &[2], &[], &[], &[])
+                }
+            }
+            "coopVecMatMulNV" | "coopVecMatMulAddNV" => {
+                let bias = name == "coopVecMatMulAddNV";
+                let expected = if bias { 14 } else { 11 };
+                if operands.len() != expected {
+                    return mismatch(self);
+                }
+                let at = |index: usize| operands.get(index);
+                if !at(0).is_some_and(vector) || !at(1).is_some_and(vector) {
+                    return mismatch(self);
+                }
+                let first = arguments.first().map_or(span, |argument| argument.span);
+                if let Some(result) = at(0) {
+                    if !self.require_lvalue(first, result) {
+                        return Operand::error();
+                    }
+                }
+                if let Some(matrix) = at(3) {
+                    if !self.require_storage(span, name, matrix) {
+                        return Operand::error();
+                    }
+                }
+                if bias {
+                    if let Some(bias) = at(6) {
+                        if !self.require_storage(span, name, bias) {
+                            return Operand::error();
+                        }
+                    }
+                }
+                let constants: &[(usize, &'static str)] = if bias {
+                    &[
+                        (2, "inputInterpretation"),
+                        (5, "matrixInterpretation"),
+                        (8, "biasInterpretation"),
+                        (9, "M"),
+                        (10, "K"),
+                        (11, "matrixLayout"),
+                        (12, "transpose"),
+                    ]
+                } else {
+                    &[
+                        (2, "inputInterpretation"),
+                        (5, "matrixInterpretation"),
+                        (6, "M"),
+                        (7, "K"),
+                        (8, "matrixLayout"),
+                        (9, "transpose"),
+                    ]
+                };
+                let (offsets, uints, ints): (&[usize], &[usize], &[usize]) = if bias {
+                    (&[4, 7], &[9, 10, 13], &[2, 5, 8, 11])
+                } else {
+                    (&[4], &[6, 7, 10], &[2, 5, 8])
+                };
+                (
+                    CooperativeCall::VectorMatMul { bias },
+                    offsets,
+                    uints,
+                    ints,
+                    constants,
+                )
+            }
+            "coopVecOuterProductAccumulateNV" => {
+                let [a, b, buffer, _, _, _, _] = operands else {
+                    return mismatch(self);
+                };
+                if !vector(a) || !vector(b) {
+                    return mismatch(self);
+                }
+                if a.ty.base_scalar() != b.ty.base_scalar() {
+                    self.cooperative_error(span, name, "cooperative vector basic types must match");
+                    return Operand::error();
+                }
+                if !self.require_storage(span, name, buffer) {
+                    return Operand::error();
+                }
+                (
+                    CooperativeCall::VectorOuterProduct,
+                    &[3],
+                    &[4],
+                    &[5, 6],
+                    &[(5, "matrixLayout"), (6, "matrixInterpretation")],
+                )
+            }
+            _ => {
+                let [value, buffer, offset] = operands else {
+                    return mismatch(self);
+                };
+                if !vector(value) || !offset.ty.is_scalar_integer() {
+                    return mismatch(self);
+                }
+                if !self.require_storage(span, name, buffer) {
+                    return Operand::error();
+                }
+                (CooperativeCall::VectorReduceSum, &[2], &[], &[], &[])
+            }
+        };
+        let mut failed = false;
+        for &(index, parameter) in constants {
+            let constant = operands.get(index).is_some_and(|operand| operand.constant);
+            if !constant {
+                let at = arguments.get(index).map_or(span, |argument| argument.span);
+                self.cooperative_error(at, parameter, "argument must be compile-time constant");
+                failed = true;
+            }
+        }
+        if failed {
+            return Operand::error();
+        }
+        let mut wide = false;
+        for &index in offsets {
+            let (Some(argument), Some(operand)) = (arguments.get(index), operands.get(index))
+            else {
+                return mismatch(self);
+            };
+            match operand.ty.scalar_type() {
+                Some(Scalar::Uint64) => wide = true,
+                Some(Scalar::Uint) => {}
+                Some(scalar) if scalar.is_integer() => {
+                    self.record_conversion(argument, &operand.ty, &Type::UINT);
+                }
+                _ => return mismatch(self),
+            }
+        }
+        let typed: Vec<(usize, Type)> = uints
+            .iter()
+            .map(|&index| (index, Type::UINT))
+            .chain(ints.iter().map(|&index| (index, Type::INT)))
+            .collect();
+        for (index, target) in typed {
+            let (Some(argument), Some(operand)) = (arguments.get(index), operands.get(index))
+            else {
+                return mismatch(self);
+            };
+            if !operand.ty.is_scalar_integer() {
+                return mismatch(self);
+            }
+            self.record_conversion(argument, &operand.ty, &target);
+        }
+        let required = if wide {
+            "GL_EXT_shader_64bit_indexing"
+        } else {
+            "GL_NV_cooperative_vector"
+        };
+        if !self.require_extension(span, required, name) {
+            return Operand::error();
+        }
+        self.calls.insert(expression.id, Callee::Cooperative(call));
+        Operand::temporary(Type::VOID)
     }
 }

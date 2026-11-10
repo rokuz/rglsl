@@ -453,7 +453,10 @@ impl FunctionLowerer<'_, '_> {
             _ if ty.as_cooperative_matrix().is_some() => Err(internal(at)),
             _ => {
                 let mut components = self.flatten(values, target, at)?;
-                let count = ty.component_count().ok_or_else(|| internal(at))?;
+                let count = ty
+                    .component_count()
+                    .or(ty.sized_vector_length().and_then(ArraySize::nominal))
+                    .ok_or_else(|| internal(at))?;
                 components.truncate(usize::try_from(count).map_err(|_| internal(at))?);
                 let ir = self.lw.ir_type(ty, at)?;
                 self.add(Expression::Compose { ty: ir, components }, at)

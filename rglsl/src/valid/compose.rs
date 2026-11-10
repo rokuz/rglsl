@@ -56,7 +56,7 @@ pub fn validate_compose(
                     });
                 }
             }
-            if size.known() != Some(given) {
+            if size.known().is_some_and(|size| size != given) {
                 return Err(ComposeError::ComponentCount {
                     expected: size.known_or_one(),
                     given,

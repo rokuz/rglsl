@@ -1387,7 +1387,11 @@ impl<'a> ConstantEvaluator<'a> {
             Expression::CooperativeLoad { .. }
             | Expression::CooperativeMultiplyAdd { .. }
             | Expression::CooperativeMatrixLength { .. }
-            | Expression::Expect { .. } => Err(ConstantEvaluatorError::CooperativeOperation),
+            | Expression::Expect { .. }
+            | Expression::CooperativeVectorLoad { .. }
+            | Expression::CooperativeVectorMatMul { .. } => {
+                Err(ConstantEvaluatorError::CooperativeOperation)
+            }
         }
     }
 
