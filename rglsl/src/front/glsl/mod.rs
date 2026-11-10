@@ -28,6 +28,7 @@ mod context;
 mod error;
 mod functions;
 mod lex;
+mod lower;
 mod offset;
 mod parser;
 #[cfg(test)]
@@ -75,6 +76,14 @@ pub struct Options {
     /// locations are not taken into account, so they can overlap automatic
     /// ones.
     pub auto_map_locations: bool,
+    pub pipeline: Pipeline,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Pipeline {
+    #[default]
+    Legacy,
+    Ast,
 }
 
 impl From<ShaderStage> for Options {
@@ -84,6 +93,7 @@ impl From<ShaderStage> for Options {
             defines: FastHashMap::default(),
             auto_map_bindings: false,
             auto_map_locations: false,
+            pipeline: Pipeline::Legacy,
         }
     }
 }
@@ -239,6 +249,9 @@ impl Frontend {
         source: &str,
     ) -> core::result::Result<Module, ParseErrors> {
         self.reset(options.stage);
+        if options.pipeline == Pipeline::Ast {
+            return lower::parse(options, source);
+        }
         self.auto_map.bindings = options.auto_map_bindings;
         self.auto_map.locations = options.auto_map_locations;
 

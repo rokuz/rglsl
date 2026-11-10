@@ -9,7 +9,7 @@ pub struct Diagnostic {
 }
 
 impl Diagnostic {
-    pub fn line(&self, source: &str) -> u32 {
+    pub fn offset(&self, source: &str) -> u32 {
         let skipped = self.span.text(source).map_or(0, |text| {
             let mut rest = text;
             loop {
@@ -27,10 +27,13 @@ impl Diagnostic {
                 }
             }
         });
-        let offset = u32::try_from(skipped).map_or(self.span.start, |skipped| {
+        u32::try_from(skipped).map_or(self.span.start, |skipped| {
             self.span.start.saturating_add(skipped)
-        });
-        rglsl_ast::line_column(source, offset).line
+        })
+    }
+
+    pub fn line(&self, source: &str) -> u32 {
+        rglsl_ast::line_column(source, self.offset(source)).line
     }
 }
 

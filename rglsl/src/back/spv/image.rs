@@ -1225,13 +1225,25 @@ impl BlockContext<'_> {
                     scalar: crate::Scalar::U32,
                 });
                 let id_extended = self.gen_id();
+                let lod = !matches!(
+                    class,
+                    Ic::Sampled { multi: true, .. }
+                        | Ic::Depth { multi: true }
+                        | Ic::Storage { .. }
+                );
                 let mut inst = Instruction::image_query(
-                    spirv::Op::ImageQuerySizeLod,
+                    if lod {
+                        spirv::Op::ImageQuerySizeLod
+                    } else {
+                        spirv::Op::ImageQuerySize
+                    },
                     extended_size_type_id,
                     id_extended,
                     image_id,
                 );
-                inst.add_operand(self.get_index_constant(0));
+                if lod {
+                    inst.add_operand(self.get_index_constant(0));
+                }
                 block.body.push(inst);
 
                 let extract_id = self.gen_id();

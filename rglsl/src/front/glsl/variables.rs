@@ -80,7 +80,7 @@ impl AutoMap {
 
 /// The number of consecutive locations a stage input or output of type `ty`
 /// occupies (GLSL 4.60, section 4.4.1 "Input Layout Qualifiers").
-fn location_count(types: &crate::UniqueArena<Type>, ty: Handle<Type>) -> u32 {
+pub(super) fn location_count(types: &crate::UniqueArena<Type>, ty: Handle<Type>) -> u32 {
     /// A `dvec3` or `dvec4` takes two locations, any other vector one.
     const fn vector_locations(size: VectorSize, scalar: Scalar) -> u32 {
         match (size, scalar.width) {
@@ -128,7 +128,7 @@ fn mark_output_invariant(global: &mut GlobalVariable) -> bool {
 
 /// Whether a value of type `ty` has a floating-point part, which is
 /// interpolated between vertices unless it is qualified otherwise.
-fn contains_float(types: &crate::UniqueArena<Type>, ty: Handle<Type>) -> bool {
+pub(super) fn contains_float(types: &crate::UniqueArena<Type>, ty: Handle<Type>) -> bool {
     match types[ty].inner {
         TypeInner::Scalar(scalar)
         | TypeInner::Vector { scalar, .. }

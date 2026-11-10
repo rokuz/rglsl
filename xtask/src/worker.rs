@@ -59,6 +59,7 @@ pub fn compile_one(
     stage: &str,
     spv_version: &str,
     auto_map: bool,
+    pipeline: &str,
     out: &Path,
 ) -> i32 {
     let source = match std::fs::read(input) {
@@ -89,6 +90,11 @@ pub fn compile_one(
     let options = glsl::Options {
         auto_map_bindings: auto_map,
         auto_map_locations: auto_map,
+        pipeline: if pipeline == "ast" {
+            glsl::Pipeline::Ast
+        } else {
+            glsl::Pipeline::Legacy
+        },
         ..glsl::Options::from(stage)
     };
     let module = match frontend.parse(&options, &source) {

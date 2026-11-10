@@ -91,6 +91,10 @@ pub enum ErrorKind {
     /// if none exist already or react to the already existing one.
     #[error("Not implemented: {0}")]
     NotImplemented(&'static str),
+    #[error("Not implemented: {0}")]
+    Unsupported(String),
+    #[error("{0}")]
+    Syntax(String),
     /// A reference to a variable that wasn't declared was used.
     #[error("Unknown variable: {0}")]
     UnknownVariable(String),

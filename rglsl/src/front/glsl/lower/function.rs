@@ -1,0 +1,429 @@
+use alloc::{collections::BTreeMap, string::String, vec::Vec};
+
+use rglsl_ast::ast::{FunctionDefinition, Node};
+use rglsl_sema::scope::Direction;
+use rglsl_sema::types::Type as GlslType;
+use rglsl_sema::{FunctionId, SymbolId};
+
+use super::{internal, unsupported, GlobalRef, Lowerer, Result};
+use crate::front::glsl::Error;
+use crate::{
+    proc::{ConstantEvaluator, Emitter, ExpressionKind, ExpressionKindTracker},
+    AddressSpace, Arena, Block, EarlyDepthTest, EntryPoint, Expression, Function, FunctionArgument,
+    FunctionResult, Handle, LocalVariable, ShaderStage, Span, Statement, TypeInner,
+};
+
+#[derive(Clone, Copy, Debug)]
+pub(super) enum Local {
+    Variable(Handle<LocalVariable>),
+    Pointer(u32),
+    Value(u32),
+}
+
+pub(super) struct FunctionLowerer<'l, 'a> {
+    pub lw: &'l mut Lowerer<'a>,
+    pub expressions: Arena<Expression>,
+    pub locals: Arena<LocalVariable>,
+    pub tracker: ExpressionKindTracker,
+    pub emitter: Emitter,
+    pub block: Block,
+    pub variables: BTreeMap<SymbolId, Local>,
+}
+
+fn ensure_returns(block: &mut Block, value: Option<Handle<Expression>>) {
+    match block.last_mut() {
+        Some(&mut Statement::Block(ref mut inner)) => ensure_returns(inner, value),
+        Some(&mut Statement::If {
+            ref mut accept,
+            ref mut reject,
+            ..
+        }) => {
+            ensure_returns(accept, value);
+            ensure_returns(reject, value);
+        }
+        Some(&mut Statement::Switch { ref mut cases, .. }) => {
+            for case in cases.iter_mut() {
+                if !case.fall_through {
+                    ensure_returns(&mut case.body, value);
+                }
+            }
+        }
+        Some(
+            &mut (Statement::Break
+            | Statement::Continue
+            | Statement::Return { .. }
+            | Statement::Kill),
+        ) => {}
+        _ => block.push(Statement::Return { value }, Span::UNDEFINED),
+    }
+}
+
+impl<'l, 'a> FunctionLowerer<'l, 'a> {
+    pub(super) fn new(lw: &'l mut Lowerer<'a>) -> Self {
+        let expressions = Arena::new();
+        let mut emitter = Emitter::default();
+        emitter.start(&expressions);
+        Self {
+            lw,
+            expressions,
+            locals: Arena::new(),
+            tracker: ExpressionKindTracker::new(),
+            emitter,
+            block: Block::new(),
+            variables: BTreeMap::new(),
+        }
+    }
+
+    pub(super) fn at(&self, span: rglsl_ast::Span) -> Span {
+        self.lw.at(span)
+    }
+
+    pub(super) fn add(&mut self, expression: Expression, span: Span) -> Result<Handle<Expression>> {
+        let mut evaluator = ConstantEvaluator::for_glsl_function(
+            &mut self.lw.module,
+            &mut self.expressions,
+            &mut self.tracker,
+            &mut self.lw.layouter,
+            &mut self.emitter,
+            &mut self.block,
+        );
+        evaluator
+            .try_eval_and_append(expression, span)
+            .map_err(|error| Error {
+                kind: error.into(),
+                meta: span,
+            })
+    }
+
+    pub(super) fn flush(&mut self) {
+        let emitted = self.emitter.finish(&self.expressions);
+        self.block.extend(emitted);
+        self.emitter.start(&self.expressions);
+    }
+
+    pub(super) fn push(&mut self, statement: Statement, span: Span) {
+        self.flush();
+        self.block.push(statement, span);
+    }
+
+    pub(super) fn unemitted(&mut self, expression: Expression, span: Span) -> Handle<Expression> {
+        let handle = self.expressions.append(expression, span);
+        self.tracker.insert(handle, ExpressionKind::Runtime);
+        handle
+    }
+
+    pub(super) fn call_statement(
+        &mut self,
+        function: Handle<Function>,
+        arguments: Vec<Handle<Expression>>,
+        returns: bool,
+        span: Span,
+    ) -> Option<Handle<Expression>> {
+        let emitted = self.emitter.finish(&self.expressions);
+        self.block.extend(emitted);
+        let result = returns.then(|| self.unemitted(Expression::CallResult(function), span));
+        self.block.push(
+            Statement::Call {
+                function,
+                arguments,
+                result,
+            },
+            span,
+        );
+        self.emitter.start(&self.expressions);
+        result
+    }
+
+    pub(super) fn nested(&mut self, body: impl FnOnce(&mut Self) -> Result<()>) -> Result<Block> {
+        self.flush();
+        let outer = core::mem::take(&mut self.block);
+        let result = body(self);
+        self.flush();
+        let inner = core::mem::replace(&mut self.block, outer);
+        result.map(|()| inner)
+    }
+
+    pub(super) fn terminated(&self) -> bool {
+        matches!(
+            self.block.last(),
+            Some(
+                &(Statement::Break
+                    | Statement::Continue
+                    | Statement::Return { .. }
+                    | Statement::Kill)
+            )
+        )
+    }
+
+    pub(super) fn local(
+        &mut self,
+        ty: &GlslType,
+        name: Option<String>,
+        span: Span,
+    ) -> Result<Handle<LocalVariable>> {
+        let ir = self.lw.ir_type(ty, span)?;
+        Ok(self.locals.append(
+            LocalVariable {
+                name,
+                ty: ir,
+                init: None,
+            },
+            span,
+        ))
+    }
+
+    pub(super) fn local_pointer(
+        &mut self,
+        local: Handle<LocalVariable>,
+        span: Span,
+    ) -> Result<Handle<Expression>> {
+        self.add(Expression::LocalVariable(local), span)
+    }
+
+    fn finish(
+        mut self,
+        result: Option<FunctionResult>,
+        arguments: Vec<FunctionArgument>,
+        name: String,
+    ) -> Function {
+        let emitted = self.emitter.finish(&self.expressions);
+        self.block.extend(emitted);
+        let value = result.as_ref().map(|result| {
+            let handle = self
+                .expressions
+                .append(Expression::ZeroValue(result.ty), Span::UNDEFINED);
+            self.tracker.insert(handle, ExpressionKind::Const);
+            handle
+        });
+        let mut body = self.block;
+        ensure_returns(&mut body, value);
+        Function {
+            name: Some(name),
+            arguments,
+            result,
+            local_variables: self.locals,
+            expressions: self.expressions,
+            named_expressions: crate::NamedExpressions::default(),
+            body,
+            diagnostic_filter_leaf: None,
+        }
+    }
+}
+
+impl<'a> Lowerer<'a> {
+    fn parameter_type(
+        &mut self,
+        ty: &GlslType,
+        symbol: Option<SymbolId>,
+        span: Span,
+    ) -> Result<Handle<crate::Type>> {
+        let depth = symbol.is_some_and(|symbol| self.depth.contains(&symbol));
+        let comparison = symbol.is_some_and(|symbol| self.comparison.contains(&symbol));
+        self.ir_type_with(ty, depth, comparison, span)
+    }
+
+    fn signature(
+        &mut self,
+        id: FunctionId,
+        span: Span,
+    ) -> Result<(Vec<FunctionArgument>, Option<FunctionResult>, Vec<Local>)> {
+        let analysis = self.analysis;
+        let function = analysis.function(id).ok_or_else(|| internal(span))?;
+        let symbols = self.parameters.get(&id).cloned().unwrap_or_default();
+        let mut arguments = Vec::with_capacity(function.parameters.len());
+        let mut locals = Vec::with_capacity(function.parameters.len());
+        for (index, parameter) in function.parameters.iter().enumerate() {
+            let index = u32::try_from(index).map_err(|_| internal(span))?;
+            let symbol = symbols
+                .get(usize::try_from(index).unwrap_or(usize::MAX))
+                .copied()
+                .flatten();
+            if parameter.qualifiers.precise {
+                return Err(unsupported("`precise`", span));
+            }
+            let mut ty = self.parameter_type(&parameter.ty, symbol, span)?;
+            let local = if parameter.direction.is_output() {
+                ty = self.insert_type(TypeInner::Pointer {
+                    base: ty,
+                    space: AddressSpace::Function,
+                });
+                Local::Pointer(index)
+            } else {
+                Local::Value(index)
+            };
+            locals.push(local);
+            arguments.push(FunctionArgument {
+                name: parameter.name.clone(),
+                ty,
+                binding: None,
+            });
+        }
+        let result = if function.return_type.is_void() {
+            None
+        } else {
+            Some(FunctionResult {
+                ty: self.ir_type(&function.return_type, span)?,
+                binding: None,
+            })
+        };
+        Ok((arguments, result, locals))
+    }
+
+    pub(super) fn declare_function(
+        &mut self,
+        id: FunctionId,
+        definition: &'a Node<FunctionDefinition>,
+    ) -> Result<()> {
+        let at = self.at(definition.span);
+        let (arguments, result, _) = self.signature(id, at)?;
+        let handle = self.module.functions.append(
+            Function {
+                name: Some(self.function_name(id)),
+                arguments,
+                result,
+                ..Function::default()
+            },
+            at,
+        );
+        self.functions.insert(id, handle);
+        Ok(())
+    }
+
+    pub(super) fn define_function(
+        &mut self,
+        id: FunctionId,
+        definition: &'a Node<FunctionDefinition>,
+    ) -> Result<()> {
+        let Some(&handle) = self.functions.get(&id) else {
+            return Ok(());
+        };
+        let function = self.lower_body(id, definition, false)?;
+        *self.module.functions.get_mut(handle) = function;
+        Ok(())
+    }
+
+    fn lower_body(
+        &mut self,
+        id: FunctionId,
+        definition: &'a Node<FunctionDefinition>,
+        entry: bool,
+    ) -> Result<Function> {
+        let at = self.at(definition.span);
+        let analysis = self.analysis;
+        let (arguments, result, locals) = self.signature(id, at)?;
+        let symbols = self.parameters.get(&id).cloned().unwrap_or_default();
+        let function = analysis.function(id).ok_or_else(|| internal(at))?;
+        let name = self.function_name(id);
+        let initializers = if entry {
+            core::mem::take(&mut self.initializers)
+        } else {
+            Vec::new()
+        };
+        let mut lowerer = FunctionLowerer::new(self);
+        for (((parameter, local), symbol), index) in function
+            .parameters
+            .iter()
+            .zip(locals)
+            .zip(symbols)
+            .zip(0_u32..)
+        {
+            let Some(symbol) = symbol else {
+                continue;
+            };
+            let opaque = parameter.ty.is_opaque();
+            let local = match local {
+                Local::Value(_)
+                    if !opaque
+                        && !parameter.qualifiers.constant
+                        && parameter.direction == Direction::In =>
+                {
+                    let variable = lowerer.local(&parameter.ty, parameter.name.clone(), at)?;
+                    let pointer = lowerer.local_pointer(variable, at)?;
+                    let value = lowerer.add(Expression::FunctionArgument(index), at)?;
+                    lowerer.push(Statement::Store { pointer, value }, at);
+                    Local::Variable(variable)
+                }
+                other => other,
+            };
+            lowerer.variables.insert(symbol, local);
+        }
+        for initialization in initializers {
+            let ty = lowerer
+                .lw
+                .variable(initialization.symbol)
+                .map(|variable| variable.ty.clone())
+                .ok_or_else(|| internal(at))?;
+            let value = lowerer.initializer(initialization.initializer, &ty)?;
+            let span = lowerer.at(initialization.initializer.span);
+            let pointer = lowerer.add(Expression::GlobalVariable(initialization.global), span)?;
+            lowerer.push(Statement::Store { pointer, value }, span);
+        }
+        lowerer.statements(&definition.body.statements)?;
+        Ok(lowerer.finish(result, arguments, name))
+    }
+
+    pub(super) fn entry_point(&mut self, definition: &'a Node<FunctionDefinition>) -> Result<()> {
+        let at = self.at(definition.span);
+        let id = *self
+            .analysis
+            .function_declarations
+            .get(&definition.id)
+            .ok_or_else(|| internal(at))?;
+        let function = self.lower_body(id, definition, true)?;
+        let stage = self.options.stage;
+        let workgroup_size = if stage == ShaderStage::Compute {
+            let size = self
+                .analysis
+                .builtins
+                .variables()
+                .find(|&(name, _)| name == "gl_WorkGroupSize")
+                .and_then(|(_, symbol)| self.variable(symbol))
+                .and_then(|variable| variable.value.as_ref())
+                .map(|value| {
+                    value
+                        .values
+                        .iter()
+                        .map(|value| match *value {
+                            rglsl_sema::constant::Value::Uint(value) => value,
+                            _ => 1,
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let mut workgroup = [1_u32; 3];
+            for (slot, value) in workgroup.iter_mut().zip(size) {
+                *slot = value;
+            }
+            workgroup
+        } else {
+            [0; 3]
+        };
+        let early_depth_test = if self.early_fragment_tests {
+            Some(EarlyDepthTest::Force)
+        } else {
+            self.conservative_depth
+                .map(|conservative| EarlyDepthTest::Allow { conservative })
+        };
+        self.module.entry_points.push(EntryPoint {
+            name: String::from("main"),
+            stage,
+            early_depth_test,
+            workgroup_size,
+            workgroup_size_overrides: None,
+            function,
+            mesh_info: None,
+            task_payload: None,
+            incoming_ray_payload: None,
+            interface: self.interface.clone(),
+        });
+        Ok(())
+    }
+
+    pub(super) const fn global_expression(&mut self, global: GlobalRef) -> Expression {
+        match global {
+            GlobalRef::Variable(handle) => Expression::GlobalVariable(handle),
+            GlobalRef::Constant(handle) => Expression::Constant(handle),
+            GlobalRef::Override(handle) => Expression::Override(handle),
+        }
+    }
+}

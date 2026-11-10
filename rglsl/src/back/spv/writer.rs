@@ -1865,18 +1865,26 @@ impl Writer {
                     }
                     None => {}
                 }
-                if let Some(ref result) = entry_point.function.result {
-                    if contains_builtin(
+                let result_depth = entry_point.function.result.as_ref().is_some_and(|result| {
+                    contains_builtin(
                         result.binding.as_ref(),
                         result.ty,
                         &ir_module.types,
                         crate::BuiltIn::FragDepth,
-                    ) {
-                        self.write_execution_mode(
-                            function_id,
-                            spirv::ExecutionMode::DepthReplacing,
-                        )?;
-                    }
+                    )
+                });
+                let interface_depth = entry_point.interface.iter().any(|&handle| {
+                    let global = &ir_module.global_variables[handle];
+                    global.space == crate::AddressSpace::Output
+                        && contains_builtin(
+                            global.io.as_ref(),
+                            global.ty,
+                            &ir_module.types,
+                            crate::BuiltIn::FragDepth,
+                        )
+                });
+                if result_depth || interface_depth {
+                    self.write_execution_mode(function_id, spirv::ExecutionMode::DepthReplacing)?;
                 }
                 spirv::ExecutionModel::Fragment
             }

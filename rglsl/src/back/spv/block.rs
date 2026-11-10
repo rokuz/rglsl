@@ -3642,8 +3642,8 @@ impl BlockContext<'_> {
                     for (i, (case, label_id)) in cases
                         .iter()
                         .zip(case_ids.iter())
-                        .filter(|&(case, _)| !(case.fall_through && case.body.is_empty()))
                         .enumerate()
+                        .filter(|&(_, (case, _))| !(case.fall_through && case.body.is_empty()))
                     {
                         let case_finish_id = if case.fall_through {
                             case_ids[i + 1]

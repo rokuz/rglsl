@@ -31,6 +31,7 @@ commands:
       --jobs N            number of parallel jobs (default: number of CPUs)
       --timeout SECS      per-process timeout (default: 30)
       --no-progress-file  do not rewrite PROGRESS.md (for filtered or local runs)
+      --pipeline P        GLSL frontend pipeline: legacy (default) or ast
   fuzz                compare rglsl with glslang on a directory of shaders
                       (accepted or not, valid SPIR-V, crashes)
       --shaders DIR       the shaders to compare (searched recursively)
@@ -73,6 +74,7 @@ fn run(args: Vec<String>) -> Result<i32> {
                 jobs: args.parsed("--jobs")?,
                 timeout_secs: args.parsed("--timeout")?.unwrap_or(30),
                 write_progress: !args.flag("--no-progress-file"),
+                pipeline: pipeline(&mut args)?,
             };
             args.finish()?;
             runner::run(&workspace_root(), options)?;
@@ -98,6 +100,7 @@ fn run(args: Vec<String>) -> Result<i32> {
             let spv = args.value("--spv")?.context("--spv is required")?;
             let out = args.value("--out")?.context("--out is required")?;
             let auto_map = args.flag("--auto-map");
+            let pipeline = pipeline(&mut args)?;
             let input = args.next_positional().context("input file is required")?;
             args.finish()?;
             Ok(worker::compile_one(
@@ -105,6 +108,7 @@ fn run(args: Vec<String>) -> Result<i32> {
                 &stage,
                 &spv,
                 auto_map,
+                &pipeline,
                 Path::new(&out),
             ))
         }
@@ -113,6 +117,16 @@ fn run(args: Vec<String>) -> Result<i32> {
             Ok(0)
         }
         other => bail!("unknown command `{other}`\n\n{USAGE}"),
+    }
+}
+
+fn pipeline(args: &mut Args) -> Result<String> {
+    let pipeline = args
+        .value("--pipeline")?
+        .unwrap_or_else(|| "legacy".to_string());
+    match pipeline.as_str() {
+        "legacy" | "ast" => Ok(pipeline),
+        other => bail!("unknown pipeline `{other}`, expected `legacy` or `ast`"),
     }
 }
 

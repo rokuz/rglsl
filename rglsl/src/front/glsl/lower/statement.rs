@@ -1,0 +1,338 @@
+use alloc::vec::Vec;
+
+use rglsl_ast::ast::{
+    CaseLabel, Condition, Declaration, DeclarationKind, ForStatement, JumpStatement, Statement,
+    StatementKind,
+};
+use rglsl_sema::constant::Value;
+use rglsl_sema::types::{Scalar as GlslScalar, Type as GlslType};
+
+use super::function::{FunctionLowerer, Local};
+use super::{internal, semantic, unsupported, Result};
+use crate::{Block, Expression, Statement as IrStatement, SwitchCase, SwitchValue, UnaryOperator};
+
+impl FunctionLowerer<'_, '_> {
+    pub(super) fn statements(&mut self, statements: &[Statement]) -> Result<()> {
+        for statement in statements {
+            if self.terminated() {
+                break;
+            }
+            self.statement(statement)?;
+        }
+        Ok(())
+    }
+
+    fn statement(&mut self, statement: &Statement) -> Result<()> {
+        let at = self.at(statement.span);
+        match statement.kind {
+            StatementKind::Compound(ref compound) => self.statements(&compound.statements),
+            StatementKind::Declaration(ref declaration) => self.local_declaration(declaration),
+            StatementKind::Expression(Some(ref expression)) => self.effect(expression),
+            StatementKind::Expression(None) => Ok(()),
+            StatementKind::Selection {
+                ref condition,
+                ref then_branch,
+                ref else_branch,
+            } => {
+                let condition = self.rvalue(condition)?;
+                let accept = self.nested(|this| this.statement(then_branch))?;
+                let reject = match *else_branch {
+                    Some(ref branch) => self.nested(|this| this.statement(branch))?,
+                    None => Block::new(),
+                };
+                self.push(
+                    IrStatement::If {
+                        condition,
+                        accept,
+                        reject,
+                    },
+                    at,
+                );
+                Ok(())
+            }
+            StatementKind::Switch {
+                ref selector,
+                ref statements,
+            } => self.switch(selector, statements, at),
+            StatementKind::CaseLabel(_) => Err(semantic("a case label outside a switch", at)),
+            StatementKind::While {
+                ref condition,
+                ref body,
+            } => {
+                let body = self.nested(|this| {
+                    let condition = this.condition(condition)?;
+                    this.break_unless(condition, at)?;
+                    this.statement(body)
+                })?;
+                self.push(
+                    IrStatement::Loop {
+                        body,
+                        continuing: Block::new(),
+                        break_if: None,
+                    },
+                    at,
+                );
+                Ok(())
+            }
+            StatementKind::DoWhile {
+                ref body,
+                ref condition,
+            } => {
+                let body = self.nested(|this| this.statement(body))?;
+                let mut break_if = None;
+                let continuing = self.nested(|this| {
+                    let value = this.rvalue(condition)?;
+                    break_if = Some(this.add(
+                        Expression::Unary {
+                            op: UnaryOperator::LogicalNot,
+                            expr: value,
+                        },
+                        at,
+                    )?);
+                    Ok(())
+                })?;
+                self.push(
+                    IrStatement::Loop {
+                        body,
+                        continuing,
+                        break_if,
+                    },
+                    at,
+                );
+                Ok(())
+            }
+            StatementKind::For(ref for_statement) => self.for_loop(for_statement, at),
+            StatementKind::Jump(ref jump) => {
+                let statement = match *jump {
+                    JumpStatement::Break => IrStatement::Break,
+                    JumpStatement::Continue => IrStatement::Continue,
+                    JumpStatement::Discard => IrStatement::Kill,
+                    JumpStatement::Return(None) => IrStatement::Return { value: None },
+                    JumpStatement::Return(Some(ref value)) => IrStatement::Return {
+                        value: Some(self.rvalue(value)?),
+                    },
+                };
+                self.push(statement, at);
+                Ok(())
+            }
+        }
+    }
+
+    fn break_unless(
+        &mut self,
+        condition: crate::Handle<Expression>,
+        at: crate::Span,
+    ) -> Result<()> {
+        let negated = self.add(
+            Expression::Unary {
+                op: UnaryOperator::LogicalNot,
+                expr: condition,
+            },
+            at,
+        )?;
+        let mut accept = Block::new();
+        accept.push(IrStatement::Break, at);
+        self.push(
+            IrStatement::If {
+                condition: negated,
+                accept,
+                reject: Block::new(),
+            },
+            at,
+        );
+        Ok(())
+    }
+
+    fn condition(&mut self, condition: &Condition) -> Result<crate::Handle<Expression>> {
+        match *condition {
+            Condition::Expression(ref expression) => self.rvalue(expression),
+            Condition::Declaration(ref declaration) => {
+                let at = self.at(declaration.span);
+                let symbol = *self
+                    .lw
+                    .analysis
+                    .declarations
+                    .get(&declaration.id)
+                    .ok_or_else(|| internal(at))?;
+                let ty = self
+                    .lw
+                    .variable(symbol)
+                    .map(|variable| variable.ty.clone())
+                    .ok_or_else(|| internal(at))?;
+                let local = self.local(&ty, Some(declaration.name.node.clone()), at)?;
+                self.variables.insert(symbol, Local::Variable(local));
+                let value = self.initializer(&declaration.initializer, &ty)?;
+                let pointer = self.local_pointer(local, at)?;
+                self.push(IrStatement::Store { pointer, value }, at);
+                let pointer = self.local_pointer(local, at)?;
+                self.add(Expression::Load { pointer }, at)
+            }
+        }
+    }
+
+    fn for_loop(&mut self, statement: &ForStatement, at: crate::Span) -> Result<()> {
+        self.statement(&statement.init)?;
+        let body = self.nested(|this| {
+            if let Some(ref condition) = statement.condition {
+                let condition = this.condition(condition)?;
+                this.break_unless(condition, at)?;
+            }
+            this.statement(&statement.body)
+        })?;
+        let continuing = self.nested(|this| match statement.increment {
+            Some(ref increment) => this.effect(increment),
+            None => Ok(()),
+        })?;
+        self.push(
+            IrStatement::Loop {
+                body,
+                continuing,
+                break_if: None,
+            },
+            at,
+        );
+        Ok(())
+    }
+
+    fn local_declaration(&mut self, declaration: &Declaration) -> Result<()> {
+        let at = self.at(declaration.span);
+        match declaration.kind {
+            DeclarationKind::InitDeclaratorList(ref list) => {
+                for declarator in &list.declarators {
+                    let at = self.at(declarator.span);
+                    let Some(&symbol) = self.lw.analysis.declarations.get(&declarator.id) else {
+                        continue;
+                    };
+                    let variable = self.lw.variable(symbol).ok_or_else(|| internal(at))?;
+                    if variable.qualifiers.precise {
+                        return Err(unsupported("`precise`", at));
+                    }
+                    let ty = variable.ty.clone();
+                    let local = self.local(&ty, Some(declarator.name.node.clone()), at)?;
+                    self.variables.insert(symbol, Local::Variable(local));
+                    if let Some(ref initializer) = declarator.initializer {
+                        let value = self.initializer(initializer, &ty)?;
+                        let pointer = self.local_pointer(local, at)?;
+                        self.push(IrStatement::Store { pointer, value }, at);
+                    }
+                }
+                Ok(())
+            }
+            DeclarationKind::Precision { .. } | DeclarationKind::FunctionPrototype(_) => Ok(()),
+            DeclarationKind::Block { .. }
+            | DeclarationKind::Qualifier(_)
+            | DeclarationKind::QualifiedIdentifiers { .. } => {
+                Err(unsupported("this declaration inside a function", at))
+            }
+        }
+    }
+
+    fn switch(
+        &mut self,
+        selector: &rglsl_ast::ast::Expression,
+        statements: &[Statement],
+        at: crate::Span,
+    ) -> Result<()> {
+        let (value, ty) = self.typed(selector)?;
+        let unsigned = ty == GlslType::scalar(GlslScalar::Uint);
+        let mut groups: Vec<(Vec<SwitchValue>, Vec<&Statement>)> = Vec::new();
+        for statement in statements {
+            match statement.kind {
+                StatementKind::CaseLabel(ref label) => {
+                    let case = match *label {
+                        CaseLabel::Default => SwitchValue::Default,
+                        CaseLabel::Case(ref expression) => {
+                            let label_at = self.at(expression.span);
+                            let constant = self
+                                .lw
+                                .analysis
+                                .expression(expression.id)
+                                .and_then(|info| info.value.as_ref())
+                                .and_then(|value| value.first())
+                                .ok_or_else(|| internal(label_at))?;
+                            match (constant, unsigned) {
+                                (Value::Int(value), false) => SwitchValue::I32(value),
+                                (Value::Int(value), true) => {
+                                    SwitchValue::U32(value.cast_unsigned())
+                                }
+                                (Value::Uint(value), true) => SwitchValue::U32(value),
+                                (Value::Uint(value), false) => {
+                                    SwitchValue::I32(value.cast_signed())
+                                }
+                                _ => return Err(internal(label_at)),
+                            }
+                        }
+                    };
+                    match groups.last_mut() {
+                        Some(&mut (ref mut labels, ref body)) if body.is_empty() => {
+                            labels.push(case)
+                        }
+                        _ => groups.push((alloc::vec![case], Vec::new())),
+                    }
+                }
+                _ => {
+                    if let Some(&mut (_, ref mut body)) = groups.last_mut() {
+                        body.push(statement);
+                    }
+                }
+            }
+        }
+        let mut cases = Vec::new();
+        for (labels, body) in groups {
+            let count = labels.len();
+            for (index, label) in labels.into_iter().enumerate() {
+                if index + 1 < count {
+                    cases.push(SwitchCase {
+                        value: label,
+                        body: Block::new(),
+                        fall_through: true,
+                    });
+                    continue;
+                }
+                let mut block = self.nested(|this| {
+                    for statement in &body {
+                        if this.terminated() {
+                            break;
+                        }
+                        this.statement(statement)?;
+                    }
+                    Ok(())
+                })?;
+                let fall_through = match block.last() {
+                    Some(&IrStatement::Break) => {
+                        let length = block.len();
+                        block.cull(length.saturating_sub(1)..);
+                        false
+                    }
+                    Some(
+                        &(IrStatement::Return { .. } | IrStatement::Continue | IrStatement::Kill),
+                    ) => false,
+                    _ => true,
+                };
+                cases.push(SwitchCase {
+                    value: label,
+                    body: block,
+                    fall_through,
+                });
+            }
+        }
+        if let Some(last) = cases.last_mut() {
+            last.fall_through = false;
+        }
+        if !cases.iter().any(|case| case.value == SwitchValue::Default) {
+            cases.push(SwitchCase {
+                value: SwitchValue::Default,
+                body: Block::new(),
+                fall_through: false,
+            });
+        }
+        self.push(
+            IrStatement::Switch {
+                selector: value,
+                cases,
+            },
+            at,
+        );
+        Ok(())
+    }
+}
