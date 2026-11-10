@@ -731,7 +731,9 @@ impl<'a> Lowerer<'a> {
         };
         let handle = self.module.global_variables.append(
             GlobalVariable {
-                name: instance.map(|instance| instance.name.node.clone()),
+                name: Some(
+                    instance.map_or_else(String::new, |instance| instance.name.node.clone()),
+                ),
                 space,
                 binding,
                 ty,

@@ -10,9 +10,9 @@ OpEntryPoint Fragment %651 "main" %35
 OpExecutionMode %651 OriginUpperLeft
 OpDecorate %4 ArrayStride 4
 OpMemberDecorate %5 0 Offset 0
-OpDecorate %5 Block
 OpDecorate %33 DescriptorSet 0
 OpDecorate %33 Binding 0
+OpDecorate %5 Block
 OpDecorate %35 Location 0
 %2 = OpTypeVoid
 %3 = OpTypeFloat 32

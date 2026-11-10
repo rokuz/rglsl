@@ -10,10 +10,10 @@ OpEntryPoint GLCompute %10 "main"
 OpExecutionMode %10 LocalSize 1 1 1
 OpDecorate %4 ArrayStride 4
 OpMemberDecorate %5 0 Offset 0
-OpDecorate %5 Block
 OpDecorate %6 Coherent
 OpDecorate %6 DescriptorSet 0
 OpDecorate %6 Binding 0
+OpDecorate %5 Block
 OpDecorate %8 DescriptorSet 0
 OpDecorate %8 Binding 1
 %2 = OpTypeVoid

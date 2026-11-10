@@ -1953,3 +1953,58 @@ fn dynamic_indexing_of_opaque_arrays_is_not_non_uniform() {
     ));
     assert!(module.extensions.is_empty());
 }
+
+#[test]
+fn buffer_blocks_decorate_their_own_struct() {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+        struct S { vec4 a; mat2 m; };
+        layout(binding = 0) uniform U { vec4 u; S s; mat3 m3; } ub;
+        layout(binding = 1) uniform U2 { vec4 v2; };
+        layout(std430, binding = 2) buffer B { float x; uint data[]; } sb;
+        layout(push_constant) uniform P { vec4 p; } pc;
+        layout(location = 0) out vec4 o;
+        void main() {
+            o = ub.u + ub.s.a + v2 + pc.p + vec4(ub.m3[0], 1.0) + vec4(ub.s.m[1], 0.0, 0.0);
+            sb.data[2] = 3u;
+            o.x += sb.x + float(sb.data.length());
+        }",
+    );
+    let mut blocks = decorated(&module, Decoration::Block);
+    blocks.sort_unstable();
+    assert_eq!(blocks, ["B", "P", "U", "U2"]);
+    for (variable, block) in [("ub", "U"), ("sb", "B"), ("pc", "P"), ("", "U2")] {
+        let id = named(&module, variable);
+        let pointer = module
+            .types_global_values
+            .iter()
+            .find(|inst| inst.class.opcode == Op::Variable && inst.result_id == Some(id))
+            .and_then(|inst| inst.result_type)
+            .map(|ty| type_instruction(&module, ty))
+            .expect("a global variable");
+        assert_eq!(
+            name_of(&module, pointer.operands[1].unwrap_id_ref()),
+            block,
+            "{variable}"
+        );
+    }
+    let ub = named(&module, "ub");
+    let chains: Vec<usize> = instructions(&module, Op::AccessChain)
+        .iter()
+        .filter(|inst| inst.operands[0] == Operand::IdRef(ub))
+        .map(|inst| inst.operands.len() - 1)
+        .collect();
+    assert_eq!(chains, [1, 2, 2, 3]);
+    let wrappers = instructions(&module, Op::TypeStruct)
+        .into_iter()
+        .filter(|inst| {
+            inst.operands.len() == 1
+                && type_instruction(&module, inst.operands[0].unwrap_id_ref())
+                    .class
+                    .opcode
+                    == Op::TypeStruct
+        })
+        .count();
+    assert_eq!(wrappers, 0);
+}

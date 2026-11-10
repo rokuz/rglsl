@@ -10,14 +10,14 @@ OpEntryPoint Fragment %12 "main"
 OpExecutionMode %12 OriginUpperLeft
 OpDecorate %4 ArrayStride 4
 OpMemberDecorate %5 0 Offset 0
-OpDecorate %5 Block
 OpMemberDecorate %6 0 Offset 0
-OpDecorate %6 Block
 OpDecorate %7 DescriptorSet 0
 OpDecorate %7 Binding 0
+OpDecorate %5 Block
 OpDecorate %9 NonWritable
 OpDecorate %9 DescriptorSet 0
 OpDecorate %9 Binding 2
+OpDecorate %6 Block
 %2 = OpTypeVoid
 %3 = OpTypeInt 32 0
 %4 = OpTypeRuntimeArray %3

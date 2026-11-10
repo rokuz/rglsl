@@ -10,9 +10,9 @@ OpEntryPoint GLCompute %38 "barrier_reorder_bug" %35 %41
 OpExecutionMode %38 LocalSize 2 1 1
 OpDecorate %5 ArrayStride 4
 OpMemberDecorate %6 0 Offset 0
-OpDecorate %6 Block
 OpDecorate %13 DescriptorSet 0
 OpDecorate %13 Binding 0
+OpDecorate %6 Block
 OpDecorate %35 BuiltIn LocalInvocationId
 OpDecorate %41 BuiltIn LocalInvocationIndex
 %2 = OpTypeVoid

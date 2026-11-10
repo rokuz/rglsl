@@ -22,9 +22,9 @@ OpName %39 "index_dynamic_array"
 OpName %46 "main"
 OpDecorate %7 ArrayStride 4
 OpMemberDecorate %8 0 Offset 0
-OpDecorate %8 Block
 OpDecorate %10 DescriptorSet 0
 OpDecorate %10 Binding 0
+OpDecorate %8 Block
 %2 = OpTypeVoid
 %5 = OpTypeFloat 32
 %4 = OpTypeVector %5 2

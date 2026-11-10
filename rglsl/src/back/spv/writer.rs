@@ -109,6 +109,7 @@ impl Writer {
             std140_compat_uniform_types: crate::FastHashMap::default(),
             laid_out_types: crate::arena::HandleSet::new(),
             decorated_blocks: crate::arena::HandleSet::new(),
+            buffer_blocks: crate::FastHashSet::default(),
             fake_missing_bindings: options.fake_missing_bindings,
             binding_map: options.binding_map.clone(),
             saved_cached: CachedExpressions::default(),
@@ -210,6 +211,7 @@ impl Writer {
             std140_compat_uniform_types: take(&mut self.std140_compat_uniform_types).reclaim(),
             laid_out_types: crate::arena::HandleSet::new(),
             decorated_blocks: crate::arena::HandleSet::new(),
+            buffer_blocks: crate::FastHashSet::default(),
             saved_cached: take(&mut self.saved_cached).reclaim(),
             temp_list: take(&mut self.temp_list).reclaim(),
             ray_query_functions: take(&mut self.ray_query_functions).reclaim(),
@@ -2305,27 +2307,12 @@ impl Writer {
                     ref members,
                     span: _,
                 } => {
-                    let mut has_runtime_array = false;
                     let mut member_ids = Vec::with_capacity(members.len());
                     for (index, member) in members.iter().enumerate() {
-                        let member_ty = &module.types[member.ty];
-                        match member_ty.inner {
-                            crate::TypeInner::Array {
-                                base: _,
-                                size: crate::ArraySize::Dynamic,
-                                stride: _,
-                            } => {
-                                has_runtime_array = true;
-                            }
-                            _ => (),
-                        }
                         let laid_out = self.laid_out_types.contains(handle);
                         self.decorate_struct_member(id, index, member, &module.types, laid_out)?;
                         let member_id = self.get_handle_type_id(member.ty);
                         member_ids.push(member_id);
-                    }
-                    if has_runtime_array {
-                        self.decorate(id, Decoration::Block, &[]);
                     }
                     Instruction::type_struct(id, member_ids.as_slice())
                 }
@@ -3659,41 +3646,39 @@ impl Writer {
 
             pointer_type_id
         } else {
-            // This is a global variable in the Storage address space. The only
-            // way it could have `global_needs_wrapper() == false` is if it has
-            // a runtime-sized or binding array.
-            // Runtime-sized arrays were decorated when iterating through struct content.
-            // Now binding arrays require Block decorating.
-            if let crate::AddressSpace::Storage { .. } = global_variable.space {
-                match ir_module.types[global_variable.ty].inner {
-                    crate::TypeInner::BindingArray { base, .. } => {
-                        let ty = &ir_module.types[base];
-                        let mut should_decorate = true;
-                        // Check if the type has a runtime array.
-                        // A normal runtime array gets validated out,
-                        // so only structs can be with runtime arrays
-                        if let crate::TypeInner::Struct { ref members, .. } = ty.inner {
-                            // only the last member in a struct can be dynamically sized
-                            if let Some(last_member) = members.last() {
-                                if let &crate::TypeInner::Array {
-                                    size: crate::ArraySize::Dynamic,
-                                    ..
-                                } = &ir_module.types[last_member.ty].inner
-                                {
-                                    should_decorate = false;
-                                }
-                            }
-                        }
-                        if should_decorate {
-                            let decorated_id = self.get_handle_type_id(base);
-                            self.decorate(decorated_id, Decoration::Block, &[]);
-                        }
+            let block_struct = match ir_module.types[global_variable.ty].inner {
+                crate::TypeInner::Struct { .. } => Some(global_variable.ty),
+                crate::TypeInner::BindingArray { base, .. } => match ir_module.types[base].inner {
+                    crate::TypeInner::Struct { .. } => Some(base),
+                    _ => None,
+                },
+                _ => None,
+            };
+            let std140_struct = match global_variable.space {
+                crate::AddressSpace::Uniform => self
+                    .std140_compat_uniform_types
+                    .get(&global_variable.ty)
+                    .map(|info| info.type_id),
+                _ => None,
+            };
+            if let Some(structure) = block_struct {
+                if let crate::AddressSpace::Uniform
+                | crate::AddressSpace::Storage { .. }
+                | crate::AddressSpace::Immediate = global_variable.space
+                {
+                    let block_id = match std140_struct {
+                        Some(id) => id,
+                        None => self.get_handle_type_id(structure),
+                    };
+                    if self.buffer_blocks.insert(block_id) {
+                        self.decorate(block_id, Decoration::Block, &[]);
                     }
-                    _ => (),
-                };
+                }
             }
             if substitute_inner_type_lookup.is_some() {
                 inner_type_id
+            } else if let Some(std140_id) = std140_struct {
+                self.get_pointer_type_id(std140_id, class)
             } else {
                 self.get_handle_pointer_type_id(global_variable.ty, class)
             }

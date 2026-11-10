@@ -128,6 +128,10 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   arrays indexed by a non-uniform value with `NonUniform` (and no longer requires
   `ShaderNonUniform`); glslang emits them only for `nonuniformEXT`.
   `Writer::decorate_non_uniform_binding_array_access` remains for an explicit request.
+- **Buffer blocks decorate their own struct.** A `Uniform`, `Storage` or `Immediate` global
+  of struct type is not wrapped in another struct: the struct itself (or its std140-compatible
+  variant) is decorated `Block`, as glslang does, unless another type contains the struct
+  (`back/spv/helpers.rs`, `global_needs_wrapper`). Only globals of other types are wrapped.
 
 ## Cherry-picked upstream commits
 

@@ -111,24 +111,20 @@ pub fn global_needs_wrapper(ir_module: &crate::Module, var: &crate::GlobalVariab
         _ => return false,
     };
     match ir_module.types[var.ty].inner {
-        crate::TypeInner::Struct {
-            ref members,
-            span: _,
-        } => match members.last() {
-            Some(member) => match ir_module.types[member.ty].inner {
-                // Structs with dynamically sized arrays can't be copied and can't be wrapped.
-                crate::TypeInner::Array {
-                    size: crate::ArraySize::Dynamic,
-                    ..
-                } => false,
-                _ => true,
-            },
-            None => false,
-        },
+        crate::TypeInner::Struct { .. } => is_nested_type(ir_module, var.ty),
         crate::TypeInner::BindingArray { .. } => false,
-        // if it's not a structure or a binding array, let's wrap it to be able to put "Block"
         _ => true,
     }
+}
+
+fn is_nested_type(ir_module: &crate::Module, ty: Handle<crate::Type>) -> bool {
+    ir_module.types.iter().any(|(_, other)| match other.inner {
+        crate::TypeInner::Array { base, .. } => base == ty,
+        crate::TypeInner::Struct { ref members, .. } => {
+            members.iter().any(|member| member.ty == ty)
+        }
+        _ => false,
+    })
 }
 
 /// Returns true if `pointer` refers to two-row matrix which is a member of a

@@ -968,6 +968,7 @@ pub struct Writer {
     /// memory.
     laid_out_types: crate::arena::HandleSet<crate::Type>,
     decorated_blocks: crate::arena::HandleSet<crate::Type>,
+    buffer_blocks: crate::FastHashSet<Word>,
     fake_missing_bindings: bool,
     binding_map: BindingMap,
 
