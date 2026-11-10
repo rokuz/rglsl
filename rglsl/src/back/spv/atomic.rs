@@ -148,7 +148,7 @@ impl BlockContext<'_> {
     ) -> Result<Word, Error> {
         match self.ir_function.expressions[image] {
             Expression::GlobalVariable(handle) => Ok(self.writer.global_variables[handle].var_id),
-            Expression::FunctionArgument(index) => Ok(self.function.parameter_id(index)),
+            Expression::FunctionArgument(index) => self.function.parameter_id(index),
             Expression::Access { .. } | Expression::AccessIndex { .. } => {
                 match self.write_access_chain(
                     image,

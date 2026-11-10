@@ -847,7 +847,7 @@ impl super::Writer {
             )?;
             function.consume(block, Instruction::return_void());
         }
-        function.to_words(&mut self.logical_layout.function_definitions);
+        function.to_words(&mut self.logical_layout.function_definitions)?;
         Ok(out_id)
     }
 
@@ -1019,7 +1019,7 @@ impl super::Writer {
                 self.write_entry_point_task_return(final_value, &mut block.body, task_payload)?;
             function.consume(block, ins);
         }
-        function.to_words(&mut self.logical_layout.function_definitions);
+        function.to_words(&mut self.logical_layout.function_definitions)?;
         Ok(out_id)
     }
 }

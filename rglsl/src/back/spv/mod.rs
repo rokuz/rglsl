@@ -324,13 +324,13 @@ impl Function {
         })
     }
 
-    fn parameter_id(&self, index: u32) -> Word {
+    fn parameter_id(&self, index: u32) -> Result<Word, Error> {
         match self.entry_point_context {
-            Some(ref context) => context.argument_ids[index as usize],
+            Some(ref context) => Ok(context.argument_ids[index as usize]),
             None => self.parameters[index as usize]
                 .instruction
                 .result_id
-                .unwrap(),
+                .ok_or(Error::Validation("function parameter has no id")),
         }
     }
 }
@@ -1043,6 +1043,7 @@ pub struct Writer {
 
     /// Non semantic debug printf extension `OpExtInstImport`
     debug_printf: Option<Word>,
+    abstract_type_declared: bool,
     debug_printf_strings: crate::FastHashMap<String, Word>,
     raw_capabilities: crate::FastIndexSet<Word>,
     utf_encoded: crate::FastHashSet<Word>,

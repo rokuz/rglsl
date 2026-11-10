@@ -33,8 +33,11 @@ pub struct FunctionInterface<'a> {
 }
 
 impl Function {
-    pub(super) fn to_words(&self, sink: &mut impl Extend<Word>) {
-        self.signature.as_ref().unwrap().to_words(sink);
+    pub(super) fn to_words(&self, sink: &mut impl Extend<Word>) -> Result<(), Error> {
+        let Some(ref signature) = self.signature else {
+            return Err(Error::Validation("function is written without a signature"));
+        };
+        signature.to_words(sink);
         for argument in self.parameters.iter() {
             argument.instruction.to_words(sink);
         }
@@ -62,6 +65,7 @@ impl Function {
             }
         }
         Instruction::function_end().to_words(sink);
+        Ok(())
     }
 }
 
@@ -133,6 +137,7 @@ impl Writer {
                 options.use_storage_input_output_16,
             ),
             debug_printf: None,
+            abstract_type_declared: false,
             debug_printf_strings: crate::FastHashMap::default(),
             raw_capabilities: crate::FastIndexSet::default(),
             utf_encoded: crate::FastHashSet::default(),
@@ -247,6 +252,7 @@ impl Writer {
             has_ray_tracing_pipeline: false,
             io_f16_polyfills: take(&mut self.io_f16_polyfills).reclaim(),
             debug_printf: None,
+            abstract_type_declared: false,
             debug_printf_strings: take(&mut self.debug_printf_strings).reclaim(),
             raw_capabilities: take(&mut self.raw_capabilities).reclaim(),
             utf_encoded: take(&mut self.utf_encoded).reclaim(),
@@ -750,11 +756,6 @@ impl Writer {
     ///
     /// The operator `op` must be either [`Divide`] or [`Modulo`].
     ///
-    /// # Panics
-    ///
-    /// The `return_type`, `left_type` or `right_type` arguments must all be
-    /// integer scalars or vectors. If not, this function panics.
-    ///
     /// [`wrapped_functions`]: Writer::wrapped_functions
     /// [`Divide`]: crate::BinaryOperator::Divide
     /// [`Modulo`]: crate::BinaryOperator::Modulo
@@ -768,6 +769,28 @@ impl Writer {
         let return_type_id = self.get_localtype_id(LocalType::Numeric(return_type));
         let left_type_id = self.get_expression_type_id(left_type)?;
         let right_type_id = self.get_expression_type_id(right_type)?;
+        let function_name = match op {
+            crate::BinaryOperator::Divide => "rglsl_div",
+            crate::BinaryOperator::Modulo => "rglsl_mod",
+            _ => return Err(Error::Validation("only division and modulo are wrapped")),
+        };
+        let splat_size = match return_type {
+            NumericType::Scalar(_) => None,
+            NumericType::Vector { size, .. } => Some(size),
+            NumericType::Matrix { .. } => {
+                return Err(Error::Validation("wrapped division operand is a matrix"))
+            }
+        };
+        let scalar = return_type.scalar();
+        let signed = match scalar.kind {
+            crate::ScalarKind::Sint => true,
+            crate::ScalarKind::Uint => false,
+            _ => {
+                return Err(Error::Validation(
+                    "wrapped division operand is not an integer",
+                ))
+            }
+        };
 
         // Check if we've already emitted this function.
         let wrapped = WrappedFunction::BinaryOp {
@@ -780,14 +803,7 @@ impl Writer {
             Entry::Vacant(e) => *e.insert(self.id_gen.next()),
         };
 
-        let scalar = return_type.scalar();
-
         if self.flags.contains(WriterFlags::DEBUG) {
-            let function_name = match op {
-                crate::BinaryOperator::Divide => "rglsl_div",
-                crate::BinaryOperator::Modulo => "rglsl_mod",
-                _ => unreachable!(),
-            };
             self.debugs
                 .push(Instruction::name(function_id, function_name));
         }
@@ -825,16 +841,15 @@ impl Writer {
         let bool_type = return_type.with_scalar(crate::Scalar::BOOL);
         let bool_type_id = self.get_numeric_type_id(bool_type);
 
-        let maybe_splat_const = |writer: &mut Self, const_id| match return_type {
-            NumericType::Scalar(_) => const_id,
-            NumericType::Vector { size, .. } => {
+        let maybe_splat_const = |writer: &mut Self, const_id| match splat_size {
+            None => const_id,
+            Some(size) => {
                 let constituent_ids = [const_id; crate::VectorSize::MAX];
                 writer.get_local_constant_composite(
                     LocalType::Numeric(return_type),
                     &constituent_ids[..size as usize],
                 )
             }
-            NumericType::Matrix { .. } => unreachable!(),
         };
 
         let const_zero_id = self.get_constant_scalar_with(0, scalar)?;
@@ -847,62 +862,60 @@ impl Writer {
             rhs_id,
             composite_zero_id,
         ));
-        let divisor_selector_id = match scalar.kind {
-            crate::ScalarKind::Sint => {
-                let (const_min_id, const_neg_one_id) = match scalar.width {
-                    2 => Ok((
-                        self.get_constant_scalar(crate::Literal::I16(i16::MIN)),
-                        self.get_constant_scalar(crate::Literal::I16(-1i16)),
-                    )),
-                    4 => Ok((
-                        self.get_constant_scalar(crate::Literal::I32(i32::MIN)),
-                        self.get_constant_scalar(crate::Literal::I32(-1i32)),
-                    )),
-                    8 => Ok((
-                        self.get_constant_scalar(crate::Literal::I64(i64::MIN)),
-                        self.get_constant_scalar(crate::Literal::I64(-1i64)),
-                    )),
-                    _ => Err(Error::Validation("Unexpected scalar width")),
-                }?;
-                let composite_min_id = maybe_splat_const(self, const_min_id);
-                let composite_neg_one_id = maybe_splat_const(self, const_neg_one_id);
+        let divisor_selector_id = if signed {
+            let (const_min_id, const_neg_one_id) = match scalar.width {
+                2 => Ok((
+                    self.get_constant_scalar(crate::Literal::I16(i16::MIN)),
+                    self.get_constant_scalar(crate::Literal::I16(-1i16)),
+                )),
+                4 => Ok((
+                    self.get_constant_scalar(crate::Literal::I32(i32::MIN)),
+                    self.get_constant_scalar(crate::Literal::I32(-1i32)),
+                )),
+                8 => Ok((
+                    self.get_constant_scalar(crate::Literal::I64(i64::MIN)),
+                    self.get_constant_scalar(crate::Literal::I64(-1i64)),
+                )),
+                _ => Err(Error::Validation("Unexpected scalar width")),
+            }?;
+            let composite_min_id = maybe_splat_const(self, const_min_id);
+            let composite_neg_one_id = maybe_splat_const(self, const_neg_one_id);
 
-                let lhs_eq_int_min_id = self.id_gen.next();
-                block.body.push(Instruction::binary(
-                    spirv::Op::IEqual,
-                    bool_type_id,
-                    lhs_eq_int_min_id,
-                    lhs_id,
-                    composite_min_id,
-                ));
-                let rhs_eq_neg_one_id = self.id_gen.next();
-                block.body.push(Instruction::binary(
-                    spirv::Op::IEqual,
-                    bool_type_id,
-                    rhs_eq_neg_one_id,
-                    rhs_id,
-                    composite_neg_one_id,
-                ));
-                let lhs_eq_int_min_and_rhs_eq_neg_one_id = self.id_gen.next();
-                block.body.push(Instruction::binary(
-                    spirv::Op::LogicalAnd,
-                    bool_type_id,
-                    lhs_eq_int_min_and_rhs_eq_neg_one_id,
-                    lhs_eq_int_min_id,
-                    rhs_eq_neg_one_id,
-                ));
-                let rhs_eq_zero_or_lhs_eq_int_min_and_rhs_eq_neg_one_id = self.id_gen.next();
-                block.body.push(Instruction::binary(
-                    spirv::Op::LogicalOr,
-                    bool_type_id,
-                    rhs_eq_zero_or_lhs_eq_int_min_and_rhs_eq_neg_one_id,
-                    rhs_eq_zero_id,
-                    lhs_eq_int_min_and_rhs_eq_neg_one_id,
-                ));
-                rhs_eq_zero_or_lhs_eq_int_min_and_rhs_eq_neg_one_id
-            }
-            crate::ScalarKind::Uint => rhs_eq_zero_id,
-            _ => unreachable!(),
+            let lhs_eq_int_min_id = self.id_gen.next();
+            block.body.push(Instruction::binary(
+                spirv::Op::IEqual,
+                bool_type_id,
+                lhs_eq_int_min_id,
+                lhs_id,
+                composite_min_id,
+            ));
+            let rhs_eq_neg_one_id = self.id_gen.next();
+            block.body.push(Instruction::binary(
+                spirv::Op::IEqual,
+                bool_type_id,
+                rhs_eq_neg_one_id,
+                rhs_id,
+                composite_neg_one_id,
+            ));
+            let lhs_eq_int_min_and_rhs_eq_neg_one_id = self.id_gen.next();
+            block.body.push(Instruction::binary(
+                spirv::Op::LogicalAnd,
+                bool_type_id,
+                lhs_eq_int_min_and_rhs_eq_neg_one_id,
+                lhs_eq_int_min_id,
+                rhs_eq_neg_one_id,
+            ));
+            let rhs_eq_zero_or_lhs_eq_int_min_and_rhs_eq_neg_one_id = self.id_gen.next();
+            block.body.push(Instruction::binary(
+                spirv::Op::LogicalOr,
+                bool_type_id,
+                rhs_eq_zero_or_lhs_eq_int_min_and_rhs_eq_neg_one_id,
+                rhs_eq_zero_id,
+                lhs_eq_int_min_and_rhs_eq_neg_one_id,
+            ));
+            rhs_eq_zero_or_lhs_eq_int_min_and_rhs_eq_neg_one_id
+        } else {
+            rhs_eq_zero_id
         };
 
         let const_one_id = self.get_constant_scalar_with(1, scalar)?;
@@ -915,9 +928,7 @@ impl Writer {
             composite_one_id,
             rhs_id,
         ));
-        let return_id = if matches!(op, crate::BinaryOperator::Modulo)
-            && matches!(scalar.kind, crate::ScalarKind::Sint)
-        {
+        let return_id = if matches!(op, crate::BinaryOperator::Modulo) && signed {
             // `OpSRem` produces a poison result for negative operands in the Vulkan
             // environment without the `maintenance8` feature. `OpSDiv` is not poisoned, so
             // reconstruct the remainder as `a - b * (a / b)`, which is well-defined for
@@ -949,12 +960,11 @@ impl Writer {
             ));
             remainder_id
         } else {
-            let spv_op = match (op, scalar.kind) {
-                (crate::BinaryOperator::Divide, crate::ScalarKind::Sint) => spirv::Op::SDiv,
-                (crate::BinaryOperator::Divide, crate::ScalarKind::Uint) => spirv::Op::UDiv,
-                (crate::BinaryOperator::Modulo, crate::ScalarKind::Sint) => spirv::Op::SRem,
-                (crate::BinaryOperator::Modulo, crate::ScalarKind::Uint) => spirv::Op::UMod,
-                _ => unreachable!(),
+            let spv_op = match (op, signed) {
+                (crate::BinaryOperator::Divide, true) => spirv::Op::SDiv,
+                (crate::BinaryOperator::Divide, false) => spirv::Op::UDiv,
+                (_, true) => spirv::Op::SRem,
+                (_, false) => spirv::Op::UMod,
             };
             let return_id = self.id_gen.next();
             block.body.push(Instruction::binary(
@@ -968,7 +978,7 @@ impl Writer {
         };
 
         function.consume(block, Instruction::return_value(return_id));
-        function.to_words(&mut self.logical_layout.function_definitions);
+        function.to_words(&mut self.logical_layout.function_definitions)?;
         Ok(())
     }
 
@@ -1192,11 +1202,15 @@ impl Writer {
                 ));
                 result_id
             }
-            _ => unreachable!(),
+            _ => {
+                return Err(Error::Validation(
+                    "std140 conversion of a type without a compatible layout",
+                ))
+            }
         };
 
         function.consume(block, Instruction::return_value(result_id));
-        function.to_words(&mut self.logical_layout.function_definitions);
+        function.to_words(&mut self.logical_layout.function_definitions)?;
         Ok(())
     }
 
@@ -1235,7 +1249,9 @@ impl Writer {
             scalar,
         } = ir_module.types[r#type].inner
         else {
-            unreachable!();
+            return Err(Error::Validation(
+                "column access wrapper of a non-mat2 type",
+            ));
         };
 
         let mut function = Function::default();
@@ -1288,7 +1304,10 @@ impl Writer {
         // case depends on our bounds check policy.
         let default_id = match self.bounds_check_policies.index {
             // For `Restrict`, treat the same as the final column.
-            crate::proc::BoundsCheckPolicy::Restrict => cases.last().unwrap().label_id,
+            crate::proc::BoundsCheckPolicy::Restrict => match cases.last() {
+                Some(case) => case.label_id,
+                None => return Err(Error::Validation("matrix has no columns")),
+            },
             // For `ReadZeroSkipWrite`, branch directly to the merge block. This
             // will be handled in the `OpPhi` below to produce a zero value.
             crate::proc::BoundsCheckPolicy::ReadZeroSkipWrite => merge_id,
@@ -1352,7 +1371,7 @@ impl Writer {
         ));
 
         function.consume(block, Instruction::return_value(result_id));
-        function.to_words(&mut self.logical_layout.function_definitions);
+        function.to_words(&mut self.logical_layout.function_definitions)?;
         Ok(())
     }
 
@@ -1428,7 +1447,11 @@ impl Writer {
                     for member in members {
                         let type_id = self.get_handle_type_id(member.ty)?;
                         let name = member.name.as_deref();
-                        let binding = member.binding.as_ref().unwrap();
+                        let Some(binding) = member.binding.as_ref() else {
+                            return Err(Error::Validation(
+                                "entry point argument member has no binding",
+                            ));
+                        };
                         let varying_id = self.write_varying(
                             ir_module,
                             iface.stage,
@@ -1454,7 +1477,7 @@ impl Writer {
                     ));
                     struct_id
                 } else {
-                    unreachable!("Missing argument binding on an entry point");
+                    return Err(Error::Validation("entry point argument has no binding"));
                 };
                 ep_context.argument_ids.push(id);
             } else {
@@ -1520,7 +1543,11 @@ impl Writer {
                         for member in members {
                             let type_id = self.get_handle_type_id(member.ty)?;
                             let name = member.name.as_deref();
-                            let binding = member.binding.as_ref().unwrap();
+                            let Some(binding) = member.binding.as_ref() else {
+                                return Err(Error::Validation(
+                                    "entry point result member has no binding",
+                                ));
+                            };
                             has_point_size |=
                                 *binding == crate::Binding::BuiltIn(crate::BuiltIn::PointSize);
                             // This isn't an actual builtin in SPIR-V. It can only appear as the
@@ -1549,7 +1576,7 @@ impl Writer {
                             });
                         }
                     } else {
-                        unreachable!("Missing result binding on an entry point");
+                        return Err(Error::Validation("entry point result has no binding"));
                     }
 
                     if self.flags.contains(WriterFlags::FORCE_POINT_SIZE)
@@ -1894,7 +1921,7 @@ impl Writer {
         self.saved_cached = cached;
         self.temp_list = temp_list;
 
-        function.to_words(&mut self.logical_layout.function_definitions);
+        function.to_words(&mut self.logical_layout.function_definitions)?;
 
         if let Some(EntryPointContext {
             mesh_state: Some(ref mesh_state),
@@ -2042,7 +2069,9 @@ impl Writer {
                     &entry_point.workgroup_size,
                 )
                 .to_words(&mut self.logical_layout.execution_modes);
-                let mesh_info = entry_point.mesh_info.as_ref().unwrap();
+                let Some(mesh_info) = entry_point.mesh_info.as_ref() else {
+                    return Err(Error::Validation("mesh entry point has no mesh info"));
+                };
                 Instruction::execution_mode(
                     function_id,
                     match mesh_info.topology {
@@ -2096,7 +2125,7 @@ impl Writer {
         ))
     }
 
-    fn make_scalar(&mut self, id: Word, scalar: crate::Scalar) -> Instruction {
+    fn make_scalar(&mut self, id: Word, scalar: crate::Scalar) -> Option<Instruction> {
         use crate::ScalarKind as Sk;
 
         let bits = (scalar.width * BITS_PER_BYTE) as u32;
@@ -2129,7 +2158,7 @@ impl Writer {
                             .insert(spirv::Capability::StorageInputOutput16);
                     }
                 }
-                Instruction::type_int(id, bits, signedness)
+                Some(Instruction::type_int(id, bits, signedness))
             }
             Sk::Float => {
                 if bits == 64 {
@@ -2150,12 +2179,10 @@ impl Writer {
                             .insert(spirv::Capability::StorageInputOutput16);
                     }
                 }
-                Instruction::type_float(id, bits)
+                Some(Instruction::type_float(id, bits))
             }
-            Sk::Bool => Instruction::type_bool(id),
-            Sk::AbstractInt | Sk::AbstractFloat => {
-                unreachable!("abstract types should never reach the backend");
-            }
+            Sk::Bool => Some(Instruction::type_bool(id)),
+            Sk::AbstractInt | Sk::AbstractFloat => None,
         }
     }
 
@@ -2190,7 +2217,9 @@ impl Writer {
                         }
                         false
                     }
-                    crate::ImageClass::External => unimplemented!(),
+                    crate::ImageClass::External => {
+                        return Err(Error::FeatureNotImplemented("external textures"))
+                    }
                 };
 
                 match dim {
@@ -2314,7 +2343,13 @@ impl Writer {
 
     fn write_numeric_type_declaration_local(&mut self, id: Word, numeric: NumericType) {
         let instruction = match numeric {
-            NumericType::Scalar(scalar) => self.make_scalar(id, scalar),
+            NumericType::Scalar(scalar) => match self.make_scalar(id, scalar) {
+                Some(instruction) => instruction,
+                None => {
+                    self.abstract_type_declared = true;
+                    return;
+                }
+            },
             NumericType::Vector { size, scalar } => {
                 let scalar_id = self.get_numeric_type_id(NumericType::Scalar(scalar));
                 Instruction::type_vector(id, scalar_id, size)
@@ -2575,7 +2610,9 @@ impl Writer {
                 | crate::TypeInner::Sampler { .. }
                 | crate::TypeInner::AccelerationStructure { .. }
                 | crate::TypeInner::RayQuery { .. }
-                | crate::TypeInner::BufferDescriptor { .. } => unreachable!(),
+                | crate::TypeInner::BufferDescriptor { .. } => {
+                    return Err(Error::Validation("a non-aggregate type has no local type"))
+                }
             };
 
             instruction.to_words(&mut self.logical_layout.declarations);
@@ -2704,7 +2741,9 @@ impl Writer {
                                 )
                             }
                             crate::proc::IndexableLength::Dynamic => {
-                                unreachable!()
+                                return Err(Error::Validation(
+                                    "a uniform buffer contains a runtime-sized array",
+                                ))
                             }
                         };
                         instruction.to_words(&mut self.logical_layout.declarations);
@@ -2982,7 +3021,8 @@ impl Writer {
             crate::Literal::Bool(true) => Instruction::constant_true(type_id, id),
             crate::Literal::Bool(false) => Instruction::constant_false(type_id, id),
             crate::Literal::AbstractInt(_) | crate::Literal::AbstractFloat(_) => {
-                unreachable!("Abstract types should not appear in IR presented to backends");
+                self.abstract_type_declared = true;
+                return;
             }
         };
 
@@ -3351,9 +3391,11 @@ impl Writer {
         let needs_polyfill = self.needs_f16_polyfill(ty_inner);
 
         let pointer_type_id = if needs_polyfill {
-            let f32_value_local =
+            let Some(f32_value_local) =
                 super::f16_polyfill::F16IoPolyfill::create_polyfill_type(ty_inner)
-                    .expect("needs_polyfill returned true but create_polyfill_type returned None");
+            else {
+                return Err(Error::Validation("f16 polyfill of a non-f16 type"));
+            };
 
             let f32_type_id = self.get_localtype_id(f32_value_local);
             let ptr_id = self.get_pointer_type_id(f32_type_id, class);
@@ -3700,7 +3742,9 @@ impl Writer {
                     Bi::MeshTaskSize => return Ok(BindingDecorations::None),
                     // These aren't normal builtins and don't occur in function output
                     Bi::VertexCount | Bi::Vertices | Bi::PrimitiveCount | Bi::Primitives => {
-                        unreachable!()
+                        return Err(Error::Validation(
+                            "a mesh output built-in is used as a varying",
+                        ))
                     }
                     // ray tracing pipeline
                     Bi::RayInvocationId => BuiltIn::LaunchIdKHR,
@@ -4583,6 +4627,11 @@ impl Writer {
         };
 
         self.write_logical_layout(ir_module, info, ep_index, debug_info)?;
+        if self.abstract_type_declared {
+            return Err(Error::Validation(
+                "abstract types should never reach the backend",
+            ));
+        }
         self.write_physical_layout();
 
         self.physical_layout.in_words(words);

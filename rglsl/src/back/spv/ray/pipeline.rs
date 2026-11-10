@@ -112,7 +112,7 @@ impl Writer {
 
         function.consume(merge_block, Instruction::return_void());
 
-        function.to_words(&mut self.logical_layout.function_definitions);
+        function.to_words(&mut self.logical_layout.function_definitions)?;
 
         self.ray_tracing_functions
             .insert(LookupRaytracingFunction::TraceRay { payload }, func_id);

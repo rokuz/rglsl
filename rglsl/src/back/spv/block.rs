@@ -2038,7 +2038,7 @@ impl BlockContext<'_> {
                 self.physical_component_load = false;
                 id
             }
-            crate::Expression::FunctionArgument(index) => self.function.parameter_id(index),
+            crate::Expression::FunctionArgument(index) => self.function.parameter_id(index)?,
             crate::Expression::CallResult(_)
             | crate::Expression::AtomicResult { .. }
             | crate::Expression::WorkGroupUniformLoadResult { .. }
@@ -2220,7 +2220,7 @@ impl BlockContext<'_> {
                 let intersection_type_id = self.get_handle_type_id(ray_intersection)?;
                 let func_id = self
                     .writer
-                    .write_ray_query_get_intersection_function(committed, intersection_type_id);
+                    .write_ray_query_get_intersection_function(committed, intersection_type_id)?;
                 let id = self.gen_id();
                 block.body.push(Instruction::function_call(
                     intersection_type_id,
@@ -2854,7 +2854,7 @@ impl BlockContext<'_> {
                     break local_var.id;
                 }
                 crate::Expression::FunctionArgument(index) => {
-                    break self.function.parameter_id(index);
+                    break self.function.parameter_id(index)?;
                 }
                 _ if matches!(
                     *self.fun_info[expr_handle]
