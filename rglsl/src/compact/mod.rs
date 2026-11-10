@@ -157,6 +157,11 @@ pub fn compact(module: &mut crate::Module, keep_unused: KeepUnused) {
             if let Some(task_payload) = e.task_payload {
                 module_tracer.global_variables_used.insert(task_payload);
             }
+            // The interface is kept whole: an input or output the code does
+            // not use is still visible to the pipeline.
+            for &variable in &e.interface {
+                module_tracer.global_variables_used.insert(variable);
+            }
             if let Some(ref mesh_info) = e.mesh_info {
                 module_tracer
                     .global_variables_used
@@ -400,6 +405,9 @@ pub fn compact(module: &mut crate::Module, keep_unused: KeepUnused) {
             &module_map,
             &mut reused_named_expressions,
         );
+        for variable in &mut entry.interface {
+            module_map.globals.adjust(variable);
+        }
         if let Some(ref mut task_payload) = entry.task_payload {
             module_map.globals.adjust(task_payload);
         }

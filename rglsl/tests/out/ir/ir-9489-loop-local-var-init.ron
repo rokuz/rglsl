@@ -64,6 +64,7 @@
             ty: 1,
             init: None,
             memory_decorations: (""),
+            io: None,
         ),
         (
             name: Some("output"),
@@ -77,6 +78,7 @@
             ty: 2,
             init: None,
             memory_decorations: (""),
+            io: None,
         ),
     ],
     global_expressions: [],
@@ -394,6 +396,7 @@
             mesh_info: None,
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
         ),
     ],
     diagnostic_filters: [],

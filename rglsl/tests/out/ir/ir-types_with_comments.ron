@@ -87,6 +87,7 @@
             ty: 0,
             init: None,
             memory_decorations: (""),
+            io: None,
         ),
         (
             name: Some("w_mem"),
@@ -95,6 +96,7 @@
             ty: 1,
             init: None,
             memory_decorations: (""),
+            io: None,
         ),
         (
             name: Some("w_mem2"),
@@ -103,6 +105,7 @@
             ty: 1,
             init: None,
             memory_decorations: (""),
+            io: None,
         ),
     ],
     global_expressions: [
@@ -180,6 +183,7 @@
             mesh_info: None,
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
         ),
     ],
     diagnostic_filters: [],

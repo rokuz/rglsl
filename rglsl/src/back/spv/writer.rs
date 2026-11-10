@@ -1822,6 +1822,14 @@ impl Writer {
             debug_info,
         )?;
 
+        // Inputs and outputs that are global variables.
+        for &handle in &entry_point.interface {
+            let id = self.global_variables[handle].var_id;
+            if id != 0 && !interface_ids.contains(&id) {
+                interface_ids.push(id);
+            }
+        }
+
         let exec_model = match entry_point.stage {
             crate::ShaderStage::Vertex => spirv::ExecutionModel::Vertex,
             crate::ShaderStage::Fragment => {
@@ -3039,8 +3047,12 @@ impl Writer {
                 location,
                 others,
                 blend_src,
+                component,
             } => {
                 self.decorate(id, spirv::Decoration::Location, &[location]);
+                if let Some(component) = component {
+                    self.decorate(id, spirv::Decoration::Component, &[component]);
+                }
                 for other in others {
                     self.decorate(id, other, &[]);
                 }
@@ -3079,6 +3091,7 @@ impl Writer {
                 location,
                 others,
                 blend_src,
+                component,
             } => {
                 self.annotations.push(Instruction::member_decorate(
                     struct_id,
@@ -3086,6 +3099,14 @@ impl Writer {
                     spirv::Decoration::Location,
                     &[location],
                 ));
+                if let Some(component) = component {
+                    self.annotations.push(Instruction::member_decorate(
+                        struct_id,
+                        member_idx,
+                        spirv::Decoration::Component,
+                        &[component],
+                    ));
+                }
                 for other in others {
                     self.annotations.push(Instruction::member_decorate(
                         struct_id,
@@ -3123,8 +3144,17 @@ impl Writer {
                 sampling,
                 blend_src,
                 per_primitive,
+                component,
+                invariant,
+                patch,
             } => {
                 let mut others = ArrayVec::new();
+                if invariant {
+                    others.push(Decoration::Invariant);
+                }
+                if patch {
+                    others.push(Decoration::Patch);
+                }
 
                 let no_decorations =
                     // VUID-StandaloneSpirv-Flat-06202
@@ -3182,6 +3212,7 @@ impl Writer {
                     location,
                     others,
                     blend_src,
+                    component,
                 })
             }
             crate::Binding::BuiltIn(built_in) => {
@@ -3417,11 +3448,27 @@ impl Writer {
         &mut self,
         ir_module: &crate::Module,
         global_variable: &crate::GlobalVariable,
+        interface_stage: Option<crate::ShaderStage>,
     ) -> Result<Word, Error> {
         use spirv::Decoration;
 
         let id = self.id_gen.next();
         let class = map_storage_class(global_variable.space);
+
+        // A stage input or output is bound to a location or a built-in. The
+        // decorations depend on the stage whose interface it belongs to.
+        if let crate::AddressSpace::Input | crate::AddressSpace::Output = global_variable.space {
+            let stage = interface_stage.ok_or(Error::Validation(
+                "an input or output variable is not in the interface of an entry point",
+            ))?;
+            let binding = global_variable
+                .io
+                .as_ref()
+                .ok_or(Error::FeatureNotImplemented("input and output blocks"))?;
+            let decorations =
+                self.map_binding(ir_module, stage, class, global_variable.ty, binding)?;
+            self.write_binding(id, decorations);
+        }
 
         if let crate::AddressSpace::RayPayload | crate::AddressSpace::IncomingRayPayload =
             global_variable.space
@@ -3819,12 +3866,24 @@ impl Writer {
             // If a single entry point was specified, only write `OpVariable` instructions
             // for the globals it actually uses. Emit dummies for the others,
             // to preserve the indices in `global_variables`.
+            // A variable in an entry point's interface is written whether or
+            // not the code uses it: it is part of what the pipeline sees.
+            let in_interface = |ep: &crate::EntryPoint| -> bool { ep.interface.contains(&handle) };
             let gvar = match ep_index {
-                Some(index) if mod_info.get_entry_point(index)[handle].is_empty() => {
+                Some(index)
+                    if mod_info.get_entry_point(index)[handle].is_empty()
+                        && !in_interface(&ir_module.entry_points[index]) =>
+                {
                     GlobalVariable::dummy()
                 }
                 _ => {
-                    let id = self.write_global_variable(ir_module, var)?;
+                    let interface_stage = match ep_index {
+                        Some(index) => Some(&ir_module.entry_points[index]),
+                        None => ir_module.entry_points.iter().find(|ep| in_interface(ep)),
+                    }
+                    .filter(|ep| in_interface(ep))
+                    .map(|ep| ep.stage);
+                    let id = self.write_global_variable(ir_module, var, interface_stage)?;
                     GlobalVariable::new(id)
                 }
             };

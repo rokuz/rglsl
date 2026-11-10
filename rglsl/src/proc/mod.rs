@@ -234,6 +234,8 @@ impl super::AddressSpace {
             crate::AddressSpace::RayPayload | crate::AddressSpace::IncomingRayPayload => {
                 Sa::LOAD | Sa::STORE
             }
+            crate::AddressSpace::Input => Sa::LOAD,
+            crate::AddressSpace::Output => Sa::LOAD | Sa::STORE,
         }
     }
 }

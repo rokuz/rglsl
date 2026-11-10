@@ -161,6 +161,7 @@ impl super::Validator {
                 ty,
                 init,
                 memory_decorations: _,
+                io: _,
             } = global_variable;
             validate_type(ty)?;
             if let Some(init_expr) = init {
@@ -233,6 +234,9 @@ impl super::Validator {
                 for size in sizes.iter().filter_map(|x| *x) {
                     validate_const_expr(size)?;
                 }
+            }
+            for &variable in &entry_point.interface {
+                Self::validate_global_variable_handle(variable, global_variables)?;
             }
             if let Some(task_payload) = entry_point.task_payload {
                 Self::validate_global_variable_handle(task_payload, global_variables)?;

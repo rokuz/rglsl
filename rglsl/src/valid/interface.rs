@@ -84,6 +84,8 @@ pub enum VaryingError {
     MemberMissingBinding(u32),
     #[error("Multiple bindings at location {location} are present")]
     BindingCollision { location: u32 },
+    #[error("Component {component} does not leave room for the value in its location")]
+    InvalidComponent { component: u32 },
     #[error("Multiple bindings use the same `blend_src` {blend_src}")]
     BindingCollisionBlendSrc { blend_src: u32 },
     #[error("Built-in {0:?} is present more than once")]
@@ -128,8 +130,16 @@ pub enum VaryingError {
 pub enum EntryPointError {
     #[error("Multiple conflicting entry points")]
     Conflict,
-    #[error("Vertex shaders must return a `@builtin(position)` output value")]
+    #[error("Vertex shaders that return a value must return a position")]
     MissingVertexOutputPosition,
+    #[error("Global variable {0:?} is used but is not in the entry point's interface")]
+    NotInInterface(Handle<crate::GlobalVariable>),
+    #[error("Global variable {0:?} is in the interface but is not an input or an output")]
+    InterfaceNotInputOrOutput(Handle<crate::GlobalVariable>),
+    #[error("Global variable {0:?} is listed twice in the interface")]
+    InterfaceDuplicate(Handle<crate::GlobalVariable>),
+    #[error("Interface variable {0:?} is invalid")]
+    InterfaceVariable(Handle<crate::GlobalVariable>, #[source] VaryingError),
     #[error("Early depth test is not applicable")]
     UnexpectedEarlyDepthTest,
     #[error("Workgroup size is not applicable")]
@@ -224,6 +234,95 @@ struct VaryingContext<'a> {
     flags: super::ValidationFlags,
     mesh_output_type: MeshOutputType,
     has_task_payload: bool,
+    /// The binding belongs to a global variable in the `Input` or `Output`
+    /// address space rather than to an argument or a result. Such a variable
+    /// may be a matrix, an array or a structure.
+    interface: bool,
+}
+
+/// How a type occupies the locations it is bound to.
+#[derive(Clone, Copy, Debug)]
+struct LocationShape {
+    /// The number of consecutive locations.
+    locations: u32,
+    /// The number of components used in each of those locations.
+    components: u32,
+    /// Some part of the value is floating-point.
+    float: bool,
+    /// Some part of the value is an integer or a double, which cannot be
+    /// interpolated.
+    non_interpolable: bool,
+}
+
+impl LocationShape {
+    /// The locations a value of type `ty` occupies (GLSL 4.60, section 4.4.1),
+    /// or `None` if the type cannot be a stage input or output.
+    fn of(types: &UniqueArena<crate::Type>, ty: Handle<crate::Type>) -> Option<Self> {
+        use crate::{ScalarKind as Sk, TypeInner as Ti, VectorSize as Vs};
+
+        let scalar_shape = |scalar: crate::Scalar, size: u32| {
+            let (float, non_interpolable) = match scalar.kind {
+                Sk::Float => (true, scalar.width == 8),
+                Sk::Sint | Sk::Uint => (false, true),
+                Sk::Bool | Sk::AbstractInt | Sk::AbstractFloat => return None,
+            };
+            // A double takes two components, so a `dvec3` or `dvec4` spills
+            // into a second location.
+            let components = if scalar.width == 8 { size * 2 } else { size };
+            Some(Self {
+                locations: components.div_ceil(4),
+                components: components.min(4),
+                float,
+                non_interpolable,
+            })
+        };
+
+        match types[ty].inner {
+            Ti::Scalar(scalar) => scalar_shape(scalar, 1),
+            Ti::Vector { size, scalar } => scalar_shape(scalar, size as u32),
+            Ti::Matrix {
+                columns,
+                rows,
+                scalar,
+            } => {
+                let column = scalar_shape(scalar, rows as u32)?;
+                // Each column starts a new location.
+                let _: Vs = columns;
+                Some(Self {
+                    locations: column.locations * columns as u32,
+                    components: 4,
+                    ..column
+                })
+            }
+            Ti::Array {
+                base,
+                size: crate::ArraySize::Constant(length),
+                ..
+            } => {
+                let element = Self::of(types, base)?;
+                Some(Self {
+                    locations: element.locations.checked_mul(length.get())?,
+                    ..element
+                })
+            }
+            Ti::Struct { ref members, .. } => {
+                let mut shape = Self {
+                    locations: 0,
+                    components: 4,
+                    float: false,
+                    non_interpolable: false,
+                };
+                for member in members {
+                    let member = Self::of(types, member.ty)?;
+                    shape.locations = shape.locations.checked_add(member.locations)?;
+                    shape.float |= member.float;
+                    shape.non_interpolable |= member.non_interpolable;
+                }
+                (shape.locations > 0).then_some(shape)
+            }
+            _ => None,
+        }
+    }
 }
 
 /// Whether `ty` can hold an index built-in such as `VertexIndex`.
@@ -238,6 +337,18 @@ const fn is_index_type(ty: &crate::TypeInner) -> bool {
 }
 
 impl VaryingContext<'_> {
+    /// Marks `components` consecutive components of `location`, starting at
+    /// `first`, as taken. Returns false if any of them already was.
+    fn claim_location(&mut self, location: u32, first: u32, components: u32) -> bool {
+        let mut free = true;
+        for component in first..first + components {
+            free &= self
+                .location_mask
+                .insert(location as usize * 4 + component as usize);
+        }
+        free
+    }
+
     fn validate_impl(
         &mut self,
         ep: &crate::EntryPoint,
@@ -687,7 +798,20 @@ impl VaryingContext<'_> {
                 sampling,
                 blend_src,
                 per_primitive,
+                component,
+                invariant,
+                patch,
             } => {
+                if invariant && !self.output {
+                    return Err(VaryingError::InvalidInputAttributeInStage(
+                        "invariant",
+                        self.stage,
+                    ));
+                }
+                if patch {
+                    // Only tessellation stages have per-patch variables.
+                    return Err(VaryingError::InvalidAttributeInStage("patch", self.stage));
+                }
                 if per_primitive && !self.capabilities.contains(Capabilities::MESH_SHADER) {
                     return Err(VaryingError::UnsupportedCapability(
                         Capabilities::MESH_SHADER,
@@ -723,13 +847,19 @@ impl VaryingContext<'_> {
                     (ty, ty_inner)
                 };
 
-                // Only IO-shareable types may be stored in locations.
-                if !self.type_info[ty.index()]
-                    .flags
-                    .contains(super::TypeFlags::IO_SHAREABLE)
+                // Only IO-shareable types may be stored in locations: numeric
+                // scalars and vectors, and, for a variable of its own,
+                // matrices, arrays and structures of them.
+                if !self.interface
+                    && !self.type_info[ty.index()]
+                        .flags
+                        .contains(super::TypeFlags::IO_SHAREABLE)
                 {
                     return Err(VaryingError::NotIOShareableType(ty));
                 }
+                let shape = LocationShape::of(self.types, ty)
+                    .ok_or(VaryingError::NotIOShareableType(ty))?;
+                let _ = ty_inner;
 
                 // Check whether `per_primitive` is appropriate for this stage and direction.
                 if self.mesh_output_type == MeshOutputType::PrimitiveOutput {
@@ -749,10 +879,26 @@ impl VaryingContext<'_> {
 
                 if blend_src.is_some() {
                     return Err(VaryingError::BlendSrcNotOnStructMember);
-                } else if !self.location_mask.insert(location as usize)
-                    && self.flags.contains(super::ValidationFlags::BINDINGS)
+                }
+                // Two variables may share a location if they use different
+                // components of it (`layout(component = N)`).
+                let first_component = component.unwrap_or(0);
+                if first_component + shape.components > 4
+                    || (first_component > 0 && shape.components == 4)
                 {
-                    return Err(VaryingError::BindingCollision { location });
+                    return Err(VaryingError::InvalidComponent {
+                        component: first_component,
+                    });
+                }
+                for index in 0..shape.locations {
+                    let location = location
+                        .checked_add(index)
+                        .ok_or(VaryingError::BindingCollision { location })?;
+                    if !self.claim_location(location, first_component, shape.components)
+                        && self.flags.contains(super::ValidationFlags::BINDINGS)
+                    {
+                        return Err(VaryingError::BindingCollision { location });
+                    }
                 }
 
                 if let Some(interpolation) = interpolation {
@@ -813,24 +959,15 @@ impl VaryingContext<'_> {
                     let fragment_input = self.stage == crate::ShaderStage::Fragment
                         && !self.output
                         && !per_primitive;
-                    let must_be_flat = match ty_inner.scalar() {
-                        Some(crate::Scalar {
-                            kind: crate::ScalarKind::Float,
-                            width,
-                        }) => {
-                            // Default interpolation is applied in the front end.
-                            if needs_interpolation && interpolation.is_none() {
-                                return Err(VaryingError::MissingInterpolation);
-                            }
-                            width == 8
-                        }
-                        Some(crate::Scalar {
-                            kind: crate::ScalarKind::Sint | crate::ScalarKind::Uint,
-                            ..
-                        }) => true,
-                        Some(_) | None => return Err(VaryingError::InvalidType(ty)),
-                    };
-                    if must_be_flat
+                    // Default interpolation is applied in the front end.
+                    if shape.float
+                        && !shape.non_interpolable
+                        && needs_interpolation
+                        && interpolation.is_none()
+                    {
+                        return Err(VaryingError::MissingInterpolation);
+                    }
+                    if shape.non_interpolable
                         && fragment_input
                         && interpolation != Some(crate::Interpolation::Flat)
                     {
@@ -884,7 +1021,7 @@ impl VaryingContext<'_> {
                         .with_span());
                     }
                     // Dual blend sources must always be at location 0.
-                    if !self.location_mask.insert(0)
+                    if !self.claim_location(0, 0, 4)
                         && self.flags.contains(super::ValidationFlags::BINDINGS)
                     {
                         return Err(VaryingError::BindingCollision { location: 0 }.with_span());
@@ -1132,6 +1269,11 @@ impl super::Validator {
                 }
                 (TypeFlags::DATA | TypeFlags::SIZED, false)
             }
+            // What the variable is bound to is validated for each entry point
+            // that lists it, since it depends on the stage.
+            crate::AddressSpace::Input | crate::AddressSpace::Output => {
+                (TypeFlags::DATA | TypeFlags::SIZED, false)
+            }
         };
 
         if !type_info.flags.contains(required_type_flags) {
@@ -1145,6 +1287,17 @@ impl super::Validator {
             if self.flags.contains(super::ValidationFlags::BINDINGS) {
                 return Err(GlobalVariableError::InvalidBinding);
             }
+        }
+
+        let is_interface = matches!(
+            var.space,
+            crate::AddressSpace::Input | crate::AddressSpace::Output
+        );
+        if var.io.is_some() && !is_interface {
+            return Err(GlobalVariableError::InvalidBinding);
+        }
+        if var.space == crate::AddressSpace::Input && var.init.is_some() {
+            return Err(GlobalVariableError::InitializerNotAllowed(var.space));
         }
 
         if var.space == crate::AddressSpace::TaskPayload {
@@ -1226,6 +1379,7 @@ impl super::Validator {
             flags: self.flags,
             mesh_output_type,
             has_task_payload: ep.task_payload.is_some(),
+            interface: false,
         };
         ctx.validate(ep, ty, None)
             .map_err_inner(|e| EntryPointError::Result(e).with_span())?;
@@ -1398,6 +1552,7 @@ impl super::Validator {
                 flags: self.flags,
                 mesh_output_type: MeshOutputType::None,
                 has_task_payload: ep.task_payload.is_some(),
+                interface: false,
             };
             ctx.validate(ep, fa.ty, fa.binding.as_ref())
                 .map_err_inner(|e| EntryPointError::Argument(index as u32, e).with_span())?;
@@ -1418,6 +1573,7 @@ impl super::Validator {
                 flags: self.flags,
                 mesh_output_type: MeshOutputType::None,
                 has_task_payload: ep.task_payload.is_some(),
+                interface: false,
             };
             ctx.validate(ep, fr.ty, fr.binding.as_ref())
                 .map_err_inner(|e| EntryPointError::Result(e).with_span())?;
@@ -1440,10 +1596,59 @@ impl super::Validator {
                     return Err(EntryPointError::WrongTaskShaderEntryResult.with_span());
                 }
             }
-        } else if ep.stage == crate::ShaderStage::Vertex {
-            return Err(EntryPointError::MissingVertexOutputPosition.with_span());
         } else if ep.stage == crate::ShaderStage::Task {
             return Err(EntryPointError::WrongTaskShaderEntryResult.with_span());
+        }
+
+        // Inputs and outputs that are global variables. They share the
+        // location space of the arguments and of the result, respectively.
+        {
+            let mut seen = crate::FastHashSet::default();
+            let mut input_mask = BitSet::new();
+            let mut output_mask = BitSet::new();
+            let mut input_built_ins = crate::FastHashSet::default();
+            let mut output_built_ins = crate::FastHashSet::default();
+            for &handle in &ep.interface {
+                let var = &module.global_variables[handle];
+                let output = match var.space {
+                    crate::AddressSpace::Input => false,
+                    crate::AddressSpace::Output => true,
+                    _ => {
+                        return Err(EntryPointError::InterfaceNotInputOrOutput(handle)
+                            .with_span_handle(handle, &module.global_variables))
+                    }
+                };
+                if !seen.insert(handle) {
+                    return Err(EntryPointError::InterfaceDuplicate(handle)
+                        .with_span_handle(handle, &module.global_variables));
+                }
+                let mut ctx = VaryingContext {
+                    stage: ep.stage,
+                    output,
+                    types: &module.types,
+                    type_info: &self.types,
+                    location_mask: if output {
+                        &mut output_mask
+                    } else {
+                        &mut input_mask
+                    },
+                    dual_source_blending: Some(&mut info.dual_source_blending),
+                    built_ins: if output {
+                        &mut output_built_ins
+                    } else {
+                        &mut input_built_ins
+                    },
+                    capabilities: self.capabilities,
+                    flags: self.flags,
+                    mesh_output_type: MeshOutputType::None,
+                    has_task_payload: ep.task_payload.is_some(),
+                    interface: true,
+                };
+                ctx.validate(ep, var.ty, var.io.as_ref()).map_err(|e| {
+                    EntryPointError::InterfaceVariable(handle, e.into_inner())
+                        .with_span_handle(handle, &module.global_variables)
+                })?;
+            }
         }
 
         {
@@ -1500,6 +1705,17 @@ impl super::Validator {
                 },
                 crate::AddressSpace::Private | crate::AddressSpace::WorkGroup => {
                     GlobalUse::READ | GlobalUse::WRITE | GlobalUse::QUERY
+                }
+                crate::AddressSpace::Input | crate::AddressSpace::Output => {
+                    if !ep.interface.contains(&var_handle) {
+                        return Err(EntryPointError::NotInInterface(var_handle)
+                            .with_span_handle(var_handle, &module.global_variables));
+                    }
+                    if var.space == crate::AddressSpace::Input {
+                        GlobalUse::READ | GlobalUse::QUERY
+                    } else {
+                        GlobalUse::READ | GlobalUse::WRITE | GlobalUse::QUERY
+                    }
                 }
                 crate::AddressSpace::TaskPayload => {
                     GlobalUse::READ

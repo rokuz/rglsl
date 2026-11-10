@@ -209,7 +209,9 @@ const fn ptr_space_argument_flag(space: crate::AddressSpace) -> TypeFlags {
         | As::Handle
         | As::Immediate
         | As::WorkGroup
-        | As::TaskPayload => TypeFlags::empty(),
+        | As::TaskPayload
+        | As::Input
+        | As::Output => TypeFlags::empty(),
     }
 }
 

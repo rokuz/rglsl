@@ -476,6 +476,7 @@
             ty: 6,
             init: None,
             memory_decorations: (""),
+            io: None,
         ),
         (
             name: Some("sampler_shadow"),
@@ -487,6 +488,7 @@
             ty: 29,
             init: None,
             memory_decorations: (""),
+            io: None,
         ),
         (
             name: Some("u_globals"),
@@ -498,6 +500,7 @@
             ty: 12,
             init: None,
             memory_decorations: (""),
+            io: None,
         ),
         (
             name: Some("s_lights"),
@@ -511,6 +514,7 @@
             ty: 19,
             init: None,
             memory_decorations: (""),
+            io: None,
         ),
         (
             name: Some("in_position_fs"),
@@ -519,6 +523,7 @@
             ty: 3,
             init: None,
             memory_decorations: (""),
+            io: None,
         ),
         (
             name: Some("in_normal_fs"),
@@ -527,6 +532,7 @@
             ty: 1,
             init: None,
             memory_decorations: (""),
+            io: None,
         ),
         (
             name: Some("out_color_fs"),
@@ -535,6 +541,7 @@
             ty: 3,
             init: None,
             memory_decorations: (""),
+            io: None,
         ),
     ],
     global_expressions: [
@@ -1265,6 +1272,9 @@
                             sampling: Some(Center),
                             blend_src: None,
                             per_primitive: false,
+                            component: None,
+                            invariant: false,
+                            patch: false,
                         )),
                     ),
                     (
@@ -1276,6 +1286,9 @@
                             sampling: Some(Center),
                             blend_src: None,
                             per_primitive: false,
+                            component: None,
+                            invariant: false,
+                            patch: false,
                         )),
                     ),
                 ],
@@ -1287,6 +1300,9 @@
                         sampling: None,
                         blend_src: None,
                         per_primitive: false,
+                        component: None,
+                        invariant: false,
+                        patch: false,
                     )),
                 )),
                 local_variables: [],
@@ -1328,6 +1344,7 @@
             mesh_info: None,
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
         ),
     ],
     diagnostic_filters: [],

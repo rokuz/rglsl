@@ -1381,6 +1381,7 @@ impl Frontend {
             stage: self.meta.stage,
             early_depth_test: Some(crate::EarlyDepthTest::Force)
                 .filter(|_| self.meta.early_fragment_tests),
+            interface: Vec::new(),
             workgroup_size: self.meta.workgroup_size,
             workgroup_size_overrides: None,
             function: Function {
@@ -1463,6 +1464,9 @@ impl Context<'_> {
                         sampling: None,
                         blend_src: None,
                         per_primitive: false,
+                        component: None,
+                        invariant: false,
+                        patch: false,
                     };
                     location += 1;
 
@@ -1500,6 +1504,9 @@ impl Context<'_> {
                                 sampling: None,
                                 blend_src: None,
                                 per_primitive: false,
+                                component: None,
+                                invariant: false,
+                                patch: false,
                             };
                             location += 1;
                             binding

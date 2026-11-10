@@ -88,6 +88,7 @@
             ty: 0,
             init: None,
             memory_decorations: (""),
+            io: None,
         ),
         (
             name: Some("s_rg_r"),
@@ -99,6 +100,7 @@
             ty: 1,
             init: None,
             memory_decorations: (""),
+            io: None,
         ),
         (
             name: Some("s_rgba_r"),
@@ -110,6 +112,7 @@
             ty: 2,
             init: None,
             memory_decorations: (""),
+            io: None,
         ),
         (
             name: Some("s_r_w"),
@@ -121,6 +124,7 @@
             ty: 3,
             init: None,
             memory_decorations: (""),
+            io: None,
         ),
         (
             name: Some("s_rg_w"),
@@ -132,6 +136,7 @@
             ty: 4,
             init: None,
             memory_decorations: (""),
+            io: None,
         ),
         (
             name: Some("s_rgba_w"),
@@ -143,6 +148,7 @@
             ty: 5,
             init: None,
             memory_decorations: (""),
+            io: None,
         ),
     ],
     global_expressions: [],
@@ -227,6 +233,7 @@
             mesh_info: None,
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
         ),
         (
             name: "csStore",
@@ -327,6 +334,7 @@
             mesh_info: None,
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
         ),
     ],
     diagnostic_filters: [],

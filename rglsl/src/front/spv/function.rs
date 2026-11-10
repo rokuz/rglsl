@@ -612,6 +612,7 @@ impl<I: Iterator<Item = u32>> super::Frontend<I> {
             mesh_info: None,
             task_payload: None,
             incoming_ray_payload: None,
+            interface: Vec::new(),
         });
 
         Ok(())

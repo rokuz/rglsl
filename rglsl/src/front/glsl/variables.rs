@@ -199,6 +199,7 @@ impl Frontend {
                 ty,
                 init: None,
                 memory_decorations: crate::MemoryDecorations::empty(),
+                io: None,
             },
             meta,
         );
@@ -695,6 +696,7 @@ impl Frontend {
                         ty,
                         init,
                         memory_decorations: crate::MemoryDecorations::empty(),
+                        io: None,
                     },
                     meta,
                 );
@@ -713,6 +715,9 @@ impl Frontend {
                     sampling,
                     blend_src,
                     per_primitive: false,
+                    component: None,
+                    invariant: false,
+                    patch: false,
                 };
 
                 binding.apply_default_interpolation(&ctx.module.types[ty].inner);
@@ -906,6 +911,7 @@ impl Frontend {
                         ty,
                         init,
                         memory_decorations: crate::MemoryDecorations::empty(),
+                        io: None,
                     },
                     meta,
                 );

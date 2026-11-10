@@ -250,6 +250,9 @@
                             sampling: Some(Center),
                             blend_src: None,
                             per_primitive: false,
+                            component: None,
+                            invariant: false,
+                            patch: false,
                         )),
                         offset: 0,
                         matrix_layout: None,
@@ -326,6 +329,7 @@
             ty: 3,
             init: None,
             memory_decorations: (""),
+            io: None,
         ),
         (
             name: Some("Vertex_Uv"),
@@ -334,6 +338,7 @@
             ty: 3,
             init: None,
             memory_decorations: (""),
+            io: None,
         ),
         (
             name: Some("Vertex_Position"),
@@ -342,6 +347,7 @@
             ty: 5,
             init: None,
             memory_decorations: (""),
+            io: None,
         ),
         (
             name: Some(""),
@@ -353,6 +359,7 @@
             ty: 8,
             init: None,
             memory_decorations: (""),
+            io: None,
         ),
         (
             name: Some(""),
@@ -361,6 +368,7 @@
             ty: 15,
             init: Some(13),
             memory_decorations: (""),
+            io: None,
         ),
         (
             name: Some(""),
@@ -372,6 +380,7 @@
             ty: 18,
             init: None,
             memory_decorations: (""),
+            io: None,
         ),
         (
             name: Some(""),
@@ -383,6 +392,7 @@
             ty: 21,
             init: None,
             memory_decorations: (""),
+            io: None,
         ),
         (
             name: Some("Vertex_Normal"),
@@ -391,6 +401,7 @@
             ty: 5,
             init: None,
             memory_decorations: (""),
+            io: None,
         ),
     ],
     global_expressions: [
@@ -635,6 +646,9 @@
                             sampling: None,
                             blend_src: None,
                             per_primitive: false,
+                            component: None,
+                            invariant: false,
+                            patch: false,
                         )),
                     ),
                     (
@@ -646,6 +660,9 @@
                             sampling: None,
                             blend_src: None,
                             per_primitive: false,
+                            component: None,
+                            invariant: false,
+                            patch: false,
                         )),
                     ),
                     (
@@ -657,6 +674,9 @@
                             sampling: None,
                             blend_src: None,
                             per_primitive: false,
+                            component: None,
+                            invariant: false,
+                            patch: false,
                         )),
                     ),
                 ],
@@ -743,6 +763,7 @@
             mesh_info: None,
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
         ),
     ],
     diagnostic_filters: [],

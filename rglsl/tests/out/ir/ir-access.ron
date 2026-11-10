@@ -452,6 +452,7 @@
             ty: 3,
             init: Some(6),
             memory_decorations: (""),
+            io: None,
         ),
         (
             name: Some("bar"),
@@ -465,6 +466,7 @@
             ty: 14,
             init: None,
             memory_decorations: (""),
+            io: None,
         ),
         (
             name: Some("baz"),
@@ -476,6 +478,7 @@
             ty: 16,
             init: None,
             memory_decorations: (""),
+            io: None,
         ),
         (
             name: Some("qux"),
@@ -489,6 +492,7 @@
             ty: 17,
             init: None,
             memory_decorations: (""),
+            io: None,
         ),
         (
             name: Some("nested_mat_cx2"),
@@ -500,6 +504,7 @@
             ty: 20,
             init: None,
             memory_decorations: (""),
+            io: None,
         ),
     ],
     global_expressions: [
@@ -2680,6 +2685,7 @@
             mesh_info: None,
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
         ),
         (
             name: "foo_frag",
@@ -2698,6 +2704,9 @@
                         sampling: Some(Center),
                         blend_src: None,
                         per_primitive: false,
+                        component: None,
+                        invariant: false,
+                        patch: false,
                     )),
                 )),
                 local_variables: [],
@@ -2877,6 +2886,7 @@
             mesh_info: None,
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
         ),
         (
             name: "foo_compute",
@@ -2939,6 +2949,7 @@
             mesh_info: None,
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
         ),
     ],
     diagnostic_filters: [],

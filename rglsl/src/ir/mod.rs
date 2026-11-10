@@ -360,6 +360,18 @@ pub enum AddressSpace {
     /// Each entrypoint may reference only one variable in this scope, as
     /// only one may be passed as a payload.
     IncomingRayPayload,
+
+    /// A stage input: a value the previous stage or the pipeline provides.
+    ///
+    /// Shaders can only read it. What it is bound to is given by
+    /// [`GlobalVariable::io`], or by the bindings of its members if it is a
+    /// block. An entry point lists the inputs it uses in
+    /// [`EntryPoint::interface`].
+    Input,
+    /// A stage output: a value passed to the next stage or to the pipeline.
+    ///
+    /// Bound and listed like an [`Input`](Self::Input).
+    Output,
 }
 
 /// Built-in inputs and outputs.
@@ -1149,6 +1161,21 @@ pub enum Binding {
         /// vertices or pixel location. For example, it may be used to store a
         /// non-interpolated normal vector.
         per_primitive: bool,
+
+        /// The first of the four components of the location that the value
+        /// occupies (GLSL `layout(component = N)`). `None` is component 0.
+        #[cfg_attr(feature = "deserialize", serde(default))]
+        component: Option<u32>,
+
+        /// The value must be computed in exactly the same way by every shader
+        /// that computes it (GLSL `invariant`).
+        #[cfg_attr(feature = "deserialize", serde(default))]
+        invariant: bool,
+
+        /// The value is per patch rather than per vertex (GLSL `patch`, in
+        /// tessellation shaders).
+        #[cfg_attr(feature = "deserialize", serde(default))]
+        patch: bool,
     },
 }
 
@@ -1177,6 +1204,16 @@ pub struct GlobalVariable {
     ///
     /// In WGSL, these can be set with attributes like `@coherent` or `@volatile`.
     pub memory_decorations: MemoryDecorations,
+    /// For a variable in the [`Input`] or [`Output`] address space that is
+    /// not a block, what it is bound to.
+    ///
+    /// A block (a struct whose members have bindings, such as GLSL
+    /// `out gl_PerVertex { ... }`) has `None` here.
+    ///
+    /// [`Input`]: AddressSpace::Input
+    /// [`Output`]: AddressSpace::Output
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    pub io: Option<Binding>,
 }
 
 /// Variable defined at function level.
@@ -2534,6 +2571,17 @@ pub struct EntryPoint {
     /// The unique global variable used as an incoming ray payload going into any hit, closest hit and miss shaders.
     /// Unlike the outgoing ray payload, an incoming ray payload must be unique
     pub incoming_ray_payload: Option<Handle<GlobalVariable>>,
+    /// The [`Input`] and [`Output`] variables that make up this entry point's
+    /// interface, in declaration order.
+    ///
+    /// This includes variables the code does not use: they are still part of
+    /// the interface the pipeline sees. An entry point whose inputs and
+    /// outputs are all function arguments and results has an empty list.
+    ///
+    /// [`Input`]: AddressSpace::Input
+    /// [`Output`]: AddressSpace::Output
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    pub interface: Vec<Handle<GlobalVariable>>,
 }
 
 /// Return types predeclared for the frexp, modf, and atomicCompareExchangeWeak built-in functions.

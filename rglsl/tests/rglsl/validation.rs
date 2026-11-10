@@ -111,6 +111,7 @@ fn populate_atomic_result() {
                 ty: ty_atomic_u32,
                 init: None,
                 memory_decorations: rglsl::MemoryDecorations::empty(),
+                io: None,
             },
             span,
         );
@@ -284,6 +285,7 @@ fn emit_workgroup_uniform_load_result() {
                 ty: ty_u32,
                 init: None,
                 memory_decorations: rglsl::MemoryDecorations::empty(),
+                io: None,
             },
             span,
         );
@@ -622,6 +624,7 @@ fn invalid_local_var_override_sized_array() {
             ty: ty_array,
             init: None,
             memory_decorations: rglsl::MemoryDecorations::empty(),
+            io: None,
         },
         span,
     );
@@ -1009,6 +1012,7 @@ fn unexpected_task_payload() {
             ty: ty_payload,
             init: None,
             memory_decorations: ir::MemoryDecorations::empty(),
+            io: None,
         },
         err_span,
     );
@@ -1023,6 +1027,7 @@ fn unexpected_task_payload() {
         mesh_info: None,
         task_payload: Some(payload_handle), // invalid for compute stage
         incoming_ray_payload: None,
+        interface: Vec::new(),
     };
     module.entry_points.push(entry_point);
 

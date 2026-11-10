@@ -62,6 +62,8 @@ pub(super) const fn map_storage_class(space: crate::AddressSpace) -> spirv::Stor
         //accessed in a ray tracing pipeline stage.
         crate::AddressSpace::RayPayload => spirv::StorageClass::RayPayloadKHR,
         crate::AddressSpace::IncomingRayPayload => spirv::StorageClass::IncomingRayPayloadKHR,
+        crate::AddressSpace::Input => spirv::StorageClass::Input,
+        crate::AddressSpace::Output => spirv::StorageClass::Output,
     }
 }
 
@@ -244,9 +246,11 @@ pub enum BindingDecorations {
     BuiltIn(spirv::BuiltIn, ArrayVec<spirv::Decoration, 2>),
     Location {
         location: u32,
-        others: ArrayVec<spirv::Decoration, 5>,
+        others: ArrayVec<spirv::Decoration, 7>,
         /// If this is `Some`, use Decoration::Index with blend_src as an operand
         blend_src: Option<Word>,
+        /// If this is `Some`, use Decoration::Component with it as an operand
+        component: Option<Word>,
     },
     None,
 }

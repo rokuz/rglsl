@@ -661,6 +661,8 @@ impl FunctionInfo {
                 let uniform = match var.space {
                     // local data is non-uniform
                     As::Function | As::Private | As::RayPayload | As::IncomingRayPayload => false,
+                    // stage inputs and outputs differ between invocations
+                    As::Input | As::Output => false,
                     // workgroup memory is exclusively accessed by the group
                     // task payload memory is very similar to workgroup memory
                     As::WorkGroup | As::TaskPayload => true,
@@ -1347,6 +1349,7 @@ fn uniform_control_flow() {
             space: crate::AddressSpace::Handle,
             binding: None,
             memory_decorations: crate::MemoryDecorations::empty(),
+            io: None,
         },
         Default::default(),
     );
@@ -1358,6 +1361,7 @@ fn uniform_control_flow() {
             binding: None,
             space: crate::AddressSpace::Uniform,
             memory_decorations: crate::MemoryDecorations::empty(),
+            io: None,
         },
         Default::default(),
     );

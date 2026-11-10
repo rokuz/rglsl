@@ -282,6 +282,9 @@ impl Decoration {
                 sampling: None,
                 blend_src: Some(index),
                 per_primitive: false,
+                component: None,
+                invariant: false,
+                patch: false,
             }),
             Decoration {
                 built_in: None,
@@ -295,6 +298,9 @@ impl Decoration {
                 sampling,
                 blend_src: None,
                 per_primitive: false,
+                component: None,
+                invariant: false,
+                patch: false,
             }),
             _ => Err(Error::MissingDecoration(spirv::Decoration::Location)),
         }
@@ -3029,6 +3035,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                     ty,
                     init,
                     memory_decorations: dec.flags.to_memory_decorations(),
+                    io: None,
                 };
                 (Variable::Global, var)
             }
@@ -3077,6 +3084,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                     ty,
                     init: None,
                     memory_decorations: crate::MemoryDecorations::empty(),
+                    io: None,
                 };
 
                 let inner = Variable::Input(crate::FunctionArgument {
@@ -3138,6 +3146,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                     ty,
                     init,
                     memory_decorations: crate::MemoryDecorations::empty(),
+                    io: None,
                 };
                 let inner = Variable::Output(crate::FunctionResult { ty, binding });
                 (inner, var)
