@@ -2934,7 +2934,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
         let inner = if let Some(id) = decor.specialization_constant_id {
             let o = crate::Override {
                 name: decor.name,
-                id: Some(id.try_into().map_err(|_| Error::SpecIdTooHigh(id))?),
+                id: Some(id),
                 ty,
                 init: Some(init),
             };

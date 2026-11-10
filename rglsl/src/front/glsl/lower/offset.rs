@@ -48,6 +48,7 @@ pub fn calculate_offset(
     layout: Packing,
     row_major: bool,
     types: &mut UniqueArena<Type>,
+    pending: &[u32],
     errors: &mut Vec<Error>,
 ) -> TypeAlignSpan {
     let mut matrix_layout = None;
@@ -79,7 +80,7 @@ pub fn calculate_offset(
         // times as many column (or row) vectors: the element stride is the
         // size of one matrix, which rule (4) already yields here.
         TypeInner::Array { base, size, .. } => {
-            let info = calculate_offset(base, meta, layout, row_major, types, errors);
+            let info = calculate_offset(base, meta, layout, row_major, types, pending, errors);
             matrix_layout = info.matrix_layout;
 
             let name = types[ty].name.clone();
@@ -94,7 +95,9 @@ pub fn calculate_offset(
 
             let span = match size {
                 crate::ArraySize::Constant(size) => size.get() * stride,
-                crate::ArraySize::Pending(_) => unreachable!(),
+                crate::ArraySize::Pending(handle) => {
+                    pending.get(handle.index()).copied().unwrap_or(1) * stride
+                }
                 crate::ArraySize::Dynamic => stride,
             };
 
@@ -150,7 +153,8 @@ pub fn calculate_offset(
             let name = types[ty].name.clone();
 
             for member in members.iter_mut() {
-                let info = calculate_offset(member.ty, meta, layout, row_major, types, errors);
+                let info =
+                    calculate_offset(member.ty, meta, layout, row_major, types, pending, errors);
                 member.matrix_layout = info.matrix_layout;
 
                 let member_alignment = info.align;

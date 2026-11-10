@@ -140,16 +140,15 @@ impl Lowerer<'_> {
         Ok(ty)
     }
 
-    pub(super) fn array_size(&self, size: GlslArraySize, span: Span) -> Result<ArraySize> {
+    pub(super) fn array_size(&mut self, size: GlslArraySize, span: Span) -> Result<ArraySize> {
         match size {
             GlslArraySize::Sized(size) => NonZeroU32::new(size)
                 .map(ArraySize::Constant)
                 .ok_or_else(|| internal(span)),
             GlslArraySize::Unsized => Ok(ArraySize::Dynamic),
-            GlslArraySize::Specialized => Err(unsupported(
-                "arrays sized by specialization constants",
-                span,
-            )),
+            GlslArraySize::Specialized(size) => {
+                self.specialized_size(size, span).map(ArraySize::Pending)
+            }
         }
     }
 
@@ -293,6 +292,25 @@ impl Lowerer<'_> {
         Ok(handle)
     }
 
+    pub(super) fn pending_lengths(&self) -> Vec<u32> {
+        self.module
+            .overrides
+            .iter()
+            .map(|(_, item)| {
+                item.init
+                    .and_then(|init| match self.module.global_expressions[init] {
+                        crate::Expression::Literal(crate::Literal::I32(value)) => {
+                            u32::try_from(value).ok()
+                        }
+                        crate::Expression::Literal(crate::Literal::U32(value)) => Some(value),
+                        _ => None,
+                    })
+                    .filter(|value| *value > 0)
+                    .unwrap_or(1)
+            })
+            .collect()
+    }
+
     fn layout(
         &mut self,
         ty: Handle<Type>,
@@ -301,12 +319,14 @@ impl Lowerer<'_> {
         span: Span,
     ) -> Result<TypeAlignSpan> {
         let mut errors = Vec::new();
+        let pending = self.pending_lengths();
         let info = calculate_offset(
             ty,
             span,
             packing,
             row_major,
             &mut self.module.types,
+            &pending,
             &mut errors,
         );
         match errors.into_iter().next() {

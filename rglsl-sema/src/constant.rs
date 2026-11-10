@@ -245,7 +245,7 @@ fn fold_integer(
     })
 }
 
-fn division_by_zero(scalar: Scalar) -> i128 {
+const fn division_by_zero(scalar: Scalar) -> i128 {
     if scalar.is_signed() {
         (1_i128 << (scalar.bits() - 1)) - 1
     } else {

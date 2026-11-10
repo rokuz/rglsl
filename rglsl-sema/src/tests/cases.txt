@@ -1993,7 +1993,12 @@ float more[a + 2];
 void main() {
     values[2] = b;
     more[6] = 1.0;
-    switch (1) { case a: break; }
+}
+### specialization constants are not case labels | frag | 5:InvalidCaseLabel
+layout(constant_id = 0) const int a = 3;
+layout(location = 0) out vec4 color;
+void main() {
+    switch (int(color.x)) { case a: break; }
 }
 ### specialization constant sized arrays are checked against the default | frag | 5:IndexOutOfRange
 layout(constant_id = 0) const int a = 3;

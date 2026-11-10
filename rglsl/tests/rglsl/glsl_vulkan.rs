@@ -2416,6 +2416,90 @@ fn constant_words(module: &dr::Module) -> Vec<u32> {
         .collect()
 }
 
+fn compile_words(stage: ShaderStage, source: &str, lang_version: (u8, u8)) -> Vec<u32> {
+    let module = parse(stage, source).unwrap_or_else(|e| panic!("shader rejected: {e}"));
+    let info = Validator::new(ValidationFlags::all(), Capabilities::all())
+        .validate(&module)
+        .expect("validated in parse");
+    let options = spv::Options {
+        lang_version,
+        ..spv::Options::default()
+    };
+    spv::write_vec(&module, &info, &options, None).expect("SPIR-V backend failed")
+}
+
+fn raw_instructions(words: &[u32]) -> Vec<(u32, Vec<u32>)> {
+    let mut found = Vec::new();
+    let mut rest = &words[5..];
+    while let Some(&first) = rest.first() {
+        let count = (first >> 16) as usize;
+        found.push((first & 0xffff, rest[1..count].to_vec()));
+        rest = &rest[count..];
+    }
+    found
+}
+
+fn compile_for(stage: ShaderStage, source: &str, lang_version: (u8, u8)) -> dr::Module {
+    let module = parse(stage, source).unwrap_or_else(|e| panic!("shader rejected: {e}"));
+    let info = Validator::new(ValidationFlags::all(), Capabilities::all())
+        .validate(&module)
+        .expect("validated in parse");
+    let options = spv::Options {
+        lang_version,
+        flags: spv::WriterFlags::DEBUG | spv::WriterFlags::LABEL_VARYINGS,
+        force_loop_bounding: false,
+        zero_initialize_workgroup_memory: spv::ZeroInitializeWorkgroupMemoryMode::None,
+        ..spv::Options::default()
+    };
+    let words = spv::write_vec(&module, &info, &options, None).expect("SPIR-V backend failed");
+    dr::load_words(words).expect("produced SPIR-V does not parse")
+}
+
+fn global_value(module: &dr::Module, id: u32) -> &dr::Instruction {
+    module
+        .types_global_values
+        .iter()
+        .find(|inst| inst.result_id == Some(id))
+        .unwrap_or_else(|| panic!("%{id} is not a global value"))
+}
+
+fn id_operand(operand: &Operand) -> u32 {
+    match *operand {
+        Operand::IdRef(id) => id,
+        ref other => panic!("operand {other:?} is not an id"),
+    }
+}
+
+fn spec_ids(module: &dr::Module) -> Vec<(u32, u32)> {
+    let mut found: Vec<(u32, u32)> = module
+        .annotations
+        .iter()
+        .filter(|inst| {
+            inst.class.opcode == Op::Decorate
+                && inst.operands[1] == Operand::Decoration(Decoration::SpecId)
+        })
+        .map(|inst| {
+            let spec = match inst.operands[2] {
+                Operand::LiteralBit32(value) => value,
+                ref other => panic!("unexpected SpecId operand {other:?}"),
+            };
+            (spec, id_operand(&inst.operands[0]))
+        })
+        .collect();
+    found.sort_unstable();
+    found
+}
+
+fn spec_operations(module: &dr::Module) -> Vec<Op> {
+    instructions(module, Op::SpecConstantOp)
+        .into_iter()
+        .map(|inst| match inst.operands[0] {
+            Operand::LiteralSpecConstantOpInteger(op) => op,
+            ref other => panic!("unexpected spec constant operation {other:?}"),
+        })
+        .collect()
+}
+
 #[test]
 fn constant_folding_follows_glslang_outside_the_domain() {
     let module = compile_valid(
@@ -2476,4 +2560,272 @@ fn extended_integer_arithmetic_and_scalar_refract() {
     ] {
         assert_eq!(instructions(&module, op).len(), 1, "{op:?}");
     }
+}
+
+fn function_ops(module: &dr::Module) -> Vec<Op> {
+    module
+        .functions
+        .iter()
+        .flat_map(|function| function.blocks.iter())
+        .flat_map(|block| block.instructions.iter())
+        .map(|inst| inst.class.opcode)
+        .collect()
+}
+
+#[test]
+fn specialization_constants_match_glslang() {
+    let module = compile(
+        ShaderStage::Fragment,
+        r#"#version 450
+layout(constant_id = 1) const int N = 5;
+layout(constant_id = 4) const float F = 1.5;
+layout(constant_id = 6) const uint U = 2;
+layout(constant_id = 7) const bool B = true;
+const vec3 V = vec3(F, 2.0, F);
+const ivec2 IV = ivec2(N);
+const bool C = N > 2 && U < 3u;
+const uint UN = uint(N) + U;
+const int NN = -N + int(U);
+const float FD = float(double(F));
+const int SEL = C ? N : 3;
+const int SW = IV.y;
+layout(location = 0) out vec4 o;
+void main() {
+  o = vec4(V, float(NN + SEL + SW)) * F * 2.0;
+  o.x += float(UN) + FD;
+  if (B) o.y = 0.0;
+}
+"#,
+    );
+    let ids = spec_ids(&module);
+    assert_eq!(
+        ids.iter().map(|&(spec, _)| spec).collect::<Vec<_>>(),
+        [1, 4, 6, 7]
+    );
+    let default = |spec: u32| {
+        let id = ids.iter().find(|&&(s, _)| s == spec).unwrap().1;
+        global_value(&module, id).clone()
+    };
+    assert_eq!(default(1).class.opcode, Op::SpecConstant);
+    assert_eq!(default(1).operands, [Operand::LiteralBit32(5)]);
+    assert_eq!(
+        default(4).operands,
+        [Operand::LiteralBit32(1.5f32.to_bits())]
+    );
+    assert_eq!(default(6).operands, [Operand::LiteralBit32(2)]);
+    assert_eq!(default(7).class.opcode, Op::SpecConstantTrue);
+    let ops = spec_operations(&module);
+    for expected in [
+        Op::SGreaterThan,
+        Op::ULessThan,
+        Op::LogicalAnd,
+        Op::IAdd,
+        Op::SNegate,
+        Op::FConvert,
+        Op::Select,
+        Op::CompositeExtract,
+    ] {
+        assert!(ops.contains(&expected), "missing {expected:?} in {ops:?}");
+    }
+    assert!(!ops.contains(&Op::FMul));
+    assert_eq!(instructions(&module, Op::SpecConstantComposite).len(), 2);
+    let body = function_ops(&module);
+    assert!(body.contains(&Op::VectorTimesScalar));
+    assert!(body.contains(&Op::ConvertSToF));
+}
+
+#[test]
+fn specialization_constant_array_sizes() {
+    let module = compile(
+        ShaderStage::Compute,
+        r#"#version 450
+layout(local_size_x = 1) in;
+layout(constant_id = 0) const int N = 3;
+const int M = N * 2;
+struct S { int v[N]; };
+layout(std430, binding = 0) buffer Out { int total; S s; float tail[M]; };
+void main() {
+  int local[N + 1];
+  local[0] = 1;
+  total = local.length() + s.v.length() + tail.length() + local[0];
+}
+"#,
+    );
+    let lengths: Vec<Op> = instructions(&module, Op::TypeArray)
+        .iter()
+        .map(|inst| {
+            global_value(&module, id_operand(&inst.operands[1]))
+                .class
+                .opcode
+        })
+        .collect();
+    assert!(lengths.contains(&Op::SpecConstant));
+    assert!(lengths.contains(&Op::SpecConstantOp));
+    assert!(lengths
+        .iter()
+        .all(|&op| matches!(op, Op::SpecConstant | Op::SpecConstantOp)));
+    assert_eq!(spec_ids(&module).len(), 1);
+    assert!(spec_operations(&module).contains(&Op::IMul));
+    assert!(!function_ops(&module).contains(&Op::ArrayLength));
+}
+
+#[test]
+fn specialized_workgroup_size() {
+    let source = r#"#version 450
+layout(local_size_x_id = 18, local_size_z_id = 19) in;
+layout(local_size_x = 32, local_size_y = 4) in;
+layout(std430, binding = 0) buffer Out { uint a; };
+shared uint tile[gl_WorkGroupSize.x * gl_WorkGroupSize.y];
+void main() {
+  tile[0] = 1u;
+  a = gl_WorkGroupSize.x * gl_WorkGroupSize.y * gl_WorkGroupSize.z + tile[0];
+}
+"#;
+    let module = compile_for(ShaderStage::Compute, source, (1, 0));
+    let ids = spec_ids(&module);
+    assert_eq!(
+        ids.iter().map(|&(spec, _)| spec).collect::<Vec<_>>(),
+        [18, 19]
+    );
+    assert_eq!(
+        global_value(&module, ids[0].1).operands,
+        [Operand::LiteralBit32(32)]
+    );
+    assert_eq!(
+        global_value(&module, ids[1].1).operands,
+        [Operand::LiteralBit32(1)]
+    );
+    let builtin = module
+        .annotations
+        .iter()
+        .find(|inst| inst.operands.get(2) == Some(&Operand::BuiltIn(spirv::BuiltIn::WorkgroupSize)))
+        .expect("no WorkgroupSize decoration");
+    let composite = global_value(&module, id_operand(&builtin.operands[0]));
+    assert_eq!(composite.class.opcode, Op::SpecConstantComposite);
+    assert_eq!(id_operand(&composite.operands[0]), ids[0].1);
+    assert_eq!(id_operand(&composite.operands[2]), ids[1].1);
+    assert_eq!(instructions(&module, Op::SpecConstantComposite).len(), 1);
+    let mode = instructions(&module, Op::ExecutionMode);
+    assert_eq!(
+        mode[0].operands[1..],
+        [
+            Operand::ExecutionMode(spirv::ExecutionMode::LocalSize),
+            Operand::LiteralBit32(32),
+            Operand::LiteralBit32(4),
+            Operand::LiteralBit32(1),
+        ]
+    );
+    assert!(spec_operations(&module).contains(&Op::CompositeExtract));
+
+    let raw = raw_instructions(&compile_words(ShaderStage::Compute, source, (1, 6)));
+    let find = |op: Op| {
+        raw.iter()
+            .filter(move |&&(code, _)| code == op as u32)
+            .map(|(_, operands)| operands.clone())
+    };
+    assert!(find(Op::Decorate).all(|operands| operands[1..]
+        != [
+            Decoration::BuiltIn as u32,
+            spirv::BuiltIn::WorkgroupSize as u32
+        ]));
+    let mode = find(Op::ExecutionModeId)
+        .next()
+        .expect("no ExecutionModeId");
+    assert_eq!(mode[1], spirv::ExecutionMode::LocalSizeId as u32);
+    let spec_of = |id: u32| {
+        find(Op::Decorate)
+            .find(|operands| operands[0] == id && operands[1] == Decoration::SpecId as u32)
+            .map(|operands| operands[2])
+    };
+    assert_eq!(spec_of(mode[2]), Some(18));
+    assert_eq!(spec_of(mode[3]), None);
+    assert_eq!(spec_of(mode[4]), Some(19));
+    assert!(find(Op::Constant).any(|operands| operands[1] == mode[3] && operands[2] == 4));
+}
+
+#[test]
+fn specialization_constant_swizzles() {
+    let raw = raw_instructions(&compile_words(
+        ShaderStage::Fragment,
+        r#"#version 450
+layout(constant_id = 0) const int N = 3;
+const ivec3 V = ivec3(N, 1, N + 1);
+const ivec2 S = V.zx;
+layout(location = 0) out ivec2 o;
+void main() { o = S; }
+"#,
+        (1, 0),
+    ));
+    let shuffle = raw
+        .iter()
+        .find(|&&(code, ref operands)| {
+            code == Op::SpecConstantOp as u32 && operands[2] == Op::VectorShuffle as u32
+        })
+        .expect("no OpSpecConstantOp VectorShuffle");
+    assert_eq!(shuffle.1[3], shuffle.1[4]);
+    assert_eq!(shuffle.1[5..], [2, 0]);
+}
+
+#[test]
+fn specialization_constant_errors() {
+    let case = parse(
+        ShaderStage::Fragment,
+        r#"#version 450
+layout(constant_id = 0) const int N = 3;
+layout(location = 0) out vec4 o;
+void main() {
+  switch (int(o.x)) { case N: o = vec4(1.0); break; default: break; }
+}
+"#,
+    );
+    assert!(case.unwrap_err().contains("case label"));
+    let derived = parse(
+        ShaderStage::Fragment,
+        r#"#version 450
+layout(constant_id = 0) const int N = 3;
+layout(constant_id = 1) const int M = N * 2;
+layout(location = 0) out vec4 o;
+void main() { o = vec4(M); }
+"#,
+    );
+    assert!(derived.unwrap_err().contains("constant_id"));
+    let floating = parse(
+        ShaderStage::Fragment,
+        r#"#version 450
+layout(constant_id = 0) const float F = 3.0;
+const float G = F * 2.0;
+layout(location = 0) out vec4 o;
+void main() { o = vec4(G); }
+"#,
+    );
+    assert!(floating.is_err());
+}
+
+#[test]
+fn specialization_constants_baked_by_process_overrides() {
+    let module = parse(
+        ShaderStage::Compute,
+        r#"#version 450
+layout(local_size_x = 1) in;
+layout(constant_id = 3) const int N = 3;
+const int M = N + 1;
+shared int tile[M];
+layout(std430, binding = 0) buffer Out { int a; };
+void main() { tile[0] = M * 2; a = tile[0]; }
+"#,
+    )
+    .unwrap();
+    let info = Validator::new(ValidationFlags::all(), Capabilities::all())
+        .validate(&module)
+        .unwrap();
+    let constants = rglsl::back::PipelineConstants::from_iter([("3".to_string(), 7.0)]);
+    let (module, info) =
+        rglsl::back::pipeline_constants::process_overrides(&module, &info, None, &constants)
+            .unwrap();
+    let words = spv::write_vec(&module, &info, &spv::Options::default(), None).unwrap();
+    let module = dr::load_words(words).unwrap();
+    assert!(spec_ids(&module).is_empty());
+    assert!(instructions(&module, Op::SpecConstantOp).is_empty());
+    let array = instructions(&module, Op::TypeArray)[0];
+    assert_eq!(constant(&module, &array.operands[1]), 8);
 }

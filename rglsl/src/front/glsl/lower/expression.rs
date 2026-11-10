@@ -10,6 +10,7 @@ use rglsl_sema::{Callee, ExpressionInfo};
 
 use super::constant::{literal, shape, Shape};
 use super::function::{FunctionLowerer, Local};
+use super::specialization::is_direct;
 use super::types::{scalar, vector_size};
 use super::{internal, semantic, unsupported, GlobalRef, Result};
 use crate::{
@@ -150,7 +151,12 @@ impl<'a> FunctionLowerer<'_, 'a> {
     ) -> Result<Option<Handle<Expression>>> {
         let at = self.at(expression.span);
         let info = self.info(expression)?;
-        if info.is_constant {
+        if info.is_specialization {
+            if !self.specializing && !is_direct(expression) {
+                let handle = self.lw.specialization(expression, None, at)?;
+                return self.add(Expression::Override(handle), at).map(Some);
+            }
+        } else if info.is_constant {
             if let Some(ref value) = info.value {
                 return self.constant(&info.ty, &value.values, at).map(Some);
             }
@@ -339,7 +345,7 @@ impl<'a> FunctionLowerer<'_, 'a> {
 
     pub(super) fn constant_index(&self, expression: &AstExpression) -> Option<u32> {
         let info = self.lw.analysis.expression(expression.id)?;
-        if !info.is_constant {
+        if !info.is_constant || info.is_specialization {
             return None;
         }
         let value = info.value.as_ref()?.scalar_i64()?;

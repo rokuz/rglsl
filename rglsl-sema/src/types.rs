@@ -2,7 +2,9 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt;
 
-use crate::scope::Qualifiers;
+use rglsl_ast::ast::NodeId;
+
+use crate::scope::{Qualifiers, SymbolId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Scalar {
@@ -538,8 +540,24 @@ pub enum TypeKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ArraySize {
     Sized(u32),
-    Specialized,
+    Specialized(SpecializedSize),
     Unsized,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum SpecializedSize {
+    Constant { symbol: SymbolId, default: u32 },
+    Expression(NodeId),
+}
+
+impl ArraySize {
+    pub const fn nominal(self) -> Option<u32> {
+        match self {
+            Self::Sized(size)
+            | Self::Specialized(SpecializedSize::Constant { default: size, .. }) => Some(size),
+            Self::Specialized(SpecializedSize::Expression(_)) | Self::Unsized => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -734,7 +752,7 @@ impl Type {
         for dimension in &self.array {
             match dimension {
                 ArraySize::Sized(size) => total = total.checked_mul(*size)?,
-                ArraySize::Specialized | ArraySize::Unsized => return None,
+                ArraySize::Specialized(_) | ArraySize::Unsized => return None,
             }
         }
         Some(total)
@@ -780,7 +798,7 @@ impl Type {
         if let Some(size) = self.array.first() {
             return match size {
                 ArraySize::Sized(size) => Some(*size),
-                ArraySize::Specialized | ArraySize::Unsized => None,
+                ArraySize::Specialized(_) | ArraySize::Unsized => None,
             };
         }
         match self.kind {
@@ -912,7 +930,7 @@ impl fmt::Display for TypeDisplay<'_> {
         for dimension in &self.ty.array {
             match dimension {
                 ArraySize::Sized(size) => write!(formatter, "[{size}]")?,
-                ArraySize::Specialized => formatter.write_str("[specialization constant]")?,
+                ArraySize::Specialized(_) => formatter.write_str("[specialization constant]")?,
                 ArraySize::Unsized => formatter.write_str("[]")?,
             }
         }

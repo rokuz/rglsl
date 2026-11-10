@@ -18,7 +18,9 @@ use crate::scope::{
     Direction, Function, FunctionId, LayoutEntry, Lookup, Origin, Parameter, Qualifiers, Storage,
     SymbolId, SymbolKind,
 };
-use crate::types::{ArraySize, BlockStorage, BlockType, Member, Opaque, Scalar, Type, TypeKind};
+use crate::types::{
+    ArraySize, BlockStorage, BlockType, Member, Opaque, Scalar, SpecializedSize, Type, TypeKind,
+};
 
 const IMAGE_FORMATS: [&str; 41] = [
     "rgba32f",
@@ -377,7 +379,27 @@ impl Analyzer<'_> {
             self.error(expression.span, DiagnosticKind::ArraySizeNotConstant);
             return ArraySize::Sized(1);
         }
-        match operand.value.as_ref().and_then(Constant::scalar_i64) {
+        let value = operand.value.as_ref().and_then(Constant::scalar_i64);
+        if operand.specialization {
+            let mut inner = expression;
+            while let rglsl_ast::ast::ExpressionKind::Parenthesized(nested) = &inner.kind {
+                inner = nested;
+            }
+            let symbol = match inner.kind {
+                rglsl_ast::ast::ExpressionKind::Variable(_) => {
+                    self.references.get(&inner.id).copied()
+                }
+                _ => None,
+            };
+            let default = value
+                .filter(|size| *size > 0)
+                .and_then(|size| u32::try_from(size).ok());
+            return ArraySize::Specialized(match (symbol, default) {
+                (Some(symbol), Some(default)) => SpecializedSize::Constant { symbol, default },
+                _ => SpecializedSize::Expression(expression.id),
+            });
+        }
+        match value {
             Some(size) if size <= 0 => {
                 self.error(expression.span, DiagnosticKind::ArraySizeNotPositive);
                 ArraySize::Sized(1)
@@ -387,7 +409,7 @@ impl Analyzer<'_> {
                 ArraySize::Sized(1)
             }
             Some(size) => ArraySize::Sized(u32::try_from(size).unwrap_or(u32::MAX)),
-            None => ArraySize::Specialized,
+            None => ArraySize::Specialized(SpecializedSize::Expression(expression.id)),
         }
     }
 
@@ -834,7 +856,21 @@ impl Analyzer<'_> {
                         DiagnosticKind::NonConstantInitializer(name.node.clone()),
                     );
                 }
+                if qualifiers.constant
+                    && operand.constant
+                    && operand.specialization
+                    && qualifiers.has_layout("constant_id")
+                {
+                    self.error(
+                        span,
+                        DiagnosticKind::InvalidQualifier {
+                            qualifier: "constant_id",
+                            reason: "cannot be applied to a constant computed from other specialization constants",
+                        },
+                    );
+                }
                 if qualifiers.constant && operand.constant {
+                    qualifiers.specialization = operand.specialization;
                     value = operand
                         .value
                         .as_ref()

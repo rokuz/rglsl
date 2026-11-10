@@ -225,26 +225,15 @@ pub fn process_overrides<'a>(
 
     // Finish processing any overrides we didn't visit in the loop above.
     for entry in override_iter {
-        match *entry.1 {
-            Override { name: Some(_), .. } | Override { id: Some(_), .. } => {
-                process_override(
-                    entry,
-                    pipeline_constants,
-                    &mut module,
-                    &mut override_map,
-                    &adjusted_global_expressions,
-                    &mut adjusted_constant_initializers,
-                    &mut global_expression_kind_tracker,
-                )?;
-            }
-            Override {
-                init: Some(ref mut init),
-                ..
-            } => {
-                *init = adjusted_global_expressions[*init];
-            }
-            _ => {}
-        }
+        process_override(
+            entry,
+            pipeline_constants,
+            &mut module,
+            &mut override_map,
+            &adjusted_global_expressions,
+            &mut adjusted_constant_initializers,
+            &mut global_expression_kind_tracker,
+        )?;
     }
 
     // Update the initialization expression handles of all `Constant`s
@@ -363,22 +352,25 @@ fn process_override(
     global_expression_kind_tracker: &mut crate::proc::ExpressionKindTracker,
 ) -> Result<Handle<Constant>, PipelineConstantError> {
     // Determine which key to use for `r#override` in `pipeline_constants`.
-    let key = if let Some(id) = r#override.id {
+    let key: Cow<'_, str> = if let Some(id) = r#override.id {
         Cow::Owned(id.to_string())
     } else if let Some(ref name) = r#override.name {
-        Cow::Borrowed(name)
+        Cow::Borrowed(name.as_str())
     } else {
-        unreachable!();
+        Cow::Borrowed("")
     };
 
     // Generate a global expression for `r#override`'s value, either
     // from the provided `pipeline_constants` table or its initializer
     // in the module.
-    let init = if let Some(value) = pipeline_constants.get::<str>(&key) {
-        let literal = match module.types[r#override.ty].inner {
-            TypeInner::Scalar(scalar) => map_value_to_literal(*value, scalar)?,
-            _ => unreachable!(),
+    let provided = pipeline_constants
+        .get::<str>(&key)
+        .filter(|_| r#override.id.is_some() || r#override.name.is_some());
+    let init = if let Some(value) = provided {
+        let TypeInner::Scalar(scalar) = module.types[r#override.ty].inner else {
+            return Err(PipelineConstantError::MissingValue(key.to_string()));
         };
+        let literal = map_value_to_literal(*value, scalar)?;
         let expr = module
             .global_expressions
             .append(Expression::Literal(literal), Span::UNDEFINED);
@@ -400,6 +392,7 @@ fn process_override(
     override_map.insert(old_h, h);
     adjusted_constant_initializers.insert(h);
     r#override.init = Some(init);
+    r#override.id = None;
     Ok(h)
 }
 

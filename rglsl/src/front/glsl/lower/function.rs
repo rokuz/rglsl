@@ -28,6 +28,7 @@ pub(super) struct FunctionLowerer<'l, 'a> {
     pub emitter: Emitter,
     pub block: Block,
     pub variables: BTreeMap<SymbolId, Local>,
+    pub specializing: bool,
 }
 
 fn ensure_returns(block: &mut Block, value: Option<Handle<Expression>>) {
@@ -71,6 +72,7 @@ impl<'l, 'a> FunctionLowerer<'l, 'a> {
             emitter,
             block: Block::new(),
             variables: BTreeMap::new(),
+            specializing: false,
         }
     }
 
@@ -371,32 +373,13 @@ impl<'a> Lowerer<'a> {
             .ok_or_else(|| internal(at))?;
         let function = self.lower_body(id, definition, true)?;
         let stage = self.options.stage;
-        let workgroup_size = if stage == ShaderStage::Compute {
-            let size = self
-                .analysis
-                .builtins
-                .variables()
-                .find(|&(name, _)| name == "gl_WorkGroupSize")
-                .and_then(|(_, symbol)| self.variable(symbol))
-                .and_then(|variable| variable.value.as_ref())
-                .map(|value| {
-                    value
-                        .values
-                        .iter()
-                        .map(|value| match *value {
-                            rglsl_sema::constant::Value::Uint(value) => value,
-                            _ => 1,
-                        })
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
-            let mut workgroup = [1_u32; 3];
-            for (slot, value) in workgroup.iter_mut().zip(size) {
-                *slot = value;
-            }
-            workgroup
+        let (workgroup_size, workgroup_size_overrides) = if stage == ShaderStage::Compute {
+            (
+                self.work_group_size_defaults(),
+                self.workgroup_size_overrides(at)?,
+            )
         } else {
-            [0; 3]
+            ([0; 3], None)
         };
         let early_depth_test = if self.early_fragment_tests {
             Some(EarlyDepthTest::Force)
@@ -409,7 +392,7 @@ impl<'a> Lowerer<'a> {
             stage,
             early_depth_test,
             workgroup_size,
-            workgroup_size_overrides: None,
+            workgroup_size_overrides,
             function,
             mesh_info: None,
             task_payload: None,

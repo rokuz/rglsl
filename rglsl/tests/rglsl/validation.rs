@@ -605,7 +605,7 @@ fn make_zero_value_local_variable(fun: &mut Function, ty: rglsl::Handle<ir::Type
 }
 
 #[test]
-fn invalid_local_var_override_sized_array() {
+fn local_var_override_sized_array() {
     // Similar to a test in wgsl_errors::invalid_local_vars.
     // ```
     // override len: u32;
@@ -666,7 +666,7 @@ fn invalid_local_var_override_sized_array() {
         valid::ValidationError::Function {
             source: valid::FunctionError::LocalVariable {
                 name: local_var_name,
-                source: valid::LocalVariableError::InvalidType(_),
+                source: valid::LocalVariableError::NonConstOrOverrideInitializer,
                 ..
             },
             ..
@@ -715,7 +715,7 @@ fn invalid_zero_value_runtime_array() {
 }
 
 #[test]
-fn invalid_zero_value_override_array() {
+fn zero_value_override_array() {
     // Similar to a test in wgsl_errors::invalid_zero_value_constructors.
     // ```
     // override len: u32;
@@ -737,22 +737,9 @@ fn invalid_zero_value_override_array() {
 
     module.functions.append(fun, span);
 
-    let err = valid::Validator::new(Default::default(), valid::Capabilities::all())
+    valid::Validator::new(Default::default(), valid::Capabilities::all())
         .validate(&module)
-        .expect_err("module should be invalid")
-        .into_inner();
-
-    assert!(matches!(
-        err,
-        valid::ValidationError::Function {
-            source: valid::FunctionError::LocalVariable {
-                name: local_var_name,
-                source: valid::LocalVariableError::InvalidType(_),
-                ..
-            },
-            ..
-        } if local_var_name == "x"
-    ));
+        .expect("SPIR-V accepts arrays sized by specialization constants here");
 }
 
 #[test]

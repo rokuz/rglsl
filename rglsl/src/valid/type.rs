@@ -625,6 +625,8 @@ impl super::Validator {
                             | TypeFlags::COPY
                             | TypeFlags::HOST_SHAREABLE
                             | TypeFlags::ARGUMENT
+                            | TypeFlags::CONSTRUCTIBLE
+                            | TypeFlags::CREATION_RESOLVED
                     }
                     crate::ArraySize::Dynamic => {
                         // Non-SIZED types may only appear as the last element of a structure.
@@ -918,7 +920,9 @@ impl super::Validator {
                     crate::ArraySize::Constant(_) => {
                         TypeFlags::SIZED | TypeFlags::HOST_SHAREABLE | TypeFlags::CREATION_RESOLVED
                     }
-                    crate::ArraySize::Pending(_) => TypeFlags::SIZED | TypeFlags::HOST_SHAREABLE,
+                    crate::ArraySize::Pending(_) => {
+                        TypeFlags::SIZED | TypeFlags::HOST_SHAREABLE | TypeFlags::CREATION_RESOLVED
+                    }
                     crate::ArraySize::Dynamic => {
                         // Final type is non-sized
                         TypeFlags::HOST_SHAREABLE | TypeFlags::CREATION_RESOLVED

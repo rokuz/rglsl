@@ -234,6 +234,7 @@ impl Analyzer<'_> {
                 ty: operand.ty.clone(),
                 is_lvalue: operand.place == Place::Writable,
                 is_constant: operand.constant,
+                is_specialization: operand.constant && operand.specialization,
                 value: operand.value.clone(),
                 conversion: None,
                 output_conversion: None,
@@ -427,11 +428,20 @@ impl Analyzer<'_> {
             self.error(expression.span, DiagnosticKind::WorkGroupSizeNotDeclared);
             return Operand::error();
         }
-        let specialization = constant
+        let work_group_size = self.work_group_size == Some(id)
             && self
-                .symbol(id)
-                .and_then(|symbol| symbol.variable())
-                .is_some_and(|variable| variable.qualifiers.has_layout("constant_id"));
+                .local_size_specialized
+                .iter()
+                .any(|specialized| *specialized);
+        let specialization = constant
+            && (work_group_size
+                || self
+                    .symbol(id)
+                    .and_then(|symbol| symbol.variable())
+                    .is_some_and(|variable| {
+                        variable.qualifiers.specialization
+                            || variable.qualifiers.has_layout("constant_id")
+                    }));
         if specialization {
             self.specialization_uses += 1;
         }
@@ -547,7 +557,13 @@ impl Analyzer<'_> {
             } else {
                 None
             };
-            let limit = base_operand.ty.length().map(i64::from).or(builtin_limit);
+            let limit = base_operand
+                .ty
+                .outer_size()
+                .and_then(ArraySize::nominal)
+                .or_else(|| base_operand.ty.length())
+                .map(i64::from)
+                .or(builtin_limit);
             if value < 0 || limit.is_some_and(|limit| value >= limit) {
                 self.error(
                     span,

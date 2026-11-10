@@ -55,6 +55,7 @@ pub struct ExpressionInfo {
     pub ty: Type,
     pub is_lvalue: bool,
     pub is_constant: bool,
+    pub is_specialization: bool,
     pub value: Option<Constant>,
     pub conversion: Option<Type>,
     pub output_conversion: Option<Type>,

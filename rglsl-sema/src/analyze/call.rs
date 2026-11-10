@@ -230,6 +230,13 @@ impl Analyzer<'_> {
                     .map(|length| Constant::single(Value::Int(length)));
                 Operand::constant(Type::INT, value)
             }
+            None if matches!(operand.ty.outer_size(), Some(ArraySize::Specialized(_))) => {
+                self.specialization_uses += 1;
+                Operand {
+                    specialization: true,
+                    ..Operand::constant(Type::INT, None)
+                }
+            }
             None if operand.ty.is_array() => {
                 let resizable = matches!(
                     (operand.storage, self.options.stage),

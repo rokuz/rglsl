@@ -6,6 +6,7 @@ mod function;
 mod globals;
 mod offset;
 mod prepass;
+mod specialization;
 mod statement;
 mod types;
 mod xfb;
@@ -263,6 +264,11 @@ pub(super) struct Lowerer<'a> {
     pub per_vertex_used: BTreeSet<String>,
     pub per_vertex_redeclared: bool,
     pub block_outputs: BTreeSet<String>,
+    pub specialized_sizes: BTreeMap<rglsl_ast::ast::NodeId, Handle<crate::Override>>,
+    pub size_expressions: BTreeMap<rglsl_ast::ast::NodeId, &'a rglsl_ast::ast::Expression>,
+    pub local_size_ids: [Option<u32>; 3],
+    pub local_size_overrides: [Option<Handle<crate::Override>>; 3],
+    pub work_group_size: Option<Handle<crate::Override>>,
     xfb: xfb::Xfb,
 }
 
@@ -310,6 +316,11 @@ impl<'a> Lowerer<'a> {
             per_vertex_used: BTreeSet::new(),
             per_vertex_redeclared: false,
             block_outputs: BTreeSet::new(),
+            specialized_sizes: BTreeMap::new(),
+            size_expressions: BTreeMap::new(),
+            local_size_ids: [None; 3],
+            local_size_overrides: [None; 3],
+            work_group_size: None,
             xfb: xfb::Xfb::new((options.stage == ShaderStage::Vertex).then_some(0)),
         }
     }
