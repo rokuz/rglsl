@@ -3853,3 +3853,43 @@ fn buffer_reference_errors() {
         );
     }
 }
+
+#[test]
+fn reference_strides_agree_with_block_layouts() {
+    for packing in ["std140", "std430", "scalar"] {
+        let source = format!(
+            "#version 450
+            #extension GL_EXT_buffer_reference2 : require
+            #extension GL_EXT_scalar_block_layout : require
+            #extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+            struct Inner {{ vec3 a; float b[3]; mat3x2 m; }};
+            layout({packing}, buffer_reference, buffer_reference_align = 16) buffer Node {{
+                float f;
+                vec3 v;
+                dvec2 d;
+                mat2 m2;
+                layout(row_major) mat3 m3;
+                Inner inner[2];
+                bool flag;
+                ivec3 tail;
+            }};
+            layout(push_constant) uniform P {{ Node node; }};
+            layout(location = 0) out vec4 o;
+            void main() {{
+                Node next = node + 3;
+                o = vec4(next.v, float(uint64_t(next) - uint64_t(node)));
+            }}"
+        );
+        let module = parse(ShaderStage::Fragment, &source)
+            .unwrap_or_else(|e| panic!("{packing}: shader rejected: {e}"));
+        let info = Validator::new(ValidationFlags::all(), Capabilities::all())
+            .validate(&module)
+            .unwrap();
+        let words = spv::write_vec(&module, &info, &spv::Options::default(), None)
+            .expect("SPIR-V backend failed");
+        crate::stage_io::spirv_val_in(
+            &words,
+            &["--target-env", "vulkan1.0", "--scalar-block-layout"],
+        );
+    }
+}

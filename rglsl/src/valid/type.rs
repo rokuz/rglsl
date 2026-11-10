@@ -765,7 +765,7 @@ impl super::Validator {
                         }
                     }
 
-                    let base_size = gctx.types[member.ty].inner.size(gctx);
+                    let base_size = member_extent(member, &gctx.types[member.ty].inner, gctx);
                     min_offset = member.offset + base_size;
                     if min_offset > span {
                         return Err(TypeError::MemberOutOfBounds {
@@ -981,5 +981,32 @@ impl super::Validator {
                 TypeInfo::new(base_info.flags & type_info_mask, Alignment::ONE)
             }
         })
+    }
+}
+
+fn member_extent(
+    member: &crate::StructMember,
+    inner: &crate::TypeInner,
+    gctx: crate::proc::GlobalCtx,
+) -> u32 {
+    match (inner, member.matrix_layout) {
+        (
+            &crate::TypeInner::Matrix {
+                columns,
+                rows,
+                scalar,
+            },
+            Some(crate::MatrixLayout { stride, row_major }),
+        ) => {
+            let (vectors, length) = if row_major {
+                (rows as u32, columns as u32)
+            } else {
+                (columns as u32, rows as u32)
+            };
+            (vectors - 1)
+                .saturating_mul(stride)
+                .saturating_add(length.saturating_mul(u32::from(scalar.width)))
+        }
+        _ => inner.size(gctx),
     }
 }

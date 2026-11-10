@@ -389,6 +389,17 @@ impl Lowerer<'_> {
         row_major: bool,
         span: Span,
     ) -> Result<Handle<Type>> {
+        self.block_struct_with_end(id, packing, row_major, span)
+            .map(|(handle, _)| handle)
+    }
+
+    pub(super) fn block_struct_with_end(
+        &mut self,
+        id: BlockId,
+        packing: Packing,
+        row_major: bool,
+        span: Span,
+    ) -> Result<(Handle<Type>, u32)> {
         let analysis = self.analysis;
         let block = analysis.types.block(id).ok_or_else(|| internal(span))?;
         let mut members = Vec::with_capacity(block.members.len());
@@ -470,7 +481,7 @@ impl Lowerer<'_> {
             offset = offset.saturating_add(info.span);
         }
         let span_bytes = alignment.round_up(offset);
-        Ok(self.module.types.insert(
+        let handle = self.module.types.insert(
             Type {
                 name: Some(block.name.clone()),
                 inner: TypeInner::Struct {
@@ -479,6 +490,7 @@ impl Lowerer<'_> {
                 },
             },
             span,
-        ))
+        );
+        Ok((handle, offset))
     }
 }
