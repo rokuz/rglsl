@@ -737,6 +737,14 @@ impl<'a> Lowerer<'a> {
                     size,
                 });
             }
+            [GlslArraySize::Unsized] => {
+                let size = self.implicit_sizes.get(&symbol).copied().unwrap_or(1);
+                let size = self.array_size(GlslArraySize::Sized(size), at)?;
+                handle_ty = self.insert_type(TypeInner::BindingArray {
+                    base: handle_ty,
+                    size,
+                });
+            }
             _ => {
                 return Err(unsupported(
                     "runtime-sized arrays and arrays of arrays of opaque types",
@@ -835,10 +843,10 @@ impl<'a> Lowerer<'a> {
             [size] => {
                 let size = match size {
                     GlslArraySize::Sized(_) => self.array_size(size, at)?,
-                    GlslArraySize::Unsized => match self.implicit_sizes.get(&symbol) {
-                        Some(&size) => self.array_size(GlslArraySize::Sized(size), at)?,
-                        None => crate::ArraySize::Dynamic,
-                    },
+                    GlslArraySize::Unsized => {
+                        let size = self.implicit_sizes.get(&symbol).copied().unwrap_or(1);
+                        self.array_size(GlslArraySize::Sized(size), at)?
+                    }
                     GlslArraySize::Specialized => self.array_size(size, at)?,
                 };
                 ty = self.insert_type(TypeInner::BindingArray { base: ty, size });

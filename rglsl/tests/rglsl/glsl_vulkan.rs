@@ -2310,3 +2310,37 @@ fn function_variables_have_no_explicit_layout() {
         assert!(!laid_out.contains(&pointer.operands[1].unwrap_id_ref()));
     }
 }
+
+#[test]
+fn unsized_arrays_of_opaque_types_match_glslang() {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+        layout(binding = 0) uniform sampler2D s[];
+        layout(binding = 1) uniform texture2D t[];
+        layout(binding = 2) uniform sampler sm;
+        layout(binding = 3) uniform sampler2D unused[];
+        layout(binding = 4) buffer B { uint n; } b[];
+        layout(location = 0) out vec4 o;
+        void main() {
+            o = texture(s[2], vec2(0.5)) + texture(sampler2D(t[1], sm), vec2(0.5));
+        }",
+    );
+    assert_eq!(array_lengths(&module), [1, 1, 2, 3]);
+    assert!(instructions(&module, Op::TypeRuntimeArray).is_empty());
+    assert!(!has_capability(
+        &module,
+        spirv::Capability::RuntimeDescriptorArray
+    ));
+
+    let error = parse(
+        ShaderStage::Fragment,
+        "#version 450
+        layout(binding = 0) uniform sampler2D s[];
+        layout(location = 0) flat in int i;
+        layout(location = 0) out vec4 o;
+        void main() { o = texture(s[i], vec2(0.5)); }",
+    )
+    .unwrap_err();
+    assert!(error.contains("non-constant"), "{error}");
+}
