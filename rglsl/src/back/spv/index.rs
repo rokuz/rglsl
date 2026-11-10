@@ -331,12 +331,10 @@ impl BlockContext<'_> {
     ) -> Result<MaybeKnown<u32>, Error> {
         match self.write_sequence_length(sequence, block)? {
             MaybeKnown::Known(known_length) => {
-                // We should have thrown out all attempts to subscript zero-length
-                // sequences during validation, so the following subtraction should never
-                // underflow.
-                assert!(known_length > 0);
-                // Compute the max index from the length now.
-                Ok(MaybeKnown::Known(known_length - 1))
+                let max_index = known_length
+                    .checked_sub(1)
+                    .ok_or(Error::Validation("indexing a zero-length sequence"))?;
+                Ok(MaybeKnown::Known(max_index))
             }
             MaybeKnown::Computed(length_id) => {
                 // Emit code to compute the max index from the length.

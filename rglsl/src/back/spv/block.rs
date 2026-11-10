@@ -17,13 +17,15 @@ use crate::{
     proc::index::GuardedIndex, Statement,
 };
 
-fn get_dimension(type_inner: &crate::TypeInner) -> Dimension {
+const fn get_dimension(type_inner: &crate::TypeInner) -> Result<Dimension, Error> {
     match *type_inner {
-        crate::TypeInner::Scalar(_) => Dimension::Scalar,
-        crate::TypeInner::Vector { .. } => Dimension::Vector,
-        crate::TypeInner::Matrix { .. } => Dimension::Matrix,
-        crate::TypeInner::CooperativeMatrix { .. } => Dimension::CooperativeMatrix,
-        _ => unreachable!(),
+        crate::TypeInner::Scalar(_) => Ok(Dimension::Scalar),
+        crate::TypeInner::Vector { .. } => Ok(Dimension::Vector),
+        crate::TypeInner::Matrix { .. } => Ok(Dimension::Matrix),
+        crate::TypeInner::CooperativeMatrix { .. } => Ok(Dimension::CooperativeMatrix),
+        _ => Err(Error::Validation(
+            "binary operand is not a scalar, vector or matrix",
+        )),
     }
 }
 
@@ -102,6 +104,7 @@ pub(super) enum ExpressionPointer {
     /// undefined behavior.
     Conditional {
         condition: Word,
+        pointer_id: Word,
         access: Instruction,
     },
 }
@@ -698,17 +701,19 @@ impl BlockContext<'_> {
             ExpressionPointer::Ready { pointer_id } => {
                 load_mat_from_struct(pointer_id, &mut self.writer.id_gen, block)
             }
-            ExpressionPointer::Conditional { condition, access } => self
-                .write_conditional_indexed_load(
-                    matrix_type_id,
-                    condition,
-                    block,
-                    |id_gen, block| {
-                        let pointer_id = access.result_id.unwrap();
-                        block.body.push(access);
-                        load_mat_from_struct(pointer_id, id_gen, block)
-                    },
-                ),
+            ExpressionPointer::Conditional {
+                condition,
+                pointer_id,
+                access,
+            } => self.write_conditional_indexed_load(
+                matrix_type_id,
+                condition,
+                block,
+                |id_gen, block| {
+                    block.body.push(access);
+                    load_mat_from_struct(pointer_id, id_gen, block)
+                },
+            ),
         };
 
         Ok(Some(result_id))
@@ -1099,8 +1104,8 @@ impl BlockContext<'_> {
                     let left_ty_inner = self.fun_info[left].ty.inner_with(&self.ir_module.types);
                     let right_ty_inner = self.fun_info[right].ty.inner_with(&self.ir_module.types);
 
-                    let left_dimension = get_dimension(left_ty_inner);
-                    let right_dimension = get_dimension(right_ty_inner);
+                    let left_dimension = get_dimension(left_ty_inner)?;
+                    let right_dimension = get_dimension(right_ty_inner)?;
 
                     let mut reverse_operands = false;
 
@@ -1134,7 +1139,11 @@ impl BlockContext<'_> {
                                 return Ok(());
                             }
                             crate::TypeInner::CooperativeMatrix { .. } => spirv::Op::FAdd,
-                            _ => unimplemented!(),
+                            _ => {
+                                return Err(Error::Validation(
+                                    "invalid operand type for a binary operator",
+                                ))
+                            }
                         },
                         crate::BinaryOperator::Subtract => match *left_ty_inner {
                             crate::TypeInner::Scalar(scalar)
@@ -1164,7 +1173,11 @@ impl BlockContext<'_> {
                                 return Ok(());
                             }
                             crate::TypeInner::CooperativeMatrix { .. } => spirv::Op::FSub,
-                            _ => unimplemented!(),
+                            _ => {
+                                return Err(Error::Validation(
+                                    "invalid operand type for a binary operator",
+                                ))
+                            }
                         },
                         crate::BinaryOperator::Multiply => {
                             match (left_dimension, right_dimension) {
@@ -1176,7 +1189,7 @@ impl BlockContext<'_> {
                                         right_id,
                                         left_id,
                                         right_ty_inner,
-                                    );
+                                    )?;
 
                                     self.cached.set(expr_handle, id)?;
                                     return Ok(());
@@ -1189,7 +1202,7 @@ impl BlockContext<'_> {
                                         left_id,
                                         right_id,
                                         left_ty_inner,
-                                    );
+                                    )?;
 
                                     self.cached.set(expr_handle, id)?;
                                     return Ok(());
@@ -1225,7 +1238,9 @@ impl BlockContext<'_> {
                                 //Note: technically can do `FMul` but IR doesn't have matrix per-component multiplication
                                 | (Dimension::CooperativeMatrix, _)
                                 | (_, Dimension::CooperativeMatrix) => {
-                                    unimplemented!()
+                                    return Err(Error::FeatureNotImplemented(
+                                        "component-wise multiplication of cooperative matrices",
+                                    ))
                                 }
                             }
                         }
@@ -1233,7 +1248,11 @@ impl BlockContext<'_> {
                             Some(crate::ScalarKind::Sint) => spirv::Op::SDiv,
                             Some(crate::ScalarKind::Uint) => spirv::Op::UDiv,
                             Some(crate::ScalarKind::Float) => spirv::Op::FDiv,
-                            _ => unimplemented!(),
+                            _ => {
+                                return Err(Error::Validation(
+                                    "invalid operand type for a binary operator",
+                                ))
+                            }
                         },
                         crate::BinaryOperator::Modulo => match left_ty_inner.scalar_kind() {
                             Some(crate::ScalarKind::Float) => spirv::Op::FRem,
@@ -1244,13 +1263,23 @@ impl BlockContext<'_> {
                                 // negative operand is poison in the Vulkan SPIR-V
                                 // environment without `VK_KHR_maintenance8`. So this raw
                                 // path is never reached for signed modulo.
-                                unreachable!("signed modulo must be lowered via the wrapped path")
+                                return Err(Error::Validation(
+                                    "signed modulo must be lowered via the wrapped path",
+                                ));
                             }
                             Some(crate::ScalarKind::Uint) => {
-                                assert!(!self.writer.emit_int_div_checks);
+                                if self.writer.emit_int_div_checks {
+                                    return Err(Error::Validation(
+                                        "checked unsigned modulo must be lowered via the wrapped path",
+                                    ));
+                                }
                                 spirv::Op::UMod
                             }
-                            _ => unimplemented!(),
+                            _ => {
+                                return Err(Error::Validation(
+                                    "invalid operand type for a binary operator",
+                                ))
+                            }
                         },
                         crate::BinaryOperator::Equal => match left_ty_inner.scalar_kind() {
                             Some(crate::ScalarKind::Sint | crate::ScalarKind::Uint) => {
@@ -1258,7 +1287,11 @@ impl BlockContext<'_> {
                             }
                             Some(crate::ScalarKind::Float) => spirv::Op::FOrdEqual,
                             Some(crate::ScalarKind::Bool) => spirv::Op::LogicalEqual,
-                            _ => unimplemented!(),
+                            _ => {
+                                return Err(Error::Validation(
+                                    "invalid operand type for a binary operator",
+                                ))
+                            }
                         },
                         crate::BinaryOperator::NotEqual => match left_ty_inner.scalar_kind() {
                             Some(crate::ScalarKind::Sint | crate::ScalarKind::Uint) => {
@@ -1266,31 +1299,51 @@ impl BlockContext<'_> {
                             }
                             Some(crate::ScalarKind::Float) => spirv::Op::FOrdNotEqual,
                             Some(crate::ScalarKind::Bool) => spirv::Op::LogicalNotEqual,
-                            _ => unimplemented!(),
+                            _ => {
+                                return Err(Error::Validation(
+                                    "invalid operand type for a binary operator",
+                                ))
+                            }
                         },
                         crate::BinaryOperator::Less => match left_ty_inner.scalar_kind() {
                             Some(crate::ScalarKind::Sint) => spirv::Op::SLessThan,
                             Some(crate::ScalarKind::Uint) => spirv::Op::ULessThan,
                             Some(crate::ScalarKind::Float) => spirv::Op::FOrdLessThan,
-                            _ => unimplemented!(),
+                            _ => {
+                                return Err(Error::Validation(
+                                    "invalid operand type for a binary operator",
+                                ))
+                            }
                         },
                         crate::BinaryOperator::LessEqual => match left_ty_inner.scalar_kind() {
                             Some(crate::ScalarKind::Sint) => spirv::Op::SLessThanEqual,
                             Some(crate::ScalarKind::Uint) => spirv::Op::ULessThanEqual,
                             Some(crate::ScalarKind::Float) => spirv::Op::FOrdLessThanEqual,
-                            _ => unimplemented!(),
+                            _ => {
+                                return Err(Error::Validation(
+                                    "invalid operand type for a binary operator",
+                                ))
+                            }
                         },
                         crate::BinaryOperator::Greater => match left_ty_inner.scalar_kind() {
                             Some(crate::ScalarKind::Sint) => spirv::Op::SGreaterThan,
                             Some(crate::ScalarKind::Uint) => spirv::Op::UGreaterThan,
                             Some(crate::ScalarKind::Float) => spirv::Op::FOrdGreaterThan,
-                            _ => unimplemented!(),
+                            _ => {
+                                return Err(Error::Validation(
+                                    "invalid operand type for a binary operator",
+                                ))
+                            }
                         },
                         crate::BinaryOperator::GreaterEqual => match left_ty_inner.scalar_kind() {
                             Some(crate::ScalarKind::Sint) => spirv::Op::SGreaterThanEqual,
                             Some(crate::ScalarKind::Uint) => spirv::Op::UGreaterThanEqual,
                             Some(crate::ScalarKind::Float) => spirv::Op::FOrdGreaterThanEqual,
-                            _ => unimplemented!(),
+                            _ => {
+                                return Err(Error::Validation(
+                                    "invalid operand type for a binary operator",
+                                ))
+                            }
                         },
                         crate::BinaryOperator::And => match left_ty_inner.scalar_kind() {
                             Some(crate::ScalarKind::Bool) => spirv::Op::LogicalAnd,
@@ -1307,7 +1360,11 @@ impl BlockContext<'_> {
                         crate::BinaryOperator::ShiftRight => match left_ty_inner.scalar_kind() {
                             Some(crate::ScalarKind::Sint) => spirv::Op::ShiftRightArithmetic,
                             Some(crate::ScalarKind::Uint) => spirv::Op::ShiftRightLogical,
-                            _ => unimplemented!(),
+                            _ => {
+                                return Err(Error::Validation(
+                                    "invalid operand type for a binary operator",
+                                ))
+                            }
                         },
                     };
 
@@ -1367,35 +1424,31 @@ impl BlockContext<'_> {
                                     arg0_id,
                                 ))
                             }
-                            other => unimplemented!("Unexpected abs({:?})", other),
+                            _ => return Err(Error::Validation("abs of a non-numeric value")),
                         }
                     }
                     Mf::Min => MathOp::Ext(match arg_scalar_kind {
                         Some(crate::ScalarKind::Float) => spirv::GlslStd450Op::FMin,
                         Some(crate::ScalarKind::Sint) => spirv::GlslStd450Op::SMin,
                         Some(crate::ScalarKind::Uint) => spirv::GlslStd450Op::UMin,
-                        other => unimplemented!("Unexpected min({:?})", other),
+                        _ => return Err(Error::Validation("min of a non-numeric value")),
                     }),
                     Mf::Max => MathOp::Ext(match arg_scalar_kind {
                         Some(crate::ScalarKind::Float) => spirv::GlslStd450Op::FMax,
                         Some(crate::ScalarKind::Sint) => spirv::GlslStd450Op::SMax,
                         Some(crate::ScalarKind::Uint) => spirv::GlslStd450Op::UMax,
-                        other => unimplemented!("Unexpected max({:?})", other),
+                        _ => return Err(Error::Validation("max of a non-numeric value")),
                     }),
                     Mf::Clamp => match arg_scalar_kind {
                         // Clamp is undefined if min > max. In practice this means it can use a median-of-three
                         // instruction to determine the value. This is fine according to the WGSL spec for float
                         // clamp, but integer clamp _must_ use min-max. As such we write out min/max.
                         Some(crate::ScalarKind::Float) => MathOp::Ext(spirv::GlslStd450Op::FClamp),
-                        Some(_) => {
-                            let (min_op, max_op) = match arg_scalar_kind {
-                                Some(crate::ScalarKind::Sint) => {
-                                    (spirv::GlslStd450Op::SMin, spirv::GlslStd450Op::SMax)
-                                }
-                                Some(crate::ScalarKind::Uint) => {
-                                    (spirv::GlslStd450Op::UMin, spirv::GlslStd450Op::UMax)
-                                }
-                                _ => unreachable!(),
+                        Some(kind @ (crate::ScalarKind::Sint | crate::ScalarKind::Uint)) => {
+                            let (min_op, max_op) = if kind == crate::ScalarKind::Sint {
+                                (spirv::GlslStd450Op::SMin, spirv::GlslStd450Op::SMax)
+                            } else {
+                                (spirv::GlslStd450Op::UMin, spirv::GlslStd450Op::UMax)
                             };
 
                             let max_id = self.gen_id();
@@ -1415,13 +1468,17 @@ impl BlockContext<'_> {
                                 &[max_id, arg2_id],
                             ))
                         }
-                        other => unimplemented!("Unexpected max({:?})", other),
+                        _ => return Err(Error::Validation("clamp of a non-numeric value")),
                     },
                     Mf::Saturate => {
                         let (maybe_size, scalar) = match *arg_ty {
                             crate::TypeInner::Vector { size, scalar } => (Some(size), scalar),
                             crate::TypeInner::Scalar(scalar) => (None, scalar),
-                            ref other => unimplemented!("Unexpected saturate({:?})", other),
+                            _ => {
+                                return Err(Error::Validation(
+                                    "saturate of a non-scalar, non-vector value",
+                                ))
+                            }
                         };
                         let scalar = crate::Scalar::float(scalar.width);
                         let mut arg1_id = self.writer.get_constant_scalar_with(0, scalar)?;
@@ -1511,11 +1568,12 @@ impl BlockContext<'_> {
                             self.cached.set(expr_handle, id)?;
                             return Ok(());
                         }
-                        _ => unreachable!(
-                            "Correct TypeInner for dot product should be already validated"
-                        ),
+                        _ => {
+                            return Err(Error::Validation("dot product of an invalid operand type"))
+                        }
                     },
                     fun @ (Mf::Dot4I8Packed | Mf::Dot4U8Packed) => {
+                        let signed = matches!(fun, Mf::Dot4I8Packed);
                         if self
                             .writer
                             .require_all(&[
@@ -1532,10 +1590,10 @@ impl BlockContext<'_> {
                                 self.writer.use_extension("SPV_KHR_integer_dot_product");
                             }
 
-                            let op = match fun {
-                                Mf::Dot4I8Packed => spirv::Op::SDot,
-                                Mf::Dot4U8Packed => spirv::Op::UDot,
-                                _ => unreachable!(),
+                            let op = if signed {
+                                spirv::Op::SDot
+                            } else {
+                                spirv::Op::UDot
                             };
 
                             block.body.push(Instruction::ternary(
@@ -1548,30 +1606,28 @@ impl BlockContext<'_> {
                             ));
                         } else {
                             // Fall back to a polyfill since `PackedVectorFormat4x8Bit` is not available.
-                            let (extract_op, arg0_id, arg1_id) = match fun {
-                                Mf::Dot4U8Packed => (spirv::Op::BitFieldUExtract, arg0_id, arg1_id),
-                                Mf::Dot4I8Packed => {
-                                    // Convert both packed arguments to signed integers so that we can apply the
-                                    // `BitFieldSExtract` operation on them in `write_dot_product` below.
-                                    let new_arg0_id = self.gen_id();
-                                    block.body.push(Instruction::unary(
-                                        spirv::Op::Bitcast,
-                                        result_type_id,
-                                        new_arg0_id,
-                                        arg0_id,
-                                    ));
+                            let (extract_op, arg0_id, arg1_id) = if signed {
+                                // Convert both packed arguments to signed integers so that we can apply the
+                                // `BitFieldSExtract` operation on them in `write_dot_product` below.
+                                let new_arg0_id = self.gen_id();
+                                block.body.push(Instruction::unary(
+                                    spirv::Op::Bitcast,
+                                    result_type_id,
+                                    new_arg0_id,
+                                    arg0_id,
+                                ));
 
-                                    let new_arg1_id = self.gen_id();
-                                    block.body.push(Instruction::unary(
-                                        spirv::Op::Bitcast,
-                                        result_type_id,
-                                        new_arg1_id,
-                                        arg1_id,
-                                    ));
+                                let new_arg1_id = self.gen_id();
+                                block.body.push(Instruction::unary(
+                                    spirv::Op::Bitcast,
+                                    result_type_id,
+                                    new_arg1_id,
+                                    arg1_id,
+                                ));
 
-                                    (spirv::Op::BitFieldSExtract, new_arg0_id, new_arg1_id)
-                                }
-                                _ => unreachable!(),
+                                (spirv::Op::BitFieldSExtract, new_arg0_id, new_arg1_id)
+                            } else {
+                                (spirv::Op::BitFieldUExtract, arg0_id, arg1_id)
                             };
 
                             let eight = self.writer.get_constant_scalar(crate::Literal::U32(8));
@@ -1630,11 +1686,13 @@ impl BlockContext<'_> {
                     Mf::Sign => MathOp::Ext(match arg_scalar_kind {
                         Some(crate::ScalarKind::Float) => spirv::GlslStd450Op::FSign,
                         Some(crate::ScalarKind::Sint) => spirv::GlslStd450Op::SSign,
-                        other => unimplemented!("Unexpected sign({:?})", other),
+                        _ => return Err(Error::Validation("sign of a non-signed value")),
                     }),
                     Mf::Fma => MathOp::Ext(spirv::GlslStd450Op::Fma),
                     Mf::Mix => {
-                        let selector = arg2.unwrap();
+                        let Some(selector) = arg2 else {
+                            return Err(Error::Validation("mix has no selector"));
+                        };
                         let selector_ty =
                             self.fun_info[selector].ty.inner_with(&self.ir_module.types);
                         match (arg_ty, selector_ty) {
@@ -1708,7 +1766,11 @@ impl BlockContext<'_> {
                             crate::TypeInner::Scalar(scalar) => self
                                 .writer
                                 .get_constant_scalar_with(scalar.width * 8, scalar)?,
-                            _ => unreachable!(),
+                            _ => {
+                                return Err(Error::Validation(
+                                    "countTrailingZeros of a non-integer value",
+                                ))
+                            }
                         };
 
                         let lsb_id = self.gen_id();
@@ -1753,11 +1815,17 @@ impl BlockContext<'_> {
                                     .get_constant_scalar_with(scalar.width * 8 - 1, scalar)?,
                                 scalar.width,
                             ),
-                            _ => unreachable!(),
+                            _ => {
+                                return Err(Error::Validation(
+                                    "countLeadingZeros of a non-integer value",
+                                ))
+                            }
                         };
 
                         if width != 4 {
-                            unreachable!("This is validated out until a polyfill is implemented. https://github.com/gfx-rs/wgpu/issues/5276");
+                            return Err(Error::FeatureNotImplemented(
+                                "countLeadingZeros of a non-32-bit integer",
+                            ));
                         };
 
                         let msb_id = self.gen_id();
@@ -1791,7 +1859,11 @@ impl BlockContext<'_> {
                         let op = match arg_scalar_kind {
                             Some(crate::ScalarKind::Uint) => spirv::Op::BitFieldUExtract,
                             Some(crate::ScalarKind::Sint) => spirv::Op::BitFieldSExtract,
-                            other => unimplemented!("Unexpected sign({:?})", other),
+                            _ => {
+                                return Err(Error::Validation(
+                                    "bitfieldExtract of a non-integer value",
+                                ))
+                            }
                         };
 
                         // The behavior of ExtractBits is undefined when offset + count > bit_width. We need
@@ -1808,7 +1880,10 @@ impl BlockContext<'_> {
                         //
                         // bitfieldExtract(x, o, c)
 
-                        let bit_width = arg_ty.scalar_width().unwrap() * 8;
+                        let Some(scalar_width) = arg_ty.scalar_width() else {
+                            return Err(Error::Validation("bit field operand is not numeric"));
+                        };
+                        let bit_width = scalar_width * 8;
                         let width_constant = self
                             .writer
                             .get_constant_scalar(crate::Literal::U32(bit_width as u32));
@@ -1858,7 +1933,10 @@ impl BlockContext<'_> {
                     Mf::InsertBits => {
                         // The behavior of InsertBits has the same undefined behavior as ExtractBits.
 
-                        let bit_width = arg_ty.scalar_width().unwrap() * 8;
+                        let Some(scalar_width) = arg_ty.scalar_width() else {
+                            return Err(Error::Validation("bit field operand is not numeric"));
+                        };
+                        let bit_width = scalar_width * 8;
                         let width_constant = self
                             .writer
                             .get_constant_scalar(crate::Literal::U32(bit_width as u32));
@@ -2261,25 +2339,27 @@ impl BlockContext<'_> {
                         ));
                         id
                     }
-                    ExpressionPointer::Conditional { condition, access } => self
-                        .write_conditional_indexed_load(
-                            result_type_id,
-                            condition,
-                            block,
-                            |id_gen, block| {
-                                let pointer_id = access.result_id.unwrap();
-                                block.body.push(access);
-                                let id = id_gen.next();
-                                block.body.push(Instruction::coop_load(
-                                    result_type_id,
-                                    id,
-                                    pointer_id,
-                                    layout_id,
-                                    stride_id,
-                                ));
-                                id
-                            },
-                        ),
+                    ExpressionPointer::Conditional {
+                        condition,
+                        pointer_id,
+                        access,
+                    } => self.write_conditional_indexed_load(
+                        result_type_id,
+                        condition,
+                        block,
+                        |id_gen, block| {
+                            block.body.push(access);
+                            let id = id_gen.next();
+                            block.body.push(Instruction::coop_load(
+                                result_type_id,
+                                id,
+                                pointer_id,
+                                layout_id,
+                                stride_id,
+                            ));
+                            id
+                        },
+                    ),
                 }
             }
             crate::Expression::CooperativeMultiplyAdd { a, b, c } => {
@@ -2537,7 +2617,11 @@ impl BlockContext<'_> {
                 let op = match src_scalar.kind {
                     Sk::Sint | Sk::Uint => spirv::Op::INotEqual,
                     Sk::Float => spirv::Op::FUnordNotEqual,
-                    Sk::Bool | Sk::AbstractInt | Sk::AbstractFloat => unreachable!(),
+                    Sk::Bool | Sk::AbstractInt | Sk::AbstractFloat => {
+                        return Err(Error::Validation(
+                            "conversion to bool from a non-numeric value",
+                        ))
+                    }
                 };
                 let zero_scalar_id = self.writer.get_constant_scalar_with(0, src_scalar)?;
                 let zero_id = match src_size {
@@ -2636,7 +2720,11 @@ impl BlockContext<'_> {
                 let op = match dst_scalar.kind {
                     crate::ScalarKind::Sint => spirv::Op::ConvertFToS,
                     crate::ScalarKind::Uint => spirv::Op::ConvertFToU,
-                    _ => unreachable!(),
+                    _ => {
+                        return Err(Error::Validation(
+                            "float to integer conversion to a non-integer type",
+                        ))
+                    }
                 };
                 Cast::Unary(op, clamp_id)
             }
@@ -2721,9 +2809,11 @@ impl BlockContext<'_> {
                             self.writer.std140_compat_uniform_types[&base].type_id,
                             map_storage_class(space),
                         ),
-                        _ => unreachable!(
-                            "`UseStd140CompatType` must only be used with uniform pointer types"
-                        ),
+                        _ => {
+                            return Err(Error::Validation(
+                                "std140 access type adjustment of a non-uniform pointer",
+                            ))
+                        }
                     }
                 }
             }
@@ -2814,7 +2904,11 @@ impl BlockContext<'_> {
                             base,
                         ) =>
                         {
-                            assert!(prev_decomposed_matrix_index.is_none());
+                            if prev_decomposed_matrix_index.is_some() {
+                                return Err(Error::Validation(
+                                    "nested decomposed matrix column access",
+                                ));
+                            }
                             prev_decomposed_matrix_index = Some(index);
                         }
                         _ => {
@@ -2868,7 +2962,7 @@ impl BlockContext<'_> {
                 {
                     break self.cached.get(expr_handle)?;
                 }
-                ref other => unimplemented!("Unexpected pointer expression {:?}", other),
+                _ => return Err(Error::Validation("unexpected pointer expression")),
             }
         };
 
@@ -2901,7 +2995,11 @@ impl BlockContext<'_> {
             // the zero value (for loads). Otherwise, we can emit the access
             // ourselves, and just hand them the id of the pointer.
             match accumulated_checks {
-                Some(condition) => ExpressionPointer::Conditional { condition, access },
+                Some(condition) => ExpressionPointer::Conditional {
+                    condition,
+                    pointer_id,
+                    access,
+                },
                 None => {
                     block.body.push(access);
                     ExpressionPointer::Ready { pointer_id }
@@ -3095,7 +3193,11 @@ impl BlockContext<'_> {
                     block.body.push(instruction);
                     id
                 }
-                ExpressionPointer::Conditional { condition, access } => {
+                ExpressionPointer::Conditional {
+                    condition,
+                    pointer_id,
+                    access,
+                } => {
                     //TODO: support atomics?
                     self.write_conditional_indexed_load(
                         load_type_id,
@@ -3103,7 +3205,6 @@ impl BlockContext<'_> {
                         block,
                         move |id_gen, block| {
                             // The in-bounds path. Perform the access and the load.
-                            let pointer_id = access.result_id.unwrap();
                             let value_id = id_gen.next();
                             block.body.push(access);
                             block.body.push(Instruction::load(
@@ -3338,13 +3439,17 @@ impl BlockContext<'_> {
         vector_id: Word,
         scalar_id: Word,
         vector: &crate::TypeInner,
-    ) {
+    ) -> Result<(), Error> {
         let (size, kind) = match *vector {
             crate::TypeInner::Vector {
                 size,
                 scalar: crate::Scalar { kind, .. },
             } => (size, kind),
-            _ => unreachable!(),
+            _ => {
+                return Err(Error::Validation(
+                    "vector-scalar multiplication of a non-vector",
+                ))
+            }
         };
 
         let (op, operand_id) = match kind {
@@ -3369,6 +3474,7 @@ impl BlockContext<'_> {
             vector_id,
             operand_id,
         ));
+        Ok(())
     }
 
     /// Build the instructions for the arithmetic expression of a dot product
@@ -3896,7 +4002,9 @@ impl BlockContext<'_> {
                         }
                     }
 
-                    let default_id = default_id.unwrap();
+                    let Some(default_id) = default_id else {
+                        return Err(Error::Validation("switch has no default case"));
+                    };
 
                     self.function.consume(
                         block,
@@ -4020,15 +4128,18 @@ impl BlockContext<'_> {
                     block = Block::new(merge_id);
                 }
                 Statement::Break => {
-                    self.function
-                        .consume(block, Instruction::branch(loop_context.break_id.unwrap()));
+                    let Some(break_id) = loop_context.break_id else {
+                        return Err(Error::Validation("break outside of a loop or switch"));
+                    };
+                    self.function.consume(block, Instruction::branch(break_id));
                     return Ok(BlockExitDisposition::Discarded);
                 }
                 Statement::Continue => {
-                    self.function.consume(
-                        block,
-                        Instruction::branch(loop_context.continuing_id.unwrap()),
-                    );
+                    let Some(continuing_id) = loop_context.continuing_id else {
+                        return Err(Error::Validation("continue outside of a loop"));
+                    };
+                    self.function
+                        .consume(block, Instruction::branch(continuing_id));
                     return Ok(BlockExitDisposition::Discarded);
                 }
                 Statement::Return { value: Some(value) } => {
@@ -4036,12 +4147,19 @@ impl BlockContext<'_> {
                     let instruction = match self.function.entry_point_context {
                         // If this is an entry point, and we need to return anything,
                         // let's instead store the output variables and return `void`.
-                        Some(ref context) => self.writer.write_entry_point_return(
-                            value_id,
-                            self.ir_function.result.as_ref().unwrap(),
-                            &context.results,
-                            &mut block.body,
-                        )?,
+                        Some(ref context) => {
+                            let Some(ref result) = self.ir_function.result else {
+                                return Err(Error::Validation(
+                                    "entry point returns a value but has no result",
+                                ));
+                            };
+                            self.writer.write_entry_point_return(
+                                value_id,
+                                result,
+                                &context.results,
+                                &mut block.body,
+                            )?
+                        }
                         None => Instruction::return_value(value_id),
                     };
                     self.function.consume(block, instruction);
@@ -4129,12 +4247,15 @@ impl BlockContext<'_> {
                             };
                             block.body.push(instruction);
                         }
-                        ExpressionPointer::Conditional { condition, access } => {
+                        ExpressionPointer::Conditional {
+                            condition,
+                            pointer_id,
+                            access,
+                        } => {
                             let mut selection = Selection::start(&mut block, ());
                             selection.if_true(self, condition, ());
 
                             // The in-bounds path. Perform the access and the store.
-                            let pointer_id = access.result_id.unwrap();
                             selection.block().body.push(access);
                             selection
                                 .block()
@@ -4244,7 +4365,7 @@ impl BlockContext<'_> {
                         .ty
                         .inner_with(&self.ir_module.types)
                         .pointer_space()
-                        .unwrap();
+                        .ok_or(Error::Validation("atomic operand is not a pointer"))?;
                     let default_semantics = self.glsl_atomic_semantics(pointer);
                     let (scope_constant_id, semantics_id, unequal_semantics_id) = match order {
                         Some(order) => {
@@ -4283,7 +4404,11 @@ impl BlockContext<'_> {
                                     spirv::Op::AtomicIAdd
                                 }
                                 crate::ScalarKind::Float => spirv::Op::AtomicFAddEXT,
-                                _ => unimplemented!(),
+                                _ => {
+                                    return Err(Error::Validation(
+                                        "atomic operation on an unsupported scalar type",
+                                    ))
+                                }
                             };
                             Instruction::atomic_binary(
                                 spirv_op,
@@ -4312,7 +4437,11 @@ impl BlockContext<'_> {
                                     ));
                                     (spirv::Op::AtomicFAddEXT, neg_result_id)
                                 }
-                                _ => unimplemented!(),
+                                _ => {
+                                    return Err(Error::Validation(
+                                        "atomic operation on an unsupported scalar type",
+                                    ))
+                                }
                             };
                             Instruction::atomic_binary(
                                 spirv_op,
@@ -4329,7 +4458,11 @@ impl BlockContext<'_> {
                                 crate::ScalarKind::Sint | crate::ScalarKind::Uint => {
                                     spirv::Op::AtomicAnd
                                 }
-                                _ => unimplemented!(),
+                                _ => {
+                                    return Err(Error::Validation(
+                                        "atomic operation on an unsupported scalar type",
+                                    ))
+                                }
                             };
                             Instruction::atomic_binary(
                                 spirv_op,
@@ -4346,7 +4479,11 @@ impl BlockContext<'_> {
                                 crate::ScalarKind::Sint | crate::ScalarKind::Uint => {
                                     spirv::Op::AtomicOr
                                 }
-                                _ => unimplemented!(),
+                                _ => {
+                                    return Err(Error::Validation(
+                                        "atomic operation on an unsupported scalar type",
+                                    ))
+                                }
                             };
                             Instruction::atomic_binary(
                                 spirv_op,
@@ -4363,7 +4500,11 @@ impl BlockContext<'_> {
                                 crate::ScalarKind::Sint | crate::ScalarKind::Uint => {
                                     spirv::Op::AtomicXor
                                 }
-                                _ => unimplemented!(),
+                                _ => {
+                                    return Err(Error::Validation(
+                                        "atomic operation on an unsupported scalar type",
+                                    ))
+                                }
                             };
                             Instruction::atomic_binary(
                                 spirv_op,
@@ -4379,7 +4520,11 @@ impl BlockContext<'_> {
                             let spirv_op = match scalar.kind {
                                 crate::ScalarKind::Sint => spirv::Op::AtomicSMin,
                                 crate::ScalarKind::Uint => spirv::Op::AtomicUMin,
-                                _ => unimplemented!(),
+                                _ => {
+                                    return Err(Error::Validation(
+                                        "atomic operation on an unsupported scalar type",
+                                    ))
+                                }
                             };
                             Instruction::atomic_binary(
                                 spirv_op,
@@ -4395,7 +4540,11 @@ impl BlockContext<'_> {
                             let spirv_op = match scalar.kind {
                                 crate::ScalarKind::Sint => spirv::Op::AtomicSMax,
                                 crate::ScalarKind::Uint => spirv::Op::AtomicUMax,
-                                _ => unimplemented!(),
+                                _ => {
+                                    return Err(Error::Validation(
+                                        "atomic operation on an unsupported scalar type",
+                                    ))
+                                }
                             };
                             Instruction::atomic_binary(
                                 spirv_op,
@@ -4430,7 +4579,11 @@ impl BlockContext<'_> {
                                 crate::ScalarKind::Sint | crate::ScalarKind::Uint => {
                                     spirv::Op::IEqual
                                 }
-                                _ => unimplemented!(),
+                                _ => {
+                                    return Err(Error::Validation(
+                                        "atomic operation on an unsupported scalar type",
+                                    ))
+                                }
                             };
 
                             let mut cas_instr = Instruction::new(spirv::Op::AtomicCompareExchange);
@@ -4573,12 +4726,15 @@ impl BlockContext<'_> {
                                 target_id, pointer_id, layout_id, stride_id,
                             ));
                         }
-                        ExpressionPointer::Conditional { condition, access } => {
+                        ExpressionPointer::Conditional {
+                            condition,
+                            pointer_id,
+                            access,
+                        } => {
                             let mut selection = Selection::start(&mut block, ());
                             selection.if_true(self, condition, ());
 
                             // The in-bounds path. Perform the access and the store.
-                            let pointer_id = access.result_id.unwrap();
                             selection.block().body.push(access);
                             selection.block().body.push(Instruction::coop_store(
                                 target_id, pointer_id, layout_id, stride_id,
@@ -4613,12 +4769,11 @@ impl BlockContext<'_> {
                 preamble_id,
             } => {
                 let condition_id = self.cached.get(condition)?;
+                let Some(break_id) = loop_context.break_id else {
+                    return Err(Error::Validation("break-if outside of a loop"));
+                };
 
-                Instruction::branch_conditional(
-                    condition_id,
-                    loop_context.break_id.unwrap(),
-                    preamble_id,
-                )
+                Instruction::branch_conditional(condition_id, break_id, preamble_id)
             }
         };
 
