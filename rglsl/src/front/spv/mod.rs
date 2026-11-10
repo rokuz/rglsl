@@ -1649,6 +1649,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                 | S::SubgroupBallot { .. }
                 | S::SubgroupCollectiveOperation { .. }
                 | S::SubgroupGather { .. }
+                | S::SubgroupFunction { .. }
                 | S::RayPipelineFunction(..)
                 | S::DebugPrintf { .. }
                 | S::Abort { .. }

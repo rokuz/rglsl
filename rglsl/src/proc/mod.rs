@@ -7,6 +7,7 @@ mod emitter;
 pub mod index;
 mod layouter;
 mod overloads;
+mod subgroup;
 mod terminator;
 mod type_methods;
 mod typifier;

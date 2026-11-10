@@ -413,6 +413,16 @@ impl<'a> FunctionLowerer<'_, 'a> {
             return Ok(Chain::Place(Place::pointer(pointer, false)));
         }
         let global = self.lw.global_ref(symbol, at)?;
+        if let GlobalRef::Variable(handle) = global {
+            if let Some(crate::Binding::BuiltIn(crate::BuiltIn::ShaderBallot(
+                crate::ShaderBallot::Mask(_),
+            ))) = self.lw.module.global_variables[handle].io
+            {
+                let pointer = self.add(Expression::GlobalVariable(handle), at)?;
+                let mask = self.add(Expression::Load { pointer }, at)?;
+                return Ok(Chain::Value(self.ballot_to_u64(mask, at)?));
+            }
+        }
         let handle_space = matches!(global, GlobalRef::Variable(handle)
             if self.lw.module.global_variables[handle].space == AddressSpace::Handle);
         let expression = self.lw.global_expression(global);

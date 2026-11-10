@@ -1253,30 +1253,30 @@ impl FunctionInfo {
                 }
                 S::SubgroupCollectiveOperation {
                     op: _,
-                    collective_op: _,
+                    ref collective_op,
                     argument,
                     result: _,
                 } => {
+                    if let Some(ballot) = collective_op.partition() {
+                        let _ = self.add_ref(ballot);
+                    }
                     let _ = self.add_ref(argument);
                     FunctionUniformity::new()
                 }
                 S::SubgroupGather {
-                    mode,
+                    ref mode,
                     argument,
                     result: _,
                 } => {
                     let _ = self.add_ref(argument);
-                    match mode {
-                        crate::GatherMode::BroadcastFirst => {}
-                        crate::GatherMode::Broadcast(index)
-                        | crate::GatherMode::Shuffle(index)
-                        | crate::GatherMode::ShuffleDown(index)
-                        | crate::GatherMode::ShuffleUp(index)
-                        | crate::GatherMode::ShuffleXor(index)
-                        | crate::GatherMode::QuadBroadcast(index) => {
-                            let _ = self.add_ref(index);
-                        }
-                        crate::GatherMode::QuadSwap(_) => {}
+                    if let Some(index) = mode.index() {
+                        let _ = self.add_ref(index);
+                    }
+                    FunctionUniformity::new()
+                }
+                S::SubgroupFunction { ref fun, result: _ } => {
+                    for operand in fun.operands().into_iter().flatten() {
+                        let _ = self.add_ref(operand);
                     }
                     FunctionUniformity::new()
                 }

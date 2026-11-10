@@ -57,6 +57,7 @@ pub struct Options {
     /// locations are not taken into account, so they can overlap automatic
     /// ones.
     pub auto_map_locations: bool,
+    pub spirv_version: Option<(u8, u8)>,
 }
 
 impl From<ShaderStage> for Options {
@@ -66,6 +67,7 @@ impl From<ShaderStage> for Options {
             defines: FastHashMap::default(),
             auto_map_bindings: false,
             auto_map_locations: false,
+            spirv_version: None,
         }
     }
 }

@@ -435,6 +435,15 @@ impl Analyzer<'_> {
         {
             self.require_scope_extension(expression.span, name);
         }
+        if let Some(extension) = crate::builtins::subgroup::variable_extension(name) {
+            if self
+                .symbol(id)
+                .and_then(|symbol| symbol.variable())
+                .is_some_and(|variable| variable.origin == Origin::BuiltIn)
+            {
+                self.require_extension(expression.span, extension, name);
+            }
+        }
         let (constant, value) = match self.symbol(id).map(|symbol| &symbol.kind) {
             Some(SymbolKind::Struct(_) | SymbolKind::Reference(_)) => {
                 self.error(

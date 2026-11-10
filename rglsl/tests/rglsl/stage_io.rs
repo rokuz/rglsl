@@ -197,6 +197,7 @@ impl Builder {
             incoming_ray_payload: None,
             interface: self.interface,
             transform_feedback: false,
+            quad_control: rglsl::QuadControl::default(),
         });
         self.module
     }

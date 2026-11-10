@@ -89,6 +89,7 @@ pub fn compile_one(
     let options = glsl::Options {
         auto_map_bindings: auto_map,
         auto_map_locations: auto_map,
+        spirv_version: Some(lang_version),
         ..glsl::Options::from(stage)
     };
     let module = match frontend.parse(&options, &source) {

@@ -4703,6 +4703,9 @@ impl BlockContext<'_> {
                 } => {
                     self.write_subgroup_gather(mode, argument, result, &mut block)?;
                 }
+                Statement::SubgroupFunction { ref fun, result } => {
+                    self.write_subgroup_function(fun, result, &mut block)?;
+                }
                 Statement::CooperativeStore { target, ref data } => {
                     let target_id = self.cached.get(target)?;
                     let layout = if data.row_major {

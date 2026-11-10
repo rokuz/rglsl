@@ -1991,6 +1991,23 @@ impl Writer {
             self.write_execution_mode(function_id, spirv::ExecutionMode::Xfb)?;
         }
 
+        for (enabled, mode) in [
+            (
+                entry_point.quad_control.quad_derivatives,
+                spirv::ExecutionMode::QuadDerivativesKHR,
+            ),
+            (
+                entry_point.quad_control.require_full_quads,
+                spirv::ExecutionMode::RequireFullQuadsKHR,
+            ),
+        ] {
+            if enabled {
+                self.use_extension("SPV_KHR_quad_control");
+                self.require_any("quad control", &[spirv::Capability::QuadControlKHR])?;
+                self.write_execution_mode(function_id, mode)?;
+            }
+        }
+
         let exec_model = match entry_point.stage {
             crate::ShaderStage::Vertex => spirv::ExecutionModel::Vertex,
             crate::ShaderStage::Fragment => {
@@ -3731,6 +3748,28 @@ impl Writer {
                         )?;
                         BuiltIn::SubgroupLocalInvocationId
                     }
+                    Bi::SubgroupMask(mask) => {
+                        self.require_all(&[
+                            spirv::Capability::GroupNonUniform,
+                            spirv::Capability::GroupNonUniformBallot,
+                        ])
+                        .map_err(|missing| {
+                            Error::MissingCapabilities("subgroup mask built-in", vec![missing])
+                        })?;
+                        subgroup_mask(mask)
+                    }
+                    Bi::ShaderBallot(ballot) => {
+                        self.use_extension("SPV_KHR_shader_ballot");
+                        self.require_any(
+                            "shader ballot built-in",
+                            &[spirv::Capability::SubgroupBallotKHR],
+                        )?;
+                        match ballot {
+                            crate::ShaderBallot::Size => BuiltIn::SubgroupSize,
+                            crate::ShaderBallot::InvocationId => BuiltIn::SubgroupLocalInvocationId,
+                            crate::ShaderBallot::Mask(mask) => subgroup_mask(mask),
+                        }
+                    }
                     Bi::CullPrimitive => {
                         others.push(Decoration::PerPrimitiveEXT);
                         BuiltIn::CullPrimitiveEXT
@@ -4749,6 +4788,16 @@ impl Writer {
                     .push(Instruction::member_decorate(id, index, *decoration, &[]));
             }
         }
+    }
+}
+
+const fn subgroup_mask(mask: crate::SubgroupMask) -> spirv::BuiltIn {
+    match mask {
+        crate::SubgroupMask::Eq => spirv::BuiltIn::SubgroupEqMask,
+        crate::SubgroupMask::Ge => spirv::BuiltIn::SubgroupGeMask,
+        crate::SubgroupMask::Gt => spirv::BuiltIn::SubgroupGtMask,
+        crate::SubgroupMask::Le => spirv::BuiltIn::SubgroupLeMask,
+        crate::SubgroupMask::Lt => spirv::BuiltIn::SubgroupLtMask,
     }
 }
 
