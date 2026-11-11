@@ -502,7 +502,7 @@ fn merge(outcomes: &mut [Outcome], per_target: &[(TargetId, Vec<Judgement>)]) {
             format!("{}: {note}", target.label())
         };
         for (other, (other_verdict, _)) in &verdicts {
-            if other != target {
+            if other != target && other_verdict != verdict {
                 let _ = write!(
                     text,
                     "{}{}: {}",
