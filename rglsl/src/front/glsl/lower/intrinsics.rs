@@ -25,61 +25,16 @@ const OPENCL_STD: &str = "OpenCL.std";
 const OPENCL_MEMORY: core::ops::RangeInclusive<u32> = 171..=185;
 
 impl Lowerer<'_> {
+    pub(super) fn spirv_type(&mut self, id: SpirvTypeId, span: Span) -> Result<TypeInner> {
+        super::function::lowerer_on_heap!(self, |cx| cx.spirv_type(id, span))
+    }
+
     pub(super) fn spirv_requirements(&mut self) {
         let requirements = &self.analysis.spirv_requirements;
         self.module.spirv_requirements = SpirvRequirements {
             extensions: requirements.extensions.iter().cloned().collect(),
             capabilities: requirements.capabilities.iter().copied().collect(),
         };
-    }
-
-    pub(super) fn spirv_type(&mut self, id: SpirvTypeId, span: Span) -> Result<TypeInner> {
-        let analysis = self.analysis;
-        let ty = analysis.types.spirv(id).ok_or_else(|| internal(span))?;
-        if !ty.instruction.set.is_empty() {
-            return Err(unsupported("`spirv_type` with an instruction set", span));
-        }
-        let opcode = ty
-            .instruction
-            .id
-            .ok_or_else(|| unsupported("`spirv_type` without an `id`", span))?;
-        if let Some(scalar) = ty.scalar() {
-            return Ok(TypeInner::Scalar(super::types::scalar(scalar)));
-        }
-        let mut operands = Vec::with_capacity(ty.parameters.len());
-        for parameter in &ty.parameters {
-            match *parameter {
-                SpirvTypeParameter::Literal(ref words) => {
-                    operands.extend(words.iter().map(|&word| SpirvTypeOperand::Literal(word)));
-                }
-                SpirvTypeParameter::Constant(_) => {
-                    return Err(unsupported(
-                        "`spirv_type` parameters that are named constants",
-                        span,
-                    ))
-                }
-                SpirvTypeParameter::Type(ref parameter) => {
-                    let handle = self.ir_type(parameter, span)?;
-                    operands.push(SpirvTypeOperand::Type(handle));
-                }
-            }
-        }
-        if opcode == OP_TYPE_VECTOR {
-            if let [SpirvTypeOperand::Type(base), SpirvTypeOperand::Literal(count)] = operands[..] {
-                let size = match count {
-                    2 => Some(VectorSize::Bi),
-                    3 => Some(VectorSize::Tri),
-                    4 => Some(VectorSize::Quad),
-                    _ => None,
-                };
-                if let (Some(size), &TypeInner::Scalar(scalar)) =
-                    (size, &self.module.types[base].inner)
-                {
-                    return Ok(TypeInner::Vector { size, scalar });
-                }
-            }
-        }
-        Ok(TypeInner::Spirv { opcode, operands })
     }
 
     fn spirv_constant(&mut self, node: NodeId, span: Span) -> Result<Handle<Expression>> {
@@ -224,14 +179,84 @@ impl Lowerer<'_> {
     }
 }
 
+#[allow(clippy::await_holding_refcell_ref)]
+impl<'b, 'a> super::function::LowererCx<'b, 'a> {
+    pub(super) async fn spirv_type(self, id: SpirvTypeId, span: Span) -> Result<TypeInner> {
+        let mut this = self.lowerer();
+        let analysis = this.analysis;
+        let ty = analysis.types.spirv(id).ok_or_else(|| internal(span))?;
+        if !ty.instruction.set.is_empty() {
+            return Err(unsupported("`spirv_type` with an instruction set", span));
+        }
+        let opcode = ty
+            .instruction
+            .id
+            .ok_or_else(|| unsupported("`spirv_type` without an `id`", span))?;
+        if let Some(scalar) = ty.scalar() {
+            return Ok(TypeInner::Scalar(super::types::scalar(scalar)));
+        }
+        let mut operands = Vec::with_capacity(ty.parameters.len());
+        for parameter in &ty.parameters {
+            match *parameter {
+                SpirvTypeParameter::Literal(ref words) => {
+                    operands.extend(words.iter().map(|&word| SpirvTypeOperand::Literal(word)));
+                }
+                SpirvTypeParameter::Constant(_) => {
+                    return Err(unsupported(
+                        "`spirv_type` parameters that are named constants",
+                        span,
+                    ))
+                }
+                SpirvTypeParameter::Type(ref parameter) => {
+                    let handle = {
+                        let frame = self.clone().ir_type(parameter.clone(), span);
+                        drop(this);
+                        let result = self.nest(frame).await;
+                        this = self.lowerer();
+                        result
+                    }?;
+                    operands.push(SpirvTypeOperand::Type(handle));
+                }
+            }
+        }
+        if opcode == OP_TYPE_VECTOR {
+            if let [SpirvTypeOperand::Type(base), SpirvTypeOperand::Literal(count)] = operands[..] {
+                let size = match count {
+                    2 => Some(VectorSize::Bi),
+                    3 => Some(VectorSize::Tri),
+                    4 => Some(VectorSize::Quad),
+                    _ => None,
+                };
+                if let (Some(size), &TypeInner::Scalar(scalar)) =
+                    (size, &this.module.types[base].inner)
+                {
+                    return Ok(TypeInner::Vector { size, scalar });
+                }
+            }
+        }
+        Ok(TypeInner::Spirv { opcode, operands })
+    }
+}
+
 impl FunctionLowerer<'_, '_> {
-    pub(super) fn spirv_call(
-        &mut self,
+    fn spirv_result_type(&mut self, ty: &GlslType, at: Span) -> Result<Handle<crate::Type>> {
+        if matches!(ty.kind, TypeKind::Spirv(_)) || !ty.is_opaque() {
+            return self.lw.ir_type(ty, at);
+        }
+        Err(unsupported("opaque results of `spirv_instruction`", at))
+    }
+}
+
+#[allow(clippy::await_holding_refcell_ref)]
+impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
+    pub(super) async fn spirv_call(
+        self,
         id: FunctionId,
-        arguments: &[AstExpression],
+        arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
-        let analysis = self.lw.analysis;
+        let mut this = self.lowerer();
+        let analysis = this.lw.analysis;
         let function = analysis.function(id).ok_or_else(|| internal(at))?;
         let spirv = function
             .spirv_instruction
@@ -253,7 +278,7 @@ impl FunctionLowerer<'_, '_> {
         let mut operands = Vec::with_capacity(arguments.len());
         for (argument, parameter) in arguments.iter().zip(&function.parameters) {
             if parameter.qualifiers.spirv_literal {
-                let info = self.info(argument)?;
+                let info = this.info(argument)?;
                 let value = info
                     .value
                     .as_ref()
@@ -266,7 +291,13 @@ impl FunctionLowerer<'_, '_> {
                 let word = value_word(&value).ok_or_else(|| internal(at))?;
                 operands.push(SpirvOperand::Literal(word));
             } else if parameter.qualifiers.spirv_by_reference {
-                let place = self.place(argument)?;
+                let place = {
+                    let frame = self.clone().place(argument);
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }?;
                 if place.boolean || place.spilled {
                     return Err(unsupported(
                         "this argument of a `spirv_by_reference` parameter",
@@ -276,7 +307,7 @@ impl FunctionLowerer<'_, '_> {
                 let pointer = match place.swizzle {
                     None => place.pointer,
                     Some(ref components) => match components[..] {
-                        [index] => self.add(
+                        [index] => this.add(
                             Expression::AccessIndex {
                                 base: place.pointer,
                                 index,
@@ -293,16 +324,22 @@ impl FunctionLowerer<'_, '_> {
                 };
                 operands.push(SpirvOperand::Pointer(pointer));
             } else {
-                operands.push(SpirvOperand::Value(self.rvalue(argument)?));
+                operands.push(SpirvOperand::Value({
+                    let frame = self.clone().rvalue(argument);
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }?));
             }
         }
         let result = if function.return_type.is_void() {
             None
         } else {
-            Some(self.spirv_result_type(&function.return_type, at)?)
+            Some(this.spirv_result_type(&function.return_type, at)?)
         };
         match result {
-            Some(ty) => Ok(Some(self.push_with_result(
+            Some(ty) => Ok(Some(this.push_with_result(
                 Expression::SpirvInstructionResult { ty },
                 |result| Statement::SpirvInstruction {
                     instruction,
@@ -312,9 +349,10 @@ impl FunctionLowerer<'_, '_> {
                 at,
             ))),
             None => {
-                let emitted = self.emitter.finish(&self.expressions);
-                self.block.extend(emitted);
-                self.block.push(
+                let lowerer = &mut **this;
+                let emitted = lowerer.emitter.finish(&lowerer.expressions);
+                lowerer.block.extend(emitted);
+                lowerer.block.push(
                     Statement::SpirvInstruction {
                         instruction,
                         operands,
@@ -322,16 +360,9 @@ impl FunctionLowerer<'_, '_> {
                     },
                     at,
                 );
-                self.emitter.start(&self.expressions);
+                lowerer.emitter.start(&lowerer.expressions);
                 Ok(None)
             }
         }
-    }
-
-    fn spirv_result_type(&mut self, ty: &GlslType, at: Span) -> Result<Handle<crate::Type>> {
-        if matches!(ty.kind, TypeKind::Spirv(_)) || !ty.is_opaque() {
-            return self.lw.ir_type(ty, at);
-        }
-        Err(unsupported("opaque results of `spirv_instruction`", at))
     }
 }

@@ -319,6 +319,69 @@ fn subgroup_mask(name: &str) -> Option<SubgroupMask> {
 }
 
 impl<'a> Lowerer<'a> {
+    fn glsl_location_count(&self, ty: &GlslType) -> u32 {
+        enum Task<'t> {
+            Visit(&'t GlslType),
+            Sum(&'t GlslType, usize),
+        }
+        let wide = |scalar: Scalar, size: u8| u32::from(scalar == Scalar::Double && size > 2) + 1;
+        let arrayed = |ty: &GlslType, element: u32| {
+            ty.array
+                .iter()
+                .map(|size| match *size {
+                    GlslArraySize::Sized(length) => length,
+                    GlslArraySize::Specialized(_) | GlslArraySize::Unsized => 1,
+                })
+                .fold(element, u32::saturating_mul)
+        };
+        let mut tasks = alloc::vec![Task::Visit(ty)];
+        let mut counts: Vec<u32> = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit(ty) => {
+                    let members = match ty.kind {
+                        TypeKind::Struct(id) => self
+                            .analysis
+                            .types
+                            .structure(id)
+                            .map(|structure| structure.members.as_slice()),
+                        TypeKind::Block(id) => self
+                            .analysis
+                            .types
+                            .block(id)
+                            .map(|block| block.members.as_slice()),
+                        _ => None,
+                    };
+                    if let Some(members) = members {
+                        tasks.push(Task::Sum(ty, members.len()));
+                        tasks.extend(members.iter().rev().map(|member| Task::Visit(&member.ty)));
+                        continue;
+                    }
+                    let element = match ty.kind {
+                        TypeKind::Vector { scalar, size } => wide(scalar, size),
+                        TypeKind::Matrix {
+                            scalar,
+                            columns,
+                            rows,
+                        } => u32::from(columns).saturating_mul(wide(scalar, rows)),
+                        _ => 1,
+                    };
+                    counts.push(arrayed(ty, element));
+                }
+                Task::Sum(ty, count) => {
+                    let start = counts.len().saturating_sub(count);
+                    let element = counts.drain(start..).fold(0, u32::saturating_add);
+                    counts.push(arrayed(ty, element));
+                }
+            }
+        }
+        counts.pop().unwrap_or(1)
+    }
+
+    pub(super) fn global_ref(&mut self, symbol: SymbolId, at: Span) -> Result<GlobalRef> {
+        super::function::lowerer_on_heap!(self, |cx| cx.global_ref(symbol, at))
+    }
+
     pub(super) fn reserve_explicit_locations(&mut self) {
         let analysis = self.analysis;
         for declaration in &self.unit.external_declarations {
@@ -414,42 +477,6 @@ impl<'a> Lowerer<'a> {
             }
         }
         ranges
-    }
-
-    fn glsl_location_count(&self, ty: &GlslType) -> u32 {
-        let wide = |scalar: Scalar, size: u8| u32::from(scalar == Scalar::Double && size > 2) + 1;
-        let members = |members: &[rglsl_sema::types::Member]| {
-            members
-                .iter()
-                .map(|member| self.glsl_location_count(&member.ty))
-                .fold(0, u32::saturating_add)
-        };
-        let element = match ty.kind {
-            TypeKind::Vector { scalar, size } => wide(scalar, size),
-            TypeKind::Matrix {
-                scalar,
-                columns,
-                rows,
-            } => u32::from(columns).saturating_mul(wide(scalar, rows)),
-            TypeKind::Struct(id) => self
-                .analysis
-                .types
-                .structure(id)
-                .map_or(1, |structure| members(&structure.members)),
-            TypeKind::Block(id) => self
-                .analysis
-                .types
-                .block(id)
-                .map_or(1, |block| members(&block.members)),
-            _ => 1,
-        };
-        ty.array
-            .iter()
-            .map(|size| match *size {
-                GlslArraySize::Sized(length) => length,
-                GlslArraySize::Specialized(_) | GlslArraySize::Unsized => 1,
-            })
-            .fold(element, u32::saturating_mul)
     }
 
     fn auto_location(&mut self, slot: usize, count: u32) -> u32 {
@@ -2066,168 +2093,6 @@ impl<'a> Lowerer<'a> {
         Ok(())
     }
 
-    pub(super) fn global_ref(&mut self, symbol: SymbolId, at: Span) -> Result<GlobalRef> {
-        if let Some(found) = self.globals.get(&symbol) {
-            return Ok(*found);
-        }
-        if let Some((name, span)) = self.deferred_private.remove(&symbol) {
-            let variable = self.variable(symbol).ok_or_else(|| internal(at))?;
-            let (ty, qualifiers) = (variable.ty.clone(), variable.qualifiers.clone());
-            let ty = self.variable_ir_type(&ty, &qualifiers, span)?;
-            let global = self.ray_query_global(name, ty, span);
-            let found = GlobalRef::Variable(global);
-            self.globals.insert(symbol, found);
-            return Ok(found);
-        }
-        if self.has_local_size_ids() && self.is_work_group_size(symbol) {
-            let handle = self.work_group_size_override(at)?;
-            self.globals.insert(symbol, GlobalRef::Override(handle));
-            return Ok(GlobalRef::Override(handle));
-        }
-        let analysis = self.analysis;
-        let record = self.symbol(symbol).ok_or_else(|| internal(at))?;
-        let (ty, output, value, volatile) = match record.kind {
-            SymbolKind::Variable(ref variable) => {
-                if variable.origin != Origin::BuiltIn {
-                    return Err(internal(at));
-                }
-                if let Some(handle) = self.builtin_override(symbol, variable, at)? {
-                    return Ok(handle);
-                }
-                if self.is_per_vertex_array(symbol) {
-                    return self.per_vertex_array(symbol, at);
-                }
-                (
-                    variable.ty.clone(),
-                    variable.qualifiers.storage == Storage::Out,
-                    variable.value.as_ref(),
-                    variable.qualifiers.volatile,
-                )
-            }
-            SymbolKind::BlockMember { instance, index } => {
-                let instance = self.variable(instance).ok_or_else(|| internal(at))?;
-                let TypeKind::Block(block) = instance.ty.kind else {
-                    return Err(internal(at));
-                };
-                let block = analysis.types.block(block).ok_or_else(|| internal(at))?;
-                let member = block
-                    .members
-                    .get(usize::try_from(index).map_err(|_| internal(at))?)
-                    .ok_or_else(|| internal(at))?;
-                (
-                    member.ty.clone(),
-                    block.storage == BlockStorage::Out,
-                    None,
-                    false,
-                )
-            }
-            SymbolKind::Struct(_)
-            | SymbolKind::Reference(_)
-            | SymbolKind::BufferType(_)
-            | SymbolKind::BlockName => return Err(internal(at)),
-        };
-        let name = record.name.clone();
-        let found = match value {
-            Some(value) => {
-                let ir = self.ir_type(&ty, at)?;
-                let init = self.global_constant(&ty, &value.values, at)?;
-                let handle = self.module.constants.append(
-                    crate::Constant {
-                        name: Some(name),
-                        ty: ir,
-                        init,
-                    },
-                    at,
-                );
-                GlobalRef::Constant(handle)
-            }
-            None => GlobalRef::Variable(self.builtin_variable(&name, &ty, output, volatile, at)?),
-        };
-        self.globals.insert(symbol, found);
-        Ok(found)
-    }
-
-    fn builtin_variable(
-        &mut self,
-        name: &str,
-        ty: &GlslType,
-        output: bool,
-        volatile: bool,
-        at: Span,
-    ) -> Result<Handle<GlobalVariable>> {
-        let (builtin, key) = match super::ray::ray_builtin(name) {
-            Some((builtin, key)) => (builtin, key),
-            None => (
-                builtin_of(name)
-                    .ok_or_else(|| unsupported(format!("the built-in variable `{name}`"), at))?,
-                name,
-            ),
-        };
-        if let Some(&handle) = self.builtins.get(key) {
-            return Ok(handle);
-        }
-        let builtin = match builtin {
-            BuiltIn::Layer { .. } => BuiltIn::Layer {
-                viewport_relative: self.layer_layout.viewport_relative,
-                secondary_view_offset: self.layer_layout.secondary_view_offset,
-            },
-            BuiltIn::SampleMask { .. } if output => BuiltIn::SampleMask {
-                override_coverage: self.override_coverage,
-            },
-            other => other,
-        };
-        let ir = if super::prepass::IMPLICITLY_SIZED.contains(&name) {
-            let size = self
-                .builtin_sizes
-                .get(name)
-                .copied()
-                .or(match ty.outer_size() {
-                    Some(GlslArraySize::Sized(size)) => Some(size),
-                    _ => None,
-                })
-                .ok_or_else(|| {
-                    unsupported(format!("`{name}` without a size or a constant index"), at)
-                })?;
-            let element = ty.element_type().ok_or_else(|| internal(at))?;
-            let sized = element.array_of(GlslArraySize::Sized(size));
-            self.ir_type(&sized, at)?
-        } else if let BuiltIn::ShaderBallot(ShaderBallot::Mask(_)) = builtin {
-            self.ir_type(&GlslType::vector(Scalar::Uint, 4), at)?
-        } else {
-            self.ray_builtin_type(name, ty, at)?
-        };
-        let handle = self.module.global_variables.append(
-            GlobalVariable {
-                name: Some(String::from(key)),
-                space: if output {
-                    AddressSpace::Output
-                } else {
-                    AddressSpace::Input
-                },
-                binding: None,
-                ty: ir,
-                init: None,
-                memory_decorations: if volatile {
-                    MemoryDecorations::VOLATILE
-                } else {
-                    self.ray_builtin_decorations(builtin)
-                },
-                io: Some(Binding::BuiltIn(builtin)),
-                xfb: None,
-                input_attachment_index: None,
-                heap_offset: None,
-                tile_attachment: false,
-                spirv_decorations: Vec::new(),
-                relaxed_precision: false,
-                immediate_bank: None,
-            },
-            at,
-        );
-        self.interface.push(handle);
-        self.builtins.insert(String::from(key), handle);
-        Ok(handle)
-    }
-
     pub(super) fn finish_interface(&mut self) {
         let invariant = core::mem::take(&mut self.invariant);
         for (name, at) in invariant {
@@ -2277,18 +2142,19 @@ impl<'a> Lowerer<'a> {
             ty: Handle<crate::Type>,
             found: &mut alloc::collections::BTreeSet<Handle<crate::Type>>,
         ) {
-            match types[ty].inner {
-                TypeInner::Struct { ref members, .. } => {
-                    if found.insert(ty) {
-                        for member in members {
-                            collect(types, member.ty, found);
+            let mut pending = alloc::vec![ty];
+            while let Some(ty) = pending.pop() {
+                match types[ty].inner {
+                    TypeInner::Struct { ref members, .. } => {
+                        if found.insert(ty) {
+                            pending.extend(members.iter().rev().map(|member| member.ty));
                         }
                     }
+                    TypeInner::Array { base, .. } | TypeInner::BindingArray { base, .. } => {
+                        pending.push(base);
+                    }
+                    _ => {}
                 }
-                TypeInner::Array { base, .. } | TypeInner::BindingArray { base, .. } => {
-                    collect(types, base, found);
-                }
-                _ => {}
             }
         }
         let mut laid_out = alloc::collections::BTreeSet::new();
@@ -2400,45 +2266,311 @@ impl<'a> Lowerer<'a> {
     }
 }
 
+#[allow(clippy::await_holding_refcell_ref)]
+impl<'b, 'a> super::function::LowererCx<'b, 'a> {
+    pub(super) async fn global_ref(self, symbol: SymbolId, at: Span) -> Result<GlobalRef> {
+        let mut this = self.lowerer();
+        if let Some(found) = this.globals.get(&symbol) {
+            return Ok(*found);
+        }
+        if let Some((name, span)) = this.deferred_private.remove(&symbol) {
+            let variable = this.variable(symbol).ok_or_else(|| internal(at))?;
+            let (ty, qualifiers) = (variable.ty.clone(), variable.qualifiers.clone());
+            let ty = {
+                let frame = self
+                    .clone()
+                    .variable_ir_type(ty.clone(), qualifiers.clone(), span);
+                drop(this);
+                let result = self.nest(frame).await;
+                this = self.lowerer();
+                result
+            }?;
+            let global = this.ray_query_global(name, ty, span);
+            let found = GlobalRef::Variable(global);
+            this.globals.insert(symbol, found);
+            return Ok(found);
+        }
+        if this.has_local_size_ids() && this.is_work_group_size(symbol) {
+            let handle = this.work_group_size_override(at)?;
+            this.globals.insert(symbol, GlobalRef::Override(handle));
+            return Ok(GlobalRef::Override(handle));
+        }
+        let analysis = this.analysis;
+        let record = this.symbol(symbol).ok_or_else(|| internal(at))?;
+        let (ty, output, value, volatile) = match record.kind {
+            SymbolKind::Variable(ref variable) => {
+                if variable.origin != Origin::BuiltIn {
+                    return Err(internal(at));
+                }
+                if let Some(handle) = {
+                    let frame = self.clone().builtin_override(symbol, variable, at);
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }? {
+                    return Ok(handle);
+                }
+                if this.is_per_vertex_array(symbol) {
+                    return {
+                        let frame = self.clone().per_vertex_array(symbol, at);
+                        drop(this);
+                        let result = self.nest(frame).await;
+                        result
+                    };
+                }
+                (
+                    variable.ty.clone(),
+                    variable.qualifiers.storage == Storage::Out,
+                    variable.value.as_ref(),
+                    variable.qualifiers.volatile,
+                )
+            }
+            SymbolKind::BlockMember { instance, index } => {
+                let instance = this.variable(instance).ok_or_else(|| internal(at))?;
+                let TypeKind::Block(block) = instance.ty.kind else {
+                    return Err(internal(at));
+                };
+                let block = analysis.types.block(block).ok_or_else(|| internal(at))?;
+                let member = block
+                    .members
+                    .get(usize::try_from(index).map_err(|_| internal(at))?)
+                    .ok_or_else(|| internal(at))?;
+                (
+                    member.ty.clone(),
+                    block.storage == BlockStorage::Out,
+                    None,
+                    false,
+                )
+            }
+            SymbolKind::Struct(_)
+            | SymbolKind::Reference(_)
+            | SymbolKind::BufferType(_)
+            | SymbolKind::BlockName => return Err(internal(at)),
+        };
+        let name = record.name.clone();
+        let found = match value {
+            Some(value) => {
+                let ir = {
+                    let frame = self.clone().ir_type(ty.clone(), at);
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }?;
+                let init = {
+                    let frame = self
+                        .clone()
+                        .global_constant(ty.clone(), value.values.to_vec(), at);
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }?;
+                let handle = this.module.constants.append(
+                    crate::Constant {
+                        name: Some(name),
+                        ty: ir,
+                        init,
+                    },
+                    at,
+                );
+                GlobalRef::Constant(handle)
+            }
+            None => GlobalRef::Variable({
+                let frame = self.clone().builtin_variable(
+                    String::from(&name),
+                    ty.clone(),
+                    output,
+                    volatile,
+                    at,
+                );
+                drop(this);
+                let result = self.nest(frame).await;
+                this = self.lowerer();
+                result
+            }?),
+        };
+        this.globals.insert(symbol, found);
+        Ok(found)
+    }
+
+    async fn builtin_variable(
+        self,
+        name: String,
+        ty: GlslType,
+        output: bool,
+        volatile: bool,
+        at: Span,
+    ) -> Result<Handle<GlobalVariable>> {
+        let name = name.as_str();
+        let ty = &ty;
+        let mut this = self.lowerer();
+        let (builtin, key) = match super::ray::ray_builtin(name) {
+            Some((builtin, key)) => (builtin, key),
+            None => (
+                builtin_of(name)
+                    .ok_or_else(|| unsupported(format!("the built-in variable `{name}`"), at))?,
+                name,
+            ),
+        };
+        if let Some(&handle) = this.builtins.get(key) {
+            return Ok(handle);
+        }
+        let builtin = match builtin {
+            BuiltIn::Layer { .. } => BuiltIn::Layer {
+                viewport_relative: this.layer_layout.viewport_relative,
+                secondary_view_offset: this.layer_layout.secondary_view_offset,
+            },
+            BuiltIn::SampleMask { .. } if output => BuiltIn::SampleMask {
+                override_coverage: this.override_coverage,
+            },
+            other => other,
+        };
+        let ir = if super::prepass::IMPLICITLY_SIZED.contains(&name) {
+            let size = this
+                .builtin_sizes
+                .get(name)
+                .copied()
+                .or(match ty.outer_size() {
+                    Some(GlslArraySize::Sized(size)) => Some(size),
+                    _ => None,
+                })
+                .ok_or_else(|| {
+                    unsupported(format!("`{name}` without a size or a constant index"), at)
+                })?;
+            let element = ty.element_type().ok_or_else(|| internal(at))?;
+            let sized = element.array_of(GlslArraySize::Sized(size));
+            {
+                let frame = self.clone().ir_type(sized.clone(), at);
+                drop(this);
+                let result = self.nest(frame).await;
+                this = self.lowerer();
+                result
+            }?
+        } else if let BuiltIn::ShaderBallot(ShaderBallot::Mask(_)) = builtin {
+            {
+                let frame = self
+                    .clone()
+                    .ir_type((GlslType::vector(Scalar::Uint, 4)).clone(), at);
+                drop(this);
+                let result = self.nest(frame).await;
+                this = self.lowerer();
+                result
+            }?
+        } else {
+            {
+                let frame = self
+                    .clone()
+                    .ray_builtin_type(String::from(name), ty.clone(), at);
+                drop(this);
+                let result = self.nest(frame).await;
+                this = self.lowerer();
+                result
+            }?
+        };
+        let memory_decorations = if volatile {
+            MemoryDecorations::VOLATILE
+        } else {
+            this.ray_builtin_decorations(builtin)
+        };
+        let handle = this.module.global_variables.append(
+            GlobalVariable {
+                name: Some(String::from(key)),
+                space: if output {
+                    AddressSpace::Output
+                } else {
+                    AddressSpace::Input
+                },
+                binding: None,
+                ty: ir,
+                init: None,
+                memory_decorations,
+                io: Some(Binding::BuiltIn(builtin)),
+                xfb: None,
+                input_attachment_index: None,
+                heap_offset: None,
+                tile_attachment: false,
+                spirv_decorations: Vec::new(),
+                relaxed_precision: false,
+                immediate_bank: None,
+            },
+            at,
+        );
+        this.interface.push(handle);
+        this.builtins.insert(String::from(key), handle);
+        Ok(handle)
+    }
+}
+
 pub(super) fn location_count(module: &crate::Module, ty: Handle<crate::Type>) -> u32 {
-    let types = &module.types;
+    enum Task {
+        Visit(Handle<crate::Type>),
+        Scale(u32),
+        Sum(usize),
+    }
     const fn vector_locations(size: crate::VectorSize, scalar: crate::Scalar) -> u32 {
         match (size, scalar.width) {
             (crate::VectorSize::Tri | crate::VectorSize::Quad, 8) => 2,
             _ => 1,
         }
     }
-
-    match types[ty].inner {
-        TypeInner::Vector { size, scalar } => vector_locations(size, scalar),
-        TypeInner::Matrix {
-            columns,
-            rows,
-            scalar,
-        } => (columns as u32).saturating_mul(vector_locations(rows, scalar)),
-        TypeInner::Array { base, size, .. } => match size.resolve(module.to_ctx()) {
-            Ok(crate::proc::IndexableLength::Known(length)) => {
-                length.saturating_mul(location_count(module, base))
+    let types = &module.types;
+    let mut tasks = alloc::vec![Task::Visit(ty)];
+    let mut counts: Vec<u32> = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(ty) => match types[ty].inner {
+                TypeInner::Vector { size, scalar } => counts.push(vector_locations(size, scalar)),
+                TypeInner::Matrix {
+                    columns,
+                    rows,
+                    scalar,
+                } => counts.push((columns as u32).saturating_mul(vector_locations(rows, scalar))),
+                TypeInner::Array { base, size, .. } => match size.resolve(module.to_ctx()) {
+                    Ok(crate::proc::IndexableLength::Known(length)) => {
+                        tasks.push(Task::Scale(length));
+                        tasks.push(Task::Visit(base));
+                    }
+                    _ => counts.push(1),
+                },
+                TypeInner::Struct { ref members, .. } => {
+                    tasks.push(Task::Sum(members.len()));
+                    tasks.extend(members.iter().rev().map(|member| Task::Visit(member.ty)));
+                }
+                _ => counts.push(1),
+            },
+            Task::Scale(length) => {
+                let count = counts.pop().unwrap_or(1);
+                counts.push(length.saturating_mul(count));
             }
-            _ => 1,
-        },
-        TypeInner::Struct { ref members, .. } => members
-            .iter()
-            .map(|member| location_count(module, member.ty))
-            .fold(0, u32::saturating_add),
-        _ => 1,
+            Task::Sum(members) => {
+                let start = counts.len().saturating_sub(members);
+                let sum = counts.drain(start..).fold(0, u32::saturating_add);
+                counts.push(sum);
+            }
+        }
     }
+    counts.pop().unwrap_or(1)
 }
 
 fn contains_float(types: &crate::UniqueArena<crate::Type>, ty: Handle<crate::Type>) -> bool {
-    match types[ty].inner {
-        TypeInner::Scalar(scalar)
-        | TypeInner::Vector { scalar, .. }
-        | TypeInner::Matrix { scalar, .. } => scalar.kind == crate::ScalarKind::Float,
-        TypeInner::Array { base, .. } => contains_float(types, base),
-        TypeInner::Struct { ref members, .. } => members
-            .iter()
-            .any(|member| contains_float(types, member.ty)),
-        _ => false,
+    let mut pending = alloc::vec![ty];
+    while let Some(ty) = pending.pop() {
+        match types[ty].inner {
+            TypeInner::Scalar(scalar)
+            | TypeInner::Vector { scalar, .. }
+            | TypeInner::Matrix { scalar, .. } => {
+                if scalar.kind == crate::ScalarKind::Float {
+                    return true;
+                }
+            }
+            TypeInner::Array { base, .. } => pending.push(base),
+            TypeInner::Struct { ref members, .. } => {
+                pending.extend(members.iter().rev().map(|member| member.ty));
+            }
+            _ => {}
+        }
     }
+    false
 }

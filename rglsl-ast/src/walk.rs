@@ -1,4 +1,8 @@
 use alloc::vec::Vec;
+use core::cell::RefCell;
+use core::future::Future;
+
+use rglsl_types::stack::{run, Call, Stack};
 
 use crate::ast::{
     ArrayDimension, ArraySpecifier, CaseLabel, Condition, Declaration, DeclarationKind, Expression,
@@ -9,34 +13,64 @@ use crate::ast::{
 };
 
 pub fn expressions(unit: &TranslationUnit) -> Vec<&Expression> {
-    let mut walker = Walker { found: Vec::new() };
-    for declaration in &unit.external_declarations {
-        match declaration {
-            ExternalDeclaration::FunctionDefinition(definition) => {
-                walker.prototype(&definition.prototype);
-                for statement in &definition.body.statements {
-                    walker.statement(statement);
-                }
-            }
-            ExternalDeclaration::Declaration(declaration) => walker.declaration(declaration),
-            ExternalDeclaration::Directive(_) | ExternalDeclaration::Semicolon(_) => {}
+    let walker = Walker {
+        found: RefCell::new(Vec::new()),
+    };
+    let finished = run(|stack| {
+        Cx {
+            walker: &walker,
+            stack,
         }
+        .unit(unit)
+    });
+    match finished {
+        Some(()) => walker.found.into_inner(),
+        None => Vec::new(),
     }
-    walker.found
 }
 
 struct Walker<'a> {
-    found: Vec<&'a Expression>,
+    found: RefCell<Vec<&'a Expression>>,
 }
 
-impl<'a> Walker<'a> {
-    fn qualifier(&mut self, qualifier: &'a Spanned<TypeQualifier>) {
+#[derive(Clone)]
+struct Cx<'b, 'a> {
+    walker: &'b Walker<'a>,
+    stack: Stack<'b>,
+}
+
+impl<'b> Cx<'b, '_> {
+    fn call<T: 'b>(&self, frame: impl Future<Output = T> + 'b) -> Call<'b, T> {
+        self.stack.call(frame)
+    }
+}
+
+impl<'b, 'a: 'b> Cx<'b, 'a> {
+    async fn unit(self, unit: &'a TranslationUnit) {
+        for declaration in &unit.external_declarations {
+            match declaration {
+                ExternalDeclaration::FunctionDefinition(definition) => {
+                    self.call(self.clone().prototype(&definition.prototype))
+                        .await;
+                    for statement in &definition.body.statements {
+                        self.call(self.clone().statement(statement)).await;
+                    }
+                }
+                ExternalDeclaration::Declaration(declaration) => {
+                    self.call(self.clone().declaration(declaration)).await;
+                }
+                ExternalDeclaration::Directive(_) | ExternalDeclaration::Semicolon(_) => {}
+            }
+        }
+    }
+
+    async fn qualifier(self, qualifier: &'a Spanned<TypeQualifier>) {
         for single in &qualifier.qualifiers {
             match &single.node {
                 SingleTypeQualifier::Layout(layout) => {
                     for id in &layout.ids {
                         if let Some(value) = &id.value {
-                            self.expression(value);
+                            self.call(self.clone().expression(value)).await;
                         }
                     }
                 }
@@ -44,7 +78,7 @@ impl<'a> Walker<'a> {
                     if decorate.kind == SpirvDecorateKind::Id =>
                 {
                     for operand in &decorate.operands {
-                        self.expression(operand);
+                        self.call(self.clone().expression(operand)).await;
                     }
                 }
                 _ => {}
@@ -52,35 +86,43 @@ impl<'a> Walker<'a> {
         }
     }
 
-    fn array(&mut self, specifier: Option<&'a Spanned<ArraySpecifier>>) {
+    async fn array(self, specifier: Option<&'a Spanned<ArraySpecifier>>) {
         let Some(specifier) = specifier else {
             return;
         };
         for dimension in &specifier.dimensions {
             if let ArrayDimension::Sized(size) = &dimension.node {
-                self.expression(size);
+                self.call(self.clone().expression(size)).await;
             }
         }
     }
 
-    fn members(&mut self, members: &'a [Spanned<StructDeclaration>]) {
+    async fn members(self, members: &'a [Spanned<StructDeclaration>]) {
         for member in members {
-            self.fully_specified(&member.ty);
+            self.call(self.clone().fully_specified(&member.ty)).await;
             for declarator in &member.declarators {
-                self.array(declarator.array.as_ref());
+                self.call(self.clone().array(declarator.array.as_ref()))
+                    .await;
             }
         }
     }
 
-    fn specifier(&mut self, specifier: &'a TypeSpecifier) {
+    async fn specifier(self, specifier: &'a TypeSpecifier) {
         match &specifier.non_array {
-            TypeSpecifierNonArray::Struct(structure) => self.members(&structure.declarations),
-            TypeSpecifierNonArray::InlineBlock(declarations) => self.members(declarations),
+            TypeSpecifierNonArray::Struct(structure) => {
+                self.call(self.clone().members(&structure.declarations))
+                    .await
+            }
+            TypeSpecifierNonArray::InlineBlock(declarations) => {
+                self.call(self.clone().members(declarations)).await
+            }
             TypeSpecifierNonArray::Spirv(spirv) => {
                 for parameter in &spirv.parameters {
                     match parameter {
-                        SpirvTypeParameter::Constant(value) => self.expression(value),
-                        SpirvTypeParameter::Type(ty) => self.specifier(ty),
+                        SpirvTypeParameter::Constant(value) => {
+                            self.call(self.clone().expression(value)).await
+                        }
+                        SpirvTypeParameter::Type(ty) => self.call(self.clone().specifier(ty)).await,
                     }
                 }
             }
@@ -88,27 +130,30 @@ impl<'a> Walker<'a> {
         }
         if let Some(parameters) = &specifier.parameters {
             if let Some(element) = &parameters.element {
-                self.specifier(element);
+                self.call(self.clone().specifier(element)).await;
             }
             for value in &parameters.values {
-                self.expression(value);
+                self.call(self.clone().expression(value)).await;
             }
         }
-        self.array(specifier.array.as_ref());
+        self.call(self.clone().array(specifier.array.as_ref()))
+            .await;
     }
 
-    fn fully_specified(&mut self, ty: &'a Spanned<FullySpecifiedType>) {
+    async fn fully_specified(self, ty: &'a Spanned<FullySpecifiedType>) {
         if let Some(qualifier) = &ty.qualifier {
-            self.qualifier(qualifier);
+            self.call(self.clone().qualifier(qualifier)).await;
         }
-        self.specifier(&ty.specifier);
+        self.call(self.clone().specifier(&ty.specifier)).await;
     }
 
-    fn prototype(&mut self, prototype: &'a FunctionPrototype) {
-        self.fully_specified(&prototype.return_type);
+    async fn prototype(self, prototype: &'a FunctionPrototype) {
+        self.call(self.clone().fully_specified(&prototype.return_type))
+            .await;
         for parameter in &prototype.parameters {
-            self.fully_specified(&parameter.ty);
-            self.array(parameter.array.as_ref());
+            self.call(self.clone().fully_specified(&parameter.ty)).await;
+            self.call(self.clone().array(parameter.array.as_ref()))
+                .await;
         }
         for attribute in prototype
             .attributes
@@ -116,31 +161,36 @@ impl<'a> Walker<'a> {
             .chain(&prototype.trailing_attributes)
         {
             if let Some(argument) = &attribute.argument {
-                self.expression(argument);
+                self.call(self.clone().expression(argument)).await;
             }
         }
     }
 
-    fn initializer(&mut self, initializer: &'a Initializer) {
+    async fn initializer(self, initializer: &'a Initializer) {
         match initializer {
-            Initializer::Expression(expression) => self.expression(expression),
+            Initializer::Expression(expression) => {
+                self.call(self.clone().expression(expression)).await
+            }
             Initializer::List(items) => {
                 for item in items {
-                    self.initializer(item);
+                    self.call(self.clone().initializer(item)).await;
                 }
             }
         }
     }
 
-    fn declaration(&mut self, declaration: &'a Declaration) {
+    async fn declaration(self, declaration: &'a Declaration) {
         match &declaration.kind {
-            DeclarationKind::FunctionPrototype(prototype) => self.prototype(prototype),
+            DeclarationKind::FunctionPrototype(prototype) => {
+                self.call(self.clone().prototype(prototype)).await
+            }
             DeclarationKind::InitDeclaratorList(list) => {
-                self.fully_specified(&list.ty);
+                self.call(self.clone().fully_specified(&list.ty)).await;
                 for declarator in &list.declarators {
-                    self.array(declarator.array.as_ref());
+                    self.call(self.clone().array(declarator.array.as_ref()))
+                        .await;
                     if let Some(initializer) = &declarator.initializer {
-                        self.initializer(initializer);
+                        self.call(self.clone().initializer(initializer)).await;
                     }
                 }
             }
@@ -149,46 +199,57 @@ impl<'a> Walker<'a> {
                 structure,
                 instance,
             } => {
-                self.qualifier(&structure.qualifier);
-                self.members(&structure.members);
+                self.call(self.clone().qualifier(&structure.qualifier))
+                    .await;
+                self.call(self.clone().members(&structure.members)).await;
                 if let Some(instance) = instance {
-                    self.array(instance.array.as_ref());
+                    self.call(self.clone().array(instance.array.as_ref())).await;
                 }
             }
             DeclarationKind::Qualifier(qualifier)
-            | DeclarationKind::QualifiedIdentifiers { qualifier, .. } => self.qualifier(qualifier),
-            DeclarationKind::SpirvInstruction { prototype, .. } => self.prototype(prototype),
+            | DeclarationKind::QualifiedIdentifiers { qualifier, .. } => {
+                self.call(self.clone().qualifier(qualifier)).await
+            }
+            DeclarationKind::SpirvInstruction { prototype, .. } => {
+                self.call(self.clone().prototype(prototype)).await
+            }
             DeclarationKind::SpirvExecutionMode(mode) => {
                 if mode.kind == SpirvExecutionModeKind::Id {
                     for operand in &mode.operands {
-                        self.expression(operand);
+                        self.call(self.clone().expression(operand)).await;
                     }
                 }
             }
         }
     }
 
-    fn condition(&mut self, condition: &'a Condition) {
+    async fn condition(self, condition: &'a Condition) {
         match condition {
-            Condition::Expression(expression) => self.expression(expression),
+            Condition::Expression(expression) => {
+                self.call(self.clone().expression(expression)).await
+            }
             Condition::Declaration(declaration) => {
-                self.fully_specified(&declaration.ty);
-                self.initializer(&declaration.initializer);
+                self.call(self.clone().fully_specified(&declaration.ty))
+                    .await;
+                self.call(self.clone().initializer(&declaration.initializer))
+                    .await;
             }
         }
     }
 
-    fn statement(&mut self, statement: &'a Statement) {
+    async fn statement(self, statement: &'a Statement) {
         match &statement.kind {
             StatementKind::Compound(compound) => {
                 for statement in &compound.statements {
-                    self.statement(statement);
+                    self.call(self.clone().statement(statement)).await;
                 }
             }
-            StatementKind::Declaration(declaration) => self.declaration(declaration),
+            StatementKind::Declaration(declaration) => {
+                self.call(self.clone().declaration(declaration)).await
+            }
             StatementKind::Expression(expression) => {
                 if let Some(expression) = expression {
-                    self.expression(expression);
+                    self.call(self.clone().expression(expression)).await;
                 }
             }
             StatementKind::Selection {
@@ -196,42 +257,46 @@ impl<'a> Walker<'a> {
                 then_branch,
                 else_branch,
             } => {
-                self.expression(condition);
-                self.statement(then_branch);
+                self.call(self.clone().expression(condition)).await;
+                self.call(self.clone().statement(then_branch)).await;
                 if let Some(else_branch) = else_branch {
-                    self.statement(else_branch);
+                    self.call(self.clone().statement(else_branch)).await;
                 }
             }
             StatementKind::Switch {
                 selector,
                 statements,
             } => {
-                self.expression(selector);
+                self.call(self.clone().expression(selector)).await;
                 for statement in statements {
-                    self.statement(statement);
+                    self.call(self.clone().statement(statement)).await;
                 }
             }
-            StatementKind::CaseLabel(CaseLabel::Case(label)) => self.expression(label),
+            StatementKind::CaseLabel(CaseLabel::Case(label)) => {
+                self.call(self.clone().expression(label)).await
+            }
             StatementKind::CaseLabel(CaseLabel::Default) => {}
             StatementKind::While { condition, body } => {
-                self.condition(condition);
-                self.statement(body);
+                self.call(self.clone().condition(condition)).await;
+                self.call(self.clone().statement(body)).await;
             }
             StatementKind::DoWhile { body, condition } => {
-                self.statement(body);
-                self.expression(condition);
+                self.call(self.clone().statement(body)).await;
+                self.call(self.clone().expression(condition)).await;
             }
             StatementKind::For(statement) => {
-                self.statement(&statement.init);
+                self.call(self.clone().statement(&statement.init)).await;
                 if let Some(condition) = &statement.condition {
-                    self.condition(condition);
+                    self.call(self.clone().condition(condition)).await;
                 }
                 if let Some(increment) = &statement.increment {
-                    self.expression(increment);
+                    self.call(self.clone().expression(increment)).await;
                 }
-                self.statement(&statement.body);
+                self.call(self.clone().statement(&statement.body)).await;
             }
-            StatementKind::Jump(JumpStatement::Return(Some(value))) => self.expression(value),
+            StatementKind::Jump(JumpStatement::Return(Some(value))) => {
+                self.call(self.clone().expression(value)).await
+            }
             StatementKind::Jump(_) => {}
             StatementKind::Attributed {
                 attributes,
@@ -241,22 +306,22 @@ impl<'a> Walker<'a> {
                     .iter()
                     .filter_map(|attribute| attribute.argument.as_ref())
                 {
-                    self.expression(argument);
+                    self.call(self.clone().expression(argument)).await;
                 }
-                self.statement(statement);
+                self.call(self.clone().statement(statement)).await;
             }
         }
     }
 
-    fn expression(&mut self, expression: &'a Expression) {
+    async fn expression(self, expression: &'a Expression) {
         let mut pending = Vec::from([expression]);
         while let Some(expression) = pending.pop() {
-            self.found.push(expression);
+            self.walker.found.borrow_mut().push(expression);
             if let ExpressionKind::FunctionCall(call) = &expression.kind {
                 if let FunctionIdentifier::Constructor(specifier)
                 | FunctionIdentifier::Cast(specifier) = &call.function.node
                 {
-                    self.specifier(specifier);
+                    self.call(self.clone().specifier(specifier)).await;
                 }
             }
             pending.extend(expression.kind.children().into_iter().rev());

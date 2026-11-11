@@ -269,16 +269,10 @@ impl Analyzer<'_> {
     }
 
     fn contained_hit_object(&self, ty: &Type) -> Option<OpaqueKind> {
-        match ty.kind {
+        self.types.find_in_members(ty, |ty| match ty.kind {
             TypeKind::Opaque(opaque) if opaque.is_hit_object() => Some(opaque.kind),
-            TypeKind::Struct(id) => self.types.structure(id).and_then(|structure| {
-                structure
-                    .members
-                    .iter()
-                    .find_map(|member| self.contained_hit_object(&member.ty))
-            }),
             _ => None,
-        }
+        })
     }
 
     pub(crate) fn hit_object_checks(

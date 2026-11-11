@@ -85,7 +85,6 @@ pub enum DiagnosticKind {
     BadExpression,
     CannotEvaluate,
     DivisionByZero,
-    ExpressionTooDeep,
     IncludeWithoutHeaderName,
     IncludeMissingNewline {
         name: String,
@@ -96,9 +95,6 @@ pub enum DiagnosticKind {
     IncludeFailed {
         name: String,
         message: String,
-    },
-    IncludeTooDeep {
-        name: String,
     },
     RecursiveInclude {
         name: String,
@@ -281,7 +277,6 @@ impl DiagnosticKind {
             Self::BadExpression => ("preprocessor evaluation", "bad expression", ""),
             Self::CannotEvaluate => ("preprocessor evaluation", "can't evaluate expression", ""),
             Self::DivisionByZero => ("preprocessor evaluation", "division by 0", ""),
-            Self::ExpressionTooDeep => ("preprocessor evaluation", "expression nested too deeply", ""),
             Self::IncludeWithoutHeaderName => ("#include", "must be followed by a header name", ""),
             Self::IncludeMissingNewline { name } => {
                 ("#include", "expected newline after header name:", name)
@@ -290,7 +285,6 @@ impl DiagnosticKind {
                 ("#include", "extra content after header name:", name)
             }
             Self::IncludeFailed { name, message } => ("#include", message, name),
-            Self::IncludeTooDeep { name } => ("#include", "include depth limit exceeded:", name),
             Self::RecursiveInclude { name } => ("#include", "recursive include:", name),
             Self::LineWithoutNumber => ("#line", "must by followed by an integral literal", ""),
             Self::ExtensionRequired { feature, extension } => {

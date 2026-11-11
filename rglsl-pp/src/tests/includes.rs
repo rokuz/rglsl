@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 
 use super::{code, errors, lex, line_of, warnings};
 use crate::{
-    preprocess, DiagnosticKind, FileId, IncludeKind, Includer, Limits, MemoryIncluder, Options,
+    preprocess, DiagnosticKind, FileId, IncludeKind, Includer, MemoryIncluder, Options,
     Preprocessed,
 };
 
@@ -256,37 +256,54 @@ fn unguarded_recursion_is_reported() {
 }
 
 #[test]
-fn include_depth_is_limited() {
+fn deep_include_chains_are_followed() {
+    let depth = 2_000;
     let mut files: Vec<(String, String)> = Vec::new();
     files.push((
         String::from("main.frag"),
         String::from("#version 450\n#include \"f0.h\"\n"),
     ));
-    for index in 0..10 {
+    for index in 0..depth {
         files.push((
             format!("f{index}.h"),
             format!("int f{index};\n#include \"f{}.h\"\n", index + 1),
         ));
     }
-    files.push((String::from("f10.h"), String::from("int bottom;\n")));
+    files.push((format!("f{depth}.h"), String::from("int bottom;\n")));
     let borrowed: Vec<(&str, &str)> = files
         .iter()
         .map(|(name, source)| (name.as_str(), source.as_str()))
         .collect();
     let deep = run_files(&borrowed, &[], &Options::default());
     no_errors(&deep);
-    assert_eq!(code(&deep.text).len(), 33);
-    let limited = Options {
-        limits: Limits {
-            max_include_depth: 5,
-            ..Limits::default()
-        },
-        ..Options::default()
-    };
-    let shallow = run_files(&borrowed, &[], &limited);
+    assert!(code(&deep.text).ends_with(&lex("int f1999; int bottom;")));
+}
+
+#[test]
+fn guarded_self_includes_are_not_recursion() {
+    let result = run_tree(&[
+        (
+            "main.frag",
+            "#version 450\n#include \"self.h\"\nint done;\n",
+        ),
+        (
+            "self.h",
+            "#ifndef SELF_H\n#define SELF_H\n#include \"self.h\"\nint once;\n#endif\n",
+        ),
+    ]);
+    no_errors(&result);
+    assert_eq!(code(&result.text), lex("int once; int done;"));
+}
+
+#[test]
+fn recursion_that_changes_macros_ends_when_they_repeat() {
+    let result = run_tree(&[
+        ("main.frag", "#version 450\n#include \"a.h\"\nint after;\n"),
+        ("a.h", "#undef X\n#define X 1\nint X;\n#include \"a.h\"\n"),
+    ]);
     assert!(matches!(
-        errors(&shallow).first(),
-        Some(DiagnosticKind::IncludeTooDeep { name }) if name == "f5.h"
+        errors(&result).first(),
+        Some(DiagnosticKind::RecursiveInclude { name }) if name == "a.h"
     ));
 }
 

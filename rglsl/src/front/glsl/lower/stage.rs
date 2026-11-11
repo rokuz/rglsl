@@ -492,11 +492,15 @@ impl<'a> Lowerer<'a> {
                     || super::mesh::MESH_BLOCKS.contains(&block.name.as_str())
             })
     }
+}
 
-    pub(super) fn per_vertex_array(&mut self, symbol: SymbolId, at: Span) -> Result<GlobalRef> {
-        let analysis = self.analysis;
-        let record = self.symbol(symbol).ok_or_else(|| internal(at))?;
-        let variable = self.variable(symbol).ok_or_else(|| internal(at))?;
+#[allow(clippy::await_holding_refcell_ref)]
+impl<'b, 'a> super::function::LowererCx<'b, 'a> {
+    pub(super) async fn per_vertex_array(self, symbol: SymbolId, at: Span) -> Result<GlobalRef> {
+        let mut this = self.lowerer();
+        let analysis = this.analysis;
+        let record = this.symbol(symbol).ok_or_else(|| internal(at))?;
+        let variable = this.variable(symbol).ok_or_else(|| internal(at))?;
         let TypeKind::Block(id) = variable.ty.kind else {
             return Err(internal(at));
         };
@@ -504,10 +508,10 @@ impl<'a> Lowerer<'a> {
         let input = block.storage == BlockStorage::In;
         let size = match variable.ty.outer_size() {
             Some(GlslArraySize::Sized(size)) => size,
-            _ if self.layout_missing() => 1,
+            _ if this.layout_missing() => 1,
             _ => {
                 return Err(semantic(
-                    format_size_error(&record.name, self.options.stage),
+                    format_size_error(&record.name, this.options.stage),
                     at,
                 ))
             }
@@ -515,13 +519,13 @@ impl<'a> Lowerer<'a> {
         let mut members = Vec::with_capacity(block.members.len());
         let mut offset = 0_u32;
         let mut alignment = Alignment::ONE;
-        let shading_rate = self
+        let shading_rate = this
             .analysis
             .extensions
             .contains("GL_EXT_fragment_shading_rate");
         for (index, member) in block.members.iter().enumerate() {
             let index = u32::try_from(index).map_err(|_| internal(at))?;
-            let requested = if self.options.stage == ShaderStage::Mesh {
+            let requested = if this.options.stage == ShaderStage::Mesh {
                 member.name != "gl_PrimitiveShadingRateEXT" || shading_rate
             } else {
                 rglsl_sema::builtins::view_extension(&member.name)
@@ -532,11 +536,11 @@ impl<'a> Lowerer<'a> {
             }
             let position = u32::try_from(members.len()).map_err(|_| internal(at))?;
             if position != index {
-                self.member_indices.insert((id, index), position);
+                this.member_indices.insert((id, index), position);
             }
             let builtin = per_vertex_builtin(
                 &member.name,
-                member.qualifiers.invariant || (!input && self.invariant_all),
+                member.qualifiers.invariant || (!input && this.invariant_all),
             )
             .or_else(|| match member.name.as_str() {
                 "gl_PrimitiveID" => Some(BuiltIn::PrimitiveIndex),
@@ -552,20 +556,28 @@ impl<'a> Lowerer<'a> {
             for (depth, size) in sized.array.iter_mut().enumerate() {
                 if *size == GlslArraySize::Unsized {
                     let used = if depth == 0 {
-                        self.member_sizes.get(&(id, index)).copied()
+                        this.member_sizes.get(&(id, index)).copied()
                     } else {
-                        self.member_dimension_sizes
+                        this.member_dimension_sizes
                             .get(&(id, index, depth))
                             .copied()
                     };
                     *size = GlslArraySize::Sized(used.unwrap_or(1));
                 }
             }
-            let ty = self.ir_type(&sized, at)?;
-            self.layouter
-                .update(self.module.to_ctx())
-                .map_err(|_| internal(at))?;
-            let layout = self.layouter[ty];
+            let ty = {
+                let frame = self.clone().ir_type(sized.clone(), at);
+                drop(this);
+                let result = self.nest(frame).await;
+                this = self.lowerer();
+                result
+            }?;
+            {
+                let lowerer = &mut **this;
+                lowerer.layouter.update(lowerer.module.to_ctx())
+            }
+            .map_err(|_| internal(at))?;
+            let layout = this.layouter[ty];
             offset = layout.alignment.round_up(offset);
             alignment = layout.alignment.max(alignment);
             members.push(crate::StructMember {
@@ -581,7 +593,7 @@ impl<'a> Lowerer<'a> {
             });
             offset = offset.saturating_add(layout.size);
         }
-        let structure = self.module.types.insert(
+        let structure = this.module.types.insert(
             crate::Type {
                 name: Some(block.name.clone()),
                 inner: TypeInner::Struct {
@@ -591,8 +603,16 @@ impl<'a> Lowerer<'a> {
             },
             Span::UNDEFINED,
         );
-        let ty = self.wrap_arrays(structure, &[GlslArraySize::Sized(size)], at)?;
-        let handle = self.module.global_variables.append(
+        let ty = {
+            let frame =
+                self.clone()
+                    .wrap_arrays(structure, ([GlslArraySize::Sized(size)]).to_vec(), at);
+            drop(this);
+            let result = self.nest(frame).await;
+            this = self.lowerer();
+            result
+        }?;
+        let handle = this.module.global_variables.append(
             GlobalVariable {
                 name: Some(record.name.clone()),
                 space: if input {
@@ -615,9 +635,9 @@ impl<'a> Lowerer<'a> {
             },
             at,
         );
-        self.interface.push(handle);
+        this.interface.push(handle);
         let found = GlobalRef::Variable(handle);
-        self.globals.insert(symbol, found);
+        this.globals.insert(symbol, found);
         Ok(found)
     }
 }
@@ -661,3 +681,5 @@ impl FunctionLowerer<'_, '_> {
         Ok(())
     }
 }
+
+impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {}

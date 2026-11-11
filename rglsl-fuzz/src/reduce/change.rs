@@ -36,13 +36,13 @@ fn is_removed(statement: &Statement) -> bool {
 
 fn tidy(statements: &mut Vec<Statement>) {
     let old = core::mem::take(statements);
-    for statement in old {
+    for mut statement in old {
         if is_removed(&statement) {
             continue;
         }
         if is_splice(&statement) {
-            if let StatementKind::Compound(compound) = statement.kind {
-                statements.extend(compound.statements);
+            if let StatementKind::Compound(compound) = &mut statement.kind {
+                statements.append(&mut compound.statements);
             }
             continue;
         }

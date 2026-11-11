@@ -1,4 +1,6 @@
+use alloc::rc::Rc;
 use alloc::vec::Vec;
+use core::cell::RefCell;
 
 use rglsl_ast::ast::{Expression as AstExpression, FunctionCall, FunctionIdentifier};
 use rglsl_sema::scope::Direction;
@@ -20,246 +22,9 @@ struct Writeback {
     non_uniform: bool,
 }
 
+type Values = Rc<RefCell<Vec<Handle<Expression>>>>;
+
 impl FunctionLowerer<'_, '_> {
-    pub(super) fn call(
-        &mut self,
-        expression: &AstExpression,
-        call: &FunctionCall,
-    ) -> Result<Option<Handle<Expression>>> {
-        let at = self.at(expression.span);
-        let analysis = self.lw.analysis;
-        let arguments = call.arguments.as_slice();
-        match analysis.calls.get(&expression.id) {
-            Some(&Callee::Function(id))
-                if analysis
-                    .function(id)
-                    .is_some_and(|function| function.spirv_instruction.is_some()) =>
-            {
-                self.spirv_call(id, arguments, at)
-            }
-            Some(&Callee::Function(id)) => self.user_function_call(expression, id, arguments, at),
-            Some(&Callee::NonUniform) => self.non_uniform_value(arguments, at).map(Some),
-            Some(&Callee::DebugPrintf) => self.debug_printf(arguments, at).map(|()| None),
-            Some(&Callee::Abort) => self.abort(arguments, at).map(|()| None),
-            Some(&Callee::Builtin(id)) => self.builtin_function_call(expression, id, arguments, at),
-            Some(&Callee::Constructor(ref ty)) => self.constructor_call(ty, arguments, at),
-            Some(&Callee::Cooperative(kind)) => self.cooperative_call(kind, arguments, at),
-            Some(&Callee::Tensor(kind)) => {
-                self.tensor_function_call(expression, kind, arguments, at)
-            }
-            Some(&Callee::TensorArm(kind)) => self.tensor_arm_call(kind, arguments, at),
-            Some(&Callee::Matrix(kind)) => {
-                self.matrix_function_call(expression, kind, arguments, at)
-            }
-            Some(&Callee::Length) => self.length_call(call, at),
-            None => Err(internal(at)),
-        }
-    }
-
-    fn user_function_call(
-        &mut self,
-        expression: &AstExpression,
-        id: FunctionId,
-        arguments: &[AstExpression],
-        at: Span,
-    ) -> Result<Option<Handle<Expression>>> {
-        let non_uniform = self.info(expression)?.non_uniform;
-        self.user_call(id, arguments, non_uniform, at)
-    }
-
-    fn builtin_function_call(
-        &mut self,
-        expression: &AstExpression,
-        id: rglsl_sema::BuiltinFunctionId,
-        arguments: &[AstExpression],
-        at: Span,
-    ) -> Result<Option<Handle<Expression>>> {
-        let result = &self.info(expression)?.ty;
-        self.builtin_call(id, result, arguments, at)
-    }
-
-    fn constructor_call(
-        &mut self,
-        ty: &GlslType,
-        arguments: &[AstExpression],
-        at: Span,
-    ) -> Result<Option<Handle<Expression>>> {
-        if ty
-            .as_opaque()
-            .is_some_and(rglsl_sema::types::Opaque::is_acceleration_structure)
-        {
-            return self.acceleration_structure_from(arguments, at).map(Some);
-        }
-        if ty.is_opaque() {
-            return Err(unsupported(
-                "combined image samplers outside the first argument of a texture function",
-                at,
-            ));
-        }
-        self.construct(ty, arguments, at).map(Some)
-    }
-
-    fn tensor_function_call(
-        &mut self,
-        expression: &AstExpression,
-        kind: rglsl_sema::TensorCall,
-        arguments: &[AstExpression],
-        at: Span,
-    ) -> Result<Option<Handle<Expression>>> {
-        let result = &self.info(expression)?.ty;
-        self.tensor_call(kind, result, arguments, at).map(Some)
-    }
-
-    fn matrix_function_call(
-        &mut self,
-        expression: &AstExpression,
-        kind: rglsl_sema::MatrixCall,
-        arguments: &[AstExpression],
-        at: Span,
-    ) -> Result<Option<Handle<Expression>>> {
-        let result = &self.info(expression)?.ty;
-        self.matrix_call(kind, result, arguments, at)
-    }
-
-    fn length_call(&mut self, call: &FunctionCall, at: Span) -> Result<Option<Handle<Expression>>> {
-        match call.function.node {
-            FunctionIdentifier::Method {
-                ref object,
-                ref name,
-            } if name.node == "length64" => self.wide_length(object, at).map(Some),
-            FunctionIdentifier::Method { ref object, .. } => self.length(object, at).map(Some),
-            _ => Err(internal(at)),
-        }
-    }
-
-    fn wide_length(&mut self, object: &AstExpression, at: Span) -> Result<Handle<Expression>> {
-        let ty = self.info(object)?.ty.clone();
-        if let Some(length) = ty.length() {
-            return self.literal(Literal::I64(i64::from(length)), at);
-        }
-        let builtin = self
-            .lw
-            .variable_symbol(object)
-            .and_then(|symbol| self.lw.symbol(symbol))
-            .is_some_and(|symbol| self.lw.builtin_sizes.contains_key(symbol.name.as_str()));
-        let runtime = ty.outer_size() == Some(ArraySize::Unsized)
-            && !builtin
-            && ty.as_cooperative_matrix().is_none()
-            && ty.sized_vector_length().is_none();
-        if runtime {
-            let place = self.place(object)?;
-            if place.swizzle.is_some() {
-                return Err(internal(at));
-            }
-            let length = self.add(Expression::WideArrayLength(place.pointer), at)?;
-            return self.as_kind(length, crate::Scalar::I64, at);
-        }
-        let length = self.length(object, at)?;
-        self.as_kind(length, crate::Scalar::I64, at)
-    }
-
-    fn length(&mut self, object: &AstExpression, at: Span) -> Result<Handle<Expression>> {
-        let ty = self.info(object)?.ty.clone();
-        if let Some(length) = ty.length() {
-            let length = i32::try_from(length).map_err(|_| internal(at))?;
-            return self.literal(Literal::I32(length), at);
-        }
-        if ty.as_cooperative_matrix().is_some() {
-            let matrix = self.lw.ir_type(&ty, at)?;
-            let length = self.add(Expression::CooperativeMatrixLength { ty: matrix }, at)?;
-            return self.as_kind(length, crate::Scalar::I32, at);
-        }
-        if let Some(ArraySize::Specialized(size)) = ty.outer_size().or(ty.sized_vector_length()) {
-            let handle = self.lw.specialized_size(size, at)?;
-            let value = self.add(Expression::Override(handle), at)?;
-            let size_ty = self.lw.module.overrides[handle].ty;
-            return match self.lw.module.types[size_ty].inner {
-                crate::TypeInner::Scalar(crate::Scalar::I32) => Ok(value),
-                _ => self.as_kind(value, crate::Scalar::I32, at),
-            };
-        }
-        if ty.outer_size() == Some(ArraySize::Unsized) {
-            if let Some(symbol) = self.lw.variable_symbol(object) {
-                if let Some(name) = self.lw.symbol(symbol).map(|s| s.name.as_str()) {
-                    if let Some(size) = self.lw.builtin_sizes.get(name).copied() {
-                        let size = i32::try_from(size).map_err(|_| internal(at))?;
-                        return self.literal(Literal::I32(size), at);
-                    }
-                }
-            }
-        }
-        let place = self.place(object)?;
-        if place.swizzle.is_some() {
-            return Err(internal(at));
-        }
-        let length = self.add(Expression::ArrayLength(place.pointer), at)?;
-        self.as_kind(length, crate::Scalar::I32, at)
-    }
-
-    fn non_uniform_value(
-        &mut self,
-        arguments: &[AstExpression],
-        at: Span,
-    ) -> Result<Handle<Expression>> {
-        let argument = arguments.first().ok_or_else(|| internal(at))?;
-        let (value, ty) = self.typed(argument)?;
-        let shared = self.tracker.is_const_or_override(value)
-            || matches!(
-                self.expressions[value],
-                Expression::FunctionArgument(_)
-                    | Expression::GlobalVariable(_)
-                    | Expression::LocalVariable(_)
-            );
-        let value = if shared && !ty.is_opaque() {
-            let pointer = self.spill(value, &ty, at)?;
-            self.add(Expression::Load { pointer }, at)?
-        } else {
-            value
-        };
-        self.mark(value, NonUniform::VALUE);
-        Ok(value)
-    }
-
-    fn user_call(
-        &mut self,
-        id: FunctionId,
-        arguments: &[AstExpression],
-        non_uniform: bool,
-        at: Span,
-    ) -> Result<Option<Handle<Expression>>> {
-        let analysis = self.lw.analysis;
-        let function = analysis.function(id).ok_or_else(|| internal(at))?;
-        let handle = self.user_call_target(id, arguments, at)?;
-        let parameter_types: Vec<Handle<crate::Type>> = self.lw.module.functions[handle]
-            .arguments
-            .iter()
-            .map(|argument| argument.ty)
-            .collect();
-        let (values, writebacks) =
-            self.user_call_arguments(arguments, &function.parameters, &parameter_types, at)?;
-        let returns = !function.return_type.is_void();
-        self.user_call_finish(handle, values, writebacks, returns, non_uniform, at)
-    }
-
-    fn user_call_arguments(
-        &mut self,
-        arguments: &[AstExpression],
-        parameters: &[rglsl_sema::scope::Parameter],
-        parameter_types: &[Handle<crate::Type>],
-        at: Span,
-    ) -> Result<(Vec<Handle<Expression>>, Vec<Writeback>)> {
-        let mut values = Vec::with_capacity(arguments.len());
-        let mut writebacks = Vec::new();
-        for ((argument, parameter), &parameter_ty) in
-            arguments.iter().zip(parameters).zip(parameter_types)
-        {
-            let writeback =
-                self.user_call_argument(argument, parameter, parameter_ty, &mut values, at)?;
-            writebacks.extend(writeback);
-        }
-        Ok((values, writebacks))
-    }
-
     fn user_call_target(
         &self,
         id: FunctionId,
@@ -284,87 +49,6 @@ impl FunctionLowerer<'_, '_> {
             }
         }
         Ok(handle)
-    }
-
-    fn user_call_argument(
-        &mut self,
-        argument: &AstExpression,
-        parameter: &rglsl_sema::scope::Parameter,
-        parameter_ty: Handle<crate::Type>,
-        values: &mut Vec<Handle<Expression>>,
-        at: Span,
-    ) -> Result<Option<Writeback>> {
-        let input = parameter.direction == Direction::In;
-        if input
-            && parameter
-                .ty
-                .as_opaque()
-                .is_some_and(rglsl_sema::types::Opaque::is_private_object)
-        {
-            return self.private_argument(argument, values).map(|()| None);
-        }
-        if input && matches!(parameter.ty.kind, TypeKind::Spirv(_)) {
-            return self
-                .spirv_in_argument(argument, &parameter.ty, values, at)
-                .map(|()| None);
-        }
-        if input {
-            return self
-                .in_argument_value(argument, parameter, parameter_ty, values, at)
-                .map(|()| None);
-        }
-        self.out_argument_place(argument, parameter, values, at)
-            .map(Some)
-    }
-
-    fn private_argument(
-        &mut self,
-        argument: &AstExpression,
-        values: &mut Vec<Handle<Expression>>,
-    ) -> Result<()> {
-        let pointer = self.ray_query_pointer(argument)?;
-        values.push(pointer);
-        Ok(())
-    }
-
-    fn spirv_in_argument(
-        &mut self,
-        argument: &AstExpression,
-        ty: &GlslType,
-        values: &mut Vec<Handle<Expression>>,
-        at: Span,
-    ) -> Result<()> {
-        let value = self.rvalue(argument)?;
-        let pointer = self.spirv_argument(ty, value, at)?;
-        values.push(pointer);
-        Ok(())
-    }
-
-    fn in_argument_value(
-        &mut self,
-        argument: &AstExpression,
-        parameter: &rglsl_sema::scope::Parameter,
-        parameter_ty: Handle<crate::Type>,
-        values: &mut Vec<Handle<Expression>>,
-        at: Span,
-    ) -> Result<()> {
-        let value = self.rvalue(argument)?;
-        let value = self.in_argument(value, parameter, parameter_ty, at)?;
-        values.push(value);
-        Ok(())
-    }
-
-    fn out_argument_place(
-        &mut self,
-        argument: &AstExpression,
-        parameter: &rglsl_sema::scope::Parameter,
-        values: &mut Vec<Handle<Expression>>,
-        at: Span,
-    ) -> Result<Writeback> {
-        let place = self.place(argument)?;
-        let (pointer, writeback) = self.out_argument(argument, place, parameter, at)?;
-        values.push(pointer);
-        Ok(writeback)
     }
 
     fn spirv_argument(
@@ -515,43 +199,6 @@ impl FunctionLowerer<'_, '_> {
             }
         }
         Ok(components)
-    }
-
-    pub(super) fn construct(
-        &mut self,
-        ty: &GlslType,
-        arguments: &[AstExpression],
-        at: Span,
-    ) -> Result<Handle<Expression>> {
-        if let &[ref argument] = arguments {
-            let from_reference = self.info(argument)?.ty.is_reference();
-            let numeric = ty.is_scalar() || ty.is_vector();
-            if ty.is_reference() || (from_reference && numeric) {
-                return self.reference_construct(ty, argument, at);
-            }
-        }
-        if ty.is_array() || ty.is_struct() {
-            return self.construct_composite(ty, arguments, at);
-        }
-        let mut values = Vec::with_capacity(arguments.len());
-        for argument in arguments {
-            values.push(self.typed(argument)?);
-        }
-        self.construct_values(ty, at, values)
-    }
-
-    fn construct_composite(
-        &mut self,
-        ty: &GlslType,
-        arguments: &[AstExpression],
-        at: Span,
-    ) -> Result<Handle<Expression>> {
-        let mut components = Vec::with_capacity(arguments.len());
-        for argument in arguments {
-            components.push(self.rvalue(argument)?);
-        }
-        let ir = self.lw.ir_type(ty, at)?;
-        self.add(Expression::Compose { ty: ir, components }, at)
     }
 
     fn construct_values(
@@ -724,5 +371,609 @@ impl FunctionLowerer<'_, '_> {
                 self.add(Expression::Compose { ty: ir, components }, at)
             }
         }
+    }
+}
+
+#[allow(clippy::await_holding_refcell_ref)]
+impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
+    pub(super) async fn call(
+        self,
+        expression: &'b AstExpression,
+        call: &'b FunctionCall,
+    ) -> Result<Option<Handle<Expression>>> {
+        let this = self.lowerer();
+        let at = this.at(expression.span);
+        let analysis = this.lw.analysis;
+        let arguments = call.arguments.as_slice();
+        match analysis.calls.get(&expression.id) {
+            Some(&Callee::Function(id))
+                if analysis
+                    .function(id)
+                    .is_some_and(|function| function.spirv_instruction.is_some()) =>
+            {
+                let frame = self.clone().spirv_call(id, arguments, at);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
+            Some(&Callee::Function(id)) => {
+                let frame = self
+                    .clone()
+                    .user_function_call(expression, id, arguments, at);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
+            Some(&Callee::NonUniform) => {
+                let frame = self.clone().non_uniform_value(arguments, at);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
+            .map(Some),
+            Some(&Callee::DebugPrintf) => {
+                let frame = self.clone().debug_printf(arguments, at);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
+            .map(|()| None),
+            Some(&Callee::Abort) => {
+                let frame = self.clone().abort(arguments, at);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
+            .map(|()| None),
+            Some(&Callee::Builtin(id)) => {
+                let frame = self
+                    .clone()
+                    .builtin_function_call(expression, id, arguments, at);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
+            Some(&Callee::Constructor(ref ty)) => {
+                let frame = self.clone().constructor_call(ty, arguments, at);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
+            Some(&Callee::Cooperative(kind)) => {
+                let frame = self.clone().cooperative_call(kind, arguments, at);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
+            Some(&Callee::Tensor(kind)) => {
+                let frame = self
+                    .clone()
+                    .tensor_function_call(expression, kind, arguments, at);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
+            Some(&Callee::TensorArm(kind)) => {
+                let frame = self.clone().tensor_arm_call(kind, arguments, at);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
+            Some(&Callee::Matrix(kind)) => {
+                let frame = self
+                    .clone()
+                    .matrix_function_call(expression, kind, arguments, at);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
+            Some(&Callee::Length) => {
+                let frame = self.clone().length_call(call, at);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
+            None => Err(internal(at)),
+        }
+    }
+
+    async fn user_function_call(
+        self,
+        expression: &'b AstExpression,
+        id: FunctionId,
+        arguments: &'b [AstExpression],
+        at: Span,
+    ) -> Result<Option<Handle<Expression>>> {
+        let this = self.lowerer();
+        let non_uniform = this.info(expression)?.non_uniform;
+        {
+            let frame = self.clone().user_call(id, arguments, non_uniform, at);
+            drop(this);
+            let result = self.nest(frame).await;
+            result
+        }
+    }
+
+    async fn builtin_function_call(
+        self,
+        expression: &'b AstExpression,
+        id: rglsl_sema::BuiltinFunctionId,
+        arguments: &'b [AstExpression],
+        at: Span,
+    ) -> Result<Option<Handle<Expression>>> {
+        let this = self.lowerer();
+        let result = &this.info(expression)?.ty;
+        {
+            let frame = self.clone().builtin_call(id, result, arguments, at);
+            drop(this);
+            let result = self.nest(frame).await;
+            result
+        }
+    }
+
+    async fn constructor_call(
+        self,
+        ty: &'b GlslType,
+        arguments: &'b [AstExpression],
+        at: Span,
+    ) -> Result<Option<Handle<Expression>>> {
+        let this = self.lowerer();
+        if ty
+            .as_opaque()
+            .is_some_and(rglsl_sema::types::Opaque::is_acceleration_structure)
+        {
+            return {
+                let frame = self.clone().acceleration_structure_from(arguments, at);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
+            .map(Some);
+        }
+        if ty.is_opaque() {
+            return Err(unsupported(
+                "combined image samplers outside the first argument of a texture function",
+                at,
+            ));
+        }
+        {
+            let frame = self.clone().construct(ty, arguments, at);
+            drop(this);
+            let result = self.nest(frame).await;
+            result
+        }
+        .map(Some)
+    }
+
+    async fn tensor_function_call(
+        self,
+        expression: &'b AstExpression,
+        kind: rglsl_sema::TensorCall,
+        arguments: &'b [AstExpression],
+        at: Span,
+    ) -> Result<Option<Handle<Expression>>> {
+        let this = self.lowerer();
+        let result = &this.info(expression)?.ty;
+        {
+            let frame = self.clone().tensor_call(kind, result, arguments, at);
+            drop(this);
+            let result = self.nest(frame).await;
+            result
+        }
+        .map(Some)
+    }
+
+    async fn matrix_function_call(
+        self,
+        expression: &'b AstExpression,
+        kind: rglsl_sema::MatrixCall,
+        arguments: &'b [AstExpression],
+        at: Span,
+    ) -> Result<Option<Handle<Expression>>> {
+        let this = self.lowerer();
+        let result = &this.info(expression)?.ty;
+        {
+            let frame = self.clone().matrix_call(kind, result, arguments, at);
+            drop(this);
+            let result = self.nest(frame).await;
+            result
+        }
+    }
+
+    async fn length_call(
+        self,
+        call: &'b FunctionCall,
+        at: Span,
+    ) -> Result<Option<Handle<Expression>>> {
+        let this = self.lowerer();
+        match call.function.node {
+            FunctionIdentifier::Method {
+                ref object,
+                ref name,
+            } if name.node == "length64" => {
+                let frame = self.clone().wide_length(object, at);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
+            .map(Some),
+            FunctionIdentifier::Method { ref object, .. } => {
+                let frame = self.clone().length(object, at);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
+            .map(Some),
+            _ => Err(internal(at)),
+        }
+    }
+
+    async fn wide_length(self, object: &'b AstExpression, at: Span) -> Result<Handle<Expression>> {
+        let mut this = self.lowerer();
+        let ty = this.info(object)?.ty.clone();
+        if let Some(length) = ty.length() {
+            return this.literal(Literal::I64(i64::from(length)), at);
+        }
+        let builtin = this
+            .lw
+            .variable_symbol(object)
+            .and_then(|symbol| this.lw.symbol(symbol))
+            .is_some_and(|symbol| this.lw.builtin_sizes.contains_key(symbol.name.as_str()));
+        let runtime = ty.outer_size() == Some(ArraySize::Unsized)
+            && !builtin
+            && ty.as_cooperative_matrix().is_none()
+            && ty.sized_vector_length().is_none();
+        if runtime {
+            let place = {
+                let frame = self.clone().place(object);
+                drop(this);
+                let result = self.nest(frame).await;
+                this = self.lowerer();
+                result
+            }?;
+            if place.swizzle.is_some() {
+                return Err(internal(at));
+            }
+            let length = this.add(Expression::WideArrayLength(place.pointer), at)?;
+            return this.as_kind(length, crate::Scalar::I64, at);
+        }
+        let length = {
+            let frame = self.clone().length(object, at);
+            drop(this);
+            let result = self.nest(frame).await;
+            this = self.lowerer();
+            result
+        }?;
+        this.as_kind(length, crate::Scalar::I64, at)
+    }
+
+    async fn length(self, object: &'b AstExpression, at: Span) -> Result<Handle<Expression>> {
+        let mut this = self.lowerer();
+        let ty = this.info(object)?.ty.clone();
+        if let Some(length) = ty.length() {
+            let length = i32::try_from(length).map_err(|_| internal(at))?;
+            return this.literal(Literal::I32(length), at);
+        }
+        if ty.as_cooperative_matrix().is_some() {
+            let matrix = this.lw.ir_type(&ty, at)?;
+            let length = this.add(Expression::CooperativeMatrixLength { ty: matrix }, at)?;
+            return this.as_kind(length, crate::Scalar::I32, at);
+        }
+        if let Some(ArraySize::Specialized(size)) = ty.outer_size().or(ty.sized_vector_length()) {
+            let handle = this.lw.specialized_size(size, at)?;
+            let value = this.add(Expression::Override(handle), at)?;
+            let size_ty = this.lw.module.overrides[handle].ty;
+            return match this.lw.module.types[size_ty].inner {
+                crate::TypeInner::Scalar(crate::Scalar::I32) => Ok(value),
+                _ => this.as_kind(value, crate::Scalar::I32, at),
+            };
+        }
+        if ty.outer_size() == Some(ArraySize::Unsized) {
+            if let Some(symbol) = this.lw.variable_symbol(object) {
+                if let Some(name) = this.lw.symbol(symbol).map(|s| s.name.as_str()) {
+                    if let Some(size) = this.lw.builtin_sizes.get(name).copied() {
+                        let size = i32::try_from(size).map_err(|_| internal(at))?;
+                        return this.literal(Literal::I32(size), at);
+                    }
+                }
+            }
+        }
+        let place = {
+            let frame = self.clone().place(object);
+            drop(this);
+            let result = self.nest(frame).await;
+            this = self.lowerer();
+            result
+        }?;
+        if place.swizzle.is_some() {
+            return Err(internal(at));
+        }
+        let length = this.add(Expression::ArrayLength(place.pointer), at)?;
+        this.as_kind(length, crate::Scalar::I32, at)
+    }
+
+    async fn non_uniform_value(
+        self,
+        arguments: &'b [AstExpression],
+        at: Span,
+    ) -> Result<Handle<Expression>> {
+        let mut this = self.lowerer();
+        let argument = arguments.first().ok_or_else(|| internal(at))?;
+        let (value, ty) = {
+            let frame = self.clone().typed(argument);
+            drop(this);
+            let result = self.nest(frame).await;
+            this = self.lowerer();
+            result
+        }?;
+        let shared = this.tracker.is_const_or_override(value)
+            || matches!(
+                this.expressions[value],
+                Expression::FunctionArgument(_)
+                    | Expression::GlobalVariable(_)
+                    | Expression::LocalVariable(_)
+            );
+        let value = if shared && !ty.is_opaque() {
+            let pointer = this.spill(value, &ty, at)?;
+            this.add(Expression::Load { pointer }, at)?
+        } else {
+            value
+        };
+        this.mark(value, NonUniform::VALUE);
+        Ok(value)
+    }
+
+    async fn user_call(
+        self,
+        id: FunctionId,
+        arguments: &'b [AstExpression],
+        non_uniform: bool,
+        at: Span,
+    ) -> Result<Option<Handle<Expression>>> {
+        let mut this = self.lowerer();
+        let analysis = this.lw.analysis;
+        let function = analysis.function(id).ok_or_else(|| internal(at))?;
+        let handle = this.user_call_target(id, arguments, at)?;
+        let parameter_types: Vec<Handle<crate::Type>> = this.lw.module.functions[handle]
+            .arguments
+            .iter()
+            .map(|argument| argument.ty)
+            .collect();
+        let (values, writebacks) = {
+            let frame = self.clone().user_call_arguments(
+                arguments,
+                &function.parameters,
+                parameter_types,
+                at,
+            );
+            drop(this);
+            let result = self.nest(frame).await;
+            this = self.lowerer();
+            result
+        }?;
+        let returns = !function.return_type.is_void();
+        this.user_call_finish(handle, values, writebacks, returns, non_uniform, at)
+    }
+
+    async fn user_call_arguments(
+        self,
+        arguments: &'b [AstExpression],
+        parameters: &'b [rglsl_sema::scope::Parameter],
+        parameter_types: Vec<Handle<crate::Type>>,
+        at: Span,
+    ) -> Result<(Vec<Handle<Expression>>, Vec<Writeback>)> {
+        let mut this = self.lowerer();
+        let values = Values::default();
+        let mut writebacks = Vec::new();
+        for ((argument, parameter), &parameter_ty) in
+            arguments.iter().zip(parameters).zip(&parameter_types)
+        {
+            let writeback = {
+                let frame = self.clone().user_call_argument(
+                    argument,
+                    parameter,
+                    parameter_ty,
+                    Rc::clone(&values),
+                    at,
+                );
+                drop(this);
+                let result = self.nest(frame).await;
+                this = self.lowerer();
+                result
+            }?;
+            writebacks.extend(writeback);
+        }
+        Ok((values.take(), writebacks))
+    }
+
+    async fn user_call_argument(
+        self,
+        argument: &'b AstExpression,
+        parameter: &'b rglsl_sema::scope::Parameter,
+        parameter_ty: Handle<crate::Type>,
+        values: Values,
+        at: Span,
+    ) -> Result<Option<Writeback>> {
+        let this = self.lowerer();
+        let input = parameter.direction == Direction::In;
+        if input
+            && parameter
+                .ty
+                .as_opaque()
+                .is_some_and(rglsl_sema::types::Opaque::is_private_object)
+        {
+            return {
+                let frame = self.clone().private_argument(argument, values);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
+            .map(|()| None);
+        }
+        if input && matches!(parameter.ty.kind, TypeKind::Spirv(_)) {
+            return {
+                let frame = self
+                    .clone()
+                    .spirv_in_argument(argument, &parameter.ty, values, at);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
+            .map(|()| None);
+        }
+        if input {
+            return {
+                let frame =
+                    self.clone()
+                        .in_argument_value(argument, parameter, parameter_ty, values, at);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
+            .map(|()| None);
+        }
+        {
+            let frame = self
+                .clone()
+                .out_argument_place(argument, parameter, values, at);
+            drop(this);
+            let result = self.nest(frame).await;
+            result
+        }
+        .map(Some)
+    }
+
+    async fn private_argument(self, argument: &'b AstExpression, values: Values) -> Result<()> {
+        let this = self.lowerer();
+        let pointer = {
+            let frame = self.clone().ray_query_pointer(argument);
+            drop(this);
+            let result = self.nest(frame).await;
+            result
+        }?;
+        values.borrow_mut().push(pointer);
+        Ok(())
+    }
+
+    async fn spirv_in_argument(
+        self,
+        argument: &'b AstExpression,
+        ty: &'b GlslType,
+        values: Values,
+        at: Span,
+    ) -> Result<()> {
+        let mut this = self.lowerer();
+        let value = {
+            let frame = self.clone().rvalue(argument);
+            drop(this);
+            let result = self.nest(frame).await;
+            this = self.lowerer();
+            result
+        }?;
+        let pointer = this.spirv_argument(ty, value, at)?;
+        values.borrow_mut().push(pointer);
+        Ok(())
+    }
+
+    async fn in_argument_value(
+        self,
+        argument: &'b AstExpression,
+        parameter: &'b rglsl_sema::scope::Parameter,
+        parameter_ty: Handle<crate::Type>,
+        values: Values,
+        at: Span,
+    ) -> Result<()> {
+        let mut this = self.lowerer();
+        let value = {
+            let frame = self.clone().rvalue(argument);
+            drop(this);
+            let result = self.nest(frame).await;
+            this = self.lowerer();
+            result
+        }?;
+        let value = this.in_argument(value, parameter, parameter_ty, at)?;
+        values.borrow_mut().push(value);
+        Ok(())
+    }
+
+    async fn out_argument_place(
+        self,
+        argument: &'b AstExpression,
+        parameter: &'b rglsl_sema::scope::Parameter,
+        values: Values,
+        at: Span,
+    ) -> Result<Writeback> {
+        let mut this = self.lowerer();
+        let place = {
+            let frame = self.clone().place(argument);
+            drop(this);
+            let result = self.nest(frame).await;
+            this = self.lowerer();
+            result
+        }?;
+        let (pointer, writeback) = this.out_argument(argument, place, parameter, at)?;
+        values.borrow_mut().push(pointer);
+        Ok(writeback)
+    }
+
+    pub(super) async fn construct(
+        self,
+        ty: &'b GlslType,
+        arguments: &'b [AstExpression],
+        at: Span,
+    ) -> Result<Handle<Expression>> {
+        let mut this = self.lowerer();
+        if let &[ref argument] = arguments {
+            let from_reference = this.info(argument)?.ty.is_reference();
+            let numeric = ty.is_scalar() || ty.is_vector();
+            if ty.is_reference() || (from_reference && numeric) {
+                return {
+                    let frame = self.clone().reference_construct(ty, argument, at);
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    result
+                };
+            }
+        }
+        if ty.is_array() || ty.is_struct() {
+            return {
+                let frame = self.clone().construct_composite(ty, arguments, at);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            };
+        }
+        let mut values = Vec::with_capacity(arguments.len());
+        for argument in arguments {
+            values.push({
+                let frame = self.clone().typed(argument);
+                drop(this);
+                let result = self.nest(frame).await;
+                this = self.lowerer();
+                result
+            }?);
+        }
+        this.construct_values(ty, at, values)
+    }
+
+    async fn construct_composite(
+        self,
+        ty: &'b GlslType,
+        arguments: &'b [AstExpression],
+        at: Span,
+    ) -> Result<Handle<Expression>> {
+        let mut this = self.lowerer();
+        let mut components = Vec::with_capacity(arguments.len());
+        for argument in arguments {
+            components.push({
+                let frame = self.clone().rvalue(argument);
+                drop(this);
+                let result = self.nest(frame).await;
+                this = self.lowerer();
+                result
+            }?);
+        }
+        let ir = this.lw.ir_type(ty, at)?;
+        this.add(Expression::Compose { ty: ir, components }, at)
     }
 }

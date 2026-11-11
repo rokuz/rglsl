@@ -1,4 +1,8 @@
 use alloc::{collections::BTreeMap, string::String, vec::Vec};
+use core::cell::{RefCell, RefMut};
+use core::future::Future;
+
+use rglsl_types::stack::{Call, Stack};
 
 use rglsl_ast::ast::{FunctionDefinition, Node};
 use rglsl_sema::scope::Direction;
@@ -29,6 +33,8 @@ pub(super) struct FunctionLowerer<'l, 'a> {
     pub emitter: Emitter,
     pub block: Block,
     pub variables: BTreeMap<SymbolId, Local>,
+    unflagged: Vec<SymbolId>,
+    pub purity: RefCell<BTreeMap<rglsl_ast::ast::NodeId, bool>>,
     pub specializing: bool,
     pub non_uniform: crate::NonUniformExpressions,
     pub precision: crate::PrecisionExpressions,
@@ -37,33 +43,130 @@ pub(super) struct FunctionLowerer<'l, 'a> {
     pub argument_types: Vec<Handle<crate::Type>>,
 }
 
+#[derive(Clone)]
+pub(super) struct Cx<'b, 'l, 'a> {
+    lowerer: &'b RefCell<&'b mut FunctionLowerer<'l, 'a>>,
+    stack: Stack<'b>,
+}
+
+#[allow(clippy::await_holding_refcell_ref)]
+impl<'b, 'l, 'a> Cx<'b, 'l, 'a> {
+    pub(super) const fn new(
+        lowerer: &'b RefCell<&'b mut FunctionLowerer<'l, 'a>>,
+        stack: Stack<'b>,
+    ) -> Self {
+        Self { lowerer, stack }
+    }
+
+    pub(super) fn lowerer(&self) -> RefMut<'b, &'b mut FunctionLowerer<'l, 'a>> {
+        self.lowerer.borrow_mut()
+    }
+
+    pub(super) fn nest<T: 'b>(&self, frame: impl Future<Output = T> + 'b) -> Call<'b, T> {
+        self.stack.call(frame)
+    }
+
+    pub(super) async fn block_with<T>(self, frame: Call<'b, Result<T>>) -> Result<(Block, T)> {
+        let outer = self.lowerer().open_block();
+        let result = frame.await;
+        let mut value = None;
+        let result = result.map(|inner| value = Some(inner));
+        let block = self.lowerer().close_block(outer, result)?;
+        let at = Span::UNDEFINED;
+        Ok((block, value.ok_or_else(|| internal(at))?))
+    }
+
+    pub(super) async fn block(self, frame: Call<'b, Result<()>>) -> Result<Block> {
+        self.block_with(frame).await.map(|(block, ())| block)
+    }
+}
+
+#[derive(Clone)]
+pub(super) struct LowererCx<'b, 'a> {
+    lowerer: &'b RefCell<&'b mut Lowerer<'a>>,
+    stack: Stack<'b>,
+}
+
+impl<'b, 'a> LowererCx<'b, 'a> {
+    pub(super) const fn new(lowerer: &'b RefCell<&'b mut Lowerer<'a>>, stack: Stack<'b>) -> Self {
+        Self { lowerer, stack }
+    }
+
+    pub(super) fn lowerer(&self) -> RefMut<'b, &'b mut Lowerer<'a>> {
+        self.lowerer.borrow_mut()
+    }
+
+    pub(super) fn nest<T: 'b>(&self, frame: impl Future<Output = T> + 'b) -> Call<'b, T> {
+        self.stack.call(frame)
+    }
+}
+
+macro_rules! lowerer_on_heap {
+    ($lowerer:expr, |$cx:ident| $frame:expr) => {{
+        let cell = core::cell::RefCell::new($lowerer);
+        rglsl_types::stack::run(|stack| {
+            let $cx = super::function::LowererCx::new(&cell, stack);
+            $frame
+        })
+        .unwrap_or_else(|| Err(super::internal(crate::Span::UNDEFINED)))
+    }};
+}
+
+pub(super) use lowerer_on_heap;
+
+macro_rules! on_heap {
+    ($lowerer:expr, |$cx:ident| $frame:expr) => {{
+        let cell = core::cell::RefCell::new($lowerer);
+        rglsl_types::stack::run(|stack| {
+            let $cx = super::function::Cx::new(&cell, stack);
+            $frame
+        })
+        .unwrap_or_else(|| Err(super::internal(crate::Span::UNDEFINED)))
+    }};
+}
+
+pub(super) use on_heap;
+
 fn ensure_returns(block: &mut Block) {
-    match block.last_mut() {
-        Some(&mut Statement::Block(ref mut inner)) => ensure_returns(inner),
-        Some(&mut Statement::If {
-            ref mut accept,
-            ref mut reject,
-            ..
-        }) => {
-            ensure_returns(accept);
-            ensure_returns(reject);
+    let mut pending = alloc::vec![block];
+    while let Some(block) = pending.pop() {
+        let ends = match block.last() {
+            Some(
+                &(Statement::Block(_)
+                | Statement::If { .. }
+                | Statement::Switch { .. }
+                | Statement::Break
+                | Statement::Continue
+                | Statement::Return { .. }
+                | Statement::Kill
+                | Statement::Abort { .. }),
+            ) => true,
+            Some(&Statement::RayPipelineFunction(ref function)) => function.is_terminator(),
+            _ => false,
+        };
+        if !ends {
+            block.push(Statement::Return { value: None }, Span::UNDEFINED);
+            continue;
         }
-        Some(&mut Statement::Switch { ref mut cases, .. }) => {
-            for case in cases.iter_mut() {
-                if !case.fall_through {
-                    ensure_returns(&mut case.body);
+        match block.last_mut() {
+            Some(&mut Statement::Block(ref mut inner)) => pending.push(inner),
+            Some(&mut Statement::If {
+                ref mut accept,
+                ref mut reject,
+                ..
+            }) => {
+                pending.push(reject);
+                pending.push(accept);
+            }
+            Some(&mut Statement::Switch { ref mut cases, .. }) => {
+                for case in cases.iter_mut().rev() {
+                    if !case.fall_through {
+                        pending.push(&mut case.body);
+                    }
                 }
             }
+            _ => {}
         }
-        Some(
-            &mut (Statement::Break
-            | Statement::Continue
-            | Statement::Return { .. }
-            | Statement::Kill
-            | Statement::Abort { .. }),
-        ) => {}
-        Some(&mut Statement::RayPipelineFunction(ref function)) if function.is_terminator() => {}
-        _ => block.push(Statement::Return { value: None }, Span::UNDEFINED),
     }
 }
 
@@ -80,6 +183,8 @@ impl<'l, 'a> FunctionLowerer<'l, 'a> {
             emitter,
             block: Block::new(),
             variables: BTreeMap::new(),
+            unflagged: Vec::new(),
+            purity: RefCell::new(BTreeMap::new()),
             specializing: false,
             non_uniform: crate::NonUniformExpressions::default(),
             precision: crate::PrecisionExpressions::default(),
@@ -137,8 +242,8 @@ impl<'l, 'a> FunctionLowerer<'l, 'a> {
         let emitted = self.emitter.finish(&self.expressions);
         self.block.extend(emitted);
         let analysis = self.lw.analysis;
-        for (&symbol, local) in &self.variables {
-            let Local::Variable(handle) = *local else {
+        for symbol in core::mem::take(&mut self.unflagged) {
+            let Some(&Local::Variable(handle)) = self.variables.get(&symbol) else {
                 continue;
             };
             let relaxed_symbol = analysis
@@ -150,6 +255,11 @@ impl<'l, 'a> FunctionLowerer<'l, 'a> {
             }
         }
         self.emitter.start(&self.expressions);
+    }
+
+    pub(super) fn bind_variable(&mut self, symbol: SymbolId, local: Local) {
+        self.variables.insert(symbol, local);
+        self.unflagged.push(symbol);
     }
 
     pub(super) fn push(&mut self, statement: Statement, span: Span) {
@@ -203,6 +313,17 @@ impl<'l, 'a> FunctionLowerer<'l, 'a> {
         self.flush();
         let outer = core::mem::take(&mut self.block);
         let result = body(self);
+        self.flush();
+        let inner = core::mem::replace(&mut self.block, outer);
+        result.map(|()| inner)
+    }
+
+    pub(super) fn open_block(&mut self) -> Block {
+        self.flush();
+        core::mem::take(&mut self.block)
+    }
+
+    pub(super) fn close_block(&mut self, outer: Block, result: Result<()>) -> Result<Block> {
         self.flush();
         let inner = core::mem::replace(&mut self.block, outer);
         result.map(|()| inner)
@@ -293,6 +414,8 @@ impl<'l, 'a> FunctionLowerer<'l, 'a> {
         }
     }
 }
+
+impl<'b, 'l, 'a> Cx<'b, 'l, 'a> {}
 
 impl<'a> Lowerer<'a> {
     fn parameter_type(
@@ -469,7 +592,7 @@ impl<'a> Lowerer<'a> {
                 }
                 other => other,
             };
-            lowerer.variables.insert(symbol, local);
+            lowerer.bind_variable(symbol, local);
         }
         for initialization in initializers {
             let ty = lowerer

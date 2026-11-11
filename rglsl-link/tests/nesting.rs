@@ -14,12 +14,11 @@ const TYPE_LIMIT: usize = 64;
 const HUGE: usize = 20_000;
 const LONG: usize = 4_000;
 
-const REJECTIONS: [&str; 7] = [
+const REJECTIONS: [&str; 6] = [
     "nested too deeply",
     "maximum nesting depth exceeded",
     "macro expansion depth limit exceeded",
-    "include depth limit exceeded",
-    "expression nested too deeply",
+    "recursive include",
     "preprocessing token limit exceeded",
     "a function body is nested too deeply",
 ];
@@ -42,7 +41,7 @@ impl Includer for Recursive {
         depth: usize,
     ) -> Result<IncludedFile, IncludeError> {
         Ok(IncludedFile {
-            file: FileId(u32::try_from(depth).unwrap() + 1),
+            file: FileId(1),
             name: format!("level{depth}.h"),
             source: String::from("#include \"next.h\"\nint f(int a) { return a; }\n"),
         })
@@ -408,7 +407,7 @@ fn preprocessor_nesting_is_bounded_on_a_small_stack() {
             "",
         )
     };
-    assert!(deepest("#if expression", parentheses, false) >= limits.max_expression_depth - 2);
+    assert_eq!(check(parentheses(HUGE), false), Outcome::Compiled);
     let include = shader(
         "#extension GL_GOOGLE_include_directive : enable\n#include \"first.h\"",
         "",
@@ -700,4 +699,326 @@ fn object_files_are_bounded_on_a_small_stack() {
     assert_eq!(linked_object(deeper), Outcome::TooDeep);
     let hostile = on_small_stack(|| nested_object(4 * MAX_BLOCK_DEPTH));
     assert_eq!(linked_object(hostile), Outcome::TooDeep);
+}
+
+const FRONTEND_STACK: usize = 256 << 10;
+const FRONTEND_DEPTHS: [usize; 2] = [10_000, 100_000];
+const RESOURCE_LIMITS: [&str; 2] = [
+    "preprocessing token limit exceeded",
+    "preprocessed output limit exceeded",
+];
+
+struct IncludeChain {
+    levels: usize,
+}
+
+impl Includer for IncludeChain {
+    fn include(
+        &mut self,
+        _requested: &str,
+        _kind: IncludeKind,
+        _from: FileId,
+        depth: usize,
+    ) -> Result<IncludedFile, IncludeError> {
+        let source = if depth < self.levels {
+            String::from("#include \"next.h\"\n")
+        } else {
+            String::from("int g(int a) { return a; }\n")
+        };
+        Ok(IncludedFile {
+            file: FileId(u32::try_from(depth).unwrap()),
+            name: format!("level{depth}.h"),
+            source,
+        })
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum Lowering {
+    Lowered,
+    ResourceLimit,
+    Rejected(String),
+}
+
+fn frontend(source: String, includes: Option<usize>) -> Lowering {
+    std::thread::Builder::new()
+        .stack_size(FRONTEND_STACK)
+        .spawn(move || {
+            let options = Options {
+                nesting_limits: false,
+                ..Options::from(ShaderStage::Fragment)
+            };
+            let parsed = match includes {
+                Some(levels) => Frontend::default().parse_with_includer(
+                    &options,
+                    &source,
+                    FileId(0),
+                    &mut IncludeChain { levels },
+                ),
+                None => Frontend::default().parse(&options, &source),
+            };
+            match parsed {
+                Ok(module) => {
+                    core::mem::forget(module);
+                    Lowering::Lowered
+                }
+                Err(errors) => {
+                    let messages: Vec<String> =
+                        errors.errors.iter().map(ToString::to_string).collect();
+                    if messages
+                        .iter()
+                        .any(|message| RESOURCE_LIMITS.iter().any(|limit| message.contains(limit)))
+                    {
+                        Lowering::ResourceLimit
+                    } else {
+                        Lowering::Rejected(messages.join("\n"))
+                    }
+                }
+            }
+        })
+        .unwrap()
+        .join()
+        .unwrap()
+}
+
+fn frontend_case(name: &str, source: impl Fn(usize) -> String, expected: &Lowering) {
+    for depth in FRONTEND_DEPTHS {
+        assert_eq!(
+            &frontend(source(depth), None),
+            expected,
+            "{name} at {depth}"
+        );
+    }
+}
+
+#[test]
+fn the_frontend_handles_deep_preprocessor_nesting_on_a_small_stack() {
+    frontend_case(
+        "macro arguments",
+        |count| {
+            shader(
+                "#define F(x) x",
+                &format!("b = {}b{};", "F(".repeat(count), ")".repeat(count)),
+            )
+        },
+        &Lowering::ResourceLimit,
+    );
+    frontend_case(
+        "macro definitions",
+        |count| {
+            let mut globals = String::from("#define F0(x) x\n");
+            for level in 1..count {
+                globals.push_str(&format!("#define F{level}(x) F{}(x)\n", level - 1));
+            }
+            shader(&globals, &format!("b = F{}(b);", count - 1))
+        },
+        &Lowering::Lowered,
+    );
+    frontend_case(
+        "#if expressions",
+        |count| {
+            shader(
+                &format!("#if {}1{}\n#endif", "(".repeat(count), ")".repeat(count)),
+                "",
+            )
+        },
+        &Lowering::Lowered,
+    );
+    frontend_case(
+        "#if operators",
+        |count| shader(&format!("#if {}1\n#endif", "- ~ ".repeat(count)), ""),
+        &Lowering::Lowered,
+    );
+    for depth in FRONTEND_DEPTHS {
+        let source = shader(
+            "#extension GL_GOOGLE_include_directive : enable\n#include \"first.h\"",
+            "",
+        );
+        assert_eq!(
+            frontend(source, Some(depth)),
+            Lowering::Lowered,
+            "includes at {depth}"
+        );
+    }
+}
+
+fn nested_body(prefix: &str, open: &str, core: &str, close: &str) -> impl Fn(usize) -> String {
+    let (prefix, open, core, close) = (
+        prefix.to_owned(),
+        open.to_owned(),
+        core.to_owned(),
+        close.to_owned(),
+    );
+    move |count| {
+        shader(
+            "int g(out int a) { a = 1; return 2; }",
+            &format!(
+                "{prefix}{}{core}{};",
+                open.repeat(count),
+                close.repeat(count)
+            ),
+        )
+    }
+}
+
+#[test]
+fn the_frontend_handles_deep_expressions_on_a_small_stack() {
+    let cases = [
+        ("parentheses", "b = ", "(", "b", ")"),
+        ("negation", "b = ", "-(", "b", ")"),
+        ("logical not", "t = ", "!(", "t", ")"),
+        ("bitwise not", "b = ", "~(", "b", ")"),
+        ("binary chain", "b = ", "b + (", "b", ")"),
+        ("right operand", "b = ", "b + b * (", "b", ")"),
+        ("comparison", "t = ", "t == (", "t", ")"),
+        ("logical and", "t = ", "t && (", "t", ")"),
+        (
+            "short-circuit with effects",
+            "t = ",
+            "(b++ > 0) || (",
+            "t",
+            ")",
+        ),
+        ("assignment", "", "b = (", "2", ")"),
+        ("compound assignment", "", "b += (", "2", ")"),
+        ("conditional else", "b = ", "t ? b : (", "b", ")"),
+        ("conditional then", "b = ", "t ? ", "b", " : b"),
+        (
+            "conditional with effects",
+            "b = ",
+            "b > 2 ? b++ : (",
+            "b",
+            ")",
+        ),
+        ("user call", "b = ", "f(", "b", ")"),
+        ("out argument", "b = ", "g(b) + (", "b", ")"),
+        ("built-in call", "b = ", "abs(", "b", ")"),
+        ("two-argument built-in", "b = ", "max(b, ", "b", ")"),
+        ("constructor", "b = ", "int(", "b", ")"),
+        ("vector constructor", "v = ", "vec4(", "v", ")"),
+        ("nonuniformEXT", "b = ", "nonuniformEXT(", "b", ")"),
+        ("subscript", "b = ", "c[", "0", "]"),
+        ("swizzle", "v = ", "(", "v", ").wzyx"),
+        ("increment", "b = ", "b++ + (", "b", ")"),
+        ("sequence", "b = ", "(b, ", "b", ")"),
+    ];
+    for (name, prefix, open, core, close) in cases {
+        frontend_case(
+            name,
+            nested_body(prefix, open, core, close),
+            &Lowering::Lowered,
+        );
+    }
+}
+
+#[test]
+fn the_frontend_handles_deep_statements_on_a_small_stack() {
+    let cases = [
+        ("blocks", "{ ", " }"),
+        ("if", "if (t) ", ""),
+        ("if blocks", "if (t) { ", " }"),
+        ("else if", "if (b > 3) b = 4; else ", ""),
+        ("for", "for (int i = 0; i < 2; i++) ", ""),
+        ("while", "while (t) ", ""),
+        ("do while", "do { ", " } while (b > 5);"),
+        ("switch", "switch (b) { case 1: ", " break; }"),
+        (
+            "loop control",
+            "[[unroll]] for (int i = 0; i < 2; i++) { ",
+            " }",
+        ),
+    ];
+    for (name, open, close) in cases {
+        frontend_case(
+            name,
+            nested_body("", open, "b = 2;", close),
+            &Lowering::Lowered,
+        );
+    }
+}
+
+#[test]
+fn the_frontend_handles_deep_declarations_on_a_small_stack() {
+    let initializer_lists = |count: usize| {
+        shader(
+            "",
+            &format!(
+                "int a{} = {}2{}; b = a{};",
+                "[1]".repeat(count),
+                "{".repeat(count),
+                "}".repeat(count),
+                "[0]".repeat(count)
+            ),
+        )
+    };
+    assert_eq!(
+        frontend(initializer_lists(FRONTEND_DEPTHS[0]), None),
+        Lowering::Lowered,
+        "array initializer lists"
+    );
+    frontend_case(
+        "struct chains",
+        |count| {
+            shader(
+                &struct_chain(count),
+                &format!("S{0} s; s.b = 1; S{0} r = s; b = r.b;", count - 1),
+            )
+        },
+        &Lowering::Lowered,
+    );
+    frontend_case(
+        "struct initializers",
+        |count| {
+            let mut initializer = String::from("{2}");
+            for _ in 1..count {
+                initializer = format!("{{{initializer}, 0}}");
+            }
+            shader(
+                &struct_chain(count),
+                &format!("S{} s = {initializer}; b = s.b;", count - 1),
+            )
+        },
+        &Lowering::Lowered,
+    );
+    frontend_case(
+        "struct constructors",
+        |count| {
+            let mut constructor = String::from("S0(2)");
+            for level in 1..count {
+                constructor = format!("S{level}({constructor}, 0)");
+            }
+            shader(
+                &struct_chain(count),
+                &format!("S{} s = {constructor}; b = s.b;", count - 1),
+            )
+        },
+        &Lowering::Lowered,
+    );
+    frontend_case(
+        "array dimensions",
+        |count| {
+            shader(
+                "",
+                &format!(
+                    "int a{0}; int r{0} = a; b = r.length();",
+                    "[1]".repeat(count)
+                ),
+            )
+        },
+        &Lowering::Lowered,
+    );
+    for depth in FRONTEND_DEPTHS {
+        let source = shader(
+            &format!(
+                "{}int a; {}",
+                "struct { ".repeat(depth),
+                "} a; ".repeat(depth)
+            ),
+            "",
+        );
+        assert!(
+            matches!(frontend(source, None), Lowering::Rejected(_)),
+            "inline structs at {depth}"
+        );
+    }
 }

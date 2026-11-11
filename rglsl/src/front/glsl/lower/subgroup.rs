@@ -223,45 +223,63 @@ impl FunctionLowerer<'_, '_> {
         )
     }
 
-    fn collective_operation(
-        &mut self,
+    fn subgroup_result_type(&mut self, inner: TypeInner) -> Expression {
+        Expression::SubgroupOperationResult {
+            ty: self.lw.insert_type(inner),
+        }
+    }
+}
+
+#[allow(clippy::await_holding_refcell_ref)]
+impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
+    async fn collective_operation(
+        self,
         collective: Collective,
-        arguments: &[AstExpression],
+        arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<CollectiveOperation> {
+        let this = self.lowerer();
         let second = || arguments.get(1).ok_or_else(|| internal(at));
         Ok(match collective {
             Collective::Reduce => CollectiveOperation::Reduce,
             Collective::InclusiveScan => CollectiveOperation::InclusiveScan,
             Collective::ExclusiveScan => CollectiveOperation::ExclusiveScan,
             Collective::Clustered => {
-                let size = self.constant_index(second()?).ok_or_else(|| internal(at))?;
+                let size = this.constant_index(second()?).ok_or_else(|| internal(at))?;
                 CollectiveOperation::ClusteredReduce(size)
             }
-            Collective::PartitionedReduce => {
-                CollectiveOperation::PartitionedReduce(self.rvalue(second()?)?)
-            }
+            Collective::PartitionedReduce => CollectiveOperation::PartitionedReduce({
+                let frame = self.clone().rvalue(second()?);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }?),
             Collective::PartitionedInclusiveScan => {
-                CollectiveOperation::PartitionedInclusiveScan(self.rvalue(second()?)?)
+                CollectiveOperation::PartitionedInclusiveScan({
+                    let frame = self.clone().rvalue(second()?);
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    result
+                }?)
             }
             Collective::PartitionedExclusiveScan => {
-                CollectiveOperation::PartitionedExclusiveScan(self.rvalue(second()?)?)
+                CollectiveOperation::PartitionedExclusiveScan({
+                    let frame = self.clone().rvalue(second()?);
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    result
+                }?)
             }
         })
     }
 
-    fn subgroup_result_type(&mut self, inner: TypeInner) -> Expression {
-        Expression::SubgroupOperationResult {
-            ty: self.lw.insert_type(inner),
-        }
-    }
-
-    pub(super) fn subgroup(
-        &mut self,
-        name: &str,
-        arguments: &[AstExpression],
+    pub(super) async fn subgroup(
+        self,
+        name: &'b str,
+        arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
+        let mut this = self.lowerer();
         let lowered = classify(name)
             .ok_or_else(|| unsupported(format!("the built-in function `{name}`"), at))?;
         let argument = |index: usize| arguments.get(index).ok_or_else(|| internal(at));
@@ -270,7 +288,7 @@ impl FunctionLowerer<'_, '_> {
                 execution,
                 semantics,
             } => {
-                self.push(
+                this.push(
                     Statement::ScopedBarrier {
                         execution: execution.then_some(MemoryScope::Subgroup),
                         memory: MemoryScope::Subgroup,
@@ -281,8 +299,14 @@ impl FunctionLowerer<'_, '_> {
                 Ok(None)
             }
             Lowered::Ballot => {
-                let predicate = self.rvalue(argument(0)?)?;
-                let result = self.push_with_result(
+                let predicate = {
+                    let frame = self.clone().rvalue(argument(0)?);
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }?;
+                let result = this.push_with_result(
                     Expression::SubgroupBallotResult,
                     |result| Statement::SubgroupBallot {
                         result,
@@ -293,10 +317,22 @@ impl FunctionLowerer<'_, '_> {
                 Ok(Some(result))
             }
             Lowered::Collective(op, collective) => {
-                let (value, ty) = self.typed(argument(0)?)?;
-                let collective_op = self.collective_operation(collective, arguments, at)?;
-                let ty = self.lw.ir_type(&ty, at)?;
-                let result = self.push_with_result(
+                let (value, ty) = {
+                    let frame = self.clone().typed(argument(0)?);
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }?;
+                let collective_op = {
+                    let frame = self.clone().collective_operation(collective, arguments, at);
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }?;
+                let ty = this.lw.ir_type(&ty, at)?;
+                let result = this.push_with_result(
                     Expression::SubgroupOperationResult { ty },
                     |result| Statement::SubgroupCollectiveOperation {
                         op,
@@ -309,23 +345,77 @@ impl FunctionLowerer<'_, '_> {
                 Ok(Some(result))
             }
             Lowered::Gather(gather) => {
-                let (value, ty) = self.typed(argument(0)?)?;
+                let (value, ty) = {
+                    let frame = self.clone().typed(argument(0)?);
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }?;
                 let mode = match gather {
                     Gather::BroadcastFirst => GatherMode::BroadcastFirst,
                     Gather::QuadSwap(direction) => GatherMode::QuadSwap(direction),
-                    Gather::Broadcast => GatherMode::Broadcast(self.rvalue(argument(1)?)?),
-                    Gather::Shuffle => GatherMode::Shuffle(self.rvalue(argument(1)?)?),
-                    Gather::ShuffleXor => GatherMode::ShuffleXor(self.rvalue(argument(1)?)?),
-                    Gather::ShuffleUp => GatherMode::ShuffleUp(self.rvalue(argument(1)?)?),
-                    Gather::ShuffleDown => GatherMode::ShuffleDown(self.rvalue(argument(1)?)?),
-                    Gather::QuadBroadcast => GatherMode::QuadBroadcast(self.rvalue(argument(1)?)?),
+                    Gather::Broadcast => GatherMode::Broadcast({
+                        let frame = self.clone().rvalue(argument(1)?);
+                        drop(this);
+                        let result = self.nest(frame).await;
+                        this = self.lowerer();
+                        result
+                    }?),
+                    Gather::Shuffle => GatherMode::Shuffle({
+                        let frame = self.clone().rvalue(argument(1)?);
+                        drop(this);
+                        let result = self.nest(frame).await;
+                        this = self.lowerer();
+                        result
+                    }?),
+                    Gather::ShuffleXor => GatherMode::ShuffleXor({
+                        let frame = self.clone().rvalue(argument(1)?);
+                        drop(this);
+                        let result = self.nest(frame).await;
+                        this = self.lowerer();
+                        result
+                    }?),
+                    Gather::ShuffleUp => GatherMode::ShuffleUp({
+                        let frame = self.clone().rvalue(argument(1)?);
+                        drop(this);
+                        let result = self.nest(frame).await;
+                        this = self.lowerer();
+                        result
+                    }?),
+                    Gather::ShuffleDown => GatherMode::ShuffleDown({
+                        let frame = self.clone().rvalue(argument(1)?);
+                        drop(this);
+                        let result = self.nest(frame).await;
+                        this = self.lowerer();
+                        result
+                    }?),
+                    Gather::QuadBroadcast => GatherMode::QuadBroadcast({
+                        let frame = self.clone().rvalue(argument(1)?);
+                        drop(this);
+                        let result = self.nest(frame).await;
+                        this = self.lowerer();
+                        result
+                    }?),
                     Gather::Rotate => GatherMode::Rotate {
-                        delta: self.rvalue(argument(1)?)?,
+                        delta: {
+                            let frame = self.clone().rvalue(argument(1)?);
+                            drop(this);
+                            let result = self.nest(frame).await;
+                            this = self.lowerer();
+                            result
+                        }?,
                         cluster_size: None,
                     },
                     Gather::ClusteredRotate => {
-                        let delta = self.rvalue(argument(1)?)?;
-                        let size = self.constant_index(argument(2)?).ok_or_else(|| {
+                        let delta = {
+                            let frame = self.clone().rvalue(argument(1)?);
+                            drop(this);
+                            let result = self.nest(frame).await;
+                            this = self.lowerer();
+                            result
+                        }?;
+                        let size = this.constant_index(argument(2)?).ok_or_else(|| {
                             unsupported("a cluster size that is not a constant expression", at)
                         })?;
                         GatherMode::Rotate {
@@ -334,8 +424,8 @@ impl FunctionLowerer<'_, '_> {
                         }
                     }
                 };
-                let ty = self.lw.ir_type(&ty, at)?;
-                let result = self.push_with_result(
+                let ty = this.lw.ir_type(&ty, at)?;
+                let result = this.push_with_result(
                     Expression::SubgroupOperationResult { ty },
                     |result| Statement::SubgroupGather {
                         mode,
@@ -346,16 +436,22 @@ impl FunctionLowerer<'_, '_> {
                 );
                 Ok(Some(result))
             }
-            Lowered::Function(function) => self.subgroup_function(function, arguments, at),
+            Lowered::Function(function) => {
+                let frame = self.clone().subgroup_function(function, arguments, at);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
         }
     }
 
-    fn subgroup_function(
-        &mut self,
+    async fn subgroup_function(
+        self,
         function: Function,
-        arguments: &[AstExpression],
+        arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
+        let mut this = self.lowerer();
         let argument = |index: usize| arguments.get(index).ok_or_else(|| internal(at));
         let boolean = TypeInner::Scalar(Scalar::BOOL);
         let unsigned = TypeInner::Scalar(Scalar::U32);
@@ -366,51 +462,123 @@ impl FunctionLowerer<'_, '_> {
         let (fun, inner) = match function {
             Function::Elect => (SubgroupFunction::Elect, boolean),
             Function::AllEqual => (
-                SubgroupFunction::AllEqual(self.rvalue(argument(0)?)?),
+                SubgroupFunction::AllEqual({
+                    let frame = self.clone().rvalue(argument(0)?);
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }?),
                 boolean,
             ),
             Function::QuadAll => (
-                SubgroupFunction::QuadAll(self.rvalue(argument(0)?)?),
+                SubgroupFunction::QuadAll({
+                    let frame = self.clone().rvalue(argument(0)?);
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }?),
                 boolean,
             ),
             Function::QuadAny => (
-                SubgroupFunction::QuadAny(self.rvalue(argument(0)?)?),
+                SubgroupFunction::QuadAny({
+                    let frame = self.clone().rvalue(argument(0)?);
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }?),
                 boolean,
             ),
             Function::InverseBallot => (
-                SubgroupFunction::InverseBallot(self.rvalue(argument(0)?)?),
+                SubgroupFunction::InverseBallot({
+                    let frame = self.clone().rvalue(argument(0)?);
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }?),
                 boolean,
             ),
             Function::BallotBitExtract => (
                 SubgroupFunction::BallotBitExtract {
-                    ballot: self.rvalue(argument(0)?)?,
-                    index: self.rvalue(argument(1)?)?,
+                    ballot: {
+                        let frame = self.clone().rvalue(argument(0)?);
+                        drop(this);
+                        let result = self.nest(frame).await;
+                        this = self.lowerer();
+                        result
+                    }?,
+                    index: {
+                        let frame = self.clone().rvalue(argument(1)?);
+                        drop(this);
+                        let result = self.nest(frame).await;
+                        this = self.lowerer();
+                        result
+                    }?,
                 },
                 boolean,
             ),
             Function::BallotBitCount(collective) => (
                 SubgroupFunction::BallotBitCount {
-                    ballot: self.rvalue(argument(0)?)?,
-                    collective_op: self.collective_operation(collective, arguments, at)?,
+                    ballot: {
+                        let frame = self.clone().rvalue(argument(0)?);
+                        drop(this);
+                        let result = self.nest(frame).await;
+                        this = self.lowerer();
+                        result
+                    }?,
+                    collective_op: {
+                        let frame = self.clone().collective_operation(collective, arguments, at);
+                        drop(this);
+                        let result = self.nest(frame).await;
+                        this = self.lowerer();
+                        result
+                    }?,
                 },
                 unsigned,
             ),
             Function::BallotFindLsb => (
-                SubgroupFunction::BallotFindLsb(self.rvalue(argument(0)?)?),
+                SubgroupFunction::BallotFindLsb({
+                    let frame = self.clone().rvalue(argument(0)?);
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }?),
                 unsigned,
             ),
             Function::BallotFindMsb => (
-                SubgroupFunction::BallotFindMsb(self.rvalue(argument(0)?)?),
+                SubgroupFunction::BallotFindMsb({
+                    let frame = self.clone().rvalue(argument(0)?);
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }?),
                 unsigned,
             ),
             Function::Partition => (
-                SubgroupFunction::Partition(self.rvalue(argument(0)?)?),
+                SubgroupFunction::Partition({
+                    let frame = self.clone().rvalue(argument(0)?);
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }?),
                 ballot,
             ),
             Function::KhrBallot => {
-                let predicate = self.rvalue(argument(0)?)?;
-                let result = self.subgroup_result_type(ballot);
-                let mask = self.push_with_result(
+                let predicate = {
+                    let frame = self.clone().rvalue(argument(0)?);
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }?;
+                let result = this.subgroup_result_type(ballot);
+                let mask = this.push_with_result(
                     result,
                     |result| Statement::SubgroupFunction {
                         fun: SubgroupFunction::KhrBallot(predicate),
@@ -418,13 +586,25 @@ impl FunctionLowerer<'_, '_> {
                     },
                     at,
                 );
-                return self.ballot_to_u64(mask, at).map(Some);
+                return this.ballot_to_u64(mask, at).map(Some);
             }
             Function::KhrReadInvocation => {
-                let (value, ty) = self.typed(argument(0)?)?;
-                let index = self.rvalue(argument(1)?)?;
-                let ty = self.lw.ir_type(&ty, at)?;
-                let result = self.push_with_result(
+                let (value, ty) = {
+                    let frame = self.clone().typed(argument(0)?);
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }?;
+                let index = {
+                    let frame = self.clone().rvalue(argument(1)?);
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }?;
+                let ty = this.lw.ir_type(&ty, at)?;
+                let result = this.push_with_result(
                     Expression::SubgroupOperationResult { ty },
                     |result| Statement::SubgroupFunction {
                         fun: SubgroupFunction::KhrReadInvocation {
@@ -438,9 +618,15 @@ impl FunctionLowerer<'_, '_> {
                 return Ok(Some(result));
             }
             Function::KhrReadFirstInvocation => {
-                let (value, ty) = self.typed(argument(0)?)?;
-                let ty = self.lw.ir_type(&ty, at)?;
-                let result = self.push_with_result(
+                let (value, ty) = {
+                    let frame = self.clone().typed(argument(0)?);
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }?;
+                let ty = this.lw.ir_type(&ty, at)?;
+                let result = this.push_with_result(
                     Expression::SubgroupOperationResult { ty },
                     |result| Statement::SubgroupFunction {
                         fun: SubgroupFunction::KhrReadFirstInvocation(value),
@@ -451,10 +637,22 @@ impl FunctionLowerer<'_, '_> {
                 return Ok(Some(result));
             }
             Function::Group(op, collective, non_uniform) => {
-                let (value, ty) = self.typed(argument(0)?)?;
-                let collective_op = self.collective_operation(collective, arguments, at)?;
-                let ty = self.lw.ir_type(&ty, at)?;
-                let result = self.push_with_result(
+                let (value, ty) = {
+                    let frame = self.clone().typed(argument(0)?);
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }?;
+                let collective_op = {
+                    let frame = self.clone().collective_operation(collective, arguments, at);
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }?;
+                let ty = this.lw.ir_type(&ty, at)?;
+                let result = this.push_with_result(
                     Expression::SubgroupOperationResult { ty },
                     |result| Statement::SubgroupFunction {
                         fun: SubgroupFunction::Group {
@@ -470,20 +668,38 @@ impl FunctionLowerer<'_, '_> {
                 return Ok(Some(result));
             }
             Function::KhrAll => (
-                SubgroupFunction::KhrAll(self.rvalue(argument(0)?)?),
+                SubgroupFunction::KhrAll({
+                    let frame = self.clone().rvalue(argument(0)?);
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }?),
                 boolean,
             ),
             Function::KhrAny => (
-                SubgroupFunction::KhrAny(self.rvalue(argument(0)?)?),
+                SubgroupFunction::KhrAny({
+                    let frame = self.clone().rvalue(argument(0)?);
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }?),
                 boolean,
             ),
             Function::KhrAllEqual => (
-                SubgroupFunction::KhrAllEqual(self.rvalue(argument(0)?)?),
+                SubgroupFunction::KhrAllEqual({
+                    let frame = self.clone().rvalue(argument(0)?);
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }?),
                 boolean,
             ),
         };
-        let result = self.subgroup_result_type(inner);
-        let result = self.push_with_result(
+        let result = this.subgroup_result_type(inner);
+        let result = this.push_with_result(
             result,
             |result| Statement::SubgroupFunction { fun, result },
             at,

@@ -4,6 +4,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use crate::diagnostic::DiagnosticKind;
+use crate::include::FileId;
 use crate::preprocessor::{Input, MacroInput, Preprocessor, Scanned, TokenInput, CPP_STYLE_LINE};
 use crate::token::{operator, At, Kind, Token, MAX_TOKEN_LENGTH};
 
@@ -43,6 +44,39 @@ fn atom_name(token: &Token) -> String {
     match token.kind {
         Kind::Op(op) => String::from(op),
         _ => String::from("<bad token>"),
+    }
+}
+
+enum Begun {
+    Done(Expand),
+    Prescan(Expansion),
+}
+
+#[derive(Debug)]
+struct Expansion {
+    name: Rc<str>,
+    body: Rc<[Token]>,
+    params: Rc<[Rc<str>]>,
+    args: Vec<Rc<[Token]>>,
+    expanded: Vec<Option<Rc<[Token]>>>,
+    prescanned: Vec<Token>,
+    origin: (FileId, u32),
+    newline_ok: bool,
+}
+
+impl Expansion {
+    fn into_input(self) -> MacroInput {
+        MacroInput {
+            name: self.name,
+            body: self.body,
+            pos: 0,
+            params: self.params,
+            args: self.args,
+            expanded: self.expanded,
+            prepaste: false,
+            postpaste: false,
+            origin: self.origin,
+        }
     }
 }
 
@@ -219,16 +253,78 @@ impl Preprocessor<'_> {
         expand_undef: bool,
         newline_ok: bool,
     ) -> Expand {
+        let mut expansions = match self.begin_expansion(token, expand_undef, newline_ok, 0) {
+            Begun::Done(expand) => return expand,
+            Begun::Prescan(expansion) => Vec::from([expansion]),
+        };
+        while let Some(expansion) = expansions.last() {
+            let newline_ok = expansion.newline_ok;
+            let mut token = self.scan();
+            if !matches!(token.kind, Kind::Marker | Kind::End) {
+                token = self.paste(token);
+                if token.kind == Kind::Identifier {
+                    let depth = expansions.len();
+                    match self.begin_expansion(&mut token, false, newline_ok, depth) {
+                        Begun::Done(Expand::NotStarted) => {}
+                        Begun::Done(Expand::Error) => loop {
+                            token = self.scan();
+                            if matches!(token.kind, Kind::Marker | Kind::End) {
+                                break;
+                            }
+                        },
+                        Begun::Done(Expand::Started | Expand::Undef) => continue,
+                        Begun::Prescan(nested) => {
+                            expansions.push(nested);
+                            continue;
+                        }
+                    }
+                }
+            }
+            let Some(expansion) = expansions.last_mut() else {
+                break;
+            };
+            if !matches!(token.kind, Kind::Marker | Kind::End) {
+                expansion.prescanned.push(token);
+                continue;
+            }
+            let prescanned = core::mem::take(&mut expansion.prescanned);
+            expansion
+                .expanded
+                .push((token.kind == Kind::Marker).then(|| Rc::from(prescanned)));
+            if let Some(next) = expansion.args.get(expansion.expanded.len()).cloned() {
+                self.start_prescan(next);
+                continue;
+            }
+            if let Some(finished) = expansions.pop() {
+                self.push_macro(finished.into_input());
+            }
+        }
+        Expand::Started
+    }
+
+    fn begin_expansion(
+        &mut self,
+        token: &mut Token,
+        expand_undef: bool,
+        newline_ok: bool,
+        depth: usize,
+    ) -> Begun {
         token.space = false;
-        if self.expand_depth >= self.options.limits.max_macro_expansion_depth {
+        if depth >= self.options.limits.max_macro_expansion_depth {
             let name = String::from(&*token.text);
             self.report(DiagnosticKind::ExpansionTooDeep { name }, token.at);
-            return Expand::NotStarted;
+            return Begun::Done(Expand::NotStarted);
         }
-        self.expand_depth += 1;
-        let result = self.macro_expand_inner(token, expand_undef, newline_ok);
-        self.expand_depth -= 1;
-        result
+        if token.fully_expanded {
+            return Begun::Done(Expand::NotStarted);
+        }
+        if let Some(expand) = self.builtin_macro(token) {
+            return Begun::Done(expand);
+        }
+        match self.lookup_macro(token, expand_undef) {
+            Ok(found) => self.start_macro(token.at, found, newline_ok),
+            Err(expand) => Begun::Done(expand),
+        }
     }
 
     fn unget_number(&mut self, token: &Token, text: &str, value: i64) {
@@ -238,24 +334,6 @@ impl Preprocessor<'_> {
         number.value = value;
         number.at.exact = 0;
         self.inputs.push(Input::Ungot(Some(number)));
-    }
-
-    fn macro_expand_inner(
-        &mut self,
-        token: &mut Token,
-        expand_undef: bool,
-        newline_ok: bool,
-    ) -> Expand {
-        if token.fully_expanded {
-            return Expand::NotStarted;
-        }
-        if let Some(expand) = self.builtin_macro(token) {
-            return expand;
-        }
-        match self.lookup_macro(token, expand_undef) {
-            Ok(found) => self.start_macro(token.at, found, newline_ok),
-            Err(expand) => expand,
-        }
     }
 
     fn builtin_macro(&mut self, token: &Token) -> Option<Expand> {
@@ -331,7 +409,7 @@ impl Preprocessor<'_> {
         })
     }
 
-    fn start_macro(&mut self, at: At, found: FoundMacro, newline_ok: bool) -> Expand {
+    fn start_macro(&mut self, at: At, found: FoundMacro, newline_ok: bool) -> Begun {
         let FoundMacro {
             name,
             params,
@@ -339,28 +417,32 @@ impl Preprocessor<'_> {
             function_like,
         } = found;
         let mut args: Vec<Rc<[Token]>> = Vec::new();
-        let mut expanded: Vec<Option<Rc<[Token]>>> = Vec::new();
         if function_like {
             match self.macro_arguments(&name, params.len(), at, newline_ok) {
                 Ok(collected) => args = collected,
-                Err(expand) => return expand,
-            }
-            for arg in &args {
-                expanded.push(self.prescan(arg.clone(), newline_ok));
+                Err(expand) => return Begun::Done(expand),
             }
         }
-        self.push_macro(MacroInput {
+        let expansion = Expansion {
             name,
             body,
-            pos: 0,
             params,
             args,
-            expanded,
-            prepaste: false,
-            postpaste: false,
+            expanded: Vec::new(),
+            prescanned: Vec::new(),
             origin: (at.file, at.offset),
-        });
-        Expand::Started
+            newline_ok,
+        };
+        match expansion.args.first().cloned() {
+            Some(first) => {
+                self.start_prescan(first);
+                Begun::Prescan(expansion)
+            }
+            None => {
+                self.push_macro(expansion.into_input());
+                Begun::Done(Expand::Started)
+            }
+        }
     }
 
     fn macro_arguments(
@@ -485,7 +567,7 @@ impl Preprocessor<'_> {
         Some(args)
     }
 
-    fn prescan(&mut self, arg: Rc<[Token]>, newline_ok: bool) -> Option<Rc<[Token]>> {
+    fn start_prescan(&mut self, arg: Rc<[Token]>) {
         self.inputs.push(Input::Marker(false));
         self.inputs.push(Input::Tokens(TokenInput {
             tokens: arg,
@@ -493,35 +575,5 @@ impl Preprocessor<'_> {
             last_pastes: false,
             pre_expanded: false,
         }));
-        let mut expanded = Vec::new();
-        let mut token;
-        loop {
-            token = self.scan();
-            if matches!(token.kind, Kind::Marker | Kind::End) {
-                break;
-            }
-            token = self.paste(token);
-            if token.kind == Kind::Identifier {
-                match self.macro_expand(&mut token, false, newline_ok) {
-                    Expand::NotStarted => {}
-                    Expand::Error => loop {
-                        token = self.scan();
-                        if matches!(token.kind, Kind::Marker | Kind::End) {
-                            break;
-                        }
-                    },
-                    Expand::Started | Expand::Undef => continue,
-                }
-            }
-            if matches!(token.kind, Kind::Marker | Kind::End) {
-                break;
-            }
-            expanded.push(token);
-        }
-        if token.kind == Kind::Marker {
-            Some(Rc::from(expanded))
-        } else {
-            None
-        }
     }
 }

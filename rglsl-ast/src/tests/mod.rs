@@ -1,4 +1,5 @@
 mod declarations;
+mod deep;
 mod errors;
 mod expressions;
 mod extensions;
@@ -14,7 +15,7 @@ use crate::ast::{
     Declaration, Expression, ExpressionKind, ExternalDeclaration, FunctionIdentifier, Statement,
     StatementKind, TranslationUnit,
 };
-use crate::{parse, print};
+use crate::{parse, placeholder, print};
 
 fn unit(source: &str) -> TranslationUnit {
     match parse(source) {
@@ -55,8 +56,10 @@ fn statement(body: &str) -> Statement {
 }
 
 fn expression(text: &str) -> Expression {
-    match statement(&format!("{text};")).kind {
-        StatementKind::Expression(Some(expression)) => expression,
+    match &mut statement(&format!("{text};")).kind {
+        StatementKind::Expression(Some(expression)) => {
+            core::mem::replace(expression, placeholder())
+        }
         other => panic!("expected an expression statement, found {other:?}"),
     }
 }

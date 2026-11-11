@@ -18,9 +18,12 @@ fn declared_types(source: &str) -> Vec<TypeSpecifierNonArray> {
         .into_iter()
         .filter_map(|declaration| match declaration {
             ExternalDeclaration::Declaration(Declaration {
-                kind: DeclarationKind::InitDeclaratorList(list),
+                kind: DeclarationKind::InitDeclaratorList(mut list),
                 ..
-            }) => Some(list.ty.node.specifier.node.non_array),
+            }) => Some(core::mem::replace(
+                &mut list.ty.node.specifier.node.non_array,
+                TypeSpecifierNonArray::Void,
+            )),
             _ => None,
         })
         .collect()

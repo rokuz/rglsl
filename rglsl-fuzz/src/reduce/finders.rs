@@ -438,9 +438,10 @@ fn inline_outlined(unit: &TranslationUnit, builder: &mut Builder) -> Vec<Opportu
                 }
             }
         });
-        let StatementKind::Expression(Some(inlined)) = holder.kind else {
+        let StatementKind::Expression(Some(inlined)) = &mut holder.kind else {
             continue;
         };
+        let inlined = core::mem::replace(inlined, rglsl_ast::placeholder());
         let replacement = builder.paren(inlined);
         result.push(Opportunity::single(Change::Expression(
             expression.id,
@@ -564,16 +565,17 @@ fn field_path(
 }
 
 fn constructor_argument(expression: &Expression, path: &[usize]) -> Option<Expression> {
-    let Some((first, rest)) = path.split_first() else {
-        return Some(expression.clone());
-    };
-    let ExpressionKind::FunctionCall(call) = &strip_parentheses(expression).kind else {
-        return None;
-    };
-    if !matches!(call.function.node, FunctionIdentifier::Constructor(_)) {
-        return None;
+    let mut current = expression;
+    for index in path {
+        let ExpressionKind::FunctionCall(call) = &strip_parentheses(current).kind else {
+            return None;
+        };
+        if !matches!(call.function.node, FunctionIdentifier::Constructor(_)) {
+            return None;
+        }
+        current = call.arguments.get(*index)?;
     }
-    constructor_argument(call.arguments.get(*first)?, rest)
+    Some(current.clone())
 }
 
 fn field_names(

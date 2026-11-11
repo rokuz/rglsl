@@ -86,18 +86,7 @@ impl Analyzer<'_> {
         );
     }
 
-    pub(crate) fn tensor_arm_call(
-        &mut self,
-        expression: &Expression,
-        span: Span,
-        name: &str,
-        arguments: &[Expression],
-    ) -> Operand {
-        let operands = self.operands(arguments);
-        self.tensor_arm_call_with(expression, span, name, arguments, operands)
-    }
-
-    fn tensor_arm_call_with(
+    pub(crate) fn tensor_arm_call_with(
         &mut self,
         expression: &Expression,
         span: Span,

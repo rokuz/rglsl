@@ -70,10 +70,45 @@ pub(crate) const CPP_STYLE_LINE: usize = 2;
 const DEBUG_PRINTF: usize = 5;
 const ABORT: usize = 6;
 
+#[derive(Debug)]
+pub(crate) enum Change {
+    Macro {
+        name: String,
+        previous: Option<Macro>,
+    },
+    Extensions([bool; TRACKED_EXTENSIONS.len()]),
+}
+
+fn same_definition(left: Option<&Macro>, right: Option<&Macro>) -> bool {
+    match (
+        left.filter(|definition| !definition.undef),
+        right.filter(|definition| !definition.undef),
+    ) {
+        (None, None) => true,
+        (Some(left), Some(right)) => {
+            left.function_like == right.function_like
+                && left.params == right.params
+                && left.body.len() == right.body.len()
+                && left
+                    .body
+                    .iter()
+                    .zip(right.body.iter())
+                    .all(|(left, right)| {
+                        left.kind == right.kind
+                            && left.text == right.text
+                            && left.value == right.value
+                            && left.space == right.space
+                    })
+        }
+        _ => false,
+    }
+}
+
 pub(crate) struct Preprocessor<'a> {
     pub(crate) options: &'a Options,
     pub(crate) includer: &'a mut dyn Includer,
     pub(crate) inputs: Vec<Input>,
+    pub(crate) file_inputs: Vec<usize>,
     pub(crate) macros: BTreeMap<String, Macro>,
     pub(crate) diagnostics: Vec<Diagnostic>,
     pub(crate) events: Events,
@@ -84,10 +119,11 @@ pub(crate) struct Preprocessor<'a> {
     pub(crate) else_tracker: isize,
     pub(crate) else_seen: Vec<bool>,
     pub(crate) previous_newline: bool,
-    pub(crate) expand_depth: usize,
     pub(crate) disable_escapes: bool,
     pub(crate) extensions: [bool; TRACKED_EXTENSIONS.len()],
     pub(crate) include_stack: Vec<FileId>,
+    pub(crate) active_includes: BTreeMap<FileId, Vec<usize>>,
+    pub(crate) changes: Vec<Change>,
     pub(crate) included_once: BTreeSet<FileId>,
     pub(crate) sources: Vec<SourceInfo>,
     pub(crate) files: BTreeMap<FileId, String>,
@@ -171,6 +207,7 @@ pub fn preprocess(
                 0,
             )),
         ],
+        file_inputs: vec![0, 1],
         macros: BTreeMap::new(),
         diagnostics: Vec::new(),
         events: Vec::new(),
@@ -181,10 +218,11 @@ pub fn preprocess(
         else_tracker: 0,
         else_seen: Vec::new(),
         previous_newline: true,
-        expand_depth: 0,
         disable_escapes: false,
         extensions: [false; TRACKED_EXTENSIONS.len()],
         include_stack: Vec::new(),
+        active_includes: BTreeMap::new(),
+        changes: Vec::new(),
         included_once: BTreeSet::new(),
         sources,
         files,
@@ -277,17 +315,24 @@ impl Preprocessor<'_> {
     }
 
     pub(crate) fn innermost_file_mut(&mut self) -> Option<&mut FileInput> {
-        self.inputs.iter_mut().rev().find_map(|input| match input {
-            Input::File(file) => Some(file),
+        let index = *self.file_inputs.last()?;
+        match self.inputs.get_mut(index) {
+            Some(Input::File(file)) => Some(file),
             _ => None,
-        })
+        }
     }
 
     pub(crate) fn innermost_file(&self) -> Option<&FileInput> {
-        self.inputs.iter().rev().find_map(|input| match input {
-            Input::File(file) => Some(file),
+        let index = *self.file_inputs.last()?;
+        match self.inputs.get(index) {
+            Some(Input::File(file)) => Some(file),
             _ => None,
-        })
+        }
+    }
+
+    pub(crate) fn push_file(&mut self, file: FileInput) {
+        self.file_inputs.push(self.inputs.len());
+        self.inputs.push(Input::File(file));
     }
 
     pub(crate) fn current_at(&self) -> At {
@@ -570,11 +615,87 @@ fn scan_tokens(macros: &BTreeMap<String, Macro>, input: &mut TokenInput, current
 }
 
 impl Preprocessor<'_> {
+    pub(crate) fn record_macro(&mut self, name: &str) {
+        if self.include_stack.is_empty() {
+            return;
+        }
+        let previous = self.macros.get(name).cloned();
+        self.changes.push(Change::Macro {
+            name: String::from(name),
+            previous,
+        });
+    }
+
+    pub(crate) fn record_extensions(&mut self) {
+        if !self.include_stack.is_empty() {
+            self.changes.push(Change::Extensions(self.extensions));
+        }
+    }
+
+    pub(crate) fn enter_include_stack(&mut self, file: FileId) {
+        let changes = self.changes.len();
+        self.include_stack.push(file);
+        self.active_includes.entry(file).or_default().push(changes);
+    }
+
+    fn leave_include(&mut self) {
+        let Some(file) = self.include_stack.pop() else {
+            return;
+        };
+        if let Some(entries) = self.active_includes.get_mut(&file) {
+            entries.pop();
+            if entries.is_empty() {
+                self.active_includes.remove(&file);
+            }
+        }
+        if self.include_stack.is_empty() {
+            self.changes.clear();
+        }
+    }
+
+    pub(crate) fn includes_itself(&self, file: FileId) -> bool {
+        let Some(entries) = self.active_includes.get(&file) else {
+            return false;
+        };
+        entries.iter().any(|&start| self.unchanged_since(start))
+    }
+
+    fn unchanged_since(&self, start: usize) -> bool {
+        let mut names = BTreeSet::new();
+        let mut extensions = false;
+        for change in self.changes.iter().skip(start) {
+            match change {
+                Change::Macro { name, previous } => {
+                    if names.insert(name.as_str())
+                        && !same_definition(previous.as_ref(), self.macros.get(name))
+                    {
+                        return false;
+                    }
+                }
+                Change::Extensions(previous) => {
+                    if !extensions && *previous != self.extensions {
+                        return false;
+                    }
+                    extensions = true;
+                }
+            }
+        }
+        true
+    }
+
     fn pop_input(&mut self) {
-        if let Some(Input::File(file)) = self.inputs.pop() {
+        let popped = self.inputs.pop();
+        while self
+            .file_inputs
+            .last()
+            .is_some_and(|&index| index >= self.inputs.len())
+        {
+            self.file_inputs.pop();
+        }
+        if let Some(Input::File(file)) = popped {
             self.last_at = file.current_at();
             if file.role == Role::Included {
-                self.include_stack.pop();
+                self.leave_include();
             }
         }
     }

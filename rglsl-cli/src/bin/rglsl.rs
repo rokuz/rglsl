@@ -732,6 +732,7 @@ fn parse_input(input_path: &Path, input: Vec<u8>, params: &Parameters) -> anyhow
                             spirv_version: params.spirv_version,
                             library: false,
                             hlsl_offsets: false,
+                            nesting_limits: true,
                         },
                         &input,
                     )

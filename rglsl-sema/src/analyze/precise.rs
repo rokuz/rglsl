@@ -2,6 +2,7 @@ use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
+use core::cell::RefCell;
 
 use rglsl_ast::ast::{
     AssignmentOperator, BinaryOperator, Condition, Declaration, DeclarationKind, Expression,
@@ -9,7 +10,9 @@ use rglsl_ast::ast::{
     Statement, StatementKind, UnaryOperator,
 };
 use rglsl_ast::{Spine, TranslationUnit};
+use rglsl_types::stack::run;
 
+use super::frames::Cx;
 use super::{Analysis, Callee};
 use crate::scope::{SymbolId, SymbolKind};
 use crate::types::{Scalar, TypeKind};
@@ -59,25 +62,14 @@ pub(crate) fn no_contraction(unit: &TranslationUnit, analysis: &Analysis) -> BTr
     if !pass.any_precise() {
         return BTreeSet::new();
     }
-    for declaration in &unit.external_declarations {
-        match declaration {
-            ExternalDeclaration::FunctionDefinition(definition) => {
-                pass.precise_return = analysis
-                    .function_declarations
-                    .get(&definition.id)
-                    .and_then(|id| analysis.function(*id))
-                    .is_some_and(|function| function.return_qualifiers.precise);
-                for statement in &definition.body.statements {
-                    pass.collect_statement(statement);
-                }
-                pass.precise_return = false;
-            }
-            ExternalDeclaration::Declaration(declaration) => pass.collect_declaration(declaration),
-            ExternalDeclaration::Directive(_) | ExternalDeclaration::Semicolon(_) => {}
-        }
+    let finished = {
+        let context = RefCell::new(&mut pass);
+        run(|stack| Cx::new(&context, stack).pass(unit))
+    };
+    match finished {
+        Some(()) => pass.result,
+        None => BTreeSet::new(),
     }
-    pass.propagate_all();
-    pass.result
 }
 
 struct Precise<'a> {
@@ -264,139 +256,6 @@ impl<'a> Precise<'a> {
         }
     }
 
-    fn collect_declaration(&mut self, declaration: &'a Declaration) {
-        let DeclarationKind::InitDeclaratorList(ref list) = declaration.kind else {
-            return;
-        };
-        for declarator in &list.declarators {
-            let Some(ref initializer) = declarator.initializer else {
-                continue;
-            };
-            let symbol = self.analysis.declarations.get(&declarator.id).copied();
-            self.initialized(symbol, initializer);
-        }
-    }
-
-    fn initialized(&mut self, symbol: Option<SymbolId>, initializer: &'a Initializer) {
-        let folded = symbol
-            .and_then(|symbol| self.analysis.symbol(symbol))
-            .and_then(|symbol| symbol.variable())
-            .is_some_and(|variable| variable.value.is_some());
-        if let (Some(symbol), false) = (symbol, folded) {
-            let label = self.label(symbol);
-            if self.symbol_precise(symbol) {
-                self.objects.insert(label.clone());
-            }
-            self.definitions
-                .entry(label)
-                .or_default()
-                .push(Definition::Initializer {
-                    symbol,
-                    value: initializer,
-                });
-        }
-        self.collect_initializer(initializer);
-    }
-
-    fn collect_initializer(&mut self, initializer: &'a Initializer) {
-        match initializer {
-            Initializer::Expression(expression) => {
-                self.collect(expression);
-            }
-            Initializer::List(items) => {
-                for item in items {
-                    self.collect_initializer(item);
-                }
-            }
-        }
-    }
-
-    fn collect_statement(&mut self, statement: &'a Statement) {
-        match statement.kind {
-            StatementKind::Compound(ref compound) => {
-                for inner in &compound.statements {
-                    self.collect_statement(inner);
-                }
-            }
-            StatementKind::Declaration(ref declaration) => self.collect_declaration(declaration),
-            StatementKind::Expression(ref expression) => {
-                if let Some(expression) = expression {
-                    self.collect(expression);
-                }
-            }
-            StatementKind::Selection {
-                ref condition,
-                ref then_branch,
-                ref else_branch,
-            } => {
-                self.collect(condition);
-                self.collect_statement(then_branch);
-                if let Some(else_branch) = else_branch {
-                    self.collect_statement(else_branch);
-                }
-            }
-            StatementKind::Switch {
-                ref selector,
-                ref statements,
-            } => {
-                self.collect(selector);
-                for inner in statements {
-                    self.collect_statement(inner);
-                }
-            }
-            StatementKind::CaseLabel(_) => {}
-            StatementKind::While {
-                ref condition,
-                ref body,
-            } => {
-                self.collect_condition(condition);
-                self.collect_statement(body);
-            }
-            StatementKind::DoWhile {
-                ref body,
-                ref condition,
-            } => {
-                self.collect_statement(body);
-                self.collect(condition);
-            }
-            StatementKind::For(ref looping) => {
-                self.collect_statement(&looping.init);
-                if let Some(ref condition) = looping.condition {
-                    self.collect_condition(condition);
-                }
-                if let Some(ref increment) = looping.increment {
-                    self.collect(increment);
-                }
-                self.collect_statement(&looping.body);
-            }
-            StatementKind::Jump(JumpStatement::Return(Some(ref value))) => {
-                if self.precise_return {
-                    self.returns.push(value);
-                    self.collect(value);
-                }
-            }
-            StatementKind::Jump(_) => {}
-            StatementKind::Attributed { ref statement, .. } => self.collect_statement(statement),
-        }
-    }
-
-    fn collect_condition(&mut self, condition: &'a Condition) {
-        match condition {
-            Condition::Expression(expression) => {
-                self.collect(expression);
-            }
-            Condition::Declaration(declaration) => {
-                let symbol = self.analysis.declarations.get(&declaration.id).copied();
-                self.initialized(symbol, &declaration.initializer);
-            }
-        }
-    }
-
-    fn define(&mut self, target: &'a Expression, definition: Definition<'a>) {
-        let chain = self.collect(target);
-        self.define_collected(target, chain, definition);
-    }
-
     fn define_collected(
         &mut self,
         target: &'a Expression,
@@ -411,147 +270,6 @@ impl<'a> Precise<'a> {
             .entry(String::from(front(&chain)))
             .or_default()
             .push(definition);
-    }
-
-    fn collect(&mut self, expression: &'a Expression) -> Option<String> {
-        match expression.kind {
-            ExpressionKind::Variable(_) => {
-                let chain = self.variable_chain(expression)?;
-                self.chains.insert(expression.id, chain.clone());
-                Some(chain)
-            }
-            ExpressionKind::Parenthesized(ref inner) => {
-                let chain = self.collect(inner);
-                if let Some(ref chain) = chain {
-                    self.chains.insert(expression.id, chain.clone());
-                }
-                chain
-            }
-            ExpressionKind::Subscript { .. }
-            | ExpressionKind::FieldSelection { .. }
-            | ExpressionKind::Postfix { .. }
-            | ExpressionKind::Unary { .. }
-            | ExpressionKind::Binary { .. } => self.collect_left(expression),
-            ExpressionKind::Assignment { .. } | ExpressionKind::Conditional { .. } => {
-                let spine = Spine::of(expression);
-                for node in spine.links {
-                    self.collect_right(node);
-                }
-                self.collect(spine.head);
-                None
-            }
-            ExpressionKind::Sequence(ref expressions) => {
-                for inner in expressions {
-                    self.collect(inner);
-                }
-                None
-            }
-            ExpressionKind::FunctionCall(ref call) => {
-                match call.function.node {
-                    FunctionIdentifier::Method { ref object, .. } => {
-                        self.collect(object);
-                    }
-                    FunctionIdentifier::Expression(ref callee) => {
-                        self.collect(callee);
-                    }
-                    FunctionIdentifier::Constructor(_)
-                    | FunctionIdentifier::Cast(_)
-                    | FunctionIdentifier::Function(_) => {}
-                }
-                for argument in &call.arguments {
-                    self.collect(argument);
-                }
-                None
-            }
-            ExpressionKind::Number(_) | ExpressionKind::Bool(_) | ExpressionKind::String(_) => None,
-        }
-    }
-
-    fn collect_left(&mut self, expression: &'a Expression) -> Option<String> {
-        let spine = Spine::of(expression);
-        let mut chain = self.collect(spine.head);
-        for node in spine.links.into_iter().rev() {
-            chain = self.collect_link(node, chain);
-        }
-        chain
-    }
-
-    fn collect_link(&mut self, node: &'a Expression, inner: Option<String>) -> Option<String> {
-        match node.kind {
-            ExpressionKind::Subscript { .. } => {
-                let chain = inner.unwrap_or_default();
-                self.chains.insert(node.id, chain.clone());
-                Some(chain)
-            }
-            ExpressionKind::FieldSelection {
-                ref base,
-                ref field,
-            } => {
-                let mut chain = inner.unwrap_or_default();
-                if let Some((index, _)) = self.member(base, &field.node) {
-                    chain.push(DELIMITER);
-                    chain.push_str(&format!("{index}"));
-                }
-                self.chains.insert(node.id, chain.clone());
-                Some(chain)
-            }
-            ExpressionKind::Unary {
-                operator: UnaryOperator::Increment | UnaryOperator::Decrement,
-                ref operand,
-            }
-            | ExpressionKind::Postfix { ref operand, .. } => {
-                self.define_collected(operand, inner, Definition::Step { node, operand });
-                None
-            }
-            ExpressionKind::Binary { ref right, .. } => {
-                self.collect(right);
-                None
-            }
-            _ => None,
-        }
-    }
-
-    fn collect_right(&mut self, node: &'a Expression) {
-        match node.kind {
-            ExpressionKind::Assignment {
-                operator,
-                ref target,
-                ref value,
-            } => self.define(
-                target,
-                Definition::Assignment {
-                    node,
-                    operator,
-                    target,
-                    value,
-                },
-            ),
-            ExpressionKind::Conditional {
-                ref condition,
-                ref then_expression,
-                ..
-            } => {
-                self.collect(condition);
-                self.collect(then_expression);
-            }
-            _ => {}
-        }
-    }
-
-    fn propagate_all(&mut self) {
-        for value in core::mem::take(&mut self.returns) {
-            self.remained.clear();
-            self.propagate(value);
-        }
-        while let Some(object) = self.objects.pop_first() {
-            let symbol = String::from(front(&object));
-            let definitions = self.definitions.get(&symbol).cloned().unwrap_or_default();
-            for definition in definitions {
-                if let Some(remained) = self.check(definition, &object) {
-                    self.propagate_definition(definition, remained);
-                }
-            }
-        }
     }
 
     fn check_target(&mut self, target: &Expression, object: &str) {
@@ -627,64 +345,6 @@ impl<'a> Precise<'a> {
         }
     }
 
-    fn propagate_definition(&mut self, definition: Definition<'a>, remained: String) {
-        self.remained = remained;
-        match definition {
-            Definition::Assignment {
-                node,
-                operator,
-                value,
-                ..
-            } => {
-                self.propagate(value);
-                if arithmetic_assignment(operator) {
-                    self.result.insert(node.id);
-                }
-            }
-            Definition::Step { node, operand } => {
-                self.propagate(operand);
-                self.result.insert(node.id);
-            }
-            Definition::Initializer { symbol, value } => {
-                let ty = self
-                    .analysis
-                    .symbol(symbol)
-                    .and_then(|symbol| symbol.variable())
-                    .map(|variable| variable.ty.clone());
-                self.propagate_initializer(value, ty.as_ref());
-            }
-        }
-    }
-
-    fn propagate_initializer(
-        &mut self,
-        initializer: &Initializer,
-        ty: Option<&crate::types::Type>,
-    ) {
-        match initializer {
-            Initializer::Expression(expression) => self.propagate(expression),
-            Initializer::List(items) => {
-                let structure = ty.is_some_and(|ty| {
-                    !ty.is_array() && matches!(ty.kind, TypeKind::Struct(_) | TypeKind::Block(_))
-                });
-                if structure && !self.remained.is_empty() {
-                    let index: usize = front(&self.remained).parse().unwrap_or(usize::MAX);
-                    let Some(item) = items.get(index) else {
-                        return;
-                    };
-                    let rest = String::from(after_front(&self.remained));
-                    let outer = core::mem::replace(&mut self.remained, rest);
-                    self.propagate_initializer(item, None);
-                    self.remained = outer;
-                    return;
-                }
-                for item in items {
-                    self.propagate_initializer(item, None);
-                }
-            }
-        }
-    }
-
     fn object(&mut self, expression: &Expression) {
         let mut chain = self.chains.get(&expression.id).cloned().unwrap_or_default();
         if self.remained.is_empty() {
@@ -705,18 +365,11 @@ impl<'a> Precise<'a> {
             == Some(Scalar::Int)
     }
 
-    fn propagate(&mut self, expression: &Expression) {
-        let mut pending = Vec::from([expression]);
-        while let Some(expression) = pending.pop() {
-            self.propagate_node(expression, &mut pending);
-        }
-    }
-
     fn propagate_node<'e>(
         &mut self,
         expression: &'e Expression,
         pending: &mut Vec<&'e Expression>,
-    ) {
+    ) -> Option<(&'e Expression, String)> {
         match expression.kind {
             ExpressionKind::Parenthesized(ref inner) => pending.push(inner),
             ExpressionKind::Variable(_)
@@ -778,14 +431,9 @@ impl<'a> Precise<'a> {
                     if let Some(Callee::Constructor(ty)) = callee {
                         if !ty.is_array() && matches!(ty.kind, TypeKind::Struct(_)) {
                             let index: usize = front(&self.remained).parse().unwrap_or(usize::MAX);
-                            let Some(argument) = call.arguments.get(index) else {
-                                return;
-                            };
+                            let argument = call.arguments.get(index)?;
                             let rest = String::from(after_front(&self.remained));
-                            let outer = core::mem::replace(&mut self.remained, rest);
-                            self.propagate(argument);
-                            self.remained = outer;
-                            return;
+                            return Some((argument, rest));
                         }
                     }
                 }
@@ -807,6 +455,421 @@ impl<'a> Precise<'a> {
                 }
             }
             ExpressionKind::Number(_) | ExpressionKind::Bool(_) | ExpressionKind::String(_) => {}
+        }
+        None
+    }
+
+    fn record_initializer(&mut self, symbol: Option<SymbolId>, initializer: &'a Initializer) {
+        let folded = symbol
+            .and_then(|symbol| self.analysis.symbol(symbol))
+            .and_then(|symbol| symbol.variable())
+            .is_some_and(|variable| variable.value.is_some());
+        if let (Some(symbol), false) = (symbol, folded) {
+            let label = self.label(symbol);
+            if self.symbol_precise(symbol) {
+                self.objects.insert(label.clone());
+            }
+            self.definitions
+                .entry(label)
+                .or_default()
+                .push(Definition::Initializer {
+                    symbol,
+                    value: initializer,
+                });
+        }
+    }
+
+    fn collect_variable(&mut self, expression: &Expression) -> Option<String> {
+        let chain = self.variable_chain(expression)?;
+        self.chains.insert(expression.id, chain.clone());
+        Some(chain)
+    }
+
+    fn collect_link(&mut self, node: &'a Expression, inner: Option<String>) -> Option<String> {
+        match node.kind {
+            ExpressionKind::Subscript { .. } => {
+                let chain = inner.unwrap_or_default();
+                self.chains.insert(node.id, chain.clone());
+                Some(chain)
+            }
+            ExpressionKind::FieldSelection {
+                ref base,
+                ref field,
+            } => {
+                let mut chain = inner.unwrap_or_default();
+                if let Some((index, _)) = self.member(base, &field.node) {
+                    chain.push(DELIMITER);
+                    chain.push_str(&format!("{index}"));
+                }
+                self.chains.insert(node.id, chain.clone());
+                Some(chain)
+            }
+            ExpressionKind::Unary {
+                operator: UnaryOperator::Increment | UnaryOperator::Decrement,
+                ref operand,
+            }
+            | ExpressionKind::Postfix { ref operand, .. } => {
+                self.define_collected(operand, inner, Definition::Step { node, operand });
+                None
+            }
+            _ => None,
+        }
+    }
+
+    fn definition_type(&self, definition: Definition<'a>) -> Option<crate::types::Type> {
+        match definition {
+            Definition::Initializer { symbol, .. } => self
+                .analysis
+                .symbol(symbol)
+                .and_then(|symbol| symbol.variable())
+                .map(|variable| variable.ty.clone()),
+            Definition::Assignment { .. } | Definition::Step { .. } => None,
+        }
+    }
+}
+
+impl<'b, 'a: 'b> Cx<'b, Precise<'a>> {
+    async fn pass(self, unit: &'a TranslationUnit) {
+        for declaration in &unit.external_declarations {
+            match declaration {
+                ExternalDeclaration::FunctionDefinition(definition) => {
+                    self.with(|pass| {
+                        pass.precise_return = pass
+                            .analysis
+                            .function_declarations
+                            .get(&definition.id)
+                            .and_then(|id| pass.analysis.function(*id))
+                            .is_some_and(|function| function.return_qualifiers.precise);
+                    });
+                    for statement in &definition.body.statements {
+                        self.call(self.clone().collect_statement(statement)).await;
+                    }
+                    self.with(|pass| pass.precise_return = false);
+                }
+                ExternalDeclaration::Declaration(declaration) => {
+                    self.call(self.clone().collect_declaration(declaration))
+                        .await;
+                }
+                ExternalDeclaration::Directive(_) | ExternalDeclaration::Semicolon(_) => {}
+            }
+        }
+        self.call(self.clone().propagate_all()).await;
+    }
+
+    async fn collect_declaration(self, declaration: &'a Declaration) {
+        let DeclarationKind::InitDeclaratorList(ref list) = declaration.kind else {
+            return;
+        };
+        for declarator in &list.declarators {
+            let Some(ref initializer) = declarator.initializer else {
+                continue;
+            };
+            let symbol = self.with(|pass| pass.analysis.declarations.get(&declarator.id).copied());
+            self.call(self.clone().initialized(symbol, initializer))
+                .await;
+        }
+    }
+
+    async fn initialized(self, symbol: Option<SymbolId>, initializer: &'a Initializer) {
+        self.with(|pass| pass.record_initializer(symbol, initializer));
+        self.call(self.clone().collect_initializer(initializer))
+            .await;
+    }
+
+    async fn collect_initializer(self, initializer: &'a Initializer) {
+        match initializer {
+            Initializer::Expression(expression) => {
+                self.call(self.clone().collect(expression)).await;
+            }
+            Initializer::List(items) => {
+                for item in items {
+                    self.call(self.clone().collect_initializer(item)).await;
+                }
+            }
+        }
+    }
+
+    async fn collect_statement(self, statement: &'a Statement) {
+        match statement.kind {
+            StatementKind::Compound(ref compound) => {
+                for inner in &compound.statements {
+                    self.call(self.clone().collect_statement(inner)).await;
+                }
+            }
+            StatementKind::Declaration(ref declaration) => {
+                self.call(self.clone().collect_declaration(declaration))
+                    .await;
+            }
+            StatementKind::Expression(ref expression) => {
+                if let Some(expression) = expression {
+                    self.call(self.clone().collect(expression)).await;
+                }
+            }
+            StatementKind::Selection {
+                ref condition,
+                ref then_branch,
+                ref else_branch,
+            } => {
+                self.call(self.clone().collect(condition)).await;
+                self.call(self.clone().collect_statement(then_branch)).await;
+                if let Some(else_branch) = else_branch {
+                    self.call(self.clone().collect_statement(else_branch)).await;
+                }
+            }
+            StatementKind::Switch {
+                ref selector,
+                ref statements,
+            } => {
+                self.call(self.clone().collect(selector)).await;
+                for inner in statements {
+                    self.call(self.clone().collect_statement(inner)).await;
+                }
+            }
+            StatementKind::CaseLabel(_) => {}
+            StatementKind::While {
+                ref condition,
+                ref body,
+            } => {
+                self.call(self.clone().collect_condition(condition)).await;
+                self.call(self.clone().collect_statement(body)).await;
+            }
+            StatementKind::DoWhile {
+                ref body,
+                ref condition,
+            } => {
+                self.call(self.clone().collect_statement(body)).await;
+                self.call(self.clone().collect(condition)).await;
+            }
+            StatementKind::For(ref looping) => {
+                self.call(self.clone().collect_statement(&looping.init))
+                    .await;
+                if let Some(ref condition) = looping.condition {
+                    self.call(self.clone().collect_condition(condition)).await;
+                }
+                if let Some(ref increment) = looping.increment {
+                    self.call(self.clone().collect(increment)).await;
+                }
+                self.call(self.clone().collect_statement(&looping.body))
+                    .await;
+            }
+            StatementKind::Jump(JumpStatement::Return(Some(ref value))) => {
+                let precise = self.with(|pass| pass.precise_return);
+                if precise {
+                    self.with(|pass| pass.returns.push(value));
+                    self.call(self.clone().collect(value)).await;
+                }
+            }
+            StatementKind::Jump(_) => {}
+            StatementKind::Attributed { ref statement, .. } => {
+                self.call(self.clone().collect_statement(statement)).await;
+            }
+        }
+    }
+
+    async fn collect_condition(self, condition: &'a Condition) {
+        match condition {
+            Condition::Expression(expression) => {
+                self.call(self.clone().collect(expression)).await;
+            }
+            Condition::Declaration(declaration) => {
+                let symbol =
+                    self.with(|pass| pass.analysis.declarations.get(&declaration.id).copied());
+                self.call(self.clone().initialized(symbol, &declaration.initializer))
+                    .await;
+            }
+        }
+    }
+
+    async fn define(self, target: &'a Expression, definition: Definition<'a>) {
+        let chain = self.call(self.clone().collect(target)).await;
+        self.with(|pass| pass.define_collected(target, chain, definition));
+    }
+
+    async fn collect(self, expression: &'a Expression) -> Option<String> {
+        match expression.kind {
+            ExpressionKind::Variable(_) => self.with(|pass| pass.collect_variable(expression)),
+            ExpressionKind::Parenthesized(ref inner) => {
+                let chain = self.call(self.clone().collect(inner)).await;
+                if let Some(ref chain) = chain {
+                    self.with(|pass| pass.chains.insert(expression.id, chain.clone()));
+                }
+                chain
+            }
+            ExpressionKind::Subscript { .. }
+            | ExpressionKind::FieldSelection { .. }
+            | ExpressionKind::Postfix { .. }
+            | ExpressionKind::Unary { .. }
+            | ExpressionKind::Binary { .. } => {
+                self.call(self.clone().collect_left(expression)).await
+            }
+            ExpressionKind::Assignment { .. } | ExpressionKind::Conditional { .. } => {
+                let spine = Spine::of(expression);
+                for node in spine.links {
+                    self.call(self.clone().collect_right(node)).await;
+                }
+                self.call(self.clone().collect(spine.head)).await;
+                None
+            }
+            ExpressionKind::Sequence(ref expressions) => {
+                for inner in expressions {
+                    self.call(self.clone().collect(inner)).await;
+                }
+                None
+            }
+            ExpressionKind::FunctionCall(ref call) => {
+                match call.function.node {
+                    FunctionIdentifier::Method { ref object, .. } => {
+                        self.call(self.clone().collect(object)).await;
+                    }
+                    FunctionIdentifier::Expression(ref callee) => {
+                        self.call(self.clone().collect(callee)).await;
+                    }
+                    FunctionIdentifier::Constructor(_)
+                    | FunctionIdentifier::Cast(_)
+                    | FunctionIdentifier::Function(_) => {}
+                }
+                for argument in &call.arguments {
+                    self.call(self.clone().collect(argument)).await;
+                }
+                None
+            }
+            ExpressionKind::Number(_) | ExpressionKind::Bool(_) | ExpressionKind::String(_) => None,
+        }
+    }
+
+    async fn collect_left(self, expression: &'a Expression) -> Option<String> {
+        let spine = Spine::of(expression);
+        let mut chain = self.call(self.clone().collect(spine.head)).await;
+        for node in spine.links.into_iter().rev() {
+            chain = match node.kind {
+                ExpressionKind::Binary { ref right, .. } => {
+                    self.call(self.clone().collect(right)).await;
+                    None
+                }
+                _ => self.with(|pass| pass.collect_link(node, chain)),
+            };
+        }
+        chain
+    }
+
+    async fn collect_right(self, node: &'a Expression) {
+        match node.kind {
+            ExpressionKind::Assignment {
+                operator,
+                ref target,
+                ref value,
+            } => {
+                self.call(self.clone().define(
+                    target,
+                    Definition::Assignment {
+                        node,
+                        operator,
+                        target,
+                        value,
+                    },
+                ))
+                .await;
+            }
+            ExpressionKind::Conditional {
+                ref condition,
+                ref then_expression,
+                ..
+            } => {
+                self.call(self.clone().collect(condition)).await;
+                self.call(self.clone().collect(then_expression)).await;
+            }
+            _ => {}
+        }
+    }
+
+    async fn propagate_all(self) {
+        let returns = self.with(|pass| core::mem::take(&mut pass.returns));
+        for value in returns {
+            self.with(|pass| pass.remained.clear());
+            self.call(self.clone().propagate(value)).await;
+        }
+        while let Some(object) = self.with(|pass| pass.objects.pop_first()) {
+            let symbol = String::from(front(&object));
+            let definitions =
+                self.with(|pass| pass.definitions.get(&symbol).cloned().unwrap_or_default());
+            for definition in definitions {
+                if let Some(remained) = self.with(|pass| pass.check(definition, &object)) {
+                    self.call(self.clone().propagate_definition(definition, remained))
+                        .await;
+                }
+            }
+        }
+    }
+
+    async fn propagate_definition(self, definition: Definition<'a>, remained: String) {
+        self.with(|pass| pass.remained = remained);
+        match definition {
+            Definition::Assignment {
+                node,
+                operator,
+                value,
+                ..
+            } => {
+                self.call(self.clone().propagate(value)).await;
+                if arithmetic_assignment(operator) {
+                    self.with(|pass| pass.result.insert(node.id));
+                }
+            }
+            Definition::Step { node, operand } => {
+                self.call(self.clone().propagate(operand)).await;
+                self.with(|pass| pass.result.insert(node.id));
+            }
+            Definition::Initializer { value, .. } => {
+                let ty = self.with(|pass| pass.definition_type(definition));
+                self.call(self.clone().propagate_initializer(value, ty))
+                    .await;
+            }
+        }
+    }
+
+    async fn propagate_initializer(
+        self,
+        initializer: &'a Initializer,
+        ty: Option<crate::types::Type>,
+    ) {
+        match initializer {
+            Initializer::Expression(expression) => {
+                self.call(self.clone().propagate(expression)).await;
+            }
+            Initializer::List(items) => {
+                let structure = ty.is_some_and(|ty| {
+                    !ty.is_array() && matches!(ty.kind, TypeKind::Struct(_) | TypeKind::Block(_))
+                });
+                let remained = self.with(|pass| pass.remained.clone());
+                if structure && !remained.is_empty() {
+                    let index: usize = front(&remained).parse().unwrap_or(usize::MAX);
+                    let Some(item) = items.get(index) else {
+                        return;
+                    };
+                    let rest = String::from(after_front(&remained));
+                    let outer = self.with(|pass| core::mem::replace(&mut pass.remained, rest));
+                    self.call(self.clone().propagate_initializer(item, None))
+                        .await;
+                    self.with(|pass| pass.remained = outer);
+                    return;
+                }
+                for item in items {
+                    self.call(self.clone().propagate_initializer(item, None))
+                        .await;
+                }
+            }
+        }
+    }
+
+    async fn propagate(self, expression: &'a Expression) {
+        let mut pending = Vec::from([expression]);
+        while let Some(expression) = pending.pop() {
+            let nested = self.with(|pass| pass.propagate_node(expression, &mut pending));
+            if let Some((argument, rest)) = nested {
+                let outer = self.with(|pass| core::mem::replace(&mut pass.remained, rest));
+                self.call(self.clone().propagate(argument)).await;
+                self.with(|pass| pass.remained = outer);
+            }
         }
     }
 }

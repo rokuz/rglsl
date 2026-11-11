@@ -109,9 +109,28 @@ impl Lowerer<'_> {
         values: &[Value],
         span: Span,
     ) -> Result<Handle<Expression>> {
-        let analysis = self.analysis;
+        super::function::lowerer_on_heap!(self, |cx| cx.global_constant(
+            ty.clone(),
+            values.to_vec(),
+            span
+        ))
+    }
+}
+
+#[allow(clippy::await_holding_refcell_ref)]
+impl<'b, 'a> super::function::LowererCx<'b, 'a> {
+    pub(super) async fn global_constant(
+        self,
+        ty: GlslType,
+        values: Vec<Value>,
+        span: Span,
+    ) -> Result<Handle<Expression>> {
+        let values = values.as_slice();
+        let ty = &ty;
+        let mut this = self.lowerer();
+        let analysis = this.analysis;
         match shape(ty, values, &analysis.types).ok_or_else(|| internal(span))? {
-            Shape::Literal(value) => Ok(self
+            Shape::Literal(value) => Ok(this
                 .module
                 .global_expressions
                 .append(Expression::Literal(literal(value)), span)),
@@ -120,10 +139,24 @@ impl Lowerer<'_> {
                 for (part, start, size) in parts {
                     let end = start.checked_add(size).ok_or_else(|| internal(span))?;
                     let slice = values.get(start..end).ok_or_else(|| internal(span))?;
-                    components.push(self.global_constant(&part, slice, span)?);
+                    components.push({
+                        let frame =
+                            self.clone()
+                                .global_constant(part.clone(), slice.to_vec(), span);
+                        drop(this);
+                        let result = self.nest(frame).await;
+                        this = self.lowerer();
+                        result
+                    }?);
                 }
-                let ir = self.ir_type(ty, span)?;
-                Ok(self
+                let ir = {
+                    let frame = self.clone().ir_type(ty.clone(), span);
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }?;
+                Ok(this
                     .module
                     .global_expressions
                     .append(Expression::Compose { ty: ir, components }, span))

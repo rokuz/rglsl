@@ -173,7 +173,10 @@ impl Layouter {
     pub fn update(&mut self, gctx: super::GlobalCtx) -> Result<(), LayoutError> {
         use crate::TypeInner as Ti;
 
-        for (ty_handle, ty) in gctx.types.iter().skip(self.layouts.len()) {
+        let fresh = gctx.types.len().saturating_sub(self.layouts.len());
+        let mut new_types: alloc::vec::Vec<_> = gctx.types.iter().rev().take(fresh).collect();
+        new_types.reverse();
+        for (ty_handle, ty) in new_types {
             let size = ty
                 .inner
                 .try_size(gctx)

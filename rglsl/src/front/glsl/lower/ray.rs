@@ -189,19 +189,6 @@ impl Lowerer<'_> {
         }
     }
 
-    pub(super) fn ray_builtin_type(
-        &mut self,
-        name: &str,
-        ty: &GlslType,
-        at: Span,
-    ) -> Result<Handle<crate::Type>> {
-        if transposed_builtin(name) {
-            let transposed = GlslType::matrix(GlslScalar::Float, 4, 3);
-            return self.ir_type(&transposed, at);
-        }
-        self.ir_type(ty, at)
-    }
-
     pub(super) fn ray_variable(&mut self, symbol: SymbolId, name: String, at: Span) -> Result<()> {
         let variable = self.variable(symbol).ok_or_else(|| internal(at))?;
         let qualifiers = &variable.qualifiers;
@@ -319,6 +306,35 @@ impl Lowerer<'_> {
     }
 }
 
+#[allow(clippy::await_holding_refcell_ref)]
+impl<'b, 'a> super::function::LowererCx<'b, 'a> {
+    pub(super) async fn ray_builtin_type(
+        self,
+        name: String,
+        ty: GlslType,
+        at: Span,
+    ) -> Result<Handle<crate::Type>> {
+        let name = name.as_str();
+        let ty = &ty;
+        let this = self.lowerer();
+        if transposed_builtin(name) {
+            let transposed = GlslType::matrix(GlslScalar::Float, 4, 3);
+            return {
+                let frame = self.clone().ir_type(transposed.clone(), at);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            };
+        }
+        {
+            let frame = self.clone().ir_type(ty.clone(), at);
+            drop(this);
+            let result = self.nest(frame).await;
+            result
+        }
+    }
+}
+
 impl FunctionLowerer<'_, '_> {
     pub(super) fn ray_builtin_chain(
         &mut self,
@@ -391,30 +407,42 @@ impl FunctionLowerer<'_, '_> {
         let pointer = self.add(Expression::GlobalVariable(global), at)?;
         Ok(RayTracingData::Pointer(pointer))
     }
+}
 
-    pub(super) fn ray_operands(
-        &mut self,
-        arguments: &[AstExpression],
+#[allow(clippy::await_holding_refcell_ref)]
+impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
+    pub(super) async fn ray_operands(
+        self,
+        arguments: &'b [AstExpression],
     ) -> Result<Vec<Handle<Expression>>> {
-        arguments
-            .iter()
-            .map(|argument| self.rvalue(argument))
-            .collect()
+        let mut operands = Vec::with_capacity(arguments.len());
+        for argument in arguments {
+            operands.push(self.nest(self.clone().rvalue(argument)).await?);
+        }
+        Ok(operands)
     }
 
-    pub(super) fn ray_query_pointer(
-        &mut self,
-        argument: &AstExpression,
+    pub(super) async fn ray_query_pointer(
+        self,
+        argument: &'b AstExpression,
     ) -> Result<Handle<Expression>> {
-        Ok(self.place(argument)?.pointer)
+        let this = self.lowerer();
+        Ok({
+            let frame = self.clone().place(argument);
+            drop(this);
+            let result = self.nest(frame).await;
+            result
+        }?
+        .pointer)
     }
 
-    pub(super) fn ray_builtin_call(
-        &mut self,
-        name: &str,
-        arguments: &[AstExpression],
+    pub(super) async fn ray_builtin_call(
+        self,
+        name: &'b str,
+        arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Option<Option<Handle<Expression>>>> {
+        let mut this = self.lowerer();
         use RayQueryIntersectionValue as Iv;
         let intersection = match name {
             "rayQueryGetIntersectionTypeEXT" => Some(Iv::Type),
@@ -449,17 +477,23 @@ impl FunctionLowerer<'_, '_> {
             let [ref query, ref committed, ref rest @ ..] = *arguments else {
                 return Err(internal(at));
             };
-            let committed = self.constant_bool(committed, at)?;
-            let query = self.ray_query_pointer(query)?;
+            let committed = this.constant_bool(committed, at)?;
+            let query = {
+                let frame = self.clone().ray_query_pointer(query);
+                drop(this);
+                let result = self.nest(frame).await;
+                this = self.lowerer();
+                result
+            }?;
             match value {
                 Iv::TriangleVertexPositions => {
-                    self.lw.module.generate_vertex_return_type();
+                    this.lw.module.generate_vertex_return_type();
                 }
-                Iv::LssPositions => self.generate_lss_array(Some(crate::VectorSize::Tri)),
-                Iv::LssRadii => self.generate_lss_array(None),
+                Iv::LssPositions => this.generate_lss_array(Some(crate::VectorSize::Tri)),
+                Iv::LssRadii => this.generate_lss_array(None),
                 _ => {}
             }
-            let result = self.add(
+            let result = this.add(
                 Expression::RayQueryGet {
                     query,
                     value: RayQueryValue::Intersection { committed, value },
@@ -467,8 +501,14 @@ impl FunctionLowerer<'_, '_> {
                 at,
             )?;
             if let [ref output] = *rest {
-                let place = self.place(output)?;
-                self.store(&place, result, at)?;
+                let place = {
+                    let frame = self.clone().place(output);
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }?;
+                this.store(&place, result, at)?;
                 return Ok(Some(None));
             }
             return Ok(Some(Some(result)));
@@ -485,8 +525,14 @@ impl FunctionLowerer<'_, '_> {
         };
         if let Some(value) = ray_value {
             let query = arguments.first().ok_or_else(|| internal(at))?;
-            let query = self.ray_query_pointer(query)?;
-            return self
+            let query = {
+                let frame = self.clone().ray_query_pointer(query);
+                drop(this);
+                let result = self.nest(frame).await;
+                this = self.lowerer();
+                result
+            }?;
+            return this
                 .add(Expression::RayQueryGet { query, value }, at)
                 .map(|result| Some(Some(result)));
         }
@@ -495,13 +541,24 @@ impl FunctionLowerer<'_, '_> {
                 let [ref query, ref rest @ ..] = *arguments else {
                     return Err(internal(at));
                 };
-                let query = self.ray_query_pointer(query)?;
-                let [acceleration_structure, flags, cull_mask, origin, tmin, direction, tmax] =
-                    *self.ray_operands(rest)?.as_slice()
-                else {
+                let query = {
+                    let frame = self.clone().ray_query_pointer(query);
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }?;
+                let [acceleration_structure, flags, cull_mask, origin, tmin, direction, tmax] = *{
+                    let frame = self.clone().ray_operands(rest);
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }?
+                .as_slice() else {
                     return Err(internal(at));
                 };
-                self.push(
+                this.push(
                     Statement::RayQuery {
                         query,
                         fun: RayQueryFunction::Initialize {
@@ -520,8 +577,14 @@ impl FunctionLowerer<'_, '_> {
             }
             "rayQueryProceedEXT" => {
                 let query = arguments.first().ok_or_else(|| internal(at))?;
-                let query = self.ray_query_pointer(query)?;
-                let result = self.result_statement(
+                let query = {
+                    let frame = self.clone().ray_query_pointer(query);
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }?;
+                let result = this.result_statement(
                     Expression::RayQueryProceedResult,
                     |result| Statement::RayQuery {
                         query,
@@ -533,22 +596,40 @@ impl FunctionLowerer<'_, '_> {
             }
             "rayQueryTerminateEXT" | "rayQueryConfirmIntersectionEXT" => {
                 let query = arguments.first().ok_or_else(|| internal(at))?;
-                let query = self.ray_query_pointer(query)?;
+                let query = {
+                    let frame = self.clone().ray_query_pointer(query);
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }?;
                 let fun = if name == "rayQueryTerminateEXT" {
                     RayQueryFunction::Terminate
                 } else {
                     RayQueryFunction::ConfirmIntersection
                 };
-                self.push(Statement::RayQuery { query, fun }, at);
+                this.push(Statement::RayQuery { query, fun }, at);
                 Ok(Some(None))
             }
             "rayQueryGenerateIntersectionEXT" => {
                 let [ref query, ref hit_t] = *arguments else {
                     return Err(internal(at));
                 };
-                let query = self.ray_query_pointer(query)?;
-                let hit_t = self.rvalue(hit_t)?;
-                self.push(
+                let query = {
+                    let frame = self.clone().ray_query_pointer(query);
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }?;
+                let hit_t = {
+                    let frame = self.clone().rvalue(hit_t);
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }?;
+                this.push(
                     Statement::RayQuery {
                         query,
                         fun: RayQueryFunction::GenerateIntersection { hit_t },
@@ -560,7 +641,13 @@ impl FunctionLowerer<'_, '_> {
             "traceNV" | "traceRayEXT" | "traceRayMotionNV" => {
                 let motion = name == "traceRayMotionNV";
                 let (payload, operands) = arguments.split_last().ok_or_else(|| internal(at))?;
-                let operands = self.ray_operands(operands)?;
+                let operands = {
+                    let frame = self.clone().ray_operands(operands);
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }?;
                 let (time, operands) = if motion {
                     let (time, operands) = operands.split_last().ok_or_else(|| internal(at))?;
                     (Some(*time), operands)
@@ -572,8 +659,8 @@ impl FunctionLowerer<'_, '_> {
                 else {
                     return Err(internal(at));
                 };
-                let payload = self.ray_data(payload, 0, name == "traceNV", at)?;
-                self.push(
+                let payload = this.ray_data(payload, 0, name == "traceNV", at)?;
+                this.push(
                     Statement::RayPipelineFunction(RayPipelineFunction::TraceRay {
                         acceleration_structure,
                         flags,
@@ -596,9 +683,15 @@ impl FunctionLowerer<'_, '_> {
                 let [ref sbt_index, ref data] = *arguments else {
                     return Err(internal(at));
                 };
-                let sbt_index = self.rvalue(sbt_index)?;
-                let data = self.ray_data(data, 1, name == "executeCallableNV", at)?;
-                self.push(
+                let sbt_index = {
+                    let frame = self.clone().rvalue(sbt_index);
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }?;
+                let data = this.ray_data(data, 1, name == "executeCallableNV", at)?;
+                this.push(
                     Statement::RayPipelineFunction(RayPipelineFunction::ExecuteCallable {
                         sbt_index,
                         data,
@@ -611,9 +704,21 @@ impl FunctionLowerer<'_, '_> {
                 let [ref hit_t, ref hit_kind] = *arguments else {
                     return Err(internal(at));
                 };
-                let hit_t = self.rvalue(hit_t)?;
-                let hit_kind = self.rvalue(hit_kind)?;
-                let result = self.result_statement(
+                let hit_t = {
+                    let frame = self.clone().rvalue(hit_t);
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }?;
+                let hit_kind = {
+                    let frame = self.clone().rvalue(hit_kind);
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }?;
+                let result = this.result_statement(
                     Expression::ReportIntersectionResult,
                     |result| {
                         Statement::RayPipelineFunction(RayPipelineFunction::ReportIntersection {
@@ -627,7 +732,7 @@ impl FunctionLowerer<'_, '_> {
                 Ok(Some(Some(result)))
             }
             "ignoreIntersectionNV" => {
-                self.push(
+                this.push(
                     Statement::RayPipelineFunction(RayPipelineFunction::IgnoreIntersection {
                         nv: true,
                     }),
@@ -636,65 +741,40 @@ impl FunctionLowerer<'_, '_> {
                 Ok(Some(None))
             }
             "terminateRayNV" => {
-                self.push(
+                this.push(
                     Statement::RayPipelineFunction(RayPipelineFunction::TerminateRay { nv: true }),
                     at,
                 );
                 Ok(Some(None))
             }
-            _ => self.hit_object_call(name, arguments, at),
+            _ => {
+                let frame = self.clone().hit_object_call(name, arguments, at);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
         }
     }
 
-    pub(super) fn acceleration_structure_from(
-        &mut self,
-        arguments: &[AstExpression],
+    pub(super) async fn acceleration_structure_from(
+        self,
+        arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Handle<Expression>> {
+        let mut this = self.lowerer();
         let argument = arguments.first().ok_or_else(|| internal(at))?;
-        let address = self.rvalue(argument)?;
-        self.add(Expression::AccelerationStructureFromAddress { address }, at)
+        let address = {
+            let frame = self.clone().rvalue(argument);
+            drop(this);
+            let result = self.nest(frame).await;
+            this = self.lowerer();
+            result
+        }?;
+        this.add(Expression::AccelerationStructureFromAddress { address }, at)
     }
 }
 
 impl Lowerer<'_> {
-    pub(super) fn builtin_override(
-        &mut self,
-        symbol: SymbolId,
-        variable: &rglsl_sema::scope::Variable,
-        at: Span,
-    ) -> Result<Option<GlobalRef>> {
-        let Some(id) = variable
-            .qualifiers
-            .layout_entry("constant_id")
-            .and_then(|entry| entry.value)
-        else {
-            return Ok(None);
-        };
-        let id =
-            u32::try_from(id).map_err(|_| semantic("the `constant_id` is out of range", at))?;
-        let name = self.symbol(symbol).map(|symbol| symbol.name.clone());
-        let values = variable
-            .value
-            .as_ref()
-            .map(|value| value.values.clone())
-            .unwrap_or_default();
-        let ty = self.ir_type(&variable.ty, at)?;
-        let init = self.global_constant(&variable.ty, &values, at)?;
-        let handle = self.module.overrides.append(
-            crate::Override {
-                name,
-                id: Some(id),
-                ty,
-                init: Some(init),
-            },
-            at,
-        );
-        let found = GlobalRef::Override(handle);
-        self.globals.insert(symbol, found);
-        Ok(Some(found))
-    }
-
     pub(super) fn opacity_micromap(&mut self, at: Span) -> Result<Option<Handle<Expression>>> {
         if !self
             .analysis
@@ -718,5 +798,60 @@ impl Lowerer<'_> {
             GlobalRef::Variable(_) => return Err(internal(at)),
         };
         Ok(Some(self.module.global_expressions.append(expression, at)))
+    }
+}
+
+#[allow(clippy::await_holding_refcell_ref)]
+impl<'b, 'a> super::function::LowererCx<'b, 'a> {
+    pub(super) async fn builtin_override(
+        self,
+        symbol: SymbolId,
+        variable: &'b rglsl_sema::scope::Variable,
+        at: Span,
+    ) -> Result<Option<GlobalRef>> {
+        let mut this = self.lowerer();
+        let Some(id) = variable
+            .qualifiers
+            .layout_entry("constant_id")
+            .and_then(|entry| entry.value)
+        else {
+            return Ok(None);
+        };
+        let id =
+            u32::try_from(id).map_err(|_| semantic("the `constant_id` is out of range", at))?;
+        let name = this.symbol(symbol).map(|symbol| symbol.name.clone());
+        let values = variable
+            .value
+            .as_ref()
+            .map(|value| value.values.clone())
+            .unwrap_or_default();
+        let ty = {
+            let frame = self.clone().ir_type(variable.ty.clone(), at);
+            drop(this);
+            let result = self.nest(frame).await;
+            this = self.lowerer();
+            result
+        }?;
+        let init = {
+            let frame = self
+                .clone()
+                .global_constant(variable.ty.clone(), values.to_vec(), at);
+            drop(this);
+            let result = self.nest(frame).await;
+            this = self.lowerer();
+            result
+        }?;
+        let handle = this.module.overrides.append(
+            crate::Override {
+                name,
+                id: Some(id),
+                ty,
+                init: Some(init),
+            },
+            at,
+        );
+        let found = GlobalRef::Override(handle);
+        this.globals.insert(symbol, found);
+        Ok(Some(found))
     }
 }

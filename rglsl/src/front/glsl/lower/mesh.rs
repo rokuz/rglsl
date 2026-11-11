@@ -186,16 +186,26 @@ impl Lowerer<'_> {
     }
 }
 
-impl FunctionLowerer<'_, '_> {
-    pub(super) fn mesh_statement(
-        &mut self,
-        name: &str,
-        arguments: &[AstExpression],
+impl FunctionLowerer<'_, '_> {}
+
+#[allow(clippy::await_holding_refcell_ref)]
+impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
+    pub(super) async fn mesh_statement(
+        self,
+        name: &'b str,
+        arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<()> {
+        let mut this = self.lowerer();
         let mut values = Vec::with_capacity(arguments.len());
         for argument in arguments {
-            values.push(self.rvalue(argument)?);
+            values.push({
+                let frame = self.clone().rvalue(argument);
+                drop(this);
+                let result = self.nest(frame).await;
+                this = self.lowerer();
+                result
+            }?);
         }
         let function = match (name, values.as_slice()) {
             ("SetMeshOutputsEXT", &[vertex_count, primitive_count]) => {
@@ -215,7 +225,7 @@ impl FunctionLowerer<'_, '_> {
             }
             _ => return Err(internal(at)),
         };
-        self.push(Statement::MeshFunction(function), at);
+        this.push(Statement::MeshFunction(function), at);
         Ok(())
     }
 }

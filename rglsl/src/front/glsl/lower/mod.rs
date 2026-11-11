@@ -116,12 +116,16 @@ fn preprocess(
         .iter()
         .map(|(name, value)| rglsl_pp::Define::new(name.clone(), Some(value.as_str())))
         .collect();
-    let preprocessor_options = rglsl_pp::Options {
+    let mut preprocessor_options = rglsl_pp::Options {
         defines,
         vulkan_client_version: Some(100),
         stage: stage.map(preprocessor_stage),
         ..rglsl_pp::Options::default()
     };
+    if !options.nesting_limits {
+        preprocessor_options.limits.max_macro_expansion_depth = usize::MAX;
+        preprocessor_options.limits.max_if_nesting = usize::MAX;
+    }
     rglsl_pp::preprocess(source, root, &preprocessor_options, includer)
 }
 
@@ -136,7 +140,8 @@ fn defines_main(
     if preprocessed.has_errors() {
         return None;
     }
-    let (unit, _) = rglsl_ast::parse_prefix(preprocessed.text.as_str());
+    let (unit, _) =
+        rglsl_ast::parse_prefix_with(preprocessed.text.as_str(), &parse_options(options));
     Some(unit.external_declarations.iter().any(|declaration| {
         matches!(
             *declaration,
@@ -185,7 +190,7 @@ fn lower(
         return Err(earlier.into());
     }
     let text = preprocessed.text.as_str();
-    let (unit, failure) = rglsl_ast::parse_prefix(text);
+    let (unit, failure) = rglsl_ast::parse_prefix_with(text, &parse_options(options));
     let analysis = rglsl_sema::analyze(&unit, &sema_options(options, text));
     if let Some(error) = failure {
         let earlier = analysis.diagnostics.iter().filter(|diagnostic| {
@@ -243,11 +248,24 @@ fn lower(
     Lowerer::new(&unit, &analysis, options, map, mode).run()
 }
 
+fn parse_options(options: &Options) -> rglsl_ast::ParseOptions {
+    if options.nesting_limits {
+        rglsl_ast::ParseOptions::default()
+    } else {
+        rglsl_ast::ParseOptions {
+            nesting_limit: None,
+        }
+    }
+}
+
 fn sema_options(options: &Options, text: &str) -> rglsl_sema::Options {
     rglsl_sema::Options {
         spirv_version: options.spirv_version,
         end_of_input: u32::try_from(text.len()).ok(),
         require_bindings: !options.auto_map_bindings,
+        type_depth_limit: options
+            .nesting_limits
+            .then_some(rglsl_sema::types::MAX_TYPE_DEPTH),
         ..rglsl_sema::Options::new(stage(options.stage))
     }
 }
@@ -259,7 +277,7 @@ fn semantic_errors_before(
 ) -> Vec<Error> {
     let map = &preprocessed.source_map;
     let text = preprocessed.text.as_str();
-    let (unit, failure) = rglsl_ast::parse_prefix(text);
+    let (unit, failure) = rglsl_ast::parse_prefix_with(text, &parse_options(options));
     let analysis = rglsl_sema::analyze(&unit, &sema_options(options, text));
     let parsed = failure.map_or(u32::MAX, |error| error.span.start);
     let mut errors: Vec<Error> = analysis

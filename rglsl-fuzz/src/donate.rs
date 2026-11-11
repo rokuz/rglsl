@@ -28,6 +28,7 @@ use crate::random::Random;
 use crate::rename::{rename_all, NameKind};
 use crate::rewrite::{rewrite_expressions, rewrite_statements, take_expression};
 use crate::scope::{has_storage, Variable};
+use crate::stack::child_statements;
 use crate::transformation::PassInput;
 
 pub const DEAD_NAME: &str = "donate_dead_code";
@@ -706,51 +707,49 @@ fn fragments(unit: &TranslationUnit) -> Vec<(usize, NodeId)> {
 }
 
 fn collect_fragments(statement: &Statement, found: &mut Vec<NodeId>, local_struct: &mut bool) {
-    match &statement.kind {
-        StatementKind::Compound(compound) => {
-            found.push(statement.id);
-            for inner in &compound.statements {
-                collect_fragments(inner, found, local_struct);
+    let mut pending = vec![statement];
+    while let Some(statement) = pending.pop() {
+        let start = pending.len();
+        match &statement.kind {
+            StatementKind::Compound(compound) => {
+                found.push(statement.id);
+                pending.extend(compound.statements.iter());
             }
-        }
-        StatementKind::Selection {
-            then_branch,
-            else_branch,
-            ..
-        } => {
-            found.push(statement.id);
-            collect_fragments(then_branch, found, local_struct);
-            if let Some(else_branch) = else_branch {
-                collect_fragments(else_branch, found, local_struct);
+            StatementKind::Selection {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                found.push(statement.id);
+                pending.push(then_branch);
+                pending.extend(else_branch.as_deref());
             }
-        }
-        StatementKind::While { body, .. } | StatementKind::DoWhile { body, .. } => {
-            found.push(statement.id);
-            collect_fragments(body, found, local_struct);
-        }
-        StatementKind::For(for_statement) => {
-            found.push(statement.id);
-            collect_fragments(&for_statement.body, found, local_struct);
-        }
-        StatementKind::Switch { statements, .. } => {
-            for inner in statements {
-                collect_fragments(inner, found, local_struct);
+            StatementKind::While { body, .. } | StatementKind::DoWhile { body, .. } => {
+                found.push(statement.id);
+                pending.push(body);
             }
-        }
-        StatementKind::Declaration(declaration) => {
-            if let DeclarationKind::InitDeclaratorList(list) = &declaration.kind {
-                if matches!(
-                    list.ty.specifier.non_array,
-                    TypeSpecifierNonArray::Struct(_)
-                ) {
-                    *local_struct = true;
+            StatementKind::For(for_statement) => {
+                found.push(statement.id);
+                pending.push(&for_statement.body);
+            }
+            StatementKind::Switch { statements, .. } => pending.extend(statements.iter()),
+            StatementKind::Declaration(declaration) => {
+                if let DeclarationKind::InitDeclaratorList(list) = &declaration.kind {
+                    if matches!(
+                        list.ty.specifier.non_array,
+                        TypeSpecifierNonArray::Struct(_)
+                    ) {
+                        *local_struct = true;
+                    }
                 }
             }
+            StatementKind::Attributed { statement, .. } => pending.push(statement),
+            StatementKind::Expression(_) | StatementKind::CaseLabel(_) | StatementKind::Jump(_) => {
+            }
         }
-        StatementKind::Attributed { statement, .. } => {
-            collect_fragments(statement, found, local_struct);
+        if let Some(added) = pending.get_mut(start..) {
+            added.reverse();
         }
-        StatementKind::Expression(_) | StatementKind::CaseLabel(_) | StatementKind::Jump(_) => {}
     }
 }
 
@@ -768,31 +767,14 @@ fn find_statement(
         return None;
     };
     fn search(statement: &Statement, id: NodeId) -> Option<&Statement> {
-        if statement.id == id {
-            return Some(statement);
+        let mut pending = vec![statement];
+        while let Some(statement) = pending.pop() {
+            if statement.id == id {
+                return Some(statement);
+            }
+            pending.extend(child_statements(&statement.kind).into_iter().rev());
         }
-        match &statement.kind {
-            StatementKind::Compound(compound) => {
-                compound.statements.iter().find_map(|s| search(s, id))
-            }
-            StatementKind::Selection {
-                then_branch,
-                else_branch,
-                ..
-            } => search(then_branch, id)
-                .or_else(|| else_branch.as_deref().and_then(|s| search(s, id))),
-            StatementKind::While { body, .. } | StatementKind::DoWhile { body, .. } => {
-                search(body, id)
-            }
-            StatementKind::For(for_statement) => {
-                search(&for_statement.init, id).or_else(|| search(&for_statement.body, id))
-            }
-            StatementKind::Switch { statements, .. } => {
-                statements.iter().find_map(|s| search(s, id))
-            }
-            StatementKind::Attributed { statement, .. } => search(statement, id),
-            _ => None,
-        }
+        None
     }
     definition
         .body
@@ -811,51 +793,30 @@ struct FreeVariable {
 fn declared_inside(statement: &Statement) -> BTreeSet<NodeId> {
     let mut ids = BTreeSet::new();
     fn walk(statement: &Statement, ids: &mut BTreeSet<NodeId>) {
-        match &statement.kind {
-            StatementKind::Declaration(declaration) => {
-                if let DeclarationKind::InitDeclaratorList(list) = &declaration.kind {
-                    ids.extend(list.declarators.iter().map(|declarator| declarator.id));
+        let mut pending = vec![statement];
+        while let Some(statement) = pending.pop() {
+            match &statement.kind {
+                StatementKind::Declaration(declaration) => {
+                    if let DeclarationKind::InitDeclaratorList(list) = &declaration.kind {
+                        ids.extend(list.declarators.iter().map(|declarator| declarator.id));
+                    }
                 }
-            }
-            StatementKind::Compound(compound) => {
-                for inner in &compound.statements {
-                    walk(inner, ids);
-                }
-            }
-            StatementKind::Selection {
-                then_branch,
-                else_branch,
-                ..
-            } => {
-                walk(then_branch, ids);
-                if let Some(else_branch) = else_branch {
-                    walk(else_branch, ids);
-                }
-            }
-            StatementKind::Switch { statements, .. } => {
-                for inner in statements {
-                    walk(inner, ids);
-                }
-            }
-            StatementKind::While { condition, body } => {
-                if let rglsl_ast::ast::Condition::Declaration(declaration) = condition {
+                StatementKind::While {
+                    condition: rglsl_ast::ast::Condition::Declaration(declaration),
+                    ..
+                } => {
                     ids.insert(declaration.id);
                 }
-                walk(body, ids);
-            }
-            StatementKind::DoWhile { body, .. } => walk(body, ids),
-            StatementKind::For(for_statement) => {
-                walk(&for_statement.init, ids);
-                if let Some(rglsl_ast::ast::Condition::Declaration(declaration)) =
-                    &for_statement.condition
-                {
-                    ids.insert(declaration.id);
+                StatementKind::For(for_statement) => {
+                    if let Some(rglsl_ast::ast::Condition::Declaration(declaration)) =
+                        &for_statement.condition
+                    {
+                        ids.insert(declaration.id);
+                    }
                 }
-                walk(&for_statement.body, ids);
+                _ => {}
             }
-            StatementKind::Attributed { statement, .. } => walk(statement, ids),
-            StatementKind::Expression(_) | StatementKind::CaseLabel(_) | StatementKind::Jump(_) => {
-            }
+            pending.extend(child_statements(&statement.kind));
         }
     }
     walk(statement, &mut ids);
@@ -931,54 +892,61 @@ fn remove_jumps(
     in_loop: bool,
     in_switch: bool,
 ) {
-    let remove = match &statement.kind {
-        StatementKind::CaseLabel(CaseLabel::Case(_) | CaseLabel::Default) => {
-            removal.case_labels && !in_switch
-        }
-        StatementKind::Jump(JumpStatement::Break) => removal.breaks && !in_loop && !in_switch,
-        StatementKind::Jump(JumpStatement::Continue) => removal.continues && !in_loop,
-        StatementKind::Jump(JumpStatement::Discard) => removal.discards,
-        StatementKind::Jump(JumpStatement::Return(_)) => removal.returns,
-        _ => false,
-    };
-    if remove {
-        *statement = builder.null_statement();
-        return;
-    }
-    match &mut statement.kind {
-        StatementKind::Compound(compound) => {
-            for inner in &mut compound.statements {
-                remove_jumps(inner, removal, builder, in_loop, in_switch);
+    let mut pending = vec![(statement, in_loop, in_switch)];
+    while let Some((statement, in_loop, in_switch)) = pending.pop() {
+        let remove = match &statement.kind {
+            StatementKind::CaseLabel(CaseLabel::Case(_) | CaseLabel::Default) => {
+                removal.case_labels && !in_switch
             }
+            StatementKind::Jump(JumpStatement::Break) => removal.breaks && !in_loop && !in_switch,
+            StatementKind::Jump(JumpStatement::Continue) => removal.continues && !in_loop,
+            StatementKind::Jump(JumpStatement::Discard) => removal.discards,
+            StatementKind::Jump(JumpStatement::Return(_)) => removal.returns,
+            _ => false,
+        };
+        if remove {
+            *statement = builder.null_statement();
+            continue;
         }
-        StatementKind::Selection {
-            then_branch,
-            else_branch,
-            ..
-        } => {
-            remove_jumps(then_branch, removal, builder, in_loop, in_switch);
-            if let Some(else_branch) = else_branch {
-                remove_jumps(else_branch, removal, builder, in_loop, in_switch);
+        let start = pending.len();
+        match &mut statement.kind {
+            StatementKind::Compound(compound) => {
+                for inner in &mut compound.statements {
+                    pending.push((inner, in_loop, in_switch));
+                }
             }
-        }
-        StatementKind::Switch { statements, .. } => {
-            for inner in statements {
-                remove_jumps(inner, removal, builder, in_loop, true);
+            StatementKind::Selection {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                pending.push((then_branch, in_loop, in_switch));
+                if let Some(else_branch) = else_branch {
+                    pending.push((else_branch, in_loop, in_switch));
+                }
             }
+            StatementKind::Switch { statements, .. } => {
+                for inner in statements {
+                    pending.push((inner, in_loop, true));
+                }
+            }
+            StatementKind::While { body, .. } | StatementKind::DoWhile { body, .. } => {
+                pending.push((body, true, in_switch));
+            }
+            StatementKind::For(for_statement) => {
+                pending.push((&mut for_statement.body, true, in_switch));
+            }
+            StatementKind::Attributed { statement, .. } => {
+                pending.push((statement, in_loop, in_switch));
+            }
+            StatementKind::Declaration(_)
+            | StatementKind::Expression(_)
+            | StatementKind::CaseLabel(_)
+            | StatementKind::Jump(_) => {}
         }
-        StatementKind::While { body, .. } | StatementKind::DoWhile { body, .. } => {
-            remove_jumps(body, removal, builder, true, in_switch);
+        if let Some(added) = pending.get_mut(start..) {
+            added.reverse();
         }
-        StatementKind::For(for_statement) => {
-            remove_jumps(&mut for_statement.body, removal, builder, true, in_switch);
-        }
-        StatementKind::Attributed { statement, .. } => {
-            remove_jumps(statement, removal, builder, in_loop, in_switch);
-        }
-        StatementKind::Declaration(_)
-        | StatementKind::Expression(_)
-        | StatementKind::CaseLabel(_)
-        | StatementKind::Jump(_) => {}
     }
 }
 

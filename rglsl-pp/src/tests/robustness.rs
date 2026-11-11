@@ -104,20 +104,29 @@ fn deeply_nested_conditionals() {
 
 #[test]
 fn deeply_nested_expressions() {
-    let mut source = String::from("#version 450\n#if ");
-    for _ in 0..50_000 {
-        source.push('(');
-    }
-    source.push_str("1\n#endif\n");
+    let depth = 50_000;
+    let source = format!(
+        "#version 450\n#if {}1{} == 1\nint yes;\n#endif\n",
+        "(".repeat(depth),
+        ")".repeat(depth)
+    );
     let result = run_limited(&source);
-    assert!(errors(&result).contains(&DiagnosticKind::ExpressionTooDeep));
-    let mut unary = String::from("#version 450\n#if ");
-    for _ in 0..50_000 {
-        unary.push_str("- ");
-    }
-    unary.push_str("1\n#endif\n");
-    let result = run_limited(&unary);
-    assert!(errors(&result).contains(&DiagnosticKind::ExpressionTooDeep));
+    assert!(errors(&result).is_empty());
+    assert!(result.text.contains("int yes;"));
+    let source = format!(
+        "#version 450\n#if {}1\nint yes;\n#endif\n",
+        "- - ".repeat(depth)
+    );
+    let result = run_limited(&source);
+    assert!(errors(&result).is_empty());
+    assert!(result.text.contains("int yes;"));
+    let source = format!(
+        "#version 450\n#if {}1{}\n#endif\n",
+        "(".repeat(depth),
+        ")".repeat(depth - 1)
+    );
+    let result = run_limited(&source);
+    assert!(errors(&result).contains(&DiagnosticKind::ExpectedCloseParen));
 }
 
 #[test]

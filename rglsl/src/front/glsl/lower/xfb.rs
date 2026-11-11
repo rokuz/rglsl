@@ -111,35 +111,58 @@ pub(super) fn size(types: &UniqueArena<Type>, ty: Handle<Type>) -> Option<(u32, 
         };
         Some((bytes.saturating_mul(count), widths))
     };
-    match types[ty].inner {
-        TypeInner::Scalar(scalar) => component(scalar, 1),
-        TypeInner::Vector { size, scalar } => component(scalar, size as u32),
-        TypeInner::Matrix {
-            columns,
-            rows,
-            scalar,
-        } => component(scalar, (columns as u32).saturating_mul(rows as u32)),
-        TypeInner::Array {
-            base,
-            size: crate::ArraySize::Constant(length),
-            ..
-        } => {
-            let (bytes, widths) = size(types, base)?;
-            Some((bytes.saturating_mul(length.get()), widths))
-        }
-        TypeInner::Struct { ref members, .. } => {
-            let mut total = 0_u32;
-            let mut widths = Widths::default();
-            for member in members {
-                let (bytes, member_widths) = size(types, member.ty)?;
-                total = round_up(total, member_widths.alignment());
-                total = total.saturating_add(bytes);
-                widths = widths.merge(member_widths);
-            }
-            Some((round_up(total, widths.alignment()), widths))
-        }
-        _ => None,
+    enum Task {
+        Visit(Handle<Type>),
+        Repeat(u32),
+        Members(usize),
     }
+    let mut tasks = alloc::vec![Task::Visit(ty)];
+    let mut sizes: Vec<(u32, Widths)> = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(ty) => match types[ty].inner {
+                TypeInner::Scalar(scalar) => sizes.push(component(scalar, 1)?),
+                TypeInner::Vector { size, scalar } => sizes.push(component(scalar, size as u32)?),
+                TypeInner::Matrix {
+                    columns,
+                    rows,
+                    scalar,
+                } => sizes.push(component(
+                    scalar,
+                    (columns as u32).saturating_mul(rows as u32),
+                )?),
+                TypeInner::Array {
+                    base,
+                    size: crate::ArraySize::Constant(length),
+                    ..
+                } => {
+                    tasks.push(Task::Repeat(length.get()));
+                    tasks.push(Task::Visit(base));
+                }
+                TypeInner::Struct { ref members, .. } => {
+                    tasks.push(Task::Members(members.len()));
+                    tasks.extend(members.iter().rev().map(|member| Task::Visit(member.ty)));
+                }
+                _ => return None,
+            },
+            Task::Repeat(length) => {
+                let (bytes, widths) = sizes.pop()?;
+                sizes.push((bytes.saturating_mul(length), widths));
+            }
+            Task::Members(count) => {
+                let start = sizes.len().checked_sub(count)?;
+                let mut total = 0_u32;
+                let mut widths = Widths::default();
+                for (bytes, member_widths) in sizes.drain(start..) {
+                    total = round_up(total, member_widths.alignment());
+                    total = total.saturating_add(bytes);
+                    widths = widths.merge(member_widths);
+                }
+                sizes.push((round_up(total, widths.alignment()), widths));
+            }
+        }
+    }
+    sizes.pop()
 }
 
 pub(super) fn ast_layout_value<'q>(

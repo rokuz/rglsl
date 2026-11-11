@@ -544,6 +544,7 @@ dependencies = [
 name = "rglsl-ast"
 version = "0.1.0"
 dependencies = [
+ "rglsl-types",
  "thiserror",
 ]
 
@@ -568,6 +569,7 @@ version = "0.1.0"
 dependencies = [
  "rglsl-ast",
  "rglsl-sema",
+ "rglsl-types",
  "serde_json",
 ]
 

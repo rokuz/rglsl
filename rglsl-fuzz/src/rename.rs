@@ -84,21 +84,38 @@ fn statement_names(statement: &mut Statement, renamer: &dyn Renamer) {
 }
 
 pub fn specifier_names(specifier: &mut TypeSpecifier, renamer: &dyn Renamer) {
-    match &mut specifier.non_array {
-        TypeSpecifierNonArray::TypeName(name) => {
-            if let Some(new) = renamer.rename(NameKind::Type, name) {
-                *name = new;
+    let mut pending = vec![specifier];
+    while let Some(specifier) = pending.pop() {
+        let start = pending.len();
+        match &mut specifier.non_array {
+            TypeSpecifierNonArray::TypeName(name) => {
+                if let Some(new) = renamer.rename(NameKind::Type, name) {
+                    *name = new;
+                }
             }
-        }
-        TypeSpecifierNonArray::Struct(structure) => {
-            if let Some(name) = &mut structure.name {
-                identifier(name, NameKind::Type, renamer);
+            TypeSpecifierNonArray::Struct(structure) => {
+                if let Some(name) = &mut structure.name {
+                    identifier(name, NameKind::Type, renamer);
+                }
+                pending.extend(member_specifiers(&mut structure.declarations));
             }
-            members(&mut structure.declarations, renamer);
+            TypeSpecifierNonArray::InlineBlock(declarations) => {
+                pending.extend(member_specifiers(declarations));
+            }
+            _ => {}
         }
-        TypeSpecifierNonArray::InlineBlock(declarations) => members(declarations, renamer),
-        _ => {}
+        if let Some(added) = pending.get_mut(start..) {
+            added.reverse();
+        }
     }
+}
+
+fn member_specifiers(
+    members: &mut [rglsl_ast::ast::Spanned<StructDeclaration>],
+) -> impl Iterator<Item = &mut TypeSpecifier> {
+    members
+        .iter_mut()
+        .map(|member| &mut member.ty.specifier.node)
 }
 
 fn members(members: &mut [rglsl_ast::ast::Spanned<StructDeclaration>], renamer: &dyn Renamer) {

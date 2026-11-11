@@ -9,7 +9,8 @@ use rglsl_ast::ast::{
 use rglsl_ast::Span;
 
 use super::expression::literal;
-use super::Analyzer;
+use super::frames::Cx;
+use super::{Analyzer, Operand};
 use crate::constant::Value;
 use crate::diagnostic::DiagnosticKind;
 use crate::scope::{Storage, SymbolKind};
@@ -48,10 +49,11 @@ fn intrinsic(subject: &str, reason: &'static str) -> DiagnosticKind {
 }
 
 fn unparenthesized(expression: &Expression) -> &Expression {
-    match expression.kind {
-        ExpressionKind::Parenthesized(ref inner) => unparenthesized(inner),
-        _ => expression,
+    let mut current = expression;
+    while let ExpressionKind::Parenthesized(ref inner) = current.kind {
+        current = inner;
     }
+    current
 }
 
 fn literal_words(expression: &Expression) -> Option<Vec<u32>> {
@@ -261,9 +263,12 @@ impl Analyzer<'_> {
         integer(&class.class)
     }
 
-    pub(crate) fn spirv_decorate(&mut self, decorate: &SpirvDecorate) -> Option<SpirvDecoration> {
-        self.spirv_requirements(&decorate.requirements);
-        let decoration = integer(&decorate.decoration)?;
+    fn spirv_decorate_with(
+        &mut self,
+        decorate: &SpirvDecorate,
+        decoration: u32,
+        ids: Vec<SpirvIdOperand>,
+    ) -> SpirvDecoration {
         let operands = match decorate.kind {
             SpirvDecorateKind::Literal => SpirvDecorationOperands::Literals(
                 decorate
@@ -283,24 +288,19 @@ impl Analyzer<'_> {
                     })
                     .collect(),
             ),
-            SpirvDecorateKind::Id => {
-                let mut ids = Vec::new();
-                for operand in &decorate.operands {
-                    if let Some(id) = self.spirv_id_operand(operand) {
-                        ids.push(id);
-                    }
-                }
-                SpirvDecorationOperands::Ids(ids)
-            }
+            SpirvDecorateKind::Id => SpirvDecorationOperands::Ids(ids),
         };
-        Some(SpirvDecoration {
+        SpirvDecoration {
             decoration,
             operands,
-        })
+        }
     }
 
-    fn spirv_id_operand(&mut self, expression: &Expression) -> Option<SpirvIdOperand> {
-        let operand = self.expression(expression);
+    fn spirv_id_operand_with(
+        &mut self,
+        expression: &Expression,
+        operand: &Operand,
+    ) -> Option<SpirvIdOperand> {
         if operand.ty.is_error() {
             return None;
         }
@@ -326,22 +326,11 @@ impl Analyzer<'_> {
         }
     }
 
-    pub(crate) fn spirv_type_specifier(&mut self, specifier: &SpirvTypeSpecifier) -> Type {
-        self.spirv_requirements(&specifier.requirements);
-        let instruction = self.spirv_instruction(&specifier.instruction);
-        let mut parameters = Vec::new();
-        for parameter in &specifier.parameters {
-            match parameter {
-                SpirvTypeParameter::Type(ty) => {
-                    parameters.push(TypeParameter::Type(self.type_specifier(ty)));
-                }
-                SpirvTypeParameter::Constant(expression) => {
-                    if let Some(parameter) = self.spirv_type_constant(expression) {
-                        parameters.push(parameter);
-                    }
-                }
-            }
-        }
+    fn spirv_type_with(
+        &mut self,
+        instruction: SpirvInstruction,
+        parameters: Vec<TypeParameter>,
+    ) -> Type {
         match self.types.add_spirv(SpirvType {
             instruction,
             parameters,
@@ -351,8 +340,11 @@ impl Analyzer<'_> {
         }
     }
 
-    fn spirv_type_constant(&mut self, expression: &Expression) -> Option<TypeParameter> {
-        let operand = self.expression(expression);
+    fn spirv_type_constant_with(
+        &mut self,
+        expression: &Expression,
+        operand: &Operand,
+    ) -> Option<TypeParameter> {
         if operand.ty.is_error() {
             return None;
         }
@@ -391,5 +383,54 @@ impl Analyzer<'_> {
                 None
             }
         }
+    }
+}
+
+impl<'b> Cx<'b, Analyzer<'_>> {
+    pub(crate) async fn spirv_decorate(
+        self,
+        decorate: &'b SpirvDecorate,
+    ) -> Option<SpirvDecoration> {
+        let decoration = self.with(|analyzer| {
+            analyzer.spirv_requirements(&decorate.requirements);
+            integer(&decorate.decoration)
+        })?;
+        let mut ids = Vec::new();
+        if decorate.kind == SpirvDecorateKind::Id {
+            for operand in &decorate.operands {
+                let evaluated = self.call(self.clone().expression(operand)).await;
+                if let Some(id) =
+                    self.with(|analyzer| analyzer.spirv_id_operand_with(operand, &evaluated))
+                {
+                    ids.push(id);
+                }
+            }
+        }
+        Some(self.with(|analyzer| analyzer.spirv_decorate_with(decorate, decoration, ids)))
+    }
+
+    pub(crate) async fn spirv_type_specifier(self, specifier: &'b SpirvTypeSpecifier) -> Type {
+        let instruction = self.with(|analyzer| {
+            analyzer.spirv_requirements(&specifier.requirements);
+            analyzer.spirv_instruction(&specifier.instruction)
+        });
+        let mut parameters = Vec::new();
+        for parameter in &specifier.parameters {
+            match parameter {
+                SpirvTypeParameter::Type(ty) => {
+                    let ty = self.call(self.clone().type_specifier(ty)).await;
+                    parameters.push(TypeParameter::Type(ty));
+                }
+                SpirvTypeParameter::Constant(expression) => {
+                    let operand = self.call(self.clone().expression(expression)).await;
+                    if let Some(parameter) = self
+                        .with(|analyzer| analyzer.spirv_type_constant_with(expression, &operand))
+                    {
+                        parameters.push(parameter);
+                    }
+                }
+            }
+        }
+        self.with(|analyzer| analyzer.spirv_type_with(instruction, parameters))
     }
 }

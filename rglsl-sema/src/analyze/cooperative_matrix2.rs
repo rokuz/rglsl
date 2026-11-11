@@ -4,6 +4,7 @@ use alloc::vec::Vec;
 use rglsl_ast::ast::{Expression, ExpressionKind};
 use rglsl_ast::Span;
 
+use super::frames::Cx;
 use super::{Analyzer, Callee, Operand};
 use crate::diagnostic::DiagnosticKind;
 use crate::scope::{Direction, FunctionId};
@@ -68,6 +69,72 @@ const REDUCE_ROW: i64 = 0x1;
 const REDUCE_COLUMN: i64 = 0x2;
 const REDUCE_2X2: i64 = 0x4;
 
+enum TensorArguments {
+    Parameters(Vec<Option<ArraySize>>),
+    Operands(Vec<Operand>),
+}
+
+impl<'b> Cx<'b, Analyzer<'_>> {
+    pub(crate) async fn tensor_function(
+        self,
+        expression: &'b Expression,
+        span: Span,
+        name: &'b str,
+        call: TensorCall,
+        arguments: &'b [Expression],
+    ) -> Operand {
+        let enabled = self
+            .with(|analyzer| analyzer.require_extension(span, "GL_NV_cooperative_matrix2", name));
+        if !enabled {
+            self.call(self.clone().operands(arguments)).await;
+            return Operand::error();
+        }
+        let evaluated = match call {
+            TensorCall::CreateLayout | TensorCall::CreateView => {
+                let uses = self.with(|analyzer| analyzer.specialization_uses);
+                let mut parameters = Vec::with_capacity(arguments.len());
+                for argument in arguments {
+                    let operand = self.call(self.clone().expression(argument)).await;
+                    parameters.push(
+                        self.with(|analyzer| analyzer.type_argument_with(argument, &operand)),
+                    );
+                }
+                self.with(|analyzer| analyzer.specialization_uses = uses);
+                TensorArguments::Parameters(parameters)
+            }
+            _ => TensorArguments::Operands(self.call(self.clone().operands(arguments)).await),
+        };
+        self.with(|analyzer| {
+            analyzer.tensor_function_with(expression, span, name, call, arguments, evaluated)
+        })
+    }
+
+    pub(crate) async fn matrix2_function(
+        self,
+        expression: &'b Expression,
+        span: Span,
+        name: &'b str,
+        arguments: &'b [Expression],
+    ) -> Operand {
+        let references: Vec<Option<FunctionId>> = self.with(|analyzer| {
+            arguments
+                .iter()
+                .map(|argument| analyzer.function_reference(argument))
+                .collect()
+        });
+        let mut operands = Vec::with_capacity(arguments.len());
+        for (argument, reference) in arguments.iter().zip(&references) {
+            operands.push(match reference {
+                Some(_) => Operand::temporary(Type::VOID),
+                None => self.call(self.clone().expression(argument)).await,
+            });
+        }
+        self.with(|analyzer| {
+            analyzer.matrix2_function_with(expression, span, name, arguments, references, operands)
+        })
+    }
+}
+
 impl Analyzer<'_> {
     fn matrix2_error(&mut self, span: Span, name: &str, reason: &'static str) -> Operand {
         self.error(
@@ -90,8 +157,11 @@ impl Analyzer<'_> {
         candidates.next().is_none().then_some(first)
     }
 
-    fn type_argument(&mut self, argument: &Expression) -> Option<crate::types::ArraySize> {
-        let operand = self.expression(argument);
+    fn type_argument_with(
+        &mut self,
+        argument: &Expression,
+        operand: &Operand,
+    ) -> Option<crate::types::ArraySize> {
         if operand.ty.is_error() {
             return None;
         }
@@ -134,28 +204,21 @@ impl Analyzer<'_> {
         u32::try_from(value).ok().map(ArraySize::Sized)
     }
 
-    pub(crate) fn tensor_function(
+    fn tensor_function_with(
         &mut self,
         expression: &Expression,
         span: Span,
         name: &str,
         call: TensorCall,
         arguments: &[Expression],
+        evaluated: TensorArguments,
     ) -> Operand {
-        if !self.require_extension(span, "GL_NV_cooperative_matrix2", name) {
-            for argument in arguments {
-                self.expression(argument);
-            }
-            return Operand::error();
-        }
+        let (parameters, operands) = match evaluated {
+            TensorArguments::Parameters(parameters) => (parameters, Vec::new()),
+            TensorArguments::Operands(operands) => (Vec::new(), operands),
+        };
         let result = match call {
             TensorCall::CreateLayout => {
-                let uses = self.specialization_uses;
-                let parameters: Vec<Option<ArraySize>> = arguments
-                    .iter()
-                    .map(|argument| self.type_argument(argument))
-                    .collect();
-                self.specialization_uses = uses;
                 if parameters.iter().any(Option::is_none) {
                     return Operand::error();
                 }
@@ -175,12 +238,6 @@ impl Analyzer<'_> {
                 })
             }
             TensorCall::CreateView => {
-                let uses = self.specialization_uses;
-                let parameters: Vec<Option<ArraySize>> = arguments
-                    .iter()
-                    .map(|argument| self.type_argument(argument))
-                    .collect();
-                self.specialization_uses = uses;
                 if parameters.iter().any(Option::is_none) {
                     return Operand::error();
                 }
@@ -212,7 +269,6 @@ impl Analyzer<'_> {
                 })
             }
             _ => {
-                let operands = self.operands(arguments);
                 let Some(base) = operands.first() else {
                     self.error(span, DiagnosticKind::NoMatchingFunction(String::from(name)));
                     return Operand::error();
@@ -343,12 +399,14 @@ impl Analyzer<'_> {
         valid
     }
 
-    pub(crate) fn matrix2_function(
+    fn matrix2_function_with(
         &mut self,
         expression: &Expression,
         span: Span,
         name: &str,
         arguments: &[Expression],
+        references: Vec<Option<FunctionId>>,
+        operands: Vec<Operand>,
     ) -> Operand {
         let ext = name.ends_with("EXT");
         let extension = if ext {
@@ -356,18 +414,6 @@ impl Analyzer<'_> {
         } else {
             "GL_NV_cooperative_matrix2"
         };
-        let references: Vec<Option<FunctionId>> = arguments
-            .iter()
-            .map(|argument| self.function_reference(argument))
-            .collect();
-        let operands: Vec<Operand> = arguments
-            .iter()
-            .zip(&references)
-            .map(|(argument, reference)| match reference {
-                Some(_) => Operand::temporary(Type::VOID),
-                None => self.expression(argument),
-            })
-            .collect();
         if operands.iter().any(|operand| operand.ty.is_error()) {
             return Operand::error();
         }

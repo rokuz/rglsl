@@ -1,10 +1,15 @@
+use core::cell::RefCell;
+
+use rglsl_types::stack::run;
+
 use rglsl_ast::ast::{
     Attribute, CaseLabel, Condition, DeclarationKind, Expression, ExpressionKind, ForStatement,
     JumpStatement, Statement, StatementKind,
 };
 use rglsl_ast::Span;
 
-use super::{Analyzer, SwitchContext};
+use super::frames::Cx;
+use super::{Analyzer, Operand, SwitchContext};
 use crate::builtins::Stage;
 use crate::constant::Constant;
 use crate::diagnostic::DiagnosticKind;
@@ -13,112 +18,62 @@ use crate::types::Type;
 
 impl Analyzer<'_> {
     pub(crate) fn statement(&mut self, statement: &Statement) {
-        match &statement.kind {
-            StatementKind::Compound(compound) => {
-                self.nesting += 1;
-                self.scoped(|analyzer| {
-                    for statement in &compound.statements {
-                        analyzer.statement(statement);
-                    }
-                });
-                self.nesting -= 1;
-            }
-            StatementKind::Declaration(declaration) => self.declaration(declaration),
-            StatementKind::Expression(expression) => {
-                if let Some(expression) = expression {
-                    if !self.names_struct(expression) {
-                        self.expression(expression);
-                    }
-                }
-            }
-            StatementKind::Selection {
-                condition,
-                then_branch,
-                else_branch,
-            } => {
-                self.boolean_condition(statement.span, condition);
-                self.nesting += 1;
-                self.stage_layout.selections += 1;
-                self.scoped(|analyzer| analyzer.statement(then_branch));
-                if let Some(else_branch) = else_branch {
-                    self.scoped(|analyzer| analyzer.statement(else_branch));
-                }
-                self.stage_layout.selections -= 1;
-                self.nesting -= 1;
-            }
-            StatementKind::Switch {
-                selector,
-                statements,
-            } => self.switch(statement.span, selector, statements),
-            StatementKind::CaseLabel(label) => self.case_label(statement.span, label),
-            StatementKind::While { condition, body } => {
-                self.scopes.push();
-                self.condition(condition);
-                self.loop_body(body);
-                self.scopes.pop();
-            }
-            StatementKind::DoWhile { body, condition } => {
-                self.scopes.push();
-                self.loop_body(body);
-                self.scopes.pop();
-                let end = statement.span.end;
-                self.boolean_condition(Span::new(end.saturating_sub(1), end), condition);
-            }
-            StatementKind::For(statement) => self.for_statement(statement),
-            StatementKind::Jump(jump) => self.jump(statement.span, jump),
-            StatementKind::Attributed {
-                attributes,
-                statement,
-            } => self.attributed(attributes, statement),
+        let finished = {
+            let analyzer = RefCell::new(&mut *self);
+            run(|stack| Cx::new(&analyzer, stack).statement(statement))
+        };
+        if finished.is_none() {
+            self.stalled(());
         }
     }
 
-    fn attributed(&mut self, attributes: &[Attribute], statement: &Statement) {
-        let selection = matches!(
-            statement.kind,
-            StatementKind::Selection { .. } | StatementKind::Switch { .. }
-        );
-        let extensions: &'static [&'static str] = if selection {
-            &["GL_EXT_control_flow_attributes"]
-        } else {
-            &[
-                "GL_EXT_control_flow_attributes",
-                "GL_EXT_control_flow_attributes2",
-                "GL_QCOM_multiple_wait_queues",
-            ]
+    fn attribute_value(&mut self, attribute: &Attribute, statement: &Statement, operand: &Operand) {
+        let value = operand
+            .value
+            .as_ref()
+            .filter(|_| operand.ty == Type::INT && operand.constant && !operand.specialization)
+            .and_then(Constant::scalar_i64);
+        let reason = match (attribute.name.node.as_str(), value) {
+            ("dependency_length" | "multiple_wait_queuesQCOM", Some(value)) if value <= 0 => {
+                Some("must be positive")
+            }
+            ("iteration_multiple", Some(0)) => Some("must be greater than or equal to 1"),
+            _ => None,
         };
-        self.require_extensions(statement.span, extensions, "attribute");
-        for attribute in attributes {
-            let Some(argument) = &attribute.argument else {
-                continue;
-            };
-            let operand = self.value_expression(argument);
-            if selection {
-                continue;
-            }
-            let value = operand
-                .value
-                .as_ref()
-                .filter(|_| operand.ty == Type::INT && operand.constant && !operand.specialization)
-                .and_then(Constant::scalar_i64);
-            let reason = match (attribute.name.node.as_str(), value) {
-                ("dependency_length" | "multiple_wait_queuesQCOM", Some(value)) if value <= 0 => {
-                    Some("must be positive")
-                }
-                ("iteration_multiple", Some(0)) => Some("must be greater than or equal to 1"),
-                _ => None,
-            };
-            if let Some(reason) = reason {
-                self.error(
-                    statement.span,
-                    DiagnosticKind::InvalidAttribute {
-                        attribute: attribute.name.node.clone(),
-                        reason,
-                    },
-                );
-            }
+        if let Some(reason) = reason {
+            self.error(
+                statement.span,
+                DiagnosticKind::InvalidAttribute {
+                    attribute: attribute.name.node.clone(),
+                    reason,
+                },
+            );
         }
-        self.statement(statement);
+    }
+
+    fn boolean_condition_with(&mut self, span: Span, operand: &Operand) {
+        if !operand.ty.is_error() && !operand.ty.is_bool() {
+            self.error(
+                span,
+                DiagnosticKind::ConditionNotBool(self.show(&operand.ty)),
+            );
+        }
+    }
+
+    fn switch_selector(&mut self, span: Span, operand: &Operand) {
+        if !operand.ty.is_error() && !operand.ty.is_scalar_integer() {
+            self.error(
+                span,
+                DiagnosticKind::SwitchSelectorNotInteger(self.show(&operand.ty)),
+            );
+        }
+        self.nesting += 1;
+        self.switches.push(SwitchContext {
+            labels: alloc::vec::Vec::new(),
+            has_default: false,
+            nesting: self.nesting,
+        });
+        self.scopes.push();
     }
 
     fn names_struct(&self, expression: &Expression) -> bool {
@@ -132,38 +87,6 @@ impl Analyzer<'_> {
             self.symbol(id).map(|symbol| &symbol.kind),
             Some(SymbolKind::Struct(_) | SymbolKind::Reference(_))
         )
-    }
-
-    fn unscoped(&mut self, statement: &Statement) {
-        match &statement.kind {
-            StatementKind::Compound(compound) => {
-                for statement in &compound.statements {
-                    self.statement(statement);
-                }
-            }
-            _ => self.statement(statement),
-        }
-    }
-
-    fn loop_body(&mut self, body: &Statement) {
-        self.loop_depth += 1;
-        self.nesting += 1;
-        self.unscoped(body);
-        self.nesting -= 1;
-        self.loop_depth -= 1;
-    }
-
-    fn for_statement(&mut self, statement: &ForStatement) {
-        self.scopes.push();
-        self.statement(&statement.init);
-        if let Some(condition) = &statement.condition {
-            self.condition(condition);
-        }
-        if let Some(increment) = &statement.increment {
-            self.expression(increment);
-        }
-        self.loop_body(&statement.body);
-        self.scopes.pop();
     }
 
     fn boolean_condition(&mut self, span: Span, condition: &Expression) {
@@ -212,49 +135,6 @@ impl Analyzer<'_> {
                 }
             }
         }
-    }
-
-    fn switch(&mut self, span: Span, selector: &Expression, statements: &[Statement]) {
-        let operand = self.value_expression(selector);
-        if !operand.ty.is_error() && !operand.ty.is_scalar_integer() {
-            self.error(
-                span,
-                DiagnosticKind::SwitchSelectorNotInteger(self.show(&operand.ty)),
-            );
-        }
-        self.nesting += 1;
-        self.switches.push(SwitchContext {
-            labels: alloc::vec::Vec::new(),
-            has_default: false,
-            nesting: self.nesting,
-        });
-        self.scoped(|analyzer| {
-            let mut labelled = false;
-            for statement in statements {
-                let generates_code = match &statement.kind {
-                    StatementKind::CaseLabel(_) => {
-                        labelled = true;
-                        false
-                    }
-                    StatementKind::Expression(None) => false,
-                    StatementKind::Declaration(declaration) => match &declaration.kind {
-                        DeclarationKind::InitDeclaratorList(list) => list
-                            .declarators
-                            .iter()
-                            .any(|declarator| declarator.initializer.is_some()),
-                        _ => false,
-                    },
-                    _ => true,
-                };
-                if generates_code && !labelled {
-                    labelled = true;
-                    analyzer.error(statement.span, DiagnosticKind::StatementBeforeCase);
-                }
-                analyzer.statement(statement);
-            }
-        });
-        self.switches.pop();
-        self.nesting -= 1;
     }
 
     fn case_label(&mut self, span: Span, label: &CaseLabel) {
@@ -376,5 +256,198 @@ impl Analyzer<'_> {
         if let Some(info) = self.expressions.get_mut(&expression.id) {
             info.conversion = Some(to.clone());
         }
+    }
+}
+
+fn generates_code(statement: &Statement) -> bool {
+    match &statement.kind {
+        StatementKind::CaseLabel(_) | StatementKind::Expression(None) => false,
+        StatementKind::Declaration(declaration) => match &declaration.kind {
+            DeclarationKind::InitDeclaratorList(list) => list
+                .declarators
+                .iter()
+                .any(|declarator| declarator.initializer.is_some()),
+            _ => false,
+        },
+        _ => true,
+    }
+}
+
+impl<'b> Cx<'b, Analyzer<'_>> {
+    pub(crate) async fn statement(self, statement: &'b Statement) {
+        match &statement.kind {
+            StatementKind::Compound(compound) => {
+                self.with(|analyzer| {
+                    analyzer.nesting += 1;
+                    analyzer.scopes.push();
+                });
+                for statement in &compound.statements {
+                    self.call(self.clone().statement(statement)).await;
+                }
+                self.with(|analyzer| {
+                    analyzer.scopes.pop();
+                    analyzer.nesting -= 1;
+                });
+            }
+            StatementKind::Declaration(declaration) => {
+                self.with(|analyzer| analyzer.declaration(declaration));
+            }
+            StatementKind::Expression(expression) => {
+                if let Some(expression) = expression {
+                    if !self.with(|analyzer| analyzer.names_struct(expression)) {
+                        self.call(self.clone().expression(expression)).await;
+                    }
+                }
+            }
+            StatementKind::Selection {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                let operand = self.call(self.clone().value_expression(condition)).await;
+                self.with(|analyzer| {
+                    analyzer.boolean_condition_with(statement.span, &operand);
+                    analyzer.nesting += 1;
+                    analyzer.stage_layout.selections += 1;
+                    analyzer.scopes.push();
+                });
+                self.call(self.clone().statement(then_branch)).await;
+                self.with(|analyzer| analyzer.scopes.pop());
+                if let Some(else_branch) = else_branch {
+                    self.with(|analyzer| analyzer.scopes.push());
+                    self.call(self.clone().statement(else_branch)).await;
+                    self.with(|analyzer| analyzer.scopes.pop());
+                }
+                self.with(|analyzer| {
+                    analyzer.stage_layout.selections -= 1;
+                    analyzer.nesting -= 1;
+                });
+            }
+            StatementKind::Switch {
+                selector,
+                statements,
+            } => {
+                self.call(self.clone().switch(statement.span, selector, statements))
+                    .await;
+            }
+            StatementKind::CaseLabel(label) => {
+                self.with(|analyzer| analyzer.case_label(statement.span, label));
+            }
+            StatementKind::While { condition, body } => {
+                self.with(|analyzer| {
+                    analyzer.scopes.push();
+                    analyzer.condition(condition);
+                });
+                self.call(self.clone().loop_body(body)).await;
+                self.with(|analyzer| analyzer.scopes.pop());
+            }
+            StatementKind::DoWhile { body, condition } => {
+                self.with(|analyzer| analyzer.scopes.push());
+                self.call(self.clone().loop_body(body)).await;
+                self.with(|analyzer| analyzer.scopes.pop());
+                let end = statement.span.end;
+                let operand = self.call(self.clone().value_expression(condition)).await;
+                self.with(|analyzer| {
+                    analyzer
+                        .boolean_condition_with(Span::new(end.saturating_sub(1), end), &operand);
+                });
+            }
+            StatementKind::For(statement) => {
+                self.call(self.clone().for_statement(statement)).await;
+            }
+            StatementKind::Jump(jump) => self.with(|analyzer| analyzer.jump(statement.span, jump)),
+            StatementKind::Attributed {
+                attributes,
+                statement,
+            } => {
+                self.call(self.clone().attributed(attributes, statement))
+                    .await;
+            }
+        }
+    }
+
+    async fn attributed(self, attributes: &'b [Attribute], statement: &'b Statement) {
+        let selection = matches!(
+            statement.kind,
+            StatementKind::Selection { .. } | StatementKind::Switch { .. }
+        );
+        let extensions: &'static [&'static str] = if selection {
+            &["GL_EXT_control_flow_attributes"]
+        } else {
+            &[
+                "GL_EXT_control_flow_attributes",
+                "GL_EXT_control_flow_attributes2",
+                "GL_QCOM_multiple_wait_queues",
+            ]
+        };
+        self.with(|analyzer| analyzer.require_extensions(statement.span, extensions, "attribute"));
+        for attribute in attributes {
+            let Some(argument) = &attribute.argument else {
+                continue;
+            };
+            let operand = self.call(self.clone().value_expression(argument)).await;
+            if !selection {
+                self.with(|analyzer| analyzer.attribute_value(attribute, statement, &operand));
+            }
+        }
+        self.call(self.clone().statement(statement)).await;
+    }
+
+    async fn unscoped(self, statement: &'b Statement) {
+        match &statement.kind {
+            StatementKind::Compound(compound) => {
+                for statement in &compound.statements {
+                    self.call(self.clone().statement(statement)).await;
+                }
+            }
+            _ => self.call(self.clone().statement(statement)).await,
+        }
+    }
+
+    async fn loop_body(self, body: &'b Statement) {
+        self.with(|analyzer| {
+            analyzer.loop_depth += 1;
+            analyzer.nesting += 1;
+        });
+        self.call(self.clone().unscoped(body)).await;
+        self.with(|analyzer| {
+            analyzer.nesting -= 1;
+            analyzer.loop_depth -= 1;
+        });
+    }
+
+    async fn for_statement(self, statement: &'b ForStatement) {
+        self.with(|analyzer| analyzer.scopes.push());
+        self.call(self.clone().statement(&statement.init)).await;
+        if let Some(condition) = &statement.condition {
+            self.with(|analyzer| analyzer.condition(condition));
+        }
+        if let Some(increment) = &statement.increment {
+            self.call(self.clone().expression(increment)).await;
+        }
+        self.call(self.clone().loop_body(&statement.body)).await;
+        self.with(|analyzer| analyzer.scopes.pop());
+    }
+
+    async fn switch(self, span: Span, selector: &'b Expression, statements: &'b [Statement]) {
+        let operand = self.call(self.clone().value_expression(selector)).await;
+        self.with(|analyzer| analyzer.switch_selector(span, &operand));
+        let mut labelled = false;
+        for statement in statements {
+            if matches!(statement.kind, StatementKind::CaseLabel(_)) {
+                labelled = true;
+            } else if generates_code(statement) && !labelled {
+                labelled = true;
+                self.with(|analyzer| {
+                    analyzer.error(statement.span, DiagnosticKind::StatementBeforeCase)
+                });
+            }
+            self.call(self.clone().statement(statement)).await;
+        }
+        self.with(|analyzer| {
+            analyzer.scopes.pop();
+            analyzer.switches.pop();
+            analyzer.nesting -= 1;
+        });
     }
 }

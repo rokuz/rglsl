@@ -334,7 +334,7 @@ pub struct InitDeclarator {
     pub initializer: Option<Spanned<Initializer>>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum Initializer {
     Expression(Expression),
     List(Vec<Spanned<Initializer>>),
@@ -621,7 +621,7 @@ pub struct LayoutQualifierId {
     pub value: Option<Expression>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct TypeSpecifier {
     pub non_array: TypeSpecifierNonArray,
     pub parameters: Option<Spanned<TypeParameters>>,
@@ -970,7 +970,7 @@ pub struct CompoundStatement {
     pub statements: Vec<Statement>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum StatementKind {
     Compound(CompoundStatement),
     Declaration(Box<Declaration>),

@@ -34,14 +34,16 @@ goal, the language rules for linkage and `#include`, and the milestones (M0–M9
 - **Safe Rust only.** `unsafe_code` is forbidden in every crate (workspace lints, and
   the `rglsl` crate's own `[lints]`). Do not add `allow(unsafe_code)`.
 - **No panics on user input.** A crash in the corpus run is always a bug.
-- **Bounded stack.** A stack overflow aborts the process. Recursion over input structure (AST,
-  IR, types, macros, object files) recurses at most once per level of nesting bounded by a
-  limit (`MAX_NESTING_DEPTH`, `MAX_TYPE_DEPTH`, the preprocessor limits, `MAX_BLOCK_DEPTH`),
-  with small frames: the recursive function dispatches and recurses, per-node work goes into
-  non-recursive helpers. Structure no limit bounds is processed with an explicit work list.
-  `rglsl-link/tests/nesting.rs` runs the whole pipeline at every limit on a 1 MiB debug stack;
-  add a case for new kinds of nesting, and fix an overflow there by shrinking frames, never by
-  raising the stack size (`docs/design/stack.md`).
+- **No recursion over input structure in the frontend.** A stack overflow aborts the process.
+  The preprocessor, AST, sema, lowering and the fuzzer walk nesting with loops, work lists, or
+  `async` functions driven by `rglsl_types::stack` (every recursive call through
+  `Stack::call`), so their stack use is constant; `rglsl-link/tests/nesting.rs` runs the
+  frontend at 10,000 and 100,000 levels on a 256 KiB debug stack, add a case for new kinds of
+  nesting. The IR half (validator, uniformity, SPIR-V backend, compaction, linker, object files)
+  still recurses at most once per level bounded by a limit (`MAX_NESTING_DEPTH`,
+  `MAX_TYPE_DEPTH`, the preprocessor limits, `MAX_BLOCK_DEPTH`), with small frames, and the
+  same test runs the whole pipeline at every limit on a 1 MiB debug stack; fix an overflow
+  there by shrinking frames, never by raising the stack size (`docs/design/stack.md`).
 - **No `unwrap` or other panics in non-test code.** `unwrap`, `expect`, `panic!`,
   `unreachable!`, `unimplemented!` and `todo!` are denied by clippy in every crate; return a
   `Result` instead, and never a silent default that hides a broken invariant. Tests may use
