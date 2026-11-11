@@ -457,6 +457,9 @@ pub fn fold_builtin(name: &str, arguments: &[Constant]) -> Option<Constant> {
             ("min", 2) => smaller(pick(0, index)?, pick(1, index)?),
             ("max", 2) => larger(pick(0, index)?, pick(1, index)?),
             ("clamp", 3) => smaller(larger(pick(0, index)?, pick(1, index)?)?, pick(2, index)?),
+            ("matrixCompMult", 2) => {
+                fold_pair(BinaryOperator::Multiply, pick(0, index)?, pick(1, index)?)
+            }
             _ => None,
         })
         .collect::<Option<Vec<_>>>()?;

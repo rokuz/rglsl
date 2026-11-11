@@ -384,6 +384,11 @@ impl<'a> FunctionLowerer<'_, 'a> {
                 Local::Value(index) => {
                     Chain::Value(self.add(Expression::FunctionArgument(index), at)?)
                 }
+                Local::Constant => {
+                    let variable = self.lw.variable(symbol).ok_or_else(|| internal(at))?;
+                    let value = variable.value.as_ref().ok_or_else(|| internal(at))?;
+                    Chain::Value(self.constant(&variable.ty, &value.values, at)?)
+                }
             });
         }
         if let Some(&rglsl_sema::scope::SymbolKind::BlockMember { instance, index }) =
