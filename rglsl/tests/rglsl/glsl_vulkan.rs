@@ -9751,3 +9751,138 @@ fn long_chains_lower_in_order_to_flat_control_flow() {
     let function = main("result = t ? b++ : b > 2 ? b-- : 7;");
     assert_eq!(block_shape(&function.body).0, base + 2);
 }
+
+fn composite_constants(module: &dr::Module, operand: &Operand) -> Vec<u32> {
+    let id = operand.unwrap_id_ref();
+    let composite = module
+        .types_global_values
+        .iter()
+        .find(|inst| inst.result_id == Some(id) && inst.class.opcode == Op::ConstantComposite)
+        .expect("operand is not an OpConstantComposite");
+    composite
+        .operands
+        .iter()
+        .map(|component| constant(module, component))
+        .collect()
+}
+
+#[test]
+fn dynamic_index_into_a_swizzle_is_an_lvalue() {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+layout(location = 0) out vec4 o;
+layout(set = 0, binding = 0) uniform U { int k; };
+void setOne(out float f) { f = 0.25; }
+void main() {
+    vec4 v = vec4(0.0);
+    int i = k;
+    v.xyz[clamp(i, 0, 2)] = 1.0;
+    v.wzyx[i + 1] += 0.5;
+    v.zyx.yx[i]++;
+    ++(v.wx)[i];
+    setOne(v.yw[i + 1]);
+    o = v;
+}
+",
+    );
+    let extracts = instructions(&module, Op::VectorExtractDynamic);
+    let selectors: Vec<Vec<u32>> = extracts
+        .iter()
+        .map(|extract| composite_constants(&module, &extract.operands[0]))
+        .collect();
+    assert_eq!(
+        selectors,
+        vec![
+            vec![0, 1, 2],
+            vec![3, 2, 1, 0],
+            vec![1, 2],
+            vec![3, 0],
+            vec![1, 3],
+        ]
+    );
+    let chains = instructions(&module, Op::AccessChain);
+    for extract in &extracts {
+        let component = extract.result_id.expect("the extract has a result");
+        assert!(
+            chains
+                .iter()
+                .any(|chain| chain.operands.last() == Some(&Operand::IdRef(component))),
+            "no access chain selects component %{component}"
+        );
+    }
+}
+
+#[test]
+fn falling_off_a_function_returns_undef() {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+layout(location = 0) out vec4 o;
+layout(set = 0, binding = 0) uniform U { vec2 s; };
+int find(int x) {
+    for (int i = int(s.x); i != 1; i++) {
+        return x;
+    }
+}
+float pick(float a) {
+    if (a > 0.0) {
+        return a;
+    } else {
+        a = 2.0;
+    }
+}
+void main() {
+    o = vec4(float(find(3)), pick(s.y), 0.0, 1.0);
+}
+",
+    );
+    let undefs: Vec<u32> = instructions(&module, Op::Undef)
+        .iter()
+        .filter_map(|inst| inst.result_id)
+        .collect();
+    let nulls: Vec<u32> = instructions(&module, Op::ConstantNull)
+        .iter()
+        .filter_map(|inst| inst.result_id)
+        .collect();
+    let returned: Vec<u32> = instructions(&module, Op::ReturnValue)
+        .iter()
+        .map(|inst| inst.operands[0].unwrap_id_ref())
+        .collect();
+    assert_eq!(
+        returned
+            .iter()
+            .filter(|value| undefs.contains(value))
+            .count(),
+        2,
+        "{returned:?}"
+    );
+    assert!(returned.iter().all(|value| !nulls.contains(value)));
+}
+
+#[test]
+fn declarations_after_a_jump_stay_in_scope() {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+layout(location = 0) out vec4 o;
+layout(set = 0, binding = 0) uniform U { int s; };
+void main() {
+    o = vec4(1.0);
+    switch (s) {
+        case 0:
+            break;
+            int b = 5;
+        case 1:
+            for (ivec2 c; float(b) > 2.0; ) {
+                o.x = float(b);
+            }
+    }
+}
+",
+    );
+    named(&module, "b");
+    assert!(instructions(&module, Op::Store)
+        .iter()
+        .all(|store| store.operands[0].unwrap_id_ref() != named(&module, "b")));
+}

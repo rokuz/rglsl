@@ -82,7 +82,11 @@ changelog was dropped; see upstream for the history before the fork.
     initialises only declarations with an initializer (or `GL_EXT_null_initializer`'s `{}`);
   - the splat of a scalar `Select` condition to a vector from SPIR-V 1.4 on, where `OpSelect`
     takes the scalar condition, as glslang writes it (before 1.4 the condition is still
-    splatted, as in glslang).
+    splatted, as in glslang);
+  - the `OpConstantNull` returned when control falls off the end of a function with a
+    result: the GLSL lowering no longer appends a `Return` of a `ZeroValue` to such a
+    function, and the backend's implicit return at the end of the body returns an `OpUndef`,
+    as glslang does (GLSL leaves the value undefined).
 
   Bounds checks were already off by default (`BoundsCheckPolicy::Unchecked`), and the
   coordinate-space flip, frag-depth clamp, mesh output clamp and task dispatch limits only

@@ -423,13 +423,90 @@ impl<'a> FunctionLowerer<'_, 'a> {
     }
 
     pub(super) fn place(&mut self, expression: &AstExpression) -> Result<Place> {
-        match self.chain(expression)? {
+        let chain = match self.dynamic_swizzle_component(expression)? {
+            Some(chain) => chain,
+            None => self.chain(expression)?,
+        };
+        match chain {
             Chain::Place(place) => Ok(place),
             Chain::Value(_) => Err(semantic(
                 "the expression is not an l-value",
                 self.at(expression.span),
             )),
         }
+    }
+
+    fn dynamic_swizzle_component(&mut self, expression: &AstExpression) -> Result<Option<Chain>> {
+        let ExpressionKind::Subscript {
+            ref base,
+            ref index,
+        } = super::prepass::strip(expression).kind
+        else {
+            return Ok(None);
+        };
+        let ExpressionKind::FieldSelection {
+            base: ref swizzled, ..
+        } = super::prepass::strip(base).kind
+        else {
+            return Ok(None);
+        };
+        let swizzled_ty = &self.info(swizzled)?.ty;
+        let is_swizzle = !swizzled_ty.is_array()
+            && matches!(
+                swizzled_ty.kind,
+                TypeKind::Scalar(_) | TypeKind::Vector { .. }
+            );
+        if !is_swizzle || !self.info(base)?.ty.is_vector() || self.constant_index(index).is_some() {
+            return Ok(None);
+        }
+        let at = self.at(expression.span);
+        let place = match self.chain(base)? {
+            Chain::Place(place) => place,
+            value @ Chain::Value(_) => return Ok(Some(value)),
+        };
+        let Some(ref components) = place.swizzle else {
+            return Err(internal(at));
+        };
+        let size = u8::try_from(components.len())
+            .ok()
+            .and_then(vector_size)
+            .ok_or_else(|| internal(at))?;
+        let mut selectors = Vec::with_capacity(components.len());
+        for &component in components {
+            selectors.push(self.literal(Literal::U32(component), at)?);
+        }
+        let ty = self.lw.insert_type(crate::TypeInner::Vector {
+            size,
+            scalar: crate::Scalar::U32,
+        });
+        let selectors = self.add(
+            Expression::Compose {
+                ty,
+                components: selectors,
+            },
+            at,
+        )?;
+        let selector = self.rvalue(index)?;
+        let component = self.add(
+            Expression::Access {
+                base: selectors,
+                index: selector,
+            },
+            at,
+        )?;
+        let pointer = self.add(
+            Expression::Access {
+                base: place.pointer,
+                index: component,
+            },
+            at,
+        )?;
+        let index_non_uniform = self.info(index)?.non_uniform;
+        let non_uniform = self.info(expression)?.non_uniform;
+        self.inherit_access(pointer, place.pointer, index_non_uniform);
+        let mut child = place.child(pointer, place.boolean);
+        child.non_uniform = non_uniform && !child.spilled;
+        Ok(Some(Chain::Place(child)))
     }
 
     fn variable_chain(&mut self, expression: &AstExpression) -> Result<Chain> {

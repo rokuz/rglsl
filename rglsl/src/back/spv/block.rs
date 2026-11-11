@@ -3798,8 +3798,7 @@ impl BlockContext<'_> {
             BlockExit::Return => match self.ir_function.result {
                 Some(ref result) if self.function.entry_point_context.is_none() => {
                     let type_id = self.get_handle_type_id(result.ty)?;
-                    let null_id = self.writer.get_constant_null(type_id);
-                    Instruction::return_value(null_id)
+                    Instruction::return_value(self.writer.get_undef(type_id))
                 }
                 _ => Instruction::return_void(),
             },
