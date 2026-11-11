@@ -178,6 +178,14 @@ impl Analyzer<'_> {
         }
     }
 
+    pub(crate) fn operands(&mut self, arguments: &[Expression]) -> Vec<Operand> {
+        let mut operands = Vec::with_capacity(arguments.len());
+        for argument in arguments {
+            operands.push(self.expression(argument));
+        }
+        operands
+    }
+
     pub(crate) fn call(&mut self, expression: &Expression, call: &FunctionCall) -> Operand {
         let end = expression.span.end;
         let close = Span::new(end.saturating_sub(1), end);
@@ -407,10 +415,18 @@ impl Analyzer<'_> {
                 return self.matrix2_function(expression, span, name, arguments);
             }
         }
-        let operands: Vec<Operand> = arguments
-            .iter()
-            .map(|argument| self.expression(argument))
-            .collect();
+        let operands = self.operands(arguments);
+        self.function_call_with(expression, span, name, arguments, operands)
+    }
+
+    fn function_call_with(
+        &mut self,
+        expression: &Expression,
+        span: Span,
+        name: &str,
+        arguments: &[Expression],
+        operands: Vec<Operand>,
+    ) -> Operand {
         if let Some(Lookup::Symbol(id)) = self.lookup(name) {
             let is_struct = matches!(
                 self.symbol(id).map(|symbol| &symbol.kind),
@@ -644,10 +660,16 @@ impl Analyzer<'_> {
         span: Span,
         arguments: &[Expression],
     ) -> Operand {
-        let operands: Vec<Operand> = arguments
-            .iter()
-            .map(|argument| self.expression(argument))
-            .collect();
+        let operands = self.operands(arguments);
+        self.non_uniform_with(expression, span, operands)
+    }
+
+    fn non_uniform_with(
+        &mut self,
+        expression: &Expression,
+        span: Span,
+        operands: Vec<Operand>,
+    ) -> Operand {
         if operands.iter().any(|operand| operand.ty.is_error()) {
             return Operand::error();
         }
@@ -693,10 +715,18 @@ impl Analyzer<'_> {
         name: &str,
         arguments: &[Expression],
     ) -> Operand {
-        let operands: Vec<Operand> = arguments
-            .iter()
-            .map(|argument| self.expression(argument))
-            .collect();
+        let operands = self.operands(arguments);
+        self.message_call_with(expression, span, name, arguments, operands)
+    }
+
+    fn message_call_with(
+        &mut self,
+        expression: &Expression,
+        span: Span,
+        name: &str,
+        arguments: &[Expression],
+        operands: Vec<Operand>,
+    ) -> Operand {
         let abort = name == ABORT;
         let (extension, callee) = if abort {
             ("GL_EXT_abort", Callee::Abort)
@@ -1122,11 +1152,19 @@ impl Analyzer<'_> {
         specifier: &TypeSpecifier,
         arguments: &[Expression],
     ) -> Operand {
-        let mut ty = self.bare_type_specifier(specifier, span);
-        let operands: Vec<Operand> = arguments
-            .iter()
-            .map(|argument| self.expression(argument))
-            .collect();
+        let ty = self.bare_type_specifier(specifier, span);
+        let operands = self.operands(arguments);
+        self.constructor_with(expression, span, arguments, ty, operands)
+    }
+
+    fn constructor_with(
+        &mut self,
+        expression: &Expression,
+        span: Span,
+        arguments: &[Expression],
+        mut ty: Type,
+        operands: Vec<Operand>,
+    ) -> Operand {
         if ty.is_error() || operands.iter().any(|operand| operand.ty.is_error()) {
             return Operand::error();
         }

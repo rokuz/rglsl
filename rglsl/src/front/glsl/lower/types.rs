@@ -201,7 +201,10 @@ impl Lowerer<'_> {
                 span,
             ));
         }
-        let base = self.base_type(ty.kind, depth, comparison, span)?;
+        let base = match ty.kind {
+            TypeKind::Struct(id) => self.struct_type(id, span)?,
+            kind => self.base_type(kind, depth, comparison, span)?,
+        };
         self.wrap_arrays(base, &ty.array, span)
     }
 
@@ -472,29 +475,58 @@ impl Lowerer<'_> {
         let mut alignment = Alignment::ONE;
         for member in &structure.members {
             let ty = self.ir_type(&member.ty, span)?;
-            self.layouter
-                .update(self.module.to_ctx())
-                .map_err(|_| internal(span))?;
-            let layout = self.layouter[ty];
-            offset = layout.alignment.round_up(offset);
-            alignment = layout.alignment.max(alignment);
-            members.push(StructMember {
-                name: Some(member.name.clone()),
-                ty,
-                binding: None,
-                offset,
-                matrix_layout: None,
-                xfb_offset: None,
-                heap: None,
-                memory_decorations: MemoryDecorations::empty(),
-                relaxed_precision: super::relaxed(&member.qualifiers),
-            });
-            offset = offset.saturating_add(layout.size);
+            let member = self.struct_member(member, ty, &mut offset, &mut alignment, span)?;
+            members.push(member);
         }
-        let span_bytes = alignment.round_up(offset);
+        self.finish_struct(
+            id,
+            structure.name.clone(),
+            members,
+            alignment.round_up(offset),
+            span,
+        )
+    }
+
+    fn struct_member(
+        &mut self,
+        member: &rglsl_sema::types::Member,
+        ty: Handle<Type>,
+        offset: &mut u32,
+        alignment: &mut Alignment,
+        span: Span,
+    ) -> Result<StructMember> {
+        self.layouter
+            .update(self.module.to_ctx())
+            .map_err(|_| internal(span))?;
+        let layout = self.layouter[ty];
+        *offset = layout.alignment.round_up(*offset);
+        *alignment = layout.alignment.max(*alignment);
+        let lowered = StructMember {
+            name: Some(member.name.clone()),
+            ty,
+            binding: None,
+            offset: *offset,
+            matrix_layout: None,
+            xfb_offset: None,
+            heap: None,
+            memory_decorations: MemoryDecorations::empty(),
+            relaxed_precision: super::relaxed(&member.qualifiers),
+        };
+        *offset = offset.saturating_add(layout.size);
+        Ok(lowered)
+    }
+
+    fn finish_struct(
+        &mut self,
+        id: StructId,
+        name: Option<alloc::string::String>,
+        members: Vec<StructMember>,
+        span_bytes: u32,
+        span: Span,
+    ) -> Result<Handle<Type>> {
         let handle = self.module.types.insert(
             Type {
-                name: structure.name.clone(),
+                name,
                 inner: TypeInner::Struct {
                     members,
                     span: span_bytes,

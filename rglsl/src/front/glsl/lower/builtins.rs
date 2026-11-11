@@ -270,41 +270,23 @@ impl FunctionLowerer<'_, '_> {
                 .map(Some);
         }
         match name {
-            _ if gather_pattern(name).is_some() => {
-                let (base, pattern) = gather_pattern(name).ok_or_else(|| internal(at))?;
-                self.sample(texture_call(base), function, arguments, pattern, at)
-                    .map(Some)
-            }
+            _ if gather_pattern(name).is_some() => self.gather_call(name, function, arguments, at),
             "sparseTexelFetchARB" => self.fetch(function, arguments, false, true, at).map(Some),
             "sparseTexelFetchOffsetARB" => {
                 self.fetch(function, arguments, true, true, at).map(Some)
             }
             "sparseImageLoadARB" => self.image(name, function, arguments, at),
-            "sparseTexelsResidentARB" => {
-                let code = self.rvalue(arguments.first().ok_or_else(|| internal(at))?)?;
-                self.add(Expression::ImageSparseResident { code }, at)
-                    .map(Some)
-            }
+            "sparseTexelsResidentARB" => self.sparse_texels_resident_call(arguments, at),
             "textureQueryLod" | "textureQueryLOD" => self.query_lod(arguments, at).map(Some),
             _ if image_processing(name).is_some() => {
-                let operation = image_processing(name).ok_or_else(|| internal(at))?;
-                self.image_processing(operation, arguments, at).map(Some)
+                self.image_processing_call(name, arguments, at)
             }
             "texelFetch" => self.fetch(function, arguments, false, false, at).map(Some),
             "texelFetchOffset" => self.fetch(function, arguments, true, false, at).map(Some),
             "textureSize" | "textureQueryLevels" | "textureSamples" | "imageSize"
             | "imageSamples" => self.query(name, arguments, at).map(Some),
             "imageLoad" | "imageStore" => self.image(name, function, arguments, at),
-            _ if name.starts_with("imageAtomic") => {
-                let first = arguments.first().ok_or_else(|| internal(at))?;
-                let Sampled {
-                    image,
-                    opaque,
-                    non_uniform,
-                    ..
-                } = self.sampled(first, at)?;
-                self.image_atomic(name, image, opaque, non_uniform, arguments, at)
-            }
+            _ if name.starts_with("imageAtomic") => self.image_atomic_call(name, arguments, at),
             "subpassLoad" => self.subpass_load(arguments, at).map(Some),
             "barrier"
             | "memoryBarrier"
@@ -314,19 +296,9 @@ impl FunctionLowerer<'_, '_> {
             | "groupMemoryBarrier"
             | "controlBarrier"
             | "controlBarrierArrive"
-            | "controlBarrierWait" => {
-                self.barrier(name, arguments, at)?;
-                Ok(None)
-            }
+            | "controlBarrierWait" => self.barrier_call(name, arguments, at),
             "beginInvocationInterlockARB" | "endInvocationInterlockARB" => {
-                self.flush();
-                let statement = if name == "beginInvocationInterlockARB" {
-                    Statement::BeginInvocationInterlock
-                } else {
-                    Statement::EndInvocationInterlock
-                };
-                self.push(statement, at);
-                Ok(None)
+                self.interlock_call(name, at)
             }
             "helperInvocationEXT" => self.add(Expression::IsHelperInvocation, at).map(Some),
             "textureFootprintNV"
@@ -335,85 +307,22 @@ impl FunctionLowerer<'_, '_> {
             | "textureFootprintGradNV"
             | "textureFootprintGradClampNV" => self.footprint(name, arguments, at).map(Some),
             "fragmentMaskFetchAMD" | "fragmentFetchAMD" => {
-                let first = arguments.first().ok_or_else(|| internal(at))?;
-                let subpass = self
-                    .lw
-                    .analysis
-                    .type_of(first.id)
-                    .and_then(GlslType::as_opaque)
-                    .is_some_and(|opaque| opaque.kind == OpaqueKind::SubpassInput);
-                let image = self.rvalue(first)?;
-                let mut rest = arguments.iter().skip(1);
-                let coordinate = if subpass {
-                    let zero = self.literal(Literal::I32(0), at)?;
-                    let ty = self
-                        .lw
-                        .vector_type(crate::VectorSize::Bi, crate::Scalar::I32);
-                    self.add(
-                        Expression::Compose {
-                            ty,
-                            components: alloc::vec![zero, zero],
-                        },
-                        at,
-                    )?
-                } else {
-                    let coordinate = rest.next().ok_or_else(|| internal(at))?;
-                    self.rvalue(coordinate)?
-                };
-                let fragment = match rest.next() {
-                    Some(fragment) if name == "fragmentFetchAMD" => Some(self.rvalue(fragment)?),
-                    _ => None,
-                };
-                self.add(
-                    Expression::FragmentFetch {
-                        image,
-                        coordinate,
-                        fragment,
-                    },
-                    at,
-                )
-                .map(Some)
+                self.fragment_fetch_call(name, arguments, at)
             }
             "interpolateAtCentroid" | "interpolateAtSample" | "interpolateAtOffset" => {
                 self.interpolate(name, arguments, at).map(Some)
             }
             "colorAttachmentReadEXT" | "depthAttachmentReadEXT" | "stencilAttachmentReadEXT" => {
-                let mut rest = arguments.iter();
-                let aspect = match name {
-                    "colorAttachmentReadEXT" => {
-                        let image = rest.next().ok_or_else(|| internal(at))?;
-                        crate::AttachmentAspect::Color(self.rvalue(image)?)
-                    }
-                    "depthAttachmentReadEXT" => crate::AttachmentAspect::Depth,
-                    _ => crate::AttachmentAspect::Stencil,
-                };
-                let sample = match rest.next() {
-                    Some(sample) => Some(self.rvalue(sample)?),
-                    None => None,
-                };
-                self.add(Expression::AttachmentRead { aspect, sample }, at)
-                    .map(Some)
+                self.attachment_read_call(name, arguments, at)
             }
             "SetMeshOutputsEXT" | "EmitMeshTasksEXT" | "writePackedPrimitiveIndices4x8NV" => {
-                self.mesh_statement(name, arguments, at)?;
-                Ok(None)
+                self.mesh_statement_call(name, arguments, at)
             }
             "EmitVertex" | "EndPrimitive" | "EmitStreamVertex" | "EndStreamPrimitive" => {
-                self.primitive_statement(name, arguments, at)?;
-                Ok(None)
+                self.primitive_statement_call(name, arguments, at)
             }
-            "expectEXT" => {
-                let value = self.rvalue(arguments.first().ok_or_else(|| internal(at))?)?;
-                let expected = self.rvalue(arguments.get(1).ok_or_else(|| internal(at))?)?;
-                self.add(Expression::Expect { value, expected }, at)
-                    .map(Some)
-            }
-            "assumeEXT" => {
-                let condition = self.rvalue(arguments.first().ok_or_else(|| internal(at))?)?;
-                self.flush();
-                self.push(Statement::Assume { condition }, at);
-                Ok(None)
-            }
+            "expectEXT" => self.expect_call(arguments, at),
+            "assumeEXT" => self.assume_call(arguments, at),
             "modf" | "frexp" => self.split(name, arguments, at).map(Some),
             "atomicAdd" | "atomicMin" | "atomicMax" | "atomicAnd" | "atomicOr" | "atomicXor"
             | "atomicExchange" | "atomicCompSwap" | "atomicLoad" | "atomicStore" => {
@@ -427,6 +336,186 @@ impl FunctionLowerer<'_, '_> {
                 .generic(name, function, call_type, arguments, at)
                 .map(Some),
         }
+    }
+
+    fn gather_call(
+        &mut self,
+        name: &str,
+        function: &Function,
+        arguments: &[AstExpression],
+        at: Span,
+    ) -> Result<Option<Handle<Expression>>> {
+        let (base, pattern) = gather_pattern(name).ok_or_else(|| internal(at))?;
+        self.sample(texture_call(base), function, arguments, pattern, at)
+            .map(Some)
+    }
+
+    fn sparse_texels_resident_call(
+        &mut self,
+        arguments: &[AstExpression],
+        at: Span,
+    ) -> Result<Option<Handle<Expression>>> {
+        let code = self.rvalue(arguments.first().ok_or_else(|| internal(at))?)?;
+        self.add(Expression::ImageSparseResident { code }, at)
+            .map(Some)
+    }
+
+    fn image_processing_call(
+        &mut self,
+        name: &str,
+        arguments: &[AstExpression],
+        at: Span,
+    ) -> Result<Option<Handle<Expression>>> {
+        let operation = image_processing(name).ok_or_else(|| internal(at))?;
+        self.image_processing(operation, arguments, at).map(Some)
+    }
+
+    fn image_atomic_call(
+        &mut self,
+        name: &str,
+        arguments: &[AstExpression],
+        at: Span,
+    ) -> Result<Option<Handle<Expression>>> {
+        let first = arguments.first().ok_or_else(|| internal(at))?;
+        let Sampled {
+            image,
+            opaque,
+            non_uniform,
+            ..
+        } = self.sampled(first, at)?;
+        self.image_atomic(name, image, opaque, non_uniform, arguments, at)
+    }
+
+    fn barrier_call(
+        &mut self,
+        name: &str,
+        arguments: &[AstExpression],
+        at: Span,
+    ) -> Result<Option<Handle<Expression>>> {
+        self.barrier(name, arguments, at)?;
+        Ok(None)
+    }
+
+    fn interlock_call(&mut self, name: &str, at: Span) -> Result<Option<Handle<Expression>>> {
+        self.flush();
+        let statement = if name == "beginInvocationInterlockARB" {
+            Statement::BeginInvocationInterlock
+        } else {
+            Statement::EndInvocationInterlock
+        };
+        self.push(statement, at);
+        Ok(None)
+    }
+
+    fn fragment_fetch_call(
+        &mut self,
+        name: &str,
+        arguments: &[AstExpression],
+        at: Span,
+    ) -> Result<Option<Handle<Expression>>> {
+        let first = arguments.first().ok_or_else(|| internal(at))?;
+        let subpass = self
+            .lw
+            .analysis
+            .type_of(first.id)
+            .and_then(GlslType::as_opaque)
+            .is_some_and(|opaque| opaque.kind == OpaqueKind::SubpassInput);
+        let image = self.rvalue(first)?;
+        let mut rest = arguments.iter().skip(1);
+        let coordinate = if subpass {
+            let zero = self.literal(Literal::I32(0), at)?;
+            let ty = self
+                .lw
+                .vector_type(crate::VectorSize::Bi, crate::Scalar::I32);
+            self.add(
+                Expression::Compose {
+                    ty,
+                    components: alloc::vec![zero, zero],
+                },
+                at,
+            )?
+        } else {
+            let coordinate = rest.next().ok_or_else(|| internal(at))?;
+            self.rvalue(coordinate)?
+        };
+        let fragment = match rest.next() {
+            Some(fragment) if name == "fragmentFetchAMD" => Some(self.rvalue(fragment)?),
+            _ => None,
+        };
+        self.add(
+            Expression::FragmentFetch {
+                image,
+                coordinate,
+                fragment,
+            },
+            at,
+        )
+        .map(Some)
+    }
+
+    fn attachment_read_call(
+        &mut self,
+        name: &str,
+        arguments: &[AstExpression],
+        at: Span,
+    ) -> Result<Option<Handle<Expression>>> {
+        let mut rest = arguments.iter();
+        let aspect = match name {
+            "colorAttachmentReadEXT" => {
+                let image = rest.next().ok_or_else(|| internal(at))?;
+                crate::AttachmentAspect::Color(self.rvalue(image)?)
+            }
+            "depthAttachmentReadEXT" => crate::AttachmentAspect::Depth,
+            _ => crate::AttachmentAspect::Stencil,
+        };
+        let sample = match rest.next() {
+            Some(sample) => Some(self.rvalue(sample)?),
+            None => None,
+        };
+        self.add(Expression::AttachmentRead { aspect, sample }, at)
+            .map(Some)
+    }
+
+    fn mesh_statement_call(
+        &mut self,
+        name: &str,
+        arguments: &[AstExpression],
+        at: Span,
+    ) -> Result<Option<Handle<Expression>>> {
+        self.mesh_statement(name, arguments, at)?;
+        Ok(None)
+    }
+
+    fn primitive_statement_call(
+        &mut self,
+        name: &str,
+        arguments: &[AstExpression],
+        at: Span,
+    ) -> Result<Option<Handle<Expression>>> {
+        self.primitive_statement(name, arguments, at)?;
+        Ok(None)
+    }
+
+    fn expect_call(
+        &mut self,
+        arguments: &[AstExpression],
+        at: Span,
+    ) -> Result<Option<Handle<Expression>>> {
+        let value = self.rvalue(arguments.first().ok_or_else(|| internal(at))?)?;
+        let expected = self.rvalue(arguments.get(1).ok_or_else(|| internal(at))?)?;
+        self.add(Expression::Expect { value, expected }, at)
+            .map(Some)
+    }
+
+    fn assume_call(
+        &mut self,
+        arguments: &[AstExpression],
+        at: Span,
+    ) -> Result<Option<Handle<Expression>>> {
+        let condition = self.rvalue(arguments.first().ok_or_else(|| internal(at))?)?;
+        self.flush();
+        self.push(Statement::Assume { condition }, at);
+        Ok(None)
     }
 
     fn generic(
@@ -451,6 +540,18 @@ impl FunctionLowerer<'_, '_> {
             values.push(value);
             types.push(ty);
         }
+        self.generic_values(name, function, call_type, at, values, types)
+    }
+
+    fn generic_values(
+        &mut self,
+        name: &str,
+        function: &Function,
+        call_type: &GlslType,
+        at: Span,
+        mut values: Vec<Handle<Expression>>,
+        types: Vec<GlslType>,
+    ) -> Result<Handle<Expression>> {
         if let Some(extract) = microscaling_bitcast(name) {
             let ty = self.lw.ir_type(call_type, at)?;
             let expr = values.first().copied().ok_or_else(|| internal(at))?;

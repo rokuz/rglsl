@@ -56,6 +56,12 @@ struct Measured {
     height: u32,
 }
 
+struct ForHeader {
+    init: Statement,
+    condition: Option<Condition>,
+    increment: Option<Expression>,
+}
+
 struct PendingBinary {
     operands: Vec<(u32, Measured)>,
     operators: Vec<BinaryOperator>,
@@ -1508,6 +1514,12 @@ impl<'a> Parser<'a> {
 
     fn parse_unscoped_for(&mut self) -> Result<Statement> {
         let start = self.start();
+        let header = self.parse_for_header()?;
+        let body = self.parse_statement()?;
+        self.finish_for(start, header, body)
+    }
+
+    fn parse_for_header(&mut self) -> Result<Box<ForHeader>> {
         self.expect_word("for")?;
         self.expect("(")?;
         let init = self.parse_simple_statement()?;
@@ -1523,7 +1535,24 @@ impl<'a> Parser<'a> {
             Some(self.parse_expression()?.expression)
         };
         self.expect(")")?;
-        let body = self.parse_statement()?;
+        Ok(Box::new(ForHeader {
+            init,
+            condition,
+            increment,
+        }))
+    }
+
+    fn finish_for(
+        &mut self,
+        start: u32,
+        header: Box<ForHeader>,
+        body: Statement,
+    ) -> Result<Statement> {
+        let ForHeader {
+            init,
+            condition,
+            increment,
+        } = *header;
         let statement = ForStatement {
             init,
             condition,
@@ -1775,24 +1804,35 @@ impl<'a> Parser<'a> {
     fn parse_postfix(&mut self) -> Result<Measured> {
         let start = self.start();
         let mut base = self.parse_primary()?;
-        loop {
-            base = match self.peek().kind {
-                TokenKind::Punctuator("[") => self.parse_subscript(start, base)?,
-                TokenKind::Punctuator(".") => self.parse_field_selection(start, base)?,
-                TokenKind::Punctuator("(") => {
-                    let callee = FunctionIdentifier::Expression(Box::new(base.expression));
-                    let function = self.spanned(start, callee);
-                    self.parse_call(start, function, base.height)?
-                }
-                TokenKind::Punctuator("++") => {
-                    self.parse_postfix_operator(start, base, PostfixOperator::Increment)?
-                }
-                TokenKind::Punctuator("--") => {
-                    self.parse_postfix_operator(start, base, PostfixOperator::Decrement)?
-                }
-                _ => return Ok(base),
-            };
+        while self.at_postfix() {
+            base = self.parse_postfix_step(start, base)?;
         }
+        Ok(base)
+    }
+
+    fn at_postfix(&self) -> bool {
+        matches!(
+            self.peek().kind,
+            TokenKind::Punctuator("[" | "." | "(" | "++" | "--")
+        )
+    }
+
+    fn parse_postfix_step(&mut self, start: u32, base: Measured) -> Result<Measured> {
+        match self.peek().kind {
+            TokenKind::Punctuator("[") => self.parse_subscript(start, base),
+            TokenKind::Punctuator(".") => self.parse_field_selection(start, base),
+            TokenKind::Punctuator("(") => self.parse_expression_call(start, base),
+            TokenKind::Punctuator("++") => {
+                self.parse_postfix_operator(start, base, PostfixOperator::Increment)
+            }
+            _ => self.parse_postfix_operator(start, base, PostfixOperator::Decrement),
+        }
+    }
+
+    fn parse_expression_call(&mut self, start: u32, base: Measured) -> Result<Measured> {
+        let callee = FunctionIdentifier::Expression(Box::new(base.expression));
+        let function = self.spanned(start, callee);
+        self.parse_call(start, function, base.height)
     }
 
     fn parse_subscript(&mut self, start: u32, base: Measured) -> Result<Measured> {
@@ -1870,54 +1910,56 @@ impl<'a> Parser<'a> {
 
     fn parse_primary(&mut self) -> Result<Measured> {
         let token = self.peek();
-        let start = token.span.start;
         match token.kind {
-            TokenKind::Number { kind, text } => {
-                self.advance();
-                let literal = NumericLiteral {
-                    kind,
-                    text: text.to_owned(),
-                };
-                self.measured(start, ExpressionKind::Number(literal), 0)
-            }
-            TokenKind::String(index) => {
-                self.advance();
-                let value = self.strings.get(index).cloned().unwrap_or_default();
-                self.measured(start, ExpressionKind::String(value), 0)
+            TokenKind::Number { .. } | TokenKind::String(_) | TokenKind::Word("true" | "false") => {
+                self.parse_literal(token)
             }
             TokenKind::Punctuator("(") => self.parse_parenthesized(),
-            TokenKind::Word("true") => {
-                self.advance();
-                self.measured(start, ExpressionKind::Bool(true), 0)
-            }
-            TokenKind::Word("false") => {
-                self.advance();
-                self.measured(start, ExpressionKind::Bool(false), 0)
-            }
-            TokenKind::Word(NON_UNIFORM) if self.at_nth(1, "(") => {
-                self.require_non_uniform(token.span)?;
-                self.advance();
-                let function = Spanned::new(
-                    token.span,
-                    FunctionIdentifier::Function(NON_UNIFORM.to_owned()),
-                );
-                self.parse_call(start, function, 0)
-            }
+            TokenKind::Word(NON_UNIFORM) if self.at_nth(1, "(") => self.parse_non_uniform(token),
             TokenKind::Word(word) if self.starts_constructor(word) => self.parse_constructor(),
-            TokenKind::Word(word) if !is_reserved_word(word) => {
-                self.advance();
-                if self.at("(") {
-                    let function =
-                        Spanned::new(token.span, FunctionIdentifier::Function(word.to_owned()));
-                    self.parse_call(start, function, 0)
-                } else {
-                    self.measured(start, ExpressionKind::Variable(word.to_owned()), 0)
-                }
-            }
+            TokenKind::Word(word) if !is_reserved_word(word) => self.parse_name(token, word),
             TokenKind::Word(word) if is_unavailable_word(word) => {
                 Err(self.error(ParseErrorKind::ReservedWord(word.to_owned()), token.span))
             }
             _ => Err(self.unexpected("an expression")),
+        }
+    }
+
+    fn parse_literal(&mut self, token: Token<'a>) -> Result<Measured> {
+        let start = token.span.start;
+        self.advance();
+        let kind = match token.kind {
+            TokenKind::Number { kind, text } => ExpressionKind::Number(NumericLiteral {
+                kind,
+                text: text.to_owned(),
+            }),
+            TokenKind::String(index) => {
+                ExpressionKind::String(self.strings.get(index).cloned().unwrap_or_default())
+            }
+            TokenKind::Word(word) => ExpressionKind::Bool(word == "true"),
+            _ => return Err(self.unexpected("an expression")),
+        };
+        self.measured(start, kind, 0)
+    }
+
+    fn parse_non_uniform(&mut self, token: Token<'a>) -> Result<Measured> {
+        self.require_non_uniform(token.span)?;
+        self.advance();
+        let function = Spanned::new(
+            token.span,
+            FunctionIdentifier::Function(NON_UNIFORM.to_owned()),
+        );
+        self.parse_call(token.span.start, function, 0)
+    }
+
+    fn parse_name(&mut self, token: Token<'a>, word: &str) -> Result<Measured> {
+        let start = token.span.start;
+        self.advance();
+        if self.at("(") {
+            let function = Spanned::new(token.span, FunctionIdentifier::Function(word.to_owned()));
+            self.parse_call(start, function, 0)
+        } else {
+            self.measured(start, ExpressionKind::Variable(word.to_owned()), 0)
         }
     }
 
