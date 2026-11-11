@@ -127,13 +127,13 @@ Our own tests of the rglsl-specific linking rules (`tests/link`): imports, libra
 
 | Stage | Files | accept | diag | valid | interface | exec local | exec remote | link | crashes |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| **all** | 50 | 50 / 50 (100.0 %) | 21 / 21 (100.0 %) | 29 / 29 (100.0 %) | – | 16 / 16 (100.0 %) | 16 / 16 (100.0 %) | 50 / 50 (100.0 %) | 0 |
+| **all** | 51 | 51 / 51 (100.0 %) | 21 / 21 (100.0 %) | 30 / 30 (100.0 %) | – | 17 / 17 (100.0 %) | 17 / 17 (100.0 %) | 51 / 51 (100.0 %) | 0 |
 | vert | 9 | 9 / 9 (100.0 %) | 3 / 3 (100.0 %) | 6 / 6 (100.0 %) | – | 3 / 3 (100.0 %) | 3 / 3 (100.0 %) | 9 / 9 (100.0 %) | 0 |
 | tesc | 1 | 1 / 1 (100.0 %) | – | 1 / 1 (100.0 %) | – | – | – | 1 / 1 (100.0 %) | 0 |
 | tese | 1 | 1 / 1 (100.0 %) | – | 1 / 1 (100.0 %) | – | – | – | 1 / 1 (100.0 %) | 0 |
 | geom | 2 | 2 / 2 (100.0 %) | 1 / 1 (100.0 %) | 1 / 1 (100.0 %) | – | – | – | 2 / 2 (100.0 %) | 0 |
 | frag | 25 | 25 / 25 (100.0 %) | 13 / 13 (100.0 %) | 12 / 12 (100.0 %) | – | 8 / 8 (100.0 %) | 8 / 8 (100.0 %) | 25 / 25 (100.0 %) | 0 |
-| comp | 11 | 11 / 11 (100.0 %) | 4 / 4 (100.0 %) | 7 / 7 (100.0 %) | – | 5 / 5 (100.0 %) | 5 / 5 (100.0 %) | 11 / 11 (100.0 %) | 0 |
+| comp | 12 | 12 / 12 (100.0 %) | 4 / 4 (100.0 %) | 8 / 8 (100.0 %) | – | 6 / 6 (100.0 %) | 6 / 6 (100.0 %) | 12 / 12 (100.0 %) | 0 |
 | mesh | 1 | 1 / 1 (100.0 %) | – | 1 / 1 (100.0 %) | – | – | – | 1 / 1 (100.0 %) | 0 |
 
 `accept` in detail:
@@ -147,8 +147,8 @@ Our own tests of the rglsl-specific linking rules (`tests/link`): imports, libra
 
 | | shaders |
 |---|---:|
-| executed | 16 |
-| passed | 16 |
+| executed | 17 |
+| passed | 17 |
 | passed within the float tolerance | 0 |
 | failed | 0 |
 
@@ -156,8 +156,8 @@ Our own tests of the rglsl-specific linking rules (`tests/link`): imports, libra
 
 | | shaders |
 |---|---:|
-| executed | 16 |
-| passed | 16 |
+| executed | 17 |
+| passed | 17 |
 | passed within the float tolerance | 0 |
 | failed | 0 |
 

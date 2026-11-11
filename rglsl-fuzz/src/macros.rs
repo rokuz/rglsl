@@ -155,10 +155,13 @@ pub fn expand_macros(unit: &TranslationUnit) -> TranslationUnit {
         }
         let id = expression.id;
         let span = expression.span;
-        let ExpressionKind::FunctionCall(call) = take_expression(expression).kind else {
+        let ExpressionKind::FunctionCall(call) = &mut take_expression(expression).kind else {
             return;
         };
-        let Some(argument) = call.arguments.into_iter().nth(position) else {
+        let Some(argument) = core::mem::take(&mut call.arguments)
+            .into_iter()
+            .nth(position)
+        else {
             return;
         };
         *expression = if parenthesize {

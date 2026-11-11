@@ -8,7 +8,7 @@ use rglsl_ast::ast::{
     ExpressionKind, ExternalDeclaration, FunctionIdentifier, Initializer, JumpStatement, NodeId,
     Statement, StatementKind, UnaryOperator,
 };
-use rglsl_ast::TranslationUnit;
+use rglsl_ast::{Spine, TranslationUnit};
 
 use super::{Analysis, Callee};
 use crate::scope::{SymbolId, SymbolKind};
@@ -217,30 +217,41 @@ impl<'a> Precise<'a> {
         Some((u32::try_from(index).ok()?, precise))
     }
 
-    fn declared_precise(&self, expression: &Expression) -> bool {
-        match expression.kind {
-            ExpressionKind::Parenthesized(ref inner) => self.is_precise(inner),
-            ExpressionKind::Variable(_) => self
-                .analysis
-                .references
-                .get(&expression.id)
-                .is_some_and(|symbol| self.symbol_precise(*symbol)),
-            ExpressionKind::Subscript { ref base, .. } => self.is_precise(base),
-            ExpressionKind::FieldSelection {
-                ref base,
-                ref field,
-            } => {
-                self.is_precise(base)
-                    || self
+    fn is_precise(&self, expression: &Expression) -> bool {
+        let mut current = expression;
+        loop {
+            if self.marked.contains(&current.id) {
+                return true;
+            }
+            match current.kind {
+                ExpressionKind::Parenthesized(ref inner)
+                | ExpressionKind::Subscript {
+                    base: ref inner, ..
+                } => {
+                    current = inner;
+                }
+                ExpressionKind::Variable(_) => {
+                    return self
+                        .analysis
+                        .references
+                        .get(&current.id)
+                        .is_some_and(|symbol| self.symbol_precise(*symbol));
+                }
+                ExpressionKind::FieldSelection {
+                    ref base,
+                    ref field,
+                } => {
+                    if self
                         .member(base, &field.node)
                         .is_some_and(|(_, precise)| precise)
+                    {
+                        return true;
+                    }
+                    current = base;
+                }
+                _ => return false,
             }
-            _ => false,
         }
-    }
-
-    fn is_precise(&self, expression: &Expression) -> bool {
-        self.marked.contains(&expression.id) || self.declared_precise(expression)
     }
 
     fn variable_chain(&self, expression: &Expression) -> Option<String> {
@@ -382,7 +393,17 @@ impl<'a> Precise<'a> {
     }
 
     fn define(&mut self, target: &'a Expression, definition: Definition<'a>) {
-        let chain = self.collect(target).unwrap_or_default();
+        let chain = self.collect(target);
+        self.define_collected(target, chain, definition);
+    }
+
+    fn define_collected(
+        &mut self,
+        target: &'a Expression,
+        chain: Option<String>,
+        definition: Definition<'a>,
+    ) {
+        let chain = chain.unwrap_or_default();
         if self.is_precise(target) {
             self.objects.insert(chain.clone());
         }
@@ -406,75 +427,17 @@ impl<'a> Precise<'a> {
                 }
                 chain
             }
-            ExpressionKind::Subscript { ref base, .. } => {
-                let chain = self.collect(base).unwrap_or_default();
-                self.chains.insert(expression.id, chain.clone());
-                Some(chain)
-            }
-            ExpressionKind::FieldSelection {
-                ref base,
-                ref field,
-            } => {
-                let mut chain = self.collect(base).unwrap_or_default();
-                if let Some((index, _)) = self.member(base, &field.node) {
-                    chain.push(DELIMITER);
-                    chain.push_str(&format!("{index}"));
+            ExpressionKind::Subscript { .. }
+            | ExpressionKind::FieldSelection { .. }
+            | ExpressionKind::Postfix { .. }
+            | ExpressionKind::Unary { .. }
+            | ExpressionKind::Binary { .. } => self.collect_left(expression),
+            ExpressionKind::Assignment { .. } | ExpressionKind::Conditional { .. } => {
+                let spine = Spine::of(expression);
+                for node in spine.links {
+                    self.collect_right(node);
                 }
-                self.chains.insert(expression.id, chain.clone());
-                Some(chain)
-            }
-            ExpressionKind::Assignment {
-                operator,
-                ref target,
-                ref value,
-            } => {
-                self.define(
-                    target,
-                    Definition::Assignment {
-                        node: expression,
-                        operator,
-                        target,
-                        value,
-                    },
-                );
-                self.collect(value);
-                None
-            }
-            ExpressionKind::Unary {
-                operator: UnaryOperator::Increment | UnaryOperator::Decrement,
-                ref operand,
-            }
-            | ExpressionKind::Postfix { ref operand, .. } => {
-                self.define(
-                    operand,
-                    Definition::Step {
-                        node: expression,
-                        operand,
-                    },
-                );
-                None
-            }
-            ExpressionKind::Unary { ref operand, .. } => {
-                self.collect(operand);
-                None
-            }
-            ExpressionKind::Binary {
-                ref left,
-                ref right,
-                ..
-            } => {
-                self.collect(left);
-                self.collect(right);
-                None
-            }
-            ExpressionKind::Conditional {
-                ref condition,
-                ref then_expression,
-                ref else_expression,
-            } => {
-                self.collect(condition);
-                self.collect(then_expression);
-                self.collect(else_expression);
+                self.collect(spine.head);
                 None
             }
             ExpressionKind::Sequence(ref expressions) => {
@@ -504,6 +467,77 @@ impl<'a> Precise<'a> {
         }
     }
 
+    fn collect_left(&mut self, expression: &'a Expression) -> Option<String> {
+        let spine = Spine::of(expression);
+        let mut chain = self.collect(spine.head);
+        for node in spine.links.into_iter().rev() {
+            chain = self.collect_link(node, chain);
+        }
+        chain
+    }
+
+    fn collect_link(&mut self, node: &'a Expression, inner: Option<String>) -> Option<String> {
+        match node.kind {
+            ExpressionKind::Subscript { .. } => {
+                let chain = inner.unwrap_or_default();
+                self.chains.insert(node.id, chain.clone());
+                Some(chain)
+            }
+            ExpressionKind::FieldSelection {
+                ref base,
+                ref field,
+            } => {
+                let mut chain = inner.unwrap_or_default();
+                if let Some((index, _)) = self.member(base, &field.node) {
+                    chain.push(DELIMITER);
+                    chain.push_str(&format!("{index}"));
+                }
+                self.chains.insert(node.id, chain.clone());
+                Some(chain)
+            }
+            ExpressionKind::Unary {
+                operator: UnaryOperator::Increment | UnaryOperator::Decrement,
+                ref operand,
+            }
+            | ExpressionKind::Postfix { ref operand, .. } => {
+                self.define_collected(operand, inner, Definition::Step { node, operand });
+                None
+            }
+            ExpressionKind::Binary { ref right, .. } => {
+                self.collect(right);
+                None
+            }
+            _ => None,
+        }
+    }
+
+    fn collect_right(&mut self, node: &'a Expression) {
+        match node.kind {
+            ExpressionKind::Assignment {
+                operator,
+                ref target,
+                ref value,
+            } => self.define(
+                target,
+                Definition::Assignment {
+                    node,
+                    operator,
+                    target,
+                    value,
+                },
+            ),
+            ExpressionKind::Conditional {
+                ref condition,
+                ref then_expression,
+                ..
+            } => {
+                self.collect(condition);
+                self.collect(then_expression);
+            }
+            _ => {}
+        }
+    }
+
     fn propagate_all(&mut self) {
         for value in core::mem::take(&mut self.returns) {
             self.remained.clear();
@@ -521,35 +555,43 @@ impl<'a> Precise<'a> {
     }
 
     fn check_target(&mut self, target: &Expression, object: &str) {
-        match target.kind {
-            ExpressionKind::Parenthesized(ref inner) => {
-                self.check_target(inner, object);
-                if self.is_precise(inner) {
-                    self.marked.insert(target.id);
-                }
-            }
-            ExpressionKind::Subscript { ref base, .. }
-            | ExpressionKind::FieldSelection { ref base, .. } => {
-                self.check_target(base, object);
-                if self.is_precise(base)
-                    || self
+        let mut path = Vec::new();
+        let mut current = target;
+        while let ExpressionKind::Parenthesized(ref inner)
+        | ExpressionKind::Subscript {
+            base: ref inner, ..
+        }
+        | ExpressionKind::FieldSelection {
+            base: ref inner, ..
+        } = current.kind
+        {
+            path.push(current);
+            current = inner;
+        }
+        if matches!(current.kind, ExpressionKind::Variable(_))
+            && self
+                .chains
+                .get(&current.id)
+                .is_some_and(|chain| chain == object)
+        {
+            self.marked.insert(current.id);
+        }
+        while let Some(node) = path.pop() {
+            let (inner, named) = match node.kind {
+                ExpressionKind::Parenthesized(ref inner) => (&**inner, false),
+                ExpressionKind::Subscript { ref base, .. }
+                | ExpressionKind::FieldSelection { ref base, .. } => (&**base, true),
+                _ => continue,
+            };
+            if self.is_precise(inner)
+                || (named
+                    && self
                         .chains
-                        .get(&target.id)
-                        .is_some_and(|chain| chain == object)
-                {
-                    self.marked.insert(target.id);
-                }
+                        .get(&node.id)
+                        .is_some_and(|chain| chain == object))
+            {
+                self.marked.insert(node.id);
             }
-            ExpressionKind::Variable(_) => {
-                if self
-                    .chains
-                    .get(&target.id)
-                    .is_some_and(|chain| chain == object)
-                {
-                    self.marked.insert(target.id);
-                }
-            }
-            _ => {}
         }
     }
 
@@ -664,8 +706,19 @@ impl<'a> Precise<'a> {
     }
 
     fn propagate(&mut self, expression: &Expression) {
+        let mut pending = Vec::from([expression]);
+        while let Some(expression) = pending.pop() {
+            self.propagate_node(expression, &mut pending);
+        }
+    }
+
+    fn propagate_node<'e>(
+        &mut self,
+        expression: &'e Expression,
+        pending: &mut Vec<&'e Expression>,
+    ) {
         match expression.kind {
-            ExpressionKind::Parenthesized(ref inner) => self.propagate(inner),
+            ExpressionKind::Parenthesized(ref inner) => pending.push(inner),
             ExpressionKind::Variable(_)
             | ExpressionKind::Subscript { .. }
             | ExpressionKind::FieldSelection { .. } => self.object(expression),
@@ -677,8 +730,8 @@ impl<'a> Precise<'a> {
                 if arithmetic_assignment(operator) && !self.is_int(expression) {
                     self.result.insert(expression.id);
                 }
-                self.propagate(target);
-                self.propagate(value);
+                pending.push(value);
+                pending.push(target);
             }
             ExpressionKind::Binary {
                 operator,
@@ -688,8 +741,8 @@ impl<'a> Precise<'a> {
                 if arithmetic_binary(operator) && !self.is_int(expression) {
                     self.result.insert(expression.id);
                 }
-                self.propagate(left);
-                self.propagate(right);
+                pending.push(right);
+                pending.push(left);
             }
             ExpressionKind::Unary {
                 operator,
@@ -701,25 +754,23 @@ impl<'a> Precise<'a> {
                 ) {
                     self.result.insert(expression.id);
                 }
-                self.propagate(operand);
+                pending.push(operand);
             }
             ExpressionKind::Postfix { ref operand, .. } => {
                 self.result.insert(expression.id);
-                self.propagate(operand);
+                pending.push(operand);
             }
             ExpressionKind::Conditional {
                 ref condition,
                 ref then_expression,
                 ref else_expression,
             } => {
-                self.propagate(condition);
-                self.propagate(then_expression);
-                self.propagate(else_expression);
+                pending.push(else_expression);
+                pending.push(then_expression);
+                pending.push(condition);
             }
             ExpressionKind::Sequence(ref expressions) => {
-                for inner in expressions {
-                    self.propagate(inner);
-                }
+                pending.extend(expressions.iter().rev());
             }
             ExpressionKind::FunctionCall(ref call) => {
                 let callee = self.analysis.calls.get(&expression.id);
@@ -750,11 +801,9 @@ impl<'a> Precise<'a> {
                         self.result.insert(expression.id);
                     }
                 }
+                pending.extend(call.arguments.iter().rev());
                 if let FunctionIdentifier::Method { ref object, .. } = call.function.node {
-                    self.propagate(object);
-                }
-                for argument in &call.arguments {
-                    self.propagate(argument);
+                    pending.push(object);
                 }
             }
             ExpressionKind::Number(_) | ExpressionKind::Bool(_) | ExpressionKind::String(_) => {}

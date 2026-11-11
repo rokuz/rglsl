@@ -243,7 +243,7 @@ fn sized_literal_suffixes_are_lexed_like_glslang() {
         ("7u", NumericKind::Uint, "7", "u"),
     ];
     for (text, kind, digits, suffix) in cases {
-        match expression(text).kind {
+        match &expression(text).kind {
             ExpressionKind::Number(number) => {
                 assert_eq!(number.kind, kind, "{text}");
                 assert_eq!(number.digits(), digits, "{text}");

@@ -287,7 +287,7 @@ void main() {
 }
 ",
     );
-    assert_eq!(checked.conversion("1").as_deref(), Some("float"));
+    assert_eq!(checked.conversion("4").as_deref(), Some("float"));
     assert_eq!(checked.conversion("3").as_deref(), Some("uint"));
     assert_eq!(checked.conversion("2u"), None);
     assert_eq!(checked.conversion("4").as_deref(), Some("float"));
@@ -921,4 +921,46 @@ void main() {
     assert!(non_uniform("v * m"));
     assert!(non_uniform("m * 2.0"));
     assert!(non_uniform("m + mat2(2.0)"));
+}
+
+#[test]
+fn long_chains_are_typed_and_folded_in_source_order() {
+    let links = 3000;
+    let subtraction = format!("100{}", " - 1".repeat(links));
+    let mixed = format!("2{}", " * 3 - 5".repeat(links));
+    let converted = format!("dynamic + 1{}", " + 0.5".repeat(links));
+    let conditional = format!("{}7", "false ? 1 : ".repeat(links));
+    let selected = format!("{}2.0", "dynamic > 0 ? 4 : ".repeat(links));
+    let assigned = format!("{}3", "x = y = ".repeat(links / 2));
+    let negated = format!("{}5", "- ".repeat(links + 1));
+    let checked = accepted(
+        Stage::Fragment,
+        &format!(
+            "layout(location = 0) flat in int dynamic;
+void main() {{
+    int x; int y;
+    const int a = {subtraction};
+    const int b = {mixed};
+    float c = {converted};
+    int d = {conditional};
+    float e = {selected};
+    int f = {assigned};
+    int g = {negated};
+}}
+"
+        ),
+    );
+    let count = i64::try_from(links).unwrap();
+    assert_eq!(checked.integer(&subtraction), Some(100 - count));
+    assert_eq!(checked.integer(&mixed), Some(1 - 15 * (count - 1)));
+    assert!(checked.is_constant(&mixed));
+    assert_eq!(checked.ty(&converted), "float");
+    assert_eq!(checked.conversion("dynamic + 1").as_deref(), Some("float"));
+    assert_eq!(checked.integer(&conditional), Some(7));
+    assert_eq!(checked.ty(&selected), "float");
+    assert_eq!(checked.conversion("4").as_deref(), Some("float"));
+    assert!(!checked.is_constant(&selected));
+    assert_eq!(checked.ty(&assigned), "int");
+    assert!(checked.is_lvalue("x"));
+    assert_eq!(checked.integer(&negated), Some(-5));
 }
