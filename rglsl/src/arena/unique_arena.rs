@@ -236,7 +236,14 @@ where
     where
         D: serde::Deserializer<'de>,
     {
-        let set = FastIndexSet::deserialize(deserializer)?;
+        let items = Vec::<T>::deserialize(deserializer)?;
+        let count = items.len();
+        let set: FastIndexSet<T> = items.into_iter().collect();
+        if set.len() != count {
+            return Err(<D::Error as serde::de::Error>::custom(
+                "a unique arena has duplicate elements",
+            ));
+        }
         let span_info = core::iter::repeat_n(Span::default(), set.len()).collect();
 
         Ok(Self { set, span_info })

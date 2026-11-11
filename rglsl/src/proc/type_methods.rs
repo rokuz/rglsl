@@ -629,7 +629,7 @@ impl crate::TypeInner {
                 size: crate::ArraySize::Constant(_),
                 ..
             } => TypeResolution::Handle(base),
-            Self::Struct { ref members, .. } => TypeResolution::Handle(members[index].ty),
+            Self::Struct { ref members, .. } => TypeResolution::Handle(members.get(index)?.ty),
             _ => return None,
         })
     }

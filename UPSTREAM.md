@@ -384,7 +384,9 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
 - **No panics in the front ends.** The SPIR-V front end returns an error where upstream
   panicked on malformed input or a broken invariant (`front/spv`: the new `Error` variants
   `InvalidImageCoordinateType`, `Layout` and `InternalError`; `atomic_upgrade::Error::
-  StructNotAccessedAtomically`). `ParseErrors::emit_to_writer*`/`emit_to_stderr*` (GLSL) and
+  StructNotAccessedAtomically`). An `OpExecutionMode LocalSize` without three operands, an `OpCompositeInsert` index
+  past the composite's last component (`InvalidAccessIndex`) and an `OpCompositeConstruct`
+  without constituents no longer panic. `ParseErrors::emit_to_writer*`/`emit_to_stderr*` (GLSL) and
   `spv::Error::emit_to_writer*` return the rendering error instead of panicking, and
   `emit_to_string*` falls back to the plain message when the source location cannot be
   rendered. `VertexFormat::min_acceleration_structure_vertex_stride` and
@@ -398,6 +400,19 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   its handle; an abstract scalar reaching a type or constant declaration makes
   `Writer::write` fail. `process_overrides` reports the new `PipelineConstantError` variants
   `UnresolvedOverride` and `InvalidOverrideType` instead of panicking.
+- **Handle validation covers every handle and index.** `validate_module_handles` (`valid/
+  handles.rs`) also checks, where naga did not: the type of `Compose`/`ZeroValue`/`Replicate`
+  global expressions that come after the last type, every other global expression like a
+  function expression with no locals, arguments or functions (the validator then rejects global
+  expressions that are not const or override expressions before typifying them), the types of
+  `AtomicResult`, `SubgroupOperationResult`, `SpirvInstructionResult` and
+  `WorkGroupUniformLoadResult`, `FunctionArgument` indices against the function's arguments,
+  that `Call` statements and cooperative matrix callbacks name an earlier function, every
+  special type (including `predeclared_types`), `EntryPoint::incoming_ray_payload`, and the
+  function, entry point, constant and global doc comment handles (naga checked them only
+  alongside struct member doc comments). `TypeInner::component_type` returns `None` for a
+  member index out of range. Deserializing a `UniqueArena` with duplicate elements is an error
+  instead of silently merging them and shifting later handles. Found by the `ir` fuzz target.
 - **No `unwrap`/`expect` in tests.** The unit tests taken from upstream (`compact`,
   `proc::constant_evaluator`, `proc::overloads::regular`, `valid`, `back::spv::writer`,
   `front::spv`), the integration tests in `rglsl/tests` and the `rglsl-test` snapshot support

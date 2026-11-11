@@ -110,9 +110,13 @@ impl super::Validator {
                 // remain true, we must advance `global_exprs_iter` beyond
                 // `max_expr`.
                 while let Some((eh, e)) = global_exprs_iter.next_if(|&(eh, _)| eh <= max_expr) {
-                    if let Some(max_type) =
-                        Self::validate_const_expression_handles((eh, e), constants, overrides)?
-                    {
+                    if let Some(max_type) = Self::validate_const_expression_handles(
+                        (eh, e),
+                        constants,
+                        overrides,
+                        types,
+                        global_variables,
+                    )? {
                         // Show that `eh` refers only to previously visited types.
                         th.check_dep(max_type)?;
                     }
@@ -137,11 +141,19 @@ impl super::Validator {
         // all expressions must be acyclic as well.
         //
         // Validate the remaining expressions normally.
-        for handle_and_expr in global_exprs_iter {
-            Self::validate_const_expression_handles(handle_and_expr, constants, overrides)?;
-        }
-
         let validate_type = |handle| Self::validate_type_handle(handle, types);
+
+        for handle_and_expr in global_exprs_iter {
+            if let Some(max_type) = Self::validate_const_expression_handles(
+                handle_and_expr,
+                constants,
+                overrides,
+                types,
+                global_variables,
+            )? {
+                validate_type(max_type)?;
+            }
+        }
         let validate_const_expr =
             |handle| Self::validate_expression_handle(handle, global_expressions);
 
@@ -270,12 +282,13 @@ impl super::Validator {
                     types,
                     local_variables,
                     global_variables,
+                    arguments,
                     functions,
                     function_handle,
                 )?;
             }
 
-            Self::validate_block_handles(body, expressions, functions, types)?;
+            Self::validate_block_handles(body, expressions, functions, function_handle, types)?;
 
             if let Some(handle) = *diagnostic_filter_leaf {
                 handle.check_valid_for(diagnostic_filters)?;
@@ -318,8 +331,11 @@ impl super::Validator {
             {
                 Self::validate_global_variable_handle(variable, global_variables)?;
             }
-            if let Some(task_payload) = entry_point.task_payload {
-                Self::validate_global_variable_handle(task_payload, global_variables)?;
+            for payload in [entry_point.task_payload, entry_point.incoming_ray_payload]
+                .into_iter()
+                .flatten()
+            {
+                Self::validate_global_variable_handle(payload, global_variables)?;
             }
             for &variable in entry_point
                 .mesh_shader
@@ -346,13 +362,25 @@ impl super::Validator {
             validate_function(Some(function_handle), function)?;
         }
 
-        if let Some(ty) = special_types.ray_desc {
-            validate_type(ty)?;
-        }
-        if let Some(ty) = special_types.ray_intersection {
-            validate_type(ty)?;
-        }
-        if let Some(ty) = special_types.ray_vertex_return {
+        let crate::SpecialTypes {
+            ray_desc,
+            ray_intersection,
+            ray_vertex_return,
+            external_texture_params,
+            external_texture_transfer_function,
+            ref predeclared_types,
+        } = *special_types;
+        for ty in [
+            ray_desc,
+            ray_intersection,
+            ray_vertex_return,
+            external_texture_params,
+            external_texture_transfer_function,
+        ]
+        .into_iter()
+        .flatten()
+        .chain(predeclared_types.values().copied())
+        {
             validate_type(ty)?;
         }
 
@@ -413,18 +441,18 @@ impl super::Validator {
                         });
                     }
                 }
-                for (&function, _) in doc_comments_for_functions.iter() {
-                    Self::validate_function_handle(function, functions)?;
-                }
-                for (&entry_point_index, _) in doc_comments_for_entry_points.iter() {
-                    Self::validate_entry_point_index(entry_point_index, entry_points)?;
-                }
-                for (&constant, _) in doc_comments_for_constants.iter() {
-                    Self::validate_constant_handle(constant, constants)?;
-                }
-                for (&global_variable, _) in doc_comments_for_global_variables.iter() {
-                    Self::validate_global_variable_handle(global_variable, global_variables)?;
-                }
+            }
+            for (&function, _) in doc_comments_for_functions.iter() {
+                Self::validate_function_handle(function, functions)?;
+            }
+            for (&entry_point_index, _) in doc_comments_for_entry_points.iter() {
+                Self::validate_entry_point_index(entry_point_index, entry_points)?;
+            }
+            for (&constant, _) in doc_comments_for_constants.iter() {
+                Self::validate_constant_handle(constant, constants)?;
+            }
+            for (&global_variable, _) in doc_comments_for_global_variables.iter() {
+                Self::validate_global_variable_handle(global_variable, global_variables)?;
             }
         }
 
@@ -471,6 +499,18 @@ impl super::Validator {
         functions: &Arena<crate::Function>,
     ) -> Result<(), InvalidHandleError> {
         handle.check_valid_for(functions).map(|_| ())
+    }
+
+    fn validate_callee_handle(
+        callee: Handle<crate::Function>,
+        functions: &Arena<crate::Function>,
+        caller: Option<Handle<crate::Function>>,
+    ) -> Result<(), InvalidHandleError> {
+        Self::validate_function_handle(callee, functions)?;
+        if let Some(caller) = caller {
+            caller.check_dep(callee)?;
+        }
+        Ok(())
     }
 
     /// Validate all handles that occur in `ty`, whose handle is `handle`.
@@ -608,6 +648,8 @@ impl super::Validator {
         (handle, expression): (Handle<crate::Expression>, &crate::Expression),
         constants: &Arena<crate::Constant>,
         overrides: &Arena<crate::Override>,
+        types: &UniqueArena<crate::Type>,
+        global_variables: &Arena<crate::GlobalVariable>,
     ) -> Result<Option<Handle<crate::Type>>, InvalidHandleError> {
         let validate_constant = |handle| Self::validate_constant_handle(handle, constants);
         let validate_override = |handle| Self::validate_override_handle(handle, overrides);
@@ -635,7 +677,20 @@ impl super::Validator {
                 handle.check_dep(value)?;
                 Some(ty)
             }
-            _ => None,
+            _ => {
+                Self::validate_expression_handles(
+                    (handle, expression),
+                    constants,
+                    overrides,
+                    types,
+                    &Arena::new(),
+                    global_variables,
+                    &[],
+                    &Arena::new(),
+                    None,
+                )?;
+                None
+            }
         };
         Ok(max_type)
     }
@@ -648,6 +703,7 @@ impl super::Validator {
         types: &UniqueArena<crate::Type>,
         local_variables: &Arena<crate::LocalVariable>,
         global_variables: &Arena<crate::GlobalVariable>,
+        arguments: &[crate::FunctionArgument],
         functions: &Arena<crate::Function>,
         // The handle of the current function or `None` if it's an entry point
         current_function: Option<Handle<crate::Function>>,
@@ -683,7 +739,16 @@ impl super::Validator {
                 validate_type(ty)?;
                 handle.check_dep_iter(components.iter().copied())?;
             }
-            crate::Expression::FunctionArgument(_arg_idx) => (),
+            crate::Expression::FunctionArgument(index) => {
+                let index = index as usize;
+                if index >= arguments.len() {
+                    return Err(BadHandle {
+                        kind: "FunctionArgument",
+                        index,
+                    }
+                    .into());
+                }
+            }
             crate::Expression::GlobalVariable(global_variable) => {
                 global_variable.check_valid_for(global_variables)?;
             }
@@ -869,19 +934,18 @@ impl super::Validator {
                 handle.check_dep(input)?;
             }
             crate::Expression::CallResult(function) => {
-                Self::validate_function_handle(function, functions)?;
-                if let Some(handle) = current_function {
-                    handle.check_dep(function)?;
-                }
+                Self::validate_callee_handle(function, functions, current_function)?;
             }
-            crate::Expression::AtomicResult { .. }
-            | crate::Expression::RayQueryProceedResult
+            crate::Expression::AtomicResult { ty, comparison: _ }
+            | crate::Expression::SubgroupOperationResult { ty }
+            | crate::Expression::SpirvInstructionResult { ty }
+            | crate::Expression::WorkGroupUniformLoadResult { ty } => {
+                validate_type(ty)?;
+            }
+            crate::Expression::RayQueryProceedResult
             | crate::Expression::ReportIntersectionResult
             | crate::Expression::SubgroupBallotResult
-            | crate::Expression::IsHelperInvocation
-            | crate::Expression::SubgroupOperationResult { .. }
-            | crate::Expression::SpirvInstructionResult { .. }
-            | crate::Expression::WorkGroupUniformLoadResult { .. } => (),
+            | crate::Expression::IsHelperInvocation => (),
             crate::Expression::ArrayLength(array) | crate::Expression::WideArrayLength(array) => {
                 handle.check_dep(array)?;
             }
@@ -1027,10 +1091,17 @@ impl super::Validator {
         block: &crate::Block,
         expressions: &Arena<crate::Expression>,
         functions: &Arena<crate::Function>,
+        current_function: Option<Handle<crate::Function>>,
         types: &UniqueArena<crate::Type>,
     ) -> Result<(), InvalidHandleError> {
         for statement in block.iter() {
-            Self::validate_statement_kind_handles(statement, expressions, functions, types)?;
+            Self::validate_statement_kind_handles(
+                statement,
+                expressions,
+                functions,
+                current_function,
+                types,
+            )?;
         }
         Ok(())
     }
@@ -1039,11 +1110,12 @@ impl super::Validator {
         statement: &crate::Statement,
         expressions: &Arena<crate::Expression>,
         functions: &Arena<crate::Function>,
+        current_function: Option<Handle<crate::Function>>,
         types: &UniqueArena<crate::Type>,
     ) -> Result<(), InvalidHandleError> {
         match *statement {
             crate::Statement::Block(ref block) => {
-                Self::validate_block_handles(block, expressions, functions, types)
+                Self::validate_block_handles(block, expressions, functions, current_function, types)
             }
             crate::Statement::If {
                 condition,
@@ -1055,6 +1127,7 @@ impl super::Validator {
                 [accept, reject].into_iter(),
                 expressions,
                 functions,
+                current_function,
                 types,
             ),
             crate::Statement::Switch {
@@ -1066,6 +1139,7 @@ impl super::Validator {
                 cases.iter().map(|case| &case.body),
                 expressions,
                 functions,
+                current_function,
                 types,
             ),
             crate::Statement::Loop {
@@ -1078,9 +1152,16 @@ impl super::Validator {
                 [body, continuing].into_iter(),
                 expressions,
                 functions,
+                current_function,
                 types,
             ),
-            _ => Self::validate_statement_handles(statement, expressions, functions, types),
+            _ => Self::validate_statement_handles(
+                statement,
+                expressions,
+                functions,
+                current_function,
+                types,
+            ),
         }
     }
 
@@ -1089,13 +1170,14 @@ impl super::Validator {
         blocks: impl Iterator<Item = &'b crate::Block>,
         expressions: &Arena<crate::Expression>,
         functions: &Arena<crate::Function>,
+        current_function: Option<Handle<crate::Function>>,
         types: &UniqueArena<crate::Type>,
     ) -> Result<(), InvalidHandleError> {
         if let Some(condition) = condition {
             Self::validate_expression_handle(condition, expressions)?;
         }
         for block in blocks {
-            Self::validate_block_handles(block, expressions, functions, types)?;
+            Self::validate_block_handles(block, expressions, functions, current_function, types)?;
         }
         Ok(())
     }
@@ -1104,6 +1186,7 @@ impl super::Validator {
         statement: &crate::Statement,
         expressions: &Arena<crate::Expression>,
         functions: &Arena<crate::Function>,
+        current_function: Option<Handle<crate::Function>>,
         types: &UniqueArena<crate::Type>,
     ) -> Result<(), InvalidHandleError> {
         let validate_expr = |handle| Self::validate_expression_handle(handle, expressions);
@@ -1221,7 +1304,7 @@ impl super::Validator {
                 ref arguments,
                 result,
             } => {
-                Self::validate_function_handle(function, functions)?;
+                Self::validate_callee_handle(function, functions, current_function)?;
                 for arg in arguments.iter().copied() {
                     validate_expr(arg)?;
                 }
@@ -1299,6 +1382,9 @@ impl super::Validator {
                 ref function,
                 result,
             } => {
+                for callee in function.functions() {
+                    Self::validate_callee_handle(callee, functions, current_function)?;
+                }
                 for operand in function.operands() {
                     validate_expr(operand)?;
                 }
@@ -1531,6 +1617,8 @@ fn constant_deps() {
             handle_and_expr,
             &constants,
             &overrides,
+            &UniqueArena::new(),
+            &Arena::new(),
         )
         .is_err());
     }
@@ -1669,4 +1757,66 @@ fn override_init_deps() {
     // Validation should catch the cycle.
     m.overrides[r#override].init = Some(ex_arr);
     assert!(Validator::validate_module_handles(&m).is_err());
+}
+
+#[test]
+fn global_expressions_cannot_name_locals_or_later_expressions() -> crate::TestResult {
+    use super::{ValidationFlags, Validator};
+    use crate::{Expression, Handle, LocalVariable, Span};
+
+    let nowhere = Span::default();
+    let missing_local: Handle<LocalVariable> =
+        Handle::new(crate::non_max_u32::NonMaxU32::new(95).ok_or("95 is a valid index")?);
+    let mut m = crate::Module::default();
+    m.global_expressions
+        .append(Expression::LocalVariable(missing_local), nowhere);
+    assert!(Validator::validate_module_handles(&m).is_err());
+    let mut validator = Validator::new(ValidationFlags::all(), super::Capabilities::default());
+    assert!(validator.validate(&m).is_err());
+
+    let later: Handle<Expression> =
+        Handle::new(crate::non_max_u32::NonMaxU32::new(1).ok_or("1 is a valid index")?);
+    let mut m = crate::Module::default();
+    m.global_expressions.append(
+        Expression::Unary {
+            op: crate::UnaryOperator::Negate,
+            expr: later,
+        },
+        nowhere,
+    );
+    assert!(Validator::validate_module_handles(&m).is_err());
+    assert!(validator.validate(&m).is_err());
+    Ok(())
+}
+
+#[test]
+fn global_expressions_after_every_type_check_their_type_handles() -> crate::TestResult {
+    use super::{ValidationFlags, Validator};
+    use crate::{Expression, Handle, Span, Type};
+
+    let missing_type: Handle<Type> =
+        Handle::new(crate::non_max_u32::NonMaxU32::new(255).ok_or("255 is a valid index")?);
+    let mut m = crate::Module::default();
+    m.global_expressions.append(
+        Expression::Compose {
+            ty: missing_type,
+            components: alloc::vec::Vec::new(),
+        },
+        Span::default(),
+    );
+    assert!(Validator::validate_module_handles(&m).is_err());
+    let mut validator = Validator::new(ValidationFlags::all(), super::Capabilities::default());
+    assert!(validator.validate(&m).is_err());
+
+    m.types.insert(
+        Type {
+            name: None,
+            inner: crate::TypeInner::Scalar(crate::Scalar::F32),
+        },
+        Span::default(),
+    );
+    m.global_expressions
+        .append(Expression::ZeroValue(missing_type), Span::default());
+    assert!(validator.validate(&m).is_err());
+    Ok(())
 }

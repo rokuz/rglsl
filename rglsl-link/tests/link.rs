@@ -161,6 +161,37 @@ fn object_modules_round_trip_through_the_file_format() -> TestResult {
 }
 
 #[test]
+fn corrupted_object_files_are_rejected_when_decoded() -> TestResult {
+    let text = encode(&object(ShaderStage::Fragment, MAIN)?)?;
+    decode(&text)?;
+    for (from, to) in [
+        (",ty:0,init:None", ",ty:7,init:None"),
+        ("CallResult(0)", "CallResult(3)"),
+        ("Splat(size:Quad,value:2)", "Splat(size:Quad,value:9)"),
+        ("(function:0,name:\"helper\"", "(function:5,name:\"helper\""),
+        ("(global:0,name:\"color\"", "(global:4,name:\"color\""),
+        ("Statement(Store(pointer:0,", "Statement(Store(pointer:12,"),
+    ] {
+        assert!(text.contains(from), "{from}");
+        let corrupted = text.replacen(from, to, 1);
+        assert!(
+            matches!(decode(&corrupted), Err(rglsl_link::FileError::Invalid(_))),
+            "{to}"
+        );
+    }
+    let duplicate_type = text.replacen(
+        "types:[",
+        "types:[(name:None,inner:Scalar((kind:Float,width:4))),",
+        1,
+    );
+    assert!(matches!(
+        decode(&duplicate_type),
+        Err(rglsl_link::FileError::Decode(_))
+    ));
+    Ok(())
+}
+
+#[test]
 fn reports_every_missing_reachable_definition() -> TestResult {
     let main = object(
         ShaderStage::Fragment,
