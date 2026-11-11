@@ -27,7 +27,7 @@ sha256 = "d92c1eb5be8be3c2723495fb0fad72f9e762e447029e6bfd0364a20c73ad9b74"
 
 [amber]
 repo = "https://github.com/rokuz/amber"
-commit = "1831e2c3a86b2f679480284ab3ab34b59ca2997e"
+commit = "ff2e91eaaee7321f8958a037043d469c349ba01f"
 
 [amber-vulkan-headers]
 repo = "https://github.com/KhronosGroup/Vulkan-Headers"
