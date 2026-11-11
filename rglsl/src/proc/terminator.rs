@@ -14,6 +14,7 @@ pub fn ensure_block_returns(block: &mut crate::Block) {
             condition: _,
             ref mut accept,
             ref mut reject,
+            control: _,
         }) => {
             ensure_block_returns(accept);
             ensure_block_returns(reject);
@@ -21,6 +22,7 @@ pub fn ensure_block_returns(block: &mut crate::Block) {
         Some(&mut S::Switch {
             selector: _,
             ref mut cases,
+            control: _,
         }) => {
             for case in cases.iter_mut() {
                 if !case.fall_through {

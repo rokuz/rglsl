@@ -681,6 +681,30 @@ impl Writer {
         Ok(id)
     }
 
+    pub(super) fn write_workgroup_size_builtin(&mut self, entry_point: &crate::EntryPoint) {
+        if !entry_point.workgroup_size_builtin
+            || entry_point.workgroup_size_overrides.is_some()
+            || self.lang_version() >= (1, 6)
+        {
+            return;
+        }
+        let type_id = self.get_numeric_type_id(NumericType::Vector {
+            size: VectorSize::Tri,
+            scalar: Scalar::U32,
+        });
+        let constituents = entry_point
+            .workgroup_size
+            .map(|size| self.get_constant_scalar(Literal::U32(size)));
+        let id = self.id_gen.next();
+        Instruction::constant_composite(type_id, id, &constituents)
+            .to_words(&mut self.logical_layout.declarations);
+        self.decorate(
+            id,
+            spirv::Decoration::BuiltIn,
+            &[spirv::BuiltIn::WorkgroupSize as u32],
+        );
+    }
+
     pub(super) fn write_workgroup_size(
         &mut self,
         function_id: Word,
@@ -693,6 +717,7 @@ impl Writer {
                 &entry_point.workgroup_size,
             )
             .to_words(&mut self.logical_layout.execution_modes);
+            self.write_workgroup_size_builtin(entry_point);
             return Ok(());
         };
         let mut ids = [0; 3];

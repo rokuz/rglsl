@@ -41,8 +41,6 @@ fn compile(stage: ShaderStage, source: &str) -> dr::Module {
         flags: spv::WriterFlags::DEBUG
             | spv::WriterFlags::LABEL_VARYINGS
             | spv::WriterFlags::SMALL_TYPE_CAPABILITIES_BY_USE,
-        force_loop_bounding: false,
-        zero_initialize_workgroup_memory: spv::ZeroInitializeWorkgroupMemoryMode::None,
         ..spv::Options::default()
     };
     let words = spv::write_vec(&module, &info, &options, None).expect("SPIR-V backend failed");
@@ -701,7 +699,7 @@ fn write_only_buffer_blocks() {
         layout(std430, binding = 0) writeonly buffer B { float d[]; } b;
         void main() { b.d[0] = 1.0; }",
     );
-    assert_eq!(decorated(&module, Decoration::NonReadable), ["b"]);
+    assert_eq!(decorated(&module, Decoration::NonReadable), ["d", "b"]);
 }
 
 /// Integer textures can be sampled, not only fetched.
@@ -825,6 +823,45 @@ fn block_layouts_match_glslang() {
             (160, row(16)),
             (192, row(16)),
         ]
+    );
+}
+
+#[test]
+fn align_qualifier_places_members_as_glslang() {
+    let source = "#version 450
+        layout(local_size_x = 1) in;
+        layout(std430, binding = 0) buffer B {
+            float a;
+            layout(align = 64) vec3 b;
+            layout(offset = 132, align = 8) float c;
+            float d[3];
+            layout(align = 4) mat2 e;
+        } b;
+        layout(std140, binding = 1, align = 32) uniform U {
+            float x;
+            vec2 y;
+            layout(offset = 80, align = 64) float z;
+            layout(align = 16) float w;
+        } u;
+        void main() {
+            b.a = u.x + u.y.x + u.z + u.w + b.c + b.d[1] + b.e[0][0];
+            b.b = vec3(1);
+        }";
+    compile(ShaderStage::Compute, source);
+    let module = parse(ShaderStage::Compute, source).unwrap();
+    assert_eq!(
+        block_layout(&module, "B"),
+        [
+            (0, None),
+            (64, None),
+            (136, None),
+            (140, None),
+            (152, Some((8, false))),
+        ]
+    );
+    assert_eq!(
+        block_layout(&module, "U"),
+        [(0, None), (32, None), (128, None), (144, None)]
     );
 }
 
@@ -2556,8 +2593,6 @@ fn compile_for(stage: ShaderStage, source: &str, lang_version: (u8, u8)) -> dr::
     let options = spv::Options {
         lang_version,
         flags: spv::WriterFlags::DEBUG | spv::WriterFlags::LABEL_VARYINGS,
-        force_loop_bounding: false,
-        zero_initialize_workgroup_memory: spv::ZeroInitializeWorkgroupMemoryMode::None,
         ..spv::Options::default()
     };
     let words = spv::write_vec(&module, &info, &options, None).expect("SPIR-V backend failed");
@@ -4594,8 +4629,6 @@ fn message_words(stage: ShaderStage, source: &str, lang_version: (u8, u8)) -> Ve
         flags: spv::WriterFlags::DEBUG
             | spv::WriterFlags::LABEL_VARYINGS
             | spv::WriterFlags::SMALL_TYPE_CAPABILITIES_BY_USE,
-        force_loop_bounding: false,
-        zero_initialize_workgroup_memory: spv::ZeroInitializeWorkgroupMemoryMode::None,
         ..spv::Options::default()
     };
     let words = spv::write_vec(&module, &info, &options, None).expect("SPIR-V backend failed");
@@ -6746,7 +6779,7 @@ fn nv_task_memory_blocks() {
         .map(|inst| literal(&inst.operands[3]))
         .collect();
     assert_eq!(offsets, [0, 8, 32]);
-    assert_eq!(decorated(&module, Decoration::BuiltIn).len(), 2);
+    assert_eq!(decorated(&module, Decoration::BuiltIn).len(), 3);
 }
 
 #[test]
@@ -8174,6 +8207,379 @@ void main() {
     assert_eq!(records, [4, 5]);
 }
 
+fn memory_decorations_of(module: &dr::Module, name: &str) -> Vec<(u32, Decoration)> {
+    let mut decorations: Vec<_> = member_decorations(module, name)
+        .into_iter()
+        .filter(|&(_, decoration, _)| {
+            matches!(
+                decoration,
+                Decoration::Coherent
+                    | Decoration::Volatile
+                    | Decoration::Restrict
+                    | Decoration::NonWritable
+                    | Decoration::NonReadable
+            )
+        })
+        .map(|(member, decoration, _)| (member, decoration))
+        .collect();
+    decorations.sort_by_key(|&(member, decoration)| (member, decoration as u32));
+    decorations
+}
+
+#[test]
+fn member_memory_qualifiers_decorate_their_member() {
+    let module = compile_valid(
+        ShaderStage::Compute,
+        "#version 450
+        #extension GL_KHR_memory_scope_semantics : require
+        layout(local_size_x = 1) in;
+        layout(std430, binding = 0) buffer B {
+            coherent float a;
+            volatile float b;
+            readonly float c;
+            writeonly float d;
+            float e;
+            restrict float f;
+            workgroupcoherent float g;
+        } b;
+        layout(std430, binding = 1) coherent restrict buffer C { float x; readonly float y; } c;
+        void main() { b.a = b.b + b.c + b.e + b.f + b.g + c.y; b.d = 1.0; c.x = b.a; }",
+    );
+    assert_eq!(
+        memory_decorations_of(&module, "B"),
+        [
+            (0, Decoration::Coherent),
+            (1, Decoration::Volatile),
+            (1, Decoration::Coherent),
+            (2, Decoration::NonWritable),
+            (3, Decoration::NonReadable),
+            (5, Decoration::Restrict),
+            (6, Decoration::Coherent),
+        ]
+    );
+    assert!(variable_decorations(&module, "b")
+        .iter()
+        .all(|&(decoration, _)| !matches!(
+            decoration,
+            Decoration::Coherent | Decoration::Volatile | Decoration::Restrict
+        )));
+    assert_eq!(
+        memory_decorations_of(&module, "C"),
+        [
+            (0, Decoration::Restrict),
+            (0, Decoration::Coherent),
+            (1, Decoration::Restrict),
+            (1, Decoration::Coherent),
+            (1, Decoration::NonWritable),
+        ]
+    );
+    let variable: Vec<_> = variable_decorations(&module, "c")
+        .into_iter()
+        .map(|(decoration, _)| decoration)
+        .filter(|decoration| matches!(decoration, Decoration::Coherent | Decoration::Restrict))
+        .collect();
+    assert_eq!(variable, [Decoration::Coherent, Decoration::Restrict]);
+}
+
+#[test]
+fn member_memory_qualifiers_select_memory_operands() {
+    let module = compile(
+        ShaderStage::Compute,
+        "#version 450
+        #pragma use_vulkan_memory_model
+        layout(local_size_x = 1) in;
+        layout(std430, binding = 0) buffer B { coherent float a; float e; volatile uint n; } b;
+        void main() { b.e = b.a; atomicAdd(b.n, 1u); }",
+    );
+    use spirv::MemoryAccess as Ma;
+    assert_eq!(
+        memory_masks(&module),
+        [(Op::Load, Ma::MAKE_POINTER_VISIBLE | Ma::NON_PRIVATE_POINTER)]
+    );
+    assert!(memory_decorations_of(&module, "B").is_empty());
+    let atomics = instructions(&module, Op::AtomicIAdd);
+    assert_eq!(atomics.len(), 1);
+    assert_eq!(
+        constant(&module, &atomics[0].operands[2]),
+        spirv::MemorySemantics::VOLATILE.bits()
+    );
+}
+
+#[test]
+fn reference_member_access_qualifiers_decorate_their_member() {
+    let module = compile_valid(
+        ShaderStage::Compute,
+        "#version 450
+        #extension GL_EXT_buffer_reference : require
+        layout(local_size_x = 1) in;
+        layout(buffer_reference, std430) buffer R { readonly float x; writeonly float y; float z; };
+        layout(buffer_reference, std430) readonly buffer S { float u; restrict float v; };
+        layout(push_constant) uniform P { R r; S s; } p;
+        void main() { p.r.y = p.r.x + p.r.z + p.s.u + p.s.v; }",
+    );
+    let names = |decoration| {
+        let mut names: Vec<_> = physical_member_decorations(&module, decoration)
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
+        names.sort();
+        names
+    };
+    assert_eq!(names(Decoration::NonWritable), ["u", "v", "x"]);
+    assert_eq!(names(Decoration::NonReadable), ["y"]);
+    assert_eq!(names(Decoration::Restrict), ["v"]);
+}
+
+fn glsl_ops(module: &dr::Module) -> Vec<u32> {
+    module
+        .all_inst_iter()
+        .filter(|inst| inst.class.opcode == Op::ExtInst)
+        .filter_map(|inst| match inst.operands.get(1) {
+            Some(&Operand::LiteralExtInstInteger(op)) => Some(op),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn integer_arithmetic_is_written_as_glslang_writes_it() {
+    let module = compile_valid(
+        ShaderStage::Compute,
+        "#version 450
+        layout(local_size_x = 1) in;
+        layout(std430, binding = 0) buffer B { int i[3]; uint u[3]; float f; vec3 v; } b;
+        void main() {
+            b.i[0] = b.i[1] % b.i[2] + b.i[1] / b.i[2] + clamp(b.i[0], b.i[1], b.i[2]);
+            b.u[0] = b.u[1] % b.u[2] + b.u[1] / b.u[2] + clamp(b.u[0], b.u[1], b.u[2]);
+            b.i[1] = int(b.f) + ivec3(b.v).y;
+            b.u[1] = uint(b.f);
+        }",
+    );
+    for op in [Op::SMod, Op::SDiv, Op::UMod, Op::UDiv, Op::ConvertFToU] {
+        assert_eq!(instructions(&module, op).len(), 1, "{op:?}");
+    }
+    assert_eq!(instructions(&module, Op::ConvertFToS).len(), 2);
+    assert!(instructions(&module, Op::SRem).is_empty());
+    assert!(instructions(&module, Op::FunctionCall).is_empty());
+    assert_eq!(
+        glsl_ops(&module),
+        [
+            spirv::GlslStd450Op::SClamp as u32,
+            spirv::GlslStd450Op::UClamp as u32
+        ]
+    );
+}
+
+#[test]
+fn variables_are_initialized_only_when_declared_so() {
+    let module = compile_valid(
+        ShaderStage::Compute,
+        "#version 450
+        layout(local_size_x = 4) in;
+        layout(std430, binding = 0) buffer B { float f[]; } b;
+        shared float s[4];
+        float g;
+        void main() {
+            float l;
+            if (b.f[0] > 0.0) { l = 1.0; } else { l = 2.0; }
+            s[gl_LocalInvocationIndex] = l;
+            g = s[0];
+            for (int k = 0; k < int(b.f[1]); ++k) { b.f[k] = g; }
+        }",
+    );
+    let variables = instructions(&module, Op::Variable);
+    let initialized: Vec<_> = variables
+        .iter()
+        .filter(|inst| inst.operands.len() > 1)
+        .filter_map(|inst| inst.result_id)
+        .map(|id| name_of(&module, id))
+        .collect();
+    assert_eq!(initialized, Vec::<String>::new());
+    assert!(instructions(&module, Op::ControlBarrier).is_empty());
+    assert!(module
+        .debug_names
+        .iter()
+        .all(|inst| inst.operands.get(1) != Some(&Operand::LiteralString("loop_bound".into()))));
+}
+
+#[test]
+fn select_keeps_a_scalar_condition_from_spirv_1_4() {
+    let source = "#version 450
+        layout(location = 0) flat in int i;
+        layout(location = 1) in vec3 a;
+        layout(location = 0) out vec3 o;
+        void main() { o = i > 1 ? a : vec3(2.0); }";
+    let module = parse(ShaderStage::Fragment, source).unwrap();
+    let info = Validator::new(ValidationFlags::all(), Capabilities::all())
+        .validate(&module)
+        .unwrap();
+    let select_conditions = |lang_version| {
+        let options = spv::Options {
+            lang_version,
+            flags: spv::WriterFlags::DEBUG,
+            ..spv::Options::default()
+        };
+        let words = spv::write_vec(&module, &info, &options, None).unwrap();
+        crate::stage_io::spirv_val_in(&words, &["--target-env", "vulkan1.2"]);
+        let module = dr::load_words(words).unwrap();
+        let composites = instructions(&module, Op::CompositeConstruct)
+            .iter()
+            .filter_map(|inst| inst.result_id)
+            .collect::<Vec<_>>();
+        instructions(&module, Op::Select)
+            .iter()
+            .map(|inst| composites.contains(&inst.operands[0].unwrap_id_ref()))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(select_conditions((1, 0)), [true]);
+    assert_eq!(select_conditions((1, 4)), [false]);
+}
+
+fn selection_controls(module: &dr::Module) -> Vec<spirv::SelectionControl> {
+    instructions(module, Op::SelectionMerge)
+        .iter()
+        .filter_map(|inst| match inst.operands.get(1) {
+            Some(&Operand::SelectionControl(control)) => Some(control),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn selection_attributes_select_the_merge_control() {
+    use spirv::SelectionControl as Sc;
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+        #extension GL_EXT_control_flow_attributes : enable
+        layout(location = 0) flat in int i;
+        layout(location = 0) out int o;
+        void main() {
+            o = 0;
+            [[flatten]] if (i > 0) { o = 1; }
+            [[branch]] if (i > 1) { o = 2; } else { o = 3; }
+            [[dont_flatten]] switch (i) { case 0: o = 4; break; default: break; }
+            [[flatten]] switch (i) { case 1: o = 5; break; }
+            [[dont_flatten, flatten]] if (i > 2) { o = 6; }
+            [[flatten(2)]] if (i > 3) { o = 7; }
+            [[unroll]] if (i > 4) { o = 8; }
+            if (i > 5) { o = 9; }
+            [[dont_flatten]] switch (i) { }
+            [[flatten]] if (i > 6) { } else { }
+        }",
+    );
+    assert_eq!(
+        selection_controls(&module),
+        [
+            Sc::FLATTEN,
+            Sc::DONT_FLATTEN,
+            Sc::DONT_FLATTEN,
+            Sc::FLATTEN,
+            Sc::FLATTEN,
+            Sc::NONE,
+            Sc::NONE,
+            Sc::NONE,
+            Sc::FLATTEN,
+        ]
+    );
+    assert_eq!(instructions(&module, Op::Switch).len(), 2);
+}
+
+#[test]
+fn unused_heap_views_declare_only_the_heap() {
+    let tensors = spirv::Capability::TensorsARM as u32;
+    let count = |raw: &[(u32, Vec<u32>)], op: Op| {
+        raw.iter().filter(|&&(code, _)| code == op as u32).count()
+    };
+    let capabilities = |raw: &[(u32, Vec<u32>)]| {
+        raw.iter()
+            .filter(|&&(code, _)| code == Op::Capability as u32)
+            .map(|(_, operands)| operands[0])
+            .collect::<Vec<_>>()
+    };
+    let raw = raw_instructions(&compile_words(
+        ShaderStage::Compute,
+        "#version 460
+        #extension GL_EXT_descriptor_heap : require
+        #extension GL_ARM_tensors : require
+        layout(local_size_x = 1) in;
+        layout(descriptor_heap) uniform tensorARM<float, 2> floatTensors[];
+        layout(descriptor_heap) uniform tensorARM<int, 4> intTensors[3];
+        layout(descriptor_heap) uniform texture2D textures[];
+        void main() {}",
+        (1, 0),
+    ));
+    assert!(!capabilities(&raw).contains(&tensors));
+    assert_eq!(count(&raw, Op::TypeTensorARM), 0);
+    assert_eq!(count(&raw, Op::TypeImage), 0);
+    assert_eq!(count(&raw, Op::ConstantSizeOfEXT), 0);
+    assert_eq!(count(&raw, Op::UntypedVariableKHR), 1);
+
+    let raw = raw_instructions(&compile_words(
+        ShaderStage::Compute,
+        "#version 460
+        #extension GL_EXT_descriptor_heap : require
+        #extension GL_ARM_tensors : require
+        layout(local_size_x = 1) in;
+        layout(descriptor_heap) uniform tensorARM<float, 2> floatTensors[];
+        layout(descriptor_heap) uniform tensorARM<int, 4> intTensors[3];
+        layout(std430, binding = 0) buffer B { uint size; } b;
+        void main() { b.size = tensorSizeARM(intTensors[1], 0); }",
+        (1, 0),
+    ));
+    assert!(capabilities(&raw).contains(&tensors));
+    assert_eq!(count(&raw, Op::TypeTensorARM), 1);
+}
+
+fn workgroup_size_builtins(raw: &[(u32, Vec<u32>)]) -> Vec<Vec<u32>> {
+    let decorated: Vec<u32> = raw
+        .iter()
+        .filter(|&&(op, ref operands)| {
+            op == Op::Decorate as u32
+                && operands.get(1) == Some(&(Decoration::BuiltIn as u32))
+                && operands.get(2) == Some(&(spirv::BuiltIn::WorkgroupSize as u32))
+        })
+        .map(|(_, operands)| operands[0])
+        .collect();
+    let constant = |id: u32| {
+        raw.iter()
+            .find(|&&(op, ref operands)| op == Op::Constant as u32 && operands.get(1) == Some(&id))
+            .map_or(u32::MAX, |(_, operands)| operands[2])
+    };
+    raw.iter()
+        .filter(|&&(op, ref operands)| {
+            (op == Op::ConstantComposite as u32 || op == Op::SpecConstantComposite as u32)
+                && decorated.contains(&operands[1])
+        })
+        .map(|(_, operands)| operands[2..].iter().map(|&id| constant(id)).collect())
+        .collect()
+}
+
+#[test]
+fn declared_local_size_is_a_workgroup_size_builtin() {
+    let source = "#version 450
+        layout(local_size_x = 8, local_size_y = 4) in;
+        layout(std430, binding = 0) buffer B { uint v; } b;
+        void main() { b.v = 1u; }";
+    let raw = raw_instructions(&compile_words(ShaderStage::Compute, source, (1, 0)));
+    assert_eq!(workgroup_size_builtins(&raw), [vec![8, 4, 1]]);
+    let raw = raw_instructions(&compile_words(ShaderStage::Compute, source, (1, 6)));
+    assert!(workgroup_size_builtins(&raw).is_empty());
+
+    let source = "#version 450
+        layout(std430, binding = 0) buffer B { uint v; } b;
+        void main() { b.v = 1u; }";
+    let raw = raw_instructions(&compile_words(ShaderStage::Compute, source, (1, 0)));
+    assert!(workgroup_size_builtins(&raw).is_empty());
+
+    let source = "#version 450
+        layout(local_size_x = 2) in;
+        layout(std430, binding = 0) buffer B { uvec3 v; } b;
+        void main() { b.v = gl_WorkGroupSize; }";
+    let raw = raw_instructions(&compile_words(ShaderStage::Compute, source, (1, 0)));
+    assert_eq!(workgroup_size_builtins(&raw), [vec![2, 1, 1]]);
+}
+
 fn valid_words(stage: ShaderStage, source: &str, lang_version: (u8, u8), env: &str) -> Vec<u32> {
     let words = compile_words(stage, source, lang_version);
     crate::stage_io::spirv_val_in(&words, &["--target-env", env]);
@@ -9109,7 +9515,19 @@ void main() {
     );
     let composites = instructions(&module, Op::SpecConstantComposite).len();
     assert_eq!(composites, 3);
-    assert!(instructions(&module, Op::ConstantComposite).is_empty());
+    let workgroup_size: Vec<u32> = module
+        .annotations
+        .iter()
+        .filter(|inst| {
+            inst.operands.get(2) == Some(&Operand::BuiltIn(spirv::BuiltIn::WorkgroupSize))
+        })
+        .map(|inst| inst.operands[0].unwrap_id_ref())
+        .collect();
+    assert!(instructions(&module, Op::ConstantComposite)
+        .iter()
+        .all(|inst| inst
+            .result_id
+            .is_some_and(|id| workgroup_size.contains(&id))));
 }
 
 #[test]

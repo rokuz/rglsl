@@ -1,17 +1,17 @@
 ; SPIR-V
 ; Version: 1.1
 ; Generator: rspirv
-; Bound: 45
+; Bound: 44
 OpCapability Shader
 %1 = OpExtInstImport "GLSL.std.450"
 OpMemoryModel Logical GLSL450
-OpEntryPoint Fragment %41 "main" %39
-OpExecutionMode %41 OriginUpperLeft
+OpEntryPoint Fragment %40 "main" %38
+OpExecutionMode %40 OriginUpperLeft
 OpDecorate %17 DescriptorSet 0
 OpDecorate %17 Binding 0
 OpDecorate %19 DescriptorSet 0
 OpDecorate %19 Binding 1
-OpDecorate %39 Location 0
+OpDecorate %38 Location 0
 %2 = OpTypeVoid
 %3 = OpTypeFloat 32
 %4 = OpTypeVector %3 2
@@ -32,34 +32,33 @@ OpDecorate %39 Location 0
 %20 = OpTypePointer UniformConstant %12
 %19 = OpVariable  %20  UniformConstant
 %22 = OpTypePointer Private %5
-%23 = OpConstantNull  %5
-%21 = OpVariable  %22  Private %23
-%26 = OpTypeFunction %2
-%28 = OpTypePointer UniformConstant %7
-%29 = OpConstant  %10  1
-%32 = OpTypePointer UniformConstant %11
-%35 = OpTypeSampledImage %7
-%40 = OpTypePointer Output %5
-%39 = OpVariable  %40  Output
-%25 = OpFunction  %2  None %26
-%24 = OpLabel
-OpBranch %27
-%27 = OpLabel
-%30 = OpAccessChain  %28  %17 %29
-%31 = OpLoad  %7  %30
-%33 = OpAccessChain  %32  %19 %29
-%34 = OpLoad  %11  %33
-%36 = OpSampledImage  %35  %31 %34
-%37 = OpImageSampleExplicitLod  %5  %36 %14 Lod %15
-OpStore %21 %37
+%21 = OpVariable  %22  Private
+%25 = OpTypeFunction %2
+%27 = OpTypePointer UniformConstant %7
+%28 = OpConstant  %10  1
+%31 = OpTypePointer UniformConstant %11
+%34 = OpTypeSampledImage %7
+%39 = OpTypePointer Output %5
+%38 = OpVariable  %39  Output
+%24 = OpFunction  %2  None %25
+%23 = OpLabel
+OpBranch %26
+%26 = OpLabel
+%29 = OpAccessChain  %27  %17 %28
+%30 = OpLoad  %7  %29
+%32 = OpAccessChain  %31  %19 %28
+%33 = OpLoad  %11  %32
+%35 = OpSampledImage  %34  %30 %33
+%36 = OpImageSampleExplicitLod  %5  %35 %14 Lod %15
+OpStore %21 %36
 OpReturn
 OpFunctionEnd
-%41 = OpFunction  %2  None %26
-%38 = OpLabel
-OpBranch %42
-%42 = OpLabel
-%43 = OpFunctionCall  %2  %25
-%44 = OpLoad  %5  %21
-OpStore %39 %44
+%40 = OpFunction  %2  None %25
+%37 = OpLabel
+OpBranch %41
+%41 = OpLabel
+%42 = OpFunctionCall  %2  %24
+%43 = OpLoad  %5  %21
+OpStore %38 %43
 OpReturn
 OpFunctionEnd

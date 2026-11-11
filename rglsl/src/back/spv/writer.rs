@@ -47,9 +47,6 @@ impl Function {
                 for local_var in self.variables.values() {
                     local_var.instruction.to_words(sink);
                 }
-                for local_var in self.force_loop_bounding_vars.iter() {
-                    local_var.instruction.to_words(sink);
-                }
                 for internal_var in self.spilled_composites.values() {
                     internal_var.instruction.to_words(sink);
                 }
@@ -89,12 +86,9 @@ impl Writer {
             annotations: vec![],
             flags: options.flags,
             bounds_check_policies: options.bounds_check_policies,
-            zero_initialize_workgroup_memory: options.zero_initialize_workgroup_memory,
-            force_loop_bounding: options.force_loop_bounding,
             vulkan_memory_model: false,
             device_scope_used: false,
             use_storage_input_output_16: options.use_storage_input_output_16,
-            emit_int_div_checks: options.emit_int_div_checks,
             void_type,
             tuple_of_u32s_ty_id: None,
             lookup_type: crate::FastHashMap::default(),
@@ -154,8 +148,6 @@ impl Writer {
         self.capabilities_available = options.capabilities.clone();
         self.flags = options.flags;
         self.bounds_check_policies = options.bounds_check_policies;
-        self.zero_initialize_workgroup_memory = options.zero_initialize_workgroup_memory;
-        self.force_loop_bounding = options.force_loop_bounding;
         self.use_storage_input_output_16 = options.use_storage_input_output_16;
         self.binding_map = options.binding_map.clone();
         self.io_f16_polyfills =
@@ -193,8 +185,6 @@ impl Writer {
             // Copied from the old Writer:
             flags: self.flags,
             bounds_check_policies: self.bounds_check_policies,
-            zero_initialize_workgroup_memory: self.zero_initialize_workgroup_memory,
-            force_loop_bounding: self.force_loop_bounding,
             vulkan_memory_model: false,
             device_scope_used: false,
             use_storage_input_output_16: self.use_storage_input_output_16,
@@ -203,7 +193,6 @@ impl Writer {
             binding_map: take(&mut self.binding_map),
             task_dispatch_limits: self.task_dispatch_limits,
             mesh_shader_primitive_indices_clamp: self.mesh_shader_primitive_indices_clamp,
-            emit_int_div_checks: self.emit_int_div_checks,
 
             // Initialized afresh:
             id_gen,
@@ -488,23 +477,8 @@ impl Writer {
         self.get_pointer_type_id(f32_id, class)
     }
 
-    pub(super) fn get_vec2u_pointer_type_id(&mut self, class: spirv::StorageClass) -> Word {
-        let vec2u_id = self.get_numeric_type_id(NumericType::Vector {
-            size: crate::VectorSize::Bi,
-            scalar: crate::Scalar::U32,
-        });
-        self.get_pointer_type_id(vec2u_id, class)
-    }
-
     pub(super) fn get_bool_type_id(&mut self) -> Word {
         self.get_numeric_type_id(NumericType::Scalar(crate::Scalar::BOOL))
-    }
-
-    pub(super) fn get_vec2_bool_type_id(&mut self) -> Word {
-        self.get_numeric_type_id(NumericType::Vector {
-            size: crate::VectorSize::Bi,
-            scalar: crate::Scalar::BOOL,
-        })
     }
 
     /// Used for "mulhi" to get the upper bits of multiplication.
@@ -676,44 +650,8 @@ impl Writer {
     ) -> Result<(), Error> {
         log::trace!("Generating wrapped functions for {:?}", ir_function.name);
 
-        for (expr_handle, expr) in ir_function.expressions.iter() {
+        for (_, expr) in ir_function.expressions.iter() {
             match *expr {
-                crate::Expression::Binary { op, left, right } => {
-                    let expr_ty_inner = info[expr_handle].ty.inner_with(&ir_module.types);
-                    if let Some(expr_ty) = NumericType::from_inner(expr_ty_inner) {
-                        match (op, expr_ty.scalar().kind) {
-                            // Division and modulo are undefined behaviour when the
-                            // dividend is the minimum representable value and the divisor
-                            // is negative one, or when the divisor is zero. These wrapped
-                            // functions override the divisor to one in these cases,
-                            // matching the WGSL spec.
-                            //
-                            // Signed `%` is additionally always wrapped (even without
-                            // `emit_int_div_checks`) so it can be lowered to
-                            // `a - b * (a / b)`: `OpSRem` produces a poison result for
-                            // negative operands in the Vulkan SPIR-V environment unless
-                            // `VK_KHR_maintenance8` is enabled. See
-                            // <https://github.com/gfx-rs/wgpu/issues/8191>.
-                            (
-                                crate::BinaryOperator::Divide | crate::BinaryOperator::Modulo,
-                                crate::ScalarKind::Sint | crate::ScalarKind::Uint,
-                            ) if self.emit_int_div_checks
-                                || matches!(
-                                    (op, expr_ty.scalar().kind),
-                                    (crate::BinaryOperator::Modulo, crate::ScalarKind::Sint)
-                                ) =>
-                            {
-                                self.write_wrapped_binary_op(
-                                    op,
-                                    expr_ty,
-                                    &info[left].ty,
-                                    &info[right].ty,
-                                )?;
-                            }
-                            _ => {}
-                        }
-                    }
-                }
                 crate::Expression::Load { pointer } => {
                     if let crate::TypeInner::Pointer {
                         base: pointer_type,
@@ -772,243 +710,6 @@ impl Writer {
             }
         }
 
-        Ok(())
-    }
-
-    /// Write a SPIR-V function that performs the operator `op` with rglsl IR semantics.
-    ///
-    /// Define a function that performs an integer division or modulo operation,
-    /// except that using a divisor of zero or causing signed overflow with a
-    /// divisor of -1 returns the numerator unchanged, rather than exhibiting
-    /// undefined behavior.
-    ///
-    /// Store the generated function's id in the [`wrapped_functions`] table.
-    ///
-    /// The operator `op` must be either [`Divide`] or [`Modulo`].
-    ///
-    /// [`wrapped_functions`]: Writer::wrapped_functions
-    /// [`Divide`]: crate::BinaryOperator::Divide
-    /// [`Modulo`]: crate::BinaryOperator::Modulo
-    fn write_wrapped_binary_op(
-        &mut self,
-        op: crate::BinaryOperator,
-        return_type: NumericType,
-        left_type: &TypeResolution,
-        right_type: &TypeResolution,
-    ) -> Result<(), Error> {
-        let return_type_id = self.get_localtype_id(LocalType::Numeric(return_type));
-        let left_type_id = self.get_expression_type_id(left_type)?;
-        let right_type_id = self.get_expression_type_id(right_type)?;
-        let function_name = match op {
-            crate::BinaryOperator::Divide => "rglsl_div",
-            crate::BinaryOperator::Modulo => "rglsl_mod",
-            _ => return Err(Error::Validation("only division and modulo are wrapped")),
-        };
-        let splat_size = match return_type {
-            NumericType::Scalar(_) => None,
-            NumericType::Vector { size, .. } => Some(size),
-            NumericType::Matrix { .. } => {
-                return Err(Error::Validation("wrapped division operand is a matrix"))
-            }
-        };
-        let scalar = return_type.scalar();
-        let signed = match scalar.kind {
-            crate::ScalarKind::Sint => true,
-            crate::ScalarKind::Uint => false,
-            _ => {
-                return Err(Error::Validation(
-                    "wrapped division operand is not an integer",
-                ))
-            }
-        };
-
-        // Check if we've already emitted this function.
-        let wrapped = WrappedFunction::BinaryOp {
-            op,
-            left_type_id,
-            right_type_id,
-        };
-        let function_id = match self.wrapped_functions.entry(wrapped) {
-            Entry::Occupied(_) => return Ok(()),
-            Entry::Vacant(e) => *e.insert(self.id_gen.next()),
-        };
-
-        if self.flags.contains(WriterFlags::DEBUG) {
-            self.debugs
-                .push(Instruction::name(function_id, function_name));
-        }
-        let mut function = Function::default();
-
-        let function_type_id = self.get_function_type(LookupFunctionType {
-            parameter_type_ids: vec![left_type_id, right_type_id],
-            return_type_id,
-        });
-        function.signature = Some(Instruction::function(
-            return_type_id,
-            function_id,
-            spirv::FunctionControl::empty(),
-            function_type_id,
-        ));
-
-        let lhs_id = self.id_gen.next();
-        let rhs_id = self.id_gen.next();
-        if self.flags.contains(WriterFlags::DEBUG) {
-            self.debugs.push(Instruction::name(lhs_id, "lhs"));
-            self.debugs.push(Instruction::name(rhs_id, "rhs"));
-        }
-        let left_par = Instruction::function_parameter(left_type_id, lhs_id);
-        let right_par = Instruction::function_parameter(right_type_id, rhs_id);
-        for instruction in [left_par, right_par] {
-            function.parameters.push(FunctionArgument {
-                instruction,
-                handle_id: 0,
-            });
-        }
-
-        let label_id = self.id_gen.next();
-        let mut block = Block::new(label_id);
-
-        let bool_type = return_type.with_scalar(crate::Scalar::BOOL);
-        let bool_type_id = self.get_numeric_type_id(bool_type);
-
-        let maybe_splat_const = |writer: &mut Self, const_id| match splat_size {
-            None => const_id,
-            Some(size) => {
-                let constituent_ids = [const_id; crate::VectorSize::MAX];
-                writer.get_local_constant_composite(
-                    LocalType::Numeric(return_type),
-                    &constituent_ids[..size as usize],
-                )
-            }
-        };
-
-        let const_zero_id = self.get_constant_scalar_with(0, scalar)?;
-        let composite_zero_id = maybe_splat_const(self, const_zero_id);
-        let rhs_eq_zero_id = self.id_gen.next();
-        block.body.push(Instruction::binary(
-            spirv::Op::IEqual,
-            bool_type_id,
-            rhs_eq_zero_id,
-            rhs_id,
-            composite_zero_id,
-        ));
-        let divisor_selector_id = if signed {
-            let (const_min_id, const_neg_one_id) = match scalar.width {
-                2 => Ok((
-                    self.get_constant_scalar(crate::Literal::I16(i16::MIN)),
-                    self.get_constant_scalar(crate::Literal::I16(-1i16)),
-                )),
-                4 => Ok((
-                    self.get_constant_scalar(crate::Literal::I32(i32::MIN)),
-                    self.get_constant_scalar(crate::Literal::I32(-1i32)),
-                )),
-                8 => Ok((
-                    self.get_constant_scalar(crate::Literal::I64(i64::MIN)),
-                    self.get_constant_scalar(crate::Literal::I64(-1i64)),
-                )),
-                _ => Err(Error::Validation("Unexpected scalar width")),
-            }?;
-            let composite_min_id = maybe_splat_const(self, const_min_id);
-            let composite_neg_one_id = maybe_splat_const(self, const_neg_one_id);
-
-            let lhs_eq_int_min_id = self.id_gen.next();
-            block.body.push(Instruction::binary(
-                spirv::Op::IEqual,
-                bool_type_id,
-                lhs_eq_int_min_id,
-                lhs_id,
-                composite_min_id,
-            ));
-            let rhs_eq_neg_one_id = self.id_gen.next();
-            block.body.push(Instruction::binary(
-                spirv::Op::IEqual,
-                bool_type_id,
-                rhs_eq_neg_one_id,
-                rhs_id,
-                composite_neg_one_id,
-            ));
-            let lhs_eq_int_min_and_rhs_eq_neg_one_id = self.id_gen.next();
-            block.body.push(Instruction::binary(
-                spirv::Op::LogicalAnd,
-                bool_type_id,
-                lhs_eq_int_min_and_rhs_eq_neg_one_id,
-                lhs_eq_int_min_id,
-                rhs_eq_neg_one_id,
-            ));
-            let rhs_eq_zero_or_lhs_eq_int_min_and_rhs_eq_neg_one_id = self.id_gen.next();
-            block.body.push(Instruction::binary(
-                spirv::Op::LogicalOr,
-                bool_type_id,
-                rhs_eq_zero_or_lhs_eq_int_min_and_rhs_eq_neg_one_id,
-                rhs_eq_zero_id,
-                lhs_eq_int_min_and_rhs_eq_neg_one_id,
-            ));
-            rhs_eq_zero_or_lhs_eq_int_min_and_rhs_eq_neg_one_id
-        } else {
-            rhs_eq_zero_id
-        };
-
-        let const_one_id = self.get_constant_scalar_with(1, scalar)?;
-        let composite_one_id = maybe_splat_const(self, const_one_id);
-        let divisor_id = self.id_gen.next();
-        block.body.push(Instruction::select(
-            right_type_id,
-            divisor_id,
-            divisor_selector_id,
-            composite_one_id,
-            rhs_id,
-        ));
-        let return_id = if matches!(op, crate::BinaryOperator::Modulo) && signed {
-            // `OpSRem` produces a poison result for negative operands in the Vulkan
-            // environment without the `maintenance8` feature. `OpSDiv` is not poisoned, so
-            // reconstruct the remainder as `a - b * (a / b)`, which is well-defined for
-            // negative operands. `divisor_id` is the zero/overflow-guarded divisor selected
-            // above, so the degenerate cases still match `OpSRem`'s guarded result (0).
-            let quotient_id = self.id_gen.next();
-            block.body.push(Instruction::binary(
-                spirv::Op::SDiv,
-                return_type_id,
-                quotient_id,
-                lhs_id,
-                divisor_id,
-            ));
-            let product_id = self.id_gen.next();
-            block.body.push(Instruction::binary(
-                spirv::Op::IMul,
-                return_type_id,
-                product_id,
-                quotient_id,
-                divisor_id,
-            ));
-            let remainder_id = self.id_gen.next();
-            block.body.push(Instruction::binary(
-                spirv::Op::ISub,
-                return_type_id,
-                remainder_id,
-                lhs_id,
-                product_id,
-            ));
-            remainder_id
-        } else {
-            let spv_op = match (op, signed) {
-                (crate::BinaryOperator::Divide, true) => spirv::Op::SDiv,
-                (crate::BinaryOperator::Divide, false) => spirv::Op::UDiv,
-                (_, true) => spirv::Op::SRem,
-                (_, false) => spirv::Op::UMod,
-            };
-            let return_id = self.id_gen.next();
-            block.body.push(Instruction::binary(
-                spv_op,
-                return_type_id,
-                return_id,
-                lhs_id,
-                divisor_id,
-            ));
-            return_id
-        };
-
-        function.consume(block, Instruction::return_value(return_id));
-        function.to_words(&mut self.logical_layout.function_definitions)?;
         Ok(())
     }
 
@@ -1434,7 +1135,6 @@ impl Writer {
         let mut parameter_type_ids = Vec::with_capacity(ir_function.arguments.len());
 
         let mut local_invocation_index_var_id = None;
-        let mut local_invocation_index_id = None;
 
         for argument in ir_function.arguments.iter() {
             let class = spirv::StorageClass::Input;
@@ -1464,7 +1164,6 @@ impl Writer {
                         argument_type_id,
                     );
                     if binding == &crate::Binding::BuiltIn(crate::BuiltIn::LocalInvocationIndex) {
-                        local_invocation_index_id = Some(id);
                         local_invocation_index_var_id = Some(varying_id);
                     }
 
@@ -1496,7 +1195,6 @@ impl Writer {
                         constituent_ids.push(id);
                         if binding == &crate::Binding::BuiltIn(crate::BuiltIn::LocalInvocationIndex)
                         {
-                            local_invocation_index_id = Some(id);
                             local_invocation_index_var_id = Some(varying_id);
                         }
                     }
@@ -1778,7 +1476,6 @@ impl Writer {
 
             // Steal the Writer's temp list for a bit.
             temp_list: core::mem::take(&mut self.temp_list),
-            force_loop_bounding: self.force_loop_bounding,
             writer: self,
             expression_constness: super::ExpressionConstnessTracker::from_arena(
                 &ir_function.expressions,
@@ -1838,22 +1535,7 @@ impl Writer {
                 pointer_type_id,
                 id,
                 spirv::StorageClass::Function,
-                init_word.or_else(|| match ir_module.types[variable.ty].inner {
-                    crate::TypeInner::RayQuery { .. }
-                    | crate::TypeInner::HitObject { .. }
-                    | crate::TypeInner::TensorLayout { .. }
-                    | crate::TypeInner::TensorView { .. }
-                    | crate::TypeInner::Spirv { .. } => None,
-                    _ if contains_raw_type(&ir_module.types, variable.ty) => None,
-                    _ => {
-                        let plain = context.writer.plain_type_id(type_id);
-                        if context.writer.contains_physical_type(plain) {
-                            None
-                        } else {
-                            Some(context.writer.write_constant_null(plain))
-                        }
-                    }
-                }),
+                init_word,
             );
 
             context
@@ -1886,37 +1568,7 @@ impl Writer {
             .function
             .consume(prelude, Instruction::branch(next_id));
 
-        let workgroup_vars_init_exit_block_id =
-            match (context.writer.zero_initialize_workgroup_memory, interface) {
-                (
-                    super::ZeroInitializeWorkgroupMemoryMode::Polyfill,
-                    Some(
-                        ref mut interface @ FunctionInterface {
-                            stage:
-                                crate::ShaderStage::Compute
-                                | crate::ShaderStage::Mesh
-                                | crate::ShaderStage::Task,
-                            ..
-                        },
-                    ),
-                ) => context.writer.generate_workgroup_vars_init_block(
-                    next_id,
-                    ir_module,
-                    info,
-                    local_invocation_index_id,
-                    interface,
-                    context.function,
-                )?,
-                _ => None,
-            };
-
-        let main_id = if let Some(exit_id) = workgroup_vars_init_exit_block_id {
-            exit_id
-        } else {
-            next_id
-        };
-
-        context.write_function_body(main_id, debug_info.as_ref())?;
+        context.write_function_body(next_id, debug_info.as_ref())?;
 
         // Consume the `BlockContext`, ending its borrows and letting the
         // `Writer` steal back its cached expression table and temp_list.
@@ -2233,6 +1885,7 @@ impl Writer {
                             &rate,
                         )
                         .to_words(&mut self.logical_layout.execution_modes);
+                        self.write_workgroup_size_builtin(entry_point);
                     }
                     _ => self.write_workgroup_size(function_id, entry_point)?,
                 }
@@ -3677,125 +3330,6 @@ impl Writer {
             .push(Instruction::memory_barrier(mem_scope_id, semantics_id));
     }
 
-    fn generate_workgroup_vars_init_block(
-        &mut self,
-        entry_id: Word,
-        ir_module: &crate::Module,
-        info: &FunctionInfo,
-        local_invocation_index: Option<Word>,
-        interface: &mut FunctionInterface,
-        function: &mut Function,
-    ) -> Result<Option<Word>, Error> {
-        let body = ir_module
-            .global_variables
-            .iter()
-            .filter(|&(handle, var)| {
-                let task_exception = (var.space == crate::AddressSpace::TaskPayload)
-                    && interface.stage == crate::ShaderStage::Task;
-                !info[handle].is_empty()
-                    && (var.space == crate::AddressSpace::WorkGroup || task_exception)
-            })
-            .map(|(handle, var)| {
-                // It's safe to use `var_id` here, not `access_id`, because only
-                // variables in the `Uniform` and `StorageBuffer` address spaces
-                // get wrapped, and we're initializing `WorkGroup` variables.
-                let var_id = self.global_variables[handle].var_id;
-                let var_type_id = self.get_handle_type_id(var.ty)?;
-                let var_type_id = self.plain_type_id(var_type_id);
-                let init_word = self.get_constant_null(var_type_id);
-                Ok(Instruction::store(var_id, init_word, None))
-            })
-            .collect::<Result<Vec<_>, Error>>()?;
-
-        if body.is_empty() {
-            return Ok(None);
-        }
-
-        let mut pre_if_block = Block::new(entry_id);
-
-        let declared = ir_module.global_variables.iter().find_map(|(handle, var)| {
-            matches!(
-                var.io,
-                Some(crate::Binding::BuiltIn(
-                    crate::BuiltIn::LocalInvocationIndex
-                ))
-            )
-            .then(|| self.global_variables[handle].var_id)
-        });
-        let local_invocation_index = if let Some(local_invocation_index) = local_invocation_index {
-            local_invocation_index
-        } else if let Some(varying_id) = declared {
-            let u32_ty_id = self.get_u32_type_id();
-            let id = self.id_gen.next();
-            pre_if_block
-                .body
-                .push(Instruction::load(u32_ty_id, id, varying_id, None));
-            if !interface.varying_ids.contains(&varying_id) {
-                interface.varying_ids.push(varying_id);
-            }
-            id
-        } else {
-            let varying_id = self.id_gen.next();
-            let class = spirv::StorageClass::Input;
-            let u32_ty_id = self.get_u32_type_id();
-            let pointer_type_id = self.get_pointer_type_id(u32_ty_id, class);
-
-            Instruction::variable(pointer_type_id, varying_id, class, None)
-                .to_words(&mut self.logical_layout.declarations);
-
-            self.decorate(
-                varying_id,
-                spirv::Decoration::BuiltIn,
-                &[spirv::BuiltIn::LocalInvocationIndex as u32],
-            );
-
-            interface.varying_ids.push(varying_id);
-            let id = self.id_gen.next();
-            pre_if_block
-                .body
-                .push(Instruction::load(u32_ty_id, id, varying_id, None));
-
-            id
-        };
-
-        let zero_id = self.get_constant_scalar(crate::Literal::U32(0));
-
-        let eq_id = self.id_gen.next();
-        pre_if_block.body.push(Instruction::binary(
-            spirv::Op::IEqual,
-            self.get_bool_type_id(),
-            eq_id,
-            local_invocation_index,
-            zero_id,
-        ));
-
-        let merge_id = self.id_gen.next();
-        pre_if_block.body.push(Instruction::selection_merge(
-            merge_id,
-            spirv::SelectionControl::NONE,
-        ));
-
-        let accept_id = self.id_gen.next();
-        function.consume(
-            pre_if_block,
-            Instruction::branch_conditional(eq_id, accept_id, merge_id),
-        );
-
-        let accept_block = Block {
-            label_id: accept_id,
-            body,
-        };
-        function.consume(accept_block, Instruction::branch(merge_id));
-
-        let mut post_if_block = Block::new(merge_id);
-
-        self.write_control_barrier(crate::Barrier::WORK_GROUP, &mut post_if_block.body);
-
-        let next_id = self.id_gen.next();
-        function.consume(post_if_block, Instruction::branch(next_id));
-        Ok(Some(next_id))
-    }
-
     /// Generate an `OpVariable` for one value in an [`EntryPoint`]'s IO interface.
     ///
     /// The [`Binding`]s of the arguments and result of an [`EntryPoint`]'s
@@ -4732,6 +4266,7 @@ impl Writer {
             },
         };
         for (flag, decoration) in [
+            (crate::MemoryDecorations::RESTRICT, Decoration::Restrict),
             (
                 crate::MemoryDecorations::NON_WRITABLE,
                 Decoration::NonWritable,
@@ -4834,6 +4369,7 @@ impl Writer {
                         matrix_layout: None,
                         xfb_offset: None,
                         heap: None,
+                        memory_decorations: crate::MemoryDecorations::empty(),
                         relaxed_precision: false,
                     };
                     self.decorate_struct_member(
@@ -4899,19 +4435,6 @@ impl Writer {
             }
         };
 
-        let init_word = match (global_variable.space, self.zero_initialize_workgroup_memory) {
-            _ if self.contains_physical_type(inner_type_id) => init_word,
-            (crate::AddressSpace::Private, _)
-                if crate::proc::contains_ray_object(&ir_module.types, global_variable.ty) =>
-            {
-                init_word
-            }
-            (crate::AddressSpace::Private, _)
-            | (crate::AddressSpace::WorkGroup, super::ZeroInitializeWorkgroupMemoryMode::Native) => {
-                init_word.or_else(|| Some(self.get_constant_null(inner_type_id)))
-            }
-            _ => init_word,
-        };
         if global_variable.space == crate::AddressSpace::Private {
             self.decorate_pointer_variable(&ir_module.types, global_variable.ty, id);
         }
@@ -5135,6 +4658,16 @@ impl Writer {
             return Ok(());
         }
 
+        for decoration in
+            member_memory_decorations(member.memory_decorations, self.vulkan_memory_model)
+        {
+            self.annotations.push(Instruction::member_decorate(
+                struct_id,
+                index as u32,
+                decoration,
+                &[],
+            ));
+        }
         self.annotations.push(Instruction::member_decorate(
             struct_id,
             index as u32,
@@ -5317,7 +4850,7 @@ impl Writer {
                 mark_laid_out(&ir_module.types, &mut self.laid_out_types, var.ty);
             }
         }
-        self.prepare_heaps(ir_module);
+        self.prepare_heaps(ir_module, mod_info);
         self.descriptor_heap = ir_module.descriptor_heap;
 
         self.decorated_blocks = crate::arena::HandleSet::for_arena(&ir_module.types);
@@ -5327,7 +4860,7 @@ impl Writer {
 
         // write all types
         for (handle, _) in ir_module.types.iter() {
-            if self.is_deferred_heap_type(handle) {
+            if self.is_deferred_heap_type(handle) || self.is_unused_heap_type(handle) {
                 continue;
             }
             self.write_type_declaration_arena(ir_module, mod_info, handle)?;
@@ -5339,6 +4872,9 @@ impl Writer {
                 ..
             } = ty.inner
             {
+                if self.is_unused_heap_type(handle) {
+                    continue;
+                }
                 let id = self.get_handle_type_id(handle)?;
                 self.physical_type_ids.insert(id);
             }
@@ -5360,7 +4896,7 @@ impl Writer {
         for (handle, _) in ir_module.overrides.iter() {
             self.write_override(handle, ir_module, mod_info)?;
         }
-        self.write_heap_layouts(ir_module)?;
+        self.write_heap_layouts(ir_module, mod_info)?;
 
         // write the name of constants on their respective const-expression initializer
         if self.flags.contains(WriterFlags::DEBUG) {
@@ -5666,6 +5202,56 @@ impl Writer {
     }
 }
 
+pub(super) fn access_decorations(
+    access: crate::StorageAccess,
+    member: crate::MemoryDecorations,
+) -> Vec<spirv::Decoration> {
+    let mut decorations = Vec::new();
+    if !access.contains(crate::StorageAccess::STORE)
+        && !member.contains(crate::MemoryDecorations::NON_WRITABLE)
+    {
+        decorations.push(spirv::Decoration::NonWritable);
+    }
+    if !access.contains(crate::StorageAccess::LOAD)
+        && !member.contains(crate::MemoryDecorations::NON_READABLE)
+    {
+        decorations.push(spirv::Decoration::NonReadable);
+    }
+    decorations
+}
+
+pub(super) fn member_memory_decorations(
+    decorations: crate::MemoryDecorations,
+    vulkan_memory_model: bool,
+) -> Vec<spirv::Decoration> {
+    use crate::MemoryDecorations as Md;
+    let coherent = Md::COHERENT
+        | Md::DEVICE_COHERENT
+        | Md::QUEUE_FAMILY_COHERENT
+        | Md::WORKGROUP_COHERENT
+        | Md::SUBGROUP_COHERENT
+        | Md::SHADER_CALL_COHERENT;
+    let mut memory = Vec::new();
+    if !vulkan_memory_model {
+        if decorations.contains(Md::VOLATILE) {
+            memory.push(spirv::Decoration::Volatile);
+            memory.push(spirv::Decoration::Coherent);
+        } else if decorations.intersects(coherent) {
+            memory.push(spirv::Decoration::Coherent);
+        }
+    }
+    for (flag, decoration) in [
+        (Md::RESTRICT, spirv::Decoration::Restrict),
+        (Md::NON_WRITABLE, spirv::Decoration::NonWritable),
+        (Md::NON_READABLE, spirv::Decoration::NonReadable),
+    ] {
+        if decorations.contains(flag) {
+            memory.push(decoration);
+        }
+    }
+    memory
+}
+
 #[test]
 fn test_write_physical_layout() {
     let mut writer = Writer::new(&Options::default()).unwrap();
@@ -5688,20 +5274,13 @@ impl Writer {
         if self.buffer_blocks.insert(id) {
             self.decorate(id, spirv::Decoration::Block, &[]);
         }
-        let mut decorations = Vec::new();
-        if !access.contains(crate::StorageAccess::STORE) {
-            decorations.push(spirv::Decoration::NonWritable);
-        }
-        if !access.contains(crate::StorageAccess::LOAD) {
-            decorations.push(spirv::Decoration::NonReadable);
-        }
-        for index in 0..members.len() {
+        for (index, member) in members.iter().enumerate() {
             let Ok(index) = u32::try_from(index) else {
                 break;
             };
-            for decoration in &decorations {
+            for decoration in access_decorations(access, member.memory_decorations) {
                 self.annotations
-                    .push(Instruction::member_decorate(id, index, *decoration, &[]));
+                    .push(Instruction::member_decorate(id, index, decoration, &[]));
             }
         }
     }
@@ -5869,17 +5448,4 @@ fn reachable_functions(module: &crate::Module) -> Vec<&crate::Function> {
         calls(&function.body, &mut pending);
     }
     reached
-}
-
-fn contains_raw_type(types: &UniqueArena<crate::Type>, ty: Handle<crate::Type>) -> bool {
-    match types[ty].inner {
-        crate::TypeInner::Spirv { .. } => true,
-        crate::TypeInner::Array { base, .. } | crate::TypeInner::BindingArray { base, .. } => {
-            contains_raw_type(types, base)
-        }
-        crate::TypeInner::Struct { ref members, .. } => members
-            .iter()
-            .any(|member| contains_raw_type(types, member.ty)),
-        _ => false,
-    }
 }

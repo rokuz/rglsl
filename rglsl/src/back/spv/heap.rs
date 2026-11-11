@@ -32,6 +32,7 @@ pub(super) struct HeapState {
     offsets: crate::FastHashMap<Handle<crate::Type>, Vec<Value>>,
     size_of: crate::FastHashMap<Word, Word>,
     deferred: crate::FastHashSet<Handle<crate::Type>>,
+    unused: crate::FastHashSet<Handle<crate::Type>>,
     blocks: crate::FastHashSet<Word>,
 }
 
@@ -660,7 +661,8 @@ impl Writer {
         Ok(())
     }
 
-    pub(super) fn prepare_heaps(&mut self, module: &Module) {
+    pub(super) fn prepare_heaps(&mut self, module: &Module, info: &crate::valid::ModuleInfo) {
+        self.heap.unused = unused_heap_types(module, info);
         self.heap_laid_out(module);
         for (_, var) in module.global_variables.iter() {
             if let crate::AddressSpace::DescriptorHeap(_) = var.space {
@@ -674,6 +676,10 @@ impl Writer {
 
     pub(super) fn is_deferred_heap_type(&self, ty: Handle<crate::Type>) -> bool {
         self.heap.deferred.contains(&ty)
+    }
+
+    pub(super) fn is_unused_heap_type(&self, ty: Handle<crate::Type>) -> bool {
+        self.heap.unused.contains(&ty)
     }
 
     fn write_deferred_root(
@@ -759,23 +765,15 @@ impl Writer {
         let TypeInner::Struct { ref members, .. } = module.types[base].inner else {
             return;
         };
-        for index in 0..members.len() {
+        for (index, member) in members.iter().enumerate() {
             let Ok(index) = u32::try_from(index) else {
                 return;
             };
-            if !access.contains(StorageAccess::STORE) {
+            for decoration in super::writer::access_decorations(access, member.memory_decorations) {
                 self.annotations.push(Instruction::member_decorate(
                     block_id,
                     index,
-                    spirv::Decoration::NonWritable,
-                    &[],
-                ));
-            }
-            if !access.contains(StorageAccess::LOAD) {
-                self.annotations.push(Instruction::member_decorate(
-                    block_id,
-                    index,
-                    spirv::Decoration::NonReadable,
+                    decoration,
                     &[],
                 ));
             }
@@ -796,11 +794,18 @@ impl Writer {
         Ok(id)
     }
 
-    pub(super) fn write_heap_layouts(&mut self, module: &Module) -> Result<(), Error> {
+    pub(super) fn write_heap_layouts(
+        &mut self,
+        module: &Module,
+        info: &crate::valid::ModuleInfo,
+    ) -> Result<(), Error> {
         for (handle, var) in module.global_variables.iter() {
             let crate::AddressSpace::DescriptorHeap(_) = var.space else {
                 continue;
             };
+            if !heap_view_used(module, info, handle) {
+                continue;
+            }
             let ty = var.ty;
             let descriptors = contains_descriptor(module, ty);
             let structure = matches!(module.types[ty].inner, TypeInner::Struct { .. });
@@ -1058,4 +1063,124 @@ impl BlockContext<'_> {
         }
         Ok(id)
     }
+}
+
+fn heap_view_used(
+    module: &Module,
+    info: &crate::valid::ModuleInfo,
+    global: Handle<crate::GlobalVariable>,
+) -> bool {
+    module
+        .functions
+        .iter()
+        .any(|(function, _)| !info[function][global].is_empty())
+        || (0..module.entry_points.len())
+            .any(|index| !info.get_entry_point(index)[global].is_empty())
+}
+
+fn type_children(inner: &TypeInner) -> Vec<Handle<crate::Type>> {
+    match *inner {
+        TypeInner::Array { base, .. }
+        | TypeInner::BindingArray { base, .. }
+        | TypeInner::Pointer { base, .. }
+        | TypeInner::BufferDescriptor { base, .. } => alloc::vec![base],
+        TypeInner::Struct { ref members, .. } => members.iter().map(|member| member.ty).collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn reach(
+    module: &Module,
+    roots: impl IntoIterator<Item = Handle<crate::Type>>,
+) -> crate::FastHashSet<Handle<crate::Type>> {
+    let mut found = crate::FastHashSet::default();
+    let mut pending: Vec<Handle<crate::Type>> = roots.into_iter().collect();
+    while let Some(ty) = pending.pop() {
+        if found.insert(ty) {
+            pending.extend(type_children(&module.types[ty].inner));
+        }
+    }
+    found
+}
+
+fn unused_heap_types(
+    module: &Module,
+    info: &crate::valid::ModuleInfo,
+) -> crate::FastHashSet<Handle<crate::Type>> {
+    let unused_views = module
+        .global_variables
+        .iter()
+        .filter(|&(handle, var)| {
+            matches!(var.space, crate::AddressSpace::DescriptorHeap(_))
+                && !heap_view_used(module, info, handle)
+        })
+        .map(|(_, var)| var.ty);
+    let candidates = reach(module, unused_views);
+    if candidates.is_empty() {
+        return candidates;
+    }
+    let mut roots: Vec<Handle<crate::Type>> = module
+        .types
+        .iter()
+        .map(|(handle, _)| handle)
+        .filter(|handle| !candidates.contains(handle))
+        .collect();
+    roots.extend(
+        module
+            .global_variables
+            .iter()
+            .filter(|&(handle, var)| {
+                !matches!(var.space, crate::AddressSpace::DescriptorHeap(_))
+                    || heap_view_used(module, info, handle)
+            })
+            .map(|(_, var)| var.ty),
+    );
+    roots.extend(module.constants.iter().map(|(_, constant)| constant.ty));
+    roots.extend(module.overrides.iter().map(|(_, item)| item.ty));
+    roots.extend(
+        module
+            .global_expressions
+            .iter()
+            .filter_map(|(handle, _)| info[handle].handle()),
+    );
+    let special = &module.special_types;
+    roots.extend(
+        [
+            special.ray_desc,
+            special.ray_intersection,
+            special.ray_vertex_return,
+            special.external_texture_params,
+            special.external_texture_transfer_function,
+        ]
+        .into_iter()
+        .flatten(),
+    );
+    roots.extend(special.predeclared_types.values().copied());
+    let functions = module
+        .functions
+        .iter()
+        .map(|(handle, function)| (function, &info[handle]))
+        .chain(
+            module
+                .entry_points
+                .iter()
+                .enumerate()
+                .map(|(index, entry)| (&entry.function, info.get_entry_point(index))),
+        );
+    for (function, function_info) in functions {
+        roots.extend(function.arguments.iter().map(|argument| argument.ty));
+        roots.extend(function.result.as_ref().map(|result| result.ty));
+        roots.extend(function.local_variables.iter().map(|(_, local)| local.ty));
+        roots.extend(
+            function
+                .expressions
+                .iter()
+                .filter_map(|(handle, _)| function_info[handle].ty.handle()),
+        );
+    }
+    let needed = reach(module, roots);
+    candidates
+        .into_iter()
+        .filter(|ty| !needed.contains(ty))
+        .collect()
 }

@@ -1,12 +1,12 @@
 ; SPIR-V
 ; Version: 1.1
 ; Generator: rspirv
-; Bound: 412
+; Bound: 384
 OpCapability Shader
 %1 = OpExtInstImport "GLSL.std.450"
 OpMemoryModel Logical GLSL450
-OpEntryPoint GLCompute %407 "main"
-OpExecutionMode %407 LocalSize 1 1 1
+OpEntryPoint GLCompute %379 "main"
+OpExecutionMode %379 LocalSize 1 1 1
 %2 = OpTypeVoid
 %3 = OpTypeInt 32 1
 %4 = OpTypeVector %3 2
@@ -137,36 +137,8 @@ OpExecutionMode %407 LocalSize 1 1 1
 %227 = OpTypePointer Function %15
 %229 = OpTypePointer Function %18
 %243 = OpTypePointer Function %5
-%244 = OpConstantNull  %5
-%246 = OpTypePointer Function %3
-%247 = OpConstantNull  %3
-%249 = OpTypePointer Function %7
-%250 = OpConstantNull  %7
-%252 = OpConstantNull  %6
-%254 = OpConstantNull  %6
-%256 = OpConstantNull  %8
-%258 = OpConstantNull  %8
-%260 = OpConstantNull  %6
-%262 = OpConstantNull  %6
-%264 = OpConstantNull  %9
-%266 = OpConstantNull  %9
-%268 = OpConstantNull  %9
-%270 = OpConstantNull  %9
-%272 = OpConstantNull  %10
-%274 = OpConstantNull  %10
-%276 = OpConstantNull  %10
-%278 = OpConstantNull  %10
-%280 = OpConstantNull  %12
-%282 = OpConstantNull  %12
-%284 = OpConstantNull  %10
-%286 = OpConstantNull  %10
-%288 = OpConstantNull  %10
-%290 = OpConstantNull  %10
-%292 = OpConstantNull  %12
-%294 = OpConstantNull  %12
-%296 = OpConstantNull  %4
-%298 = OpConstantNull  %6
-%300 = OpConstantNull  %8
+%245 = OpTypePointer Function %3
+%247 = OpTypePointer Function %7
 %123 = OpFunction  %2  None %124
 %122 = OpLabel
 OpBranch %125
@@ -334,196 +306,196 @@ OpReturn
 OpFunctionEnd
 %241 = OpFunction  %2  None %124
 %240 = OpLabel
-%295 = OpVariable  %182  Function %296
-%289 = OpVariable  %214  Function %290
-%283 = OpVariable  %214  Function %284
-%277 = OpVariable  %214  Function %278
-%271 = OpVariable  %214  Function %272
-%265 = OpVariable  %197  Function %266
-%259 = OpVariable  %184  Function %260
-%253 = OpVariable  %184  Function %254
-%245 = OpVariable  %246  Function %247
-%299 = OpVariable  %186  Function %300
-%293 = OpVariable  %219  Function %294
-%287 = OpVariable  %214  Function %288
-%281 = OpVariable  %219  Function %282
-%275 = OpVariable  %214  Function %276
-%269 = OpVariable  %197  Function %270
-%263 = OpVariable  %197  Function %264
-%257 = OpVariable  %186  Function %258
-%251 = OpVariable  %184  Function %252
-%242 = OpVariable  %243  Function %244
-%297 = OpVariable  %184  Function %298
-%291 = OpVariable  %219  Function %292
-%285 = OpVariable  %214  Function %286
-%279 = OpVariable  %219  Function %280
-%273 = OpVariable  %214  Function %274
-%267 = OpVariable  %197  Function %268
-%261 = OpVariable  %184  Function %262
-%255 = OpVariable  %186  Function %256
-%248 = OpVariable  %249  Function %250
-OpBranch %301
-%301 = OpLabel
-%302 = OpLoad  %5  %242
-%303 = OpCompositeConstruct  %6  %302 %32
-OpStore %251 %303
-%304 = OpLoad  %5  %242
-%305 = OpCompositeConstruct  %6  %31 %304
-OpStore %253 %305
-%306 = OpLoad  %7  %248
-%307 = OpCompositeConstruct  %8  %306 %26
-OpStore %255 %307
-%308 = OpLoad  %7  %248
-%309 = OpCompositeConstruct  %8  %308 %29
-OpStore %257 %309
-%310 = OpLoad  %5  %242
-%311 = OpCompositeConstruct  %6  %310 %32
-OpStore %259 %311
-%312 = OpLoad  %5  %242
-%313 = OpCompositeConstruct  %6  %31 %312
-OpStore %261 %313
-%314 = OpLoad  %7  %248
-%315 = OpCompositeConstruct  %8  %314 %42
-%316 = OpCompositeConstruct  %9  %315 %46
-OpStore %263 %316
-%317 = OpLoad  %7  %248
-%318 = OpCompositeConstruct  %8  %41 %317
-%319 = OpCompositeConstruct  %9  %318 %46
-OpStore %265 %319
-%320 = OpLoad  %7  %248
-%321 = OpCompositeConstruct  %8  %320 %45
-%322 = OpCompositeConstruct  %9  %43 %321
-OpStore %267 %322
-%323 = OpLoad  %7  %248
-%324 = OpCompositeConstruct  %8  %44 %323
-%325 = OpCompositeConstruct  %9  %43 %324
-OpStore %269 %325
-%326 = OpLoad  %7  %248
-%327 = OpCompositeConstruct  %10  %326 %42
-OpStore %271 %327
-%328 = OpLoad  %7  %248
-%329 = OpCompositeConstruct  %10  %41 %328
-OpStore %273 %329
-%330 = OpLoad  %7  %248
-%331 = OpCompositeConstruct  %10  %330 %42
-OpStore %275 %331
-%332 = OpLoad  %7  %248
-%333 = OpCompositeConstruct  %10  %41 %332
-OpStore %277 %333
-%334 = OpLoad  %3  %245
-%335 = OpCompositeConstruct  %12  %334 %53
-OpStore %279 %335
-%336 = OpLoad  %3  %245
-%337 = OpCompositeConstruct  %12  %48 %336
-OpStore %281 %337
-%338 = OpLoad  %7  %248
-%339 = OpCompositeConstruct  %10  %338 %42
-OpStore %283 %339
-%340 = OpLoad  %7  %248
-%341 = OpCompositeConstruct  %10  %41 %340
-OpStore %285 %341
-%342 = OpLoad  %7  %248
-%343 = OpCompositeConstruct  %10  %342 %42
-OpStore %287 %343
-%344 = OpLoad  %7  %248
-%345 = OpCompositeConstruct  %10  %41 %344
-OpStore %289 %345
-%346 = OpLoad  %3  %245
-%347 = OpCompositeConstruct  %12  %346 %53
-OpStore %291 %347
-%348 = OpLoad  %3  %245
-%349 = OpCompositeConstruct  %12  %48 %348
-OpStore %293 %349
-%350 = OpLoad  %3  %245
-%351 = OpCompositeConstruct  %4  %350 %350
-OpStore %295 %351
-%352 = OpLoad  %5  %242
-%353 = OpCompositeConstruct  %6  %352 %352
-OpStore %297 %353
-%354 = OpLoad  %7  %248
-%355 = OpCompositeConstruct  %8  %354 %354
-OpStore %299 %355
-%356 = OpLoad  %5  %242
-%357 = OpCompositeConstruct  %6  %356 %32
-OpStore %251 %357
-%358 = OpLoad  %5  %242
-%359 = OpCompositeConstruct  %6  %31 %358
-OpStore %253 %359
-%360 = OpLoad  %5  %242
-%361 = OpCompositeConstruct  %6  %360 %32
-OpStore %259 %361
-%362 = OpLoad  %5  %242
-%363 = OpCompositeConstruct  %6  %31 %362
-OpStore %261 %363
-%364 = OpLoad  %7  %248
-%365 = OpCompositeConstruct  %8  %364 %42
-%366 = OpCompositeConstruct  %9  %365 %46
-OpStore %263 %366
-%367 = OpLoad  %7  %248
-%368 = OpCompositeConstruct  %8  %41 %367
-%369 = OpCompositeConstruct  %9  %368 %46
-OpStore %265 %369
-%370 = OpLoad  %7  %248
-%371 = OpCompositeConstruct  %8  %370 %45
-%372 = OpCompositeConstruct  %9  %43 %371
-OpStore %267 %372
-%373 = OpLoad  %7  %248
-%374 = OpCompositeConstruct  %8  %44 %373
-%375 = OpCompositeConstruct  %9  %43 %374
-OpStore %269 %375
-%376 = OpLoad  %7  %248
-%377 = OpCompositeConstruct  %10  %376 %42
-OpStore %271 %377
-%378 = OpLoad  %7  %248
-%379 = OpCompositeConstruct  %10  %41 %378
-OpStore %273 %379
-%380 = OpLoad  %7  %248
-%381 = OpCompositeConstruct  %10  %380 %42
-OpStore %275 %381
-%382 = OpLoad  %7  %248
-%383 = OpCompositeConstruct  %10  %41 %382
-OpStore %277 %383
-%384 = OpLoad  %3  %245
-%385 = OpCompositeConstruct  %12  %384 %53
-OpStore %279 %385
-%386 = OpLoad  %3  %245
-%387 = OpCompositeConstruct  %12  %48 %386
-OpStore %281 %387
-%388 = OpLoad  %7  %248
-%389 = OpCompositeConstruct  %10  %388 %42
-OpStore %283 %389
-%390 = OpLoad  %7  %248
-%391 = OpCompositeConstruct  %10  %41 %390
-OpStore %285 %391
-%392 = OpLoad  %7  %248
-%393 = OpCompositeConstruct  %10  %392 %42
-OpStore %287 %393
-%394 = OpLoad  %7  %248
-%395 = OpCompositeConstruct  %10  %41 %394
-OpStore %289 %395
-%396 = OpLoad  %3  %245
-%397 = OpCompositeConstruct  %12  %396 %53
-OpStore %291 %397
-%398 = OpLoad  %3  %245
-%399 = OpCompositeConstruct  %12  %48 %398
-OpStore %293 %399
-%400 = OpLoad  %3  %245
-%401 = OpCompositeConstruct  %4  %400 %400
-OpStore %295 %401
-%402 = OpLoad  %5  %242
-%403 = OpCompositeConstruct  %6  %402 %402
-OpStore %297 %403
-%404 = OpLoad  %7  %248
-%405 = OpCompositeConstruct  %8  %404 %404
-OpStore %299 %405
+%270 = OpVariable  %182  Function
+%267 = OpVariable  %214  Function
+%264 = OpVariable  %214  Function
+%261 = OpVariable  %214  Function
+%258 = OpVariable  %214  Function
+%255 = OpVariable  %197  Function
+%252 = OpVariable  %184  Function
+%249 = OpVariable  %184  Function
+%244 = OpVariable  %245  Function
+%272 = OpVariable  %186  Function
+%269 = OpVariable  %219  Function
+%266 = OpVariable  %214  Function
+%263 = OpVariable  %219  Function
+%260 = OpVariable  %214  Function
+%257 = OpVariable  %197  Function
+%254 = OpVariable  %197  Function
+%251 = OpVariable  %186  Function
+%248 = OpVariable  %184  Function
+%242 = OpVariable  %243  Function
+%271 = OpVariable  %184  Function
+%268 = OpVariable  %219  Function
+%265 = OpVariable  %214  Function
+%262 = OpVariable  %219  Function
+%259 = OpVariable  %214  Function
+%256 = OpVariable  %197  Function
+%253 = OpVariable  %184  Function
+%250 = OpVariable  %186  Function
+%246 = OpVariable  %247  Function
+OpBranch %273
+%273 = OpLabel
+%274 = OpLoad  %5  %242
+%275 = OpCompositeConstruct  %6  %274 %32
+OpStore %248 %275
+%276 = OpLoad  %5  %242
+%277 = OpCompositeConstruct  %6  %31 %276
+OpStore %249 %277
+%278 = OpLoad  %7  %246
+%279 = OpCompositeConstruct  %8  %278 %26
+OpStore %250 %279
+%280 = OpLoad  %7  %246
+%281 = OpCompositeConstruct  %8  %280 %29
+OpStore %251 %281
+%282 = OpLoad  %5  %242
+%283 = OpCompositeConstruct  %6  %282 %32
+OpStore %252 %283
+%284 = OpLoad  %5  %242
+%285 = OpCompositeConstruct  %6  %31 %284
+OpStore %253 %285
+%286 = OpLoad  %7  %246
+%287 = OpCompositeConstruct  %8  %286 %42
+%288 = OpCompositeConstruct  %9  %287 %46
+OpStore %254 %288
+%289 = OpLoad  %7  %246
+%290 = OpCompositeConstruct  %8  %41 %289
+%291 = OpCompositeConstruct  %9  %290 %46
+OpStore %255 %291
+%292 = OpLoad  %7  %246
+%293 = OpCompositeConstruct  %8  %292 %45
+%294 = OpCompositeConstruct  %9  %43 %293
+OpStore %256 %294
+%295 = OpLoad  %7  %246
+%296 = OpCompositeConstruct  %8  %44 %295
+%297 = OpCompositeConstruct  %9  %43 %296
+OpStore %257 %297
+%298 = OpLoad  %7  %246
+%299 = OpCompositeConstruct  %10  %298 %42
+OpStore %258 %299
+%300 = OpLoad  %7  %246
+%301 = OpCompositeConstruct  %10  %41 %300
+OpStore %259 %301
+%302 = OpLoad  %7  %246
+%303 = OpCompositeConstruct  %10  %302 %42
+OpStore %260 %303
+%304 = OpLoad  %7  %246
+%305 = OpCompositeConstruct  %10  %41 %304
+OpStore %261 %305
+%306 = OpLoad  %3  %244
+%307 = OpCompositeConstruct  %12  %306 %53
+OpStore %262 %307
+%308 = OpLoad  %3  %244
+%309 = OpCompositeConstruct  %12  %48 %308
+OpStore %263 %309
+%310 = OpLoad  %7  %246
+%311 = OpCompositeConstruct  %10  %310 %42
+OpStore %264 %311
+%312 = OpLoad  %7  %246
+%313 = OpCompositeConstruct  %10  %41 %312
+OpStore %265 %313
+%314 = OpLoad  %7  %246
+%315 = OpCompositeConstruct  %10  %314 %42
+OpStore %266 %315
+%316 = OpLoad  %7  %246
+%317 = OpCompositeConstruct  %10  %41 %316
+OpStore %267 %317
+%318 = OpLoad  %3  %244
+%319 = OpCompositeConstruct  %12  %318 %53
+OpStore %268 %319
+%320 = OpLoad  %3  %244
+%321 = OpCompositeConstruct  %12  %48 %320
+OpStore %269 %321
+%322 = OpLoad  %3  %244
+%323 = OpCompositeConstruct  %4  %322 %322
+OpStore %270 %323
+%324 = OpLoad  %5  %242
+%325 = OpCompositeConstruct  %6  %324 %324
+OpStore %271 %325
+%326 = OpLoad  %7  %246
+%327 = OpCompositeConstruct  %8  %326 %326
+OpStore %272 %327
+%328 = OpLoad  %5  %242
+%329 = OpCompositeConstruct  %6  %328 %32
+OpStore %248 %329
+%330 = OpLoad  %5  %242
+%331 = OpCompositeConstruct  %6  %31 %330
+OpStore %249 %331
+%332 = OpLoad  %5  %242
+%333 = OpCompositeConstruct  %6  %332 %32
+OpStore %252 %333
+%334 = OpLoad  %5  %242
+%335 = OpCompositeConstruct  %6  %31 %334
+OpStore %253 %335
+%336 = OpLoad  %7  %246
+%337 = OpCompositeConstruct  %8  %336 %42
+%338 = OpCompositeConstruct  %9  %337 %46
+OpStore %254 %338
+%339 = OpLoad  %7  %246
+%340 = OpCompositeConstruct  %8  %41 %339
+%341 = OpCompositeConstruct  %9  %340 %46
+OpStore %255 %341
+%342 = OpLoad  %7  %246
+%343 = OpCompositeConstruct  %8  %342 %45
+%344 = OpCompositeConstruct  %9  %43 %343
+OpStore %256 %344
+%345 = OpLoad  %7  %246
+%346 = OpCompositeConstruct  %8  %44 %345
+%347 = OpCompositeConstruct  %9  %43 %346
+OpStore %257 %347
+%348 = OpLoad  %7  %246
+%349 = OpCompositeConstruct  %10  %348 %42
+OpStore %258 %349
+%350 = OpLoad  %7  %246
+%351 = OpCompositeConstruct  %10  %41 %350
+OpStore %259 %351
+%352 = OpLoad  %7  %246
+%353 = OpCompositeConstruct  %10  %352 %42
+OpStore %260 %353
+%354 = OpLoad  %7  %246
+%355 = OpCompositeConstruct  %10  %41 %354
+OpStore %261 %355
+%356 = OpLoad  %3  %244
+%357 = OpCompositeConstruct  %12  %356 %53
+OpStore %262 %357
+%358 = OpLoad  %3  %244
+%359 = OpCompositeConstruct  %12  %48 %358
+OpStore %263 %359
+%360 = OpLoad  %7  %246
+%361 = OpCompositeConstruct  %10  %360 %42
+OpStore %264 %361
+%362 = OpLoad  %7  %246
+%363 = OpCompositeConstruct  %10  %41 %362
+OpStore %265 %363
+%364 = OpLoad  %7  %246
+%365 = OpCompositeConstruct  %10  %364 %42
+OpStore %266 %365
+%366 = OpLoad  %7  %246
+%367 = OpCompositeConstruct  %10  %41 %366
+OpStore %267 %367
+%368 = OpLoad  %3  %244
+%369 = OpCompositeConstruct  %12  %368 %53
+OpStore %268 %369
+%370 = OpLoad  %3  %244
+%371 = OpCompositeConstruct  %12  %48 %370
+OpStore %269 %371
+%372 = OpLoad  %3  %244
+%373 = OpCompositeConstruct  %4  %372 %372
+OpStore %270 %373
+%374 = OpLoad  %5  %242
+%375 = OpCompositeConstruct  %6  %374 %374
+OpStore %271 %375
+%376 = OpLoad  %7  %246
+%377 = OpCompositeConstruct  %8  %376 %376
+OpStore %272 %377
 OpReturn
 OpFunctionEnd
-%407 = OpFunction  %2  None %124
-%406 = OpLabel
-OpBranch %408
-%408 = OpLabel
-%409 = OpFunctionCall  %2  %123
-%410 = OpFunctionCall  %2  %180
-%411 = OpFunctionCall  %2  %241
+%379 = OpFunction  %2  None %124
+%378 = OpLabel
+OpBranch %380
+%380 = OpLabel
+%381 = OpFunctionCall  %2  %123
+%382 = OpFunctionCall  %2  %180
+%383 = OpFunctionCall  %2  %241
 OpReturn
 OpFunctionEnd

@@ -841,6 +841,12 @@ pub struct StructMember {
     pub heap: Option<HeapMember>,
     #[cfg_attr(
         feature = "serialize",
+        serde(skip_serializing_if = "MemoryDecorations::is_empty")
+    )]
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    pub memory_decorations: MemoryDecorations,
+    #[cfg_attr(
+        feature = "serialize",
         serde(skip_serializing_if = "core::ops::Not::not")
     )]
     #[cfg_attr(feature = "deserialize", serde(default))]
@@ -949,6 +955,7 @@ bitflags::bitflags! {
         const NON_WRITABLE = 0x100;
         const NON_READABLE = 0x200;
         const NONTEMPORAL = 0x400;
+        const RESTRICT = 0x800;
     }
 }
 
@@ -3206,6 +3213,12 @@ pub enum Statement {
         condition: Handle<Expression>, //bool
         accept: Block,
         reject: Block,
+        #[cfg_attr(feature = "deserialize", serde(default))]
+        #[cfg_attr(
+            feature = "serialize",
+            serde(skip_serializing_if = "SelectionControl::is_none")
+        )]
+        control: SelectionControl,
     },
     /// Conditionally executes one of multiple blocks, based on the value of the selector.
     ///
@@ -3231,6 +3244,12 @@ pub enum Statement {
     Switch {
         selector: Handle<Expression>,
         cases: Vec<SwitchCase>,
+        #[cfg_attr(feature = "deserialize", serde(default))]
+        #[cfg_attr(
+            feature = "serialize",
+            serde(skip_serializing_if = "SelectionControl::is_none")
+        )]
+        control: SelectionControl,
     },
 
     /// Executes a block repeatedly.
@@ -3894,6 +3913,12 @@ pub struct EntryPoint {
     pub workgroup_size: [u32; 3],
     /// Override expressions for workgroup size in the global_expressions arena
     pub workgroup_size_overrides: Option<[Option<Handle<Expression>>; 3]>,
+    #[cfg_attr(
+        feature = "serialize",
+        serde(skip_serializing_if = "core::ops::Not::not")
+    )]
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    pub workgroup_size_builtin: bool,
     /// The entrance function.
     pub function: Function,
     /// Information for [`Mesh`] shaders.
@@ -4011,6 +4036,17 @@ pub enum DerivativeGroupExtension {
 pub enum LoopDependency {
     Infinite,
     Length(u32),
+}
+
+#[derive(Clone, Copy, Debug, Default, Hash, Eq, PartialEq)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub enum SelectionControl {
+    #[default]
+    None,
+    Flatten,
+    DontFlatten,
 }
 
 #[derive(Clone, Copy, Debug, Default, Hash, Eq, PartialEq)]

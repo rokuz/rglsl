@@ -311,16 +311,21 @@ impl BlockContext<'_> {
         pointer: Handle<Expression>,
     ) -> (PointerQualifiers, Option<AddressSpace>) {
         let mut current = pointer;
+        let mut members = PointerQualifiers::empty();
         loop {
             match self.ir_function.expressions[current] {
-                Expression::Access { base, .. } | Expression::AccessIndex { base, .. }
+                Expression::AccessIndex { base, index }
                     if self.physical_space(current).is_none() =>
                 {
+                    members |= self.member_qualifiers(base, index);
+                    current = base;
+                }
+                Expression::Access { base, .. } if self.physical_space(current).is_none() => {
                     current = base;
                 }
                 Expression::GlobalVariable(handle) => {
                     let global = &self.ir_module.global_variables[handle];
-                    let mut qualifiers = global_qualifiers(global.memory_decorations);
+                    let mut qualifiers = global_qualifiers(global.memory_decorations) | members;
                     if global.space == AddressSpace::WorkGroup {
                         qualifiers |= PointerQualifiers::WORKGROUP_COHERENT;
                     }
@@ -339,6 +344,23 @@ impl BlockContext<'_> {
                 }
                 _ => return (PointerQualifiers::empty(), None),
             }
+        }
+    }
+
+    fn member_qualifiers(&self, base: Handle<Expression>, index: u32) -> PointerQualifiers {
+        let types = &self.ir_module.types;
+        let pointee = match *self.fun_info[base].ty.inner_with(types) {
+            TypeInner::Pointer { base, .. } => base,
+            _ => return PointerQualifiers::empty(),
+        };
+        match types[pointee].inner {
+            TypeInner::Struct { ref members, .. } => usize::try_from(index)
+                .ok()
+                .and_then(|index| members.get(index))
+                .map_or(PointerQualifiers::empty(), |member| {
+                    global_qualifiers(member.memory_decorations)
+                }),
+            _ => PointerQualifiers::empty(),
         }
     }
 

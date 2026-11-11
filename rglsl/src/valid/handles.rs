@@ -1052,6 +1052,7 @@ impl super::Validator {
                 condition,
                 ref accept,
                 ref reject,
+                control: _,
             } => {
                 validate_expr(condition)?;
                 validate_block(accept)?;
@@ -1061,6 +1062,7 @@ impl super::Validator {
             crate::Statement::Switch {
                 selector,
                 ref cases,
+                control: _,
             } => {
                 validate_expr(selector)?;
                 for &crate::SwitchCase {

@@ -5,6 +5,7 @@ use rglsl_ast::ast::{Expression as AstExpression, ExpressionKind};
 use rglsl_sema::types::Scalar as GlslScalar;
 
 use super::function::FunctionLowerer;
+use super::types::matrix_layout;
 use super::{internal, unsupported, Packing, Result};
 use crate::proc::Alignment;
 use crate::{
@@ -103,6 +104,7 @@ impl FunctionLowerer<'_, '_> {
             matrix_layout: None,
             xfb_offset: None,
             heap: None,
+            memory_decorations: crate::MemoryDecorations::empty(),
             relaxed_precision: false,
         });
         let mut offset = length;
@@ -130,20 +132,24 @@ impl FunctionLowerer<'_, '_> {
                 (self.rvalue(argument)?, ty)
             };
             let plain = self.lw.ir_type(&ty, at)?;
-            let info = self.lw.layout(plain, Packing::Scalar, false, at)?;
-            offset = info.align.round_up(offset);
-            alignment = alignment.max(info.align);
+            let (laid, layout) = self.lw.laid_out(&ty, plain, Packing::Scalar, false, at)?;
+            let member_alignment = Alignment::new(layout.alignment).ok_or_else(|| internal(at))?;
+            offset = member_alignment.round_up(offset);
+            alignment = alignment.max(member_alignment);
             members.push(StructMember {
                 name: None,
-                ty: info.ty,
+                ty: laid,
                 binding: None,
                 offset,
-                matrix_layout: info.matrix_layout,
+                matrix_layout: matrix_layout(&layout),
                 xfb_offset: None,
                 heap: None,
+                memory_decorations: crate::MemoryDecorations::empty(),
                 relaxed_precision: false,
             });
-            offset = offset.checked_add(info.span).ok_or_else(|| internal(at))?;
+            offset = offset
+                .checked_add(layout.size)
+                .ok_or_else(|| internal(at))?;
             values.push(value);
         }
         let ty = self.lw.module.types.insert(

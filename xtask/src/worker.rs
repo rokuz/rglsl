@@ -149,10 +149,7 @@ fn spirv_options(lang_version: (u8, u8)) -> spv::Options<'static> {
         flags: spv::WriterFlags::DEBUG
             | spv::WriterFlags::LABEL_VARYINGS
             | spv::WriterFlags::SMALL_TYPE_CAPABILITIES_BY_USE,
-        force_loop_bounding: false,
-        zero_initialize_workgroup_memory: spv::ZeroInitializeWorkgroupMemoryMode::None,
         mesh_shader_primitive_indices_clamp: false,
-        emit_int_div_checks: false,
         ..spv::Options::default()
     }
 }

@@ -515,6 +515,9 @@ impl<'a> Lowerer<'a> {
         } else {
             ([0; 3], None)
         };
+        let workgroup_size_builtin = stage.compute_like()
+            && (self.declared_local_size.iter().any(Option::is_some)
+                || self.local_size_ids.iter().any(Option::is_some));
         let early_depth_test =
             if self.early_fragment_tests || self.analysis.fragment.early_fragment_tests {
                 Some(EarlyDepthTest::Force)
@@ -531,6 +534,7 @@ impl<'a> Lowerer<'a> {
             early_depth_test,
             workgroup_size,
             workgroup_size_overrides,
+            workgroup_size_builtin,
             function,
             mesh_info: None,
             task_payload: self.task_payload,

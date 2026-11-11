@@ -1,7 +1,7 @@
 use alloc::{string::String, vec::Vec};
 
 use rglsl_ast::ast::{Expression as AstExpression, SingleTypeQualifier, Spanned, TypeQualifier};
-use rglsl_sema::layout::{layout_of, member_row_major};
+use rglsl_sema::layout::{block_layout, member_row_major};
 use rglsl_sema::scope::{Qualifiers, Storage};
 use rglsl_sema::types::{
     ArraySize as GlslArraySize, BlockId, BlockStorage, Member, OpaqueKind, Packing, StructId,
@@ -10,12 +10,12 @@ use rglsl_sema::types::{
 use rglsl_sema::SymbolId;
 
 use super::globals::{image_access, image_format, storage_access};
-use super::types::image_dimension;
+use super::types::{image_dimension, matrix_layout};
 use super::{internal, unsupported, GlobalRef, Lowerer, Result};
 use crate::proc::Alignment;
 use crate::{
     AddressSpace, DescriptorHeap, Expression, GlobalVariable, Handle, HeapMember, ImageClass,
-    Literal, MatrixLayout, MemoryDecorations, Span, StructMember, Type, TypeInner,
+    Literal, MemoryDecorations, Span, StructMember, Type, TypeInner,
 };
 
 pub(super) const HEAP_EXTENSION: &str = "GL_EXT_descriptor_heap";
@@ -288,7 +288,7 @@ impl<'a> Lowerer<'a> {
         }
         let analysis = self.analysis;
         let structure = analysis.types.structure(id).ok_or_else(|| internal(at))?;
-        let members = self.heap_members(&structure.members, None, false, at)?;
+        let members = self.heap_members(None, &structure.members, None, false, at)?;
         let handle = self.module.types.insert(
             Type {
                 name: structure.name.clone(),
@@ -302,28 +302,23 @@ impl<'a> Lowerer<'a> {
 
     fn heap_members(
         &mut self,
+        block: Option<&Qualifiers>,
         members: &[Member],
         packing: Option<Packing>,
         row_major: bool,
         at: Span,
     ) -> Result<Vec<StructMember>> {
-        let analysis = self.analysis;
+        let offsets = match packing {
+            Some(packing) => Some(self.packed_offsets(block, members, packing, row_major, at)?),
+            None => None,
+        };
         let mut lowered = Vec::with_capacity(members.len());
-        let mut packed_offset = 0_u32;
-        for member in members {
+        for (index, member) in members.iter().enumerate() {
             let qualifiers = &member.qualifiers;
             let member_row_major = member_row_major(qualifiers, row_major);
             let explicit = layout_u32(qualifiers, "offset", at)?;
-            let offset = match packing {
-                Some(packing) => {
-                    let layout = layout_of(&analysis.types, &member.ty, packing, member_row_major)
-                        .ok_or_else(|| internal(at))?;
-                    let start = explicit.unwrap_or(packed_offset);
-                    let start = Alignment::new(layout.alignment)
-                        .map_or(start, |alignment| alignment.round_up(start));
-                    packed_offset = start.saturating_add(layout.size);
-                    Some(start)
-                }
+            let offset = match offsets {
+                Some(ref offsets) => Some(*offsets.get(index).ok_or_else(|| internal(at))?),
                 None => explicit,
             };
             let size = layout_u32(qualifiers, "descriptor_size", at)?;
@@ -341,8 +336,9 @@ impl<'a> Lowerer<'a> {
                 )
             } else {
                 let ty = self.heap_data_type(&member.ty, at)?;
-                let info = self.heap_layout(ty, member_row_major, at)?;
-                (info.0, info.1)
+                let (ty, layout) =
+                    self.laid_out(&member.ty, ty, Packing::Scalar, member_row_major, at)?;
+                (ty, matrix_layout(&layout))
             };
             lowered.push(StructMember {
                 name: Some(member.name.clone()),
@@ -352,10 +348,33 @@ impl<'a> Lowerer<'a> {
                 matrix_layout,
                 xfb_offset: None,
                 heap: Some(HeapMember { offset, size }),
+                memory_decorations: MemoryDecorations::empty(),
                 relaxed_precision: false,
             });
         }
         Ok(lowered)
+    }
+
+    fn packed_offsets(
+        &self,
+        block: Option<&Qualifiers>,
+        members: &[Member],
+        packing: Packing,
+        row_major: bool,
+        at: Span,
+    ) -> Result<Vec<u32>> {
+        let unqualified = Qualifiers::default();
+        let lengths = self.lowered_lengths();
+        let layout = block_layout(
+            &self.analysis.types,
+            block.unwrap_or(&unqualified),
+            members,
+            packing,
+            row_major,
+            &lengths,
+        )
+        .ok_or_else(|| internal(at))?;
+        Ok(layout.members.iter().map(|member| member.offset).collect())
     }
 
     fn heap_data_type(&mut self, ty: &GlslType, at: Span) -> Result<Handle<Type>> {
@@ -365,61 +384,46 @@ impl<'a> Lowerer<'a> {
         self.ir_type(ty, at)
     }
 
-    fn heap_layout(
-        &mut self,
-        ty: Handle<Type>,
-        row_major: bool,
-        at: Span,
-    ) -> Result<(Handle<Type>, Option<MatrixLayout>)> {
-        let info = self.layout(ty, Packing::Scalar, row_major, at)?;
-        Ok((info.ty, info.matrix_layout))
-    }
-
     fn data_heap_struct(
         &mut self,
         name: &str,
+        block: &Qualifiers,
         members: &[Member],
         packing: Option<Packing>,
         row_major: bool,
         at: Span,
     ) -> Result<Handle<Type>> {
-        let analysis = self.analysis;
+        let mut laid = Vec::with_capacity(members.len());
+        for member in members {
+            layout_u32(&member.qualifiers, "offset", at)?;
+            let member_row_major = member_row_major(&member.qualifiers, row_major);
+            let ty = self.heap_data_type(&member.ty, at)?;
+            laid.push(self.laid_out(&member.ty, ty, Packing::Scalar, member_row_major, at)?);
+        }
+        let offsets = self.packed_offsets(
+            Some(block),
+            members,
+            packing.unwrap_or(Packing::Scalar),
+            row_major,
+            at,
+        )?;
         let mut lowered = Vec::with_capacity(members.len());
-        let mut offset = 0_u32;
         let mut end = 0_u32;
         let mut alignment = Alignment::ONE;
-        for member in members {
-            let qualifiers = &member.qualifiers;
-            let member_row_major = member_row_major(qualifiers, row_major);
-            let ty = self.heap_data_type(&member.ty, at)?;
-            let info = self.layout(ty, Packing::Scalar, member_row_major, at)?;
-            let explicit = layout_u32(qualifiers, "offset", at)?;
-            let start = match packing {
-                Some(packing) => {
-                    let layout = layout_of(&analysis.types, &member.ty, packing, member_row_major)
-                        .ok_or_else(|| internal(at))?;
-                    let start = explicit.unwrap_or(offset);
-                    let start = Alignment::new(layout.alignment)
-                        .map_or(start, |alignment| alignment.round_up(start));
-                    offset = start.saturating_add(layout.size);
-                    start
-                }
-                None => {
-                    let start = explicit.unwrap_or_else(|| info.align.round_up(offset));
-                    offset = start.saturating_add(info.span);
-                    start
-                }
-            };
-            end = end.max(start.saturating_add(info.span));
-            alignment = info.align.max(alignment);
+        for ((member, (ty, layout)), start) in members.iter().zip(laid).zip(offsets) {
+            end = end.max(start.saturating_add(layout.size));
+            alignment = Alignment::new(layout.alignment).map_or(alignment, |member_alignment| {
+                member_alignment.max(alignment)
+            });
             lowered.push(StructMember {
                 name: Some(member.name.clone()),
-                ty: info.ty,
+                ty,
                 binding: None,
                 offset: start,
-                matrix_layout: info.matrix_layout,
+                matrix_layout: matrix_layout(&layout),
                 xfb_offset: None,
                 heap: None,
+                memory_decorations: MemoryDecorations::empty(),
                 relaxed_precision: false,
             });
         }
@@ -503,7 +507,13 @@ impl<'a> Lowerer<'a> {
             .iter()
             .any(|member| self.contains_descriptor(&member.ty));
         let ty = if descriptors {
-            let members = self.heap_members(&block.members, packing, row_major, at)?;
+            let members = self.heap_members(
+                Some(&block.qualifiers),
+                &block.members,
+                packing,
+                row_major,
+                at,
+            )?;
             self.module.types.insert(
                 Type {
                     name: Some(block.name.clone()),
@@ -512,7 +522,14 @@ impl<'a> Lowerer<'a> {
                 at,
             )
         } else {
-            self.data_heap_struct(&block.name, &block.members, packing, row_major, at)?
+            self.data_heap_struct(
+                &block.name,
+                &block.qualifiers,
+                &block.members,
+                packing,
+                row_major,
+                at,
+            )?
         };
         let offset = self.heap_offset(qualifier, at)?;
         self.heap_view(symbol, name, heap, ty, offset, at);

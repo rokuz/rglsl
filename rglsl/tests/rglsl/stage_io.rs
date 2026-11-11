@@ -111,6 +111,7 @@ impl Builder {
                 matrix_layout: None,
                 xfb_offset: None,
                 heap: None,
+                memory_decorations: rglsl::MemoryDecorations::empty(),
                 relaxed_precision: false,
             })
             .collect::<Vec<_>>();
@@ -196,6 +197,7 @@ impl Builder {
             early_depth_test: None,
             workgroup_size: [0; 3],
             workgroup_size_overrides: None,
+            workgroup_size_builtin: false,
             function: self.function,
             mesh_info: None,
             task_payload: None,

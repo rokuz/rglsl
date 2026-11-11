@@ -475,6 +475,7 @@ impl BindingArrayFixture {
                         matrix_layout: None,
                         xfb_offset: None,
                         heap: None,
+                        memory_decorations: rglsl::MemoryDecorations::empty(),
                         relaxed_precision: false,
                     }],
                     span: 4,
@@ -919,6 +920,7 @@ fn invalid_constructor_unsized_struct() {
                     matrix_layout: None,
                     xfb_offset: None,
                     heap: None,
+                    memory_decorations: rglsl::MemoryDecorations::empty(),
                     relaxed_precision: false,
                 }],
                 span: 4,
@@ -1051,6 +1053,7 @@ fn unexpected_task_payload() {
         early_depth_test: None,
         workgroup_size: [1, 1, 1],
         workgroup_size_overrides: None,
+        workgroup_size_builtin: false,
         function: ir::Function::default(),
         mesh_info: None,
         task_payload: Some(payload_handle), // invalid for compute stage

@@ -65,6 +65,7 @@ impl crate::Module {
                             matrix_layout: None,
                             xfb_offset: None,
                             heap: None,
+                            memory_decorations: crate::MemoryDecorations::empty(),
                             relaxed_precision: false,
                         },
                         crate::StructMember {
@@ -75,6 +76,7 @@ impl crate::Module {
                             matrix_layout: None,
                             xfb_offset: None,
                             heap: None,
+                            memory_decorations: crate::MemoryDecorations::empty(),
                             relaxed_precision: false,
                         },
                         crate::StructMember {
@@ -85,6 +87,7 @@ impl crate::Module {
                             matrix_layout: None,
                             xfb_offset: None,
                             heap: None,
+                            memory_decorations: crate::MemoryDecorations::empty(),
                             relaxed_precision: false,
                         },
                         crate::StructMember {
@@ -95,6 +98,7 @@ impl crate::Module {
                             matrix_layout: None,
                             xfb_offset: None,
                             heap: None,
+                            memory_decorations: crate::MemoryDecorations::empty(),
                             relaxed_precision: false,
                         },
                         crate::StructMember {
@@ -105,6 +109,7 @@ impl crate::Module {
                             matrix_layout: None,
                             xfb_offset: None,
                             heap: None,
+                            memory_decorations: crate::MemoryDecorations::empty(),
                             relaxed_precision: false,
                         },
                         crate::StructMember {
@@ -115,6 +120,7 @@ impl crate::Module {
                             matrix_layout: None,
                             xfb_offset: None,
                             heap: None,
+                            memory_decorations: crate::MemoryDecorations::empty(),
                             relaxed_precision: false,
                         },
                     ],
@@ -233,6 +239,7 @@ impl crate::Module {
                             matrix_layout: None,
                             xfb_offset: None,
                             heap: None,
+                            memory_decorations: crate::MemoryDecorations::empty(),
                             relaxed_precision: false,
                         },
                         crate::StructMember {
@@ -243,6 +250,7 @@ impl crate::Module {
                             matrix_layout: None,
                             xfb_offset: None,
                             heap: None,
+                            memory_decorations: crate::MemoryDecorations::empty(),
                             relaxed_precision: false,
                         },
                         crate::StructMember {
@@ -253,6 +261,7 @@ impl crate::Module {
                             matrix_layout: None,
                             xfb_offset: None,
                             heap: None,
+                            memory_decorations: crate::MemoryDecorations::empty(),
                             relaxed_precision: false,
                         },
                         crate::StructMember {
@@ -263,6 +272,7 @@ impl crate::Module {
                             matrix_layout: None,
                             xfb_offset: None,
                             heap: None,
+                            memory_decorations: crate::MemoryDecorations::empty(),
                             relaxed_precision: false,
                         },
                         crate::StructMember {
@@ -273,6 +283,7 @@ impl crate::Module {
                             matrix_layout: None,
                             xfb_offset: None,
                             heap: None,
+                            memory_decorations: crate::MemoryDecorations::empty(),
                             relaxed_precision: false,
                         },
                         crate::StructMember {
@@ -283,6 +294,7 @@ impl crate::Module {
                             matrix_layout: None,
                             xfb_offset: None,
                             heap: None,
+                            memory_decorations: crate::MemoryDecorations::empty(),
                             relaxed_precision: false,
                         },
                         crate::StructMember {
@@ -293,6 +305,7 @@ impl crate::Module {
                             matrix_layout: None,
                             xfb_offset: None,
                             heap: None,
+                            memory_decorations: crate::MemoryDecorations::empty(),
                             relaxed_precision: false,
                         },
                         crate::StructMember {
@@ -303,6 +316,7 @@ impl crate::Module {
                             matrix_layout: None,
                             xfb_offset: None,
                             heap: None,
+                            memory_decorations: crate::MemoryDecorations::empty(),
                             relaxed_precision: false,
                         },
                         crate::StructMember {
@@ -313,6 +327,7 @@ impl crate::Module {
                             matrix_layout: None,
                             xfb_offset: None,
                             heap: None,
+                            memory_decorations: crate::MemoryDecorations::empty(),
                             relaxed_precision: false,
                         },
                         crate::StructMember {
@@ -323,6 +338,7 @@ impl crate::Module {
                             matrix_layout: None,
                             xfb_offset: None,
                             heap: None,
+                            memory_decorations: crate::MemoryDecorations::empty(),
                             relaxed_precision: false,
                         },
                         crate::StructMember {
@@ -333,6 +349,7 @@ impl crate::Module {
                             matrix_layout: None,
                             xfb_offset: None,
                             heap: None,
+                            memory_decorations: crate::MemoryDecorations::empty(),
                             relaxed_precision: false,
                         },
                     ],
@@ -433,6 +450,7 @@ impl crate::Module {
                             matrix_layout: None,
                             xfb_offset: None,
                             heap: None,
+                            memory_decorations: crate::MemoryDecorations::empty(),
                             relaxed_precision: false,
                         },
                         crate::StructMember {
@@ -443,6 +461,7 @@ impl crate::Module {
                             matrix_layout: None,
                             xfb_offset: None,
                             heap: None,
+                            memory_decorations: crate::MemoryDecorations::empty(),
                             relaxed_precision: false,
                         },
                         crate::StructMember {
@@ -453,6 +472,7 @@ impl crate::Module {
                             matrix_layout: None,
                             xfb_offset: None,
                             heap: None,
+                            memory_decorations: crate::MemoryDecorations::empty(),
                             relaxed_precision: false,
                         },
                         crate::StructMember {
@@ -463,6 +483,7 @@ impl crate::Module {
                             matrix_layout: None,
                             xfb_offset: None,
                             heap: None,
+                            memory_decorations: crate::MemoryDecorations::empty(),
                             relaxed_precision: false,
                         },
                     ],
@@ -486,6 +507,7 @@ impl crate::Module {
                             matrix_layout: None,
                             xfb_offset: None,
                             heap: None,
+                            memory_decorations: crate::MemoryDecorations::empty(),
                             relaxed_precision: false,
                         },
                         crate::StructMember {
@@ -496,6 +518,7 @@ impl crate::Module {
                             matrix_layout: None,
                             xfb_offset: None,
                             heap: None,
+                            memory_decorations: crate::MemoryDecorations::empty(),
                             relaxed_precision: false,
                         },
                         crate::StructMember {
@@ -506,6 +529,7 @@ impl crate::Module {
                             matrix_layout: None,
                             xfb_offset: None,
                             heap: None,
+                            memory_decorations: crate::MemoryDecorations::empty(),
                             relaxed_precision: false,
                         },
                         crate::StructMember {
@@ -516,6 +540,7 @@ impl crate::Module {
                             matrix_layout: None,
                             xfb_offset: None,
                             heap: None,
+                            memory_decorations: crate::MemoryDecorations::empty(),
                             relaxed_precision: false,
                         },
                         crate::StructMember {
@@ -526,6 +551,7 @@ impl crate::Module {
                             matrix_layout: None,
                             xfb_offset: None,
                             heap: None,
+                            memory_decorations: crate::MemoryDecorations::empty(),
                             relaxed_precision: false,
                         },
                         crate::StructMember {
@@ -536,6 +562,7 @@ impl crate::Module {
                             matrix_layout: None,
                             xfb_offset: None,
                             heap: None,
+                            memory_decorations: crate::MemoryDecorations::empty(),
                             relaxed_precision: false,
                         },
                         crate::StructMember {
@@ -546,6 +573,7 @@ impl crate::Module {
                             matrix_layout: None,
                             xfb_offset: None,
                             heap: None,
+                            memory_decorations: crate::MemoryDecorations::empty(),
                             relaxed_precision: false,
                         },
                         crate::StructMember {
@@ -556,6 +584,7 @@ impl crate::Module {
                             matrix_layout: None,
                             xfb_offset: None,
                             heap: None,
+                            memory_decorations: crate::MemoryDecorations::empty(),
                             relaxed_precision: false,
                         },
                     ],
@@ -608,6 +637,7 @@ impl crate::Module {
                                 matrix_layout: None,
                                 xfb_offset: None,
                                 heap: None,
+                                memory_decorations: crate::MemoryDecorations::empty(),
                                 relaxed_precision: false,
                             },
                             crate::StructMember {
@@ -618,6 +648,7 @@ impl crate::Module {
                                 matrix_layout: None,
                                 xfb_offset: None,
                                 heap: None,
+                                memory_decorations: crate::MemoryDecorations::empty(),
                                 relaxed_precision: false,
                             },
                         ],
@@ -659,6 +690,7 @@ impl crate::Module {
                                 matrix_layout: None,
                                 xfb_offset: None,
                                 heap: None,
+                                memory_decorations: crate::MemoryDecorations::empty(),
                                 relaxed_precision: false,
                             },
                             crate::StructMember {
@@ -669,6 +701,7 @@ impl crate::Module {
                                 matrix_layout: None,
                                 xfb_offset: None,
                                 heap: None,
+                                memory_decorations: crate::MemoryDecorations::empty(),
                                 relaxed_precision: false,
                             },
                         ],
@@ -732,6 +765,7 @@ impl crate::Module {
                                 matrix_layout: None,
                                 xfb_offset: None,
                                 heap: None,
+                                memory_decorations: crate::MemoryDecorations::empty(),
                                 relaxed_precision: false,
                             },
                             crate::StructMember {
@@ -742,6 +776,7 @@ impl crate::Module {
                                 matrix_layout: None,
                                 xfb_offset: None,
                                 heap: None,
+                                memory_decorations: crate::MemoryDecorations::empty(),
                                 relaxed_precision: false,
                             },
                         ],
@@ -790,6 +825,7 @@ impl crate::Module {
                     matrix_layout: None,
                     xfb_offset: None,
                     heap: None,
+                    memory_decorations: crate::MemoryDecorations::empty(),
                     relaxed_precision: false,
                 };
                 crate::Type {

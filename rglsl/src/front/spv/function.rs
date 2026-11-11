@@ -515,6 +515,7 @@ impl<I: Iterator<Item = u32>> super::Frontend<I> {
                             matrix_layout: None,
                             xfb_offset: None,
                             heap: None,
+                            memory_decorations: crate::MemoryDecorations::empty(),
                             relaxed_precision: false,
                         });
                         struct_alignment = struct_alignment.max(member_alignment);
@@ -635,6 +636,7 @@ impl<I: Iterator<Item = u32>> super::Frontend<I> {
             fragment_modes: crate::FragmentModes::default(),
             workgroup_size: ep.workgroup_size,
             workgroup_size_overrides: None,
+            workgroup_size_builtin: false,
             function,
             mesh_info: None,
             task_payload: None,
@@ -693,6 +695,7 @@ impl BlockContext<'_> {
                                 condition,
                                 accept,
                                 reject,
+                                control: crate::SelectionControl::None,
                             },
                             crate::Span::default(),
                         )
@@ -745,6 +748,7 @@ impl BlockContext<'_> {
                             crate::Statement::Switch {
                                 selector,
                                 cases: ir_cases,
+                                control: crate::SelectionControl::None,
                             },
                             crate::Span::default(),
                         )
