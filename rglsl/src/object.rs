@@ -45,7 +45,7 @@ impl ObjectModule {
         self.stage.is_none()
     }
 
-    pub fn has_entry_point(&self) -> bool {
+    pub const fn has_entry_point(&self) -> bool {
         !self.module.entry_points.is_empty()
     }
 

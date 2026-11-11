@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
 use rglsl::back::spv;
 use rglsl::compact::{compact, KeepUnused};
 use rglsl::front::glsl::{Frontend, Options};

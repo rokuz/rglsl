@@ -243,7 +243,7 @@ impl Lowerer<'_> {
         };
         if let (
             Some(members),
-            TypeInner::Struct {
+            &TypeInner::Struct {
                 members: ref ir, ..
             },
         ) = (members, &self.module.types[ty].inner)

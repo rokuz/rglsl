@@ -71,6 +71,8 @@ pub(crate) fn callees(block: &Block, found: &mut Vec<Handle<Function>>) {
 
 pub(crate) type Node = (usize, Handle<Function>);
 
+type Frame = (Option<Node>, Vec<Result<Node, String>>);
+
 #[derive(Debug, Default)]
 pub(crate) struct SymbolTable {
     pub definitions: BTreeMap<String, Node>,
@@ -196,7 +198,7 @@ pub(crate) fn order(
     let mut done: BTreeSet<Node> = BTreeSet::new();
     let mut active: BTreeSet<Node> = BTreeSet::new();
     let mut postorder: Vec<Node> = Vec::new();
-    let mut stack: Vec<(Option<Node>, Vec<Result<Node, String>>)> = Vec::new();
+    let mut stack: Vec<Frame> = Vec::new();
     let mut roots = edges(main, &entry.function.body);
     roots.reverse();
     stack.push((None, roots));

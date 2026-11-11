@@ -37,12 +37,16 @@ fn location_count(module: &Module, ty: Handle<Type>) -> u32 {
 }
 
 const fn arrayed(stage: ShaderStage, space: AddressSpace) -> bool {
-    match (stage, space) {
-        (ShaderStage::TessControl, AddressSpace::Input | AddressSpace::Output)
-        | (ShaderStage::TessEvaluation | ShaderStage::Geometry, AddressSpace::Input)
-        | (ShaderStage::Mesh, AddressSpace::Output) => true,
-        _ => false,
-    }
+    matches!(
+        (stage, space),
+        (
+            ShaderStage::TessControl,
+            AddressSpace::Input | AddressSpace::Output
+        ) | (
+            ShaderStage::TessEvaluation | ShaderStage::Geometry,
+            AddressSpace::Input
+        ) | (ShaderStage::Mesh, AddressSpace::Output)
+    )
 }
 
 fn element(module: &Module, stage: ShaderStage, global: &GlobalVariable) -> Handle<Type> {

@@ -898,8 +898,8 @@ fn compile_object_file(
         .unwrap_or_default();
     if extension == OBJECT_EXTENSION {
         let text = fs::read_to_string(path)?;
-        return Ok(rglsl_link::decode(&text)
-            .with_context(|| format!("reading the object module {}", path.display()))?);
+        return rglsl_link::decode(&text)
+            .with_context(|| format!("reading the object module {}", path.display()));
     }
     let inner = path
         .file_stem()
@@ -994,12 +994,14 @@ fn link_command(args: &Args, params: &Parameters) -> anyhow::Result<()> {
         eprintln!("warning: {warning}");
     }
     let mut spv_options = params.spv_out.clone();
-    spv_options
-        .flags
-        .set(rglsl::back::spv::WriterFlags::SMALL_TYPE_CAPABILITIES_BY_USE, true);
-    spv_options
-        .flags
-        .set(rglsl::back::spv::WriterFlags::ADJUST_COORDINATE_SPACE, false);
+    spv_options.flags.set(
+        rglsl::back::spv::WriterFlags::SMALL_TYPE_CAPABILITIES_BY_USE,
+        true,
+    );
+    spv_options.flags.set(
+        rglsl::back::spv::WriterFlags::ADJUST_COORDINATE_SPACE,
+        false,
+    );
     for stage in &stages {
         let name = stage_name(stage.stage);
         let output = match args.output.as_ref() {

@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
 use rglsl::front::glsl::{Frontend, Options};
 use rglsl::object::ObjectModule;
 use rglsl::ShaderStage;
@@ -51,7 +53,10 @@ void main() { color = vec4(called(1.0)); }
 #[test]
 fn object_modules_keep_every_function_and_linking_prunes() {
     let main = object(ShaderStage::Fragment, false, UNCALLED);
-    assert_eq!(names(&main.module.functions), ["called", "helper", "uncalled"]);
+    assert_eq!(
+        names(&main.module.functions),
+        ["called", "helper", "uncalled"]
+    );
     let library = object(ShaderStage::Compute, true, HELPER);
     assert_eq!(names(&library.module.functions), ["helper", "spare"]);
     let linked = rglsl_link::link(&[main, library], &rglsl_link::Options::default()).unwrap();
