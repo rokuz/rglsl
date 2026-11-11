@@ -194,6 +194,7 @@ impl Builder {
             early_depth_test: None,
             workgroup_size: [0; 3],
             workgroup_size_overrides: None,
+            workgroup_size_builtin: false,
             function: self.function,
             mesh_info: None,
             task_payload: None,

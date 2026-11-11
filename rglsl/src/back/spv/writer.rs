@@ -1758,6 +1758,7 @@ impl Writer {
                             &rate,
                         )
                         .to_words(&mut self.logical_layout.execution_modes);
+                        self.write_workgroup_size_builtin(entry_point);
                     }
                     _ => self.write_workgroup_size(function_id, entry_point)?,
                 }

@@ -344,6 +344,11 @@ pub(crate) fn apply(
             .map(LinkError::MissingLayout),
     );
     if stage.compute_like() {
+        if layout.local_size.iter().any(Option::is_some)
+            || layout.local_size_ids.iter().any(Option::is_some)
+        {
+            entry.workgroup_size_builtin = true;
+        }
         for (slot, size) in entry.workgroup_size.iter_mut().zip(layout.local_size) {
             if let Some(size) = size {
                 *slot = size;

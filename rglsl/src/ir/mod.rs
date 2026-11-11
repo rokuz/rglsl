@@ -3735,6 +3735,12 @@ pub struct EntryPoint {
     pub workgroup_size: [u32; 3],
     /// Override expressions for workgroup size in the global_expressions arena
     pub workgroup_size_overrides: Option<[Option<Handle<Expression>>; 3]>,
+    #[cfg_attr(
+        feature = "serialize",
+        serde(skip_serializing_if = "core::ops::Not::not")
+    )]
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    pub workgroup_size_builtin: bool,
     /// The entrance function.
     pub function: Function,
     /// Information for [`Mesh`] shaders.

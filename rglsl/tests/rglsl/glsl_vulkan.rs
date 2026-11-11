@@ -6754,7 +6754,7 @@ fn nv_task_memory_blocks() {
         .map(|inst| literal(&inst.operands[3]))
         .collect();
     assert_eq!(offsets, [0, 8, 32]);
-    assert_eq!(decorated(&module, Decoration::BuiltIn).len(), 2);
+    assert_eq!(decorated(&module, Decoration::BuiltIn).len(), 3);
 }
 
 #[test]
@@ -8504,4 +8504,53 @@ fn unused_heap_views_declare_only_the_heap() {
     ));
     assert!(capabilities(&raw).contains(&tensors));
     assert_eq!(count(&raw, Op::TypeTensorARM), 1);
+}
+
+fn workgroup_size_builtins(raw: &[(u32, Vec<u32>)]) -> Vec<Vec<u32>> {
+    let decorated: Vec<u32> = raw
+        .iter()
+        .filter(|&&(op, ref operands)| {
+            op == Op::Decorate as u32
+                && operands.get(1) == Some(&(Decoration::BuiltIn as u32))
+                && operands.get(2) == Some(&(spirv::BuiltIn::WorkgroupSize as u32))
+        })
+        .map(|(_, operands)| operands[0])
+        .collect();
+    let constant = |id: u32| {
+        raw.iter()
+            .find(|&&(op, ref operands)| op == Op::Constant as u32 && operands.get(1) == Some(&id))
+            .map_or(u32::MAX, |(_, operands)| operands[2])
+    };
+    raw.iter()
+        .filter(|&&(op, ref operands)| {
+            (op == Op::ConstantComposite as u32 || op == Op::SpecConstantComposite as u32)
+                && decorated.contains(&operands[1])
+        })
+        .map(|(_, operands)| operands[2..].iter().map(|&id| constant(id)).collect())
+        .collect()
+}
+
+#[test]
+fn declared_local_size_is_a_workgroup_size_builtin() {
+    let source = "#version 450
+        layout(local_size_x = 8, local_size_y = 4) in;
+        layout(std430, binding = 0) buffer B { uint v; } b;
+        void main() { b.v = 1u; }";
+    let raw = raw_instructions(&compile_words(ShaderStage::Compute, source, (1, 0)));
+    assert_eq!(workgroup_size_builtins(&raw), [vec![8, 4, 1]]);
+    let raw = raw_instructions(&compile_words(ShaderStage::Compute, source, (1, 6)));
+    assert!(workgroup_size_builtins(&raw).is_empty());
+
+    let source = "#version 450
+        layout(std430, binding = 0) buffer B { uint v; } b;
+        void main() { b.v = 1u; }";
+    let raw = raw_instructions(&compile_words(ShaderStage::Compute, source, (1, 0)));
+    assert!(workgroup_size_builtins(&raw).is_empty());
+
+    let source = "#version 450
+        layout(local_size_x = 2) in;
+        layout(std430, binding = 0) buffer B { uvec3 v; } b;
+        void main() { b.v = gl_WorkGroupSize; }";
+    let raw = raw_instructions(&compile_words(ShaderStage::Compute, source, (1, 0)));
+    assert_eq!(workgroup_size_builtins(&raw), [vec![2, 1, 1]]);
 }

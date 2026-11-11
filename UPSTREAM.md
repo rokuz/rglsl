@@ -244,7 +244,13 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   (integer and boolean arithmetic, comparisons, `Select`, conversions, `CompositeExtract`,
   `VectorShuffle`; floating-point arithmetic is an error); `ArraySize::Pending` is an
   `OpTypeArray` with the spec constant as length; `EntryPoint::workgroup_size_overrides` is
-  `LocalSizeId` on SPIR-V 1.6 and a `WorkgroupSize` spec-constant composite before. An
+  `LocalSizeId` on SPIR-V 1.6 and a `WorkgroupSize` spec-constant composite before.
+  `EntryPoint::workgroup_size_builtin` (new, not serialized when false) says that the source
+  declared a workgroup size (`local_size_*` or `local_size_*_id`); with fixed sizes the backend
+  then writes an `OpConstantComposite` of the size decorated `BuiltIn WorkgroupSize` before
+  SPIR-V 1.6, as glslang does for the `gl_WorkGroupSize` linker object it keeps whenever a
+  size is declared, in compute, mesh and task shaders (rglsl-link sets it when any linked unit
+  declares a size). An
   `Expression::Override` in a function is the spec constant's id, and a `Compose` or `Splat`
   of overrides and constants in a function is an `OpSpecConstantComposite`, so it can be a
   `ConstOffset`. Before SPIR-V 1.4 an unsigned integer conversion is `SConvert`, masked with

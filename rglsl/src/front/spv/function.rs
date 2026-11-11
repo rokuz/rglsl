@@ -622,6 +622,7 @@ impl<I: Iterator<Item = u32>> super::Frontend<I> {
             early_depth_test: ep.early_depth_test,
             workgroup_size: ep.workgroup_size,
             workgroup_size_overrides: None,
+            workgroup_size_builtin: false,
             function,
             mesh_info: None,
             task_payload: None,
