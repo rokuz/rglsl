@@ -115,7 +115,8 @@ pub struct Templates {
 
 const SCALAR_NUMERIC: [ScalarType; 3] = [ScalarType::Float, ScalarType::Uint, ScalarType::Int];
 const INTEGERS: [ScalarType; 2] = [ScalarType::Uint, ScalarType::Int];
-const EXCLUDED_BUILTIN_PREFIXES: [&str; 18] = [
+const EXCLUDED_BUILTIN_PREFIXES: [&str; 19] = [
+    "sparse",
     "expectEXT",
     "assumeEXT",
     "interpolateAt",

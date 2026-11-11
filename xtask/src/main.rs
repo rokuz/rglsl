@@ -57,8 +57,9 @@ commands:
       --interesting K     with --reduce: crash, reject, invalid-spirv (glslang accepts and
                           rglsl crashes, rejects or emits invalid SPIR-V), differs-from-glslang
                           (rglsl's module renders differently from glslang's on the exec
-                          target) or differs-from-reference (rglsl's variant renders
-                          differently from rglsl's reference, glslang's does not)
+                          target), differs-from-reference (rglsl's variant renders
+                          differently from rglsl's reference, glslang's does not) or
+                          exec-fails (rglsl's module fails on the driver, glslang's runs)
       --preserve-semantics  with --reduce: only undo the generator's transformations
       --max-steps N       with --reduce: interestingness tests to run at most (default 2000)
       --no-ub-guards      with --reduce and without --preserve-semantics: do not bound loops,

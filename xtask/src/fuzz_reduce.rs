@@ -19,6 +19,7 @@ pub enum Interesting {
     InvalidSpirv,
     DiffersFromGlslang,
     DiffersFromReference,
+    ExecFails,
 }
 
 impl Interesting {
@@ -29,12 +30,16 @@ impl Interesting {
             "invalid-spirv" => Some(Self::InvalidSpirv),
             "differs-from-glslang" => Some(Self::DiffersFromGlslang),
             "differs-from-reference" => Some(Self::DiffersFromReference),
+            "exec-fails" => Some(Self::ExecFails),
             _ => None,
         }
     }
 
     const fn needs_exec(self) -> bool {
-        matches!(self, Self::DiffersFromGlslang | Self::DiffersFromReference)
+        matches!(
+            self,
+            Self::DiffersFromGlslang | Self::DiffersFromReference | Self::ExecFails
+        )
     }
 }
 
@@ -228,7 +233,9 @@ pub fn run(root: &Path, options: Options) -> Result<()> {
             Interesting::Crash => verdict == Verdict::Crash,
             Interesting::Reject => matches!(verdict, Verdict::WeReject | Verdict::BackendFailed),
             Interesting::InvalidSpirv => verdict == Verdict::InvalidSpirv,
-            Interesting::DiffersFromGlslang | Interesting::DiffersFromReference => {
+            Interesting::DiffersFromGlslang
+            | Interesting::DiffersFromReference
+            | Interesting::ExecFails => {
                 let Some(executor) = &executor else {
                     return Ok(false);
                 };
@@ -245,6 +252,9 @@ pub fn run(root: &Path, options: Options) -> Result<()> {
                     "glslang",
                 );
                 match &reference {
+                    _ if options.interesting == Interesting::ExecFails => {
+                        matches!(ours, Run::Failed(_)) && matches!(theirs, Run::Ran { .. })
+                    }
                     Some(reference) => {
                         differs(&reference.ours, &ours) == Some(true)
                             && differs(&reference.theirs, &theirs) == Some(false)
