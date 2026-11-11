@@ -41,18 +41,30 @@ impl FunctionLowerer<'_, '_> {
     pub(super) fn statements(&mut self, statements: &[Statement]) -> Result<()> {
         for statement in statements {
             if self.terminated() {
-                break;
+                self.unreachable_declaration(statement)?;
+            } else {
+                self.statement(statement)?;
             }
-            self.statement(statement)?;
         }
         Ok(())
+    }
+
+    fn unreachable_declaration(&mut self, statement: &Statement) -> Result<()> {
+        match statement.kind {
+            StatementKind::Declaration(ref declaration) => {
+                self.local_declaration(declaration, false)
+            }
+            _ => Ok(()),
+        }
     }
 
     fn statement(&mut self, statement: &Statement) -> Result<()> {
         let at = self.at(statement.span);
         match statement.kind {
             StatementKind::Compound(ref compound) => self.statements(&compound.statements),
-            StatementKind::Declaration(ref declaration) => self.local_declaration(declaration),
+            StatementKind::Declaration(ref declaration) => {
+                self.local_declaration(declaration, true)
+            }
             StatementKind::Expression(Some(ref expression)) => self.effect(expression),
             StatementKind::Expression(None) => Ok(()),
             StatementKind::Selection {
@@ -355,7 +367,7 @@ impl FunctionLowerer<'_, '_> {
         Ok(())
     }
 
-    fn local_declaration(&mut self, declaration: &Declaration) -> Result<()> {
+    fn local_declaration(&mut self, declaration: &Declaration, reachable: bool) -> Result<()> {
         let at = self.at(declaration.span);
         match declaration.kind {
             DeclarationKind::InitDeclaratorList(ref list) => {
@@ -401,7 +413,8 @@ impl FunctionLowerer<'_, '_> {
                     let ir = self.lw.variable_ir_type(&ty, &variable.qualifiers, at)?;
                     let local = self.local_typed(ir, Some(declarator.name.node.clone()), at);
                     self.variables.insert(symbol, Local::Variable(local));
-                    if let Some(ref initializer) = declarator.initializer {
+                    if let Some(initializer) = declarator.initializer.as_ref().filter(|_| reachable)
+                    {
                         let value = self.initializer(initializer, &ty)?;
                         let value = self.requalify_to(value, ir, at)?;
                         let pointer = self.local_pointer(local, at)?;
@@ -498,9 +511,10 @@ impl FunctionLowerer<'_, '_> {
                 let mut block = self.nested(|this| {
                     for statement in &body {
                         if this.terminated() {
-                            break;
+                            this.unreachable_declaration(statement)?;
+                        } else {
+                            this.statement(statement)?;
                         }
-                        this.statement(statement)?;
                     }
                     Ok(())
                 })?;

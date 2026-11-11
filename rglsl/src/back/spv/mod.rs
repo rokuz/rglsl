@@ -642,6 +642,7 @@ enum CachedConstant {
         constituent_ids: Vec<Word>,
     },
     ZeroValue(Word),
+    Undef(Word),
 }
 
 /// The SPIR-V representation of a [`crate::GlobalVariable`].

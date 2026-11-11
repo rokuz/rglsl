@@ -3189,6 +3189,17 @@ impl Writer {
         id
     }
 
+    pub(super) fn get_undef(&mut self, type_id: Word) -> Word {
+        let undef = CachedConstant::Undef(type_id);
+        if let Some(&id) = self.cached_constants.get(&undef) {
+            return id;
+        }
+        let id = self.id_gen.next();
+        Instruction::undef(type_id, id).to_words(&mut self.logical_layout.declarations);
+        self.cached_constants.insert(undef, id);
+        id
+    }
+
     pub(super) fn write_constant_null(&mut self, type_id: Word) -> Word {
         if self.contains_physical_type(type_id) {
             return self.get_constant_null(type_id);
