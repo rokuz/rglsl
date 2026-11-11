@@ -87,6 +87,9 @@ fn shape(expression: &Expression) -> String {
             FunctionIdentifier::Constructor(_) => {
                 format!("(construct {})", join(&call.arguments))
             }
+            FunctionIdentifier::Cast(_) => {
+                format!("(cast {})", join(&call.arguments))
+            }
             FunctionIdentifier::Function(name) => {
                 format!("(call {name} {})", join(&call.arguments))
             }

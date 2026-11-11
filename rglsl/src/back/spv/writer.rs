@@ -347,6 +347,14 @@ impl Writer {
     }
 
     /// Indicate that the code uses the given extension.
+    pub(super) fn require_demote(&mut self) -> Result<(), Error> {
+        self.use_extension("SPV_EXT_demote_to_helper_invocation");
+        self.require_any(
+            "demote to helper invocation",
+            &[spirv::Capability::DemoteToHelperInvocation],
+        )
+    }
+
     pub(super) fn require_mesh_shading(&mut self) -> Result<(), Error> {
         match self.mesh_extension {
             Some(crate::MeshShaderExtension::Nv) => {
@@ -2071,6 +2079,41 @@ impl Writer {
                     }
                     None => {}
                 }
+                let modes = entry_point.fragment_modes;
+                if modes.post_depth_coverage {
+                    self.use_extension("SPV_KHR_post_depth_coverage");
+                    self.require_any(
+                        "post_depth_coverage",
+                        &[spirv::Capability::SampleMaskPostDepthCoverage],
+                    )?;
+                    self.write_execution_mode(
+                        function_id,
+                        spirv::ExecutionMode::PostDepthCoverage,
+                    )?;
+                }
+                for (enabled, capability, mode) in [
+                    (
+                        modes.non_coherent_color_attachment_read,
+                        spirv::Capability::TileImageColorReadAccessEXT,
+                        spirv::ExecutionMode::NonCoherentColorAttachmentReadEXT,
+                    ),
+                    (
+                        modes.non_coherent_depth_attachment_read,
+                        spirv::Capability::TileImageDepthReadAccessEXT,
+                        spirv::ExecutionMode::NonCoherentDepthAttachmentReadEXT,
+                    ),
+                    (
+                        modes.non_coherent_stencil_attachment_read,
+                        spirv::Capability::TileImageStencilReadAccessEXT,
+                        spirv::ExecutionMode::NonCoherentStencilAttachmentReadEXT,
+                    ),
+                ] {
+                    if enabled {
+                        self.use_extension("SPV_EXT_shader_tile_image");
+                        self.require_any("tile image reads", &[capability])?;
+                        self.write_execution_mode(function_id, mode)?;
+                    }
+                }
                 let result_depth = entry_point.function.result.as_ref().is_some_and(|result| {
                     contains_builtin(
                         result.binding.as_ref(),
@@ -2091,6 +2134,55 @@ impl Writer {
                 });
                 if result_depth || interface_depth {
                     self.write_execution_mode(function_id, spirv::ExecutionMode::DepthReplacing)?;
+                }
+                let stencil = entry_point.interface.iter().any(|&handle| {
+                    let global = &ir_module.global_variables[handle];
+                    global.space == crate::AddressSpace::Output
+                        && contains_builtin(
+                            global.io.as_ref(),
+                            global.ty,
+                            &ir_module.types,
+                            crate::BuiltIn::FragStencilRef,
+                        )
+                });
+                if stencil {
+                    self.write_execution_mode(
+                        function_id,
+                        spirv::ExecutionMode::StencilRefReplacingEXT,
+                    )?;
+                }
+                if let Some(interlock) = modes.interlock {
+                    use crate::InterlockScope as Is;
+                    use spirv::ExecutionMode as Em;
+                    let (mode, capability) = match (interlock.scope, interlock.ordered) {
+                        (Is::Pixel, true) => (
+                            Em::PixelInterlockOrderedEXT,
+                            spirv::Capability::FragmentShaderPixelInterlockEXT,
+                        ),
+                        (Is::Pixel, false) => (
+                            Em::PixelInterlockUnorderedEXT,
+                            spirv::Capability::FragmentShaderPixelInterlockEXT,
+                        ),
+                        (Is::Sample, true) => (
+                            Em::SampleInterlockOrderedEXT,
+                            spirv::Capability::FragmentShaderSampleInterlockEXT,
+                        ),
+                        (Is::Sample, false) => (
+                            Em::SampleInterlockUnorderedEXT,
+                            spirv::Capability::FragmentShaderSampleInterlockEXT,
+                        ),
+                        (Is::ShadingRate, true) => (
+                            Em::ShadingRateInterlockOrderedEXT,
+                            spirv::Capability::FragmentShaderShadingRateInterlockEXT,
+                        ),
+                        (Is::ShadingRate, false) => (
+                            Em::ShadingRateInterlockUnorderedEXT,
+                            spirv::Capability::FragmentShaderShadingRateInterlockEXT,
+                        ),
+                    };
+                    self.use_extension("SPV_EXT_fragment_shader_interlock");
+                    self.require_any("fragment shader interlock", &[capability])?;
+                    self.write_execution_mode(function_id, mode)?;
                 }
                 spirv::ExecutionModel::Fragment
             }
@@ -2349,6 +2441,7 @@ impl Writer {
                     crate::ImageDimension::Subpass => {
                         self.require_any("subpass inputs", &[spirv::Capability::InputAttachment])?;
                     }
+                    crate::ImageDimension::TileImageData => {}
                     crate::ImageDimension::Buffer => {
                         if sampled {
                             self.require_any(
@@ -3945,8 +4038,20 @@ impl Writer {
                         BuiltIn::ViewIndex
                     }
                     // vertex
-                    Bi::BaseInstance => BuiltIn::BaseInstance,
-                    Bi::BaseVertex => BuiltIn::BaseVertex,
+                    Bi::BaseInstance | Bi::BaseVertex => {
+                        if self.lang_version() < (1, 3) {
+                            self.use_extension("SPV_KHR_shader_draw_parameters");
+                        }
+                        self.require_any(
+                            "draw parameter built-ins",
+                            &[spirv::Capability::DrawParameters],
+                        )?;
+                        if built_in == Bi::BaseInstance {
+                            BuiltIn::BaseInstance
+                        } else {
+                            BuiltIn::BaseVertex
+                        }
+                    }
                     Bi::ClipDistances => {
                         self.require_any(
                             "`clip_distances` built-in",
@@ -4045,7 +4150,9 @@ impl Writer {
                     }
                     Bi::VertexIndex => BuiltIn::VertexIndex,
                     Bi::DrawIndex => {
-                        self.use_extension("SPV_KHR_shader_draw_parameters");
+                        if self.lang_version() < (1, 3) {
+                            self.use_extension("SPV_KHR_shader_draw_parameters");
+                        }
                         self.require_any(
                             "`draw_index built-in",
                             &[spirv::Capability::DrawParameters],
@@ -4096,6 +4203,66 @@ impl Writer {
                         BuiltIn::SampleId
                     }
                     Bi::SampleMask { .. } => BuiltIn::SampleMask,
+                    Bi::SamplePosition => {
+                        self.require_any(
+                            "`gl_SamplePosition`",
+                            &[spirv::Capability::SampleRateShading],
+                        )?;
+                        BuiltIn::SamplePosition
+                    }
+                    Bi::HelperInvocation => {
+                        if self.lang_version() >= (1, 6) && !self.vulkan_memory_model {
+                            others.push(Decoration::Volatile);
+                        }
+                        BuiltIn::HelperInvocation
+                    }
+                    Bi::DeviceIndex => {
+                        if self.lang_version() < (1, 3) {
+                            self.use_extension("SPV_KHR_device_group");
+                        }
+                        self.require_any("`gl_DeviceIndex`", &[spirv::Capability::DeviceGroup])?;
+                        BuiltIn::DeviceIndex
+                    }
+                    Bi::ShadingRate => {
+                        self.use_extension("SPV_KHR_fragment_shading_rate");
+                        self.require_any(
+                            "`gl_ShadingRateEXT`",
+                            &[spirv::Capability::FragmentShadingRateKHR],
+                        )?;
+                        BuiltIn::ShadingRateKHR
+                    }
+                    Bi::FragSize { nv } | Bi::FragInvocationCount { nv } => {
+                        self.use_extension(if nv {
+                            "SPV_NV_shading_rate"
+                        } else {
+                            "SPV_EXT_fragment_invocation_density"
+                        });
+                        self.require_any(
+                            "fragment density built-ins",
+                            &[spirv::Capability::FragmentDensityEXT],
+                        )?;
+                        if matches!(built_in, Bi::FragSize { .. }) {
+                            BuiltIn::FragSizeEXT
+                        } else {
+                            BuiltIn::FragInvocationCountEXT
+                        }
+                    }
+                    Bi::FullyCovered => {
+                        self.use_extension("SPV_EXT_fragment_fully_covered");
+                        self.require_any(
+                            "`gl_FragFullyCoveredNV`",
+                            &[spirv::Capability::FragmentFullyCoveredEXT],
+                        )?;
+                        BuiltIn::FullyCoveredEXT
+                    }
+                    Bi::FragStencilRef => {
+                        self.use_extension("SPV_EXT_shader_stencil_export");
+                        self.require_any(
+                            "`gl_FragStencilRefARB`",
+                            &[spirv::Capability::StencilExportEXT],
+                        )?;
+                        BuiltIn::FragStencilRefEXT
+                    }
                     // compute
                     Bi::GlobalInvocationId => BuiltIn::GlobalInvocationId,
                     Bi::LocalInvocationId => BuiltIn::LocalInvocationId,
@@ -4313,8 +4480,10 @@ impl Writer {
                     let is_flat = match ir_module.types[element].inner {
                         crate::TypeInner::Scalar(scalar)
                         | crate::TypeInner::Vector { scalar, .. } => match scalar.kind {
-                            Sk::Uint | Sk::Sint | Sk::Bool => true,
-                            Sk::Float | Sk::BFloat | Sk::FloatE4M3 | Sk::FloatE5M2 => false,
+                            Sk::Uint | Sk::Sint => true,
+                            Sk::Bool | Sk::Float | Sk::BFloat | Sk::FloatE4M3 | Sk::FloatE5M2 => {
+                                false
+                            }
                             Sk::AbstractInt | Sk::AbstractFloat => {
                                 return Err(Error::Validation(
                                     "Abstract types should not appear in IR presented to backends",
@@ -4392,9 +4561,16 @@ impl Writer {
         let class = if global_variable.tile_attachment {
             self.require_tile_shading()?;
             spirv::StorageClass::TileAttachmentQCOM
+        } else if crate::proc::is_tile_image(ir_module, global_variable) {
+            spirv::StorageClass::TileImageEXT
         } else {
             map_storage_class(global_variable.space)
         };
+        if let (crate::AddressSpace::Handle, Some(&crate::Binding::Location { location, .. })) =
+            (global_variable.space, global_variable.io.as_ref())
+        {
+            self.decorate(id, Decoration::Location, &[location]);
+        }
 
         // A stage input or output is bound to a location or a built-in. The
         // decorations depend on the stage whose interface it belongs to.

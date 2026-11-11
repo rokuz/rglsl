@@ -65,7 +65,12 @@ fn opaque_types() -> Vec<Opaque> {
             for multisample in [false, true] {
                 for arrayed in [false, true] {
                     for dimension in TextureDimension::ALL {
-                        for sampled in SampledType::ALL {
+                        let wide: &[SampledType] = if kind == OpaqueKind::Image {
+                            &SampledType::WIDE
+                        } else {
+                            &[]
+                        };
+                        for &sampled in SampledType::ALL.iter().chain(wide) {
                             let opaque = Opaque {
                                 kind,
                                 sampled,
@@ -172,7 +177,12 @@ fn images(emitter: &mut Emitter<'_>, opaque: Opaque) {
         scoped(core::slice::from_ref(&data)),
     );
     let names: &[&str] = if opaque.sampled == SampledType::Float {
-        &["imageAtomicExchange"]
+        &[
+            "imageAtomicAdd",
+            "imageAtomicMin",
+            "imageAtomicMax",
+            "imageAtomicExchange",
+        ]
     } else {
         &[
             "imageAtomicAdd",

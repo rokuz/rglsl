@@ -365,6 +365,8 @@ pub enum Feature {
     BFloat16Type,
     FloatE4M3Type,
     FloatE5M2Type,
+    Int64ImageType,
+    TileImageType,
 }
 
 impl Feature {
@@ -421,6 +423,8 @@ impl Feature {
             Self::BFloat16Type => &["GL_EXT_bfloat16"],
             Self::FloatE4M3Type => &["GL_EXT_float_e4m3"],
             Self::FloatE5M2Type => &["GL_EXT_float_e5m2"],
+            Self::Int64ImageType => &["GL_EXT_shader_image_int64"],
+            Self::TileImageType => &["GL_EXT_shader_tile_image"],
         }
     }
 
@@ -460,6 +464,10 @@ impl Feature {
             Self::HitObjectNvType
         } else if word == "hitObjectEXT" {
             Self::HitObjectExtType
+        } else if matches!(word, "attachmentEXT" | "iattachmentEXT" | "uattachmentEXT") {
+            Self::TileImageType
+        } else if word.starts_with("i64image") || word.starts_with("u64image") {
+            Self::Int64ImageType
         } else if word == "coopmat" {
             Self::CooperativeMatrixType
         } else if word == "fcoopmatNV" {

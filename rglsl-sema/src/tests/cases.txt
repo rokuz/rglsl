@@ -2619,7 +2619,7 @@ void main() { a = 1.0; b[2] = a; }
 ### shared local | comp | 3:InvalidQualifier
 layout(local_size_x=1) in;
 void main() { shared float a; }
-### readonly image param | comp | 6:InvalidQualifier
+### readonly image param | comp | 6:InvalidQualifier, 6:InvalidQualifier, 6:InvalidQualifier
 layout(local_size_x=1) in;
 layout(binding=0, rgba8) uniform readonly image2D img;
 vec4 f(readonly image2D i) { return imageLoad(i, ivec2(0)); }
@@ -3114,7 +3114,7 @@ void main() {
   int n = imageSize(a) + imageSize(f) + imageSamples(g); ivec2 m = imageSize(c) + imageSize(g); ivec3 k = imageSize(b) + imageSize(d) + imageSize(e);
   float x = imageAtomicExchange(h, ivec2(0), 1.0);
 }
-### imageAtomicAdd float | comp | 4:NoMatchingFunction
+### imageAtomicAdd float | comp | 4:ExtensionRequired
 layout(local_size_x=1) in;
 layout(binding=7, r32f) uniform image2D h;
 void main() { float x = imageAtomicAdd(h, ivec2(0), 1.0); }
@@ -5535,6 +5535,59 @@ void main() {
 #extension GL_EXT_ray_tracing : enable
 void main() {
     bool sphere = gl_HitIsSphereNV;
+}
+### interlock placement | frag | 3:InvalidQualifier, 5:InvalidQualifier, 7:InvalidBuiltinCall, 8:InvalidBuiltinCall, 11:InvalidBuiltinCall, 12:InvalidBuiltinCall, 12:InvalidBuiltinCall, 14:InvalidBuiltinCall, 14:InvalidBuiltinCall
+#extension GL_ARB_fragment_shader_interlock : enable
+layout(pixel_interlock_ordered) out;
+layout(pixel_interlock_ordered) in;
+layout(pixel_interlock_unordered) in;
+void foo() {
+    beginInvocationInterlockARB();
+    endInvocationInterlockARB();
+}
+void main() {
+    endInvocationInterlockARB();
+    beginInvocationInterlockARB();
+    return;
+    endInvocationInterlockARB();
+}
+### split barrier wait semantics | comp | 5:InvalidBuiltinCall, 5:InvalidBuiltinCall
+#extension GL_KHR_memory_scope_semantics : require
+#extension GL_EXT_split_barrier : require
+void main() {
+    controlBarrierWait(gl_ScopeWorkgroup, gl_ScopeWorkgroup, gl_StorageSemanticsBuffer, gl_SemanticsAcquire | gl_SemanticsVolatile);
+}
+### split barrier needs its extension | comp | 3:ExtensionRequired
+void main() {
+    controlBarrierArrive();
+}
+### tile images need a location and no set | frag 460 | 3:InvalidQualifier, 3:InvalidQualifier, 4:OverlappingLocation
+#extension GL_EXT_shader_tile_image : require
+layout(set = 0) tileImageEXT highp attachmentEXT a;
+layout(location = 0) tileImageEXT highp attachmentEXT b[2], c;
+void main() {}
+### float atomics need their extensions | comp | 4:ExtensionRequired, 5:ExtensionRequired
+layout(binding = 0) buffer B { float f; };
+void main() {
+    atomicAdd(f, 1.0);
+    atomicMin(f, 1.0);
+}
+### nontemporal cannot be dropped | frag 460 | 5:InvalidQualifier
+#extension GL_EXT_nontemporal_keyword : require
+layout(binding = 0) uniform writeonly nontemporal image2D image;
+void f(writeonly image2D target) {}
+void main() { f(image); }
+### post depth coverage needs an extension | frag | 2:ExtensionRequired
+layout(post_depth_coverage) in;
+void main() {}
+### shading rate built-ins need their extension | vert | 3:ExtensionRequired
+void main() {
+    gl_PrimitiveShadingRateEXT = 0;
+}
+### fragment mask needs its extension | frag | 4:ExtensionRequired
+layout(binding = 0) uniform sampler2DMS image;
+void main() {
+    uint mask = fragmentMaskFetchAMD(image, ivec2(0));
 }
 ### push constant banks need their extension | vert 460 | 2:ExtensionRequired, 3:ExtensionRequired
 layout(push_constant, bank = 1) uniform A { uint a; } a;

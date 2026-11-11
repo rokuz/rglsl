@@ -629,6 +629,70 @@ fn adjust_expr(new_pos: &HandleVec<Expression, Handle<Expression>>, expr: &mut E
         Expression::ImageSparseResident { ref mut code } => {
             adjust(code);
         }
+        Expression::InterpolateAt {
+            ref mut pointer,
+            ref mut location,
+        } => {
+            adjust(pointer);
+            match *location {
+                crate::InterpolationLocation::Centroid => {}
+                crate::InterpolationLocation::Sample(ref mut operand)
+                | crate::InterpolationLocation::Offset(ref mut operand) => adjust(operand),
+            }
+        }
+        Expression::ImageFootprint {
+            ref mut image,
+            ref mut coordinate,
+            ref mut granularity,
+            ref mut coarse,
+            ref mut level,
+            ref mut min_lod,
+            ty: _,
+        } => {
+            adjust(image);
+            adjust(coordinate);
+            adjust(granularity);
+            adjust(coarse);
+            match *level {
+                crate::SampleLevel::Auto | crate::SampleLevel::Zero => {}
+                crate::SampleLevel::Exact(ref mut expr)
+                | crate::SampleLevel::Bias(ref mut expr) => {
+                    adjust(expr);
+                }
+                crate::SampleLevel::Gradient {
+                    ref mut x,
+                    ref mut y,
+                } => {
+                    adjust(x);
+                    adjust(y);
+                }
+            }
+            if let Some(ref mut min_lod) = *min_lod {
+                adjust(min_lod);
+            }
+        }
+        Expression::FragmentFetch {
+            ref mut image,
+            ref mut coordinate,
+            ref mut fragment,
+        } => {
+            adjust(image);
+            adjust(coordinate);
+            if let Some(ref mut fragment) = *fragment {
+                adjust(fragment);
+            }
+        }
+        Expression::AttachmentRead {
+            ref mut aspect,
+            ref mut sample,
+        } => {
+            if let crate::AttachmentAspect::Color(ref mut image) = *aspect {
+                adjust(image);
+            }
+            if let Some(ref mut sample) = *sample {
+                adjust(sample);
+            }
+        }
         Expression::Unary {
             ref mut expr,
             op: _,
@@ -760,6 +824,7 @@ fn adjust_expr(new_pos: &HandleVec<Expression, Handle<Expression>>, expr: &mut E
         }
         | Expression::WorkGroupUniformLoadResult { ty: _ }
         | Expression::SubgroupBallotResult
+        | Expression::IsHelperInvocation
         | Expression::SubgroupOperationResult { .. }
         | Expression::SpirvInstructionResult { .. } => {}
         Expression::CooperativeLoad { ref mut data, .. } => {
@@ -1191,6 +1256,10 @@ fn adjust_stmt(new_pos: &HandleVec<Expression, Handle<Expression>>, stmt: &mut S
         Statement::Break
         | Statement::Continue
         | Statement::Kill
+        | Statement::Demote
+        | Statement::BeginInvocationInterlock
+        | Statement::EndInvocationInterlock
+        | Statement::SplitBarrier { .. }
         | Statement::EmitVertex { .. }
         | Statement::EndPrimitive { .. }
         | Statement::ControlBarrier(_)

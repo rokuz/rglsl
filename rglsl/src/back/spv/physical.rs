@@ -43,6 +43,7 @@ pub(super) fn global_qualifiers(decorations: crate::MemoryDecorations) -> Pointe
             PointerQualifiers::SHADER_CALL_COHERENT,
         ),
         (Md::NONPRIVATE, PointerQualifiers::NONPRIVATE),
+        (Md::NONTEMPORAL, PointerQualifiers::NONTEMPORAL),
     ]
     .into_iter()
     .filter(|&(decoration, _)| decorations.contains(decoration))
@@ -409,6 +410,11 @@ impl BlockContext<'_> {
         if volatile {
             mask |= spirv::ImageOperands::VOLATILE_TEXEL;
         }
+        if qualifiers.contains(PointerQualifiers::NONTEMPORAL)
+            && self.writer.lang_version() >= (1, 6)
+        {
+            mask |= spirv::ImageOperands::NONTEMPORAL;
+        }
         (mask, scope)
     }
 
@@ -467,6 +473,9 @@ impl BlockContext<'_> {
             if volatile {
                 mask |= spirv::MemoryAccess::VOLATILE;
             }
+            if visible && qualifiers.contains(PointerQualifiers::NONTEMPORAL) {
+                mask |= spirv::MemoryAccess::NONTEMPORAL;
+            }
         }
         if alignment.is_some() {
             mask |= spirv::MemoryAccess::ALIGNED;
@@ -488,17 +497,17 @@ impl BlockContext<'_> {
         &mut self,
         pointer: Handle<Expression>,
     ) -> Option<(spirv::MemorySemantics, spirv::Scope)> {
-        let width = match *self.fun_info[pointer].ty.inner_with(&self.ir_module.types) {
+        let scalar = match *self.fun_info[pointer].ty.inner_with(&self.ir_module.types) {
             TypeInner::Pointer { base, .. } => match self.ir_module.types[base].inner {
-                TypeInner::Scalar(scalar) => scalar.width,
+                TypeInner::Scalar(scalar) => scalar,
                 _ => return None,
             },
             TypeInner::ValuePointer {
                 size: None, scalar, ..
-            } => scalar.width,
+            } => scalar,
             _ => return None,
         };
-        if width == 8 {
+        if scalar.width == 8 && scalar.kind != crate::ScalarKind::Float {
             self.writer
                 .capabilities_used
                 .insert(spirv::Capability::Int64Atomics);

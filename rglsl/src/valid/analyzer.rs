@@ -930,6 +930,80 @@ impl FunctionInfo {
                     .or(self.add_ref(barycentric)),
                 requirements: UniformityRequirements::empty(),
             },
+            E::InterpolateAt { pointer, location } => Uniformity {
+                non_uniform_result: self
+                    .add_ref(pointer)
+                    .or(match location {
+                        crate::InterpolationLocation::Centroid => None,
+                        crate::InterpolationLocation::Sample(operand)
+                        | crate::InterpolationLocation::Offset(operand) => self.add_ref(operand),
+                    })
+                    .or(Some(handle)),
+                requirements: UniformityRequirements::empty(),
+            },
+            E::ImageFootprint {
+                image,
+                coordinate,
+                granularity,
+                coarse,
+                level,
+                min_lod,
+                ty: _,
+            } => {
+                let level_result = match level {
+                    crate::SampleLevel::Auto | crate::SampleLevel::Zero => None,
+                    crate::SampleLevel::Exact(expr) | crate::SampleLevel::Bias(expr) => {
+                        self.add_ref(expr)
+                    }
+                    crate::SampleLevel::Gradient { x, y } => {
+                        let x = self.add_ref(x);
+                        self.add_ref(y).or(x)
+                    }
+                };
+                Uniformity {
+                    non_uniform_result: self
+                        .add_ref(image)
+                        .or(self.add_ref(coordinate))
+                        .or(self.add_ref(granularity))
+                        .or(self.add_ref(coarse))
+                        .or(min_lod.and_then(|min_lod| self.add_ref(min_lod)))
+                        .or(level_result),
+                    requirements: if matches!(
+                        level,
+                        crate::SampleLevel::Auto | crate::SampleLevel::Bias(_)
+                    ) {
+                        UniformityRequirements::IMPLICIT_LEVEL
+                    } else {
+                        UniformityRequirements::empty()
+                    },
+                }
+            }
+            E::FragmentFetch {
+                image,
+                coordinate,
+                fragment,
+            } => Uniformity {
+                non_uniform_result: self
+                    .add_ref(image)
+                    .or(self.add_ref(coordinate))
+                    .or(fragment.and_then(|fragment| self.add_ref(fragment))),
+                requirements: UniformityRequirements::empty(),
+            },
+            E::AttachmentRead { aspect, sample } => Uniformity {
+                non_uniform_result: match aspect {
+                    crate::AttachmentAspect::Color(image) => self.add_ref(image),
+                    crate::AttachmentAspect::Depth | crate::AttachmentAspect::Stencil => {
+                        Some(handle)
+                    }
+                }
+                .or(sample.and_then(|sample| self.add_ref(sample)))
+                .or(Some(handle)),
+                requirements: UniformityRequirements::empty(),
+            },
+            E::IsHelperInvocation => Uniformity {
+                non_uniform_result: Some(handle),
+                requirements: UniformityRequirements::empty(),
+            },
             E::SubgroupBallotResult => Uniformity {
                 non_uniform_result: Some(handle),
                 requirements: UniformityRequirements::empty(),
@@ -1155,15 +1229,19 @@ impl FunctionInfo {
                         ExitFlags::empty()
                     },
                 },
-                S::ControlBarrier(_) | S::MemoryBarrier(_) | S::ScopedBarrier { .. } => {
-                    FunctionUniformity {
-                        result: Uniformity {
-                            non_uniform_result: None,
-                            requirements: UniformityRequirements::WORK_GROUP_BARRIER,
-                        },
-                        exit: ExitFlags::empty(),
-                    }
+                S::Demote | S::BeginInvocationInterlock | S::EndInvocationInterlock => {
+                    FunctionUniformity::new()
                 }
+                S::ControlBarrier(_)
+                | S::MemoryBarrier(_)
+                | S::ScopedBarrier { .. }
+                | S::SplitBarrier { .. } => FunctionUniformity {
+                    result: Uniformity {
+                        non_uniform_result: None,
+                        requirements: UniformityRequirements::WORK_GROUP_BARRIER,
+                    },
+                    exit: ExitFlags::empty(),
+                },
                 S::WorkGroupUniformLoad { pointer, .. } => {
                     let _condition_nur = self.add_ref(pointer);
 
@@ -1341,7 +1419,11 @@ impl FunctionInfo {
                     result: _,
                 } => {
                     for &argument in arguments {
-                        let _ = self.add_ref(argument);
+                        let usage = match expression_arena[argument] {
+                            crate::Expression::GlobalVariable(_) => GlobalUse::QUERY,
+                            _ => GlobalUse::READ,
+                        };
+                        let _ = self.add_ref_impl(argument, usage);
                     }
                     let info = &other_functions[function.index()];
                     //Note: the result is validated by the Validator, not here

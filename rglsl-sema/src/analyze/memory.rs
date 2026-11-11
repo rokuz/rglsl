@@ -26,6 +26,8 @@ enum Kind {
     Load,
     Store,
     ControlBarrier,
+    BarrierArrive,
+    BarrierWait,
     MemoryBarrier,
 }
 
@@ -66,6 +68,8 @@ fn shape(name: &str) -> Option<Shape> {
         "atomicAdd" | "atomicMin" | "atomicMax" | "atomicAnd" | "atomicOr" | "atomicXor"
         | "atomicExchange" => (Kind::Modify, 2, 3),
         "controlBarrier" => (Kind::ControlBarrier, 0, 2),
+        "controlBarrierArrive" => (Kind::BarrierArrive, 0, 2),
+        "controlBarrierWait" => (Kind::BarrierWait, 0, 2),
         "memoryBarrier" => (Kind::MemoryBarrier, 0, 1),
         _ => return None,
     };
@@ -80,7 +84,47 @@ const fn is_int64(ty: &Type) -> bool {
     matches!(ty.base_scalar(), Some(Scalar::Int64 | Scalar::Uint64)) && !ty.is_array()
 }
 
+const ATOMIC_FLOAT: &str = "GL_EXT_shader_atomic_float";
+const ATOMIC_FLOAT2: &str = "GL_EXT_shader_atomic_float2";
+
 impl Analyzer<'_> {
+    pub(crate) fn atomic_float_extensions(&mut self, span: Span, name: &str, operands: &[Operand]) {
+        let Some(first) = operands.first() else {
+            return;
+        };
+        let image = name.starts_with("imageAtomic");
+        let operation = name
+            .strip_prefix("imageAtomic")
+            .or_else(|| name.strip_prefix("atomic"))
+            .unwrap_or_default();
+        let extension = if image {
+            let float = first
+                .ty
+                .as_opaque()
+                .is_some_and(|opaque| opaque.sampled == crate::types::SampledType::Float);
+            match operation {
+                _ if !float => None,
+                "Add" | "Load" | "Store" => Some(ATOMIC_FLOAT),
+                "Min" | "Max" => Some(ATOMIC_FLOAT2),
+                _ => None,
+            }
+        } else {
+            match (first.ty.base_scalar(), operation) {
+                (Some(Scalar::Float | Scalar::Double), "Add" | "Exchange" | "Load" | "Store") => {
+                    Some(ATOMIC_FLOAT)
+                }
+                (Some(Scalar::Float | Scalar::Double), "Min" | "Max")
+                | (Some(Scalar::Float16), "Add" | "Exchange" | "Load" | "Store" | "Min" | "Max") => {
+                    Some(ATOMIC_FLOAT2)
+                }
+                _ => None,
+            }
+        };
+        if let Some(extension) = extension {
+            self.require_extension(span, extension, name);
+        }
+    }
+
     fn require_any_extension(&mut self, span: Span, names: &[&'static str], what: &str) -> bool {
         match self.extensions.request(names) {
             rglsl_ast::extensions::Request::Enabled => true,
@@ -135,7 +179,10 @@ impl Analyzer<'_> {
                 return true;
             };
             let scoped = match shape.kind {
-                Kind::ControlBarrier | Kind::MemoryBarrier => !operands.is_empty(),
+                Kind::ControlBarrier
+                | Kind::BarrierArrive
+                | Kind::BarrierWait
+                | Kind::MemoryBarrier => !operands.is_empty(),
                 Kind::Modify | Kind::CompareSwap | Kind::Load | Kind::Store => operands.len() > 3,
             };
             (shape, scoped)
@@ -225,6 +272,20 @@ impl Analyzer<'_> {
                 "Semantics must be gl_SemanticsRelease, gl_SemanticsAcquire, or gl_SemanticsAcquireRelease when used with non-zero storage class semantics",
             );
         }
+        if storage != 0 {
+            if shape.kind == Kind::BarrierArrive && semantics & !MAKE_AVAILABLE != RELEASE {
+                report(
+                    self,
+                    "Semantics must be gl_SemanticsRelease (optionally with gl_SemanticsMakeAvailable) when used with non-zero storage class semantics",
+                );
+            }
+            if shape.kind == Kind::BarrierWait && semantics & !MAKE_VISIBLE != ACQUIRE {
+                report(
+                    self,
+                    "Semantics must be gl_SemanticsAcquire (optionally with gl_SemanticsMakeVisible) when used with non-zero storage class semantics",
+                );
+            }
+        }
         let available = |semantics: i64| {
             semantics & MAKE_AVAILABLE != 0 && semantics & (RELEASE | ACQUIRE_RELEASE) == 0
         };
@@ -273,6 +334,18 @@ impl Analyzer<'_> {
             report(
                 self,
                 "gl_SemanticsVolatile must not be used with memoryBarrier or controlBarrier",
+            );
+        }
+        if shape.kind == Kind::BarrierArrive && semantics & VOLATILE != 0 {
+            report(
+                self,
+                "gl_SemanticsVolatile must not be used with controlBarrierArrive",
+            );
+        }
+        if shape.kind == Kind::BarrierWait && semantics & VOLATILE != 0 {
+            report(
+                self,
+                "gl_SemanticsVolatile must not be used with controlBarrierWait",
             );
         }
         if shape.kind == Kind::CompareSwap {
