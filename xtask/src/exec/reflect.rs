@@ -177,6 +177,32 @@ impl Layout {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DataType {
+    Scalar(Scalar),
+    Vector {
+        scalar: Scalar,
+        count: u32,
+    },
+    Matrix {
+        scalar: Scalar,
+        columns: u32,
+        rows: u32,
+    },
+    Array {
+        element: Box<DataType>,
+        length: u32,
+    },
+    Struct(Vec<DataType>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RayVariable {
+    pub class: StorageClass,
+    pub location: u32,
+    pub ty: Result<DataType, String>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ImageType {
     pub dim: Dim,
@@ -250,6 +276,7 @@ pub struct Varying {
     pub centroid: bool,
     pub sample: bool,
     pub patch: bool,
+    pub per_primitive: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -268,10 +295,46 @@ pub struct Reflection {
     pub extensions: BTreeSet<String>,
     pub modes: BTreeMap<u32, Vec<u32>>,
     pub ray_storage: BTreeSet<StorageClass>,
+    pub ray_variables: Vec<RayVariable>,
+    pub shader_record: Option<Result<Layout, String>>,
+    pub task_payload: Option<Result<DataType, String>>,
+    pub body_opcodes: BTreeSet<u32>,
     pub problems: Vec<String>,
 }
 
 impl Reflection {
+    pub fn new(model: ExecutionModel) -> Self {
+        Self {
+            model,
+            entry: "main".into(),
+            local_size: [1, 1, 1],
+            resources: Vec::new(),
+            push_constants: None,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            input_builtins: BTreeSet::new(),
+            output_builtins: BTreeSet::new(),
+            capabilities: BTreeSet::new(),
+            unknown_capabilities: BTreeSet::new(),
+            extensions: BTreeSet::new(),
+            modes: BTreeMap::new(),
+            ray_storage: BTreeSet::new(),
+            ray_variables: Vec::new(),
+            shader_record: None,
+            task_payload: None,
+            body_opcodes: BTreeSet::new(),
+            problems: Vec::new(),
+        }
+    }
+
+    pub fn uses(&self, op: Op) -> bool {
+        self.body_opcodes.contains(&(op as u32))
+    }
+
+    pub fn ray_variable(&self, class: StorageClass) -> Option<&RayVariable> {
+        self.ray_variables.iter().find(|v| v.class == class)
+    }
+
     pub fn mode(&self, mode: ExecutionMode) -> Option<&[u32]> {
         self.modes.get(&(mode as u32)).map(Vec::as_slice)
     }
@@ -280,6 +343,8 @@ impl Reflection {
         self.modes.contains_key(&(mode as u32))
     }
 }
+
+pub const RUNTIME_DESCRIPTORS: u32 = 64;
 
 type DecorationList = Vec<(Decoration, Vec<u32>)>;
 
@@ -463,6 +528,66 @@ impl Types<'_> {
             return Err("pointers in buffers (buffer device address)".into());
         }
         Err(format!("unsupported type {} in a buffer", op_name(op)))
+    }
+
+    fn data_type(&self, id: u32, depth: u32) -> Result<DataType, String> {
+        if depth > 32 {
+            return Err("type nesting too deep".into());
+        }
+        let instruction = self
+            .get(id)
+            .ok_or_else(|| format!("unsupported type %{id}"))?;
+        let op = instruction.opcode;
+        if op == Op::TypeBool as u32 || op == Op::TypeInt as u32 || op == Op::TypeFloat as u32 {
+            return self
+                .scalar(id)
+                .map(DataType::Scalar)
+                .ok_or_else(|| "unsupported scalar type".to_string());
+        }
+        if op == Op::TypeVector as u32 {
+            let component = instruction.word(1).ok_or("bad vector type")?;
+            let count = instruction.word(2).ok_or("bad vector type")?;
+            let scalar = self
+                .scalar(component)
+                .ok_or_else(|| "unsupported vector component".to_string())?;
+            return Ok(DataType::Vector { scalar, count });
+        }
+        if op == Op::TypeMatrix as u32 {
+            let column = instruction.word(1).ok_or("bad matrix type")?;
+            let columns = instruction.word(2).ok_or("bad matrix type")?;
+            let DataType::Vector {
+                scalar,
+                count: rows,
+            } = self.data_type(column, depth + 1)?
+            else {
+                return Err("bad matrix column type".into());
+            };
+            return Ok(DataType::Matrix {
+                scalar,
+                columns,
+                rows,
+            });
+        }
+        if op == Op::TypeArray as u32 {
+            let element = instruction.word(1).ok_or("bad array type")?;
+            let length = instruction
+                .word(2)
+                .and_then(|l| self.constant_u32(l))
+                .ok_or_else(|| "array length is not a constant".to_string())?;
+            return Ok(DataType::Array {
+                element: Box::new(self.data_type(element, depth + 1)?),
+                length,
+            });
+        }
+        if op == Op::TypeStruct as u32 {
+            let members = instruction
+                .rest(1)
+                .iter()
+                .map(|member| self.data_type(*member, depth + 1))
+                .collect::<Result<Vec<_>, _>>()?;
+            return Ok(DataType::Struct(members));
+        }
+        Err(format!("{} values", op_name(op)))
     }
 
     fn image(&self, id: u32) -> Result<ImageType, String> {
@@ -661,6 +786,7 @@ fn varyings(types: &Types, id: u32, pointee: u32, arrayed: bool) -> Result<Vec<V
         centroid: decorations.has(id, Decoration::Centroid),
         sample: decorations.has(id, Decoration::Sample),
         patch,
+        per_primitive: decorations.has(id, Decoration::PerPrimitiveEXT),
     };
     let Some(instruction) = types.get(pointee) else {
         return Err("interface variable of an unknown type".into());
@@ -698,6 +824,8 @@ fn varyings(types: &Types, id: u32, pointee: u32, arrayed: bool) -> Result<Vec<V
                     || decorations.member_has(pointee, index, Decoration::Centroid),
                 sample: base.sample || decorations.member_has(pointee, index, Decoration::Sample),
                 patch: base.patch || decorations.member_has(pointee, index, Decoration::Patch),
+                per_primitive: base.per_primitive
+                    || decorations.member_has(pointee, index, Decoration::PerPrimitiveEXT),
                 ..base.clone()
             });
             next = Some(location + 1);
@@ -745,6 +873,16 @@ const fn arrayed_interface(model: ExecutionModel, output: bool) -> bool {
         ExecutionModel::MeshEXT | ExecutionModel::MeshNV => output,
         _ => false,
     }
+}
+
+pub const fn is_mesh_shading(model: ExecutionModel) -> bool {
+    matches!(
+        model,
+        ExecutionModel::MeshEXT
+            | ExecutionModel::TaskEXT
+            | ExecutionModel::MeshNV
+            | ExecutionModel::TaskNV
+    )
 }
 
 pub const fn is_ray_tracing(model: ExecutionModel) -> bool {
@@ -818,21 +956,14 @@ pub fn reflect(module: &Module) -> Result<Reflection, String> {
     }
 
     let mut reflection = Reflection {
-        model,
         entry,
         local_size: local_size(module, &types, &modes),
-        resources: Vec::new(),
-        push_constants: None,
-        inputs: Vec::new(),
-        outputs: Vec::new(),
-        input_builtins: BTreeSet::new(),
-        output_builtins: BTreeSet::new(),
         capabilities,
         unknown_capabilities,
         extensions,
         modes,
-        ray_storage: BTreeSet::new(),
-        problems: Vec::new(),
+        body_opcodes: module.body_opcodes.clone(),
+        ..Reflection::new(model)
     };
 
     for instruction in &module.globals {
@@ -911,12 +1042,16 @@ pub fn reflect(module: &Module) -> Result<Reflection, String> {
                             None => (None, None),
                         }
                     }
-                    Some(array) if array.is(Op::TypeRuntimeArray) => (None, None),
+                    Some(array) if array.is(Op::TypeRuntimeArray) => {
+                        (Some(RUNTIME_DESCRIPTORS), array.word(1))
+                    }
                     _ => (None, Some(pointee)),
                 };
                 let kind = match element {
                     Some(element) if count != Some(0) => resource_kind(&types, class, id, element),
-                    _ => ResourceKind::Unsupported("runtime arrays of descriptors".into()),
+                    _ => ResourceKind::Unsupported(
+                        "descriptor arrays without a constant length".into(),
+                    ),
                 };
                 reflection.resources.push(Resource {
                     set,
@@ -932,19 +1067,33 @@ pub fn reflect(module: &Module) -> Result<Reflection, String> {
             | StorageClass::Workgroup
             | StorageClass::Function
             | StorageClass::Image => {}
+            StorageClass::ShaderRecordBufferKHR if is_ray_tracing(model) => {
+                reflection.ray_storage.insert(class);
+                reflection.shader_record = Some(types.layout(pointee, None, 0));
+            }
             StorageClass::RayPayloadKHR
             | StorageClass::IncomingRayPayloadKHR
             | StorageClass::HitAttributeKHR
             | StorageClass::CallableDataKHR
             | StorageClass::IncomingCallableDataKHR
-            | StorageClass::ShaderRecordBufferKHR
                 if is_ray_tracing(model) =>
             {
                 reflection.ray_storage.insert(class);
+                reflection.ray_variables.push(RayVariable {
+                    class,
+                    location: decorations.value(id, Decoration::Location).unwrap_or(0),
+                    ty: types.data_type(pointee, 0),
+                });
+            }
+            StorageClass::TaskPayloadWorkgroupEXT if is_mesh_shading(model) => {
+                reflection.task_payload = Some(types.data_type(pointee, 0));
             }
             other => reflection.problems.push(format!("{other:?} variables")),
         }
     }
+    reflection
+        .ray_variables
+        .sort_by_key(|v| (v.class as u32, v.location));
     reflection
         .resources
         .sort_by_key(|resource| (resource.set, resource.binding));

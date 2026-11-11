@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use spirv::Op;
 
 pub const MAGIC: u32 = 0x0723_0203;
@@ -35,6 +37,7 @@ impl Instruction {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Module {
     pub globals: Vec<Instruction>,
+    pub body_opcodes: BTreeSet<u32>,
 }
 
 pub fn literal_string(words: &[u32]) -> Option<(String, usize)> {
@@ -110,6 +113,7 @@ pub fn parse(words: &[u32]) -> Result<Module, String> {
         return Err("the SPIR-V header is truncated".into());
     }
     let mut module = Module::default();
+    let mut in_body = false;
     while let Some(&first) = words.get(position) {
         let count = usize::try_from(first >> 16).unwrap_or(0);
         let opcode = first & 0xffff;
@@ -122,13 +126,15 @@ pub fn parse(words: &[u32]) -> Result<Module, String> {
             .checked_add(count)
             .filter(|end| *end <= words.len())
             .ok_or_else(|| format!("instruction at word {position} runs past the end"))?;
-        if opcode == Op::Function as u32 {
-            break;
+        in_body |= opcode == Op::Function as u32;
+        if in_body {
+            module.body_opcodes.insert(opcode);
+        } else {
+            module.globals.push(Instruction {
+                opcode,
+                operands: words.get(position + 1..end).unwrap_or_default().to_vec(),
+            });
         }
-        module.globals.push(Instruction {
-            opcode,
-            operands: words.get(position + 1..end).unwrap_or_default().to_vec(),
-        });
         position = end;
     }
     Ok(module)
@@ -196,6 +202,8 @@ pub mod tests {
         assert_eq!(module.globals[2].result_id(), None);
         assert_eq!(module.globals[4].result_id(), Some(4));
         assert_eq!(module.globals[4].rest(2), [9]);
+        assert!(module.body_opcodes.contains(&(Op::Return as u32)));
+        assert!(!module.body_opcodes.contains(&(Op::Capability as u32)));
     }
 
     #[test]
