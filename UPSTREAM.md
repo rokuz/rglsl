@@ -597,6 +597,62 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   `Output` global with a raw `BuiltIn` decoration (`proc::has_spirv_built_in`) needs no binding.
   The SPIR-V backend writes them in `back/spv/intrinsics.rs`.
 
+- **Built-ins of fragment and draw extensions.** `BuiltIn::SamplePosition`,
+  `HelperInvocation` (`Volatile` from SPIR-V 1.6 without the Vulkan memory model, as glslang
+  does), `DeviceIndex`, `ShadingRate`, `FragSize { nv }`, `FragInvocationCount { nv }`
+  (`SPV_NV_shading_rate` or `SPV_EXT_fragment_invocation_density`, `FragmentDensityEXT`),
+  `FullyCovered` and `FragStencilRef` (which adds the `StencilRefReplacingEXT` execution mode
+  when it is an output of the entry point). `BaseVertex`/`BaseInstance` require
+  `DrawParameters`, and the draw-parameter and device-group extensions are only declared
+  before SPIR-V 1.3. Boolean fragment inputs are no longer decorated `Flat` (glslang does not
+  decorate `gl_FrontFacing` or `gl_FragFullyCoveredNV`).
+- **Demote, interlock and split barriers.** `Statement::Demote`
+  (`OpDemoteToHelperInvocation`), `Statement::BeginInvocationInterlock`,
+  `Statement::EndInvocationInterlock`, `Statement::SplitBarrier { phase: BarrierPhase,
+  execution, memory, semantics }` (`OpControlBarrierArriveEXT`/`WaitEXT`) and
+  `Expression::IsHelperInvocation`. The first three are fragment-only in the validator.
+- **Fragment execution modes.** `EntryPoint::fragment_modes` (`FragmentModes`, not
+  serialized when default): `post_depth_coverage`, `interlock: Option<Interlock { scope:
+  InterlockScope, ordered }>` and the three non-coherent tile-image reads.
+- **Floating-point atomics on plain pointers and images.** `Statement::Atomic` and
+  `ImageAtomic` accept `f16`/`f32`/`f64` scalars behind a plain (non-`Atomic`) pointer with
+  `Add`, `Min`, `Max` and `Exchange`, and `R32Float` images with `Add`, `Min`, `Max` as well as
+  `Exchange` (`valid/function.rs`); the SPIR-V backend writes `OpAtomicFAddEXT`/`FMinEXT`/
+  `FMaxEXT` with the width's `AtomicFloat*AddEXT`/`MinMaxEXT` capability. 64-bit float atomics
+  no longer request `Int64Atomics`.
+- **64-bit integer images.** `StorageFormat::R64Sint` (new, `R64i`), next to `R64Uint`;
+  either is valid for image atomics. Sparse loads of 64-bit texels use a correctly aligned
+  result struct.
+- **`nontemporal`.** `MemoryDecorations::NONTEMPORAL` and `PointerQualifiers::NONTEMPORAL`
+  (new). With the Vulkan memory model the SPIR-V backend adds the `Nontemporal` memory
+  operand to loads and stores of such a global, and the `Nontemporal` image operand to reads
+  and writes of such an image from SPIR-V 1.6, as glslang does. A member's qualifier applies
+  to its whole block, like the other memory qualifiers.
+- **Storage image parameters.** A user function may take a storage image (a `Handle`
+  argument of an `Image` type with an unknown format); `ImageStore` accepts a function
+  argument, and a global passed directly as a call argument counts as a query in the global
+  usage analysis rather than a read.
+- **Tile images** (`GL_EXT_shader_tile_image`). `ImageDimension::TileImageData` (new,
+  `OpTypeImage TileImageDataEXT`, Sampled=2). A `Handle` global of such an image has an
+  `io: Binding::Location` and no resource binding; the SPIR-V backend declares it in the
+  `TileImageEXT` storage class with a `Location` (`proc::is_tile_image`).
+  `Expression::AttachmentRead { aspect: AttachmentAspect::{Color(image), Depth, Stencil},
+  sample }` is `OpColorAttachmentReadEXT`/`OpDepthAttachmentReadEXT`/
+  `OpStencilAttachmentReadEXT` with the matching `TileImage*ReadAccessEXT` capability.
+- **Interpolation functions.** `Expression::InterpolateAt { pointer, location:
+  InterpolationLocation::{Centroid, Sample(index), Offset(offset)} }` on a pointer to an
+  `Input` (`GLSL.std.450 InterpolateAt*`, `InterpolationFunction`).
+- **AMD fragment mask.** `Expression::FragmentFetch { image, coordinate, fragment }`:
+  `OpFragmentMaskFetchAMD` without a fragment, `OpFragmentFetchAMD` with one.
+- **Texture footprints.** `Expression::ImageFootprint { image, coordinate, granularity,
+  coarse, level, min_lod, ty }` is `OpImageSampleFootprintNV`; `ty` is the result struct
+  `{ bool, anchor, offset, mask, lod, granularity }`.
+- **Booleans in structures inside blocks.** The block layout (`front/glsl/lower/offset.rs`)
+  lays a `bool`/`bvecN` member of a structure or array out as `u32`/`uvecN`; the laid-out
+  copy is converted member by member with `!= 0` and `select` on loads and stores.
+- **Float-to-integer conversions without a representable range** (from `f16` to 8-bit
+  integers) are a plain `OpConvertFTo[SU]` instead of a backend error.
+
 ## Cherry-picked upstream commits
 
 None yet.
