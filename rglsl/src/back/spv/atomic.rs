@@ -113,6 +113,37 @@ impl super::Writer {
         }
     }
 
+    pub(super) fn float_atomic(
+        &mut self,
+        fun: crate::AtomicFunction,
+        scalar: crate::Scalar,
+    ) -> Result<spirv::Op, Error> {
+        use spirv::Capability as C;
+        let add = matches!(fun, crate::AtomicFunction::Add);
+        let capability = match (add, scalar.width) {
+            (true, 2) => C::AtomicFloat16AddEXT,
+            (true, 4) => C::AtomicFloat32AddEXT,
+            (true, _) => C::AtomicFloat64AddEXT,
+            (false, 2) => C::AtomicFloat16MinMaxEXT,
+            (false, 4) => C::AtomicFloat32MinMaxEXT,
+            (false, _) => C::AtomicFloat64MinMaxEXT,
+        };
+        if add {
+            self.use_extension("SPV_EXT_shader_atomic_float_add");
+            if scalar.width == 2 {
+                self.use_extension("SPV_EXT_shader_atomic_float16_add");
+            }
+        } else {
+            self.use_extension("SPV_EXT_shader_atomic_float_min_max");
+        }
+        self.require_any("floating-point atomics", &[capability])?;
+        Ok(match fun {
+            crate::AtomicFunction::Min => spirv::Op::AtomicFMinEXT,
+            crate::AtomicFunction::Max => spirv::Op::AtomicFMaxEXT,
+            _ => spirv::Op::AtomicFAddEXT,
+        })
+    }
+
     pub(super) fn write_split_barrier(
         &mut self,
         phase: crate::BarrierPhase,
@@ -156,7 +187,7 @@ impl super::Writer {
 
 impl BlockContext<'_> {
     fn atomic_scalar(&mut self, scalar: crate::Scalar) {
-        if scalar.width == 8 {
+        if scalar.width == 8 && scalar.kind != crate::ScalarKind::Float {
             self.writer
                 .capabilities_used
                 .insert(spirv::Capability::Int64Atomics);
@@ -328,6 +359,13 @@ impl BlockContext<'_> {
         let type_id = self.get_numeric_type_id(NumericType::Scalar(scalar));
         let signed = scalar.kind == crate::ScalarKind::Sint;
         let op = match fun {
+            crate::AtomicFunction::Add
+            | crate::AtomicFunction::Min
+            | crate::AtomicFunction::Max
+                if scalar.kind == crate::ScalarKind::Float =>
+            {
+                self.writer.float_atomic(fun, scalar)?
+            }
             crate::AtomicFunction::Add => spirv::Op::AtomicIAdd,
             crate::AtomicFunction::Subtract => spirv::Op::AtomicISub,
             crate::AtomicFunction::And => spirv::Op::AtomicAnd,

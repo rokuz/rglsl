@@ -48,8 +48,18 @@ pub(super) const fn vector_size(size: u8) -> Option<VectorSize> {
 pub(super) const fn sampled_kind(sampled: SampledType) -> ScalarKind {
     match sampled {
         SampledType::Float => ScalarKind::Float,
-        SampledType::Int => ScalarKind::Sint,
-        SampledType::Uint => ScalarKind::Uint,
+        SampledType::Int | SampledType::Int64 => ScalarKind::Sint,
+        SampledType::Uint | SampledType::Uint64 => ScalarKind::Uint,
+    }
+}
+
+pub(super) const fn sampled_scalar(sampled: SampledType) -> Scalar {
+    Scalar {
+        kind: sampled_kind(sampled),
+        width: match sampled {
+            SampledType::Int64 | SampledType::Uint64 => 8,
+            SampledType::Float | SampledType::Int | SampledType::Uint => 4,
+        },
     }
 }
 
@@ -102,6 +112,7 @@ impl Lowerer<'_> {
 
     pub(super) fn sparse_result_type(&mut self, texel: TypeInner) -> Handle<Type> {
         let (offset, span) = match texel {
+            TypeInner::Vector { scalar, .. } if scalar.width == 8 => (32, 64),
             TypeInner::Vector { .. } => (16, 32),
             _ => (4, 8),
         };

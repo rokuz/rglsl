@@ -488,17 +488,17 @@ impl BlockContext<'_> {
         &mut self,
         pointer: Handle<Expression>,
     ) -> Option<(spirv::MemorySemantics, spirv::Scope)> {
-        let width = match *self.fun_info[pointer].ty.inner_with(&self.ir_module.types) {
+        let scalar = match *self.fun_info[pointer].ty.inner_with(&self.ir_module.types) {
             TypeInner::Pointer { base, .. } => match self.ir_module.types[base].inner {
-                TypeInner::Scalar(scalar) => scalar.width,
+                TypeInner::Scalar(scalar) => scalar,
                 _ => return None,
             },
             TypeInner::ValuePointer {
                 size: None, scalar, ..
-            } => scalar.width,
+            } => scalar,
             _ => return None,
         };
-        if width == 8 {
+        if scalar.width == 8 && scalar.kind != crate::ScalarKind::Float {
             self.writer
                 .capabilities_used
                 .insert(spirv::Capability::Int64Atomics);

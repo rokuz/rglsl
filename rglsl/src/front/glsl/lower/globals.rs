@@ -12,7 +12,7 @@ use rglsl_sema::types::{
 };
 use rglsl_sema::SymbolId;
 
-use super::types::{image_dimension, sampled_kind};
+use super::types::image_dimension;
 use super::{internal, semantic, unsupported, GlobalRef, Initialization, Lowerer, Packing, Result};
 use super::{specialization, xfb};
 use crate::proc::Alignment;
@@ -119,6 +119,7 @@ pub(super) fn image_format(word: &str) -> Option<StorageFormat> {
         "rgba16ui" => Sf::Rgba16Uint,
         "rgba8ui" => Sf::Rgba8Uint,
         "r64ui" => Sf::R64Uint,
+        "r64i" => Sf::R64Sint,
         "rg32ui" => Sf::Rg32Uint,
         "rg16ui" => Sf::Rg16Uint,
         "rg8ui" => Sf::Rg8Uint,
@@ -130,10 +131,7 @@ pub(super) fn image_format(word: &str) -> Option<StorageFormat> {
 }
 
 pub(super) const fn unknown_format(sampled: rglsl_sema::types::SampledType) -> StorageFormat {
-    StorageFormat::Unknown(crate::Scalar {
-        kind: sampled_kind(sampled),
-        width: 4,
-    })
+    StorageFormat::Unknown(super::types::sampled_scalar(sampled))
 }
 
 pub(super) fn storage_access(qualifiers: &Qualifiers) -> StorageAccess {

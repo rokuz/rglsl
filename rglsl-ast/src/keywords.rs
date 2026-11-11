@@ -107,7 +107,7 @@ const EXTENSION_ONLY: [&str; 8] = [
     "tileImageEXT",
 ];
 
-const EXTENSION_KEYWORDS: [&str; 126] = [
+const EXTENSION_KEYWORDS: [&str; 106] = [
     "terminateInvocation",
     "terminateRayEXT",
     "ignoreIntersectionEXT",
@@ -119,28 +119,8 @@ const EXTENSION_KEYWORDS: [&str; 126] = [
     "shadercallcoherent",
     "nonprivate",
     "nontemporal",
-    "i64image1D",
-    "u64image1D",
-    "i64image2D",
-    "u64image2D",
-    "i64image3D",
-    "u64image3D",
     "i64image2DRect",
     "u64image2DRect",
-    "i64imageCube",
-    "u64imageCube",
-    "i64imageBuffer",
-    "u64imageBuffer",
-    "i64image1DArray",
-    "u64image1DArray",
-    "i64image2DArray",
-    "u64image2DArray",
-    "i64imageCubeArray",
-    "u64imageCubeArray",
-    "i64image2DMS",
-    "u64image2DMS",
-    "i64image2DMSArray",
-    "u64image2DMSArray",
     "floate2m1_t",
     "fe2m1vec2",
     "fe2m1vec3",
@@ -263,7 +243,16 @@ pub fn is_opaque_type_keyword(word: &str) -> bool {
                     .is_some_and(|shape| SAMPLED_SHAPES.contains(&shape))
             })
     };
-    is_family_member(word) || word.strip_prefix(['i', 'u']).is_some_and(is_family_member)
+    let is_wide_image = |name: &str| {
+        name.strip_prefix("image")
+            .is_some_and(|shape| SAMPLED_SHAPES.contains(&shape))
+    };
+    is_family_member(word)
+        || word.strip_prefix(['i', 'u']).is_some_and(is_family_member)
+        || word
+            .strip_prefix("i64")
+            .or_else(|| word.strip_prefix("u64"))
+            .is_some_and(is_wide_image)
 }
 
 pub fn is_type_keyword(word: &str) -> bool {

@@ -374,17 +374,26 @@ pub enum SampledType {
     Float,
     Int,
     Uint,
+    Int64,
+    Uint64,
 }
 
 impl SampledType {
     pub const ALL: [Self; 3] = [Self::Float, Self::Int, Self::Uint];
+    pub const WIDE: [Self; 2] = [Self::Int64, Self::Uint64];
 
     pub const fn scalar(self) -> Scalar {
         match self {
             Self::Float => Scalar::Float,
             Self::Int => Scalar::Int,
             Self::Uint => Scalar::Uint,
+            Self::Int64 => Scalar::Int64,
+            Self::Uint64 => Scalar::Uint64,
         }
+    }
+
+    pub const fn is_integer(self) -> bool {
+        !matches!(self, Self::Float)
     }
 
     const fn prefix(self) -> &'static str {
@@ -392,6 +401,8 @@ impl SampledType {
             Self::Float => "",
             Self::Int => "i",
             Self::Uint => "u",
+            Self::Int64 => "i64",
+            Self::Uint64 => "u64",
         }
     }
 }
@@ -475,6 +486,12 @@ impl Opaque {
         let is_family = |rest: &str| families.iter().any(|family| rest.starts_with(family));
         let (sampled, rest) = match (word.strip_prefix('i'), word.strip_prefix('u')) {
             _ if is_family(word) => (SampledType::Float, word),
+            (Some(rest), _) if rest.starts_with("64image") => {
+                (SampledType::Int64, rest.trim_start_matches("64"))
+            }
+            (_, Some(rest)) if rest.starts_with("64image") => {
+                (SampledType::Uint64, rest.trim_start_matches("64"))
+            }
             (Some(rest), _) if is_family(rest) => (SampledType::Int, rest),
             (_, Some(rest)) if is_family(rest) => (SampledType::Uint, rest),
             _ => return None,

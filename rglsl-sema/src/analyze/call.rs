@@ -837,6 +837,9 @@ impl Analyzer<'_> {
             );
             false
         };
+        if name.starts_with("atomic") || name.starts_with("imageAtomic") {
+            self.atomic_float_extensions(span, name, operands);
+        }
         if !self.memory_scope_checks(span, name, operands) {
             return false;
         }
@@ -878,6 +881,32 @@ impl Analyzer<'_> {
                 });
             if name.starts_with("imageAtomic") && integer_image && !has_atomic_format {
                 return invalid(self, span, "the image format must be r32i or r32ui");
+            }
+            let wide = first
+                .and_then(|operand| operand.ty.as_opaque())
+                .map(|opaque| opaque.sampled)
+                .and_then(|sampled| match sampled {
+                    crate::types::SampledType::Int64 => Some("r64i"),
+                    crate::types::SampledType::Uint64 => Some("r64ui"),
+                    _ => None,
+                });
+            if let Some(format) = wide.filter(|_| name.starts_with("imageAtomic")) {
+                let matches = first
+                    .and_then(|operand| operand.root)
+                    .and_then(|id| self.symbol(id))
+                    .and_then(|symbol| symbol.variable())
+                    .is_some_and(|variable| variable.qualifiers.has_layout(format));
+                if !matches {
+                    return invalid(
+                        self,
+                        span,
+                        if format == "r64i" {
+                            "only supported on image with format r64i"
+                        } else {
+                            "only supported on image with format r64ui"
+                        },
+                    );
+                }
             }
             if let Some((readonly, writeonly)) = qualifiers {
                 if readonly && name != "imageLoad" {

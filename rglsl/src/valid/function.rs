@@ -647,10 +647,14 @@ impl super::Validator {
                     };
                 match scalar {
                     Some(
-                        scalar @ crate::Scalar {
+                        scalar @ (crate::Scalar {
                             kind: crate::ScalarKind::Sint | crate::ScalarKind::Uint,
                             width: 4 | 8,
-                        },
+                        }
+                        | crate::Scalar {
+                            kind: crate::ScalarKind::Float,
+                            width: 2 | 4 | 8,
+                        }),
                     ) => Ok(scalar),
                     _ => Err(AtomicError::InvalidPointer(pointer)
                         .with_span_handle(pointer, context.expressions)
@@ -663,7 +667,8 @@ impl super::Validator {
                     crate::StorageFormat::R32Sint
                     | crate::StorageFormat::R32Uint
                     | crate::StorageFormat::R32Float
-                    | crate::StorageFormat::R64Uint => Ok(format.into()),
+                    | crate::StorageFormat::R64Uint
+                    | crate::StorageFormat::R64Sint => Ok(format.into()),
                     _ => Err(FunctionError::InvalidImageAtomic(
                         ExpressionError::InvalidImageFormat(format),
                     )
@@ -712,14 +717,42 @@ impl super::Validator {
     ) -> Result<(), WithSpan<FunctionError>> {
         // The `pointer` operand must be a pointer to an atomic value.
         let pointer_inner = context.resolve_type_inner(pointer, &self.valid_expression_set)?;
+        let plain_float = |inner: &crate::TypeInner| {
+            matches!(
+                *inner,
+                crate::TypeInner::Pointer { base, .. }
+                    if matches!(
+                        context.types[base].inner,
+                        crate::TypeInner::Scalar(crate::Scalar {
+                            kind: crate::ScalarKind::Float,
+                            width: 2 | 4 | 8,
+                        })
+                    )
+            ) || matches!(
+                *inner,
+                crate::TypeInner::ValuePointer {
+                    size: None,
+                    scalar: crate::Scalar {
+                        kind: crate::ScalarKind::Float,
+                        width: 2 | 4 | 8,
+                    },
+                    ..
+                }
+            )
+        };
+        let plain_float = plain_float(pointer_inner);
         let (pointer_scalar, pointer_space) = match *pointer_inner {
             crate::TypeInner::Pointer { base, space } => match context.types[base].inner {
                 crate::TypeInner::Atomic(scalar) => (scalar, space),
                 crate::TypeInner::Scalar(
-                    scalar @ crate::Scalar {
+                    scalar @ (crate::Scalar {
                         kind: crate::ScalarKind::Sint | crate::ScalarKind::Uint,
                         width: 4 | 8,
-                    },
+                    }
+                    | crate::Scalar {
+                        kind: crate::ScalarKind::Float,
+                        width: 2 | 4 | 8,
+                    }),
                 ) => (scalar, space),
                 ref other => {
                     log::error!("Atomic pointer to type {other:?}");
@@ -731,10 +764,14 @@ impl super::Validator {
             crate::TypeInner::ValuePointer {
                 size: None,
                 scalar:
-                    scalar @ crate::Scalar {
+                    scalar @ (crate::Scalar {
                         kind: crate::ScalarKind::Sint | crate::ScalarKind::Uint,
                         width: 4 | 8,
-                    },
+                    }
+                    | crate::Scalar {
+                        kind: crate::ScalarKind::Float,
+                        width: 2 | 4 | 8,
+                    }),
                 space,
             } => (scalar, space),
             ref other => {
@@ -761,6 +798,19 @@ impl super::Validator {
         }
 
         match pointer_scalar {
+            _ if plain_float => {
+                if !matches!(
+                    *fun,
+                    crate::AtomicFunction::Add
+                        | crate::AtomicFunction::Min
+                        | crate::AtomicFunction::Max
+                        | crate::AtomicFunction::Exchange { compare: None }
+                ) {
+                    return Err(AtomicError::InvalidOperator(*fun)
+                        .with_span_handle(value, context.expressions)
+                        .into_other());
+                }
+            }
             // Check for the special restrictions on 64-bit atomic operations.
             //
             // We don't need to consider other widths here: this function has already checked
@@ -1917,7 +1967,7 @@ impl super::Validator {
                         .with_span_handle(image, context.expressions));
                     }
                     let supported = match format {
-                        crate::StorageFormat::R64Uint => {
+                        crate::StorageFormat::R64Uint | crate::StorageFormat::R64Sint => {
                             if !self
                                 .capabilities
                                 .intersects(super::Capabilities::TEXTURE_INT64_ATOMIC)
@@ -1941,9 +1991,13 @@ impl super::Validator {
                             }
                             !matches!(fun, crate::AtomicFunction::Subtract)
                         }
-                        crate::StorageFormat::R32Float => {
-                            matches!(fun, crate::AtomicFunction::Exchange { compare: None })
-                        }
+                        crate::StorageFormat::R32Float => matches!(
+                            fun,
+                            crate::AtomicFunction::Exchange { compare: None }
+                                | crate::AtomicFunction::Add
+                                | crate::AtomicFunction::Min
+                                | crate::AtomicFunction::Max
+                        ),
                         _ => {
                             return Err(FunctionError::InvalidImageAtomic(
                                 ExpressionError::InvalidImageFormat(format),

@@ -4486,7 +4486,9 @@ impl BlockContext<'_> {
                                 crate::ScalarKind::Sint | crate::ScalarKind::Uint => {
                                     spirv::Op::AtomicIAdd
                                 }
-                                crate::ScalarKind::Float => spirv::Op::AtomicFAddEXT,
+                                crate::ScalarKind::Float => {
+                                    self.writer.float_atomic(*fun, scalar)?
+                                }
                                 _ => {
                                     return Err(Error::Validation(
                                         "atomic operation on an unsupported scalar type",
@@ -4603,6 +4605,9 @@ impl BlockContext<'_> {
                             let spirv_op = match scalar.kind {
                                 crate::ScalarKind::Sint => spirv::Op::AtomicSMin,
                                 crate::ScalarKind::Uint => spirv::Op::AtomicUMin,
+                                crate::ScalarKind::Float => {
+                                    self.writer.float_atomic(*fun, scalar)?
+                                }
                                 _ => {
                                     return Err(Error::Validation(
                                         "atomic operation on an unsupported scalar type",
@@ -4623,6 +4628,9 @@ impl BlockContext<'_> {
                             let spirv_op = match scalar.kind {
                                 crate::ScalarKind::Sint => spirv::Op::AtomicSMax,
                                 crate::ScalarKind::Uint => spirv::Op::AtomicUMax,
+                                crate::ScalarKind::Float => {
+                                    self.writer.float_atomic(*fun, scalar)?
+                                }
                                 _ => {
                                     return Err(Error::Validation(
                                         "atomic operation on an unsupported scalar type",

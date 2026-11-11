@@ -84,7 +84,47 @@ const fn is_int64(ty: &Type) -> bool {
     matches!(ty.base_scalar(), Some(Scalar::Int64 | Scalar::Uint64)) && !ty.is_array()
 }
 
+const ATOMIC_FLOAT: &str = "GL_EXT_shader_atomic_float";
+const ATOMIC_FLOAT2: &str = "GL_EXT_shader_atomic_float2";
+
 impl Analyzer<'_> {
+    pub(crate) fn atomic_float_extensions(&mut self, span: Span, name: &str, operands: &[Operand]) {
+        let Some(first) = operands.first() else {
+            return;
+        };
+        let image = name.starts_with("imageAtomic");
+        let operation = name
+            .strip_prefix("imageAtomic")
+            .or_else(|| name.strip_prefix("atomic"))
+            .unwrap_or_default();
+        let extension = if image {
+            let float = first
+                .ty
+                .as_opaque()
+                .is_some_and(|opaque| opaque.sampled == crate::types::SampledType::Float);
+            match operation {
+                _ if !float => None,
+                "Add" | "Load" | "Store" => Some(ATOMIC_FLOAT),
+                "Min" | "Max" => Some(ATOMIC_FLOAT2),
+                _ => None,
+            }
+        } else {
+            match (first.ty.base_scalar(), operation) {
+                (Some(Scalar::Float | Scalar::Double), "Add" | "Exchange" | "Load" | "Store") => {
+                    Some(ATOMIC_FLOAT)
+                }
+                (Some(Scalar::Float | Scalar::Double), "Min" | "Max")
+                | (Some(Scalar::Float16), "Add" | "Exchange" | "Load" | "Store" | "Min" | "Max") => {
+                    Some(ATOMIC_FLOAT2)
+                }
+                _ => None,
+            }
+        };
+        if let Some(extension) = extension {
+            self.require_extension(span, extension, name);
+        }
+    }
+
     fn require_any_extension(&mut self, span: Span, names: &[&'static str], what: &str) -> bool {
         match self.extensions.request(names) {
             rglsl_ast::extensions::Request::Enabled => true,

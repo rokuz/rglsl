@@ -1381,10 +1381,7 @@ impl FunctionLowerer<'_, '_> {
                 } else {
                     crate::TypeInner::Vector {
                         size: crate::VectorSize::Quad,
-                        scalar: crate::Scalar {
-                            kind: super::types::sampled_kind(opaque.sampled),
-                            width: 4,
-                        },
+                        scalar: super::types::sampled_scalar(opaque.sampled),
                     }
                 };
                 Some(self.lw.sparse_result_type(texel))
@@ -1498,10 +1495,7 @@ impl FunctionLowerer<'_, '_> {
         let sparse_type = sparse.then(|| {
             self.lw.sparse_result_type(crate::TypeInner::Vector {
                 size: crate::VectorSize::Quad,
-                scalar: crate::Scalar {
-                    kind: super::types::sampled_kind(opaque.sampled),
-                    width: 4,
-                },
+                scalar: super::types::sampled_scalar(opaque.sampled),
             })
         });
         let result = self.add(
@@ -1613,10 +1607,7 @@ impl FunctionLowerer<'_, '_> {
         if name == "sparseImageLoadARB" {
             let texel = crate::TypeInner::Vector {
                 size: crate::VectorSize::Quad,
-                scalar: crate::Scalar {
-                    kind: super::types::sampled_kind(opaque.sampled),
-                    width: 4,
-                },
+                scalar: super::types::sampled_scalar(opaque.sampled),
             };
             let sparse = Some(self.lw.sparse_result_type(texel));
             let result = self.add(
