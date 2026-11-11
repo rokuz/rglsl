@@ -5823,18 +5823,25 @@ fn subgroup_builtins_are_flat_in_fragment_shaders() {
                 + uvec4(gl_SubgroupSize, gl_SubgroupInvocationID, 0, 0);
         }",
     );
-    for (name, builtin) in [
-        ("gl_SubgroupSize", Bi::SubgroupSize),
-        ("gl_SubgroupInvocationID", Bi::SubgroupLocalInvocationId),
-        ("gl_SubgroupEqMask", Bi::SubgroupEqMask),
-        ("gl_SubgroupLtMask", Bi::SubgroupLtMask),
+    for (name, builtin, relaxed) in [
+        ("gl_SubgroupSize", Bi::SubgroupSize, true),
+        (
+            "gl_SubgroupInvocationID",
+            Bi::SubgroupLocalInvocationId,
+            true,
+        ),
+        ("gl_SubgroupEqMask", Bi::SubgroupEqMask, false),
+        ("gl_SubgroupLtMask", Bi::SubgroupLtMask, false),
     ] {
+        let mut expected = Vec::new();
+        if relaxed {
+            expected.push((Decoration::RelaxedPrecision, vec![]));
+        }
+        expected.push((Decoration::BuiltIn, vec![builtin as u32]));
+        expected.push((Decoration::Flat, vec![]));
         assert_eq!(
             sorted_variable_decorations(&module, name),
-            [
-                (Decoration::BuiltIn, vec![builtin as u32]),
-                (Decoration::Flat, vec![]),
-            ],
+            expected,
             "{name}"
         );
     }
@@ -8292,4 +8299,113 @@ fn microscaling_types_match_glslang() {
         .iter()
         .any(|(op, operands)| *op == Op::Extension as u32
             && operands.first() == Some(&u32::from_le_bytes(*b"SPV_"))));
+}
+
+fn decorated_ops(module: &dr::Module, decoration: Decoration) -> Vec<Op> {
+    let targets: Vec<u32> = module
+        .annotations
+        .iter()
+        .filter(|inst| {
+            inst.class.opcode == Op::Decorate
+                && inst.operands.get(1) == Some(&Operand::Decoration(decoration))
+        })
+        .filter_map(|inst| match inst.operands[0] {
+            Operand::IdRef(id) => Some(id),
+            _ => None,
+        })
+        .collect();
+    let mut found: Vec<Op> = module
+        .all_inst_iter()
+        .filter(|inst| inst.result_id.is_some_and(|id| targets.contains(&id)))
+        .map(|inst| inst.class.opcode)
+        .collect();
+    found.sort_by_key(|op| *op as u32);
+    found
+}
+
+#[test]
+fn precise_marks_the_operations_that_feed_it() {
+    let module = compile_valid(
+        ShaderStage::Vertex,
+        "#version 450
+        layout(location = 0) in vec4 a;
+        layout(location = 1) in vec4 b;
+        layout(location = 0) out float plain;
+        out gl_PerVertex { precise vec4 gl_Position; };
+        float helper(float x) { return x * 3.0; }
+        void main() {
+            vec4 sum = a * b + a;
+            float d = dot(sum, b);
+            plain = d * 2.0 + helper(d);
+            gl_Position = vec4(d) - b;
+        }",
+    );
+    assert_eq!(
+        decorated_ops(&module, Decoration::NoContraction),
+        [Op::FAdd, Op::FSub, Op::FMul, Op::Dot]
+    );
+}
+
+#[test]
+fn precise_follows_struct_members_and_compound_assignments() {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+        struct T { float f1; float f2; };
+        layout(location = 0) in float a;
+        layout(location = 0) out float color;
+        void main() {
+            precise float result;
+            T s;
+            s.f1 = a + 0.2;
+            s.f2 = a * 0.5;
+            result = s.f1;
+            result += a * a;
+            color = result;
+        }",
+    );
+    assert_eq!(
+        decorated_ops(&module, Decoration::NoContraction),
+        [Op::FAdd, Op::FAdd, Op::FMul]
+    );
+}
+
+#[test]
+fn precision_qualifiers_become_relaxed_precision() {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+        precision mediump float;
+        layout(location = 0) in vec2 uv;
+        layout(location = 1) in highp vec2 exact;
+        layout(binding = 0) uniform lowp sampler2D s;
+        layout(location = 0) out vec4 color;
+        struct S { mediump float m; highp float h; };
+        layout(location = 2) flat in highp int index;
+        void main() {
+            vec4 sum = texture(s, uv);
+            sum += vec4(exact, 0.0, 1.0);
+            sum *= 2.0;
+            color = sum + float(index);
+        }",
+    );
+    let relaxed = decorated_ops(&module, Decoration::RelaxedPrecision);
+    assert!(relaxed.contains(&Op::Variable));
+    assert!(relaxed.contains(&Op::ImageSampleImplicitLod));
+    assert!(relaxed.contains(&Op::VectorTimesScalar));
+    assert!(!relaxed.contains(&Op::ConvertSToF));
+    let adds = instructions(&module, Op::FAdd);
+    assert_eq!(adds.len(), 2);
+    assert!(relaxed.iter().all(|op| *op != Op::FAdd));
+    let names: Vec<String> = decorated(&module, Decoration::RelaxedPrecision)
+        .into_iter()
+        .filter(|name| !name.is_empty())
+        .collect();
+    for name in ["uv", "s", "color", "sum"] {
+        assert!(
+            names.iter().any(|found| found == name),
+            "{name} in {names:?}"
+        );
+    }
+    assert!(!names.iter().any(|found| found == "exact"));
 }

@@ -88,6 +88,7 @@ impl Builder {
                 heap_offset: None,
                 tile_attachment: false,
                 spirv_decorations: Vec::new(),
+                relaxed_precision: false,
             },
             Span::UNDEFINED,
         )
@@ -109,6 +110,7 @@ impl Builder {
                 matrix_layout: None,
                 xfb_offset: None,
                 heap: None,
+                relaxed_precision: false,
             })
             .collect::<Vec<_>>();
         let span = 16 * u32::try_from(members.len()).unwrap();
@@ -559,6 +561,7 @@ fn invalid_interfaces_are_rejected() {
                 heap_offset: None,
                 tile_attachment: false,
                 spirv_decorations: Vec::new(),
+                relaxed_precision: false,
             },
             Span::UNDEFINED,
         );

@@ -612,6 +612,13 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   `ty` has the bit size of `expr` (`OpBitcast`), with one it is `OpBitcastExtractEXT`. The
   backend writes the types, capabilities and `SPV_EXT_ocp_microscaling_types` in
   `back/spv/microscaling.rs`, with raw enumerant values the `spirv` crate lacks.
+- **Precision decorations** (`docs/design/precision.md`). `Function::precision`
+  (`PrecisionExpressions`: expression handles with `Precision` flags `RELAXED` and
+  `NO_CONTRACTION`, kept like `Function::non_uniform`) puts `RelaxedPrecision` and
+  `NoContraction` on the instruction the backend writes for an expression. `relaxed_precision`
+  (new, serialized only when set) on `GlobalVariable`, `LocalVariable`, `FunctionArgument`,
+  `FunctionResult` and `StructMember` decorates the variable, the parameter, the function and
+  the member; a struct member's flag is part of the struct type. Upstream has no precision.
 
 ## Cherry-picked upstream commits
 

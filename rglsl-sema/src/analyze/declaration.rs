@@ -17,7 +17,7 @@ use crate::constant::{Constant, Value};
 use crate::diagnostic::DiagnosticKind;
 use crate::scope::{
     Direction, Function, FunctionControl, FunctionId, LayoutEntry, Lookup, Origin, Parameter,
-    Qualifiers, Storage, SymbolId, SymbolKind,
+    PrecisionKey, Qualifiers, Storage, SymbolId, SymbolKind,
 };
 use crate::types::{
     ArraySize, BlockStorage, BlockType, Member, Opaque, Scalar, SpecializedSize, Type, TypeKind,
@@ -83,7 +83,11 @@ impl Analyzer<'_> {
             }
             DeclarationKind::SpirvExecutionMode(mode) => self.spirv_execution_mode(mode),
             DeclarationKind::InitDeclaratorList(list) => self.init_declarator_list(list),
-            DeclarationKind::Precision { .. } => {}
+            DeclarationKind::Precision { qualifier, ty } => {
+                if let Some(key) = precision_key(ty) {
+                    self.scopes.set_default_precision(key, qualifier.node);
+                }
+            }
             DeclarationKind::Block {
                 structure,
                 instance,
@@ -105,14 +109,38 @@ impl Analyzer<'_> {
                     ) {
                         continue;
                     }
-                    if self.lookup(&identifier.node).is_none() {
-                        self.error(
+                    match self.lookup(&identifier.node) {
+                        None => self.error(
                             identifier.span,
                             DiagnosticKind::UndeclaredIdentifier(identifier.node.clone()),
-                        );
+                        ),
+                        Some(Lookup::Symbol(id)) if qualifiers.precise => self.make_precise(id),
+                        Some(_) => {}
                     }
                 }
             }
+        }
+    }
+
+    fn make_precise(&mut self, id: SymbolId) {
+        let member = match self.symbol_mut(id).map(|symbol| &mut symbol.kind) {
+            Some(SymbolKind::Variable(variable)) => {
+                variable.qualifiers.precise = true;
+                return;
+            }
+            Some(SymbolKind::BlockMember { instance, index }) => (*instance, *index),
+            _ => return,
+        };
+        let (instance, index) = member;
+        let TypeKind::Block(block) = self.symbol_type(instance).kind else {
+            return;
+        };
+        if let Some(member) = self
+            .types
+            .block_mut(block)
+            .and_then(|block| block.members.get_mut(usize::try_from(index).ok()?))
+        {
+            member.qualifiers.precise = true;
         }
     }
 
@@ -565,10 +593,15 @@ impl Analyzer<'_> {
     }
 
     fn optional_qualifiers(&mut self, ty: &FullySpecifiedType) -> Qualifiers {
-        match &ty.qualifier {
+        let mut qualifiers = match &ty.qualifier {
             Some(qualifier) => self.qualifiers(qualifier),
             None => Qualifiers::default(),
+        };
+        if qualifiers.precision.is_none() {
+            qualifiers.precision =
+                precision_key(&ty.specifier).map(|key| self.scopes.default_precision(&key));
         }
+        qualifiers
     }
 
     pub(crate) fn array_sizes(
@@ -2378,5 +2411,22 @@ const fn both_derivative_groups() -> DiagnosticKind {
     DiagnosticKind::InvalidQualifier {
         qualifier: "derivative_group_quads* and derivative_group_linear*",
         reason: "cannot be both specified",
+    }
+}
+
+fn precision_key(specifier: &TypeSpecifier) -> Option<PrecisionKey> {
+    use rglsl_ast::ast::{BasicType, ScalarType};
+    match specifier.non_array {
+        TypeSpecifierNonArray::Basic(
+            BasicType::Scalar(scalar)
+            | BasicType::Vector { scalar, .. }
+            | BasicType::Matrix { scalar, .. },
+        ) => match scalar {
+            ScalarType::Float => Some(PrecisionKey::Float),
+            ScalarType::Int | ScalarType::Uint => Some(PrecisionKey::Int),
+            _ => None,
+        },
+        TypeSpecifierNonArray::Opaque(ref word) => Some(PrecisionKey::Opaque(word.clone())),
+        _ => None,
     }
 }

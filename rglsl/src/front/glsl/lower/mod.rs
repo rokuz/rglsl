@@ -339,6 +339,13 @@ pub(super) enum GlobalRef {
 
 pub(super) use rglsl_sema::types::Packing;
 
+pub(super) const fn relaxed(qualifiers: &rglsl_sema::scope::Qualifiers) -> bool {
+    matches!(
+        qualifiers.precision,
+        Some(rglsl_ast::ast::PrecisionQualifier::Low | rglsl_ast::ast::PrecisionQualifier::Medium)
+    )
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub(super) struct LayerLayout {
     pub viewport_relative: bool,
@@ -619,7 +626,35 @@ impl<'a> Lowerer<'a> {
             return Err(core::mem::take(&mut self.errors).into());
         }
         self.module.ray_tracing = self.ray_tracing_features();
+        self.relax_globals();
         Ok(self.into_object())
+    }
+
+    fn relax_globals(&mut self) {
+        let analysis = self.analysis;
+        for (&symbol, global) in &self.globals {
+            let GlobalRef::Variable(handle) = *global else {
+                continue;
+            };
+            let relaxed_symbol = analysis
+                .symbol(symbol)
+                .and_then(|symbol| symbol.variable())
+                .is_some_and(|variable| relaxed(&variable.qualifiers));
+            if relaxed_symbol {
+                self.module.global_variables[handle].relaxed_precision = true;
+            }
+        }
+        for (name, &handle) in &self.builtins {
+            let relaxed_builtin = analysis.symbols.iter().any(|symbol| {
+                symbol.name == *name
+                    && symbol
+                        .variable()
+                        .is_some_and(|variable| relaxed(&variable.qualifiers))
+            });
+            if relaxed_builtin {
+                self.module.global_variables[handle].relaxed_precision = true;
+            }
+        }
     }
 
     fn directive(&mut self, directive: &rglsl_ast::ast::Directive) {

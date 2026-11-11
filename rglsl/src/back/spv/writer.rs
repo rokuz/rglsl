@@ -1505,6 +1505,9 @@ impl Writer {
             } else {
                 let argument_id = self.id_gen.next();
                 self.decorate_pointer_parameter(&ir_module.types, argument.ty, argument_id);
+                if argument.relaxed_precision {
+                    self.decorate(argument_id, spirv::Decoration::RelaxedPrecision, &[]);
+                }
                 let instruction = Instruction::function_parameter(argument_type_id, argument_id);
                 if self.flags.contains(WriterFlags::DEBUG) {
                     if let Some(ref name) = argument.name {
@@ -1661,6 +1664,13 @@ impl Writer {
         }
 
         let function_type = self.get_function_type(lookup_function_type);
+        if ir_function
+            .result
+            .as_ref()
+            .is_some_and(|result| result.relaxed_precision)
+        {
+            self.decorate(function_id, spirv::Decoration::RelaxedPrecision, &[]);
+        }
         let function_control = match ir_function.control {
             crate::FunctionControl::None => spirv::FunctionControl::empty(),
             crate::FunctionControl::Inline => spirv::FunctionControl::INLINE,
@@ -1715,6 +1725,9 @@ impl Writer {
                         prelude
                             .body
                             .push(Instruction::load(var_type_id, id, gv.var_id, None));
+                        if var.relaxed_precision {
+                            self.decorate(id, spirv::Decoration::RelaxedPrecision, &[]);
+                        }
                         gv.access_id = gv.var_id;
                         gv.handle_id = id;
                     } else if global_needs_wrapper(ir_module, var) {
@@ -1780,6 +1793,11 @@ impl Writer {
             context
                 .writer
                 .decorate_pointer_variable(&ir_module.types, variable.ty, id);
+            if variable.relaxed_precision {
+                context
+                    .writer
+                    .decorate(id, spirv::Decoration::RelaxedPrecision, &[]);
+            }
 
             if context.writer.flags.contains(WriterFlags::DEBUG) {
                 if let Some(ref name) = variable.name {
@@ -4421,6 +4439,9 @@ impl Writer {
             return self.heap_variable(heap);
         }
         let id = self.id_gen.next();
+        if global_variable.relaxed_precision {
+            self.decorate(id, Decoration::RelaxedPrecision, &[]);
+        }
         let class = if global_variable.tile_attachment {
             self.require_tile_shading()?;
             spirv::StorageClass::TileAttachmentQCOM
@@ -4623,6 +4644,7 @@ impl Writer {
                         matrix_layout: None,
                         xfb_offset: None,
                         heap: None,
+                        relaxed_precision: false,
                     };
                     self.decorate_struct_member(
                         wrapper_type_id,
@@ -4902,6 +4924,15 @@ impl Writer {
                 self.debugs
                     .push(Instruction::member_name(struct_id, index as u32, name));
             }
+        }
+
+        if member.relaxed_precision {
+            self.annotations.push(Instruction::member_decorate(
+                struct_id,
+                index as u32,
+                Decoration::RelaxedPrecision,
+                &[],
+            ));
         }
 
         // Only the contents of buffers have a layout; see `laid_out_types`.
@@ -5362,6 +5393,15 @@ impl Writer {
     /// Return the set of capabilities the last module written used.
     pub const fn get_capabilities_used(&self) -> &crate::FastIndexSet<spirv::Capability> {
         &self.capabilities_used
+    }
+
+    pub(super) fn decorate_precision(&mut self, id: Word, precision: crate::Precision) {
+        if precision.contains(crate::Precision::RELAXED) {
+            self.decorate(id, spirv::Decoration::RelaxedPrecision, &[]);
+        }
+        if precision.contains(crate::Precision::NO_CONTRACTION) {
+            self.decorate(id, spirv::Decoration::NoContraction, &[]);
+        }
     }
 
     pub(super) fn decorate_non_uniform(&mut self, id: Word) -> Result<(), Error> {

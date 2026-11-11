@@ -281,6 +281,14 @@ pub enum Lookup<'a> {
 struct Level {
     symbols: BTreeMap<String, SymbolId>,
     functions: BTreeMap<String, Vec<FunctionId>>,
+    precisions: BTreeMap<PrecisionKey, PrecisionQualifier>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum PrecisionKey {
+    Float,
+    Int,
+    Opaque(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -308,6 +316,20 @@ impl Scopes {
 
     pub const fn depth(&self) -> usize {
         self.levels.len()
+    }
+
+    pub fn set_default_precision(&mut self, key: PrecisionKey, precision: PrecisionQualifier) {
+        if let Some(level) = self.levels.last_mut() {
+            level.precisions.insert(key, precision);
+        }
+    }
+
+    pub fn default_precision(&self, key: &PrecisionKey) -> PrecisionQualifier {
+        self.levels
+            .iter()
+            .rev()
+            .find_map(|level| level.precisions.get(key).copied())
+            .unwrap_or(PrecisionQualifier::High)
     }
 
     pub const fn is_global(&self) -> bool {

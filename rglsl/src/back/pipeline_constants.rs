@@ -487,6 +487,13 @@ fn process_function(
             .entry(adjusted_local_expressions[expr_h])
             .or_default() |= flags;
     }
+    let precision = mem::take(&mut function.precision);
+    for (expr_h, flags) in precision {
+        *function
+            .precision
+            .entry(adjusted_local_expressions[expr_h])
+            .or_default() |= flags;
+    }
 
     Ok(())
 }

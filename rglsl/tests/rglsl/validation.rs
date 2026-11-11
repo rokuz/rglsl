@@ -117,6 +117,7 @@ fn populate_atomic_result() {
                 heap_offset: None,
                 tile_attachment: false,
                 spirv_decorations: Vec::new(),
+                relaxed_precision: false,
             },
             span,
         );
@@ -210,6 +211,7 @@ fn populate_call_result() {
             result: Some(rglsl::FunctionResult {
                 ty: ty_u32,
                 binding: None,
+                relaxed_precision: false,
             }),
             ..Function::default()
         };
@@ -297,6 +299,7 @@ fn emit_workgroup_uniform_load_result() {
                 heap_offset: None,
                 tile_attachment: false,
                 spirv_decorations: Vec::new(),
+                relaxed_precision: false,
             },
             span,
         );
@@ -379,6 +382,7 @@ fn builtin_cross_product_args() {
             result: Some(rglsl::ir::FunctionResult {
                 ty: ty_vec3f,
                 binding: None,
+                relaxed_precision: false,
             }),
             ..Function::default()
         };
@@ -469,6 +473,7 @@ impl BindingArrayFixture {
                         matrix_layout: None,
                         xfb_offset: None,
                         heap: None,
+                        relaxed_precision: false,
                     }],
                     span: 4,
                 },
@@ -609,6 +614,7 @@ fn make_zero_value_local_variable(fun: &mut Function, ty: rglsl::Handle<ir::Type
             name: Some("x".into()),
             ty,
             init: Some(ex_zero),
+            relaxed_precision: false,
         },
         span,
     );
@@ -643,6 +649,7 @@ fn local_var_override_sized_array() {
             heap_offset: None,
             tile_attachment: false,
             spirv_decorations: Vec::new(),
+            relaxed_precision: false,
         },
         span,
     );
@@ -664,6 +671,7 @@ fn local_var_override_sized_array() {
             name: Some("x".into()),
             ty: ty_array,
             init: Some(ex_load),
+            relaxed_precision: false,
         },
         span,
     );
@@ -855,6 +863,7 @@ fn invalid_constructor_runtime_array() {
             name: Some("x".into()),
             ty: ty_array,
             init: Some(ex_compose),
+            relaxed_precision: false,
         },
         span,
     );
@@ -907,6 +916,7 @@ fn invalid_constructor_unsized_struct() {
                     matrix_layout: None,
                     xfb_offset: None,
                     heap: None,
+                    relaxed_precision: false,
                 }],
                 span: 4,
             },
@@ -962,6 +972,7 @@ fn arity_check() {
             result: Some(ir::FunctionResult {
                 ty: ty_f32,
                 binding: None,
+                relaxed_precision: false,
             }),
             ..ir::Function::default()
         };
@@ -1025,6 +1036,7 @@ fn unexpected_task_payload() {
             heap_offset: None,
             tile_attachment: false,
             spirv_decorations: Vec::new(),
+            relaxed_precision: false,
         },
         err_span,
     );

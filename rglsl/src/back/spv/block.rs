@@ -737,6 +737,18 @@ impl BlockContext<'_> {
                 self.writer.decorate_non_uniform(id)?;
             }
         }
+        let precision = self
+            .ir_function
+            .precision
+            .get(&expr_handle)
+            .copied()
+            .unwrap_or_default();
+        if !precision.is_empty() && self.produces_instruction(expr_handle) {
+            let id = self.cached.ids[expr_handle];
+            if id != 0 {
+                self.writer.decorate_precision(id, precision);
+            }
+        }
         Ok(())
     }
 
@@ -4382,6 +4394,9 @@ impl BlockContext<'_> {
                             self.cached.set(expr, id)?;
                             if self.non_uniform(expr).contains(crate::NonUniform::VALUE) {
                                 self.writer.decorate_non_uniform(id)?;
+                            }
+                            if let Some(&precision) = self.ir_function.precision.get(&expr) {
+                                self.writer.decorate_precision(id, precision);
                             }
                             self.get_expression_type_id(&self.fun_info[expr].ty)?
                         }

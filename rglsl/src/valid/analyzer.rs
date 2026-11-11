@@ -1739,6 +1739,7 @@ fn uniform_control_flow() {
             heap_offset: None,
             tile_attachment: false,
             spirv_decorations: Default::default(),
+            relaxed_precision: false,
         },
         Default::default(),
     );
@@ -1756,6 +1757,7 @@ fn uniform_control_flow() {
             heap_offset: None,
             tile_attachment: false,
             spirv_decorations: Default::default(),
+            relaxed_precision: false,
         },
         Default::default(),
     );

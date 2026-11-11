@@ -5622,3 +5622,19 @@ void main() {
     floate2m1_t b = floate2m1_t(a);
     float g = floatue8m0_t(1.0);
 }
+### precision statements and precise | frag 450 | ok
+precision mediump float;
+precision lowp sampler2D;
+layout(binding = 0) uniform sampler2D s;
+layout(location = 0) in highp vec2 uv;
+layout(location = 0) out lowp vec4 color;
+struct T { mediump float a; float b; };
+precise float f(precise float x) { return x * x; }
+void main() {
+    precision highp float;
+    precise vec4 value = texture(s, uv) * 2.0;
+    T t = T(1.0, 2.0);
+    precise gl_FragDepth;
+    gl_FragDepth = t.a + t.b;
+    color = value + vec4(f(uv.x));
+}

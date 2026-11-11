@@ -493,9 +493,6 @@ impl<'a> Lowerer<'a> {
                 ref identifiers,
             } => {
                 let qualifier = Some(qualifier);
-                if has_qualifier(qualifier, |q| matches!(q, SingleTypeQualifier::Precise)) {
-                    return Err(unsupported("`precise`", self.at(declaration.span)));
-                }
                 if has_qualifier(qualifier, |q| matches!(q, SingleTypeQualifier::Invariant)) {
                     for identifier in identifiers {
                         self.invariant
@@ -620,9 +617,6 @@ impl<'a> Lowerer<'a> {
         let name = declarator.name.node.clone();
         let qualifiers = &variable.qualifiers;
         let ty = &variable.ty;
-        if qualifiers.precise {
-            return Err(unsupported("`precise`", at));
-        }
         if qualifiers.constant {
             if let Some(entry) = qualifiers.layout_entry("constant_id") {
                 let id = entry
@@ -696,6 +690,7 @@ impl<'a> Lowerer<'a> {
                         heap_offset: None,
                         tile_attachment: false,
                         spirv_decorations: Vec::new(),
+                        relaxed_precision: false,
                     },
                     at,
                 );
@@ -782,6 +777,7 @@ impl<'a> Lowerer<'a> {
                 heap_offset: None,
                 tile_attachment: false,
                 spirv_decorations: Vec::new(),
+                relaxed_precision: false,
             },
             at,
         );
@@ -855,6 +851,7 @@ impl<'a> Lowerer<'a> {
                     heap_offset: None,
                     tile_attachment: false,
                     spirv_decorations: Vec::new(),
+                    relaxed_precision: false,
                 },
                 at,
             );
@@ -929,6 +926,7 @@ impl<'a> Lowerer<'a> {
                 heap_offset: None,
                 tile_attachment: false,
                 spirv_decorations: Vec::new(),
+                relaxed_precision: false,
             },
             at,
         );
@@ -1110,6 +1108,7 @@ impl<'a> Lowerer<'a> {
                     .iter()
                     .any(|entry| entry.name.eq_ignore_ascii_case("tile_attachmentQCOM")),
                 spirv_decorations: Vec::new(),
+                relaxed_precision: false,
             },
             at,
         );
@@ -1128,12 +1127,6 @@ impl<'a> Lowerer<'a> {
     ) -> Result<()> {
         let at = self.at(structure.name.span);
         if structure.name.node == "gl_PerVertex" {
-            for member in &structure.members {
-                let qualifier = member.ty.qualifier.as_ref();
-                if has_qualifier(qualifier, |q| matches!(q, SingleTypeQualifier::Precise)) {
-                    return Err(unsupported("`precise`", at));
-                }
-            }
             if storage_of(Some(&structure.qualifier)) == Some(StorageQualifier::In)
                 && layout_names(Some(&structure.qualifier)).contains(&"passthrough")
             {
@@ -1266,6 +1259,7 @@ impl<'a> Lowerer<'a> {
                 heap_offset: None,
                 tile_attachment: false,
                 spirv_decorations: Vec::new(),
+                relaxed_precision: false,
             },
             at,
         );
@@ -1323,9 +1317,6 @@ impl<'a> Lowerer<'a> {
         let outer = &block.qualifiers;
         let patch = outer.patch || block.members.iter().any(|member| member.qualifiers.patch);
         let per_vertex = self.is_per_vertex_io(outer) && !patch;
-        if outer.precise || block.members.iter().any(|member| member.qualifiers.precise) {
-            return Err(unsupported("`precise`", at));
-        }
         if outer.invariant {
             return Err(semantic(
                 "cannot use invariant qualifier on an interface block",
@@ -1436,6 +1427,7 @@ impl<'a> Lowerer<'a> {
                 matrix_layout: None,
                 xfb_offset: None,
                 heap: None,
+                relaxed_precision: false,
             });
             offset = offset.saturating_add(layout.size);
         }
@@ -1585,6 +1577,7 @@ impl<'a> Lowerer<'a> {
                 heap_offset: None,
                 tile_attachment: false,
                 spirv_decorations: Vec::new(),
+                relaxed_precision: false,
             },
             at,
         );
@@ -1839,6 +1832,7 @@ impl<'a> Lowerer<'a> {
                 matrix_layout: None,
                 xfb_offset,
                 heap: None,
+                relaxed_precision: false,
             });
             offset = offset.saturating_add(layout.size);
             names.push(String::from(name));
@@ -1870,6 +1864,7 @@ impl<'a> Lowerer<'a> {
                 heap_offset: None,
                 tile_attachment: false,
                 spirv_decorations: Vec::new(),
+                relaxed_precision: false,
             },
             Span::UNDEFINED,
         );
@@ -1902,9 +1897,6 @@ impl<'a> Lowerer<'a> {
             self.builtin_sizes.insert(name.clone(), size);
         }
         let qualifier = list.ty.qualifier.as_ref();
-        if has_qualifier(qualifier, |q| matches!(q, SingleTypeQualifier::Precise)) {
-            return Err(unsupported("`precise`", at));
-        }
         if has_qualifier(qualifier, |q| matches!(q, SingleTypeQualifier::Invariant)) {
             self.invariant.push((name.clone(), at));
         }
@@ -2103,6 +2095,7 @@ impl<'a> Lowerer<'a> {
                 heap_offset: None,
                 tile_attachment: false,
                 spirv_decorations: Vec::new(),
+                relaxed_precision: false,
             },
             at,
         );

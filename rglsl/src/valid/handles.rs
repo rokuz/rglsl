@@ -178,6 +178,7 @@ impl super::Validator {
                 heap_offset,
                 tile_attachment: _,
                 ref spirv_decorations,
+                relaxed_precision: _,
             } = global_variable;
             validate_type(ty)?;
             if let Some(init_expr) = init {
@@ -209,6 +210,7 @@ impl super::Validator {
                 ref expressions,
                 ref named_expressions,
                 ref non_uniform,
+                ref precision,
                 ref body,
                 ref diagnostic_filter_leaf,
                 linkage: _,
@@ -220,16 +222,27 @@ impl super::Validator {
                     name: _,
                     ty,
                     binding: _,
+                    relaxed_precision: _,
                 } = arg;
                 validate_type(ty)?;
             }
 
-            if let &Some(crate::FunctionResult { ty, binding: _ }) = result {
+            if let &Some(crate::FunctionResult {
+                ty,
+                binding: _,
+                relaxed_precision: _,
+            }) = result
+            {
                 validate_type(ty)?;
             }
 
             for (_handle, local_variable) in local_variables.iter() {
-                let &crate::LocalVariable { name: _, ty, init } = local_variable;
+                let &crate::LocalVariable {
+                    name: _,
+                    ty,
+                    init,
+                    relaxed_precision: _,
+                } = local_variable;
                 validate_type(ty)?;
                 if let Some(init) = init {
                     Self::validate_expression_handle(init, expressions)?;
@@ -241,6 +254,10 @@ impl super::Validator {
             }
 
             for handle in non_uniform.keys().copied() {
+                Self::validate_expression_handle(handle, expressions)?;
+            }
+
+            for handle in precision.keys().copied() {
                 Self::validate_expression_handle(handle, expressions)?;
             }
 

@@ -233,7 +233,7 @@ use serde::Serialize;
 
 use crate::arena::{Arena, Handle, Range, UniqueArena};
 use crate::diagnostic_filter::DiagnosticFilterNode;
-use crate::{FastIndexMap, NamedExpressions, NonUniformExpressions};
+use crate::{FastIndexMap, NamedExpressions, NonUniformExpressions, PrecisionExpressions};
 
 pub use block::Block;
 pub use rglsl_types::{ResourceBinding, ShaderStage};
@@ -827,6 +827,12 @@ pub struct StructMember {
     #[cfg_attr(feature = "serialize", serde(skip_serializing_if = "Option::is_none"))]
     #[cfg_attr(feature = "deserialize", serde(default))]
     pub heap: Option<HeapMember>,
+    #[cfg_attr(
+        feature = "serialize",
+        serde(skip_serializing_if = "core::ops::Not::not")
+    )]
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    pub relaxed_precision: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
@@ -1577,6 +1583,12 @@ pub struct GlobalVariable {
     #[cfg_attr(feature = "serialize", serde(skip_serializing_if = "Vec::is_empty"))]
     #[cfg_attr(feature = "deserialize", serde(default))]
     pub spirv_decorations: Vec<SpirvDecoration>,
+    #[cfg_attr(
+        feature = "serialize",
+        serde(skip_serializing_if = "core::ops::Not::not")
+    )]
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    pub relaxed_precision: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -1607,6 +1619,12 @@ pub struct LocalVariable {
     ///
     /// [`expressions`]: Function::expressions
     pub init: Option<Handle<Expression>>,
+    #[cfg_attr(
+        feature = "serialize",
+        serde(skip_serializing_if = "core::ops::Not::not")
+    )]
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    pub relaxed_precision: bool,
 }
 
 /// Operation that can be applied on a single value.
@@ -3564,6 +3582,12 @@ pub struct FunctionArgument {
     /// For entry points, an argument has to have a binding
     /// unless it's a structure.
     pub binding: Option<Binding>,
+    #[cfg_attr(
+        feature = "serialize",
+        serde(skip_serializing_if = "core::ops::Not::not")
+    )]
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    pub relaxed_precision: bool,
 }
 
 /// A function result.
@@ -3577,6 +3601,12 @@ pub struct FunctionResult {
     /// For entry points, the result has to have a binding
     /// unless it's a structure.
     pub binding: Option<Binding>,
+    #[cfg_attr(
+        feature = "serialize",
+        serde(skip_serializing_if = "core::ops::Not::not")
+    )]
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    pub relaxed_precision: bool,
 }
 
 bitflags::bitflags! {
@@ -3588,6 +3618,17 @@ bitflags::bitflags! {
         const VALUE = 1 << 0;
         const ACCESS = 1 << 1;
         const SAMPLED_IMAGE = 1 << 2;
+    }
+}
+
+bitflags::bitflags! {
+    #[cfg_attr(feature = "serialize", derive(Serialize))]
+    #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+    #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+    #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    pub struct Precision: u8 {
+        const RELAXED = 1 << 0;
+        const NO_CONTRACTION = 1 << 1;
     }
 }
 
@@ -3636,6 +3677,12 @@ pub struct Function {
         serde(skip_serializing_if = "NonUniformExpressions::is_empty")
     )]
     pub non_uniform: NonUniformExpressions,
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    #[cfg_attr(
+        feature = "serialize",
+        serde(skip_serializing_if = "PrecisionExpressions::is_empty")
+    )]
+    pub precision: PrecisionExpressions,
     /// Block of instructions comprising the body of the function.
     pub body: Block,
     /// The leaf of all diagnostic filter rules tree (stored in [`Module::diagnostic_filters`])

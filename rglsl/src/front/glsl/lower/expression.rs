@@ -116,6 +116,15 @@ impl<'a> FunctionLowerer<'_, 'a> {
         match info.conversion {
             Some(ref target) if *target != info.ty => {
                 let converted = self.convert(value, &info.ty, target, at)?;
+                if self
+                    .lw
+                    .analysis
+                    .relaxed_precision
+                    .conversions
+                    .contains(&expression.id)
+                {
+                    self.mark_precision(converted, crate::Precision::RELAXED);
+                }
                 Ok((converted, target.clone()))
             }
             _ => Ok((value, info.ty.clone())),
@@ -160,6 +169,49 @@ impl<'a> FunctionLowerer<'_, 'a> {
         &mut self,
         expression: &AstExpression,
     ) -> Result<Option<Handle<Expression>>> {
+        self.stepped = None;
+        let value = self.unmarked_value(expression)?;
+        let analysis = self.lw.analysis;
+        let mut flags = crate::Precision::empty();
+        if analysis.no_contraction.contains(&expression.id) {
+            flags |= crate::Precision::NO_CONTRACTION;
+        }
+        let relaxed = analysis.relaxed_precision.results.contains(&expression.id);
+        if relaxed {
+            flags |= crate::Precision::RELAXED;
+        }
+        if flags.is_empty() {
+            return Ok(value);
+        }
+        let operation = match expression.kind {
+            ExpressionKind::Postfix { .. }
+            | ExpressionKind::Unary {
+                operator: AstUnary::Increment | AstUnary::Decrement,
+                ..
+            } => self.stepped.take(),
+            ExpressionKind::Assignment {
+                operator: AssignmentOperator::Assign,
+                ..
+            }
+            | ExpressionKind::Conditional { .. }
+            | ExpressionKind::Sequence(_)
+            | ExpressionKind::Parenthesized(_) => None,
+            _ => value,
+        };
+        if let Some(operation) = operation {
+            self.mark_precision(operation, flags);
+            if relaxed {
+                if let Expression::Swizzle { vector, .. } = self.expressions[operation] {
+                    if matches!(self.expressions[vector], Expression::Load { .. }) {
+                        self.mark_precision(vector, crate::Precision::RELAXED);
+                    }
+                }
+            }
+        }
+        Ok(value)
+    }
+
+    fn unmarked_value(&mut self, expression: &AstExpression) -> Result<Option<Handle<Expression>>> {
         let at = self.at(expression.span);
         let info = self.info(expression)?;
         if info.is_specialization {
@@ -1276,6 +1328,18 @@ impl<'a> FunctionLowerer<'_, 'a> {
         }
     }
 
+    fn relax_load(&mut self, place: &AstExpression, load: Handle<Expression>) {
+        if self
+            .lw
+            .analysis
+            .relaxed_precision
+            .results
+            .contains(&super::prepass::strip(place).id)
+        {
+            self.mark_precision(load, crate::Precision::RELAXED);
+        }
+    }
+
     fn increment(
         &mut self,
         operand: &AstExpression,
@@ -1286,6 +1350,7 @@ impl<'a> FunctionLowerer<'_, 'a> {
         let ty = self.info(operand)?.ty.clone();
         let place = self.place(operand)?;
         let old = self.load(&place, at)?;
+        self.relax_load(operand, old);
         let base = ty.base_scalar().ok_or_else(|| internal(at))?;
         let one = Literal::one(scalar(base)).ok_or_else(|| internal(at))?;
         let one = self.filled(&ty, one, at)?;
@@ -1305,6 +1370,7 @@ impl<'a> FunctionLowerer<'_, 'a> {
         if place.non_uniform {
             self.mark_operation(new);
         }
+        self.stepped = Some(new);
         self.store(&place, new, at)?;
         Ok(if postfix { old } else { new })
     }
@@ -1501,6 +1567,7 @@ impl<'a> FunctionLowerer<'_, 'a> {
             }
             Some(operator) => {
                 let old = self.load(&place, at)?;
+                self.relax_load(target, old);
                 let value_info = self.info(value)?;
                 let value_non_uniform = value_info.non_uniform
                     && value_info

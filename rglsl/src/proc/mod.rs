@@ -1660,6 +1660,7 @@ pub fn long_math_result(
         matrix_layout: None,
         xfb_offset: None,
         heap: None,
+        relaxed_precision: false,
     };
     Some(crate::Type {
         name: None,

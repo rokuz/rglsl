@@ -40,6 +40,7 @@ impl Builder<'_> {
             heap_offset,
             tile_attachment,
             ref spirv_decorations,
+            relaxed_precision: _,
         } = *candidate.global;
         if current.space != space {
             self.errors.push(mismatch("storage qualifiers"));

@@ -51,6 +51,7 @@ impl<I: Iterator<Item = u32>> super::Frontend<I> {
                     Some(crate::FunctionResult {
                         ty: lookup_result_ty.handle,
                         binding: None,
+                        relaxed_precision: false,
                     })
                 },
                 local_variables: Arena::new(),
@@ -61,6 +62,7 @@ impl<I: Iterator<Item = u32>> super::Frontend<I> {
                 )?,
                 named_expressions: crate::NamedExpressions::default(),
                 non_uniform: crate::NonUniformExpressions::default(),
+                precision: crate::PrecisionExpressions::default(),
                 body: crate::Block::new(),
                 diagnostic_filter_leaf: None,
                 linkage: crate::Linkage::Definition,
@@ -109,6 +111,7 @@ impl<I: Iterator<Item = u32>> super::Frontend<I> {
                         name: decor.name,
                         ty,
                         binding: None,
+                        relaxed_precision: false,
                     });
                 }
                 Instruction { op, .. } => return Err(Error::InvalidParameter(op)),
@@ -250,6 +253,7 @@ impl<I: Iterator<Item = u32>> super::Frontend<I> {
                             name: None,
                             ty,
                             init: None,
+                            relaxed_precision: false,
                         },
                         crate::Span::default(),
                     );
@@ -339,6 +343,7 @@ impl<I: Iterator<Item = u32>> super::Frontend<I> {
             expressions: Arena::new(),
             named_expressions: crate::NamedExpressions::default(),
             non_uniform: crate::NonUniformExpressions::default(),
+            precision: crate::PrecisionExpressions::default(),
             body: crate::Block::new(),
             diagnostic_filter_leaf: None,
             linkage: crate::Linkage::Definition,
@@ -510,6 +515,7 @@ impl<I: Iterator<Item = u32>> super::Frontend<I> {
                             matrix_layout: None,
                             xfb_offset: None,
                             heap: None,
+                            relaxed_precision: false,
                         });
                         struct_alignment = struct_alignment.max(member_alignment);
                         next_member_offset += self.layouter[result.ty].size;
@@ -587,6 +593,7 @@ impl<I: Iterator<Item = u32>> super::Frontend<I> {
                 function.result = Some(crate::FunctionResult {
                     ty: member.ty,
                     binding: member.binding.clone(),
+                    relaxed_precision: false,
                 });
             }
             _ => {
@@ -613,7 +620,11 @@ impl<I: Iterator<Item = u32>> super::Frontend<I> {
                     },
                     span,
                 );
-                function.result = Some(crate::FunctionResult { ty, binding: None });
+                function.result = Some(crate::FunctionResult {
+                    ty,
+                    binding: None,
+                    relaxed_precision: false,
+                });
             }
         }
 

@@ -8,6 +8,8 @@ mod extension;
 mod heap;
 mod memory;
 mod mesh;
+mod precise;
+mod precision;
 mod qcom;
 mod ray;
 mod reference;
@@ -30,6 +32,7 @@ use rglsl_ast::{Span, TranslationUnit};
 
 pub use cooperative_call::CooperativeCall;
 pub use cooperative_matrix2::{MatrixCall, TensorCall};
+pub use precision::RelaxedPrecision;
 pub use qcom::QcomConversion;
 pub use tensor::TensorArmCall;
 
@@ -116,6 +119,8 @@ pub struct Analysis {
     pub derivative_group: Option<(DerivativeGroup, bool)>,
     pub spirv_requirements: SpirvRequirements,
     pub spirv_execution_modes: SpirvExecutionModes,
+    pub no_contraction: BTreeSet<NodeId>,
+    pub relaxed_precision: precision::RelaxedPrecision,
 }
 
 impl Analysis {
@@ -199,7 +204,10 @@ fn run(unit: &TranslationUnit, options: &Options, cached: Option<&Arc<Builtins>>
     let mut analyzer = Analyzer::new(options, builtins, diagnostics);
     analyzer.version = version;
     analyzer.unit(unit);
-    analyzer.finish()
+    let mut analysis = analyzer.finish();
+    analysis.no_contraction = precise::no_contraction(unit, &analysis);
+    analysis.relaxed_precision = precision::relaxed_precision(unit, &analysis);
+    analysis
 }
 
 fn version_of(unit: &TranslationUnit, diagnostics: &mut Vec<Diagnostic>) -> Option<u32> {
@@ -609,6 +617,8 @@ impl<'a> Analyzer<'a> {
             derivative_group: self.derivative_group,
             spirv_requirements: self.spirv_requirements,
             spirv_execution_modes: self.spirv_execution_modes,
+            no_contraction: BTreeSet::new(),
+            relaxed_precision: precision::RelaxedPrecision::default(),
         }
     }
 
