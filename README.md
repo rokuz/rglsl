@@ -66,7 +66,29 @@ cargo xtask fuzz --shaders DIR --exec    # metamorphic check of rglsl-fuzz shade
 
 On other platforms `cargo xtask oracles` skips the exec oracles and `cargo xtask test` needs
 `--no-exec`. `RGLSL_AMBER` and `RGLSL_VK_ICD` select another Amber binary or driver manifest.
-Scripts, inputs and dumps of the last run are kept in `target/xtask/exec/<shader>/`.
+Scripts, inputs and dumps of the last run are kept in `target/xtask/exec/<target>/<shader>/`.
+
+#### The remote Windows target
+
+A second exec target runs the same scripts on a real GPU: a Windows machine with a Vulkan
+driver, reached over SSH. Set `RGLSL_EXEC_REMOTE` to an SSH host alias of a Windows machine with
+Vulkan, configured in your `~/.ssh/config` with key authentication (`ssh -o BatchMode=yes ALIAS
+cmd` must work; the remote shell is `cmd.exe`). The machine needs Visual Studio with the C++
+tools (found with `vswhere`), the Vulkan SDK (`VULKAN_SDK`), Git and Python 3 on `PATH`.
+
+```sh
+export RGLSL_EXEC_REMOTE=my-windows-gpu    # your alias; never commit it
+cargo xtask oracles --remote               # clone and build the pinned Amber there, smoke check
+cargo xtask test                           # exec on both targets
+cargo xtask test --no-remote-exec          # Mac only
+```
+
+Everything stays in one directory on that machine (`C:/rglsl-exec`, or
+`RGLSL_EXEC_REMOTE_DIR`): sources, build, and per-run batches that are deleted when a run
+ends. Nothing is installed system-wide. `RGLSL_EXEC_REMOTE_JOBS` bounds the Amber processes
+running there at once (default 4). When `RGLSL_EXEC_REMOTE` is not set, `cargo xtask test` and
+`cargo xtask fuzz --exec` warn that the remote target was skipped, and `PROGRESS.md` keeps its
+last remote results.
 
 ## Command line
 

@@ -639,7 +639,6 @@ dependencies = [
  "rglsl",
  "rglsl-link",
  "rglsl-pp",
- "rspirv",
  "serde_json",
  "spirv",
  "toml",

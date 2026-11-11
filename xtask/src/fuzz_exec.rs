@@ -4,10 +4,11 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value as Json;
 
+use crate::exec::batch::{Job, JobResult};
 use crate::exec::data::Value;
-use crate::exec::plan::{Inputs, Plan, Refusal};
+use crate::exec::plan::{Inputs, Plan};
 use crate::exec::reflect::{ScalarKind, Slot};
-use crate::exec::{reflect, Executor, Outputs, TargetDifference};
+use crate::exec::{reflect, refusal_text, Executor, Outputs, TargetDifference};
 
 pub const FRAMEBUFFER: u32 = 256;
 const SEED: &str = "graphicsfuzz";
@@ -57,19 +58,25 @@ pub fn job_json(shader: &Path) -> Option<PathBuf> {
     json.is_file().then_some(json)
 }
 
-pub fn run_module(
+#[derive(Debug, Clone)]
+pub enum Staged {
+    Ready { plan: Box<Plan>, job: Job },
+    Refused(String),
+}
+
+pub fn stage_module(
     executor: &Executor,
     spirv: &Path,
     json: Option<&Path>,
     dir: &Path,
     tag: &str,
-) -> Run {
+) -> Staged {
     let values = match json.map(fs::read_to_string) {
         Some(Ok(text)) => match uniform_values(&text) {
             Ok(values) => values,
-            Err(error) => return Run::Refused(format!("shader job: {error}")),
+            Err(error) => return Staged::Refused(format!("shader job: {error}")),
         },
-        Some(Err(error)) => return Run::Refused(format!("shader job: {error}")),
+        Some(Err(error)) => return Staged::Refused(format!("shader job: {error}")),
         None => BTreeMap::new(),
     };
     let reflection = match fs::read(spirv)
@@ -77,7 +84,7 @@ pub fn run_module(
         .and_then(|bytes| reflect::reflect_bytes(&bytes))
     {
         Ok(reflection) => reflection,
-        Err(error) => return Run::Refused(error),
+        Err(error) => return Staged::Refused(error),
     };
     let inputs = Inputs {
         seed: SEED.to_string(),
@@ -86,23 +93,33 @@ pub fn run_module(
     };
     let plan = match Plan::new(&reflection, &inputs) {
         Ok(plan) => plan,
-        Err(Refusal::Stage(what) | Refusal::Capability(what) | Refusal::Binding(what)) => {
-            return Run::Refused(what)
-        }
+        Err(refusal) => return Staged::Refused(refusal_text(&refusal).to_string()),
     };
-    if let Some(feature) = executor.missing_feature(&plan) {
-        return Run::Refused(format!("device feature {feature}"));
+    if let Some(need) = executor.missing(&plan.needs) {
+        return Staged::Refused(format!("device lacks {}", need.line()));
     }
     let harness = match executor.prepare(&plan, dir) {
         Ok(harness) => harness,
-        Err(error) => return Run::Refused(format!("harness: {error}")),
+        Err(error) => return Staged::Refused(format!("harness: {error}")),
     };
-    match executor.run(&plan, dir, harness.as_deref(), spirv, tag) {
-        Ok(outputs) => Run::Ran {
+    match executor.stage(&plan, dir, &harness, spirv, tag) {
+        Ok(job) => Staged::Ready {
             plan: Box::new(plan),
+            job,
+        },
+        Err(error) => Staged::Refused(format!("staging: {error}")),
+    }
+}
+
+pub fn finish(staged: &Staged, result: Option<JobResult>) -> Run {
+    match (staged, result) {
+        (Staged::Refused(why), _) => Run::Refused(why.clone()),
+        (Staged::Ready { plan, .. }, Some(Ok(outputs))) => Run::Ran {
+            plan: plan.clone(),
             outputs,
         },
-        Err(error) => Run::Failed(error),
+        (Staged::Ready { .. }, Some(Err(error))) => Run::Failed(error),
+        (Staged::Ready { .. }, None) => Run::Failed("no result from the batch".into()),
     }
 }
 
