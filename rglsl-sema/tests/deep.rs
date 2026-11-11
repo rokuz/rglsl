@@ -1,7 +1,9 @@
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+#![allow(clippy::panic)]
 
 use rglsl_ast::{parse_with, ParseOptions};
 use rglsl_sema::{analyze, Options, Stage};
+
+type TestResult = Result<(), Box<dyn std::error::Error>>;
 
 const STACK: usize = 256 << 10;
 const DEPTHS: [usize; 2] = [10_000, 100_000];
@@ -20,22 +22,23 @@ fn shader(globals: &str, body: &str) -> String {
     )
 }
 
-fn analyzed(name: &str, source: String) {
-    analyzed_with(name, source, true);
+fn analyzed(name: &str, source: String) -> TestResult {
+    analyzed_with(name, source, true)
 }
 
-fn analyzed_with(name: &str, source: String, clean: bool) {
+fn analyzed_with(name: &str, source: String, clean: bool) -> TestResult {
+    let label = name.to_owned();
     let name = name.to_owned();
     std::thread::Builder::new()
         .stack_size(STACK)
-        .spawn(move || {
+        .spawn(move || -> Result<(), String> {
             let unit = parse_with(
                 &source,
                 &ParseOptions {
                     nesting_limit: None,
                 },
             )
-            .unwrap_or_else(|error| panic!("{name}: {error}"));
+            .map_err(|error| format!("{name}: {error}"))?;
             let options = Options {
                 type_depth_limit: None,
                 ..Options::new(Stage::Fragment)
@@ -47,10 +50,11 @@ fn analyzed_with(name: &str, source: String, clean: bool) {
                 .map(|diagnostic| diagnostic.kind.to_string())
                 .collect();
             assert_eq!(errors.is_empty(), clean, "{name}: {errors:?}");
-        })
-        .unwrap()
+            Ok(())
+        })?
         .join()
-        .unwrap();
+        .map_err(|_| format!("{label}: the analysis thread panicked"))??;
+    Ok(())
 }
 
 fn nested(open: &str, core: &str, close: &str, count: usize) -> String {
@@ -58,7 +62,7 @@ fn nested(open: &str, core: &str, close: &str, count: usize) -> String {
 }
 
 #[test]
-fn deep_expressions_are_analysed_on_a_small_stack() {
+fn deep_expressions_are_analysed_on_a_small_stack() -> TestResult {
     let cases = [
         ("parentheses", "b = ", "(", "b", ")"),
         ("negation", "b = ", "-(", "b", ")"),
@@ -82,13 +86,14 @@ fn deep_expressions_are_analysed_on_a_small_stack() {
     for depth in DEPTHS {
         for (name, prefix, open, core, close) in cases {
             let body = format!("{prefix}{};", nested(open, core, close, depth));
-            analyzed(&format!("{name} at {depth}"), shader("", &body));
+            analyzed(&format!("{name} at {depth}"), shader("", &body))?;
         }
     }
+    Ok(())
 }
 
 #[test]
-fn deep_statements_are_analysed_on_a_small_stack() {
+fn deep_statements_are_analysed_on_a_small_stack() -> TestResult {
     let cases = [
         ("blocks", "{ ", " }"),
         ("if", "if (t) ", ""),
@@ -108,9 +113,10 @@ fn deep_statements_are_analysed_on_a_small_stack() {
             analyzed(
                 &format!("{name} at {depth}"),
                 shader("", &nested(open, "b = 2;", close, depth)),
-            );
+            )?;
         }
     }
+    Ok(())
 }
 
 fn struct_chain(count: usize) -> String {
@@ -125,7 +131,7 @@ fn struct_chain(count: usize) -> String {
 }
 
 #[test]
-fn deep_declarations_are_analysed_on_a_small_stack() {
+fn deep_declarations_are_analysed_on_a_small_stack() -> TestResult {
     analyzed(
         "array initializer lists at 10000",
         shader(
@@ -138,7 +144,7 @@ fn deep_declarations_are_analysed_on_a_small_stack() {
                 "[0]".repeat(10_000)
             ),
         ),
-    );
+    )?;
     for depth in DEPTHS {
         let chain = struct_chain(depth);
         let last = depth - 1;
@@ -148,14 +154,14 @@ fn deep_declarations_are_analysed_on_a_small_stack() {
                 &chain,
                 &format!("S{last} s; s.b = 1; S{last} r = s; b = r.b;"),
             ),
-        );
+        )?;
         analyzed(
             &format!("struct chains in a block at {depth}"),
             shader(
                 &format!("{chain}layout(std430, binding = 0) buffer B {{ S{last} s; }};"),
                 "b = s.b;",
             ),
-        );
+        )?;
         let mut initializer = String::from("{2}");
         let mut constructor = String::from("S0(2)");
         for level in 1..depth {
@@ -165,11 +171,11 @@ fn deep_declarations_are_analysed_on_a_small_stack() {
         analyzed(
             &format!("struct initializers at {depth}"),
             shader(&chain, &format!("S{last} s = {initializer}; b = s.b;")),
-        );
+        )?;
         analyzed(
             &format!("struct constructors at {depth}"),
             shader(&chain, &format!("S{last} s = {constructor}; b = s.b;")),
-        );
+        )?;
         analyzed_with(
             &format!("inline structs at {depth}"),
             shader(
@@ -181,7 +187,7 @@ fn deep_declarations_are_analysed_on_a_small_stack() {
                 "",
             ),
             false,
-        );
+        )?;
         analyzed(
             &format!("array dimensions at {depth}"),
             shader(
@@ -191,6 +197,7 @@ fn deep_declarations_are_analysed_on_a_small_stack() {
                     "[1]".repeat(depth)
                 ),
             ),
-        );
+        )?;
     }
+    Ok(())
 }
