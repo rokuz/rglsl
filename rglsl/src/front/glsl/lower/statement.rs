@@ -11,8 +11,8 @@ use super::constant::shape;
 use super::function::{FunctionLowerer, Local};
 use super::{internal, semantic, unsupported, GlobalRef, Result};
 use crate::{
-    Block, Expression, LoopControl, LoopDependency, SelectionControl, Statement as IrStatement,
-    SwitchCase, SwitchValue, UnaryOperator,
+    Block, Expression, Literal, LoopControl, LoopDependency, SelectionControl,
+    Statement as IrStatement, SwitchCase, SwitchValue, UnaryOperator,
 };
 
 fn selection_control(attributes: &[Attribute]) -> SelectionControl {
@@ -140,6 +140,9 @@ impl FunctionLowerer<'_, '_> {
         condition: crate::Handle<Expression>,
         at: crate::Span,
     ) -> Result<()> {
+        if self.is_true(condition) {
+            return Ok(());
+        }
         let negated = self.add(
             Expression::Unary {
                 op: UnaryOperator::LogicalNot,
@@ -159,6 +162,13 @@ impl FunctionLowerer<'_, '_> {
             at,
         );
         Ok(())
+    }
+
+    fn is_true(&self, condition: crate::Handle<Expression>) -> bool {
+        matches!(
+            self.expressions[condition],
+            Expression::Literal(Literal::Bool(true))
+        )
     }
 
     fn condition(&mut self, condition: &Condition) -> Result<crate::Handle<Expression>> {
@@ -538,13 +548,19 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         let cx = self.clone();
         let frame = async move {
             let value = cx.nest(cx.clone().rvalue(condition)).await?;
-            cx.lowerer().add(
-                Expression::Unary {
-                    op: UnaryOperator::LogicalNot,
-                    expr: value,
-                },
-                at,
-            )
+            let mut lowerer = cx.lowerer();
+            if lowerer.is_true(value) {
+                return Ok(None);
+            }
+            lowerer
+                .add(
+                    Expression::Unary {
+                        op: UnaryOperator::LogicalNot,
+                        expr: value,
+                    },
+                    at,
+                )
+                .map(Some)
         };
         let (continuing, break_if) = {
             drop(this);
@@ -552,7 +568,6 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             this = self.lowerer();
             result
         }?;
-        let break_if = Some(break_if);
         this.push(
             IrStatement::Loop {
                 body,

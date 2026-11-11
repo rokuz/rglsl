@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 use anyhow::{bail, Context, Result};
 
 use crate::corpus::{self, Case, Kind};
+use crate::exec::known::{self, Known};
 use crate::exec::{self, ExecCase, Executor, TargetId};
 use crate::groups;
 use crate::oracles::{self, Tool};
@@ -72,6 +73,13 @@ pub struct ExecInput {
     pub ours: PathBuf,
     pub reference: PathBuf,
     pub invalid_reference: Option<String>,
+    pub twin: Option<Twin>,
+}
+
+#[derive(Debug, Clone)]
+pub enum Twin {
+    Ready,
+    Broken(String),
 }
 
 impl CaseResult {
@@ -142,6 +150,7 @@ pub struct Environment {
     pub spirv_val: Tool,
     pub pins: oracles::Pins,
     pub executors: Vec<Executor>,
+    pub known: Known,
 }
 
 pub fn run(root: &Path, options: Options) -> Result<()> {
@@ -161,6 +170,7 @@ pub fn run(root: &Path, options: Options) -> Result<()> {
         glslang: oracles::find_tool(root, "glslang", "RGLSL_GLSLANG")?,
         spirv_val: oracles::find_tool(root, "spirv-val", "RGLSL_SPIRV_VAL")?,
         executors: Vec::new(),
+        known: Known::load(root)?,
         glslang_dir,
         pins,
     };
@@ -298,32 +308,7 @@ fn run_case(
     let oracle = run_oracle(env, work_dir, case, timeout)?;
 
     let out = work_dir.join("ours").join(format!("{}.spv", case.name));
-    let mut command = Command::new(self_exe);
-    command
-        .arg("compile-one")
-        .args(["--stage", case.stage])
-        .args([
-            "--spv",
-            &format!("{}.{}", case.target.spirv.0, case.target.spirv.1),
-        ])
-        .arg("--out")
-        .arg(&out);
-    if case.target.automap {
-        command.arg("--auto-map");
-    }
-    if case.target.compile_only {
-        command.arg("--object");
-    }
-    let test_dir = env.glslang_dir.join("Test");
-    let runtests = corpus::runtests_options(&case.name);
-    for directory in runtests.include_dirs {
-        command.arg("--include-dir").arg(test_dir.join(directory));
-    }
-    if runtests.hlsl_offsets {
-        command.arg("--hlsl-offsets");
-    }
-    command.arg(&case.path);
-    let output = process::run(command, timeout)?;
+    let output = process::run(ours_command(env, self_exe, case, &case.path, &out), timeout)?;
     let first = output.stdout.lines().find_map(|l| l.strip_prefix("E "));
     let first_line = first
         .and_then(|d| d.split(' ').nth(1))
@@ -366,11 +351,22 @@ fn run_case(
         && !case.target.compile_only
         && reference.is_file()
     {
-        Some(ExecInput {
-            invalid_reference: validate(env, case, &reference, timeout)?,
-            ours: out.clone(),
-            reference,
-        })
+        match env.known.get(&case.name) {
+            Some(undefined) => Some(twin_input(
+                env,
+                self_exe,
+                work_dir,
+                case,
+                &undefined.twin,
+                timeout,
+            )?),
+            None => Some(ExecInput {
+                invalid_reference: validate(env, case, &reference, timeout)?,
+                ours: out.clone(),
+                reference,
+                twin: None,
+            }),
+        }
     } else {
         None
     };
@@ -387,6 +383,120 @@ fn run_case(
     })
 }
 
+fn ours_command(
+    env: &Environment,
+    self_exe: &Path,
+    case: &Case,
+    source: &Path,
+    out: &Path,
+) -> Command {
+    let mut command = Command::new(self_exe);
+    command
+        .arg("compile-one")
+        .args(["--stage", case.stage])
+        .args([
+            "--spv",
+            &format!("{}.{}", case.target.spirv.0, case.target.spirv.1),
+        ])
+        .arg("--out")
+        .arg(out);
+    if case.target.automap {
+        command.arg("--auto-map");
+    }
+    if case.target.compile_only {
+        command.arg("--object");
+    }
+    let test_dir = env.glslang_dir.join("Test");
+    let runtests = corpus::runtests_options(&case.name);
+    for directory in runtests.include_dirs {
+        command.arg("--include-dir").arg(test_dir.join(directory));
+    }
+    if runtests.hlsl_offsets {
+        command.arg("--hlsl-offsets");
+    }
+    command.arg(source);
+    command
+}
+
+fn twin_input(
+    env: &Environment,
+    self_exe: &Path,
+    work_dir: &Path,
+    case: &Case,
+    twin: &Path,
+    timeout: Duration,
+) -> Result<ExecInput> {
+    let reference = work_dir
+        .join("glslang")
+        .join(format!("{}.twin.spv", case.name));
+    let ours = work_dir
+        .join("ours")
+        .join(format!("{}.twin.spv", case.name));
+    let broken = |message: String| ExecInput {
+        ours: ours.clone(),
+        reference: reference.clone(),
+        invalid_reference: None,
+        twin: Some(Twin::Broken(message)),
+    };
+    let name = format!("{}/{}", known::DIR, case.name);
+    let mut command = Command::new(&env.glslang.path);
+    command
+        .current_dir(env.glslang_dir.join("Test"))
+        .args(case.target.glslang_args())
+        .arg("-o")
+        .arg(&reference);
+    let runtests = corpus::runtests_options(&case.name);
+    for directory in runtests.include_dirs {
+        command.arg(format!("-I{directory}"));
+    }
+    if let Some(preamble) = runtests.glslang_preamble {
+        command.args(["--preamble-text", preamble]);
+    }
+    if runtests.hlsl_offsets {
+        command.arg("--hlsl-offsets");
+    }
+    command.arg(twin);
+    let output = process::run(command, timeout)?;
+    if !matches!(output.exit, Exit::Code(0)) {
+        let error = output
+            .stdout
+            .lines()
+            .chain(output.stderr.lines())
+            .find(|line| line.starts_with("ERROR"))
+            .unwrap_or("glslang failed");
+        return Ok(broken(format!(
+            "glslang rejects the twin {name}: {error}; fix the twin"
+        )));
+    }
+    if let Some(message) = validate(env, case, &reference, timeout)? {
+        return Ok(broken(format!(
+            "glslang's module of the twin {name} is not valid: {message}; fix the twin"
+        )));
+    }
+    let output = process::run(ours_command(env, self_exe, case, twin, &ours), timeout)?;
+    if !matches!(output.exit, Exit::Code(EXIT_ACCEPTED)) {
+        let error = output
+            .stdout
+            .lines()
+            .find_map(|l| l.strip_prefix("E "))
+            .map_or_else(|| first_stderr_line(&output.stderr), str::to_string);
+        return Ok(broken(format!(
+            "we do not compile the twin {name}: {error}"
+        )));
+    }
+    if let Some(message) = validate(env, case, &ours, timeout)? {
+        return Ok(broken(format!(
+            "our module of the twin {name} is not valid: {message}"
+        )));
+    }
+    Ok(ExecInput {
+        ours,
+        reference,
+        invalid_reference: None,
+        twin: Some(Twin::Ready),
+    })
+}
+
 fn run_exec(executor: &Executor, results: &mut [CaseResult]) {
     let mut cases = Vec::new();
     let mut indices = Vec::new();
@@ -394,6 +504,12 @@ fn run_exec(executor: &Executor, results: &mut [CaseResult]) {
         let Some(input) = &result.exec_input else {
             continue;
         };
+        if let Some(Twin::Broken(message)) = &input.twin {
+            result
+                .exec
+                .insert(executor.target, exec::Outcome::Fail(message.clone()));
+            continue;
+        }
         if let Some(message) = &input.invalid_reference {
             result.exec.insert(
                 executor.target,
@@ -405,6 +521,7 @@ fn run_exec(executor: &Executor, results: &mut [CaseResult]) {
             name: result.case.name.clone(),
             ours: input.ours.clone(),
             reference: input.reference.clone(),
+            twin: input.twin.is_some(),
         });
         indices.push(index);
     }
@@ -647,6 +764,7 @@ fn run_group(
                     invalid_reference: validate(env, case, &reference, timeout)?,
                     ours: module.clone(),
                     reference,
+                    twin: None,
                 }),
                 None => None,
             }

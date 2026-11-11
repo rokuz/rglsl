@@ -5781,3 +5781,52 @@ void main() {
     a += textureLod(sc, tc, 0.0) + textureLod(sca, tc, 0.0, 0.0);
     a += textureLodOffset(s2da, tc, 0.0, ivec2(0)) + textureOffset(s2da, tc, ivec2(0));
 }
+### errors after a return are reported | frag | 4:UndeclaredIdentifier, 5:CannotConvert
+int f(int x) {
+    return x;
+    x = missing;
+    int y = vec2(1.0);
+}
+void main() {
+    f(1);
+}
+### errors after an always-returning branch are reported | frag | 9:UndeclaredIdentifier
+int f(int x) {
+    if (x > 0) {
+        return 1;
+    } else {
+        discard;
+    }
+    x++;
+    return missing;
+}
+void main() {
+    f(1);
+}
+### errors after an infinite loop are reported | frag | 7:CannotConvert, 9:UndeclaredIdentifier
+int f(int x) {
+    for (;;) {
+        return x;
+    }
+    while (true) {
+        int y = vec2(1.0);
+    }
+    x = missing;
+}
+void main() {
+    f(1);
+}
+### errors in a switch whose cases all return are reported | frag | 8:UndeclaredIdentifier, 10:UndeclaredIdentifier
+int f(int x) {
+    switch (x) {
+    case 0:
+        return 1;
+    default:
+        return 2;
+        x = missing;
+    }
+    return other;
+}
+void main() {
+    f(1);
+}

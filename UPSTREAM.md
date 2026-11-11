@@ -87,6 +87,14 @@ changelog was dropped; see upstream for the history before the fork.
     result: the GLSL lowering no longer appends a `Return` of a `ZeroValue` to such a
     function, and the backend's implicit return at the end of the body returns an `OpUndef`,
     as glslang does (GLSL leaves the value undefined).
+- **Unreachable code in the SPIR-V backend.** Upstream stopped writing a block only after a
+  direct jump, and wrote the merge block of an `If`, `Switch` or `Loop` that never completes
+  with the code after it, plus an implicit return at the end of the function. The backend now
+  asks `proc::Reachability` (an iterative analysis of the function body) which statements do
+  not complete normally: it writes nothing after them, closes their merge block with
+  `OpUnreachable`, writes an unreachable continue target as a branch to the loop header, and
+  adds no implicit return to a body that cannot fall off its end (`back/spv/block.rs`,
+  `docs/design/lowering.md`, Unreachable code).
 
   Bounds checks were already off by default (`BoundsCheckPolicy::Unchecked`), and the
   coordinate-space flip, frag-depth clamp, mesh output clamp and task dispatch limits only
