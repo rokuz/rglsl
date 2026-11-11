@@ -219,16 +219,18 @@ impl Access for Store {
         _id_gen: &mut IdGenerator,
         coordinates_id: Word,
         _level_id: Option<Word>,
-        _sample_id: Option<Word>,
+        sample_id: Option<Word>,
         block: &mut Block,
     ) {
         let mut instruction =
             Instruction::image_write(self.image_id, coordinates_id, self.value_id);
-        let (mask, scope_id) = self.memory;
+        let (memory, scope_id) = self.memory;
+        let mut mask = memory;
+        mask.set(spirv::ImageOperands::SAMPLE, sample_id.is_some());
         if !mask.is_empty() {
             instruction.add_operand(mask.bits());
         }
-        if let Some(id) = scope_id {
+        for id in sample_id.into_iter().chain(scope_id) {
             instruction.add_operand(id);
         }
         block.body.push(instruction);
@@ -800,6 +802,7 @@ impl BlockContext<'_> {
         array_index: Option<Handle<crate::Expression>>,
         level: Option<Handle<crate::Expression>>,
         sample: Option<Handle<crate::Expression>>,
+        sparse: bool,
         block: &mut Block,
     ) -> Result<Word, Error> {
         let image_id = self.get_image_id(image, block)?;
@@ -815,8 +818,29 @@ impl BlockContext<'_> {
         if subpass {
             access.opcode = spirv::Op::ImageRead;
         }
+        if sparse {
+            if access.type_id != result_type_id {
+                return Err(Error::FeatureNotImplemented("sparse loads of depth images"));
+            }
+            self.writer
+                .require_any("sparse residency", &[spirv::Capability::SparseResidency])?;
+            access.opcode = match access.opcode {
+                spirv::Op::ImageRead => spirv::Op::ImageSparseRead,
+                _ => spirv::Op::ImageSparseFetch,
+            };
+        }
         if matches!(image_class, crate::ImageClass::Storage { .. }) {
             access.memory = self.texel_memory(image, false);
+        }
+        if let crate::ImageClass::Storage {
+            format: crate::StorageFormat::Unknown(_),
+            ..
+        } = image_class
+        {
+            self.writer.require_any(
+                "storage image read without a format",
+                &[spirv::Capability::StorageImageReadWithoutFormat],
+            )?;
         }
         let coordinates = self.write_image_coordinates(coordinate, array_index, block)?;
 
@@ -898,6 +922,8 @@ impl BlockContext<'_> {
         level: crate::SampleLevel,
         depth_ref: Option<Handle<crate::Expression>>,
         clamp_to_edge: bool,
+        min_lod: Option<Handle<crate::Expression>>,
+        sparse: bool,
         block: &mut Block,
     ) -> Result<Word, Error> {
         use super::instructions::SampleLod;
@@ -922,6 +948,11 @@ impl BlockContext<'_> {
             crate::ImageClass::Depth { .. } => depth_ref.is_none() && gather.is_none(),
             _ => false,
         };
+        if sparse && needs_sub_access {
+            return Err(Error::FeatureNotImplemented(
+                "sparse sampling of depth images without a reference",
+            ));
+        }
         let sample_result_type_id = if needs_sub_access {
             self.get_numeric_type_id(NumericType::Vector {
                 size: crate::VectorSize::Quad,
@@ -1069,6 +1100,26 @@ impl BlockContext<'_> {
         let mut mask = spirv::ImageOperands::empty();
         let constant_offset =
             offset.is_none_or(|offset| self.expression_constness.is_constant_instruction(offset));
+        let offsets = offset.is_some_and(|offset| {
+            matches!(
+                *self.fun_info[offset].ty.inner_with(&self.ir_module.types),
+                crate::TypeInner::Array { .. }
+            )
+        });
+        if offsets {
+            if !constant_offset {
+                return Err(Error::FeatureNotImplemented(
+                    "gather offsets that are not constant",
+                ));
+            }
+            self.writer.require_any(
+                "constant gather offsets",
+                &[spirv::Capability::ImageGatherExtended],
+            )?;
+            mask |= spirv::ImageOperands::CONST_OFFSETS;
+        }
+        let offset_operand = offset;
+        let offset = offset.filter(|_| !offsets);
         mask.set(
             spirv::ImageOperands::CONST_OFFSET,
             offset.is_some() && constant_offset,
@@ -1083,6 +1134,12 @@ impl BlockContext<'_> {
                 &[spirv::Capability::ImageGatherExtended],
             )?;
         }
+        let min_lod_id = min_lod.map(|expr| self.cached.get(expr)).transpose()?;
+        if min_lod_id.is_some() {
+            mask |= spirv::ImageOperands::MIN_LOD;
+            self.writer
+                .require_any("minimum level of detail", &[spirv::Capability::MinLod])?;
+        }
 
         let mut main_instruction = match (level, gather) {
             (_, Some((component, crate::ImageGatherPattern::Quad))) => {
@@ -1095,8 +1152,31 @@ impl BlockContext<'_> {
                     component_id,
                     depth_id,
                 );
+                let level_id = match level {
+                    crate::SampleLevel::Exact(handle) => {
+                        mask |= spirv::ImageOperands::LOD;
+                        Some(self.cached.get(handle)?)
+                    }
+                    crate::SampleLevel::Bias(handle) => {
+                        mask |= spirv::ImageOperands::BIAS;
+                        Some(self.cached.get(handle)?)
+                    }
+                    crate::SampleLevel::Auto
+                    | crate::SampleLevel::Zero
+                    | crate::SampleLevel::Gradient { .. } => None,
+                };
+                if level_id.is_some() {
+                    self.writer.use_extension("SPV_AMD_texture_gather_bias_lod");
+                    self.writer.require_any(
+                        "gather with a level of detail or bias",
+                        &[spirv::Capability::ImageGatherBiasLodAMD],
+                    )?;
+                }
                 if !mask.is_empty() {
                     inst.add_operand(mask.bits());
+                }
+                if let Some(level_id) = level_id {
+                    inst.add_operand(level_id);
                 }
                 inst
             }
@@ -1250,9 +1330,17 @@ impl BlockContext<'_> {
             }
         };
 
-        if let Some(offset_const) = offset {
+        if let Some(offset_const) = offset_operand {
             let offset_id = self.cached.get(offset_const)?;
             main_instruction.add_operand(offset_id);
+        }
+        if let Some(min_lod_id) = min_lod_id {
+            main_instruction.add_operand(min_lod_id);
+        }
+        if sparse {
+            self.writer
+                .require_any("sparse residency", &[spirv::Capability::SparseResidency])?;
+            main_instruction.op = sparse_opcode(main_instruction.op)? as u32;
         }
 
         block.body.push(main_instruction);
@@ -1285,6 +1373,13 @@ impl BlockContext<'_> {
     ) -> Result<Word, Error> {
         use crate::{ImageClass as Ic, ImageDimension as Id, ImageQuery as Iq};
 
+        if let Iq::Lod {
+            sampler,
+            coordinate,
+        } = query
+        {
+            return self.write_image_query_lod(result_type_id, image, sampler, coordinate, block);
+        }
         let image_id = self.get_image_id(image, block)?;
         let (dim, arrayed, class) = match *self.fun_info[image].ty.inner_with(&self.ir_module.types)
         {
@@ -1359,7 +1454,16 @@ impl BlockContext<'_> {
                 }
                 block.body.push(inst);
 
-                if result_type_id != extended_size_type_id {
+                if result_type_id != extended_size_type_id && dim_coords == 1 {
+                    let id = self.gen_id();
+                    block.body.push(Instruction::composite_extract(
+                        result_type_id,
+                        id,
+                        id_extended,
+                        &[0],
+                    ));
+                    id
+                } else if result_type_id != extended_size_type_id {
                     let id = self.gen_id();
                     let components = match dim {
                         // always pick the first component, and duplicate it for all 3 dimensions
@@ -1444,8 +1548,61 @@ impl BlockContext<'_> {
 
                 query_id
             }
+            Iq::Lod { .. } => return Err(Error::Validation("level of detail query")),
         };
 
+        Ok(id)
+    }
+
+    fn write_image_query_lod(
+        &mut self,
+        result_type_id: Word,
+        image: Handle<crate::Expression>,
+        sampler: Option<Handle<crate::Expression>>,
+        coordinate: Handle<crate::Expression>,
+        block: &mut Block,
+    ) -> Result<Word, Error> {
+        self.writer
+            .require_any("image queries", &[spirv::Capability::ImageQuery])?;
+        let handle_id = self.get_non_uniform_handle_id(image, block)?;
+        let sampled_image_id = match sampler {
+            Some(sampler) => {
+                let (dim, arrayed, class) =
+                    match *self.fun_info[image].ty.inner_with(&self.ir_module.types) {
+                        crate::TypeInner::Image {
+                            dim,
+                            arrayed,
+                            class,
+                        } => (dim, arrayed, class),
+                        _ => return Err(Error::Validation("image type")),
+                    };
+                let image_type_id = self.get_localtype_id(LocalType::Image(
+                    LocalImageType::from_inner(dim, arrayed, class)?,
+                ));
+                let sampled_image_type_id =
+                    self.get_localtype_id(LocalType::SampledImage { image_type_id });
+                let sampler_id = self.get_non_uniform_handle_id(sampler, block)?;
+                let id = self.gen_id();
+                block.body.push(Instruction::sampled_image(
+                    sampled_image_type_id,
+                    id,
+                    handle_id,
+                    sampler_id,
+                ));
+                id
+            }
+            None => handle_id,
+        };
+        let coordinate_id = self.cached.get(coordinate)?;
+        let id = self.gen_id();
+        let mut instruction = Instruction::image_query(
+            spirv::Op::ImageQueryLod,
+            result_type_id,
+            id,
+            sampled_image_id,
+        );
+        instruction.add_operand(coordinate_id);
+        block.body.push(instruction);
         Ok(id)
     }
 
@@ -1454,12 +1611,14 @@ impl BlockContext<'_> {
         image: Handle<crate::Expression>,
         coordinate: Handle<crate::Expression>,
         array_index: Option<Handle<crate::Expression>>,
+        sample: Option<Handle<crate::Expression>>,
         value: Handle<crate::Expression>,
         block: &mut Block,
     ) -> Result<(), Error> {
         let image_id = self.get_non_uniform_handle_id(image, block)?;
         let coordinates = self.write_image_coordinates(coordinate, array_index, block)?;
         let value_id = self.cached.get(value)?;
+        let sample_id = sample.map(|expr| self.cached.get(expr)).transpose()?;
 
         let memory = self.texel_memory(image, true);
         let write = Store {
@@ -1480,6 +1639,17 @@ impl BlockContext<'_> {
                 "Bgra8Unorm storage write",
                 &[spirv::Capability::StorageImageWriteWithoutFormat],
             )?,
+            crate::TypeInner::Image {
+                class:
+                    crate::ImageClass::Storage {
+                        format: crate::StorageFormat::Unknown(_),
+                        ..
+                    },
+                ..
+            } => self.writer.require_any(
+                "storage image write without a format",
+                &[spirv::Capability::StorageImageWriteWithoutFormat],
+            )?,
             _ => {}
         }
 
@@ -1487,7 +1657,7 @@ impl BlockContext<'_> {
             &mut self.writer.id_gen,
             coordinates.value_id,
             None,
-            None,
+            sample_id,
             block,
         );
 
@@ -1568,4 +1738,17 @@ impl BlockContext<'_> {
 
         Ok(())
     }
+}
+
+const fn sparse_opcode(op: u32) -> Result<spirv::Op, Error> {
+    use spirv::Op;
+    Ok(match op {
+        op if op == Op::ImageSampleImplicitLod as u32 => Op::ImageSparseSampleImplicitLod,
+        op if op == Op::ImageSampleExplicitLod as u32 => Op::ImageSparseSampleExplicitLod,
+        op if op == Op::ImageSampleDrefImplicitLod as u32 => Op::ImageSparseSampleDrefImplicitLod,
+        op if op == Op::ImageSampleDrefExplicitLod as u32 => Op::ImageSparseSampleDrefExplicitLod,
+        op if op == Op::ImageGather as u32 => Op::ImageSparseGather,
+        op if op == Op::ImageDrefGather as u32 => Op::ImageSparseDrefGather,
+        _ => return Err(Error::FeatureNotImplemented("this sparse image operation")),
+    })
 }

@@ -7603,3 +7603,145 @@ fn shader_core_builtins() {
         );
     }
 }
+
+#[test]
+fn formatless_multisampled_and_cube_storage_images() {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+        #extension GL_EXT_shader_image_load_formatted : require
+        layout(set = 0, binding = 0) uniform image2D plain;
+        layout(set = 0, binding = 1, rgba8) uniform image2DMS ms;
+        layout(set = 0, binding = 2, rgba8) uniform imageCubeArray cube;
+        layout(location = 0) out vec4 o;
+        void main() {
+            o = imageLoad(plain, ivec2(0)) + imageLoad(cube, ivec3(1, 2, 9));
+            imageStore(plain, ivec2(1), o);
+            imageStore(ms, ivec2(0), 3, o);
+            imageStore(cube, ivec3(0, 0, 7), o);
+        }",
+    );
+    assert!(has_capability(
+        &module,
+        spirv::Capability::StorageImageReadWithoutFormat
+    ));
+    assert!(has_capability(
+        &module,
+        spirv::Capability::StorageImageWriteWithoutFormat
+    ));
+    let formats: Vec<&Operand> = instructions(&module, Op::TypeImage)
+        .iter()
+        .map(|inst| &inst.operands[6])
+        .collect();
+    assert!(formats.contains(&&Operand::ImageFormat(spirv::ImageFormat::Unknown)));
+    let writes = instructions(&module, Op::ImageWrite);
+    assert_eq!(writes.len(), 3);
+    assert!(writes.iter().any(|inst| {
+        inst.operands.get(3) == Some(&Operand::ImageOperands(spirv::ImageOperands::SAMPLE))
+    }));
+}
+
+#[test]
+fn compute_shader_derivatives() {
+    let module = compile_valid(
+        ShaderStage::Compute,
+        "#version 450
+        #extension GL_KHR_compute_shader_derivatives : require
+        layout(local_size_x = 2, local_size_y = 2) in;
+        layout(derivative_group_quadsKHR) in;
+        layout(set = 0, binding = 0) uniform sampler2D s;
+        layout(set = 0, binding = 1) buffer B { vec4 v; float f; } b;
+        void main() {
+            b.f = dFdx(b.f) + fwidthCoarse(b.f);
+            b.v = texture(s, vec2(0.5), 0.25) + textureQueryLod(s, vec2(0.5)).xyxy;
+        }",
+    );
+    assert!(has_execution_mode(
+        &module,
+        spirv::ExecutionMode::DerivativeGroupQuadsKHR
+    ));
+    assert!(has_capability(
+        &module,
+        spirv::Capability::ComputeDerivativeGroupQuadsKHR
+    ));
+    assert_eq!(instructions(&module, Op::DPdx).len(), 1);
+    assert_eq!(instructions(&module, Op::ImageSampleImplicitLod).len(), 1);
+    assert_eq!(instructions(&module, Op::ImageQueryLod).len(), 1);
+
+    let module = compile_valid(
+        ShaderStage::Compute,
+        "#version 450
+        layout(local_size_x = 1) in;
+        layout(set = 0, binding = 0) uniform sampler2D s;
+        layout(set = 0, binding = 1) buffer B { vec4 v; } b;
+        void main() { b.v = texture(s, vec2(0.5), 0.25); }",
+    );
+    assert!(instructions(&module, Op::ImageSampleImplicitLod).is_empty());
+    assert_eq!(instructions(&module, Op::ImageSampleExplicitLod).len(), 1);
+}
+
+#[test]
+fn sparse_textures_and_lod_clamp() {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+        #extension GL_ARB_sparse_texture2 : require
+        #extension GL_ARB_sparse_texture_clamp : require
+        layout(set = 0, binding = 0) uniform sampler2D s;
+        layout(set = 0, binding = 1) uniform sampler2DShadow d;
+        layout(set = 0, binding = 2, rgba32f) uniform image2D i;
+        layout(location = 0) out vec4 o;
+        void main() {
+            float f;
+            vec4 t;
+            int code = sparseTextureARB(s, vec2(0.5), o);
+            code += sparseTextureClampARB(d, vec3(0.5), 0.5, f);
+            code += sparseTextureGatherARB(s, vec2(0.5), t, 1);
+            code += sparseTexelFetchARB(s, ivec2(0), 0, t);
+            code += sparseImageLoadARB(i, ivec2(0), t);
+            o += t + textureClampARB(s, vec2(0.5), 0.25);
+            if (sparseTexelsResidentARB(code)) o += f;
+        }",
+    );
+    assert!(has_capability(&module, spirv::Capability::SparseResidency));
+    assert!(has_capability(&module, spirv::Capability::MinLod));
+    for op in [
+        Op::ImageSparseSampleImplicitLod,
+        Op::ImageSparseSampleDrefImplicitLod,
+        Op::ImageSparseGather,
+        Op::ImageSparseFetch,
+        Op::ImageSparseRead,
+        Op::ImageSparseTexelsResident,
+    ] {
+        assert_eq!(instructions(&module, op).len(), 1, "{op:?}");
+    }
+}
+
+#[test]
+fn gather_with_a_level_or_a_bias() {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+        #extension GL_AMD_texture_gather_bias_lod : require
+        layout(set = 0, binding = 0) uniform sampler2D s;
+        layout(location = 0) out vec4 o;
+        void main() {
+            o = textureGatherLodAMD(s, vec2(0.5), 1.0, 2) + textureGather(s, vec2(0.5), 1, 0.5);
+        }",
+    );
+    assert!(has_capability(
+        &module,
+        spirv::Capability::ImageGatherBiasLodAMD
+    ));
+    let masks: Vec<&Operand> = instructions(&module, Op::ImageGather)
+        .iter()
+        .map(|inst| &inst.operands[3])
+        .collect();
+    assert_eq!(
+        masks,
+        [
+            &Operand::ImageOperands(spirv::ImageOperands::LOD),
+            &Operand::ImageOperands(spirv::ImageOperands::BIAS)
+        ]
+    );
+}

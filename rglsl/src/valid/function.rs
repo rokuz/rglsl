@@ -581,7 +581,7 @@ impl super::Validator {
             )
             .with_span_handle(texel.coordinate, context.expressions));
         }
-        if arrayed != texel.array_index.is_some() {
+        if super::image_array_index_expected(dim, arrayed, class) != texel.array_index.is_some() {
             return Err(
                 FunctionError::InvalidImageAtomic(ExpressionError::InvalidImageArrayIndex)
                     .with_span_handle(texel.coordinate, context.expressions),
@@ -1195,6 +1195,7 @@ impl super::Validator {
                             | Ex::ArrayConversion { .. }
                             | Ex::ImageLoad { .. }
                             | Ex::ImageQuery { .. }
+                            | Ex::ImageSparseResident { .. }
                             | Ex::Unary { .. }
                             | Ex::Binary { .. }
                             | Ex::Select { .. }
@@ -1666,6 +1667,7 @@ impl super::Validator {
                     image,
                     coordinate,
                     array_index,
+                    sample,
                     value,
                 } => {
                     //Note: this code uses a lot of `FunctionError::InvalidImageStore`,
@@ -1751,11 +1753,40 @@ impl super::Validator {
 
                     // The `array_index` operand should be present if and only if
                     // the image itself is arrayed.
-                    if arrayed != array_index.is_some() {
+                    if super::image_array_index_expected(dim, arrayed, class)
+                        != array_index.is_some()
+                    {
                         return Err(FunctionError::InvalidImageStore(
                             ExpressionError::InvalidImageArrayIndex,
                         )
                         .with_span_handle(coordinate, context.expressions));
+                    }
+
+                    match (sample, class.is_multisampled()) {
+                        (None, false) => {}
+                        (Some(sample), true) => {
+                            if !matches!(
+                                *context.resolve_type_inner(sample, &self.valid_expression_set)?,
+                                Ti::Scalar(crate::Scalar::I32 | crate::Scalar::U32)
+                            ) {
+                                return Err(FunctionError::InvalidImageStore(
+                                    ExpressionError::InvalidImageOtherIndexType(sample),
+                                )
+                                .with_span_handle(sample, context.expressions));
+                            }
+                        }
+                        (Some(_), false) => {
+                            return Err(FunctionError::InvalidImageStore(
+                                ExpressionError::InvalidImageSampleSelector,
+                            )
+                            .with_span_handle(image, context.expressions));
+                        }
+                        (None, true) => {
+                            return Err(FunctionError::InvalidImageStore(
+                                ExpressionError::MissingImageSampleSelector,
+                            )
+                            .with_span_handle(image, context.expressions));
+                        }
                     }
 
                     // If present, `array_index` must be a scalar integer type.

@@ -5315,3 +5315,90 @@ void main() {
     o = uvec4(gl_WarpsPerSMNV, gl_SMCountNV, gl_WarpIDNV, gl_SMIDNV)
         + uvec4(gl_CoreIDARM, gl_CoreCountARM, gl_CoreMaxIDARM, gl_WarpIDARM + gl_WarpMaxIDARM);
 }
+### dFdx in compute needs a derivative extension | comp 450 | 4:ExtensionRequired
+layout(local_size_x = 2, local_size_y = 2) in;
+layout(set = 0, binding = 0) buffer B { float x; } b;
+void main() { b.x = dFdx(b.x); }
+### dFdx in compute with the NV extension and no layout | comp 450 | ok
+#extension GL_NV_compute_shader_derivatives : require
+layout(local_size_x = 2, local_size_y = 2) in;
+layout(set = 0, binding = 0) buffer B { float x; } b;
+void main() { b.x = dFdx(b.x) + fwidthFine(b.x); }
+### dFdx in a task shader needs the KHR extension | task 450 | 6:ExtensionRequired
+#extension GL_EXT_mesh_shader : require
+#extension GL_NV_compute_shader_derivatives : require
+layout(local_size_x = 4) in;
+layout(set = 0, binding = 0) buffer B { float x; } b;
+void main() { b.x = dFdx(b.x); EmitMeshTasksEXT(1u, 1u, 1u); }
+### KHR derivatives need the layout before the call | comp 450 | 5:InvalidBuiltinCall
+#extension GL_KHR_compute_shader_derivatives : require
+layout(local_size_x = 2, local_size_y = 2) in;
+layout(set = 0, binding = 0) buffer B { float x; } b;
+void main() { b.x = dFdx(b.x); }
+layout(derivative_group_quadsKHR) in;
+### textureQueryLod and bias in compute with derivatives | comp 450 | ok
+#extension GL_KHR_compute_shader_derivatives : require
+layout(local_size_x = 2, local_size_y = 2) in;
+layout(derivative_group_quadsKHR) in;
+layout(set = 0, binding = 0) uniform sampler2D s;
+layout(set = 0, binding = 1) buffer B { vec4 x; } b;
+void main() { b.x = texture(s, vec2(0.5), 1.0) + textureQueryLod(s, vec2(0.5)).xyxy; }
+### sparse textures need GL_ARB_sparse_texture2 | frag 450 | 5:ExtensionRequired
+layout(set = 0, binding = 0) uniform sampler2D s;
+layout(location = 0) out vec4 o;
+void main() {
+    int code = sparseTextureARB(s, vec2(0.5), o);
+}
+### sparse textures and residency | frag 450 | ok
+#extension GL_ARB_sparse_texture2 : require
+#extension GL_ARB_sparse_texture_clamp : require
+layout(set = 0, binding = 0) uniform sampler2D s;
+layout(set = 0, binding = 1) uniform sampler2DShadow d;
+layout(set = 0, binding = 2, rgba32f) uniform image2D i;
+layout(location = 0) out vec4 o;
+void main() {
+    float f;
+    int code = sparseTextureARB(s, vec2(0.5), o, 1.0);
+    code += sparseTextureClampARB(d, vec3(0.5), 0.5, f);
+    code += sparseTextureGatherOffsetARB(s, vec2(0.5), ivec2(1), o, 2);
+    code += sparseTexelFetchARB(s, ivec2(0), 0, o);
+    code += sparseImageLoadARB(i, ivec2(0), o);
+    o += textureGradOffsetClampARB(s, vec2(0.5), vec2(0.0), vec2(0.0), ivec2(1), 0.5);
+    if (sparseTexelsResidentARB(code)) o += f;
+}
+### sparse texel offsets must be constant | frag 450 | 7:InvalidBuiltinCall
+#extension GL_ARB_sparse_texture2 : require
+layout(set = 0, binding = 0) uniform sampler2D s;
+layout(location = 0) out vec4 o;
+layout(location = 0) flat in ivec2 offset;
+void main() {
+    int code = sparseTextureOffsetARB(s, vec2(0.5), offset, o);
+}
+### gather with a level needs the AMD extension | frag 450 | 5:ExtensionRequired
+layout(set = 0, binding = 0) uniform sampler2D s;
+layout(location = 0) out vec4 o;
+void main() {
+    o = textureGatherLodAMD(s, vec2(0.5), 1.0, 2);
+}
+### gather with a level or a bias | frag 450 | ok
+#extension GL_AMD_texture_gather_bias_lod : require
+layout(set = 0, binding = 0) uniform sampler2D s;
+layout(location = 0) out vec4 o;
+void main() {
+    o = textureGatherLodAMD(s, vec2(0.5), 1.0, 2) + textureGather(s, vec2(0.5), 1, 0.5);
+}
+### formatless storage images | frag 450 | ok
+#extension GL_EXT_shader_image_load_formatted : require
+layout(set = 0, binding = 0) uniform image2D i;
+layout(set = 0, binding = 1) uniform image2DMS ms;
+layout(set = 0, binding = 2, rgba8) uniform imageCubeArray c;
+layout(location = 0) out vec4 o;
+void main() {
+    o = imageLoad(i, ivec2(0)) + imageLoad(c, ivec3(0, 0, 7));
+    imageStore(ms, ivec2(0), 3, o);
+    imageStore(c, ivec3(1, 1, 8), o);
+}
+### formatless images need writeonly or the extension | frag 450 | 2:InvalidQualifier
+layout(set = 0, binding = 0) uniform image2D i;
+layout(set = 0, binding = 1) writeonly uniform image2D w;
+void main() { imageStore(w, ivec2(0), imageLoad(i, ivec2(0))); }

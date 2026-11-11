@@ -129,6 +129,13 @@ pub(super) fn image_format(word: &str) -> Option<StorageFormat> {
     })
 }
 
+pub(super) const fn unknown_format(sampled: rglsl_sema::types::SampledType) -> StorageFormat {
+    StorageFormat::Unknown(crate::Scalar {
+        kind: sampled_kind(sampled),
+        width: 4,
+    })
+}
+
 pub(super) fn storage_access(qualifiers: &Qualifiers) -> StorageAccess {
     if qualifiers.readonly {
         StorageAccess::LOAD
@@ -970,8 +977,7 @@ impl<'a> Lowerer<'a> {
                 .iter()
                 .rev()
                 .find_map(|entry| image_format(&entry.name))
-                .ok_or_else(|| unsupported("storage images without a format qualifier", at))?;
-            let _ = sampled_kind(opaque.sampled);
+                .unwrap_or_else(|| unknown_format(opaque.sampled));
             TypeInner::Image {
                 dim: image_dimension(opaque),
                 arrayed: opaque.arrayed,

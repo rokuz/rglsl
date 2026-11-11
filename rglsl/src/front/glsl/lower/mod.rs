@@ -127,6 +127,7 @@ fn lower(
         &unit,
         &rglsl_sema::Options {
             spirv_version: options.spirv_version,
+            end_of_input: u32::try_from(text.len()).ok(),
             ..rglsl_sema::Options::new(stage(options.stage))
         },
     );
@@ -168,6 +169,9 @@ fn lower(
                 kind: ErrorKind::SemanticError(Cow::Owned(message)),
                 meta: if link_time(&diagnostic.kind) {
                     Span::UNDEFINED
+                } else if usize::try_from(start).is_ok_and(|start| start >= text.len()) {
+                    let end = u32::try_from(source.len()).unwrap_or(u32::MAX);
+                    Span::new(end, end)
                 } else {
                     original(
                         map,

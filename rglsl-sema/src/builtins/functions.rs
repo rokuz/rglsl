@@ -519,7 +519,12 @@ uint packFloat2x16(f16vec2)
 f16vec2 unpackFloat2x16(uint)
 ";
 
+const SPARSE: &str = "
+bool sparseTexelsResidentARB(int)
+";
+
 pub(super) const SECTIONS: &[Section] = &[
+    Section::new(SPARSE),
     Section::new(ANGLE_AND_TRIGONOMETRY).with_halves(),
     Section::new(EXPONENTIAL).with_halves(),
     Section::new(EXPONENTIAL_WITH_DOUBLE)
@@ -545,7 +550,7 @@ pub(super) const SECTIONS: &[Section] = &[
     Section::new(DERIVATIVES)
         .with_doubles()
         .with_halves()
-        .in_stages(FRAGMENT),
+        .in_stages(FRAGMENT | COMPUTE | TASK | MESH),
     Section::new(INTERPOLATION)
         .with_doubles()
         .with_halves()

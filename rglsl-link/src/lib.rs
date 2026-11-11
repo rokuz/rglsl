@@ -220,7 +220,12 @@ fn fix_up_library_functions(
     functions: &[Handle<Function>],
     stage: ShaderStage,
 ) {
-    if stage == ShaderStage::Fragment {
+    let derivatives = stage == ShaderStage::Compute
+        && module
+            .entry_points
+            .first()
+            .is_some_and(|entry| entry.derivative_group.is_some());
+    if stage == ShaderStage::Fragment || derivatives {
         return;
     }
     for &handle in functions {

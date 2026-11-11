@@ -475,6 +475,12 @@ impl<'a> ResolveContext<'a> {
                 }
             },
             crate::Expression::ImageSample {
+                sparse: Some(ty), ..
+            }
+            | crate::Expression::ImageLoad {
+                sparse: Some(ty), ..
+            } => TypeResolution::Handle(ty),
+            crate::Expression::ImageSample {
                 image,
                 gather: Some(_),
                 ..
@@ -545,7 +551,14 @@ impl<'a> ResolveContext<'a> {
                 crate::ImageQuery::NumLevels
                 | crate::ImageQuery::NumLayers
                 | crate::ImageQuery::NumSamples => Ti::Scalar(crate::Scalar::U32),
+                crate::ImageQuery::Lod { .. } => Ti::Vector {
+                    size: crate::VectorSize::Bi,
+                    scalar: crate::Scalar::F32,
+                },
             }),
+            crate::Expression::ImageSparseResident { .. } => {
+                TypeResolution::Value(Ti::Scalar(crate::Scalar::BOOL))
+            }
             crate::Expression::Unary { expr, .. } => past(expr)?.clone(),
             crate::Expression::Binary { op, left, right } => match op {
                 crate::BinaryOperator::Add

@@ -349,6 +349,7 @@ impl<I: Iterator<Item = u32>> super::Frontend<I> {
         };
 
         Ok(crate::Statement::ImageStore {
+            sample: None,
             image: image_lexp.handle,
             coordinate,
             array_index,
@@ -445,6 +446,7 @@ impl<I: Iterator<Item = u32>> super::Frontend<I> {
             array_index,
             sample,
             level,
+            sparse: None,
         };
         let image_load_handle = ctx
             .expressions
@@ -806,6 +808,8 @@ impl<I: Iterator<Item = u32>> super::Frontend<I> {
             level,
             depth_ref,
             clamp_to_edge: false,
+            min_lod: None,
+            sparse: None,
         };
         let image_sample_handle = ctx.expressions.append(expr, self.span_from_with_op(start));
         let handle = if is_depth && depth_ref.is_none() {

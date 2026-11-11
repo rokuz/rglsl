@@ -204,6 +204,7 @@ impl Builder {
             tessellation: None,
             mesh_shader: None,
             tile_shading: rglsl::TileShading::default(),
+            derivative_group: None,
         });
         self.module
     }

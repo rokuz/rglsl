@@ -15,6 +15,7 @@ mod reference_expression;
 mod stage;
 mod statement;
 mod tensor;
+mod texture;
 
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::format;
@@ -46,6 +47,7 @@ pub struct Options {
     pub relaxed_uniforms: bool,
     pub limits: ResourceLimits,
     pub spirv_version: Option<(u8, u8)>,
+    pub end_of_input: Option<u32>,
 }
 
 impl Options {
@@ -55,6 +57,7 @@ impl Options {
             relaxed_uniforms: false,
             limits: ResourceLimits::default(),
             spirv_version: None,
+            end_of_input: None,
         }
     }
 }
@@ -106,6 +109,7 @@ pub struct Analysis {
     pub shader_64bit_indexing: bool,
     pub promote_uint32_indices: bool,
     pub primitive_culling: bool,
+    pub derivative_group: Option<(DerivativeGroup, bool)>,
 }
 
 impl Analysis {
@@ -316,7 +320,7 @@ pub(crate) struct Analyzer<'a> {
     pub main: Option<FunctionId>,
     pub redeclared_blocks: Vec<BlockStorage>,
     pub recovered: BTreeSet<SymbolId>,
-    pub derivative_group: Option<DerivativeGroup>,
+    pub derivative_group: Option<(DerivativeGroup, bool)>,
     pub khr_derivative_group: bool,
     pub local_size: [Option<u32>; 3],
     pub local_size_specialized: [bool; 3],
@@ -331,7 +335,7 @@ pub(crate) struct Analyzer<'a> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum DerivativeGroup {
+pub enum DerivativeGroup {
     Quads,
     Linear,
 }
@@ -453,7 +457,8 @@ impl<'a> Analyzer<'a> {
         if !self.main_defined {
             self.error(Span::new(end, end), DiagnosticKind::MissingEntryPoint);
         }
-        self.check_derivative_group(Span::new(end, end));
+        let end_of_input = self.options.end_of_input.unwrap_or(end);
+        self.check_derivative_group(Span::new(end_of_input, end_of_input));
         self.mesh_output_reads(unit);
     }
 
@@ -533,7 +538,7 @@ impl<'a> Analyzer<'a> {
             }
         };
         match self.derivative_group {
-            Some(DerivativeGroup::Quads) => {
+            Some((DerivativeGroup::Quads, _)) => {
                 if [size(0), size(1)]
                     .iter()
                     .flatten()
@@ -548,7 +553,7 @@ impl<'a> Analyzer<'a> {
                     );
                 }
             }
-            Some(DerivativeGroup::Linear) => {
+            Some((DerivativeGroup::Linear, _)) => {
                 if let (Some(x), Some(y), Some(z)) = (size(0), size(1), size(2)) {
                     if x.wrapping_mul(y).wrapping_mul(z) % 4 != 0 {
                         self.error(
@@ -585,6 +590,7 @@ impl<'a> Analyzer<'a> {
             shader_64bit_indexing: self.shader_64bit_indexing,
             promote_uint32_indices: self.promote_uint32_indices,
             primitive_culling: self.primitive_culling,
+            derivative_group: self.derivative_group,
         }
     }
 

@@ -1984,6 +1984,25 @@ impl Writer {
             }
         }
 
+        if let Some(group) = entry_point.derivative_group {
+            let (capability, mode) = match group.shape {
+                crate::DerivativeGroupShape::Quads => (
+                    spirv::Capability::ComputeDerivativeGroupQuadsKHR,
+                    spirv::ExecutionMode::DerivativeGroupQuadsKHR,
+                ),
+                crate::DerivativeGroupShape::Linear => (
+                    spirv::Capability::ComputeDerivativeGroupLinearKHR,
+                    spirv::ExecutionMode::DerivativeGroupLinearKHR,
+                ),
+            };
+            self.use_extension(match group.extension {
+                crate::DerivativeGroupExtension::Khr => "SPV_KHR_compute_shader_derivatives",
+                crate::DerivativeGroupExtension::Nv => "SPV_NV_compute_shader_derivatives",
+            });
+            self.require_any("compute shader derivatives", &[capability])?;
+            self.write_execution_mode(function_id, mode)?;
+        }
+
         if entry_point.tile_shading.non_coherent_attachment_read {
             self.require_tile_shading()?;
             self.write_execution_mode(

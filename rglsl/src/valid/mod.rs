@@ -554,6 +554,7 @@ impl crate::TypeInner {
     fn addresses_image(&self, dim: crate::ImageDimension) -> bool {
         let dim = match dim {
             crate::ImageDimension::Buffer => crate::ImageDimension::D1,
+            crate::ImageDimension::Cube => crate::ImageDimension::D3,
             crate::ImageDimension::Subpass => {
                 return matches!(
                     *self,
@@ -593,6 +594,21 @@ impl crate::TypeInner {
             _ => None,
         }
     }
+}
+
+pub(crate) const fn image_array_index_expected(
+    dim: crate::ImageDimension,
+    arrayed: bool,
+    class: crate::ImageClass,
+) -> bool {
+    arrayed
+        && !matches!(
+            (dim, class),
+            (
+                crate::ImageDimension::Cube,
+                crate::ImageClass::Storage { .. }
+            )
+        )
 }
 
 impl Validator {

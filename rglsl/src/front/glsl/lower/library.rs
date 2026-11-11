@@ -219,6 +219,10 @@ pub(super) fn library_diagnostic(
         {
             Some(message(name))
         }
+        DiagnosticKind::ExtensionRequired {
+            ref feature,
+            ref extensions,
+        } if extensions.contains("compute_shader_derivatives") => Some(message(feature)),
         DiagnosticKind::InvalidQualifier {
             qualifier: "in" | "out",
             reason,

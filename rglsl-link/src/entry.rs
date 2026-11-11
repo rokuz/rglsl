@@ -196,6 +196,7 @@ impl Builder<'_> {
             tessellation,
             mesh_shader,
             tile_shading,
+            derivative_group,
         } = entry;
         function.diagnostic_filter_leaf = None;
         remap.adjust_function(&mut function).map_err(internal)?;
@@ -268,6 +269,7 @@ impl Builder<'_> {
             tessellation,
             mesh_shader,
             tile_shading,
+            derivative_group,
         })
     }
 

@@ -545,6 +545,24 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   the declared stage layout), with `object::FORMAT_VERSION`. `compact::KeepUnused::Declarations`
   keeps functions, globals and named overrides but drops unused types; `compact::Remap` exposes
   compaction's handle adjustment (one exhaustive `match` per IR enum) to the linker.
+- **Storage images without a format, multisampled and cube storage images.**
+  `StorageFormat::Unknown(Scalar)` is an image without a format qualifier whose texel type is
+  the given scalar; the SPIR-V backend writes `Unknown` and requires
+  `StorageImageReadWithoutFormat`/`StorageImageWriteWithoutFormat` on a read or a write.
+  `Statement::ImageStore` has a `sample` (required for multisampled images, like
+  `ImageLoad`). Cube storage images take their `vec3<i32>` coordinate unchanged and never an
+  `array_index`, even when arrayed (`valid::image_array_index_expected`); `addresses_image`
+  accepts it. A query of the size of a 1D arrayed image no longer shuffles to a scalar.
+- **Sparse residency and minimum level of detail.** `ImageSample` has `min_lod` and `sparse`,
+  `ImageLoad` has `sparse`: a struct type `{ i32, texel }` that is the result of the
+  expression (`OpImageSparse*`). `Expression::ImageSparseResident { code }` is
+  `OpImageSparseTexelsResident`. `ImageQuery::Lod { sampler, coordinate }` is
+  `OpImageQueryLod`. A gather may have an explicit level or a bias
+  (`SPV_AMD_texture_gather_bias_lod`) and an `array<vec2<i32>, 4>` offset (`ConstOffsets`).
+- **Compute shader derivatives.** `EntryPoint::derivative_group` (`DerivativeGroup { shape,
+  extension }`) writes the `DerivativeGroup*KHR` execution mode. Derivatives, implicit and
+  biased sampling and level-of-detail queries are valid in compute, mesh and task stages as
+  well as in fragment shaders (`valid/expression.rs`).
 
 ## Cherry-picked upstream commits
 

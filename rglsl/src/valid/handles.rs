@@ -656,10 +656,16 @@ impl super::Validator {
                 level,
                 depth_ref,
                 clamp_to_edge: _,
+                min_lod,
+                sparse,
             } => {
+                if let Some(ty) = sparse {
+                    validate_type(ty)?;
+                }
                 handle
                     .check_dep(image)?
                     .check_dep_opt(sampler)?
+                    .check_dep_opt(min_lod)?
                     .check_dep(coordinate)?
                     .check_dep_opt(array_index)?
                     .check_dep_opt(offset)?;
@@ -685,7 +691,11 @@ impl super::Validator {
                 array_index,
                 sample,
                 level,
+                sparse,
             } => {
+                if let Some(ty) = sparse {
+                    validate_type(ty)?;
+                }
                 handle
                     .check_dep(image)?
                     .check_dep(coordinate)?
@@ -702,7 +712,16 @@ impl super::Validator {
                     crate::ImageQuery::NumLevels
                     | crate::ImageQuery::NumLayers
                     | crate::ImageQuery::NumSamples => (),
+                    crate::ImageQuery::Lod {
+                        sampler,
+                        coordinate,
+                    } => {
+                        handle.check_dep_opt(sampler)?.check_dep(coordinate)?;
+                    }
                 };
+            }
+            crate::Expression::ImageSparseResident { code } => {
+                handle.check_dep(code)?;
             }
             crate::Expression::Unary {
                 op: _,
@@ -947,11 +966,13 @@ impl super::Validator {
                 image,
                 coordinate,
                 array_index,
+                sample,
                 value,
             } => {
                 validate_expr(image)?;
                 validate_expr(coordinate)?;
                 validate_expr_opt(array_index)?;
+                validate_expr_opt(sample)?;
                 validate_expr(value)?;
                 Ok(())
             }

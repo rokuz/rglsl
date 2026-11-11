@@ -972,6 +972,8 @@ pub enum StorageFormat {
     Rg16Snorm,
     Rgba16Unorm,
     Rgba16Snorm,
+
+    Unknown(Scalar),
 }
 
 /// Sub-class of the image type.
@@ -1843,6 +1845,10 @@ pub enum ImageQuery {
     NumLayers,
     /// Get the number of samples, a `u32`.
     NumSamples,
+    Lod {
+        sampler: Option<Handle<Expression>>,
+        coordinate: Handle<Expression>,
+    },
 }
 
 /// Component selection for a vector swizzle.
@@ -2557,6 +2563,12 @@ pub enum Expression {
         /// `coordinate` to the range `[half_texel, 1 - half_texel]`, regardless
         /// of `sampler`.
         clamp_to_edge: bool,
+        #[cfg_attr(feature = "serialize", serde(skip_serializing_if = "Option::is_none"))]
+        #[cfg_attr(feature = "deserialize", serde(default))]
+        min_lod: Option<Handle<Expression>>,
+        #[cfg_attr(feature = "serialize", serde(skip_serializing_if = "Option::is_none"))]
+        #[cfg_attr(feature = "deserialize", serde(default))]
+        sparse: Option<Handle<Type>>,
     },
 
     /// Load a texel from an image.
@@ -2623,6 +2635,9 @@ pub enum Expression {
         /// [`Sampled`]: ImageClass::Sampled
         /// [`Depth`]: ImageClass::Depth
         level: Option<Handle<Expression>>,
+        #[cfg_attr(feature = "serialize", serde(skip_serializing_if = "Option::is_none"))]
+        #[cfg_attr(feature = "deserialize", serde(default))]
+        sparse: Option<Handle<Type>>,
     },
 
     /// Query information from an image.
@@ -2788,6 +2803,9 @@ pub enum Expression {
     Expect {
         value: Handle<Expression>,
         expected: Handle<Expression>,
+    },
+    ImageSparseResident {
+        code: Handle<Expression>,
     },
     CooperativeVectorLoad {
         ty: Handle<Type>,
@@ -3096,9 +3114,9 @@ pub enum Statement {
     ///
     /// The `image`, `coordinate`, and `array_index` fields have the same
     /// meanings as the corresponding operands of an [`ImageLoad`] expression;
-    /// see that documentation for details. Storing into multisampled images or
-    /// images with mipmaps is not supported, so there are no `level` or
-    /// `sample` operands.
+    /// see that documentation for details. Storing into images with mipmaps is
+    /// not supported, so there is no `level` operand; `sample` is required for
+    /// multisampled images and forbidden otherwise.
     ///
     /// This statement is a barrier for any operations on the corresponding
     /// [`Expression::GlobalVariable`] for this image.
@@ -3108,6 +3126,9 @@ pub enum Statement {
         image: Handle<Expression>,
         coordinate: Handle<Expression>,
         array_index: Option<Handle<Expression>>,
+        #[cfg_attr(feature = "serialize", serde(skip_serializing_if = "Option::is_none"))]
+        #[cfg_attr(feature = "deserialize", serde(default))]
+        sample: Option<Handle<Expression>>,
         value: Handle<Expression>,
     },
     /// Atomic function.
@@ -3598,6 +3619,36 @@ pub struct EntryPoint {
         serde(skip_serializing_if = "TileShading::is_default")
     )]
     pub tile_shading: TileShading,
+    #[cfg_attr(feature = "serialize", serde(skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    pub derivative_group: Option<DerivativeGroup>,
+}
+
+#[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub struct DerivativeGroup {
+    pub shape: DerivativeGroupShape,
+    pub extension: DerivativeGroupExtension,
+}
+
+#[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub enum DerivativeGroupShape {
+    Quads,
+    Linear,
+}
+
+#[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub enum DerivativeGroupExtension {
+    Nv,
+    Khr,
 }
 
 #[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]

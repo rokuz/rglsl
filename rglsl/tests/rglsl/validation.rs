@@ -1043,6 +1043,7 @@ fn unexpected_task_payload() {
         tessellation: None,
         mesh_shader: None,
         tile_shading: rglsl::TileShading::default(),
+        derivative_group: None,
     };
     module.entry_points.push(entry_point);
 

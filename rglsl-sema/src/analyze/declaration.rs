@@ -215,14 +215,17 @@ impl Analyzer<'_> {
         }
         let mut quads = false;
         let mut linear = false;
+        let mut khr = false;
         for entry in &qualifiers.layout {
             match entry.name.to_ascii_lowercase().as_str() {
                 "derivative_group_quadskhr" => {
                     quads = true;
+                    khr = true;
                     self.khr_derivative_group = true;
                 }
                 "derivative_group_linearkhr" => {
                     linear = true;
+                    khr = true;
                     self.khr_derivative_group = true;
                 }
                 "derivative_group_quadsnv" | "derivative_group_linearnv"
@@ -236,8 +239,14 @@ impl Analyzer<'_> {
                         },
                     );
                 }
-                "derivative_group_quadsnv" => quads = true,
-                "derivative_group_linearnv" => linear = true,
+                "derivative_group_quadsnv" => {
+                    quads = true;
+                    khr = false;
+                }
+                "derivative_group_linearnv" => {
+                    linear = true;
+                    khr = false;
+                }
                 _ => {}
             }
         }
@@ -251,8 +260,10 @@ impl Analyzer<'_> {
             }
         };
         match self.derivative_group {
-            Some(previous) if previous != group => self.error(span, both_derivative_groups()),
-            _ => self.derivative_group = Some(group),
+            Some((previous, _)) if previous != group => {
+                self.error(span, both_derivative_groups());
+            }
+            _ => self.derivative_group = Some((group, khr)),
         }
     }
 

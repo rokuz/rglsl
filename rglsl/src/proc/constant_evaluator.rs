@@ -1390,7 +1390,10 @@ impl<'a> ConstantEvaluator<'a> {
             Expression::ImageSample { .. }
             | Expression::ImageProcessing { .. }
             | Expression::ImageLoad { .. }
-            | Expression::ImageQuery { .. } => Err(ConstantEvaluatorError::ImageExpression),
+            | Expression::ImageQuery { .. }
+            | Expression::ImageSparseResident { .. } => {
+                Err(ConstantEvaluatorError::ImageExpression)
+            }
             Expression::RayQueryProceedResult
             | Expression::RayQueryGet { .. }
             | Expression::ReportIntersectionResult

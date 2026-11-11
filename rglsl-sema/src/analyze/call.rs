@@ -502,6 +502,9 @@ impl Analyzer<'_> {
             failed = !self.ray_builtin_checks(span, name, &operands);
         }
         if is_builtin && !failed {
+            failed = !self.texture_checks(span, name, &operands);
+        }
+        if is_builtin && !failed {
             failed = !self.builtin_checks(span, name, &operands);
             let reason = "{} types can only be in uniform block or buffer storage";
             if !self.require_small_arithmetic(
@@ -698,6 +701,7 @@ impl Analyzer<'_> {
         if let Some(extension) = super::qcom::function_extension(name) {
             self.require_extension(span, extension, name);
         }
+        self.texture_extensions(span, name);
     }
 
     fn subgroup_checks(&mut self, span: Span, name: &str, operands: &[Operand]) -> bool {
@@ -856,9 +860,13 @@ impl Analyzer<'_> {
             }
         }
         let offset_index = match name {
-            "textureOffset" | "textureProjOffset" => Some(2),
-            "texelFetchOffset" | "textureLodOffset" | "textureProjLodOffset" => Some(3),
-            "textureGradOffset" | "textureProjGradOffset" => Some(4),
+            "textureOffset" | "textureProjOffset" | "sparseTextureOffsetARB" => Some(2),
+            "texelFetchOffset"
+            | "textureLodOffset"
+            | "textureProjLodOffset"
+            | "sparseTextureLodOffsetARB"
+            | "sparseTexelFetchOffsetARB" => Some(3),
+            "textureGradOffset" | "textureProjGradOffset" | "sparseTextureGradOffsetARB" => Some(4),
             _ => None,
         };
         if let Some(index) = offset_index {
@@ -896,7 +904,7 @@ impl Analyzer<'_> {
                 }
             }
         }
-        if name.starts_with("textureGather") && !shadow {
+        if name.starts_with("textureGather") && !name.contains("Lod") && !shadow {
             let index = if name == "textureGather"
                 || (super::qcom::gather_function(name) && !name.contains("Offset"))
             {

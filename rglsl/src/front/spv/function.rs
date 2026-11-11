@@ -633,6 +633,7 @@ impl<I: Iterator<Item = u32>> super::Frontend<I> {
             tessellation: None,
             mesh_shader: None,
             tile_shading: crate::TileShading::default(),
+            derivative_group: None,
         });
 
         Ok(())

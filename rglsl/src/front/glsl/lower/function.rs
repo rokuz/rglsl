@@ -483,8 +483,24 @@ impl<'a> Lowerer<'a> {
             tessellation,
             mesh_shader: self.mesh_shader_info(),
             tile_shading: self.tile_shading(),
+            derivative_group: self.derivative_group(),
         });
         Ok(())
+    }
+
+    fn derivative_group(&self) -> Option<crate::DerivativeGroup> {
+        let (shape, khr) = self.analysis.derivative_group?;
+        Some(crate::DerivativeGroup {
+            shape: match shape {
+                rglsl_sema::DerivativeGroup::Quads => crate::DerivativeGroupShape::Quads,
+                rglsl_sema::DerivativeGroup::Linear => crate::DerivativeGroupShape::Linear,
+            },
+            extension: if khr {
+                crate::DerivativeGroupExtension::Khr
+            } else {
+                crate::DerivativeGroupExtension::Nv
+            },
+        })
     }
 
     fn tile_shading(&self) -> crate::TileShading {

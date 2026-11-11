@@ -10,7 +10,7 @@ use rglsl_sema::types::{
 use rglsl_sema::SymbolId;
 
 use super::globals::{image_access, image_format, storage_access};
-use super::types::{image_dimension, sampled_kind};
+use super::types::image_dimension;
 use super::{internal, unsupported, GlobalRef, Lowerer, Result};
 use crate::proc::Alignment;
 use crate::{
@@ -203,8 +203,7 @@ impl<'a> Lowerer<'a> {
                     .iter()
                     .rev()
                     .find_map(|entry| image_format(&entry.name))
-                    .ok_or_else(|| unsupported("storage images without a format qualifier", at))?;
-                let _ = sampled_kind(opaque.sampled);
+                    .unwrap_or_else(|| super::globals::unknown_format(opaque.sampled));
                 Ok(TypeInner::Image {
                     dim: image_dimension(opaque),
                     arrayed: opaque.arrayed,

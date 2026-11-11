@@ -61,12 +61,16 @@ impl FunctionTracer<'_> {
                         image,
                         coordinate,
                         array_index,
+                        sample,
                         value,
                     } => {
                         self.expressions_used.insert(image);
                         self.expressions_used.insert(coordinate);
                         if let Some(array_index) = array_index {
                             self.expressions_used.insert(array_index);
+                        }
+                        if let Some(sample) = sample {
+                            self.expressions_used.insert(sample);
                         }
                         self.expressions_used.insert(value);
                     }
@@ -361,12 +365,16 @@ impl FunctionMap {
                         ref mut image,
                         ref mut coordinate,
                         ref mut array_index,
+                        ref mut sample,
                         ref mut value,
                     } => {
                         adjust(image)?;
                         adjust(coordinate)?;
                         if let Some(ref mut array_index) = *array_index {
                             adjust(array_index)?;
+                        }
+                        if let Some(ref mut sample) = *sample {
+                            adjust(sample)?;
                         }
                         adjust(value)?;
                     }

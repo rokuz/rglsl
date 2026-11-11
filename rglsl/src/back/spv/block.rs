@@ -2046,6 +2046,7 @@ impl BlockContext<'_> {
                 array_index,
                 sample,
                 level,
+                sparse,
             } => self.write_image_load(
                 result_type_id,
                 image,
@@ -2053,6 +2054,7 @@ impl BlockContext<'_> {
                 array_index,
                 level,
                 sample,
+                sparse.is_some(),
                 block,
             )?,
             crate::Expression::ImageSample {
@@ -2066,6 +2068,8 @@ impl BlockContext<'_> {
                 level,
                 depth_ref,
                 clamp_to_edge,
+                min_lod,
+                sparse,
             } => self.write_image_sample(
                 expr_handle,
                 result_type_id,
@@ -2078,8 +2082,23 @@ impl BlockContext<'_> {
                 level,
                 depth_ref,
                 clamp_to_edge,
+                min_lod,
+                sparse.is_some(),
                 block,
             )?,
+            crate::Expression::ImageSparseResident { code } => {
+                self.writer
+                    .require_any("sparse residency", &[spirv::Capability::SparseResidency])?;
+                let id = self.gen_id();
+                let code_id = self.cached.get(code)?;
+                block.body.push(Instruction::unary(
+                    spirv::Op::ImageSparseTexelsResident,
+                    result_type_id,
+                    id,
+                    code_id,
+                ));
+                id
+            }
             crate::Expression::Select {
                 condition,
                 accept,
@@ -4267,8 +4286,16 @@ impl BlockContext<'_> {
                     image,
                     coordinate,
                     array_index,
+                    sample,
                     value,
-                } => self.write_image_store(image, coordinate, array_index, value, &mut block)?,
+                } => self.write_image_store(
+                    image,
+                    coordinate,
+                    array_index,
+                    sample,
+                    value,
+                    &mut block,
+                )?,
                 Statement::TensorWrite {
                     tensor,
                     coordinates,

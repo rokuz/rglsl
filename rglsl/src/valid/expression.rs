@@ -119,8 +119,18 @@ pub enum ExpressionError {
     InvalidSampleOffset(crate::ImageDimension, Handle<crate::Expression>),
     #[error("Depth reference {0:?} is not a scalar float")]
     InvalidDepthReference(Handle<crate::Expression>),
-    #[error("Gather level can only be Zero")]
+    #[error("Gather level can only be Zero, an explicit level or a bias")]
     InvalidGatherLevel,
+    #[error("Sparse result type {0:?} must be a struct of an `i32` and the texel")]
+    InvalidSparseResultType(Handle<crate::Type>),
+    #[error(
+        "Minimum level of detail {0:?} must be a float scalar on an implicit or gradient level"
+    )]
+    InvalidMinLod(Handle<crate::Expression>),
+    #[error("Residency code {0:?} must be an `i32`")]
+    InvalidResidencyCode(Handle<crate::Expression>),
+    #[error("Level of detail query on {0:?} needs a sampled image and a coordinate {1:?}")]
+    InvalidLodQuery(Handle<crate::Type>, Handle<crate::Expression>),
     #[error("Gather component {0:?} doesn't exist in the image")]
     InvalidGatherComponent(crate::SwizzleComponent),
     #[error("Gather can't be done for image dimension {0:?}")]
@@ -566,6 +576,8 @@ impl super::Validator {
                 level,
                 depth_ref,
                 clamp_to_edge,
+                min_lod,
+                sparse,
             } => {
                 // check the validity of expressions
                 let image_ty = Self::global_var_ty(module, function, info, image)?;
@@ -664,6 +676,18 @@ impl super::Validator {
                 // check constant offset
                 if let Some(const_expr) = offset {
                     match resolver[const_expr] {
+                        Ti::Array {
+                            base,
+                            size: crate::ArraySize::Constant(size),
+                            ..
+                        } if gather.is_some()
+                            && size.get() == 4
+                            && dim == crate::ImageDimension::D2
+                            && module.types[base].inner
+                                == (Ti::Vector {
+                                    size: crate::VectorSize::Bi,
+                                    scalar: Sc::I32,
+                                }) => {}
                         Ti::Scalar(Sc { kind: Sk::Sint, .. }) if num_components == 1 => {}
                         Ti::Vector {
                             size,
@@ -716,7 +740,45 @@ impl super::Validator {
                     }
                     match level {
                         crate::SampleLevel::Zero => {}
+                        crate::SampleLevel::Exact(_) | crate::SampleLevel::Bias(_)
+                            if depth_ref.is_none()
+                                && gather_pattern == crate::ImageGatherPattern::Quad => {}
                         _ => return Err(ExpressionError::InvalidGatherLevel),
+                    }
+                }
+
+                if let Some(min_lod) = min_lod {
+                    let implicit_or_gradient = matches!(
+                        level,
+                        crate::SampleLevel::Auto
+                            | crate::SampleLevel::Bias(_)
+                            | crate::SampleLevel::Gradient { .. }
+                    );
+                    if gather.is_some()
+                        || !implicit_or_gradient
+                        || !matches!(resolver[min_lod], Ti::Scalar(Sc::F32))
+                    {
+                        return Err(ExpressionError::InvalidMinLod(min_lod));
+                    }
+                }
+
+                if let Some(ty) = sparse {
+                    let texel = if gather.is_some() {
+                        Ti::Vector {
+                            size: crate::VectorSize::Quad,
+                            scalar: Sc {
+                                kind: match class {
+                                    crate::ImageClass::Sampled { kind, .. } => kind,
+                                    _ => Sk::Float,
+                                },
+                                width: 4,
+                            },
+                        }
+                    } else {
+                        sampled_texel(class)
+                    };
+                    if !is_sparse_result(module, ty, &texel) {
+                        return Err(ExpressionError::InvalidSparseResultType(ty));
                     }
                 }
 
@@ -777,7 +839,7 @@ impl super::Validator {
 
                 // check level properties
                 match level {
-                    crate::SampleLevel::Auto => ShaderStages::FRAGMENT,
+                    crate::SampleLevel::Auto => ShaderStages::FRAGMENT | ShaderStages::COMPUTE_LIKE,
                     crate::SampleLevel::Zero => ShaderStages::all(),
                     crate::SampleLevel::Exact(expr) => {
                         match class {
@@ -818,7 +880,7 @@ impl super::Validator {
                             | crate::ImageClass::Depth { multi: false } => {}
                             _ => return Err(ExpressionError::InvalidImageClass(class)),
                         }
-                        ShaderStages::FRAGMENT
+                        ShaderStages::FRAGMENT | ShaderStages::COMPUTE_LIKE
                     }
                     crate::SampleLevel::Gradient { x, y } => {
                         match resolver[x] {
@@ -861,6 +923,7 @@ impl super::Validator {
                 array_index,
                 sample,
                 level,
+                sparse,
             } => {
                 let ty = Self::global_var_ty(module, function, info, image)?;
                 let (Ti::Image {
@@ -880,7 +943,7 @@ impl super::Validator {
                 if !resolver[coordinate].addresses_image(dim) {
                     return Err(ExpressionError::InvalidImageCoordinateType(dim, coordinate));
                 }
-                if arrayed != array_index.is_some() {
+                if super::image_array_index_expected(dim, arrayed, class) != array_index.is_some() {
                     return Err(ExpressionError::InvalidImageArrayIndex);
                 }
                 if let Some(expr) = array_index {
@@ -920,6 +983,20 @@ impl super::Validator {
                         return Err(ExpressionError::MissingImageLevelSelector);
                     }
                 }
+                if let Some(sparse) = sparse {
+                    let texel = match class {
+                        crate::ImageClass::Storage { format, .. } => Ti::Vector {
+                            size: crate::VectorSize::Quad,
+                            scalar: format.into(),
+                        },
+                        _ => sampled_texel(class),
+                    };
+                    if dim == crate::ImageDimension::Subpass
+                        || !is_sparse_result(module, sparse, &texel)
+                    {
+                        return Err(ExpressionError::InvalidSparseResultType(sparse));
+                    }
+                }
                 if dim == crate::ImageDimension::Subpass {
                     ShaderStages::FRAGMENT
                 } else {
@@ -955,12 +1032,64 @@ impl super::Validator {
                             }
                             crate::ImageQuery::NumLevels => class.has_levels(dim),
                             crate::ImageQuery::NumSamples => class.is_multisampled(),
+                            crate::ImageQuery::Lod {
+                                sampler,
+                                coordinate,
+                            } => {
+                                let combined =
+                                    matches!(module.types[ty].inner, Ti::SampledImage { .. });
+                                let paired = match sampler {
+                                    Some(sampler) => matches!(
+                                        module.types
+                                            [Self::global_var_ty(module, function, info, sampler)?]
+                                        .inner,
+                                        Ti::Sampler { .. }
+                                    ),
+                                    None => false,
+                                };
+                                let components = match dim {
+                                    crate::ImageDimension::D1 => 1,
+                                    crate::ImageDimension::D2 => 2,
+                                    crate::ImageDimension::D3 | crate::ImageDimension::Cube => 3,
+                                    crate::ImageDimension::Buffer
+                                    | crate::ImageDimension::Subpass => 0,
+                                };
+                                let coordinate_good = match resolver[coordinate] {
+                                    Ti::Scalar(Sc::F32) => components == 1,
+                                    Ti::Vector {
+                                        size,
+                                        scalar: Sc::F32,
+                                    } => size as u32 == components,
+                                    _ => false,
+                                };
+                                if combined == paired
+                                    || !coordinate_good
+                                    || !matches!(
+                                        class,
+                                        crate::ImageClass::Sampled { multi: false, .. }
+                                            | crate::ImageClass::Depth { multi: false }
+                                    )
+                                {
+                                    return Err(ExpressionError::InvalidLodQuery(ty, coordinate));
+                                }
+                                true
+                            }
                         };
                         if !good || dim == crate::ImageDimension::Subpass {
                             return Err(ExpressionError::InvalidImageClass(class));
                         }
                     }
                     _ => return Err(ExpressionError::ExpectedImageType(ty)),
+                }
+                if matches!(query, crate::ImageQuery::Lod { .. }) {
+                    ShaderStages::FRAGMENT | ShaderStages::COMPUTE_LIKE
+                } else {
+                    ShaderStages::all()
+                }
+            }
+            E::ImageSparseResident { code } => {
+                if !matches!(resolver[code], Ti::Scalar(Sc::I32)) {
+                    return Err(ExpressionError::InvalidResidencyCode(code));
                 }
                 ShaderStages::all()
             }
@@ -1268,7 +1397,7 @@ impl super::Validator {
                     // in the future, see https://github.com/gpuweb/gpuweb/issues/5482.
                     return Err(ExpressionError::InvalidDerivative);
                 }
-                ShaderStages::FRAGMENT
+                ShaderStages::FRAGMENT | ShaderStages::COMPUTE_LIKE
             }
             E::Relational { fun, argument } => {
                 use crate::RelationalFunction as Rf;
@@ -1954,4 +2083,42 @@ fn f64_const_literals() {
         super::Capabilities::default() | super::Capabilities::FLOAT64,
     );
     assert!(result.is_ok());
+}
+
+fn sampled_texel(class: crate::ImageClass) -> crate::TypeInner {
+    match class {
+        crate::ImageClass::Depth { .. } => crate::TypeInner::Scalar(crate::Scalar::F32),
+        crate::ImageClass::Sampled { kind, .. } => crate::TypeInner::Vector {
+            size: crate::VectorSize::Quad,
+            scalar: crate::Scalar { kind, width: 4 },
+        },
+        crate::ImageClass::Storage { format, .. } => crate::TypeInner::Vector {
+            size: crate::VectorSize::Quad,
+            scalar: format.into(),
+        },
+        crate::ImageClass::External => crate::TypeInner::Vector {
+            size: crate::VectorSize::Quad,
+            scalar: crate::Scalar::F32,
+        },
+    }
+}
+
+fn is_sparse_result(
+    module: &crate::Module,
+    ty: Handle<crate::Type>,
+    texel: &crate::TypeInner,
+) -> bool {
+    let Some(ty) = module.types.get_handle(ty).ok() else {
+        return false;
+    };
+    let crate::TypeInner::Struct { ref members, .. } = ty.inner else {
+        return false;
+    };
+    let [ref code, ref value] = members[..] else {
+        return false;
+    };
+    matches!(
+        module.types[code.ty].inner,
+        crate::TypeInner::Scalar(crate::Scalar::I32)
+    ) && module.types[value.ty].inner == *texel
 }
