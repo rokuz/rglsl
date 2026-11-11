@@ -37,6 +37,7 @@ impl Instruction {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Module {
     pub globals: Vec<Instruction>,
+    pub body: Vec<Instruction>,
     pub body_opcodes: BTreeSet<u32>,
 }
 
@@ -127,13 +128,15 @@ pub fn parse(words: &[u32]) -> Result<Module, String> {
             .filter(|end| *end <= words.len())
             .ok_or_else(|| format!("instruction at word {position} runs past the end"))?;
         in_body |= opcode == Op::Function as u32;
+        let instruction = Instruction {
+            opcode,
+            operands: words.get(position + 1..end).unwrap_or_default().to_vec(),
+        };
         if in_body {
             module.body_opcodes.insert(opcode);
+            module.body.push(instruction);
         } else {
-            module.globals.push(Instruction {
-                opcode,
-                operands: words.get(position + 1..end).unwrap_or_default().to_vec(),
-            });
+            module.globals.push(instruction);
         }
         position = end;
     }
