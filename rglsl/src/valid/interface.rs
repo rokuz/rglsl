@@ -1635,6 +1635,7 @@ impl super::Validator {
                     | crate::TypeInner::SampledImage { .. }
                     | crate::TypeInner::AccelerationStructure { .. }
                     | crate::TypeInner::Tensor { .. }
+                    | crate::TypeInner::Spirv { .. }
                     | crate::TypeInner::RayQuery { .. } => {}
                     _ => {
                         return Err(GlobalVariableError::InvalidType(var.space));
@@ -2172,6 +2173,9 @@ impl super::Validator {
                 if !seen.insert(handle) {
                     return Err(EntryPointError::InterfaceDuplicate(handle)
                         .with_span_handle(handle, &module.global_variables));
+                }
+                if var.io.is_none() && crate::proc::has_spirv_built_in(var) {
+                    continue;
                 }
                 let patch = crate::proc::is_patch_variable(&module.types, var);
                 let passthrough = ep

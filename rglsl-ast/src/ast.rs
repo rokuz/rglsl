@@ -213,6 +213,96 @@ pub enum DeclarationKind {
         qualifier: Spanned<TypeQualifier>,
         identifiers: Vec<Identifier>,
     },
+    SpirvInstruction {
+        instruction: Spanned<SpirvInstruction>,
+        prototype: Spanned<FunctionPrototype>,
+    },
+    SpirvExecutionMode(Spanned<SpirvExecutionMode>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpirvRequirement {
+    pub name: Identifier,
+    pub values: Vec<Expression>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpirvInstructionQualifier {
+    pub name: Identifier,
+    pub value: Expression,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpirvInstruction {
+    pub requirements: Vec<Spanned<SpirvRequirement>>,
+    pub qualifiers: Vec<Spanned<SpirvInstructionQualifier>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum SpirvExecutionModeKind {
+    Literal,
+    Id,
+}
+
+impl SpirvExecutionModeKind {
+    pub const fn keyword(self) -> &'static str {
+        match self {
+            Self::Literal => "spirv_execution_mode",
+            Self::Id => "spirv_execution_mode_id",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpirvExecutionMode {
+    pub kind: SpirvExecutionModeKind,
+    pub requirements: Vec<Spanned<SpirvRequirement>>,
+    pub mode: Expression,
+    pub operands: Vec<Expression>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum SpirvDecorateKind {
+    Literal,
+    Id,
+    String,
+}
+
+impl SpirvDecorateKind {
+    pub const fn keyword(self) -> &'static str {
+        match self {
+            Self::Literal => "spirv_decorate",
+            Self::Id => "spirv_decorate_id",
+            Self::String => "spirv_decorate_string",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpirvDecorate {
+    pub kind: SpirvDecorateKind,
+    pub requirements: Vec<Spanned<SpirvRequirement>>,
+    pub decoration: Expression,
+    pub operands: Vec<Expression>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpirvStorageClass {
+    pub requirements: Vec<Spanned<SpirvRequirement>>,
+    pub class: Expression,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpirvTypeSpecifier {
+    pub requirements: Vec<Spanned<SpirvRequirement>>,
+    pub instruction: Vec<Spanned<SpirvInstructionQualifier>>,
+    pub parameters: Vec<SpirvTypeParameter>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SpirvTypeParameter {
+    Constant(Expression),
+    Type(Box<Spanned<TypeSpecifier>>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -294,6 +384,10 @@ pub enum SingleTypeQualifier {
     Invariant,
     Precise,
     NonUniform,
+    SpirvStorageClass(SpirvStorageClass),
+    SpirvDecorate(SpirvDecorate),
+    SpirvByReference,
+    SpirvLiteral,
 }
 
 impl SingleTypeQualifier {
@@ -595,6 +689,7 @@ pub enum TypeSpecifierNonArray {
     Struct(StructSpecifier),
     TypeName(String),
     InlineBlock(Vec<Spanned<StructDeclaration>>),
+    Spirv(Box<SpirvTypeSpecifier>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

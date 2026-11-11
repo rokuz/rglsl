@@ -174,6 +174,8 @@ impl Rewriter<'_> {
             }
             DeclarationKind::Qualifier(qualifier)
             | DeclarationKind::QualifiedIdentifiers { qualifier, .. } => self.qualifier(qualifier),
+            DeclarationKind::SpirvInstruction { prototype, .. } => self.prototype(prototype),
+            DeclarationKind::SpirvExecutionMode(_) => {}
         }
     }
 

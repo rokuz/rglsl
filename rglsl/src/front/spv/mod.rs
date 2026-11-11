@@ -1662,6 +1662,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                 | S::DebugPrintf { .. }
                 | S::Abort { .. }
                 | S::TensorWrite { .. }
+                | S::SpirvInstruction { .. }
                 | S::WorkGroupUniformLoad { .. }
                 | S::CooperativeStore { .. }
                 | S::Assume { .. }
@@ -3082,6 +3083,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                     input_attachment_index: None,
                     heap_offset: None,
                     tile_attachment: false,
+                    spirv_decorations: Vec::new(),
                 };
                 (Variable::Global, var)
             }
@@ -3135,6 +3137,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                     input_attachment_index: None,
                     heap_offset: None,
                     tile_attachment: false,
+                    spirv_decorations: Vec::new(),
                 };
 
                 let inner = Variable::Input(crate::FunctionArgument {
@@ -3201,6 +3204,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                     input_attachment_index: None,
                     heap_offset: None,
                     tile_attachment: false,
+                    spirv_decorations: Vec::new(),
                 };
                 let inner = Variable::Output(crate::FunctionResult { ty, binding });
                 (inner, var)

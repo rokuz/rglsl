@@ -58,6 +58,13 @@ impl TypeTracer<'_> {
                 }
             }
             Ti::TensorView { dimensions, .. } => self.trace_cooperative_size(dimensions),
+            Ti::Spirv { ref operands, .. } => {
+                for operand in operands {
+                    if let crate::SpirvTypeOperand::Type(base) = *operand {
+                        self.types_used.insert(base);
+                    }
+                }
+            }
 
             // Types that do contain handles.
             Ti::Array {
@@ -143,6 +150,16 @@ impl ModuleMap {
                 {
                     if let crate::CooperativeSize::Pending(ref mut r#override) = *size {
                         self.overrides.adjust(r#override)?;
+                    }
+                }
+            }
+
+            Ti::Spirv {
+                ref mut operands, ..
+            } => {
+                for operand in operands.iter_mut() {
+                    if let crate::SpirvTypeOperand::Type(ref mut base) = *operand {
+                        adjust(base)?;
                     }
                 }
             }

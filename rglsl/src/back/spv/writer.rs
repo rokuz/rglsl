@@ -133,6 +133,8 @@ impl Writer {
             abstract_type_declared: false,
             debug_printf_strings: crate::FastHashMap::default(),
             raw_capabilities: crate::FastIndexSet::default(),
+            raw_extensions: crate::FastIndexSet::default(),
+            spirv_ext_imports: crate::FastHashMap::default(),
             utf_encoded: crate::FastHashSet::default(),
             qcom_decorations: crate::FastHashSet::default(),
             laid_out_copies: crate::FastHashMap::default(),
@@ -248,6 +250,8 @@ impl Writer {
             abstract_type_declared: false,
             debug_printf_strings: take(&mut self.debug_printf_strings).reclaim(),
             raw_capabilities: take(&mut self.raw_capabilities).reclaim(),
+            raw_extensions: take(&mut self.raw_extensions).reclaim(),
+            spirv_ext_imports: take(&mut self.spirv_ext_imports).reclaim(),
             utf_encoded: take(&mut self.utf_encoded).reclaim(),
             qcom_decorations: take(&mut self.qcom_decorations).reclaim(),
             laid_out_copies: take(&mut self.laid_out_copies).reclaim(),
@@ -629,7 +633,8 @@ impl Writer {
             | crate::TypeInner::BindingArray { .. }
             | crate::TypeInner::TensorLayout { .. }
             | crate::TypeInner::TensorView { .. }
-            | crate::TypeInner::Tensor { .. } => return Ok(None),
+            | crate::TypeInner::Tensor { .. }
+            | crate::TypeInner::Spirv { .. } => return Ok(None),
         }))
     }
 
@@ -1806,7 +1811,9 @@ impl Writer {
                     crate::TypeInner::RayQuery { .. }
                     | crate::TypeInner::HitObject { .. }
                     | crate::TypeInner::TensorLayout { .. }
-                    | crate::TypeInner::TensorView { .. } => None,
+                    | crate::TypeInner::TensorView { .. }
+                    | crate::TypeInner::Spirv { .. } => None,
+                    _ if contains_raw_type(&ir_module.types, variable.ty) => None,
                     _ => {
                         let plain = context.writer.plain_type_id(type_id);
                         if context.writer.contains_physical_type(plain) {
@@ -1960,6 +1967,7 @@ impl Writer {
             self.write_execution_mode(function_id, spirv::ExecutionMode::Xfb)?;
         }
         self.write_opacity_micromap_mode(function_id, entry_point)?;
+        self.write_spirv_execution_modes(function_id, entry_point)?;
         if ir_module.shader_64bit_indexing {
             self.use_extension("SPV_EXT_shader_64bit_indexing");
             self.require_any(
@@ -1984,6 +1992,25 @@ impl Writer {
                 self.require_any("quad control", &[spirv::Capability::QuadControlKHR])?;
                 self.write_execution_mode(function_id, mode)?;
             }
+        }
+
+        if let Some(group) = entry_point.derivative_group {
+            let (capability, mode) = match group.shape {
+                crate::DerivativeGroupShape::Quads => (
+                    spirv::Capability::ComputeDerivativeGroupQuadsKHR,
+                    spirv::ExecutionMode::DerivativeGroupQuadsKHR,
+                ),
+                crate::DerivativeGroupShape::Linear => (
+                    spirv::Capability::ComputeDerivativeGroupLinearKHR,
+                    spirv::ExecutionMode::DerivativeGroupLinearKHR,
+                ),
+            };
+            self.use_extension(match group.extension {
+                crate::DerivativeGroupExtension::Khr => "SPV_KHR_compute_shader_derivatives",
+                crate::DerivativeGroupExtension::Nv => "SPV_NV_compute_shader_derivatives",
+            });
+            self.require_any("compute shader derivatives", &[capability])?;
+            self.write_execution_mode(function_id, mode)?;
         }
 
         if entry_point.tile_shading.non_coherent_attachment_read {
@@ -2755,6 +2782,23 @@ impl Writer {
                 }
                 crate::TypeInner::Tensor { scalar, rank } => {
                     self.write_tensor_type(id, scalar, rank)?
+                }
+                crate::TypeInner::Spirv {
+                    opcode,
+                    ref operands,
+                } => {
+                    let mut instruction = Instruction::raw(opcode);
+                    instruction.set_result(id);
+                    for operand in operands {
+                        match *operand {
+                            crate::SpirvTypeOperand::Literal(word) => instruction.add_operand(word),
+                            crate::SpirvTypeOperand::Type(base) => {
+                                let base = self.get_handle_type_id(base)?;
+                                instruction.add_operand(base);
+                            }
+                        }
+                    }
+                    instruction
                 }
                 crate::TypeInner::Array { base, size, stride } => {
                     let type_id = self.get_handle_type_id(base)?;
@@ -4367,6 +4411,9 @@ impl Writer {
                     class,
                     id,
                 )?;
+            } else if global_variable.io.is_none()
+                && crate::proc::has_spirv_built_in(global_variable)
+            {
             } else {
                 let binding = global_variable.io.as_ref().ok_or(Error::Validation(
                     "an input or output variable has no binding",
@@ -4947,6 +4994,7 @@ impl Writer {
         Instruction::type_void(self.void_type).to_words(&mut self.logical_layout.declarations);
         Instruction::ext_inst_import(self.gl450_ext_inst_id, "GLSL.std.450")
             .to_words(&mut self.logical_layout.ext_inst_imports);
+        self.use_spirv_requirements(ir_module);
 
         let mut debug_info_inner = None;
         if self.flags.contains(WriterFlags::DEBUG) {
@@ -5092,6 +5140,7 @@ impl Writer {
             };
             self.global_variables.insert(handle, gvar);
         }
+        self.write_spirv_decorations(ir_module)?;
 
         // write all functions
         for (handle, ir_function) in ir_module.functions.iter() {
@@ -5179,6 +5228,11 @@ impl Writer {
         }
         for extension in self.extensions_used.iter() {
             Instruction::extension(extension).to_words(&mut self.logical_layout.extensions);
+        }
+        for extension in self.raw_extensions.iter() {
+            if !self.extensions_used.contains(extension.as_str()) {
+                Instruction::extension(extension).to_words(&mut self.logical_layout.extensions);
+            }
         }
         if ir_module.entry_points.is_empty() {
             // SPIR-V doesn't like modules without entry points
@@ -5546,4 +5600,17 @@ fn reachable_functions(module: &crate::Module) -> Vec<&crate::Function> {
         calls(&function.body, &mut pending);
     }
     reached
+}
+
+fn contains_raw_type(types: &UniqueArena<crate::Type>, ty: Handle<crate::Type>) -> bool {
+    match types[ty].inner {
+        crate::TypeInner::Spirv { .. } => true,
+        crate::TypeInner::Array { base, .. } | crate::TypeInner::BindingArray { base, .. } => {
+            contains_raw_type(types, base)
+        }
+        crate::TypeInner::Struct { ref members, .. } => members
+            .iter()
+            .any(|member| contains_raw_type(types, member.ty)),
+        _ => false,
+    }
 }

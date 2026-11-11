@@ -235,7 +235,7 @@ impl Layouter {
                             .ok_or(LayoutErrorInner::TooLarge.with(ty_handle))?,
                     }
                 }
-                Ti::TensorLayout { .. } | Ti::TensorView { .. } => TypeLayout {
+                Ti::TensorLayout { .. } | Ti::TensorView { .. } | Ti::Spirv { .. } => TypeLayout {
                     size,
                     alignment: Alignment::ONE,
                 },

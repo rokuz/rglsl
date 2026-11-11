@@ -558,6 +558,24 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   the declared stage layout), with `object::FORMAT_VERSION`. `compact::KeepUnused::Declarations`
   keeps functions, globals and named overrides but drops unused types; `compact::Remap` exposes
   compaction's handle adjustment (one exhaustive `match` per IR enum) to the linker.
+- **Storage images without a format, multisampled and cube storage images.**
+  `StorageFormat::Unknown(Scalar)` is an image without a format qualifier whose texel type is
+  the given scalar; the SPIR-V backend writes `Unknown` and requires
+  `StorageImageReadWithoutFormat`/`StorageImageWriteWithoutFormat` on a read or a write.
+  `Statement::ImageStore` has a `sample` (required for multisampled images, like
+  `ImageLoad`). Cube storage images take their `vec3<i32>` coordinate unchanged and never an
+  `array_index`, even when arrayed (`valid::image_array_index_expected`); `addresses_image`
+  accepts it. A query of the size of a 1D arrayed image no longer shuffles to a scalar.
+- **Sparse residency and minimum level of detail.** `ImageSample` has `min_lod` and `sparse`,
+  `ImageLoad` has `sparse`: a struct type `{ i32, texel }` that is the result of the
+  expression (`OpImageSparse*`). `Expression::ImageSparseResident { code }` is
+  `OpImageSparseTexelsResident`. `ImageQuery::Lod { sampler, coordinate }` is
+  `OpImageQueryLod`. A gather may have an explicit level or a bias
+  (`SPV_AMD_texture_gather_bias_lod`) and an `array<vec2<i32>, 4>` offset (`ConstOffsets`).
+- **Compute shader derivatives.** `EntryPoint::derivative_group` (`DerivativeGroup { shape,
+  extension }`) writes the `DerivativeGroup*KHR` execution mode. Derivatives, implicit and
+  biased sampling and level-of-detail queries are valid in compute, mesh and task stages as
+  well as in fragment shaders (`valid/expression.rs`).
 - **Libraries without a stage** (2026-11-11, format version 2). A library object module keeps
   one lowering per distinct stage meaning (`ObjectModule::stages`, `variants`), the first error
   of every stage it cannot be used in (`rejections`, `StageRejection`) and an optional file
@@ -567,6 +585,17 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   `ExpectedOutputVertices`, `ExpectedTessellationPrimitive`, and a mesh entry point with
   `MeshShaderInfo::output` unset): the layout may come from another unit. `ShaderStage` gained
   `ALL` and `name()`.
+
+- **SPIR-V intrinsics** (`GL_EXT_spirv_intrinsics`, `docs/design/spirv-intrinsics.md`).
+  `TypeInner::Spirv { opcode, operands }` (`SpirvTypeOperand::{Literal, Type}`), a raw type
+  instruction; `Statement::SpirvInstruction { instruction, operands, result }` with
+  `SpirvInstruction { set, opcode }`, `SpirvOperand::{Value, Pointer, Literal}` and the result
+  expression `Expression::SpirvInstructionResult { ty }`; `GlobalVariable::spirv_decorations`
+  (`SpirvDecoration`, `SpirvDecorationOperands::{Literals, Ids, Strings}`, `SpirvId::{Constant,
+  Global}`); `EntryPoint::spirv_execution_modes` (`SpirvExecutionMode`, operands literal words or
+  global expressions); `Module::spirv_requirements` (extensions and capabilities). An `Input` or
+  `Output` global with a raw `BuiltIn` decoration (`proc::has_spirv_built_in`) needs no binding.
+  The SPIR-V backend writes them in `back/spv/intrinsics.rs`.
 
 ## Cherry-picked upstream commits
 

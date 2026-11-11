@@ -900,6 +900,8 @@ pub enum ConstantEvaluatorError {
     RayQueryExpression,
     #[error("Constants don't support subgroup expressions")]
     SubgroupExpression,
+    #[error("Constants don't support SPIR-V instruction results")]
+    SpirvInstructionExpression,
     #[error("Cannot access the type")]
     InvalidAccessBase,
     #[error("Cannot access at the index")]
@@ -1390,7 +1392,10 @@ impl<'a> ConstantEvaluator<'a> {
             Expression::ImageSample { .. }
             | Expression::ImageProcessing { .. }
             | Expression::ImageLoad { .. }
-            | Expression::ImageQuery { .. } => Err(ConstantEvaluatorError::ImageExpression),
+            | Expression::ImageQuery { .. }
+            | Expression::ImageSparseResident { .. } => {
+                Err(ConstantEvaluatorError::ImageExpression)
+            }
             Expression::RayQueryProceedResult
             | Expression::RayQueryGet { .. }
             | Expression::ReportIntersectionResult
@@ -1402,6 +1407,9 @@ impl<'a> ConstantEvaluator<'a> {
             Expression::SubgroupBallotResult => Err(ConstantEvaluatorError::SubgroupExpression),
             Expression::SubgroupOperationResult { .. } => {
                 Err(ConstantEvaluatorError::SubgroupExpression)
+            }
+            Expression::SpirvInstructionResult { .. } => {
+                Err(ConstantEvaluatorError::SpirvInstructionExpression)
             }
             Expression::CooperativeLoad { .. }
             | Expression::CooperativeMultiplyAdd { .. }

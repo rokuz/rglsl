@@ -467,6 +467,7 @@ impl Builtins {
                     .collect(),
                 defined: true,
                 span: Span::default(),
+                spirv_instruction: None,
             });
         }
         let mut types = TypeRegistry::new();

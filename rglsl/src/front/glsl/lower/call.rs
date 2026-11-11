@@ -20,6 +20,13 @@ impl FunctionLowerer<'_, '_> {
         let at = self.at(expression.span);
         let analysis = self.lw.analysis;
         match analysis.calls.get(&expression.id) {
+            Some(&Callee::Function(id))
+                if analysis
+                    .function(id)
+                    .is_some_and(|function| function.spirv_instruction.is_some()) =>
+            {
+                self.spirv_call(id, &call.arguments, at)
+            }
             Some(&Callee::Function(id)) => {
                 let non_uniform = self.info(expression)?.non_uniform;
                 self.user_call(id, &call.arguments, non_uniform, at)
@@ -209,6 +216,16 @@ impl FunctionLowerer<'_, '_> {
                     .is_some_and(rglsl_sema::types::Opaque::is_private_object)
             {
                 values.push(self.ray_query_pointer(argument)?);
+                continue;
+            }
+            if parameter.direction == Direction::In
+                && matches!(parameter.ty.kind, TypeKind::Spirv(_))
+            {
+                let value = self.rvalue(argument)?;
+                let local = self.local(&parameter.ty, None, at)?;
+                let pointer = self.local_pointer(local, at)?;
+                self.push(Statement::Store { pointer, value }, at);
+                values.push(self.local_pointer(local, at)?);
                 continue;
             }
             if parameter.direction == Direction::In {

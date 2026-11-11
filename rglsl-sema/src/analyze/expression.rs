@@ -32,7 +32,7 @@ fn parse_integer(digits: &str) -> Option<u64> {
     }
 }
 
-fn literal(number: &NumericLiteral) -> Option<Operand> {
+pub(crate) fn literal(number: &NumericLiteral) -> Option<Operand> {
     let digits = number.digits();
     let integer = |scalar: Scalar, limit: u64| {
         let parsed = parse_integer(digits)?;

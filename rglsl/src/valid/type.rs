@@ -514,7 +514,7 @@ impl super::Validator {
                         .ok_or(WidthError::Invalid(scalar.kind, scalar.width))?,
                 )
             }
-            Ti::TensorLayout { .. } | Ti::TensorView { .. } => TypeInfo::new(
+            Ti::TensorLayout { .. } | Ti::TensorView { .. } | Ti::Spirv { .. } => TypeInfo::new(
                 TypeFlags::DATA
                     | TypeFlags::SIZED
                     | TypeFlags::COPY

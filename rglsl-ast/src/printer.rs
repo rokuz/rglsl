@@ -6,8 +6,9 @@ use crate::ast::{
     ArrayDimension, ArraySpecifier, CaseLabel, CompoundStatement, Condition, Declaration,
     DeclarationKind, Expression, ExpressionKind, ExternalDeclaration, FullySpecifiedType,
     FunctionIdentifier, FunctionPrototype, InitDeclaratorList, Initializer, JumpStatement,
-    SingleTypeQualifier, Spanned, Statement, StatementKind, StructDeclaration, TranslationUnit,
-    TypeQualifier, TypeSpecifier, TypeSpecifierNonArray, UnaryOperator,
+    SingleTypeQualifier, Spanned, SpirvDecorate, SpirvInstructionQualifier, SpirvRequirement,
+    SpirvTypeParameter, SpirvTypeSpecifier, Statement, StatementKind, StructDeclaration,
+    TranslationUnit, TypeQualifier, TypeSpecifier, TypeSpecifierNonArray, UnaryOperator,
 };
 
 const INDENT: &str = "    ";
@@ -67,7 +68,9 @@ const fn is_single_line(external: &ExternalDeclaration) -> bool {
             DeclarationKind::FunctionPrototype(_)
             | DeclarationKind::Precision { .. }
             | DeclarationKind::Qualifier(_)
-            | DeclarationKind::QualifiedIdentifiers { .. } => true,
+            | DeclarationKind::QualifiedIdentifiers { .. }
+            | DeclarationKind::SpirvInstruction { .. }
+            | DeclarationKind::SpirvExecutionMode(_) => true,
         },
     }
 }
@@ -170,8 +173,86 @@ impl Printer {
                 self.write(" ");
                 self.separated(identifiers, |printer, identifier| printer.write(identifier));
             }
+            DeclarationKind::SpirvInstruction {
+                instruction,
+                prototype,
+            } => {
+                self.write("spirv_instruction(");
+                self.spirv_requirements(&instruction.requirements);
+                if !instruction.requirements.is_empty() {
+                    self.write(", ");
+                }
+                self.spirv_instruction_qualifiers(&instruction.qualifiers);
+                self.write(") ");
+                self.function_prototype(prototype);
+            }
+            DeclarationKind::SpirvExecutionMode(mode) => {
+                self.write(mode.kind.keyword());
+                self.write("(");
+                self.spirv_requirements(&mode.requirements);
+                if !mode.requirements.is_empty() {
+                    self.write(", ");
+                }
+                self.expression(&mode.mode);
+                for operand in &mode.operands {
+                    self.write(", ");
+                    self.expression(operand);
+                }
+                self.write(")");
+            }
         }
         self.write(";");
+    }
+
+    fn spirv_requirements(&mut self, requirements: &[Spanned<SpirvRequirement>]) {
+        self.separated(requirements, |printer, requirement| {
+            printer.write(&requirement.name);
+            printer.write(" = [");
+            printer.separated(&requirement.values, |printer, value| {
+                printer.expression(value)
+            });
+            printer.write("]");
+        });
+    }
+
+    fn spirv_instruction_qualifiers(&mut self, qualifiers: &[Spanned<SpirvInstructionQualifier>]) {
+        self.separated(qualifiers, |printer, qualifier| {
+            printer.write(&qualifier.name);
+            printer.write(" = ");
+            printer.expression(&qualifier.value);
+        });
+    }
+
+    fn spirv_decorate(&mut self, decorate: &SpirvDecorate) {
+        self.write(decorate.kind.keyword());
+        self.write("(");
+        self.spirv_requirements(&decorate.requirements);
+        if !decorate.requirements.is_empty() {
+            self.write(", ");
+        }
+        self.expression(&decorate.decoration);
+        for operand in &decorate.operands {
+            self.write(", ");
+            self.expression(operand);
+        }
+        self.write(")");
+    }
+
+    fn spirv_type(&mut self, specifier: &SpirvTypeSpecifier) {
+        self.write("spirv_type(");
+        self.spirv_requirements(&specifier.requirements);
+        if !specifier.requirements.is_empty() {
+            self.write(", ");
+        }
+        self.spirv_instruction_qualifiers(&specifier.instruction);
+        for parameter in &specifier.parameters {
+            self.write(", ");
+            match parameter {
+                SpirvTypeParameter::Constant(value) => self.expression(value),
+                SpirvTypeParameter::Type(ty) => self.type_specifier(ty),
+            }
+        }
+        self.write(")");
     }
 
     fn function_prototype(&mut self, prototype: &FunctionPrototype) {
@@ -266,6 +347,18 @@ impl Printer {
                 SingleTypeQualifier::Invariant => self.write("invariant"),
                 SingleTypeQualifier::Precise => self.write("precise"),
                 SingleTypeQualifier::NonUniform => self.write("nonuniformEXT"),
+                SingleTypeQualifier::SpirvStorageClass(class) => {
+                    self.write("spirv_storage_class(");
+                    self.spirv_requirements(&class.requirements);
+                    if !class.requirements.is_empty() {
+                        self.write(", ");
+                    }
+                    self.expression(&class.class);
+                    self.write(")");
+                }
+                SingleTypeQualifier::SpirvDecorate(decorate) => self.spirv_decorate(decorate),
+                SingleTypeQualifier::SpirvByReference => self.write("spirv_by_reference"),
+                SingleTypeQualifier::SpirvLiteral => self.write("spirv_literal"),
                 SingleTypeQualifier::Layout(layout) => {
                     self.write("layout(");
                     self.separated(&layout.ids, |printer, id| {
@@ -303,6 +396,7 @@ impl Printer {
             TypeSpecifierNonArray::InlineBlock(declarations) => {
                 self.struct_declaration_list(declarations);
             }
+            TypeSpecifierNonArray::Spirv(specifier) => self.spirv_type(specifier),
         }
         if let Some(parameters) = &specifier.parameters {
             self.write("<");

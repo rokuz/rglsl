@@ -31,14 +31,15 @@ pub mod constant;
 pub mod diagnostic;
 pub mod layout;
 pub mod scope;
+pub mod spirv;
 pub mod types;
 
 #[cfg(test)]
 mod tests;
 
 pub use analyze::{
-    analyze, analyze_with_builtins, Analysis, Callee, CooperativeCall, ExpressionInfo, MatrixCall,
-    Options, QcomConversion, TensorArmCall, TensorCall,
+    analyze, analyze_with_builtins, Analysis, Callee, CooperativeCall, DerivativeGroup,
+    ExpressionInfo, MatrixCall, Options, QcomConversion, TensorArmCall, TensorCall,
 };
 pub use builtins::{BuiltinFunctionId, Builtins, ResourceLimits, Stage};
 pub use diagnostic::{Diagnostic, DiagnosticKind};

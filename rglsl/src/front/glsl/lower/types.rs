@@ -100,6 +100,38 @@ impl Lowerer<'_> {
             .insert(Type { name: None, inner }, Span::UNDEFINED)
     }
 
+    pub(super) fn sparse_result_type(&mut self, texel: TypeInner) -> Handle<Type> {
+        let (offset, span) = match texel {
+            TypeInner::Vector { .. } => (16, 32),
+            _ => (4, 8),
+        };
+        let code = self.insert_type(TypeInner::Scalar(Scalar::I32));
+        let texel = self.insert_type(texel);
+        self.insert_type(TypeInner::Struct {
+            members: alloc::vec![
+                StructMember {
+                    name: None,
+                    ty: code,
+                    binding: None,
+                    offset: 0,
+                    matrix_layout: None,
+                    xfb_offset: None,
+                    heap: None,
+                },
+                StructMember {
+                    name: None,
+                    ty: texel,
+                    binding: None,
+                    offset,
+                    matrix_layout: None,
+                    xfb_offset: None,
+                    heap: None,
+                },
+            ],
+            span,
+        })
+    }
+
     pub(super) fn vector_type(&mut self, size: VectorSize, scalar: Scalar) -> Handle<Type> {
         self.insert_type(TypeInner::Vector { size, scalar })
     }
@@ -283,6 +315,7 @@ impl Lowerer<'_> {
                 scalar: scalar(s),
                 rank,
             },
+            TypeKind::Spirv(id) => self.spirv_type(id, span)?,
         };
         Ok(self.insert_type(inner))
     }

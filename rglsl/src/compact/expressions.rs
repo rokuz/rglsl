@@ -153,9 +153,13 @@ impl ExpressionTracer<'_> {
                 ref level,
                 depth_ref,
                 clamp_to_edge: _,
+                min_lod,
+                sparse,
             } => {
                 self.expressions_used.insert_iter([image, coordinate]);
                 self.expressions_used.insert_iter(sampler);
+                self.expressions_used.insert_iter(min_lod);
+                self.types_used.insert_iter(sparse);
                 self.expressions_used.insert_iter(array_index);
                 self.expressions_used.insert_iter(offset);
                 use crate::SampleLevel as Sl;
@@ -174,12 +178,14 @@ impl ExpressionTracer<'_> {
                 array_index,
                 sample,
                 level,
+                sparse,
             } => {
                 self.expressions_used.insert(image);
                 self.expressions_used.insert(coordinate);
                 self.expressions_used.insert_iter(array_index);
                 self.expressions_used.insert_iter(sample);
                 self.expressions_used.insert_iter(level);
+                self.types_used.insert_iter(sparse);
             }
             Ex::ImageQuery { image, ref query } => {
                 self.expressions_used.insert(image);
@@ -187,7 +193,17 @@ impl ExpressionTracer<'_> {
                 match *query {
                     Iq::Size { level } => self.expressions_used.insert_iter(level),
                     Iq::NumLevels | Iq::NumLayers | Iq::NumSamples => {}
+                    Iq::Lod {
+                        sampler,
+                        coordinate,
+                    } => {
+                        self.expressions_used.insert_iter(sampler);
+                        self.expressions_used.insert(coordinate);
+                    }
                 }
+            }
+            Ex::ImageSparseResident { code } => {
+                self.expressions_used.insert(code);
             }
             Ex::RayQueryGet { query, value: _ } => {
                 self.expressions_used.insert(query);
@@ -276,7 +292,8 @@ impl ExpressionTracer<'_> {
             Ex::CallResult(_) => {}
             Ex::AtomicResult { ty, comparison: _ }
             | Ex::WorkGroupUniformLoadResult { ty }
-            | Ex::SubgroupOperationResult { ty } => {
+            | Ex::SubgroupOperationResult { ty }
+            | Ex::SpirvInstructionResult { ty } => {
                 self.types_used.insert(ty);
             }
             Ex::CooperativeLoad { ty, ref data } => {
@@ -441,9 +458,15 @@ impl ModuleMap {
                 ref mut level,
                 ref mut depth_ref,
                 clamp_to_edge: _,
+                ref mut min_lod,
+                ref mut sparse,
             } => {
                 adjust(image)?;
                 operand_map.adjust_option(sampler)?;
+                operand_map.adjust_option(min_lod)?;
+                if let Some(ref mut sparse) = *sparse {
+                    self.types.adjust(sparse)?;
+                }
                 adjust(coordinate)?;
                 operand_map.adjust_option(array_index)?;
                 operand_map.adjust_option(offset)?;
@@ -456,13 +479,18 @@ impl ModuleMap {
                 ref mut array_index,
                 ref mut sample,
                 ref mut level,
+                ref mut sparse,
             } => {
                 adjust(image)?;
                 adjust(coordinate)?;
                 operand_map.adjust_option(array_index)?;
                 operand_map.adjust_option(sample)?;
                 operand_map.adjust_option(level)?;
+                if let Some(ref mut sparse) = *sparse {
+                    self.types.adjust(sparse)?;
+                }
             }
+            Ex::ImageSparseResident { ref mut code } => adjust(code)?,
             Ex::ImageQuery {
                 ref mut image,
                 ref mut query,
@@ -525,7 +553,8 @@ impl ModuleMap {
                 comparison: _,
             } => self.types.adjust(ty)?,
             Ex::WorkGroupUniformLoadResult { ref mut ty } => self.types.adjust(ty)?,
-            Ex::SubgroupOperationResult { ref mut ty } => self.types.adjust(ty)?,
+            Ex::SubgroupOperationResult { ref mut ty }
+            | Ex::SpirvInstructionResult { ref mut ty } => self.types.adjust(ty)?,
             Ex::ArrayLength(ref mut expr) | Ex::WideArrayLength(ref mut expr) => adjust(expr)?,
             Ex::PhysicalAddress {
                 ref mut pointer,
@@ -722,6 +751,13 @@ impl ModuleMap {
         match *query {
             Iq::Size { ref mut level } => operand_map.adjust_option(level)?,
             Iq::NumLevels | Iq::NumLayers | Iq::NumSamples => {}
+            Iq::Lod {
+                ref mut sampler,
+                ref mut coordinate,
+            } => {
+                operand_map.adjust_option(sampler)?;
+                operand_map.adjust(coordinate)?;
+            }
         }
         Ok(())
     }

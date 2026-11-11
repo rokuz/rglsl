@@ -543,12 +543,17 @@ fn adjust_expr(new_pos: &HandleVec<Expression, Handle<Expression>>, expr: &mut E
             ref mut offset,
             ref mut level,
             ref mut depth_ref,
+            ref mut min_lod,
             gather: _,
             gather_pattern: _,
             clamp_to_edge: _,
+            sparse: _,
         } => {
             adjust(image);
             if let Some(e) = sampler.as_mut() {
+                adjust(e);
+            }
+            if let Some(e) = min_lod.as_mut() {
                 adjust(e);
             }
             adjust(coordinate);
@@ -582,6 +587,7 @@ fn adjust_expr(new_pos: &HandleVec<Expression, Handle<Expression>>, expr: &mut E
             ref mut array_index,
             ref mut sample,
             ref mut level,
+            sparse: _,
         } => {
             adjust(image);
             adjust(coordinate);
@@ -609,7 +615,19 @@ fn adjust_expr(new_pos: &HandleVec<Expression, Handle<Expression>>, expr: &mut E
                 crate::ImageQuery::NumLevels
                 | crate::ImageQuery::NumLayers
                 | crate::ImageQuery::NumSamples => {}
+                crate::ImageQuery::Lod {
+                    ref mut sampler,
+                    ref mut coordinate,
+                } => {
+                    if let Some(e) = sampler.as_mut() {
+                        adjust(e);
+                    }
+                    adjust(coordinate);
+                }
             }
+        }
+        Expression::ImageSparseResident { ref mut code } => {
+            adjust(code);
         }
         Expression::Unary {
             ref mut expr,
@@ -742,7 +760,8 @@ fn adjust_expr(new_pos: &HandleVec<Expression, Handle<Expression>>, expr: &mut E
         }
         | Expression::WorkGroupUniformLoadResult { ty: _ }
         | Expression::SubgroupBallotResult
-        | Expression::SubgroupOperationResult { .. } => {}
+        | Expression::SubgroupOperationResult { .. }
+        | Expression::SpirvInstructionResult { .. } => {}
         Expression::CooperativeLoad { ref mut data, .. } => {
             for operand in data.operands_mut() {
                 adjust(operand);
@@ -916,11 +935,15 @@ fn adjust_stmt(new_pos: &HandleVec<Expression, Handle<Expression>>, stmt: &mut S
             ref mut image,
             ref mut coordinate,
             ref mut array_index,
+            ref mut sample,
             ref mut value,
         } => {
             adjust(image);
             adjust(coordinate);
             if let Some(e) = array_index.as_mut() {
+                adjust(e);
+            }
+            if let Some(e) = sample.as_mut() {
                 adjust(e);
             }
             adjust(value);
@@ -1148,6 +1171,22 @@ fn adjust_stmt(new_pos: &HandleVec<Expression, Handle<Expression>>, stmt: &mut S
             adjust(tensor);
             adjust(coordinates);
             adjust(value);
+        }
+        Statement::SpirvInstruction {
+            ref mut operands,
+            ref mut result,
+            ..
+        } => {
+            for operand in operands.iter_mut() {
+                match *operand {
+                    crate::SpirvOperand::Value(ref mut value)
+                    | crate::SpirvOperand::Pointer(ref mut value) => adjust(value),
+                    crate::SpirvOperand::Literal(_) => {}
+                }
+            }
+            if let Some(ref mut result) = *result {
+                adjust(result);
+            }
         }
         Statement::Break
         | Statement::Continue

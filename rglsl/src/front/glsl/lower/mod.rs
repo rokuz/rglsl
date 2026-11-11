@@ -8,6 +8,7 @@ mod function;
 mod globals;
 mod heap;
 mod hit_object;
+mod intrinsics;
 mod library;
 mod mesh;
 mod message;
@@ -174,6 +175,7 @@ fn lower(
         &unit,
         &rglsl_sema::Options {
             spirv_version: options.spirv_version,
+            end_of_input: u32::try_from(text.len()).ok(),
             ..rglsl_sema::Options::new(stage(options.stage))
         },
     );
@@ -215,6 +217,9 @@ fn lower(
                 kind: ErrorKind::SemanticError(Cow::Owned(message)),
                 meta: if link_time(&diagnostic.kind) {
                     Span::UNDEFINED
+                } else if usize::try_from(start).is_ok_and(|start| start >= text.len()) {
+                    let end = u32::try_from(source.len()).unwrap_or(u32::MAX);
+                    Span::new(end, end)
                 } else {
                     original(
                         map,
@@ -560,6 +565,9 @@ impl<'a> Lowerer<'a> {
             }
         }
         let result = self.declare_per_vertex();
+        self.report(result);
+        self.spirv_requirements();
+        let result = self.spirv_decorations();
         self.report(result);
         if let Some(layer) = self.layer_layout.redeclared {
             let result = self.global_ref(layer, Span::UNDEFINED).map(|_| ());

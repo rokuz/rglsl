@@ -53,14 +53,14 @@ fn variable_names(builtins: &Builtins) -> BTreeSet<String> {
 #[test]
 fn the_tables_have_the_expected_sizes() {
     let expected = [
-        (Stage::Vertex, 6038, 35, 178, 214),
-        (Stage::TessControl, 6039, 35, 174, 207),
-        (Stage::TessEvaluation, 6038, 35, 182, 215),
-        (Stage::Geometry, 6042, 35, 180, 213),
-        (Stage::Fragment, 6292, 35, 179, 215),
-        (Stage::Compute, 6042, 37, 172, 208),
-        (Stage::Mesh, 6044, 37, 186, 220),
-        (Stage::RayGeneration, 6038, 122, 164, 203),
+        (Stage::Vertex, 6416, 35, 178, 214),
+        (Stage::TessControl, 6417, 35, 174, 207),
+        (Stage::TessEvaluation, 6416, 35, 182, 215),
+        (Stage::Geometry, 6420, 35, 180, 213),
+        (Stage::Fragment, 6918, 35, 179, 215),
+        (Stage::Compute, 6880, 37, 172, 208),
+        (Stage::Mesh, 6632, 37, 186, 220),
+        (Stage::RayGeneration, 6416, 122, 164, 203),
     ];
     for (stage, functions, added, variables_450, variables_460) in expected {
         let older = builtins(450, stage);
@@ -255,20 +255,32 @@ fn image_functions_follow_the_image_type() {
 
 #[test]
 fn stage_specific_functions_are_gated() {
-    let fragment_only = [
+    let derivatives = [
         "dFdx",
         "dFdy",
         "fwidth",
         "dFdxFine",
         "fwidthCoarse",
+        "textureQueryLod",
+    ];
+    let fragment_only = [
         "interpolateAtCentroid",
         "interpolateAtSample",
         "interpolateAtOffset",
-        "textureQueryLod",
         "subpassLoad",
     ];
     for stage in Stage::ALL {
         let table = builtins(450, stage);
+        for name in derivatives {
+            assert_eq!(
+                !table.overloads(name).is_empty(),
+                matches!(
+                    stage,
+                    Stage::Fragment | Stage::Compute | Stage::Task | Stage::Mesh
+                ),
+                "{stage:?} {name}"
+            );
+        }
         for name in fragment_only {
             assert_eq!(
                 !table.overloads(name).is_empty(),
@@ -313,7 +325,11 @@ fn stage_specific_functions_are_gated() {
         assert_eq!(table.overloads("memoryBarrier").len(), 2, "{stage:?}");
         let bias = signatures(&table, "texture")
             .contains(&"vec4 texture(sampler2D, vec2, float)".to_string());
-        assert_eq!(bias, stage == Stage::Fragment, "{stage:?}");
+        assert_eq!(
+            bias,
+            matches!(stage, Stage::Fragment | Stage::Compute),
+            "{stage:?}"
+        );
     }
 }
 
@@ -377,7 +393,7 @@ fn every_core_function_name_is_known() {
     for name in names.split_whitespace() {
         assert!(!table.overloads(name).is_empty(), "{name}");
     }
-    assert_eq!(table.function_names().count(), 360);
+    assert_eq!(table.function_names().count(), 390);
 }
 
 fn storage_of(builtins: &Builtins, name: &str) -> Option<Storage> {

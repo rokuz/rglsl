@@ -37,6 +37,7 @@ pub fn ensure_block_returns(block: &mut crate::Block) {
             | S::Store { .. }
             | S::ImageStore { .. }
             | S::TensorWrite { .. }
+            | S::SpirvInstruction { .. }
             | S::Call { .. }
             | S::RayQuery { .. }
             | S::Atomic { .. }
