@@ -48,6 +48,10 @@ pub(crate) fn callees(block: &Block, found: &mut Vec<Handle<Function>>) {
             | Statement::Continue
             | Statement::Return { .. }
             | Statement::Kill
+            | Statement::Demote
+            | Statement::BeginInvocationInterlock
+            | Statement::EndInvocationInterlock
+            | Statement::SplitBarrier { .. }
             | Statement::EmitVertex { .. }
             | Statement::EndPrimitive { .. }
             | Statement::ControlBarrier(_)

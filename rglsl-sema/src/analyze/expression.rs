@@ -63,6 +63,11 @@ pub(crate) fn literal(number: &NumericLiteral) -> Option<Operand> {
         NumericKind::Float => floating(Scalar::Float),
         NumericKind::Double => floating(Scalar::Double),
         NumericKind::Float16 => floating(Scalar::Float16),
+        NumericKind::FloatE2M1 => floating(Scalar::FloatE2M1),
+        NumericKind::FloatE3M2 => floating(Scalar::FloatE3M2),
+        NumericKind::FloatE2M3 => floating(Scalar::FloatE2M3),
+        NumericKind::FloatUE8M0 => floating(Scalar::FloatUE8M0),
+        NumericKind::FloatMXINT8 => floating(Scalar::FloatMXINT8),
     }
 }
 
@@ -73,6 +78,11 @@ const fn literal_feature(kind: NumericKind) -> Option<(Feature, &'static str)> {
         NumericKind::Int16 => Some((Feature::Int16Literal, "16-bit literal")),
         NumericKind::Uint16 => Some((Feature::Int16Literal, "16-bit unsigned literal")),
         NumericKind::Float16 => Some((Feature::Float16Literal, "half floating-point suffix")),
+        NumericKind::FloatE2M1 => Some((Feature::FloatE2M1Type, "fe2m1 literal")),
+        NumericKind::FloatE3M2 => Some((Feature::FloatE3M2Type, "fe3m2 literal")),
+        NumericKind::FloatE2M3 => Some((Feature::FloatE2M3Type, "fe2m3 literal")),
+        NumericKind::FloatUE8M0 => Some((Feature::FloatUE8M0Type, "fue8m0 literal")),
+        NumericKind::FloatMXINT8 => Some((Feature::FloatMXINT8Type, "fmxint8 literal")),
         NumericKind::Int | NumericKind::Uint | NumericKind::Float | NumericKind::Double => None,
     }
 }
@@ -542,6 +552,9 @@ impl Analyzer<'_> {
             self.viewport_layer_extension(expression.span, name);
             self.mesh_variable_extension(expression.span, name);
             if let Some(extension) = crate::builtins::view_extension(name) {
+                self.require_extension(expression.span, extension, name);
+            }
+            if let Some(extension) = crate::builtins::variable_extension(name) {
                 self.require_extension(expression.span, extension, name);
             }
             if let Some(extension) = super::qcom::variable_extension(name) {

@@ -4,7 +4,6 @@
 ; Bound: 21
 OpCapability Shader
 OpCapability DrawParameters
-OpExtension "SPV_KHR_shader_draw_parameters"
 %1 = OpExtInstImport "GLSL.std.450"
 OpMemoryModel Logical GLSL450
 OpEntryPoint Vertex %14 "vertex" %9 %12

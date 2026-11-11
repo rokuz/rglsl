@@ -24,6 +24,7 @@ impl FunctionTracer<'_> {
                         condition,
                         ref accept,
                         ref reject,
+                        control: _,
                     } => {
                         self.expressions_used.insert(condition);
                         worklist.push(accept);
@@ -32,6 +33,7 @@ impl FunctionTracer<'_> {
                     St::Switch {
                         selector,
                         ref cases,
+                        control: _,
                     } => {
                         self.expressions_used.insert(selector);
                         for case in cases {
@@ -281,6 +283,10 @@ impl FunctionTracer<'_> {
                     St::Break
                     | St::Continue
                     | St::Kill
+                    | St::Demote
+                    | St::BeginInvocationInterlock
+                    | St::EndInvocationInterlock
+                    | St::SplitBarrier { .. }
                     | St::EmitVertex { .. }
                     | St::EndPrimitive { .. }
                     | St::ControlBarrier(_)
@@ -353,6 +359,7 @@ impl FunctionMap {
                         ref mut condition,
                         ref mut accept,
                         ref mut reject,
+                        control: _,
                     } => {
                         adjust(condition)?;
                         worklist.push(accept);
@@ -361,6 +368,7 @@ impl FunctionMap {
                     St::Switch {
                         ref mut selector,
                         ref mut cases,
+                        control: _,
                     } => {
                         adjust(selector)?;
                         for case in cases {
@@ -637,6 +645,10 @@ impl FunctionMap {
                     St::Break
                     | St::Continue
                     | St::Kill
+                    | St::Demote
+                    | St::BeginInvocationInterlock
+                    | St::EndInvocationInterlock
+                    | St::SplitBarrier { .. }
                     | St::EmitVertex { .. }
                     | St::EndPrimitive { .. }
                     | St::ControlBarrier(_)

@@ -16,15 +16,15 @@ use crate::builtins::Stage;
 use crate::constant::{Constant, Value};
 use crate::diagnostic::DiagnosticKind;
 use crate::scope::{
-    Direction, Function, FunctionId, LayoutEntry, Lookup, Origin, Parameter, Qualifiers, Storage,
-    SymbolId, SymbolKind,
+    Direction, Function, FunctionControl, FunctionId, LayoutEntry, Lookup, Origin, Parameter,
+    PrecisionKey, Qualifiers, Storage, SymbolId, SymbolKind,
 };
 use crate::types::{
     ArraySize, BlockStorage, BlockType, Member, Opaque, OpaqueKind, Scalar, SpecializedSize, Type,
     TypeKind,
 };
 
-const IMAGE_FORMATS: [&str; 41] = [
+pub(crate) const IMAGE_FORMATS: [&str; 41] = [
     "rgba32f",
     "rgba16f",
     "rg32f",
@@ -84,7 +84,11 @@ impl Analyzer<'_> {
             }
             DeclarationKind::SpirvExecutionMode(mode) => self.spirv_execution_mode(mode),
             DeclarationKind::InitDeclaratorList(list) => self.init_declarator_list(list),
-            DeclarationKind::Precision { .. } => {}
+            DeclarationKind::Precision { qualifier, ty } => {
+                if let Some(key) = precision_key(ty) {
+                    self.scopes.set_default_precision(key, qualifier.node);
+                }
+            }
             DeclarationKind::Block {
                 structure,
                 instance,
@@ -106,14 +110,38 @@ impl Analyzer<'_> {
                     ) {
                         continue;
                     }
-                    if self.lookup(&identifier.node).is_none() {
-                        self.error(
+                    match self.lookup(&identifier.node) {
+                        None => self.error(
                             identifier.span,
                             DiagnosticKind::UndeclaredIdentifier(identifier.node.clone()),
-                        );
+                        ),
+                        Some(Lookup::Symbol(id)) if qualifiers.precise => self.make_precise(id),
+                        Some(_) => {}
                     }
                 }
             }
+        }
+    }
+
+    fn make_precise(&mut self, id: SymbolId) {
+        let member = match self.symbol_mut(id).map(|symbol| &mut symbol.kind) {
+            Some(SymbolKind::Variable(variable)) => {
+                variable.qualifiers.precise = true;
+                return;
+            }
+            Some(SymbolKind::BlockMember { instance, index }) => (*instance, *index),
+            _ => return,
+        };
+        let (instance, index) = member;
+        let TypeKind::Block(block) = self.symbol_type(instance).kind else {
+            return;
+        };
+        if let Some(member) = self
+            .types
+            .block_mut(block)
+            .and_then(|block| block.members.get_mut(usize::try_from(index).ok()?))
+        {
+            member.qualifiers.precise = true;
         }
     }
 
@@ -136,6 +164,7 @@ impl Analyzer<'_> {
         }
         self.record_buffer_defaults(&qualifiers);
         self.standalone_stage_layout(&qualifiers);
+        self.fragment_layouts(&qualifiers);
         self.task_payload_type_only(qualifier.span, &qualifiers);
         if qualifiers.storage == Storage::Out {
             self.resize_mesh_arrays(qualifier.span);
@@ -410,6 +439,14 @@ impl Analyzer<'_> {
                         self.require_scope_extension(single.span, storage.keyword());
                         result.nonprivate = true;
                     }
+                    StorageQualifier::NonTemporal => {
+                        self.require_extension(
+                            single.span,
+                            "GL_EXT_nontemporal_keyword",
+                            storage.keyword(),
+                        );
+                        result.nontemporal = true;
+                    }
                     StorageQualifier::ShaderCallCoherent => {
                         self.require_extension(
                             single.span,
@@ -433,6 +470,14 @@ impl Analyzer<'_> {
                     StorageQualifier::TaskPayloadSharedEXT => {
                         self.mesh_qualifier(single.span, *storage);
                         result.storage = Storage::TaskPayloadShared;
+                    }
+                    StorageQualifier::TileImageEXT => {
+                        self.require_extension(
+                            single.span,
+                            "GL_EXT_shader_tile_image",
+                            storage.keyword(),
+                        );
+                        result.storage = Storage::TileImage;
                     }
                     StorageQualifier::Volatile => result.volatile = true,
                     StorageQualifier::Restrict => result.restrict = true,
@@ -650,10 +695,15 @@ impl Analyzer<'_> {
     }
 
     fn optional_qualifiers(&mut self, ty: &FullySpecifiedType) -> Qualifiers {
-        match &ty.qualifier {
+        let mut qualifiers = match &ty.qualifier {
             Some(qualifier) => self.qualifiers(qualifier),
             None => Qualifiers::default(),
+        };
+        if qualifiers.precision.is_none() {
+            qualifiers.precision =
+                precision_key(&ty.specifier).map(|key| self.scopes.default_precision(&key));
         }
+        qualifiers
     }
 
     pub(crate) fn array_sizes(
@@ -853,6 +903,7 @@ impl Analyzer<'_> {
                 qualifiers.subgroup_coherent |= block.subgroup_coherent;
                 qualifiers.shader_call_coherent |= block.shader_call_coherent;
                 qualifiers.nonprivate |= block.nonprivate;
+                qualifiers.nontemporal |= block.nontemporal;
                 qualifiers.writeonly |= block.writeonly;
                 qualifiers.per_primitive |= block.per_primitive;
                 qualifiers.per_view |= block.per_view;
@@ -999,6 +1050,29 @@ impl Analyzer<'_> {
             return;
         }
         let stage = self.options.stage;
+        if matches!(qualifiers.storage, Storage::In | Storage::Out)
+            && ty.contains_scalar_where(&self.types, Scalar::is_microscaling)
+        {
+            self.error(
+                span,
+                invalid("in/out", "microscaling types not allowed as input/output"),
+            );
+            return;
+        }
+        if matches!(
+            qualifiers.storage,
+            Storage::Uniform | Storage::Buffer | Storage::Shared
+        ) && ty.contains_scalar_where(&self.types, Scalar::is_sub_byte)
+        {
+            self.error(
+                span,
+                invalid(
+                    "storage class",
+                    "sub-byte sized types not allowed in storage class",
+                ),
+            );
+            return;
+        }
         if matches!(qualifiers.storage, Storage::In | Storage::Out) {
             let bfloat = ty.contains_scalar(&self.types, Scalar::BFloat16);
             let float8 = ty.contains_scalar(&self.types, Scalar::FloatE4M3)
@@ -1301,6 +1375,8 @@ impl Analyzer<'_> {
         );
         if hit_object {
             qualifiers.storage = Storage::None;
+        } else if qualifiers.storage == Storage::TileImage || self.is_tile_image(&ty) {
+            self.tile_image_declaration(name.span, &qualifiers, &ty);
         } else if qualifiers.storage != Storage::Uniform && self.opaque_outside_uniform(&ty) {
             self.error(name.span, DiagnosticKind::OpaqueNotAllowed(self.show(&ty)));
         } else if qualifiers.storage == Storage::Uniform
@@ -1779,6 +1855,24 @@ impl Analyzer<'_> {
             );
         }
         let members = self.struct_members(&structure.members, Some(&qualifiers));
+        let declarators = structure
+            .members
+            .iter()
+            .flat_map(|declaration| &declaration.declarators);
+        for (declarator, member) in declarators.zip(&members) {
+            if member
+                .ty
+                .contains_scalar_where(&self.types, Scalar::is_sub_byte)
+            {
+                self.error(
+                    declarator.name.span,
+                    DiagnosticKind::InvalidBlock {
+                        name: member.name.clone(),
+                        reason: "member of block cannot be or contain a sub-byte type",
+                    },
+                );
+            }
+        }
         let dimensions = instance
             .map(|instance| self.array_sizes(instance.array.as_ref()))
             .unwrap_or_default();
@@ -2206,6 +2300,7 @@ impl Analyzer<'_> {
         }
         let return_type = self.type_specifier(&prototype.return_type.specifier);
         let close = Span::new(prototype.span.end.saturating_sub(1), prototype.span.end);
+        let control = self.function_attributes(prototype, close);
         if return_type.array.contains(&ArraySize::Unsized) {
             self.error(
                 prototype.return_type.span,
@@ -2298,6 +2393,7 @@ impl Analyzer<'_> {
                     DiagnosticKind::FunctionRedefinition(name.node.clone()),
                 );
             }
+            let mut incompatible = false;
             if let Some(function) = self
                 .functions
                 .get_mut(usize::try_from(id.index()).unwrap_or(usize::MAX))
@@ -2306,6 +2402,15 @@ impl Analyzer<'_> {
                 if definition {
                     function.parameters = parameters;
                 }
+                let merged = function.control.merge(control);
+                incompatible = merged.is_incompatible() && !control.is_incompatible();
+                function.control = merged;
+            }
+            if incompatible {
+                self.error(
+                    close,
+                    DiagnosticKind::IncompatibleFunctionAttributes(name.node.clone()),
+                );
             }
             self.function_declarations.insert(node, id);
             return Some(id);
@@ -2319,12 +2424,79 @@ impl Analyzer<'_> {
             defined: definition,
             span: prototype.span,
             spirv_instruction,
+            control,
         });
         self.function_declarations.insert(node, id);
         if self.scopes.declare_function(&name.node, id).is_err() {
             self.error(name.span, DiagnosticKind::Redeclaration(name.node.clone()));
         }
         Some(id)
+    }
+
+    fn function_attributes(
+        &mut self,
+        prototype: &FunctionPrototype,
+        close: Span,
+    ) -> FunctionControl {
+        let mut control = FunctionControl::default();
+        for attributes in [&prototype.attributes, &prototype.trailing_attributes] {
+            if attributes.is_empty() {
+                continue;
+            }
+            self.require_extensions(
+                close,
+                &[
+                    "GL_EXT_subgroup_uniform_control_flow",
+                    "GL_EXT_maximal_reconvergence",
+                    "GL_EXT_function_control_attributes",
+                ],
+                "attribute",
+            );
+            for attribute in attributes {
+                if let Some(argument) = &attribute.argument {
+                    self.value_expression(argument);
+                    continue;
+                }
+                match attribute.name.node.as_str() {
+                    "subgroup_uniform_control_flow" => {
+                        self.require_extension(
+                            close,
+                            "GL_EXT_subgroup_uniform_control_flow",
+                            "attribute",
+                        );
+                        self.subgroup_uniform_control_flow = true;
+                    }
+                    "maximally_reconverges" => {
+                        self.require_extension(close, "GL_EXT_maximal_reconvergence", "attribute");
+                        self.maximally_reconverges = true;
+                    }
+                    "inline" => {
+                        self.require_extension(
+                            close,
+                            "GL_EXT_function_control_attributes",
+                            "attribute",
+                        );
+                        control.inline = true;
+                    }
+                    "noinline" => {
+                        self.require_extension(
+                            close,
+                            "GL_EXT_function_control_attributes",
+                            "attribute",
+                        );
+                        control.dont_inline = true;
+                    }
+                    _ => {}
+                }
+            }
+            if control.is_incompatible() {
+                self.error(
+                    close,
+                    DiagnosticKind::IncompatibleFunctionAttributes(prototype.name.node.clone()),
+                );
+            }
+        }
+        control
     }
 
     pub(crate) fn function_definition(&mut self, definition: &Node<FunctionDefinition>) {
@@ -2393,6 +2565,23 @@ const fn both_derivative_groups() -> DiagnosticKind {
     DiagnosticKind::InvalidQualifier {
         qualifier: "derivative_group_quads* and derivative_group_linear*",
         reason: "cannot be both specified",
+    }
+}
+
+fn precision_key(specifier: &TypeSpecifier) -> Option<PrecisionKey> {
+    use rglsl_ast::ast::{BasicType, ScalarType};
+    match specifier.non_array {
+        TypeSpecifierNonArray::Basic(
+            BasicType::Scalar(scalar)
+            | BasicType::Vector { scalar, .. }
+            | BasicType::Matrix { scalar, .. },
+        ) => match scalar {
+            ScalarType::Float => Some(PrecisionKey::Float),
+            ScalarType::Int | ScalarType::Uint => Some(PrecisionKey::Int),
+            _ => None,
+        },
+        TypeSpecifierNonArray::Opaque(ref word) => Some(PrecisionKey::Opaque(word.clone())),
+        _ => None,
     }
 }
 

@@ -110,6 +110,15 @@ impl<'a> Walker<'a> {
             self.fully_specified(&parameter.ty);
             self.array(parameter.array.as_ref());
         }
+        for attribute in prototype
+            .attributes
+            .iter()
+            .chain(&prototype.trailing_attributes)
+        {
+            if let Some(argument) = &attribute.argument {
+                self.expression(argument);
+            }
+        }
     }
 
     fn initializer(&mut self, initializer: &'a Initializer) {
@@ -253,7 +262,10 @@ impl<'a> Walker<'a> {
             }
             ExpressionKind::FunctionCall(call) => {
                 match &call.function.node {
-                    FunctionIdentifier::Constructor(specifier) => self.specifier(specifier),
+                    FunctionIdentifier::Constructor(specifier)
+                    | FunctionIdentifier::Cast(specifier) => {
+                        self.specifier(specifier);
+                    }
                     FunctionIdentifier::Function(_) => {}
                     FunctionIdentifier::Expression(callee) => self.expression(callee),
                     FunctionIdentifier::Method { object, .. } => self.expression(object),

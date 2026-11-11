@@ -253,7 +253,7 @@ fn side_effect_free_live_block(statement: &Statement) -> bool {
                         && !name.starts_with("image");
                 }
             }
-            FunctionIdentifier::Constructor(_) => {}
+            FunctionIdentifier::Constructor(_) | FunctionIdentifier::Cast(_) => {}
             FunctionIdentifier::Expression(_) | FunctionIdentifier::Method { .. } => safe = false,
         },
         _ => {}

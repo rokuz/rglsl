@@ -40,6 +40,7 @@ impl Builder<'_> {
             heap_offset,
             tile_attachment,
             ref spirv_decorations,
+            relaxed_precision: _,
             immediate_bank,
         } = *candidate.global;
         if current.space != space {
@@ -192,6 +193,7 @@ impl Builder<'_> {
             early_depth_test,
             workgroup_size,
             workgroup_size_overrides,
+            workgroup_size_builtin,
             mut function,
             mesh_info,
             task_payload,
@@ -200,12 +202,14 @@ impl Builder<'_> {
             transform_feedback,
             opacity_micromap,
             quad_control,
+            fragment_modes,
             geometry,
             tessellation,
             mesh_shader,
             tile_shading,
             derivative_group,
             spirv_execution_modes,
+            reconvergence,
         } = entry;
         function.diagnostic_filter_leaf = None;
         remap.adjust_function(&mut function).map_err(internal)?;
@@ -285,6 +289,7 @@ impl Builder<'_> {
             early_depth_test,
             workgroup_size,
             workgroup_size_overrides,
+            workgroup_size_builtin,
             function,
             mesh_info,
             task_payload: task_payload.map(global).transpose()?,
@@ -293,12 +298,14 @@ impl Builder<'_> {
             transform_feedback,
             opacity_micromap: opacity_micromap.map(expression).transpose()?,
             quad_control,
+            fragment_modes,
             geometry,
             tessellation,
             mesh_shader,
             tile_shading,
             derivative_group,
             spirv_execution_modes,
+            reconvergence,
         })
     }
 

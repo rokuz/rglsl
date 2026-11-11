@@ -12,7 +12,7 @@ use rglsl_sema::types::{
 };
 use rglsl_sema::SymbolId;
 
-use super::types::{image_dimension, sampled_kind};
+use super::types::image_dimension;
 use super::{internal, semantic, unsupported, GlobalRef, Initialization, Lowerer, Packing, Result};
 use super::{specialization, xfb};
 use crate::proc::Alignment;
@@ -119,6 +119,7 @@ pub(super) fn image_format(word: &str) -> Option<StorageFormat> {
         "rgba16ui" => Sf::Rgba16Uint,
         "rgba8ui" => Sf::Rgba8Uint,
         "r64ui" => Sf::R64Uint,
+        "r64i" => Sf::R64Sint,
         "rg32ui" => Sf::Rg32Uint,
         "rg16ui" => Sf::Rg16Uint,
         "rg8ui" => Sf::Rg8Uint,
@@ -130,10 +131,7 @@ pub(super) fn image_format(word: &str) -> Option<StorageFormat> {
 }
 
 pub(super) const fn unknown_format(sampled: rglsl_sema::types::SampledType) -> StorageFormat {
-    StorageFormat::Unknown(crate::Scalar {
-        kind: sampled_kind(sampled),
-        width: 4,
-    })
+    StorageFormat::Unknown(super::types::sampled_scalar(sampled))
 }
 
 pub(super) fn storage_access(qualifiers: &Qualifiers) -> StorageAccess {
@@ -168,6 +166,17 @@ fn tensor_access(qualifiers: &Qualifiers, ty: &GlslType) -> MemoryDecorations {
     decorations
 }
 
+pub(super) fn member_memory(block: &Qualifiers, member: &Qualifiers) -> MemoryDecorations {
+    let mut decorations = memory(block) | memory(member);
+    if block.readonly || member.readonly {
+        decorations |= MemoryDecorations::NON_WRITABLE;
+    }
+    if block.writeonly || member.writeonly {
+        decorations |= MemoryDecorations::NON_READABLE;
+    }
+    decorations
+}
+
 fn memory(qualifiers: &Qualifiers) -> MemoryDecorations {
     let mut decorations = MemoryDecorations::empty();
     if qualifiers.coherent {
@@ -175,6 +184,7 @@ fn memory(qualifiers: &Qualifiers) -> MemoryDecorations {
     }
     for (present, decoration) in [
         (qualifiers.volatile, MemoryDecorations::VOLATILE),
+        (qualifiers.restrict, MemoryDecorations::RESTRICT),
         (
             qualifiers.device_coherent,
             MemoryDecorations::DEVICE_COHERENT,
@@ -196,6 +206,7 @@ fn memory(qualifiers: &Qualifiers) -> MemoryDecorations {
             MemoryDecorations::SHADER_CALL_COHERENT,
         ),
         (qualifiers.nonprivate, MemoryDecorations::NONPRIVATE),
+        (qualifiers.nontemporal, MemoryDecorations::NONTEMPORAL),
     ] {
         if present {
             decorations |= decoration;
@@ -220,6 +231,20 @@ fn builtin_of(name: &str) -> Option<BuiltIn> {
         "gl_PointCoord" => BuiltIn::PointCoord,
         "gl_PrimitiveID" => BuiltIn::PrimitiveIndex,
         "gl_SampleID" => BuiltIn::SampleIndex,
+        "gl_SamplePosition" => BuiltIn::SamplePosition,
+        "gl_HelperInvocation" => BuiltIn::HelperInvocation,
+        "gl_BaseVertexARB" => BuiltIn::BaseVertex,
+        "gl_BaseInstanceARB" => BuiltIn::BaseInstance,
+        "gl_DrawIDARB" => BuiltIn::DrawIndex,
+        "gl_DeviceIndex" => BuiltIn::DeviceIndex,
+        "gl_PrimitiveShadingRateEXT" => BuiltIn::PrimitiveShadingRate,
+        "gl_ShadingRateEXT" => BuiltIn::ShadingRate,
+        "gl_FragSizeEXT" => BuiltIn::FragSize { nv: false },
+        "gl_FragInvocationCountEXT" => BuiltIn::FragInvocationCount { nv: false },
+        "gl_FragmentSizeNV" => BuiltIn::FragSize { nv: true },
+        "gl_InvocationsPerPixelNV" => BuiltIn::FragInvocationCount { nv: true },
+        "gl_FragFullyCoveredNV" => BuiltIn::FullyCovered,
+        "gl_FragStencilRefARB" => BuiltIn::FragStencilRef,
         "gl_NumWorkGroups" => BuiltIn::NumWorkGroups,
         "gl_WorkGroupID" => BuiltIn::WorkGroupId,
         "gl_LocalInvocationID" => BuiltIn::LocalInvocationId,
@@ -493,9 +518,6 @@ impl<'a> Lowerer<'a> {
                 ref identifiers,
             } => {
                 let qualifier = Some(qualifier);
-                if has_qualifier(qualifier, |q| matches!(q, SingleTypeQualifier::Precise)) {
-                    return Err(unsupported("`precise`", self.at(declaration.span)));
-                }
                 if has_qualifier(qualifier, |q| matches!(q, SingleTypeQualifier::Invariant)) {
                     for identifier in identifiers {
                         self.invariant
@@ -538,7 +560,6 @@ impl<'a> Lowerer<'a> {
                         "early_fragment_tests" => self.early_fragment_tests = true,
                         "quad_derivatives" => self.quad_control.quad_derivatives = true,
                         "full_quads" => self.quad_control.require_full_quads = true,
-                        "post_depth_coverage" => self.post_depth_coverage = Some(at),
                         "local_size_x" | "local_size_y" | "local_size_z" => {
                             let value = xfb::ast_layout_value(self, Some(qualifier), name);
                             let index = match name {
@@ -620,9 +641,6 @@ impl<'a> Lowerer<'a> {
         let name = declarator.name.node.clone();
         let qualifiers = &variable.qualifiers;
         let ty = &variable.ty;
-        if qualifiers.precise {
-            return Err(unsupported("`precise`", at));
-        }
         if qualifiers.constant {
             if let Some(entry) = qualifiers.layout_entry("constant_id") {
                 let id = entry
@@ -676,6 +694,7 @@ impl<'a> Lowerer<'a> {
             }
             Storage::Uniform => self.resource(symbol, name, at),
             Storage::TaskPayloadShared => self.task_payload_variable(symbol, name, at),
+            Storage::TileImage => self.tile_image_variable(symbol, name, at),
             Storage::Shared => {
                 let ir = self.ir_type(ty, at)?;
                 let init = declarator
@@ -703,6 +722,7 @@ impl<'a> Lowerer<'a> {
                         heap_offset: None,
                         tile_attachment: false,
                         spirv_decorations: Vec::new(),
+                        relaxed_precision: false,
                         immediate_bank: None,
                     },
                     at,
@@ -722,6 +742,51 @@ impl<'a> Lowerer<'a> {
             | Storage::HitObjectAttributeExt => self.ray_variable(symbol, name, at),
             Storage::None => self.private(symbol, name, declarator, at),
         }
+    }
+
+    fn tile_image_variable(&mut self, symbol: SymbolId, name: String, at: Span) -> Result<()> {
+        let variable = self.variable(symbol).ok_or_else(|| internal(at))?;
+        if variable.ty.is_array() {
+            return Err(unsupported("arrays of tile images", at));
+        }
+        let location = variable
+            .qualifiers
+            .layout_entry("location")
+            .and_then(|entry| entry.value)
+            .and_then(|value| u32::try_from(value).ok())
+            .ok_or_else(|| internal(at))?;
+        let ty = self.ir_type(&variable.ty, at)?;
+        let handle = self.module.global_variables.append(
+            GlobalVariable {
+                name: Some(name),
+                space: AddressSpace::Handle,
+                binding: None,
+                ty,
+                init: None,
+                memory_decorations: MemoryDecorations::empty(),
+                io: Some(Binding::Location {
+                    location,
+                    interpolation: None,
+                    sampling: None,
+                    blend_src: None,
+                    per_primitive: false,
+                    per_view: false,
+                    component: None,
+                    invariant: false,
+                    patch: false,
+                }),
+                xfb: None,
+                input_attachment_index: None,
+                heap_offset: None,
+                tile_attachment: false,
+                immediate_bank: None,
+                spirv_decorations: Vec::new(),
+                relaxed_precision: false,
+            },
+            at,
+        );
+        self.globals.insert(symbol, GlobalRef::Variable(handle));
+        Ok(())
     }
 
     fn private(
@@ -798,6 +863,7 @@ impl<'a> Lowerer<'a> {
                 heap_offset: None,
                 tile_attachment: false,
                 spirv_decorations: Vec::new(),
+                relaxed_precision: false,
                 immediate_bank: None,
             },
             at,
@@ -872,6 +938,7 @@ impl<'a> Lowerer<'a> {
                     heap_offset: None,
                     tile_attachment: false,
                     spirv_decorations: Vec::new(),
+                    relaxed_precision: false,
                     immediate_bank: None,
                 },
                 at,
@@ -947,6 +1014,7 @@ impl<'a> Lowerer<'a> {
                 heap_offset: None,
                 tile_attachment: false,
                 spirv_decorations: Vec::new(),
+                relaxed_precision: false,
                 immediate_bank: None,
             },
             at,
@@ -1135,6 +1203,7 @@ impl<'a> Lowerer<'a> {
                     .iter()
                     .any(|entry| entry.name.eq_ignore_ascii_case("tile_attachmentQCOM")),
                 spirv_decorations: Vec::new(),
+                relaxed_precision: false,
                 immediate_bank: None,
             },
             at,
@@ -1154,12 +1223,6 @@ impl<'a> Lowerer<'a> {
     ) -> Result<()> {
         let at = self.at(structure.name.span);
         if structure.name.node == "gl_PerVertex" {
-            for member in &structure.members {
-                let qualifier = member.ty.qualifier.as_ref();
-                if has_qualifier(qualifier, |q| matches!(q, SingleTypeQualifier::Precise)) {
-                    return Err(unsupported("`precise`", at));
-                }
-            }
             if storage_of(Some(&structure.qualifier)) == Some(StorageQualifier::In)
                 && layout_names(Some(&structure.qualifier)).contains(&"passthrough")
             {
@@ -1259,8 +1322,8 @@ impl<'a> Lowerer<'a> {
             _ => return Err(unsupported("arrays of arrays of blocks", at)),
         }
         let mut decorations = memory(qualifiers);
-        for member in &block.members {
-            decorations |= memory(&member.qualifiers);
+        if push_constant || shader_record {
+            decorations.remove(MemoryDecorations::RESTRICT);
         }
         let space = if push_constant {
             AddressSpace::Immediate
@@ -1314,6 +1377,7 @@ impl<'a> Lowerer<'a> {
                 heap_offset: None,
                 tile_attachment: false,
                 spirv_decorations: Vec::new(),
+                relaxed_precision: false,
                 immediate_bank,
             },
             at,
@@ -1372,9 +1436,6 @@ impl<'a> Lowerer<'a> {
         let outer = &block.qualifiers;
         let patch = outer.patch || block.members.iter().any(|member| member.qualifiers.patch);
         let per_vertex = self.is_per_vertex_io(outer) && !patch;
-        if outer.precise || block.members.iter().any(|member| member.qualifiers.precise) {
-            return Err(unsupported("`precise`", at));
-        }
         if outer.invariant {
             return Err(semantic(
                 "cannot use invariant qualifier on an interface block",
@@ -1485,6 +1546,8 @@ impl<'a> Lowerer<'a> {
                 matrix_layout: None,
                 xfb_offset: None,
                 heap: None,
+                memory_decorations: MemoryDecorations::empty(),
+                relaxed_precision: false,
             });
             offset = offset.saturating_add(layout.size);
         }
@@ -1634,6 +1697,7 @@ impl<'a> Lowerer<'a> {
                 heap_offset: None,
                 tile_attachment: false,
                 spirv_decorations: Vec::new(),
+                relaxed_precision: false,
                 immediate_bank: None,
             },
             at,
@@ -1889,6 +1953,8 @@ impl<'a> Lowerer<'a> {
                 matrix_layout: None,
                 xfb_offset,
                 heap: None,
+                memory_decorations: MemoryDecorations::empty(),
+                relaxed_precision: false,
             });
             offset = offset.saturating_add(layout.size);
             names.push(String::from(name));
@@ -1920,6 +1986,7 @@ impl<'a> Lowerer<'a> {
                 heap_offset: None,
                 tile_attachment: false,
                 spirv_decorations: Vec::new(),
+                relaxed_precision: false,
                 immediate_bank: None,
             },
             Span::UNDEFINED,
@@ -1953,9 +2020,6 @@ impl<'a> Lowerer<'a> {
             self.builtin_sizes.insert(name.clone(), size);
         }
         let qualifier = list.ty.qualifier.as_ref();
-        if has_qualifier(qualifier, |q| matches!(q, SingleTypeQualifier::Precise)) {
-            return Err(unsupported("`precise`", at));
-        }
         if has_qualifier(qualifier, |q| matches!(q, SingleTypeQualifier::Invariant)) {
             self.invariant.push((name.clone(), at));
         }
@@ -2154,6 +2218,7 @@ impl<'a> Lowerer<'a> {
                 heap_offset: None,
                 tile_attachment: false,
                 spirv_decorations: Vec::new(),
+                relaxed_precision: false,
                 immediate_bank: None,
             },
             at,
@@ -2192,16 +2257,14 @@ impl<'a> Lowerer<'a> {
                 }
             }
         }
-        if let Some(at) = self.post_depth_coverage {
-            let implied = self
-                .analysis
-                .extensions
-                .contains("GL_ARB_post_depth_coverage");
-            self.errors.push(if self.early_fragment_tests || implied {
-                unsupported("the `post_depth_coverage` layout qualifier", at)
-            } else {
-                semantic("post_depth_coverage requires early_fragment_tests", at)
-            });
+        let fragment = self.analysis.fragment;
+        if fragment.post_depth_coverage
+            && !(self.early_fragment_tests || fragment.early_fragment_tests)
+        {
+            self.errors.push(semantic(
+                "post_depth_coverage requires early_fragment_tests",
+                Span::UNDEFINED,
+            ));
         }
         self.check_shared_layouts();
         self.finish_xfb();

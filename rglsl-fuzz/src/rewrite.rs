@@ -348,7 +348,8 @@ impl Rewriter<'_> {
             }
             ExpressionKind::FunctionCall(call) => {
                 match &mut call.function.node {
-                    FunctionIdentifier::Constructor(specifier) => self.specifier(specifier),
+                    FunctionIdentifier::Constructor(specifier)
+                    | FunctionIdentifier::Cast(specifier) => self.specifier(specifier),
                     FunctionIdentifier::Function(_) => {}
                     FunctionIdentifier::Expression(callee) => self.expression(callee),
                     FunctionIdentifier::Method { object, .. } => self.expression(object),

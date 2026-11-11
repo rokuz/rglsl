@@ -32,6 +32,7 @@ pub const MAX_NESTING_DEPTH: u32 = 256;
 pub const NON_UNIFORM: &str = "nonuniformEXT";
 const NON_UNIFORM_EXTENSION: &str = "GL_EXT_nonuniform_qualifier";
 const SPIRV_INTRINSICS: &str = "GL_EXT_spirv_intrinsics";
+const EXPLICIT_TYPECAST: &str = "GL_NV_explicit_typecast";
 const SPIRV_TYPE: &str = "spirv_type";
 const SPIRV_QUALIFIERS: [&str; 6] = [
     "spirv_storage_class",
@@ -127,7 +128,10 @@ pub fn parse_prefix(source: &str) -> (TranslationUnit, Option<ParseError>) {
         previous_end: 0,
         next_id: 0,
         depth: 0,
-        struct_scopes: Vec::from([BTreeSet::new()]),
+        struct_scopes: Vec::from([BTreeSet::from([
+            "gl_TextureFootprint2DNV",
+            "gl_TextureFootprint3DNV",
+        ])]),
         extensions: ExtensionState::new(),
     };
     let mut external_declarations = Vec::new();
@@ -467,6 +471,9 @@ impl<'a> Parser<'a> {
         allow_definition: bool,
     ) -> Result<ExternalDeclaration> {
         let start = self.start();
+        if allow_definition && self.at_attribute_list() {
+            return self.parse_attributed_function(start);
+        }
         if self.eat_word("precision") {
             let qualifier = self.parse_precision_qualifier()?;
             let ty = self.parse_type_specifier()?;
@@ -506,7 +513,7 @@ impl<'a> Parser<'a> {
         }
         let name = self.identifier()?;
         if self.at("(") {
-            return self.parse_function(start, ty, name, allow_definition);
+            return self.parse_function(start, ty, name, Vec::new(), allow_definition);
         }
         let mut declarators = Vec::new();
         declarators.push(self.parse_init_declarator(name)?);
@@ -517,6 +524,24 @@ impl<'a> Parser<'a> {
         self.expect(";")?;
         let list = InitDeclaratorList { ty, declarators };
         self.declaration(start, DeclarationKind::InitDeclaratorList(list))
+    }
+
+    fn parse_attributed_function(&mut self, start: u32) -> Result<ExternalDeclaration> {
+        let attributes = self.parse_attribute_list()?;
+        let qualifier = self.parse_type_qualifier()?;
+        let specifier = self.parse_type_specifier()?;
+        let return_type = self.spanned(
+            start,
+            FullySpecifiedType {
+                qualifier,
+                specifier,
+            },
+        );
+        let name = self.identifier()?;
+        if !self.at("(") {
+            return Err(self.unexpected("`(`"));
+        }
+        self.parse_function(start, return_type, name, attributes, true)
     }
 
     fn parse_qualifier_declaration(
@@ -596,9 +621,14 @@ impl<'a> Parser<'a> {
         start: u32,
         return_type: Spanned<FullySpecifiedType>,
         name: Identifier,
+        attributes: Vec<Attribute>,
         allow_definition: bool,
     ) -> Result<ExternalDeclaration> {
-        let prototype = self.parse_prototype(start, return_type, name)?;
+        let mut prototype = self.parse_prototype(start, return_type, name)?;
+        prototype.attributes = attributes;
+        if self.at_attribute_list() {
+            prototype.trailing_attributes = self.parse_attribute_list()?;
+        }
         if self.eat(";") {
             return self.declaration(start, DeclarationKind::FunctionPrototype(prototype));
         }
@@ -636,6 +666,8 @@ impl<'a> Parser<'a> {
                 return_type,
                 name,
                 parameters,
+                attributes: Vec::new(),
+                trailing_attributes: Vec::new(),
             },
         ))
     }
@@ -1255,18 +1287,37 @@ impl<'a> Parser<'a> {
             TokenKind::Word("continue") => self.parse_jump(JumpStatement::Continue),
             TokenKind::Word("break") => self.parse_jump(JumpStatement::Break),
             TokenKind::Word("discard") => self.parse_jump(JumpStatement::Discard),
+            TokenKind::Word("demote") => self.parse_jump(JumpStatement::Demote),
             TokenKind::Word("terminateRayEXT") => self.parse_jump(JumpStatement::TerminateRay),
             TokenKind::Word("ignoreIntersectionEXT") => {
                 self.parse_jump(JumpStatement::IgnoreIntersection)
             }
             TokenKind::Word("return") => self.parse_return(),
-            TokenKind::Punctuator("[") if self.at_nth(1, "[") => self.parse_attributed(),
+            TokenKind::Punctuator("[") if self.at_attribute_list() => self.parse_attributed(),
             _ => self.parse_simple_statement(),
         }
     }
 
     fn parse_attributed(&mut self) -> Result<Statement> {
         let start = self.start();
+        let attributes = self.parse_attribute_list()?;
+        if !matches!(
+            self.peek().kind,
+            TokenKind::Word("if" | "switch" | "while" | "do" | "for")
+        ) {
+            return Err(self.unexpected("a selection, switch or iteration statement"));
+        }
+        let statement = Box::new(self.parse_unguarded_statement()?);
+        self.node(
+            start,
+            StatementKind::Attributed {
+                attributes,
+                statement,
+            },
+        )
+    }
+
+    fn parse_attribute_list(&mut self) -> Result<Vec<Attribute>> {
         self.expect("[")?;
         self.expect("[")?;
         let mut attributes = Vec::new();
@@ -1291,20 +1342,11 @@ impl<'a> Parser<'a> {
         }
         self.expect("]")?;
         self.expect("]")?;
-        if !matches!(
-            self.peek().kind,
-            TokenKind::Word("if" | "switch" | "while" | "do" | "for")
-        ) {
-            return Err(self.unexpected("a selection, switch or iteration statement"));
-        }
-        let statement = Box::new(self.parse_unguarded_statement()?);
-        self.node(
-            start,
-            StatementKind::Attributed {
-                attributes,
-                statement,
-            },
-        )
+        Ok(attributes)
+    }
+
+    fn at_attribute_list(&self) -> bool {
+        self.at("[") && self.at_nth(1, "[")
     }
 
     fn parse_compound_as_statement(&mut self) -> Result<Statement> {
@@ -1655,10 +1697,68 @@ impl<'a> Parser<'a> {
         };
         let expression = match operator {
             Some(operator) => self.parse_unary_operand(operator),
+            None if self.starts_cast() => self.parse_cast(),
             None => self.parse_postfix(),
         };
         self.leave();
         expression
+    }
+
+    fn starts_cast(&self) -> bool {
+        if !self.at("(") || !self.extensions.is_on(EXPLICIT_TYPECAST) {
+            return false;
+        }
+        match self.token_at(self.cursor.saturating_add(1)).kind {
+            TokenKind::Word(word) if self.is_type_name(word) => true,
+            TokenKind::Word(word) => self.casts_to_name(word),
+            _ => false,
+        }
+    }
+
+    fn casts_to_name(&self, word: &str) -> bool {
+        if is_reserved_word(word)
+            || self.token_at(self.cursor.saturating_add(2)).kind != TokenKind::Punctuator(")")
+        {
+            return false;
+        }
+        match self.token_at(self.cursor.saturating_add(3)).kind {
+            TokenKind::Word(next) => !is_reserved_word(next) || matches!(next, "true" | "false"),
+            TokenKind::Number { .. } => true,
+            _ => false,
+        }
+    }
+
+    fn parse_cast(&mut self) -> Result<Measured> {
+        let start = self.start();
+        self.expect("(")?;
+        let name = match self.peek().kind {
+            TokenKind::Word(word) if !self.is_type_name(word) => Some(word),
+            _ => None,
+        };
+        let (specifier, height) = match name {
+            Some(word) => {
+                let span = self.peek().span;
+                self.advance();
+                let specifier = TypeSpecifier {
+                    non_array: TypeSpecifierNonArray::TypeName(word.to_owned()),
+                    parameters: None,
+                    array: None,
+                };
+                (Spanned::new(span, specifier), 0)
+            }
+            None => self.parse_measured_type_specifier()?,
+        };
+        self.expect(")")?;
+        let operand = self.parse_unary()?;
+        let function = Spanned::new(
+            specifier.span,
+            FunctionIdentifier::Cast(Box::new(specifier.node)),
+        );
+        let kind = ExpressionKind::FunctionCall(Box::new(FunctionCall {
+            function,
+            arguments: alloc::vec![operand.expression],
+        }));
+        self.measured(start, kind, height.max(operand.height))
     }
 
     fn parse_unary_operand(&mut self, operator: UnaryOperator) -> Result<Measured> {

@@ -67,7 +67,7 @@ pub(super) fn swizzle_indices(name: &str) -> Vec<u32> {
     indices
 }
 
-fn pattern(indices: &[u32]) -> [SwizzleComponent; 4] {
+pub(super) fn pattern(indices: &[u32]) -> [SwizzleComponent; 4] {
     let mut pattern = [SwizzleComponent::X; 4];
     for (slot, index) in pattern.iter_mut().zip(indices) {
         *slot = match *index {
@@ -116,6 +116,15 @@ impl<'a> FunctionLowerer<'_, 'a> {
         match info.conversion {
             Some(ref target) if *target != info.ty => {
                 let converted = self.convert(value, &info.ty, target, at)?;
+                if self
+                    .lw
+                    .analysis
+                    .relaxed_precision
+                    .conversions
+                    .contains(&expression.id)
+                {
+                    self.mark_precision(converted, crate::Precision::RELAXED);
+                }
                 Ok((converted, target.clone()))
             }
             _ => Ok((value, info.ty.clone())),
@@ -160,6 +169,49 @@ impl<'a> FunctionLowerer<'_, 'a> {
         &mut self,
         expression: &AstExpression,
     ) -> Result<Option<Handle<Expression>>> {
+        self.stepped = None;
+        let value = self.unmarked_value(expression)?;
+        let analysis = self.lw.analysis;
+        let mut flags = crate::Precision::empty();
+        if analysis.no_contraction.contains(&expression.id) {
+            flags |= crate::Precision::NO_CONTRACTION;
+        }
+        let relaxed = analysis.relaxed_precision.results.contains(&expression.id);
+        if relaxed {
+            flags |= crate::Precision::RELAXED;
+        }
+        if flags.is_empty() {
+            return Ok(value);
+        }
+        let operation = match expression.kind {
+            ExpressionKind::Postfix { .. }
+            | ExpressionKind::Unary {
+                operator: AstUnary::Increment | AstUnary::Decrement,
+                ..
+            } => self.stepped.take(),
+            ExpressionKind::Assignment {
+                operator: AssignmentOperator::Assign,
+                ..
+            }
+            | ExpressionKind::Conditional { .. }
+            | ExpressionKind::Sequence(_)
+            | ExpressionKind::Parenthesized(_) => None,
+            _ => value,
+        };
+        if let Some(operation) = operation {
+            self.mark_precision(operation, flags);
+            if relaxed {
+                if let Expression::Swizzle { vector, .. } = self.expressions[operation] {
+                    if matches!(self.expressions[vector], Expression::Load { .. }) {
+                        self.mark_precision(vector, crate::Precision::RELAXED);
+                    }
+                }
+            }
+        }
+        Ok(value)
+    }
+
+    fn unmarked_value(&mut self, expression: &AstExpression) -> Result<Option<Handle<Expression>>> {
         let at = self.at(expression.span);
         let info = self.info(expression)?;
         if info.is_specialization {
@@ -783,6 +835,23 @@ impl<'a> FunctionLowerer<'_, 'a> {
                         let index = index
                             .and_then(|index| u32::try_from(index).ok())
                             .ok_or_else(|| internal(at))?;
+                        let nested_boolean = match base_ty.kind {
+                            TypeKind::Struct(id) => analysis
+                                .types
+                                .structure(id)
+                                .and_then(|s| s.members.get(usize::try_from(index).ok()?))
+                                .is_some_and(|member| {
+                                    matches!(
+                                        member.ty.kind,
+                                        TypeKind::Scalar(rglsl_sema::types::Scalar::Bool)
+                                            | TypeKind::Vector {
+                                                scalar: rglsl_sema::types::Scalar::Bool,
+                                                ..
+                                            }
+                                    )
+                                }),
+                            _ => false,
+                        };
                         let boolean = block
                             .is_some_and(|block| self.lw.block_bools.contains(&(block, index)));
                         let chain = self.chain(base)?;
@@ -801,6 +870,8 @@ impl<'a> FunctionLowerer<'_, 'a> {
                                     at,
                                 )?;
                                 self.inherit_access(pointer, base_pointer, false);
+                                let boolean = boolean
+                                    || (nested_boolean && self.buffer_pointee(pointer).is_some());
                                 Ok(Chain::Place(place.child(pointer, boolean)))
                             }
                             Chain::Value(value) => Ok(Chain::Value(
@@ -994,6 +1065,19 @@ impl<'a> FunctionLowerer<'_, 'a> {
                     },
                 ) if from_size == to_size => {
                     (0..from_size.get()).map(|_| (from_base, to_base)).collect()
+                }
+                (
+                    &(crate::TypeInner::Scalar(from_scalar)
+                    | crate::TypeInner::Vector {
+                        scalar: from_scalar,
+                        ..
+                    }),
+                    &(crate::TypeInner::Scalar(to_scalar)
+                    | crate::TypeInner::Vector {
+                        scalar: to_scalar, ..
+                    }),
+                ) if from_scalar != to_scalar => {
+                    return self.as_kind(value, to_scalar, at);
                 }
                 _ => return Err(internal(at)),
             };
@@ -1276,6 +1360,18 @@ impl<'a> FunctionLowerer<'_, 'a> {
         }
     }
 
+    fn relax_load(&mut self, place: &AstExpression, load: Handle<Expression>) {
+        if self
+            .lw
+            .analysis
+            .relaxed_precision
+            .results
+            .contains(&super::prepass::strip(place).id)
+        {
+            self.mark_precision(load, crate::Precision::RELAXED);
+        }
+    }
+
     fn increment(
         &mut self,
         operand: &AstExpression,
@@ -1286,6 +1382,7 @@ impl<'a> FunctionLowerer<'_, 'a> {
         let ty = self.info(operand)?.ty.clone();
         let place = self.place(operand)?;
         let old = self.load(&place, at)?;
+        self.relax_load(operand, old);
         let base = ty.base_scalar().ok_or_else(|| internal(at))?;
         let one = Literal::one(scalar(base)).ok_or_else(|| internal(at))?;
         let one = self.filled(&ty, one, at)?;
@@ -1305,6 +1402,7 @@ impl<'a> FunctionLowerer<'_, 'a> {
         if place.non_uniform {
             self.mark_operation(new);
         }
+        self.stepped = Some(new);
         self.store(&place, new, at)?;
         Ok(if postfix { old } else { new })
     }
@@ -1434,6 +1532,7 @@ impl<'a> FunctionLowerer<'_, 'a> {
                     condition,
                     accept,
                     reject,
+                    control: crate::SelectionControl::None,
                 },
                 at,
             );
@@ -1471,6 +1570,7 @@ impl<'a> FunctionLowerer<'_, 'a> {
                 condition,
                 accept,
                 reject,
+                control: crate::SelectionControl::None,
             },
             at,
         );
@@ -1501,6 +1601,7 @@ impl<'a> FunctionLowerer<'_, 'a> {
             }
             Some(operator) => {
                 let old = self.load(&place, at)?;
+                self.relax_load(target, old);
                 let value_info = self.info(value)?;
                 let value_non_uniform = value_info.non_uniform
                     && value_info
@@ -1553,6 +1654,7 @@ impl<'a> FunctionLowerer<'_, 'a> {
                     condition: left,
                     accept,
                     reject,
+                    control: crate::SelectionControl::None,
                 },
                 at,
             );

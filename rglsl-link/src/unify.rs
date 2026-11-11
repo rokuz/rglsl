@@ -125,7 +125,8 @@ pub(crate) fn unify(
                     && member_a.offset == member_b.offset
                     && member_a.matrix_layout == member_b.matrix_layout
                     && member_a.xfb_offset == member_b.xfb_offset
-                    && member_a.heap == member_b.heap;
+                    && member_a.heap == member_b.heap
+                    && member_a.memory_decorations == member_b.memory_decorations;
                 if !same_declaration {
                     return Err(Mismatch::Types);
                 }

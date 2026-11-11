@@ -59,6 +59,7 @@ impl From<super::StorageFormat> for super::Scalar {
             Sf::Rgb10a2Unorm => Sk::Float,
             Sf::Rg11b10Ufloat => Sk::Float,
             Sf::R64Uint => Sk::Uint,
+            Sf::R64Sint => Sk::Sint,
             Sf::Rg32Uint => Sk::Uint,
             Sf::Rg32Sint => Sk::Sint,
             Sf::Rg32Float => Sk::Float,
@@ -77,7 +78,7 @@ impl From<super::StorageFormat> for super::Scalar {
             Sf::Unknown(scalar) => scalar.kind,
         };
         let width = match format {
-            Sf::R64Uint => 8,
+            Sf::R64Uint | Sf::R64Sint => 8,
             Sf::Unknown(scalar) => scalar.width,
             _ => 4,
         };
@@ -103,6 +104,7 @@ pub enum HashableLiteral {
     AbstractFloat(u64),
     BF16(u16),
     BF8(u8, bool),
+    Microscaling(u8, crate::ScalarKind),
 }
 
 impl From<crate::Literal> for HashableLiteral {
@@ -125,11 +127,62 @@ impl From<crate::Literal> for HashableLiteral {
             crate::Literal::BF16(v) => Self::BF16(v),
             crate::Literal::FE4M3(v) => Self::BF8(v, false),
             crate::Literal::FE5M2(v) => Self::BF8(v, true),
+            crate::Literal::FE2M1(v) => Self::Microscaling(v, crate::ScalarKind::FloatE2M1),
+            crate::Literal::FE3M2(v) => Self::Microscaling(v, crate::ScalarKind::FloatE3M2),
+            crate::Literal::FE2M3(v) => Self::Microscaling(v, crate::ScalarKind::FloatE2M3),
+            crate::Literal::FUE8M0(v) => Self::Microscaling(v, crate::ScalarKind::FloatUE8M0),
+            crate::Literal::FMXINT8(v) => Self::Microscaling(v, crate::ScalarKind::FloatMXINT8),
         }
     }
 }
 
 impl crate::Literal {
+    pub fn encoded_float_value(self) -> Option<f64> {
+        Some(match self {
+            Self::BF16(bits) => small_float::bf16_to_f64(bits),
+            Self::FE4M3(bits) => small_float::fe4m3_to_f64(bits),
+            Self::FE5M2(bits) => small_float::fe5m2_to_f64(bits),
+            Self::FE2M1(bits) => small_float::fe2m1_to_f64(bits),
+            Self::FE3M2(bits) => small_float::fe3m2_to_f64(bits),
+            Self::FE2M3(bits) => small_float::fe2m3_to_f64(bits),
+            Self::FUE8M0(bits) => small_float::fue8m0_to_f64(bits),
+            Self::FMXINT8(bits) => small_float::fmxint8_to_f64(bits),
+            Self::F64(_)
+            | Self::F32(_)
+            | Self::F16(_)
+            | Self::U8(_)
+            | Self::I8(_)
+            | Self::U16(_)
+            | Self::I16(_)
+            | Self::U32(_)
+            | Self::I32(_)
+            | Self::U64(_)
+            | Self::I64(_)
+            | Self::Bool(_)
+            | Self::AbstractInt(_)
+            | Self::AbstractFloat(_) => return None,
+        })
+    }
+
+    pub fn encoded_float(scalar: crate::Scalar, value: f64) -> Option<Self> {
+        Some(match scalar.kind {
+            crate::ScalarKind::BFloat => Self::BF16(small_float::bf16_from_f64(value)),
+            crate::ScalarKind::FloatE4M3 => Self::FE4M3(small_float::fe4m3_from_f64(value)),
+            crate::ScalarKind::FloatE5M2 => Self::FE5M2(small_float::fe5m2_from_f64(value)),
+            crate::ScalarKind::FloatE2M1 => Self::FE2M1(small_float::fe2m1_from_f64(value)),
+            crate::ScalarKind::FloatE3M2 => Self::FE3M2(small_float::fe3m2_from_f64(value)),
+            crate::ScalarKind::FloatE2M3 => Self::FE2M3(small_float::fe2m3_from_f64(value)),
+            crate::ScalarKind::FloatUE8M0 => Self::FUE8M0(small_float::fue8m0_from_f64(value)),
+            crate::ScalarKind::FloatMXINT8 => Self::FMXINT8(small_float::fmxint8_from_f64(value)),
+            crate::ScalarKind::Sint
+            | crate::ScalarKind::Uint
+            | crate::ScalarKind::Float
+            | crate::ScalarKind::Bool
+            | crate::ScalarKind::AbstractInt
+            | crate::ScalarKind::AbstractFloat => return None,
+        })
+    }
+
     pub const fn new(value: u8, scalar: crate::Scalar) -> Option<Self> {
         match (value, scalar.kind, scalar.width) {
             (value, crate::ScalarKind::Float, 8) => Some(Self::F64(value as _)),
@@ -180,7 +233,15 @@ impl crate::Literal {
             Self::F64(_) | Self::I64(_) | Self::U64(_) => 8,
             Self::F32(_) | Self::U32(_) | Self::I32(_) => 4,
             Self::F16(_) | Self::U16(_) | Self::I16(_) => 2,
-            Self::U8(_) | Self::I8(_) | Self::FE4M3(_) | Self::FE5M2(_) => 1,
+            Self::U8(_)
+            | Self::I8(_)
+            | Self::FE4M3(_)
+            | Self::FE5M2(_)
+            | Self::FE2M1(_)
+            | Self::FE3M2(_)
+            | Self::FE2M3(_)
+            | Self::FUE8M0(_)
+            | Self::FMXINT8(_) => 1,
             Self::BF16(_) => 2,
             Self::Bool(_) => crate::BOOL_WIDTH,
             Self::AbstractInt(_) | Self::AbstractFloat(_) => crate::ABSTRACT_WIDTH,
@@ -205,6 +266,11 @@ impl crate::Literal {
             Self::BF16(_) => crate::Scalar::BF16,
             Self::FE4M3(_) => crate::Scalar::FE4M3,
             Self::FE5M2(_) => crate::Scalar::FE5M2,
+            Self::FE2M1(_) => crate::Scalar::FE2M1,
+            Self::FE3M2(_) => crate::Scalar::FE3M2,
+            Self::FE2M3(_) => crate::Scalar::FE2M3,
+            Self::FUE8M0(_) => crate::Scalar::FUE8M0,
+            Self::FMXINT8(_) => crate::Scalar::FMXINT8,
         }
     }
     pub const fn scalar_kind(&self) -> crate::ScalarKind {
@@ -494,9 +560,26 @@ impl super::ImageClass {
         self.is_mipmapped()
             && !matches!(
                 dim,
-                crate::ImageDimension::Buffer | crate::ImageDimension::Subpass
+                crate::ImageDimension::Buffer
+                    | crate::ImageDimension::Subpass
+                    | crate::ImageDimension::TileImageData
             )
     }
+}
+
+pub fn is_tile_image(module: &crate::Module, global: &crate::GlobalVariable) -> bool {
+    let ty = match module.types[global.ty].inner {
+        crate::TypeInner::Array { base, .. } => base,
+        _ => global.ty,
+    };
+    global.space == crate::AddressSpace::Handle
+        && matches!(
+            module.types[ty].inner,
+            crate::TypeInner::Image {
+                dim: crate::ImageDimension::TileImageData,
+                ..
+            }
+        )
 }
 
 impl crate::Module {
@@ -1595,6 +1678,8 @@ pub fn long_math_result(
         matrix_layout: None,
         xfb_offset: None,
         heap: None,
+        memory_decorations: crate::MemoryDecorations::empty(),
+        relaxed_precision: false,
     };
     Some(crate::Type {
         name: None,

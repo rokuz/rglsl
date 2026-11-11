@@ -110,7 +110,6 @@ pub struct SpirvOutParameters {
     #[serde(deserialize_with = "deserialize_binding_map")]
     pub binding_map: rglsl::back::spv::BindingMap,
     pub use_storage_input_output_16: bool,
-    pub emit_int_div_checks: bool,
 }
 impl Default for SpirvOutParameters {
     fn default() -> Self {
@@ -123,7 +122,6 @@ impl Default for SpirvOutParameters {
             clamp_frag_depth: false,
             separate_entry_points: false,
             use_storage_input_output_16: true,
-            emit_int_div_checks: true,
             binding_map: rglsl::back::spv::BindingMap::default(),
         }
     }
@@ -154,13 +152,10 @@ impl SpirvOutParameters {
             bounds_check_policies: shared_info.bounds_checks_policies,
             fake_missing_bindings: true,
             binding_map: self.binding_map.clone(),
-            zero_initialize_workgroup_memory: spv::ZeroInitializeWorkgroupMemoryMode::Polyfill,
-            force_loop_bounding: true,
             debug_info,
             use_storage_input_output_16: self.use_storage_input_output_16,
             task_dispatch_limits: shared_info.task_limits,
             mesh_shader_primitive_indices_clamp: shared_info.mesh_output_validation,
-            emit_int_div_checks: self.emit_int_div_checks,
         }
     }
 }

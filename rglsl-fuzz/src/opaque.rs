@@ -166,7 +166,7 @@ pub fn side_effect_free(expression: &Expression, builtins: &Builtins) -> bool {
         }
         ExpressionKind::FunctionCall(call) => {
             let callee_pure = match &call.function.node {
-                FunctionIdentifier::Constructor(_) => true,
+                FunctionIdentifier::Constructor(_) | FunctionIdentifier::Cast(_) => true,
                 FunctionIdentifier::Function(name) => {
                     is_macro(name) || {
                         let overloads = builtins.overloads(name);

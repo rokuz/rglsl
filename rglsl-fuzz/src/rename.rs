@@ -36,7 +36,9 @@ pub fn rename_all(unit: &mut TranslationUnit, renamer: &dyn Renamer) {
                     *name = new;
                 }
             }
-            FunctionIdentifier::Constructor(specifier) => specifier_names(specifier, renamer),
+            FunctionIdentifier::Constructor(specifier) | FunctionIdentifier::Cast(specifier) => {
+                specifier_names(specifier, renamer);
+            }
             FunctionIdentifier::Expression(_) | FunctionIdentifier::Method { .. } => {}
         },
         _ => {}

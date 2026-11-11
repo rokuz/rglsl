@@ -185,6 +185,8 @@ pub fn apply(input: &PassInput<'_>, random: &mut Random) -> Option<TranslationUn
                     ),
                     name: Spanned::new(Span::new(0, 0), name),
                     parameters,
+                    attributes: Vec::new(),
+                    trailing_attributes: Vec::new(),
                 },
             ),
             body: Spanned::new(

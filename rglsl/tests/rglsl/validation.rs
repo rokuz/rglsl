@@ -117,6 +117,7 @@ fn populate_atomic_result() {
                 heap_offset: None,
                 tile_attachment: false,
                 spirv_decorations: Vec::new(),
+                relaxed_precision: false,
                 immediate_bank: None,
             },
             span,
@@ -211,6 +212,7 @@ fn populate_call_result() {
             result: Some(rglsl::FunctionResult {
                 ty: ty_u32,
                 binding: None,
+                relaxed_precision: false,
             }),
             ..Function::default()
         };
@@ -298,6 +300,7 @@ fn emit_workgroup_uniform_load_result() {
                 heap_offset: None,
                 tile_attachment: false,
                 spirv_decorations: Vec::new(),
+                relaxed_precision: false,
                 immediate_bank: None,
             },
             span,
@@ -381,6 +384,7 @@ fn builtin_cross_product_args() {
             result: Some(rglsl::ir::FunctionResult {
                 ty: ty_vec3f,
                 binding: None,
+                relaxed_precision: false,
             }),
             ..Function::default()
         };
@@ -471,6 +475,8 @@ impl BindingArrayFixture {
                         matrix_layout: None,
                         xfb_offset: None,
                         heap: None,
+                        memory_decorations: rglsl::MemoryDecorations::empty(),
+                        relaxed_precision: false,
                     }],
                     span: 4,
                 },
@@ -611,6 +617,7 @@ fn make_zero_value_local_variable(fun: &mut Function, ty: rglsl::Handle<ir::Type
             name: Some("x".into()),
             ty,
             init: Some(ex_zero),
+            relaxed_precision: false,
         },
         span,
     );
@@ -645,6 +652,7 @@ fn local_var_override_sized_array() {
             heap_offset: None,
             tile_attachment: false,
             spirv_decorations: Vec::new(),
+            relaxed_precision: false,
             immediate_bank: None,
         },
         span,
@@ -667,6 +675,7 @@ fn local_var_override_sized_array() {
             name: Some("x".into()),
             ty: ty_array,
             init: Some(ex_load),
+            relaxed_precision: false,
         },
         span,
     );
@@ -858,6 +867,7 @@ fn invalid_constructor_runtime_array() {
             name: Some("x".into()),
             ty: ty_array,
             init: Some(ex_compose),
+            relaxed_precision: false,
         },
         span,
     );
@@ -910,6 +920,8 @@ fn invalid_constructor_unsized_struct() {
                     matrix_layout: None,
                     xfb_offset: None,
                     heap: None,
+                    memory_decorations: rglsl::MemoryDecorations::empty(),
+                    relaxed_precision: false,
                 }],
                 span: 4,
             },
@@ -965,6 +977,7 @@ fn arity_check() {
             result: Some(ir::FunctionResult {
                 ty: ty_f32,
                 binding: None,
+                relaxed_precision: false,
             }),
             ..ir::Function::default()
         };
@@ -1028,6 +1041,7 @@ fn unexpected_task_payload() {
             heap_offset: None,
             tile_attachment: false,
             spirv_decorations: Vec::new(),
+            relaxed_precision: false,
             immediate_bank: None,
         },
         err_span,
@@ -1039,6 +1053,7 @@ fn unexpected_task_payload() {
         early_depth_test: None,
         workgroup_size: [1, 1, 1],
         workgroup_size_overrides: None,
+        workgroup_size_builtin: false,
         function: ir::Function::default(),
         mesh_info: None,
         task_payload: Some(payload_handle), // invalid for compute stage
@@ -1047,12 +1062,14 @@ fn unexpected_task_payload() {
         transform_feedback: false,
         opacity_micromap: None,
         quad_control: rglsl::QuadControl::default(),
+        fragment_modes: rglsl::FragmentModes::default(),
         geometry: None,
         tessellation: None,
         mesh_shader: None,
         tile_shading: rglsl::TileShading::default(),
         derivative_group: None,
         spirv_execution_modes: Vec::new(),
+        reconvergence: rglsl::Reconvergence::default(),
     };
     module.entry_points.push(entry_point);
 

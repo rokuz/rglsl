@@ -456,7 +456,7 @@ fn post_process(
         let interface = storage.is_some_and(|storage| {
             storage == class(StorageClass::Input) || storage == class(StorageClass::Output)
         });
-        if int == Some(8) && !buffer {
+        if (int == Some(8) || float == Some(8)) && !buffer {
             found.push(Capability::Int8);
         }
         if !buffer && !interface {

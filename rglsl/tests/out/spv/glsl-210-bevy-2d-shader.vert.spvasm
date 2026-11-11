@@ -1,7 +1,7 @@
 ; SPIR-V
 ; Version: 1.1
 ; Generator: rspirv
-; Bound: 62
+; Bound: 61
 OpCapability Shader
 %1 = OpExtInstImport "GLSL.std.450"
 OpMemoryModel Logical GLSL450
@@ -62,38 +62,37 @@ OpMemberDecorate %14 3 BuiltIn CullDistance
 %32 = OpTypeFunction %2
 %33 = OpConstant  %4  1
 %35 = OpTypePointer Function %3
-%36 = OpConstantNull  %3
-%40 = OpTypePointer Uniform %5
-%41 = OpConstant  %13  0
-%48 = OpTypePointer Output %7
-%49 = OpTypePointer Uniform %6
+%39 = OpTypePointer Uniform %5
+%40 = OpConstant  %13  0
+%47 = OpTypePointer Output %7
+%48 = OpTypePointer Uniform %6
 %31 = OpFunction  %2  None %32
 %30 = OpLabel
-%34 = OpVariable  %35  Function %36
-OpBranch %37
-%37 = OpLabel
-%38 = OpLoad  %5  %18
-OpStore %20 %38
-%39 = OpLoad  %3  %15
-%42 = OpAccessChain  %40  %26 %41
-%43 = OpLoad  %5  %42
-%44 = OpCompositeExtract  %4  %43 0
-%45 = OpCompositeExtract  %4  %43 1
-%46 = OpCompositeConstruct  %3  %44 %45 %33
-%47 = OpFMul  %3  %39 %46
-OpStore %34 %47
-%50 = OpAccessChain  %49  %22 %41
-%51 = OpLoad  %6  %50
-%52 = OpAccessChain  %49  %24 %41
-%53 = OpLoad  %6  %52
-%54 = OpMatrixTimesMatrix  %6  %51 %53
-%55 = OpLoad  %3  %34
-%56 = OpCompositeExtract  %4  %55 0
-%57 = OpCompositeExtract  %4  %55 1
-%58 = OpCompositeExtract  %4  %55 2
-%59 = OpCompositeConstruct  %7  %56 %57 %58 %33
-%60 = OpMatrixTimesVector  %7  %54 %59
-%61 = OpAccessChain  %48  %28 %41
-OpStore %61 %60
+%34 = OpVariable  %35  Function
+OpBranch %36
+%36 = OpLabel
+%37 = OpLoad  %5  %18
+OpStore %20 %37
+%38 = OpLoad  %3  %15
+%41 = OpAccessChain  %39  %26 %40
+%42 = OpLoad  %5  %41
+%43 = OpCompositeExtract  %4  %42 0
+%44 = OpCompositeExtract  %4  %42 1
+%45 = OpCompositeConstruct  %3  %43 %44 %33
+%46 = OpFMul  %3  %38 %45
+OpStore %34 %46
+%49 = OpAccessChain  %48  %22 %40
+%50 = OpLoad  %6  %49
+%51 = OpAccessChain  %48  %24 %40
+%52 = OpLoad  %6  %51
+%53 = OpMatrixTimesMatrix  %6  %50 %52
+%54 = OpLoad  %3  %34
+%55 = OpCompositeExtract  %4  %54 0
+%56 = OpCompositeExtract  %4  %54 1
+%57 = OpCompositeExtract  %4  %54 2
+%58 = OpCompositeConstruct  %7  %55 %56 %57 %33
+%59 = OpMatrixTimesVector  %7  %53 %58
+%60 = OpAccessChain  %47  %28 %40
+OpStore %60 %59
 OpReturn
 OpFunctionEnd

@@ -1420,7 +1420,9 @@ impl BlockContext<'_> {
                     Id::D1 | Id::Buffer => 1,
                     Id::D2 | Id::Cube => 2,
                     Id::D3 => 3,
-                    Id::Subpass => return Err(Error::Validation("subpass input query")),
+                    Id::Subpass | Id::TileImageData => {
+                        return Err(Error::Validation("subpass input query"))
+                    }
                 };
                 let array_coords = usize::from(arrayed);
                 let vector_size = match dim_coords + array_coords {
@@ -1512,7 +1514,9 @@ impl BlockContext<'_> {
                     Id::D1 | Id::Buffer => crate::VectorSize::Bi,
                     Id::D2 | Id::Cube => crate::VectorSize::Tri,
                     Id::D3 => crate::VectorSize::Quad,
-                    Id::Subpass => return Err(Error::Validation("subpass input query")),
+                    Id::Subpass | Id::TileImageData => {
+                        return Err(Error::Validation("subpass input query"))
+                    }
                 };
                 let extended_size_type_id = self.get_numeric_type_id(NumericType::Vector {
                     size: vec_size,
@@ -1675,6 +1679,104 @@ impl BlockContext<'_> {
         );
 
         Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn write_image_footprint(
+        &mut self,
+        result_type_id: Word,
+        image: Handle<crate::Expression>,
+        coordinate: Handle<crate::Expression>,
+        granularity: Handle<crate::Expression>,
+        coarse: Handle<crate::Expression>,
+        level: crate::SampleLevel,
+        min_lod: Option<Handle<crate::Expression>>,
+        block: &mut Block,
+    ) -> Result<Word, Error> {
+        self.writer.use_extension("SPV_NV_shader_image_footprint");
+        self.writer
+            .require_any("texture footprints", &[spirv::Capability::ImageFootprintNV])?;
+        let image_id = self.get_handle_id(image)?;
+        let id = self.gen_id();
+        let mut instruction = Instruction::new(spirv::Op::ImageSampleFootprintNV);
+        instruction.set_type(result_type_id);
+        instruction.set_result(id);
+        instruction.add_operand(image_id);
+        instruction.add_operand(self.cached.get(coordinate)?);
+        instruction.add_operand(self.cached.get(granularity)?);
+        instruction.add_operand(self.cached.get(coarse)?);
+        let mut mask = spirv::ImageOperands::empty();
+        let mut operands = alloc::vec::Vec::new();
+        match level {
+            crate::SampleLevel::Auto | crate::SampleLevel::Zero => {}
+            crate::SampleLevel::Bias(bias) => {
+                mask |= spirv::ImageOperands::BIAS;
+                operands.push(self.cached.get(bias)?);
+            }
+            crate::SampleLevel::Exact(lod) => {
+                mask |= spirv::ImageOperands::LOD;
+                operands.push(self.cached.get(lod)?);
+            }
+            crate::SampleLevel::Gradient { x, y } => {
+                mask |= spirv::ImageOperands::GRAD;
+                operands.push(self.cached.get(x)?);
+                operands.push(self.cached.get(y)?);
+            }
+        }
+        if let Some(min_lod) = min_lod {
+            self.writer
+                .require_any("minimum level of detail", &[spirv::Capability::MinLod])?;
+            mask |= spirv::ImageOperands::MIN_LOD;
+            operands.push(self.cached.get(min_lod)?);
+        }
+        if !mask.is_empty() {
+            instruction.add_operand(mask.bits());
+            for operand in operands {
+                instruction.add_operand(operand);
+            }
+        }
+        block.body.push(instruction);
+        Ok(id)
+    }
+
+    pub(super) fn write_attachment_read(
+        &mut self,
+        aspect: crate::AttachmentAspect,
+        sample: Option<Handle<crate::Expression>>,
+        result_type_id: Word,
+        block: &mut Block,
+    ) -> Result<Word, Error> {
+        let (op, capability, image) = match aspect {
+            crate::AttachmentAspect::Color(image) => (
+                spirv::Op::ColorAttachmentReadEXT,
+                spirv::Capability::TileImageColorReadAccessEXT,
+                Some(image),
+            ),
+            crate::AttachmentAspect::Depth => (
+                spirv::Op::DepthAttachmentReadEXT,
+                spirv::Capability::TileImageDepthReadAccessEXT,
+                None,
+            ),
+            crate::AttachmentAspect::Stencil => (
+                spirv::Op::StencilAttachmentReadEXT,
+                spirv::Capability::TileImageStencilReadAccessEXT,
+                None,
+            ),
+        };
+        self.writer.use_extension("SPV_EXT_shader_tile_image");
+        self.writer.require_any("tile image reads", &[capability])?;
+        let id = self.gen_id();
+        let mut instruction = Instruction::new(op);
+        instruction.set_type(result_type_id);
+        instruction.set_result(id);
+        if let Some(image) = image {
+            instruction.add_operand(self.get_handle_id(image)?);
+        }
+        if let Some(sample) = sample {
+            instruction.add_operand(self.cached.get(sample)?);
+        }
+        block.body.push(instruction);
+        Ok(id)
     }
 
     pub(super) fn write_image_atomic(

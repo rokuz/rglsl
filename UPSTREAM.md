@@ -59,6 +59,35 @@ changelog was dropped; see upstream for the history before the fork.
   with the WGSL frontend before it was removed, so the SPIR-V backend keeps that coverage.
   The 24 snapshots that embedded the WGSL source as debug information lost it.
 
+- **WGSL semantics in the SPIR-V backend.** Code that made the output behave as WGSL
+  requires and that glslang does not emit, since GLSL leaves those cases undefined or does
+  not define them that way:
+  - the `FClamp` of a float to the range of the integer type before `OpConvertFToS` and
+    `OpConvertFToU` (GLSL leaves an out-of-range conversion undefined; glslang converts
+    directly);
+  - the integer division and remainder wrappers (`rglsl_div`, `rglsl_mod`) that replaced a
+    zero divisor and `INT_MIN / -1`, with the `Options::emit_int_div_checks` option, and the
+    `a - b * (a / b)` lowering of signed `%`: signed `%` is `OpSMod`, unsigned `OpUMod`, and
+    division is `OpSDiv`/`OpUDiv`, as glslang writes them (GLSL leaves a zero divisor and
+    negative operands of `%` undefined);
+  - integer `clamp` written as `min(max(x, low), high)`: it is `SClamp`/`UClamp`, as glslang
+    writes it (GLSL leaves `low > high` undefined; constant folding still follows glslang's
+    folding);
+  - loop bounding (`Options::force_loop_bounding`, the `loop_bound` counter in every loop);
+  - zero initialisation of workgroup memory (`Options::zero_initialize_workgroup_memory`,
+    `ZeroInitializeWorkgroupMemoryMode`, the `LocalInvocationIndex == 0` store-and-barrier
+    polyfill and the `OpConstantNull` initializer of the native mode);
+  - the `OpConstantNull` initializer of `Private` globals and function variables without an
+    initializer: a variable is initialised only when the IR gives it an `init`, as glslang
+    initialises only declarations with an initializer (or `GL_EXT_null_initializer`'s `{}`);
+  - the splat of a scalar `Select` condition to a vector from SPIR-V 1.4 on, where `OpSelect`
+    takes the scalar condition, as glslang writes it (before 1.4 the condition is still
+    splatted, as in glslang).
+
+  Bounds checks were already off by default (`BoundsCheckPolicy::Unchecked`), and the
+  coordinate-space flip, frag-depth clamp, mesh output clamp and task dispatch limits only
+  apply to entry points with WGSL-style arguments and results, which the GLSL front end does
+  not produce.
 - **The GLSL frontend's parser and one-pass lowering** (`front/glsl/{lex,token,ast,parser,
   parser/*,parser_tests,context,functions,builtins,types,variables}.rs`), the
   `ShaderMetadata`, `Profile`, `Precision`, `TokenValue` and `ExpectedToken` types,
@@ -66,8 +95,9 @@ changelog was dropped; see upstream for the history before the fork.
   dependency. The frontend is now `rglsl-pp` → `rglsl-ast` → `rglsl-sema` →
   `front/glsl/lower` (`docs/design/lowering.md`). Kept from upstream: `Options` (with
   `Options::from(stage)`), `Frontend::parse`, `Error`, `ErrorKind` (`Unsupported`, `Syntax`,
-  `SemanticError`, `InternalError`), `ParseErrors` with its emitters, and the block layout
-  computation of `offset.rs` (now `front/glsl/lower/offset.rs`).
+  `SemanticError`, `InternalError`), `ParseErrors` with its emitters. The block layout
+  computation of upstream's `offset.rs` was kept at first and later replaced by
+  `rglsl-sema`'s (`rglsl-sema/src/layout.rs`), which lowering applies to the IR types.
 - Upstream's GLSL snapshot inputs without a `#version`, or with `#version 440`, now declare
   `#version 450`; `declarations.frag` (a fragment output block, which GLSL rejects) was
   deleted.
@@ -111,9 +141,6 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   other storage classes (`back/spv/plain_types.rs`) point to an undecorated twin of such a
   type, or of any struct or array containing one; loads and stores through them convert
   between the twins with `OpCopyLogical` from SPIR-V 1.4 and member by member before.
-- **The workgroup zero-initialisation polyfill reuses a declared `LocalInvocationIndex`**
-  input global instead of declaring a second one, which Vulkan forbids
-  (VUID-StandaloneSpirv-OpEntryPoint-09658).
 - **`MathFunction::Outer` typing.** `outer(c, r)` has one row per component of `c` and one
   column per component of `r`, as in GLSL and SPIR-V; upstream had them swapped
   (`proc/overloads/mathfunction.rs`).
@@ -219,7 +246,13 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   (integer and boolean arithmetic, comparisons, `Select`, conversions, `CompositeExtract`,
   `VectorShuffle`; floating-point arithmetic is an error); `ArraySize::Pending` is an
   `OpTypeArray` with the spec constant as length; `EntryPoint::workgroup_size_overrides` is
-  `LocalSizeId` on SPIR-V 1.6 and a `WorkgroupSize` spec-constant composite before. An
+  `LocalSizeId` on SPIR-V 1.6 and a `WorkgroupSize` spec-constant composite before.
+  `EntryPoint::workgroup_size_builtin` (new, not serialized when false) says that the source
+  declared a workgroup size (`local_size_*` or `local_size_*_id`); with fixed sizes the backend
+  then writes an `OpConstantComposite` of the size decorated `BuiltIn WorkgroupSize` before
+  SPIR-V 1.6, as glslang does for the `gl_WorkGroupSize` linker object it keeps whenever a
+  size is declared, in compute, mesh and task shaders (rglsl-link sets it when any linked unit
+  declares a size). An
   `Expression::Override` in a function is the spec constant's id, and a `Compose` or `Splat`
   of overrides and constants in a function is an `OpSpecConstantComposite`, so it can be a
   `ConstOffset`. Before SPIR-V 1.4 an unsigned integer conversion is `SConvert`, masked with
@@ -279,10 +312,20 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   decorates a `volatile` variable both `Volatile` and `Coherent`); under the model they give
   loads and stores their availability operands and scope, and storage image reads and writes
   `MakeTexelVisible`/`MakeTexelAvailable`, `NonPrivateTexel` and `VolatileTexel`.
+- **Memory qualifiers of struct members.** `StructMember::memory_decorations` (new, not
+  serialized when empty) holds the memory qualifiers of a member of a buffer block (its own and
+  its block's), and `MemoryDecorations::RESTRICT` (new) is `restrict`. The SPIR-V backend
+  decorates each member of a laid-out struct with `Volatile`/`Coherent` (without the Vulkan
+  memory model), `Restrict`, `NonWritable` and `NonReadable`, as glslang's
+  `TranslateMemoryDecoration` does for the members of storage blocks, and decorates a global
+  with `RESTRICT` `Restrict`. Loads, stores and atomics through a member add the member's
+  qualifiers to those of the variable when choosing the memory operands, scope and `Volatile`
+  semantics (`back/spv/physical.rs`, `root_qualifiers`). A buffer variable's own
+  `memory_decorations` are those of its declaration only (they used to merge the members').
 - **Override ids may repeat.** The validator no longer rejects two overrides with the same id
   (`OverrideError::DuplicateID` is gone): glslang gives `local_size_*_id` and `constant_id`
   constants with the same id separate spec constants with one `SpecId`.
-- **Scalar block layout** (`std140`/`std430`/`scalar` packing in `front/glsl/lower/offset.rs`)
+- **Scalar block layout** (`std140`/`std430`/`scalar` packing, computed by `rglsl-sema/src/layout.rs`)
   and array strides smaller than the natural size of a matrix element (the matrix layout of
   the member decides the size).
 - **Debug printf and abort** (`GL_EXT_debug_printf`, `GL_EXT_abort`;
@@ -319,6 +362,9 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   atomics (`back/spv/heap.rs`). `Module::descriptor_heap` (new, serialized only when set)
   records that the source requested `GL_EXT_descriptor_heap`: `NonUniform` decorations are then
   replaced by the `DescriptorHeapEXT` capability, as glslang does.
+  The SPIR-V backend writes the types of a heap view only when a function uses the view
+  (`back/spv/heap.rs`, `unused_heap_types`): naga writes every type of the arena, which
+  declared `OpTypeTensorARM` and its capability for unused tensor views.
 - **Immediate slots of override-sized arrays.** `ImmediateSlots::from_type` no longer panics on
   an array sized by a specialization constant in push constants (it built a context without
   overrides); such an array covers the rest of the push-constant range, and
@@ -526,6 +572,10 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   rate replaces `LocalSize` with `TileShadingRateQCOM`. `Statement::Loop::control: LoopControl`
   (new, not serialized when default) carries the loop attributes of
   `GL_EXT_control_flow_attributes(2)` and `GL_QCOM_multiple_wait_queues` to `OpLoopMerge`.
+  `Statement::If::control` and `Statement::Switch::control: SelectionControl` (new, `None`,
+  `Flatten` or `DontFlatten`, not serialized when `None`) carry `[[flatten]]`, `[[branch]]` and
+  `[[dont_flatten]]` to `OpSelectionMerge`; an `If` with empty branches is written when it has a
+  control.
   The SPIR-V backend keeps the QCOM opcodes, capabilities and loop control bits the `spirv`
   crate lacks in `back/spv/qcom.rs`, and records the pointer of every binding-array element it
   loads so that the image processing decorations land on the `OpAccessChain`, as glslang
@@ -598,7 +648,85 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   global expressions); `Module::spirv_requirements` (extensions and capabilities). An `Input` or
   `Output` global with a raw `BuiltIn` decoration (`proc::has_spirv_built_in`) needs no binding.
   The SPIR-V backend writes them in `back/spv/intrinsics.rs`.
+- **Function attributes.** `Function::control` (`FunctionControl::{None, Inline,
+  DontInline}`, serialized only when not `None`) is the `OpFunction` control of
+  `GL_EXT_function_control_attributes`. `EntryPoint::reconvergence` (`Reconvergence {
+  subgroup_uniform_control_flow, maximally_reconverges }`) writes the
+  `SubgroupUniformControlFlowKHR` and `MaximallyReconvergesKHR` execution modes. As in glslang,
+  the two reconvergence attributes apply to the compilation unit, whichever function carries
+  them; the linker keeps the entry unit's.
+- **OCP microscaling types** (`docs/design/cooperative.md`). Scalar kinds
+  `ScalarKind::{FloatE2M1, FloatE3M2, FloatE2M3, FloatUE8M0, FloatMXINT8}` with
+  `Literal::{FE2M1, FE3M2, FE2M3, FUE8M0, FMXINT8}` (the bits) and `Scalar::{FE2M1, FE3M2, FE2M3,
+  FUE8M0, FMXINT8}`; their `width` is one byte, `Scalar::bit_width` gives the 4 or 6 bits of
+  the sub-byte ones. `ScalarKind::is_encoded_float` and `is_any_float` name the float kinds.
+  `Expression::Bitcast { expr, ty, offset }` reinterprets bits across shapes: without an offset
+  `ty` has the bit size of `expr` (`OpBitcast`), with one it is `OpBitcastExtractEXT`. The
+  backend writes the types, capabilities and `SPV_EXT_ocp_microscaling_types` in
+  `back/spv/microscaling.rs`, with raw enumerant values the `spirv` crate lacks.
+- **Precision decorations** (`docs/design/precision.md`). `Function::precision`
+  (`PrecisionExpressions`: expression handles with `Precision` flags `RELAXED` and
+  `NO_CONTRACTION`, kept like `Function::non_uniform`) puts `RelaxedPrecision` and
+  `NoContraction` on the instruction the backend writes for an expression. `relaxed_precision`
+  (new, serialized only when set) on `GlobalVariable`, `LocalVariable`, `FunctionArgument`,
+  `FunctionResult` and `StructMember` decorates the variable, the parameter, the function and
+  the member; a struct member's flag is part of the struct type. Upstream has no precision.
 
+- **Built-ins of fragment and draw extensions.** `BuiltIn::SamplePosition`,
+  `HelperInvocation` (`Volatile` from SPIR-V 1.6 without the Vulkan memory model, as glslang
+  does), `DeviceIndex`, `ShadingRate`, `FragSize { nv }`, `FragInvocationCount { nv }`
+  (`SPV_NV_shading_rate` or `SPV_EXT_fragment_invocation_density`, `FragmentDensityEXT`),
+  `FullyCovered` and `FragStencilRef` (which adds the `StencilRefReplacingEXT` execution mode
+  when it is an output of the entry point). `BaseVertex`/`BaseInstance` require
+  `DrawParameters`, and the draw-parameter and device-group extensions are only declared
+  before SPIR-V 1.3. Boolean fragment inputs are no longer decorated `Flat` (glslang does not
+  decorate `gl_FrontFacing` or `gl_FragFullyCoveredNV`).
+- **Demote, interlock and split barriers.** `Statement::Demote`
+  (`OpDemoteToHelperInvocation`), `Statement::BeginInvocationInterlock`,
+  `Statement::EndInvocationInterlock`, `Statement::SplitBarrier { phase: BarrierPhase,
+  execution, memory, semantics }` (`OpControlBarrierArriveEXT`/`WaitEXT`) and
+  `Expression::IsHelperInvocation`. The first three are fragment-only in the validator.
+- **Fragment execution modes.** `EntryPoint::fragment_modes` (`FragmentModes`, not
+  serialized when default): `post_depth_coverage`, `interlock: Option<Interlock { scope:
+  InterlockScope, ordered }>` and the three non-coherent tile-image reads.
+- **Floating-point atomics on plain pointers and images.** `Statement::Atomic` and
+  `ImageAtomic` accept `f16`/`f32`/`f64` scalars behind a plain (non-`Atomic`) pointer with
+  `Add`, `Min`, `Max` and `Exchange`, and `R32Float` images with `Add`, `Min`, `Max` as well as
+  `Exchange` (`valid/function.rs`); the SPIR-V backend writes `OpAtomicFAddEXT`/`FMinEXT`/
+  `FMaxEXT` with the width's `AtomicFloat*AddEXT`/`MinMaxEXT` capability. 64-bit float atomics
+  no longer request `Int64Atomics`.
+- **64-bit integer images.** `StorageFormat::R64Sint` (new, `R64i`), next to `R64Uint`;
+  either is valid for image atomics. Sparse loads of 64-bit texels use a correctly aligned
+  result struct.
+- **`nontemporal`.** `MemoryDecorations::NONTEMPORAL` and `PointerQualifiers::NONTEMPORAL`
+  (new). With the Vulkan memory model the SPIR-V backend adds the `Nontemporal` memory
+  operand to loads and stores of such a global, and the `Nontemporal` image operand to reads
+  and writes of such an image from SPIR-V 1.6, as glslang does. A member's qualifier applies
+  to its whole block, like the other memory qualifiers.
+- **Storage image parameters.** A user function may take a storage image (a `Handle`
+  argument of an `Image` type with an unknown format); `ImageStore` accepts a function
+  argument, and a global passed directly as a call argument counts as a query in the global
+  usage analysis rather than a read.
+- **Tile images** (`GL_EXT_shader_tile_image`). `ImageDimension::TileImageData` (new,
+  `OpTypeImage TileImageDataEXT`, Sampled=2). A `Handle` global of such an image has an
+  `io: Binding::Location` and no resource binding; the SPIR-V backend declares it in the
+  `TileImageEXT` storage class with a `Location` (`proc::is_tile_image`).
+  `Expression::AttachmentRead { aspect: AttachmentAspect::{Color(image), Depth, Stencil},
+  sample }` is `OpColorAttachmentReadEXT`/`OpDepthAttachmentReadEXT`/
+  `OpStencilAttachmentReadEXT` with the matching `TileImage*ReadAccessEXT` capability.
+- **Interpolation functions.** `Expression::InterpolateAt { pointer, location:
+  InterpolationLocation::{Centroid, Sample(index), Offset(offset)} }` on a pointer to an
+  `Input` (`GLSL.std.450 InterpolateAt*`, `InterpolationFunction`).
+- **AMD fragment mask.** `Expression::FragmentFetch { image, coordinate, fragment }`:
+  `OpFragmentMaskFetchAMD` without a fragment, `OpFragmentFetchAMD` with one.
+- **Texture footprints.** `Expression::ImageFootprint { image, coordinate, granularity,
+  coarse, level, min_lod, ty }` is `OpImageSampleFootprintNV`; `ty` is the result struct
+  `{ bool, anchor, offset, mask, lod, granularity }`.
+- **Booleans in structures inside blocks.** The block layout (`front/glsl/lower/offset.rs`)
+  lays a `bool`/`bvecN` member of a structure or array out as `u32`/`uvecN`; the laid-out
+  copy is converted member by member with `!= 0` and `select` on loads and stores.
+- **Float-to-integer conversions without a representable range** (from `f16` to 8-bit
+  integers) are a plain `OpConvertFTo[SU]` instead of a backend error.
 - **A comparison sampler may sample a float texture that is not a depth image.**
   `ImageSample` with a separate comparison sampler and a `depth_ref` accepts an
   `ImageClass::Sampled { kind: Float, multi: false }` image and has a scalar `f32` result; the

@@ -376,7 +376,7 @@ fn reserved_words_cannot_be_names() {
         "goto",
         "inline",
         "pervertexNV",
-        "attachmentEXT",
+        "noinline",
     ] {
         assert!(is_unavailable_word(word), "{word}");
         for source in [
@@ -497,4 +497,31 @@ fn heap_blocks_and_inline_reference_members() {
     ));
     assert!(is_keyword("resourceheap"));
     assert!(is_keyword("samplerheap"));
+}
+
+#[test]
+fn function_attributes_lead_and_trail_prototypes() {
+    let printed = round_trip(
+        "[[inline]] int f(int i) {\n    return i;\n}\nint g() [[noinline, x(1)]];\n[[a]] void main() [[b]] {\n}\n",
+    );
+    assert_eq!(
+        printed,
+        "[[inline]] int f(int i) {\n    return i;\n}\n\nint g() [[noinline, x(1)]];\n\n[[a]] void main() [[b]] {\n}\n"
+    );
+    let parsed = unit("[[inline, noinline]] int f(int i);");
+    let Some(ExternalDeclaration::Declaration(declaration)) = parsed.external_declarations.first()
+    else {
+        panic!("{parsed:?}");
+    };
+    let DeclarationKind::FunctionPrototype(prototype) = &declaration.kind else {
+        panic!("{declaration:?}");
+    };
+    let names: Vec<&str> = prototype
+        .attributes
+        .iter()
+        .map(|attribute| attribute.name.node.as_str())
+        .collect();
+    assert_eq!(names, ["inline", "noinline"]);
+    assert!(prototype.trailing_attributes.is_empty());
+    assert!(crate::parse("[[inline]] int x;").is_err());
 }
