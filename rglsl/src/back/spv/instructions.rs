@@ -800,7 +800,7 @@ impl super::Instruction {
         instruction
     }
 
-    pub(super) fn type_hit_object(id: Word, kind: crate::HitObjectKind) -> Self {
+    pub(super) const fn type_hit_object(id: Word, kind: crate::HitObjectKind) -> Self {
         let op = match kind {
             crate::HitObjectKind::Nv => Op::TypeHitObjectNV,
             crate::HitObjectKind::Ext => Op::TypeHitObjectEXT,

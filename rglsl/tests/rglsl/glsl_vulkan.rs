@@ -7603,3 +7603,262 @@ fn shader_core_builtins() {
         );
     }
 }
+
+#[test]
+fn ext_hit_objects_take_payload_and_attribute_variables() {
+    let module = compile(
+        ShaderStage::RayGeneration,
+        r#"#version 460
+#extension GL_EXT_ray_tracing : enable
+#extension GL_EXT_ray_query : enable
+#extension GL_EXT_shader_invocation_reorder : enable
+layout(location = 1) rayPayloadEXT vec4 payload;
+layout(location = 2) rayPayloadEXT float other;
+layout(location = 3) hitObjectAttributeEXT vec2 attributes;
+layout(binding = 0) uniform accelerationStructureEXT scene;
+layout(binding = 1) buffer Out { float t; uint flags; };
+void main() {
+    hitObjectEXT hit;
+    rayQueryEXT query;
+    hitObjectTraceRayEXT(hit, scene, 1u, 2u, 3u, 4u, 5u, vec3(0.0), 0.5, vec3(1.0), 7.0, 2);
+    hitObjectRecordFromQueryEXT(hit, query, 6u, 3);
+    hitObjectGetAttributesEXT(hit, 3);
+    t = hitObjectGetRayTMaxEXT(hit);
+    flags = hitObjectGetRayFlagsEXT(hit);
+    reorderThreadEXT(hit, 4u, 2u);
+    reorderThreadEXT(8u, 3u);
+    hitObjectReorderExecuteEXT(hit, 9u, 1u, 1);
+}
+"#,
+    );
+    let traces = instructions(&module, Op::HitObjectTraceRayEXT);
+    assert_eq!(traces.len(), 1);
+    let operands = &traces[0].operands;
+    assert_eq!(name_of(&module, operands[0].unwrap_id_ref()), "hit");
+    for (index, value) in [(2, 1), (3, 2), (4, 3), (5, 4), (6, 5)] {
+        assert_eq!(constant(&module, &operands[index]), value);
+    }
+    assert_eq!(name_of(&module, operands[11].unwrap_id_ref()), "other");
+    let records = instructions(&module, Op::HitObjectRecordFromQueryEXT);
+    assert_eq!(records.len(), 1);
+    assert_eq!(
+        name_of(&module, records[0].operands[1].unwrap_id_ref()),
+        "query"
+    );
+    assert_eq!(constant(&module, &records[0].operands[2]), 6);
+    assert_eq!(
+        name_of(&module, records[0].operands[3].unwrap_id_ref()),
+        "attributes"
+    );
+    let attributes = instructions(&module, Op::HitObjectGetAttributesEXT);
+    assert_eq!(
+        name_of(&module, attributes[0].operands[1].unwrap_id_ref()),
+        "attributes"
+    );
+    assert_eq!(instructions(&module, Op::HitObjectGetRayTMaxEXT).len(), 1);
+    assert_eq!(instructions(&module, Op::HitObjectGetRayFlagsEXT).len(), 1);
+    assert_eq!(
+        instructions(&module, Op::ReorderThreadWithHitObjectEXT)[0]
+            .operands
+            .len(),
+        3
+    );
+    assert_eq!(instructions(&module, Op::ReorderThreadWithHintEXT).len(), 1);
+    let execute = instructions(&module, Op::HitObjectReorderExecuteShaderEXT);
+    assert_eq!(
+        name_of(&module, execute[0].operands[1].unwrap_id_ref()),
+        "payload"
+    );
+    assert_eq!(constant(&module, &execute[0].operands[2]), 9);
+    assert_eq!(constant(&module, &execute[0].operands[3]), 1);
+    assert!(decorated(&module, Decoration::Location).is_empty());
+    let classes = storage_classes(&module);
+    assert!(classes.contains(&spirv::StorageClass::HitObjectAttributeEXT));
+    assert!(classes.contains(&spirv::StorageClass::Private));
+    assert_eq!(instructions(&module, Op::TypeHitObjectEXT).len(), 1);
+    assert!(capabilities(&module).contains(&spirv::Capability::ShaderInvocationReorderEXT));
+}
+
+#[test]
+fn nv_hit_objects_record_hits_and_reorder() {
+    let module = compile(
+        ShaderStage::RayGeneration,
+        r#"#version 460
+#extension GL_NV_ray_tracing : enable
+#extension GL_NV_shader_invocation_reorder : enable
+#extension GL_NV_ray_tracing_motion_blur : enable
+#extension GL_EXT_ray_query : enable
+layout(location = 0) rayPayloadNV vec4 payload;
+layout(location = 1) hitObjectAttributeNV block { float value; };
+layout(binding = 0) uniform accelerationStructureEXT scene;
+layout(binding = 1) buffer Out { float t; };
+void main() {
+    hitObjectNV hit;
+    hitObjectRecordHitNV(hit, scene, 1, 2, 3, 4u, 5u, 6u, vec3(0.0), 0.5, vec3(1.0), 7.0, 1);
+    hitObjectRecordHitWithIndexMotionNV(hit, scene, 1, 2, 3, 4u, 5u, vec3(0.0), 0.5, vec3(1.0), 7.0, 2.0, 1);
+    hitObjectRecordMissNV(hit, 3u, vec3(0.0), 0.5, vec3(1.0), 7.0);
+    hitObjectExecuteShaderNV(hit, 0);
+    t = hitObjectGetCurrentTimeNV(hit);
+    reorderThreadNV(1u, 2u);
+}
+"#,
+    );
+    let hits = instructions(&module, Op::HitObjectRecordHitNV);
+    assert_eq!(hits.len(), 1);
+    let operands = &hits[0].operands;
+    assert_eq!(operands.len(), 13);
+    assert_eq!(constant(&module, &operands[2]), 1);
+    assert_eq!(constant(&module, &operands[5]), 4);
+    assert_eq!(constant(&module, &operands[7]), 6);
+    assert_eq!(
+        instructions(&module, Op::HitObjectRecordHitWithIndexMotionNV)[0]
+            .operands
+            .len(),
+        13
+    );
+    assert_eq!(
+        instructions(&module, Op::HitObjectRecordMissNV)[0]
+            .operands
+            .len(),
+        6
+    );
+    let execute = instructions(&module, Op::HitObjectExecuteShaderNV);
+    assert_eq!(
+        name_of(&module, execute[0].operands[1].unwrap_id_ref()),
+        "payload"
+    );
+    assert_eq!(
+        instructions(&module, Op::HitObjectGetCurrentTimeNV).len(),
+        1
+    );
+    assert_eq!(instructions(&module, Op::ReorderThreadWithHintNV).len(), 1);
+    assert!(decorated(&module, Decoration::Location).is_empty());
+    assert!(storage_classes(&module).contains(&spirv::StorageClass::HitObjectAttributeNV));
+    let capabilities = capabilities(&module);
+    assert!(capabilities.contains(&spirv::Capability::ShaderInvocationReorderNV));
+    assert!(capabilities.contains(&spirv::Capability::RayTracingMotionBlurNV));
+}
+
+#[test]
+fn unused_hit_objects_declare_nothing() {
+    let module = compile(
+        ShaderStage::Fragment,
+        r#"#version 460
+#extension GL_EXT_ray_query : enable
+#extension GL_NV_shader_invocation_reorder : enable
+#extension GL_NV_linear_swept_spheres : enable
+layout(location = 0) out float radius;
+void main() {
+    hitObjectNV unused;
+    rayQueryEXT query;
+    float radii[2];
+    rayQueryGetIntersectionLSSRadiiNV(query, true, radii);
+    radius = radii[0] + rayQueryGetIntersectionSphereRadiusNV(query, false);
+}
+"#,
+    );
+    assert!(instructions(&module, Op::TypeHitObjectNV).is_empty());
+    assert_eq!(
+        instructions(&module, Op::RayQueryGetIntersectionLSSRadiiNV).len(),
+        1
+    );
+    let capabilities = capabilities(&module);
+    assert!(!capabilities.contains(&spirv::Capability::ShaderInvocationReorderNV));
+    assert!(capabilities.contains(&spirv::Capability::RayTracingSpheresGeometryNV));
+    assert!(capabilities.contains(&spirv::Capability::RayTracingLinearSweptSpheresGeometryNV));
+}
+
+#[test]
+fn swept_sphere_and_cluster_built_ins() {
+    let module = compile(
+        ShaderStage::ClosestHit,
+        r#"#version 460
+#extension GL_EXT_ray_tracing : enable
+#extension GL_NV_linear_swept_spheres : enable
+#extension GL_NV_cluster_acceleration_structure : enable
+#extension GL_NV_shader_invocation_reorder : enable
+layout(location = 0) rayPayloadInEXT vec4 payload;
+void main() {
+    hitObjectNV hit;
+    vec3 positions[2];
+    hitObjectGetLSSPositionsNV(hit, positions);
+    payload = vec4(positions[1], gl_HitLSSRadiiNV[0]);
+    if (gl_HitIsSphereNV && gl_ClusterIDNV != gl_ClusterIDNoneNV) {
+        payload.w = float(hitObjectGetClusterIdNV(hit));
+    }
+}
+"#,
+    );
+    let mut builtins = decorated(&module, Decoration::BuiltIn);
+    builtins.sort();
+    assert_eq!(
+        builtins,
+        ["gl_ClusterIDNV", "gl_HitIsSphereNV", "gl_HitLSSRadiiNV"]
+    );
+    assert_eq!(
+        instructions(&module, Op::HitObjectGetLSSPositionsNV).len(),
+        1
+    );
+    assert_eq!(instructions(&module, Op::HitObjectGetClusterIdNV).len(), 1);
+    let capabilities = capabilities(&module);
+    for capability in [
+        spirv::Capability::RayTracingSpheresGeometryNV,
+        spirv::Capability::RayTracingLinearSweptSpheresGeometryNV,
+        spirv::Capability::RayTracingClusterAccelerationStructureNV,
+    ] {
+        assert!(capabilities.contains(&capability), "{capability:?}");
+    }
+}
+
+#[test]
+fn displacement_micromap_fetches_in_compute() {
+    let module = compile(
+        ShaderStage::Compute,
+        r#"#version 460
+#extension GL_NV_displacement_micromap : enable
+#extension GL_EXT_ray_query : enable
+layout(local_size_x = 1) in;
+layout(binding = 0) uniform accelerationStructureEXT scene;
+layout(binding = 1) buffer Out { vec3 position; vec2 barycentric; };
+void main() {
+    position = fetchMicroTriangleVertexPositionNV(scene, 1, 2, 3, ivec2(0, 1));
+    barycentric = fetchMicroTriangleVertexBarycentricNV(scene, 1, 2, 3, ivec2(1, 0));
+}
+"#,
+    );
+    let positions = instructions(&module, Op::FetchMicroTriangleVertexPositionNV);
+    assert_eq!(positions.len(), 1);
+    assert_eq!(positions[0].operands.len(), 5);
+    assert_eq!(constant(&module, &positions[0].operands[3]), 3);
+    assert_eq!(
+        instructions(&module, Op::FetchMicroTriangleVertexBarycentricNV).len(),
+        1
+    );
+    assert!(capabilities(&module).contains(&spirv::Capability::DisplacementMicromapNV));
+}
+
+#[test]
+fn hit_object_record_from_query_passes_the_hit_kind() {
+    let words = compile_words(
+        ShaderStage::ClosestHit,
+        r#"#version 460
+#extension GL_EXT_ray_tracing : enable
+#extension GL_EXT_ray_query : enable
+#extension GL_EXT_shader_invocation_reorder : enable
+layout(location = 0) hitObjectAttributeEXT vec2 attributes;
+void main() {
+    hitObjectEXT hit;
+    rayQueryEXT query;
+    hitObjectRecordFromQueryEXT(hit, query, 1u, 0);
+    hitObjectRecordFromQueryEXT(hit, query, 1u, 0, 0xFEu);
+}
+"#,
+        (1, 4),
+    );
+    let records: Vec<_> = raw_instructions(&words)
+        .into_iter()
+        .filter(|&(op, _)| op == Op::HitObjectRecordFromQueryEXT as u32)
+        .map(|(_, operands)| operands.len())
+        .collect();
+    assert_eq!(records, [4, 5]);
+}
