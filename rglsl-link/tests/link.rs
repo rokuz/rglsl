@@ -725,3 +725,54 @@ void helper() { b.a += 1.0; }
         }]
     );
 }
+
+fn selection_controls(block: &rglsl::Block, found: &mut Vec<rglsl::SelectionControl>) {
+    for statement in block.iter() {
+        match *statement {
+            rglsl::Statement::If {
+                ref accept,
+                ref reject,
+                control,
+                ..
+            } => {
+                found.push(control);
+                selection_controls(accept, found);
+                selection_controls(reject, found);
+            }
+            rglsl::Statement::Switch {
+                ref cases, control, ..
+            } => {
+                found.push(control);
+                for case in cases {
+                    selection_controls(&case.body, found);
+                }
+            }
+            rglsl::Statement::Block(ref inner) => selection_controls(inner, found),
+            _ => {}
+        }
+    }
+}
+
+#[test]
+fn selection_controls_survive_linking() {
+    use rglsl::SelectionControl as Sc;
+    let main = object(ShaderStage::Fragment, MAIN);
+    let lib = library(
+        "#version 450
+#extension GL_EXT_control_flow_attributes : enable
+float helper(float x) {
+    float y = x;
+    [[flatten]] if (x > 1.0) { y = 2.0; }
+    [[dont_flatten]] switch (int(x)) { case 0: y = 3.0; break; default: break; }
+    return y;
+}
+",
+    );
+    let result = linked(&[main, lib]);
+    let mut found = Vec::new();
+    for (_, function) in result.module.functions.iter() {
+        selection_controls(&function.body, &mut found);
+    }
+    assert_eq!(found, [Sc::Flatten, Sc::DontFlatten]);
+    assert!(!spirv(&result).is_empty());
+}

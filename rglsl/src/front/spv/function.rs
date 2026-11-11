@@ -679,6 +679,7 @@ impl BlockContext<'_> {
                                 condition,
                                 accept,
                                 reject,
+                                control: crate::SelectionControl::None,
                             },
                             crate::Span::default(),
                         )
@@ -731,6 +732,7 @@ impl BlockContext<'_> {
                             crate::Statement::Switch {
                                 selector,
                                 cases: ir_cases,
+                                control: crate::SelectionControl::None,
                             },
                             crate::Span::default(),
                         )

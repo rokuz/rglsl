@@ -1434,6 +1434,7 @@ impl<'a> FunctionLowerer<'_, 'a> {
                     condition,
                     accept,
                     reject,
+                    control: crate::SelectionControl::None,
                 },
                 at,
             );
@@ -1471,6 +1472,7 @@ impl<'a> FunctionLowerer<'_, 'a> {
                 condition,
                 accept,
                 reject,
+                control: crate::SelectionControl::None,
             },
             at,
         );
@@ -1553,6 +1555,7 @@ impl<'a> FunctionLowerer<'_, 'a> {
                     condition: left,
                     accept,
                     reject,
+                    control: crate::SelectionControl::None,
                 },
                 at,
             );

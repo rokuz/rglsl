@@ -11,9 +11,31 @@ use super::constant::shape;
 use super::function::{FunctionLowerer, Local};
 use super::{internal, semantic, unsupported, GlobalRef, Result};
 use crate::{
-    Block, Expression, LoopControl, LoopDependency, Statement as IrStatement, SwitchCase,
-    SwitchValue, UnaryOperator,
+    Block, Expression, LoopControl, LoopDependency, SelectionControl, Statement as IrStatement,
+    SwitchCase, SwitchValue, UnaryOperator,
 };
+
+fn selection_control(attributes: &[Attribute]) -> SelectionControl {
+    let mut flatten = false;
+    let mut dont_flatten = false;
+    for attribute in attributes
+        .iter()
+        .filter(|attribute| attribute.argument.is_none())
+    {
+        match attribute.name.node.as_str() {
+            "flatten" => flatten = true,
+            "branch" | "dont_flatten" => dont_flatten = true,
+            _ => {}
+        }
+    }
+    if flatten {
+        SelectionControl::Flatten
+    } else if dont_flatten {
+        SelectionControl::DontFlatten
+    } else {
+        SelectionControl::None
+    }
+}
 
 impl FunctionLowerer<'_, '_> {
     pub(super) fn statements(&mut self, statements: &[Statement]) -> Result<()> {
@@ -37,27 +59,17 @@ impl FunctionLowerer<'_, '_> {
                 ref condition,
                 ref then_branch,
                 ref else_branch,
-            } => {
-                let condition = self.rvalue(condition)?;
-                let accept = self.nested(|this| this.statement(then_branch))?;
-                let reject = match *else_branch {
-                    Some(ref branch) => self.nested(|this| this.statement(branch))?,
-                    None => Block::new(),
-                };
-                self.push(
-                    IrStatement::If {
-                        condition,
-                        accept,
-                        reject,
-                    },
-                    at,
-                );
-                Ok(())
-            }
+            } => self.selection(
+                condition,
+                then_branch,
+                else_branch.as_deref(),
+                SelectionControl::None,
+                at,
+            ),
             StatementKind::Switch {
                 ref selector,
                 ref statements,
-            } => self.switch(selector, statements, at),
+            } => self.switch(selector, statements, SelectionControl::None, at),
             StatementKind::CaseLabel(_) => Err(semantic("a case label outside a switch", at)),
             StatementKind::While { .. } | StatementKind::DoWhile { .. } | StatementKind::For(_) => {
                 self.iteration(statement, LoopControl::default())
@@ -72,6 +84,26 @@ impl FunctionLowerer<'_, '_> {
                     let control = self.loop_control(attributes);
                     self.iteration(statement, control)
                 }
+                StatementKind::Selection {
+                    ref condition,
+                    ref then_branch,
+                    ref else_branch,
+                } => self.selection(
+                    condition,
+                    then_branch,
+                    else_branch.as_deref(),
+                    selection_control(attributes),
+                    self.at(statement.span),
+                ),
+                StatementKind::Switch {
+                    ref selector,
+                    ref statements,
+                } => self.switch(
+                    selector,
+                    statements,
+                    selection_control(attributes),
+                    self.at(statement.span),
+                ),
                 _ => self.statement(statement),
             },
             StatementKind::Jump(ref jump) => {
@@ -95,6 +127,32 @@ impl FunctionLowerer<'_, '_> {
                 Ok(())
             }
         }
+    }
+
+    fn selection(
+        &mut self,
+        condition: &rglsl_ast::ast::Expression,
+        then_branch: &Statement,
+        else_branch: Option<&Statement>,
+        control: SelectionControl,
+        at: crate::Span,
+    ) -> Result<()> {
+        let condition = self.rvalue(condition)?;
+        let accept = self.nested(|this| this.statement(then_branch))?;
+        let reject = match else_branch {
+            Some(branch) => self.nested(|this| this.statement(branch))?,
+            None => Block::new(),
+        };
+        self.push(
+            IrStatement::If {
+                condition,
+                accept,
+                reject,
+                control,
+            },
+            at,
+        );
+        Ok(())
     }
 
     fn loop_control(&self, attributes: &[Attribute]) -> LoopControl {
@@ -232,6 +290,7 @@ impl FunctionLowerer<'_, '_> {
                 condition: negated,
                 accept,
                 reject: Block::new(),
+                control: SelectionControl::None,
             },
             at,
         );
@@ -370,8 +429,12 @@ impl FunctionLowerer<'_, '_> {
         &mut self,
         selector: &rglsl_ast::ast::Expression,
         statements: &[Statement],
+        control: SelectionControl,
         at: crate::Span,
     ) -> Result<()> {
+        if statements.is_empty() {
+            return self.effect(selector);
+        }
         let (value, ty) = self.typed(selector)?;
         let unsigned = ty == GlslType::scalar(GlslScalar::Uint);
         let mut groups: Vec<(Vec<SwitchValue>, Vec<&Statement>)> = Vec::new();
@@ -477,6 +540,7 @@ impl FunctionLowerer<'_, '_> {
             IrStatement::Switch {
                 selector: value,
                 cases,
+                control,
             },
             at,
         );

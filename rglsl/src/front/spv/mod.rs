@@ -1614,6 +1614,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                     condition: _,
                     ref mut accept,
                     ref mut reject,
+                    control: _,
                 } => {
                     self.patch_statements(reject, expressions, fun_parameter_sampling)?;
                     self.patch_statements(accept, expressions, fun_parameter_sampling)?;
@@ -1621,6 +1622,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                 S::Switch {
                     selector: _,
                     ref mut cases,
+                    control: _,
                 } => {
                     for case in cases.iter_mut() {
                         self.patch_statements(&mut case.body, expressions, fun_parameter_sampling)?;

@@ -1256,6 +1256,7 @@ impl super::Validator {
                     condition,
                     ref accept,
                     ref reject,
+                    control: _,
                 } => {
                     match *context.resolve_type_inner(condition, &self.valid_expression_set)? {
                         Ti::Scalar(crate::Scalar {
@@ -1273,6 +1274,7 @@ impl super::Validator {
                 S::Switch {
                     selector,
                     ref cases,
+                    control: _,
                 } => {
                     let uint = match context
                         .resolve_type_inner(selector, &self.valid_expression_set)?

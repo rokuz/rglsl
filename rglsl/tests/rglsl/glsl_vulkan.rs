@@ -8409,3 +8409,53 @@ fn select_keeps_a_scalar_condition_from_spirv_1_4() {
     assert_eq!(select_conditions((1, 0)), [true]);
     assert_eq!(select_conditions((1, 4)), [false]);
 }
+
+fn selection_controls(module: &dr::Module) -> Vec<spirv::SelectionControl> {
+    instructions(module, Op::SelectionMerge)
+        .iter()
+        .filter_map(|inst| match inst.operands.get(1) {
+            Some(&Operand::SelectionControl(control)) => Some(control),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn selection_attributes_select_the_merge_control() {
+    use spirv::SelectionControl as Sc;
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+        #extension GL_EXT_control_flow_attributes : enable
+        layout(location = 0) flat in int i;
+        layout(location = 0) out int o;
+        void main() {
+            o = 0;
+            [[flatten]] if (i > 0) { o = 1; }
+            [[branch]] if (i > 1) { o = 2; } else { o = 3; }
+            [[dont_flatten]] switch (i) { case 0: o = 4; break; default: break; }
+            [[flatten]] switch (i) { case 1: o = 5; break; }
+            [[dont_flatten, flatten]] if (i > 2) { o = 6; }
+            [[flatten(2)]] if (i > 3) { o = 7; }
+            [[unroll]] if (i > 4) { o = 8; }
+            if (i > 5) { o = 9; }
+            [[dont_flatten]] switch (i) { }
+            [[flatten]] if (i > 6) { } else { }
+        }",
+    );
+    assert_eq!(
+        selection_controls(&module),
+        [
+            Sc::FLATTEN,
+            Sc::DONT_FLATTEN,
+            Sc::DONT_FLATTEN,
+            Sc::FLATTEN,
+            Sc::FLATTEN,
+            Sc::NONE,
+            Sc::NONE,
+            Sc::NONE,
+            Sc::FLATTEN,
+        ]
+    );
+    assert_eq!(instructions(&module, Op::Switch).len(), 2);
+}

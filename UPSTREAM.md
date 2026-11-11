@@ -561,6 +561,10 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   rate replaces `LocalSize` with `TileShadingRateQCOM`. `Statement::Loop::control: LoopControl`
   (new, not serialized when default) carries the loop attributes of
   `GL_EXT_control_flow_attributes(2)` and `GL_QCOM_multiple_wait_queues` to `OpLoopMerge`.
+  `Statement::If::control` and `Statement::Switch::control: SelectionControl` (new, `None`,
+  `Flatten` or `DontFlatten`, not serialized when `None`) carry `[[flatten]]`, `[[branch]]` and
+  `[[dont_flatten]]` to `OpSelectionMerge`; an `If` with empty branches is written when it has a
+  control.
   The SPIR-V backend keeps the QCOM opcodes, capabilities and loop control bits the `spirv`
   crate lacks in `back/spv/qcom.rs`, and records the pointer of every binding-array element it
   loads so that the image processing decorations land on the `OpAccessChain`, as glslang

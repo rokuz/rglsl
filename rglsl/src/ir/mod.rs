@@ -3100,6 +3100,12 @@ pub enum Statement {
         condition: Handle<Expression>, //bool
         accept: Block,
         reject: Block,
+        #[cfg_attr(feature = "deserialize", serde(default))]
+        #[cfg_attr(
+            feature = "serialize",
+            serde(skip_serializing_if = "SelectionControl::is_none")
+        )]
+        control: SelectionControl,
     },
     /// Conditionally executes one of multiple blocks, based on the value of the selector.
     ///
@@ -3125,6 +3131,12 @@ pub enum Statement {
     Switch {
         selector: Handle<Expression>,
         cases: Vec<SwitchCase>,
+        #[cfg_attr(feature = "deserialize", serde(default))]
+        #[cfg_attr(
+            feature = "serialize",
+            serde(skip_serializing_if = "SelectionControl::is_none")
+        )]
+        control: SelectionControl,
     },
 
     /// Executes a block repeatedly.
@@ -3813,6 +3825,17 @@ pub enum DerivativeGroupExtension {
 pub enum LoopDependency {
     Infinite,
     Length(u32),
+}
+
+#[derive(Clone, Copy, Debug, Default, Hash, Eq, PartialEq)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub enum SelectionControl {
+    #[default]
+    None,
+    Flatten,
+    DontFlatten,
 }
 
 #[derive(Clone, Copy, Debug, Default, Hash, Eq, PartialEq)]

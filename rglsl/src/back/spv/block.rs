@@ -3645,22 +3645,24 @@ impl BlockContext<'_> {
                     condition,
                     ref accept,
                     ref reject,
+                    control,
                 } => {
                     // In spirv 1.6, in a conditional branch the two block ids
                     // of the branches can't have the same label. If `accept`
                     // and `reject` are both empty (e.g. in `if (condition) {}`)
                     // merge id will be both labels. Because both branches are
                     // empty, we can skip the if statement.
-                    if !(accept.is_empty() && reject.is_empty()) {
+                    let empty = accept.is_empty() && reject.is_empty();
+                    if !empty || !control.is_none() {
                         let condition_id = self.cached.get(condition)?;
 
                         let merge_id = self.gen_id();
                         block.body.push(Instruction::selection_merge(
                             merge_id,
-                            spirv::SelectionControl::NONE,
+                            selection_control(control),
                         ));
 
-                        let accept_id = if accept.is_empty() {
+                        let accept_id = if accept.is_empty() && !empty {
                             None
                         } else {
                             Some(self.gen_id())
@@ -3713,13 +3715,14 @@ impl BlockContext<'_> {
                 Statement::Switch {
                     selector,
                     ref cases,
+                    control,
                 } => {
                     let selector_id = self.cached.get(selector)?;
 
                     let merge_id = self.gen_id();
                     block.body.push(Instruction::selection_merge(
                         merge_id,
-                        spirv::SelectionControl::NONE,
+                        selection_control(control),
                     ));
 
                     let mut default_id = None;
@@ -4566,5 +4569,13 @@ impl BlockContext<'_> {
         )?;
 
         Ok(())
+    }
+}
+
+const fn selection_control(control: crate::SelectionControl) -> spirv::SelectionControl {
+    match control {
+        crate::SelectionControl::None => spirv::SelectionControl::NONE,
+        crate::SelectionControl::Flatten => spirv::SelectionControl::FLATTEN,
+        crate::SelectionControl::DontFlatten => spirv::SelectionControl::DONT_FLATTEN,
     }
 }

@@ -893,6 +893,7 @@ fn adjust_stmt(new_pos: &HandleVec<Expression, Handle<Expression>>, stmt: &mut S
             ref mut condition,
             ref mut accept,
             ref mut reject,
+            control: _,
         } => {
             adjust(condition);
             adjust_block(new_pos, accept);
@@ -901,6 +902,7 @@ fn adjust_stmt(new_pos: &HandleVec<Expression, Handle<Expression>>, stmt: &mut S
         Statement::Switch {
             ref mut selector,
             ref mut cases,
+            control: _,
         } => {
             adjust(selector);
             for case in cases.iter_mut() {
@@ -1262,6 +1264,7 @@ fn filter_emits_in_block(block: &mut Block, expressions: &Arena<Expression>) {
                 condition,
                 mut accept,
                 mut reject,
+                control,
             } => {
                 filter_emits_in_block(&mut accept, expressions);
                 filter_emits_in_block(&mut reject, expressions);
@@ -1270,6 +1273,7 @@ fn filter_emits_in_block(block: &mut Block, expressions: &Arena<Expression>) {
                         condition,
                         accept,
                         reject,
+                        control,
                     },
                     span,
                 );
@@ -1277,11 +1281,19 @@ fn filter_emits_in_block(block: &mut Block, expressions: &Arena<Expression>) {
             Statement::Switch {
                 selector,
                 mut cases,
+                control,
             } => {
                 for case in &mut cases {
                     filter_emits_in_block(&mut case.body, expressions);
                 }
-                block.push(Statement::Switch { selector, cases }, span);
+                block.push(
+                    Statement::Switch {
+                        selector,
+                        cases,
+                        control,
+                    },
+                    span,
+                );
             }
             Statement::Loop {
                 mut body,

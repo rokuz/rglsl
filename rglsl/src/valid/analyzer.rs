@@ -1204,6 +1204,7 @@ impl FunctionInfo {
                     condition,
                     ref accept,
                     ref reject,
+                    control: _,
                 } => {
                     let condition_nur = self.add_ref(condition);
                     let branch_disruptor =
@@ -1227,6 +1228,7 @@ impl FunctionInfo {
                 S::Switch {
                     selector,
                     ref cases,
+                    control: _,
                 } => {
                     let selector_nur = self.add_ref(selector);
                     let branch_disruptor =
@@ -1837,6 +1839,7 @@ fn uniform_control_flow() {
             },
         ]
         .into(),
+        control: crate::SelectionControl::None,
     };
     assert_eq!(
         info.process_block(
@@ -1869,6 +1872,7 @@ fn uniform_control_flow() {
         ]
         .into(),
         reject: crate::Block::new(),
+        control: crate::SelectionControl::None,
     };
     {
         let block_info = info.process_block(

@@ -6,6 +6,12 @@ impl crate::LoopControl {
     }
 }
 
+impl crate::SelectionControl {
+    pub const fn is_none(&self) -> bool {
+        matches!(*self, Self::None)
+    }
+}
+
 impl crate::TileShading {
     pub const fn is_default(&self) -> bool {
         self.rate.is_none() && !self.non_coherent_attachment_read
