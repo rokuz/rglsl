@@ -210,7 +210,7 @@ pub fn run(root: &Path, options: Options) -> Result<()> {
                 bail!("the reference does not compile: {}", verdict.label());
             }
             let json = reference.with_extension("json");
-            let dir = work.join("reference");
+            let dir = executor.work_dir().join("fuzz").join("reference");
             Some(ReferenceRuns {
                 ours: run_module(executor, &spirv, &json, &dir, "rglsl"),
                 theirs: run_module(
@@ -225,8 +225,12 @@ pub fn run(root: &Path, options: Options) -> Result<()> {
         _ => None,
     };
     let candidate_json = work.join("candidate.json");
-    let stage_dir = work.join("stage");
-    let judge = |candidate: &ShaderJob| -> Result<bool> {
+    let stage_dir = executor.as_ref().map_or_else(
+        || work.join("stage"),
+        |executor| executor.work_dir().join("fuzz").join("stage"),
+    );
+    let mut first = true;
+    let mut judge = |candidate: &ShaderJob| -> Result<bool> {
         let shader = write_job(candidate, &candidate_json)?;
         let (verdict, spirv) = tools.verdict(&shader)?;
         let interesting = match options.interesting {
@@ -251,6 +255,14 @@ pub fn run(root: &Path, options: Options) -> Result<()> {
                     &stage_dir,
                     "glslang",
                 );
+                if first {
+                    for (tag, run) in [("rglsl", &ours), ("glslang", &theirs)] {
+                        if let Run::Failed(why) | Run::Refused(why) = run {
+                            eprintln!("[xtask] the input's {tag} module did not run: {why}");
+                        }
+                    }
+                    first = false;
+                }
                 match &reference {
                     _ if options.interesting == Interesting::ExecFails => {
                         matches!(ours, Run::Failed(_)) && matches!(theirs, Run::Ran { .. })
