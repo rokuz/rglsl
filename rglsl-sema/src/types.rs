@@ -336,6 +336,7 @@ pub enum OpaqueKind {
     RayQuery,
     HitObjectNv,
     HitObjectExt,
+    TileImage,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -374,17 +375,26 @@ pub enum SampledType {
     Float,
     Int,
     Uint,
+    Int64,
+    Uint64,
 }
 
 impl SampledType {
     pub const ALL: [Self; 3] = [Self::Float, Self::Int, Self::Uint];
+    pub const WIDE: [Self; 2] = [Self::Int64, Self::Uint64];
 
     pub const fn scalar(self) -> Scalar {
         match self {
             Self::Float => Scalar::Float,
             Self::Int => Scalar::Int,
             Self::Uint => Scalar::Uint,
+            Self::Int64 => Scalar::Int64,
+            Self::Uint64 => Scalar::Uint64,
         }
+    }
+
+    pub const fn is_integer(self) -> bool {
+        !matches!(self, Self::Float)
     }
 
     const fn prefix(self) -> &'static str {
@@ -392,6 +402,8 @@ impl SampledType {
             Self::Float => "",
             Self::Int => "i",
             Self::Uint => "u",
+            Self::Int64 => "i64",
+            Self::Uint64 => "u64",
         }
     }
 }
@@ -469,12 +481,33 @@ impl Opaque {
             "rayQueryEXT" => return Some(Self::ray(OpaqueKind::RayQuery)),
             "hitObjectNV" => return Some(Self::ray(OpaqueKind::HitObjectNv)),
             "hitObjectEXT" => return Some(Self::ray(OpaqueKind::HitObjectExt)),
+            "attachmentEXT" | "iattachmentEXT" | "uattachmentEXT" => {
+                let sampled = match word.as_bytes().first() {
+                    Some(b'i') => SampledType::Int,
+                    Some(b'u') => SampledType::Uint,
+                    _ => SampledType::Float,
+                };
+                return Some(Self {
+                    kind: OpaqueKind::TileImage,
+                    sampled,
+                    dimension: TextureDimension::D2,
+                    arrayed: false,
+                    shadow: false,
+                    multisample: false,
+                });
+            }
             _ => {}
         }
         let families = ["sampler", "texture", "image", "subpassInput"];
         let is_family = |rest: &str| families.iter().any(|family| rest.starts_with(family));
         let (sampled, rest) = match (word.strip_prefix('i'), word.strip_prefix('u')) {
             _ if is_family(word) => (SampledType::Float, word),
+            (Some(rest), _) if rest.starts_with("64image") => {
+                (SampledType::Int64, rest.trim_start_matches("64"))
+            }
+            (_, Some(rest)) if rest.starts_with("64image") => {
+                (SampledType::Uint64, rest.trim_start_matches("64"))
+            }
             (Some(rest), _) if is_family(rest) => (SampledType::Int, rest),
             (_, Some(rest)) if is_family(rest) => (SampledType::Uint, rest),
             _ => return None,
@@ -569,6 +602,9 @@ impl fmt::Display for Opaque {
             OpaqueKind::RayQuery => return formatter.write_str("rayQueryEXT"),
             OpaqueKind::HitObjectNv => return formatter.write_str("hitObjectNV"),
             OpaqueKind::HitObjectExt => return formatter.write_str("hitObjectEXT"),
+            OpaqueKind::TileImage => {
+                return write!(formatter, "{}attachmentEXT", self.sampled.prefix());
+            }
             OpaqueKind::CombinedSampler => "sampler",
             OpaqueKind::Texture => "texture",
             OpaqueKind::Image => "image",

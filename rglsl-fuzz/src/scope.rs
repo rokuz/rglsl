@@ -387,7 +387,7 @@ impl Finder<'_> {
                             || name.starts_with("textureGather")
                             || name.starts_with("interpolateAt")
                     }
-                    FunctionIdentifier::Constructor(_) => false,
+                    FunctionIdentifier::Constructor(_) | FunctionIdentifier::Cast(_) => false,
                     FunctionIdentifier::Expression(_) | FunctionIdentifier::Method { .. } => true,
                 };
                 if skip_all {

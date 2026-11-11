@@ -283,6 +283,10 @@ impl FunctionTracer<'_> {
                     St::Break
                     | St::Continue
                     | St::Kill
+                    | St::Demote
+                    | St::BeginInvocationInterlock
+                    | St::EndInvocationInterlock
+                    | St::SplitBarrier { .. }
                     | St::EmitVertex { .. }
                     | St::EndPrimitive { .. }
                     | St::ControlBarrier(_)
@@ -641,6 +645,10 @@ impl FunctionMap {
                     St::Break
                     | St::Continue
                     | St::Kill
+                    | St::Demote
+                    | St::BeginInvocationInterlock
+                    | St::EndInvocationInterlock
+                    | St::SplitBarrier { .. }
                     | St::EmitVertex { .. }
                     | St::EndPrimitive { .. }
                     | St::ControlBarrier(_)

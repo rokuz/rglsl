@@ -429,6 +429,7 @@ pub enum StorageQualifier {
     SubgroupCoherent,
     ShaderCallCoherent,
     NonPrivate,
+    NonTemporal,
     ResourceHeap,
     SamplerHeap,
     RayPayloadNV,
@@ -448,10 +449,11 @@ pub enum StorageQualifier {
     PerViewNV,
     TaskNV,
     TaskPayloadSharedEXT,
+    TileImageEXT,
 }
 
 impl StorageQualifier {
-    pub const ALL: [Self; 42] = [
+    pub const ALL: [Self; 44] = [
         Self::Const,
         Self::In,
         Self::Out,
@@ -475,6 +477,7 @@ impl StorageQualifier {
         Self::SubgroupCoherent,
         Self::ShaderCallCoherent,
         Self::NonPrivate,
+        Self::NonTemporal,
         Self::ResourceHeap,
         Self::SamplerHeap,
         Self::RayPayloadNV,
@@ -494,6 +497,7 @@ impl StorageQualifier {
         Self::PerViewNV,
         Self::TaskNV,
         Self::TaskPayloadSharedEXT,
+        Self::TileImageEXT,
     ];
 
     pub const fn keyword(self) -> &'static str {
@@ -521,6 +525,7 @@ impl StorageQualifier {
             Self::SubgroupCoherent => "subgroupcoherent",
             Self::ShaderCallCoherent => "shadercallcoherent",
             Self::NonPrivate => "nonprivate",
+            Self::NonTemporal => "nontemporal",
             Self::ResourceHeap => "resourceheap",
             Self::SamplerHeap => "samplerheap",
             Self::RayPayloadNV => "rayPayloadNV",
@@ -540,6 +545,7 @@ impl StorageQualifier {
             Self::PerViewNV => "perviewNV",
             Self::TaskNV => "taskNV",
             Self::TaskPayloadSharedEXT => "taskPayloadSharedEXT",
+            Self::TileImageEXT => "tileImageEXT",
         }
     }
 
@@ -1012,6 +1018,7 @@ pub enum JumpStatement {
     Break,
     Return(Option<Expression>),
     Discard,
+    Demote,
     TerminateRay,
     IgnoreIntersection,
 }
@@ -1104,6 +1111,7 @@ pub struct FunctionCall {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FunctionIdentifier {
     Constructor(Box<TypeSpecifier>),
+    Cast(Box<TypeSpecifier>),
     Function(String),
     Expression(Box<Expression>),
     Method {

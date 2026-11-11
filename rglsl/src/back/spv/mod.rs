@@ -386,7 +386,10 @@ impl LocalImageType {
                 dim,
                 flags: make_flags(
                     multi,
-                    if dim == spirv::Dim::DimSubpassData {
+                    if matches!(
+                        dim,
+                        spirv::Dim::DimSubpassData | spirv::Dim::DimTileImageDataEXT
+                    ) {
                         ImageTypeFlags::empty()
                     } else {
                         ImageTypeFlags::SAMPLED

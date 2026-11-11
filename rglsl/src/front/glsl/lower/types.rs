@@ -59,8 +59,18 @@ pub(super) const fn vector_size(size: u8) -> Option<VectorSize> {
 pub(super) const fn sampled_kind(sampled: SampledType) -> ScalarKind {
     match sampled {
         SampledType::Float => ScalarKind::Float,
-        SampledType::Int => ScalarKind::Sint,
-        SampledType::Uint => ScalarKind::Uint,
+        SampledType::Int | SampledType::Int64 => ScalarKind::Sint,
+        SampledType::Uint | SampledType::Uint64 => ScalarKind::Uint,
+    }
+}
+
+pub(super) const fn sampled_scalar(sampled: SampledType) -> Scalar {
+    Scalar {
+        kind: sampled_kind(sampled),
+        width: match sampled {
+            SampledType::Int64 | SampledType::Uint64 => 8,
+            SampledType::Float | SampledType::Int | SampledType::Uint => 4,
+        },
     }
 }
 
@@ -68,26 +78,15 @@ pub(super) const fn image_dimension(opaque: Opaque) -> ImageDimension {
     if matches!(opaque.kind, OpaqueKind::SubpassInput) {
         return ImageDimension::Subpass;
     }
+    if matches!(opaque.kind, OpaqueKind::TileImage) {
+        return ImageDimension::TileImageData;
+    }
     match opaque.dimension {
         TextureDimension::D1 => ImageDimension::D1,
         TextureDimension::D2 => ImageDimension::D2,
         TextureDimension::D3 => ImageDimension::D3,
         TextureDimension::Cube => ImageDimension::Cube,
         TextureDimension::Buffer => ImageDimension::Buffer,
-    }
-}
-
-fn contains_bool(ty: &GlslType, registry: &rglsl_sema::TypeRegistry) -> bool {
-    match ty.kind {
-        TypeKind::Scalar(GlslScalar::Bool)
-        | TypeKind::Vector {
-            scalar: GlslScalar::Bool,
-            ..
-        } => true,
-        TypeKind::Struct(id) => registry
-            .structure(id)
-            .is_some_and(|structure| structure.scalars.contains(&GlslScalar::Bool)),
-        _ => false,
     }
 }
 
@@ -113,6 +112,7 @@ impl Lowerer<'_> {
 
     pub(super) fn sparse_result_type(&mut self, texel: TypeInner) -> Handle<Type> {
         let (offset, span) = match texel {
+            TypeInner::Vector { scalar, .. } if scalar.width == 8 => (32, 64),
             TypeInner::Vector { .. } => (16, 32),
             _ => (4, 8),
         };
@@ -143,6 +143,33 @@ impl Lowerer<'_> {
             ],
             span,
         })
+    }
+
+    pub(super) fn footprint_result_type(&mut self, three: bool) -> Handle<Type> {
+        let (size, offsets, span) = if three {
+            (VectorSize::Tri, [0, 16, 32, 48, 56, 60], 64)
+        } else {
+            (VectorSize::Bi, [0, 8, 16, 24, 32, 36], 40)
+        };
+        let boolean = self.insert_type(TypeInner::Scalar(Scalar::BOOL));
+        let vector = self.vector_type(size, Scalar::U32);
+        let mask = self.vector_type(VectorSize::Bi, Scalar::U32);
+        let scalar = self.insert_type(TypeInner::Scalar(Scalar::U32));
+        let members = [boolean, vector, vector, mask, scalar, scalar]
+            .into_iter()
+            .zip(offsets)
+            .map(|(ty, offset)| StructMember {
+                name: None,
+                ty,
+                binding: None,
+                offset,
+                matrix_layout: None,
+                xfb_offset: None,
+                heap: None,
+                memory_decorations: MemoryDecorations::empty(),
+            })
+            .collect();
+        self.insert_type(TypeInner::Struct { members, span })
     }
 
     pub(super) fn vector_type(&mut self, size: VectorSize, scalar: Scalar) -> Handle<Type> {
@@ -404,6 +431,14 @@ impl Lowerer<'_> {
             OpaqueKind::HitObjectExt => Ok(TypeInner::HitObject {
                 kind: crate::HitObjectKind::Ext,
             }),
+            OpaqueKind::TileImage => Ok(TypeInner::Image {
+                dim: ImageDimension::TileImageData,
+                arrayed: false,
+                class: ImageClass::Sampled {
+                    kind: sampled_kind(opaque.sampled),
+                    multi: false,
+                },
+            }),
             OpaqueKind::SubpassInput => Ok(TypeInner::Image {
                 dim: ImageDimension::Subpass,
                 arrayed: false,
@@ -562,6 +597,17 @@ impl Lowerer<'_> {
             (&TypeInner::Array { .. } | &TypeInner::Struct { .. }, _) => {
                 return Err(internal(span))
             }
+            (&TypeInner::Scalar(Scalar::BOOL), &Shape::Plain) => TypeInner::Scalar(Scalar::U32),
+            (
+                &TypeInner::Vector {
+                    size,
+                    scalar: Scalar::BOOL,
+                },
+                &Shape::Plain,
+            ) => TypeInner::Vector {
+                size,
+                scalar: Scalar::U32,
+            },
             (_, &Shape::Plain | &Shape::Matrix { .. }) => return Ok(ty),
             (_, &Shape::Array { .. } | &Shape::Struct(_)) => return Err(invalid_member(span)),
         };
@@ -569,7 +615,10 @@ impl Lowerer<'_> {
     }
 
     fn record_relayout(&mut self, laid: Handle<Type>, plain: Handle<Type>) {
-        if laid == plain || self.relayout.insert(laid, plain).is_some() {
+        if laid == plain || self.holds_booleans(plain) {
+            return;
+        }
+        if self.relayout.insert(laid, plain).is_some() {
             return;
         }
         let types = &self.module.types;
@@ -596,6 +645,16 @@ impl Lowerer<'_> {
             };
         for (laid, plain) in pairs {
             self.record_relayout(laid, plain);
+        }
+    }
+
+    fn holds_booleans(&self, ty: Handle<Type>) -> bool {
+        match self.module.types[ty].inner {
+            TypeInner::Scalar(scalar) | TypeInner::Vector { scalar, .. } => {
+                scalar.kind == ScalarKind::Bool
+            }
+            TypeInner::Array { base, .. } => self.holds_booleans(base),
+            _ => false,
         }
     }
 
@@ -640,12 +699,6 @@ impl Lowerer<'_> {
                     self.ir_type(&lowered, span)?
                 }
                 None => {
-                    if contains_bool(&member_ty, &analysis.types) {
-                        return Err(unsupported(
-                            "booleans inside arrays or structures in a block",
-                            span,
-                        ));
-                    }
                     if member_ty.contains_opaque(&analysis.types) {
                         return Err(unsupported("opaque types in blocks", span));
                     }

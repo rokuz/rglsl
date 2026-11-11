@@ -81,6 +81,7 @@ impl ExpressionTracer<'_> {
             | Ex::FunctionArgument(_)
             | Ex::LocalVariable(_)
             | Ex::SubgroupBallotResult
+            | Ex::IsHelperInvocation
             | Ex::RayQueryProceedResult
             | Ex::ReportIntersectionResult => {}
 
@@ -204,6 +205,64 @@ impl ExpressionTracer<'_> {
             }
             Ex::ImageSparseResident { code } => {
                 self.expressions_used.insert(code);
+            }
+            Ex::InterpolateAt { pointer, location } => {
+                self.expressions_used.insert(pointer);
+                match location {
+                    crate::InterpolationLocation::Centroid => {}
+                    crate::InterpolationLocation::Sample(operand)
+                    | crate::InterpolationLocation::Offset(operand) => {
+                        self.expressions_used.insert(operand);
+                    }
+                }
+            }
+            Ex::ImageFootprint {
+                image,
+                coordinate,
+                granularity,
+                coarse,
+                ref level,
+                min_lod,
+                ty,
+            } => {
+                self.types_used.insert(ty);
+                self.expressions_used.insert(image);
+                self.expressions_used.insert(coordinate);
+                self.expressions_used.insert(granularity);
+                self.expressions_used.insert(coarse);
+                if let Some(min_lod) = min_lod {
+                    self.expressions_used.insert(min_lod);
+                }
+                use crate::SampleLevel as Sl;
+                match *level {
+                    Sl::Auto | Sl::Zero => {}
+                    Sl::Exact(expr) | Sl::Bias(expr) => {
+                        self.expressions_used.insert(expr);
+                    }
+                    Sl::Gradient { x, y } => {
+                        self.expressions_used.insert(x);
+                        self.expressions_used.insert(y);
+                    }
+                }
+            }
+            Ex::FragmentFetch {
+                image,
+                coordinate,
+                fragment,
+            } => {
+                self.expressions_used.insert(image);
+                self.expressions_used.insert(coordinate);
+                if let Some(fragment) = fragment {
+                    self.expressions_used.insert(fragment);
+                }
+            }
+            Ex::AttachmentRead { aspect, sample } => {
+                if let crate::AttachmentAspect::Color(image) = aspect {
+                    self.expressions_used.insert(image);
+                }
+                if let Some(sample) = sample {
+                    self.expressions_used.insert(sample);
+                }
             }
             Ex::RayQueryGet { query, value: _ } => {
                 self.expressions_used.insert(query);
@@ -409,6 +468,7 @@ impl ModuleMap {
             | Ex::FunctionArgument(_)
             | Ex::LocalVariable(_)
             | Ex::SubgroupBallotResult
+            | Ex::IsHelperInvocation
             | Ex::RayQueryProceedResult
             | Ex::ReportIntersectionResult => {}
 
@@ -491,6 +551,69 @@ impl ModuleMap {
                 }
             }
             Ex::ImageSparseResident { ref mut code } => adjust(code)?,
+            Ex::InterpolateAt {
+                ref mut pointer,
+                ref mut location,
+            } => {
+                adjust(pointer)?;
+                match *location {
+                    crate::InterpolationLocation::Centroid => {}
+                    crate::InterpolationLocation::Sample(ref mut operand)
+                    | crate::InterpolationLocation::Offset(ref mut operand) => adjust(operand)?,
+                }
+            }
+            Ex::ImageFootprint {
+                ref mut image,
+                ref mut coordinate,
+                ref mut granularity,
+                ref mut coarse,
+                ref mut level,
+                ref mut min_lod,
+                ref mut ty,
+            } => {
+                adjust(image)?;
+                adjust(coordinate)?;
+                adjust(granularity)?;
+                adjust(coarse)?;
+                if let Some(ref mut min_lod) = *min_lod {
+                    adjust(min_lod)?;
+                }
+                self.types.adjust(ty)?;
+                match *level {
+                    crate::SampleLevel::Auto | crate::SampleLevel::Zero => {}
+                    crate::SampleLevel::Exact(ref mut expr)
+                    | crate::SampleLevel::Bias(ref mut expr) => adjust(expr)?,
+                    crate::SampleLevel::Gradient {
+                        ref mut x,
+                        ref mut y,
+                    } => {
+                        adjust(x)?;
+                        adjust(y)?;
+                    }
+                }
+            }
+            Ex::FragmentFetch {
+                ref mut image,
+                ref mut coordinate,
+                ref mut fragment,
+            } => {
+                adjust(image)?;
+                adjust(coordinate)?;
+                if let Some(ref mut fragment) = *fragment {
+                    adjust(fragment)?;
+                }
+            }
+            Ex::AttachmentRead {
+                ref mut aspect,
+                ref mut sample,
+            } => {
+                if let crate::AttachmentAspect::Color(ref mut image) = *aspect {
+                    adjust(image)?;
+                }
+                if let Some(ref mut sample) = *sample {
+                    adjust(sample)?;
+                }
+            }
             Ex::ImageQuery {
                 ref mut image,
                 ref mut query,

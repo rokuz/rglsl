@@ -29,6 +29,7 @@ pub enum Storage {
     HitObjectAttributeNv,
     HitObjectAttributeExt,
     TaskPayloadShared,
+    TileImage,
 }
 
 impl Storage {
@@ -76,6 +77,7 @@ pub struct Qualifiers {
     pub subgroup_coherent: bool,
     pub shader_call_coherent: bool,
     pub nonprivate: bool,
+    pub nontemporal: bool,
     pub per_primitive: bool,
     pub per_view: bool,
     pub per_task: bool,
@@ -103,6 +105,7 @@ impl Qualifiers {
             || self.coherent
             || self.volatile
             || self.restrict
+            || self.nontemporal
             || self.needs_vulkan_memory_model()
     }
 
@@ -113,6 +116,7 @@ impl Qualifiers {
                 || self.coherent
                 || self.volatile
                 || self.restrict
+                || self.nontemporal
                 || self.device_coherent
                 || self.queue_family_coherent
                 || self.workgroup_coherent

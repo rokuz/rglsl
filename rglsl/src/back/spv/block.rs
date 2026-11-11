@@ -1826,6 +1826,96 @@ impl BlockContext<'_> {
             | crate::Expression::SubgroupBallotResult
             | crate::Expression::SubgroupOperationResult { .. }
             | crate::Expression::SpirvInstructionResult { .. } => self.cached.get(expr_handle)?,
+            crate::Expression::InterpolateAt { pointer, location } => {
+                self.writer.require_any(
+                    "interpolation functions",
+                    &[spirv::Capability::InterpolationFunction],
+                )?;
+                let pointer_id =
+                    match self.write_access_chain(pointer, block, AccessTypeAdjustment::None)? {
+                        ExpressionPointer::Ready { pointer_id } => pointer_id,
+                        ExpressionPointer::Conditional { .. } => {
+                            return Err(Error::FeatureNotImplemented("bounds-checked interpolants"))
+                        }
+                    };
+                let (op, operand) = match location {
+                    crate::InterpolationLocation::Centroid => {
+                        (spirv::GlslStd450Op::InterpolateAtCentroid, None)
+                    }
+                    crate::InterpolationLocation::Sample(sample) => (
+                        spirv::GlslStd450Op::InterpolateAtSample,
+                        Some(self.cached.get(sample)?),
+                    ),
+                    crate::InterpolationLocation::Offset(offset) => (
+                        spirv::GlslStd450Op::InterpolateAtOffset,
+                        Some(self.cached.get(offset)?),
+                    ),
+                };
+                let id = self.gen_id();
+                let mut operands = alloc::vec![pointer_id];
+                operands.extend(operand);
+                block.body.push(Instruction::ext_inst_gl_op(
+                    self.writer.gl450_ext_inst_id,
+                    op,
+                    result_type_id,
+                    id,
+                    &operands,
+                ));
+                id
+            }
+            crate::Expression::ImageFootprint {
+                image,
+                coordinate,
+                granularity,
+                coarse,
+                level,
+                min_lod,
+                ty: _,
+            } => self.write_image_footprint(
+                result_type_id,
+                image,
+                coordinate,
+                granularity,
+                coarse,
+                level,
+                min_lod,
+                block,
+            )?,
+            crate::Expression::FragmentFetch {
+                image,
+                coordinate,
+                fragment,
+            } => {
+                self.writer.use_extension("SPV_AMD_shader_fragment_mask");
+                self.writer
+                    .require_any("fragment mask", &[spirv::Capability::FragmentMaskAMD])?;
+                let image_id = self.get_image_id(image, block)?;
+                let id = self.gen_id();
+                let mut instruction = Instruction::new(match fragment {
+                    None => spirv::Op::FragmentMaskFetchAMD,
+                    Some(_) => spirv::Op::FragmentFetchAMD,
+                });
+                instruction.set_type(result_type_id);
+                instruction.set_result(id);
+                instruction.add_operand(image_id);
+                instruction.add_operand(self.cached.get(coordinate)?);
+                if let Some(fragment) = fragment {
+                    instruction.add_operand(self.cached.get(fragment)?);
+                }
+                block.body.push(instruction);
+                id
+            }
+            crate::Expression::AttachmentRead { aspect, sample } => {
+                self.write_attachment_read(aspect, sample, result_type_id, block)?
+            }
+            crate::Expression::IsHelperInvocation => {
+                self.writer.require_demote()?;
+                let id = self.gen_id();
+                block
+                    .body
+                    .push(Instruction::is_helper_invocation(result_type_id, id));
+                id
+            }
             crate::Expression::As {
                 expr,
                 kind,
@@ -3924,6 +4014,25 @@ impl BlockContext<'_> {
                     self.function.consume(block, Instruction::kill());
                     return Ok(BlockExitDisposition::Discarded);
                 }
+                Statement::Demote => {
+                    self.writer.require_demote()?;
+                    block.body.push(Instruction::demote_to_helper_invocation());
+                }
+                Statement::BeginInvocationInterlock => {
+                    block.body.push(Instruction::invocation_interlock(true));
+                }
+                Statement::EndInvocationInterlock => {
+                    block.body.push(Instruction::invocation_interlock(false));
+                }
+                Statement::SplitBarrier {
+                    phase,
+                    execution,
+                    memory,
+                    semantics,
+                } => {
+                    self.writer
+                        .write_split_barrier(phase, execution, memory, semantics, &mut block)?;
+                }
                 Statement::EmitVertex { stream } => {
                     self.write_primitive_operation(&mut block, true, stream)?;
                 }
@@ -4197,7 +4306,9 @@ impl BlockContext<'_> {
                                 crate::ScalarKind::Sint | crate::ScalarKind::Uint => {
                                     spirv::Op::AtomicIAdd
                                 }
-                                crate::ScalarKind::Float => spirv::Op::AtomicFAddEXT,
+                                crate::ScalarKind::Float => {
+                                    self.writer.float_atomic(*fun, scalar)?
+                                }
                                 _ => {
                                     return Err(Error::Validation(
                                         "atomic operation on an unsupported scalar type",
@@ -4314,6 +4425,9 @@ impl BlockContext<'_> {
                             let spirv_op = match scalar.kind {
                                 crate::ScalarKind::Sint => spirv::Op::AtomicSMin,
                                 crate::ScalarKind::Uint => spirv::Op::AtomicUMin,
+                                crate::ScalarKind::Float => {
+                                    self.writer.float_atomic(*fun, scalar)?
+                                }
                                 _ => {
                                     return Err(Error::Validation(
                                         "atomic operation on an unsupported scalar type",
@@ -4334,6 +4448,9 @@ impl BlockContext<'_> {
                             let spirv_op = match scalar.kind {
                                 crate::ScalarKind::Sint => spirv::Op::AtomicSMax,
                                 crate::ScalarKind::Uint => spirv::Op::AtomicUMax,
+                                crate::ScalarKind::Float => {
+                                    self.writer.float_atomic(*fun, scalar)?
+                                }
                                 _ => {
                                     return Err(Error::Validation(
                                         "atomic operation on an unsupported scalar type",

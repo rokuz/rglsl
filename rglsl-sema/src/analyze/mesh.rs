@@ -62,8 +62,6 @@ fn variable_extension(name: &str) -> Option<&'static [&'static str]> {
         | "gl_LocalInvocationID"
         | "gl_GlobalInvocationID"
         | "gl_LocalInvocationIndex" => &MESH_ANY,
-        "gl_DrawIDARB" => &["GL_ARB_shader_draw_parameters"],
-        "gl_DeviceIndex" => &["GL_EXT_device_group"],
         _ => return None,
     })
 }

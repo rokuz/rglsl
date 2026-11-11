@@ -1105,6 +1105,41 @@ impl super::Instruction {
         Self::new(Op::Kill)
     }
 
+    pub(super) const fn demote_to_helper_invocation() -> Self {
+        Self::new(Op::DemoteToHelperInvocation)
+    }
+
+    pub(super) const fn is_helper_invocation(result_type_id: Word, id: Word) -> Self {
+        let mut instruction = Self::new(Op::IsHelperInvocationEXT);
+        instruction.set_type(result_type_id);
+        instruction.set_result(id);
+        instruction
+    }
+
+    pub(super) const fn invocation_interlock(begin: bool) -> Self {
+        Self::new(if begin {
+            Op::BeginInvocationInterlockEXT
+        } else {
+            Op::EndInvocationInterlockEXT
+        })
+    }
+
+    pub(super) fn split_barrier(
+        phase: crate::BarrierPhase,
+        exec_scope_id: Word,
+        mem_scope_id: Word,
+        semantics_id: Word,
+    ) -> Self {
+        let mut instruction = Self::new(match phase {
+            crate::BarrierPhase::Arrive => Op::ControlBarrierArriveINTEL,
+            crate::BarrierPhase::Wait => Op::ControlBarrierWaitINTEL,
+        });
+        instruction.add_operand(exec_scope_id);
+        instruction.add_operand(mem_scope_id);
+        instruction.add_operand(semantics_id);
+        instruction
+    }
+
     pub(super) const fn return_void() -> Self {
         Self::new(Op::Return)
     }
@@ -1174,6 +1209,7 @@ impl From<crate::StorageFormat> for spirv::ImageFormat {
             Sf::Rgb10a2Unorm => Self::Rgb10A2,
             Sf::Rg11b10Ufloat => Self::R11fG11fB10f,
             Sf::R64Uint => Self::R64ui,
+            Sf::R64Sint => Self::R64i,
             Sf::Rg32Uint => Self::Rg32ui,
             Sf::Rg32Sint => Self::Rg32i,
             Sf::Rg32Float => Self::Rg32f,
@@ -1204,6 +1240,7 @@ impl From<crate::ImageDimension> for spirv::Dim {
             Id::Cube => Self::DimCube,
             Id::Buffer => Self::DimBuffer,
             Id::Subpass => Self::DimSubpassData,
+            Id::TileImageData => Self::DimTileImageDataEXT,
         }
     }
 }

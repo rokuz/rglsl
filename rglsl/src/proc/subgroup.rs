@@ -18,6 +18,12 @@ impl crate::TileShading {
     }
 }
 
+impl crate::FragmentModes {
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
 impl QuadControl {
     pub const fn is_default(&self) -> bool {
         !self.quad_derivatives && !self.require_full_quads

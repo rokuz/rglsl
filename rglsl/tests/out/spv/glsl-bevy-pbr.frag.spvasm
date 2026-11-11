@@ -71,7 +71,6 @@ OpDecorate %63 Binding 13
 OpDecorate %64 DescriptorSet 3
 OpDecorate %64 Binding 14
 OpDecorate %65 BuiltIn FrontFacing
-OpDecorate %65 Flat
 %2 = OpTypeVoid
 %3 = OpTypeInt 32 1
 %5 = OpTypeFloat 32

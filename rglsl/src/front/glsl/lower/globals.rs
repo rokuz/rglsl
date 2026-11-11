@@ -12,7 +12,7 @@ use rglsl_sema::types::{
 };
 use rglsl_sema::SymbolId;
 
-use super::types::{image_dimension, sampled_kind};
+use super::types::image_dimension;
 use super::{internal, semantic, unsupported, GlobalRef, Initialization, Lowerer, Packing, Result};
 use super::{specialization, xfb};
 use crate::proc::Alignment;
@@ -119,6 +119,7 @@ pub(super) fn image_format(word: &str) -> Option<StorageFormat> {
         "rgba16ui" => Sf::Rgba16Uint,
         "rgba8ui" => Sf::Rgba8Uint,
         "r64ui" => Sf::R64Uint,
+        "r64i" => Sf::R64Sint,
         "rg32ui" => Sf::Rg32Uint,
         "rg16ui" => Sf::Rg16Uint,
         "rg8ui" => Sf::Rg8Uint,
@@ -130,10 +131,7 @@ pub(super) fn image_format(word: &str) -> Option<StorageFormat> {
 }
 
 pub(super) const fn unknown_format(sampled: rglsl_sema::types::SampledType) -> StorageFormat {
-    StorageFormat::Unknown(crate::Scalar {
-        kind: sampled_kind(sampled),
-        width: 4,
-    })
+    StorageFormat::Unknown(super::types::sampled_scalar(sampled))
 }
 
 pub(super) fn storage_access(qualifiers: &Qualifiers) -> StorageAccess {
@@ -208,6 +206,7 @@ fn memory(qualifiers: &Qualifiers) -> MemoryDecorations {
             MemoryDecorations::SHADER_CALL_COHERENT,
         ),
         (qualifiers.nonprivate, MemoryDecorations::NONPRIVATE),
+        (qualifiers.nontemporal, MemoryDecorations::NONTEMPORAL),
     ] {
         if present {
             decorations |= decoration;
@@ -232,6 +231,20 @@ fn builtin_of(name: &str) -> Option<BuiltIn> {
         "gl_PointCoord" => BuiltIn::PointCoord,
         "gl_PrimitiveID" => BuiltIn::PrimitiveIndex,
         "gl_SampleID" => BuiltIn::SampleIndex,
+        "gl_SamplePosition" => BuiltIn::SamplePosition,
+        "gl_HelperInvocation" => BuiltIn::HelperInvocation,
+        "gl_BaseVertexARB" => BuiltIn::BaseVertex,
+        "gl_BaseInstanceARB" => BuiltIn::BaseInstance,
+        "gl_DrawIDARB" => BuiltIn::DrawIndex,
+        "gl_DeviceIndex" => BuiltIn::DeviceIndex,
+        "gl_PrimitiveShadingRateEXT" => BuiltIn::PrimitiveShadingRate,
+        "gl_ShadingRateEXT" => BuiltIn::ShadingRate,
+        "gl_FragSizeEXT" => BuiltIn::FragSize { nv: false },
+        "gl_FragInvocationCountEXT" => BuiltIn::FragInvocationCount { nv: false },
+        "gl_FragmentSizeNV" => BuiltIn::FragSize { nv: true },
+        "gl_InvocationsPerPixelNV" => BuiltIn::FragInvocationCount { nv: true },
+        "gl_FragFullyCoveredNV" => BuiltIn::FullyCovered,
+        "gl_FragStencilRefARB" => BuiltIn::FragStencilRef,
         "gl_NumWorkGroups" => BuiltIn::NumWorkGroups,
         "gl_WorkGroupID" => BuiltIn::WorkGroupId,
         "gl_LocalInvocationID" => BuiltIn::LocalInvocationId,
@@ -550,7 +563,6 @@ impl<'a> Lowerer<'a> {
                         "early_fragment_tests" => self.early_fragment_tests = true,
                         "quad_derivatives" => self.quad_control.quad_derivatives = true,
                         "full_quads" => self.quad_control.require_full_quads = true,
-                        "post_depth_coverage" => self.post_depth_coverage = Some(at),
                         "local_size_x" | "local_size_y" | "local_size_z" => {
                             let value = xfb::ast_layout_value(self, Some(qualifier), name);
                             let index = match name {
@@ -688,6 +700,7 @@ impl<'a> Lowerer<'a> {
             }
             Storage::Uniform => self.resource(symbol, name, at),
             Storage::TaskPayloadShared => self.task_payload_variable(symbol, name, at),
+            Storage::TileImage => self.tile_image_variable(symbol, name, at),
             Storage::Shared => {
                 let ir = self.ir_type(ty, at)?;
                 let init = declarator
@@ -734,6 +747,50 @@ impl<'a> Lowerer<'a> {
             | Storage::HitObjectAttributeExt => self.ray_variable(symbol, name, at),
             Storage::None => self.private(symbol, name, declarator, at),
         }
+    }
+
+    fn tile_image_variable(&mut self, symbol: SymbolId, name: String, at: Span) -> Result<()> {
+        let variable = self.variable(symbol).ok_or_else(|| internal(at))?;
+        if variable.ty.is_array() {
+            return Err(unsupported("arrays of tile images", at));
+        }
+        let location = variable
+            .qualifiers
+            .layout_entry("location")
+            .and_then(|entry| entry.value)
+            .and_then(|value| u32::try_from(value).ok())
+            .ok_or_else(|| internal(at))?;
+        let ty = self.ir_type(&variable.ty, at)?;
+        let handle = self.module.global_variables.append(
+            GlobalVariable {
+                name: Some(name),
+                space: AddressSpace::Handle,
+                binding: None,
+                ty,
+                init: None,
+                memory_decorations: MemoryDecorations::empty(),
+                io: Some(Binding::Location {
+                    location,
+                    interpolation: None,
+                    sampling: None,
+                    blend_src: None,
+                    per_primitive: false,
+                    per_view: false,
+                    component: None,
+                    invariant: false,
+                    patch: false,
+                }),
+                xfb: None,
+                input_attachment_index: None,
+                heap_offset: None,
+                tile_attachment: false,
+                immediate_bank: None,
+                spirv_decorations: Vec::new(),
+            },
+            at,
+        );
+        self.globals.insert(symbol, GlobalRef::Variable(handle));
+        Ok(())
     }
 
     fn private(
@@ -2206,16 +2263,14 @@ impl<'a> Lowerer<'a> {
                 }
             }
         }
-        if let Some(at) = self.post_depth_coverage {
-            let implied = self
-                .analysis
-                .extensions
-                .contains("GL_ARB_post_depth_coverage");
-            self.errors.push(if self.early_fragment_tests || implied {
-                unsupported("the `post_depth_coverage` layout qualifier", at)
-            } else {
-                semantic("post_depth_coverage requires early_fragment_tests", at)
-            });
+        let fragment = self.analysis.fragment;
+        if fragment.post_depth_coverage
+            && !(self.early_fragment_tests || fragment.early_fragment_tests)
+        {
+            self.errors.push(semantic(
+                "post_depth_coverage requires early_fragment_tests",
+                Span::UNDEFINED,
+            ));
         }
         self.check_shared_layouts();
         self.finish_xfb();

@@ -47,6 +47,10 @@ pub fn ensure_block_returns(block: &mut crate::Block) {
             | S::AtomicLoad { .. }
             | S::AtomicStore { .. }
             | S::ScopedBarrier { .. }
+            | S::SplitBarrier { .. }
+            | S::Demote
+            | S::BeginInvocationInterlock
+            | S::EndInvocationInterlock
             | S::WorkGroupUniformLoad { .. }
             | S::SubgroupBallot { .. }
             | S::SubgroupCollectiveOperation { .. }

@@ -24,7 +24,7 @@ use crate::types::{
     TypeKind,
 };
 
-const IMAGE_FORMATS: [&str; 41] = [
+pub(crate) const IMAGE_FORMATS: [&str; 41] = [
     "rgba32f",
     "rgba16f",
     "rg32f",
@@ -136,6 +136,7 @@ impl Analyzer<'_> {
         }
         self.record_buffer_defaults(&qualifiers);
         self.standalone_stage_layout(&qualifiers);
+        self.fragment_layouts(&qualifiers);
         self.task_payload_type_only(qualifier.span, &qualifiers);
         if qualifiers.storage == Storage::Out {
             self.resize_mesh_arrays(qualifier.span);
@@ -410,6 +411,14 @@ impl Analyzer<'_> {
                         self.require_scope_extension(single.span, storage.keyword());
                         result.nonprivate = true;
                     }
+                    StorageQualifier::NonTemporal => {
+                        self.require_extension(
+                            single.span,
+                            "GL_EXT_nontemporal_keyword",
+                            storage.keyword(),
+                        );
+                        result.nontemporal = true;
+                    }
                     StorageQualifier::ShaderCallCoherent => {
                         self.require_extension(
                             single.span,
@@ -433,6 +442,14 @@ impl Analyzer<'_> {
                     StorageQualifier::TaskPayloadSharedEXT => {
                         self.mesh_qualifier(single.span, *storage);
                         result.storage = Storage::TaskPayloadShared;
+                    }
+                    StorageQualifier::TileImageEXT => {
+                        self.require_extension(
+                            single.span,
+                            "GL_EXT_shader_tile_image",
+                            storage.keyword(),
+                        );
+                        result.storage = Storage::TileImage;
                     }
                     StorageQualifier::Volatile => result.volatile = true,
                     StorageQualifier::Restrict => result.restrict = true,
@@ -853,6 +870,7 @@ impl Analyzer<'_> {
                 qualifiers.subgroup_coherent |= block.subgroup_coherent;
                 qualifiers.shader_call_coherent |= block.shader_call_coherent;
                 qualifiers.nonprivate |= block.nonprivate;
+                qualifiers.nontemporal |= block.nontemporal;
                 qualifiers.writeonly |= block.writeonly;
                 qualifiers.per_primitive |= block.per_primitive;
                 qualifiers.per_view |= block.per_view;
@@ -1301,6 +1319,8 @@ impl Analyzer<'_> {
         );
         if hit_object {
             qualifiers.storage = Storage::None;
+        } else if qualifiers.storage == Storage::TileImage || self.is_tile_image(&ty) {
+            self.tile_image_declaration(name.span, &qualifiers, &ty);
         } else if qualifiers.storage != Storage::Uniform && self.opaque_outside_uniform(&ty) {
             self.error(name.span, DiagnosticKind::OpaqueNotAllowed(self.show(&ty)));
         } else if qualifiers.storage == Storage::Uniform
