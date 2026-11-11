@@ -8485,3 +8485,38 @@ void main() {
         .collect();
     assert!(depths.contains(&0) && depths.contains(&1), "{depths:?}");
 }
+
+#[test]
+fn local_arrays_sized_by_spec_constants_keep_the_spec_length() {
+    let module = compile(
+        ShaderStage::Compute,
+        "#version 450
+layout(local_size_x = 1) in;
+layout(constant_id = 9) const int size = 9;
+const int twice = size * 2;
+layout(std430, binding = 0) buffer B { float o; } b;
+void main() {
+    float a[size];
+    float c[twice];
+    a[1] = 1.0;
+    c[2] = 2.0;
+    b.o = a[1] + c[2] + float(a.length());
+}
+",
+    );
+    let spec: Vec<u32> = module
+        .types_global_values
+        .iter()
+        .filter(|inst| matches!(inst.class.opcode, Op::SpecConstant | Op::SpecConstantOp))
+        .filter_map(|inst| inst.result_id)
+        .collect();
+    let lengths: Vec<u32> = instructions(&module, Op::TypeArray)
+        .into_iter()
+        .map(|inst| match inst.operands[1] {
+            Operand::IdRef(id) => id,
+            ref other => panic!("unexpected length operand {other:?}"),
+        })
+        .collect();
+    assert_eq!(lengths.len(), 2);
+    assert!(lengths.iter().all(|length| spec.contains(length)), "{lengths:?}");
+}
