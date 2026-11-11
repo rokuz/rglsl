@@ -37,21 +37,21 @@ pub(super) struct FunctionLowerer<'l, 'a> {
     pub argument_types: Vec<Handle<crate::Type>>,
 }
 
-fn ensure_returns(block: &mut Block, value: Option<Handle<Expression>>) {
+fn ensure_returns(block: &mut Block) {
     match block.last_mut() {
-        Some(&mut Statement::Block(ref mut inner)) => ensure_returns(inner, value),
+        Some(&mut Statement::Block(ref mut inner)) => ensure_returns(inner),
         Some(&mut Statement::If {
             ref mut accept,
             ref mut reject,
             ..
         }) => {
-            ensure_returns(accept, value);
-            ensure_returns(reject, value);
+            ensure_returns(accept);
+            ensure_returns(reject);
         }
         Some(&mut Statement::Switch { ref mut cases, .. }) => {
             for case in cases.iter_mut() {
                 if !case.fall_through {
-                    ensure_returns(&mut case.body, value);
+                    ensure_returns(&mut case.body);
                 }
             }
         }
@@ -63,7 +63,7 @@ fn ensure_returns(block: &mut Block, value: Option<Handle<Expression>>) {
             | Statement::Abort { .. }),
         ) => {}
         Some(&mut Statement::RayPipelineFunction(ref function)) if function.is_terminator() => {}
-        _ => block.push(Statement::Return { value }, Span::UNDEFINED),
+        _ => block.push(Statement::Return { value: None }, Span::UNDEFINED),
     }
 }
 
@@ -273,15 +273,10 @@ impl<'l, 'a> FunctionLowerer<'l, 'a> {
     ) -> Function {
         let emitted = self.emitter.finish(&self.expressions);
         self.block.extend(emitted);
-        let value = result.as_ref().map(|result| {
-            let handle = self
-                .expressions
-                .append(Expression::ZeroValue(result.ty), Span::UNDEFINED);
-            self.tracker.insert(handle, ExpressionKind::Const);
-            handle
-        });
         let mut body = self.block;
-        ensure_returns(&mut body, value);
+        if result.is_none() {
+            ensure_returns(&mut body);
+        }
         Function {
             name: Some(name),
             arguments,
