@@ -533,6 +533,19 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   `CoreIDARM`/`CoreCountARM`/`CoreMaxIDARM`/`WarpIDARM`/`WarpMaxIDARM` (`CoreBuiltinsARM`):
   `u32` inputs in every stage.
 
+- **Function linkage and object modules** (M2, `docs/design/linking.md`). `Function::linkage`
+  (`Linkage::{Definition, Import}`, serialized only when it is `Import`): an import is a
+  prototype with no body, supplied by the linker (`rglsl-link`). The validator has
+  `ValidationMode::{Object, Executable}` (`Validator::mode`): object mode accepts imports with an
+  empty body, executable mode (the default) rejects any import (`ValidationError::Import`,
+  `ImportWithBody`, `EntryPointError::Import`). The SPIR-V backend refuses imports
+  (`spv::Error::Import`). `object::ObjectModule` wraps a module with what the linker needs and
+  the IR does not say (stage or none, `#version`, extensions, function signatures in GLSL terms,
+  link names of globals and their implicitly sized dimensions, automatic locations and bindings,
+  the declared stage layout), with `object::FORMAT_VERSION`. `compact::KeepUnused::Declarations`
+  keeps functions, globals and named overrides but drops unused types; `compact::Remap` exposes
+  compaction's handle adjustment (one exhaustive `match` per IR enum) to the linker.
+
 ## Cherry-picked upstream commits
 
 None yet.

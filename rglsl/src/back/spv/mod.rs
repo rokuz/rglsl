@@ -192,6 +192,8 @@ pub enum Error {
     SpirvVersionTooLow(u8, u8),
     #[error("mapping of {0:?} is missing")]
     MissingBinding(crate::ResourceBinding),
+    #[error("function `{0}` is imported: link the module before writing SPIR-V")]
+    Import(String),
 }
 
 #[derive(Default)]

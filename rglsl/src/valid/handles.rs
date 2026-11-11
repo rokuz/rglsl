@@ -197,6 +197,7 @@ impl super::Validator {
                 ref non_uniform,
                 ref body,
                 ref diagnostic_filter_leaf,
+                linkage: _,
             } = function;
 
             for arg in arguments.iter() {

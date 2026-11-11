@@ -12,6 +12,7 @@ To begin, take a look at the documentation for the [`Frontend`].
 */
 
 pub use error::{Error, ErrorKind, ParseErrors};
+pub use rglsl_pp::{FileId, Includer, NoIncluder};
 
 use alloc::string::String;
 
@@ -58,6 +59,7 @@ pub struct Options {
     /// ones.
     pub auto_map_locations: bool,
     pub spirv_version: Option<(u8, u8)>,
+    pub library: bool,
 }
 
 impl From<ShaderStage> for Options {
@@ -68,6 +70,7 @@ impl From<ShaderStage> for Options {
             auto_map_bindings: false,
             auto_map_locations: false,
             spirv_version: None,
+            library: false,
         }
     }
 }
@@ -107,5 +110,23 @@ impl Frontend {
     /// Multiple calls using the same `Frontend` and different shaders are supported.
     pub fn parse(&mut self, options: &Options, source: &str) -> Result<Module, ParseErrors> {
         lower::parse(options, source)
+    }
+
+    pub fn compile(
+        &mut self,
+        options: &Options,
+        source: &str,
+    ) -> Result<crate::object::ObjectModule, ParseErrors> {
+        lower::compile(options, source, FileId(0), &mut NoIncluder)
+    }
+
+    pub fn compile_with_includer(
+        &mut self,
+        options: &Options,
+        source: &str,
+        root: FileId,
+        includer: &mut dyn Includer,
+    ) -> Result<crate::object::ObjectModule, ParseErrors> {
+        lower::compile(options, source, root, includer)
     }
 }

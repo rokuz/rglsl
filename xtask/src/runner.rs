@@ -10,8 +10,9 @@ use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
 
-use crate::corpus::{self, Case};
+use crate::corpus::{self, Case, Kind};
 use crate::exec::{self, ExecCase, Executor, TargetId};
+use crate::groups;
 use crate::oracles::{self, Tool};
 use crate::process::{self, Exit};
 use crate::report;
@@ -63,6 +64,7 @@ pub struct CaseResult {
     pub note: String,
     pub exec_input: Option<ExecInput>,
     pub exec: BTreeMap<TargetId, exec::Outcome>,
+    pub expected_messages: Option<bool>,
 }
 
 #[derive(Debug, Clone)]
@@ -94,12 +96,33 @@ impl CaseResult {
         let OracleResult::Rejected { lines } = &self.oracle else {
             return None;
         };
+        let rejected = matches!(self.ours, OursResult::Rejected { .. });
+        if let Some(found) = self.expected_messages {
+            return Some(rejected && found);
+        }
         Some(match self.ours {
             OursResult::Rejected {
                 first_line: Some(line),
             } => lines.contains(&line),
+            OursResult::Rejected { first_line: None } => lines.is_empty(),
             _ => false,
         })
+    }
+
+    pub fn link(&self) -> Option<bool> {
+        if self.case.kind.is_file() {
+            return None;
+        }
+        let failed = |outcome: Option<bool>| outcome == Some(false);
+        Some(
+            self.accept() == Some(true)
+                && !failed(self.diag())
+                && !failed(self.valid())
+                && !self
+                    .exec
+                    .values()
+                    .any(|outcome| matches!(outcome, exec::Outcome::Fail(_))),
+        )
     }
 
     /// `valid`: everything we accept becomes SPIR-V that passes spirv-val.
@@ -172,6 +195,8 @@ pub fn run(root: &Path, options: Options) -> Result<()> {
     }
 
     let mut cases = corpus::load(&env.glslang_dir)?;
+    cases.extend(groups::load_groups(&env.glslang_dir)?);
+    cases.extend(groups::load_own(root)?);
     if let Some(filter) = &options.filter {
         cases.retain(|c| c.name.contains(filter.as_str()));
     }
@@ -267,6 +292,9 @@ fn run_case(
     case: &Case,
     timeout: Duration,
 ) -> Result<CaseResult> {
+    if !case.kind.is_file() {
+        return run_group(env, self_exe, work_dir, case, timeout);
+    }
     let oracle = run_oracle(env, work_dir, case, timeout)?;
 
     let out = work_dir.join("ours").join(format!("{}.spv", case.name));
@@ -282,6 +310,9 @@ fn run_case(
         .arg(&out);
     if case.target.automap {
         command.arg("--auto-map");
+    }
+    if case.target.compile_only {
+        command.arg("--object");
     }
     command.arg(&case.path);
     let output = process::run(command, timeout)?;
@@ -309,6 +340,7 @@ fn run_case(
     };
 
     let spirv_val = match ours {
+        OursResult::Accepted if case.target.compile_only => None,
         OursResult::Accepted => {
             let failure = validate(env, case, &out, timeout)?;
             if let Some(message) = &failure {
@@ -343,6 +375,7 @@ fn run_case(
         note,
         exec_input,
         exec: BTreeMap::new(),
+        expected_messages: None,
     })
 }
 
@@ -434,6 +467,194 @@ fn run_oracle(
         Exit::Signal => OracleResult::Broken("glslang crashed".into()),
         Exit::Timeout => OracleResult::Broken("glslang timed out".into()),
     })
+}
+
+fn run_group(
+    env: &Environment,
+    self_exe: &Path,
+    work_dir: &Path,
+    case: &Case,
+    timeout: Duration,
+) -> Result<CaseResult> {
+    let directory = work_dir
+        .join("groups")
+        .join(case.name.replace(['/', '+'], "_"));
+    let ours_dir = directory.join("ours");
+    let reference_dir = directory.join("glslang");
+    fs::create_dir_all(&ours_dir)?;
+    fs::create_dir_all(&reference_dir)?;
+    let (sources, auto_map_bindings, oracle, expected) = match case.kind {
+        Kind::Group {
+            ref files,
+            auto_map_bindings,
+        } => {
+            let test_dir = env.glslang_dir.join("Test");
+            for file in files {
+                fs::copy(test_dir.join(file), reference_dir.join(file))
+                    .with_context(|| format!("copying {file}"))?;
+            }
+            let mut command = Command::new(&env.glslang.path);
+            command.current_dir(&reference_dir).args([
+                "--target-env",
+                "vulkan1.0",
+                "--target-env",
+                "spirv1.0",
+                "--auto-map-locations",
+            ]);
+            if auto_map_bindings {
+                command.arg("--auto-map-bindings");
+            }
+            command.args(files);
+            let oracle = oracle_result(process::run(command, timeout)?);
+            let sources: Vec<PathBuf> = files.iter().map(|file| test_dir.join(file)).collect();
+            (sources, auto_map_bindings, oracle, None)
+        }
+        Kind::Own {
+            ref dir,
+            ref files,
+            ref expectation,
+            ref reference,
+        } => {
+            if let Some(reference) = reference {
+                let stage = groups::stage_of(reference).unwrap_or(case.stage);
+                let mut command = Command::new(&env.glslang.path);
+                command
+                    .current_dir(dir)
+                    .args(case.target.glslang_args())
+                    .arg("-o")
+                    .arg(reference_dir.join(format!("{stage}.spv")))
+                    .arg(reference);
+                let _ = process::run(command, timeout)?;
+            }
+            let oracle = if expectation.accept {
+                OracleResult::Accepted
+            } else {
+                OracleResult::Rejected { lines: Vec::new() }
+            };
+            let sources: Vec<PathBuf> = files.iter().map(|file| dir.join(file)).collect();
+            (sources, true, oracle, Some(expectation.clone()))
+        }
+        Kind::File => bail!("`{}` is not a group", case.name),
+    };
+
+    let spirv = format!("{}.{}", case.target.spirv.0, case.target.spirv.1);
+    let mut command = Command::new(self_exe);
+    command
+        .arg("compile-group")
+        .args(["--spv", spirv.as_str(), "--auto-map-locations"])
+        .arg("--out-dir")
+        .arg(&ours_dir);
+    if auto_map_bindings {
+        command.arg("--auto-map-bindings");
+    }
+    command.args(&sources);
+    let output = process::run(command, timeout)?;
+    let messages: Vec<String> = output
+        .stdout
+        .lines()
+        .filter_map(|line| line.strip_prefix("E "))
+        .map(str::to_string)
+        .collect();
+    let first_line = messages
+        .first()
+        .and_then(|d| d.split(' ').nth(1))
+        .and_then(|l| l.parse().ok());
+    let mut note = messages.first().cloned().unwrap_or_default();
+    let ours = match output.exit {
+        Exit::Code(EXIT_ACCEPTED) => OursResult::Accepted,
+        Exit::Code(EXIT_REJECTED) => OursResult::Rejected { first_line },
+        Exit::Code(EXIT_BACKEND_FAILED) => OursResult::BackendFailed,
+        Exit::Code(code) => {
+            note = format!("crash (exit {code}): {}", first_stderr_line(&output.stderr));
+            OursResult::Crashed
+        }
+        Exit::Signal => {
+            note = format!("crash (signal): {}", first_stderr_line(&output.stderr));
+            OursResult::Crashed
+        }
+        Exit::Timeout => {
+            note = "timeout".into();
+            OursResult::Crashed
+        }
+    };
+    let expected_messages = expected
+        .as_ref()
+        .filter(|expectation| !expectation.accept)
+        .map(|expectation| {
+            let missing: Vec<&String> = expectation
+                .messages
+                .iter()
+                .filter(|message| !messages.iter().any(|ours| ours.contains(message.as_str())))
+                .collect();
+            if let Some(message) = missing.first() {
+                note = format!("missing the error `{message}`; {note}");
+            }
+            missing.is_empty()
+        });
+
+    let mut produced: Vec<PathBuf> = fs::read_dir(&ours_dir)?
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| path.extension().is_some_and(|extension| extension == "spv"))
+        .collect();
+    produced.sort();
+    let spirv_val = match ours {
+        OursResult::Accepted => {
+            let mut valid = true;
+            for module in &produced {
+                if let Some(message) = validate(env, case, module, timeout)? {
+                    note = format!("spirv-val: {message}");
+                    valid = false;
+                }
+            }
+            Some(valid)
+        }
+        _ => None,
+    };
+
+    let exec_input = match produced.as_slice() {
+        [module]
+            if !env.executors.is_empty()
+                && matches!(oracle, OracleResult::Accepted)
+                && spirv_val == Some(true) =>
+        {
+            let reference = module
+                .file_name()
+                .map(|name| reference_dir.join(name))
+                .filter(|path| path.is_file());
+            match reference {
+                Some(reference) => Some(ExecInput {
+                    invalid_reference: validate(env, case, &reference, timeout)?,
+                    ours: module.clone(),
+                    reference,
+                }),
+                None => None,
+            }
+        }
+        _ => None,
+    };
+
+    Ok(CaseResult {
+        case: case.clone(),
+        oracle,
+        ours,
+        spirv_val,
+        note,
+        exec_input,
+        exec: BTreeMap::new(),
+        expected_messages,
+    })
+}
+
+fn oracle_result(output: process::Output) -> OracleResult {
+    match output.exit {
+        Exit::Code(0) => OracleResult::Accepted,
+        Exit::Code(1..=3) => OracleResult::Rejected {
+            lines: glslang_error_lines(&format!("{}\n{}", output.stdout, output.stderr)),
+        },
+        Exit::Code(code) => OracleResult::Broken(format!("glslang exited with {code}")),
+        Exit::Signal => OracleResult::Broken("glslang crashed".into()),
+        Exit::Timeout => OracleResult::Broken("glslang timed out".into()),
+    }
 }
 
 /// Line numbers from `ERROR: <string>:<line>: ...` messages.

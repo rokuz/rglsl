@@ -5181,6 +5181,16 @@ impl Writer {
     ) -> Result<(), Error> {
         self.reset();
 
+        if let Some(import) = ir_module
+            .functions
+            .iter()
+            .map(|(_, function)| function)
+            .chain(ir_module.entry_points.iter().map(|entry| &entry.function))
+            .find(|function| function.linkage.is_import())
+        {
+            return Err(Error::Import(import.name.clone().unwrap_or_default()));
+        }
+
         // Try to find the entry point and corresponding index
         let ep_index = match pipeline_options {
             Some(po) => {

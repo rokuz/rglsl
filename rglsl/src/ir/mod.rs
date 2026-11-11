@@ -3465,6 +3465,32 @@ pub struct Function {
     /// See [`DiagnosticFilterNode`] for details on how the tree is represented and used in
     /// validation.
     pub diagnostic_filter_leaf: Option<Handle<DiagnosticFilterNode>>,
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    #[cfg_attr(
+        feature = "serialize",
+        serde(skip_serializing_if = "Linkage::is_definition")
+    )]
+    pub linkage: Linkage,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub enum Linkage {
+    #[default]
+    Definition,
+    Import,
+}
+
+impl Linkage {
+    pub const fn is_definition(&self) -> bool {
+        matches!(*self, Self::Definition)
+    }
+
+    pub const fn is_import(&self) -> bool {
+        matches!(*self, Self::Import)
+    }
 }
 
 /// The main function for a pipeline stage.

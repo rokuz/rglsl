@@ -375,9 +375,17 @@ impl ops::Index<Handle<crate::Expression>> for ModuleInfo {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ValidationMode {
+    Object,
+    #[default]
+    Executable,
+}
+
 #[derive(Debug)]
 pub struct Validator {
     flags: ValidationFlags,
+    mode: ValidationMode,
     capabilities: Capabilities,
     subgroup_stages: ShaderStages,
     subgroup_operations: SubgroupOperationSet,
@@ -491,6 +499,16 @@ pub enum ValidationError {
         handle: Handle<crate::Function>,
         name: String,
         source: FunctionError,
+    },
+    #[error("function `{name}` is imported, but an executable module cannot have imports")]
+    Import {
+        handle: Handle<crate::Function>,
+        name: String,
+    },
+    #[error("imported function `{name}` has a body")]
+    ImportWithBody {
+        handle: Handle<crate::Function>,
+        name: String,
     },
     #[error("Entry point {name} at {stage:?} is invalid")]
     EntryPoint {
@@ -616,6 +634,7 @@ impl Validator {
 
         Validator {
             flags,
+            mode: ValidationMode::Executable,
             capabilities,
             subgroup_stages,
             subgroup_operations,
@@ -628,6 +647,11 @@ impl Validator {
             overrides_resolved: false,
             needs_visit: HandleSet::new(),
         }
+    }
+
+    pub const fn mode(&mut self, mode: ValidationMode) -> &mut Self {
+        self.mode = mode;
+        self
     }
 
     // TODO(https://github.com/gfx-rs/wgpu/issues/8207): Consider removing this
@@ -886,6 +910,20 @@ impl Validator {
         }
 
         for (handle, fun) in module.functions.iter() {
+            if fun.linkage.is_import() {
+                let name = fun.name.clone().unwrap_or_default();
+                if self.mode == ValidationMode::Executable {
+                    return Err(ValidationError::Import { handle, name }
+                        .with_span_handle(handle, &module.functions));
+                }
+                if !fun.body.is_empty()
+                    || !fun.expressions.is_empty()
+                    || !fun.local_variables.is_empty()
+                {
+                    return Err(ValidationError::ImportWithBody { handle, name }
+                        .with_span_handle(handle, &module.functions));
+                }
+            }
             match self.validate_function(fun, module, &mod_info, false) {
                 Ok(info) => mod_info.functions.push(info),
                 Err(error) => {
@@ -912,6 +950,14 @@ impl Validator {
                 .with_span()); // TODO: keep some EP span information?
             }
 
+            if ep.function.linkage.is_import() {
+                return Err(ValidationError::EntryPoint {
+                    stage: ep.stage,
+                    name: ep.name.clone(),
+                    source: EntryPointError::Import,
+                }
+                .with_span());
+            }
             match self.validate_entry_point(ep, module, &mod_info) {
                 Ok(info) => mod_info.entry_points.push(info),
                 Err(error) => {

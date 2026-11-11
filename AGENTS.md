@@ -15,6 +15,8 @@ goal, the language rules for linkage and `#include`, and the milestones (M0–M9
 | `rglsl-pp/` | GLSL preprocessor: macros, conditionals, `#include`, source map |
 | `rglsl-ast/` | GLSL AST, parser and printer; shared by the compiler frontend and the fuzzer |
 | `rglsl-sema/` | semantic analysis over the AST: scopes, types, built-ins, expression typing, diagnostics |
+| `rglsl-link/` | the linker: merges object modules (`rglsl::object::ObjectModule`) into programs, object file format (`docs/design/linking.md`) |
+| `tests/link/` | our own link tests: modules, `expect`, optional single-file `reference.*` for exec |
 | `rglsl-fuzz/` | port of GraphicsFuzz's variant generator (Apache-2.0; see `docs/design/fuzzer.md`) |
 | `rglsl-types/` | types shared by the rglsl crates (`ShaderStage`, ...) |
 | `rglsl-cli/` | the `rglsl` command-line tool (to become `glslangValidator`-compatible in M9) |

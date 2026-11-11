@@ -100,6 +100,24 @@ cargo run -p rglsl-cli -- --auto-map-bindings --auto-map-locations shader.frag s
 `--auto-map-bindings` and `--auto-map-locations` assign missing bindings and locations the way
 glslang's options of the same names do.
 
+### Linking
+
+A function declared without a body is an import; any number of files can be compiled and linked
+into one program. Files with a stage extension (`.vert`, `.frag`, `.comp`, ...) are modules of
+that stage and may leave out `main`; `.glsl` files are libraries, which have no stage and link
+into a program of any stage.
+
+```sh
+rglsl --link main.frag lighting.glsl noise.glsl -o shader.spv   # compile and link in one step
+rglsl --object lighting.glsl                                   # writes lighting.rglo
+rglsl --link main.frag lighting.rglo -o shader.spv             # link object modules
+rglsl --link scene.vert scene.frag common.glsl                 # one program, vert.spv and frag.spv
+```
+
+`-I DIR` adds an include directory; `#include` needs no extension directive. Link errors are
+glslang's (missing or duplicate definitions, mismatched globals, contradictory layouts); see
+[docs/design/linking.md](docs/design/linking.md).
+
 ## License
 
 MIT OR Apache-2.0, like naga.

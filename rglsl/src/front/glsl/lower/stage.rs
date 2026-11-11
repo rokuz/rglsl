@@ -34,6 +34,24 @@ pub(super) struct StageLayout {
     passthrough: Vec<Handle<GlobalVariable>>,
 }
 
+impl StageLayout {
+    pub(super) fn record(&self) -> crate::object::StageLayout {
+        crate::object::StageLayout {
+            input_primitive: self.input_primitive,
+            output_primitive: self.output_primitive,
+            vertices: self.vertices,
+            primitives: self.primitives,
+            invocations: self.invocations,
+            tessellation_primitive: self.primitive,
+            spacing: self.spacing,
+            vertex_order: self.vertex_order,
+            point_mode: self.point_mode,
+            mesh_topology: self.mesh_topology,
+            ..crate::object::StageLayout::default()
+        }
+    }
+}
+
 const PASSTHROUGH_EXTENSION: &str = "GL_NV_geometry_shader_passthrough";
 
 const fn input_primitive(name: &str) -> Option<GeometryInputPrimitive> {

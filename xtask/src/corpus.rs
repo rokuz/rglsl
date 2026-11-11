@@ -138,6 +138,28 @@ pub struct Case {
     /// The `#version` number: one of [`SUPPORTED_VERSIONS`].
     pub version: u32,
     pub corpus: Corpus,
+    pub kind: Kind,
+}
+
+#[derive(Debug, Clone)]
+pub enum Kind {
+    File,
+    Group {
+        files: Vec<String>,
+        auto_map_bindings: bool,
+    },
+    Own {
+        dir: PathBuf,
+        files: Vec<String>,
+        expectation: crate::groups::Expectation,
+        reference: Option<String>,
+    },
+}
+
+impl Kind {
+    pub const fn is_file(&self) -> bool {
+        matches!(*self, Self::File)
+    }
 }
 
 /// Which part of glslang's `Test/` directory a shader belongs to.
@@ -149,6 +171,7 @@ pub enum Corpus {
     /// not list it). The oracle compiles it under Vulkan semantics instead,
     /// which mostly exercises the rules for rejecting OpenGL-only constructs.
     OpenGlAsVulkan,
+    Link,
 }
 
 impl Corpus {
@@ -159,7 +182,7 @@ impl Corpus {
 pub const SUPPORTED_VERSIONS: &[u32] = &[450, 460];
 
 /// The `#version` number, if it is a desktop version the project supports.
-fn supported_version(source: &str) -> Option<u32> {
+pub fn supported_version(source: &str) -> Option<u32> {
     match parse_version(source)? {
         (number, profile) if profile.as_deref() != Some("es") => {
             SUPPORTED_VERSIONS.contains(&number).then_some(number)
@@ -226,6 +249,7 @@ pub fn load(glslang_dir: &Path) -> Result<Vec<Case>> {
             suite,
             version,
             corpus,
+            kind: Kind::File,
         });
     }
     cases.sort_by(|a, b| a.name.cmp(&b.name));

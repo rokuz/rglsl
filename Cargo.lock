@@ -558,6 +558,8 @@ dependencies = [
  "env_logger",
  "log",
  "rglsl",
+ "rglsl-link",
+ "rglsl-pp",
 ]
 
 [[package]]
@@ -577,6 +579,17 @@ dependencies = [
  "cfg_aliases",
  "libfuzzer-sys",
  "rglsl",
+]
+
+[[package]]
+name = "rglsl-link"
+version = "0.1.0"
+dependencies = [
+ "rglsl",
+ "rglsl-pp",
+ "ron",
+ "serde",
+ "thiserror",
 ]
 
 [[package]]
@@ -624,6 +637,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "rglsl",
+ "rglsl-link",
+ "rglsl-pp",
  "serde_json",
  "spirv",
  "toml",

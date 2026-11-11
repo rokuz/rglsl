@@ -9,6 +9,7 @@ members = [
     "rglsl-pp",
     "rglsl-cli",
     "rglsl-fuzz",
+    "rglsl-link",
     "rglsl/fuzz",
     "rglsl/xtask",
     "xtask",
@@ -44,6 +45,7 @@ rglsl = { version = "0.1.0", path = "./rglsl" }
 rglsl-ast = { version = "0.1.0", path = "./rglsl-ast" }
 rglsl-sema = { version = "0.1.0", path = "./rglsl-sema" }
 rglsl-pp = { version = "0.1.0", path = "./rglsl-pp" }
+rglsl-link = { version = "0.1.0", path = "./rglsl-link" }
 rglsl-test = { path = "./rglsl-test" }
 rglsl-types = { version = "0.1.0", path = "./rglsl-types" }
 
