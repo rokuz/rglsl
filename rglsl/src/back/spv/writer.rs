@@ -2441,6 +2441,7 @@ impl Writer {
                     crate::ImageDimension::Subpass => {
                         self.require_any("subpass inputs", &[spirv::Capability::InputAttachment])?;
                     }
+                    crate::ImageDimension::TileImageData => {}
                     crate::ImageDimension::Buffer => {
                         if sampled {
                             self.require_any(
@@ -4558,9 +4559,16 @@ impl Writer {
         let class = if global_variable.tile_attachment {
             self.require_tile_shading()?;
             spirv::StorageClass::TileAttachmentQCOM
+        } else if crate::proc::is_tile_image(ir_module, global_variable) {
+            spirv::StorageClass::TileImageEXT
         } else {
             map_storage_class(global_variable.space)
         };
+        if let (crate::AddressSpace::Handle, Some(crate::Binding::Location { location, .. })) =
+            (global_variable.space, global_variable.io.as_ref())
+        {
+            self.decorate(id, Decoration::Location, &[*location]);
+        }
 
         // A stage input or output is bound to a location or a built-in. The
         // decorations depend on the stage whose interface it belongs to.

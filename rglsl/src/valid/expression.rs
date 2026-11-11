@@ -659,7 +659,9 @@ impl super::Validator {
                     crate::ImageDimension::D1 => 1,
                     crate::ImageDimension::D2 => 2,
                     crate::ImageDimension::D3 | crate::ImageDimension::Cube => 3,
-                    crate::ImageDimension::Buffer | crate::ImageDimension::Subpass => {
+                    crate::ImageDimension::Buffer
+                    | crate::ImageDimension::Subpass
+                    | crate::ImageDimension::TileImageData => {
                         return Err(ExpressionError::InvalidImageCoordinateType(dim, coordinate))
                     }
                 };
@@ -725,7 +727,8 @@ impl super::Validator {
                         crate::ImageDimension::D1
                         | crate::ImageDimension::D3
                         | crate::ImageDimension::Buffer
-                        | crate::ImageDimension::Subpass => {
+                        | crate::ImageDimension::Subpass
+                        | crate::ImageDimension::TileImageData => {
                             return Err(ExpressionError::InvalidGatherDimension(dim))
                         }
                     };
@@ -1056,7 +1059,8 @@ impl super::Validator {
                                     crate::ImageDimension::D2 => 2,
                                     crate::ImageDimension::D3 | crate::ImageDimension::Cube => 3,
                                     crate::ImageDimension::Buffer
-                                    | crate::ImageDimension::Subpass => 0,
+                                    | crate::ImageDimension::Subpass
+                                    | crate::ImageDimension::TileImageData => 0,
                                 };
                                 let coordinate_good = match resolver[coordinate] {
                                     Ti::Scalar(Sc::F32) => components == 1,
@@ -1736,6 +1740,25 @@ impl super::Validator {
             },
             E::SubgroupBallotResult | E::SubgroupOperationResult { .. } => self.subgroup_stages,
             E::IsHelperInvocation => ShaderStages::FRAGMENT,
+            E::AttachmentRead { aspect, sample } => {
+                if let crate::AttachmentAspect::Color(image) = aspect {
+                    if !matches!(
+                        resolver[image],
+                        Ti::Image {
+                            dim: crate::ImageDimension::TileImageData,
+                            ..
+                        }
+                    ) {
+                        return Err(ExpressionError::ExpectedGlobalVariable);
+                    }
+                }
+                if let Some(sample) = sample {
+                    if !matches!(resolver[sample], Ti::Scalar(Sc::I32 | Sc::U32)) {
+                        return Err(ExpressionError::InvalidImageOtherIndexType(sample));
+                    }
+                }
+                ShaderStages::FRAGMENT
+            }
             E::SpirvInstructionResult { .. } => ShaderStages::all(),
             E::CooperativeLoad { ref data, .. } => {
                 if resolver[data.pointer]

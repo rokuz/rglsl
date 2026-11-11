@@ -2036,6 +2036,9 @@ impl BlockContext<'_> {
             | crate::Expression::SubgroupBallotResult
             | crate::Expression::SubgroupOperationResult { .. }
             | crate::Expression::SpirvInstructionResult { .. } => self.cached.get(expr_handle)?,
+            crate::Expression::AttachmentRead { aspect, sample } => {
+                self.write_attachment_read(aspect, sample, result_type_id, block)?
+            }
             crate::Expression::IsHelperInvocation => {
                 self.writer.require_demote()?;
                 let id = self.gen_id();

@@ -1240,6 +1240,7 @@ impl From<crate::ImageDimension> for spirv::Dim {
             Id::Cube => Self::DimCube,
             Id::Buffer => Self::DimBuffer,
             Id::Subpass => Self::DimSubpassData,
+            Id::TileImageData => Self::DimTileImageDataEXT,
         }
     }
 }

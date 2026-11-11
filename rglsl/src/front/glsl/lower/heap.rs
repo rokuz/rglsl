@@ -217,6 +217,7 @@ impl<'a> Lowerer<'a> {
             }
             OpaqueKind::CombinedSampler
             | OpaqueKind::SubpassInput
+            | OpaqueKind::TileImage
             | OpaqueKind::RayQuery
             | OpaqueKind::HitObjectNv
             | OpaqueKind::HitObjectExt => Err(internal(at)),

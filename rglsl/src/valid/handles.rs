@@ -752,6 +752,12 @@ impl super::Validator {
             crate::Expression::ImageSparseResident { code } => {
                 handle.check_dep(code)?;
             }
+            crate::Expression::AttachmentRead { aspect, sample } => {
+                if let crate::AttachmentAspect::Color(image) = aspect {
+                    handle.check_dep(image)?;
+                }
+                handle.check_dep_opt(sample)?;
+            }
             crate::Expression::Unary {
                 op: _,
                 expr: operand,

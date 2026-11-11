@@ -67,6 +67,9 @@ pub(super) const fn image_dimension(opaque: Opaque) -> ImageDimension {
     if matches!(opaque.kind, OpaqueKind::SubpassInput) {
         return ImageDimension::Subpass;
     }
+    if matches!(opaque.kind, OpaqueKind::TileImage) {
+        return ImageDimension::TileImageData;
+    }
     match opaque.dimension {
         TextureDimension::D1 => ImageDimension::D1,
         TextureDimension::D2 => ImageDimension::D2,
@@ -401,6 +404,14 @@ impl Lowerer<'_> {
             }),
             OpaqueKind::HitObjectExt => Ok(TypeInner::HitObject {
                 kind: crate::HitObjectKind::Ext,
+            }),
+            OpaqueKind::TileImage => Ok(TypeInner::Image {
+                dim: ImageDimension::TileImageData,
+                arrayed: false,
+                class: ImageClass::Sampled {
+                    kind: sampled_kind(opaque.sampled),
+                    multi: false,
+                },
             }),
             OpaqueKind::SubpassInput => Ok(TypeInner::Image {
                 dim: ImageDimension::Subpass,

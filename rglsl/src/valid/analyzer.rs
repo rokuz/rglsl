@@ -930,6 +930,17 @@ impl FunctionInfo {
                     .or(self.add_ref(barycentric)),
                 requirements: UniformityRequirements::empty(),
             },
+            E::AttachmentRead { aspect, sample } => Uniformity {
+                non_uniform_result: match aspect {
+                    crate::AttachmentAspect::Color(image) => self.add_ref(image),
+                    crate::AttachmentAspect::Depth | crate::AttachmentAspect::Stencil => {
+                        Some(handle)
+                    }
+                }
+                .or(sample.and_then(|sample| self.add_ref(sample)))
+                .or(Some(handle)),
+                requirements: UniformityRequirements::empty(),
+            },
             E::IsHelperInvocation => Uniformity {
                 non_uniform_result: Some(handle),
                 requirements: UniformityRequirements::empty(),

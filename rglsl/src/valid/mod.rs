@@ -557,6 +557,7 @@ impl crate::TypeInner {
         let dim = match dim {
             crate::ImageDimension::Buffer => crate::ImageDimension::D1,
             crate::ImageDimension::Cube => crate::ImageDimension::D3,
+            crate::ImageDimension::TileImageData => return false,
             crate::ImageDimension::Subpass => {
                 return matches!(
                     *self,

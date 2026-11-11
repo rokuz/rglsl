@@ -692,6 +692,7 @@ impl<'a> Lowerer<'a> {
             }
             Storage::Uniform => self.resource(symbol, name, at),
             Storage::TaskPayloadShared => self.task_payload_variable(symbol, name, at),
+            Storage::TileImage => self.tile_image_variable(symbol, name, at),
             Storage::Shared => {
                 let ir = self.ir_type(ty, at)?;
                 let handle = self.module.global_variables.append(
@@ -726,6 +727,49 @@ impl<'a> Lowerer<'a> {
             | Storage::HitObjectAttributeExt => self.ray_variable(symbol, name, at),
             Storage::None => self.private(symbol, name, declarator, at),
         }
+    }
+
+    fn tile_image_variable(&mut self, symbol: SymbolId, name: String, at: Span) -> Result<()> {
+        let variable = self.variable(symbol).ok_or_else(|| internal(at))?;
+        if variable.ty.is_array() {
+            return Err(unsupported("arrays of tile images", at));
+        }
+        let location = variable
+            .qualifiers
+            .layout_entry("location")
+            .and_then(|entry| entry.value)
+            .and_then(|value| u32::try_from(value).ok())
+            .ok_or_else(|| internal(at))?;
+        let ty = self.ir_type(&variable.ty, at)?;
+        let handle = self.module.global_variables.append(
+            GlobalVariable {
+                name: Some(name),
+                space: AddressSpace::Handle,
+                binding: None,
+                ty,
+                init: None,
+                memory_decorations: MemoryDecorations::empty(),
+                io: Some(Binding::Location {
+                    location,
+                    interpolation: None,
+                    sampling: None,
+                    blend_src: None,
+                    per_primitive: false,
+                    per_view: false,
+                    component: None,
+                    invariant: false,
+                    patch: false,
+                }),
+                xfb: None,
+                input_attachment_index: None,
+                heap_offset: None,
+                tile_attachment: false,
+                spirv_decorations: Vec::new(),
+            },
+            at,
+        );
+        self.globals.insert(symbol, GlobalRef::Variable(handle));
+        Ok(())
     }
 
     fn private(

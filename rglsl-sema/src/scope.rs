@@ -29,6 +29,7 @@ pub enum Storage {
     HitObjectAttributeNv,
     HitObjectAttributeExt,
     TaskPayloadShared,
+    TileImage,
 }
 
 impl Storage {

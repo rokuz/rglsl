@@ -878,6 +878,7 @@ pub enum ImageDimension {
     Cube,
     Buffer,
     Subpass,
+    TileImageData,
 }
 
 bitflags::bitflags! {
@@ -1712,6 +1713,16 @@ pub enum AtomicFunction {
     Min,
     Max,
     Exchange { compare: Option<Handle<Expression>> },
+}
+
+#[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub enum AttachmentAspect {
+    Color(Handle<Expression>),
+    Depth,
+    Stencil,
 }
 
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
@@ -2963,6 +2974,10 @@ pub enum Expression {
         code: Handle<Expression>,
     },
     IsHelperInvocation,
+    AttachmentRead {
+        aspect: AttachmentAspect,
+        sample: Option<Handle<Expression>>,
+    },
     CooperativeVectorLoad {
         ty: Handle<Type>,
         pointer: Handle<Expression>,

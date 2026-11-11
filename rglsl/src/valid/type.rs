@@ -1011,10 +1011,12 @@ impl super::Validator {
                         class,
                     });
                 }
-                if dim == crate::ImageDimension::Subpass
-                    && (arrayed
-                        || matches!(gctx.types[handle].inner, Ti::SampledImage { .. })
-                        || !matches!(class, crate::ImageClass::Sampled { .. }))
+                if matches!(
+                    dim,
+                    crate::ImageDimension::Subpass | crate::ImageDimension::TileImageData
+                ) && (arrayed
+                    || matches!(gctx.types[handle].inner, Ti::SampledImage { .. })
+                    || !matches!(class, crate::ImageClass::Sampled { .. }))
                 {
                     return Err(TypeError::UnsupportedImageType {
                         dim,

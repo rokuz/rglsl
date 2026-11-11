@@ -1407,7 +1407,9 @@ impl BlockContext<'_> {
                     Id::D1 | Id::Buffer => 1,
                     Id::D2 | Id::Cube => 2,
                     Id::D3 => 3,
-                    Id::Subpass => return Err(Error::Validation("subpass input query")),
+                    Id::Subpass | Id::TileImageData => {
+                        return Err(Error::Validation("subpass input query"))
+                    }
                 };
                 let array_coords = usize::from(arrayed);
                 let vector_size = match dim_coords + array_coords {
@@ -1499,7 +1501,9 @@ impl BlockContext<'_> {
                     Id::D1 | Id::Buffer => crate::VectorSize::Bi,
                     Id::D2 | Id::Cube => crate::VectorSize::Tri,
                     Id::D3 => crate::VectorSize::Quad,
-                    Id::Subpass => return Err(Error::Validation("subpass input query")),
+                    Id::Subpass | Id::TileImageData => {
+                        return Err(Error::Validation("subpass input query"))
+                    }
                 };
                 let extended_size_type_id = self.get_numeric_type_id(NumericType::Vector {
                     size: vec_size,
@@ -1662,6 +1666,46 @@ impl BlockContext<'_> {
         );
 
         Ok(())
+    }
+
+    pub(super) fn write_attachment_read(
+        &mut self,
+        aspect: crate::AttachmentAspect,
+        sample: Option<Handle<crate::Expression>>,
+        result_type_id: Word,
+        block: &mut Block,
+    ) -> Result<Word, Error> {
+        let (op, capability, image) = match aspect {
+            crate::AttachmentAspect::Color(image) => (
+                spirv::Op::ColorAttachmentReadEXT,
+                spirv::Capability::TileImageColorReadAccessEXT,
+                Some(image),
+            ),
+            crate::AttachmentAspect::Depth => (
+                spirv::Op::DepthAttachmentReadEXT,
+                spirv::Capability::TileImageDepthReadAccessEXT,
+                None,
+            ),
+            crate::AttachmentAspect::Stencil => (
+                spirv::Op::StencilAttachmentReadEXT,
+                spirv::Capability::TileImageStencilReadAccessEXT,
+                None,
+            ),
+        };
+        self.writer.use_extension("SPV_EXT_shader_tile_image");
+        self.writer.require_any("tile image reads", &[capability])?;
+        let id = self.gen_id();
+        let mut instruction = Instruction::new(op);
+        instruction.set_type(result_type_id);
+        instruction.set_result(id);
+        if let Some(image) = image {
+            instruction.add_operand(self.get_handle_id(image)?);
+        }
+        if let Some(sample) = sample {
+            instruction.add_operand(self.cached.get(sample)?);
+        }
+        block.body.push(instruction);
+        Ok(id)
     }
 
     pub(super) fn write_image_atomic(

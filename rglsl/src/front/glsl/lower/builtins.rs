@@ -329,6 +329,23 @@ impl FunctionLowerer<'_, '_> {
                 Ok(None)
             }
             "helperInvocationEXT" => self.add(Expression::IsHelperInvocation, at).map(Some),
+            "colorAttachmentReadEXT" | "depthAttachmentReadEXT" | "stencilAttachmentReadEXT" => {
+                let mut rest = arguments.iter();
+                let aspect = match name {
+                    "colorAttachmentReadEXT" => {
+                        let image = rest.next().ok_or_else(|| internal(at))?;
+                        crate::AttachmentAspect::Color(self.rvalue(image)?)
+                    }
+                    "depthAttachmentReadEXT" => crate::AttachmentAspect::Depth,
+                    _ => crate::AttachmentAspect::Stencil,
+                };
+                let sample = match rest.next() {
+                    Some(sample) => Some(self.rvalue(sample)?),
+                    None => None,
+                };
+                self.add(Expression::AttachmentRead { aspect, sample }, at)
+                    .map(Some)
+            }
             "SetMeshOutputsEXT" | "EmitMeshTasksEXT" | "writePackedPrimitiveIndices4x8NV" => {
                 self.mesh_statement(name, arguments, at)?;
                 Ok(None)

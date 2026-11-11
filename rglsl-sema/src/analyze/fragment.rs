@@ -248,6 +248,74 @@ impl Analyzer<'_> {
         }
     }
 
+    pub(crate) fn is_tile_image(&self, ty: &crate::types::Type) -> bool {
+        ty.as_opaque()
+            .or_else(|| ty.element_type().and_then(|element| element.as_opaque()))
+            .is_some_and(|opaque| opaque.kind == crate::types::OpaqueKind::TileImage)
+    }
+
+    pub(crate) fn tile_image_declaration(
+        &mut self,
+        span: Span,
+        qualifiers: &Qualifiers,
+        ty: &crate::types::Type,
+    ) {
+        if qualifiers.storage != Storage::TileImage {
+            self.error(
+                span,
+                DiagnosticKind::OpaqueNotAllowed(alloc::format!("{ty:?}")),
+            );
+            return;
+        }
+        if !self.is_tile_image(ty) {
+            self.error(
+                span,
+                invalid("tileImageEXT", "can only be used with attachmentEXT types"),
+            );
+            return;
+        }
+        if self.options.stage != Stage::Fragment {
+            self.error(
+                span,
+                DiagnosticKind::NotSupportedInStage {
+                    feature: String::from("tileImageEXT"),
+                    stage: self.options.stage.name(),
+                },
+            );
+        }
+        if !self.scopes.is_global() {
+            self.error(span, invalid("tileImageEXT", "not allowed in nested scope"));
+        }
+        if qualifiers.has_layout("set") {
+            self.error(span, invalid("set", "cannot be used with tileImageEXT"));
+        }
+        let Some(location) = qualifiers
+            .layout_entry("location")
+            .and_then(|entry| entry.value)
+            .and_then(|value| u32::try_from(value).ok())
+        else {
+            self.error(
+                span,
+                invalid("tileImageEXT", "can only be used with an explicit location"),
+            );
+            return;
+        };
+        let count = match ty.outer_size() {
+            Some(crate::types::ArraySize::Sized(size)) => size.max(1),
+            _ => 1,
+        };
+        let end = location.saturating_add(count);
+        let overlap = self
+            .tile_image_locations
+            .iter()
+            .find(|&&(start, stop)| location < stop && start < end)
+            .map(|&(start, _)| start.max(location));
+        match overlap {
+            Some(found) => self.error(span, DiagnosticKind::OverlappingLocation(found)),
+            None => self.tile_image_locations.push((location, end)),
+        }
+    }
+
     pub(crate) fn demote(&mut self, span: Span) {
         if self.options.stage != Stage::Fragment {
             self.error(

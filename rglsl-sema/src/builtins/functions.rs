@@ -373,6 +373,12 @@ uint stencilAttachmentReadEXT()
 uint stencilAttachmentReadEXT(int)
 float depthAttachmentReadEXT()
 float depthAttachmentReadEXT(int)
+vec4 colorAttachmentReadEXT(attachmentEXT)
+vec4 colorAttachmentReadEXT(attachmentEXT, int)
+ivec4 colorAttachmentReadEXT(iattachmentEXT)
+ivec4 colorAttachmentReadEXT(iattachmentEXT, int)
+uvec4 colorAttachmentReadEXT(uattachmentEXT)
+uvec4 colorAttachmentReadEXT(uattachmentEXT, int)
 ";
 
 const COMPUTE_MEMORY_BARRIERS: &str = "

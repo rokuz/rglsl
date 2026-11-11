@@ -175,9 +175,9 @@ impl crate::ImageDimension {
     const fn required_coordinate_size(&self) -> Option<crate::VectorSize> {
         match *self {
             crate::ImageDimension::D1 | crate::ImageDimension::Buffer => None,
-            crate::ImageDimension::D2 | crate::ImageDimension::Subpass => {
-                Some(crate::VectorSize::Bi)
-            }
+            crate::ImageDimension::D2
+            | crate::ImageDimension::Subpass
+            | crate::ImageDimension::TileImageData => Some(crate::VectorSize::Bi),
             crate::ImageDimension::D3 => Some(crate::VectorSize::Tri),
             crate::ImageDimension::Cube => Some(crate::VectorSize::Tri),
         }

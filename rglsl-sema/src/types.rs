@@ -336,6 +336,7 @@ pub enum OpaqueKind {
     RayQuery,
     HitObjectNv,
     HitObjectExt,
+    TileImage,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -480,6 +481,21 @@ impl Opaque {
             "rayQueryEXT" => return Some(Self::ray(OpaqueKind::RayQuery)),
             "hitObjectNV" => return Some(Self::ray(OpaqueKind::HitObjectNv)),
             "hitObjectEXT" => return Some(Self::ray(OpaqueKind::HitObjectExt)),
+            "attachmentEXT" | "iattachmentEXT" | "uattachmentEXT" => {
+                let sampled = match word.as_bytes().first() {
+                    Some(b'i') => SampledType::Int,
+                    Some(b'u') => SampledType::Uint,
+                    _ => SampledType::Float,
+                };
+                return Some(Self {
+                    kind: OpaqueKind::TileImage,
+                    sampled,
+                    dimension: TextureDimension::D2,
+                    arrayed: false,
+                    shadow: false,
+                    multisample: false,
+                });
+            }
             _ => {}
         }
         let families = ["sampler", "texture", "image", "subpassInput"];
@@ -586,6 +602,9 @@ impl fmt::Display for Opaque {
             OpaqueKind::RayQuery => return formatter.write_str("rayQueryEXT"),
             OpaqueKind::HitObjectNv => return formatter.write_str("hitObjectNV"),
             OpaqueKind::HitObjectExt => return formatter.write_str("hitObjectEXT"),
+            OpaqueKind::TileImage => {
+                return write!(formatter, "{}attachmentEXT", self.sampled.prefix());
+            }
             OpaqueKind::CombinedSampler => "sampler",
             OpaqueKind::Texture => "texture",
             OpaqueKind::Image => "image",

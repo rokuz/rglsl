@@ -495,9 +495,26 @@ impl super::ImageClass {
         self.is_mipmapped()
             && !matches!(
                 dim,
-                crate::ImageDimension::Buffer | crate::ImageDimension::Subpass
+                crate::ImageDimension::Buffer
+                    | crate::ImageDimension::Subpass
+                    | crate::ImageDimension::TileImageData
             )
     }
+}
+
+pub fn is_tile_image(module: &crate::Module, global: &crate::GlobalVariable) -> bool {
+    let ty = match module.types[global.ty].inner {
+        crate::TypeInner::Array { base, .. } => base,
+        _ => global.ty,
+    };
+    global.space == crate::AddressSpace::Handle
+        && matches!(
+            module.types[ty].inner,
+            crate::TypeInner::Image {
+                dim: crate::ImageDimension::TileImageData,
+                ..
+            }
+        )
 }
 
 impl crate::Module {

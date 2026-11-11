@@ -413,6 +413,14 @@ impl Analyzer<'_> {
                         self.mesh_qualifier(single.span, *storage);
                         result.storage = Storage::TaskPayloadShared;
                     }
+                    StorageQualifier::TileImageEXT => {
+                        self.require_extension(
+                            single.span,
+                            "GL_EXT_shader_tile_image",
+                            storage.keyword(),
+                        );
+                        result.storage = Storage::TileImage;
+                    }
                     StorageQualifier::Volatile => result.volatile = true,
                     StorageQualifier::Restrict => result.restrict = true,
                     StorageQualifier::Readonly => result.readonly = true,
@@ -1220,6 +1228,8 @@ impl Analyzer<'_> {
         );
         if hit_object {
             qualifiers.storage = Storage::None;
+        } else if qualifiers.storage == Storage::TileImage || self.is_tile_image(&ty) {
+            self.tile_image_declaration(name.span, &qualifiers, &ty);
         } else if qualifiers.storage != Storage::Uniform && self.opaque_outside_uniform(&ty) {
             self.error(name.span, DiagnosticKind::OpaqueNotAllowed(self.show(&ty)));
         } else if qualifiers.storage == Storage::Uniform

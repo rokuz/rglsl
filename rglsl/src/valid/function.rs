@@ -1281,7 +1281,8 @@ impl super::Validator {
                             | Ex::CooperativeVectorMatMul { .. }
                             | Ex::TensorRead { .. }
                             | Ex::TensorQuerySize { .. }
-                            | Ex::IsHelperInvocation => self.emit_expression(handle, context)?,
+                            | Ex::IsHelperInvocation
+                            | Ex::AttachmentRead { .. } => self.emit_expression(handle, context)?,
                             Ex::CallResult(_)
                             | Ex::AtomicResult { .. }
                             | Ex::WorkGroupUniformLoadResult { .. }

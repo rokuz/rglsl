@@ -548,7 +548,8 @@ impl<'a> ResolveContext<'a> {
                         }
                         crate::ImageDimension::D2
                         | crate::ImageDimension::Cube
-                        | crate::ImageDimension::Subpass => Ti::Vector {
+                        | crate::ImageDimension::Subpass
+                        | crate::ImageDimension::TileImageData => Ti::Vector {
                             size: crate::VectorSize::Bi,
                             scalar: crate::Scalar::U32,
                         },
@@ -1028,6 +1029,27 @@ impl<'a> ResolveContext<'a> {
             crate::Expression::IsHelperInvocation => {
                 TypeResolution::Value(Ti::Scalar(crate::Scalar::BOOL))
             }
+            crate::Expression::AttachmentRead { aspect, .. } => match aspect {
+                crate::AttachmentAspect::Color(image) => match *past(image)?.inner_with(types) {
+                    Ti::Image {
+                        class: crate::ImageClass::Sampled { kind, .. },
+                        ..
+                    } => TypeResolution::Value(Ti::Vector {
+                        size: crate::VectorSize::Quad,
+                        scalar: crate::Scalar { kind, width: 4 },
+                    }),
+                    ref other => {
+                        log::error!("Attachment type {other:?}");
+                        return Err(ResolveError::InvalidImage(image));
+                    }
+                },
+                crate::AttachmentAspect::Depth => {
+                    TypeResolution::Value(Ti::Scalar(crate::Scalar::F32))
+                }
+                crate::AttachmentAspect::Stencil => {
+                    TypeResolution::Value(Ti::Scalar(crate::Scalar::U32))
+                }
+            },
             crate::Expression::SubgroupBallotResult => TypeResolution::Value(Ti::Vector {
                 scalar: crate::Scalar::U32,
                 size: crate::VectorSize::Quad,

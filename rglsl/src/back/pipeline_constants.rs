@@ -629,6 +629,17 @@ fn adjust_expr(new_pos: &HandleVec<Expression, Handle<Expression>>, expr: &mut E
         Expression::ImageSparseResident { ref mut code } => {
             adjust(code);
         }
+        Expression::AttachmentRead {
+            ref mut aspect,
+            ref mut sample,
+        } => {
+            if let crate::AttachmentAspect::Color(ref mut image) = *aspect {
+                adjust(image);
+            }
+            if let Some(ref mut sample) = *sample {
+                adjust(sample);
+            }
+        }
         Expression::Unary {
             ref mut expr,
             op: _,

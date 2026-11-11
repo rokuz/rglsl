@@ -96,16 +96,7 @@ const RESERVED_UNDER_VULKAN: [&str; 7] = [
     "uimage2DRect",
 ];
 
-const EXTENSION_ONLY: [&str; 8] = [
-    "inline",
-    "noinline",
-    "pervertexNV",
-    "pervertexEXT",
-    "attachmentEXT",
-    "iattachmentEXT",
-    "uattachmentEXT",
-    "tileImageEXT",
-];
+const EXTENSION_ONLY: [&str; 4] = ["inline", "noinline", "pervertexNV", "pervertexEXT"];
 
 const EXTENSION_KEYWORDS: [&str; 105] = [
     "terminateInvocation",
@@ -226,6 +217,9 @@ pub fn is_opaque_type_keyword(word: &str) -> bool {
             | "rayQueryEXT"
             | "hitObjectNV"
             | "hitObjectEXT"
+            | "attachmentEXT"
+            | "iattachmentEXT"
+            | "uattachmentEXT"
     ) {
         return true;
     }

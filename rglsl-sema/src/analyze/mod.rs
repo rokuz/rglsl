@@ -340,6 +340,7 @@ pub(crate) struct Analyzer<'a> {
     pub primitive_culling: bool,
     pub stage_layout: stage::StageLayout,
     pub fragment_layout: FragmentLayout,
+    pub tile_image_locations: Vec<(u32, u32)>,
     pub spirv_requirements: SpirvRequirements,
     pub spirv_execution_modes: SpirvExecutionModes,
 }
@@ -413,6 +414,7 @@ impl<'a> Analyzer<'a> {
             primitive_culling: false,
             stage_layout: stage::StageLayout::default(),
             fragment_layout: FragmentLayout::default(),
+            tile_image_locations: Vec::new(),
             spirv_requirements: SpirvRequirements::default(),
             spirv_execution_modes: SpirvExecutionModes::new(),
         }
