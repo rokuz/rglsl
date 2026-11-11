@@ -4,6 +4,7 @@ use alloc::vec::Vec;
 use rglsl_ast::ast::Expression;
 use rglsl_ast::Span;
 
+use super::qcom::QcomConversion;
 use super::{Analyzer, Callee, Operand};
 use crate::constant::Value;
 use crate::diagnostic::DiagnosticKind;
@@ -21,6 +22,7 @@ pub enum CooperativeCall {
     VectorOuterProduct,
     VectorReduceSum,
     SaturatedConvert,
+    Qcom(QcomConversion),
 }
 
 pub(crate) fn cooperative_function(name: &str) -> bool {
@@ -39,6 +41,10 @@ pub(crate) fn cooperative_function(name: &str) -> bool {
             | "coopVecOuterProductAccumulateNV"
             | "coopVecReduceSumAccumulateNV"
             | "saturatedConvertEXT"
+            | "bitcastQCOM"
+            | "extractSubArrayQCOM"
+            | "vectorToCoopmatQCOM"
+            | "coopmatToVectorQCOM"
     )
 }
 
@@ -91,6 +97,9 @@ impl Analyzer<'_> {
             .collect();
         if operands.iter().any(|operand| operand.ty.is_error()) {
             return Operand::error();
+        }
+        if let Some(conversion) = super::qcom::conversion(name) {
+            return self.qcom_conversion(expression, span, name, conversion, arguments, &operands);
         }
         if name == "saturatedConvertEXT" {
             return self.saturated_convert(expression, span, arguments, &operands);

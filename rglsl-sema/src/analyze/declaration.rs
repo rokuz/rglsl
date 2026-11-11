@@ -110,6 +110,7 @@ impl Analyzer<'_> {
     fn global_qualifier(&mut self, qualifier: &Spanned<TypeQualifier>) {
         let qualifiers = self.qualifiers(qualifier);
         self.primitive_culling(qualifier.span, &qualifiers, true);
+        self.qcom_layout(qualifier.span, &qualifiers);
         self.shader_record_default(qualifier.span, &qualifiers);
         if self.buffer_reference_layout(&qualifiers) {
             if qualifiers.storage != Storage::Buffer {
@@ -805,6 +806,7 @@ impl Analyzer<'_> {
         let qualifiers = self.optional_qualifiers(&list.ty.node);
         if let Some(qualifier) = list.ty.qualifier.as_ref() {
             self.primitive_culling(qualifier.span, &qualifiers, false);
+            self.qcom_layout(qualifier.span, &qualifiers);
         }
         if qualifiers.nonuniform {
             self.non_uniform_storage_check(list.ty.qualifier.as_ref(), &qualifiers);
@@ -835,8 +837,9 @@ impl Analyzer<'_> {
         }
         let invalid = |qualifier, reason| DiagnosticKind::InvalidQualifier { qualifier, reason };
         let is_image = matches!(ty.kind, TypeKind::Opaque(opaque) if opaque.is_image());
+        let is_tensor = matches!(ty.kind, TypeKind::Tensor { .. });
         let misplaced = if qualifiers.has_memory_qualifier() && !qualifiers.only_nonprivate() {
-            !is_image && qualifiers.storage != Storage::Buffer
+            !is_image && !is_tensor && qualifiers.storage != Storage::Buffer
         } else {
             qualifiers.nonprivate
                 && !matches!(ty.kind, TypeKind::Opaque(_))
@@ -1301,7 +1304,7 @@ impl Analyzer<'_> {
 
     fn contains_non_opaque(&self, ty: &Type) -> bool {
         match ty.kind {
-            TypeKind::Opaque(_) | TypeKind::Error => false,
+            TypeKind::Opaque(_) | TypeKind::Tensor { .. } | TypeKind::Error => false,
             TypeKind::Struct(id) => self
                 .types
                 .structure(id)
@@ -1540,6 +1543,7 @@ impl Analyzer<'_> {
             _ => self.ray_block_storage(structure.name.span, qualifiers.storage),
         };
         self.primitive_culling(structure.qualifier.span, &qualifiers, false);
+        self.qcom_layout(structure.qualifier.span, &qualifiers);
         self.shader_record_checks(structure.qualifier.span, &qualifiers, true);
         self.ray_variable_checks(structure.qualifier.span, &qualifiers);
         self.heap_object_check(structure.name.span, &qualifiers);

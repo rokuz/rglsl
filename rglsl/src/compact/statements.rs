@@ -42,6 +42,7 @@ impl FunctionTracer<'_> {
                         ref body,
                         ref continuing,
                         break_if,
+                        control: _,
                     } => {
                         if let Some(break_if) = break_if {
                             self.expressions_used.insert(break_if);
@@ -233,6 +234,16 @@ impl FunctionTracer<'_> {
                             self.expressions_used.insert(argument);
                         }
                     }
+                    St::TensorWrite {
+                        tensor,
+                        coordinates,
+                        value,
+                        ..
+                    } => {
+                        self.expressions_used.insert(tensor);
+                        self.expressions_used.insert(coordinates);
+                        self.expressions_used.insert(value);
+                    }
 
                     // Trivial statements.
                     St::Break
@@ -328,6 +339,7 @@ impl FunctionMap {
                         ref mut body,
                         ref mut continuing,
                         ref mut break_if,
+                        control: _,
                     } => {
                         if let Some(ref mut break_if) = *break_if {
                             adjust(break_if)?;
@@ -540,6 +552,16 @@ impl FunctionMap {
                         for argument in arguments.iter_mut() {
                             adjust(argument)?;
                         }
+                    }
+                    St::TensorWrite {
+                        ref mut tensor,
+                        ref mut coordinates,
+                        ref mut value,
+                        ..
+                    } => {
+                        adjust(tensor)?;
+                        adjust(coordinates)?;
+                        adjust(value)?;
                     }
 
                     // Trivial statements.

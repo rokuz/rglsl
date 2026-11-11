@@ -27,7 +27,8 @@ impl crate::TypeInner {
             Self::Image { .. }
             | Self::SampledImage { .. }
             | Self::Sampler { .. }
-            | Self::AccelerationStructure { .. } => true,
+            | Self::AccelerationStructure { .. }
+            | Self::Tensor { .. } => true,
             _ => false,
         }
     }

@@ -93,6 +93,8 @@ pub enum Disalignment {
 #[derive(Clone, Debug, thiserror::Error)]
 #[cfg_attr(test, derive(PartialEq))]
 pub enum TypeError {
+    #[error("A tensor must have a rank of at least 1")]
+    InvalidTensorRank,
     #[error("Capability {0:?} is required")]
     MissingCapability(Capabilities),
     #[error("The {0:?} scalar width {1} is not supported for an atomic")]
@@ -1056,6 +1058,19 @@ impl super::Validator {
                     | TypeFlags::SIZED,
                 Alignment::ONE,
             ),
+            Ti::Tensor { scalar, rank } => {
+                let _ = self.check_width(scalar)?;
+                if rank == 0 {
+                    return Err(TypeError::InvalidTensorRank);
+                }
+                TypeInfo::new(
+                    TypeFlags::ARGUMENT
+                        | TypeFlags::CREATION_RESOLVED
+                        | TypeFlags::HEAP_LAYOUT
+                        | TypeFlags::SIZED,
+                    Alignment::ONE,
+                )
+            }
             Ti::AccelerationStructure { vertex_return } => {
                 self.require_type_capability(Capabilities::RAY_TRACING_PIPELINE)
                     .or_else(|_| self.require_type_capability(Capabilities::RAY_QUERY))?;

@@ -213,10 +213,25 @@ impl Analyzer<'_> {
         for argument in arguments {
             self.expression(argument);
         }
-        if name.node != "length" {
+        let wide = name.node == "length64";
+        if name.node != "length" && !wide {
             self.error(name.span, DiagnosticKind::UnknownMethod(name.node.clone()));
             return Operand::error();
         }
+        if wide
+            && !self.require_extension(
+                name.span,
+                super::expression::SHADER_64BIT_INDEXING,
+                "length64",
+            )
+        {
+            return Operand::error();
+        }
+        let result = if wide {
+            Type::scalar(Scalar::Int64)
+        } else {
+            Type::INT
+        };
         if operand.ty.is_error() {
             return Operand::error();
         }
@@ -233,7 +248,7 @@ impl Analyzer<'_> {
             .as_cooperative_matrix()
             .map(|matrix| matrix.usage);
         if matrix_usage.is_some_and(|usage| usage != crate::types::CooperativeUse::Nv) {
-            return Operand::temporary(Type::INT);
+            return Operand::temporary(result);
         }
         let specialized = matrix_usage.is_some()
             || matches!(
@@ -246,15 +261,19 @@ impl Analyzer<'_> {
             self.specialization_uses += 1;
             return Operand {
                 specialization: true,
-                ..Operand::constant(Type::INT, None)
+                ..Operand::constant(result, None)
             };
         }
         match operand.ty.length() {
             Some(length) => {
-                let value = i32::try_from(length)
-                    .ok()
-                    .map(|length| Constant::single(Value::Int(length)));
-                Operand::constant(Type::INT, value)
+                let value = if wide {
+                    Some(Constant::single(Value::Int64(i64::from(length))))
+                } else {
+                    i32::try_from(length)
+                        .ok()
+                        .map(|length| Constant::single(Value::Int(length)))
+                };
+                Operand::constant(result, value)
             }
             None if operand.ty.is_array() => {
                 let resizable = matches!(
@@ -270,7 +289,7 @@ impl Analyzer<'_> {
                     );
                     return Operand::error();
                 }
-                Operand::temporary(Type::INT)
+                Operand::temporary(result)
             }
             None => {
                 self.error(
@@ -336,6 +355,10 @@ impl Analyzer<'_> {
             && self.scopes.function_levels(name).is_empty()
         {
             return self.cooperative_call(expression, span, name, arguments);
+        }
+        if super::tensor::tensor_arm_function(name) && self.scopes.function_levels(name).is_empty()
+        {
+            return self.tensor_arm_call(expression, span, name, arguments);
         }
         if self.scopes.function_levels(name).is_empty() {
             if let Some(call) = super::cooperative_matrix2::tensor_call(name) {
@@ -672,6 +695,9 @@ impl Analyzer<'_> {
             self.require_extension(span, "GL_EXT_float_e5m2", name);
         }
         self.mesh_function_extension(span, name);
+        if let Some(extension) = super::qcom::function_extension(name) {
+            self.require_extension(span, extension, name);
+        }
     }
 
     fn subgroup_checks(&mut self, span: Span, name: &str, operands: &[Operand]) -> bool {
@@ -871,7 +897,13 @@ impl Analyzer<'_> {
             }
         }
         if name.starts_with("textureGather") && !shadow {
-            let index = if name == "textureGather" { 2 } else { 3 };
+            let index = if name == "textureGather"
+                || (super::qcom::gather_function(name) && !name.contains("Offset"))
+            {
+                2
+            } else {
+                3
+            };
             if let Some(operand) = operands.get(index) {
                 if !operand.constant || operand.specialization {
                     return invalid(self, span, "the component must be constant");

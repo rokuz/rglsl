@@ -6,16 +6,16 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use crate::ast::{
-    ArrayDimension, ArraySpecifier, AssignmentOperator, BasicType, BinaryOperator, BlockInstance,
-    BlockStructure, CaseLabel, CompoundStatement, Condition, ConditionDeclaration, Declaration,
-    DeclarationKind, Directive, DirectiveKind, Expression, ExpressionKind, ExternalDeclaration,
-    ForStatement, FullySpecifiedType, FunctionCall, FunctionDefinition, FunctionIdentifier,
-    FunctionPrototype, Identifier, InitDeclarator, InitDeclaratorList, Initializer, JumpStatement,
-    LayoutQualifier, LayoutQualifierId, Node, NodeId, NumericLiteral, ParameterDeclaration,
-    ParameterizedType, PostfixOperator, PrecisionQualifier, SingleTypeQualifier, Spanned,
-    Statement, StatementKind, StructDeclaration, StructDeclarator, StructSpecifier,
-    TranslationUnit, TypeParameters, TypeQualifier, TypeSpecifier, TypeSpecifierNonArray,
-    UnaryOperator,
+    ArrayDimension, ArraySpecifier, AssignmentOperator, Attribute, BasicType, BinaryOperator,
+    BlockInstance, BlockStructure, CaseLabel, CompoundStatement, Condition, ConditionDeclaration,
+    Declaration, DeclarationKind, Directive, DirectiveKind, Expression, ExpressionKind,
+    ExternalDeclaration, ForStatement, FullySpecifiedType, FunctionCall, FunctionDefinition,
+    FunctionIdentifier, FunctionPrototype, Identifier, InitDeclarator, InitDeclaratorList,
+    Initializer, JumpStatement, LayoutQualifier, LayoutQualifierId, Node, NodeId, NumericLiteral,
+    ParameterDeclaration, ParameterizedType, PostfixOperator, PrecisionQualifier,
+    SingleTypeQualifier, Spanned, Statement, StatementKind, StructDeclaration, StructDeclarator,
+    StructSpecifier, TranslationUnit, TypeParameters, TypeQualifier, TypeSpecifier,
+    TypeSpecifierNonArray, UnaryOperator,
 };
 use crate::error::{ParseError, ParseErrorKind};
 use crate::extensions::{ExtensionState, Feature};
@@ -788,7 +788,7 @@ impl<'a> Parser<'a> {
         self.expect("<")?;
         let mut height = 0;
         let element = match self.peek().kind {
-            TokenKind::Word(word) if self.is_type_name(word) => {
+            TokenKind::Word(word) if word == "struct" || self.is_type_name(word) => {
                 let (element, element_height) = self.parse_measured_type_specifier()?;
                 height = element_height;
                 Some(Box::new(element))
@@ -950,8 +950,51 @@ impl<'a> Parser<'a> {
                 self.parse_jump(JumpStatement::IgnoreIntersection)
             }
             TokenKind::Word("return") => self.parse_return(),
+            TokenKind::Punctuator("[") if self.at_nth(1, "[") => self.parse_attributed(),
             _ => self.parse_simple_statement(),
         }
+    }
+
+    fn parse_attributed(&mut self) -> Result<Statement> {
+        let start = self.start();
+        self.expect("[")?;
+        self.expect("[")?;
+        let mut attributes = Vec::new();
+        loop {
+            let token = self.peek();
+            let TokenKind::Word(word) = token.kind else {
+                return Err(self.unexpected("an attribute"));
+            };
+            self.advance();
+            let name = Spanned::new(token.span, word.to_owned());
+            let argument = if self.eat("(") {
+                let argument = self.parse_conditional()?.expression;
+                self.expect(")")?;
+                Some(argument)
+            } else {
+                None
+            };
+            attributes.push(Attribute { name, argument });
+            if !self.eat(",") {
+                break;
+            }
+        }
+        self.expect("]")?;
+        self.expect("]")?;
+        if !matches!(
+            self.peek().kind,
+            TokenKind::Word("if" | "switch" | "while" | "do" | "for")
+        ) {
+            return Err(self.unexpected("a selection, switch or iteration statement"));
+        }
+        let statement = Box::new(self.parse_unguarded_statement()?);
+        self.node(
+            start,
+            StatementKind::Attributed {
+                attributes,
+                statement,
+            },
+        )
     }
 
     fn parse_compound_as_statement(&mut self) -> Result<Statement> {

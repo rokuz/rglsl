@@ -863,7 +863,7 @@ impl ExpressionKindTracker {
                 .max(self.type_of(accept))
                 .max(self.type_of(reject)),
             Expression::Relational { argument, .. } => self.type_of(argument),
-            Expression::ArrayLength(expr) => self.type_of(expr),
+            Expression::ArrayLength(expr) | Expression::WideArrayLength(expr) => self.type_of(expr),
             _ => ExpressionKind::Runtime,
         }
     }
@@ -1364,13 +1364,15 @@ impl<'a> ConstantEvaluator<'a> {
                 let argument = self.check_and_get(argument)?;
                 self.relational(fun, argument, span)
             }
-            Expression::ArrayLength(expr) => match self.behavior {
-                Behavior::Wgsl(_) => Err(ConstantEvaluatorError::ArrayLength),
-                Behavior::Glsl(_) => {
-                    let expr = self.check_and_get(expr)?;
-                    self.array_length(expr, span)
+            Expression::ArrayLength(expr) | Expression::WideArrayLength(expr) => {
+                match self.behavior {
+                    Behavior::Wgsl(_) => Err(ConstantEvaluatorError::ArrayLength),
+                    Behavior::Glsl(_) => {
+                        let expr = self.check_and_get(expr)?;
+                        self.array_length(expr, span)
+                    }
                 }
-            },
+            }
             Expression::Load { .. }
             | Expression::PhysicalPointer { .. }
             | Expression::PhysicalAddress { .. }
@@ -1386,6 +1388,7 @@ impl<'a> ConstantEvaluator<'a> {
             Expression::FunctionArgument(_) => Err(ConstantEvaluatorError::FunctionArg),
             Expression::GlobalVariable(_) => Err(ConstantEvaluatorError::GlobalVariable),
             Expression::ImageSample { .. }
+            | Expression::ImageProcessing { .. }
             | Expression::ImageLoad { .. }
             | Expression::ImageQuery { .. } => Err(ConstantEvaluatorError::ImageExpression),
             Expression::RayQueryProceedResult
@@ -1405,9 +1408,14 @@ impl<'a> ConstantEvaluator<'a> {
             | Expression::CooperativeVectorLoad { .. }
             | Expression::CooperativeVectorMatMul { .. }
             | Expression::Convert { .. }
+            | Expression::ArrayConversion { .. }
             | Expression::CooperativeMatrixResult { .. }
             | Expression::TensorCreate { .. }
-            | Expression::TensorSet { .. } => Err(ConstantEvaluatorError::CooperativeOperation),
+            | Expression::TensorSet { .. }
+            | Expression::TensorRead { .. }
+            | Expression::TensorQuerySize { .. } => {
+                Err(ConstantEvaluatorError::CooperativeOperation)
+            }
         }
     }
 

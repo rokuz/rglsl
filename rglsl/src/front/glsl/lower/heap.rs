@@ -75,7 +75,7 @@ impl<'a> Lowerer<'a> {
 
     fn contains_descriptor(&self, ty: &GlslType) -> bool {
         match ty.kind {
-            TypeKind::Opaque(_) => true,
+            TypeKind::Opaque(_) | TypeKind::Tensor { .. } => true,
             TypeKind::Block(id) => self
                 .analysis
                 .types
@@ -170,6 +170,7 @@ impl<'a> Lowerer<'a> {
                 xfb: None,
                 input_attachment_index: None,
                 heap_offset,
+                tile_attachment: false,
             },
             at,
         );
@@ -185,8 +186,15 @@ impl<'a> Lowerer<'a> {
         qualifiers: &Qualifiers,
         at: Span,
     ) -> Result<TypeInner> {
-        let TypeKind::Opaque(opaque) = ty.kind else {
-            return Err(internal(at));
+        let opaque = match ty.kind {
+            TypeKind::Opaque(opaque) => opaque,
+            TypeKind::Tensor { scalar, rank } => {
+                return Ok(TypeInner::Tensor {
+                    scalar: super::types::scalar(scalar),
+                    rank,
+                })
+            }
+            _ => return Err(internal(at)),
         };
         match opaque.kind {
             OpaqueKind::Image => {
@@ -259,7 +267,7 @@ impl<'a> Lowerer<'a> {
         at: Span,
     ) -> Result<Handle<Type>> {
         match ty.kind {
-            TypeKind::Opaque(_) => {
+            TypeKind::Opaque(_) | TypeKind::Tensor { .. } => {
                 let inner = self.heap_image(ty, qualifiers, at)?;
                 Ok(self.insert_type(inner))
             }
@@ -431,10 +439,8 @@ impl<'a> Lowerer<'a> {
         let variable = self.variable(symbol).ok_or_else(|| internal(at))?;
         let qualifiers = &variable.qualifiers;
         let ty = &variable.ty;
-        let TypeKind::Opaque(opaque) = ty.kind else {
-            return Err(internal(at));
-        };
-        let heap = if opaque.kind == OpaqueKind::Sampler {
+        let heap = if matches!(ty.kind, TypeKind::Opaque(opaque) if opaque.kind == OpaqueKind::Sampler)
+        {
             DescriptorHeap::Sampler
         } else {
             DescriptorHeap::Resource

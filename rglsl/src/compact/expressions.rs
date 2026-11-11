@@ -146,6 +146,7 @@ impl ExpressionTracer<'_> {
                 image,
                 sampler,
                 gather: _,
+                gather_pattern: _,
                 coordinate,
                 array_index,
                 offset,
@@ -237,6 +238,7 @@ impl ExpressionTracer<'_> {
                 self.expressions_used.insert(expr);
             }
             Ex::ArrayLength(expr)
+            | Ex::WideArrayLength(expr)
             | Ex::PhysicalAddress { pointer: expr, .. }
             | Ex::BufferPointer { descriptor: expr } => {
                 self.expressions_used.insert(expr);
@@ -294,6 +296,33 @@ impl ExpressionTracer<'_> {
             Ex::CooperativeMatrixResult { ty } | Ex::TensorCreate { ty } => {
                 self.types_used.insert(ty);
             }
+            Ex::ImageProcessing {
+                operation: _,
+                image,
+                sampler,
+                coordinate,
+                reference,
+                reference_sampler,
+                reference_coordinate,
+                size,
+            } => {
+                self.expressions_used.insert_iter([image, coordinate]);
+                self.expressions_used.insert_iter(sampler);
+                self.expressions_used.insert_iter(reference);
+                self.expressions_used.insert_iter(reference_sampler);
+                self.expressions_used.insert_iter(reference_coordinate);
+                self.expressions_used.insert_iter(size);
+            }
+            Ex::ArrayConversion {
+                conversion: _,
+                expr,
+                index,
+                ty,
+            } => {
+                self.types_used.insert(ty);
+                self.expressions_used.insert(expr);
+                self.expressions_used.insert_iter(index);
+            }
             Ex::TensorSet {
                 base, ref operands, ..
             } => {
@@ -303,6 +332,23 @@ impl ExpressionTracer<'_> {
             Ex::CooperativeVectorMatMul { ty, ref operation } => {
                 self.types_used.insert(ty);
                 self.expressions_used.insert_iter(operation.operands());
+            }
+            Ex::TensorRead {
+                ty,
+                tensor,
+                coordinates,
+                out_of_bounds,
+                ..
+            } => {
+                self.types_used.insert(ty);
+                self.expressions_used.insert(tensor);
+                self.expressions_used.insert(coordinates);
+                if let Some(value) = out_of_bounds {
+                    self.expressions_used.insert(value);
+                }
+            }
+            Ex::TensorQuerySize { tensor, .. } => {
+                self.expressions_used.insert(tensor);
             }
         }
     }
@@ -369,6 +415,7 @@ impl ModuleMap {
                 ref mut image,
                 ref mut sampler,
                 gather: _,
+                gather_pattern: _,
                 ref mut coordinate,
                 ref mut array_index,
                 ref mut offset,
@@ -460,7 +507,7 @@ impl ModuleMap {
             } => self.types.adjust(ty)?,
             Ex::WorkGroupUniformLoadResult { ref mut ty } => self.types.adjust(ty)?,
             Ex::SubgroupOperationResult { ref mut ty } => self.types.adjust(ty)?,
-            Ex::ArrayLength(ref mut expr) => adjust(expr)?,
+            Ex::ArrayLength(ref mut expr) | Ex::WideArrayLength(ref mut expr) => adjust(expr)?,
             Ex::PhysicalAddress {
                 ref mut pointer,
                 split: _,
@@ -539,6 +586,34 @@ impl ModuleMap {
             Ex::CooperativeMatrixResult { ref mut ty } | Ex::TensorCreate { ref mut ty } => {
                 self.types.adjust(ty)?;
             }
+            Ex::ImageProcessing {
+                operation: _,
+                ref mut image,
+                ref mut sampler,
+                ref mut coordinate,
+                ref mut reference,
+                ref mut reference_sampler,
+                ref mut reference_coordinate,
+                ref mut size,
+            } => {
+                adjust(image)?;
+                operand_map.adjust_option(sampler)?;
+                adjust(coordinate)?;
+                operand_map.adjust_option(reference)?;
+                operand_map.adjust_option(reference_sampler)?;
+                operand_map.adjust_option(reference_coordinate)?;
+                operand_map.adjust_option(size)?;
+            }
+            Ex::ArrayConversion {
+                conversion: _,
+                ref mut expr,
+                ref mut index,
+                ref mut ty,
+            } => {
+                self.types.adjust(ty)?;
+                adjust(expr)?;
+                operand_map.adjust_option(index)?;
+            }
             Ex::TensorSet {
                 ref mut base,
                 ref mut operands,
@@ -558,6 +633,21 @@ impl ModuleMap {
                     adjust(operand)?;
                 }
             }
+            Ex::TensorRead {
+                ref mut ty,
+                ref mut tensor,
+                ref mut coordinates,
+                ref mut out_of_bounds,
+                ..
+            } => {
+                self.types.adjust(ty)?;
+                adjust(tensor)?;
+                adjust(coordinates)?;
+                if let Some(value) = out_of_bounds.as_mut() {
+                    adjust(value)?;
+                }
+            }
+            Ex::TensorQuerySize { ref mut tensor, .. } => adjust(tensor)?,
         }
         Ok(())
     }

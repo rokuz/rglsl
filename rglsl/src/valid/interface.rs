@@ -714,6 +714,18 @@ impl VaryingContext<'_> {
                                 scalar: crate::Scalar::U32,
                             },
                     ),
+                    Bi::TileOffset | Bi::TileDimension | Bi::TileApronSize => (
+                        matches!(self.stage, St::Compute | St::Fragment) && !self.output,
+                        *ty_inner
+                            == Ti::Vector {
+                                size: if built_in == Bi::TileDimension {
+                                    Vs::Tri
+                                } else {
+                                    Vs::Bi
+                                },
+                                scalar: crate::Scalar::U32,
+                            },
+                    ),
                     Bi::NumSubgroups | Bi::SubgroupId => (
                         self.stage.compute_like() && !self.output,
                         *ty_inner == Ti::Scalar(crate::Scalar::U32),
@@ -770,6 +782,9 @@ impl VaryingContext<'_> {
                     }
                     Bi::PrimitiveIndicesNV => {
                         (mesh_interface, array_of(Ti::Scalar(crate::Scalar::U32)))
+                    }
+                    Bi::ShaderCore(_) => {
+                        (!self.output, *ty_inner == Ti::Scalar(crate::Scalar::U32))
                     }
                     Bi::MeshViewCountNV => (
                         self.stage.mesh_like() && !self.output,
@@ -1562,6 +1577,7 @@ impl super::Validator {
                     crate::TypeInner::Sampler { .. }
                     | crate::TypeInner::SampledImage { .. }
                     | crate::TypeInner::AccelerationStructure { .. }
+                    | crate::TypeInner::Tensor { .. }
                     | crate::TypeInner::RayQuery { .. } => {}
                     _ => {
                         return Err(GlobalVariableError::InvalidType(var.space));
@@ -2193,12 +2209,18 @@ impl super::Validator {
                             class: crate::ImageClass::Storage { access, .. },
                             ..
                         } => storage_usage(access),
+                        crate::TypeInner::Tensor { .. } => {
+                            GlobalUse::READ | GlobalUse::QUERY | GlobalUse::WRITE
+                        }
                         _ => GlobalUse::READ | GlobalUse::QUERY,
                     },
                     crate::TypeInner::Image {
                         class: crate::ImageClass::Storage { access, .. },
                         ..
                     } => storage_usage(access),
+                    crate::TypeInner::Tensor { .. } => {
+                        GlobalUse::READ | GlobalUse::QUERY | GlobalUse::WRITE
+                    }
                     _ => GlobalUse::READ | GlobalUse::QUERY,
                 },
                 crate::AddressSpace::Private | crate::AddressSpace::WorkGroup => {

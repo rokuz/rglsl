@@ -211,3 +211,31 @@ fn a_whole_function_round_trips() {
     );
     assert!(printed.starts_with("#version 450\n\nstruct S {\n    int a;\n    vec2 b[2];\n};\n\nint g(in int x, out float y, inout S s, const highp vec2);\n\nvoid main() {\n"));
 }
+
+#[test]
+fn attributes_precede_selections_switches_and_loops() {
+    let parsed = statement("[[unroll, dependency_length(1 + 3)]] for (;;) {}");
+    let StatementKind::Attributed {
+        attributes,
+        statement: inner,
+    } = &parsed.kind
+    else {
+        panic!("{parsed:?}");
+    };
+    let names: alloc::vec::Vec<&str> = attributes
+        .iter()
+        .map(|attribute| attribute.name.node.as_str())
+        .collect();
+    assert_eq!(names, ["unroll", "dependency_length"]);
+    assert!(attributes[1].argument.is_some());
+    assert!(matches!(inner.kind, StatementKind::For(_)));
+    assert_eq!(
+        parsed.to_string(),
+        "[[unroll, dependency_length(1 + 3)]] for (;;) {\n}\n"
+    );
+    let spaced = statement("[ [ flatten ] ] if (a) b;");
+    assert!(matches!(spaced.kind, StatementKind::Attributed { .. }));
+    statement("[[multiple_wait_queuesQCOM(2)]] while (a) {}");
+    statement("[[dont_flatten]] switch (a) { default: break; }");
+    assert!(crate::parse("void f() { [[unroll]] a = 1; }").is_err());
+}

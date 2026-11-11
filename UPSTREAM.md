@@ -185,6 +185,10 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   (`valid/type.rs`, `valid/mod.rs`, `valid/expression.rs`).
 - **`frexp` exponents are `i32`** for every float width, as SPIR-V's `FrexpStruct` requires
   (`front/type_gen.rs`); upstream used an exponent as wide as the fraction.
+- **Bit-field operands are not clamped.** The SPIR-V backend writes `ExtractBits` and
+  `InsertBits` as `OpBitField[SU]Extract`/`OpBitFieldInsert` on the offset and count as they
+  are, like glslang, instead of upstream's WGSL clamps (`min(offset, w)`, `min(count, w -
+  offset)`); GLSL and SPIR-V leave an out-of-range field undefined (`back/spv/block.rs`).
 - **`FindUMsb`/`FindSMsb` for every integer width** in the SPIR-V backend instead of an
   `unreachable!` for non-32-bit arguments (the GLSL front end widens them first).
 - **Capabilities of 8- and 16-bit types by use.** With
@@ -492,6 +496,42 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   `SPV_KHR_expect_assume` capabilities and extensions, and the ARM cooperative matrix layouts.
   Upstream's `ir-cooperative-matrix*` snapshot inputs and outputs were deleted: they used the
   removed sizes and `row_major`, and the GLSL corpus covers the feature.
+- **QCOM extensions** ([docs/design/qcom.md](docs/design/qcom.md)).
+  `Expression::ImageSample::gather_pattern: ImageGatherPattern` (new; `Quad` is the ordinary
+  gather, the others are the `GL_QCOM_image_processing3` modes written as `OpImageGatherQCOM`).
+  `Expression::ImageProcessing { operation: ImageProcessingOperation, image, sampler,
+  coordinate, reference, reference_sampler, reference_coordinate, size }` (new: weighted
+  sampling, box filter, and block matching with `BlockMatchMetric` and `BlockMatchSearch`); it
+  is a `vec4<f32>`. `Expression::ArrayConversion { conversion: ArrayConversion, expr, index, ty }`
+  (new: the array bitcast, sub-array extraction and the array to cooperative matrix
+  conversions of `GL_QCOM_cooperative_matrix_conversion`). `GlobalVariable::tile_attachment`
+  (new, not serialized when false): a `Handle` global in the `TileAttachmentQCOM` storage class.
+  `BuiltIn::{TileOffset, TileDimension, TileApronSize}` (new). `EntryPoint::tile_shading:
+  TileShading { rate, non_coherent_attachment_read }` (new, not serialized when default); a
+  rate replaces `LocalSize` with `TileShadingRateQCOM`. `Statement::Loop::control: LoopControl`
+  (new, not serialized when default) carries the loop attributes of
+  `GL_EXT_control_flow_attributes(2)` and `GL_QCOM_multiple_wait_queues` to `OpLoopMerge`.
+  The SPIR-V backend keeps the QCOM opcodes, capabilities and loop control bits the `spirv`
+  crate lacks in `back/spv/qcom.rs`, and records the pointer of every binding-array element it
+  loads so that the image processing decorations land on the `OpAccessChain`, as glslang
+  writes them.
+- **ARM tensors** (`GL_ARM_tensors`, `docs/design/cooperative.md`). New handle type
+  `TypeInner::Tensor { scalar, rank }` (an `OpTypeTensorARM`, valid in `Handle` globals, binding
+  arrays, function arguments and descriptor heaps), expressions `TensorRead { ty, tensor,
+  coordinates, nontemporal, out_of_bounds }` and `TensorQuerySize { tensor, dimension }`, and
+  the statement `TensorWrite { tensor, coordinates, value, nontemporal }`. `MemoryDecorations`
+  is now `u16` and gains `NON_WRITABLE`/`NON_READABLE`, written as `NonWritable`/`NonReadable`
+  on the global (the GLSL frontend sets them on `readonly`/`writeonly` tensors only).
+- **64-bit indexing** (`GL_EXT_shader_64bit_indexing`). `Access` takes 64-bit integer indices;
+  the validator accepts 64-bit index literals (a negative one is an error) and the SPIR-V
+  backend never bounds-checks a 64-bit index. New expression `WideArrayLength(pointer)`, an
+  `OpArrayLength` with a 64-bit unsigned result (`length64()`), and
+  `Module::shader_64bit_indexing`, which writes the `Shader64BitIndexingEXT` capability,
+  extension and execution mode.
+- **SM and core built-ins.** `BuiltIn::ShaderCore(ShaderCore)` covers
+  `WarpsPerSMNV`/`SMCountNV`/`WarpIDNV`/`SMIDNV` (`ShaderSMBuiltinsNV`) and
+  `CoreIDARM`/`CoreCountARM`/`CoreMaxIDARM`/`WarpIDARM`/`WarpMaxIDARM` (`CoreBuiltinsARM`):
+  `u32` inputs in every stage.
 
 ## Cherry-picked upstream commits
 

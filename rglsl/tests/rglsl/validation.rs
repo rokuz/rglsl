@@ -115,6 +115,7 @@ fn populate_atomic_result() {
                 xfb: None,
                 input_attachment_index: None,
                 heap_offset: None,
+                tile_attachment: false,
             },
             span,
         );
@@ -293,6 +294,7 @@ fn emit_workgroup_uniform_load_result() {
                 xfb: None,
                 input_attachment_index: None,
                 heap_offset: None,
+                tile_attachment: false,
             },
             span,
         );
@@ -637,6 +639,7 @@ fn local_var_override_sized_array() {
             xfb: None,
             input_attachment_index: None,
             heap_offset: None,
+            tile_attachment: false,
         },
         span,
     );
@@ -1017,6 +1020,7 @@ fn unexpected_task_payload() {
             xfb: None,
             input_attachment_index: None,
             heap_offset: None,
+            tile_attachment: false,
         },
         err_span,
     );
@@ -1038,6 +1042,7 @@ fn unexpected_task_payload() {
         geometry: None,
         tessellation: None,
         mesh_shader: None,
+        tile_shading: rglsl::TileShading::default(),
     };
     module.entry_points.push(entry_point);
 

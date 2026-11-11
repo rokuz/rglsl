@@ -17,6 +17,7 @@ mod specialization;
 mod stage;
 mod statement;
 mod subgroup;
+mod tensor;
 mod types;
 mod xfb;
 
@@ -296,6 +297,8 @@ pub(super) struct Lowerer<'a> {
     pub buffer_defaults: BlockDefaults,
     pub early_fragment_tests: bool,
     pub quad_control: crate::QuadControl,
+    pub tile_shading_rate: [Option<u32>; 3],
+    pub non_coherent_tile_read: bool,
     pub conservative_depth: Option<ConservativeDepth>,
     pub layer_layout: LayerLayout,
     pub override_coverage: bool,
@@ -332,6 +335,7 @@ impl<'a> Lowerer<'a> {
             module: Module {
                 vulkan_memory_model: analysis.vulkan_memory_model,
                 descriptor_heap: analysis.extensions.contains(heap::HEAP_EXTENSION),
+                shader_64bit_indexing: analysis.shader_64bit_indexing,
                 ..Module::default()
             },
             layouter: Layouter::default(),
@@ -369,6 +373,8 @@ impl<'a> Lowerer<'a> {
             buffer_defaults: BlockDefaults::default(),
             early_fragment_tests: false,
             quad_control: crate::QuadControl::default(),
+            tile_shading_rate: [None; 3],
+            non_coherent_tile_read: false,
             conservative_depth: None,
             layer_layout: LayerLayout::default(),
             override_coverage: false,

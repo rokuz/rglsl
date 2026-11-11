@@ -917,9 +917,7 @@ impl BlockContext<'_> {
                         let result_id = match self.write_access_chain(
                             expr_handle,
                             block,
-                            AccessTypeAdjustment::IntroducePointer(
-                                spirv::StorageClass::UniformConstant,
-                            ),
+                            AccessTypeAdjustment::IntroducePointer(self.handle_class(base)),
                         )? {
                             ExpressionPointer::Ready { pointer_id } => pointer_id,
                             ExpressionPointer::Conditional { .. } => {
@@ -930,6 +928,7 @@ impl BlockContext<'_> {
                         };
 
                         let binding_type_id = self.get_handle_type_id(binding_type)?;
+                        self.function.handle_pointers.insert(expr_handle, result_id);
 
                         let load_id = self.gen_id();
                         block.body.push(Instruction::load(
@@ -1007,9 +1006,7 @@ impl BlockContext<'_> {
                         let result_id = match self.write_access_chain(
                             expr_handle,
                             block,
-                            AccessTypeAdjustment::IntroducePointer(
-                                spirv::StorageClass::UniformConstant,
-                            ),
+                            AccessTypeAdjustment::IntroducePointer(self.handle_class(base)),
                         )? {
                             ExpressionPointer::Ready { pointer_id } => pointer_id,
                             ExpressionPointer::Conditional { .. } => {
@@ -1020,6 +1017,7 @@ impl BlockContext<'_> {
                         };
 
                         let binding_type_id = self.get_handle_type_id(binding_type)?;
+                        self.function.handle_pointers.insert(expr_handle, result_id);
 
                         let load_id = self.gen_id();
                         block.body.push(Instruction::load(
@@ -1903,125 +1901,24 @@ impl BlockContext<'_> {
                                 ))
                             }
                         };
-
-                        // The behavior of ExtractBits is undefined when offset + count > bit_width. We need
-                        // to first sanitize the offset and count first. If we don't do this, AMD and Intel
-                        // will return out-of-spec values if the extracted range is not within the bit width.
-                        //
-                        // This encodes the exact formula specified by the wgsl spec:
-                        // https://gpuweb.github.io/gpuweb/wgsl/#extractBits-unsigned-builtin
-                        //
-                        // w = sizeof(x) * 8
-                        // o = min(offset, w)
-                        // tmp = w - o
-                        // c = min(count, tmp)
-                        //
-                        // bitfieldExtract(x, o, c)
-
-                        let Some(scalar_width) = arg_ty.scalar_width() else {
-                            return Err(Error::Validation("bit field operand is not numeric"));
-                        };
-                        let bit_width = scalar_width * 8;
-                        let width_constant = self
-                            .writer
-                            .get_constant_scalar(crate::Literal::U32(bit_width as u32));
-
-                        let u32_type =
-                            self.get_numeric_type_id(NumericType::Scalar(crate::Scalar::U32));
-
-                        // o = min(offset, w)
-                        let offset_id = self.gen_id();
-                        block.body.push(Instruction::ext_inst_gl_op(
-                            self.writer.gl450_ext_inst_id,
-                            spirv::GlslStd450Op::UMin,
-                            u32_type,
-                            offset_id,
-                            &[arg1_id, width_constant],
-                        ));
-
-                        // tmp = w - o
-                        let max_count_id = self.gen_id();
-                        block.body.push(Instruction::binary(
-                            spirv::Op::ISub,
-                            u32_type,
-                            max_count_id,
-                            width_constant,
-                            offset_id,
-                        ));
-
-                        // c = min(count, tmp)
-                        let count_id = self.gen_id();
-                        block.body.push(Instruction::ext_inst_gl_op(
-                            self.writer.gl450_ext_inst_id,
-                            spirv::GlslStd450Op::UMin,
-                            u32_type,
-                            count_id,
-                            &[arg2_id, max_count_id],
-                        ));
-
                         MathOp::Custom(Instruction::ternary(
                             op,
                             result_type_id,
                             id,
                             arg0_id,
-                            offset_id,
-                            count_id,
-                        ))
-                    }
-                    Mf::InsertBits => {
-                        // The behavior of InsertBits has the same undefined behavior as ExtractBits.
-
-                        let Some(scalar_width) = arg_ty.scalar_width() else {
-                            return Err(Error::Validation("bit field operand is not numeric"));
-                        };
-                        let bit_width = scalar_width * 8;
-                        let width_constant = self
-                            .writer
-                            .get_constant_scalar(crate::Literal::U32(bit_width as u32));
-
-                        let u32_type =
-                            self.get_numeric_type_id(NumericType::Scalar(crate::Scalar::U32));
-
-                        // o = min(offset, w)
-                        let offset_id = self.gen_id();
-                        block.body.push(Instruction::ext_inst_gl_op(
-                            self.writer.gl450_ext_inst_id,
-                            spirv::GlslStd450Op::UMin,
-                            u32_type,
-                            offset_id,
-                            &[arg2_id, width_constant],
-                        ));
-
-                        // tmp = w - o
-                        let max_count_id = self.gen_id();
-                        block.body.push(Instruction::binary(
-                            spirv::Op::ISub,
-                            u32_type,
-                            max_count_id,
-                            width_constant,
-                            offset_id,
-                        ));
-
-                        // c = min(count, tmp)
-                        let count_id = self.gen_id();
-                        block.body.push(Instruction::ext_inst_gl_op(
-                            self.writer.gl450_ext_inst_id,
-                            spirv::GlslStd450Op::UMin,
-                            u32_type,
-                            count_id,
-                            &[arg3_id, max_count_id],
-                        ));
-
-                        MathOp::Custom(Instruction::quaternary(
-                            spirv::Op::BitFieldInsert,
-                            result_type_id,
-                            id,
-                            arg0_id,
                             arg1_id,
-                            offset_id,
-                            count_id,
+                            arg2_id,
                         ))
                     }
+                    Mf::InsertBits => MathOp::Custom(Instruction::quaternary(
+                        spirv::Op::BitFieldInsert,
+                        result_type_id,
+                        id,
+                        arg0_id,
+                        arg1_id,
+                        arg2_id,
+                        arg3_id,
+                    )),
                     Mf::AddCarry | Mf::SubBorrow | Mf::MulExtended => {
                         let op = match (fun, arg_scalar_kind) {
                             (Mf::AddCarry, _) => spirv::Op::IAddCarry,
@@ -2162,6 +2059,7 @@ impl BlockContext<'_> {
                 image,
                 sampler,
                 gather,
+                gather_pattern,
                 coordinate,
                 array_index,
                 offset,
@@ -2173,7 +2071,7 @@ impl BlockContext<'_> {
                 result_type_id,
                 image,
                 sampler,
-                gather,
+                gather.map(|component| (component, gather_pattern)),
                 coordinate,
                 array_index,
                 offset,
@@ -2277,6 +2175,9 @@ impl BlockContext<'_> {
                 id
             }
             crate::Expression::ArrayLength(expr) => self.write_runtime_array_length(expr, block)?,
+            crate::Expression::WideArrayLength(expr) => {
+                self.write_typed_array_length(expr, result_type_id, block)?
+            }
             crate::Expression::PhysicalPointer { value, ty: _ } => {
                 if matches!(
                     self.ir_function.expressions[value],
@@ -2350,6 +2251,35 @@ impl BlockContext<'_> {
                 family,
             } => self.write_convert(expr, ty, (saturating, family), result_type_id, block)?,
             crate::Expression::CooperativeMatrixResult { .. } => self.cached.get(expr_handle)?,
+            crate::Expression::ImageProcessing {
+                operation,
+                image,
+                sampler,
+                coordinate,
+                reference,
+                reference_sampler,
+                reference_coordinate,
+                size,
+            } => self.write_image_processing(
+                result_type_id,
+                super::qcom::ImageProcessingOperands {
+                    operation,
+                    image,
+                    sampler,
+                    coordinate,
+                    reference,
+                    reference_sampler,
+                    reference_coordinate,
+                    size,
+                },
+                block,
+            )?,
+            crate::Expression::ArrayConversion {
+                conversion,
+                expr,
+                index,
+                ty: _,
+            } => self.write_array_conversion(result_type_id, conversion, expr, index, block)?,
             crate::Expression::TensorCreate { ty } => {
                 self.write_tensor_create(ty, result_type_id, block)?
             }
@@ -2360,6 +2290,22 @@ impl BlockContext<'_> {
             } => self.write_tensor_set(base, operation, operands, result_type_id, block)?,
             crate::Expression::CooperativeVectorMatMul { ref operation, .. } => self
                 .write_cooperative_vector_mat_mul(expr_handle, operation, result_type_id, block)?,
+            crate::Expression::TensorRead {
+                tensor,
+                coordinates,
+                nontemporal,
+                out_of_bounds,
+                ..
+            } => self.write_tensor_read(
+                tensor,
+                coordinates,
+                (nontemporal, out_of_bounds),
+                result_type_id,
+                block,
+            )?,
+            crate::Expression::TensorQuerySize { tensor, dimension } => {
+                self.write_tensor_query_size(tensor, dimension, result_type_id, block)?
+            }
         };
 
         self.cached.set(expr_handle, id)?;
@@ -4080,6 +4026,7 @@ impl BlockContext<'_> {
                     ref body,
                     ref continuing,
                     break_if,
+                    control,
                 } => {
                     let preamble_id = self.gen_id();
                     self.function
@@ -4102,11 +4049,9 @@ impl BlockContext<'_> {
                             loc.line_position,
                         ))
                     }
-                    block.body.push(Instruction::loop_merge(
-                        merge_id,
-                        continuing_id,
-                        spirv::SelectionControl::NONE,
-                    ));
+                    block
+                        .body
+                        .push(self.loop_merge(merge_id, continuing_id, control));
 
                     if self.force_loop_bounding {
                         block = self.write_force_bounded_loop_instructions(block, merge_id);
@@ -4324,6 +4269,14 @@ impl BlockContext<'_> {
                     array_index,
                     value,
                 } => self.write_image_store(image, coordinate, array_index, value, &mut block)?,
+                Statement::TensorWrite {
+                    tensor,
+                    coordinates,
+                    value,
+                    nontemporal,
+                } => {
+                    self.write_tensor_write(tensor, coordinates, value, nontemporal, &mut block)?
+                }
                 Statement::Call {
                     function: local_function,
                     ref arguments,

@@ -6,6 +6,7 @@ mod textures;
 mod variables;
 
 pub use variables::view_extension;
+pub(crate) use variables::{TENSOR_OPERAND_NONTEMPORAL, TENSOR_OPERAND_OUT_OF_BOUNDS_VALUE};
 
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::String;

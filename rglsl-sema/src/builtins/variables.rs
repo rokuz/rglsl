@@ -192,6 +192,24 @@ in int gl_DrawID
         text: RAY_TRACING_SUBGROUP,
     },
     Group {
+        stages: COMPUTE,
+        since: 460,
+        text: "
+in uvec2 gl_TileOffsetQCOM
+in uvec3 gl_TileDimensionQCOM
+in uvec2 gl_TileApronSizeQCOM
+",
+    },
+    Group {
+        stages: FRAGMENT,
+        since: 460,
+        text: "
+flat in uvec2 gl_TileOffsetQCOM
+flat in uvec3 gl_TileDimensionQCOM
+flat in uvec2 gl_TileApronSizeQCOM
+",
+    },
+    Group {
         stages: COMPUTE | MESH | TASK,
         since: 450,
         text: "
@@ -216,6 +234,15 @@ in uint64_t gl_SubGroupGeMaskARB
 in uint64_t gl_SubGroupGtMaskARB
 in uint64_t gl_SubGroupLeMaskARB
 in uint64_t gl_SubGroupLtMaskARB
+in uint gl_WarpsPerSMNV
+in uint gl_SMCountNV
+in uint gl_WarpIDNV
+in uint gl_SMIDNV
+in uint gl_CoreIDARM
+in uint gl_CoreCountARM
+in uint gl_CoreMaxIDARM
+in uint gl_WarpIDARM
+in uint gl_WarpMaxIDARM
 ";
 
 const FRAGMENT_SUBGROUP: &str = "
@@ -233,6 +260,15 @@ flat in uint64_t gl_SubGroupGeMaskARB
 flat in uint64_t gl_SubGroupGtMaskARB
 flat in uint64_t gl_SubGroupLeMaskARB
 flat in uint64_t gl_SubGroupLtMaskARB
+flat in uint gl_WarpsPerSMNV
+flat in uint gl_SMCountNV
+flat in uint gl_WarpIDNV
+flat in uint gl_SMIDNV
+flat in uint gl_CoreIDARM
+flat in uint gl_CoreCountARM
+flat in uint gl_CoreMaxIDARM
+flat in uint gl_WarpIDARM
+flat in uint gl_WarpMaxIDARM
 ";
 
 const RAY_TRACING_SUBGROUP: &str = "
@@ -250,6 +286,15 @@ volatile in uint64_t gl_SubGroupGeMaskARB
 volatile in uint64_t gl_SubGroupGtMaskARB
 volatile in uint64_t gl_SubGroupLeMaskARB
 volatile in uint64_t gl_SubGroupLtMaskARB
+in uint gl_WarpsPerSMNV
+in uint gl_SMCountNV
+volatile in uint gl_WarpIDNV
+volatile in uint gl_SMIDNV
+in uint gl_CoreIDARM
+in uint gl_CoreCountARM
+in uint gl_CoreMaxIDARM
+in uint gl_WarpIDARM
+in uint gl_WarpMaxIDARM
 ";
 
 const PER_VERTEX: &str = "
@@ -593,6 +638,20 @@ const COOPERATIVE_CONSTANTS: [(&str, i32); 40] = [
     ("gl_ComponentTypeFloatE5M2NV", 1_000_491_003),
 ];
 
+pub(crate) const TENSOR_OPERAND_NONTEMPORAL: u32 = 0x1;
+pub(crate) const TENSOR_OPERAND_OUT_OF_BOUNDS_VALUE: u32 = 0x2;
+
+const TENSOR_OPERAND_CONSTANTS: [(&str, u32); 2] = [
+    (
+        "gl_TensorOperandsNonTemporalARM",
+        TENSOR_OPERAND_NONTEMPORAL,
+    ),
+    (
+        "gl_TensorOperandsOutOfBoundsValueARM",
+        TENSOR_OPERAND_OUT_OF_BOUNDS_VALUE,
+    ),
+];
+
 pub(super) fn build(
     version: u32,
     stage: Stage,
@@ -611,6 +670,9 @@ pub(super) fn build(
         .chain(COOPERATIVE_CONSTANTS)
     {
         builder.constant(name, Type::INT, alloc::vec![Value::Int(value)]);
+    }
+    for (name, value) in TENSOR_OPERAND_CONSTANTS {
+        builder.constant(name, Type::UINT, alloc::vec![Value::Uint(value)]);
     }
     let triple = |values: [i32; 3]| values.iter().map(|value| Value::Int(*value)).collect();
     builder.constant(

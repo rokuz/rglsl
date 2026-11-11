@@ -605,6 +605,10 @@ pub enum TypeKind {
         has_dimensions: bool,
         permutation: [u8; 5],
     },
+    Tensor {
+        scalar: Scalar,
+        rank: u32,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -884,7 +888,14 @@ impl Type {
     }
 
     pub const fn is_opaque(&self) -> bool {
-        matches!(self.kind, TypeKind::Opaque(_))
+        matches!(self.kind, TypeKind::Opaque(_) | TypeKind::Tensor { .. })
+    }
+
+    pub const fn as_tensor(&self) -> Option<(Scalar, u32)> {
+        match self.kind {
+            TypeKind::Tensor { scalar, rank } if !self.is_array() => Some((scalar, rank)),
+            _ => None,
+        }
     }
 
     pub const fn as_opaque(&self) -> Option<Opaque> {
@@ -896,7 +907,7 @@ impl Type {
 
     pub fn contains_opaque(&self, registry: &TypeRegistry) -> bool {
         match self.kind {
-            TypeKind::Opaque(_) => true,
+            TypeKind::Opaque(_) | TypeKind::Tensor { .. } => true,
             TypeKind::Struct(id) => registry
                 .structure(id)
                 .is_some_and(|structure| structure.contains_opaque),
@@ -1243,6 +1254,9 @@ impl fmt::Display for TypeDisplay<'_> {
             )?,
             TypeKind::TensorView { dimensions, .. } => {
                 write!(formatter, "tensorViewNV<{}>", ShowSize(dimensions))?;
+            }
+            TypeKind::Tensor { scalar, rank } => {
+                write!(formatter, "tensorARM<{}, {rank}>", scalar.keyword())?;
             }
         }
         for dimension in &self.ty.array {

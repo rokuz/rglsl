@@ -4990,3 +4990,328 @@ void main() {
     int a = expectEXT(1, 1);
     assumeEXT(a == 1);
 }
+### tile shading built-ins need the extension | comp 460 | 4:ExtensionRequired
+layout(local_size_x = 16) in;
+void main() {
+    uvec2 offset = gl_TileOffsetQCOM;
+}
+### tile shading built-ins and qualifiers | comp 460 | ok
+#extension GL_QCOM_tile_shading : enable
+layout(local_size_x = 16, local_size_y = 16) in;
+layout(shading_rate_xQCOM = 2, shading_rate_yQCOM = 4, shading_rate_zQCOM = 3) in;
+layout(set = 0, binding = 0, tile_attachmentQCOM, rgba32f) uniform highp image2D color;
+void main() {
+    uvec2 offset = gl_TileOffsetQCOM + gl_TileApronSizeQCOM;
+    uvec3 size = gl_TileDimensionQCOM;
+    imageStore(color, ivec2(offset + size.xy), vec4(1.0));
+}
+### tile shading rates are powers of two | comp 460 | 4:InvalidQualifier
+#extension GL_QCOM_tile_shading : enable
+layout(local_size_x = 16) in;
+layout(shading_rate_xQCOM = 3) in;
+void main() {}
+### tile attachments need the extension | frag 460 | 2:ExtensionRequired
+layout(set = 0, binding = 0, tile_attachmentQCOM, rgba32f) uniform highp image2D color;
+void main() {}
+### fragment tile shading reads | frag 460 | ok
+#extension GL_QCOM_tile_shading : enable
+layout(non_coherent_attachment_readQCOM) in;
+layout(set = 0, binding = 0, tile_attachmentQCOM, rgba32f) uniform highp image2D color;
+layout(location = 0) out vec4 result;
+void main() {
+    result = imageLoad(color, ivec2(gl_TileOffsetQCOM));
+}
+### image processing functions | frag 450 | ok
+#extension GL_QCOM_image_processing : require
+#extension GL_QCOM_image_processing2 : require
+layout(set = 0, binding = 0) uniform texture2D source;
+layout(set = 0, binding = 1) uniform sampler plain;
+layout(set = 0, binding = 2) uniform sampler2DArray weights;
+layout(location = 0) out vec4 result;
+void main() {
+    uvec2 at = uvec2(1, 2);
+    result = textureWeightedQCOM(sampler2D(source, plain), vec2(0.5), weights);
+    result += textureBoxFilterQCOM(sampler2D(source, plain), vec2(0.5), vec2(2.0));
+    result += textureBlockMatchSADQCOM(sampler2D(source, plain), at, sampler2D(source, plain), at, at);
+    result += textureBlockMatchWindowSSDQCOM(sampler2D(source, plain), at, sampler2D(source, plain), at, at);
+    result += textureBlockMatchGatherSADQCOM(sampler2D(source, plain), at, sampler2D(source, plain), at, at);
+}
+### image processing needs the extension | frag 450 | 6:ExtensionRequired
+layout(set = 0, binding = 0) uniform sampler2D source;
+layout(set = 0, binding = 1) uniform sampler2DArray weights;
+layout(location = 0) out vec4 result;
+void main() {
+    result = textureWeightedQCOM(source, vec2(0.5), weights);
+}
+### window block matching needs the second extension | frag 450 | 7:ExtensionRequired
+#extension GL_QCOM_image_processing : require
+layout(set = 0, binding = 0) uniform sampler2D source;
+layout(location = 0) out vec4 result;
+void main() {
+    uvec2 at = uvec2(1, 2);
+    result = textureBlockMatchWindowSADQCOM(source, at, source, at, at);
+}
+### image processing takes float samplers | frag 450 | 6:NoMatchingFunction
+#extension GL_QCOM_image_processing : require
+layout(set = 0, binding = 0) uniform isampler2D source;
+layout(location = 0) out vec4 result;
+void main() {
+    result = textureBoxFilterQCOM(source, vec2(0.5), vec2(2.0));
+}
+### gather modes | frag 460 | ok
+#extension GL_QCOM_image_processing3 : enable
+layout(set = 0, binding = 0) uniform usampler2D source;
+layout(set = 0, binding = 1) uniform sampler2DArray layers;
+layout(location = 0) flat in ivec2 offset;
+layout(location = 0) out vec4 result;
+void main() {
+    result = vec4(textureGather4x1QCOM(source, vec2(0.5), 2));
+    result += textureGatherDOffsetQCOM(layers, vec3(0.5), offset);
+    result += textureGatherV2QCOM(layers, vec3(0.5), 3);
+}
+### gather mode component is constant | frag 460 | 7:InvalidBuiltinCall
+#extension GL_QCOM_image_processing3 : enable
+layout(set = 0, binding = 0) uniform sampler2D source;
+layout(location = 0) flat in int component;
+layout(location = 0) out vec4 result;
+void main() {
+    result = textureGatherH2QCOM(source, vec2(0.5), component);
+}
+### gather mode component is in range | frag 460 | 6:InvalidBuiltinCall
+#extension GL_QCOM_image_processing3 : enable
+layout(set = 0, binding = 0) uniform sampler2D source;
+layout(location = 0) out vec4 result;
+void main() {
+    result = textureGatherH2QCOM(source, vec2(0.5), 4);
+}
+### gather modes need the extension | frag 460 | 5:ExtensionRequired
+layout(set = 0, binding = 0) uniform sampler2D source;
+layout(location = 0) out vec4 result;
+void main() {
+    result = textureGather4x1QCOM(source, vec2(0.5));
+}
+### cooperative matrix conversions | comp 450 | ok
+#extension GL_KHR_cooperative_matrix : enable
+#extension GL_KHR_memory_scope_semantics : enable
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : enable
+#extension GL_QCOM_cooperative_matrix_conversion : enable
+layout(local_size_x = 64) in;
+void main() {
+    uint packed[8];
+    float values[8];
+    float16_t halves[16];
+    uint wide[64];
+    bitcastQCOM(packed, values);
+    bitcastQCOM(packed, halves);
+    extractSubArrayQCOM(wide, 8, packed);
+    coopmat<float, gl_ScopeSubgroup, 64, 8, gl_MatrixUseA> a;
+    vectorToCoopmatQCOM(packed, a);
+    coopmatToVectorQCOM(a, values);
+}
+### cooperative matrix conversions need the extension | comp 450 | 9:ExtensionRequired, 10:ExtensionRequired
+#extension GL_KHR_cooperative_matrix : enable
+#extension GL_KHR_memory_scope_semantics : enable
+layout(local_size_x = 64) in;
+void main() {
+    uint packed[8];
+    float values[8];
+    coopmat<float, gl_ScopeSubgroup, 64, 8, gl_MatrixUseA> a;
+    coopmatToVectorQCOM(a, values);
+    bitcastQCOM(packed, values);
+}
+### bitcast arrays keep their bit size | comp 450 | 7:InvalidCooperativeCall
+#extension GL_QCOM_cooperative_matrix_conversion : enable
+layout(local_size_x = 64) in;
+void main() {
+    uint packed[8];
+    float values[4];
+    bitcastQCOM(packed, values);
+}
+### vector to matrix element types are compatible | comp 450 | 9:InvalidCooperativeCall
+#extension GL_KHR_cooperative_matrix : enable
+#extension GL_KHR_memory_scope_semantics : enable
+#extension GL_QCOM_cooperative_matrix_conversion : enable
+layout(local_size_x = 64) in;
+void main() {
+    int packed[8];
+    coopmat<float, gl_ScopeSubgroup, 64, 8, gl_MatrixUseA> a;
+    vectorToCoopmatQCOM(packed, a);
+}
+### matrix to vector destination length | comp 450 | 9:InvalidCooperativeCall
+#extension GL_KHR_cooperative_matrix : enable
+#extension GL_KHR_memory_scope_semantics : enable
+#extension GL_QCOM_cooperative_matrix_conversion : enable
+layout(local_size_x = 64) in;
+void main() {
+    float values[4];
+    coopmat<float, gl_ScopeSubgroup, 64, 8, gl_MatrixUseA> a;
+    coopmatToVectorQCOM(a, values);
+}
+### cooperative matrix conversions need workgroup scope rejected | comp 450 | 9:InvalidCooperativeCall
+#extension GL_KHR_cooperative_matrix : enable
+#extension GL_KHR_memory_scope_semantics : enable
+#extension GL_QCOM_cooperative_matrix_conversion : enable
+layout(local_size_x = 64) in;
+void main() {
+    float values[8];
+    coopmat<float, gl_ScopeWorkgroup, 64, 8, gl_MatrixUseA> a;
+    coopmatToVectorQCOM(a, values);
+}
+### conversion destination is an lvalue | comp 450 | 7:NotAnLValue
+#extension GL_QCOM_cooperative_matrix_conversion : enable
+layout(local_size_x = 64) in;
+const float values[1] = float[1](1.0);
+void main() {
+    uint packed[1];
+    bitcastQCOM(packed, values);
+}
+### loop attributes need an extension | comp 450 | 4:ExtensionRequired
+layout(local_size_x = 1) in;
+void main() {
+    [[unroll]] for (int i = 0; i < 4; ++i) {}
+}
+### multiple wait queues | comp 450 | ok
+#extension GL_QCOM_multiple_wait_queues : enable
+layout(local_size_x = 1) in;
+void main() {
+    [[multiple_wait_queuesQCOM]] for (int i = 0; i < 4; ++i) {}
+    [[multiple_wait_queuesQCOM(2)]] while (false) {}
+}
+### multiple wait queues must be positive | comp 450 | 5:InvalidAttribute
+#extension GL_QCOM_multiple_wait_queues : enable
+layout(local_size_x = 1) in;
+void main() {
+    [[multiple_wait_queuesQCOM(0)]] for (int i = 0; i < 4; ++i) {}
+}
+### selection attributes need the control flow extension | comp 450 | 6:ExtensionRequired
+#extension GL_QCOM_multiple_wait_queues : enable
+layout(local_size_x = 1) in;
+void main() {
+    bool flag = true;
+    [[flatten]] if (flag) {}
+}
+### control flow attributes | comp 450 | 6:InvalidAttribute
+#extension GL_EXT_control_flow_attributes : enable
+layout(local_size_x = 1) in;
+void main() {
+    [[unroll, dependency_length(2)]] for (int i = 0; i < 4; ++i) {}
+    [[dependency_length(-1)]] do {} while (false);
+    [[dont_flatten]] switch (1) { default: break; }
+}
+### tensor reads, writes and size queries | comp 460 | ok
+#extension GL_ARM_tensors : require
+layout(set = 0, binding = 0) uniform tensorARM<int, 2> t;
+readonly layout(set = 0, binding = 1) uniform tensorARM<float, 1> r;
+layout(local_size_x = 1) in;
+void main() {
+    int value;
+    int values[3];
+    tensorReadARM(t, uint[](0, 1), value, gl_TensorOperandsOutOfBoundsValueARM, 7);
+    tensorReadARM(t, uint[](0, 1), values);
+    tensorWriteARM(t, uint[](1, 0), values, gl_TensorOperandsNonTemporalARM);
+    float x;
+    tensorReadARM(r, uint[](0), x);
+    uint size = tensorSizeARM(t, 1) + tensorSizeARM(r, 0);
+}
+### tensor declarations need a rank and an element type | comp 460 | 3:InvalidTypeParameters, 4:InvalidTypeParameters, 5:InvalidTypeParameters, 6:InvalidTypeParameters
+#extension GL_ARM_tensors : require
+uniform tensorARM noparams;
+uniform tensorARM<int, 0> zero;
+uniform tensorARM<int, 1, 2> two;
+uniform tensorARM<void, 2> bad;
+void main() {}
+### tensors are uniforms or parameters | comp 460 | 3:OpaqueNotAllowed, 5:OpaqueNotAllowed
+#extension GL_ARM_tensors : require
+tensorARM<int, 1> global;
+void main() {
+    tensorARM<int, 1> local;
+}
+### tensor bfloat16 elements need their extension | comp 460 | 4:ExtensionRequired
+#extension GL_ARM_tensors : require
+#extension GL_EXT_bfloat16 : require
+layout(set = 0, binding = 0) uniform tensorARM<bfloat16_t, 1> t;
+void main() {}
+### tensor access checks | comp 460 | 7:InvalidCooperativeCall, 8:InvalidCooperativeCall, 9:InvalidCooperativeCall, 10:InvalidCooperativeCall, 11:InvalidCooperativeCall, 12:InvalidCooperativeCall
+#extension GL_ARM_tensors : require
+layout(set = 0, binding = 0) uniform tensorARM<int, 1> t;
+void main() {
+    int i = 1;
+    float f;
+    tensorReadARM(t, uint[](0, 0), i);
+    tensorReadARM(t, uint[](0), f);
+    tensorWriteARM(t, uint[](0), i, gl_TensorOperandsOutOfBoundsValueARM, 1);
+    tensorReadARM(t, uint[](0), i, gl_TensorOperandsOutOfBoundsValueARM);
+    tensorReadARM(t, uint[](0), i, gl_TensorOperandsOutOfBoundsValueARM, i);
+    tensorReadARM(t, uint[](0), i, gl_TensorOperandsOutOfBoundsValueARM, 1u);
+}
+### tensor operands and dimensions must be constant | comp 460 | 7:InvalidCooperativeCall, 8:InvalidCooperativeCall, 9:InvalidCooperativeCall
+#extension GL_ARM_tensors : require
+layout(set = 0, binding = 0) uniform tensorARM<int, 2> t;
+void main() {
+    int value;
+    uint operands = gl_TensorOperandsNonTemporalARM;
+    tensorReadARM(t, uint[](0, 0), value, operands);
+    uint a = tensorSizeARM(t, operands);
+    uint b = tensorSizeARM(t, 2);
+}
+### tensor accesses keep memory qualifiers | comp 460 | 7:InvalidCooperativeCall, 8:InvalidCooperativeCall
+#extension GL_ARM_tensors : require
+readonly layout(set = 0, binding = 0) uniform tensorARM<int, 1> r;
+writeonly layout(set = 0, binding = 1) uniform tensorARM<int, 1> w;
+void main() {
+    int value = 0;
+    tensorWriteARM(r, uint[](0), value);
+    tensorReadARM(w, uint[](0), value);
+}
+### tensor parameters | comp 460 | ok
+#extension GL_ARM_tensors : require
+layout(set = 0, binding = 0) uniform tensorARM<int, 4> t;
+uint size(readonly tensorARM<int, 4> tensor) {
+    return tensorSizeARM(tensor, 3);
+}
+void main() {
+    uint s = size(t);
+}
+### type parameters cannot be structures | comp 460 | 3:InvalidTypeParameters
+#extension GL_ARM_tensors : require
+layout(set = 0, binding = 0) uniform tensorARM<struct S { float a; }, 1> t;
+void main() {}
+### 64-bit indices need the extension | comp 450 | 7:IndexNotInteger
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+layout(set = 0, binding = 0) buffer B { float x[]; } b;
+layout(local_size_x = 1) in;
+void main() {
+    uint64_t i = 0;
+    float y = b.x[i];
+}
+### 64-bit indices and length64 | comp 450 | ok
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+#extension GL_EXT_shader_64bit_indexing : require
+#pragma shader_64bit_indexing
+#pragma promote_uint32_indices
+layout(set = 0, binding = 0) buffer B { float x[]; } b;
+layout(local_size_x = 1) in;
+void main() {
+    uint64_t i = 0;
+    float y = b.x[i] + b.x[5000000000ul];
+    int64_t n = b.x.length64();
+}
+### length64 needs the extension | comp 450 | 5:ExtensionRequired
+layout(set = 0, binding = 0) buffer B { float x[]; } b;
+layout(local_size_x = 1) in;
+void main() {
+    int n = int(b.x.length64());
+}
+### SM built-ins need their extension | frag 450 | 4:ExtensionRequired
+layout(location = 0) out uvec4 o;
+void main() {
+    o = uvec4(gl_SMIDNV);
+}
+### SM and core built-ins | frag 450 | ok
+#extension GL_NV_shader_sm_builtins : require
+#extension GL_ARM_shader_core_builtins : require
+layout(location = 0) out uvec4 o;
+void main() {
+    o = uvec4(gl_WarpsPerSMNV, gl_SMCountNV, gl_WarpIDNV, gl_SMIDNV)
+        + uvec4(gl_CoreIDARM, gl_CoreCountARM, gl_CoreMaxIDARM, gl_WarpIDARM + gl_WarpMaxIDARM);
+}

@@ -1630,6 +1630,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                     ref mut body,
                     ref mut continuing,
                     break_if: _,
+                    control: _,
                 } => {
                     self.patch_statements(body, expressions, fun_parameter_sampling)?;
                     self.patch_statements(continuing, expressions, fun_parameter_sampling)?;
@@ -1658,6 +1659,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                 | S::MeshFunction(..)
                 | S::DebugPrintf { .. }
                 | S::Abort { .. }
+                | S::TensorWrite { .. }
                 | S::WorkGroupUniformLoad { .. }
                 | S::CooperativeStore { .. }
                 | S::Assume { .. }
@@ -3077,6 +3079,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                     xfb: None,
                     input_attachment_index: None,
                     heap_offset: None,
+                    tile_attachment: false,
                 };
                 (Variable::Global, var)
             }
@@ -3129,6 +3132,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                     xfb: None,
                     input_attachment_index: None,
                     heap_offset: None,
+                    tile_attachment: false,
                 };
 
                 let inner = Variable::Input(crate::FunctionArgument {
@@ -3194,6 +3198,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                     xfb: None,
                     input_attachment_index: None,
                     heap_offset: None,
+                    tile_attachment: false,
                 };
                 let inner = Variable::Output(crate::FunctionResult { ty, binding });
                 (inner, var)

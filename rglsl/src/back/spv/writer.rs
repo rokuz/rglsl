@@ -134,6 +134,7 @@ impl Writer {
             debug_printf_strings: crate::FastHashMap::default(),
             raw_capabilities: crate::FastIndexSet::default(),
             utf_encoded: crate::FastHashSet::default(),
+            qcom_decorations: crate::FastHashSet::default(),
             laid_out_copies: crate::FastHashMap::default(),
             task_dispatch_limits: options.task_dispatch_limits,
             mesh_shader_primitive_indices_clamp: options.mesh_shader_primitive_indices_clamp,
@@ -248,6 +249,7 @@ impl Writer {
             debug_printf_strings: take(&mut self.debug_printf_strings).reclaim(),
             raw_capabilities: take(&mut self.raw_capabilities).reclaim(),
             utf_encoded: take(&mut self.utf_encoded).reclaim(),
+            qcom_decorations: take(&mut self.qcom_decorations).reclaim(),
             laid_out_copies: take(&mut self.laid_out_copies).reclaim(),
             heap: super::heap::HeapState::default(),
             descriptor_heap: false,
@@ -625,7 +627,8 @@ impl Writer {
             | crate::TypeInner::Struct { .. }
             | crate::TypeInner::BindingArray { .. }
             | crate::TypeInner::TensorLayout { .. }
-            | crate::TypeInner::TensorView { .. } => return Ok(None),
+            | crate::TypeInner::TensorView { .. }
+            | crate::TypeInner::Tensor { .. } => return Ok(None),
         }))
     }
 
@@ -1955,6 +1958,14 @@ impl Writer {
             self.write_execution_mode(function_id, spirv::ExecutionMode::Xfb)?;
         }
         self.write_opacity_micromap_mode(function_id, entry_point)?;
+        if ir_module.shader_64bit_indexing {
+            self.use_extension("SPV_EXT_shader_64bit_indexing");
+            self.require_any(
+                "64-bit indexing",
+                &[spirv::Capability::Shader64BitIndexingEXT],
+            )?;
+            self.write_execution_mode(function_id, spirv::ExecutionMode::Shader64BitIndexingEXT)?;
+        }
 
         for (enabled, mode) in [
             (
@@ -1971,6 +1982,14 @@ impl Writer {
                 self.require_any("quad control", &[spirv::Capability::QuadControlKHR])?;
                 self.write_execution_mode(function_id, mode)?;
             }
+        }
+
+        if entry_point.tile_shading.non_coherent_attachment_read {
+            self.require_tile_shading()?;
+            self.write_execution_mode(
+                function_id,
+                spirv::ExecutionMode::NonCoherentTileAttachmentReadQCOM,
+            )?;
         }
 
         if let Some(ref geometry) = entry_point.geometry {
@@ -2047,7 +2066,20 @@ impl Writer {
                 spirv::ExecutionModel::Fragment
             }
             crate::ShaderStage::Compute => {
-                self.write_workgroup_size(function_id, entry_point)?;
+                let size_id =
+                    entry_point.workgroup_size_overrides.is_some() && self.lang_version() >= (1, 6);
+                match entry_point.tile_shading.rate {
+                    Some(rate) if !size_id => {
+                        self.require_tile_shading()?;
+                        Instruction::execution_mode(
+                            function_id,
+                            spirv::ExecutionMode::TileShadingRateQCOM,
+                            &rate,
+                        )
+                        .to_words(&mut self.logical_layout.execution_modes);
+                    }
+                    _ => self.write_workgroup_size(function_id, entry_point)?,
+                }
                 spirv::ExecutionModel::GLCompute
             }
             crate::ShaderStage::Task | crate::ShaderStage::Mesh
@@ -2714,6 +2746,9 @@ impl Writer {
                         instruction.add_operand(index);
                     }
                     instruction
+                }
+                crate::TypeInner::Tensor { scalar, rank } => {
+                    self.write_tensor_type(id, scalar, rank)?
                 }
                 crate::TypeInner::Array { base, size, stride } => {
                     let type_id = self.get_handle_type_id(base)?;
@@ -4090,6 +4125,7 @@ impl Writer {
                     Bi::TaskCountNV => BuiltIn::TaskCountNV,
                     Bi::PrimitiveCountNV => BuiltIn::PrimitiveCountNV,
                     Bi::PrimitiveIndicesNV => BuiltIn::PrimitiveIndicesNV,
+                    Bi::ShaderCore(core) => self.shader_core_builtin(core)?,
                     Bi::MeshViewCountNV => BuiltIn::MeshViewCountNV,
                     Bi::MeshViewIndicesNV => BuiltIn::MeshViewIndicesNV,
                     Bi::ClipDistancePerViewNV | Bi::CullDistancePerViewNV | Bi::LayerPerViewNV => {
@@ -4106,6 +4142,14 @@ impl Writer {
                             Bi::ClipDistancePerViewNV => BuiltIn::ClipDistancePerViewNV,
                             Bi::CullDistancePerViewNV => BuiltIn::CullDistancePerViewNV,
                             _ => BuiltIn::LayerPerViewNV,
+                        }
+                    }
+                    Bi::TileOffset | Bi::TileDimension | Bi::TileApronSize => {
+                        self.require_tile_shading()?;
+                        match built_in {
+                            Bi::TileOffset => BuiltIn::TileOffsetQCOM,
+                            Bi::TileDimension => BuiltIn::TileDimensionQCOM,
+                            _ => BuiltIn::TileApronSizeQCOM,
                         }
                     }
                     Bi::PointIndex => BuiltIn::PrimitivePointIndicesEXT,
@@ -4250,7 +4294,12 @@ impl Writer {
             return self.heap_variable(heap);
         }
         let id = self.id_gen.next();
-        let class = map_storage_class(global_variable.space);
+        let class = if global_variable.tile_attachment {
+            self.require_tile_shading()?;
+            spirv::StorageClass::TileAttachmentQCOM
+        } else {
+            map_storage_class(global_variable.space)
+        };
 
         // A stage input or output is bound to a location or a built-in. The
         // decorations depend on the stage whose interface it belongs to.
@@ -4349,6 +4398,20 @@ impl Writer {
                 _ => None,
             },
         };
+        for (flag, decoration) in [
+            (
+                crate::MemoryDecorations::NON_WRITABLE,
+                Decoration::NonWritable,
+            ),
+            (
+                crate::MemoryDecorations::NON_READABLE,
+                Decoration::NonReadable,
+            ),
+        ] {
+            if global_variable.memory_decorations.contains(flag) {
+                self.decorate(id, decoration, &[]);
+            }
+        }
         if let Some(storage_access) = storage_access {
             if !storage_access.contains(crate::StorageAccess::LOAD) {
                 self.decorate(id, Decoration::NonReadable, &[]);
@@ -5254,6 +5317,38 @@ impl Writer {
                     .push(Instruction::member_decorate(id, index, *decoration, &[]));
             }
         }
+    }
+}
+
+impl Writer {
+    fn shader_core_builtin(&mut self, core: crate::ShaderCore) -> Result<spirv::BuiltIn, Error> {
+        use crate::ShaderCore as Sc;
+        use spirv::BuiltIn as B;
+        let (built_in, nv) = match core {
+            Sc::WarpsPerSmNv => (B::WarpsPerSMNV, true),
+            Sc::SmCountNv => (B::SMCountNV, true),
+            Sc::WarpIdNv => (B::WarpIDNV, true),
+            Sc::SmIdNv => (B::SMIDNV, true),
+            Sc::CoreIdArm => (B::CoreIDARM, false),
+            Sc::CoreCountArm => (B::CoreCountARM, false),
+            Sc::CoreMaxIdArm => (B::CoreMaxIDARM, false),
+            Sc::WarpIdArm => (B::WarpIDARM, false),
+            Sc::WarpMaxIdArm => (B::WarpMaxIDARM, false),
+        };
+        if nv {
+            self.use_extension("SPV_NV_shader_sm_builtins");
+            self.require_any(
+                "shader SM built-ins",
+                &[spirv::Capability::ShaderSMBuiltinsNV],
+            )?;
+        } else {
+            self.use_extension("SPV_ARM_core_builtins");
+            self.require_any(
+                "shader core built-ins",
+                &[spirv::Capability::CoreBuiltinsARM],
+            )?;
+        }
+        Ok(built_in)
     }
 }
 

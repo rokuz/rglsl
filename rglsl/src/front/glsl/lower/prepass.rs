@@ -291,6 +291,18 @@ impl<'a> Lowerer<'a> {
                 }
             }
         }
+        if let Some(main) = main {
+            let mut reachable = BTreeSet::from([main]);
+            let mut pending = Vec::from([main]);
+            while let Some(caller) = pending.pop() {
+                for &callee in calls.get(&caller).into_iter().flatten() {
+                    if reachable.insert(callee) {
+                        pending.push(callee);
+                    }
+                }
+            }
+            order.retain(|&(id, _)| reachable.contains(&id));
+        }
         Ok(order)
     }
 }

@@ -91,12 +91,22 @@ impl BlockContext<'_> {
         array: Handle<crate::Expression>,
         block: &mut Block,
     ) -> Result<Word, Error> {
+        let type_id = self.writer.get_u32_type_id();
+        self.write_typed_array_length(array, type_id, block)
+    }
+
+    pub(super) fn write_typed_array_length(
+        &mut self,
+        array: Handle<crate::Expression>,
+        type_id: Word,
+        block: &mut Block,
+    ) -> Result<Word, Error> {
         if let crate::Expression::AccessIndex { base, index } = self.ir_function.expressions[array]
         {
             if let crate::Expression::BufferPointer { .. } = self.ir_function.expressions[base] {
                 let length_id = self.gen_id();
                 block.body.push(Instruction::array_length(
-                    self.writer.get_u32_type_id(),
+                    type_id,
                     length_id,
                     self.cached.get(base)?,
                     index,
@@ -257,7 +267,7 @@ impl BlockContext<'_> {
         };
         let length_id = self.gen_id();
         block.body.push(Instruction::array_length(
-            self.writer.get_u32_type_id(),
+            type_id,
             length_id,
             structure_id,
             last_member_index,
@@ -545,11 +555,23 @@ impl BlockContext<'_> {
         // If the value of `index` is known at compile time, find it now.
         index.try_resolve_to_constant(&self.ir_function.expressions, self.ir_module);
 
-        let policy = self.writer.bounds_check_policies.choose_policy(
-            base,
-            &self.ir_module.types,
-            self.fun_info,
-        );
+        let wide = match index {
+            GuardedIndex::Expression(expr) => self.fun_info[expr]
+                .ty
+                .inner_with(&self.ir_module.types)
+                .scalar_width()
+                .is_some_and(|width| width == 8),
+            GuardedIndex::Known(_) => false,
+        };
+        let policy = if wide {
+            BoundsCheckPolicy::Unchecked
+        } else {
+            self.writer.bounds_check_policies.choose_policy(
+                base,
+                &self.ir_module.types,
+                self.fun_info,
+            )
+        };
 
         Ok(match policy {
             BoundsCheckPolicy::Restrict => self.write_restricted_index(base, index, block)?,

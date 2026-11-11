@@ -44,6 +44,7 @@ impl super::Validator {
             ref doc_comments,
             vulkan_memory_model: _,
             descriptor_heap: _,
+            shader_64bit_indexing: _,
             ray_tracing: _,
         } = module;
 
@@ -174,6 +175,7 @@ impl super::Validator {
                 xfb: _,
                 input_attachment_index: _,
                 heap_offset,
+                tile_attachment: _,
             } = global_variable;
             validate_type(ty)?;
             if let Some(init_expr) = init {
@@ -449,6 +451,7 @@ impl super::Validator {
             | crate::TypeInner::SampledImage { .. }
             | crate::TypeInner::Sampler { .. }
             | crate::TypeInner::AccelerationStructure { .. }
+            | crate::TypeInner::Tensor { .. }
             | crate::TypeInner::RayQuery { .. } => None,
             crate::TypeInner::Pointer {
                 base,
@@ -645,6 +648,7 @@ impl super::Validator {
                 image,
                 sampler,
                 gather: _,
+                gather_pattern: _,
                 coordinate,
                 array_index,
                 offset,
@@ -756,7 +760,7 @@ impl super::Validator {
             | crate::Expression::SubgroupBallotResult
             | crate::Expression::SubgroupOperationResult { .. }
             | crate::Expression::WorkGroupUniformLoadResult { .. } => (),
-            crate::Expression::ArrayLength(array) => {
+            crate::Expression::ArrayLength(array) | crate::Expression::WideArrayLength(array) => {
                 handle.check_dep(array)?;
             }
             crate::Expression::PhysicalAddress { pointer, split: _ } => {
@@ -804,6 +808,34 @@ impl super::Validator {
             | crate::Expression::TensorCreate { ty } => {
                 validate_type(ty)?;
             }
+            crate::Expression::ImageProcessing {
+                operation: _,
+                image,
+                sampler,
+                coordinate,
+                reference,
+                reference_sampler,
+                reference_coordinate,
+                size,
+            } => {
+                handle
+                    .check_dep(image)?
+                    .check_dep_opt(sampler)?
+                    .check_dep(coordinate)?
+                    .check_dep_opt(reference)?
+                    .check_dep_opt(reference_sampler)?
+                    .check_dep_opt(reference_coordinate)?
+                    .check_dep_opt(size)?;
+            }
+            crate::Expression::ArrayConversion {
+                conversion: _,
+                expr,
+                index,
+                ty,
+            } => {
+                validate_type(ty)?;
+                handle.check_dep(expr)?.check_dep_opt(index)?;
+            }
             crate::Expression::TensorSet {
                 base, ref operands, ..
             } => {
@@ -822,6 +854,22 @@ impl super::Validator {
             crate::Expression::CooperativeVectorMatMul { ty, ref operation } => {
                 validate_type(ty)?;
                 handle.check_dep_iter(operation.operands())?;
+            }
+            crate::Expression::TensorRead {
+                ty,
+                tensor,
+                coordinates,
+                out_of_bounds,
+                ..
+            } => {
+                validate_type(ty)?;
+                handle
+                    .check_dep(tensor)?
+                    .check_dep(coordinates)?
+                    .check_dep_opt(out_of_bounds)?;
+            }
+            crate::Expression::TensorQuerySize { tensor, .. } => {
+                handle.check_dep(tensor)?;
             }
         }
         Ok(())
@@ -881,6 +929,7 @@ impl super::Validator {
                 ref body,
                 ref continuing,
                 break_if,
+                control: _,
             } => {
                 validate_block(body)?;
                 validate_block(continuing)?;
@@ -1086,6 +1135,17 @@ impl super::Validator {
                 for &argument in arguments {
                     validate_expr(argument)?;
                 }
+                Ok(())
+            }
+            crate::Statement::TensorWrite {
+                tensor,
+                coordinates,
+                value,
+                ..
+            } => {
+                validate_expr(tensor)?;
+                validate_expr(coordinates)?;
+                validate_expr(value)?;
                 Ok(())
             }
             crate::Statement::Break

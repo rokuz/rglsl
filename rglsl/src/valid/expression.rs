@@ -125,6 +125,12 @@ pub enum ExpressionError {
     InvalidGatherComponent(crate::SwizzleComponent),
     #[error("Gather can't be done for image dimension {0:?}")]
     InvalidGatherDimension(crate::ImageDimension),
+    #[error("Gather pattern {0:?} requires a gather on a sampled two-dimensional image")]
+    InvalidGatherPattern(crate::ImageGatherPattern),
+    #[error("Image processing operation {0:?} is invalid: {1}")]
+    InvalidImageProcessing(crate::ImageProcessingOperation, &'static str),
+    #[error("Array conversion {0:?} is invalid: {1}")]
+    InvalidArrayConversion(crate::ArrayConversion, &'static str),
     #[error("Sample level (exact) type {0:?} has an invalid type")]
     InvalidSampleLevelExactType(Handle<crate::Expression>),
     #[error("Sample level (bias) type {0:?} is not a scalar float")]
@@ -151,6 +157,26 @@ pub enum ExpressionError {
     UnsupportedWidth(crate::MathFunction, crate::ScalarKind, crate::Bytes),
     #[error("Invalid operand for cooperative op")]
     InvalidCooperativeOperand(Handle<crate::Expression>),
+    #[error("Invalid operand {0:?} for a tensor operation")]
+    InvalidTensorOperand(Handle<crate::Expression>),
+}
+
+pub(super) fn tensor_shape(
+    inner: &crate::TypeInner,
+    types: &UniqueArena<crate::Type>,
+) -> Option<(crate::Scalar, Option<u32>)> {
+    match *inner {
+        crate::TypeInner::Scalar(scalar) => Some((scalar, None)),
+        crate::TypeInner::Array {
+            base,
+            size: crate::ArraySize::Constant(length),
+            ..
+        } => match types[base].inner {
+            crate::TypeInner::Scalar(scalar) => Some((scalar, Some(length.get()))),
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 #[derive(Clone, Debug, thiserror::Error)]
@@ -400,7 +426,15 @@ impl super::Validator {
                     }
                     Err(crate::proc::ConstValueError::NonConst) => {}
                     Err(crate::proc::ConstValueError::InvalidType) => {
-                        return Err(ExpressionError::InvalidIndexType(index))
+                        match function.expressions[index] {
+                            crate::Expression::Literal(crate::Literal::I64(value)) if value < 0 => {
+                                return Err(ExpressionError::NegativeIndex(base))
+                            }
+                            crate::Expression::Literal(
+                                crate::Literal::I64(_) | crate::Literal::U64(_),
+                            ) => {}
+                            _ => return Err(ExpressionError::InvalidIndexType(index)),
+                        }
                     }
                 }
 
@@ -508,7 +542,10 @@ impl super::Validator {
                         space: crate::AddressSpace::DescriptorHeap(_),
                     } if matches!(
                         module.types[base].inner,
-                        Ti::Image { .. } | Ti::Sampler { .. } | Ti::AccelerationStructure { .. }
+                        Ti::Image { .. }
+                            | Ti::Sampler { .. }
+                            | Ti::AccelerationStructure { .. }
+                            | Ti::Tensor { .. }
                     ) => {}
                     Ti::ValuePointer { .. } => {}
                     ref other => {
@@ -522,6 +559,7 @@ impl super::Validator {
                 image,
                 sampler,
                 gather,
+                gather_pattern,
                 coordinate,
                 array_index,
                 offset,
@@ -670,10 +708,20 @@ impl super::Validator {
                     if component > max_component {
                         return Err(ExpressionError::InvalidGatherComponent(component));
                     }
+                    if gather_pattern != crate::ImageGatherPattern::Quad
+                        && (dim != crate::ImageDimension::D2
+                            || matches!(class, crate::ImageClass::Depth { .. }))
+                    {
+                        return Err(ExpressionError::InvalidGatherPattern(gather_pattern));
+                    }
                     match level {
                         crate::SampleLevel::Zero => {}
                         _ => return Err(ExpressionError::InvalidGatherLevel),
                     }
+                }
+
+                if gather.is_none() && gather_pattern != crate::ImageGatherPattern::Quad {
+                    return Err(ExpressionError::InvalidGatherPattern(gather_pattern));
                 }
 
                 // Clamping coordinate to edge is only supported with 2d non-arrayed, sampled images
@@ -1359,7 +1407,7 @@ impl super::Validator {
                     return Err(ExpressionError::InvalidWorkGroupUniformLoadResultType(ty));
                 }
             }
-            E::ArrayLength(expr) => match resolver[expr] {
+            E::ArrayLength(expr) | E::WideArrayLength(expr) => match resolver[expr] {
                 Ti::Pointer { base, .. } => {
                     let base_ty = &resolver.types[base];
                     if let Ti::Array {
@@ -1517,6 +1565,162 @@ impl super::Validator {
                 Ti::TensorLayout { .. } | Ti::TensorView { .. } => ShaderStages::all(),
                 _ => return Err(ExpressionError::InvalidCooperativeOperand(base)),
             },
+            E::ImageProcessing {
+                operation,
+                image,
+                sampler,
+                coordinate,
+                reference,
+                reference_sampler,
+                reference_coordinate,
+                size,
+            } => {
+                let invalid =
+                    |reason| Err(ExpressionError::InvalidImageProcessing(operation, reason));
+                let sampled = |image, sampler: Option<Handle<crate::Expression>>| {
+                    let image_ty = Self::global_var_ty(module, function, info, image)?;
+                    let (dim, arrayed, class) = match (sampler, &module.types[image_ty].inner) {
+                        (
+                            Some(_),
+                            &Ti::Image {
+                                dim,
+                                arrayed,
+                                class,
+                            },
+                        )
+                        | (
+                            None,
+                            &Ti::SampledImage {
+                                dim,
+                                arrayed,
+                                class,
+                            },
+                        ) => (dim, arrayed, class),
+                        _ => return Err(ExpressionError::ExpectedImageType(image_ty)),
+                    };
+                    if let Some(sampler) = sampler {
+                        let sampler_ty = Self::global_var_ty(module, function, info, sampler)?;
+                        if !matches!(module.types[sampler_ty].inner, Ti::Sampler { .. }) {
+                            return Err(ExpressionError::ExpectedSamplerType(sampler_ty));
+                        }
+                    }
+                    let float = matches!(
+                        class,
+                        crate::ImageClass::Sampled {
+                            kind: Sk::Float,
+                            multi: false
+                        }
+                    );
+                    Ok((dim, arrayed, float))
+                };
+                let vector2 = |handle: Handle<crate::Expression>, kind: Sk| {
+                    matches!(
+                        resolver[handle],
+                        Ti::Vector {
+                            size: crate::VectorSize::Bi,
+                            scalar: Sc { kind: found, width: 4 },
+                        } if found == kind
+                    )
+                };
+                if sampled(image, sampler)? != (crate::ImageDimension::D2, false, true) {
+                    return invalid("the source must be a sampled 2D float image");
+                }
+                match operation {
+                    crate::ImageProcessingOperation::SampleWeighted => {
+                        let Some(weights) = reference else {
+                            return invalid("missing weights");
+                        };
+                        let (dim, arrayed, float) = sampled(weights, reference_sampler)?;
+                        if !float
+                            || !arrayed
+                            || !matches!(dim, crate::ImageDimension::D1 | crate::ImageDimension::D2)
+                            || !vector2(coordinate, Sk::Float)
+                            || reference_coordinate.is_some()
+                            || size.is_some()
+                        {
+                            return invalid("wrong operands");
+                        }
+                    }
+                    crate::ImageProcessingOperation::BoxFilter => {
+                        let Some(size) = size else {
+                            return invalid("missing box size");
+                        };
+                        if reference.is_some()
+                            || reference_sampler.is_some()
+                            || reference_coordinate.is_some()
+                            || !vector2(coordinate, Sk::Float)
+                            || !vector2(size, Sk::Float)
+                        {
+                            return invalid("wrong operands");
+                        }
+                    }
+                    crate::ImageProcessingOperation::BlockMatch { .. } => {
+                        let (Some(reference), Some(reference_coordinate), Some(size)) =
+                            (reference, reference_coordinate, size)
+                        else {
+                            return invalid("missing operands");
+                        };
+                        if sampled(reference, reference_sampler)?
+                            != (crate::ImageDimension::D2, false, true)
+                            || !vector2(coordinate, Sk::Uint)
+                            || !vector2(reference_coordinate, Sk::Uint)
+                            || !vector2(size, Sk::Uint)
+                        {
+                            return invalid("wrong operands");
+                        }
+                    }
+                }
+                ShaderStages::all()
+            }
+            E::ArrayConversion {
+                conversion,
+                expr,
+                index,
+                ty,
+            } => {
+                let invalid =
+                    |reason| Err(ExpressionError::InvalidArrayConversion(conversion, reason));
+                let array_of_scalars = |inner: &Ti| match *inner {
+                    Ti::Array { base, .. } => module.types[base].inner.scalar(),
+                    _ => None,
+                };
+                let source = &resolver[expr];
+                let target = &module.types[ty].inner;
+                let valid = match conversion {
+                    crate::ArrayConversion::Bitcast => {
+                        array_of_scalars(source).is_some() && array_of_scalars(target).is_some()
+                    }
+                    crate::ArrayConversion::SubArray => {
+                        let index_valid = index.is_some_and(|index| {
+                            matches!(
+                                resolver[index],
+                                Ti::Scalar(Sc {
+                                    kind: Sk::Uint | Sk::Sint,
+                                    ..
+                                })
+                            )
+                        });
+                        index_valid
+                            && array_of_scalars(source).is_some()
+                            && array_of_scalars(source) == array_of_scalars(target)
+                    }
+                    crate::ArrayConversion::ToCooperativeMatrix => {
+                        array_of_scalars(source).is_some()
+                            && matches!(*target, Ti::CooperativeMatrix { .. })
+                    }
+                    crate::ArrayConversion::FromCooperativeMatrix => {
+                        matches!(*source, Ti::CooperativeMatrix { .. })
+                            && array_of_scalars(target).is_some()
+                    }
+                };
+                if !valid {
+                    return invalid("wrong operand types");
+                }
+                if index.is_some() != (conversion == crate::ArrayConversion::SubArray) {
+                    return invalid("only a sub-array extraction takes an index");
+                }
+                ShaderStages::all()
+            }
             E::Convert { expr, ty, .. } => {
                 let source = resolver[expr].scalar();
                 let target = module.types[ty].inner.scalar();
@@ -1534,6 +1738,41 @@ impl super::Validator {
                     _ => return Err(ExpressionError::InvalidCooperativeOperand(root)),
                 }
             }
+            E::TensorRead {
+                ty,
+                tensor,
+                coordinates,
+                out_of_bounds,
+                ..
+            } => {
+                let (scalar, rank) = match resolver[tensor] {
+                    Ti::Tensor { scalar, rank } => (scalar, rank),
+                    _ => return Err(ExpressionError::InvalidTensorOperand(tensor)),
+                };
+                match tensor_shape(&resolver[coordinates], &module.types) {
+                    Some((index, Some(length)))
+                        if length == rank
+                            && matches!(
+                                index.kind,
+                                crate::ScalarKind::Uint | crate::ScalarKind::Sint
+                            ) => {}
+                    _ => return Err(ExpressionError::InvalidTensorOperand(coordinates)),
+                }
+                match tensor_shape(&module.types[ty].inner, &module.types) {
+                    Some((element, _)) if element == scalar => {}
+                    _ => return Err(ExpressionError::InvalidTensorOperand(root)),
+                }
+                if let Some(value) = out_of_bounds {
+                    if resolver[value] != Ti::Scalar(scalar) {
+                        return Err(ExpressionError::InvalidTensorOperand(value));
+                    }
+                }
+                ShaderStages::all()
+            }
+            E::TensorQuerySize { tensor, dimension } => match resolver[tensor] {
+                Ti::Tensor { rank, .. } if dimension < rank => ShaderStages::all(),
+                _ => return Err(ExpressionError::InvalidTensorOperand(tensor)),
+            },
             E::Expect { value, expected } => {
                 if resolver[value] != resolver[expected] {
                     return Err(ExpressionError::InvalidCooperativeOperand(expected));

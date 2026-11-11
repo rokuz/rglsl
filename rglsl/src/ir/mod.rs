@@ -417,6 +417,22 @@ pub enum ShaderBallot {
     Mask(SubgroupMask),
 }
 
+#[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub enum ShaderCore {
+    WarpsPerSmNv,
+    SmCountNv,
+    WarpIdNv,
+    SmIdNv,
+    CoreIdArm,
+    CoreCountArm,
+    CoreMaxIdArm,
+    WarpIdArm,
+    WarpMaxIdArm,
+}
+
 /// Built-in inputs and outputs.
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
@@ -508,6 +524,10 @@ pub enum BuiltIn {
     SubgroupInvocationId,
     SubgroupMask(SubgroupMask),
     ShaderBallot(ShaderBallot),
+    TileOffset,
+    TileDimension,
+    TileApronSize,
+    ShaderCore(ShaderCore),
 
     /// Written in task shaders
     MeshTaskSize,
@@ -874,7 +894,7 @@ bitflags::bitflags! {
     #[cfg_attr(feature = "deserialize", derive(Deserialize))]
     #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
     #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
-    pub struct MemoryDecorations: u8 {
+    pub struct MemoryDecorations: u16 {
         /// Reads and writes are automatically visible to other invocations
         /// without explicit barriers.
         const COHERENT = 0x1;
@@ -887,6 +907,8 @@ bitflags::bitflags! {
         const SUBGROUP_COHERENT = 0x20;
         const SHADER_CALL_COHERENT = 0x40;
         const NONPRIVATE = 0x80;
+        const NON_WRITABLE = 0x100;
+        const NON_READABLE = 0x200;
     }
 }
 
@@ -1018,7 +1040,10 @@ pub enum TypeInner {
     /// Number of integral or floating-point kind.
     Scalar(Scalar),
     /// Vector of numbers.
-    Vector { size: VectorSize, scalar: Scalar },
+    Vector {
+        size: VectorSize,
+        scalar: Scalar,
+    },
     /// Matrix of numbers.
     Matrix {
         columns: VectorSize,
@@ -1048,6 +1073,10 @@ pub enum TypeInner {
         dimensions: CooperativeSize,
         has_dimensions: bool,
         permutation: Vec<u32>,
+    },
+    Tensor {
+        scalar: Scalar,
+        rank: u32,
     },
     /// Atomic scalar.
     Atomic(Scalar),
@@ -1167,7 +1196,9 @@ pub enum TypeInner {
         class: ImageClass,
     },
     /// Can be used to sample values from images.
-    Sampler { comparison: bool },
+    Sampler {
+        comparison: bool,
+    },
 
     SampledImage {
         dim: ImageDimension,
@@ -1176,10 +1207,14 @@ pub enum TypeInner {
     },
 
     /// Opaque object representing an acceleration structure of geometry.
-    AccelerationStructure { vertex_return: bool },
+    AccelerationStructure {
+        vertex_return: bool,
+    },
 
     /// Locally used handle for ray queries.
-    RayQuery { vertex_return: bool },
+    RayQuery {
+        vertex_return: bool,
+    },
 
     /// Array of bindings.
     ///
@@ -1220,7 +1255,10 @@ pub enum TypeInner {
     /// [`DATA`]: crate::valid::TypeFlags::DATA
     /// [`ARGUMENT`]: crate::valid::TypeFlags::ARGUMENT
     /// [rglsl#1864]: https://github.com/gfx-rs/naga/issues/1864
-    BindingArray { base: Handle<Type>, size: ArraySize },
+    BindingArray {
+        base: Handle<Type>,
+        size: ArraySize,
+    },
     BufferDescriptor {
         base: Handle<Type>,
         space: AddressSpace,
@@ -1407,6 +1445,12 @@ pub struct GlobalVariable {
     #[cfg_attr(feature = "serialize", serde(skip_serializing_if = "Option::is_none"))]
     #[cfg_attr(feature = "deserialize", serde(default))]
     pub heap_offset: Option<Handle<Expression>>,
+    #[cfg_attr(
+        feature = "serialize",
+        serde(skip_serializing_if = "core::ops::Not::not")
+    )]
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    pub tile_attachment: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -1943,6 +1987,62 @@ bitflags::bitflags! {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, Hash, Eq, Ord, PartialEq, PartialOrd)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub enum ImageGatherPattern {
+    #[default]
+    Quad,
+    Linear4x1,
+    Diagonal,
+    Horizontal2,
+    Vertical2,
+}
+
+#[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub enum BlockMatchMetric {
+    SumOfAbsoluteDifferences,
+    SumOfSquaredDifferences,
+}
+
+#[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub enum BlockMatchSearch {
+    Block,
+    Window,
+    Gather,
+}
+
+#[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub enum ImageProcessingOperation {
+    SampleWeighted,
+    BoxFilter,
+    BlockMatch {
+        metric: BlockMatchMetric,
+        search: BlockMatchSearch,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub enum ArrayConversion {
+    Bitcast,
+    SubArray,
+    ToCooperativeMatrix,
+    FromCooperativeMatrix,
+}
+
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
@@ -2446,6 +2546,8 @@ pub enum Expression {
         /// If Some(), this operation is a gather operation
         /// on the selected component.
         gather: Option<SwizzleComponent>,
+        #[cfg_attr(feature = "deserialize", serde(default))]
+        gather_pattern: ImageGatherPattern,
         coordinate: Handle<Expression>,
         array_index: Option<Handle<Expression>>,
         offset: Option<Handle<Expression>>,
@@ -2619,6 +2721,7 @@ pub enum Expression {
     /// This doesn't match the semantics of spirv's `OpArrayLength`, which must be passed
     /// a pointer to a structure containing a runtime array in its' last field.
     ArrayLength(Handle<Expression>),
+    WideArrayLength(Handle<Expression>),
     PhysicalPointer {
         value: Handle<Expression>,
         ty: Handle<Type>,
@@ -2707,10 +2810,37 @@ pub enum Expression {
     TensorCreate {
         ty: Handle<Type>,
     },
+    ImageProcessing {
+        operation: ImageProcessingOperation,
+        image: Handle<Expression>,
+        sampler: Option<Handle<Expression>>,
+        coordinate: Handle<Expression>,
+        reference: Option<Handle<Expression>>,
+        reference_sampler: Option<Handle<Expression>>,
+        reference_coordinate: Option<Handle<Expression>>,
+        size: Option<Handle<Expression>>,
+    },
+    ArrayConversion {
+        conversion: ArrayConversion,
+        expr: Handle<Expression>,
+        index: Option<Handle<Expression>>,
+        ty: Handle<Type>,
+    },
     TensorSet {
         base: Handle<Expression>,
         operation: TensorOperation,
         operands: Vec<Handle<Expression>>,
+    },
+    TensorRead {
+        ty: Handle<Type>,
+        tensor: Handle<Expression>,
+        coordinates: Handle<Expression>,
+        nontemporal: bool,
+        out_of_bounds: Option<Handle<Expression>>,
+    },
+    TensorQuerySize {
+        tensor: Handle<Expression>,
+        dimension: u32,
     },
 }
 
@@ -2880,6 +3010,12 @@ pub enum Statement {
         body: Block,
         continuing: Block,
         break_if: Option<Handle<Expression>>,
+        #[cfg_attr(feature = "deserialize", serde(default))]
+        #[cfg_attr(
+            feature = "serialize",
+            serde(skip_serializing_if = "LoopControl::is_default")
+        )]
+        control: LoopControl,
     },
 
     /// Exits the innermost enclosing [`Loop`] or [`Switch`].
@@ -3217,6 +3353,12 @@ pub enum Statement {
         ty: Handle<Type>,
         arguments: Vec<Handle<Expression>>,
     },
+    TensorWrite {
+        tensor: Handle<Expression>,
+        coordinates: Handle<Expression>,
+        value: Handle<Expression>,
+        nontemporal: bool,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -3424,6 +3566,46 @@ pub struct EntryPoint {
     #[cfg_attr(feature = "serialize", serde(skip_serializing_if = "Option::is_none"))]
     #[cfg_attr(feature = "deserialize", serde(default))]
     pub mesh_shader: Option<MeshShaderInfo>,
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    #[cfg_attr(
+        feature = "serialize",
+        serde(skip_serializing_if = "TileShading::is_default")
+    )]
+    pub tile_shading: TileShading,
+}
+
+#[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub enum LoopDependency {
+    Infinite,
+    Length(u32),
+}
+
+#[derive(Clone, Copy, Debug, Default, Hash, Eq, PartialEq)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub struct LoopControl {
+    pub unroll: bool,
+    pub dont_unroll: bool,
+    pub dependency: Option<LoopDependency>,
+    pub min_iterations: Option<u32>,
+    pub max_iterations: Option<u32>,
+    pub iteration_multiple: Option<u32>,
+    pub peel_count: Option<u32>,
+    pub partial_count: Option<u32>,
+    pub multiple_wait_queues: Option<u32>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Hash, Eq, PartialEq)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub struct TileShading {
+    pub rate: Option<[u32; 3]>,
+    pub non_coherent_attachment_read: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -3963,6 +4145,12 @@ pub struct Module {
     )]
     #[cfg_attr(feature = "deserialize", serde(default))]
     pub descriptor_heap: bool,
+    #[cfg_attr(
+        feature = "serialize",
+        serde(skip_serializing_if = "core::ops::Not::not")
+    )]
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    pub shader_64bit_indexing: bool,
     #[cfg_attr(
         feature = "serialize",
         serde(skip_serializing_if = "RayTracingFeatures::is_empty")
