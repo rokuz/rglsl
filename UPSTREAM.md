@@ -599,6 +599,12 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   `Output` global with a raw `BuiltIn` decoration (`proc::has_spirv_built_in`) needs no binding.
   The SPIR-V backend writes them in `back/spv/intrinsics.rs`.
 
+- **A comparison sampler may sample a float texture that is not a depth image.**
+  `ImageSample` with a separate comparison sampler and a `depth_ref` accepts an
+  `ImageClass::Sampled { kind: Float, multi: false }` image and has a scalar `f32` result; the
+  SPIR-V backend combines it into an `OpTypeSampledImage` of the depth variant of the image
+  type, as glslang does for a texture used both with and without a shadow sampler.
+
 - **Workgroup variables may be null-initialized.** A `WorkGroup` global may have an
   initializer when it is a `ZeroValue` (`GL_EXT_null_initializer`'s `shared T x = {};`); the
   SPIR-V backend writes it as `OpConstantNull`, as glslang does.

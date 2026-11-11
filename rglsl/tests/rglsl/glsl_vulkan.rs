@@ -8457,3 +8457,31 @@ void main() {}
 ";
     assert_eq!(first_error_line(later, &options), Some(3));
 }
+
+#[test]
+fn a_texture_may_be_sampled_with_and_without_a_shadow_sampler() {
+    let module = compile(
+        ShaderStage::Fragment,
+        "#version 450
+layout(binding = 0) uniform texture2D t;
+layout(binding = 1) uniform sampler s;
+layout(binding = 2) uniform samplerShadow c;
+layout(location = 0) in vec3 uv;
+layout(location = 0) out vec4 color;
+void main() {
+    color = texture(sampler2D(t, s), uv.xy);
+    color.x += texture(sampler2DShadow(t, c), uv);
+}
+",
+    );
+    assert_eq!(
+        instructions(&module, Op::ImageSampleDrefImplicitLod).len(),
+        1
+    );
+    assert_eq!(instructions(&module, Op::ImageSampleImplicitLod).len(), 1);
+    let depths: Vec<u32> = instructions(&module, Op::TypeImage)
+        .into_iter()
+        .map(|inst| literal(&inst.operands[2]))
+        .collect();
+    assert!(depths.contains(&0) && depths.contains(&1), "{depths:?}");
+}
