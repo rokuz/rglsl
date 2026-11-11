@@ -188,7 +188,6 @@ impl Lowerer<'_> {
 
 impl FunctionLowerer<'_, '_> {}
 
-#[allow(clippy::await_holding_refcell_ref)]
 impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
     pub(super) async fn mesh_statement(
         self,
@@ -196,14 +195,11 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<()> {
-        let mut this = self.lowerer();
         let mut values = Vec::with_capacity(arguments.len());
         for argument in arguments {
             values.push({
                 let frame = self.clone().rvalue(argument);
-                drop(this);
                 let result = self.nest(frame).await;
-                this = self.lowerer();
                 result
             }?);
         }
@@ -225,7 +221,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             }
             _ => return Err(internal(at)),
         };
-        this.push(Statement::MeshFunction(function), at);
+        self.with(|this| this.push(Statement::MeshFunction(function), at))?;
         Ok(())
     }
 }

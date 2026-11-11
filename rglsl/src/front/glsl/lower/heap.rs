@@ -474,7 +474,6 @@ impl<'a> Lowerer<'a> {
     }
 }
 
-#[allow(clippy::await_holding_refcell_ref)]
 impl<'b, 'a> super::function::LowererCx<'b, 'a> {
     async fn heap_leaf(
         self,
@@ -483,16 +482,14 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
         at: Span,
     ) -> Result<Handle<Type>> {
         let ty = &ty;
-        let mut this = self.lowerer();
         match ty.kind {
             TypeKind::Opaque(_) | TypeKind::Tensor { .. } => {
-                let inner = this.heap_image(ty, qualifiers, at)?;
-                Ok(this.insert_type(inner))
+                let inner = self.with(|this| this.heap_image(ty, qualifiers, at))??;
+                Ok(self.with(|this| this.insert_type(inner))?)
             }
-            TypeKind::Block(id) => this.buffer_descriptor(id, at),
+            TypeKind::Block(id) => self.with(|this| this.buffer_descriptor(id, at))?,
             TypeKind::Struct(id) => {
                 let frame = self.clone().heap_struct(id, at);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
@@ -501,29 +498,28 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
     }
 
     async fn heap_struct(self, id: StructId, at: Span) -> Result<Handle<Type>> {
-        let mut this = self.lowerer();
-        if let Some(&handle) = this.heap_structs.get(&id) {
+        if let Some(handle) = self.with(|this| this.heap_structs.get(&id).copied())? {
             return Ok(handle);
         }
-        let analysis = this.analysis;
+        let analysis = self.with(|this| this.analysis)?;
         let structure = analysis.types.structure(id).ok_or_else(|| internal(at))?;
         let members = {
             let frame = self
                 .clone()
                 .heap_members(None, &structure.members, None, false, at);
-            drop(this);
             let result = self.nest(frame).await;
-            this = self.lowerer();
             result
         }?;
-        let handle = this.module.types.insert(
-            Type {
-                name: structure.name.clone(),
-                inner: TypeInner::Struct { members, span: 0 },
-            },
-            at,
-        );
-        this.heap_structs.insert(id, handle);
+        let handle = self.with(|this| {
+            this.module.types.insert(
+                Type {
+                    name: structure.name.clone(),
+                    inner: TypeInner::Struct { members, span: 0 },
+                },
+                at,
+            )
+        })?;
+        self.with(|this| this.heap_structs.insert(id, handle))?;
         Ok(handle)
     }
 
@@ -535,9 +531,10 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
         row_major: bool,
         at: Span,
     ) -> Result<Vec<StructMember>> {
-        let mut this = self.lowerer();
         let offsets = match packing {
-            Some(packing) => Some(this.packed_offsets(block, members, packing, row_major, at)?),
+            Some(packing) => Some(
+                self.with(|this| this.packed_offsets(block, members, packing, row_major, at))??,
+            ),
             None => None,
         };
         let mut lowered = Vec::with_capacity(members.len());
@@ -550,13 +547,11 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
                 None => explicit,
             };
             let size = layout_u32(qualifiers, "descriptor_size", at)?;
-            let (ty, matrix_layout) = if this.contains_descriptor(&member.ty) {
+            let (ty, matrix_layout) = if self.with(|this| this.contains_descriptor(&member.ty))? {
                 let element = GlslType::new(member.ty.kind);
                 let leaf = {
                     let frame = self.clone().heap_leaf(element.clone(), qualifiers, at);
-                    drop(this);
                     let result = self.nest(frame).await;
-                    this = self.lowerer();
                     result
                 }?;
                 let stride = if member.ty.is_array() {
@@ -565,13 +560,14 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
                     0
                 };
                 (
-                    this.descriptor_arrays(leaf, &member.ty.array, stride, at)?,
+                    self.with(|this| this.descriptor_arrays(leaf, &member.ty.array, stride, at))??,
                     None,
                 )
             } else {
-                let ty = this.heap_data_type(&member.ty, at)?;
-                let (ty, layout) =
-                    this.laid_out(&member.ty, ty, Packing::Scalar, member_row_major, at)?;
+                let ty = self.with(|this| this.heap_data_type(&member.ty, at))??;
+                let (ty, layout) = self.with(|this| {
+                    this.laid_out(&member.ty, ty, Packing::Scalar, member_row_major, at)
+                })??;
                 (ty, matrix_layout(&layout))
             };
             lowered.push(StructMember {

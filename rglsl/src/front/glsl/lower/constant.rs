@@ -117,7 +117,6 @@ impl Lowerer<'_> {
     }
 }
 
-#[allow(clippy::await_holding_refcell_ref)]
 impl<'b, 'a> super::function::LowererCx<'b, 'a> {
     pub(super) async fn global_constant(
         self,
@@ -127,13 +126,13 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
     ) -> Result<Handle<Expression>> {
         let values = values.as_slice();
         let ty = &ty;
-        let mut this = self.lowerer();
-        let analysis = this.analysis;
+        let analysis = self.with(|this| this.analysis)?;
         match shape(ty, values, &analysis.types).ok_or_else(|| internal(span))? {
-            Shape::Literal(value) => Ok(this
-                .module
-                .global_expressions
-                .append(Expression::Literal(literal(value)), span)),
+            Shape::Literal(value) => Ok(self.with(|this| {
+                this.module
+                    .global_expressions
+                    .append(Expression::Literal(literal(value)), span)
+            })?),
             Shape::Compose(parts) => {
                 let mut components = Vec::with_capacity(parts.len());
                 for (part, start, size) in parts {
@@ -143,23 +142,20 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
                         let frame =
                             self.clone()
                                 .global_constant(part.clone(), slice.to_vec(), span);
-                        drop(this);
                         let result = self.nest(frame).await;
-                        this = self.lowerer();
                         result
                     }?);
                 }
                 let ir = {
                     let frame = self.clone().ir_type(ty.clone(), span);
-                    drop(this);
                     let result = self.nest(frame).await;
-                    this = self.lowerer();
                     result
                 }?;
-                Ok(this
-                    .module
-                    .global_expressions
-                    .append(Expression::Compose { ty: ir, components }, span))
+                Ok(self.with(|this| {
+                    this.module
+                        .global_expressions
+                        .append(Expression::Compose { ty: ir, components }, span)
+                })?)
             }
         }
     }

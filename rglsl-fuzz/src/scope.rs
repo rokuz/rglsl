@@ -393,22 +393,24 @@ impl<'b, 'a: 'b> Cx<'b, Finder<'a>> {
     }
 
     async fn nested(self, statement: &'b Statement) {
-        self.state().scopes.push(Vec::new());
+        self.with(|state| state.scopes.push(Vec::new()));
         self.call(self.clone().statement(statement)).await;
-        self.state().pop();
+        self.with(|state| state.pop());
     }
 
     async fn statement(self, statement: &'b Statement) {
         match &statement.kind {
             StatementKind::Compound(compound) => {
-                self.state().scopes.push(Vec::new());
+                self.with(|state| state.scopes.push(Vec::new()));
                 self.clone().statements(&compound.statements).await;
-                self.state().pop();
+                self.with(|state| state.pop());
             }
-            StatementKind::Declaration(declaration) => self.state().declaration(declaration),
+            StatementKind::Declaration(declaration) => {
+                self.with(|state| state.declaration(declaration))
+            }
             StatementKind::Expression(expression) => {
                 if let Some(expression) = expression {
-                    self.state().expression(expression);
+                    self.with(|state| state.expression(expression));
                 }
             }
             StatementKind::Selection {
@@ -416,7 +418,7 @@ impl<'b, 'a: 'b> Cx<'b, Finder<'a>> {
                 then_branch,
                 else_branch,
             } => {
-                self.state().expression(condition);
+                self.with(|state| state.expression(condition));
                 self.clone().nested(then_branch).await;
                 if let Some(else_branch) = else_branch {
                     self.clone().nested(else_branch).await;
@@ -426,36 +428,36 @@ impl<'b, 'a: 'b> Cx<'b, Finder<'a>> {
                 selector,
                 statements,
             } => {
-                self.state().expression(selector);
-                self.state().scopes.push(Vec::new());
+                self.with(|state| state.expression(selector));
+                self.with(|state| state.scopes.push(Vec::new()));
                 self.clone().statements(statements).await;
-                self.state().pop();
+                self.with(|state| state.pop());
             }
             StatementKind::CaseLabel(CaseLabel::Case(_) | CaseLabel::Default) => {}
             StatementKind::While { condition, body } => {
-                self.state().scopes.push(Vec::new());
-                self.state().condition(condition);
+                self.with(|state| state.scopes.push(Vec::new()));
+                self.with(|state| state.condition(condition));
                 self.call(self.clone().statement(body)).await;
-                self.state().pop();
+                self.with(|state| state.pop());
             }
             StatementKind::DoWhile { body, condition } => {
                 self.clone().nested(body).await;
-                self.state().expression(condition);
+                self.with(|state| state.expression(condition));
             }
             StatementKind::For(statement) => {
-                self.state().scopes.push(Vec::new());
+                self.with(|state| state.scopes.push(Vec::new()));
                 self.call(self.clone().statement(&statement.init)).await;
                 if let Some(condition) = &statement.condition {
-                    self.state().condition(condition);
+                    self.with(|state| state.condition(condition));
                 }
                 if let Some(increment) = &statement.increment {
-                    self.state().expression(increment);
+                    self.with(|state| state.expression(increment));
                 }
                 self.call(self.clone().statement(&statement.body)).await;
-                self.state().pop();
+                self.with(|state| state.pop());
             }
             StatementKind::Jump(JumpStatement::Return(Some(value))) => {
-                self.state().expression(value);
+                self.with(|state| state.expression(value));
             }
             StatementKind::Jump(_) => {}
             StatementKind::Attributed { statement, .. } => {

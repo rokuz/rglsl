@@ -374,16 +374,14 @@ impl FunctionLowerer<'_, '_> {
     }
 }
 
-#[allow(clippy::await_holding_refcell_ref)]
 impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
     pub(super) async fn call(
         self,
         expression: &'b AstExpression,
         call: &'b FunctionCall,
     ) -> Result<Option<Handle<Expression>>> {
-        let this = self.lowerer();
-        let at = this.at(expression.span);
-        let analysis = this.lw.analysis;
+        let at = self.with(|this| this.at(expression.span))?;
+        let analysis = self.with(|this| this.lw.analysis)?;
         let arguments = call.arguments.as_slice();
         match analysis.calls.get(&expression.id) {
             Some(&Callee::Function(id))
@@ -392,7 +390,6 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     .is_some_and(|function| function.spirv_instruction.is_some()) =>
             {
                 let frame = self.clone().spirv_call(id, arguments, at);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
@@ -400,27 +397,23 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 let frame = self
                     .clone()
                     .user_function_call(expression, id, arguments, at);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
             Some(&Callee::NonUniform) => {
                 let frame = self.clone().non_uniform_value(arguments, at);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
             .map(Some),
             Some(&Callee::DebugPrintf) => {
                 let frame = self.clone().debug_printf(arguments, at);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
             .map(|()| None),
             Some(&Callee::Abort) => {
                 let frame = self.clone().abort(arguments, at);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
@@ -429,19 +422,16 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 let frame = self
                     .clone()
                     .builtin_function_call(expression, id, arguments, at);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
             Some(&Callee::Constructor(ref ty)) => {
                 let frame = self.clone().constructor_call(ty, arguments, at);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
             Some(&Callee::Cooperative(kind)) => {
                 let frame = self.clone().cooperative_call(kind, arguments, at);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
@@ -449,13 +439,11 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 let frame = self
                     .clone()
                     .tensor_function_call(expression, kind, arguments, at);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
             Some(&Callee::TensorArm(kind)) => {
                 let frame = self.clone().tensor_arm_call(kind, arguments, at);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
@@ -463,13 +451,11 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 let frame = self
                     .clone()
                     .matrix_function_call(expression, kind, arguments, at);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
             Some(&Callee::Length) => {
                 let frame = self.clone().length_call(call, at);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
@@ -484,11 +470,9 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
-        let this = self.lowerer();
-        let non_uniform = this.info(expression)?.non_uniform;
+        let non_uniform = self.with(|this| this.info(expression))??.non_uniform;
         {
             let frame = self.clone().user_call(id, arguments, non_uniform, at);
-            drop(this);
             let result = self.nest(frame).await;
             result
         }
@@ -501,11 +485,9 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
-        let this = self.lowerer();
-        let result = &this.info(expression)?.ty;
+        let result = &self.with(|this| this.info(expression))??.ty;
         {
             let frame = self.clone().builtin_call(id, result, arguments, at);
-            drop(this);
             let result = self.nest(frame).await;
             result
         }
@@ -517,14 +499,12 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
-        let this = self.lowerer();
         if ty
             .as_opaque()
             .is_some_and(rglsl_sema::types::Opaque::is_acceleration_structure)
         {
             return {
                 let frame = self.clone().acceleration_structure_from(arguments, at);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
@@ -538,7 +518,6 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         }
         {
             let frame = self.clone().construct(ty, arguments, at);
-            drop(this);
             let result = self.nest(frame).await;
             result
         }
@@ -552,11 +531,9 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
-        let this = self.lowerer();
-        let result = &this.info(expression)?.ty;
+        let result = &self.with(|this| this.info(expression))??.ty;
         {
             let frame = self.clone().tensor_call(kind, result, arguments, at);
-            drop(this);
             let result = self.nest(frame).await;
             result
         }
@@ -570,11 +547,9 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
-        let this = self.lowerer();
-        let result = &this.info(expression)?.ty;
+        let result = &self.with(|this| this.info(expression))??.ty;
         {
             let frame = self.clone().matrix_call(kind, result, arguments, at);
-            drop(this);
             let result = self.nest(frame).await;
             result
         }
@@ -585,21 +560,18 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         call: &'b FunctionCall,
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
-        let this = self.lowerer();
         match call.function.node {
             FunctionIdentifier::Method {
                 ref object,
                 ref name,
             } if name.node == "length64" => {
                 let frame = self.clone().wide_length(object, at);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
             .map(Some),
             FunctionIdentifier::Method { ref object, .. } => {
                 let frame = self.clone().length(object, at);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
@@ -609,16 +581,16 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
     }
 
     async fn wide_length(self, object: &'b AstExpression, at: Span) -> Result<Handle<Expression>> {
-        let mut this = self.lowerer();
-        let ty = this.info(object)?.ty.clone();
+        let ty = self.with(|this| this.info(object))??.ty.clone();
         if let Some(length) = ty.length() {
-            return this.literal(Literal::I64(i64::from(length)), at);
+            return self.with(|this| this.literal(Literal::I64(i64::from(length)), at))?;
         }
-        let builtin = this
-            .lw
-            .variable_symbol(object)
-            .and_then(|symbol| this.lw.symbol(symbol))
-            .is_some_and(|symbol| this.lw.builtin_sizes.contains_key(symbol.name.as_str()));
+        let builtin = self.with(|this| {
+            this.lw
+                .variable_symbol(object)
+                .and_then(|symbol| this.lw.symbol(symbol))
+                .is_some_and(|symbol| this.lw.builtin_sizes.contains_key(symbol.name.as_str()))
+        })?;
         let runtime = ty.outer_size() == Some(ArraySize::Unsized)
             && !builtin
             && ty.as_cooperative_matrix().is_none()
@@ -626,70 +598,69 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         if runtime {
             let place = {
                 let frame = self.clone().place(object);
-                drop(this);
                 let result = self.nest(frame).await;
-                this = self.lowerer();
                 result
             }?;
             if place.swizzle.is_some() {
                 return Err(internal(at));
             }
-            let length = this.add(Expression::WideArrayLength(place.pointer), at)?;
-            return this.as_kind(length, crate::Scalar::I64, at);
+            let length =
+                self.with(|this| this.add(Expression::WideArrayLength(place.pointer), at))??;
+            return self.with(|this| this.as_kind(length, crate::Scalar::I64, at))?;
         }
         let length = {
             let frame = self.clone().length(object, at);
-            drop(this);
             let result = self.nest(frame).await;
-            this = self.lowerer();
             result
         }?;
-        this.as_kind(length, crate::Scalar::I64, at)
+        self.with(|this| this.as_kind(length, crate::Scalar::I64, at))?
     }
 
     async fn length(self, object: &'b AstExpression, at: Span) -> Result<Handle<Expression>> {
-        let mut this = self.lowerer();
-        let ty = this.info(object)?.ty.clone();
+        let ty = self.with(|this| this.info(object))??.ty.clone();
         if let Some(length) = ty.length() {
             let length = i32::try_from(length).map_err(|_| internal(at))?;
-            return this.literal(Literal::I32(length), at);
+            return self.with(|this| this.literal(Literal::I32(length), at))?;
         }
         if ty.as_cooperative_matrix().is_some() {
-            let matrix = this.lw.ir_type(&ty, at)?;
-            let length = this.add(Expression::CooperativeMatrixLength { ty: matrix }, at)?;
-            return this.as_kind(length, crate::Scalar::I32, at);
+            let matrix = self.with(|this| this.lw.ir_type(&ty, at))??;
+            let length = self
+                .with(|this| this.add(Expression::CooperativeMatrixLength { ty: matrix }, at))??;
+            return self.with(|this| this.as_kind(length, crate::Scalar::I32, at))?;
         }
         if let Some(ArraySize::Specialized(size)) = ty.outer_size().or(ty.sized_vector_length()) {
-            let handle = this.lw.specialized_size(size, at)?;
-            let value = this.add(Expression::Override(handle), at)?;
-            let size_ty = this.lw.module.overrides[handle].ty;
-            return match this.lw.module.types[size_ty].inner {
+            let handle = self.with(|this| this.lw.specialized_size(size, at))??;
+            let value = self.with(|this| this.add(Expression::Override(handle), at))??;
+            let size_ty = self.with(|this| this.lw.module.overrides[handle].ty)?;
+            return match self.with(|this| this.lw.module.types[size_ty].inner.clone())? {
                 crate::TypeInner::Scalar(crate::Scalar::I32) => Ok(value),
-                _ => this.as_kind(value, crate::Scalar::I32, at),
+                _ => self.with(|this| this.as_kind(value, crate::Scalar::I32, at))?,
             };
         }
         if ty.outer_size() == Some(ArraySize::Unsized) {
-            if let Some(symbol) = this.lw.variable_symbol(object) {
-                if let Some(name) = this.lw.symbol(symbol).map(|s| s.name.as_str()) {
-                    if let Some(size) = this.lw.builtin_sizes.get(name).copied() {
+            if let Some(symbol) = self.with(|this| this.lw.variable_symbol(object))? {
+                if let Some(name) =
+                    self.with(|this| this.lw.symbol(symbol).map(|s| s.name.as_str()))?
+                {
+                    if let Some(size) =
+                        self.with(|this| this.lw.builtin_sizes.get(name).copied())?
+                    {
                         let size = i32::try_from(size).map_err(|_| internal(at))?;
-                        return this.literal(Literal::I32(size), at);
+                        return self.with(|this| this.literal(Literal::I32(size), at))?;
                     }
                 }
             }
         }
         let place = {
             let frame = self.clone().place(object);
-            drop(this);
             let result = self.nest(frame).await;
-            this = self.lowerer();
             result
         }?;
         if place.swizzle.is_some() {
             return Err(internal(at));
         }
-        let length = this.add(Expression::ArrayLength(place.pointer), at)?;
-        this.as_kind(length, crate::Scalar::I32, at)
+        let length = self.with(|this| this.add(Expression::ArrayLength(place.pointer), at))??;
+        self.with(|this| this.as_kind(length, crate::Scalar::I32, at))?
     }
 
     async fn non_uniform_value(
@@ -697,29 +668,26 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Handle<Expression>> {
-        let mut this = self.lowerer();
         let argument = arguments.first().ok_or_else(|| internal(at))?;
         let (value, ty) = {
             let frame = self.clone().typed(argument);
-            drop(this);
             let result = self.nest(frame).await;
-            this = self.lowerer();
             result
         }?;
-        let shared = this.tracker.is_const_or_override(value)
+        let shared = self.with(|this| this.tracker.is_const_or_override(value))?
             || matches!(
-                this.expressions[value],
+                self.with(|this| this.expressions[value].clone())?,
                 Expression::FunctionArgument(_)
                     | Expression::GlobalVariable(_)
                     | Expression::LocalVariable(_)
             );
         let value = if shared && !ty.is_opaque() {
-            let pointer = this.spill(value, &ty, at)?;
-            this.add(Expression::Load { pointer }, at)?
+            let pointer = self.with(|this| this.spill(value, &ty, at))??;
+            self.with(|this| this.add(Expression::Load { pointer }, at))??
         } else {
             value
         };
-        this.mark(value, NonUniform::VALUE);
+        self.with(|this| this.mark(value, NonUniform::VALUE))?;
         Ok(value)
     }
 
@@ -730,15 +698,16 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         non_uniform: bool,
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
-        let mut this = self.lowerer();
-        let analysis = this.lw.analysis;
+        let analysis = self.with(|this| this.lw.analysis)?;
         let function = analysis.function(id).ok_or_else(|| internal(at))?;
-        let handle = this.user_call_target(id, arguments, at)?;
-        let parameter_types: Vec<Handle<crate::Type>> = this.lw.module.functions[handle]
-            .arguments
-            .iter()
-            .map(|argument| argument.ty)
-            .collect();
+        let handle = self.with(|this| this.user_call_target(id, arguments, at))??;
+        let parameter_types: Vec<Handle<crate::Type>> = self.with(|this| {
+            this.lw.module.functions[handle]
+                .arguments
+                .iter()
+                .map(|argument| argument.ty)
+                .collect()
+        })?;
         let (values, writebacks) = {
             let frame = self.clone().user_call_arguments(
                 arguments,
@@ -746,13 +715,13 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 parameter_types,
                 at,
             );
-            drop(this);
             let result = self.nest(frame).await;
-            this = self.lowerer();
             result
         }?;
         let returns = !function.return_type.is_void();
-        this.user_call_finish(handle, values, writebacks, returns, non_uniform, at)
+        self.with(|this| {
+            this.user_call_finish(handle, values, writebacks, returns, non_uniform, at)
+        })?
     }
 
     async fn user_call_arguments(
@@ -762,7 +731,6 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         parameter_types: Vec<Handle<crate::Type>>,
         at: Span,
     ) -> Result<(Vec<Handle<Expression>>, Vec<Writeback>)> {
-        let mut this = self.lowerer();
         let values = Values::default();
         let mut writebacks = Vec::new();
         for ((argument, parameter), &parameter_ty) in
@@ -776,9 +744,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     Rc::clone(&values),
                     at,
                 );
-                drop(this);
                 let result = self.nest(frame).await;
-                this = self.lowerer();
                 result
             }?;
             writebacks.extend(writeback);
@@ -794,7 +760,6 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         values: Values,
         at: Span,
     ) -> Result<Option<Writeback>> {
-        let this = self.lowerer();
         let input = parameter.direction == Direction::In;
         if input
             && parameter
@@ -804,7 +769,6 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         {
             return {
                 let frame = self.clone().private_argument(argument, values);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
@@ -815,7 +779,6 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 let frame = self
                     .clone()
                     .spirv_in_argument(argument, &parameter.ty, values, at);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
@@ -826,7 +789,6 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 let frame =
                     self.clone()
                         .in_argument_value(argument, parameter, parameter_ty, values, at);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
@@ -836,7 +798,6 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             let frame = self
                 .clone()
                 .out_argument_place(argument, parameter, values, at);
-            drop(this);
             let result = self.nest(frame).await;
             result
         }
@@ -844,10 +805,8 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
     }
 
     async fn private_argument(self, argument: &'b AstExpression, values: Values) -> Result<()> {
-        let this = self.lowerer();
         let pointer = {
             let frame = self.clone().ray_query_pointer(argument);
-            drop(this);
             let result = self.nest(frame).await;
             result
         }?;
@@ -862,15 +821,12 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         values: Values,
         at: Span,
     ) -> Result<()> {
-        let mut this = self.lowerer();
         let value = {
             let frame = self.clone().rvalue(argument);
-            drop(this);
             let result = self.nest(frame).await;
-            this = self.lowerer();
             result
         }?;
-        let pointer = this.spirv_argument(ty, value, at)?;
+        let pointer = self.with(|this| this.spirv_argument(ty, value, at))??;
         values.borrow_mut().push(pointer);
         Ok(())
     }
@@ -883,15 +839,12 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         values: Values,
         at: Span,
     ) -> Result<()> {
-        let mut this = self.lowerer();
         let value = {
             let frame = self.clone().rvalue(argument);
-            drop(this);
             let result = self.nest(frame).await;
-            this = self.lowerer();
             result
         }?;
-        let value = this.in_argument(value, parameter, parameter_ty, at)?;
+        let value = self.with(|this| this.in_argument(value, parameter, parameter_ty, at))??;
         values.borrow_mut().push(value);
         Ok(())
     }
@@ -903,15 +856,13 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         values: Values,
         at: Span,
     ) -> Result<Writeback> {
-        let mut this = self.lowerer();
         let place = {
             let frame = self.clone().place(argument);
-            drop(this);
             let result = self.nest(frame).await;
-            this = self.lowerer();
             result
         }?;
-        let (pointer, writeback) = this.out_argument(argument, place, parameter, at)?;
+        let (pointer, writeback) =
+            self.with(|this| this.out_argument(argument, place, parameter, at))??;
         values.borrow_mut().push(pointer);
         Ok(writeback)
     }
@@ -922,14 +873,12 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Handle<Expression>> {
-        let mut this = self.lowerer();
         if let &[ref argument] = arguments {
-            let from_reference = this.info(argument)?.ty.is_reference();
+            let from_reference = self.with(|this| this.info(argument))??.ty.is_reference();
             let numeric = ty.is_scalar() || ty.is_vector();
             if ty.is_reference() || (from_reference && numeric) {
                 return {
                     let frame = self.clone().reference_construct(ty, argument, at);
-                    drop(this);
                     let result = self.nest(frame).await;
                     result
                 };
@@ -938,7 +887,6 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         if ty.is_array() || ty.is_struct() {
             return {
                 let frame = self.clone().construct_composite(ty, arguments, at);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             };
@@ -947,13 +895,11 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         for argument in arguments {
             values.push({
                 let frame = self.clone().typed(argument);
-                drop(this);
                 let result = self.nest(frame).await;
-                this = self.lowerer();
                 result
             }?);
         }
-        this.construct_values(ty, at, values)
+        self.with(|this| this.construct_values(ty, at, values))?
     }
 
     async fn construct_composite(
@@ -962,18 +908,15 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Handle<Expression>> {
-        let mut this = self.lowerer();
         let mut components = Vec::with_capacity(arguments.len());
         for argument in arguments {
             components.push({
                 let frame = self.clone().rvalue(argument);
-                drop(this);
                 let result = self.nest(frame).await;
-                this = self.lowerer();
                 result
             }?);
         }
-        let ir = this.lw.ir_type(ty, at)?;
-        this.add(Expression::Compose { ty: ir, components }, at)
+        let ir = self.with(|this| this.lw.ir_type(ty, at))??;
+        self.with(|this| this.add(Expression::Compose { ty: ir, components }, at))?
     }
 }

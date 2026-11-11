@@ -274,19 +274,15 @@ impl FunctionLowerer<'_, '_> {
     }
 }
 
-#[allow(clippy::await_holding_refcell_ref)]
 impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
     pub(super) async fn statements(self, statements: &'b [Statement]) -> Result<()> {
-        let mut this = self.lowerer();
         for statement in statements {
-            if this.terminated() {
-                this.unreachable_declaration(statement)?;
+            if self.with(|this| this.terminated())? {
+                self.with(|this| this.unreachable_declaration(statement))??;
             } else {
                 {
                     let frame = self.clone().statement(statement);
-                    drop(this);
                     let result = self.nest(frame).await;
-                    this = self.lowerer();
                     result
                 }?;
             }
@@ -295,21 +291,18 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
     }
 
     async fn statement(self, statement: &'b Statement) -> Result<()> {
-        let mut this = self.lowerer();
-        let at = this.at(statement.span);
+        let at = self.with(|this| this.at(statement.span))?;
         match statement.kind {
             StatementKind::Compound(ref compound) => {
                 let frame = self.clone().statements(&compound.statements);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
             StatementKind::Declaration(ref declaration) => {
-                this.local_declaration(declaration, true)
+                self.with(|this| this.local_declaration(declaration, true))?
             }
             StatementKind::Expression(Some(ref expression)) => {
                 let frame = self.clone().effect(expression);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
@@ -326,7 +319,6 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     SelectionControl::None,
                     at,
                 );
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
@@ -337,14 +329,12 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 let frame = self
                     .clone()
                     .switch(selector, statements, SelectionControl::None, at);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
             StatementKind::CaseLabel(_) => Err(semantic("a case label outside a switch", at)),
             StatementKind::While { .. } | StatementKind::DoWhile { .. } | StatementKind::For(_) => {
                 let frame = self.clone().iteration(statement, LoopControl::default());
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
@@ -353,22 +343,19 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 ref statement,
             } => {
                 let frame = self.clone().attributed(attributes, statement);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
-            StatementKind::Jump(ref jump) => this.jump(jump, at),
+            StatementKind::Jump(ref jump) => self.with(|this| this.jump(jump, at))?,
         }
     }
 
     async fn attributed(self, attributes: &'b [Attribute], statement: &'b Statement) -> Result<()> {
-        let this = self.lowerer();
         match statement.kind {
             StatementKind::While { .. } | StatementKind::DoWhile { .. } | StatementKind::For(_) => {
-                let control = this.loop_control(attributes);
+                let control = self.with(|this| this.loop_control(attributes))?;
                 {
                     let frame = self.clone().iteration(statement, control);
-                    drop(this);
                     let result = self.nest(frame).await;
                     result
                 }
@@ -383,9 +370,8 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     then_branch,
                     else_branch.as_deref(),
                     selection_control(attributes),
-                    this.at(statement.span),
+                    self.with(|this| this.at(statement.span))?,
                 );
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
@@ -397,15 +383,13 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     selector,
                     statements,
                     selection_control(attributes),
-                    this.at(statement.span),
+                    self.with(|this| this.at(statement.span))?,
                 );
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
             _ => {
                 let frame = self.clone().statement(statement);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
@@ -420,57 +404,50 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         control: SelectionControl,
         at: crate::Span,
     ) -> Result<()> {
-        let mut this = self.lowerer();
         let condition = {
             let frame = self.clone().rvalue(condition);
-            drop(this);
             let result = self.nest(frame).await;
-            this = self.lowerer();
             result
         }?;
         let accept = {
-            drop(this);
             let result = self
                 .clone()
                 .block(self.nest(self.clone().statement(then_branch)))
                 .await;
-            this = self.lowerer();
             result
         }?;
         let reject = match else_branch {
             Some(branch) => {
-                drop(this);
                 let result = self
                     .clone()
                     .block(self.nest(self.clone().statement(branch)))
                     .await;
-                this = self.lowerer();
                 result
             }?,
             None => Block::new(),
         };
-        this.push(
-            IrStatement::If {
-                condition,
-                accept,
-                reject,
-                control,
-            },
-            at,
-        );
+        self.with(|this| {
+            this.push(
+                IrStatement::If {
+                    condition,
+                    accept,
+                    reject,
+                    control,
+                },
+                at,
+            )
+        })?;
         Ok(())
     }
 
     async fn iteration(self, statement: &'b Statement, control: LoopControl) -> Result<()> {
-        let this = self.lowerer();
-        let at = this.at(statement.span);
+        let at = self.with(|this| this.at(statement.span))?;
         match statement.kind {
             StatementKind::While {
                 ref condition,
                 ref body,
             } => {
                 let frame = self.clone().while_loop(condition, body, control, at);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
@@ -479,13 +456,11 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 ref condition,
             } => {
                 let frame = self.clone().do_while_loop(body, condition, control, at);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
             StatementKind::For(ref for_statement) => {
                 let frame = self.clone().for_loop(for_statement, control, at);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
@@ -500,31 +475,29 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         control: LoopControl,
         at: crate::Span,
     ) -> Result<()> {
-        let mut this = self.lowerer();
         let cx = self.clone();
         let frame = async move {
             {
-                let mut this = cx.lowerer();
-                let condition = this.condition(condition)?;
-                this.break_unless(condition, at)?;
+                let condition = cx.with(|this| this.condition(condition))??;
+                cx.with(|this| this.break_unless(condition, at))??;
             }
             cx.nest(cx.clone().statement(body)).await
         };
         let body = {
-            drop(this);
             let result = self.clone().block(self.nest(frame)).await;
-            this = self.lowerer();
             result
         }?;
-        this.push(
-            IrStatement::Loop {
-                body,
-                continuing: Block::new(),
-                break_if: None,
-                control,
-            },
-            at,
-        );
+        self.with(|this| {
+            this.push(
+                IrStatement::Loop {
+                    body,
+                    continuing: Block::new(),
+                    break_if: None,
+                    control,
+                },
+                at,
+            )
+        })?;
         Ok(())
     }
 
@@ -535,48 +508,46 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         control: LoopControl,
         at: crate::Span,
     ) -> Result<()> {
-        let mut this = self.lowerer();
         let body = {
-            drop(this);
             let result = self
                 .clone()
                 .block(self.nest(self.clone().statement(body)))
                 .await;
-            this = self.lowerer();
             result
         }?;
         let cx = self.clone();
         let frame = async move {
             let value = cx.nest(cx.clone().rvalue(condition)).await?;
-            let mut lowerer = cx.lowerer();
-            if lowerer.is_true(value) {
-                return Ok(None);
-            }
-            lowerer
-                .add(
-                    Expression::Unary {
-                        op: UnaryOperator::LogicalNot,
-                        expr: value,
-                    },
-                    at,
-                )
-                .map(Some)
+            cx.try_with(|lowerer| {
+                if lowerer.is_true(value) {
+                    return Ok(None);
+                }
+                lowerer
+                    .add(
+                        Expression::Unary {
+                            op: UnaryOperator::LogicalNot,
+                            expr: value,
+                        },
+                        at,
+                    )
+                    .map(Some)
+            })
         };
         let (continuing, break_if) = {
-            drop(this);
             let result = self.clone().block_with(self.nest(frame)).await;
-            this = self.lowerer();
             result
         }?;
-        this.push(
-            IrStatement::Loop {
-                body,
-                continuing,
-                break_if,
-                control,
-            },
-            at,
-        );
+        self.with(|this| {
+            this.push(
+                IrStatement::Loop {
+                    body,
+                    continuing,
+                    break_if,
+                    control,
+                },
+                at,
+            )
+        })?;
         Ok(())
     }
 
@@ -586,27 +557,21 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         control: LoopControl,
         at: crate::Span,
     ) -> Result<()> {
-        let mut this = self.lowerer();
         {
             let frame = self.clone().statement(&statement.init);
-            drop(this);
             let result = self.nest(frame).await;
-            this = self.lowerer();
             result
         }?;
         let cx = self.clone();
         let frame = async move {
             if let Some(ref condition) = statement.condition {
-                let mut this = cx.lowerer();
-                let condition = this.condition(condition)?;
-                this.break_unless(condition, at)?;
+                let condition = cx.with(|this| this.condition(condition))??;
+                cx.with(|this| this.break_unless(condition, at))??;
             }
             cx.nest(cx.clone().statement(&statement.body)).await
         };
         let body = {
-            drop(this);
             let result = self.clone().block(self.nest(frame)).await;
-            this = self.lowerer();
             result
         }?;
         let cx = self.clone();
@@ -617,20 +582,20 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             }
         };
         let continuing = {
-            drop(this);
             let result = self.clone().block(self.nest(frame)).await;
-            this = self.lowerer();
             result
         }?;
-        this.push(
-            IrStatement::Loop {
-                body,
-                continuing,
-                break_if: None,
-                control,
-            },
-            at,
-        );
+        self.with(|this| {
+            this.push(
+                IrStatement::Loop {
+                    body,
+                    continuing,
+                    break_if: None,
+                    control,
+                },
+                at,
+            )
+        })?;
         Ok(())
     }
 
@@ -641,20 +606,16 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         control: SelectionControl,
         at: crate::Span,
     ) -> Result<()> {
-        let mut this = self.lowerer();
         if statements.is_empty() {
             return {
                 let frame = self.clone().effect(selector);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             };
         }
         let (value, ty) = {
             let frame = self.clone().typed(selector);
-            drop(this);
             let result = self.nest(frame).await;
-            this = self.lowerer();
             result
         }?;
         let unsigned = ty == GlslType::scalar(GlslScalar::Uint);
@@ -665,14 +626,15 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     let case = match *label {
                         CaseLabel::Default => SwitchValue::Default,
                         CaseLabel::Case(ref expression) => {
-                            let label_at = this.at(expression.span);
-                            let constant = this
-                                .lw
-                                .analysis
-                                .expression(expression.id)
-                                .and_then(|info| info.value.as_ref())
-                                .and_then(|value| value.first())
-                                .ok_or_else(|| internal(label_at))?;
+                            let label_at = self.with(|this| this.at(expression.span))?;
+                            let constant = self.with(|this| {
+                                this.lw
+                                    .analysis
+                                    .expression(expression.id)
+                                    .and_then(|info| info.value.as_ref())
+                                    .and_then(|value| value.first())
+                                    .ok_or_else(|| internal(label_at))
+                            })??;
                             match (constant, unsigned) {
                                 (Value::Int(value), false) => SwitchValue::I32(value),
                                 (Value::Int(value), true) => {
@@ -716,9 +678,9 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 let statements = body.clone();
                 let frame = async move {
                     for statement in statements {
-                        let terminated = cx.lowerer().terminated();
+                        let terminated = cx.with(|this| this.terminated())?;
                         if terminated {
-                            cx.lowerer().unreachable_declaration(statement)?;
+                            cx.try_with(|this| this.unreachable_declaration(statement))?;
                         } else {
                             cx.nest(cx.clone().statement(statement)).await?;
                         }
@@ -726,9 +688,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     Ok(())
                 };
                 let mut block = {
-                    drop(this);
                     let result = self.clone().block(self.nest(frame)).await;
-                    this = self.lowerer();
                     result
                 }?;
                 let fall_through = match block.last() {
@@ -767,14 +727,16 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 fall_through: false,
             });
         }
-        this.push(
-            IrStatement::Switch {
-                selector: value,
-                cases,
-                control,
-            },
-            at,
-        );
+        self.with(|this| {
+            this.push(
+                IrStatement::Switch {
+                    selector: value,
+                    cases,
+                    control,
+                },
+                at,
+            )
+        })?;
         Ok(())
     }
 }

@@ -236,7 +236,6 @@ impl FunctionLowerer<'_, '_> {
     }
 }
 
-#[allow(clippy::await_holding_refcell_ref)]
 impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
     pub(super) async fn atomic(
         self,
@@ -244,16 +243,13 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
-        let mut this = self.lowerer();
         let (memory, rest) = arguments.split_first().ok_or_else(|| internal(at))?;
-        let memory_ty = this.info(memory)?.ty.clone();
+        let memory_ty = self.with(|this| this.info(memory))??.ty.clone();
         let element = memory_ty.scalar_type().ok_or_else(|| internal(at))?;
         let element = scalar(element);
         let place = {
             let frame = self.clone().place(memory);
-            drop(this);
             let result = self.nest(frame).await;
-            this = self.lowerer();
             result
         }?;
         let count = operand_count(name).min(rest.len());
@@ -262,45 +258,47 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         for argument in values {
             let (value, ty) = {
                 let frame = self.clone().typed(argument);
-                drop(this);
                 let result = self.nest(frame).await;
-                this = self.lowerer();
                 result
             }?;
-            operands.push(this.convert(value, &ty, &memory_ty, at)?);
+            operands.push(self.with(|this| this.convert(value, &ty, &memory_ty, at))??);
         }
         let order = if scope.is_empty() {
             None
         } else {
-            Some(this.memory_order(scope, at)?)
+            Some(self.with(|this| this.memory_order(scope, at))??)
         };
         let pointer = place.pointer;
         match (name, order, operands.as_slice()) {
             ("atomicLoad", Some(order), &[]) => {
-                let ty = this.lw.insert_type(TypeInner::Scalar(element));
-                let result = this.push_with_result(
-                    Expression::AtomicResult {
-                        ty,
-                        comparison: false,
-                    },
-                    |result| Statement::AtomicLoad {
-                        location: AtomicLocation::Pointer(pointer),
-                        order,
-                        result,
-                    },
-                    at,
-                );
+                let ty = self.with(|this| this.lw.insert_type(TypeInner::Scalar(element)))?;
+                let result = self.with(|this| {
+                    this.push_with_result(
+                        Expression::AtomicResult {
+                            ty,
+                            comparison: false,
+                        },
+                        |result| Statement::AtomicLoad {
+                            location: AtomicLocation::Pointer(pointer),
+                            order,
+                            result,
+                        },
+                        at,
+                    )
+                })?;
                 return Ok(Some(result));
             }
             ("atomicStore", Some(order), &[value]) => {
-                this.push(
-                    Statement::AtomicStore {
-                        location: AtomicLocation::Pointer(pointer),
-                        value,
-                        order,
-                    },
-                    at,
-                );
+                self.with(|this| {
+                    this.push(
+                        Statement::AtomicStore {
+                            location: AtomicLocation::Pointer(pointer),
+                            value,
+                            order,
+                        },
+                        at,
+                    )
+                })?;
                 return Ok(None);
             }
             _ => {}
@@ -317,32 +315,38 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             _ => return Err(internal(at)),
         };
         let ty = if comparison {
-            this.lw.module.generate_predeclared_type(
-                PredeclaredType::AtomicCompareExchangeWeakResult(element),
-            )
+            self.with(|this| {
+                this.lw.module.generate_predeclared_type(
+                    PredeclaredType::AtomicCompareExchangeWeakResult(element),
+                )
+            })?
         } else {
-            this.lw.insert_type(TypeInner::Scalar(element))
+            self.with(|this| this.lw.insert_type(TypeInner::Scalar(element)))?
         };
-        let result = this.push_with_result(
-            Expression::AtomicResult { ty, comparison },
-            |result| Statement::Atomic {
-                pointer,
-                fun,
-                value,
-                result: Some(result),
-                order,
-            },
-            at,
-        );
-        if comparison {
-            this.add(
-                Expression::AccessIndex {
-                    base: result,
-                    index: 0,
+        let result = self.with(|this| {
+            this.push_with_result(
+                Expression::AtomicResult { ty, comparison },
+                |result| Statement::Atomic {
+                    pointer,
+                    fun,
+                    value,
+                    result: Some(result),
+                    order,
                 },
                 at,
             )
-            .map(Some)
+        })?;
+        if comparison {
+            self.with(|this| {
+                this.add(
+                    Expression::AccessIndex {
+                        base: result,
+                        index: 0,
+                    },
+                    at,
+                )
+                .map(Some)
+            })?
         } else {
             Ok(Some(result))
         }
@@ -357,30 +361,25 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
-        let mut this = self.lowerer();
         if non_uniform {
-            this.mark(image, NonUniform::VALUE);
+            self.with(|this| this.mark(image, NonUniform::VALUE))?;
         }
         let coordinate_argument = arguments.get(1).ok_or_else(|| internal(at))?;
         let (coordinate, ty) = {
             let frame = self.clone().typed(coordinate_argument);
-            drop(this);
             let result = self.nest(frame).await;
-            this = self.lowerer();
             result
         }?;
         let size = ty.component_count().ok_or_else(|| internal(at))?;
         let (coordinate, array_index) =
-            this.split_storage_coordinate(coordinate, size, opaque, at)?;
+            self.with(|this| this.split_storage_coordinate(coordinate, size, opaque, at))??;
         let mut rest = arguments.get(2..).ok_or_else(|| internal(at))?;
         let sample = if opaque.multisample {
             let (sample, tail) = rest.split_first().ok_or_else(|| internal(at))?;
             rest = tail;
             Some({
                 let frame = self.clone().rvalue(sample);
-                drop(this);
                 let result = self.nest(frame).await;
-                this = self.lowerer();
                 result
             }?)
         } else {
@@ -392,26 +391,25 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         for argument in values {
             operands.push({
                 let frame = self.clone().rvalue(argument);
-                drop(this);
                 let result = self.nest(frame).await;
-                this = self.lowerer();
                 result
             }?);
         }
         let order = if scope.is_empty() {
-            let semantics = if this.lw.analysis.vulkan_memory_model && this.image_is_volatile(image)
+            let semantics = if self.with(|this| this.lw.analysis.vulkan_memory_model)?
+                && self.with(|this| this.image_is_volatile(image))?
             {
                 MemorySemantics::VOLATILE
             } else {
                 MemorySemantics::empty()
             };
             MemoryOrder {
-                scope: this.default_scope(),
+                scope: self.with(|this| this.default_scope())?,
                 semantics,
                 unequal: semantics,
             }
         } else {
-            this.memory_order(scope, at)?
+            self.with(|this| this.memory_order(scope, at))??
         };
         let texel = Texel {
             image,
@@ -421,30 +419,34 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         };
         let element = rglsl_sema::types::Type::scalar(opaque.sampled.scalar());
         let element = element.scalar_type().ok_or_else(|| internal(at))?;
-        let ty = this.lw.insert_type(TypeInner::Scalar(scalar(element)));
+        let ty = self.with(|this| this.lw.insert_type(TypeInner::Scalar(scalar(element))))?;
         let result = Expression::AtomicResult {
             ty,
             comparison: false,
         };
         match (name, operands.as_slice()) {
-            ("imageAtomicLoad", &[]) => Ok(Some(this.push_with_result(
-                result,
-                |result| Statement::AtomicLoad {
-                    location: AtomicLocation::Texel(texel),
-                    order,
+            ("imageAtomicLoad", &[]) => Ok(Some(self.with(|this| {
+                this.push_with_result(
                     result,
-                },
-                at,
-            ))),
-            ("imageAtomicStore", &[value]) => {
-                this.push(
-                    Statement::AtomicStore {
+                    |result| Statement::AtomicLoad {
                         location: AtomicLocation::Texel(texel),
-                        value,
                         order,
+                        result,
                     },
                     at,
-                );
+                )
+            })?)),
+            ("imageAtomicStore", &[value]) => {
+                self.with(|this| {
+                    this.push(
+                        Statement::AtomicStore {
+                            location: AtomicLocation::Texel(texel),
+                            value,
+                            order,
+                        },
+                        at,
+                    )
+                })?;
                 Ok(None)
             }
             _ => {
@@ -458,20 +460,22 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     ),
                     _ => return Err(internal(at)),
                 };
-                Ok(Some(this.push_with_result(
-                    result,
-                    |result| Statement::ImageAtomic {
-                        image,
-                        coordinate,
-                        array_index,
-                        fun,
-                        value,
-                        sample,
-                        result: Some(result),
-                        order: Some(order),
-                    },
-                    at,
-                )))
+                Ok(Some(self.with(|this| {
+                    this.push_with_result(
+                        result,
+                        |result| Statement::ImageAtomic {
+                            image,
+                            coordinate,
+                            array_index,
+                            fun,
+                            value,
+                            sample,
+                            result: Some(result),
+                            order: Some(order),
+                        },
+                        at,
+                    )
+                })?))
             }
         }
     }

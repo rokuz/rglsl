@@ -179,11 +179,9 @@ impl Lowerer<'_> {
     }
 }
 
-#[allow(clippy::await_holding_refcell_ref)]
 impl<'b, 'a> super::function::LowererCx<'b, 'a> {
     pub(super) async fn spirv_type(self, id: SpirvTypeId, span: Span) -> Result<TypeInner> {
-        let mut this = self.lowerer();
-        let analysis = this.analysis;
+        let analysis = self.with(|this| this.analysis)?;
         let ty = analysis.types.spirv(id).ok_or_else(|| internal(span))?;
         if !ty.instruction.set.is_empty() {
             return Err(unsupported("`spirv_type` with an instruction set", span));
@@ -210,9 +208,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
                 SpirvTypeParameter::Type(ref parameter) => {
                     let handle = {
                         let frame = self.clone().ir_type(parameter.clone(), span);
-                        drop(this);
                         let result = self.nest(frame).await;
-                        this = self.lowerer();
                         result
                     }?;
                     operands.push(SpirvTypeOperand::Type(handle));
@@ -227,9 +223,10 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
                     4 => Some(VectorSize::Quad),
                     _ => None,
                 };
-                if let (Some(size), &TypeInner::Scalar(scalar)) =
-                    (size, &this.module.types[base].inner)
-                {
+                if let (Some(size), &TypeInner::Scalar(scalar)) = (
+                    size,
+                    &self.with(|this| this.module.types[base].inner.clone())?,
+                ) {
                     return Ok(TypeInner::Vector { size, scalar });
                 }
             }
@@ -247,7 +244,6 @@ impl FunctionLowerer<'_, '_> {
     }
 }
 
-#[allow(clippy::await_holding_refcell_ref)]
 impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
     pub(super) async fn spirv_call(
         self,
@@ -255,8 +251,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
-        let mut this = self.lowerer();
-        let analysis = this.lw.analysis;
+        let analysis = self.with(|this| this.lw.analysis)?;
         let function = analysis.function(id).ok_or_else(|| internal(at))?;
         let spirv = function
             .spirv_instruction
@@ -278,7 +273,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         let mut operands = Vec::with_capacity(arguments.len());
         for (argument, parameter) in arguments.iter().zip(&function.parameters) {
             if parameter.qualifiers.spirv_literal {
-                let info = this.info(argument)?;
+                let info = self.with(|this| this.info(argument))??;
                 let value = info
                     .value
                     .as_ref()
@@ -293,9 +288,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             } else if parameter.qualifiers.spirv_by_reference {
                 let place = {
                     let frame = self.clone().place(argument);
-                    drop(this);
                     let result = self.nest(frame).await;
-                    this = self.lowerer();
                     result
                 }?;
                 if place.boolean || place.spilled {
@@ -307,13 +300,15 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 let pointer = match place.swizzle {
                     None => place.pointer,
                     Some(ref components) => match components[..] {
-                        [index] => this.add(
-                            Expression::AccessIndex {
-                                base: place.pointer,
-                                index,
-                            },
-                            at,
-                        )?,
+                        [index] => self.with(|this| {
+                            this.add(
+                                Expression::AccessIndex {
+                                    base: place.pointer,
+                                    index,
+                                },
+                                at,
+                            )
+                        })??,
                         _ => {
                             return Err(unsupported(
                                 "a swizzle as the argument of a `spirv_by_reference` parameter",
@@ -326,9 +321,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             } else {
                 operands.push(SpirvOperand::Value({
                     let frame = self.clone().rvalue(argument);
-                    drop(this);
                     let result = self.nest(frame).await;
-                    this = self.lowerer();
                     result
                 }?));
             }
@@ -336,31 +329,34 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         let result = if function.return_type.is_void() {
             None
         } else {
-            Some(this.spirv_result_type(&function.return_type, at)?)
+            Some(self.with(|this| this.spirv_result_type(&function.return_type, at))??)
         };
         match result {
-            Some(ty) => Ok(Some(this.push_with_result(
-                Expression::SpirvInstructionResult { ty },
-                |result| Statement::SpirvInstruction {
-                    instruction,
-                    operands,
-                    result: Some(result),
-                },
-                at,
-            ))),
-            None => {
-                let lowerer = &mut **this;
-                let emitted = lowerer.emitter.finish(&lowerer.expressions);
-                lowerer.block.extend(emitted);
-                lowerer.block.push(
-                    Statement::SpirvInstruction {
+            Some(ty) => Ok(Some(self.with(|this| {
+                this.push_with_result(
+                    Expression::SpirvInstructionResult { ty },
+                    |result| Statement::SpirvInstruction {
                         instruction,
                         operands,
-                        result: None,
+                        result: Some(result),
                     },
                     at,
-                );
-                lowerer.emitter.start(&lowerer.expressions);
+                )
+            })?)),
+            None => {
+                self.with(|lowerer| {
+                    let emitted = lowerer.emitter.finish(&lowerer.expressions);
+                    lowerer.block.extend(emitted);
+                    lowerer.block.push(
+                        Statement::SpirvInstruction {
+                            instruction,
+                            operands,
+                            result: None,
+                        },
+                        at,
+                    );
+                    lowerer.emitter.start(&lowerer.expressions);
+                })?;
                 Ok(None)
             }
         }

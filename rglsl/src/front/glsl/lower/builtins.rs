@@ -931,7 +931,6 @@ impl FunctionLowerer<'_, '_> {
     }
 }
 
-#[allow(clippy::await_holding_refcell_ref)]
 impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
     pub(super) async fn builtin_call(
         self,
@@ -940,15 +939,12 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
-        let mut this = self.lowerer();
-        let analysis = this.lw.analysis;
+        let analysis = self.with(|this| this.lw.analysis)?;
         let function = analysis.builtins.function(id).ok_or_else(|| internal(at))?;
         let name = function.name.as_str();
         if let Some(result) = {
             let frame = self.clone().ray_builtin_call(name, arguments, at);
-            drop(this);
             let result = self.nest(frame).await;
-            this = self.lowerer();
             result
         }? {
             return Ok(result);
@@ -959,7 +955,6 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 let frame =
                     self.clone()
                         .sample(call, function, arguments, ImageGatherPattern::Quad, at);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
@@ -968,59 +963,50 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         match name {
             _ if gather_pattern(name).is_some() => {
                 let frame = self.clone().gather_call(name, function, arguments, at);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
             "sparseTexelFetchARB" => {
                 let frame = self.clone().fetch(function, arguments, false, true, at);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
             .map(Some),
             "sparseTexelFetchOffsetARB" => {
                 let frame = self.clone().fetch(function, arguments, true, true, at);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
             .map(Some),
             "sparseImageLoadARB" => {
                 let frame = self.clone().image(name, function, arguments, at);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
             "sparseTexelsResidentARB" => {
                 let frame = self.clone().sparse_texels_resident_call(arguments, at);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
             "textureQueryLod" | "textureQueryLOD" => {
                 let frame = self.clone().query_lod(arguments, at);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
             .map(Some),
             _ if image_processing(name).is_some() => {
                 let frame = self.clone().image_processing_call(name, arguments, at);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
             "texelFetch" => {
                 let frame = self.clone().fetch(function, arguments, false, false, at);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
             .map(Some),
             "texelFetchOffset" => {
                 let frame = self.clone().fetch(function, arguments, true, false, at);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
@@ -1028,26 +1014,22 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             "textureSize" | "textureQueryLevels" | "textureSamples" | "imageSize"
             | "imageSamples" => {
                 let frame = self.clone().query(name, arguments, at);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
             .map(Some),
             "imageLoad" | "imageStore" => {
                 let frame = self.clone().image(name, function, arguments, at);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
             _ if name.starts_with("imageAtomic") => {
                 let frame = self.clone().image_atomic_call(name, arguments, at);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
             "subpassLoad" => {
                 let frame = self.clone().subpass_load(arguments, at);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
@@ -1060,65 +1042,59 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             | "groupMemoryBarrier"
             | "controlBarrier"
             | "controlBarrierArrive"
-            | "controlBarrierWait" => this.barrier_call(name, arguments, at),
+            | "controlBarrierWait" => self.with(|this| this.barrier_call(name, arguments, at))?,
             "beginInvocationInterlockARB" | "endInvocationInterlockARB" => {
-                this.interlock_call(name, at)
+                self.with(|this| this.interlock_call(name, at))?
             }
-            "helperInvocationEXT" => this.add(Expression::IsHelperInvocation, at).map(Some),
+            "helperInvocationEXT" => {
+                self.with(|this| this.add(Expression::IsHelperInvocation, at).map(Some))?
+            }
             "textureFootprintNV"
             | "textureFootprintClampNV"
             | "textureFootprintLodNV"
             | "textureFootprintGradNV"
             | "textureFootprintGradClampNV" => {
                 let frame = self.clone().footprint(name, arguments, at);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
             .map(Some),
             "fragmentMaskFetchAMD" | "fragmentFetchAMD" => {
                 let frame = self.clone().fragment_fetch_call(name, arguments, at);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
             "interpolateAtCentroid" | "interpolateAtSample" | "interpolateAtOffset" => {
                 let frame = self.clone().interpolate(name, arguments, at);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
             .map(Some),
             "colorAttachmentReadEXT" | "depthAttachmentReadEXT" | "stencilAttachmentReadEXT" => {
                 let frame = self.clone().attachment_read_call(name, arguments, at);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
             "SetMeshOutputsEXT" | "EmitMeshTasksEXT" | "writePackedPrimitiveIndices4x8NV" => {
                 let frame = self.clone().mesh_statement_call(name, arguments, at);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
             "EmitVertex" | "EndPrimitive" | "EmitStreamVertex" | "EndStreamPrimitive" => {
-                this.primitive_statement_call(name, arguments, at)
+                self.with(|this| this.primitive_statement_call(name, arguments, at))?
             }
             "expectEXT" => {
                 let frame = self.clone().expect_call(arguments, at);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
             "assumeEXT" => {
                 let frame = self.clone().assume_call(arguments, at);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
             "modf" | "frexp" => {
                 let frame = self.clone().split(name, arguments, at);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
@@ -1126,19 +1102,16 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             "atomicAdd" | "atomicMin" | "atomicMax" | "atomicAnd" | "atomicOr" | "atomicXor"
             | "atomicExchange" | "atomicCompSwap" | "atomicLoad" | "atomicStore" => {
                 let frame = self.clone().atomic(name, arguments, at);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
             "uaddCarry" | "usubBorrow" | "umulExtended" | "imulExtended" => {
                 let frame = self.clone().wide(name, arguments, at);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
             _ if super::subgroup::is_subgroup_function(name) => {
                 let frame = self.clone().subgroup(name, arguments, at);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
@@ -1146,7 +1119,6 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 let frame = self
                     .clone()
                     .generic(name, function, call_type, arguments, at);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
@@ -1161,13 +1133,11 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
-        let this = self.lowerer();
         let (base, pattern) = gather_pattern(name).ok_or_else(|| internal(at))?;
         {
             let frame = self
                 .clone()
                 .sample(texture_call(base), function, arguments, pattern, at);
-            drop(this);
             let result = self.nest(frame).await;
             result
         }
@@ -1179,18 +1149,17 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
-        let mut this = self.lowerer();
         let code = {
             let frame = self
                 .clone()
                 .rvalue(arguments.first().ok_or_else(|| internal(at))?);
-            drop(this);
             let result = self.nest(frame).await;
-            this = self.lowerer();
             result
         }?;
-        this.add(Expression::ImageSparseResident { code }, at)
-            .map(Some)
+        self.with(|this| {
+            this.add(Expression::ImageSparseResident { code }, at)
+                .map(Some)
+        })?
     }
 
     async fn image_processing_call(
@@ -1199,11 +1168,9 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
-        let this = self.lowerer();
         let operation = image_processing(name).ok_or_else(|| internal(at))?;
         {
             let frame = self.clone().image_processing(operation, arguments, at);
-            drop(this);
             let result = self.nest(frame).await;
             result
         }
@@ -1216,7 +1183,6 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
-        let mut this = self.lowerer();
         let first = arguments.first().ok_or_else(|| internal(at))?;
         let Sampled {
             image,
@@ -1225,16 +1191,13 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             ..
         } = {
             let frame = self.clone().sampled(first, at);
-            drop(this);
             let result = self.nest(frame).await;
-            this = self.lowerer();
             result
         }?;
         {
             let frame = self
                 .clone()
                 .image_atomic(name, image, opaque, non_uniform, arguments, at);
-            drop(this);
             let result = self.nest(frame).await;
             result
         }
@@ -1246,63 +1209,62 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
-        let mut this = self.lowerer();
         let first = arguments.first().ok_or_else(|| internal(at))?;
-        let subpass = this
-            .lw
-            .analysis
-            .type_of(first.id)
-            .and_then(GlslType::as_opaque)
-            .is_some_and(|opaque| opaque.kind == OpaqueKind::SubpassInput);
+        let subpass = self.with(|this| {
+            this.lw
+                .analysis
+                .type_of(first.id)
+                .and_then(GlslType::as_opaque)
+                .is_some_and(|opaque| opaque.kind == OpaqueKind::SubpassInput)
+        })?;
         let image = {
             let frame = self.clone().rvalue(first);
-            drop(this);
             let result = self.nest(frame).await;
-            this = self.lowerer();
             result
         }?;
         let mut rest = arguments.iter().skip(1);
         let coordinate = if subpass {
-            let zero = this.literal(Literal::I32(0), at)?;
-            let ty = this
-                .lw
-                .vector_type(crate::VectorSize::Bi, crate::Scalar::I32);
-            this.add(
-                Expression::Compose {
-                    ty,
-                    components: alloc::vec![zero, zero],
-                },
-                at,
-            )?
+            let zero = self.with(|this| this.literal(Literal::I32(0), at))??;
+            let ty = self.with(|this| {
+                this.lw
+                    .vector_type(crate::VectorSize::Bi, crate::Scalar::I32)
+            })?;
+            self.with(|this| {
+                this.add(
+                    Expression::Compose {
+                        ty,
+                        components: alloc::vec![zero, zero],
+                    },
+                    at,
+                )
+            })??
         } else {
             let coordinate = rest.next().ok_or_else(|| internal(at))?;
             {
                 let frame = self.clone().rvalue(coordinate);
-                drop(this);
                 let result = self.nest(frame).await;
-                this = self.lowerer();
                 result
             }?
         };
         let fragment = match rest.next() {
             Some(fragment) if name == "fragmentFetchAMD" => Some({
                 let frame = self.clone().rvalue(fragment);
-                drop(this);
                 let result = self.nest(frame).await;
-                this = self.lowerer();
                 result
             }?),
             _ => None,
         };
-        this.add(
-            Expression::FragmentFetch {
-                image,
-                coordinate,
-                fragment,
-            },
-            at,
-        )
-        .map(Some)
+        self.with(|this| {
+            this.add(
+                Expression::FragmentFetch {
+                    image,
+                    coordinate,
+                    fragment,
+                },
+                at,
+            )
+            .map(Some)
+        })?
     }
 
     async fn attachment_read_call(
@@ -1311,16 +1273,13 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
-        let mut this = self.lowerer();
         let mut rest = arguments.iter();
         let aspect = match name {
             "colorAttachmentReadEXT" => {
                 let image = rest.next().ok_or_else(|| internal(at))?;
                 crate::AttachmentAspect::Color({
                     let frame = self.clone().rvalue(image);
-                    drop(this);
                     let result = self.nest(frame).await;
-                    this = self.lowerer();
                     result
                 }?)
             }
@@ -1330,15 +1289,15 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         let sample = match rest.next() {
             Some(sample) => Some({
                 let frame = self.clone().rvalue(sample);
-                drop(this);
                 let result = self.nest(frame).await;
-                this = self.lowerer();
                 result
             }?),
             None => None,
         };
-        this.add(Expression::AttachmentRead { aspect, sample }, at)
-            .map(Some)
+        self.with(|this| {
+            this.add(Expression::AttachmentRead { aspect, sample }, at)
+                .map(Some)
+        })?
     }
 
     async fn mesh_statement_call(
@@ -1347,10 +1306,8 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
-        let this = self.lowerer();
         {
             let frame = self.clone().mesh_statement(name, arguments, at);
-            drop(this);
             let result = self.nest(frame).await;
             result
         }?;
@@ -1362,27 +1319,24 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
-        let mut this = self.lowerer();
         let value = {
             let frame = self
                 .clone()
                 .rvalue(arguments.first().ok_or_else(|| internal(at))?);
-            drop(this);
             let result = self.nest(frame).await;
-            this = self.lowerer();
             result
         }?;
         let expected = {
             let frame = self
                 .clone()
                 .rvalue(arguments.get(1).ok_or_else(|| internal(at))?);
-            drop(this);
             let result = self.nest(frame).await;
-            this = self.lowerer();
             result
         }?;
-        this.add(Expression::Expect { value, expected }, at)
-            .map(Some)
+        self.with(|this| {
+            this.add(Expression::Expect { value, expected }, at)
+                .map(Some)
+        })?
     }
 
     async fn assume_call(
@@ -1390,18 +1344,15 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
-        let mut this = self.lowerer();
         let condition = {
             let frame = self
                 .clone()
                 .rvalue(arguments.first().ok_or_else(|| internal(at))?);
-            drop(this);
             let result = self.nest(frame).await;
-            this = self.lowerer();
             result
         }?;
-        this.flush();
-        this.push(Statement::Assume { condition }, at);
+        self.with(|this| this.flush())?;
+        self.with(|this| this.push(Statement::Assume { condition }, at))?;
         Ok(None)
     }
 
@@ -1413,7 +1364,6 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Handle<Expression>> {
-        let mut this = self.lowerer();
         if function
             .parameters
             .iter()
@@ -1426,15 +1376,13 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         for argument in arguments {
             let (value, ty) = {
                 let frame = self.clone().typed(argument);
-                drop(this);
                 let result = self.nest(frame).await;
-                this = self.lowerer();
                 result
             }?;
             values.push(value);
             types.push(ty);
         }
-        this.generic_values(name, function, call_type, at, values, types)
+        self.with(|this| this.generic_values(name, function, call_type, at, values, types))?
     }
 
     async fn split(
@@ -1443,15 +1391,12 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Handle<Expression>> {
-        let mut this = self.lowerer();
         let &[ref value, ref output] = arguments else {
             return Err(internal(at));
         };
         let (value, ty) = {
             let frame = self.clone().typed(value);
-            drop(this);
             let result = self.nest(frame).await;
-            this = self.lowerer();
             result
         }?;
         let base = ty.base_scalar().ok_or_else(|| internal(at))?;
@@ -1477,31 +1422,33 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             )
         };
         if ty.sized_vector_length().is_some() {
-            this.long_math_result(fun, &ty, at)?;
+            self.with(|this| this.long_math_result(fun, &ty, at))??;
         } else {
-            this.lw.module.generate_predeclared_type(special);
+            self.with(|this| this.lw.module.generate_predeclared_type(special))?;
         }
-        let result = this.math_call(fun, &[value], at)?;
-        let fraction = this.add(
-            Expression::AccessIndex {
-                base: result,
-                index: 0,
-            },
-            at,
-        )?;
-        let other = this.add(
-            Expression::AccessIndex {
-                base: result,
-                index: 1,
-            },
-            at,
-        )?;
-        let output_ty = this.info(output)?.ty.clone();
+        let result = self.with(|this| this.math_call(fun, &[value], at))??;
+        let fraction = self.with(|this| {
+            this.add(
+                Expression::AccessIndex {
+                    base: result,
+                    index: 0,
+                },
+                at,
+            )
+        })??;
+        let other = self.with(|this| {
+            this.add(
+                Expression::AccessIndex {
+                    base: result,
+                    index: 1,
+                },
+                at,
+            )
+        })??;
+        let output_ty = self.with(|this| this.info(output))??.ty.clone();
         let place = {
             let frame = self.clone().place(output);
-            drop(this);
             let result = self.nest(frame).await;
-            this = self.lowerer();
             result
         }?;
         let other_ty = if name == "modf" {
@@ -1509,8 +1456,8 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         } else {
             ty.with_scalar(GlslScalar::Int)
         };
-        let other = this.convert(other, &other_ty, &output_ty, at)?;
-        this.store(&place, other, at)?;
+        let other = self.with(|this| this.convert(other, &other_ty, &output_ty, at))??;
+        self.with(|this| this.store(&place, other, at))??;
         Ok(fraction)
     }
 
@@ -1520,22 +1467,17 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
-        let mut this = self.lowerer();
         let &[ref x, ref y, ref outputs @ ..] = arguments else {
             return Err(internal(at));
         };
         let (x, ty) = {
             let frame = self.clone().typed(x);
-            drop(this);
             let result = self.nest(frame).await;
-            this = self.lowerer();
             result
         }?;
         let (y, _) = {
             let frame = self.clone().typed(y);
-            drop(this);
             let result = self.nest(frame).await;
-            this = self.lowerer();
             result
         }?;
         let base = ty.base_scalar().ok_or_else(|| internal(at))?;
@@ -1549,30 +1491,36 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             _ => MathFunction::MulExtended,
         };
         if ty.sized_vector_length().is_some() {
-            this.long_math_result(fun, &ty, at)?;
+            self.with(|this| this.long_math_result(fun, &ty, at))??;
         } else {
-            this.lw
-                .module
-                .generate_predeclared_type(PredeclaredType::WideResult {
-                    size,
-                    scalar: scalar(base),
-                });
+            self.with(|this| {
+                this.lw
+                    .module
+                    .generate_predeclared_type(PredeclaredType::WideResult {
+                        size,
+                        scalar: scalar(base),
+                    })
+            })?;
         }
-        let result = this.math_call(fun, &[x, y], at)?;
-        let high = this.add(
-            Expression::AccessIndex {
-                base: result,
-                index: 1,
-            },
-            at,
-        )?;
-        let low = this.add(
-            Expression::AccessIndex {
-                base: result,
-                index: 0,
-            },
-            at,
-        )?;
+        let result = self.with(|this| this.math_call(fun, &[x, y], at))??;
+        let high = self.with(|this| {
+            this.add(
+                Expression::AccessIndex {
+                    base: result,
+                    index: 1,
+                },
+                at,
+            )
+        })??;
+        let low = self.with(|this| {
+            this.add(
+                Expression::AccessIndex {
+                    base: result,
+                    index: 0,
+                },
+                at,
+            )
+        })??;
         let (stored, returned) = if fun == MathFunction::MulExtended {
             (&[high, low][..], None)
         } else {
@@ -1582,23 +1530,20 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             return Err(internal(at));
         }
         for (output, &half) in outputs.iter().zip(stored) {
-            let output_ty = this.info(output)?.ty.clone();
+            let output_ty = self.with(|this| this.info(output))??.ty.clone();
             let place = {
                 let frame = self.clone().place(output);
-                drop(this);
                 let result = self.nest(frame).await;
-                this = self.lowerer();
                 result
             }?;
-            let half = this.convert(half, &ty, &output_ty, at)?;
-            this.store(&place, half, at)?;
+            let half = self.with(|this| this.convert(half, &ty, &output_ty, at))??;
+            self.with(|this| this.store(&place, half, at))??;
         }
         Ok(returned)
     }
 
     async fn sampled(self, argument: &'b AstExpression, at: Span) -> Result<Sampled> {
-        let mut this = self.lowerer();
-        let analysis = this.lw.analysis;
+        let analysis = self.with(|this| this.lw.analysis)?;
         let mut inner = strip(argument);
         let mut non_uniform = false;
         while let (&ExpressionKind::FunctionCall(ref call), Some(&Callee::NonUniform)) =
@@ -1629,14 +1574,11 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 };
                 let image = {
                     let frame = self.clone().rvalue(texture);
-                    drop(this);
                     let result = self.nest(frame).await;
-                    this = self.lowerer();
                     result
                 }?;
                 let sampler = {
                     let frame = self.clone().rvalue(sampler);
-                    drop(this);
                     let result = self.nest(frame).await;
                     result
                 }?;
@@ -1648,7 +1590,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 });
             }
         }
-        let ty = this.info(argument)?.ty.clone();
+        let ty = self.with(|this| this.info(argument))??.ty.clone();
         match ty.as_opaque() {
             Some(opaque)
                 if opaque.kind == OpaqueKind::Image
@@ -1659,7 +1601,6 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 Ok(Sampled {
                     image: {
                         let frame = self.clone().rvalue(argument);
-                        drop(this);
                         let result = self.nest(frame).await;
                         result
                     }?,
@@ -1678,29 +1619,22 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Handle<Expression>> {
-        let mut this = self.lowerer();
         let argument = |index: usize| arguments.get(index).ok_or_else(|| internal(at));
         let source = {
             let frame = self.clone().sampled(argument(0)?, at);
-            drop(this);
             let result = self.nest(frame).await;
-            this = self.lowerer();
             result
         }?;
         let coordinate = {
             let frame = self.clone().rvalue(argument(1)?);
-            drop(this);
             let result = self.nest(frame).await;
-            this = self.lowerer();
             result
         }?;
         let (reference, reference_coordinate, size) = match operation {
             ImageProcessingOperation::SampleWeighted => (
                 Some({
                     let frame = self.clone().sampled(argument(2)?, at);
-                    drop(this);
                     let result = self.nest(frame).await;
-                    this = self.lowerer();
                     result
                 }?),
                 None,
@@ -1711,32 +1645,24 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 None,
                 Some({
                     let frame = self.clone().rvalue(argument(2)?);
-                    drop(this);
                     let result = self.nest(frame).await;
-                    this = self.lowerer();
                     result
                 }?),
             ),
             ImageProcessingOperation::BlockMatch { .. } => {
                 let reference = {
                     let frame = self.clone().sampled(argument(2)?, at);
-                    drop(this);
                     let result = self.nest(frame).await;
-                    this = self.lowerer();
                     result
                 }?;
                 let reference_coordinate = {
                     let frame = self.clone().rvalue(argument(3)?);
-                    drop(this);
                     let result = self.nest(frame).await;
-                    this = self.lowerer();
                     result
                 }?;
                 let size = {
                     let frame = self.clone().rvalue(argument(4)?);
-                    drop(this);
                     let result = self.nest(frame).await;
-                    this = self.lowerer();
                     result
                 }?;
                 (Some(reference), Some(reference_coordinate), Some(size))
@@ -1746,21 +1672,23 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             || reference
                 .as_ref()
                 .is_some_and(|reference| reference.non_uniform);
-        let result = this.add(
-            Expression::ImageProcessing {
-                operation,
-                image: source.image,
-                sampler: source.sampler,
-                coordinate,
-                reference: reference.as_ref().map(|reference| reference.image),
-                reference_sampler: reference.as_ref().and_then(|reference| reference.sampler),
-                reference_coordinate,
-                size,
-            },
-            at,
-        )?;
+        let result = self.with(|this| {
+            this.add(
+                Expression::ImageProcessing {
+                    operation,
+                    image: source.image,
+                    sampler: source.sampler,
+                    coordinate,
+                    reference: reference.as_ref().map(|reference| reference.image),
+                    reference_sampler: reference.as_ref().and_then(|reference| reference.sampler),
+                    reference_coordinate,
+                    size,
+                },
+                at,
+            )
+        })??;
         if non_uniform {
-            this.mark(result, NonUniform::SAMPLED_IMAGE);
+            self.with(|this| this.mark(result, NonUniform::SAMPLED_IMAGE))?;
         }
         Ok(result)
     }
@@ -1773,7 +1701,6 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         gather_pattern: ImageGatherPattern,
         at: Span,
     ) -> Result<Handle<Expression>> {
-        let mut this = self.lowerer();
         let name = call.base;
         let first = arguments.first().ok_or_else(|| internal(at))?;
         let Sampled {
@@ -1783,9 +1710,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             non_uniform,
         } = {
             let frame = self.clone().sampled(first, at);
-            drop(this);
             let result = self.nest(frame).await;
-            this = self.lowerer();
             result
         }?;
         if sampler.is_none() && opaque.kind != OpaqueKind::CombinedSampler {
@@ -1799,9 +1724,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         let coordinate_argument = arguments.get(1).ok_or_else(|| internal(at))?;
         let (coordinate, coordinate_ty) = {
             let frame = self.clone().typed(coordinate_argument);
-            drop(this);
             let result = self.nest(frame).await;
-            this = self.lowerer();
             result
         }?;
         let mut size = u32::from(match coordinate_ty.kind {
@@ -1821,9 +1744,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     },
                     at,
                 );
-                drop(this);
                 let result = self.nest(frame).await;
-                this = self.lowerer();
                 result
             }?)
         } else {
@@ -1832,26 +1753,28 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         let mut coordinate = coordinate;
         if proj {
             let last = size.checked_sub(1).ok_or_else(|| internal(at))?;
-            let q = this.component(coordinate, last, at)?;
-            let head = this.resize(coordinate, size, last, at)?;
+            let q = self.with(|this| this.component(coordinate, last, at))??;
+            let head = self.with(|this| this.resize(coordinate, size, last, at))??;
             let divisor = if last > 1 {
-                this.splat(q, u8::try_from(last).unwrap_or(0), at)?
+                self.with(|this| this.splat(q, u8::try_from(last).unwrap_or(0), at))??
             } else {
                 q
             };
-            coordinate = this.binary_op(BinaryOperator::Divide, head, divisor, at)?;
+            coordinate =
+                self.with(|this| this.binary_op(BinaryOperator::Divide, head, divisor, at))??;
             size = last;
         }
         let depth_ref = match reference_argument {
             Some(reference) => Some(reference),
             None if opaque.shadow => {
                 let last = size.checked_sub(1).ok_or_else(|| internal(at))?;
-                let reference = this.component(coordinate, last, at)?;
+                let reference = self.with(|this| this.component(coordinate, last, at))??;
                 Some(reference)
             }
             None => None,
         };
-        let (point, array_index) = this.split_coordinate(coordinate, size, opaque, true, at)?;
+        let (point, array_index) =
+            self.with(|this| this.split_coordinate(coordinate, size, opaque, true, at))??;
         let mut level = SampleLevel::Auto;
         if lod {
             level = SampleLevel::Exact({
@@ -1863,9 +1786,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     },
                     at,
                 );
-                drop(this);
                 let result = self.nest(frame).await;
-                this = self.lowerer();
                 result
             }?);
         }
@@ -1879,9 +1800,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     },
                     at,
                 );
-                drop(this);
                 let result = self.nest(frame).await;
-                this = self.lowerer();
                 result
             }?;
             let y = {
@@ -1893,9 +1812,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     },
                     at,
                 );
-                drop(this);
                 let result = self.nest(frame).await;
-                this = self.lowerer();
                 result
             }?;
             level = SampleLevel::Gradient { x, y };
@@ -1911,9 +1828,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     },
                     at,
                 );
-                drop(this);
                 let result = self.nest(frame).await;
-                this = self.lowerer();
                 result
             }?);
         }
@@ -1928,9 +1843,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     },
                     at,
                 );
-                drop(this);
                 let result = self.nest(frame).await;
-                this = self.lowerer();
                 result
             }?);
         }
@@ -1952,7 +1865,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 match arguments.get(next) {
                     Some(component) => {
                         next += 1;
-                        match this.constant_index(component) {
+                        match self.with(|this| this.constant_index(component))? {
                             Some(0) => SwizzleComponent::X,
                             Some(1) => SwizzleComponent::Y,
                             Some(2) => SwizzleComponent::Z,
@@ -1979,9 +1892,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                         },
                         at,
                     );
-                    drop(this);
                     let result = self.nest(frame).await;
-                    this = self.lowerer();
                     result
                 }?);
             }
@@ -1995,26 +1906,26 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     },
                     at,
                 );
-                drop(this);
                 let result = self.nest(frame).await;
-                this = self.lowerer();
                 result
             }?);
         }
-        let stage = this.lw.options.stage;
+        let stage = self.with(|this| this.lw.options.stage)?;
         let derivatives = stage == ShaderStage::Fragment
-            || (stage == ShaderStage::Compute && this.lw.analysis.derivative_group.is_some());
+            || (stage == ShaderStage::Compute
+                && self.with(|this| this.lw.analysis.derivative_group.is_some())?);
         let implicit = match level {
-            SampleLevel::Auto => !this.lw.library,
+            SampleLevel::Auto => !self.with(|this| this.lw.library)?,
             SampleLevel::Bias(_) => true,
             SampleLevel::Zero | SampleLevel::Exact(_) | SampleLevel::Gradient { .. } => false,
         };
         if implicit && !gather && !derivatives {
             level = SampleLevel::Zero;
             if let Some(clamp) = min_lod.take() {
-                let zero = this.literal(Literal::F32(0.0), at)?;
-                level =
-                    SampleLevel::Exact(this.math_call(MathFunction::Max, &[clamp, zero], at)?);
+                let zero = self.with(|this| this.literal(Literal::F32(0.0), at))??;
+                level = SampleLevel::Exact(
+                    self.with(|this| this.math_call(MathFunction::Max, &[clamp, zero], at))??,
+                );
             }
         }
         let sparse = match texel_out {
@@ -2027,36 +1938,37 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                         scalar: super::types::sampled_scalar(opaque.sampled),
                     }
                 };
-                Some(this.lw.sparse_result_type(texel))
+                Some(self.with(|this| this.lw.sparse_result_type(texel))?)
             }
             None => None,
         };
-        let sample = this.add(
-            Expression::ImageSample {
-                image,
-                sampler,
-                gather: gather_component,
-                gather_pattern,
-                coordinate: point,
-                array_index,
-                offset: sample_offset,
-                level,
-                depth_ref,
-                clamp_to_edge: false,
-                min_lod,
-                sparse,
-            },
-            at,
-        )?;
+        let sample = self.with(|this| {
+            this.add(
+                Expression::ImageSample {
+                    image,
+                    sampler,
+                    gather: gather_component,
+                    gather_pattern,
+                    coordinate: point,
+                    array_index,
+                    offset: sample_offset,
+                    level,
+                    depth_ref,
+                    clamp_to_edge: false,
+                    min_lod,
+                    sparse,
+                },
+                at,
+            )
+        })??;
         if non_uniform {
-            this.mark(sample, NonUniform::SAMPLED_IMAGE);
+            self.with(|this| this.mark(sample, NonUniform::SAMPLED_IMAGE))?;
         }
         match texel_out {
             Some(index) => {
                 let frame = self
                     .clone()
                     .sparse_result(sample, function, arguments, index, at);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
@@ -2072,33 +1984,34 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         index: usize,
         at: Span,
     ) -> Result<Handle<Expression>> {
-        let mut this = self.lowerer();
         let output = arguments.get(index).ok_or_else(|| internal(at))?;
         let parameter = function.parameters.get(index).ok_or_else(|| internal(at))?;
-        let texel = this.add(
-            Expression::AccessIndex {
-                base: result,
-                index: 1,
-            },
-            at,
-        )?;
-        let output_ty = this.info(output)?.ty.clone();
+        let texel = self.with(|this| {
+            this.add(
+                Expression::AccessIndex {
+                    base: result,
+                    index: 1,
+                },
+                at,
+            )
+        })??;
+        let output_ty = self.with(|this| this.info(output))??.ty.clone();
         let place = {
             let frame = self.clone().place(output);
-            drop(this);
             let result = self.nest(frame).await;
-            this = self.lowerer();
             result
         }?;
-        let texel = this.convert(texel, &parameter.ty, &output_ty, at)?;
-        this.store(&place, texel, at)?;
-        this.add(
-            Expression::AccessIndex {
-                base: result,
-                index: 0,
-            },
-            at,
-        )
+        let texel = self.with(|this| this.convert(texel, &parameter.ty, &output_ty, at))??;
+        self.with(|this| this.store(&place, texel, at))??;
+        self.with(|this| {
+            this.add(
+                Expression::AccessIndex {
+                    base: result,
+                    index: 0,
+                },
+                at,
+            )
+        })?
     }
 
     async fn next_argument(
@@ -2119,7 +2032,6 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         sparse: bool,
         at: Span,
     ) -> Result<Handle<Expression>> {
-        let mut this = self.lowerer();
         let first = arguments.first().ok_or_else(|| internal(at))?;
         let Sampled {
             image,
@@ -2128,31 +2040,25 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             ..
         } = {
             let frame = self.clone().sampled(first, at);
-            drop(this);
             let result = self.nest(frame).await;
-            this = self.lowerer();
             result
         }?;
         if non_uniform {
-            this.mark(image, NonUniform::VALUE);
+            self.with(|this| this.mark(image, NonUniform::VALUE))?;
         }
         let coordinate_argument = arguments.get(1).ok_or_else(|| internal(at))?;
         let (coordinate, ty) = {
             let frame = self.clone().typed(coordinate_argument);
-            drop(this);
             let result = self.nest(frame).await;
-            this = self.lowerer();
             result
         }?;
         let size = ty.component_count().ok_or_else(|| internal(at))?;
         let (mut point, array_index) =
-            this.split_coordinate(coordinate, size, opaque, false, at)?;
+            self.with(|this| this.split_coordinate(coordinate, size, opaque, false, at))??;
         let extra = match arguments.get(2) {
             Some(argument) => Some({
                 let frame = self.clone().rvalue(argument);
-                drop(this);
                 let result = self.nest(frame).await;
-                this = self.lowerer();
                 result
             }?),
             None => None,
@@ -2161,42 +2067,43 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             let offset = arguments.get(3).ok_or_else(|| internal(at))?;
             let offset = {
                 let frame = self.clone().rvalue(offset);
-                drop(this);
                 let result = self.nest(frame).await;
-                this = self.lowerer();
                 result
             }?;
-            point = this.binary_op(BinaryOperator::Add, point, offset, at)?;
+            point = self.with(|this| this.binary_op(BinaryOperator::Add, point, offset, at))??;
         }
         let (sample, level) = if opaque.multisample {
             (extra, None)
         } else {
             (None, extra)
         };
-        let sparse_type = sparse.then(|| {
-            this.lw.sparse_result_type(crate::TypeInner::Vector {
-                size: crate::VectorSize::Quad,
-                scalar: super::types::sampled_scalar(opaque.sampled),
+        let sparse_type = self.with(|this| {
+            sparse.then(|| {
+                this.lw.sparse_result_type(crate::TypeInner::Vector {
+                    size: crate::VectorSize::Quad,
+                    scalar: super::types::sampled_scalar(opaque.sampled),
+                })
             })
-        });
-        let result = this.add(
-            Expression::ImageLoad {
-                image,
-                coordinate: point,
-                array_index,
-                sample,
-                level,
-                sparse: sparse_type,
-            },
-            at,
-        )?;
+        })?;
+        let result = self.with(|this| {
+            this.add(
+                Expression::ImageLoad {
+                    image,
+                    coordinate: point,
+                    array_index,
+                    sample,
+                    level,
+                    sparse: sparse_type,
+                },
+                at,
+            )
+        })??;
         if sparse {
             let index = if offset { 4 } else { 3 };
             {
                 let frame = self
                     .clone()
                     .sparse_result(result, function, arguments, index, at);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
@@ -2210,7 +2117,6 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Handle<Expression>> {
-        let mut this = self.lowerer();
         let first = arguments.first().ok_or_else(|| internal(at))?;
         let Sampled {
             image,
@@ -2219,32 +2125,30 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             ..
         } = {
             let frame = self.clone().sampled(first, at);
-            drop(this);
             let result = self.nest(frame).await;
-            this = self.lowerer();
             result
         }?;
         let coordinate = {
             let frame = self
                 .clone()
                 .rvalue(arguments.get(1).ok_or_else(|| internal(at))?);
-            drop(this);
             let result = self.nest(frame).await;
-            this = self.lowerer();
             result
         }?;
-        let query = this.add(
-            Expression::ImageQuery {
-                image,
-                query: ImageQuery::Lod {
-                    sampler,
-                    coordinate,
+        let query = self.with(|this| {
+            this.add(
+                Expression::ImageQuery {
+                    image,
+                    query: ImageQuery::Lod {
+                        sampler,
+                        coordinate,
+                    },
                 },
-            },
-            at,
-        )?;
+                at,
+            )
+        })??;
         if non_uniform {
-            this.mark(query, NonUniform::SAMPLED_IMAGE);
+            self.with(|this| this.mark(query, NonUniform::SAMPLED_IMAGE))?;
         }
         Ok(query)
     }
@@ -2255,7 +2159,6 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Handle<Expression>> {
-        let mut this = self.lowerer();
         let mut next = 0;
         let image = {
             let frame = self.clone().next_argument(
@@ -2266,9 +2169,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 },
                 at,
             );
-            drop(this);
             let result = self.nest(frame).await;
-            this = self.lowerer();
             result
         }?;
         let coordinate = {
@@ -2280,9 +2181,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 },
                 at,
             );
-            drop(this);
             let result = self.nest(frame).await;
-            this = self.lowerer();
             result
         }?;
         let mut level = SampleLevel::Auto;
@@ -2298,9 +2197,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                         },
                         at,
                     );
-                    drop(this);
                     let result = self.nest(frame).await;
-                    this = self.lowerer();
                     result
                 }?);
             }
@@ -2314,9 +2211,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                         },
                         at,
                     );
-                    drop(this);
                     let result = self.nest(frame).await;
-                    this = self.lowerer();
                     result
                 }?;
                 let y = {
@@ -2328,9 +2223,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                         },
                         at,
                     );
-                    drop(this);
                     let result = self.nest(frame).await;
-                    this = self.lowerer();
                     result
                 }?;
                 level = SampleLevel::Gradient { x, y };
@@ -2344,9 +2237,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                             },
                             at,
                         );
-                        drop(this);
                         let result = self.nest(frame).await;
-                        this = self.lowerer();
                         result
                     }?);
                 }
@@ -2361,9 +2252,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                         },
                         at,
                     );
-                    drop(this);
                     let result = self.nest(frame).await;
-                    this = self.lowerer();
                     result
                 }?);
             }
@@ -2378,9 +2267,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 },
                 at,
             );
-            drop(this);
             let result = self.nest(frame).await;
-            this = self.lowerer();
             result
         }?;
         let coarse = {
@@ -2392,9 +2279,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 },
                 at,
             );
-            drop(this);
             let result = self.nest(frame).await;
-            this = self.lowerer();
             result
         }?;
         let output = arguments.get(next).ok_or_else(|| internal(at))?;
@@ -2402,67 +2287,73 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         if let Some(bias) = arguments.get(next) {
             level = SampleLevel::Bias({
                 let frame = self.clone().rvalue(bias);
-                drop(this);
                 let result = self.nest(frame).await;
-                this = self.lowerer();
                 result
             }?);
         }
-        let output_ty = this.info(output)?.ty.clone();
-        let footprint = this.lw.ir_type(&output_ty, at)?;
-        let three = matches!(
-            this.lw.module.types[footprint].inner,
-            crate::TypeInner::Struct { ref members, .. }
-                if members.first().is_some_and(|member| matches!(
-                    this.lw.module.types[member.ty].inner,
-                    crate::TypeInner::Vector { size: crate::VectorSize::Tri, .. }
-                ))
-        );
-        let ty = this.lw.footprint_result_type(three);
-        let result = this.add(
-            Expression::ImageFootprint {
-                image,
-                coordinate,
-                granularity,
-                coarse,
-                level,
-                min_lod,
-                ty,
-            },
-            at,
-        )?;
-        let mut components = Vec::with_capacity(5);
-        for index in 1..6 {
-            components.push(this.add(
-                Expression::AccessIndex {
-                    base: result,
-                    index,
+        let output_ty = self.with(|this| this.info(output))??.ty.clone();
+        let footprint = self.with(|this| this.lw.ir_type(&output_ty, at))??;
+        let three = self.with(|this| {
+            matches!(
+                this.lw.module.types[footprint].inner,
+                crate::TypeInner::Struct { ref members, .. }
+                    if members.first().is_some_and(|member| matches!(
+                        this.lw.module.types[member.ty].inner,
+                        crate::TypeInner::Vector { size: crate::VectorSize::Tri, .. }
+                    ))
+            )
+        })?;
+        let ty = self.with(|this| this.lw.footprint_result_type(three))?;
+        let result = self.with(|this| {
+            this.add(
+                Expression::ImageFootprint {
+                    image,
+                    coordinate,
+                    granularity,
+                    coarse,
+                    level,
+                    min_lod,
+                    ty,
                 },
                 at,
-            )?);
+            )
+        })??;
+        let mut components = Vec::with_capacity(5);
+        for index in 1..6 {
+            components.push(self.with(|this| {
+                this.add(
+                    Expression::AccessIndex {
+                        base: result,
+                        index,
+                    },
+                    at,
+                )
+            })??);
         }
-        let value = this.add(
-            Expression::Compose {
-                ty: footprint,
-                components,
-            },
-            at,
-        )?;
+        let value = self.with(|this| {
+            this.add(
+                Expression::Compose {
+                    ty: footprint,
+                    components,
+                },
+                at,
+            )
+        })??;
         let place = {
             let frame = self.clone().place(output);
-            drop(this);
             let result = self.nest(frame).await;
-            this = self.lowerer();
             result
         }?;
-        this.store(&place, value, at)?;
-        this.add(
-            Expression::AccessIndex {
-                base: result,
-                index: 0,
-            },
-            at,
-        )
+        self.with(|this| this.store(&place, value, at))??;
+        self.with(|this| {
+            this.add(
+                Expression::AccessIndex {
+                    base: result,
+                    index: 0,
+                },
+                at,
+            )
+        })?
     }
 
     async fn interpolate(
@@ -2471,13 +2362,10 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Handle<Expression>> {
-        let mut this = self.lowerer();
         let first = arguments.first().ok_or_else(|| internal(at))?;
         let super::expression::Chain::Place(place) = {
             let frame = self.clone().chain(first);
-            drop(this);
             let result = self.nest(frame).await;
-            this = self.lowerer();
             result
         }?
         else {
@@ -2486,44 +2374,44 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         let location = match (name, arguments.get(1)) {
             ("interpolateAtSample", Some(sample)) => crate::InterpolationLocation::Sample({
                 let frame = self.clone().rvalue(sample);
-                drop(this);
                 let result = self.nest(frame).await;
-                this = self.lowerer();
                 result
             }?),
             ("interpolateAtOffset", Some(offset)) => crate::InterpolationLocation::Offset({
                 let frame = self.clone().rvalue(offset);
-                drop(this);
                 let result = self.nest(frame).await;
-                this = self.lowerer();
                 result
             }?),
             _ => crate::InterpolationLocation::Centroid,
         };
-        let value = this.add(
-            Expression::InterpolateAt {
-                pointer: place.pointer,
-                location,
-            },
-            at,
-        )?;
+        let value = self.with(|this| {
+            this.add(
+                Expression::InterpolateAt {
+                    pointer: place.pointer,
+                    location,
+                },
+                at,
+            )
+        })??;
         match place.swizzle {
             None => Ok(value),
             Some(ref components) if components.len() == 1 => {
                 let index = components.first().copied().ok_or_else(|| internal(at))?;
-                this.add(Expression::AccessIndex { base: value, index }, at)
+                self.with(|this| this.add(Expression::AccessIndex { base: value, index }, at))?
             }
             Some(ref components) => {
                 let size = vector_size(u8::try_from(components.len()).unwrap_or(0))
                     .ok_or_else(|| internal(at))?;
-                this.add(
-                    Expression::Swizzle {
-                        size,
-                        vector: value,
-                        pattern: super::expression::pattern(components),
-                    },
-                    at,
-                )
+                self.with(|this| {
+                    this.add(
+                        Expression::Swizzle {
+                            size,
+                            vector: value,
+                            pattern: super::expression::pattern(components),
+                        },
+                        at,
+                    )
+                })?
             }
         }
     }
@@ -2533,47 +2421,47 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Handle<Expression>> {
-        let mut this = self.lowerer();
         let first = arguments.first().ok_or_else(|| internal(at))?;
         let image = {
             let frame = self.clone().rvalue(first);
-            drop(this);
             let result = self.nest(frame).await;
-            this = self.lowerer();
             result
         }?;
         let sample = match arguments.get(1) {
             Some(argument) => Some({
                 let frame = self.clone().rvalue(argument);
-                drop(this);
                 let result = self.nest(frame).await;
-                this = self.lowerer();
                 result
             }?),
             None => None,
         };
-        let zero = this.literal(Literal::I32(0), at)?;
-        let ty = this
-            .lw
-            .vector_type(crate::VectorSize::Bi, crate::Scalar::I32);
-        let coordinate = this.add(
-            Expression::Compose {
-                ty,
-                components: alloc::vec![zero, zero],
-            },
-            at,
-        )?;
-        this.add(
-            Expression::ImageLoad {
-                image,
-                coordinate,
-                array_index: None,
-                sample,
-                level: None,
-                sparse: None,
-            },
-            at,
-        )
+        let zero = self.with(|this| this.literal(Literal::I32(0), at))??;
+        let ty = self.with(|this| {
+            this.lw
+                .vector_type(crate::VectorSize::Bi, crate::Scalar::I32)
+        })?;
+        let coordinate = self.with(|this| {
+            this.add(
+                Expression::Compose {
+                    ty,
+                    components: alloc::vec![zero, zero],
+                },
+                at,
+            )
+        })??;
+        self.with(|this| {
+            this.add(
+                Expression::ImageLoad {
+                    image,
+                    coordinate,
+                    array_index: None,
+                    sample,
+                    level: None,
+                    sparse: None,
+                },
+                at,
+            )
+        })?
     }
 
     async fn image(
@@ -2583,7 +2471,6 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
-        let mut this = self.lowerer();
         let first = arguments.first().ok_or_else(|| internal(at))?;
         let Sampled {
             image,
@@ -2592,31 +2479,26 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             ..
         } = {
             let frame = self.clone().sampled(first, at);
-            drop(this);
             let result = self.nest(frame).await;
-            this = self.lowerer();
             result
         }?;
         if non_uniform {
-            this.mark(image, NonUniform::VALUE);
+            self.with(|this| this.mark(image, NonUniform::VALUE))?;
         }
         let coordinate_argument = arguments.get(1).ok_or_else(|| internal(at))?;
         let (coordinate, ty) = {
             let frame = self.clone().typed(coordinate_argument);
-            drop(this);
             let result = self.nest(frame).await;
-            this = self.lowerer();
             result
         }?;
         let size = ty.component_count().ok_or_else(|| internal(at))?;
-        let (point, array_index) = this.split_storage_coordinate(coordinate, size, opaque, at)?;
+        let (point, array_index) =
+            self.with(|this| this.split_storage_coordinate(coordinate, size, opaque, at))??;
         let sample = if opaque.multisample {
             let sample = arguments.get(2).ok_or_else(|| internal(at))?;
             Some({
                 let frame = self.clone().rvalue(sample);
-                drop(this);
                 let result = self.nest(frame).await;
-                this = self.lowerer();
                 result
             }?)
         } else {
@@ -2627,32 +2509,33 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 size: crate::VectorSize::Quad,
                 scalar: super::types::sampled_scalar(opaque.sampled),
             };
-            let sparse = Some(this.lw.sparse_result_type(texel));
-            let result = this.add(
-                Expression::ImageLoad {
-                    image,
-                    coordinate: point,
-                    array_index,
-                    sample,
-                    level: None,
-                    sparse,
-                },
-                at,
-            )?;
+            let sparse = Some(self.with(|this| this.lw.sparse_result_type(texel))?);
+            let result = self.with(|this| {
+                this.add(
+                    Expression::ImageLoad {
+                        image,
+                        coordinate: point,
+                        array_index,
+                        sample,
+                        level: None,
+                        sparse,
+                    },
+                    at,
+                )
+            })??;
             let index = 2 + usize::from(opaque.multisample);
             return {
                 let frame = self
                     .clone()
                     .sparse_result(result, function, arguments, index, at);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
             .map(Some);
         }
         if name == "imageLoad" {
-            return this
-                .add(
+            return self.with(|this| {
+                this.add(
                     Expression::ImageLoad {
                         image,
                         coordinate: point,
@@ -2663,28 +2546,29 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     },
                     at,
                 )
-                .map(Some);
+                .map(Some)
+            })?;
         }
         let value = arguments
             .get(2 + usize::from(opaque.multisample))
             .ok_or_else(|| internal(at))?;
         let value = {
             let frame = self.clone().rvalue(value);
-            drop(this);
             let result = self.nest(frame).await;
-            this = self.lowerer();
             result
         }?;
-        this.push(
-            Statement::ImageStore {
-                image,
-                coordinate: point,
-                array_index,
-                sample,
-                value,
-            },
-            at,
-        );
+        self.with(|this| {
+            this.push(
+                Statement::ImageStore {
+                    image,
+                    coordinate: point,
+                    array_index,
+                    sample,
+                    value,
+                },
+                at,
+            )
+        })?;
         Ok(None)
     }
 
@@ -2694,7 +2578,6 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Handle<Expression>> {
-        let mut this = self.lowerer();
         let first = arguments.first().ok_or_else(|| internal(at))?;
         let Sampled {
             image,
@@ -2703,13 +2586,11 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             ..
         } = {
             let frame = self.clone().sampled(first, at);
-            drop(this);
             let result = self.nest(frame).await;
-            this = self.lowerer();
             result
         }?;
         if non_uniform {
-            this.mark(image, NonUniform::VALUE);
+            self.with(|this| this.mark(image, NonUniform::VALUE))?;
         }
         let query = match name {
             "textureQueryLevels" => ImageQuery::NumLevels,
@@ -2718,9 +2599,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 let level = match arguments.get(1) {
                     Some(level) => Some({
                         let frame = self.clone().rvalue(level);
-                        drop(this);
                         let result = self.nest(frame).await;
-                        this = self.lowerer();
                         result
                     }?),
                     None => None,
@@ -2729,7 +2608,8 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             }
         };
         let sized = matches!(query, ImageQuery::Size { .. });
-        let mut value = this.add(Expression::ImageQuery { image, query }, at)?;
+        let mut value =
+            self.with(|this| this.add(Expression::ImageQuery { image, query }, at))??;
         if sized && opaque.arrayed {
             let base =
                 coordinate_count(opaque) - u32::from(opaque.dimension == TextureDimension::Cube);
@@ -2738,22 +2618,24 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 components.push(value);
             } else {
                 for index in 0..base {
-                    components.push(this.component(value, index, at)?);
+                    components.push(self.with(|this| this.component(value, index, at))??);
                 }
             }
-            components.push(this.add(
-                Expression::ImageQuery {
-                    image,
-                    query: ImageQuery::NumLayers,
-                },
-                at,
-            )?);
+            components.push(self.with(|this| {
+                this.add(
+                    Expression::ImageQuery {
+                        image,
+                        query: ImageQuery::NumLayers,
+                    },
+                    at,
+                )
+            })??);
             let size =
                 vector_size(u8::try_from(base + 1).unwrap_or(0)).ok_or_else(|| internal(at))?;
-            let ty = this.lw.vector_type(size, crate::Scalar::U32);
-            value = this.add(Expression::Compose { ty, components }, at)?;
+            let ty = self.with(|this| this.lw.vector_type(size, crate::Scalar::U32))?;
+            value = self.with(|this| this.add(Expression::Compose { ty, components }, at))??;
         }
-        this.as_kind(value, crate::Scalar::I32, at)
+        self.with(|this| this.as_kind(value, crate::Scalar::I32, at))?
     }
 }
 

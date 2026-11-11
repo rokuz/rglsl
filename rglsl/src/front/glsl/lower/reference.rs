@@ -114,54 +114,58 @@ impl Lowerer<'_> {
     }
 }
 
-#[allow(clippy::await_holding_refcell_ref)]
 impl<'b, 'a> super::function::LowererCx<'b, 'a> {
     pub(super) async fn reference_type(self, block: BlockId, span: Span) -> Result<Handle<Type>> {
-        let mut this = self.lowerer();
-        let (space, qualifiers) = this.reference_space(block, span)?;
-        if let Some(&handle) = this.references.get(&(block, qualifiers)) {
+        let (space, qualifiers) = self.with(|this| this.reference_space(block, span))??;
+        if let Some(handle) =
+            self.with(|this| this.references.get(&(block, qualifiers)).copied())?
+        {
             return Ok(handle);
         }
-        if this.references_in_progress.contains(&block) {
-            let name = this
-                .analysis
-                .types
-                .block(block)
-                .map(|declared| declared.name.clone());
-            let placeholder = this.module.types.insert(
-                Type {
-                    name,
-                    inner: TypeInner::Struct {
-                        members: Vec::new(),
-                        span: 0,
+        if self.with(|this| this.references_in_progress.contains(&block))? {
+            let name = self.with(|this| {
+                this.analysis
+                    .types
+                    .block(block)
+                    .map(|declared| declared.name.clone())
+            })?;
+            let placeholder = self.with(|this| {
+                this.module.types.insert(
+                    Type {
+                        name,
+                        inner: TypeInner::Struct {
+                            members: Vec::new(),
+                            span: 0,
+                        },
                     },
-                },
-                span,
-            );
-            let pointer = this.insert_type(TypeInner::Pointer {
-                base: placeholder,
-                space,
-            });
-            this.references.insert((block, qualifiers), pointer);
+                    span,
+                )
+            })?;
+            let pointer = self.with(|this| {
+                this.insert_type(TypeInner::Pointer {
+                    base: placeholder,
+                    space,
+                })
+            })?;
+            self.with(|this| this.references.insert((block, qualifiers), pointer))?;
             return Ok(pointer);
         }
-        let layout = this
-            .analysis
-            .types
-            .block(block)
-            .and_then(|declared| declared.reference)
-            .ok_or_else(|| internal(span))?;
-        this.references_in_progress.insert(block);
+        let layout = self.with(|this| {
+            this.analysis
+                .types
+                .block(block)
+                .and_then(|declared| declared.reference)
+                .ok_or_else(|| internal(span))
+        })??;
+        self.with(|this| this.references_in_progress.insert(block))?;
         let structure = {
             let frame = self
                 .clone()
                 .block_struct(block, layout.packing, layout.row_major, span);
-            drop(this);
             let result = self.nest(frame).await;
-            this = self.lowerer();
             result
         };
-        this.references_in_progress.remove(&block);
+        self.with(|this| this.references_in_progress.remove(&block))?;
         let structure = structure?;
         let resolved = Type {
             name: None,
@@ -170,20 +174,22 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
                 space,
             },
         };
-        match this.references.get(&(block, qualifiers)).copied() {
+        match self.with(|this| this.references.get(&(block, qualifiers)).copied())? {
             Some(pointer) => {
-                if this.module.types.get(&resolved).is_some() {
+                if self.with(|this| this.module.types.get(&resolved).is_some())? {
                     return Err(internal(span));
                 }
-                this.module
-                    .types
-                    .replace(pointer, resolved)
-                    .map_err(|_| internal(span))?;
+                self.with(|this| {
+                    this.module
+                        .types
+                        .replace(pointer, resolved)
+                        .map_err(|_| internal(span))
+                })??;
                 Ok(pointer)
             }
             None => {
-                let pointer = this.module.types.insert(resolved, span);
-                this.references.insert((block, qualifiers), pointer);
+                let pointer = self.with(|this| this.module.types.insert(resolved, span))?;
+                self.with(|this| this.references.insert((block, qualifiers), pointer))?;
                 Ok(pointer)
             }
         }
@@ -195,20 +201,21 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
         extra: PointerQualifiers,
         span: Span,
     ) -> Result<Handle<Type>> {
-        let mut this = self.lowerer();
         let plain = {
             let frame = self.clone().reference_type(block, span);
-            drop(this);
             let result = self.nest(frame).await;
-            this = self.lowerer();
             result
         }?;
-        let (space, qualifiers) = this.reference_space(block, span)?;
+        let (space, qualifiers) = self.with(|this| this.reference_space(block, span))??;
         let qualifiers = qualifiers | extra;
-        if let Some(&handle) = this.references.get(&(block, qualifiers)) {
+        if let Some(handle) =
+            self.with(|this| this.references.get(&(block, qualifiers)).copied())?
+        {
             return Ok(handle);
         }
-        let TypeInner::Pointer { base, .. } = this.module.types[plain].inner else {
+        let TypeInner::Pointer { base, .. } =
+            self.with(|this| this.module.types[plain].inner.clone())?
+        else {
             return Err(internal(span));
         };
         let AddressSpace::PhysicalStorage {
@@ -217,16 +224,18 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
         else {
             return Err(internal(span));
         };
-        let handle = this.insert_type(TypeInner::Pointer {
-            base,
-            space: AddressSpace::PhysicalStorage {
-                alignment,
-                access,
-                qualifiers,
-            },
-        });
-        this.references.insert((block, qualifiers), handle);
-        this.qualified_references.insert(handle, plain);
+        let handle = self.with(|this| {
+            this.insert_type(TypeInner::Pointer {
+                base,
+                space: AddressSpace::PhysicalStorage {
+                    alignment,
+                    access,
+                    qualifiers,
+                },
+            })
+        })?;
+        self.with(|this| this.references.insert((block, qualifiers), handle))?;
+        self.with(|this| this.qualified_references.insert(handle, plain))?;
         Ok(handle)
     }
 
@@ -238,18 +247,15 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
     ) -> Result<Handle<Type>> {
         let ty = &ty;
         let qualifiers = &qualifiers;
-        let this = self.lowerer();
         let extra = pointer_qualifiers(qualifiers);
         match ty.as_reference() {
             Some(block) if !extra.is_empty() => {
                 let frame = self.clone().qualified_reference_type(block, extra, span);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
             _ => {
                 let frame = self.clone().ir_type(ty.clone(), span);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
@@ -591,7 +597,6 @@ impl FunctionLowerer<'_, '_> {
     }
 }
 
-#[allow(clippy::await_holding_refcell_ref)]
 impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
     pub(super) async fn reference_construct(
         self,
@@ -599,28 +604,28 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         argument: &'b AstExpression,
         at: Span,
     ) -> Result<Handle<Expression>> {
-        let mut this = self.lowerer();
         let (value, from) = {
             let frame = self.clone().typed(argument);
-            drop(this);
             let result = self.nest(frame).await;
-            this = self.lowerer();
             result
         }?;
         if let Some(block) = ty.as_reference() {
-            let target = this.lw.reference_type(block, at)?;
-            return this.add(Expression::PhysicalPointer { value, ty: target }, at);
+            let target = self.with(|this| this.lw.reference_type(block, at))??;
+            return self
+                .with(|this| this.add(Expression::PhysicalPointer { value, ty: target }, at))?;
         }
         if !from.is_reference() {
             return Err(internal(at));
         }
         let split = !ty.is_scalar();
-        this.add(
-            Expression::PhysicalAddress {
-                pointer: value,
-                split,
-            },
-            at,
-        )
+        self.with(|this| {
+            this.add(
+                Expression::PhysicalAddress {
+                    pointer: value,
+                    split,
+                },
+                at,
+            )
+        })?
     }
 }
