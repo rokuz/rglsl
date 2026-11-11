@@ -1159,66 +1159,82 @@ impl<'a> FunctionLowerer<'_, 'a> {
     }
 
     pub(super) fn pure(&self, expression: &AstExpression) -> bool {
-        let mut pending = Vec::from([expression]);
-        while let Some(expression) = pending.pop() {
-            match expression.kind {
-                ExpressionKind::Variable(_)
-                | ExpressionKind::Number(_)
-                | ExpressionKind::Bool(_)
-                | ExpressionKind::String(_) => {}
-                ExpressionKind::Parenthesized(ref inner)
-                | ExpressionKind::FieldSelection {
-                    base: ref inner, ..
-                } => pending.push(inner),
-                ExpressionKind::Subscript {
-                    ref base,
-                    ref index,
-                } => {
-                    if self.constant_index(index).is_none() {
-                        return false;
-                    }
-                    pending.push(base);
-                }
-                ExpressionKind::FunctionCall(ref call) => {
-                    match self.lw.analysis.calls.get(&expression.id) {
-                        Some(&Callee::Constructor(_)) => pending.extend(call.arguments.iter()),
-                        Some(&Callee::Length) => match call.function.node {
-                            rglsl_ast::ast::FunctionIdentifier::Method { ref object, .. } => {
-                                pending.push(object);
-                            }
-                            _ => return false,
-                        },
-                        _ => return false,
-                    }
-                }
-                ExpressionKind::Unary {
-                    operator: AstUnary::Increment | AstUnary::Decrement,
-                    ..
-                }
-                | ExpressionKind::Postfix { .. }
-                | ExpressionKind::Assignment { .. } => return false,
-                ExpressionKind::Unary { ref operand, .. } => pending.push(operand),
-                ExpressionKind::Binary {
-                    ref left,
-                    ref right,
-                    ..
-                } => {
-                    pending.push(right);
-                    pending.push(left);
-                }
-                ExpressionKind::Conditional {
-                    ref condition,
-                    ref then_expression,
-                    ref else_expression,
-                } => {
-                    pending.push(else_expression);
-                    pending.push(then_expression);
-                    pending.push(condition);
-                }
-                ExpressionKind::Sequence(ref list) => pending.extend(list.iter()),
+        let mut pending = Vec::from([(expression, false)]);
+        while let Some((node, expanded)) = pending.pop() {
+            if self.purity.borrow().contains_key(&node.id) {
+                continue;
             }
+            let Some(children) = self.pure_children(node) else {
+                self.purity.borrow_mut().insert(node.id, false);
+                continue;
+            };
+            if expanded {
+                let purity = self.purity.borrow();
+                let pure = children
+                    .iter()
+                    .all(|child| purity.get(&child.id).copied().unwrap_or(false));
+                drop(purity);
+                self.purity.borrow_mut().insert(node.id, pure);
+                continue;
+            }
+            pending.push((node, true));
+            pending.extend(children.into_iter().map(|child| (child, false)));
         }
-        true
+        self.purity
+            .borrow()
+            .get(&expression.id)
+            .copied()
+            .unwrap_or(false)
+    }
+
+    fn pure_children<'e>(&self, expression: &'e AstExpression) -> Option<Vec<&'e AstExpression>> {
+        Some(match expression.kind {
+            ExpressionKind::Variable(_)
+            | ExpressionKind::Number(_)
+            | ExpressionKind::Bool(_)
+            | ExpressionKind::String(_) => Vec::new(),
+            ExpressionKind::Parenthesized(ref inner)
+            | ExpressionKind::FieldSelection {
+                base: ref inner, ..
+            } => Vec::from([&**inner]),
+            ExpressionKind::Subscript {
+                ref base,
+                ref index,
+            } => {
+                self.constant_index(index)?;
+                Vec::from([&**base])
+            }
+            ExpressionKind::FunctionCall(ref call) => {
+                match self.lw.analysis.calls.get(&expression.id) {
+                    Some(&Callee::Constructor(_)) => call.arguments.iter().collect(),
+                    Some(&Callee::Length) => match call.function.node {
+                        rglsl_ast::ast::FunctionIdentifier::Method { ref object, .. } => {
+                            Vec::from([&**object])
+                        }
+                        _ => return None,
+                    },
+                    _ => return None,
+                }
+            }
+            ExpressionKind::Unary {
+                operator: AstUnary::Increment | AstUnary::Decrement,
+                ..
+            }
+            | ExpressionKind::Postfix { .. }
+            | ExpressionKind::Assignment { .. } => return None,
+            ExpressionKind::Unary { ref operand, .. } => Vec::from([&**operand]),
+            ExpressionKind::Binary {
+                ref left,
+                ref right,
+                ..
+            } => Vec::from([&**left, &**right]),
+            ExpressionKind::Conditional {
+                ref condition,
+                ref then_expression,
+                ref else_expression,
+            } => Vec::from([&**condition, &**then_expression, &**else_expression]),
+            ExpressionKind::Sequence(ref list) => list.iter().collect(),
+        })
     }
 
     pub(super) fn compound_old(

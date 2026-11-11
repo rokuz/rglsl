@@ -178,7 +178,7 @@ impl FunctionLowerer<'_, '_> {
                     .map(|variable| variable.ty.clone())
                     .ok_or_else(|| internal(at))?;
                 let local = self.local(&ty, Some(declaration.name.node.clone()), at)?;
-                self.variables.insert(symbol, Local::Variable(local));
+                self.bind_variable(symbol, Local::Variable(local));
                 let value = self.initializer(&declaration.initializer, &ty)?;
                 let pointer = self.local_pointer(local, at)?;
                 self.push(IrStatement::Store { pointer, value }, at);
@@ -214,7 +214,7 @@ impl FunctionLowerer<'_, '_> {
                             shape(&variable.ty, &value.values, &self.lw.analysis.types).is_some()
                         })
                     {
-                        self.variables.insert(symbol, Local::Constant);
+                        self.bind_variable(symbol, Local::Constant);
                         continue;
                     }
                     let ty = variable.ty.clone();
@@ -233,7 +233,7 @@ impl FunctionLowerer<'_, '_> {
                     }
                     let ir = self.lw.variable_ir_type(&ty, &variable.qualifiers, at)?;
                     let local = self.local_typed(ir, Some(declarator.name.node.clone()), at);
-                    self.variables.insert(symbol, Local::Variable(local));
+                    self.bind_variable(symbol, Local::Variable(local));
                     if let Some(initializer) = declarator.initializer.as_ref().filter(|_| reachable)
                     {
                         let value = self.initializer(initializer, &ty)?;

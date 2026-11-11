@@ -33,6 +33,8 @@ pub(super) struct FunctionLowerer<'l, 'a> {
     pub emitter: Emitter,
     pub block: Block,
     pub variables: BTreeMap<SymbolId, Local>,
+    unflagged: Vec<SymbolId>,
+    pub purity: RefCell<BTreeMap<rglsl_ast::ast::NodeId, bool>>,
     pub specializing: bool,
     pub non_uniform: crate::NonUniformExpressions,
     pub precision: crate::PrecisionExpressions,
@@ -181,6 +183,8 @@ impl<'l, 'a> FunctionLowerer<'l, 'a> {
             emitter,
             block: Block::new(),
             variables: BTreeMap::new(),
+            unflagged: Vec::new(),
+            purity: RefCell::new(BTreeMap::new()),
             specializing: false,
             non_uniform: crate::NonUniformExpressions::default(),
             precision: crate::PrecisionExpressions::default(),
@@ -238,8 +242,8 @@ impl<'l, 'a> FunctionLowerer<'l, 'a> {
         let emitted = self.emitter.finish(&self.expressions);
         self.block.extend(emitted);
         let analysis = self.lw.analysis;
-        for (&symbol, local) in &self.variables {
-            let Local::Variable(handle) = *local else {
+        for symbol in core::mem::take(&mut self.unflagged) {
+            let Some(&Local::Variable(handle)) = self.variables.get(&symbol) else {
                 continue;
             };
             let relaxed_symbol = analysis
@@ -251,6 +255,11 @@ impl<'l, 'a> FunctionLowerer<'l, 'a> {
             }
         }
         self.emitter.start(&self.expressions);
+    }
+
+    pub(super) fn bind_variable(&mut self, symbol: SymbolId, local: Local) {
+        self.variables.insert(symbol, local);
+        self.unflagged.push(symbol);
     }
 
     pub(super) fn push(&mut self, statement: Statement, span: Span) {
@@ -583,7 +592,7 @@ impl<'a> Lowerer<'a> {
                 }
                 other => other,
             };
-            lowerer.variables.insert(symbol, local);
+            lowerer.bind_variable(symbol, local);
         }
         for initialization in initializers {
             let ty = lowerer
