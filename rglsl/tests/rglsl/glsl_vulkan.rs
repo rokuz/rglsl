@@ -526,6 +526,44 @@ fn automatic_bindings_match_glslang() {
 }
 
 #[test]
+fn discarded_results_keep_their_resources_live() {
+    let source = "#version 450
+        uniform textureBuffer tBuf;
+        uniform sampler s;
+        uniform samplerBuffer sBuf;
+        uniform utextureBuffer utBuf;
+        uniform itextureBuffer itBuf;
+        void main() {
+            texelFetch(samplerBuffer(tBuf, s), 13);
+            texelFetch(sBuf, 13);
+            texelFetch(tBuf, 13);
+            texelFetch(utBuf, 13);
+            texelFetch(itBuf, 13);
+        }";
+    let options = glsl::Options {
+        auto_map_bindings: true,
+        ..glsl::Options::from(ShaderStage::Vertex)
+    };
+    let module = glsl::Frontend::default().parse(&options, source).unwrap();
+    let mut bindings: Vec<(&str, u32)> = module
+        .global_variables
+        .iter()
+        .filter_map(|(_, global)| Some((global.name.as_deref()?, global.binding.as_ref()?.binding)))
+        .collect();
+    bindings.sort_unstable_by_key(|&(_, binding)| binding);
+    assert_eq!(
+        bindings,
+        [
+            ("tBuf", 0),
+            ("s", 1),
+            ("sBuf", 2),
+            ("utBuf", 3),
+            ("itBuf", 4)
+        ]
+    );
+}
+
+#[test]
 fn automatic_locations_skip_explicit_ones() {
     let source = "#version 450
         in vec4 i0;

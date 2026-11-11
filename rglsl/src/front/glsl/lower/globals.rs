@@ -2171,7 +2171,20 @@ impl<'a> Lowerer<'a> {
             return;
         }
         unbound.sort_by_key(|&(_, set)| set.is_none());
-        let live = crate::compact::live_global_variables(&self.module);
+        let mut live = crate::compact::live_global_variables(&self.module);
+        let functions = self
+            .module
+            .functions
+            .iter()
+            .map(|(_, function)| function)
+            .chain(self.module.entry_points.iter().map(|entry| &entry.function));
+        for function in functions {
+            for (_, expression) in function.expressions.iter() {
+                if let crate::Expression::GlobalVariable(global) = *expression {
+                    live.insert(global);
+                }
+            }
+        }
         let mut taken: alloc::collections::BTreeMap<u32, alloc::collections::BTreeSet<u32>> =
             alloc::collections::BTreeMap::new();
         for (_, global) in self.module.global_variables.iter() {
