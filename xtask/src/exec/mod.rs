@@ -32,29 +32,61 @@ use self::compare::{compare, Comparison};
 use self::harness::ShaderKind;
 use self::plan::{Inputs, Plan, Refusal, ScriptPaths};
 use self::reflect::Reflection;
-use self::remote::Remote;
+use self::remote::{Remote, RemoteSpec};
 use self::requirements::Need;
 use crate::oracles;
 use crate::process::{self, Exit};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum TargetId {
     Local,
-    Remote,
+    Remote(String),
 }
 
 impl TargetId {
-    pub const ALL: [Self; 2] = [Self::Local, Self::Remote];
-
-    pub const fn label(self) -> &'static str {
+    pub fn label(&self) -> &str {
         match self {
             Self::Local => "local",
-            Self::Remote => "remote",
+            Self::Remote(label) => label,
         }
     }
 
     pub fn parse(text: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|t| t.label() == text.trim())
+        let text = text.trim();
+        if text.is_empty() || text.contains(|c: char| c.is_whitespace() || c == '|') {
+            return None;
+        }
+        Some(if text == "local" {
+            Self::Local
+        } else {
+            Self::Remote(text.to_string())
+        })
+    }
+
+    pub const fn is_remote(&self) -> bool {
+        matches!(self, Self::Remote(_))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TargetSpec {
+    Local,
+    Remote(RemoteSpec),
+}
+
+impl TargetSpec {
+    pub fn describe(&self) -> String {
+        match self {
+            Self::Local => "local".into(),
+            Self::Remote(spec) => format!("remote {}", spec.entry()),
+        }
+    }
+
+    fn work_name(&self) -> String {
+        match self {
+            Self::Local => "local".into(),
+            Self::Remote(spec) => spec.work_name(),
+        }
     }
 }
 
@@ -228,26 +260,116 @@ struct Ready {
     twin: bool,
 }
 
-pub fn select_targets(local: bool, remote: bool) -> Vec<TargetId> {
+pub fn select_targets(local: bool, remote: bool) -> Result<Vec<TargetSpec>> {
     let mut targets = Vec::new();
     if local {
         if oracles::EXEC_PLATFORM {
-            targets.push(TargetId::Local);
+            targets.push(TargetSpec::Local);
         } else {
             eprintln!("[xtask] warning: the local exec target was skipped: KosmicKrisp runs on macOS on arm64 only");
         }
     }
     if remote {
-        if std::env::var(remote::HOST_VAR).is_ok_and(|h| !h.trim().is_empty()) {
-            targets.push(TargetId::Remote);
-        } else {
+        let specs = RemoteSpec::from_env()?;
+        if specs.is_empty() {
             eprintln!(
-                "[xtask] warning: the remote Windows exec target was skipped: set {} to the SSH host alias of a Windows machine with Vulkan (or pass --no-remote-exec)",
+                "[xtask] warning: the remote Windows exec targets were skipped: set {} to the SSH host aliases of Windows machines with Vulkan (or pass --no-remote-exec)",
                 remote::HOST_VAR
             );
         }
+        targets.extend(specs.into_iter().map(TargetSpec::Remote));
     }
-    targets
+    Ok(targets)
+}
+
+pub fn named_targets(name: &str) -> Result<Vec<TargetSpec>> {
+    let name = name.trim();
+    if name == "local" {
+        return select_targets(true, false);
+    }
+    let specs = RemoteSpec::from_env()?;
+    let chosen: Vec<TargetSpec> = specs
+        .iter()
+        .filter(|spec| name == "remote" || spec.matches(name))
+        .cloned()
+        .map(TargetSpec::Remote)
+        .collect();
+    if chosen.is_empty() {
+        let listed: Vec<String> = specs.iter().map(RemoteSpec::entry).collect();
+        bail!(
+            "unknown exec target `{name}`: use local, remote (every entry of {}) or one of its entries ({})",
+            remote::HOST_VAR,
+            if listed.is_empty() { "none set".to_string() } else { listed.join(", ") }
+        );
+    }
+    Ok(chosen)
+}
+
+pub fn open_executors(
+    specs: &[TargetSpec],
+    root: &Path,
+    glslang: &Path,
+    work: &Path,
+    timeout: Duration,
+) -> Result<Vec<Executor>> {
+    let opened = parallel_map(specs, |spec| {
+        Executor::new(spec, root, glslang, work, timeout)
+            .map_err(|error| error.context(format!("the {} exec target", spec.describe())))
+    });
+    let mut executors = opened.into_iter().collect::<Result<Vec<_>>>()?;
+    let devices: Vec<(TargetId, Device)> = executors
+        .iter()
+        .map(|e| (e.target.clone(), e.device.clone()))
+        .collect();
+    for (executor, label) in executors.iter_mut().zip(target_labels(&devices)) {
+        executor.target = label;
+    }
+    for (executor, spec) in executors.iter().zip(specs) {
+        eprintln!(
+            "[xtask] exec target `{}` ({}): {}",
+            executor.target.label(),
+            spec.describe(),
+            executor.describe()
+        );
+    }
+    Ok(executors)
+}
+
+pub fn target_labels(devices: &[(TargetId, Device)]) -> Vec<TargetId> {
+    let first: Vec<TargetId> = devices
+        .iter()
+        .map(|(target, device)| match target {
+            TargetId::Local => TargetId::Local,
+            TargetId::Remote(_) => TargetId::Remote(device.vendor()),
+        })
+        .collect();
+    let shared = |label: &TargetId| first.iter().filter(|l| *l == label).count() > 1;
+    let second: Vec<TargetId> = first
+        .iter()
+        .zip(devices)
+        .map(|(label, (_, device))| match label {
+            TargetId::Remote(_) if shared(label) => TargetId::Remote(remote::slug(&device.name)),
+            other => other.clone(),
+        })
+        .collect();
+    second
+        .iter()
+        .enumerate()
+        .map(|(index, label)| {
+            let earlier = second
+                .get(..index)
+                .unwrap_or_default()
+                .iter()
+                .filter(|l| *l == label)
+                .count();
+            match label {
+                TargetId::Remote(name) if earlier > 0 => {
+                    TargetId::Remote(format!("{name}-{}", earlier + 1))
+                }
+                other => other.clone(),
+            }
+        })
+        .collect()
 }
 
 pub fn amber_tool(root: &Path) -> Option<PathBuf> {
@@ -292,14 +414,14 @@ pub fn parallel_map<T: Sync, R: Send>(items: &[T], run: impl Fn(&T) -> R + Sync)
 
 impl Executor {
     pub fn new(
-        target: TargetId,
+        spec: &TargetSpec,
         root: &Path,
         glslang: &Path,
         work: &Path,
         timeout: Duration,
     ) -> Result<Self> {
-        let backend = match target {
-            TargetId::Local => {
+        let backend = match spec {
+            TargetSpec::Local => {
                 let (Some(binary), Some(icd)) = (amber_tool(root), icd_manifest(root)) else {
                     bail!("the local exec oracles (Amber, KosmicKrisp) are missing: run `cargo xtask oracles` or pass --no-exec");
                 };
@@ -309,15 +431,7 @@ impl Executor {
                     timeout,
                 })
             }
-            TargetId::Remote => {
-                let Some(remote) = Remote::from_env(timeout) else {
-                    bail!(
-                        "the remote target is not configured: set {}",
-                        remote::HOST_VAR
-                    );
-                };
-                Backend::Remote(remote)
-            }
+            TargetSpec::Remote(spec) => Backend::Remote(Remote::new(spec, timeout)),
         };
         let device = match &backend {
             Backend::Local(amber) => amber.device(),
@@ -326,10 +440,14 @@ impl Executor {
         .map_err(|error| {
             anyhow!(
                 "no Vulkan device through Amber on the {} target: {error}",
-                target.label()
+                spec.describe()
             )
         })?;
-        let work = work.join(target.label());
+        let target = match spec {
+            TargetSpec::Local => TargetId::Local,
+            TargetSpec::Remote(_) => TargetId::Remote(device.vendor()),
+        };
+        let work = work.join(spec.work_name());
         let _ = fs::remove_dir_all(&work);
         fs::create_dir_all(&work)?;
         let dump_shader = compile_glsl(
@@ -928,8 +1046,55 @@ mod tests {
 
     #[test]
     fn targets_have_stable_labels() {
-        assert_eq!(TargetId::parse("remote"), Some(TargetId::Remote));
+        assert_eq!(
+            TargetId::parse("nvidia"),
+            Some(TargetId::Remote("nvidia".into()))
+        );
         assert_eq!(TargetId::parse(" local"), Some(TargetId::Local));
-        assert_eq!(TargetId::parse("other"), None);
+        assert_eq!(TargetId::parse("a b"), None);
+        assert_eq!(TargetId::parse(""), None);
+    }
+
+    #[test]
+    fn remote_targets_are_named_after_their_gpu() {
+        let device = |name: &str, driver: &str| Device {
+            name: name.into(),
+            api_version: "1.4".into(),
+            driver: driver.into(),
+        };
+        let remote = || TargetId::Remote(String::new());
+        let labels = target_labels(&[
+            (TargetId::Local, device("Apple M4 Max", "KosmicKrisp")),
+            (
+                remote(),
+                device("AMD Radeon(TM) 8060S Graphics", "AMD proprietary driver"),
+            ),
+            (remote(), device("NVIDIA GeForce RTX 4090", "NVIDIA 617.14")),
+        ]);
+        let names: Vec<&str> = labels.iter().map(TargetId::label).collect();
+        assert_eq!(names, ["local", "amd", "nvidia"]);
+        let labels = target_labels(&[
+            (
+                remote(),
+                device("AMD Radeon(TM) 8060S Graphics", "AMD proprietary driver"),
+            ),
+            (
+                remote(),
+                device("AMD Radeon RX 9060 XT", "AMD proprietary driver"),
+            ),
+            (
+                remote(),
+                device("AMD Radeon RX 9060 XT", "AMD proprietary driver"),
+            ),
+        ]);
+        let names: Vec<&str> = labels.iter().map(TargetId::label).collect();
+        assert_eq!(
+            names,
+            [
+                "amd-radeon-tm-8060s-graphics",
+                "amd-radeon-rx-9060-xt",
+                "amd-radeon-rx-9060-xt-2"
+            ]
+        );
     }
 }

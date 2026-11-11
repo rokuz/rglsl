@@ -70,27 +70,44 @@ On other platforms `cargo xtask oracles` skips the exec oracles and `cargo xtask
 `--no-exec`. `RGLSL_AMBER` and `RGLSL_VK_ICD` select another Amber binary or driver manifest.
 Scripts, inputs and dumps of the last run are kept in `target/xtask/exec/<target>/<shader>/`.
 
-#### The remote Windows target
+#### Remote Windows targets
 
-A second exec target runs the same scripts on a real GPU: a Windows machine with a Vulkan
-driver, reached over SSH. Set `RGLSL_EXEC_REMOTE` to an SSH host alias of a Windows machine with
-Vulkan, configured in your `~/.ssh/config` with key authentication (`ssh -o BatchMode=yes ALIAS
-cmd` must work; the remote shell is `cmd.exe`). The machine needs Visual Studio with the C++
-tools (found with `vswhere`), the Vulkan SDK (`VULKAN_SDK`), Git and Python 3 on `PATH`.
+More exec targets run the same scripts on real GPUs: Windows machines with a Vulkan driver,
+reached over SSH. `RGLSL_EXEC_REMOTE` lists them, separated by commas: each entry is an SSH host
+alias configured in your `~/.ssh/config` with key authentication (`ssh -o BatchMode=yes ALIAS
+cmd` must work; the remote shell is `cmd.exe`), optionally followed by `@` and a device filter
+for a machine with several GPUs. Amber then runs on the first Vulkan device whose name contains
+the filter, ignoring case (its `--device-name` option; without a filter it takes the first device
+that supports the script). The device is chosen inside Amber because the Vulkan loader ignores
+`VK_DRIVER_FILES` and `VK_LOADER_DRIVERS_SELECT` in the elevated sessions an administrator gets
+over SSH. One machine may appear twice with different filters. Each machine needs Visual Studio
+with the C++ tools (found with `vswhere`), the Vulkan SDK (`VULKAN_SDK`), Git and Python 3 on
+`PATH`.
 
 ```sh
-export RGLSL_EXEC_REMOTE=my-windows-gpu    # your alias; never commit it
-cargo xtask oracles --remote               # clone and build the pinned Amber there, smoke check
-cargo xtask test                           # exec on both targets
+export RGLSL_EXEC_REMOTE=gpu-box,big-box@NVIDIA   # your aliases; never commit them
+cargo xtask oracles --remote               # clone and build the pinned Amber on every machine
+                                           # in parallel, then smoke check every target
+cargo xtask test                           # exec on the Mac and every remote target, in parallel
 cargo xtask test --no-remote-exec          # Mac only
+cargo xtask fuzz --shaders DIR --exec --exec-target big-box@NVIDIA   # one target
 ```
 
-Everything stays in one directory on that machine (`C:/rglsl-exec`, or
-`RGLSL_EXEC_REMOTE_DIR`): sources, build, and per-run batches that are deleted when a run
-ends. Nothing is installed system-wide. `RGLSL_EXEC_REMOTE_JOBS` bounds the Amber processes
-running there at once (default 4). When `RGLSL_EXEC_REMOTE` is not set, `cargo xtask test` and
-`cargo xtask fuzz --exec` warn that the remote target was skipped, and `PROGRESS.md` keeps its
-last remote results.
+Each target is named after the GPU it reports, never after the alias: `amd`, `nvidia`, `intel`,
+... from the device and driver names, or the GPU's full name (`amd-radeon-rx-9060-xt`) when two
+targets share a vendor. The name labels the target's column in `PROGRESS.md` (`exec nvidia`), in
+`target/xtask/results.tsv` (`exec_nvidia`, `exec_nvidia_note`) and in the terminal summary; the
+driver-bug lists in `xtask/exec-drivers/` apply by driver name.
+
+Everything stays in one directory on each machine (`C:/rglsl-exec`): sources, build, and per-run
+batches that are deleted when a run ends. Nothing is installed system-wide.
+`RGLSL_EXEC_REMOTE_DIR` changes that directory and `RGLSL_EXEC_REMOTE_JOBS` bounds the Amber
+processes running at once on a machine (default 4); both take one value for every machine or a
+comma-separated list of `alias=value` entries with an optional plain default, e.g.
+`RGLSL_EXEC_REMOTE_DIR=C:/rglsl-exec,gpu-box=D:/exec`. When `RGLSL_EXEC_REMOTE` is not set,
+`cargo xtask test` and `cargo xtask fuzz --exec` warn that the remote targets were skipped, and
+`PROGRESS.md` keeps their last results. A run that reaches at least one remote target replaces
+every remote column with the targets it ran.
 
 ## Command line
 

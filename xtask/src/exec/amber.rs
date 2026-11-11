@@ -21,6 +21,40 @@ pub struct Device {
     pub driver: String,
 }
 
+impl Device {
+    pub fn vendor(&self) -> String {
+        let text = format!("{} {}", self.name, self.driver).to_ascii_lowercase();
+        let words: Vec<&str> = text
+            .split(|c: char| !c.is_ascii_alphanumeric())
+            .filter(|w| !w.is_empty())
+            .collect();
+        let known = [
+            ("nvidia", "nvidia"),
+            ("geforce", "nvidia"),
+            ("amd", "amd"),
+            ("radeon", "amd"),
+            ("intel", "intel"),
+            ("arc", "intel"),
+            ("apple", "apple"),
+            ("qualcomm", "qualcomm"),
+            ("adreno", "qualcomm"),
+            ("llvmpipe", "llvmpipe"),
+            ("swiftshader", "swiftshader"),
+        ];
+        known
+            .iter()
+            .find(|(word, _)| words.contains(word))
+            .map_or_else(
+                || {
+                    words
+                        .first()
+                        .map_or_else(|| "gpu".to_string(), |w| (*w).to_string())
+                },
+                |(_, vendor)| (*vendor).to_string(),
+            )
+    }
+}
+
 impl Amber {
     fn command(&self) -> Command {
         let mut command = Command::new(&self.binary);
@@ -179,6 +213,7 @@ mod tests {
         assert_eq!(device.api_version, "1.4.354");
         assert_eq!(device.driver, "KosmicKrisp Mesa 26.2.1");
         assert!(parse_device("Summary: 0 pass").is_none());
+        assert_eq!(device.vendor(), "apple");
         Ok(())
     }
 }

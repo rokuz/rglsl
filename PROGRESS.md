@@ -166,7 +166,7 @@ Our own tests of the rglsl-specific linking rules (`tests/link`): imports, libra
 | `valid` | we produce SPIR-V and `spirv-val` accepts it | shaders we accept |
 | `interface` | reflection matches glslang | not implemented yet (M9) |
 | `exec local` | our module and glslang's, run by Amber on KosmicKrisp on the Mac with the same inputs, write the same buffers, images and color attachments | shaders both accept and that we could execute; skips are counted apart |
-| `exec remote` | the same on the remote Windows target (a real GPU and its Vulkan driver), driven over SSH | as for `exec local` |
+| `exec remote` | the same on each remote Windows target (a real GPU and its vendor's Vulkan driver), driven over SSH; the column is named after the GPU's vendor, or after the GPU when two targets share a vendor | as for `exec local` |
 | `link` | a group of files compiled and linked into one program gives glslang's verdict (accept, diag and valid as above, exec when the program has one stage); for our own tests, the verdict and the errors their `expect` file names | glslang's link tests (`gtests/Link.FromFile*.cpp`) in scope, and our tests in `tests/link` |
 
 `crashes` counts panics, aborts and timeouts of our compiler; each one is a bug.

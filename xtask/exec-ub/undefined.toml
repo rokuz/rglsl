@@ -45,3 +45,15 @@ twin = "uses 16×16 matrices and only the `gl_MatrixUseA` component types the AM
 ["spv.for-notest.vert"]
 undefined = "the loop has no condition and no exit, so the vertex shader never terminates and the draw has no result (the AMD driver crashes compiling it; Metal's compiler deletes the loop)"
 twin = "the loop body breaks after `r = 3`"
+
+["spv.halfBitsToInt16.frag"]
+undefined = "reads the outputs `o` and `u` before writing them: `o.xy +=`, `o.xyz +=` and `o +=` read the components `o.x` alone set, and the same for `u` (glslang's own module wrote different values on two runs on the NVIDIA target)"
+twin = "writes `o = ivec4(0)` and `u = uvec4(0)` first"
+
+["spv.longVectorFixedArrayLength.comp"]
+undefined = "stores `vals[3][11]`, an element of the uninitialized local array `vals` (only `vals[0]` is written; glslang's own module stored different values on two runs on the NVIDIA target)"
+twin = "also writes `vals[3] = vector<int, 12>(4)`"
+
+["spv.matrix.float16.frag"]
+undefined = "divides by zero: `f16mat3x4(x)` leaves the off-diagonal elements 0, so `sum34 /= matrixCompMult(m1, m2)` and `f / m1` divide by 0 (and by `src`, which may be 0 or overflow half precision); SPIR-V leaves the result undefined, and glslang's own module wrote infinities of different signs on two runs on the NVIDIA target"
+twin = "fills every element of `m1` and `m2` and takes every operand from `exp2(floor(clamp(src, -2.0, 2.0)))`, a power of two from 0.25 to 4, so no divisor is 0, nothing overflows half precision, and dividing equals multiplying by the reciprocal (glslang lowers `m / s` to `m * (1 / s)`, rglsl to a division per column, which rounds differently in half precision); drops the comments"

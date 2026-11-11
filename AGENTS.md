@@ -62,11 +62,14 @@ goal, the language rules for linkage and `#include`, and the milestones (M0–M9
   [UPSTREAM.md](UPSTREAM.md).
 - A change that moves corpus numbers must commit the regenerated `PROGRESS.md`
   (CI checks it is up to date).
-- **Exec on both targets.** The final gate of every change is a full `cargo xtask test` that
-  runs `exec` on both targets: KosmicKrisp on the Mac and the remote Windows target from
-  `RGLSL_EXEC_REMOTE` (an SSH host alias; see README). A run that warns that the remote target
-  was skipped is not a final gate. Never write host names, addresses or user names of the remote
-  machine into the repository.
+- **Exec on every target.** The final gate of every change is a full `cargo xtask test` that
+  runs `exec` on every target: KosmicKrisp on the Mac and each remote Windows target listed in
+  `RGLSL_EXEC_REMOTE` (comma-separated SSH host aliases, each with an optional `@device` filter;
+  see README). Today that is two Windows machines, one with an AMD GPU and one with an NVIDIA GPU
+  (`exec amd` and `exec nvidia` in `PROGRESS.md`). A run that warns that the remote targets were
+  skipped, or that reaches fewer targets than `PROGRESS.md` has columns, is not a final gate.
+  Never write host names, addresses or user names of the remote machines into the repository;
+  targets are named after their GPU vendor.
 
 ## Commands
 
@@ -78,10 +81,11 @@ cargo test --workspace --all-features
 cargo deny check
 
 cargo xtask oracles [--glslang-dir ../glslang]     # build pinned glslang + spirv-val
-RGLSL_EXEC_REMOTE=<alias> cargo xtask oracles --remote  # build the pinned Amber on the remote Windows target
-RGLSL_EXEC_REMOTE=<alias> cargo xtask test [--glslang-dir ../glslang]
+RGLSL_EXEC_REMOTE=<alias>,<alias>@<gpu> cargo xtask oracles --remote
+                                                   # build the pinned Amber on every remote target
+RGLSL_EXEC_REMOTE=<alias>,<alias>@<gpu> cargo xtask test [--glslang-dir ../glslang]
                                                    # final gate: corpus run with exec on the Mac and
-                                                   # the remote Windows target, rewrites PROGRESS.md
+                                                   # every remote Windows target, rewrites PROGRESS.md
 cargo xtask test --filter NAME --no-progress-file  # quick local check
 cargo xtask test --no-remote-exec | --no-local-exec | --no-exec   # per-target opt-outs (CI: --no-exec)
 ```

@@ -74,11 +74,13 @@ def transient(status):
 
 
 def run_job(settings, job):
-    amber, version, timeout, base, results = settings
+    amber, version, timeout, base, results, device = settings
     index, directory, script, dumps = job
     cwd = os.path.join(base, directory)
     dump = os.path.join(cwd, "batch-%s.dump.txt" % index)
     command = [amber, "-d", "-v", version, "-q"]
+    if device:
+        command += ["--device-name", device]
     if dumps:
         command += ["-b", dump]
         for name in dumps:
@@ -112,6 +114,7 @@ def read_manifest(path):
 
 def main():
     archive, workdir, manifest, output, amber, workers, timeout, version = sys.argv[1:9]
+    device = sys.argv[9] if len(sys.argv) > 9 else ""
     os.makedirs(workdir, exist_ok=True)
     with tarfile.open(archive) as tar:
         tar.extractall(workdir, filter="data")
@@ -119,7 +122,7 @@ def main():
     results = os.path.join(workdir, "results")
     os.makedirs(results, exist_ok=True)
     jobs = read_manifest(os.path.join(workdir, manifest))
-    settings = (amber, version, float(timeout), workdir, results)
+    settings = (amber, version, float(timeout), workdir, results, device)
     with concurrent.futures.ThreadPoolExecutor(max(1, int(workers))) as pool:
         list(pool.map(lambda job: run_job(settings, job), jobs))
     with tarfile.open(output, "w:gz") as tar:

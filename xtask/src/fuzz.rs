@@ -10,7 +10,7 @@ use std::time::Duration;
 use anyhow::{bail, Context, Result};
 
 use crate::corpus::STAGE_EXTENSIONS;
-use crate::exec::{self, Executor, TargetId};
+use crate::exec::{self, Executor, TargetId, TargetSpec};
 use crate::fuzz_exec::{self, Run, Staged};
 use crate::oracles;
 use crate::process::{self, Exit};
@@ -21,7 +21,7 @@ pub struct Options {
     pub shaders: PathBuf,
     pub jobs: Option<usize>,
     pub timeout_secs: u64,
-    pub exec: Vec<TargetId>,
+    pub exec: Vec<TargetSpec>,
     pub exec_glslang: bool,
 }
 
@@ -143,19 +143,21 @@ pub fn run(root: &Path, options: Options) -> Result<()> {
         .unwrap_or_else(PoisonError::into_inner);
     outcomes.sort_by(|a, b| a.shader.cmp(&b.shader));
 
-    let mut per_target = Vec::new();
-    for target in &options.exec {
-        let executor = Executor::new(*target, root, &glslang.path, &work.join("exec"), timeout)?;
-        eprintln!(
-            "[xtask] exec on the {} target: {}",
-            target.label(),
-            executor.describe()
-        );
-        per_target.push((
-            *target,
-            metamorphic(&executor, &outcomes, options.exec_glslang),
-        ));
-    }
+    let executors = exec::open_executors(
+        &options.exec,
+        root,
+        &glslang.path,
+        &work.join("exec"),
+        timeout,
+    )?;
+    let judgements = exec::parallel_map(&executors, |executor| {
+        metamorphic(executor, &outcomes, options.exec_glslang)
+    });
+    let per_target: Vec<(TargetId, Vec<Judgement>)> = executors
+        .iter()
+        .map(|executor| executor.target.clone())
+        .zip(judgements)
+        .collect();
     merge(&mut outcomes, &per_target);
 
     let report = work.join("report.tsv");
@@ -490,7 +492,7 @@ fn merge(outcomes: &mut [Outcome], per_target: &[(TargetId, Vec<Judgement>)]) {
                 judgements
                     .get(index)
                     .and_then(Option::as_ref)
-                    .map(|j| (*target, j))
+                    .map(|j| (target.clone(), j))
             })
             .collect();
         let Some((target, (verdict, note))) = verdicts.iter().max_by_key(|(_, (v, _))| *v) else {
