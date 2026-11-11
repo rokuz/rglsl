@@ -46,9 +46,8 @@ impl Block {
         }
     }
 
-    pub fn extend_block(&mut self, other: Self) {
-        self.span_info.extend(other.span_info);
-        self.body.extend(other.body);
+    pub fn extend_block(&mut self, mut other: Self) {
+        self.append(&mut other);
     }
 
     pub fn append(&mut self, other: &mut Self) {
@@ -61,13 +60,15 @@ impl Block {
         self.body.drain(range);
     }
 
-    pub fn splice<R: RangeBounds<usize> + Clone>(&mut self, range: R, other: Self) {
-        self.span_info.splice(range.clone(), other.span_info);
-        self.body.splice(range, other.body);
+    pub fn splice<R: RangeBounds<usize> + Clone>(&mut self, range: R, mut other: Self) {
+        self.span_info
+            .splice(range.clone(), core::mem::take(&mut other.span_info));
+        self.body.splice(range, core::mem::take(&mut other.body));
     }
 
-    pub fn span_into_iter(self) -> impl Iterator<Item = (Statement, Span)> {
-        let Block { body, span_info } = self;
+    pub fn span_into_iter(mut self) -> impl Iterator<Item = (Statement, Span)> {
+        let body = core::mem::take(&mut self.body);
+        let span_info = core::mem::take(&mut self.span_info);
         body.into_iter().zip(span_info)
     }
 
@@ -79,6 +80,26 @@ impl Block {
     pub fn span_iter_mut(&mut self) -> impl Iterator<Item = (&mut Statement, Option<&mut Span>)> {
         let span_iter = self.span_info.iter_mut().map(Some);
         self.body.iter_mut().zip(span_iter)
+    }
+
+    pub fn walk(&self) -> Walk<'_> {
+        Walk {
+            pending: Vec::from([self.body.iter()]),
+        }
+    }
+
+    pub fn visit_blocks_mut(&mut self, mut visit: impl FnMut(&mut Self)) {
+        let mut pending = Vec::from([self]);
+        while let Some(block) = pending.pop() {
+            visit(block);
+            for statement in block.body.iter_mut().rev() {
+                statement.push_child_blocks_mut(&mut pending);
+            }
+        }
+    }
+
+    pub fn span_at(&self, index: usize) -> Option<(&Statement, &Span)> {
+        self.body.get(index).zip(self.span_info.get(index))
     }
 
     pub const fn is_empty(&self) -> bool {
@@ -108,6 +129,66 @@ impl Block {
                     .into_iter()
                     .zip(source.child_blocks()),
             );
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Walk<'a> {
+    pending: Vec<core::slice::Iter<'a, Statement>>,
+}
+
+impl<'a> Iterator for Walk<'a> {
+    type Item = &'a Statement;
+
+    fn next(&mut self) -> Option<&'a Statement> {
+        loop {
+            let top = self.pending.last_mut()?;
+            let Some(statement) = top.next() else {
+                self.pending.pop();
+                continue;
+            };
+            match *statement {
+                Statement::Block(ref block) => self.pending.push(block.iter()),
+                Statement::If {
+                    ref accept,
+                    ref reject,
+                    ..
+                } => {
+                    self.pending.push(reject.iter());
+                    self.pending.push(accept.iter());
+                }
+                Statement::Switch { ref cases, .. } => self
+                    .pending
+                    .extend(cases.iter().rev().map(|case| case.body.iter())),
+                Statement::Loop {
+                    ref body,
+                    ref continuing,
+                    ..
+                } => {
+                    self.pending.push(continuing.iter());
+                    self.pending.push(body.iter());
+                }
+                _ => {}
+            }
+            return Some(statement);
+        }
+    }
+}
+
+impl Drop for Block {
+    fn drop(&mut self) {
+        if !self.body.iter().any(Statement::has_child_blocks) {
+            return;
+        }
+        let mut pending = Vec::new();
+        for statement in &mut self.body {
+            statement.take_child_blocks(&mut pending);
+        }
+        while let Some(mut block) = pending.pop() {
+            for statement in &mut block.body {
+                statement.take_child_blocks(&mut pending);
+            }
         }
     }
 }
@@ -163,6 +244,65 @@ impl Statement {
                 control,
             },
             _ => self.clone(),
+        }
+    }
+
+    const fn has_child_blocks(&self) -> bool {
+        matches!(
+            *self,
+            Self::Block(_) | Self::If { .. } | Self::Switch { .. } | Self::Loop { .. }
+        )
+    }
+
+    fn push_child_blocks_mut<'a>(&'a mut self, into: &mut Vec<&'a mut Block>) {
+        match *self {
+            Self::Block(ref mut block) => into.push(block),
+            Self::If {
+                ref mut accept,
+                ref mut reject,
+                ..
+            } => {
+                into.push(reject);
+                into.push(accept);
+            }
+            Self::Switch { ref mut cases, .. } => {
+                into.extend(cases.iter_mut().rev().map(|case| &mut case.body));
+            }
+            Self::Loop {
+                ref mut body,
+                ref mut continuing,
+                ..
+            } => {
+                into.push(continuing);
+                into.push(body);
+            }
+            _ => {}
+        }
+    }
+
+    fn take_child_blocks(&mut self, into: &mut Vec<Block>) {
+        match *self {
+            Self::Block(ref mut block) => into.push(core::mem::take(block)),
+            Self::If {
+                ref mut accept,
+                ref mut reject,
+                ..
+            } => {
+                into.push(core::mem::take(accept));
+                into.push(core::mem::take(reject));
+            }
+            Self::Switch { ref mut cases, .. } => {
+                into.extend(cases.iter_mut().map(|case| core::mem::take(&mut case.body)));
+            }
+            Self::Loop {
+                ref mut body,
+                ref mut continuing,
+                ..
+            } => {
+                into.push(core::mem::take(body));
+                into.push(core::mem::take(continuing));
+            }
+            _ => {}
         }
     }
 

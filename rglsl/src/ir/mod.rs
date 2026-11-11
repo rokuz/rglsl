@@ -235,7 +235,7 @@ use crate::arena::{Arena, Handle, Range, UniqueArena};
 use crate::diagnostic_filter::DiagnosticFilterNode;
 use crate::{FastIndexMap, NamedExpressions, NonUniformExpressions, PrecisionExpressions};
 
-pub use block::Block;
+pub use block::{Block, Walk};
 pub use rglsl_types::{ResourceBinding, ShaderStage};
 
 /// Explicitly allows early depth/stencil tests.
