@@ -429,6 +429,7 @@ pub enum StorageQualifier {
     SubgroupCoherent,
     ShaderCallCoherent,
     NonPrivate,
+    NonTemporal,
     ResourceHeap,
     SamplerHeap,
     RayPayloadNV,
@@ -451,7 +452,7 @@ pub enum StorageQualifier {
 }
 
 impl StorageQualifier {
-    pub const ALL: [Self; 42] = [
+    pub const ALL: [Self; 43] = [
         Self::Const,
         Self::In,
         Self::Out,
@@ -475,6 +476,7 @@ impl StorageQualifier {
         Self::SubgroupCoherent,
         Self::ShaderCallCoherent,
         Self::NonPrivate,
+        Self::NonTemporal,
         Self::ResourceHeap,
         Self::SamplerHeap,
         Self::RayPayloadNV,
@@ -521,6 +523,7 @@ impl StorageQualifier {
             Self::SubgroupCoherent => "subgroupcoherent",
             Self::ShaderCallCoherent => "shadercallcoherent",
             Self::NonPrivate => "nonprivate",
+            Self::NonTemporal => "nontemporal",
             Self::ResourceHeap => "resourceheap",
             Self::SamplerHeap => "samplerheap",
             Self::RayPayloadNV => "rayPayloadNV",

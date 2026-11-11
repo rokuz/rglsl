@@ -43,6 +43,7 @@ pub(super) fn global_qualifiers(decorations: crate::MemoryDecorations) -> Pointe
             PointerQualifiers::SHADER_CALL_COHERENT,
         ),
         (Md::NONPRIVATE, PointerQualifiers::NONPRIVATE),
+        (Md::NONTEMPORAL, PointerQualifiers::NONTEMPORAL),
     ]
     .into_iter()
     .filter(|&(decoration, _)| decorations.contains(decoration))
@@ -409,6 +410,11 @@ impl BlockContext<'_> {
         if volatile {
             mask |= spirv::ImageOperands::VOLATILE_TEXEL;
         }
+        if qualifiers.contains(PointerQualifiers::NONTEMPORAL)
+            && self.writer.lang_version() >= (1, 6)
+        {
+            mask |= spirv::ImageOperands::NONTEMPORAL;
+        }
         (mask, scope)
     }
 
@@ -466,6 +472,9 @@ impl BlockContext<'_> {
             }
             if volatile {
                 mask |= spirv::MemoryAccess::VOLATILE;
+            }
+            if visible && qualifiers.contains(PointerQualifiers::NONTEMPORAL) {
+                mask |= spirv::MemoryAccess::NONTEMPORAL;
             }
         }
         if alignment.is_some() {

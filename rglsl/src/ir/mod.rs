@@ -911,6 +911,7 @@ bitflags::bitflags! {
         const SHADER_CALL_COHERENT = 0x40;
         const VOLATILE = 0x80;
         const NONPRIVATE = 0x100;
+        const NONTEMPORAL = 0x200;
     }
 }
 
@@ -935,6 +936,7 @@ bitflags::bitflags! {
         const NONPRIVATE = 0x80;
         const NON_WRITABLE = 0x100;
         const NON_READABLE = 0x200;
+        const NONTEMPORAL = 0x400;
     }
 }
 

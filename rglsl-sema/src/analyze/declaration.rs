@@ -23,7 +23,7 @@ use crate::types::{
     ArraySize, BlockStorage, BlockType, Member, Opaque, Scalar, SpecializedSize, Type, TypeKind,
 };
 
-const IMAGE_FORMATS: [&str; 41] = [
+pub(crate) const IMAGE_FORMATS: [&str; 41] = [
     "rgba32f",
     "rgba16f",
     "rg32f",
@@ -380,6 +380,14 @@ impl Analyzer<'_> {
                     StorageQualifier::NonPrivate => {
                         self.require_scope_extension(single.span, storage.keyword());
                         result.nonprivate = true;
+                    }
+                    StorageQualifier::NonTemporal => {
+                        self.require_extension(
+                            single.span,
+                            "GL_EXT_nontemporal_keyword",
+                            storage.keyword(),
+                        );
+                        result.nontemporal = true;
                     }
                     StorageQualifier::ShaderCallCoherent => {
                         self.require_extension(
@@ -769,6 +777,7 @@ impl Analyzer<'_> {
                 qualifiers.subgroup_coherent |= block.subgroup_coherent;
                 qualifiers.shader_call_coherent |= block.shader_call_coherent;
                 qualifiers.nonprivate |= block.nonprivate;
+                qualifiers.nontemporal |= block.nontemporal;
                 qualifiers.writeonly |= block.writeonly;
                 qualifiers.per_primitive |= block.per_primitive;
                 qualifiers.per_view |= block.per_view;

@@ -107,7 +107,7 @@ const EXTENSION_ONLY: [&str; 8] = [
     "tileImageEXT",
 ];
 
-const EXTENSION_KEYWORDS: [&str; 106] = [
+const EXTENSION_KEYWORDS: [&str; 105] = [
     "terminateInvocation",
     "terminateRayEXT",
     "ignoreIntersectionEXT",
@@ -118,7 +118,6 @@ const EXTENSION_KEYWORDS: [&str; 106] = [
     "subgroupcoherent",
     "shadercallcoherent",
     "nonprivate",
-    "nontemporal",
     "i64image2DRect",
     "u64image2DRect",
     "floate2m1_t",

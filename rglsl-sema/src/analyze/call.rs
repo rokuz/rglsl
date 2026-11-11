@@ -507,6 +507,16 @@ impl Analyzer<'_> {
                 );
                 failed = true;
             }
+            if !is_builtin && !self.image_formats_match(operand, parameter) {
+                self.error(
+                    first_argument,
+                    DiagnosticKind::InvalidQualifier {
+                        qualifier: "format",
+                        reason: "image formats must match",
+                    },
+                );
+                failed = true;
+            }
             if parameter.direction.is_input() {
                 self.record_conversion(argument, &operand.ty, &parameter.ty);
             }
@@ -810,6 +820,32 @@ impl Analyzer<'_> {
         }
     }
 
+    fn image_formats_match(&self, operand: &Operand, parameter: &Parameter) -> bool {
+        if !operand
+            .ty
+            .as_opaque()
+            .is_some_and(crate::types::Opaque::is_image)
+        {
+            return true;
+        }
+        let format = |qualifiers: &crate::scope::Qualifiers| {
+            qualifiers
+                .layout
+                .iter()
+                .rev()
+                .find(|entry| super::declaration::IMAGE_FORMATS.contains(&entry.name.as_str()))
+                .map(|entry| entry.name.clone())
+        };
+        let argument = operand
+            .root
+            .and_then(|id| self.symbol(id))
+            .and_then(|symbol| symbol.variable())
+            .and_then(|variable| format(&variable.qualifiers));
+        let formal = format(&parameter.qualifiers);
+        argument == formal
+            || (parameter.qualifiers.writeonly && (argument.is_none() || formal.is_none()))
+    }
+
     fn keeps_memory_qualifiers(&self, operand: &Operand, parameter: &Parameter) -> bool {
         let Some(argument) = operand
             .root
@@ -823,6 +859,7 @@ impl Analyzer<'_> {
         (!argument.readonly || formal.readonly)
             && (!argument.writeonly || formal.writeonly)
             && (!argument.volatile || formal.volatile)
+            && (!argument.nontemporal || formal.nontemporal)
             && (!argument.coherent || formal.coherent)
     }
 

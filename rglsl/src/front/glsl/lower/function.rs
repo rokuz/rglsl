@@ -284,6 +284,25 @@ impl<'a> Lowerer<'a> {
             if ty.is_reference() {
                 return self.variable_ir_type(ty, qualifiers, span);
             }
+            if let Some(opaque) = ty
+                .as_opaque()
+                .filter(|opaque| opaque.kind == rglsl_sema::types::OpaqueKind::Image)
+            {
+                let format = super::globals::unknown_format(opaque.sampled);
+                let image = self.insert_type(TypeInner::Image {
+                    dim: super::types::image_dimension(opaque),
+                    arrayed: opaque.arrayed,
+                    class: crate::ImageClass::Storage {
+                        format,
+                        access: super::globals::image_access(qualifiers),
+                        multi: opaque.multisample,
+                    },
+                });
+                return Ok(match ty.outer_size() {
+                    None => image,
+                    Some(_) => return Err(unsupported("arrays of storage image parameters", span)),
+                });
+            }
         }
         self.ir_type_with(ty, depth, comparison, span)
     }

@@ -1349,7 +1349,11 @@ impl FunctionInfo {
                     result: _,
                 } => {
                     for &argument in arguments {
-                        let _ = self.add_ref(argument);
+                        let usage = match expression_arena[argument] {
+                            crate::Expression::GlobalVariable(_) => GlobalUse::QUERY,
+                            _ => GlobalUse::READ,
+                        };
+                        let _ = self.add_ref_impl(argument, usage);
                     }
                     let info = &other_functions[function.index()];
                     //Note: the result is validated by the Validator, not here

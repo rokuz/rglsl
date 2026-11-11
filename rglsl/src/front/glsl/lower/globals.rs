@@ -194,6 +194,7 @@ fn memory(qualifiers: &Qualifiers) -> MemoryDecorations {
             MemoryDecorations::SHADER_CALL_COHERENT,
         ),
         (qualifiers.nonprivate, MemoryDecorations::NONPRIVATE),
+        (qualifiers.nontemporal, MemoryDecorations::NONTEMPORAL),
     ] {
         if present {
             decorations |= decoration;
