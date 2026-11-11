@@ -580,6 +580,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "rglsl-link"
+version = "0.1.0"
+dependencies = [
+ "rglsl",
+ "ron",
+ "serde",
+ "thiserror",
+]
+
+[[package]]
 name = "rglsl-pp"
 version = "0.1.0"
 
@@ -624,6 +634,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "rglsl",
+ "rglsl-link",
  "rspirv",
  "serde_json",
  "spirv",

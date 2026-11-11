@@ -134,6 +134,26 @@ fn run(args: Vec<String>) -> Result<i32> {
                 Path::new(&out),
             ))
         }
+        "compile-group" => {
+            let spv = args.value("--spv")?.context("--spv is required")?;
+            let out_dir = args.value("--out-dir")?.context("--out-dir is required")?;
+            let auto_map_locations = args.flag("--auto-map-locations");
+            let auto_map_bindings = args.flag("--auto-map-bindings");
+            let mut inputs = Vec::new();
+            while let Some(input) = args.next_positional() {
+                inputs.push(input);
+            }
+            args.finish()?;
+            Ok(worker::compile_group(
+                &inputs,
+                &worker::GroupOptions {
+                    spv_version: &spv,
+                    auto_map_locations,
+                    auto_map_bindings,
+                    out_dir: Path::new(&out_dir),
+                },
+            ))
+        }
         "help" | "--help" | "-h" => {
             print!("{USAGE}");
             Ok(0)

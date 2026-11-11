@@ -155,6 +155,8 @@ pub enum VaryingError {
 pub enum EntryPointError {
     #[error("Multiple conflicting entry points")]
     Conflict,
+    #[error("an entry point cannot be an imported function")]
+    Import,
     #[error("Vertex shaders that return a value must return a position")]
     MissingVertexOutputPosition,
     #[error("Global variable {0:?} is used but is not in the entry point's interface")]

@@ -63,6 +63,7 @@ impl<I: Iterator<Item = u32>> super::Frontend<I> {
                 non_uniform: crate::NonUniformExpressions::default(),
                 body: crate::Block::new(),
                 diagnostic_filter_leaf: None,
+                linkage: crate::Linkage::Definition,
             }
         };
 
@@ -339,6 +340,7 @@ impl<I: Iterator<Item = u32>> super::Frontend<I> {
             non_uniform: crate::NonUniformExpressions::default(),
             body: crate::Block::new(),
             diagnostic_filter_leaf: None,
+            linkage: crate::Linkage::Definition,
         };
 
         // 1. copy the inputs from arguments to privates

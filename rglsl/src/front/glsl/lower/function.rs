@@ -262,6 +262,7 @@ impl<'l, 'a> FunctionLowerer<'l, 'a> {
             non_uniform: self.non_uniform,
             body,
             diagnostic_filter_leaf: None,
+            linkage: crate::Linkage::Definition,
         }
     }
 }
@@ -286,7 +287,7 @@ impl<'a> Lowerer<'a> {
         self.ir_type_with(ty, depth, comparison, span)
     }
 
-    fn signature(
+    pub(super) fn signature(
         &mut self,
         id: FunctionId,
         span: Span,

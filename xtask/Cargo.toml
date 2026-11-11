@@ -9,6 +9,7 @@ publish = false
 [dependencies]
 anyhow = { workspace = true, features = ["std"] }
 rglsl = { workspace = true, features = ["glsl-in", "spv-out"] }
+rglsl-link.workspace = true
 rspirv.workspace = true
 serde_json.workspace = true
 spirv.workspace = true

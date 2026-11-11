@@ -1,0 +1,27 @@
+[package]
+name = "rglsl-link"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+description = "Linker of rglsl object modules"
+repository.workspace = true
+keywords = ["shader", "SPIR-V", "GLSL"]
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+rglsl = { workspace = true, features = ["serialize", "deserialize"] }
+ron.workspace = true
+serde = { workspace = true, features = ["derive"] }
+thiserror.workspace = true
+
+[dev-dependencies]
+rglsl = { workspace = true, features = [
+    "glsl-in",
+    "spv-out",
+    "serialize",
+    "deserialize",
+] }
+
+[lints]
+workspace = true
