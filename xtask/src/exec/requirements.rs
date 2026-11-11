@@ -114,6 +114,9 @@ pub fn capability(capability: Capability) -> Requirement {
         C::GroupNonUniformClustered => needs![F("SubgroupSupportedOperations.clustered")],
         C::GroupNonUniformQuad => needs![F("SubgroupSupportedOperations.quad")],
         C::DrawParameters => needs![E("VK_KHR_shader_draw_parameters")],
+        C::ShaderViewportIndexLayerEXT => {
+            needs![E("VK_EXT_shader_viewport_index_layer"), F("multiViewport")]
+        }
         C::CooperativeMatrixKHR => needs![F("CooperativeMatrixFeaturesKHR.cooperativeMatrix")],
         C::LongVectorEXT => needs![F("ShaderLongVectorFeaturesEXT.longVector")],
         C::RayTracingKHR => Requirement::Needs(&RAY_TRACING),
@@ -196,6 +199,7 @@ pub fn extension(name: &str) -> bool {
             | "SPV_KHR_non_semantic_info"
             | "SPV_KHR_terminate_invocation"
             | "SPV_KHR_shader_draw_parameters"
+            | "SPV_EXT_shader_viewport_index_layer"
             | "SPV_KHR_physical_storage_buffer"
             | "SPV_KHR_float_controls"
             | "SPV_KHR_no_integer_wrap_decoration"

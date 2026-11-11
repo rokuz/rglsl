@@ -12,10 +12,10 @@ Shaders that glslang's own test suite (`gtests/*.FromFile.cpp`) compiles under V
 
 | Stage | Files | accept | diag | valid | interface | exec local | exec remote | link | crashes |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| **all** | 694 | 572 / 694 (82.4 %) | 124 / 143 (86.7 %) | 428 / 428 (100.0 %) | – | 107 / 108 (99.1 %) | 137 / 138 (99.3 %) | 12 / 12 (100.0 %) | 0 |
+| **all** | 694 | 572 / 694 (82.4 %) | 124 / 143 (86.7 %) | 428 / 428 (100.0 %) | – | 109 / 110 (99.1 %) | 139 / 140 (99.3 %) | 12 / 12 (100.0 %) | 0 |
 | vert | 68 | 54 / 68 (79.4 %) | 8 / 9 (88.9 %) | 45 / 45 (100.0 %) | – | 25 / 26 (96.2 %) | 28 / 29 (96.6 %) | 6 / 6 (100.0 %) | 0 |
 | tesc | 7 | 7 / 7 (100.0 %) | 1 / 1 (100.0 %) | 6 / 6 (100.0 %) | – | 2 / 2 (100.0 %) | 2 / 2 (100.0 %) | – | 0 |
-| tese | 4 | 4 / 4 (100.0 %) | – | 4 / 4 (100.0 %) | – | 1 / 1 (100.0 %) | 2 / 2 (100.0 %) | – | 0 |
+| tese | 4 | 4 / 4 (100.0 %) | – | 4 / 4 (100.0 %) | – | 3 / 3 (100.0 %) | 4 / 4 (100.0 %) | – | 0 |
 | geom | 4 | 4 / 4 (100.0 %) | – | 4 / 4 (100.0 %) | – | – | 3 / 3 (100.0 %) | – | 0 |
 | frag | 207 | 161 / 207 (77.8 %) | 28 / 33 (84.8 %) | 128 / 128 (100.0 %) | – | 46 / 46 (100.0 %) | 53 / 53 (100.0 %) | 4 / 4 (100.0 %) | 0 |
 | comp | 296 | 266 / 296 (89.9 %) | 66 / 75 (88.0 %) | 190 / 190 (100.0 %) | – | 33 / 33 (100.0 %) | 48 / 48 (100.0 %) | 2 / 2 (100.0 %) | 0 |
@@ -39,12 +39,12 @@ Shaders that glslang's own test suite (`gtests/*.FromFile.cpp`) compiles under V
 
 | | shaders |
 |---|---:|
-| executed | 108 |
-| passed | 107 |
+| executed | 110 |
+| passed | 109 |
 | passed within the float tolerance | 0 |
 | failed | 1 |
 | skipped: stage not executed by the harness | 31 |
-| skipped: capability or extension the harness cannot enable | 226 |
+| skipped: capability or extension the harness cannot enable | 224 |
 | skipped: device feature missing on the driver | 34 |
 | skipped: resource or interface the harness cannot bind | 14 |
 | skipped: glslang's module is not valid SPIR-V | 11 |
@@ -55,12 +55,12 @@ Shaders that glslang's own test suite (`gtests/*.FromFile.cpp`) compiles under V
 
 | | shaders |
 |---|---:|
-| executed | 138 |
-| passed | 137 |
+| executed | 140 |
+| passed | 139 |
 | passed within the float tolerance | 0 |
 | failed | 1 |
 | skipped: stage not executed by the harness | 31 |
-| skipped: capability or extension the harness cannot enable | 227 |
+| skipped: capability or extension the harness cannot enable | 225 |
 | skipped: resource or interface the harness cannot bind | 15 |
 | skipped: glslang's module is not valid SPIR-V | 11 |
 | skipped: glslang's module fails on the driver | 2 |
