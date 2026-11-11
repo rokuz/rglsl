@@ -10,7 +10,7 @@ use super::harness::{self, Attachment, ShaderKind, MAX_ATTACHMENTS, PATCH_VERTIC
 use super::mesh;
 use super::rays::{self, Geometry, RayPipeline, ShaderRef};
 use super::reflect::{
-    ImageType, Layout, Reflection, ResourceKind, Scalar, ScalarKind, Slot, Varying,
+    AddressBuffer, ImageType, Layout, Reflection, ResourceKind, Scalar, ScalarKind, Slot, Varying,
 };
 use super::requirements::{self, Need, Requirement};
 
@@ -72,6 +72,7 @@ pub struct Plan {
     pub rays: Option<RayPipeline>,
     pub harness_env: Option<&'static str>,
     pub notes: Vec<String>,
+    pub addresses: Vec<(String, u32)>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -198,6 +199,22 @@ fn texel_slots(info: &ImageFormatInfo, texels: u32) -> Vec<Slot> {
         }
     }
     slots
+}
+
+fn address_offsets(reflection: &Reflection, buffer: AddressBuffer) -> Vec<u32> {
+    reflection
+        .addresses
+        .iter()
+        .filter(|field| field.buffer == buffer)
+        .map(|field| field.offset)
+        .collect()
+}
+
+fn outside_addresses(slot: &Slot, offsets: &[u32]) -> bool {
+    let end = slot.offset.saturating_add(slot.scalar.bytes());
+    offsets
+        .iter()
+        .all(|offset| end <= *offset || slot.offset >= offset.saturating_add(8))
 }
 
 fn round_up(value: u32, multiple: u32) -> u32 {
@@ -352,6 +369,7 @@ impl Plan {
             rays: None,
             harness_env: None,
             notes: Vec::new(),
+            addresses: Vec::new(),
         };
         let mut rng = Rng::from_text(&inputs.seed);
         let invocations = reflection
@@ -387,6 +405,18 @@ impl Plan {
                 ),
             };
             let values = inputs.values.get(&(resource.set, resource.binding));
+            let addresses = |index: usize| {
+                address_offsets(
+                    reflection,
+                    AddressBuffer::Resource {
+                        set: resource.set,
+                        binding: resource.binding,
+                        element: resource
+                            .count
+                            .map(|_| u32::try_from(index).unwrap_or(u32::MAX)),
+                    },
+                )
+            };
             match &resource.kind {
                 ResourceKind::UniformBuffer(layout) => {
                     if layout.has_runtime_array() {
@@ -394,8 +424,9 @@ impl Plan {
                             "uniform buffer with a runtime array".into(),
                         ));
                     }
-                    for name in &names {
-                        let bytes = buffer_bytes(layout, 0, values, &mut rng);
+                    for (index, name) in names.iter().enumerate() {
+                        let mut bytes = buffer_bytes(layout, 0, values, &mut rng);
+                        plan.clear_addresses(name, &mut bytes, &addresses(index))?;
                         plan.add_buffer(name, bytes);
                     }
                     let _ = writeln!(plan.bindings, "  BIND {bind} {list} AS uniform {location}");
@@ -403,12 +434,15 @@ impl Plan {
                 ResourceKind::StorageBuffer { layout, writable } => {
                     let length = runtime_length(layout, invocations);
                     for (index, name) in names.iter().enumerate() {
-                        let bytes = buffer_bytes(layout, length, values, &mut rng);
+                        let mut bytes = buffer_bytes(layout, length, values, &mut rng);
+                        let offsets = addresses(index);
+                        plan.clear_addresses(name, &mut bytes, &offsets)?;
                         plan.add_buffer(name, bytes);
                         if *writable {
                             writes = true;
                             let mut slots = Vec::new();
                             layout.slots(0, length, &mut slots);
+                            slots.retain(|slot| outside_addresses(slot, &offsets));
                             plan.add_target(label("storage buffer", index), name, slots);
                         }
                     }
@@ -547,6 +581,11 @@ impl Plan {
             };
             let size = round_up(u32::try_from(bytes.len()).unwrap_or(0).max(4), 4);
             bytes.resize(usize::try_from(size).unwrap_or(4), 0);
+            plan.clear_addresses(
+                "push",
+                &mut bytes,
+                &address_offsets(reflection, AddressBuffer::PushConstants),
+            )?;
             plan.add_buffer("push", bytes);
             plan.bindings
                 .push_str("  BIND BUFFER push AS push_constant\n");
@@ -719,8 +758,18 @@ impl Plan {
                 plan.finish_with_fragment(&reflection.outputs);
             }
         }
+        if !plan.addresses.is_empty() && scene.is_none() {
+            scene = Some(Geometry::Triangles);
+        }
         if let Some(geometry) = scene {
             plan.declarations.push_str(&geometry.declarations());
+        }
+        for (name, offset) in &plan.addresses {
+            let _ = writeln!(
+                plan.declarations,
+                "ACCELERATION_STRUCTURE ADDRESS {} BUFFER {name} OFFSET {offset}",
+                rays::SCENE_TLAS
+            );
         }
         plan.add_attachment_targets();
         plan.needs = needs;
@@ -731,7 +780,7 @@ impl Plan {
         &mut self,
         reflection: &Reflection,
         rng: &mut Rng,
-    ) -> Result<Option<rays::ShaderRecord>, Refusal> {
+    ) -> Result<Option<String>, Refusal> {
         let Some(record) = &reflection.shader_record else {
             return Ok(None);
         };
@@ -746,20 +795,35 @@ impl Plan {
         let mut bytes = fill_random(layout, 0, rng);
         let size = round_up(u32::try_from(bytes.len()).unwrap_or(0).max(4), 4);
         bytes.resize(usize::try_from(size).unwrap_or(4), 0);
-        for offset in &reflection.record_addresses {
-            let start = usize::try_from(*offset).unwrap_or(usize::MAX);
-            if let Some(field) = start
-                .checked_add(8)
-                .and_then(|end| bytes.get_mut(start..end))
-            {
-                field.fill(0);
-            }
-        }
+        self.clear_addresses(
+            "rglsl_record",
+            &mut bytes,
+            &address_offsets(reflection, AddressBuffer::ShaderRecord),
+        )?;
         self.add_buffer("rglsl_record", bytes);
-        Ok(Some(rays::ShaderRecord {
-            buffer: "rglsl_record".into(),
-            addresses: reflection.record_addresses.clone(),
-        }))
+        Ok(Some("rglsl_record".into()))
+    }
+
+    fn clear_addresses(
+        &mut self,
+        name: &str,
+        bytes: &mut [u8],
+        offsets: &[u32],
+    ) -> Result<(), Refusal> {
+        for offset in offsets {
+            let field = usize::try_from(*offset)
+                .ok()
+                .and_then(|start| Some(start..start.checked_add(8)?))
+                .and_then(|range| bytes.get_mut(range))
+                .ok_or_else(|| {
+                    Refusal::Binding(format!(
+                        "acceleration structure address at offset {offset} outside buffer {name}"
+                    ))
+                })?;
+            field.fill(0);
+            self.addresses.push((name.to_string(), *offset));
+        }
+        Ok(())
     }
 
     fn start_with_vertex(&mut self, inputs: &[Varying], rng: &mut Rng) -> Result<(), Refusal> {
@@ -1021,7 +1085,7 @@ mod tests {
 
     use super::*;
     use crate::exec::reflect::{
-        DataType, Interpolation, RayVariable, Resource, Varying, VaryingType,
+        AddressField, DataType, Interpolation, RayVariable, Resource, Varying, VaryingType,
     };
 
     const F32: Scalar = Scalar {
@@ -1412,7 +1476,10 @@ mod tests {
                 ),
             ],
         }));
-        module.record_addresses = vec![8];
+        module.addresses = vec![AddressField {
+            buffer: AddressBuffer::ShaderRecord,
+            offset: 8,
+        }];
         let plan = Plan::new(&module, &Inputs::default()).unwrap();
         let record = plan
             .files
@@ -1427,9 +1494,94 @@ mod tests {
             dump: &dump,
             data: &data,
         });
+        assert!(script.contains("    g_raygen SHADER_RECORD rglsl_record\n"));
+        assert!(script
+            .contains("END\nACCELERATION_STRUCTURE ADDRESS tlas BUFFER rglsl_record OFFSET 8\n"));
+    }
+
+    #[test]
+    fn addresses_in_push_constants_and_buffers_hold_the_scene() {
+        let address = Layout::Vector {
+            scalar: U32,
+            count: 2,
+        };
+        let mut module = reflection(ExecutionModel::GLCompute);
+        module.capabilities.insert(spirv::Capability::RayQueryKHR);
+        module.push_constants = Some(Layout::Struct {
+            members: vec![(0, address.clone())],
+        });
+        module.resources.push(Resource {
+            set: 0,
+            binding: 2,
+            count: Some(2),
+            kind: ResourceKind::StorageBuffer {
+                layout: Layout::Struct {
+                    members: vec![(0, Layout::Scalar(U32)), (8, address)],
+                },
+                writable: true,
+            },
+        });
+        module.addresses = vec![
+            AddressField {
+                buffer: AddressBuffer::PushConstants,
+                offset: 0,
+            },
+            AddressField {
+                buffer: AddressBuffer::Resource {
+                    set: 0,
+                    binding: 2,
+                    element: Some(1),
+                },
+                offset: 8,
+            },
+        ];
+        let plan = Plan::new(&module, &Inputs::default()).unwrap();
+        let file = |name: &str| {
+            plan.files
+                .iter()
+                .find(|(file, _)| file == name)
+                .map(|(_, bytes)| bytes.clone())
+                .unwrap()
+        };
+        assert_eq!(file("push.bin")[0..8], [0; 8]);
+        assert_eq!(file("r0_2_1.bin")[8..16], [0; 8]);
+        assert_ne!(file("r0_2_0.bin")[8..16], [0; 8]);
+        let slots = |buffer: &str| {
+            plan.targets
+                .iter()
+                .find(|target| target.buffer == buffer)
+                .map(|target| {
+                    target
+                        .slots
+                        .iter()
+                        .map(|slot| slot.offset)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap()
+        };
+        assert_eq!(slots("r0_2_0"), [0, 8, 12]);
+        assert_eq!(slots("r0_2_1"), [0]);
+        let (tested, dump, data) = paths();
+        let script = plan.script(ScriptPaths {
+            tested: &tested,
+            harness: &[],
+            dump: &dump,
+            data: &data,
+        });
         assert!(script.contains(
-            "    g_raygen SHADER_RECORD rglsl_record ACCELERATION_STRUCTURE tlas OFFSET 8\n"
+            "ACCELERATION_STRUCTURE TOP_LEVEL tlas\n  BOTTOM_LEVEL_INSTANCE blas\n  END\nEND\n\
+             ACCELERATION_STRUCTURE ADDRESS tlas BUFFER r0_2_1 OFFSET 8\n\
+             ACCELERATION_STRUCTURE ADDRESS tlas BUFFER push OFFSET 0\nPIPELINE compute main\n"
         ));
+        assert!(!script.contains("BIND ACCELERATION_STRUCTURE"));
+
+        module.addresses[0].offset = 4;
+        assert_eq!(
+            Plan::new(&module, &Inputs::default()).unwrap_err(),
+            Refusal::Binding(
+                "acceleration structure address at offset 4 outside buffer push".into()
+            )
+        );
     }
 
     #[test]
