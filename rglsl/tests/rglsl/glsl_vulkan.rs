@@ -9663,3 +9663,91 @@ void main() {
         "{lengths:?}"
     );
 }
+
+fn block_shape(block: &rglsl::Block) -> (usize, usize) {
+    let mut deepest = 0;
+    let mut ifs = 0;
+    let mut pending = vec![(block, 0)];
+    while let Some((block, depth)) = pending.pop() {
+        deepest = deepest.max(depth);
+        for statement in block.iter() {
+            if matches!(*statement, rglsl::Statement::If { .. }) {
+                ifs += 1;
+            }
+            pending.extend(
+                statement
+                    .child_blocks()
+                    .into_iter()
+                    .map(|child| (child, depth + 1)),
+            );
+        }
+    }
+    (deepest, ifs)
+}
+
+fn left_operands(function: &rglsl::Function, root: rglsl::Handle<rglsl::Expression>) -> usize {
+    let mut count = 0;
+    let mut current = root;
+    while let rglsl::Expression::Binary {
+        op: rglsl::BinaryOperator::Subtract,
+        left,
+        ..
+    } = function.expressions[current]
+    {
+        count += 1;
+        current = left;
+    }
+    count
+}
+
+#[test]
+fn long_chains_lower_in_order_to_flat_control_flow() {
+    let links = 2000;
+    let shader = |body: &str| {
+        format!(
+            "#version 450\nlayout(location = 0) flat in int dynamic;\n\
+             layout(location = 0) out int result;\n\
+             void main() {{ int b = dynamic; bool t = b > 1; {body} }}\n"
+        )
+    };
+    let main = |body: &str| {
+        let module = parse(ShaderStage::Fragment, &shader(body)).unwrap();
+        module.entry_points[0].function.clone()
+    };
+
+    let function = main(&format!("result = b{};", " - 1".repeat(links)));
+    let stored = function
+        .body
+        .iter()
+        .filter_map(|statement| match *statement {
+            rglsl::Statement::Store { value, .. } => Some(value),
+            _ => None,
+        })
+        .map(|value| left_operands(&function, value))
+        .max();
+    assert_eq!(stored, Some(links));
+
+    let function = main(&format!(
+        "t = t{}; result = int(t);",
+        " && (b++ > 0) || (b-- < 9)".repeat(links / 2)
+    ));
+    let base = block_shape(&main("result = b;").body).0;
+    assert_eq!(block_shape(&function.body), (base + 2, links));
+
+    let function = main(&format!("result = {}b;", "b > 2 ? b++ : ".repeat(links)));
+    let (depth, ifs) = block_shape(&function.body);
+    assert!(depth <= base + 2, "{depth}");
+    assert!(ifs >= 2 * links - 1, "{ifs}");
+
+    let function = main(&format!("result = {}b;", "t ? b : ".repeat(links)));
+    assert_eq!(block_shape(&function.body), (base, 0));
+    let selects = function
+        .expressions
+        .iter()
+        .filter(|(_, expression)| matches!(expression, rglsl::Expression::Select { .. }))
+        .count();
+    assert_eq!(selects, links);
+
+    let function = main("result = t ? b++ : b > 2 ? b-- : 7;");
+    assert_eq!(block_shape(&function.body).0, base + 2);
+}

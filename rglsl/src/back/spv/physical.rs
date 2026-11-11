@@ -549,6 +549,15 @@ impl BlockContext<'_> {
     }
 
     pub(super) fn loaded_by_swizzle(&self, load: Handle<Expression>) -> bool {
+        let Expression::Load { pointer } = self.ir_function.expressions[load] else {
+            return false;
+        };
+        if !matches!(
+            self.physical_space(pointer),
+            Some(AddressSpace::PhysicalStorage { .. })
+        ) {
+            return false;
+        }
         self.ir_function
             .expressions
             .iter()

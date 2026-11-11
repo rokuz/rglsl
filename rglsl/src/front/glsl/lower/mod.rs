@@ -17,6 +17,7 @@ mod prepass;
 mod ray;
 mod reference;
 mod specialization;
+mod spine;
 mod stage;
 mod statement;
 mod subgroup;
