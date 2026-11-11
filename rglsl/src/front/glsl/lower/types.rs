@@ -33,6 +33,11 @@ pub(super) const fn scalar(scalar: GlslScalar) -> Scalar {
         GlslScalar::BFloat16 => Scalar::BF16,
         GlslScalar::FloatE4M3 => Scalar::FE4M3,
         GlslScalar::FloatE5M2 => Scalar::FE5M2,
+        GlslScalar::FloatE2M1 => Scalar::FE2M1,
+        GlslScalar::FloatE3M2 => Scalar::FE3M2,
+        GlslScalar::FloatE2M3 => Scalar::FE2M3,
+        GlslScalar::FloatUE8M0 => Scalar::FUE8M0,
+        GlslScalar::FloatMXINT8 => Scalar::FMXINT8,
     }
 }
 

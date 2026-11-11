@@ -722,10 +722,15 @@ pub enum ScalarType {
     BFloat16,
     FloatE4M3,
     FloatE5M2,
+    FloatE2M1,
+    FloatE3M2,
+    FloatE2M3,
+    FloatUE8M0,
+    FloatMXINT8,
 }
 
 impl ScalarType {
-    pub const ALL: [Self; 15] = [
+    pub const ALL: [Self; 20] = [
         Self::Bool,
         Self::Int,
         Self::Uint,
@@ -741,6 +746,11 @@ impl ScalarType {
         Self::BFloat16,
         Self::FloatE4M3,
         Self::FloatE5M2,
+        Self::FloatE2M1,
+        Self::FloatE3M2,
+        Self::FloatE2M3,
+        Self::FloatUE8M0,
+        Self::FloatMXINT8,
     ];
 
     pub const fn keyword(self) -> &'static str {
@@ -760,6 +770,11 @@ impl ScalarType {
             Self::BFloat16 => "bfloat16_t",
             Self::FloatE4M3 => "floate4m3_t",
             Self::FloatE5M2 => "floate5m2_t",
+            Self::FloatE2M1 => "floate2m1_t",
+            Self::FloatE3M2 => "floate3m2_t",
+            Self::FloatE2M3 => "floate2m3_t",
+            Self::FloatUE8M0 => "floatue8m0_t",
+            Self::FloatMXINT8 => "floatmxint8_t",
         }
     }
 
@@ -780,6 +795,11 @@ impl ScalarType {
             Self::BFloat16 => "bf16vec",
             Self::FloatE4M3 => "fe4m3vec",
             Self::FloatE5M2 => "fe5m2vec",
+            Self::FloatE2M1 => "fe2m1vec",
+            Self::FloatE3M2 => "fe3m2vec",
+            Self::FloatE2M3 => "fe2m3vec",
+            Self::FloatUE8M0 => "fue8m0vec",
+            Self::FloatMXINT8 => "fmxint8vec",
         }
     }
 
@@ -1029,6 +1049,32 @@ pub enum NumericKind {
     Int64,
     Uint64,
     Float16,
+    FloatE2M1,
+    FloatE3M2,
+    FloatE2M3,
+    FloatUE8M0,
+    FloatMXINT8,
+}
+
+impl NumericKind {
+    pub const fn microscaling_suffix(self) -> Option<&'static str> {
+        match self {
+            Self::FloatE2M1 => Some("fe2m1"),
+            Self::FloatE3M2 => Some("fe3m2"),
+            Self::FloatE2M3 => Some("fe2m3"),
+            Self::FloatUE8M0 => Some("fue8m0"),
+            Self::FloatMXINT8 => Some("fmxint8"),
+            Self::Int
+            | Self::Uint
+            | Self::Float
+            | Self::Double
+            | Self::Int16
+            | Self::Uint16
+            | Self::Int64
+            | Self::Uint64
+            | Self::Float16 => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1039,6 +1085,10 @@ pub struct NumericLiteral {
 
 impl NumericLiteral {
     pub fn suffix(&self) -> &str {
+        if let Some(suffix) = self.kind.microscaling_suffix() {
+            let split = self.text.len().saturating_sub(suffix.len());
+            return self.text.get(split..).unwrap_or("");
+        }
         let letters: &[char] = match self.kind {
             NumericKind::Float | NumericKind::Double | NumericKind::Float16 => {
                 &['f', 'F', 'h', 'H', 'l', 'L']

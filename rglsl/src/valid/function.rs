@@ -1199,6 +1199,7 @@ impl super::Validator {
                             | Ex::ImageSample { .. }
                             | Ex::ImageProcessing { .. }
                             | Ex::ArrayConversion { .. }
+                            | Ex::Bitcast { .. }
                             | Ex::ImageLoad { .. }
                             | Ex::ImageQuery { .. }
                             | Ex::ImageSparseResident { .. }

@@ -2297,6 +2297,9 @@ impl Writer {
                 instruction.add_operand(encoding as u32);
                 Some(instruction)
             }
+            Sk::FloatE2M1 | Sk::FloatE3M2 | Sk::FloatE2M3 | Sk::FloatUE8M0 | Sk::FloatMXINT8 => {
+                self.microscaling_type(id, scalar)
+            }
             Sk::AbstractInt | Sk::AbstractFloat => None,
         }
     }
@@ -3307,7 +3310,13 @@ impl Writer {
                 Instruction::constant_16bit(type_id, id, low as u32)
             }
             crate::Literal::BF16(value) => Instruction::constant_16bit(type_id, id, value as u32),
-            crate::Literal::FE4M3(value) | crate::Literal::FE5M2(value) => {
+            crate::Literal::FE4M3(value)
+            | crate::Literal::FE5M2(value)
+            | crate::Literal::FE2M1(value)
+            | crate::Literal::FE3M2(value)
+            | crate::Literal::FE2M3(value)
+            | crate::Literal::FUE8M0(value)
+            | crate::Literal::FMXINT8(value) => {
                 Instruction::constant_16bit(type_id, id, value as u32)
             }
             crate::Literal::U8(value) => Instruction::constant_16bit(type_id, id, value as u32),
@@ -4329,7 +4338,15 @@ impl Writer {
                         crate::TypeInner::Scalar(scalar)
                         | crate::TypeInner::Vector { scalar, .. } => match scalar.kind {
                             Sk::Uint | Sk::Sint | Sk::Bool => true,
-                            Sk::Float | Sk::BFloat | Sk::FloatE4M3 | Sk::FloatE5M2 => false,
+                            Sk::Float
+                            | Sk::BFloat
+                            | Sk::FloatE4M3
+                            | Sk::FloatE5M2
+                            | Sk::FloatE2M1
+                            | Sk::FloatE3M2
+                            | Sk::FloatE2M3
+                            | Sk::FloatUE8M0
+                            | Sk::FloatMXINT8 => false,
                             Sk::AbstractInt | Sk::AbstractFloat => {
                                 return Err(Error::Validation(
                                     "Abstract types should not appear in IR presented to backends",

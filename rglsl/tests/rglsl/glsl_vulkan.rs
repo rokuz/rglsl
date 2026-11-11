@@ -8227,3 +8227,69 @@ fn reconvergence_attributes_become_execution_modes() {
         assert_eq!(extensions_of(&module), [spv_extension]);
     }
 }
+
+fn microscaling_words(source: &str) -> Vec<u32> {
+    let module = parse(ShaderStage::Compute, source).unwrap_or_else(|e| panic!("{e}"));
+    let info = Validator::new(ValidationFlags::all(), Capabilities::all())
+        .validate(&module)
+        .expect("validated in parse");
+    let options = spv::Options {
+        lang_version: (1, 6),
+        flags: spv::WriterFlags::DEBUG | spv::WriterFlags::SMALL_TYPE_CAPABILITIES_BY_USE,
+        ..spv::Options::default()
+    };
+    let words = spv::write_vec(&module, &info, &options, None).expect("SPIR-V backend failed");
+    crate::stage_io::spirv_val_in(&words, &["--target-env", "vulkan1.3"]);
+    words
+}
+
+#[test]
+fn microscaling_types_match_glslang() {
+    let words = microscaling_words(
+        "#version 450
+        #extension GL_EXT_float_e2m1 : require
+        #extension GL_EXT_float_e3m2 : require
+        #extension GL_EXT_float_ue8m0 : require
+        #extension GL_EXT_float_mxint8 : require
+        #extension GL_EXT_shader_explicit_arithmetic_types : enable
+        layout(local_size_x = 1) in;
+        layout(std430, binding = 0) buffer B { uint8_t packed; floatue8m0_t scale; floatmxint8_t m; float f; };
+        void main() {
+            fe2m1vec2 pair = fe2m1vec2(10.fe2m1, floate2m1_t(-0.5));
+            packed = packFloat2xfe2m1EXT(pair);
+            floate3m2_t six = bitcastExtractfe3m2EXT(packed, 1u);
+            scale = floatue8m0_t(10.0);
+            m = floatmxint8_t(-1.0);
+            f = float(six) + float(pair.x);
+        }",
+    );
+    let instructions = raw_instructions(&words);
+    let mut floats: Vec<Vec<u32>> = instructions
+        .iter()
+        .filter(|(op, operands)| *op == Op::TypeFloat as u32 && operands.len() == 3)
+        .map(|(_, operands)| operands[1..].to_vec())
+        .collect();
+    floats.sort();
+    assert_eq!(floats, [[4, 4225], [6, 4224], [8, 4226], [8, 4227]]);
+    let capabilities: Vec<u32> = instructions
+        .iter()
+        .filter(|(op, _)| *op == Op::Capability as u32)
+        .map(|(_, operands)| operands[0])
+        .collect();
+    for capability in [4228, 4229, 4230, 4231, 4232] {
+        assert!(capabilities.contains(&capability), "{capability}");
+    }
+    let constants: Vec<u32> = instructions
+        .iter()
+        .filter(|(op, operands)| *op == Op::Constant as u32 && operands.len() == 3)
+        .map(|(_, operands)| operands[2])
+        .collect();
+    for value in [7, 9, 130, 192] {
+        assert!(constants.contains(&value), "{value} in {constants:?}");
+    }
+    assert_eq!(instructions.iter().filter(|(op, _)| *op == 4195).count(), 1);
+    assert!(instructions
+        .iter()
+        .any(|(op, operands)| *op == Op::Extension as u32
+            && operands.first() == Some(&u32::from_le_bytes(*b"SPV_"))));
+}

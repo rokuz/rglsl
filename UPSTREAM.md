@@ -603,6 +603,15 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   `SubgroupUniformControlFlowKHR` and `MaximallyReconvergesKHR` execution modes. As in glslang,
   the two reconvergence attributes apply to the compilation unit, whichever function carries
   them; the linker keeps the entry unit's.
+- **OCP microscaling types** (`docs/design/cooperative.md`). Scalar kinds
+  `ScalarKind::{FloatE2M1, FloatE3M2, FloatE2M3, FloatUE8M0, FloatMXINT8}` with
+  `Literal::{FE2M1, FE3M2, FE2M3, FUE8M0, FMXINT8}` (the bits) and `Scalar::{FE2M1, FE3M2, FE2M3,
+  FUE8M0, FMXINT8}`; their `width` is one byte, `Scalar::bit_width` gives the 4 or 6 bits of
+  the sub-byte ones. `ScalarKind::is_encoded_float` and `is_any_float` name the float kinds.
+  `Expression::Bitcast { expr, ty, offset }` reinterprets bits across shapes: without an offset
+  `ty` has the bit size of `expr` (`OpBitcast`), with one it is `OpBitcastExtractEXT`. The
+  backend writes the types, capabilities and `SPV_EXT_ocp_microscaling_types` in
+  `back/spv/microscaling.rs`, with raw enumerant values the `spirv` crate lacks.
 
 ## Cherry-picked upstream commits
 

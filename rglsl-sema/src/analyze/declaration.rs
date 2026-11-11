@@ -914,6 +914,29 @@ impl Analyzer<'_> {
             return;
         }
         let stage = self.options.stage;
+        if matches!(qualifiers.storage, Storage::In | Storage::Out)
+            && ty.contains_scalar_where(&self.types, Scalar::is_microscaling)
+        {
+            self.error(
+                span,
+                invalid("in/out", "microscaling types not allowed as input/output"),
+            );
+            return;
+        }
+        if matches!(
+            qualifiers.storage,
+            Storage::Uniform | Storage::Buffer | Storage::Shared
+        ) && ty.contains_scalar_where(&self.types, Scalar::is_sub_byte)
+        {
+            self.error(
+                span,
+                invalid(
+                    "storage class",
+                    "sub-byte sized types not allowed in storage class",
+                ),
+            );
+            return;
+        }
         if matches!(qualifiers.storage, Storage::In | Storage::Out) {
             let bfloat = ty.contains_scalar(&self.types, Scalar::BFloat16);
             let float8 = ty.contains_scalar(&self.types, Scalar::FloatE4M3)
@@ -1645,6 +1668,24 @@ impl Analyzer<'_> {
             );
         }
         let members = self.struct_members(&structure.members, Some(&qualifiers));
+        let declarators = structure
+            .members
+            .iter()
+            .flat_map(|declaration| &declaration.declarators);
+        for (declarator, member) in declarators.zip(&members) {
+            if member
+                .ty
+                .contains_scalar_where(&self.types, Scalar::is_sub_byte)
+            {
+                self.error(
+                    declarator.name.span,
+                    DiagnosticKind::InvalidBlock {
+                        name: member.name.clone(),
+                        reason: "member of block cannot be or contain a sub-byte type",
+                    },
+                );
+            }
+        }
         let dimensions = instance
             .map(|instance| self.array_sizes(instance.array.as_ref()))
             .unwrap_or_default();

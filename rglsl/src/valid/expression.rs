@@ -145,6 +145,8 @@ pub enum ExpressionError {
     InvalidImageProcessing(crate::ImageProcessingOperation, &'static str),
     #[error("Array conversion {0:?} is invalid: {1}")]
     InvalidArrayConversion(crate::ArrayConversion, &'static str),
+    #[error("Bitcast is invalid: {0}")]
+    InvalidBitcast(&'static str),
     #[error("Sample level (exact) type {0:?} has an invalid type")]
     InvalidSampleLevelExactType(Handle<crate::Expression>),
     #[error("Sample level (bias) type {0:?} is not a scalar float")]
@@ -1123,7 +1125,12 @@ impl super::Validator {
                             | Sk::AbstractFloat
                             | Sk::BFloat
                             | Sk::FloatE4M3
-                            | Sk::FloatE5M2 => false,
+                            | Sk::FloatE5M2
+                            | Sk::FloatE2M1
+                            | Sk::FloatE3M2
+                            | Sk::FloatE2M3
+                            | Sk::FloatUE8M0
+                            | Sk::FloatMXINT8 => false,
                         },
                         Ti::Matrix { .. } | Ti::CooperativeMatrix { .. } => {
                             left_inner == right_inner
@@ -1138,7 +1145,12 @@ impl super::Validator {
                             | Sk::AbstractFloat
                             | Sk::BFloat
                             | Sk::FloatE4M3
-                            | Sk::FloatE5M2 => false,
+                            | Sk::FloatE5M2
+                            | Sk::FloatE2M1
+                            | Sk::FloatE3M2
+                            | Sk::FloatE2M3
+                            | Sk::FloatUE8M0
+                            | Sk::FloatMXINT8 => false,
                         },
                         _ => false,
                     },
@@ -1151,7 +1163,12 @@ impl super::Validator {
                                 | Sk::AbstractFloat
                                 | Sk::BFloat
                                 | Sk::FloatE4M3
-                                | Sk::FloatE5M2,
+                                | Sk::FloatE5M2
+                                | Sk::FloatE2M1
+                                | Sk::FloatE3M2
+                                | Sk::FloatE2M3
+                                | Sk::FloatUE8M0
+                                | Sk::FloatMXINT8,
                             )
                             | None => false,
                         };
@@ -1241,7 +1258,12 @@ impl super::Validator {
                                 | Sk::AbstractFloat
                                 | Sk::BFloat
                                 | Sk::FloatE4M3
-                                | Sk::FloatE5M2 => false,
+                                | Sk::FloatE5M2
+                                | Sk::FloatE2M1
+                                | Sk::FloatE3M2
+                                | Sk::FloatE2M3
+                                | Sk::FloatUE8M0
+                                | Sk::FloatMXINT8 => false,
                             },
                             ref other => {
                                 log::debug!("Op {op:?} left type {other:?}");
@@ -1268,7 +1290,12 @@ impl super::Validator {
                             | Sk::AbstractFloat
                             | Sk::BFloat
                             | Sk::FloatE4M3
-                            | Sk::FloatE5M2 => false,
+                            | Sk::FloatE5M2
+                            | Sk::FloatE2M1
+                            | Sk::FloatE3M2
+                            | Sk::FloatE2M3
+                            | Sk::FloatUE8M0
+                            | Sk::FloatMXINT8 => false,
                         },
                         ref other => {
                             log::debug!("Op {op:?} left type {other:?}");
@@ -1284,7 +1311,12 @@ impl super::Validator {
                             | Sk::AbstractFloat
                             | Sk::BFloat
                             | Sk::FloatE4M3
-                            | Sk::FloatE5M2 => false,
+                            | Sk::FloatE5M2
+                            | Sk::FloatE2M1
+                            | Sk::FloatE3M2
+                            | Sk::FloatE2M3
+                            | Sk::FloatUE8M0
+                            | Sk::FloatMXINT8 => false,
                         },
                         ref other => {
                             log::debug!("Op {op:?} left type {other:?}");
@@ -1319,7 +1351,12 @@ impl super::Validator {
                             | Sk::Bool
                             | Sk::BFloat
                             | Sk::FloatE4M3
-                            | Sk::FloatE5M2 => false,
+                            | Sk::FloatE5M2
+                            | Sk::FloatE2M1
+                            | Sk::FloatE3M2
+                            | Sk::FloatE2M3
+                            | Sk::FloatUE8M0
+                            | Sk::FloatMXINT8 => false,
                         }
                     }
                 };
@@ -1929,6 +1966,48 @@ impl super::Validator {
                 }
                 if index.is_some() != (conversion == crate::ArrayConversion::SubArray) {
                     return invalid("only a sub-array extraction takes an index");
+                }
+                ShaderStages::all()
+            }
+            E::Bitcast { expr, ty, offset } => {
+                let shape = |inner: &Ti| -> Option<(u32, Sc)> {
+                    match *inner {
+                        Ti::Scalar(scalar) => Some((1, scalar)),
+                        Ti::Vector { size, scalar } => Some((u32::from(size as u8), scalar)),
+                        Ti::LongVector {
+                            size: crate::CooperativeSize::Constant(size),
+                            scalar,
+                            ..
+                        } => Some((size.get(), scalar)),
+                        _ => None,
+                    }
+                };
+                let (Some((source_count, source)), Some((target_count, target))) =
+                    (shape(&resolver[expr]), shape(&module.types[ty].inner))
+                else {
+                    return Err(ExpressionError::InvalidBitcast("operands are not numeric"));
+                };
+                match offset {
+                    None => {
+                        if source_count * source.bit_width() != target_count * target.bit_width() {
+                            return Err(ExpressionError::InvalidBitcast("sizes differ"));
+                        }
+                    }
+                    Some(offset) => {
+                        if !matches!(
+                            resolver[offset],
+                            Ti::Scalar(Sc {
+                                kind: Sk::Uint | Sk::Sint,
+                                ..
+                            })
+                        ) || !matches!(source.kind, Sk::Uint | Sk::Sint)
+                            || target.bit_width() > source.bit_width()
+                        {
+                            return Err(ExpressionError::InvalidBitcast(
+                                "an extraction takes integers and a scalar offset",
+                            ));
+                        }
+                    }
                 }
                 ShaderStages::all()
             }

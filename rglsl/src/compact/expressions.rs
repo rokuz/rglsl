@@ -359,6 +359,11 @@ impl ExpressionTracer<'_> {
                 self.expressions_used.insert(expr);
                 self.expressions_used.insert_iter(index);
             }
+            Ex::Bitcast { expr, ty, offset } => {
+                self.types_used.insert(ty);
+                self.expressions_used.insert(expr);
+                self.expressions_used.insert_iter(offset);
+            }
             Ex::TensorSet {
                 base, ref operands, ..
             } => {
@@ -679,6 +684,15 @@ impl ModuleMap {
                 self.types.adjust(ty)?;
                 adjust(expr)?;
                 operand_map.adjust_option(index)?;
+            }
+            Ex::Bitcast {
+                ref mut expr,
+                ref mut ty,
+                ref mut offset,
+            } => {
+                self.types.adjust(ty)?;
+                adjust(expr)?;
+                operand_map.adjust_option(offset)?;
             }
             Ex::TensorSet {
                 ref mut base,

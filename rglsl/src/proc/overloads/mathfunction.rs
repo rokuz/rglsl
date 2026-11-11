@@ -129,7 +129,12 @@ fn ldexp() -> List {
             | ir::ScalarKind::AbstractInt
             | ir::ScalarKind::BFloat
             | ir::ScalarKind::FloatE4M3
-            | ir::ScalarKind::FloatE5M2 => None,
+            | ir::ScalarKind::FloatE5M2
+            | ir::ScalarKind::FloatE2M1
+            | ir::ScalarKind::FloatE3M2
+            | ir::ScalarKind::FloatE2M3
+            | ir::ScalarKind::FloatUE8M0
+            | ir::ScalarKind::FloatMXINT8 => None,
         }
     }
 

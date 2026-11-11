@@ -1037,6 +1037,7 @@ impl<'a> ResolveContext<'a> {
             | crate::Expression::CooperativeVectorMatMul { ty, .. }
             | crate::Expression::Convert { ty, .. }
             | crate::Expression::ArrayConversion { ty, .. }
+            | crate::Expression::Bitcast { ty, .. }
             | crate::Expression::CooperativeMatrixResult { ty }
             | crate::Expression::TensorCreate { ty }
             | crate::Expression::TensorRead { ty, .. } => TypeResolution::Handle(ty),

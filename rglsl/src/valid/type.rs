@@ -302,7 +302,13 @@ impl super::Validator {
         let good = match scalar.kind {
             crate::ScalarKind::Bool => scalar.width == crate::BOOL_WIDTH,
             crate::ScalarKind::BFloat => scalar.width == 2,
-            crate::ScalarKind::FloatE4M3 | crate::ScalarKind::FloatE5M2 => scalar.width == 1,
+            crate::ScalarKind::FloatE4M3
+            | crate::ScalarKind::FloatE5M2
+            | crate::ScalarKind::FloatE2M1
+            | crate::ScalarKind::FloatE3M2
+            | crate::ScalarKind::FloatE2M3
+            | crate::ScalarKind::FloatUE8M0
+            | crate::ScalarKind::FloatMXINT8 => scalar.width == 1,
             crate::ScalarKind::Float => match scalar.width {
                 8 => {
                     if !self.capabilities.contains(Capabilities::FLOAT64) {

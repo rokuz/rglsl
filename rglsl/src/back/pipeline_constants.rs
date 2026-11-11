@@ -822,6 +822,16 @@ fn adjust_expr(new_pos: &HandleVec<Expression, Handle<Expression>>, expr: &mut E
                 adjust(index);
             }
         }
+        Expression::Bitcast {
+            ref mut expr,
+            ref mut offset,
+            ..
+        } => {
+            adjust(expr);
+            if let Some(offset) = offset.as_mut() {
+                adjust(offset);
+            }
+        }
         Expression::CooperativeMatrixResult { .. } | Expression::TensorCreate { .. } => {}
         Expression::TensorSet {
             ref mut base,

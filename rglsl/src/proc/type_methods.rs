@@ -10,6 +10,29 @@ use crate::{ir, valid::MAX_TYPE_SIZE};
 use super::TypeResolution;
 
 impl crate::ScalarKind {
+    pub const fn is_encoded_float(self) -> bool {
+        match self {
+            crate::ScalarKind::BFloat
+            | crate::ScalarKind::FloatE4M3
+            | crate::ScalarKind::FloatE5M2
+            | crate::ScalarKind::FloatE2M1
+            | crate::ScalarKind::FloatE3M2
+            | crate::ScalarKind::FloatE2M3
+            | crate::ScalarKind::FloatUE8M0
+            | crate::ScalarKind::FloatMXINT8 => true,
+            crate::ScalarKind::Sint
+            | crate::ScalarKind::Uint
+            | crate::ScalarKind::Float
+            | crate::ScalarKind::Bool
+            | crate::ScalarKind::AbstractInt
+            | crate::ScalarKind::AbstractFloat => false,
+        }
+    }
+
+    pub const fn is_any_float(self) -> bool {
+        matches!(self, crate::ScalarKind::Float) || self.is_encoded_float()
+    }
+
     pub const fn is_numeric(self) -> bool {
         match self {
             crate::ScalarKind::Sint
@@ -19,7 +42,12 @@ impl crate::ScalarKind {
             | crate::ScalarKind::AbstractFloat
             | crate::ScalarKind::BFloat
             | crate::ScalarKind::FloatE4M3
-            | crate::ScalarKind::FloatE5M2 => true,
+            | crate::ScalarKind::FloatE5M2
+            | crate::ScalarKind::FloatE2M1
+            | crate::ScalarKind::FloatE3M2
+            | crate::ScalarKind::FloatE2M3
+            | crate::ScalarKind::FloatUE8M0
+            | crate::ScalarKind::FloatMXINT8 => true,
             crate::ScalarKind::Bool => false,
         }
     }
@@ -66,6 +94,26 @@ impl crate::Scalar {
         kind: crate::ScalarKind::FloatE5M2,
         width: 1,
     };
+    pub const FE2M1: Self = Self {
+        kind: crate::ScalarKind::FloatE2M1,
+        width: 1,
+    };
+    pub const FE3M2: Self = Self {
+        kind: crate::ScalarKind::FloatE3M2,
+        width: 1,
+    };
+    pub const FE2M3: Self = Self {
+        kind: crate::ScalarKind::FloatE2M3,
+        width: 1,
+    };
+    pub const FUE8M0: Self = Self {
+        kind: crate::ScalarKind::FloatUE8M0,
+        width: 1,
+    };
+    pub const FMXINT8: Self = Self {
+        kind: crate::ScalarKind::FloatMXINT8,
+        width: 1,
+    };
     pub const F32: Self = Self {
         kind: crate::ScalarKind::Float,
         width: 4,
@@ -95,6 +143,24 @@ impl crate::Scalar {
         width: crate::ABSTRACT_WIDTH,
     };
 
+    pub const fn bit_width(self) -> u32 {
+        match self.kind {
+            crate::ScalarKind::FloatE2M1 => 4,
+            crate::ScalarKind::FloatE3M2 | crate::ScalarKind::FloatE2M3 => 6,
+            crate::ScalarKind::Sint
+            | crate::ScalarKind::Uint
+            | crate::ScalarKind::Float
+            | crate::ScalarKind::Bool
+            | crate::ScalarKind::BFloat
+            | crate::ScalarKind::FloatE4M3
+            | crate::ScalarKind::FloatE5M2
+            | crate::ScalarKind::FloatUE8M0
+            | crate::ScalarKind::FloatMXINT8
+            | crate::ScalarKind::AbstractInt
+            | crate::ScalarKind::AbstractFloat => self.width as u32 * 8,
+        }
+    }
+
     pub const fn is_abstract(self) -> bool {
         match self.kind {
             crate::ScalarKind::AbstractInt | crate::ScalarKind::AbstractFloat => true,
@@ -104,7 +170,12 @@ impl crate::Scalar {
             | crate::ScalarKind::Bool
             | crate::ScalarKind::BFloat
             | crate::ScalarKind::FloatE4M3
-            | crate::ScalarKind::FloatE5M2 => false,
+            | crate::ScalarKind::FloatE5M2
+            | crate::ScalarKind::FloatE2M1
+            | crate::ScalarKind::FloatE3M2
+            | crate::ScalarKind::FloatE2M3
+            | crate::ScalarKind::FloatUE8M0
+            | crate::ScalarKind::FloatMXINT8 => false,
         }
     }
 

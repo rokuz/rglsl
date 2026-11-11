@@ -203,7 +203,25 @@ pub(crate) fn parse_type(word: &str) -> Option<Type> {
     if let Some(basic) = BasicType::from_keyword(word) {
         return Some(Type::from(basic));
     }
+    if let Some(long) = long_vector_type(word) {
+        return Some(long);
+    }
     Opaque::from_keyword(word).map(Type::opaque)
+}
+
+fn long_vector_type(word: &str) -> Option<Type> {
+    let digits = word.trim_end_matches(|character: char| character.is_ascii_digit());
+    let size: u32 = word.get(digits.len()..)?.parse().ok()?;
+    if size <= 4 {
+        return None;
+    }
+    let scalar = crate::types::Scalar::ALL
+        .into_iter()
+        .find(|scalar| scalar.vector_prefix() == digits)?;
+    Some(Type::new(crate::types::TypeKind::LongVector {
+        scalar,
+        size: crate::types::ArraySize::Sized(size),
+    }))
 }
 
 fn words(text: &str) -> Vec<&str> {
@@ -229,9 +247,30 @@ fn words(text: &str) -> Vec<&str> {
     found
 }
 
-const SIZED_STEMS: [&str; 18] = [
-    "vec", "ivec", "uvec", "bvec", "dvec", "mat", "dmat", "f16vec", "f16mat", "i64vec", "u64vec",
-    "i16vec", "u16vec", "i8vec", "u8vec", "bf16vec", "fe4m3vec", "fe5m2vec",
+const SIZED_STEMS: [&str; 23] = [
+    "vec",
+    "ivec",
+    "uvec",
+    "bvec",
+    "dvec",
+    "mat",
+    "dmat",
+    "f16vec",
+    "f16mat",
+    "i64vec",
+    "u64vec",
+    "i16vec",
+    "u16vec",
+    "i8vec",
+    "u8vec",
+    "bf16vec",
+    "fe4m3vec",
+    "fe5m2vec",
+    "fe2m1vec",
+    "fe3m2vec",
+    "fe2m3vec",
+    "fue8m0vec",
+    "fmxint8vec",
 ];
 
 #[derive(Clone, Copy, Default)]

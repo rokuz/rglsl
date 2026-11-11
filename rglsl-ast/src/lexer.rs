@@ -254,7 +254,30 @@ impl<'a> Lexer<'a> {
                     end += 2;
                     NumericKind::Float16
                 }
-                (Some(b'f' | b'F'), _) => {
+                (Some(b'f'), _) => {
+                    end += 1;
+                    let suffix = [
+                        ("e2m1", NumericKind::FloatE2M1),
+                        ("e3m2", NumericKind::FloatE3M2),
+                        ("e2m3", NumericKind::FloatE2M3),
+                        ("ue8m0", NumericKind::FloatUE8M0),
+                        ("mxint8", NumericKind::FloatMXINT8),
+                    ]
+                    .into_iter()
+                    .find(|(text, _)| {
+                        self.source
+                            .get(end..)
+                            .is_some_and(|rest| rest.starts_with(text))
+                    });
+                    match suffix {
+                        Some((text, kind)) => {
+                            end += text.len();
+                            kind
+                        }
+                        None => NumericKind::Float,
+                    }
+                }
+                (Some(b'F'), _) => {
                     end += 1;
                     NumericKind::Float
                 }

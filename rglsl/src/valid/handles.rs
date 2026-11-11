@@ -909,6 +909,10 @@ impl super::Validator {
                 validate_type(ty)?;
                 handle.check_dep(expr)?.check_dep_opt(index)?;
             }
+            crate::Expression::Bitcast { expr, ty, offset } => {
+                validate_type(ty)?;
+                handle.check_dep(expr)?.check_dep_opt(offset)?;
+            }
             crate::Expression::TensorSet {
                 base, ref operands, ..
             } => {

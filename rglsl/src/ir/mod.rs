@@ -698,6 +698,11 @@ pub enum ScalarKind {
     BFloat,
     FloatE4M3,
     FloatE5M2,
+    FloatE2M1,
+    FloatE3M2,
+    FloatE2M3,
+    FloatUE8M0,
+    FloatMXINT8,
 
     /// WGSL abstract integer type.
     ///
@@ -1403,6 +1408,11 @@ pub enum Literal {
     BF16(u16),
     FE4M3(u8),
     FE5M2(u8),
+    FE2M1(u8),
+    FE3M2(u8),
+    FE2M3(u8),
+    FUE8M0(u8),
+    FMXINT8(u8),
 }
 
 /// Pipeline-overridable constant.
@@ -2974,6 +2984,11 @@ pub enum Expression {
         expr: Handle<Expression>,
         index: Option<Handle<Expression>>,
         ty: Handle<Type>,
+    },
+    Bitcast {
+        expr: Handle<Expression>,
+        ty: Handle<Type>,
+        offset: Option<Handle<Expression>>,
     },
     TensorSet {
         base: Handle<Expression>,
