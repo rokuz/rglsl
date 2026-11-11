@@ -50,9 +50,10 @@ pub(super) fn parse(options: &Options, source: &str) -> core::result::Result<Mod
     lower(
         options,
         source,
-        false,
+        Mode::Program,
         rglsl_pp::FileId(0),
         &mut rglsl_pp::NoIncluder,
+        &mut library::StageNames::default(),
     )
     .map(|object| object.module)
 }
@@ -63,7 +64,30 @@ pub(super) fn compile(
     root: rglsl_pp::FileId,
     includer: &mut dyn rglsl_pp::Includer,
 ) -> core::result::Result<crate::object::ObjectModule, ParseErrors> {
-    lower(options, source, true, root, includer)
+    let hint = (!options.library).then_some(options.stage);
+    match defines_main(options, hint, source, root, includer) {
+        Some(true) if options.library => Err(vec![semantic(
+            "a module compiled as a library cannot define `main`: a module with `main` is a program and needs a shader stage",
+            Span::UNDEFINED,
+        )]
+        .into()),
+        Some(true) => lower(
+            options,
+            source,
+            Mode::Object,
+            root,
+            includer,
+            &mut library::StageNames::default(),
+        ),
+        Some(false) | None => library::compile(options, hint, source, root, includer),
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Mode {
+    Program,
+    Object,
+    Library,
 }
 
 const fn link_time(kind: &rglsl_sema::DiagnosticKind) -> bool {
@@ -74,24 +98,13 @@ const fn link_time(kind: &rglsl_sema::DiagnosticKind) -> bool {
     )
 }
 
-fn lower(
+fn preprocess(
     options: &Options,
+    stage: Option<ShaderStage>,
     source: &str,
-    object: bool,
     root: rglsl_pp::FileId,
     includer: &mut dyn rglsl_pp::Includer,
-) -> core::result::Result<crate::object::ObjectModule, ParseErrors> {
-    let carrier;
-    let options = if options.library {
-        carrier = Options {
-            stage: ShaderStage::Compute,
-            defines: options.defines.clone(),
-            ..*options
-        };
-        &carrier
-    } else {
-        options
-    };
+) -> rglsl_pp::Preprocessed {
     let defines = options
         .defines
         .iter()
@@ -100,10 +113,43 @@ fn lower(
     let preprocessor_options = rglsl_pp::Options {
         defines,
         vulkan_client_version: Some(100),
-        stage: Some(preprocessor_stage(options.stage)),
+        stage: stage.map(preprocessor_stage),
         ..rglsl_pp::Options::default()
     };
-    let preprocessed = rglsl_pp::preprocess(source, root, &preprocessor_options, includer);
+    rglsl_pp::preprocess(source, root, &preprocessor_options, includer)
+}
+
+fn defines_main(
+    options: &Options,
+    stage: Option<ShaderStage>,
+    source: &str,
+    root: rglsl_pp::FileId,
+    includer: &mut dyn rglsl_pp::Includer,
+) -> Option<bool> {
+    let preprocessed = preprocess(options, stage, source, root, includer);
+    if preprocessed.has_errors() {
+        return None;
+    }
+    let (unit, _) = rglsl_ast::parse_prefix(preprocessed.text.as_str());
+    Some(unit.external_declarations.iter().any(|declaration| {
+        matches!(
+            *declaration,
+            ExternalDeclaration::FunctionDefinition(ref definition)
+                if definition.prototype.name.node == "main"
+        )
+    }))
+}
+
+fn lower(
+    options: &Options,
+    source: &str,
+    mode: Mode,
+    root: rglsl_pp::FileId,
+    includer: &mut dyn rglsl_pp::Includer,
+    names: &mut library::StageNames,
+) -> core::result::Result<crate::object::ObjectModule, ParseErrors> {
+    let object = mode != Mode::Program;
+    let preprocessed = preprocess(options, Some(options.stage), source, root, includer);
     let map = &preprocessed.source_map;
     if preprocessed.has_errors() {
         let errors = preprocessed
@@ -158,11 +204,11 @@ fn lower(
         .diagnostics
         .iter()
         .filter(|diagnostic| !(object && link_time(&diagnostic.kind)))
-        .map(|diagnostic| {
+        .enumerate()
+        .map(|(index, diagnostic)| {
             let start = diagnostic.offset(text);
-            let message = options
-                .library
-                .then(|| library::library_diagnostic(&diagnostic.kind, analysis.version))
+            let message = (mode == Mode::Library && index == 0)
+                .then(|| names.stage_diagnostic(&diagnostic.kind, analysis.version, options.stage))
                 .flatten()
                 .unwrap_or_else(|| diagnostic.kind.to_string());
             Error {
@@ -181,7 +227,7 @@ fn lower(
     if !errors.is_empty() {
         return Err(errors.into());
     }
-    Lowerer::new(&unit, &analysis, options, map, object).run()
+    Lowerer::new(&unit, &analysis, options, map, mode).run()
 }
 
 const fn external_end(declaration: &ExternalDeclaration) -> u32 {
@@ -373,6 +419,7 @@ pub(super) struct Lowerer<'a> {
     xfb: xfb::Xfb,
     stage_layout: stage::StageLayout,
     pub object: bool,
+    pub library: bool,
     pub automatic_locations: Vec<Handle<GlobalVariable>>,
     pub automatic_bindings: Vec<(Handle<GlobalVariable>, Option<u32>)>,
     pub declared_local_size: [Option<u32>; 3],
@@ -384,7 +431,7 @@ impl<'a> Lowerer<'a> {
         analysis: &'a Analysis,
         options: &'a Options,
         source_map: &'a rglsl_pp::SourceMap,
-        object: bool,
+        mode: Mode,
     ) -> Self {
         Self {
             source_map,
@@ -460,7 +507,8 @@ impl<'a> Lowerer<'a> {
                 .then_some(0),
             ),
             stage_layout: stage::StageLayout::default(),
-            object,
+            object: mode != Mode::Program,
+            library: mode == Mode::Library,
             automatic_locations: Vec::new(),
             automatic_bindings: Vec::new(),
             declared_local_size: [None; 3],
@@ -502,9 +550,6 @@ impl<'a> Lowerer<'a> {
             }
         }
         self.prepass(&definitions);
-        if self.options.library {
-            self.check_library(&definitions);
-        }
         if self.options.auto_map_locations {
             self.reserve_explicit_locations();
         }

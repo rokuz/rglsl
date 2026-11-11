@@ -1,7 +1,13 @@
-const UNDEFINED: &[(&str, &str)] = &[(
-    "spv.noexplicitlayout.comp",
-    "copies the uninitialized struct `new_bar` into the buffer",
-)];
+const UNDEFINED: &[(&str, &str)] = &[
+    (
+        "spv.noexplicitlayout.comp",
+        "copies the uninitialized struct `new_bar` into the buffer",
+    ),
+    (
+        "spv.Operations.frag",
+        "reads the uninitialized locals `f` and `u` and the private bools `ub41` and `ub42`",
+    ),
+];
 
 pub fn undefined(name: &str) -> Option<&'static str> {
     UNDEFINED

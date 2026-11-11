@@ -1,28 +1,57 @@
 pub mod amber;
+pub mod batch;
 pub mod compare;
 pub mod data;
 pub mod harness;
 pub mod known;
+pub mod module;
 pub mod plan;
 pub mod reflect;
+pub mod remote;
 pub mod requirements;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::{Condvar, Mutex, PoisonError};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
-use anyhow::{bail, Result};
-use spirv::ExecutionModel;
+use anyhow::{anyhow, bail, Result};
 
 use self::amber::{Amber, Device};
+pub use self::batch::Outputs;
+use self::batch::{Job, JobResult};
 use self::compare::{compare, Comparison};
-use self::plan::{Inputs, Plan, Refusal, ScriptPaths, Stage};
+use self::harness::ShaderKind;
+use self::plan::{Inputs, Plan, Refusal, ScriptPaths};
 use self::reflect::Reflection;
+use self::remote::Remote;
+use self::requirements::Need;
 use crate::oracles;
 use crate::process::{self, Exit};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum TargetId {
+    Local,
+    Remote,
+}
+
+impl TargetId {
+    pub const ALL: [Self; 2] = [Self::Local, Self::Remote];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Local => "local",
+            Self::Remote => "remote",
+        }
+    }
+
+    pub fn parse(text: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|t| t.label() == text.trim())
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum SkipReason {
@@ -99,6 +128,12 @@ impl Outcome {
     }
 }
 
+pub fn refusal_text(refusal: &Refusal) -> &str {
+    match refusal {
+        Refusal::Stage(what) | Refusal::Capability(what) | Refusal::Binding(what) => what,
+    }
+}
+
 fn refusal(refusal: Refusal) -> Outcome {
     match refusal {
         Refusal::Stage(stage) => Outcome::skip(SkipReason::Stage, stage),
@@ -107,9 +142,8 @@ fn refusal(refusal: Refusal) -> Outcome {
     }
 }
 
-pub type Outputs = BTreeMap<String, Vec<u8>>;
-
 const DUMP_FILE: &str = "dump.comp.spv";
+const LOCAL_GPU_JOBS: usize = 2;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TargetDifference {
@@ -155,42 +189,57 @@ pub fn compare_outputs(
 }
 
 #[derive(Debug)]
+enum Backend {
+    Local(Amber),
+    Remote(Remote),
+}
+
+#[derive(Debug)]
 pub struct Executor {
-    amber: Amber,
+    pub target: TargetId,
+    backend: Backend,
     glslang: PathBuf,
     work: PathBuf,
     dump_shader: PathBuf,
-    support: Mutex<BTreeMap<&'static str, bool>>,
-    gpu: Gate,
+    timeout: Duration,
+    support: BTreeMap<Need, Option<String>>,
     pub device: Device,
 }
 
-const GPU_JOBS: usize = 4;
-
-#[derive(Debug, Default)]
-struct Gate {
-    running: Mutex<usize>,
-    freed: Condvar,
+#[derive(Debug, Clone)]
+pub struct ExecCase {
+    pub name: String,
+    pub ours: PathBuf,
+    pub reference: PathBuf,
 }
 
-impl Gate {
-    fn with<T>(&self, limit: usize, run: impl FnOnce() -> T) -> T {
-        let mut running = self.running.lock().unwrap_or_else(PoisonError::into_inner);
-        while *running >= limit {
-            running = self
-                .freed
-                .wait(running)
-                .unwrap_or_else(PoisonError::into_inner);
+#[derive(Debug)]
+struct Ready {
+    plan: Plan,
+    theirs: Job,
+    ours: Job,
+}
+
+pub fn select_targets(local: bool, remote: bool) -> Vec<TargetId> {
+    let mut targets = Vec::new();
+    if local {
+        if oracles::EXEC_PLATFORM {
+            targets.push(TargetId::Local);
+        } else {
+            eprintln!("[xtask] warning: the local exec target was skipped: KosmicKrisp runs on macOS on arm64 only");
         }
-        *running += 1;
-        drop(running);
-        let result = run();
-        let mut running = self.running.lock().unwrap_or_else(PoisonError::into_inner);
-        *running = running.saturating_sub(1);
-        drop(running);
-        self.freed.notify_one();
-        result
     }
+    if remote {
+        if std::env::var(remote::HOST_VAR).is_ok_and(|h| !h.trim().is_empty()) {
+            targets.push(TargetId::Remote);
+        } else {
+            eprintln!(
+                "[xtask] warning: the remote Windows exec target was skipped: set {} to the SSH host alias of a Windows machine with Vulkan (or pass --no-remote-exec)",
+                remote::HOST_VAR
+            );
+        }
+    }
+    targets
 }
 
 pub fn amber_tool(root: &Path) -> Option<PathBuf> {
@@ -209,113 +258,231 @@ pub fn icd_manifest(root: &Path) -> Option<PathBuf> {
     built.is_file().then_some(built)
 }
 
+pub fn parallel_map<T: Sync, R: Send>(items: &[T], run: impl Fn(&T) -> R + Sync) -> Vec<R> {
+    let workers = std::thread::available_parallelism()
+        .map_or(4, |n| n.get())
+        .min(items.len().max(1));
+    let next = AtomicUsize::new(0);
+    let results: Mutex<Vec<(usize, R)>> = Mutex::new(Vec::with_capacity(items.len()));
+    std::thread::scope(|scope| {
+        for _ in 0..workers {
+            scope.spawn(|| loop {
+                let index = next.fetch_add(1, Ordering::Relaxed);
+                let Some(item) = items.get(index) else { break };
+                let result = run(item);
+                results
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .push((index, result));
+            });
+        }
+    });
+    let mut results = results.into_inner().unwrap_or_else(PoisonError::into_inner);
+    results.sort_by_key(|(index, _)| *index);
+    results.into_iter().map(|(_, result)| result).collect()
+}
+
 impl Executor {
-    pub fn new(root: &Path, glslang: &Path, work: PathBuf, timeout: Duration) -> Result<Self> {
-        let (Some(binary), Some(icd)) = (amber_tool(root), icd_manifest(root)) else {
-            bail!("the exec oracles (Amber, KosmicKrisp) are missing: run `cargo xtask oracles` or pass --no-exec");
+    pub fn new(
+        target: TargetId,
+        root: &Path,
+        glslang: &Path,
+        work: &Path,
+        timeout: Duration,
+    ) -> Result<Self> {
+        let backend = match target {
+            TargetId::Local => {
+                let (Some(binary), Some(icd)) = (amber_tool(root), icd_manifest(root)) else {
+                    bail!("the local exec oracles (Amber, KosmicKrisp) are missing: run `cargo xtask oracles` or pass --no-exec");
+                };
+                Backend::Local(Amber {
+                    binary,
+                    icd,
+                    timeout,
+                })
+            }
+            TargetId::Remote => {
+                let Some(remote) = Remote::from_env(timeout) else {
+                    bail!(
+                        "the remote target is not configured: set {}",
+                        remote::HOST_VAR
+                    );
+                };
+                Backend::Remote(remote)
+            }
         };
-        let amber = Amber {
-            binary,
-            icd,
-            timeout,
-        };
-        let device = amber
-            .device()
-            .map_err(|error| anyhow::anyhow!("no Vulkan device through Amber: {error}"))?;
+        let device = match &backend {
+            Backend::Local(amber) => amber.device(),
+            Backend::Remote(remote) => remote.device(),
+        }
+        .map_err(|error| {
+            anyhow!(
+                "no Vulkan device through Amber on the {} target: {error}",
+                target.label()
+            )
+        })?;
+        let work = work.join(target.label());
         let _ = fs::remove_dir_all(&work);
         fs::create_dir_all(&work)?;
         let dump_shader = compile_glsl(
             glslang,
             &work,
             "dump",
-            "comp",
+            ShaderKind::Compute,
             harness::DUMP_SHADER,
             timeout,
         )
-        .map_err(|error| anyhow::anyhow!("compiling the dump shader: {error}"))?;
-        Ok(Self {
-            amber,
+        .map_err(|error| anyhow!("compiling the dump shader: {error}"))?;
+        let mut executor = Self {
+            target,
+            backend,
             glslang: glslang.to_path_buf(),
             work,
             dump_shader,
-            support: Mutex::new(BTreeMap::new()),
-            gpu: Gate::default(),
+            timeout,
+            support: BTreeMap::new(),
             device,
-        })
+        };
+        executor.probe(&requirements::probes())?;
+        Ok(executor)
     }
 
-    pub fn supports(&self, feature: &'static str) -> bool {
-        if let Some(known) = self
-            .support
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .get(feature)
-        {
-            return *known;
-        }
+    pub fn describe(&self) -> String {
+        format!(
+            "{} (Vulkan {}, {})",
+            self.device.name, self.device.api_version, self.device.driver
+        )
+    }
+
+    fn probe(&mut self, needs: &[Need]) -> Result<()> {
         let dir = self.work.join("probes");
-        let _ = fs::create_dir_all(&dir);
-        let stem = feature.replace('.', "_");
-        let script = dir.join(format!("{stem}.amber"));
-        let text = format!(
-            "#!amber\nDEVICE_FEATURE {feature}\nSHADER compute probe SPIRV-BIN FILE {stem}.spv\nPIPELINE compute p\n  ATTACH probe\nEND\nRUN p 1 1 1\n"
+        let mut jobs = Vec::new();
+        for (index, need) in needs.iter().enumerate() {
+            let job_dir = dir.join(index.to_string());
+            fs::create_dir_all(&job_dir)?;
+            fs::copy(&self.dump_shader, job_dir.join("probe.spv"))?;
+            fs::write(
+                job_dir.join("probe.amber"),
+                format!(
+                    "#!amber\n{}\nSHADER compute probe SPIRV-BIN FILE probe.spv\nPIPELINE compute p\n  ATTACH probe\nEND\nRUN p 1 1 1\n",
+                    need.line()
+                ),
+            )?;
+            jobs.push(Job {
+                dir: job_dir,
+                script: "probe.amber".into(),
+                dumps: Vec::new(),
+            });
+        }
+        let results = self.confirm_jobs(&jobs);
+        if !results.is_empty() && results.iter().all(Result::is_err) {
+            let reason = results
+                .iter()
+                .find_map(|r| r.as_ref().err().cloned())
+                .unwrap_or_default();
+            bail!(
+                "every feature probe failed on the {} target: {reason}",
+                self.target.label()
+            );
+        }
+        for (need, result) in needs.iter().zip(results) {
+            self.support.insert(*need, result.err());
+        }
+        let missing: Vec<String> = self
+            .support
+            .iter()
+            .filter_map(|(need, error)| {
+                error
+                    .as_ref()
+                    .map(|error| format!("{} ({error})", need.name()))
+            })
+            .collect();
+        eprintln!(
+            "[xtask] {} target: {} of {} probed device features and extensions available; missing: {}",
+            self.target.label(),
+            self.support.len() - missing.len(),
+            self.support.len(),
+            if missing.is_empty() { "none".to_string() } else { missing.join(", ") }
         );
-        let supported = fs::copy(&self.dump_shader, dir.join(format!("{stem}.spv"))).is_ok()
-            && fs::write(&script, text).is_ok()
-            && self
-                .gpu
-                .with(GPU_JOBS, || {
-                    self.amber
-                        .run(&script, &[], &dir.join(format!("{stem}.txt")))
-                })
-                .is_ok();
-        self.support
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .insert(feature, supported);
-        supported
+        Ok(())
     }
 
-    pub fn missing_feature(&self, plan: &Plan) -> Option<&'static str> {
-        plan.features.iter().copied().find(|f| !self.supports(f))
+    pub fn supports(&self, need: Need) -> bool {
+        matches!(self.support.get(&need), Some(None))
     }
 
-    pub fn prepare(&self, plan: &Plan, dir: &Path) -> Result<Option<PathBuf>, String> {
+    pub fn why_missing(&self, need: Need) -> String {
+        match self.support.get(&need) {
+            Some(Some(error)) => format!("{}: {error}", need.name()),
+            Some(None) => need.name().to_string(),
+            None => format!("{}: not probed", need.name()),
+        }
+    }
+
+    pub fn missing(&self, needs: &BTreeSet<Need>) -> Option<Need> {
+        needs.iter().copied().find(|need| !self.supports(*need))
+    }
+
+    pub fn run_jobs(&self, jobs: &[Job]) -> Vec<JobResult> {
+        self.run_with(jobs, None)
+    }
+
+    pub fn confirm_jobs(&self, jobs: &[Job]) -> Vec<JobResult> {
+        self.run_with(jobs, Some(1))
+    }
+
+    fn run_with(&self, jobs: &[Job], workers: Option<usize>) -> Vec<JobResult> {
+        if jobs.is_empty() {
+            return Vec::new();
+        }
+        match &self.backend {
+            Backend::Local(amber) => {
+                batch::run_local(amber, jobs, workers.unwrap_or(LOCAL_GPU_JOBS))
+            }
+            Backend::Remote(remote) => match workers {
+                Some(workers) => {
+                    let single = Remote {
+                        jobs: workers,
+                        ..remote.clone()
+                    };
+                    single.run(&self.work, jobs)
+                }
+                None => remote.run(&self.work, jobs),
+            },
+        }
+    }
+
+    pub fn work_dir(&self) -> &Path {
+        &self.work
+    }
+
+    pub fn prepare(&self, plan: &Plan, dir: &Path) -> Result<Vec<(ShaderKind, PathBuf)>, String> {
         let data = dir.join("data");
         fs::create_dir_all(&data).map_err(|e| e.to_string())?;
         fs::copy(&self.dump_shader, dir.join(DUMP_FILE)).map_err(|e| e.to_string())?;
         for (name, bytes) in &plan.files {
             fs::write(data.join(name), bytes).map_err(|e| e.to_string())?;
         }
-        match &plan.harness {
-            Some(source) => {
-                let extension = if plan.stage == Stage::Fragment {
-                    "vert"
-                } else {
-                    "frag"
-                };
-                compile_glsl(
-                    &self.glslang,
-                    dir,
-                    "harness",
-                    extension,
-                    source,
-                    self.amber.timeout,
-                )?;
-                Ok(Some(PathBuf::from(format!("harness.{extension}.spv"))))
-            }
-            None => Ok(None),
+        let mut harness = Vec::new();
+        for (index, (kind, source)) in plan.harness.iter().enumerate() {
+            let name = format!("harness{index}");
+            compile_glsl(&self.glslang, dir, &name, *kind, source, self.timeout)?;
+            harness.push((
+                *kind,
+                PathBuf::from(format!("{name}.{}.spv", kind.extension())),
+            ));
         }
+        Ok(harness)
     }
 
-    pub fn run(
+    pub fn stage(
         &self,
         plan: &Plan,
         dir: &Path,
-        harness: Option<&Path>,
+        harness: &[(ShaderKind, PathBuf)],
         spirv: &Path,
         tag: &str,
-    ) -> Result<Outputs, String> {
+    ) -> Result<Job, String> {
         let tested = PathBuf::from(format!("{tag}.spv"));
         fs::copy(spirv, dir.join(&tested)).map_err(|e| e.to_string())?;
         let script = plan.script(ScriptPaths {
@@ -324,99 +491,175 @@ impl Executor {
             dump: Path::new(DUMP_FILE),
             data: Path::new("data"),
         });
-        let path = dir.join(format!("{tag}.amber"));
-        fs::write(&path, script).map_err(|e| e.to_string())?;
-        self.gpu.with(GPU_JOBS, || {
-            self.amber
-                .run(&path, &plan.dumps(), &dir.join(format!("{tag}.dump.txt")))
+        let name = format!("{tag}.amber");
+        fs::write(dir.join(&name), script).map_err(|e| e.to_string())?;
+        Ok(Job {
+            dir: dir.to_path_buf(),
+            script: name,
+            dumps: plan.dumps().into_iter().map(str::to_string).collect(),
         })
     }
 
-    pub fn exec(&self, name: &str, ours: &Path, reference: &Path) -> Outcome {
+    fn stage_case(&self, case: &ExecCase) -> Result<Ready, Outcome> {
         let reflect = |path: &Path| -> Result<Reflection, String> {
             let bytes = fs::read(path).map_err(|e| e.to_string())?;
             reflect::reflect_bytes(&bytes)
         };
-        let theirs = match reflect(reference) {
-            Ok(reflection) => reflection,
-            Err(error) => return Outcome::skip(SkipReason::Capability, error),
-        };
-        let mine = match reflect(ours) {
-            Ok(reflection) => reflection,
-            Err(error) => return Outcome::Fail(format!("reflecting our module: {error}")),
-        };
+        let theirs = reflect(&case.reference).map_err(|e| Outcome::skip(SkipReason::Binding, e))?;
+        let mine = reflect(&case.ours)
+            .map_err(|e| Outcome::Fail(format!("reflecting our module: {e}")))?;
         let stage_feature = match theirs.model {
-            ExecutionModel::Geometry => Some("geometryShader"),
-            ExecutionModel::TessellationControl | ExecutionModel::TessellationEvaluation => {
-                Some("tessellationShader")
+            spirv::ExecutionModel::Geometry => Some(Need::Feature("geometryShader")),
+            spirv::ExecutionModel::TessellationControl
+            | spirv::ExecutionModel::TessellationEvaluation => {
+                Some(Need::Feature("tessellationShader"))
             }
             _ => None,
         };
-        if let Some(feature) = stage_feature.filter(|f| !self.supports(f)) {
-            return Outcome::skip(SkipReason::DeviceFeature, feature);
-        }
-        let inputs = Inputs {
-            seed: name.to_string(),
-            ..Inputs::default()
-        };
-        let plan = match Plan::new(&theirs, &inputs) {
-            Ok(plan) => plan,
-            Err(error) => return refusal(error),
-        };
-        if let Some(feature) = self.missing_feature(&plan) {
-            return Outcome::skip(SkipReason::DeviceFeature, feature);
-        }
-        if let Some(shared) = shared_binding(&theirs) {
-            return Outcome::skip(SkipReason::Binding, shared);
-        }
-        if let Some(why) = known::undefined(name) {
-            return Outcome::skip(SkipReason::Undefined, why);
-        }
-        if let Some(difference) = interface_difference(&theirs, &mine) {
-            return Outcome::Fail(format!("interface differs: {difference}"));
-        }
-        let mut our_plan = match Plan::new(&mine, &inputs) {
-            Ok(plan) => plan,
-            Err(error) => {
-                return Outcome::Fail(format!(
-                    "our module needs what glslang's does not: {}",
-                    match refusal(error) {
-                        Outcome::Skip { detail, .. } => detail,
-                        other => format!("{other:?}"),
-                    }
-                ))
-            }
-        };
-        if let Some(feature) = self.missing_feature(&our_plan) {
-            return Outcome::Fail(format!(
-                "our module needs the device feature {feature}, glslang's does not"
+        if let Some(need) = stage_feature.filter(|n| !self.supports(*n)) {
+            return Err(Outcome::skip(
+                SkipReason::DeviceFeature,
+                self.why_missing(need),
             ));
         }
-        our_plan.features.extend(plan.features.iter().copied());
-        let dir = self.work.join(name);
-        let harness = match self.prepare(&plan, &dir) {
-            Ok(harness) => harness,
-            Err(error) => return Outcome::skip(SkipReason::Binding, format!("harness: {error}")),
+        let inputs = Inputs {
+            seed: case.name.clone(),
+            ..Inputs::default()
         };
-        let expected = match self.run(&plan, &dir, harness.as_deref(), reference, "glslang") {
-            Ok(outputs) => outputs,
-            Err(error) => return Outcome::skip(SkipReason::ReferenceFails, error),
-        };
-        let actual = match self.run(&our_plan, &dir, harness.as_deref(), ours, "rglsl") {
-            Ok(outputs) => outputs,
-            Err(error) => return Outcome::Fail(format!("our module fails on the driver: {error}")),
-        };
-        match compare_outputs(&plan, &expected, &actual) {
-            Ok(tolerated) => Outcome::Pass { tolerated },
-            Err(difference) => {
-                match self.run(&plan, &dir, harness.as_deref(), reference, "glslang-again") {
-                    Ok(again) if compare_outputs(&plan, &expected, &again).is_ok() => {
-                        Outcome::Fail(format!("{difference} (glslang vs rglsl)"))
+        let plan = Plan::new(&theirs, &inputs).map_err(refusal)?;
+        if let Some(need) = self.missing(&plan.needs) {
+            return Err(Outcome::skip(
+                SkipReason::DeviceFeature,
+                self.why_missing(need),
+            ));
+        }
+        if let Some(shared) = shared_binding(&theirs) {
+            return Err(Outcome::skip(SkipReason::Binding, shared));
+        }
+        if let Some(why) = known::undefined(&case.name) {
+            return Err(Outcome::skip(SkipReason::Undefined, why));
+        }
+        if let Some(difference) = interface_difference(&theirs, &mine) {
+            return Err(Outcome::Fail(format!("interface differs: {difference}")));
+        }
+        let mut our_plan = Plan::new(&mine, &inputs).map_err(|error| {
+            Outcome::Fail(format!(
+                "our module needs what glslang's does not: {}",
+                refusal_text(&error)
+            ))
+        })?;
+        if let Some(need) = self.missing(&our_plan.needs) {
+            return Err(Outcome::Fail(format!(
+                "our module needs {}, glslang's does not",
+                need.line()
+            )));
+        }
+        our_plan.needs.extend(plan.needs.iter().copied());
+        let dir = self.work.join(&case.name);
+        let harness = self
+            .prepare(&plan, &dir)
+            .map_err(|error| Outcome::skip(SkipReason::Binding, format!("harness: {error}")))?;
+        let theirs_job = self
+            .stage(&plan, &dir, &harness, &case.reference, "glslang")
+            .map_err(|error| Outcome::skip(SkipReason::Binding, error))?;
+        let ours_job = self
+            .stage(&our_plan, &dir, &harness, &case.ours, "rglsl")
+            .map_err(|error| Outcome::skip(SkipReason::Binding, error))?;
+        Ok(Ready {
+            plan,
+            theirs: theirs_job,
+            ours: ours_job,
+        })
+    }
+
+    pub fn exec_all(&self, cases: &[ExecCase]) -> Vec<Outcome> {
+        let staged = parallel_map(cases, |case| self.stage_case(case));
+        let mut jobs = Vec::new();
+        for ready in staged.iter().flatten() {
+            jobs.push(ready.theirs.clone());
+            jobs.push(ready.ours.clone());
+        }
+        let mut first = self.run_jobs(&jobs).into_iter();
+        let mut outcomes: Vec<Option<Outcome>> = Vec::with_capacity(staged.len());
+        let mut pending: Vec<(usize, Option<Outputs>)> = Vec::new();
+        for (index, entry) in staged.iter().enumerate() {
+            match entry {
+                Err(outcome) => outcomes.push(Some(outcome.clone())),
+                Ok(ready) => {
+                    let expected = first
+                        .next()
+                        .unwrap_or_else(|| Err("no result from the batch".into()));
+                    let actual = first
+                        .next()
+                        .unwrap_or_else(|| Err("no result from the batch".into()));
+                    if let (Ok(e), Ok(a)) = (&expected, &actual) {
+                        if let Ok(tolerated) = compare_outputs(&ready.plan, e, a) {
+                            outcomes.push(Some(Outcome::Pass { tolerated }));
+                            continue;
+                        }
                     }
-                    Ok(_) => Outcome::skip(SkipReason::Nondeterministic, difference.to_string()),
-                    Err(error) => Outcome::skip(SkipReason::ReferenceFails, error),
+                    outcomes.push(None);
+                    pending.push((index, expected.ok()));
                 }
             }
+        }
+        let mut again = Vec::new();
+        for (index, _) in &pending {
+            if let Some(Ok(ready)) = staged.get(*index) {
+                again.push(ready.theirs.clone());
+                again.push(ready.ours.clone());
+            }
+        }
+        let mut confirmed = self.confirm_jobs(&again).into_iter();
+        for (index, expected_first) in pending {
+            let Some(Ok(ready)) = staged.get(index) else {
+                continue;
+            };
+            let expected = confirmed
+                .next()
+                .unwrap_or_else(|| Err("no result from the confirmation".into()));
+            let actual = confirmed
+                .next()
+                .unwrap_or_else(|| Err("no result from the confirmation".into()));
+            let outcome = confirm(&ready.plan, expected_first.as_ref(), expected, actual);
+            if let Some(slot) = outcomes.get_mut(index) {
+                *slot = Some(outcome);
+            }
+        }
+        outcomes
+            .into_iter()
+            .map(|o| o.unwrap_or_else(|| Outcome::skip(SkipReason::ReferenceFails, "no result")))
+            .collect()
+    }
+}
+
+fn confirm(
+    plan: &Plan,
+    expected_first: Option<&Outputs>,
+    expected: JobResult,
+    actual: JobResult,
+) -> Outcome {
+    let expected = match expected {
+        Ok(outputs) => outputs,
+        Err(error) => return Outcome::skip(SkipReason::ReferenceFails, error),
+    };
+    let actual = match actual {
+        Ok(outputs) => outputs,
+        Err(error) => {
+            return Outcome::Fail(format!(
+                "our module fails on the driver (confirmed alone): {error}"
+            ))
+        }
+    };
+    if let Some(first) = expected_first {
+        if let Err(difference) = compare_outputs(plan, first, &expected) {
+            return Outcome::skip(SkipReason::Nondeterministic, difference.to_string());
+        }
+    }
+    match compare_outputs(plan, &expected, &actual) {
+        Ok(tolerated) => Outcome::Pass { tolerated },
+        Err(difference) => {
+            Outcome::Fail(format!("{difference} (glslang vs rglsl, confirmed alone)"))
         }
     }
 }
@@ -490,7 +733,7 @@ fn interface_difference(theirs: &Reflection, mine: &Reflection) -> Option<String
         ("input", &theirs.inputs, &mine.inputs),
         ("output", &theirs.outputs, &mine.outputs),
     ] {
-        let shape = |v: &reflect::Varying| (v.location, v.component, v.ty.clone());
+        let shape = |v: &reflect::Varying| (v.location, v.component, v.patch, v.ty.clone());
         let a: Vec<_> = a.iter().map(shape).collect();
         let b: Vec<_> = b.iter().map(shape).collect();
         if a == b {
@@ -509,17 +752,18 @@ pub fn compile_glsl(
     glslang: &Path,
     dir: &Path,
     name: &str,
-    extension: &str,
+    kind: ShaderKind,
     source: &str,
     timeout: Duration,
 ) -> Result<PathBuf, String> {
     fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    let extension = kind.extension();
     let input = dir.join(format!("{name}.{extension}"));
     let output = dir.join(format!("{name}.{extension}.spv"));
     fs::write(&input, source).map_err(|e| e.to_string())?;
     let mut command = Command::new(glslang);
     command
-        .args(["-V", "--target-env", "vulkan1.0", "-o"])
+        .args(["-V", "--target-env", kind.target_env(), "-o"])
         .arg(&output)
         .arg(&input);
     let result = process::run(command, timeout).map_err(|e| format!("{e:#}"))?;
@@ -534,4 +778,89 @@ pub fn compile_glsl(
         return Err(message);
     }
     Ok(output)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::exec::plan::Target;
+    use crate::exec::reflect::{Scalar, ScalarKind, Slot};
+
+    fn plan() -> Plan {
+        let reflection = Reflection {
+            model: spirv::ExecutionModel::GLCompute,
+            entry: "main".into(),
+            local_size: [1, 1, 1],
+            resources: Vec::new(),
+            push_constants: None,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            input_builtins: BTreeSet::new(),
+            output_builtins: BTreeSet::new(),
+            capabilities: BTreeSet::new(),
+            unknown_capabilities: BTreeSet::new(),
+            extensions: BTreeSet::new(),
+            modes: BTreeMap::new(),
+            ray_storage: BTreeSet::new(),
+            problems: Vec::new(),
+        };
+        let mut plan = Plan::new(&reflection, &Inputs::default()).unwrap();
+        plan.targets.push(Target {
+            name: "buffer".into(),
+            buffer: "b".into(),
+            dump: "dump:0:0".into(),
+            slots: vec![Slot {
+                offset: 0,
+                scalar: Scalar {
+                    kind: ScalarKind::Uint,
+                    width: 32,
+                },
+            }],
+        });
+        plan
+    }
+
+    fn outputs(value: u32) -> Outputs {
+        [("dump:0:0".to_string(), value.to_le_bytes().to_vec())]
+            .into_iter()
+            .collect()
+    }
+
+    #[test]
+    fn confirmation_decides_the_verdict() {
+        let plan = plan();
+        assert_eq!(
+            confirm(&plan, Some(&outputs(1)), Ok(outputs(1)), Ok(outputs(1))),
+            Outcome::Pass { tolerated: 0 }
+        );
+        assert!(matches!(
+            confirm(&plan, Some(&outputs(1)), Ok(outputs(1)), Ok(outputs(2))),
+            Outcome::Fail(_)
+        ));
+        assert!(matches!(
+            confirm(&plan, Some(&outputs(3)), Ok(outputs(1)), Ok(outputs(2))),
+            Outcome::Skip {
+                reason: SkipReason::Nondeterministic,
+                ..
+            }
+        ));
+        assert!(matches!(
+            confirm(&plan, None, Err("lost".into()), Ok(outputs(2))),
+            Outcome::Skip {
+                reason: SkipReason::ReferenceFails,
+                ..
+            }
+        ));
+        assert!(matches!(
+            confirm(&plan, None, Ok(outputs(2)), Err("lost".into())),
+            Outcome::Fail(_)
+        ));
+    }
+
+    #[test]
+    fn targets_have_stable_labels() {
+        assert_eq!(TargetId::parse("remote"), Some(TargetId::Remote));
+        assert_eq!(TargetId::parse(" local"), Some(TargetId::Local));
+        assert_eq!(TargetId::parse("other"), None);
+    }
 }

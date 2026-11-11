@@ -475,6 +475,7 @@ impl Analyzer<'_> {
                 SingleTypeQualifier::NonUniform => result.nonuniform = true,
             }
         }
+        self.stage_layout_identifiers(&result);
         self.heap_layout_check(&result);
         result
     }

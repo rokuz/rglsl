@@ -1,34 +1,32 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use spirv::{BuiltIn, Dim, ExecutionModel, ImageFormat};
+use spirv::{BuiltIn, Capability, Dim, ExecutionMode, ExecutionModel, ImageFormat, StorageClass};
 
 use super::data::{fill_random, fill_values, Rng, Value};
-use super::harness::{self, Attachment, MAX_ATTACHMENTS};
-use super::reflect::{ImageType, Layout, Reflection, ResourceKind, Scalar, ScalarKind, Slot};
-use super::requirements::{self, Requirement};
+use super::harness::{self, Attachment, ShaderKind, MAX_ATTACHMENTS, PATCH_VERTICES};
+use super::reflect::{
+    ImageType, Layout, Reflection, ResourceKind, Scalar, ScalarKind, Slot, Varying,
+};
+use super::requirements::{self, Need, Requirement};
 
 pub const FRAMEBUFFER: u32 = 32;
 pub const VERTEX_COUNT: u32 = 12;
+const TEXEL_BUFFER_TEXELS: u32 = 64;
+const LAUNCH_SIZE: u32 = 4;
 const MAX_BUFFER_BYTES: u32 = 1 << 22;
 const DATA_DIR: &str = "{DATA}";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Stage {
-    Compute,
-    Fragment,
-    Vertex,
-}
-
-impl Stage {
-    const fn amber(self) -> &'static str {
-        match self {
-            Self::Compute => "compute",
-            Self::Fragment => "fragment",
-            Self::Vertex => "vertex",
-        }
-    }
+pub enum Draw {
+    Dispatch,
+    Rect,
+    Array {
+        topology: &'static str,
+        patch_vertices: Option<u32>,
+    },
+    Rays,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,24 +53,25 @@ pub struct Target {
 
 #[derive(Debug, Clone)]
 pub struct Plan {
-    pub stage: Stage,
+    pub stage: ShaderKind,
     pub entry: String,
-    pub features: BTreeSet<&'static str>,
+    pub needs: BTreeSet<Need>,
     pub files: Vec<(String, Vec<u8>)>,
     pub declarations: String,
     pub bindings: String,
     pub targets: Vec<Target>,
-    pub harness: Option<String>,
+    pub harness: Vec<(ShaderKind, String)>,
     pub attachments: Vec<Attachment>,
     pub framebuffer: u32,
     pub placeholder: bool,
+    pub draw: Draw,
     pub notes: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct ScriptPaths<'a> {
     pub tested: &'a Path,
-    pub harness: Option<&'a Path>,
+    pub harness: &'a [(ShaderKind, PathBuf)],
     pub dump: &'a Path,
     pub data: &'a Path,
 }
@@ -129,19 +128,27 @@ fn sampled_format(image: &ImageType) -> ImageFormatInfo {
 
 fn image_extent(image: &ImageType) -> Result<(String, u32), Refusal> {
     if image.arrayed {
-        return Err(Refusal::Binding("arrayed images".into()));
+        return Err(Refusal::Binding(
+            "arrayed images (Amber images have a single layer)".into(),
+        ));
     }
     if image.multisampled {
-        return Err(Refusal::Binding("multisampled images".into()));
+        return Err(Refusal::Binding(
+            "multisampled images (Amber cannot fill them with data)".into(),
+        ));
     }
     if image.depth && image.sampled != 2 {
-        return Err(Refusal::Binding("depth-comparison images".into()));
+        return Err(Refusal::Binding(
+            "depth-comparison images (Amber has no comparison samplers for them)".into(),
+        ));
     }
     match image.dim {
         Dim::Dim1D => Ok(("DIM_1D WIDTH 8".into(), 8)),
         Dim::Dim2D => Ok(("DIM_2D WIDTH 8 HEIGHT 8".into(), 64)),
         Dim::Dim3D => Ok(("DIM_3D WIDTH 4 HEIGHT 4 DEPTH 4".into(), 64)),
-        Dim::DimCube => Err(Refusal::Binding("cube images".into())),
+        Dim::DimCube => Err(Refusal::Binding(
+            "cube images (Amber has no cube image views)".into(),
+        )),
         Dim::DimRect => Err(Refusal::Binding("rectangle images".into())),
         other => Err(Refusal::Binding(format!("{other:?} images"))),
     }
@@ -215,25 +222,32 @@ fn buffer_bytes(
     bytes
 }
 
-fn requirements(reflection: &Reflection) -> Result<BTreeSet<&'static str>, Refusal> {
-    let mut features = BTreeSet::new();
+fn requirements(reflection: &Reflection) -> Result<BTreeSet<Need>, Refusal> {
+    if let Some(unknown) = reflection.unknown_capabilities.first() {
+        let name = match unknown {
+            5120 => "AbortKHR".to_string(),
+            5447 => "CooperativeMatrixDecodeVectorNV".to_string(),
+            6032 => "RayTracingOpacityMicromapExecutionModeKHR".to_string(),
+            other => format!("capability {other}"),
+        };
+        return Err(Refusal::Capability(format!(
+            "{name} (newer than the harness's SPIR-V tables; Amber cannot enable it)"
+        )));
+    }
+    let mut needs = BTreeSet::new();
     for capability in &reflection.capabilities {
         match requirements::capability(*capability) {
-            Requirement::None => {}
-            Requirement::Feature(feature) => {
-                features.insert(feature);
-            }
+            Requirement::Needs(list) => needs.extend(list.iter().copied()),
             Requirement::Unsupported(reason) => {
                 return Err(Refusal::Capability(format!("{capability:?} ({reason})")));
             }
         }
     }
-    if features
-        .iter()
-        .any(|f| f.starts_with("SubgroupSupportedOperations"))
-    {
+    if needs.iter().any(|need| {
+        matches!(need, Need::Feature(name) if name.starts_with("SubgroupSupportedOperations"))
+    }) {
         if let Some(stage) = requirements::subgroup_stage(reflection.model) {
-            features.insert(stage);
+            needs.insert(Need::Feature(stage));
         }
     }
     for extension in &reflection.extensions {
@@ -241,33 +255,114 @@ fn requirements(reflection: &Reflection) -> Result<BTreeSet<&'static str>, Refus
             return Err(Refusal::Capability(format!("extension {extension}")));
         }
     }
-    Ok(features)
+    Ok(needs)
+}
+
+fn stage_of(model: ExecutionModel) -> Result<ShaderKind, Refusal> {
+    Ok(match model {
+        ExecutionModel::GLCompute => ShaderKind::Compute,
+        ExecutionModel::Fragment => ShaderKind::Fragment,
+        ExecutionModel::Vertex => ShaderKind::Vertex,
+        ExecutionModel::Geometry => ShaderKind::Geometry,
+        ExecutionModel::TessellationControl => ShaderKind::TessControl,
+        ExecutionModel::TessellationEvaluation => ShaderKind::TessEval,
+        ExecutionModel::RayGenerationKHR => ShaderKind::RayGeneration,
+        ExecutionModel::MeshEXT
+        | ExecutionModel::TaskEXT
+        | ExecutionModel::MeshNV
+        | ExecutionModel::TaskNV => {
+            return Err(Refusal::Stage(format!(
+                "{model:?} (Amber has no mesh pipelines)"
+            )))
+        }
+        ExecutionModel::IntersectionKHR
+        | ExecutionModel::AnyHitKHR
+        | ExecutionModel::ClosestHitKHR
+        | ExecutionModel::MissKHR
+        | ExecutionModel::CallableKHR => {
+            return Err(Refusal::Stage(format!(
+                "{model:?} (only ray generation shaders are run)"
+            )))
+        }
+        other => return Err(Refusal::Stage(format!("{other:?}"))),
+    })
+}
+
+fn geometry_topology(reflection: &Reflection) -> Result<&'static str, Refusal> {
+    let topologies = [
+        (ExecutionMode::InputPoints, "POINT_LIST"),
+        (ExecutionMode::InputLines, "LINE_LIST"),
+        (
+            ExecutionMode::InputLinesAdjacency,
+            "LINE_LIST_WITH_ADJACENCY",
+        ),
+        (ExecutionMode::Triangles, "TRIANGLE_LIST"),
+        (
+            ExecutionMode::InputTrianglesAdjacency,
+            "TRIANGLE_LIST_WITH_ADJACENCY",
+        ),
+    ];
+    topologies
+        .iter()
+        .find(|(mode, _)| reflection.has_mode(*mode))
+        .map(|(_, topology)| *topology)
+        .ok_or_else(|| Refusal::Binding("geometry shader without an input primitive".into()))
+}
+
+fn position_values(rng: &mut Rng) -> String {
+    let mut data = String::new();
+    for _ in 0..VERTEX_COUNT {
+        let x = Value::random(scalar(ScalarKind::Float, 32), rng).as_f64() / 2.0;
+        let y = Value::random(scalar(ScalarKind::Float, 32), rng).as_f64() / 2.0;
+        let z = 0.5 + Value::random(scalar(ScalarKind::Float, 32), rng).as_f64() / 8.0;
+        let _ = write!(data, "{x:?} {y:?} {z:?} 1.0 ");
+    }
+    data
 }
 
 impl Plan {
     pub fn new(reflection: &Reflection, inputs: &Inputs) -> Result<Self, Refusal> {
-        let stage = match reflection.model {
-            ExecutionModel::GLCompute => Stage::Compute,
-            ExecutionModel::Fragment => Stage::Fragment,
-            ExecutionModel::Vertex => Stage::Vertex,
-            other => return Err(Refusal::Stage(format!("{other:?}"))),
-        };
+        let stage = stage_of(reflection.model)?;
+        let mut needs = requirements(reflection)?;
         if let Some(problem) = reflection.problems.first() {
             return Err(Refusal::Binding(problem.clone()));
         }
-        let mut features = requirements(reflection)?;
+        if stage == ShaderKind::RayGeneration {
+            if reflection
+                .ray_storage
+                .contains(&StorageClass::CallableDataKHR)
+            {
+                return Err(Refusal::Binding(
+                    "callable shaders (the harness has no callable shader table)".into(),
+                ));
+            }
+            if reflection
+                .ray_storage
+                .contains(&StorageClass::ShaderRecordBufferKHR)
+            {
+                return Err(Refusal::Binding(
+                    "shader record buffers (Amber's shader binding tables carry no data)".into(),
+                ));
+            }
+            if !reflection.capabilities.contains(&Capability::RayTracingKHR) {
+                return Err(Refusal::Capability(
+                    "ray generation without the RayTracingKHR capability".into(),
+                ));
+            }
+        }
         let mut plan = Self {
             stage,
             entry: reflection.entry.clone(),
-            features: BTreeSet::new(),
+            needs: BTreeSet::new(),
             files: Vec::new(),
             declarations: String::new(),
             bindings: String::new(),
             targets: Vec::new(),
-            harness: None,
+            harness: Vec::new(),
             attachments: Vec::new(),
             framebuffer: inputs.framebuffer.unwrap_or(FRAMEBUFFER),
             placeholder: false,
+            draw: Draw::Dispatch,
             notes: Vec::new(),
         };
         let mut rng = Rng::from_text(&inputs.seed);
@@ -397,8 +492,59 @@ impl Plan {
                         }
                     }
                 }
-                ResourceKind::UniformTexelBuffer(_) | ResourceKind::StorageTexelBuffer(_) => {
-                    return Err(Refusal::Binding("texel buffers".into()));
+                ResourceKind::UniformTexelBuffer(image) => {
+                    if image.scalar.width != 32 {
+                        return Err(Refusal::Binding(
+                            "texel buffers with non-32-bit texels".into(),
+                        ));
+                    }
+                    let info = sampled_format(image);
+                    for name in &names {
+                        let data = image_values(&info, TEXEL_BUFFER_TEXELS, &mut rng);
+                        let _ = writeln!(
+                            plan.declarations,
+                            "BUFFER {name} DATA_TYPE {} DATA\n{data}\nEND",
+                            info.name
+                        );
+                    }
+                    let _ = writeln!(
+                        plan.bindings,
+                        "  BIND {bind} {list} AS uniform_texel_buffer {location}"
+                    );
+                }
+                ResourceKind::StorageTexelBuffer(image) => {
+                    let info = storage_format(image.format).ok_or_else(|| {
+                        Refusal::Binding(format!("storage texel buffer format {:?}", image.format))
+                    })?;
+                    for (index, name) in names.iter().enumerate() {
+                        let data = image_values(&info, TEXEL_BUFFER_TEXELS, &mut rng);
+                        let _ = writeln!(
+                            plan.declarations,
+                            "BUFFER {name} DATA_TYPE {} DATA\n{data}\nEND",
+                            info.name
+                        );
+                        plan.add_target(
+                            label("storage texel buffer", index),
+                            name,
+                            texel_slots(&info, TEXEL_BUFFER_TEXELS),
+                        );
+                    }
+                    writes = true;
+                    let _ = writeln!(
+                        plan.bindings,
+                        "  BIND {bind} {list} AS storage_texel_buffer {location}"
+                    );
+                }
+                ResourceKind::AccelerationStructure => {
+                    if stage != ShaderKind::RayGeneration || resource.count.is_some() {
+                        return Err(Refusal::Binding(
+                            "acceleration structures outside a ray generation shader".into(),
+                        ));
+                    }
+                    let _ = writeln!(
+                        plan.bindings,
+                        "  BIND ACCELERATION_STRUCTURE tlas {location}"
+                    );
                 }
                 ResourceKind::Unsupported(reason) => return Err(Refusal::Binding(reason.clone())),
             }
@@ -418,19 +564,31 @@ impl Plan {
         }
 
         match stage {
-            Stage::Compute => {}
-            Stage::Fragment => {
+            ShaderKind::Compute => {}
+            ShaderKind::RayGeneration => {
+                plan.draw = Draw::Rays;
+                plan.harness = vec![
+                    (ShaderKind::Miss, harness::MISS_SHADER.to_string()),
+                    (ShaderKind::ClosestHit, harness::HIT_SHADER.to_string()),
+                ];
+                plan.declarations.push_str(
+                    "ACCELERATION_STRUCTURE BOTTOM_LEVEL blas\n  GEOMETRY TRIANGLES\n    -1.0 -1.0 0.5\n    1.0 -1.0 0.5\n    0.0 1.0 0.5\n  END\nEND\nACCELERATION_STRUCTURE TOP_LEVEL tlas\n  BOTTOM_LEVEL_INSTANCE blas\n  END\nEND\n",
+                );
+            }
+            ShaderKind::Fragment => {
                 if writes {
-                    features.insert("fragmentStoresAndAtomics");
+                    needs.insert(Need::Feature("fragmentStoresAndAtomics"));
                 }
                 for builtin in [BuiltIn::ClipDistance, BuiltIn::CullDistance] {
                     if reflection.input_builtins.contains(&builtin) {
                         return Err(Refusal::Binding(format!("{builtin:?} fragment input")));
                     }
                 }
-                plan.harness = Some(
+                plan.draw = Draw::Rect;
+                plan.harness = vec![(
+                    ShaderKind::Vertex,
                     harness::vertex_for_fragment(&reflection.inputs).map_err(Refusal::Binding)?,
-                );
+                )];
                 for output in &reflection.outputs {
                     let (scalar, count) = harness::simple_32(output).map_err(Refusal::Binding)?;
                     for location in output.location..output.location + output.array.unwrap_or(1) {
@@ -448,9 +606,9 @@ impl Plan {
                     plan.placeholder = true;
                 }
             }
-            Stage::Vertex => {
+            ShaderKind::Vertex => {
                 if writes {
-                    features.insert("vertexPipelineStoresAndAtomics");
+                    needs.insert(Need::Feature("vertexPipelineStoresAndAtomics"));
                 }
                 for input in &reflection.inputs {
                     if input.array.is_some() {
@@ -465,16 +623,86 @@ impl Plan {
                 if reflection.inputs.is_empty() {
                     plan.add_vertex_input(0, scalar(ScalarKind::Float, 32), 4, &mut rng);
                 }
-                let (source, attachments, ignored) =
-                    harness::fragment_for_vertex(&reflection.outputs);
-                plan.harness = Some(source);
-                plan.attachments = attachments;
-                plan.notes.extend(ignored);
+                plan.draw = Draw::Array {
+                    topology: "TRIANGLE_LIST",
+                    patch_vertices: None,
+                };
+                plan.finish_with_fragment(&reflection.outputs);
+            }
+            ShaderKind::Geometry => {
+                if writes {
+                    needs.insert(Need::Feature("vertexPipelineStoresAndAtomics"));
+                }
+                plan.draw = Draw::Array {
+                    topology: geometry_topology(reflection)?,
+                    patch_vertices: None,
+                };
+                plan.start_with_vertex(&reflection.inputs, &mut rng)?;
+                plan.finish_with_fragment(&reflection.outputs);
+            }
+            ShaderKind::TessControl => {
+                if writes {
+                    needs.insert(Need::Feature("vertexPipelineStoresAndAtomics"));
+                }
+                plan.draw = Draw::Array {
+                    topology: "PATCH_LIST",
+                    patch_vertices: Some(PATCH_VERTICES),
+                };
+                plan.start_with_vertex(&reflection.inputs, &mut rng)?;
+                let vertices = reflection
+                    .mode(ExecutionMode::OutputVertices)
+                    .and_then(|v| v.first().copied())
+                    .unwrap_or(PATCH_VERTICES);
+                let (source, forwarded) =
+                    harness::evaluation_for_control(&reflection.outputs, vertices)
+                        .map_err(Refusal::Binding)?;
+                plan.harness.push((ShaderKind::TessEval, source));
+                plan.finish_with_fragment(&forwarded);
+            }
+            ShaderKind::TessEval => {
+                if writes {
+                    needs.insert(Need::Feature("vertexPipelineStoresAndAtomics"));
+                }
+                plan.draw = Draw::Array {
+                    topology: "PATCH_LIST",
+                    patch_vertices: Some(PATCH_VERTICES),
+                };
+                plan.start_with_vertex(&[], &mut rng)?;
+                plan.harness.push((
+                    ShaderKind::TessControl,
+                    harness::control_for_evaluation(&reflection.inputs)
+                        .map_err(Refusal::Binding)?,
+                ));
+                plan.finish_with_fragment(&reflection.outputs);
+            }
+            ShaderKind::Miss | ShaderKind::ClosestHit => {
+                return Err(Refusal::Stage(format!("{stage:?}")));
             }
         }
         plan.add_attachment_targets();
-        plan.features = features;
+        plan.needs = needs;
         Ok(plan)
+    }
+
+    fn start_with_vertex(&mut self, inputs: &[Varying], rng: &mut Rng) -> Result<(), Refusal> {
+        let data = position_values(rng);
+        let _ = writeln!(
+            self.declarations,
+            "BUFFER vb0 DATA_TYPE vec4<float> DATA\n{data}\nEND"
+        );
+        self.bindings.push_str("  VERTEX_DATA vb0 LOCATION 0\n");
+        self.harness.push((
+            ShaderKind::Vertex,
+            harness::vertex_for_fragment(inputs).map_err(Refusal::Binding)?,
+        ));
+        Ok(())
+    }
+
+    fn finish_with_fragment(&mut self, outputs: &[Varying]) {
+        let (source, attachments, ignored) = harness::fragment_for_vertex(outputs);
+        self.harness.push((ShaderKind::Fragment, source));
+        self.attachments = attachments;
+        self.notes.extend(ignored);
     }
 
     fn add_buffer(&mut self, name: &str, bytes: Vec<u8>) {
@@ -567,8 +795,8 @@ impl Plan {
 
     pub fn script(&self, paths: ScriptPaths) -> String {
         let mut out = String::from("#!amber\n");
-        for feature in &self.features {
-            let _ = writeln!(out, "DEVICE_FEATURE {feature}");
+        for need in &self.needs {
+            let _ = writeln!(out, "{}", need.line());
         }
         out.push_str("SET ENGINE_DATA fence_timeout_ms 10000\n");
         let _ = writeln!(
@@ -577,18 +805,18 @@ impl Plan {
             self.stage.amber(),
             paths.tested.display()
         );
-        if let (Some(harness), true) = (paths.harness, self.stage != Stage::Compute) {
-            let kind = if self.stage == Stage::Fragment {
-                "vertex"
-            } else {
-                "fragment"
-            };
+        let mut graphics = vec![(self.stage, "tested".to_string())];
+        for (index, (kind, path)) in paths.harness.iter().enumerate() {
+            let name = format!("harness{index}");
             let _ = writeln!(
                 out,
-                "SHADER {kind} harness SPIRV-BIN FILE {}",
-                harness.display()
+                "SHADER {} {name} SPIRV-BIN FILE {}",
+                kind.amber(),
+                path.display()
             );
+            graphics.push((*kind, name));
         }
+        graphics.sort();
         if !self.targets.is_empty() {
             let _ = writeln!(
                 out,
@@ -617,19 +845,47 @@ impl Plan {
         } else {
             format!(" ENTRY_POINT {}", self.entry)
         };
+        let attach = |name: &str| {
+            if name == "tested" {
+                format!("  ATTACH tested{entry}\n")
+            } else {
+                format!("  ATTACH {name}\n")
+            }
+        };
         let size = self.framebuffer;
-        match self.stage {
-            Stage::Compute => {
+        match self.draw {
+            Draw::Dispatch => {
                 let _ = writeln!(out, "PIPELINE compute main\n  ATTACH tested{entry}");
                 out.push_str(&self.bindings);
                 out.push_str("END\n");
             }
-            Stage::Fragment | Stage::Vertex => {
+            Draw::Rays => {
+                out.push_str("PIPELINE raytracing main\n");
+                for (kind, name) in &graphics {
+                    let group = match kind {
+                        ShaderKind::RayGeneration => "g_raygen",
+                        ShaderKind::Miss => "g_miss",
+                        _ => "g_hit",
+                    };
+                    let _ = writeln!(out, "  SHADER_GROUP {group} {name}");
+                }
+                out.push_str("  SHADER_BINDING_TABLE sbt_raygen\n    g_raygen\n  END\n");
+                out.push_str("  SHADER_BINDING_TABLE sbt_miss\n    g_miss\n  END\n");
+                out.push_str("  SHADER_BINDING_TABLE sbt_hit\n    g_hit\n  END\n");
+                out.push_str(&self.bindings);
+                out.push_str("END\n");
+            }
+            Draw::Rect | Draw::Array { .. } => {
                 out.push_str("PIPELINE graphics main\n");
-                if self.stage == Stage::Fragment {
-                    let _ = writeln!(out, "  ATTACH harness\n  ATTACH tested{entry}");
-                } else {
-                    let _ = writeln!(out, "  ATTACH tested{entry}\n  ATTACH harness");
+                for (_, name) in &graphics {
+                    out.push_str(&attach(name));
+                }
+                if let Draw::Array {
+                    patch_vertices: Some(count),
+                    ..
+                } = self.draw
+                {
+                    let _ = writeln!(out, "  PATCH_CONTROL_POINTS {count}");
                 }
                 let _ = writeln!(out, "  FRAMEBUFFER_SIZE {size} {size}");
                 for attachment in &self.attachments {
@@ -657,18 +913,24 @@ impl Plan {
             }
             out.push_str("END\n");
         }
-        match self.stage {
-            Stage::Compute => out.push_str("RUN main 1 1 1\n"),
-            Stage::Fragment => {
+        match self.draw {
+            Draw::Dispatch => out.push_str("RUN main 1 1 1\n"),
+            Draw::Rect => {
                 let _ = writeln!(
                     out,
                     "CLEAR_COLOR main 0 0 0 0\nCLEAR main\nRUN main DRAW_RECT POS 0 0 SIZE {size} {size}"
                 );
             }
-            Stage::Vertex => {
+            Draw::Array { topology, .. } => {
                 let _ = writeln!(
                     out,
-                    "CLEAR_COLOR main 0 0 0 0\nCLEAR main\nRUN main DRAW_ARRAY AS TRIANGLE_LIST START_IDX 0 COUNT {VERTEX_COUNT}"
+                    "CLEAR_COLOR main 0 0 0 0\nCLEAR main\nRUN main DRAW_ARRAY AS {topology} START_IDX 0 COUNT {VERTEX_COUNT}"
+                );
+            }
+            Draw::Rays => {
+                let _ = writeln!(
+                    out,
+                    "RUN main RAYGEN sbt_raygen MISS sbt_miss HIT sbt_hit {LAUNCH_SIZE} {LAUNCH_SIZE} 1"
                 );
             }
         }
@@ -704,7 +966,10 @@ mod tests {
             input_builtins: BTreeSet::new(),
             output_builtins: BTreeSet::new(),
             capabilities: [spirv::Capability::Shader].into_iter().collect(),
+            unknown_capabilities: BTreeSet::new(),
             extensions: BTreeSet::new(),
+            modes: BTreeMap::new(),
+            ray_storage: BTreeSet::new(),
             problems: Vec::new(),
         }
     }
@@ -775,7 +1040,7 @@ mod tests {
         let (tested, dump, data) = paths();
         let script = plan.script(ScriptPaths {
             tested: &tested,
-            harness: None,
+            harness: &[],
             dump: &dump,
             data: &data,
         });
@@ -807,6 +1072,7 @@ mod tests {
             interpolation: Interpolation::Smooth,
             centroid: false,
             sample: false,
+            patch: false,
         }];
         module.outputs = vec![Varying {
             location: 0,
@@ -819,12 +1085,12 @@ mod tests {
             interpolation: Interpolation::Smooth,
             centroid: false,
             sample: false,
+            patch: false,
         }];
         let plan = Plan::new(&module, &Inputs::default()).unwrap();
-        assert!(plan
-            .harness
-            .as_deref()
-            .unwrap()
+        assert_eq!(plan.harness.len(), 1);
+        assert!(plan.harness[0]
+            .1
             .contains("layout(location = 1) out vec2 v1;"));
         assert_eq!(plan.targets.len(), 1);
         assert_eq!(
@@ -833,14 +1099,14 @@ mod tests {
         );
         assert_eq!(plan.targets[0].slots[3].offset, 16);
         let (tested, dump, data) = paths();
-        let harness = PathBuf::from("/w/harness.spv");
+        let harness = [(ShaderKind::Vertex, PathBuf::from("/w/harness.spv"))];
         let script = plan.script(ScriptPaths {
             tested: &tested,
-            harness: Some(&harness),
+            harness: &harness,
             dump: &dump,
             data: &data,
         });
-        assert!(script.contains("SHADER vertex harness SPIRV-BIN FILE /w/harness.spv\n"));
+        assert!(script.contains("SHADER vertex harness0 SPIRV-BIN FILE /w/harness.spv\n"));
         assert!(script.contains("BUFFER fb0 FORMAT R32G32B32A32_SFLOAT\n"));
         assert!(script.contains("  BIND BUFFER fb0 AS color LOCATION 0\n"));
         assert!(script.contains("  BIND BUFFER fb0 AS storage DESCRIPTOR_SET 0 BINDING 0\n"));
@@ -867,15 +1133,19 @@ mod tests {
             Refusal::Binding("arrays of descriptors".into())
         );
         assert!(matches!(
-            Plan::new(&reflection(ExecutionModel::Geometry), &Inputs::default()),
+            Plan::new(&reflection(ExecutionModel::MeshEXT), &Inputs::default()),
             Err(Refusal::Stage(_))
+        ));
+        assert!(matches!(
+            Plan::new(&reflection(ExecutionModel::Geometry), &Inputs::default()),
+            Err(Refusal::Binding(_))
         ));
         let mut module = reflection(ExecutionModel::GLCompute);
         module.capabilities.insert(spirv::Capability::Float64);
         assert!(Plan::new(&module, &Inputs::default())
             .unwrap()
-            .features
-            .contains("shaderFloat64"));
+            .needs
+            .contains(&Need::Feature("shaderFloat64")));
     }
 
     #[test]
@@ -930,5 +1200,169 @@ mod tests {
         let bytes = &plan.files[0].1;
         assert_eq!(&bytes[0..4], &0f32.to_le_bytes());
         assert_eq!(&bytes[4..8], &1f32.to_le_bytes());
+    }
+
+    fn shaders(plan: &Plan) -> Vec<ShaderKind> {
+        plan.harness.iter().map(|(kind, _)| *kind).collect()
+    }
+
+    fn harness_paths(plan: &Plan) -> Vec<(ShaderKind, PathBuf)> {
+        plan.harness
+            .iter()
+            .map(|(kind, _)| (*kind, PathBuf::from(format!("h.{}.spv", kind.extension()))))
+            .collect()
+    }
+
+    #[test]
+    fn geometry_and_tessellation_get_generated_stages() {
+        let mut module = reflection(ExecutionModel::Geometry);
+        module
+            .modes
+            .insert(ExecutionMode::InputLinesAdjacency as u32, Vec::new());
+        let plan = Plan::new(&module, &Inputs::default()).unwrap();
+        assert_eq!(shaders(&plan), [ShaderKind::Vertex, ShaderKind::Fragment]);
+        let (tested, dump, data) = paths();
+        let harness = harness_paths(&plan);
+        let script = plan.script(ScriptPaths {
+            tested: &tested,
+            harness: &harness,
+            dump: &dump,
+            data: &data,
+        });
+        assert!(script.contains("SHADER geometry tested SPIRV-BIN FILE /w/tested.spv\n"));
+        assert!(script.contains("  ATTACH harness0\n  ATTACH tested\n  ATTACH harness1\n"));
+        assert!(script.contains("  VERTEX_DATA vb0 LOCATION 0\n"));
+        assert!(script.contains("DRAW_ARRAY AS LINE_LIST_WITH_ADJACENCY START_IDX 0 COUNT 12"));
+
+        let mut module = reflection(ExecutionModel::TessellationEvaluation);
+        module.capabilities.insert(spirv::Capability::Tessellation);
+        let plan = Plan::new(&module, &Inputs::default()).unwrap();
+        assert_eq!(
+            shaders(&plan),
+            [
+                ShaderKind::Vertex,
+                ShaderKind::TessControl,
+                ShaderKind::Fragment
+            ]
+        );
+        assert!(plan.needs.contains(&Need::Feature("tessellationShader")));
+        let harness = harness_paths(&plan);
+        let script = plan.script(ScriptPaths {
+            tested: &tested,
+            harness: &harness,
+            dump: &dump,
+            data: &data,
+        });
+        assert!(script.contains("  PATCH_CONTROL_POINTS 3\n"));
+        assert!(script.contains("  ATTACH harness0\n  ATTACH harness1\n  ATTACH tested\n"));
+        assert!(script.contains("DRAW_ARRAY AS PATCH_LIST"));
+
+        let plan = Plan::new(
+            &reflection(ExecutionModel::TessellationControl),
+            &Inputs::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            shaders(&plan),
+            [
+                ShaderKind::Vertex,
+                ShaderKind::TessEval,
+                ShaderKind::Fragment
+            ]
+        );
+    }
+
+    #[test]
+    fn ray_generation_runs_in_a_ray_tracing_pipeline() {
+        let mut module = reflection(ExecutionModel::RayGenerationKHR);
+        module.capabilities.insert(spirv::Capability::RayTracingKHR);
+        module.resources.push(Resource {
+            set: 0,
+            binding: 1,
+            count: None,
+            kind: ResourceKind::AccelerationStructure,
+        });
+        let plan = Plan::new(&module, &Inputs::default()).unwrap();
+        assert_eq!(shaders(&plan), [ShaderKind::Miss, ShaderKind::ClosestHit]);
+        let (tested, dump, data) = paths();
+        let harness = harness_paths(&plan);
+        let script = plan.script(ScriptPaths {
+            tested: &tested,
+            harness: &harness,
+            dump: &dump,
+            data: &data,
+        });
+        assert!(
+            script.contains("DEVICE_FEATURE RayTracingPipelineFeaturesKHR.rayTracingPipeline\n")
+        );
+        assert!(script.contains("PIPELINE raytracing main\n  SHADER_GROUP g_raygen tested\n"));
+        assert!(script.contains("  BIND ACCELERATION_STRUCTURE tlas DESCRIPTOR_SET 0 BINDING 1\n"));
+        assert!(script.ends_with("RUN main RAYGEN sbt_raygen MISS sbt_miss HIT sbt_hit 4 4 1\n"));
+
+        module.ray_storage.insert(StorageClass::CallableDataKHR);
+        assert!(matches!(
+            Plan::new(&module, &Inputs::default()),
+            Err(Refusal::Binding(_))
+        ));
+    }
+
+    #[test]
+    fn texel_buffers_are_bound_and_dumped() {
+        let image = ImageType {
+            dim: Dim::DimBuffer,
+            depth: false,
+            arrayed: false,
+            multisampled: false,
+            sampled: 2,
+            format: ImageFormat::R32ui,
+            scalar: U32,
+        };
+        let mut module = reflection(ExecutionModel::GLCompute);
+        module.resources.push(Resource {
+            set: 0,
+            binding: 0,
+            count: None,
+            kind: ResourceKind::UniformTexelBuffer(ImageType {
+                sampled: 1,
+                ..image
+            }),
+        });
+        module.resources.push(Resource {
+            set: 0,
+            binding: 1,
+            count: None,
+            kind: ResourceKind::StorageTexelBuffer(image),
+        });
+        let plan = Plan::new(&module, &Inputs::default()).unwrap();
+        assert!(plan
+            .declarations
+            .contains("BUFFER r0_0 DATA_TYPE R32G32B32A32_UINT DATA\n"));
+        assert!(plan
+            .declarations
+            .contains("BUFFER r0_1 DATA_TYPE R32_UINT DATA\n"));
+        assert!(plan
+            .bindings
+            .contains("  BIND BUFFER r0_0 AS uniform_texel_buffer DESCRIPTOR_SET 0 BINDING 0\n"));
+        assert!(plan
+            .bindings
+            .contains("  BIND BUFFER r0_1 AS storage_texel_buffer DESCRIPTOR_SET 0 BINDING 1\n"));
+        assert_eq!(plan.targets.len(), 1);
+        assert_eq!(plan.targets[0].slots.len(), 64);
+
+        let mut module = reflection(ExecutionModel::GLCompute);
+        module.resources.push(Resource {
+            set: 0,
+            binding: 0,
+            count: None,
+            kind: ResourceKind::SampledImage(ImageType {
+                dim: Dim::DimCube,
+                sampled: 1,
+                ..image
+            }),
+        });
+        let Err(Refusal::Binding(reason)) = Plan::new(&module, &Inputs::default()) else {
+            panic!("cube images are refused");
+        };
+        assert!(reason.contains("Amber"));
     }
 }
