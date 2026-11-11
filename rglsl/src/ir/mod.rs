@@ -233,7 +233,7 @@ use serde::Serialize;
 
 use crate::arena::{Arena, Handle, Range, UniqueArena};
 use crate::diagnostic_filter::DiagnosticFilterNode;
-use crate::{FastIndexMap, NamedExpressions, NonUniformExpressions};
+use crate::{FastIndexMap, NamedExpressions, NonUniformExpressions, PrecisionExpressions};
 
 pub use block::Block;
 pub use rglsl_types::{ResourceBinding, ShaderStage};
@@ -503,6 +503,18 @@ pub enum BuiltIn {
     SampleMask {
         override_coverage: bool,
     },
+    SamplePosition,
+    HelperInvocation,
+    DeviceIndex,
+    ShadingRate,
+    FragSize {
+        nv: bool,
+    },
+    FragInvocationCount {
+        nv: bool,
+    },
+    FullyCovered,
+    FragStencilRef,
 
     /// Read in compute, task, and mesh shaders
     GlobalInvocationId,
@@ -698,6 +710,11 @@ pub enum ScalarKind {
     BFloat,
     FloatE4M3,
     FloatE5M2,
+    FloatE2M1,
+    FloatE3M2,
+    FloatE2M3,
+    FloatUE8M0,
+    FloatMXINT8,
 
     /// WGSL abstract integer type.
     ///
@@ -822,6 +839,18 @@ pub struct StructMember {
     #[cfg_attr(feature = "serialize", serde(skip_serializing_if = "Option::is_none"))]
     #[cfg_attr(feature = "deserialize", serde(default))]
     pub heap: Option<HeapMember>,
+    #[cfg_attr(
+        feature = "serialize",
+        serde(skip_serializing_if = "MemoryDecorations::is_empty")
+    )]
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    pub memory_decorations: MemoryDecorations,
+    #[cfg_attr(
+        feature = "serialize",
+        serde(skip_serializing_if = "core::ops::Not::not")
+    )]
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    pub relaxed_precision: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
@@ -866,6 +895,7 @@ pub enum ImageDimension {
     Cube,
     Buffer,
     Subpass,
+    TileImageData,
 }
 
 bitflags::bitflags! {
@@ -899,6 +929,7 @@ bitflags::bitflags! {
         const SHADER_CALL_COHERENT = 0x40;
         const VOLATILE = 0x80;
         const NONPRIVATE = 0x100;
+        const NONTEMPORAL = 0x200;
     }
 }
 
@@ -923,6 +954,8 @@ bitflags::bitflags! {
         const NONPRIVATE = 0x80;
         const NON_WRITABLE = 0x100;
         const NON_READABLE = 0x200;
+        const NONTEMPORAL = 0x400;
+        const RESTRICT = 0x800;
     }
 }
 
@@ -967,6 +1000,7 @@ pub enum StorageFormat {
 
     // 64-bit formats
     R64Uint,
+    R64Sint,
     Rg32Uint,
     Rg32Sint,
     Rg32Float,
@@ -1403,6 +1437,11 @@ pub enum Literal {
     BF16(u16),
     FE4M3(u8),
     FE5M2(u8),
+    FE2M1(u8),
+    FE3M2(u8),
+    FE2M3(u8),
+    FUE8M0(u8),
+    FMXINT8(u8),
 }
 
 /// Pipeline-overridable constant.
@@ -1567,6 +1606,24 @@ pub struct GlobalVariable {
     #[cfg_attr(feature = "serialize", serde(skip_serializing_if = "Vec::is_empty"))]
     #[cfg_attr(feature = "deserialize", serde(default))]
     pub spirv_decorations: Vec<SpirvDecoration>,
+    #[cfg_attr(
+        feature = "serialize",
+        serde(skip_serializing_if = "core::ops::Not::not")
+    )]
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    pub relaxed_precision: bool,
+    #[cfg_attr(feature = "serialize", serde(skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    pub immediate_bank: Option<ImmediateBank>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub struct ImmediateBank {
+    pub bank: Option<u32>,
+    pub member_offset: Option<u32>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -1597,6 +1654,12 @@ pub struct LocalVariable {
     ///
     /// [`expressions`]: Function::expressions
     pub init: Option<Handle<Expression>>,
+    #[cfg_attr(
+        feature = "serialize",
+        serde(skip_serializing_if = "core::ops::Not::not")
+    )]
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    pub relaxed_precision: bool,
 }
 
 /// Operation that can be applied on a single value.
@@ -1697,6 +1760,35 @@ pub enum AtomicFunction {
     Min,
     Max,
     Exchange { compare: Option<Handle<Expression>> },
+}
+
+#[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub enum InterpolationLocation {
+    Centroid,
+    Sample(Handle<Expression>),
+    Offset(Handle<Expression>),
+}
+
+#[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub enum AttachmentAspect {
+    Color(Handle<Expression>),
+    Depth,
+    Stencil,
+}
+
+#[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub enum BarrierPhase {
+    Arrive,
+    Wait,
 }
 
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
@@ -2938,6 +3030,29 @@ pub enum Expression {
     ImageSparseResident {
         code: Handle<Expression>,
     },
+    IsHelperInvocation,
+    InterpolateAt {
+        pointer: Handle<Expression>,
+        location: InterpolationLocation,
+    },
+    FragmentFetch {
+        image: Handle<Expression>,
+        coordinate: Handle<Expression>,
+        fragment: Option<Handle<Expression>>,
+    },
+    ImageFootprint {
+        image: Handle<Expression>,
+        coordinate: Handle<Expression>,
+        granularity: Handle<Expression>,
+        coarse: Handle<Expression>,
+        level: SampleLevel,
+        min_lod: Option<Handle<Expression>>,
+        ty: Handle<Type>,
+    },
+    AttachmentRead {
+        aspect: AttachmentAspect,
+        sample: Option<Handle<Expression>>,
+    },
     CooperativeVectorLoad {
         ty: Handle<Type>,
         pointer: Handle<Expression>,
@@ -2974,6 +3089,11 @@ pub enum Expression {
         expr: Handle<Expression>,
         index: Option<Handle<Expression>>,
         ty: Handle<Type>,
+    },
+    Bitcast {
+        expr: Handle<Expression>,
+        ty: Handle<Type>,
+        offset: Option<Handle<Expression>>,
     },
     TensorSet {
         base: Handle<Expression>,
@@ -3093,6 +3213,12 @@ pub enum Statement {
         condition: Handle<Expression>, //bool
         accept: Block,
         reject: Block,
+        #[cfg_attr(feature = "deserialize", serde(default))]
+        #[cfg_attr(
+            feature = "serialize",
+            serde(skip_serializing_if = "SelectionControl::is_none")
+        )]
+        control: SelectionControl,
     },
     /// Conditionally executes one of multiple blocks, based on the value of the selector.
     ///
@@ -3118,6 +3244,12 @@ pub enum Statement {
     Switch {
         selector: Handle<Expression>,
         cases: Vec<SwitchCase>,
+        #[cfg_attr(feature = "deserialize", serde(default))]
+        #[cfg_attr(
+            feature = "serialize",
+            serde(skip_serializing_if = "SelectionControl::is_none")
+        )]
+        control: SelectionControl,
     },
 
     /// Executes a block repeatedly.
@@ -3204,6 +3336,12 @@ pub enum Statement {
     /// [`Loop`]: Statement::Loop
     Kill,
 
+    Demote,
+
+    BeginInvocationInterlock,
+
+    EndInvocationInterlock,
+
     EmitVertex {
         stream: Option<u32>,
     },
@@ -3223,6 +3361,13 @@ pub enum Statement {
 
     ScopedBarrier {
         execution: Option<MemoryScope>,
+        memory: MemoryScope,
+        semantics: MemorySemantics,
+    },
+
+    SplitBarrier {
+        phase: BarrierPhase,
+        execution: MemoryScope,
         memory: MemoryScope,
         semantics: MemorySemantics,
     },
@@ -3549,6 +3694,12 @@ pub struct FunctionArgument {
     /// For entry points, an argument has to have a binding
     /// unless it's a structure.
     pub binding: Option<Binding>,
+    #[cfg_attr(
+        feature = "serialize",
+        serde(skip_serializing_if = "core::ops::Not::not")
+    )]
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    pub relaxed_precision: bool,
 }
 
 /// A function result.
@@ -3562,6 +3713,12 @@ pub struct FunctionResult {
     /// For entry points, the result has to have a binding
     /// unless it's a structure.
     pub binding: Option<Binding>,
+    #[cfg_attr(
+        feature = "serialize",
+        serde(skip_serializing_if = "core::ops::Not::not")
+    )]
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    pub relaxed_precision: bool,
 }
 
 bitflags::bitflags! {
@@ -3573,6 +3730,17 @@ bitflags::bitflags! {
         const VALUE = 1 << 0;
         const ACCESS = 1 << 1;
         const SAMPLED_IMAGE = 1 << 2;
+    }
+}
+
+bitflags::bitflags! {
+    #[cfg_attr(feature = "serialize", derive(Serialize))]
+    #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+    #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+    #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    pub struct Precision: u8 {
+        const RELAXED = 1 << 0;
+        const NO_CONTRACTION = 1 << 1;
     }
 }
 
@@ -3621,6 +3789,12 @@ pub struct Function {
         serde(skip_serializing_if = "NonUniformExpressions::is_empty")
     )]
     pub non_uniform: NonUniformExpressions,
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    #[cfg_attr(
+        feature = "serialize",
+        serde(skip_serializing_if = "PrecisionExpressions::is_empty")
+    )]
+    pub precision: PrecisionExpressions,
     /// Block of instructions comprising the body of the function.
     pub body: Block,
     /// The leaf of all diagnostic filter rules tree (stored in [`Module::diagnostic_filters`])
@@ -3637,6 +3811,29 @@ pub struct Function {
         serde(skip_serializing_if = "Linkage::is_definition")
     )]
     pub linkage: Linkage,
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    #[cfg_attr(
+        feature = "serialize",
+        serde(skip_serializing_if = "FunctionControl::is_none")
+    )]
+    pub control: FunctionControl,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub enum FunctionControl {
+    #[default]
+    None,
+    Inline,
+    DontInline,
+}
+
+impl FunctionControl {
+    pub const fn is_none(&self) -> bool {
+        matches!(*self, Self::None)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -3716,6 +3913,12 @@ pub struct EntryPoint {
     pub workgroup_size: [u32; 3],
     /// Override expressions for workgroup size in the global_expressions arena
     pub workgroup_size_overrides: Option<[Option<Handle<Expression>>; 3]>,
+    #[cfg_attr(
+        feature = "serialize",
+        serde(skip_serializing_if = "core::ops::Not::not")
+    )]
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    pub workgroup_size_builtin: bool,
     /// The entrance function.
     pub function: Function,
     /// Information for [`Mesh`] shaders.
@@ -3749,6 +3952,12 @@ pub struct EntryPoint {
         serde(skip_serializing_if = "QuadControl::is_default")
     )]
     pub quad_control: QuadControl,
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    #[cfg_attr(
+        feature = "serialize",
+        serde(skip_serializing_if = "FragmentModes::is_default")
+    )]
+    pub fragment_modes: FragmentModes,
     #[cfg_attr(feature = "serialize", serde(skip_serializing_if = "Option::is_none"))]
     #[cfg_attr(feature = "deserialize", serde(default))]
     pub geometry: Option<GeometryInfo>,
@@ -3770,6 +3979,27 @@ pub struct EntryPoint {
     #[cfg_attr(feature = "serialize", serde(skip_serializing_if = "Option::is_none"))]
     #[cfg_attr(feature = "deserialize", serde(default))]
     pub derivative_group: Option<DerivativeGroup>,
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    #[cfg_attr(
+        feature = "serialize",
+        serde(skip_serializing_if = "Reconvergence::is_default")
+    )]
+    pub reconvergence: Reconvergence,
+}
+
+#[derive(Clone, Copy, Debug, Default, Hash, Eq, PartialEq)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub struct Reconvergence {
+    pub subgroup_uniform_control_flow: bool,
+    pub maximally_reconverges: bool,
+}
+
+impl Reconvergence {
+    pub const fn is_default(&self) -> bool {
+        !self.subgroup_uniform_control_flow && !self.maximally_reconverges
+    }
 }
 
 #[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
@@ -3806,6 +4036,17 @@ pub enum DerivativeGroupExtension {
 pub enum LoopDependency {
     Infinite,
     Length(u32),
+}
+
+#[derive(Clone, Copy, Debug, Default, Hash, Eq, PartialEq)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub enum SelectionControl {
+    #[default]
+    None,
+    Flatten,
+    DontFlatten,
 }
 
 #[derive(Clone, Copy, Debug, Default, Hash, Eq, PartialEq)]
@@ -3969,6 +4210,37 @@ pub enum TessellationSpacing {
 pub enum TessellationVertexOrder {
     Cw,
     Ccw,
+}
+
+#[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub enum InterlockScope {
+    Pixel,
+    Sample,
+    ShadingRate,
+}
+
+#[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub struct Interlock {
+    pub scope: InterlockScope,
+    pub ordered: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, Hash, Eq, PartialEq)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub struct FragmentModes {
+    pub post_depth_coverage: bool,
+    pub interlock: Option<Interlock>,
+    pub non_coherent_color_attachment_read: bool,
+    pub non_coherent_depth_attachment_read: bool,
+    pub non_coherent_stencil_attachment_read: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, Hash, Eq, PartialEq)]

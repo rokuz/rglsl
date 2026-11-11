@@ -121,12 +121,9 @@ impl Lowerer<'_> {
             .and_then(|declared| declared.reference)
             .ok_or_else(|| internal(span))?;
         self.references_in_progress.insert(block);
-        let structure = self.block_struct_with_end(block, layout.packing, layout.row_major, span);
+        let structure = self.block_struct(block, layout.packing, layout.row_major, span);
         self.references_in_progress.remove(&block);
-        let (structure, end) = structure?;
-        if layout.size.is_some_and(|size| size != end) {
-            return Err(internal(span));
-        }
+        let structure = structure?;
         let resolved = Type {
             name: None,
             inner: TypeInner::Pointer {

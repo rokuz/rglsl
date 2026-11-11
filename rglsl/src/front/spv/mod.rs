@@ -175,9 +175,9 @@ impl crate::ImageDimension {
     const fn required_coordinate_size(&self) -> Option<crate::VectorSize> {
         match *self {
             crate::ImageDimension::D1 | crate::ImageDimension::Buffer => None,
-            crate::ImageDimension::D2 | crate::ImageDimension::Subpass => {
-                Some(crate::VectorSize::Bi)
-            }
+            crate::ImageDimension::D2
+            | crate::ImageDimension::Subpass
+            | crate::ImageDimension::TileImageData => Some(crate::VectorSize::Bi),
             crate::ImageDimension::D3 => Some(crate::VectorSize::Tri),
             crate::ImageDimension::Cube => Some(crate::VectorSize::Tri),
         }
@@ -973,6 +973,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                     name: None,
                     ty,
                     init: None,
+                    relaxed_precision: false,
                 },
                 crate::Span::default(),
             );
@@ -1614,6 +1615,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                     condition: _,
                     ref mut accept,
                     ref mut reject,
+                    control: _,
                 } => {
                     self.patch_statements(reject, expressions, fun_parameter_sampling)?;
                     self.patch_statements(accept, expressions, fun_parameter_sampling)?;
@@ -1621,6 +1623,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                 S::Switch {
                     selector: _,
                     ref mut cases,
+                    control: _,
                 } => {
                     for case in cases.iter_mut() {
                         self.patch_statements(&mut case.body, expressions, fun_parameter_sampling)?;
@@ -1639,6 +1642,10 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                 | S::Continue
                 | S::Return { .. }
                 | S::Kill
+                | S::Demote
+                | S::BeginInvocationInterlock
+                | S::EndInvocationInterlock
+                | S::SplitBarrier { .. }
                 | S::EmitVertex { .. }
                 | S::EndPrimitive { .. }
                 | S::ControlBarrier(_)
@@ -2624,6 +2631,8 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                 matrix_layout: None,
                 xfb_offset: None,
                 heap: None,
+                memory_decorations: crate::MemoryDecorations::empty(),
+                relaxed_precision: false,
             });
         }
 
@@ -3084,6 +3093,8 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                     heap_offset: None,
                     tile_attachment: false,
                     spirv_decorations: Vec::new(),
+                    relaxed_precision: false,
+                    immediate_bank: None,
                 };
                 (Variable::Global, var)
             }
@@ -3138,12 +3149,15 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                     heap_offset: None,
                     tile_attachment: false,
                     spirv_decorations: Vec::new(),
+                    relaxed_precision: false,
+                    immediate_bank: None,
                 };
 
                 let inner = Variable::Input(crate::FunctionArgument {
                     name: dec.name,
                     ty: unsigned_ty,
                     binding: Some(binding),
+                    relaxed_precision: false,
                 });
                 (inner, var)
             }
@@ -3205,8 +3219,14 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                     heap_offset: None,
                     tile_attachment: false,
                     spirv_decorations: Vec::new(),
+                    relaxed_precision: false,
+                    immediate_bank: None,
                 };
-                let inner = Variable::Output(crate::FunctionResult { ty, binding });
+                let inner = Variable::Output(crate::FunctionResult {
+                    ty,
+                    binding,
+                    relaxed_precision: false,
+                });
                 (inner, var)
             }
         };

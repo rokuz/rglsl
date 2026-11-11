@@ -108,6 +108,7 @@ pub(super) fn map_image_format(word: spirv::Word) -> Result<crate::StorageFormat
         Some(spirv::ImageFormat::Rgb10A2) => Ok(crate::StorageFormat::Rgb10a2Unorm),
         Some(spirv::ImageFormat::R11fG11fB10f) => Ok(crate::StorageFormat::Rg11b10Ufloat),
         Some(spirv::ImageFormat::R64ui) => Ok(crate::StorageFormat::R64Uint),
+        Some(spirv::ImageFormat::R64i) => Ok(crate::StorageFormat::R64Sint),
         Some(spirv::ImageFormat::Rg32ui) => Ok(crate::StorageFormat::Rg32Uint),
         Some(spirv::ImageFormat::Rg32i) => Ok(crate::StorageFormat::Rg32Sint),
         Some(spirv::ImageFormat::Rg32f) => Ok(crate::StorageFormat::Rg32Float),

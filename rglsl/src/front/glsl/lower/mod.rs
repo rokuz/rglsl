@@ -13,7 +13,6 @@ mod library;
 mod mesh;
 mod message;
 mod object;
-mod offset;
 mod prepass;
 mod ray;
 mod reference;
@@ -47,13 +46,18 @@ use crate::{
 
 pub(super) type Result<T> = core::result::Result<T, Error>;
 
-pub(super) fn parse(options: &Options, source: &str) -> core::result::Result<Module, ParseErrors> {
+pub(super) fn parse(
+    options: &Options,
+    source: &str,
+    root: rglsl_pp::FileId,
+    includer: &mut dyn rglsl_pp::Includer,
+) -> core::result::Result<Module, ParseErrors> {
     lower(
         options,
         source,
         Mode::Program,
-        rglsl_pp::FileId(0),
-        &mut rglsl_pp::NoIncluder,
+        root,
+        includer,
         &mut library::StageNames::default(),
     )
     .map(|object| object.module)
@@ -167,18 +171,21 @@ fn lower(
                 }
             })
             .collect::<Vec<_>>();
-        return Err(errors.into());
+        let first = errors
+            .iter()
+            .filter_map(|error| error.meta.to_range())
+            .map(|range| range.start)
+            .min();
+        let mut earlier = first
+            .map(|first| semantic_errors_before(options, &preprocessed, first))
+            .unwrap_or_default();
+        earlier.extend(errors);
+        earlier.sort_by_key(|error| !error.meta.is_defined());
+        return Err(earlier.into());
     }
     let text = preprocessed.text.as_str();
     let (unit, failure) = rglsl_ast::parse_prefix(text);
-    let analysis = rglsl_sema::analyze(
-        &unit,
-        &rglsl_sema::Options {
-            spirv_version: options.spirv_version,
-            end_of_input: u32::try_from(text.len()).ok(),
-            ..rglsl_sema::Options::new(stage(options.stage))
-        },
-    );
+    let analysis = rglsl_sema::analyze(&unit, &sema_options(options, text));
     if let Some(error) = failure {
         let earlier = analysis.diagnostics.iter().filter(|diagnostic| {
             diagnostic.offset(text) < error.span.start
@@ -233,6 +240,43 @@ fn lower(
         return Err(errors.into());
     }
     Lowerer::new(&unit, &analysis, options, map, mode).run()
+}
+
+fn sema_options(options: &Options, text: &str) -> rglsl_sema::Options {
+    rglsl_sema::Options {
+        spirv_version: options.spirv_version,
+        end_of_input: u32::try_from(text.len()).ok(),
+        require_bindings: !options.auto_map_bindings,
+        ..rglsl_sema::Options::new(stage(options.stage))
+    }
+}
+
+fn semantic_errors_before(
+    options: &Options,
+    preprocessed: &rglsl_pp::Preprocessed,
+    end: usize,
+) -> Vec<Error> {
+    let map = &preprocessed.source_map;
+    let text = preprocessed.text.as_str();
+    let (unit, failure) = rglsl_ast::parse_prefix(text);
+    let analysis = rglsl_sema::analyze(&unit, &sema_options(options, text));
+    let parsed = failure.map_or(u32::MAX, |error| error.span.start);
+    let mut errors: Vec<Error> = analysis
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| {
+            diagnostic.offset(text) < parsed
+                && !link_time(&diagnostic.kind)
+                && !matches!(
+                    diagnostic.kind,
+                    rglsl_sema::DiagnosticKind::UnsupportedProfile(_)
+                )
+        })
+        .map(|diagnostic| semantic_error(map, text, diagnostic))
+        .filter(|error| error.meta.to_range().is_some_and(|range| range.start < end))
+        .collect();
+    errors.sort_by_key(|error| error.meta.to_range().map(|range| range.start));
+    errors
 }
 
 const fn external_end(declaration: &ExternalDeclaration) -> u32 {
@@ -339,6 +383,13 @@ pub(super) enum GlobalRef {
 
 pub(super) use rglsl_sema::types::Packing;
 
+pub(super) const fn relaxed(qualifiers: &rglsl_sema::scope::Qualifiers) -> bool {
+    matches!(
+        qualifiers.precision,
+        Some(rglsl_ast::ast::PrecisionQualifier::Low | rglsl_ast::ast::PrecisionQualifier::Medium)
+    )
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub(super) struct LayerLayout {
     pub viewport_relative: bool,
@@ -406,7 +457,6 @@ pub(super) struct Lowerer<'a> {
     pub conservative_depth: Option<ConservativeDepth>,
     pub layer_layout: LayerLayout,
     pub override_coverage: bool,
-    pub post_depth_coverage: Option<Span>,
     pub per_vertex: Option<(Handle<GlobalVariable>, Vec<String>)>,
     pub per_vertex_used: BTreeSet<String>,
     pub per_vertex_redeclared: bool,
@@ -489,7 +539,6 @@ impl<'a> Lowerer<'a> {
             conservative_depth: None,
             layer_layout: LayerLayout::default(),
             override_coverage: false,
-            post_depth_coverage: None,
             per_vertex: None,
             per_vertex_used: BTreeSet::new(),
             per_vertex_redeclared: false,
@@ -619,7 +668,35 @@ impl<'a> Lowerer<'a> {
             return Err(core::mem::take(&mut self.errors).into());
         }
         self.module.ray_tracing = self.ray_tracing_features();
+        self.relax_globals();
         Ok(self.into_object())
+    }
+
+    fn relax_globals(&mut self) {
+        let analysis = self.analysis;
+        for (&symbol, global) in &self.globals {
+            let GlobalRef::Variable(handle) = *global else {
+                continue;
+            };
+            let relaxed_symbol = analysis
+                .symbol(symbol)
+                .and_then(|symbol| symbol.variable())
+                .is_some_and(|variable| relaxed(&variable.qualifiers));
+            if relaxed_symbol {
+                self.module.global_variables[handle].relaxed_precision = true;
+            }
+        }
+        for (name, &handle) in &self.builtins {
+            let relaxed_builtin = analysis.symbols.iter().any(|symbol| {
+                symbol.name == *name
+                    && symbol
+                        .variable()
+                        .is_some_and(|variable| relaxed(&variable.qualifiers))
+            });
+            if relaxed_builtin {
+                self.module.global_variables[handle].relaxed_precision = true;
+            }
+        }
     }
 
     fn directive(&mut self, directive: &rglsl_ast::ast::Directive) {

@@ -1,7 +1,7 @@
 ; SPIR-V
 ; Version: 1.1
 ; Generator: rspirv
-; Bound: 61
+; Bound: 53
 OpCapability Shader
 %1 = OpExtInstImport "GLSL.std.450"
 OpMemoryModel Logical GLSL450
@@ -44,36 +44,28 @@ OpExecutionMode %12 OriginUpperLeft
 %38 = OpConstantComposite  %7  %14 %14 %14 %14
 %39 = OpConstantComposite  %10  %36 %37 %38 %38
 %41 = OpTypePointer Function %3
-%42 = OpConstantNull  %3
-%44 = OpConstantNull  %3
-%46 = OpTypePointer Function %6
-%47 = OpConstantNull  %6
-%49 = OpConstantNull  %3
-%51 = OpConstantNull  %3
-%53 = OpTypePointer Function %8
-%54 = OpConstantNull  %8
-%56 = OpConstantNull  %8
-%58 = OpTypePointer Function %10
-%59 = OpConstantNull  %10
+%44 = OpTypePointer Function %6
+%48 = OpTypePointer Function %8
+%51 = OpTypePointer Function %10
 %12 = OpFunction  %2  None %13
 %11 = OpLabel
-%55 = OpVariable  %53  Function %56
-%48 = OpVariable  %41  Function %49
-%40 = OpVariable  %41  Function %42
-%57 = OpVariable  %58  Function %59
-%50 = OpVariable  %41  Function %51
-%43 = OpVariable  %41  Function %44
-%52 = OpVariable  %53  Function %54
-%45 = OpVariable  %46  Function %47
-OpBranch %60
-%60 = OpLabel
+%49 = OpVariable  %48  Function
+%45 = OpVariable  %41  Function
+%40 = OpVariable  %41  Function
+%50 = OpVariable  %51  Function
+%46 = OpVariable  %41  Function
+%42 = OpVariable  %41  Function
+%47 = OpVariable  %48  Function
+%43 = OpVariable  %44  Function
+OpBranch %52
+%52 = OpLabel
 OpStore %40 %18
-OpStore %43 %22
-OpStore %45 %25
-OpStore %48 %30
-OpStore %50 %30
-OpStore %52 %33
-OpStore %55 %35
-OpStore %57 %39
+OpStore %42 %22
+OpStore %43 %25
+OpStore %45 %30
+OpStore %46 %30
+OpStore %47 %33
+OpStore %49 %35
+OpStore %50 %39
 OpReturn
 OpFunctionEnd

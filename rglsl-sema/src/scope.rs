@@ -29,6 +29,7 @@ pub enum Storage {
     HitObjectAttributeNv,
     HitObjectAttributeExt,
     TaskPayloadShared,
+    TileImage,
 }
 
 impl Storage {
@@ -76,6 +77,7 @@ pub struct Qualifiers {
     pub subgroup_coherent: bool,
     pub shader_call_coherent: bool,
     pub nonprivate: bool,
+    pub nontemporal: bool,
     pub per_primitive: bool,
     pub per_view: bool,
     pub per_task: bool,
@@ -103,6 +105,7 @@ impl Qualifiers {
             || self.coherent
             || self.volatile
             || self.restrict
+            || self.nontemporal
             || self.needs_vulkan_memory_model()
     }
 
@@ -113,6 +116,7 @@ impl Qualifiers {
                 || self.coherent
                 || self.volatile
                 || self.restrict
+                || self.nontemporal
                 || self.device_coherent
                 || self.queue_family_coherent
                 || self.workgroup_coherent
@@ -238,6 +242,26 @@ pub struct Function {
     pub defined: bool,
     pub span: Span,
     pub spirv_instruction: Option<SpirvInstruction>,
+    pub control: FunctionControl,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct FunctionControl {
+    pub inline: bool,
+    pub dont_inline: bool,
+}
+
+impl FunctionControl {
+    pub const fn merge(self, other: Self) -> Self {
+        Self {
+            inline: self.inline || other.inline,
+            dont_inline: self.dont_inline || other.dont_inline,
+        }
+    }
+
+    pub const fn is_incompatible(self) -> bool {
+        self.inline && self.dont_inline
+    }
 }
 
 impl Function {
@@ -261,6 +285,14 @@ pub enum Lookup<'a> {
 struct Level {
     symbols: BTreeMap<String, SymbolId>,
     functions: BTreeMap<String, Vec<FunctionId>>,
+    precisions: BTreeMap<PrecisionKey, PrecisionQualifier>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum PrecisionKey {
+    Float,
+    Int,
+    Opaque(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -288,6 +320,20 @@ impl Scopes {
 
     pub const fn depth(&self) -> usize {
         self.levels.len()
+    }
+
+    pub fn set_default_precision(&mut self, key: PrecisionKey, precision: PrecisionQualifier) {
+        if let Some(level) = self.levels.last_mut() {
+            level.precisions.insert(key, precision);
+        }
+    }
+
+    pub fn default_precision(&self, key: &PrecisionKey) -> PrecisionQualifier {
+        self.levels
+            .iter()
+            .rev()
+            .find_map(|level| level.precisions.get(key).copied())
+            .unwrap_or(PrecisionQualifier::High)
     }
 
     pub const fn is_global(&self) -> bool {

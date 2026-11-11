@@ -516,6 +516,9 @@ impl<'a> ResolveContext<'a> {
                     return Err(ResolveError::InvalidImage(image));
                 }
             },
+            crate::Expression::ImageSample {
+                depth_ref: Some(_), ..
+            } => TypeResolution::Value(Ti::Scalar(crate::Scalar::F32)),
             crate::Expression::ImageSample { image, .. }
             | crate::Expression::ImageLoad { image, .. } => match *past(image)?.inner_with(types) {
                 Ti::Image { class, .. } | Ti::SampledImage { class, .. } => {
@@ -548,7 +551,8 @@ impl<'a> ResolveContext<'a> {
                         }
                         crate::ImageDimension::D2
                         | crate::ImageDimension::Cube
-                        | crate::ImageDimension::Subpass => Ti::Vector {
+                        | crate::ImageDimension::Subpass
+                        | crate::ImageDimension::TileImageData => Ti::Vector {
                             size: crate::VectorSize::Bi,
                             scalar: crate::Scalar::U32,
                         },
@@ -1025,6 +1029,66 @@ impl<'a> ResolveContext<'a> {
                     vertex_return: false,
                 })
             }
+            crate::Expression::IsHelperInvocation => {
+                TypeResolution::Value(Ti::Scalar(crate::Scalar::BOOL))
+            }
+            crate::Expression::InterpolateAt { pointer, .. } => {
+                match *past(pointer)?.inner_with(types) {
+                    Ti::Pointer { base, .. } => TypeResolution::Handle(base),
+                    Ti::ValuePointer { size, scalar, .. } => TypeResolution::Value(match size {
+                        Some(size) => Ti::Vector { size, scalar },
+                        None => Ti::Scalar(scalar),
+                    }),
+                    ref other => {
+                        log::error!("Interpolant type {other:?}");
+                        return Err(ResolveError::InvalidPointer(pointer));
+                    }
+                }
+            }
+            crate::Expression::ImageFootprint { ty, .. } => TypeResolution::Handle(ty),
+            crate::Expression::FragmentFetch {
+                image, fragment, ..
+            } => match fragment {
+                None => TypeResolution::Value(Ti::Scalar(crate::Scalar::U32)),
+                Some(_) => match *past(image)?.inner_with(types) {
+                    Ti::Image {
+                        class: crate::ImageClass::Sampled { kind, .. },
+                        ..
+                    }
+                    | Ti::SampledImage {
+                        class: crate::ImageClass::Sampled { kind, .. },
+                        ..
+                    } => TypeResolution::Value(Ti::Vector {
+                        size: crate::VectorSize::Quad,
+                        scalar: crate::Scalar { kind, width: 4 },
+                    }),
+                    ref other => {
+                        log::error!("Fragment fetch image type {other:?}");
+                        return Err(ResolveError::InvalidImage(image));
+                    }
+                },
+            },
+            crate::Expression::AttachmentRead { aspect, .. } => match aspect {
+                crate::AttachmentAspect::Color(image) => match *past(image)?.inner_with(types) {
+                    Ti::Image {
+                        class: crate::ImageClass::Sampled { kind, .. },
+                        ..
+                    } => TypeResolution::Value(Ti::Vector {
+                        size: crate::VectorSize::Quad,
+                        scalar: crate::Scalar { kind, width: 4 },
+                    }),
+                    ref other => {
+                        log::error!("Attachment type {other:?}");
+                        return Err(ResolveError::InvalidImage(image));
+                    }
+                },
+                crate::AttachmentAspect::Depth => {
+                    TypeResolution::Value(Ti::Scalar(crate::Scalar::F32))
+                }
+                crate::AttachmentAspect::Stencil => {
+                    TypeResolution::Value(Ti::Scalar(crate::Scalar::U32))
+                }
+            },
             crate::Expression::SubgroupBallotResult => TypeResolution::Value(Ti::Vector {
                 scalar: crate::Scalar::U32,
                 size: crate::VectorSize::Quad,
@@ -1037,6 +1101,7 @@ impl<'a> ResolveContext<'a> {
             | crate::Expression::CooperativeVectorMatMul { ty, .. }
             | crate::Expression::Convert { ty, .. }
             | crate::Expression::ArrayConversion { ty, .. }
+            | crate::Expression::Bitcast { ty, .. }
             | crate::Expression::CooperativeMatrixResult { ty }
             | crate::Expression::TensorCreate { ty }
             | crate::Expression::TensorRead { ty, .. } => TypeResolution::Handle(ty),

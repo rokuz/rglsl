@@ -145,6 +145,8 @@ pub enum ExpressionError {
     InvalidImageProcessing(crate::ImageProcessingOperation, &'static str),
     #[error("Array conversion {0:?} is invalid: {1}")]
     InvalidArrayConversion(crate::ArrayConversion, &'static str),
+    #[error("Bitcast is invalid: {0}")]
+    InvalidBitcast(&'static str),
     #[error("Sample level (exact) type {0:?} has an invalid type")]
     InvalidSampleLevelExactType(Handle<crate::Expression>),
     #[error("Sample level (bias) type {0:?} is not a scalar float")]
@@ -646,7 +648,17 @@ impl super::Validator {
                     crate::ImageClass::Depth { multi: false } => true,
                     _ => return Err(ExpressionError::InvalidImageClass(class)),
                 };
-                if comparison != depth_ref.is_some() || (comparison && !image_depth) {
+                let compared_float = sampler.is_some()
+                    && matches!(
+                        class,
+                        crate::ImageClass::Sampled {
+                            kind: crate::ScalarKind::Float,
+                            multi: false,
+                        }
+                    );
+                if comparison != depth_ref.is_some()
+                    || (comparison && !image_depth && !compared_float)
+                {
                     return Err(ExpressionError::ComparisonSamplingMismatch {
                         image: class,
                         sampler: comparison,
@@ -659,7 +671,9 @@ impl super::Validator {
                     crate::ImageDimension::D1 => 1,
                     crate::ImageDimension::D2 => 2,
                     crate::ImageDimension::D3 | crate::ImageDimension::Cube => 3,
-                    crate::ImageDimension::Buffer | crate::ImageDimension::Subpass => {
+                    crate::ImageDimension::Buffer
+                    | crate::ImageDimension::Subpass
+                    | crate::ImageDimension::TileImageData => {
                         return Err(ExpressionError::InvalidImageCoordinateType(dim, coordinate))
                     }
                 };
@@ -725,7 +739,8 @@ impl super::Validator {
                         crate::ImageDimension::D1
                         | crate::ImageDimension::D3
                         | crate::ImageDimension::Buffer
-                        | crate::ImageDimension::Subpass => {
+                        | crate::ImageDimension::Subpass
+                        | crate::ImageDimension::TileImageData => {
                             return Err(ExpressionError::InvalidGatherDimension(dim))
                         }
                     };
@@ -1056,7 +1071,8 @@ impl super::Validator {
                                     crate::ImageDimension::D2 => 2,
                                     crate::ImageDimension::D3 | crate::ImageDimension::Cube => 3,
                                     crate::ImageDimension::Buffer
-                                    | crate::ImageDimension::Subpass => 0,
+                                    | crate::ImageDimension::Subpass
+                                    | crate::ImageDimension::TileImageData => 0,
                                 };
                                 let coordinate_good = match resolver[coordinate] {
                                     Ti::Scalar(Sc::F32) => components == 1,
@@ -1123,7 +1139,12 @@ impl super::Validator {
                             | Sk::AbstractFloat
                             | Sk::BFloat
                             | Sk::FloatE4M3
-                            | Sk::FloatE5M2 => false,
+                            | Sk::FloatE5M2
+                            | Sk::FloatE2M1
+                            | Sk::FloatE3M2
+                            | Sk::FloatE2M3
+                            | Sk::FloatUE8M0
+                            | Sk::FloatMXINT8 => false,
                         },
                         Ti::Matrix { .. } | Ti::CooperativeMatrix { .. } => {
                             left_inner == right_inner
@@ -1138,7 +1159,12 @@ impl super::Validator {
                             | Sk::AbstractFloat
                             | Sk::BFloat
                             | Sk::FloatE4M3
-                            | Sk::FloatE5M2 => false,
+                            | Sk::FloatE5M2
+                            | Sk::FloatE2M1
+                            | Sk::FloatE3M2
+                            | Sk::FloatE2M3
+                            | Sk::FloatUE8M0
+                            | Sk::FloatMXINT8 => false,
                         },
                         _ => false,
                     },
@@ -1151,7 +1177,12 @@ impl super::Validator {
                                 | Sk::AbstractFloat
                                 | Sk::BFloat
                                 | Sk::FloatE4M3
-                                | Sk::FloatE5M2,
+                                | Sk::FloatE5M2
+                                | Sk::FloatE2M1
+                                | Sk::FloatE3M2
+                                | Sk::FloatE2M3
+                                | Sk::FloatUE8M0
+                                | Sk::FloatMXINT8,
                             )
                             | None => false,
                         };
@@ -1241,7 +1272,12 @@ impl super::Validator {
                                 | Sk::AbstractFloat
                                 | Sk::BFloat
                                 | Sk::FloatE4M3
-                                | Sk::FloatE5M2 => false,
+                                | Sk::FloatE5M2
+                                | Sk::FloatE2M1
+                                | Sk::FloatE3M2
+                                | Sk::FloatE2M3
+                                | Sk::FloatUE8M0
+                                | Sk::FloatMXINT8 => false,
                             },
                             ref other => {
                                 log::debug!("Op {op:?} left type {other:?}");
@@ -1268,7 +1304,12 @@ impl super::Validator {
                             | Sk::AbstractFloat
                             | Sk::BFloat
                             | Sk::FloatE4M3
-                            | Sk::FloatE5M2 => false,
+                            | Sk::FloatE5M2
+                            | Sk::FloatE2M1
+                            | Sk::FloatE3M2
+                            | Sk::FloatE2M3
+                            | Sk::FloatUE8M0
+                            | Sk::FloatMXINT8 => false,
                         },
                         ref other => {
                             log::debug!("Op {op:?} left type {other:?}");
@@ -1284,7 +1325,12 @@ impl super::Validator {
                             | Sk::AbstractFloat
                             | Sk::BFloat
                             | Sk::FloatE4M3
-                            | Sk::FloatE5M2 => false,
+                            | Sk::FloatE5M2
+                            | Sk::FloatE2M1
+                            | Sk::FloatE3M2
+                            | Sk::FloatE2M3
+                            | Sk::FloatUE8M0
+                            | Sk::FloatMXINT8 => false,
                         },
                         ref other => {
                             log::debug!("Op {op:?} left type {other:?}");
@@ -1319,7 +1365,12 @@ impl super::Validator {
                             | Sk::Bool
                             | Sk::BFloat
                             | Sk::FloatE4M3
-                            | Sk::FloatE5M2 => false,
+                            | Sk::FloatE5M2
+                            | Sk::FloatE2M1
+                            | Sk::FloatE3M2
+                            | Sk::FloatE2M3
+                            | Sk::FloatUE8M0
+                            | Sk::FloatMXINT8 => false,
                         }
                     }
                 };
@@ -1735,6 +1786,144 @@ impl super::Validator {
                 }
             },
             E::SubgroupBallotResult | E::SubgroupOperationResult { .. } => self.subgroup_stages,
+            E::IsHelperInvocation => ShaderStages::FRAGMENT,
+            E::InterpolateAt { pointer, location } => {
+                if !matches!(
+                    resolver[pointer],
+                    Ti::Pointer {
+                        space: crate::AddressSpace::Input,
+                        ..
+                    } | Ti::ValuePointer {
+                        space: crate::AddressSpace::Input,
+                        ..
+                    }
+                ) {
+                    return Err(ExpressionError::InvalidPointerType(pointer));
+                }
+                match location {
+                    crate::InterpolationLocation::Centroid => {}
+                    crate::InterpolationLocation::Sample(sample) => {
+                        if !matches!(resolver[sample], Ti::Scalar(Sc::I32)) {
+                            return Err(ExpressionError::InvalidImageOtherIndexType(sample));
+                        }
+                    }
+                    crate::InterpolationLocation::Offset(offset) => {
+                        if !matches!(
+                            resolver[offset],
+                            Ti::Vector {
+                                size: crate::VectorSize::Bi,
+                                scalar: Sc::F32,
+                            }
+                        ) {
+                            return Err(ExpressionError::InvalidImageOtherIndexType(offset));
+                        }
+                    }
+                }
+                ShaderStages::FRAGMENT
+            }
+            E::ImageFootprint {
+                image,
+                coordinate,
+                granularity,
+                coarse,
+                level,
+                min_lod,
+                ty,
+            } => {
+                let dim = match resolver[image] {
+                    Ti::SampledImage {
+                        dim,
+                        class: crate::ImageClass::Sampled { multi: false, .. },
+                        arrayed: false,
+                    } => dim,
+                    _ => return Err(ExpressionError::ExpectedGlobalVariable),
+                };
+                if !resolver[coordinate].addresses_image(dim)
+                    && !matches!(
+                        resolver[coordinate],
+                        Ti::Vector {
+                            scalar: Sc::F32,
+                            ..
+                        }
+                    )
+                {
+                    return Err(ExpressionError::InvalidImageCoordinateType(dim, coordinate));
+                }
+                if !matches!(resolver[granularity], Ti::Scalar(Sc::I32)) {
+                    return Err(ExpressionError::InvalidImageOtherIndexType(granularity));
+                }
+                if !matches!(resolver[coarse], Ti::Scalar(Sc::BOOL)) {
+                    return Err(ExpressionError::InvalidImageOtherIndexType(coarse));
+                }
+                if let Some(min_lod) = min_lod {
+                    if !matches!(resolver[min_lod], Ti::Scalar(Sc::F32)) {
+                        return Err(ExpressionError::InvalidImageOtherIndexType(min_lod));
+                    }
+                }
+                if !matches!(module.types[ty].inner, Ti::Struct { .. }) {
+                    return Err(ExpressionError::InvalidSparseResultType(ty));
+                }
+                match level {
+                    crate::SampleLevel::Auto | crate::SampleLevel::Bias(_) => {
+                        ShaderStages::FRAGMENT
+                    }
+                    crate::SampleLevel::Zero
+                    | crate::SampleLevel::Exact(_)
+                    | crate::SampleLevel::Gradient { .. } => ShaderStages::all(),
+                }
+            }
+            E::FragmentFetch {
+                image,
+                coordinate,
+                fragment,
+            } => {
+                if !matches!(
+                    resolver[image],
+                    Ti::Image {
+                        class: crate::ImageClass::Sampled { multi: true, .. },
+                        ..
+                    } | Ti::SampledImage {
+                        class: crate::ImageClass::Sampled { multi: true, .. },
+                        ..
+                    }
+                ) {
+                    return Err(ExpressionError::ExpectedGlobalVariable);
+                }
+                if !matches!(
+                    resolver[coordinate],
+                    Ti::Vector {
+                        scalar: Sc::I32,
+                        ..
+                    }
+                ) {
+                    return Err(ExpressionError::InvalidImageOtherIndexType(coordinate));
+                }
+                if let Some(fragment) = fragment {
+                    if !matches!(resolver[fragment], Ti::Scalar(Sc::U32)) {
+                        return Err(ExpressionError::InvalidImageOtherIndexType(fragment));
+                    }
+                }
+                ShaderStages::all()
+            }
+            E::AttachmentRead { aspect, sample } => {
+                if let crate::AttachmentAspect::Color(image) = aspect {
+                    if !matches!(
+                        resolver[image],
+                        Ti::Image {
+                            dim: crate::ImageDimension::TileImageData,
+                            ..
+                        }
+                    ) {
+                        return Err(ExpressionError::ExpectedGlobalVariable);
+                    }
+                }
+                if let Some(sample) = sample {
+                    if !matches!(resolver[sample], Ti::Scalar(Sc::I32 | Sc::U32)) {
+                        return Err(ExpressionError::InvalidImageOtherIndexType(sample));
+                    }
+                }
+                ShaderStages::FRAGMENT
+            }
             E::SpirvInstructionResult { .. } => ShaderStages::all(),
             E::CooperativeLoad { ref data, .. } => {
                 if resolver[data.pointer]
@@ -1929,6 +2118,48 @@ impl super::Validator {
                 }
                 if index.is_some() != (conversion == crate::ArrayConversion::SubArray) {
                     return invalid("only a sub-array extraction takes an index");
+                }
+                ShaderStages::all()
+            }
+            E::Bitcast { expr, ty, offset } => {
+                let shape = |inner: &Ti| -> Option<(u32, Sc)> {
+                    match *inner {
+                        Ti::Scalar(scalar) => Some((1, scalar)),
+                        Ti::Vector { size, scalar } => Some((u32::from(size as u8), scalar)),
+                        Ti::LongVector {
+                            size: crate::CooperativeSize::Constant(size),
+                            scalar,
+                            ..
+                        } => Some((size.get(), scalar)),
+                        _ => None,
+                    }
+                };
+                let (Some((source_count, source)), Some((target_count, target))) =
+                    (shape(&resolver[expr]), shape(&module.types[ty].inner))
+                else {
+                    return Err(ExpressionError::InvalidBitcast("operands are not numeric"));
+                };
+                match offset {
+                    None => {
+                        if source_count * source.bit_width() != target_count * target.bit_width() {
+                            return Err(ExpressionError::InvalidBitcast("sizes differ"));
+                        }
+                    }
+                    Some(offset) => {
+                        if !matches!(
+                            resolver[offset],
+                            Ti::Scalar(Sc {
+                                kind: Sk::Uint | Sk::Sint,
+                                ..
+                            })
+                        ) || !matches!(source.kind, Sk::Uint | Sk::Sint)
+                            || target.bit_width() > source.bit_width()
+                        {
+                            return Err(ExpressionError::InvalidBitcast(
+                                "an extraction takes integers and a scalar offset",
+                            ));
+                        }
+                    }
                 }
                 ShaderStages::all()
             }

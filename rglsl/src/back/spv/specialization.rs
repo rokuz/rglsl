@@ -32,7 +32,13 @@ fn literal_words(literal: Literal) -> Vec<Word> {
         }
         Literal::Bool(value) => vec![u32::from(value)],
         Literal::BF16(value) => vec![u32::from(value)],
-        Literal::FE4M3(value) | Literal::FE5M2(value) => vec![u32::from(value)],
+        Literal::FE4M3(value)
+        | Literal::FE5M2(value)
+        | Literal::FE2M1(value)
+        | Literal::FE3M2(value)
+        | Literal::FE2M3(value)
+        | Literal::FUE8M0(value)
+        | Literal::FMXINT8(value) => vec![u32::from(value)],
     }
 }
 
@@ -396,6 +402,17 @@ impl Writer {
                 let id = self.written(value)?;
                 parts.extend(core::iter::repeat_n(id, size as usize));
             }
+            Expression::Replicate { ty, value } => {
+                let id = self.written(value)?;
+                match super::cooperative::replicate_shape(&module.types[ty].inner)? {
+                    super::cooperative::ReplicateShape::Copies(count) => {
+                        parts.extend(core::iter::repeat_n(id, count as usize));
+                    }
+                    super::cooperative::ReplicateShape::Replicated => {
+                        return self.write_spec_constant_replicate(type_id, id);
+                    }
+                }
+            }
             _ => return Err(Error::Validation("not a composite")),
         }
         Ok(self.write_spec_constant_composite(type_id, &parts))
@@ -664,6 +681,30 @@ impl Writer {
         Ok(id)
     }
 
+    pub(super) fn write_workgroup_size_builtin(&mut self, entry_point: &crate::EntryPoint) {
+        if !entry_point.workgroup_size_builtin
+            || entry_point.workgroup_size_overrides.is_some()
+            || self.lang_version() >= (1, 6)
+        {
+            return;
+        }
+        let type_id = self.get_numeric_type_id(NumericType::Vector {
+            size: VectorSize::Tri,
+            scalar: Scalar::U32,
+        });
+        let constituents = entry_point
+            .workgroup_size
+            .map(|size| self.get_constant_scalar(Literal::U32(size)));
+        let id = self.id_gen.next();
+        Instruction::constant_composite(type_id, id, &constituents)
+            .to_words(&mut self.logical_layout.declarations);
+        self.decorate(
+            id,
+            spirv::Decoration::BuiltIn,
+            &[spirv::BuiltIn::WorkgroupSize as u32],
+        );
+    }
+
     pub(super) fn write_workgroup_size(
         &mut self,
         function_id: Word,
@@ -676,6 +717,7 @@ impl Writer {
                 &entry_point.workgroup_size,
             )
             .to_words(&mut self.logical_layout.execution_modes);
+            self.write_workgroup_size_builtin(entry_point);
             return Ok(());
         };
         let mut ids = [0; 3];

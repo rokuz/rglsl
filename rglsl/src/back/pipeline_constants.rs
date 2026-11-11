@@ -487,6 +487,13 @@ fn process_function(
             .entry(adjusted_local_expressions[expr_h])
             .or_default() |= flags;
     }
+    let precision = mem::take(&mut function.precision);
+    for (expr_h, flags) in precision {
+        *function
+            .precision
+            .entry(adjusted_local_expressions[expr_h])
+            .or_default() |= flags;
+    }
 
     Ok(())
 }
@@ -629,6 +636,70 @@ fn adjust_expr(new_pos: &HandleVec<Expression, Handle<Expression>>, expr: &mut E
         Expression::ImageSparseResident { ref mut code } => {
             adjust(code);
         }
+        Expression::InterpolateAt {
+            ref mut pointer,
+            ref mut location,
+        } => {
+            adjust(pointer);
+            match *location {
+                crate::InterpolationLocation::Centroid => {}
+                crate::InterpolationLocation::Sample(ref mut operand)
+                | crate::InterpolationLocation::Offset(ref mut operand) => adjust(operand),
+            }
+        }
+        Expression::ImageFootprint {
+            ref mut image,
+            ref mut coordinate,
+            ref mut granularity,
+            ref mut coarse,
+            ref mut level,
+            ref mut min_lod,
+            ty: _,
+        } => {
+            adjust(image);
+            adjust(coordinate);
+            adjust(granularity);
+            adjust(coarse);
+            match *level {
+                crate::SampleLevel::Auto | crate::SampleLevel::Zero => {}
+                crate::SampleLevel::Exact(ref mut expr)
+                | crate::SampleLevel::Bias(ref mut expr) => {
+                    adjust(expr);
+                }
+                crate::SampleLevel::Gradient {
+                    ref mut x,
+                    ref mut y,
+                } => {
+                    adjust(x);
+                    adjust(y);
+                }
+            }
+            if let Some(ref mut min_lod) = *min_lod {
+                adjust(min_lod);
+            }
+        }
+        Expression::FragmentFetch {
+            ref mut image,
+            ref mut coordinate,
+            ref mut fragment,
+        } => {
+            adjust(image);
+            adjust(coordinate);
+            if let Some(ref mut fragment) = *fragment {
+                adjust(fragment);
+            }
+        }
+        Expression::AttachmentRead {
+            ref mut aspect,
+            ref mut sample,
+        } => {
+            if let crate::AttachmentAspect::Color(ref mut image) = *aspect {
+                adjust(image);
+            }
+            if let Some(ref mut sample) = *sample {
+                adjust(sample);
+            }
+        }
         Expression::Unary {
             ref mut expr,
             op: _,
@@ -760,6 +831,7 @@ fn adjust_expr(new_pos: &HandleVec<Expression, Handle<Expression>>, expr: &mut E
         }
         | Expression::WorkGroupUniformLoadResult { ty: _ }
         | Expression::SubgroupBallotResult
+        | Expression::IsHelperInvocation
         | Expression::SubgroupOperationResult { .. }
         | Expression::SpirvInstructionResult { .. } => {}
         Expression::CooperativeLoad { ref mut data, .. } => {
@@ -820,6 +892,16 @@ fn adjust_expr(new_pos: &HandleVec<Expression, Handle<Expression>>, expr: &mut E
             adjust(expr);
             if let Some(index) = index.as_mut() {
                 adjust(index);
+            }
+        }
+        Expression::Bitcast {
+            ref mut expr,
+            ref mut offset,
+            ..
+        } => {
+            adjust(expr);
+            if let Some(offset) = offset.as_mut() {
+                adjust(offset);
             }
         }
         Expression::CooperativeMatrixResult { .. } | Expression::TensorCreate { .. } => {}
@@ -893,6 +975,7 @@ fn adjust_stmt(new_pos: &HandleVec<Expression, Handle<Expression>>, stmt: &mut S
             ref mut condition,
             ref mut accept,
             ref mut reject,
+            control: _,
         } => {
             adjust(condition);
             adjust_block(new_pos, accept);
@@ -901,6 +984,7 @@ fn adjust_stmt(new_pos: &HandleVec<Expression, Handle<Expression>>, stmt: &mut S
         Statement::Switch {
             ref mut selector,
             ref mut cases,
+            control: _,
         } => {
             adjust(selector);
             for case in cases.iter_mut() {
@@ -1191,6 +1275,10 @@ fn adjust_stmt(new_pos: &HandleVec<Expression, Handle<Expression>>, stmt: &mut S
         Statement::Break
         | Statement::Continue
         | Statement::Kill
+        | Statement::Demote
+        | Statement::BeginInvocationInterlock
+        | Statement::EndInvocationInterlock
+        | Statement::SplitBarrier { .. }
         | Statement::EmitVertex { .. }
         | Statement::EndPrimitive { .. }
         | Statement::ControlBarrier(_)
@@ -1262,6 +1350,7 @@ fn filter_emits_in_block(block: &mut Block, expressions: &Arena<Expression>) {
                 condition,
                 mut accept,
                 mut reject,
+                control,
             } => {
                 filter_emits_in_block(&mut accept, expressions);
                 filter_emits_in_block(&mut reject, expressions);
@@ -1270,6 +1359,7 @@ fn filter_emits_in_block(block: &mut Block, expressions: &Arena<Expression>) {
                         condition,
                         accept,
                         reject,
+                        control,
                     },
                     span,
                 );
@@ -1277,11 +1367,19 @@ fn filter_emits_in_block(block: &mut Block, expressions: &Arena<Expression>) {
             Statement::Switch {
                 selector,
                 mut cases,
+                control,
             } => {
                 for case in &mut cases {
                     filter_emits_in_block(&mut case.body, expressions);
                 }
-                block.push(Statement::Switch { selector, cases }, span);
+                block.push(
+                    Statement::Switch {
+                        selector,
+                        cases,
+                        control,
+                    },
+                    span,
+                );
             }
             Statement::Loop {
                 mut body,

@@ -178,6 +178,8 @@ impl super::Validator {
                 heap_offset,
                 tile_attachment: _,
                 ref spirv_decorations,
+                relaxed_precision: _,
+                immediate_bank: _,
             } = global_variable;
             validate_type(ty)?;
             if let Some(init_expr) = init {
@@ -209,9 +211,11 @@ impl super::Validator {
                 ref expressions,
                 ref named_expressions,
                 ref non_uniform,
+                ref precision,
                 ref body,
                 ref diagnostic_filter_leaf,
                 linkage: _,
+                control: _,
             } = function;
 
             for arg in arguments.iter() {
@@ -219,16 +223,27 @@ impl super::Validator {
                     name: _,
                     ty,
                     binding: _,
+                    relaxed_precision: _,
                 } = arg;
                 validate_type(ty)?;
             }
 
-            if let &Some(crate::FunctionResult { ty, binding: _ }) = result {
+            if let &Some(crate::FunctionResult {
+                ty,
+                binding: _,
+                relaxed_precision: _,
+            }) = result
+            {
                 validate_type(ty)?;
             }
 
             for (_handle, local_variable) in local_variables.iter() {
-                let &crate::LocalVariable { name: _, ty, init } = local_variable;
+                let &crate::LocalVariable {
+                    name: _,
+                    ty,
+                    init,
+                    relaxed_precision: _,
+                } = local_variable;
                 validate_type(ty)?;
                 if let Some(init) = init {
                     Self::validate_expression_handle(init, expressions)?;
@@ -240,6 +255,10 @@ impl super::Validator {
             }
 
             for handle in non_uniform.keys().copied() {
+                Self::validate_expression_handle(handle, expressions)?;
+            }
+
+            for handle in precision.keys().copied() {
                 Self::validate_expression_handle(handle, expressions)?;
             }
 
@@ -752,6 +771,58 @@ impl super::Validator {
             crate::Expression::ImageSparseResident { code } => {
                 handle.check_dep(code)?;
             }
+            crate::Expression::InterpolateAt { pointer, location } => {
+                handle.check_dep(pointer)?;
+                match location {
+                    crate::InterpolationLocation::Centroid => {}
+                    crate::InterpolationLocation::Sample(operand)
+                    | crate::InterpolationLocation::Offset(operand) => {
+                        handle.check_dep(operand)?;
+                    }
+                }
+            }
+            crate::Expression::ImageFootprint {
+                image,
+                coordinate,
+                granularity,
+                coarse,
+                level,
+                min_lod,
+                ty,
+            } => {
+                validate_type(ty)?;
+                handle
+                    .check_dep(image)?
+                    .check_dep(coordinate)?
+                    .check_dep(granularity)?
+                    .check_dep(coarse)?
+                    .check_dep_opt(min_lod)?;
+                match level {
+                    crate::SampleLevel::Auto | crate::SampleLevel::Zero => (),
+                    crate::SampleLevel::Exact(expr) | crate::SampleLevel::Bias(expr) => {
+                        handle.check_dep(expr)?;
+                    }
+                    crate::SampleLevel::Gradient { x, y } => {
+                        handle.check_dep(x)?.check_dep(y)?;
+                    }
+                };
+            }
+            crate::Expression::FragmentFetch {
+                image,
+                coordinate,
+                fragment,
+            } => {
+                handle
+                    .check_dep(image)?
+                    .check_dep(coordinate)?
+                    .check_dep_opt(fragment)?;
+            }
+            crate::Expression::AttachmentRead { aspect, sample } => {
+                if let crate::AttachmentAspect::Color(image) = aspect {
+                    handle.check_dep(image)?;
+                }
+                handle.check_dep_opt(sample)?;
+            }
             crate::Expression::Unary {
                 op: _,
                 expr: operand,
@@ -807,6 +878,7 @@ impl super::Validator {
             | crate::Expression::RayQueryProceedResult
             | crate::Expression::ReportIntersectionResult
             | crate::Expression::SubgroupBallotResult
+            | crate::Expression::IsHelperInvocation
             | crate::Expression::SubgroupOperationResult { .. }
             | crate::Expression::SpirvInstructionResult { .. }
             | crate::Expression::WorkGroupUniformLoadResult { .. } => (),
@@ -908,6 +980,10 @@ impl super::Validator {
                 validate_type(ty)?;
                 handle.check_dep(expr)?.check_dep_opt(index)?;
             }
+            crate::Expression::Bitcast { expr, ty, offset } => {
+                validate_type(ty)?;
+                handle.check_dep(expr)?.check_dep_opt(offset)?;
+            }
             crate::Expression::TensorSet {
                 base, ref operands, ..
             } => {
@@ -976,6 +1052,7 @@ impl super::Validator {
                 condition,
                 ref accept,
                 ref reject,
+                control: _,
             } => {
                 validate_expr(condition)?;
                 validate_block(accept)?;
@@ -985,6 +1062,7 @@ impl super::Validator {
             crate::Statement::Switch {
                 selector,
                 ref cases,
+                control: _,
             } => {
                 validate_expr(selector)?;
                 for &crate::SwitchCase {
@@ -1255,6 +1333,10 @@ impl super::Validator {
             crate::Statement::Break
             | crate::Statement::Continue
             | crate::Statement::Kill
+            | crate::Statement::Demote
+            | crate::Statement::BeginInvocationInterlock
+            | crate::Statement::EndInvocationInterlock
+            | crate::Statement::SplitBarrier { .. }
             | crate::Statement::EmitVertex { .. }
             | crate::Statement::EndPrimitive { .. }
             | crate::Statement::ControlBarrier(_)

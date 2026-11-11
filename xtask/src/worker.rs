@@ -58,14 +58,24 @@ fn full_message(err: &dyn std::error::Error) -> String {
     message
 }
 
-pub fn compile_one(
-    input: &Path,
-    stage: &str,
-    spv_version: &str,
-    auto_map: bool,
-    object: bool,
-    out: &Path,
-) -> i32 {
+pub struct OneOptions<'a> {
+    pub stage: &'a str,
+    pub spv_version: &'a str,
+    pub auto_map: bool,
+    pub object: bool,
+    pub hlsl_offsets: bool,
+    pub include_dirs: &'a [String],
+}
+
+pub fn compile_one(input: &Path, one: &OneOptions<'_>, out: &Path) -> i32 {
+    let OneOptions {
+        stage,
+        spv_version,
+        auto_map,
+        object,
+        hlsl_offsets,
+        include_dirs,
+    } = *one;
     let source = match std::fs::read(input) {
         Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
         Err(err) => {
@@ -95,12 +105,15 @@ pub fn compile_one(
         auto_map_bindings: auto_map,
         auto_map_locations: auto_map,
         spirv_version: Some(lang_version),
+        hlsl_offsets,
         ..glsl::Options::from(stage)
     };
+    let mut includer = rglsl_pp::FileSystemIncluder::new(include_dirs);
+    let root = includer.add_root(input);
     if object {
-        return compile_object(&mut frontend, &options, &source, out);
+        return compile_object(&mut frontend, &options, &source, root, &mut includer, out);
     }
-    let module = match frontend.parse(&options, &source) {
+    let module = match frontend.parse_with_includer(&options, &source, root, &mut includer) {
         Ok(module) => module,
         Err(errors) => {
             for error in &errors.errors {
@@ -136,10 +149,7 @@ fn spirv_options(lang_version: (u8, u8)) -> spv::Options<'static> {
         flags: spv::WriterFlags::DEBUG
             | spv::WriterFlags::LABEL_VARYINGS
             | spv::WriterFlags::SMALL_TYPE_CAPABILITIES_BY_USE,
-        force_loop_bounding: false,
-        zero_initialize_workgroup_memory: spv::ZeroInitializeWorkgroupMemoryMode::None,
         mesh_shader_primitive_indices_clamp: false,
-        emit_int_div_checks: false,
         ..spv::Options::default()
     }
 }
@@ -298,9 +308,11 @@ fn compile_object(
     frontend: &mut glsl::Frontend,
     options: &glsl::Options,
     source: &str,
+    root: rglsl_pp::FileId,
+    includer: &mut rglsl_pp::FileSystemIncluder,
     out: &Path,
 ) -> i32 {
-    let object = match frontend.compile(options, source) {
+    let object = match frontend.compile_with_includer(options, source, root, includer) {
         Ok(object) => object,
         Err(errors) => {
             for error in &errors.errors {

@@ -23,6 +23,15 @@ pub(super) fn literal(value: Value) -> Literal {
         Value::BFloat16(value) => Literal::BF16(crate::proc::small_float::bf16_from_f64(value)),
         Value::FloatE4M3(value) => Literal::FE4M3(crate::proc::small_float::fe4m3_from_f64(value)),
         Value::FloatE5M2(value) => Literal::FE5M2(crate::proc::small_float::fe5m2_from_f64(value)),
+        Value::FloatE2M1(value) => Literal::FE2M1(crate::proc::small_float::fe2m1_from_f64(value)),
+        Value::FloatE3M2(value) => Literal::FE3M2(crate::proc::small_float::fe3m2_from_f64(value)),
+        Value::FloatE2M3(value) => Literal::FE2M3(crate::proc::small_float::fe2m3_from_f64(value)),
+        Value::FloatUE8M0(value) => {
+            Literal::FUE8M0(crate::proc::small_float::fue8m0_from_f64(value))
+        }
+        Value::FloatMXINT8(value) => {
+            Literal::FMXINT8(crate::proc::small_float::fmxint8_from_f64(value))
+        }
     }
 }
 

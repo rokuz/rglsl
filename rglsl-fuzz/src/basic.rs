@@ -194,7 +194,12 @@ pub fn from_sema(ty: &Type) -> Option<BasicType> {
         | Scalar::Float16
         | Scalar::BFloat16
         | Scalar::FloatE4M3
-        | Scalar::FloatE5M2 => None,
+        | Scalar::FloatE5M2
+        | Scalar::FloatE2M1
+        | Scalar::FloatE3M2
+        | Scalar::FloatE2M3
+        | Scalar::FloatUE8M0
+        | Scalar::FloatMXINT8 => None,
     };
     match ty.kind {
         TypeKind::Scalar(element) => scalar(element).map(BasicType::Scalar),

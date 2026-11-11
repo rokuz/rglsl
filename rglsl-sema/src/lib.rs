@@ -39,10 +39,11 @@ mod tests;
 
 pub use analyze::{
     analyze, analyze_with_builtins, Analysis, Callee, CooperativeCall, DerivativeGroup,
-    ExpressionInfo, MatrixCall, Options, QcomConversion, TensorArmCall, TensorCall,
+    ExpressionInfo, FragmentLayout, Interlock, MatrixCall, Options, QcomConversion, TensorArmCall,
+    TensorCall,
 };
 pub use builtins::{BuiltinFunctionId, Builtins, ResourceLimits, Stage};
 pub use diagnostic::{Diagnostic, DiagnosticKind};
 pub use rglsl_ast::extensions;
-pub use scope::{FunctionId, SymbolId};
+pub use scope::{FunctionControl, FunctionId, SymbolId};
 pub use types::{NumericFeatures, Type, TypeKind, TypeRegistry};

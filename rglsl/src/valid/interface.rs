@@ -177,7 +177,7 @@ pub enum EntryPointError {
     ForbiddenStageOperations,
     #[error("Global variable {0:?} is used incorrectly as {1:?}")]
     InvalidGlobalUsage(Handle<crate::GlobalVariable>, GlobalUse),
-    #[error("More than 1 immediate data variable is used")]
+    #[error("More than 1 immediate data variable is used in the same push constant bank")]
     MoreThanOneImmediateUsed,
     #[error("Argument {0} varying error")]
     Argument(u32, #[source] VaryingError),
@@ -314,7 +314,12 @@ impl LocationShape {
                 | Sk::AbstractFloat
                 | Sk::BFloat
                 | Sk::FloatE4M3
-                | Sk::FloatE5M2 => return None,
+                | Sk::FloatE5M2
+                | Sk::FloatE2M1
+                | Sk::FloatE3M2
+                | Sk::FloatE2M3
+                | Sk::FloatUE8M0
+                | Sk::FloatMXINT8 => return None,
             };
             // A double takes two components, so a `dvec3` or `dvec4` spills
             // into a second location.
@@ -771,6 +776,35 @@ impl VaryingContext<'_> {
                             )
                         }
                     }
+                    Bi::SamplePosition => (
+                        self.stage == St::Fragment && !self.output,
+                        *ty_inner
+                            == Ti::Vector {
+                                size: Vs::Bi,
+                                scalar: crate::Scalar::F32,
+                            },
+                    ),
+                    Bi::HelperInvocation | Bi::FullyCovered => (
+                        self.stage == St::Fragment && !self.output,
+                        *ty_inner == Ti::Scalar(crate::Scalar::BOOL),
+                    ),
+                    Bi::DeviceIndex => (!self.output, is_index_type(ty_inner)),
+                    Bi::ShadingRate | Bi::FragInvocationCount { .. } => (
+                        self.stage == St::Fragment && !self.output,
+                        *ty_inner == Ti::Scalar(crate::Scalar::I32),
+                    ),
+                    Bi::FragSize { .. } => (
+                        self.stage == St::Fragment && !self.output,
+                        *ty_inner
+                            == Ti::Vector {
+                                size: Vs::Bi,
+                                scalar: crate::Scalar::I32,
+                            },
+                    ),
+                    Bi::FragStencilRef => (
+                        self.stage == St::Fragment && self.output,
+                        *ty_inner == Ti::Scalar(crate::Scalar::I32),
+                    ),
                     Bi::PrimitiveShadingRate => (
                         pre_rasterization_output,
                         *ty_inner == Ti::Scalar(crate::Scalar::I32),
@@ -1726,7 +1760,16 @@ impl super::Validator {
             });
         }
 
-        if is_resource != var.binding.is_some() {
+        let located_tile_image = var.binding.is_none()
+            && matches!(var.io, Some(crate::Binding::Location { .. }))
+            && matches!(
+                gctx.types[var.ty].inner,
+                crate::TypeInner::Image {
+                    dim: crate::ImageDimension::TileImageData,
+                    ..
+                }
+            );
+        if is_resource != var.binding.is_some() && !located_tile_image {
             if self.flags.contains(super::ValidationFlags::BINDINGS) {
                 return Err(GlobalVariableError::InvalidBinding);
             }
@@ -1744,7 +1787,16 @@ impl super::Validator {
                 | crate::AddressSpace::IncomingCallableData
                 | crate::AddressSpace::HitObjectAttribute { .. }
         ) && matches!(var.io, None | Some(crate::Binding::Location { .. }));
-        if var.io.is_some() && !is_interface && !ray_location {
+        let tile_image = var.space == crate::AddressSpace::Handle
+            && matches!(var.io, Some(crate::Binding::Location { .. }))
+            && matches!(
+                gctx.types[var.ty].inner,
+                crate::TypeInner::Image {
+                    dim: crate::ImageDimension::TileImageData,
+                    ..
+                }
+            );
+        if var.io.is_some() && !is_interface && !ray_location && !tile_image {
             return Err(GlobalVariableError::InvalidBinding);
         }
         if var.space == crate::AddressSpace::Input && var.init.is_some() {
@@ -1797,6 +1849,11 @@ impl super::Validator {
         if let Some(init) = var.init {
             match var.space {
                 crate::AddressSpace::Private | crate::AddressSpace::Function => {}
+                crate::AddressSpace::WorkGroup
+                    if matches!(
+                        gctx.global_expressions[init],
+                        crate::Expression::ZeroValue(_)
+                    ) => {}
                 _ => {
                     return Err(GlobalVariableError::InitializerNotAllowed(var.space));
                 }
@@ -2234,17 +2291,17 @@ impl super::Validator {
         }
 
         {
-            let mut used_immediates = module
-                .global_variables
-                .iter()
-                .filter(|&(_, var)| var.space == crate::AddressSpace::Immediate)
-                .map(|(handle, _)| handle)
-                .filter(|&handle| !info[handle].is_empty());
-            // Check if there is more than one immediate data, and error if so.
-            // Use a loop for when returning multiple errors is supported.
-            if let Some(handle) = used_immediates.nth(1) {
-                return Err(EntryPointError::MoreThanOneImmediateUsed
-                    .with_span_handle(handle, &module.global_variables));
+            let mut banks = crate::FastHashSet::default();
+            for (handle, var) in module.global_variables.iter() {
+                if var.space != crate::AddressSpace::Immediate || info[handle].is_empty() {
+                    continue;
+                }
+                let bank = var.immediate_bank.unwrap_or_default();
+                let key = (bank.bank.unwrap_or(0), bank.member_offset.unwrap_or(0));
+                if !banks.insert(key) {
+                    return Err(EntryPointError::MoreThanOneImmediateUsed
+                        .with_span_handle(handle, &module.global_variables));
+                }
             }
         }
 

@@ -1,3 +1,4 @@
+pub(crate) mod footprint;
 mod functions;
 mod limits;
 pub(crate) mod ray;
@@ -5,7 +6,7 @@ pub(crate) mod subgroup;
 mod textures;
 mod variables;
 
-pub use variables::view_extension;
+pub use variables::{variable_extension, view_extension};
 pub(crate) use variables::{TENSOR_OPERAND_NONTEMPORAL, TENSOR_OPERAND_OUT_OF_BOUNDS_VALUE};
 
 use alloc::collections::{BTreeMap, BTreeSet};
@@ -203,7 +204,25 @@ pub(crate) fn parse_type(word: &str) -> Option<Type> {
     if let Some(basic) = BasicType::from_keyword(word) {
         return Some(Type::from(basic));
     }
+    if let Some(long) = long_vector_type(word) {
+        return Some(long);
+    }
     Opaque::from_keyword(word).map(Type::opaque)
+}
+
+fn long_vector_type(word: &str) -> Option<Type> {
+    let digits = word.trim_end_matches(|character: char| character.is_ascii_digit());
+    let size: u32 = word.get(digits.len()..)?.parse().ok()?;
+    if size <= 4 {
+        return None;
+    }
+    let scalar = crate::types::Scalar::ALL
+        .into_iter()
+        .find(|scalar| scalar.vector_prefix() == digits)?;
+    Some(Type::new(crate::types::TypeKind::LongVector {
+        scalar,
+        size: crate::types::ArraySize::Sized(size),
+    }))
 }
 
 fn words(text: &str) -> Vec<&str> {
@@ -229,9 +248,30 @@ fn words(text: &str) -> Vec<&str> {
     found
 }
 
-const SIZED_STEMS: [&str; 18] = [
-    "vec", "ivec", "uvec", "bvec", "dvec", "mat", "dmat", "f16vec", "f16mat", "i64vec", "u64vec",
-    "i16vec", "u16vec", "i8vec", "u8vec", "bf16vec", "fe4m3vec", "fe5m2vec",
+const SIZED_STEMS: [&str; 23] = [
+    "vec",
+    "ivec",
+    "uvec",
+    "bvec",
+    "dvec",
+    "mat",
+    "dmat",
+    "f16vec",
+    "f16mat",
+    "i64vec",
+    "u64vec",
+    "i16vec",
+    "u16vec",
+    "i8vec",
+    "u8vec",
+    "bf16vec",
+    "fe4m3vec",
+    "fe5m2vec",
+    "fe2m1vec",
+    "fe3m2vec",
+    "fe2m3vec",
+    "fue8m0vec",
+    "fmxint8vec",
 ];
 
 #[derive(Clone, Copy, Default)]
@@ -434,6 +474,9 @@ impl Builtins {
         }
         prototypes.append(&mut textures::prototypes());
         prototypes.append(&mut subgroup::prototypes(version));
+        let mut types = TypeRegistry::new();
+        let footprints = footprint::structs(&mut types);
+        prototypes.append(&mut footprint::prototypes(&footprints));
         let mut seen = BTreeSet::new();
         let mut functions = Vec::new();
         let mut names: BTreeMap<String, Vec<BuiltinFunctionId>> = BTreeMap::new();
@@ -468,10 +511,21 @@ impl Builtins {
                 defined: true,
                 span: Span::default(),
                 spirv_instruction: None,
+                control: crate::scope::FunctionControl::default(),
             });
         }
-        let mut types = TypeRegistry::new();
-        let (symbols, scope) = variables::build(version, stage, limits, &mut types);
+        let (mut symbols, mut scope) = variables::build(version, stage, limits, &mut types);
+        for (name, id) in footprints {
+            let Ok(index) = u32::try_from(symbols.len()) else {
+                break;
+            };
+            symbols.push(Symbol {
+                name: String::from(name),
+                span: Span::default(),
+                kind: crate::scope::SymbolKind::Struct(id),
+            });
+            scope.push((String::from(name), SymbolId(index)));
+        }
         Self {
             version,
             stage,

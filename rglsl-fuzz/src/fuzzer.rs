@@ -83,7 +83,13 @@ pub struct Templates {
 
 const SCALAR_NUMERIC: [ScalarType; 3] = [ScalarType::Float, ScalarType::Uint, ScalarType::Int];
 const INTEGERS: [ScalarType; 2] = [ScalarType::Uint, ScalarType::Int];
-const EXCLUDED_BUILTIN_PREFIXES: [&str; 18] = [
+const EXCLUDED_BUILTIN_PREFIXES: [&str; 24] = [
+    "helperInvocationEXT",
+    "depthAttachmentReadEXT",
+    "stencilAttachmentReadEXT",
+    "beginInvocationInterlock",
+    "endInvocationInterlock",
+    "controlBarrier",
     "expectEXT",
     "assumeEXT",
     "interpolateAt",
@@ -683,7 +689,12 @@ pub fn random_constant(random: &mut Random, builder: &mut Builder, ty: BasicType
         | ScalarType::Float16
         | ScalarType::BFloat16
         | ScalarType::FloatE4M3
-        | ScalarType::FloatE5M2 => {
+        | ScalarType::FloatE5M2
+        | ScalarType::FloatE2M1
+        | ScalarType::FloatE3M2
+        | ScalarType::FloatE2M3
+        | ScalarType::FloatUE8M0
+        | ScalarType::FloatMXINT8 => {
             let text = random_float_text(random);
             builder.float(&text)
         }
@@ -747,7 +758,12 @@ pub fn literal_zero_or_one(builder: &mut Builder, zero: bool, ty: BasicType) -> 
         | ScalarType::Float16
         | ScalarType::BFloat16
         | ScalarType::FloatE4M3
-        | ScalarType::FloatE5M2 => builder.float(&format!("{digit}.0")),
+        | ScalarType::FloatE5M2
+        | ScalarType::FloatE2M1
+        | ScalarType::FloatE3M2
+        | ScalarType::FloatE2M3
+        | ScalarType::FloatUE8M0
+        | ScalarType::FloatMXINT8 => builder.float(&format!("{digit}.0")),
     };
     if basic::is_scalar(ty) {
         return scalar(builder, basic::element(ty));

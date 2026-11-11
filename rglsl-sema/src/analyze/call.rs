@@ -188,6 +188,13 @@ impl Analyzer<'_> {
             FunctionIdentifier::Constructor(specifier) => {
                 self.constructor(expression, close, specifier, &call.arguments)
             }
+            FunctionIdentifier::Cast(specifier) => {
+                if self.castable(close, specifier, &call.arguments) {
+                    self.constructor(expression, close, specifier, &call.arguments)
+                } else {
+                    Operand::error()
+                }
+            }
             FunctionIdentifier::Method { object, name } => {
                 self.method(expression, object, name, &call.arguments)
             }
@@ -200,6 +207,38 @@ impl Analyzer<'_> {
                 Operand::error()
             }
         }
+    }
+
+    #[inline(never)]
+    fn castable(
+        &mut self,
+        span: Span,
+        specifier: &TypeSpecifier,
+        arguments: &[Expression],
+    ) -> bool {
+        let ty = self.bare_type_specifier(specifier, span);
+        let castable = !ty.is_array()
+            && matches!(
+                ty.kind,
+                TypeKind::Scalar(_)
+                    | TypeKind::Vector { .. }
+                    | TypeKind::Matrix { .. }
+                    | TypeKind::Reference(_)
+            );
+        if ty.is_error() || castable {
+            return true;
+        }
+        for argument in arguments {
+            self.expression(argument);
+        }
+        self.error(
+            span,
+            DiagnosticKind::InvalidConstructor {
+                ty: self.show(&ty),
+                reason: "type cast has to be either scalar, vector, matrix or buffer reference",
+            },
+        );
+        false
     }
 
     fn method(
@@ -388,6 +427,11 @@ impl Analyzer<'_> {
             .any(|ty| ty.sized_vector_length().is_some() && !ty.is_array())
             && self.scopes.function_levels(name).is_empty()
             && !self.builtins.overloads(name).is_empty()
+            && !self.builtins.overloads(name).iter().any(|id| {
+                self.builtins
+                    .function(*id)
+                    .is_some_and(|function| function.same_parameter_types(&types))
+            })
         {
             return self.long_vector_builtin(expression, span, name, arguments, &operands);
         }
@@ -460,6 +504,9 @@ impl Analyzer<'_> {
         if is_builtin && name == "barrier" {
             self.tessellation_barrier(span);
         }
+        if is_builtin {
+            self.interlock_call(span, name);
+        }
         let first_argument = arguments.first().map_or(span, |argument| argument.span);
         let mut failed = false;
         if function.spirv_instruction.is_some() {
@@ -500,6 +547,16 @@ impl Analyzer<'_> {
                     DiagnosticKind::InvalidQualifier {
                         qualifier: "memory",
                         reason: "an argument cannot drop a memory qualifier",
+                    },
+                );
+                failed = true;
+            }
+            if !is_builtin && !self.image_formats_match(operand, parameter) {
+                self.error(
+                    first_argument,
+                    DiagnosticKind::InvalidQualifier {
+                        qualifier: "format",
+                        reason: "image formats must match",
                     },
                 );
                 failed = true;
@@ -719,9 +776,22 @@ impl Analyzer<'_> {
             self.require_extension(span, "GL_EXT_float_e4m3", name);
         } else if lower.contains("floate5m2") {
             self.require_extension(span, "GL_EXT_float_e5m2", name);
+        } else if lower.contains("fe2m1") {
+            self.require_extension(span, "GL_EXT_float_e2m1", name);
+        } else if lower.contains("fe3m2") {
+            self.require_extension(span, "GL_EXT_float_e3m2", name);
+        } else if lower.contains("fe2m3") {
+            self.require_extension(span, "GL_EXT_float_e2m3", name);
+        } else if lower.contains("floatue8m0") {
+            self.require_extension(span, "GL_EXT_float_ue8m0", name);
+        } else if lower.contains("floatmxint8") {
+            self.require_extension(span, "GL_EXT_float_mxint8", name);
         }
         self.mesh_function_extension(span, name);
         if let Some(extension) = super::qcom::function_extension(name) {
+            self.require_extension(span, extension, name);
+        }
+        if let Some(extension) = super::fragment::function_extension(name) {
             self.require_extension(span, extension, name);
         }
         self.texture_extensions(span, name);
@@ -804,6 +874,32 @@ impl Analyzer<'_> {
         }
     }
 
+    fn image_formats_match(&self, operand: &Operand, parameter: &Parameter) -> bool {
+        if !operand
+            .ty
+            .as_opaque()
+            .is_some_and(crate::types::Opaque::is_image)
+        {
+            return true;
+        }
+        let format = |qualifiers: &crate::scope::Qualifiers| {
+            qualifiers
+                .layout
+                .iter()
+                .rev()
+                .find(|entry| super::declaration::IMAGE_FORMATS.contains(&entry.name.as_str()))
+                .map(|entry| entry.name.clone())
+        };
+        let argument = operand
+            .root
+            .and_then(|id| self.symbol(id))
+            .and_then(|symbol| symbol.variable())
+            .and_then(|variable| format(&variable.qualifiers));
+        let formal = format(&parameter.qualifiers);
+        argument == formal
+            || (parameter.qualifiers.writeonly && (argument.is_none() || formal.is_none()))
+    }
+
     fn keeps_memory_qualifiers(&self, operand: &Operand, parameter: &Parameter) -> bool {
         let Some(argument) = operand
             .root
@@ -817,6 +913,7 @@ impl Analyzer<'_> {
         (!argument.readonly || formal.readonly)
             && (!argument.writeonly || formal.writeonly)
             && (!argument.volatile || formal.volatile)
+            && (!argument.nontemporal || formal.nontemporal)
             && (!argument.coherent || formal.coherent)
     }
 
@@ -831,6 +928,9 @@ impl Analyzer<'_> {
             );
             false
         };
+        if name.starts_with("atomic") || name.starts_with("imageAtomic") {
+            self.atomic_float_extensions(span, name, operands);
+        }
         if !self.memory_scope_checks(span, name, operands) {
             return false;
         }
@@ -872,6 +972,32 @@ impl Analyzer<'_> {
                 });
             if name.starts_with("imageAtomic") && integer_image && !has_atomic_format {
                 return invalid(self, span, "the image format must be r32i or r32ui");
+            }
+            let wide = first
+                .and_then(|operand| operand.ty.as_opaque())
+                .map(|opaque| opaque.sampled)
+                .and_then(|sampled| match sampled {
+                    crate::types::SampledType::Int64 => Some("r64i"),
+                    crate::types::SampledType::Uint64 => Some("r64ui"),
+                    _ => None,
+                });
+            if let Some(format) = wide.filter(|_| name.starts_with("imageAtomic")) {
+                let matches = first
+                    .and_then(|operand| operand.root)
+                    .and_then(|id| self.symbol(id))
+                    .and_then(|symbol| symbol.variable())
+                    .is_some_and(|variable| variable.qualifiers.has_layout(format));
+                if !matches {
+                    return invalid(
+                        self,
+                        span,
+                        if format == "r64i" {
+                            "only supported on image with format r64i"
+                        } else {
+                            "only supported on image with format r64ui"
+                        },
+                    );
+                }
             }
             if let Some((readonly, writeonly)) = qualifiers {
                 if readonly && name != "imageLoad" {
@@ -1051,6 +1177,13 @@ impl Analyzer<'_> {
         {
             return fail(self, &ty, "can't convert");
         }
+        if microscaling_conversion(&ty, &operands) {
+            return fail(
+                self,
+                &ty,
+                "constructor argument must be a non-spec constant",
+            );
+        }
         if !ty.is_array()
             && matches!(
                 ty.kind,
@@ -1106,8 +1239,10 @@ impl Analyzer<'_> {
             || operands
                 .iter()
                 .all(|operand| operand.ty.base_scalar() == ty.base_scalar());
+        let composite_specialization = self.extension_enabled(SPEC_CONSTANT_COMPOSITES)
+            && (matches!(ty.kind, TypeKind::Struct(_)) || operands.len() > 1);
         let constant = operands.iter().all(|operand| operand.constant)
-            && (!any_specialization || keeps_specialization)
+            && (!any_specialization || keeps_specialization || composite_specialization)
             && foldable;
         let count = u32::try_from(operands.len()).unwrap_or(u32::MAX);
         let mut element_types: Vec<Type> = Vec::new();
@@ -1351,3 +1486,20 @@ impl Analyzer<'_> {
         (values.len() == needed).then(|| Constant::new(values))
     }
 }
+
+fn microscaling_conversion(ty: &Type, operands: &[Operand]) -> bool {
+    if ty.is_array()
+        || !matches!(ty.kind, TypeKind::Scalar(_) | TypeKind::Vector { .. })
+        || !ty.base_scalar().is_some_and(Scalar::is_microscaling)
+    {
+        return false;
+    }
+    let constant = operands
+        .iter()
+        .all(|operand| operand.constant && !operand.specialization);
+    !constant
+        && operands
+            .iter()
+            .any(|operand| operand.ty.base_scalar() != ty.base_scalar())
+}
+pub(crate) const SPEC_CONSTANT_COMPOSITES: &str = "GL_EXT_spec_constant_composites";

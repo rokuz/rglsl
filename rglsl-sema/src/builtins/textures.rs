@@ -65,7 +65,12 @@ fn opaque_types() -> Vec<Opaque> {
             for multisample in [false, true] {
                 for arrayed in [false, true] {
                     for dimension in TextureDimension::ALL {
-                        for sampled in SampledType::ALL {
+                        let wide: &[SampledType] = if kind == OpaqueKind::Image {
+                            &SampledType::WIDE
+                        } else {
+                            &[]
+                        };
+                        for &sampled in SampledType::ALL.iter().chain(wide) {
                             let opaque = Opaque {
                                 kind,
                                 sampled,
@@ -172,7 +177,12 @@ fn images(emitter: &mut Emitter<'_>, opaque: Opaque) {
         scoped(core::slice::from_ref(&data)),
     );
     let names: &[&str] = if opaque.sampled == SampledType::Float {
-        &["imageAtomicExchange"]
+        &[
+            "imageAtomicAdd",
+            "imageAtomicMin",
+            "imageAtomicMax",
+            "imageAtomicExchange",
+        ]
     } else {
         &[
             "imageAtomicAdd",
@@ -591,6 +601,67 @@ fn subpasses(emitter: &mut Emitter<'_>) {
     }
 }
 
+fn shadow_lod(emitter: &mut Emitter<'_>) {
+    let shadow = |dimension, arrayed| {
+        Type::opaque(Opaque {
+            kind: OpaqueKind::CombinedSampler,
+            sampled: SampledType::Float,
+            dimension,
+            arrayed,
+            shadow: true,
+            multisample: false,
+        })
+    };
+    let array = shadow(TextureDimension::D2, true);
+    let cube = shadow(TextureDimension::Cube, false);
+    let cube_array = shadow(TextureDimension::Cube, true);
+    let coordinate = Type::vector(Scalar::Float, 4);
+    let offset = Type::vector(Scalar::Int, 2);
+    let float = Type::FLOAT;
+    for (name, parameters) in [
+        (
+            "texture",
+            alloc::vec![array.clone(), coordinate.clone(), float.clone()],
+        ),
+        (
+            "texture",
+            alloc::vec![
+                cube_array.clone(),
+                coordinate.clone(),
+                float.clone(),
+                float.clone()
+            ],
+        ),
+        (
+            "textureLod",
+            alloc::vec![array.clone(), coordinate.clone(), float.clone()],
+        ),
+        (
+            "textureLod",
+            alloc::vec![cube, coordinate.clone(), float.clone()],
+        ),
+        (
+            "textureLod",
+            alloc::vec![cube_array, coordinate.clone(), float.clone(), float.clone()],
+        ),
+        (
+            "textureLodOffset",
+            alloc::vec![
+                array.clone(),
+                coordinate.clone(),
+                float.clone(),
+                offset.clone()
+            ],
+        ),
+        (
+            "textureOffset",
+            alloc::vec![array, coordinate, offset, float],
+        ),
+    ] {
+        emitter.common(name, Type::FLOAT, parameters);
+    }
+}
+
 pub(super) fn prototypes() -> Vec<Prototype> {
     let mut prototypes = Vec::new();
     let mut emitter = Emitter {
@@ -623,6 +694,7 @@ pub(super) fn prototypes() -> Vec<Prototype> {
             alloc::vec![Type::opaque(buffer), Type::INT],
         );
     }
+    shadow_lod(&mut emitter);
     subpasses(&mut emitter);
     image_processing(&mut emitter);
     prototypes

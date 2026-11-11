@@ -38,6 +38,52 @@ in int gl_DrawID
 ",
     },
     Group {
+        stages: VERTEX,
+        since: 450,
+        text: "
+in int gl_BaseVertexARB
+in int gl_BaseInstanceARB
+in int gl_DrawIDARB
+",
+    },
+    Group {
+        stages: VERTEX
+            | TESS_CONTROL
+            | TESS_EVALUATION
+            | GEOMETRY
+            | COMPUTE
+            | RAY_GENERATION
+            | INTERSECTION
+            | ANY_HIT
+            | CLOSEST_HIT
+            | MISS,
+        since: 450,
+        text: "
+in int gl_DeviceIndex
+",
+    },
+    Group {
+        stages: VERTEX | GEOMETRY,
+        since: 450,
+        text: "
+out int gl_PrimitiveShadingRateEXT
+",
+    },
+    Group {
+        stages: FRAGMENT,
+        since: 450,
+        text: "
+flat in int gl_DeviceIndex
+flat in ivec2 gl_FragSizeEXT
+flat in int gl_FragInvocationCountEXT
+in bool gl_FragFullyCoveredNV
+flat in ivec2 gl_FragmentSizeNV
+flat in int gl_InvocationsPerPixelNV
+flat in int gl_ShadingRateEXT
+out int gl_FragStencilRefARB
+",
+    },
+    Group {
         stages: VERTEX | TESS_CONTROL | TESS_EVALUATION,
         since: 450,
         text: "
@@ -60,14 +106,14 @@ out int gl_ViewportMaskPerViewNV[]
         stages: VERTEX | TESS_CONTROL | TESS_EVALUATION | GEOMETRY | MESH,
         since: 450,
         text: "
-in int gl_ViewIndex
+in highp int gl_ViewIndex
 ",
     },
     Group {
         stages: FRAGMENT,
         since: 450,
         text: "
-flat in int gl_ViewIndex
+flat in highp int gl_ViewIndex
 ",
     },
     Group {
@@ -127,11 +173,11 @@ in bool gl_HelperInvocation
         stages: COMPUTE | MESH | TASK,
         since: 450,
         text: "
-in uvec3 gl_NumWorkGroups
-in uvec3 gl_WorkGroupID
-in uvec3 gl_LocalInvocationID
-in uvec3 gl_GlobalInvocationID
-in uint gl_LocalInvocationIndex
+in highp uvec3 gl_NumWorkGroups
+in highp uvec3 gl_WorkGroupID
+in highp uvec3 gl_LocalInvocationID
+in highp uvec3 gl_GlobalInvocationID
+in highp uint gl_LocalInvocationIndex
 ",
     },
     Group {
@@ -158,7 +204,7 @@ out uint gl_TaskCountNV
         text: "
 in uint gl_MeshViewCountNV
 in uint gl_MeshViewIndicesNV[4]
-in int gl_DeviceIndex
+in highp int gl_DeviceIndex
 in int gl_DrawIDARB
 ",
     },
@@ -213,20 +259,20 @@ flat in uvec2 gl_TileApronSizeQCOM
         stages: COMPUTE | MESH | TASK,
         since: 450,
         text: "
-in uint gl_NumSubgroups
-in uint gl_SubgroupID
+in highp uint gl_NumSubgroups
+in highp uint gl_SubgroupID
 ",
     },
 ];
 
 const SUBGROUP: &str = "
-in uint gl_SubgroupSize
-in uint gl_SubgroupInvocationID
-in uvec4 gl_SubgroupEqMask
-in uvec4 gl_SubgroupGeMask
-in uvec4 gl_SubgroupGtMask
-in uvec4 gl_SubgroupLeMask
-in uvec4 gl_SubgroupLtMask
+in mediump uint gl_SubgroupSize
+in mediump uint gl_SubgroupInvocationID
+in highp uvec4 gl_SubgroupEqMask
+in highp uvec4 gl_SubgroupGeMask
+in highp uvec4 gl_SubgroupGtMask
+in highp uvec4 gl_SubgroupLeMask
+in highp uvec4 gl_SubgroupLtMask
 in uint gl_SubGroupSizeARB
 in uint gl_SubGroupInvocationARB
 in uint64_t gl_SubGroupEqMaskARB
@@ -234,25 +280,25 @@ in uint64_t gl_SubGroupGeMaskARB
 in uint64_t gl_SubGroupGtMaskARB
 in uint64_t gl_SubGroupLeMaskARB
 in uint64_t gl_SubGroupLtMaskARB
-in uint gl_WarpsPerSMNV
-in uint gl_SMCountNV
-in uint gl_WarpIDNV
-in uint gl_SMIDNV
-in uint gl_CoreIDARM
-in uint gl_CoreCountARM
-in uint gl_CoreMaxIDARM
-in uint gl_WarpIDARM
-in uint gl_WarpMaxIDARM
+in highp uint gl_WarpsPerSMNV
+in highp uint gl_SMCountNV
+in highp uint gl_WarpIDNV
+in highp uint gl_SMIDNV
+in highp uint gl_CoreIDARM
+in highp uint gl_CoreCountARM
+in highp uint gl_CoreMaxIDARM
+in highp uint gl_WarpIDARM
+in highp uint gl_WarpMaxIDARM
 ";
 
 const FRAGMENT_SUBGROUP: &str = "
-flat in uint gl_SubgroupSize
-flat in uint gl_SubgroupInvocationID
-flat in uvec4 gl_SubgroupEqMask
-flat in uvec4 gl_SubgroupGeMask
-flat in uvec4 gl_SubgroupGtMask
-flat in uvec4 gl_SubgroupLeMask
-flat in uvec4 gl_SubgroupLtMask
+flat in mediump uint gl_SubgroupSize
+flat in mediump uint gl_SubgroupInvocationID
+flat in highp uvec4 gl_SubgroupEqMask
+flat in highp uvec4 gl_SubgroupGeMask
+flat in highp uvec4 gl_SubgroupGtMask
+flat in highp uvec4 gl_SubgroupLeMask
+flat in highp uvec4 gl_SubgroupLtMask
 flat in uint gl_SubGroupSizeARB
 flat in uint gl_SubGroupInvocationARB
 flat in uint64_t gl_SubGroupEqMaskARB
@@ -260,25 +306,25 @@ flat in uint64_t gl_SubGroupGeMaskARB
 flat in uint64_t gl_SubGroupGtMaskARB
 flat in uint64_t gl_SubGroupLeMaskARB
 flat in uint64_t gl_SubGroupLtMaskARB
-flat in uint gl_WarpsPerSMNV
-flat in uint gl_SMCountNV
-flat in uint gl_WarpIDNV
-flat in uint gl_SMIDNV
-flat in uint gl_CoreIDARM
-flat in uint gl_CoreCountARM
-flat in uint gl_CoreMaxIDARM
-flat in uint gl_WarpIDARM
-flat in uint gl_WarpMaxIDARM
+flat in highp uint gl_WarpsPerSMNV
+flat in highp uint gl_SMCountNV
+flat in highp uint gl_WarpIDNV
+flat in highp uint gl_SMIDNV
+flat in highp uint gl_CoreIDARM
+flat in highp uint gl_CoreCountARM
+flat in highp uint gl_CoreMaxIDARM
+flat in highp uint gl_WarpIDARM
+flat in highp uint gl_WarpMaxIDARM
 ";
 
 const RAY_TRACING_SUBGROUP: &str = "
-volatile in uint gl_SubgroupSize
-volatile in uint gl_SubgroupInvocationID
-volatile in uvec4 gl_SubgroupEqMask
-volatile in uvec4 gl_SubgroupGeMask
-volatile in uvec4 gl_SubgroupGtMask
-volatile in uvec4 gl_SubgroupLeMask
-volatile in uvec4 gl_SubgroupLtMask
+volatile in mediump uint gl_SubgroupSize
+volatile in mediump uint gl_SubgroupInvocationID
+volatile in highp uvec4 gl_SubgroupEqMask
+volatile in highp uvec4 gl_SubgroupGeMask
+volatile in highp uvec4 gl_SubgroupGtMask
+volatile in highp uvec4 gl_SubgroupLeMask
+volatile in highp uvec4 gl_SubgroupLtMask
 volatile in uint gl_SubGroupSizeARB
 volatile in uint gl_SubGroupInvocationARB
 volatile in uint64_t gl_SubGroupEqMaskARB
@@ -286,15 +332,15 @@ volatile in uint64_t gl_SubGroupGeMaskARB
 volatile in uint64_t gl_SubGroupGtMaskARB
 volatile in uint64_t gl_SubGroupLeMaskARB
 volatile in uint64_t gl_SubGroupLtMaskARB
-in uint gl_WarpsPerSMNV
-in uint gl_SMCountNV
-volatile in uint gl_WarpIDNV
-volatile in uint gl_SMIDNV
-in uint gl_CoreIDARM
-in uint gl_CoreCountARM
-in uint gl_CoreMaxIDARM
-in uint gl_WarpIDARM
-in uint gl_WarpMaxIDARM
+in highp uint gl_WarpsPerSMNV
+in highp uint gl_SMCountNV
+volatile in highp uint gl_WarpIDNV
+volatile in highp uint gl_SMIDNV
+in highp uint gl_CoreIDARM
+in highp uint gl_CoreCountARM
+in highp uint gl_CoreMaxIDARM
+in highp uint gl_WarpIDARM
+in highp uint gl_WarpMaxIDARM
 ";
 
 const PER_VERTEX: &str = "
@@ -358,6 +404,33 @@ const MESH_BLOCKS: [(&str, &str, &str, bool); 4] = [
     ),
 ];
 
+const SHADING_RATE_CONSTANTS: [(&str, i32); 4] = [
+    ("gl_ShadingRateFlag2VerticalPixelsEXT", 1),
+    ("gl_ShadingRateFlag4VerticalPixelsEXT", 2),
+    ("gl_ShadingRateFlag2HorizontalPixelsEXT", 4),
+    ("gl_ShadingRateFlag4HorizontalPixelsEXT", 8),
+];
+
+pub fn variable_extension(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "gl_BaseVertexARB" | "gl_BaseInstanceARB" | "gl_DrawIDARB" => {
+            "GL_ARB_shader_draw_parameters"
+        }
+        "gl_DeviceIndex" => "GL_EXT_device_group",
+        "gl_PrimitiveShadingRateEXT"
+        | "gl_ShadingRateEXT"
+        | "gl_ShadingRateFlag2VerticalPixelsEXT"
+        | "gl_ShadingRateFlag4VerticalPixelsEXT"
+        | "gl_ShadingRateFlag2HorizontalPixelsEXT"
+        | "gl_ShadingRateFlag4HorizontalPixelsEXT" => "GL_EXT_fragment_shading_rate",
+        "gl_FragSizeEXT" | "gl_FragInvocationCountEXT" => "GL_EXT_fragment_invocation_density",
+        "gl_FragmentSizeNV" | "gl_InvocationsPerPixelNV" => "GL_NV_shading_rate_image",
+        "gl_FragFullyCoveredNV" => "GL_NV_conservative_raster_underestimation",
+        "gl_FragStencilRefARB" => "GL_ARB_shader_stencil_export",
+        _ => return None,
+    })
+}
+
 pub fn view_extension(name: &str) -> Option<&'static str> {
     Some(match name {
         "gl_ViewIndex" => "GL_EXT_multiview",
@@ -409,6 +482,9 @@ fn parse_declaration(line: &[&str]) -> Option<Declared> {
             "volatile" => qualifiers.volatile = true,
             "perprimitiveNV" => qualifiers.per_primitive = true,
             "perviewNV" => qualifiers.per_view = true,
+            "lowp" => qualifiers.precision = Some(rglsl_ast::ast::PrecisionQualifier::Low),
+            "mediump" => qualifiers.precision = Some(rglsl_ast::ast::PrecisionQualifier::Medium),
+            "highp" => qualifiers.precision = Some(rglsl_ast::ast::PrecisionQualifier::High),
             "[" => {
                 let next = iterator.next()?;
                 if next == "]" {
@@ -669,6 +745,9 @@ pub(super) fn build(
         .into_iter()
         .chain(COOPERATIVE_CONSTANTS)
     {
+        builder.constant(name, Type::INT, alloc::vec![Value::Int(value)]);
+    }
+    for (name, value) in SHADING_RATE_CONSTANTS {
         builder.constant(name, Type::INT, alloc::vec![Value::Int(value)]);
     }
     for (name, value) in TENSOR_OPERAND_CONSTANTS {

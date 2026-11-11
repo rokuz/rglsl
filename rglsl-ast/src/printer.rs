@@ -3,12 +3,13 @@ use alloc::string::String;
 use core::fmt;
 
 use crate::ast::{
-    ArrayDimension, ArraySpecifier, CaseLabel, CompoundStatement, Condition, Declaration,
-    DeclarationKind, Expression, ExpressionKind, ExternalDeclaration, FullySpecifiedType,
-    FunctionIdentifier, FunctionPrototype, InitDeclaratorList, Initializer, JumpStatement,
-    SingleTypeQualifier, Spanned, SpirvDecorate, SpirvInstructionQualifier, SpirvRequirement,
-    SpirvTypeParameter, SpirvTypeSpecifier, Statement, StatementKind, StructDeclaration,
-    TranslationUnit, TypeQualifier, TypeSpecifier, TypeSpecifierNonArray, UnaryOperator,
+    ArrayDimension, ArraySpecifier, Attribute, CaseLabel, CompoundStatement, Condition,
+    Declaration, DeclarationKind, Expression, ExpressionKind, ExternalDeclaration,
+    FullySpecifiedType, FunctionIdentifier, FunctionPrototype, InitDeclaratorList, Initializer,
+    JumpStatement, SingleTypeQualifier, Spanned, SpirvDecorate, SpirvInstructionQualifier,
+    SpirvRequirement, SpirvTypeParameter, SpirvTypeSpecifier, Statement, StatementKind,
+    StructDeclaration, TranslationUnit, TypeQualifier, TypeSpecifier, TypeSpecifierNonArray,
+    UnaryOperator,
 };
 
 const INDENT: &str = "    ";
@@ -255,7 +256,27 @@ impl Printer {
         self.write(")");
     }
 
+    fn attribute_list(&mut self, attributes: &[Attribute]) {
+        self.write("[[");
+        for (index, attribute) in attributes.iter().enumerate() {
+            if index > 0 {
+                self.write(", ");
+            }
+            self.write(&attribute.name.node);
+            if let Some(argument) = &attribute.argument {
+                self.write("(");
+                self.expression(argument);
+                self.write(")");
+            }
+        }
+        self.write("]]");
+    }
+
     fn function_prototype(&mut self, prototype: &FunctionPrototype) {
+        if !prototype.attributes.is_empty() {
+            self.attribute_list(&prototype.attributes);
+            self.write(" ");
+        }
         self.fully_specified_type(&prototype.return_type);
         self.write(" ");
         self.write(&prototype.name);
@@ -269,6 +290,10 @@ impl Printer {
             printer.optional_array_specifier(parameter.array.as_deref());
         });
         self.write(")");
+        if !prototype.trailing_attributes.is_empty() {
+            self.write(" ");
+            self.attribute_list(&prototype.trailing_attributes);
+        }
     }
 
     fn init_declarator_list(&mut self, list: &InitDeclaratorList) {
@@ -506,19 +531,8 @@ impl Printer {
                 attributes,
                 statement,
             } => {
-                self.write("[[");
-                for (index, attribute) in attributes.iter().enumerate() {
-                    if index > 0 {
-                        self.write(", ");
-                    }
-                    self.write(&attribute.name.node);
-                    if let Some(argument) = &attribute.argument {
-                        self.write("(");
-                        self.expression(argument);
-                        self.write(")");
-                    }
-                }
-                self.write("]] ");
+                self.attribute_list(attributes);
+                self.write(" ");
                 self.statement_content(statement);
             }
         }
@@ -613,6 +627,7 @@ impl Printer {
             JumpStatement::Continue => self.write("continue;"),
             JumpStatement::Break => self.write("break;"),
             JumpStatement::Discard => self.write("discard;"),
+            JumpStatement::Demote => self.write("demote;"),
             JumpStatement::TerminateRay => self.write("terminateRayEXT;"),
             JumpStatement::IgnoreIntersection => self.write("ignoreIntersectionEXT;"),
             JumpStatement::Return(None) => self.write("return;"),
@@ -672,7 +687,10 @@ impl Printer {
             }
             ExpressionKind::FunctionCall(call) => {
                 match &call.function.node {
-                    FunctionIdentifier::Constructor(specifier) => self.type_specifier(specifier),
+                    FunctionIdentifier::Constructor(specifier)
+                    | FunctionIdentifier::Cast(specifier) => {
+                        self.type_specifier(specifier);
+                    }
                     FunctionIdentifier::Function(name) => self.write(name),
                     FunctionIdentifier::Expression(callee) => self.expression(callee),
                     FunctionIdentifier::Method { object, name } => {
