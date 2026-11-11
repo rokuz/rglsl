@@ -26,8 +26,8 @@ asset = "kosmickrisp-macos-arm64.zip"
 sha256 = "d92c1eb5be8be3c2723495fb0fad72f9e762e447029e6bfd0364a20c73ad9b74"
 
 [amber]
-repo = "https://github.com/google/amber"
-commit = "c9f1e2871ccbb0b0564c4a33e359801144f6b7c1"
+repo = "https://github.com/rokuz/amber"
+commit = "1fa57189ddeb0d17ccb461d120cba9af361c1c57"
 
 [amber-vulkan-headers]
 repo = "https://github.com/KhronosGroup/Vulkan-Headers"

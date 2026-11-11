@@ -2,10 +2,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
-use spirv::{BuiltIn, Capability, Dim, ExecutionMode, ExecutionModel, ImageFormat, StorageClass};
+use spirv::{BuiltIn, Capability, Dim, ExecutionMode, ExecutionModel, ImageFormat};
 
 use super::data::{fill_random, fill_values, Rng, Value};
+use super::glsl;
 use super::harness::{self, Attachment, ShaderKind, MAX_ATTACHMENTS, PATCH_VERTICES};
+use super::mesh;
+use super::rays::{self, Geometry, RayPipeline, ShaderRef};
 use super::reflect::{
     ImageType, Layout, Reflection, ResourceKind, Scalar, ScalarKind, Slot, Varying,
 };
@@ -14,7 +17,7 @@ use super::requirements::{self, Need, Requirement};
 pub const FRAMEBUFFER: u32 = 32;
 pub const VERTEX_COUNT: u32 = 12;
 const TEXEL_BUFFER_TEXELS: u32 = 64;
-const LAUNCH_SIZE: u32 = 4;
+const RAY_COUNT: u32 = rays::LAUNCH_SIZE * rays::LAUNCH_SIZE;
 const MAX_BUFFER_BYTES: u32 = 1 << 22;
 const DATA_DIR: &str = "{DATA}";
 
@@ -27,6 +30,7 @@ pub enum Draw {
         patch_vertices: Option<u32>,
     },
     Rays,
+    Mesh,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -65,6 +69,8 @@ pub struct Plan {
     pub framebuffer: u32,
     pub placeholder: bool,
     pub draw: Draw,
+    pub rays: Option<RayPipeline>,
+    pub harness_env: Option<&'static str>,
     pub notes: Vec<String>,
 }
 
@@ -222,7 +228,7 @@ fn buffer_bytes(
     bytes
 }
 
-fn requirements(reflection: &Reflection) -> Result<BTreeSet<Need>, Refusal> {
+pub fn requirements(reflection: &Reflection) -> Result<BTreeSet<Need>, Refusal> {
     if let Some(unknown) = reflection.unknown_capabilities.first() {
         let name = match unknown {
             5120 => "AbortKHR".to_string(),
@@ -267,21 +273,16 @@ fn stage_of(model: ExecutionModel) -> Result<ShaderKind, Refusal> {
         ExecutionModel::TessellationControl => ShaderKind::TessControl,
         ExecutionModel::TessellationEvaluation => ShaderKind::TessEval,
         ExecutionModel::RayGenerationKHR => ShaderKind::RayGeneration,
-        ExecutionModel::MeshEXT
-        | ExecutionModel::TaskEXT
-        | ExecutionModel::MeshNV
-        | ExecutionModel::TaskNV => {
+        ExecutionModel::MissKHR => ShaderKind::Miss,
+        ExecutionModel::ClosestHitKHR => ShaderKind::ClosestHit,
+        ExecutionModel::AnyHitKHR => ShaderKind::AnyHit,
+        ExecutionModel::IntersectionKHR => ShaderKind::Intersection,
+        ExecutionModel::CallableKHR => ShaderKind::Callable,
+        ExecutionModel::MeshEXT => ShaderKind::Mesh,
+        ExecutionModel::TaskEXT => ShaderKind::Task,
+        ExecutionModel::MeshNV | ExecutionModel::TaskNV => {
             return Err(Refusal::Stage(format!(
-                "{model:?} (Amber has no mesh pipelines)"
-            )))
-        }
-        ExecutionModel::IntersectionKHR
-        | ExecutionModel::AnyHitKHR
-        | ExecutionModel::ClosestHitKHR
-        | ExecutionModel::MissKHR
-        | ExecutionModel::CallableKHR => {
-            return Err(Refusal::Stage(format!(
-                "{model:?} (only ray generation shaders are run)"
+                "{model:?} (the harness generates EXT task, mesh and fragment stages)"
             )))
         }
         other => return Err(Refusal::Stage(format!("{other:?}"))),
@@ -327,28 +328,13 @@ impl Plan {
         if let Some(problem) = reflection.problems.first() {
             return Err(Refusal::Binding(problem.clone()));
         }
-        if stage == ShaderKind::RayGeneration {
-            if reflection
-                .ray_storage
-                .contains(&StorageClass::CallableDataKHR)
-            {
-                return Err(Refusal::Binding(
-                    "callable shaders (the harness has no callable shader table)".into(),
-                ));
-            }
-            if reflection
-                .ray_storage
-                .contains(&StorageClass::ShaderRecordBufferKHR)
-            {
-                return Err(Refusal::Binding(
-                    "shader record buffers (Amber's shader binding tables carry no data)".into(),
-                ));
-            }
-            if !reflection.capabilities.contains(&Capability::RayTracingKHR) {
-                return Err(Refusal::Capability(
-                    "ray generation without the RayTracingKHR capability".into(),
-                ));
-            }
+        if stage.is_ray_tracing()
+            && !reflection.capabilities.contains(&Capability::RayTracingKHR)
+            && !reflection.capabilities.contains(&Capability::RayTracingNV)
+        {
+            return Err(Refusal::Capability(format!(
+                "{stage:?} without a ray tracing capability"
+            )));
         }
         let mut plan = Self {
             stage,
@@ -363,6 +349,8 @@ impl Plan {
             framebuffer: inputs.framebuffer.unwrap_or(FRAMEBUFFER),
             placeholder: false,
             draw: Draw::Dispatch,
+            rays: None,
+            harness_env: None,
             notes: Vec::new(),
         };
         let mut rng = Rng::from_text(&inputs.seed);
@@ -373,6 +361,7 @@ impl Plan {
             .min(4096);
         let mut sampler_declared = false;
         let mut writes = false;
+        let mut scene: Option<Geometry> = None;
 
         for resource in &reflection.resources {
             let base = format!("r{}_{}", resource.set, resource.binding);
@@ -536,14 +525,14 @@ impl Plan {
                     );
                 }
                 ResourceKind::AccelerationStructure => {
-                    if stage != ShaderKind::RayGeneration || resource.count.is_some() {
-                        return Err(Refusal::Binding(
-                            "acceleration structures outside a ray generation shader".into(),
-                        ));
+                    if resource.count.is_some() {
+                        return Err(Refusal::Binding("arrays of acceleration structures".into()));
                     }
+                    scene = Some(Geometry::Triangles);
                     let _ = writeln!(
                         plan.bindings,
-                        "  BIND ACCELERATION_STRUCTURE tlas {location}"
+                        "  BIND ACCELERATION_STRUCTURE {} {location}",
+                        rays::SCENE_TLAS
                     );
                 }
                 ResourceKind::Unsupported(reason) => return Err(Refusal::Binding(reason.clone())),
@@ -565,15 +554,69 @@ impl Plan {
 
         match stage {
             ShaderKind::Compute => {}
-            ShaderKind::RayGeneration => {
+            ShaderKind::RayGeneration
+            | ShaderKind::Miss
+            | ShaderKind::ClosestHit
+            | ShaderKind::AnyHit
+            | ShaderKind::Intersection
+            | ShaderKind::Callable => {
+                let set = reflection
+                    .resources
+                    .iter()
+                    .map(|r| r.set + 1)
+                    .max()
+                    .unwrap_or(0);
+                let record = plan.add_shader_record(reflection, &mut rng)?;
+                let generated = rays::harness(stage, reflection, set, record, &mut rng)
+                    .map_err(Refusal::Binding)?;
                 plan.draw = Draw::Rays;
-                plan.harness = vec![
-                    (ShaderKind::Miss, harness::MISS_SHADER.to_string()),
-                    (ShaderKind::ClosestHit, harness::HIT_SHADER.to_string()),
-                ];
-                plan.declarations.push_str(
-                    "ACCELERATION_STRUCTURE BOTTOM_LEVEL blas\n  GEOMETRY TRIANGLES\n    -1.0 -1.0 0.5\n    1.0 -1.0 0.5\n    0.0 1.0 0.5\n  END\nEND\nACCELERATION_STRUCTURE TOP_LEVEL tlas\n  BOTTOM_LEVEL_INSTANCE blas\n  END\nEND\n",
-                );
+                plan.harness = generated.shaders;
+                plan.rays = Some(generated.pipeline);
+                plan.harness_env = Some(ShaderKind::RayGeneration.target_env());
+                scene = Some(generated.geometry);
+                if let Some(output) = generated.output {
+                    let layout = glsl::array_of(&output, RAY_COUNT);
+                    let size = round_up(layout.size(0).max(4), 4);
+                    plan.add_buffer("rglsl_out", vec![0; usize::try_from(size).unwrap_or(4)]);
+                    let _ = writeln!(
+                        plan.bindings,
+                        "  BIND ACCELERATION_STRUCTURE {} DESCRIPTOR_SET {set} BINDING 0\n  BIND BUFFER rglsl_out AS storage DESCRIPTOR_SET {set} BINDING 1",
+                        rays::SCENE_TLAS
+                    );
+                    let mut slots = Vec::new();
+                    layout.slots(0, 0, &mut slots);
+                    plan.add_target("ray payloads".into(), "rglsl_out", slots);
+                }
+            }
+            ShaderKind::Mesh => {
+                plan.draw = Draw::Mesh;
+                plan.harness_env = Some(ShaderKind::Mesh.target_env());
+                if reflection
+                    .output_builtins
+                    .contains(&BuiltIn::PrimitiveShadingRateKHR)
+                {
+                    needs.insert(requirements::PRIMITIVE_SHADING_RATE);
+                    needs.insert(requirements::PRIMITIVE_SHADING_RATE_MESH);
+                }
+                if let Some(payload) = &reflection.task_payload {
+                    let payload = payload
+                        .as_ref()
+                        .map_err(|e| Refusal::Binding(format!("task payload: {e}")))?;
+                    plan.harness.push((
+                        ShaderKind::Task,
+                        mesh::task_for_mesh(Some(payload), &mut rng).map_err(Refusal::Binding)?,
+                    ));
+                    needs.insert(requirements::TASK_SHADER);
+                }
+                plan.finish_with_fragment(&reflection.outputs);
+            }
+            ShaderKind::Task => {
+                plan.draw = Draw::Mesh;
+                plan.harness_env = Some(ShaderKind::Task.target_env());
+                needs.insert(requirements::TASK_SHADER);
+                plan.harness
+                    .push((ShaderKind::Mesh, mesh::MESH_FOR_TASK.to_string()));
+                plan.finish_with_fragment(&mesh::mesh_for_task_outputs());
             }
             ShaderKind::Fragment => {
                 if writes {
@@ -675,13 +718,36 @@ impl Plan {
                 ));
                 plan.finish_with_fragment(&reflection.outputs);
             }
-            ShaderKind::Miss | ShaderKind::ClosestHit => {
-                return Err(Refusal::Stage(format!("{stage:?}")));
-            }
+        }
+        if let Some(geometry) = scene {
+            plan.declarations.push_str(&geometry.declarations());
         }
         plan.add_attachment_targets();
         plan.needs = needs;
         Ok(plan)
+    }
+
+    fn add_shader_record(
+        &mut self,
+        reflection: &Reflection,
+        rng: &mut Rng,
+    ) -> Result<Option<String>, Refusal> {
+        let Some(record) = &reflection.shader_record else {
+            return Ok(None);
+        };
+        let layout = record
+            .as_ref()
+            .map_err(|e| Refusal::Binding(format!("shader record buffer: {e}")))?;
+        if layout.has_runtime_array() {
+            return Err(Refusal::Binding(
+                "shader record buffer with a runtime array".into(),
+            ));
+        }
+        let mut bytes = fill_random(layout, 0, rng);
+        let size = round_up(u32::try_from(bytes.len()).unwrap_or(0).max(4), 4);
+        bytes.resize(usize::try_from(size).unwrap_or(4), 0);
+        self.add_buffer("rglsl_record", bytes);
+        Ok(Some("rglsl_record".into()))
     }
 
     fn start_with_vertex(&mut self, inputs: &[Varying], rng: &mut Rng) -> Result<(), Refusal> {
@@ -861,21 +927,16 @@ impl Plan {
             }
             Draw::Rays => {
                 out.push_str("PIPELINE raytracing main\n");
-                for (kind, name) in &graphics {
-                    let group = match kind {
-                        ShaderKind::RayGeneration => "g_raygen",
-                        ShaderKind::Miss => "g_miss",
-                        _ => "g_hit",
-                    };
-                    let _ = writeln!(out, "  SHADER_GROUP {group} {name}");
+                if let Some(rays) = &self.rays {
+                    out.push_str(&rays.script(&|shader| match shader {
+                        ShaderRef::Tested => "tested".to_string(),
+                        ShaderRef::Harness(index) => format!("harness{index}"),
+                    }));
                 }
-                out.push_str("  SHADER_BINDING_TABLE sbt_raygen\n    g_raygen\n  END\n");
-                out.push_str("  SHADER_BINDING_TABLE sbt_miss\n    g_miss\n  END\n");
-                out.push_str("  SHADER_BINDING_TABLE sbt_hit\n    g_hit\n  END\n");
                 out.push_str(&self.bindings);
                 out.push_str("END\n");
             }
-            Draw::Rect | Draw::Array { .. } => {
+            Draw::Rect | Draw::Array { .. } | Draw::Mesh => {
                 out.push_str("PIPELINE graphics main\n");
                 for (_, name) in &graphics {
                     out.push_str(&attach(name));
@@ -928,9 +989,13 @@ impl Plan {
                 );
             }
             Draw::Rays => {
-                let _ = writeln!(
-                    out,
-                    "RUN main RAYGEN sbt_raygen MISS sbt_miss HIT sbt_hit {LAUNCH_SIZE} {LAUNCH_SIZE} 1"
+                if let Some(rays) = &self.rays {
+                    out.push_str(&rays.run());
+                }
+            }
+            Draw::Mesh => {
+                out.push_str(
+                    "CLEAR_COLOR main 0 0 0 0\nCLEAR main\nRUN main DRAW_MESH_TASKS 1 1 1\n",
                 );
             }
         }
@@ -943,7 +1008,9 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
-    use crate::exec::reflect::{Interpolation, Resource, Varying, VaryingType};
+    use crate::exec::reflect::{
+        DataType, Interpolation, RayVariable, Resource, Varying, VaryingType,
+    };
 
     const F32: Scalar = Scalar {
         kind: ScalarKind::Float,
@@ -956,21 +1023,9 @@ mod tests {
 
     fn reflection(model: ExecutionModel) -> Reflection {
         Reflection {
-            model,
-            entry: "main".into(),
             local_size: [4, 1, 1],
-            resources: Vec::new(),
-            push_constants: None,
-            inputs: Vec::new(),
-            outputs: Vec::new(),
-            input_builtins: BTreeSet::new(),
-            output_builtins: BTreeSet::new(),
             capabilities: [spirv::Capability::Shader].into_iter().collect(),
-            unknown_capabilities: BTreeSet::new(),
-            extensions: BTreeSet::new(),
-            modes: BTreeMap::new(),
-            ray_storage: BTreeSet::new(),
-            problems: Vec::new(),
+            ..Reflection::new(model)
         }
     }
 
@@ -1073,6 +1128,7 @@ mod tests {
             centroid: false,
             sample: false,
             patch: false,
+            per_primitive: false,
         }];
         module.outputs = vec![Varying {
             location: 0,
@@ -1086,6 +1142,7 @@ mod tests {
             centroid: false,
             sample: false,
             patch: false,
+            per_primitive: false,
         }];
         let plan = Plan::new(&module, &Inputs::default()).unwrap();
         assert_eq!(plan.harness.len(), 1);
@@ -1116,7 +1173,7 @@ mod tests {
     #[test]
     fn refuses_what_it_cannot_bind() {
         let mut module = reflection(ExecutionModel::GLCompute);
-        module.capabilities.insert(spirv::Capability::RayQueryKHR);
+        module.capabilities.insert(spirv::Capability::Int64ImageEXT);
         assert!(matches!(
             Plan::new(&module, &Inputs::default()),
             Err(Refusal::Capability(_))
@@ -1133,8 +1190,12 @@ mod tests {
             Refusal::Binding("arrays of descriptors".into())
         );
         assert!(matches!(
-            Plan::new(&reflection(ExecutionModel::MeshEXT), &Inputs::default()),
+            Plan::new(&reflection(ExecutionModel::MeshNV), &Inputs::default()),
             Err(Refusal::Stage(_))
+        ));
+        assert!(matches!(
+            Plan::new(&reflection(ExecutionModel::MissKHR), &Inputs::default()),
+            Err(Refusal::Capability(_))
         ));
         assert!(matches!(
             Plan::new(&reflection(ExecutionModel::Geometry), &Inputs::default()),
@@ -1283,7 +1344,14 @@ mod tests {
             kind: ResourceKind::AccelerationStructure,
         });
         let plan = Plan::new(&module, &Inputs::default()).unwrap();
-        assert_eq!(shaders(&plan), [ShaderKind::Miss, ShaderKind::ClosestHit]);
+        assert_eq!(
+            shaders(&plan),
+            [
+                ShaderKind::Miss,
+                ShaderKind::ClosestHit,
+                ShaderKind::Callable
+            ]
+        );
         let (tested, dump, data) = paths();
         let harness = harness_paths(&plan);
         let script = plan.script(ScriptPaths {
@@ -1297,13 +1365,145 @@ mod tests {
         );
         assert!(script.contains("PIPELINE raytracing main\n  SHADER_GROUP g_raygen tested\n"));
         assert!(script.contains("  BIND ACCELERATION_STRUCTURE tlas DESCRIPTOR_SET 0 BINDING 1\n"));
-        assert!(script.ends_with("RUN main RAYGEN sbt_raygen MISS sbt_miss HIT sbt_hit 4 4 1\n"));
-
-        module.ray_storage.insert(StorageClass::CallableDataKHR);
-        assert!(matches!(
-            Plan::new(&module, &Inputs::default()),
-            Err(Refusal::Binding(_))
+        assert!(script.contains("ACCELERATION_STRUCTURE TOP_LEVEL tlas\n"));
+        assert!(script.ends_with(
+            "RUN main RAYGEN sbt_raygen MISS sbt_miss HIT sbt_hit CALL sbt_call 4 4 1\n"
         ));
+
+        module.shader_record = Some(Ok(Layout::Struct {
+            members: vec![(0, Layout::Scalar(U32)), (4, Layout::Scalar(F32))],
+        }));
+        let plan = Plan::new(&module, &Inputs::default()).unwrap();
+        let record = plan
+            .files
+            .iter()
+            .find(|(name, _)| name == "rglsl_record.bin")
+            .unwrap();
+        assert_eq!(record.1.len(), 8);
+        let script = plan.script(ScriptPaths {
+            tested: &tested,
+            harness: &harness,
+            dump: &dump,
+            data: &data,
+        });
+        assert!(script.contains("    g_raygen SHADER_RECORD rglsl_record\n"));
+    }
+
+    #[test]
+    fn hit_stages_run_behind_a_generated_ray_generation_shader() {
+        let mut module = reflection(ExecutionModel::ClosestHitKHR);
+        module.capabilities.insert(spirv::Capability::RayTracingKHR);
+        module.resources.push(Resource {
+            set: 0,
+            binding: 0,
+            count: None,
+            kind: ResourceKind::AccelerationStructure,
+        });
+        module.ray_variables.push(RayVariable {
+            class: spirv::StorageClass::IncomingRayPayloadKHR,
+            location: 1,
+            ty: Ok(DataType::Vector {
+                scalar: F32,
+                count: 4,
+            }),
+        });
+        let plan = Plan::new(&module, &Inputs::default()).unwrap();
+        assert_eq!(plan.harness_env, Some("vulkan1.2"));
+        assert_eq!(plan.harness[0].0, ShaderKind::RayGeneration);
+        assert!(plan.harness[0]
+            .1
+            .contains("layout(set = 1, binding = 1, std430) buffer RglslOut"));
+        assert_eq!(plan.targets.len(), 1);
+        assert_eq!(plan.targets[0].buffer, "rglsl_out");
+        assert_eq!(plan.targets[0].slots.len(), 64);
+        assert_eq!(plan.targets[0].slots[4].offset, 16);
+        assert!(plan
+            .bindings
+            .contains("  BIND ACCELERATION_STRUCTURE tlas DESCRIPTOR_SET 1 BINDING 0\n  BIND BUFFER rglsl_out AS storage DESCRIPTOR_SET 1 BINDING 1\n"));
+        let (tested, dump, data) = paths();
+        let harness = harness_paths(&plan);
+        let script = plan.script(ScriptPaths {
+            tested: &tested,
+            harness: &harness,
+            dump: &dump,
+            data: &data,
+        });
+        assert!(script.contains("SHADER closest_hit tested SPIRV-BIN FILE /w/tested.spv\n"));
+        assert!(script.contains("  SHADER_GROUP g_hit tested\n"));
+        assert!(script.contains("BUFFER rglsl_out DATA_TYPE uint8 SIZE 256 FILE BINARY"));
+    }
+
+    #[test]
+    fn ray_queries_bind_the_scene_in_any_stage() {
+        let mut module = reflection(ExecutionModel::Fragment);
+        module.capabilities.insert(spirv::Capability::RayQueryKHR);
+        module.resources.push(Resource {
+            set: 0,
+            binding: 2,
+            count: None,
+            kind: ResourceKind::AccelerationStructure,
+        });
+        let plan = Plan::new(&module, &Inputs::default()).unwrap();
+        assert!(plan
+            .needs
+            .contains(&Need::Feature("RayQueryFeaturesKHR.rayQuery")));
+        assert!(plan
+            .declarations
+            .contains("ACCELERATION_STRUCTURE BOTTOM_LEVEL blas\n  GEOMETRY TRIANGLES\n"));
+        assert!(plan
+            .bindings
+            .contains("  BIND ACCELERATION_STRUCTURE tlas DESCRIPTOR_SET 0 BINDING 2\n"));
+        assert_eq!(plan.draw, Draw::Rect);
+    }
+
+    #[test]
+    fn mesh_shaders_draw_mesh_tasks() {
+        let mut module = reflection(ExecutionModel::MeshEXT);
+        module
+            .capabilities
+            .insert(spirv::Capability::MeshShadingEXT);
+        module.outputs = vec![Varying {
+            location: 0,
+            component: 0,
+            ty: VaryingType::Simple {
+                scalar: F32,
+                count: 4,
+            },
+            array: None,
+            interpolation: Interpolation::Smooth,
+            centroid: false,
+            sample: false,
+            patch: false,
+            per_primitive: true,
+        }];
+        module.task_payload = Some(Ok(DataType::Scalar(U32)));
+        let plan = Plan::new(&module, &Inputs::default()).unwrap();
+        assert_eq!(shaders(&plan), [ShaderKind::Task, ShaderKind::Fragment]);
+        assert!(plan.harness[1]
+            .1
+            .contains("layout(location = 0) perprimitiveEXT in vec4 v0;"));
+        assert!(plan.needs.contains(&requirements::TASK_SHADER));
+        assert!(plan.needs.contains(&requirements::MESH_SHADER));
+        let (tested, dump, data) = paths();
+        let harness = harness_paths(&plan);
+        let script = plan.script(ScriptPaths {
+            tested: &tested,
+            harness: &harness,
+            dump: &dump,
+            data: &data,
+        });
+        assert!(script.contains("SHADER mesh tested SPIRV-BIN FILE /w/tested.spv\n"));
+        assert!(script.contains("  ATTACH harness0\n  ATTACH tested\n  ATTACH harness1\n"));
+        assert!(script.ends_with("RUN main DRAW_MESH_TASKS 1 1 1\n"));
+
+        let mut module = reflection(ExecutionModel::TaskEXT);
+        module
+            .capabilities
+            .insert(spirv::Capability::MeshShadingEXT);
+        let plan = Plan::new(&module, &Inputs::default()).unwrap();
+        assert_eq!(shaders(&plan), [ShaderKind::Mesh, ShaderKind::Fragment]);
+        assert_eq!(plan.attachments.len(), 2);
+        assert_eq!(plan.draw, Draw::Mesh);
     }
 
     #[test]
