@@ -4589,7 +4589,7 @@ impl Writer {
                 mark_laid_out(&ir_module.types, &mut self.laid_out_types, var.ty);
             }
         }
-        self.prepare_heaps(ir_module);
+        self.prepare_heaps(ir_module, mod_info);
         self.descriptor_heap = ir_module.descriptor_heap;
 
         self.decorated_blocks = crate::arena::HandleSet::for_arena(&ir_module.types);
@@ -4599,7 +4599,7 @@ impl Writer {
 
         // write all types
         for (handle, _) in ir_module.types.iter() {
-            if self.is_deferred_heap_type(handle) {
+            if self.is_deferred_heap_type(handle) || self.is_unused_heap_type(handle) {
                 continue;
             }
             self.write_type_declaration_arena(ir_module, mod_info, handle)?;
@@ -4611,6 +4611,9 @@ impl Writer {
                 ..
             } = ty.inner
             {
+                if self.is_unused_heap_type(handle) {
+                    continue;
+                }
                 let id = self.get_handle_type_id(handle)?;
                 self.physical_type_ids.insert(id);
             }
@@ -4632,7 +4635,7 @@ impl Writer {
         for (handle, _) in ir_module.overrides.iter() {
             self.write_override(handle, ir_module, mod_info)?;
         }
-        self.write_heap_layouts(ir_module)?;
+        self.write_heap_layouts(ir_module, mod_info)?;
 
         // write the name of constants on their respective const-expression initializer
         if self.flags.contains(WriterFlags::DEBUG) {

@@ -354,6 +354,9 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   atomics (`back/spv/heap.rs`). `Module::descriptor_heap` (new, serialized only when set)
   records that the source requested `GL_EXT_descriptor_heap`: `NonUniform` decorations are then
   replaced by the `DescriptorHeapEXT` capability, as glslang does.
+  The SPIR-V backend writes the types of a heap view only when a function uses the view
+  (`back/spv/heap.rs`, `unused_heap_types`): naga writes every type of the arena, which
+  declared `OpTypeTensorARM` and its capability for unused tensor views.
 - **Immediate slots of override-sized arrays.** `ImmediateSlots::from_type` no longer panics on
   an array sized by a specialization constant in push constants (it built a context without
   overrides); such an array covers the rest of the push-constant range, and

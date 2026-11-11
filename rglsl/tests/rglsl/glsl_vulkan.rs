@@ -8459,3 +8459,49 @@ fn selection_attributes_select_the_merge_control() {
     );
     assert_eq!(instructions(&module, Op::Switch).len(), 2);
 }
+
+#[test]
+fn unused_heap_views_declare_only_the_heap() {
+    let tensors = spirv::Capability::TensorsARM as u32;
+    let count = |raw: &[(u32, Vec<u32>)], op: Op| {
+        raw.iter().filter(|&&(code, _)| code == op as u32).count()
+    };
+    let capabilities = |raw: &[(u32, Vec<u32>)]| {
+        raw.iter()
+            .filter(|&&(code, _)| code == Op::Capability as u32)
+            .map(|(_, operands)| operands[0])
+            .collect::<Vec<_>>()
+    };
+    let raw = raw_instructions(&compile_words(
+        ShaderStage::Compute,
+        "#version 460
+        #extension GL_EXT_descriptor_heap : require
+        #extension GL_ARM_tensors : require
+        layout(local_size_x = 1) in;
+        layout(descriptor_heap) uniform tensorARM<float, 2> floatTensors[];
+        layout(descriptor_heap) uniform tensorARM<int, 4> intTensors[3];
+        layout(descriptor_heap) uniform texture2D textures[];
+        void main() {}",
+        (1, 0),
+    ));
+    assert!(!capabilities(&raw).contains(&tensors));
+    assert_eq!(count(&raw, Op::TypeTensorARM), 0);
+    assert_eq!(count(&raw, Op::TypeImage), 0);
+    assert_eq!(count(&raw, Op::ConstantSizeOfEXT), 0);
+    assert_eq!(count(&raw, Op::UntypedVariableKHR), 1);
+
+    let raw = raw_instructions(&compile_words(
+        ShaderStage::Compute,
+        "#version 460
+        #extension GL_EXT_descriptor_heap : require
+        #extension GL_ARM_tensors : require
+        layout(local_size_x = 1) in;
+        layout(descriptor_heap) uniform tensorARM<float, 2> floatTensors[];
+        layout(descriptor_heap) uniform tensorARM<int, 4> intTensors[3];
+        layout(std430, binding = 0) buffer B { uint size; } b;
+        void main() { b.size = tensorSizeARM(intTensors[1], 0); }",
+        (1, 0),
+    ));
+    assert!(capabilities(&raw).contains(&tensors));
+    assert_eq!(count(&raw, Op::TypeTensorARM), 1);
+}
