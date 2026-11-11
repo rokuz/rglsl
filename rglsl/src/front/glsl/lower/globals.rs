@@ -2266,37 +2266,36 @@ impl<'a> Lowerer<'a> {
     }
 }
 
-#[allow(clippy::await_holding_refcell_ref)]
 impl<'b, 'a> super::function::LowererCx<'b, 'a> {
     pub(super) async fn global_ref(self, symbol: SymbolId, at: Span) -> Result<GlobalRef> {
-        let mut this = self.lowerer();
-        if let Some(found) = this.globals.get(&symbol) {
-            return Ok(*found);
+        if let Some(found) = self.with(|this| this.globals.get(&symbol).copied())? {
+            return Ok(found);
         }
-        if let Some((name, span)) = this.deferred_private.remove(&symbol) {
-            let variable = this.variable(symbol).ok_or_else(|| internal(at))?;
+        if let Some((name, span)) = self.with(|this| this.deferred_private.remove(&symbol))? {
+            let variable =
+                self.with(|this| this.variable(symbol).ok_or_else(|| internal(at)))??;
             let (ty, qualifiers) = (variable.ty.clone(), variable.qualifiers.clone());
             let ty = {
                 let frame = self
                     .clone()
                     .variable_ir_type(ty.clone(), qualifiers.clone(), span);
-                drop(this);
                 let result = self.nest(frame).await;
-                this = self.lowerer();
                 result
             }?;
-            let global = this.ray_query_global(name, ty, span);
+            let global = self.with(|this| this.ray_query_global(name, ty, span))?;
             let found = GlobalRef::Variable(global);
-            this.globals.insert(symbol, found);
+            self.with(|this| this.globals.insert(symbol, found))?;
             return Ok(found);
         }
-        if this.has_local_size_ids() && this.is_work_group_size(symbol) {
-            let handle = this.work_group_size_override(at)?;
-            this.globals.insert(symbol, GlobalRef::Override(handle));
+        if self.with(|this| this.has_local_size_ids())?
+            && self.with(|this| this.is_work_group_size(symbol))?
+        {
+            let handle = self.with(|this| this.work_group_size_override(at))??;
+            self.with(|this| this.globals.insert(symbol, GlobalRef::Override(handle)))?;
             return Ok(GlobalRef::Override(handle));
         }
-        let analysis = this.analysis;
-        let record = this.symbol(symbol).ok_or_else(|| internal(at))?;
+        let analysis = self.with(|this| this.analysis)?;
+        let record = self.with(|this| this.symbol(symbol).ok_or_else(|| internal(at)))??;
         let (ty, output, value, volatile) = match record.kind {
             SymbolKind::Variable(ref variable) => {
                 if variable.origin != Origin::BuiltIn {
@@ -2304,17 +2303,14 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
                 }
                 if let Some(handle) = {
                     let frame = self.clone().builtin_override(symbol, variable, at);
-                    drop(this);
                     let result = self.nest(frame).await;
-                    this = self.lowerer();
                     result
                 }? {
                     return Ok(handle);
                 }
-                if this.is_per_vertex_array(symbol) {
+                if self.with(|this| this.is_per_vertex_array(symbol))? {
                     return {
                         let frame = self.clone().per_vertex_array(symbol, at);
-                        drop(this);
                         let result = self.nest(frame).await;
                         result
                     };
@@ -2327,7 +2323,8 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
                 )
             }
             SymbolKind::BlockMember { instance, index } => {
-                let instance = this.variable(instance).ok_or_else(|| internal(at))?;
+                let instance =
+                    self.with(|this| this.variable(instance).ok_or_else(|| internal(at)))??;
                 let TypeKind::Block(block) = instance.ty.kind else {
                     return Err(internal(at));
                 };
@@ -2353,28 +2350,26 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
             Some(value) => {
                 let ir = {
                     let frame = self.clone().ir_type(ty.clone(), at);
-                    drop(this);
                     let result = self.nest(frame).await;
-                    this = self.lowerer();
                     result
                 }?;
                 let init = {
                     let frame = self
                         .clone()
                         .global_constant(ty.clone(), value.values.to_vec(), at);
-                    drop(this);
                     let result = self.nest(frame).await;
-                    this = self.lowerer();
                     result
                 }?;
-                let handle = this.module.constants.append(
-                    crate::Constant {
-                        name: Some(name),
-                        ty: ir,
-                        init,
-                    },
-                    at,
-                );
+                let handle = self.with(|this| {
+                    this.module.constants.append(
+                        crate::Constant {
+                            name: Some(name),
+                            ty: ir,
+                            init,
+                        },
+                        at,
+                    )
+                })?;
                 GlobalRef::Constant(handle)
             }
             None => GlobalRef::Variable({
@@ -2385,13 +2380,11 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
                     volatile,
                     at,
                 );
-                drop(this);
                 let result = self.nest(frame).await;
-                this = self.lowerer();
                 result
             }?),
         };
-        this.globals.insert(symbol, found);
+        self.with(|this| this.globals.insert(symbol, found))?;
         Ok(found)
     }
 
@@ -2405,7 +2398,6 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
     ) -> Result<Handle<GlobalVariable>> {
         let name = name.as_str();
         let ty = &ty;
-        let mut this = self.lowerer();
         let (builtin, key) = match super::ray::ray_builtin(name) {
             Some((builtin, key)) => (builtin, key),
             None => (
@@ -2414,38 +2406,37 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
                 name,
             ),
         };
-        if let Some(&handle) = this.builtins.get(key) {
+        if let Some(handle) = self.with(|this| this.builtins.get(key).copied())? {
             return Ok(handle);
         }
         let builtin = match builtin {
             BuiltIn::Layer { .. } => BuiltIn::Layer {
-                viewport_relative: this.layer_layout.viewport_relative,
-                secondary_view_offset: this.layer_layout.secondary_view_offset,
+                viewport_relative: self.with(|this| this.layer_layout.viewport_relative)?,
+                secondary_view_offset: self.with(|this| this.layer_layout.secondary_view_offset)?,
             },
             BuiltIn::SampleMask { .. } if output => BuiltIn::SampleMask {
-                override_coverage: this.override_coverage,
+                override_coverage: self.with(|this| this.override_coverage)?,
             },
             other => other,
         };
         let ir = if super::prepass::IMPLICITLY_SIZED.contains(&name) {
-            let size = this
-                .builtin_sizes
-                .get(name)
-                .copied()
-                .or(match ty.outer_size() {
-                    Some(GlslArraySize::Sized(size)) => Some(size),
-                    _ => None,
-                })
-                .ok_or_else(|| {
-                    unsupported(format!("`{name}` without a size or a constant index"), at)
-                })?;
+            let size = self.with(|this| {
+                this.builtin_sizes
+                    .get(name)
+                    .copied()
+                    .or(match ty.outer_size() {
+                        Some(GlslArraySize::Sized(size)) => Some(size),
+                        _ => None,
+                    })
+                    .ok_or_else(|| {
+                        unsupported(format!("`{name}` without a size or a constant index"), at)
+                    })
+            })??;
             let element = ty.element_type().ok_or_else(|| internal(at))?;
             let sized = element.array_of(GlslArraySize::Sized(size));
             {
                 let frame = self.clone().ir_type(sized.clone(), at);
-                drop(this);
                 let result = self.nest(frame).await;
-                this = self.lowerer();
                 result
             }?
         } else if let BuiltIn::ShaderBallot(ShaderBallot::Mask(_)) = builtin {
@@ -2453,9 +2444,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
                 let frame = self
                     .clone()
                     .ir_type((GlslType::vector(Scalar::Uint, 4)).clone(), at);
-                drop(this);
                 let result = self.nest(frame).await;
-                this = self.lowerer();
                 result
             }?
         } else {
@@ -2463,42 +2452,42 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
                 let frame = self
                     .clone()
                     .ray_builtin_type(String::from(name), ty.clone(), at);
-                drop(this);
                 let result = self.nest(frame).await;
-                this = self.lowerer();
                 result
             }?
         };
         let memory_decorations = if volatile {
             MemoryDecorations::VOLATILE
         } else {
-            this.ray_builtin_decorations(builtin)
+            self.with(|this| this.ray_builtin_decorations(builtin))?
         };
-        let handle = this.module.global_variables.append(
-            GlobalVariable {
-                name: Some(String::from(key)),
-                space: if output {
-                    AddressSpace::Output
-                } else {
-                    AddressSpace::Input
+        let handle = self.with(|this| {
+            this.module.global_variables.append(
+                GlobalVariable {
+                    name: Some(String::from(key)),
+                    space: if output {
+                        AddressSpace::Output
+                    } else {
+                        AddressSpace::Input
+                    },
+                    binding: None,
+                    ty: ir,
+                    init: None,
+                    memory_decorations,
+                    io: Some(Binding::BuiltIn(builtin)),
+                    xfb: None,
+                    input_attachment_index: None,
+                    heap_offset: None,
+                    tile_attachment: false,
+                    spirv_decorations: Vec::new(),
+                    relaxed_precision: false,
+                    immediate_bank: None,
                 },
-                binding: None,
-                ty: ir,
-                init: None,
-                memory_decorations,
-                io: Some(Binding::BuiltIn(builtin)),
-                xfb: None,
-                input_attachment_index: None,
-                heap_offset: None,
-                tile_attachment: false,
-                spirv_decorations: Vec::new(),
-                relaxed_precision: false,
-                immediate_bank: None,
-            },
-            at,
-        );
-        this.interface.push(handle);
-        this.builtins.insert(String::from(key), handle);
+                at,
+            )
+        })?;
+        self.with(|this| this.interface.push(handle))?;
+        self.with(|this| this.builtins.insert(String::from(key), handle))?;
         Ok(handle)
     }
 }

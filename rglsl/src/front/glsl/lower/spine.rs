@@ -161,7 +161,6 @@ impl FunctionLowerer<'_, '_> {
     }
 }
 
-#[allow(clippy::await_holding_refcell_ref)]
 impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
     async fn flat_conditionals(
         self,
@@ -170,28 +169,28 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         tail: &'b AstExpression,
     ) -> Result<Option<Handle<Expression>>> {
         let links = links.as_slice();
-        let mut this = self.lowerer();
-        let outer = links
-            .first()
-            .map(|node| this.at(node.span))
-            .ok_or_else(|| internal(this.at(tail.span)))?;
+        let outer_span = links.first().map_or(tail.span, |node| node.span);
+        let outer = self.with(|this| this.at(outer_span))?;
+        if links.is_empty() {
+            return Err(internal(outer));
+        }
         let none = u32::try_from(links.len()).map_err(|_| internal(outer))?;
-        let taken = this.local(&GlslType::UINT, None, outer)?;
-        this.set_taken(taken, none, outer)?;
+        let taken = self.with(|this| this.local(&GlslType::UINT, None, outer))??;
+        self.with(|this| this.set_taken(taken, none, outer))??;
         let mut results = Vec::with_capacity(links.len());
         for &node in links {
             results.push(if valued {
-                let ty = &this.info(node)?.ty;
-                let at = this.at(node.span);
-                Some(this.local(ty, None, at)?)
+                let ty = &self.with(|this| this.info(node))??.ty;
+                let at = self.with(|this| this.at(node.span))?;
+                Some(self.with(|this| this.local(ty, None, at))??)
             } else {
                 None
             });
         }
         for (level, (&node, &result)) in (0u32..).zip(links.iter().zip(&results)) {
-            let at = this.at(node.span);
+            let at = self.with(|this| this.at(node.span))?;
             let last = level.checked_add(1) == Some(none);
-            let (condition, then_expression) = this.conditional_parts(node)?;
+            let (condition, then_expression) = self.with(|this| this.conditional_parts(node))??;
             let chosen = FlatLevel {
                 condition,
                 then_expression,
@@ -202,28 +201,26 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 at,
             };
             if level == 0 {
-                drop(this);
                 let chosen = self.nest(self.clone().flat_level(chosen)).await;
-                this = self.lowerer();
                 chosen?;
             } else {
-                let pending = this.taken_is(taken, none, at)?;
-                drop(this);
+                let pending = self.with(|this| this.taken_is(taken, none, at))??;
                 let accept = self
                     .clone()
                     .block(self.nest(self.clone().flat_level(chosen)))
                     .await;
-                this = self.lowerer();
                 let accept = accept?;
-                this.push(
-                    Statement::If {
-                        condition: pending,
-                        accept,
-                        reject: Block::new(),
-                        control: SelectionControl::None,
-                    },
-                    at,
-                );
+                self.with(|this| {
+                    this.push(
+                        Statement::If {
+                            condition: pending,
+                            accept,
+                            reject: Block::new(),
+                            control: SelectionControl::None,
+                        },
+                        at,
+                    )
+                })?;
             }
         }
         if !valued {
@@ -236,33 +233,37 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             let (&[_, inner], &[Some(result), Some(inner_result)]) = pair else {
                 return Err(internal(outer));
             };
-            let at = this.at(inner.span);
-            let skip = this.taken_is(taken, level, at)?;
-            let reject = this.nested(|this| {
-                let pointer = this.local_pointer(inner_result, at)?;
-                let loaded = this.add(Expression::Load { pointer }, at)?;
-                let (value, _) = this.typed_value(inner, Some(loaded))?;
-                let pointer = this.local_pointer(result, at)?;
-                this.push(Statement::Store { pointer, value }, at);
-                Ok(())
+            let at = self.with(|this| this.at(inner.span))?;
+            let skip = self.with(|this| this.taken_is(taken, level, at))??;
+            let reject = self.try_with(|this| {
+                Ok(this.nested(|this| {
+                    let pointer = this.local_pointer(inner_result, at)?;
+                    let loaded = this.add(Expression::Load { pointer }, at)?;
+                    let (value, _) = this.typed_value(inner, Some(loaded))?;
+                    let pointer = this.local_pointer(result, at)?;
+                    this.push(Statement::Store { pointer, value }, at);
+                    Ok(())
+                }))
+            })??;
+            self.with(|this| {
+                this.push(
+                    Statement::If {
+                        condition: skip,
+                        accept: Block::new(),
+                        reject,
+                        control: SelectionControl::None,
+                    },
+                    at,
+                )
             })?;
-            this.push(
-                Statement::If {
-                    condition: skip,
-                    accept: Block::new(),
-                    reject,
-                    control: SelectionControl::None,
-                },
-                at,
-            );
         }
         let result = results
             .first()
             .copied()
             .flatten()
             .ok_or_else(|| internal(outer))?;
-        let pointer = this.local_pointer(result, outer)?;
-        this.add(Expression::Load { pointer }, outer).map(Some)
+        let pointer = self.with(|this| this.local_pointer(result, outer))??;
+        self.with(|this| this.add(Expression::Load { pointer }, outer).map(Some))?
     }
 
     async fn flat_level(self, level: FlatLevel<'b>) -> Result<()> {
@@ -280,7 +281,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         let accepted = async move {
             cx.nest(cx.clone().branch(then_expression, result, at))
                 .await?;
-            cx.lowerer().set_taken(taken, level, at)
+            cx.try_with(|this| this.set_taken(taken, level, at))
         };
         let accept = self.clone().block(self.nest(accepted)).await?;
         let reject = match tail {
@@ -291,19 +292,20 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             }
             None => Block::new(),
         };
-        self.lowerer().push(
-            Statement::If {
-                condition,
-                accept,
-                reject,
-                control: SelectionControl::None,
-            },
-            at,
-        );
+        self.with(|this| {
+            this.push(
+                Statement::If {
+                    condition,
+                    accept,
+                    reject,
+                    control: SelectionControl::None,
+                },
+                at,
+            );
+        })?;
         Ok(())
     }
     pub(super) async fn access_chain(self, expression: &'b AstExpression) -> Result<Chain> {
-        let mut this = self.lowerer();
         let mut links = Vec::new();
         let mut current = expression;
         while let ExpressionKind::Subscript { ref base, .. }
@@ -314,32 +316,28 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         }
         let head = {
             let frame = self.clone().chain_head(current);
-            drop(this);
             let result = self.nest(frame).await;
-            this = self.lowerer();
             result
         }?;
-        let mut chain = this.chain_marked(current, head)?;
+        let mut chain = self.with(|this| this.chain_marked(current, head))??;
         for node in links.into_iter().rev() {
-            let at = this.at(node.span);
+            let at = self.with(|this| this.at(node.span))?;
             let linked = match node.kind {
                 ExpressionKind::Subscript {
                     ref base,
                     ref index,
                 } => {
                     let frame = self.clone().subscript_chain(chain, base, index, at);
-                    drop(this);
                     let result = self.nest(frame).await;
-                    this = self.lowerer();
                     result
                 }?,
                 ExpressionKind::FieldSelection {
                     ref base,
                     ref field,
-                } => this.field_chain(chain, base, field, at)?,
+                } => self.with(|this| this.field_chain(chain, base, field, at))??,
                 _ => return Err(internal(at)),
             };
-            chain = this.chain_marked(node, linked)?;
+            chain = self.with(|this| this.chain_marked(node, linked))??;
         }
         Ok(chain)
     }
@@ -348,35 +346,29 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         self,
         expression: &'b AstExpression,
     ) -> Result<Handle<Expression>> {
-        let mut this = self.lowerer();
-        let spine = this.lowered_spine(expression)?;
+        let spine = self.with(|this| this.lowered_spine(expression))??;
         let mut left = {
             let frame = self.clone().typed(spine.head);
-            drop(this);
             let result = self.nest(frame).await;
-            this = self.lowerer();
             result
         }?;
         let mut links = spine.links.into_iter().rev().peekable();
         while let Some(node) = links.next() {
             let value = {
                 let frame = self.clone().binary_link(node, left);
-                drop(this);
                 let result = self.nest(frame).await;
-                this = self.lowerer();
                 result
             }?;
             if links.peek().is_none() {
                 return Ok(value);
             }
-            left = this.passed_on(node, Some(value))?;
+            left = self.with(|this| this.passed_on(node, Some(value)))??;
         }
-        Err(internal(this.at(expression.span)))
+        Err(internal(self.with(|this| this.at(expression.span))?))
     }
 
     async fn binary_link(self, node: &'b AstExpression, left: Typed) -> Result<Handle<Expression>> {
-        let mut this = self.lowerer();
-        let at = this.at(node.span);
+        let at = self.with(|this| this.at(node.span))?;
         let ExpressionKind::Binary {
             operator,
             ref right,
@@ -386,27 +378,23 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             return Err(internal(at));
         };
         let value = if matches!(operator, AstBinary::LogicalAnd | AstBinary::LogicalOr)
-            && !this.pure(right)
+            && !self.with(|this| this.pure(right))?
         {
             {
                 let frame = self.clone().short_circuit(operator, left.0, right, at);
-                drop(this);
                 let result = self.nest(frame).await;
-                this = self.lowerer();
                 result
             }?
         } else {
             let right = {
                 let frame = self.clone().typed(right);
-                drop(this);
                 let result = self.nest(frame).await;
-                this = self.lowerer();
                 result
             }?;
-            this.binary_typed(operator, left, right, at)?
+            self.with(|this| this.binary_typed(operator, left, right, at))??
         };
-        if this.info(node)?.non_uniform {
-            this.mark_operation(value);
+        if self.with(|this| this.info(node))??.non_uniform {
+            self.with(|this| this.mark_operation(value))?;
         }
         Ok(value)
     }
@@ -415,24 +403,21 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         self,
         expression: &'b AstExpression,
     ) -> Result<Handle<Expression>> {
-        let mut this = self.lowerer();
-        let spine = this.lowered_spine(expression)?;
+        let spine = self.with(|this| this.lowered_spine(expression))??;
         let mut operand: Option<Typed> = None;
         let mut links = spine.links.into_iter().rev().peekable();
         while let Some(node) = links.next() {
             let value = {
                 let frame = self.clone().unary_link(node, operand.take());
-                drop(this);
                 let result = self.nest(frame).await;
-                this = self.lowerer();
                 result
             }?;
             if links.peek().is_none() {
                 return Ok(value);
             }
-            operand = Some(this.passed_on(node, Some(value))?);
+            operand = Some(self.with(|this| this.passed_on(node, Some(value)))??);
         }
-        Err(internal(this.at(expression.span)))
+        Err(internal(self.with(|this| this.at(expression.span))?))
     }
 
     async fn unary_link(
@@ -440,8 +425,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         node: &'b AstExpression,
         operand: Option<Typed>,
     ) -> Result<Handle<Expression>> {
-        let mut this = self.lowerer();
-        let at = this.at(node.span);
+        let at = self.with(|this| this.at(node.span))?;
         let ExpressionKind::Unary {
             operator,
             operand: ref inner,
@@ -457,7 +441,6 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 let frame =
                     self.clone()
                         .increment(inner, operator == AstUnary::Increment, false, at);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             };
@@ -466,15 +449,13 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             Some(typed) => typed,
             None => {
                 let frame = self.clone().typed(inner);
-                drop(this);
                 let result = self.nest(frame).await;
-                this = self.lowerer();
                 result
             }?,
         };
-        let value = this.unary_typed(operator, at, value, ty)?;
-        if this.info(node)?.non_uniform {
-            this.mark_value(value);
+        let value = self.with(|this| this.unary_typed(operator, at, value, ty))??;
+        if self.with(|this| this.info(node))??.non_uniform {
+            self.with(|this| this.mark_value(value))?;
         }
         Ok(value)
     }
@@ -483,11 +464,10 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         self,
         expression: &'b AstExpression,
     ) -> Result<Handle<Expression>> {
-        let mut this = self.lowerer();
         let spine = Spine::of(expression);
         let mut pending = Vec::with_capacity(spine.links.len());
         for node in spine.links {
-            let at = this.at(node.span);
+            let at = self.with(|this| this.at(node.span))?;
             let ExpressionKind::Assignment {
                 operator,
                 ref target,
@@ -498,20 +478,18 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             };
             let place = {
                 let frame = self.clone().place(target);
-                drop(this);
                 let result = self.nest(frame).await;
-                this = self.lowerer();
                 result
             }?;
             let old = match super::expression::compound(operator) {
-                Some(_) => Some(this.compound_old(target, &place, at)?),
+                Some(_) => Some(self.with(|this| this.compound_old(target, &place, at))??),
                 None => None,
             };
             pending.push(Pending { node, place, old });
         }
         let mut inner = None;
         while let Some(Pending { node, place, old }) = pending.pop() {
-            let at = this.at(node.span);
+            let at = self.with(|this| this.at(node.span))?;
             let ExpressionKind::Assignment {
                 operator,
                 ref target,
@@ -521,56 +499,52 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 return Err(internal(at));
             };
             let typed = match inner.take() {
-                Some(result) => this.passed_on(value, Some(result))?,
+                Some(result) => self.with(|this| this.passed_on(value, Some(result)))??,
                 None => {
                     let frame = self.clone().typed(value);
-                    drop(this);
                     let result = self.nest(frame).await;
-                    this = self.lowerer();
                     result
                 }?,
             };
             let result = match (super::expression::compound(operator), old) {
                 (None, _) => typed.0,
-                (Some(binary), Some(old)) => {
-                    this.compound_assignment(binary, (target, &place, old), value, typed, at)?
-                }
+                (Some(binary), Some(old)) => self.with(|this| {
+                    this.compound_assignment(binary, (target, &place, old), value, typed, at)
+                })??,
                 (Some(_), None) => return Err(internal(at)),
             };
-            this.store(&place, result, at)?;
+            self.with(|this| this.store(&place, result, at))??;
             inner = Some(result);
         }
-        inner.ok_or_else(|| internal(this.at(expression.span)))
+        let at = self.with(|this| this.at(expression.span))?;
+        inner.ok_or_else(|| internal(at))
     }
 
     pub(super) async fn conditional_chain(
         self,
         expression: &'b AstExpression,
     ) -> Result<Option<Handle<Expression>>> {
-        let this = self.lowerer();
-        let spine = this.lowered_spine(expression)?;
-        let modes = this.conditional_modes(&spine.links, spine.head)?;
+        let spine = self.with(|this| this.lowered_spine(expression))??;
+        let modes = self.with(|this| this.conditional_modes(&spine.links, spine.head))??;
         let first = modes
             .first()
             .copied()
-            .ok_or_else(|| internal(this.at(expression.span)))?;
+            .ok_or(self.with(|this| internal(this.at(expression.span)))?)?;
         let run = modes.iter().take_while(|mode| **mode == first).count();
         let links = spine
             .links
             .get(..run)
-            .ok_or_else(|| internal(this.at(expression.span)))?;
+            .ok_or(self.with(|this| internal(this.at(expression.span)))?)?;
         let tail = spine.links.get(run).copied().unwrap_or(spine.head);
         match (first, links) {
             (Mode::Select, _) => {
                 let frame = self.clone().select_chain(links.to_vec(), tail);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
             .map(Some),
             (_, &[node]) => {
                 let frame = self.clone().single_conditional(node, first, tail);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
@@ -578,7 +552,6 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 let frame =
                     self.clone()
                         .flat_conditionals(links.to_vec(), first == Mode::Local, tail);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
@@ -591,49 +564,44 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         tail: &'b AstExpression,
     ) -> Result<Handle<Expression>> {
         let links = links.as_slice();
-        let mut this = self.lowerer();
         let mut parts = Vec::with_capacity(links.len());
         for &node in links {
-            let (condition, then_expression) = this.conditional_parts(node)?;
+            let (condition, then_expression) = self.with(|this| this.conditional_parts(node))??;
             let condition = {
                 let frame = self.clone().rvalue(condition);
-                drop(this);
                 let result = self.nest(frame).await;
-                this = self.lowerer();
                 result
             }?;
             let accept = {
                 let frame = self.clone().rvalue(then_expression);
-                drop(this);
                 let result = self.nest(frame).await;
-                this = self.lowerer();
                 result
             }?;
             parts.push((node, condition, accept));
         }
         let mut reject = {
             let frame = self.clone().rvalue(tail);
-            drop(this);
             let result = self.nest(frame).await;
-            this = self.lowerer();
             result
         }?;
         while let Some((node, condition, accept)) = parts.pop() {
-            let at = this.at(node.span);
-            let value = this.add(
-                Expression::Select {
-                    condition,
-                    accept,
-                    reject,
-                },
-                at,
-            )?;
+            let at = self.with(|this| this.at(node.span))?;
+            let value = self.with(|this| {
+                this.add(
+                    Expression::Select {
+                        condition,
+                        accept,
+                        reject,
+                    },
+                    at,
+                )
+            })??;
             if parts.is_empty() {
                 return Ok(value);
             }
-            reject = this.passed_on(node, Some(value))?.0;
+            reject = self.with(|this| this.passed_on(node, Some(value)))??.0;
         }
-        Err(internal(this.at(tail.span)))
+        Err(internal(self.with(|this| this.at(tail.span))?))
     }
 
     async fn single_conditional(
@@ -642,14 +610,11 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         mode: Mode,
         tail: &'b AstExpression,
     ) -> Result<Option<Handle<Expression>>> {
-        let mut this = self.lowerer();
-        let at = this.at(node.span);
-        let (condition, then_expression) = this.conditional_parts(node)?;
+        let at = self.with(|this| this.at(node.span))?;
+        let (condition, then_expression) = self.with(|this| this.conditional_parts(node))??;
         let condition = {
             let frame = self.clone().rvalue(condition);
-            drop(this);
             let result = self.nest(frame).await;
-            this = self.lowerer();
             result
         }?;
         if mode == Mode::Effect {
@@ -657,17 +622,15 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 let frame = self
                     .clone()
                     .conditional_effect(condition, [then_expression, tail], at);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             };
         }
-        let ty = &this.info(node)?.ty;
+        let ty = &self.with(|this| this.info(node))??.ty;
         {
             let frame = self
                 .clone()
                 .conditional_local(ty, condition, [then_expression, tail], at);
-            drop(this);
             let result = self.nest(frame).await;
             result
         }
@@ -679,17 +642,14 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         result: Option<Handle<LocalVariable>>,
         at: Span,
     ) -> Result<()> {
-        let this = self.lowerer();
         match result {
             Some(local) => {
                 let frame = self.clone().stored(expression, local, at);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }
             None => {
                 let frame = self.clone().effect(expression);
-                drop(this);
                 let result = self.nest(frame).await;
                 result
             }

@@ -390,7 +390,7 @@ impl<'b, 'v: 'b> Cx<'b, Rewriter<'v>> {
                     {
                         *slot = child;
                     }
-                    (self.state().visit)(&mut node);
+                    self.with(|state| (state.visit)(&mut node));
                     done.push(node);
                 }
             }

@@ -162,33 +162,35 @@ impl<'u> Walker<'_, 'u> {
 
 impl<'b, 'a: 'b, 'u: 'b> Cx<'b, Walker<'a, 'u>> {
     async fn block(self, block: BlockId, statements: &'u [Statement]) {
-        self.state().push();
+        self.with(|state| state.push());
         for (index, statement) in statements.iter().enumerate() {
             let label = matches!(statement.kind, StatementKind::CaseLabel(_));
             if !(index == 0 && label) {
-                let mut state = self.state();
-                let in_loop = state.loops > 0;
-                state.point(Location::Block { block, index }, Some(statement), in_loop);
+                self.with(|state| {
+                    let in_loop = state.loops > 0;
+                    state.point(Location::Block { block, index }, Some(statement), in_loop);
+                });
             }
             self.call(self.clone().statement(statement)).await;
         }
-        let mut state = self.state();
-        let in_loop = state.loops > 0;
-        state.point(
-            Location::Block {
-                block,
-                index: statements.len(),
-            },
-            None,
-            in_loop,
-        );
-        state.pop();
+        self.with(|state| {
+            let in_loop = state.loops > 0;
+            state.point(
+                Location::Block {
+                    block,
+                    index: statements.len(),
+                },
+                None,
+                in_loop,
+            );
+            state.pop();
+        });
     }
 
     async fn nested(self, statement: &'u Statement) {
-        self.state().push();
+        self.with(|state| state.push());
         self.call(self.clone().statement(statement)).await;
-        self.state().pop();
+        self.with(|state| state.pop());
     }
 
     async fn statement(self, statement: &'u Statement) {
@@ -200,37 +202,40 @@ impl<'b, 'a: 'b, 'u: 'b> Cx<'b, Walker<'a, 'u>> {
                 )
                 .await;
             }
-            StatementKind::Declaration(declaration) => self.state().declaration(declaration),
+            StatementKind::Declaration(declaration) => {
+                self.with(|state| state.declaration(declaration))
+            }
             StatementKind::Selection {
                 then_branch,
                 else_branch,
                 ..
             } => {
                 {
-                    let mut state = self.state();
-                    let in_loop = state.loops > 0;
-                    if !matches!(then_branch.kind, StatementKind::Compound(_)) {
-                        state.point(
-                            Location::Branch {
-                                statement: statement.id,
-                                else_branch: false,
-                            },
-                            Some(then_branch),
-                            in_loop,
-                        );
-                    }
-                    if let Some(else_branch) = else_branch {
-                        if !matches!(else_branch.kind, StatementKind::Compound(_)) {
+                    self.with(|state| {
+                        let in_loop = state.loops > 0;
+                        if !matches!(then_branch.kind, StatementKind::Compound(_)) {
                             state.point(
                                 Location::Branch {
                                     statement: statement.id,
-                                    else_branch: true,
+                                    else_branch: false,
                                 },
-                                Some(else_branch),
+                                Some(then_branch),
                                 in_loop,
                             );
                         }
-                    }
+                        if let Some(else_branch) = else_branch {
+                            if !matches!(else_branch.kind, StatementKind::Compound(_)) {
+                                state.point(
+                                    Location::Branch {
+                                        statement: statement.id,
+                                        else_branch: true,
+                                    },
+                                    Some(else_branch),
+                                    in_loop,
+                                );
+                            }
+                        }
+                    });
                 }
                 self.clone().nested(then_branch).await;
                 if let Some(else_branch) = else_branch {
@@ -238,61 +243,70 @@ impl<'b, 'a: 'b, 'u: 'b> Cx<'b, Walker<'a, 'u>> {
                 }
             }
             StatementKind::Switch { statements, .. } => {
-                self.state().switches += 1;
+                self.with(|state| state.switches += 1);
                 self.call(
                     self.clone()
                         .block(BlockId::Statement(statement.id), statements),
                 )
                 .await;
-                self.state().switches -= 1;
+                self.with(|state| state.switches -= 1);
             }
             StatementKind::While { condition, body } => {
                 {
-                    let mut state = self.state();
-                    state.loop_body(statement.id, body);
-                    state.loops += 1;
-                    state.push();
-                    if let Condition::Declaration(declaration) = condition {
+                    self.with(|state| {
+                        state.loop_body(statement.id, body);
+                        state.loops += 1;
+                        state.push();
+                        if let Condition::Declaration(declaration) = condition {
+                            let variable = declared_variable(
+                                state.analysis,
+                                declaration.id,
+                                &declaration.name.node,
+                            );
+                            state.add(variable);
+                        }
+                    });
+                }
+                self.call(self.clone().statement(body)).await;
+                self.with(|state| {
+                    state.pop();
+                    state.loops -= 1;
+                });
+            }
+            StatementKind::DoWhile { body, .. } => {
+                {
+                    self.with(|state| {
+                        state.loop_body(statement.id, body);
+                        state.loops += 1;
+                    });
+                }
+                self.clone().nested(body).await;
+                self.with(|state| state.loops -= 1);
+            }
+            StatementKind::For(for_statement) => {
+                {
+                    self.with(|state| {
+                        state.loop_body(statement.id, &for_statement.body);
+                        state.loops += 1;
+                        state.push();
+                    });
+                }
+                self.call(self.clone().statement(&for_statement.init)).await;
+                if let Some(Condition::Declaration(declaration)) = &for_statement.condition {
+                    self.with(|state| {
                         let variable = declared_variable(
                             state.analysis,
                             declaration.id,
                             &declaration.name.node,
                         );
                         state.add(variable);
-                    }
-                }
-                self.call(self.clone().statement(body)).await;
-                let mut state = self.state();
-                state.pop();
-                state.loops -= 1;
-            }
-            StatementKind::DoWhile { body, .. } => {
-                {
-                    let mut state = self.state();
-                    state.loop_body(statement.id, body);
-                    state.loops += 1;
-                }
-                self.clone().nested(body).await;
-                self.state().loops -= 1;
-            }
-            StatementKind::For(for_statement) => {
-                {
-                    let mut state = self.state();
-                    state.loop_body(statement.id, &for_statement.body);
-                    state.loops += 1;
-                    state.push();
-                }
-                self.call(self.clone().statement(&for_statement.init)).await;
-                if let Some(Condition::Declaration(declaration)) = &for_statement.condition {
-                    let mut state = self.state();
-                    let variable =
-                        declared_variable(state.analysis, declaration.id, &declaration.name.node);
-                    state.add(variable);
+                    });
                 }
                 self.call(self.clone().statement(&for_statement.body)).await;
-                let mut state = self.state();
-                state.pop();
-                state.loops -= 1;
+                self.with(|state| {
+                    state.pop();
+                    state.loops -= 1;
+                });
             }
             StatementKind::Attributed { statement, .. } => {
                 self.call(self.clone().statement(statement)).await;
@@ -510,7 +524,7 @@ impl<'b, 'c: 'b> Cx<'b, Applier<'c>> {
         for statement in statements.iter_mut() {
             self.statement_in(statement).await;
         }
-        self.state().finish_block(block, statements);
+        self.with(|state| state.finish_block(block, statements));
     }
 
     async fn statement_in(&self, slot: &mut Statement) {
@@ -532,22 +546,26 @@ impl<'b, 'c: 'b> Cx<'b, Applier<'c>> {
                 ..
             } => {
                 self.statement_in(then_branch).await;
-                self.state().branch(
-                    Location::Branch {
-                        statement: id,
-                        else_branch: false,
-                    },
-                    then_branch,
-                );
-                if let Some(else_branch) = else_branch {
-                    self.statement_in(else_branch).await;
-                    self.state().branch(
+                self.with(|state| {
+                    state.branch(
                         Location::Branch {
                             statement: id,
-                            else_branch: true,
+                            else_branch: false,
                         },
-                        else_branch,
-                    );
+                        then_branch,
+                    )
+                });
+                if let Some(else_branch) = else_branch {
+                    self.statement_in(else_branch).await;
+                    self.with(|state| {
+                        state.branch(
+                            Location::Branch {
+                                statement: id,
+                                else_branch: true,
+                            },
+                            else_branch,
+                        )
+                    });
                 }
             }
             StatementKind::Switch { statements, .. } => {
@@ -555,12 +573,13 @@ impl<'b, 'c: 'b> Cx<'b, Applier<'c>> {
             }
             StatementKind::While { body, .. } | StatementKind::DoWhile { body, .. } => {
                 self.statement_in(body).await;
-                self.state().branch(Location::Body { statement: id }, body);
+                self.with(|state| state.branch(Location::Body { statement: id }, body));
             }
             StatementKind::For(for_statement) => {
                 self.statement_in(&mut for_statement.body).await;
-                self.state()
-                    .branch(Location::Body { statement: id }, &mut for_statement.body);
+                self.with(|state| {
+                    state.branch(Location::Body { statement: id }, &mut for_statement.body)
+                });
             }
             StatementKind::Attributed { statement, .. } => self.statement_in(statement).await,
             StatementKind::Declaration(_)

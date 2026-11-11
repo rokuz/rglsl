@@ -325,7 +325,6 @@ impl FunctionLowerer<'_, '_> {
     }
 }
 
-#[allow(clippy::await_holding_refcell_ref)]
 impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
     pub(super) async fn cooperative_call(
         self,
@@ -333,7 +332,6 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
-        let mut this = self.lowerer();
         let argument = |index: usize| arguments.get(index).ok_or_else(|| internal(at));
         match kind {
             CooperativeCall::Qcom(conversion) => {
@@ -345,133 +343,114 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 };
                 let expr = {
                     let frame = self.clone().rvalue(argument(0)?);
-                    drop(this);
                     let result = self.nest(frame).await;
-                    this = self.lowerer();
                     result
                 }?;
                 let index = if conversion == ArrayConversion::SubArray {
                     Some({
                         let frame = self.clone().rvalue(argument(1)?);
-                        drop(this);
                         let result = self.nest(frame).await;
-                        this = self.lowerer();
                         result
                     }?)
                 } else {
                     None
                 };
                 let destination = argument(target)?;
-                let destination_ty = this.info(destination)?.ty.clone();
-                let ty = this.lw.ir_type(&destination_ty, at)?;
+                let destination_ty = self.with(|this| this.info(destination))??.ty.clone();
+                let ty = self.with(|this| this.lw.ir_type(&destination_ty, at))??;
                 let place = {
                     let frame = self.clone().place(destination);
-                    drop(this);
                     let result = self.nest(frame).await;
-                    this = self.lowerer();
                     result
                 }?;
-                let value = this.add(
-                    Expression::ArrayConversion {
-                        conversion,
-                        expr,
-                        index,
-                        ty,
-                    },
-                    at,
-                )?;
-                this.store(&place, value, at)?;
+                let value = self.with(|this| {
+                    this.add(
+                        Expression::ArrayConversion {
+                            conversion,
+                            expr,
+                            index,
+                            ty,
+                        },
+                        at,
+                    )
+                })??;
+                self.with(|this| this.store(&place, value, at))??;
                 Ok(None)
             }
             CooperativeCall::Load { .. } | CooperativeCall::Store { .. } => {
                 let data = {
                     let frame = self.clone().cooperative_data(&arguments[1..], at);
-                    drop(this);
                     let result = self.nest(frame).await;
-                    this = self.lowerer();
                     result
                 }?;
                 let matrix = argument(0)?;
                 if let CooperativeCall::Load { .. } = kind {
-                    let matrix_ty = this.info(matrix)?.ty.clone();
-                    let ty = this.lw.ir_type(&matrix_ty, at)?;
+                    let matrix_ty = self.with(|this| this.info(matrix))??.ty.clone();
+                    let ty = self.with(|this| this.lw.ir_type(&matrix_ty, at))??;
                     let place = {
                         let frame = self.clone().place(matrix);
-                        drop(this);
                         let result = self.nest(frame).await;
-                        this = self.lowerer();
                         result
                     }?;
-                    let value = this.add(Expression::CooperativeLoad { ty, data }, at)?;
-                    this.store(&place, value, at)?;
+                    let value =
+                        self.with(|this| this.add(Expression::CooperativeLoad { ty, data }, at))??;
+                    self.with(|this| this.store(&place, value, at))??;
                 } else {
                     let target = {
                         let frame = self.clone().rvalue(matrix);
-                        drop(this);
                         let result = self.nest(frame).await;
-                        this = self.lowerer();
                         result
                     }?;
-                    this.push(Statement::CooperativeStore { target, data }, at);
+                    self.with(|this| this.push(Statement::CooperativeStore { target, data }, at))?;
                 }
                 Ok(None)
             }
             CooperativeCall::VectorLoad => {
                 let pointer = {
                     let frame = self.clone().array_pointer(argument(1)?, at);
-                    drop(this);
                     let result = self.nest(frame).await;
-                    this = self.lowerer();
                     result
                 }?;
                 let offset = {
                     let frame = self.clone().rvalue(argument(2)?);
-                    drop(this);
                     let result = self.nest(frame).await;
-                    this = self.lowerer();
                     result
                 }?;
                 let vector = argument(0)?;
-                let vector_ty = this.info(vector)?.ty.clone();
-                let ty = this.lw.ir_type(&vector_ty, at)?;
+                let vector_ty = self.with(|this| this.info(vector))??.ty.clone();
+                let ty = self.with(|this| this.lw.ir_type(&vector_ty, at))??;
                 let place = {
                     let frame = self.clone().place(vector);
-                    drop(this);
                     let result = self.nest(frame).await;
-                    this = self.lowerer();
                     result
                 }?;
-                let value = this.add(
-                    Expression::CooperativeVectorLoad {
-                        ty,
-                        pointer,
-                        offset,
-                    },
-                    at,
-                )?;
-                this.store(&place, value, at)?;
+                let value = self.with(|this| {
+                    this.add(
+                        Expression::CooperativeVectorLoad {
+                            ty,
+                            pointer,
+                            offset,
+                        },
+                        at,
+                    )
+                })??;
+                self.with(|this| this.store(&place, value, at))??;
                 Ok(None)
             }
             CooperativeCall::VectorStore | CooperativeCall::VectorReduceSum => {
                 let value = {
                     let frame = self.clone().rvalue(argument(0)?);
-                    drop(this);
                     let result = self.nest(frame).await;
-                    this = self.lowerer();
                     result
                 }?;
                 let pointer = {
                     let frame = self.clone().array_pointer(argument(1)?, at);
-                    drop(this);
                     let result = self.nest(frame).await;
-                    this = self.lowerer();
                     result
                 }?;
                 let offset = {
                     let frame = self.clone().rvalue(argument(2)?);
-                    drop(this);
                     let result = self.nest(frame).await;
-                    this = self.lowerer();
                     result
                 }?;
                 let function = if kind == CooperativeCall::VectorStore {
@@ -487,11 +466,10 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                         offset,
                     }
                 };
-                this.push(Statement::CooperativeVector(function), at);
+                self.with(|this| this.push(Statement::CooperativeVector(function), at))?;
                 Ok(None)
             }
             other => {
-                drop(this);
                 self.nest(self.clone().cooperative_vector_call(other, arguments, at))
                     .await
             }
@@ -504,131 +482,102 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
-        let mut this = self.lowerer();
         let argument = |index: usize| arguments.get(index).ok_or_else(|| internal(at));
         match kind {
             CooperativeCall::VectorOuterProduct => {
                 let a = {
                     let frame = self.clone().rvalue(argument(0)?);
-                    drop(this);
                     let result = self.nest(frame).await;
-                    this = self.lowerer();
                     result
                 }?;
                 let b = {
                     let frame = self.clone().rvalue(argument(1)?);
-                    drop(this);
                     let result = self.nest(frame).await;
-                    this = self.lowerer();
                     result
                 }?;
                 let matrix = {
                     let frame = self.clone().array_pointer(argument(2)?, at);
-                    drop(this);
                     let result = self.nest(frame).await;
-                    this = self.lowerer();
                     result
                 }?;
                 let offset = {
                     let frame = self.clone().rvalue(argument(3)?);
-                    drop(this);
                     let result = self.nest(frame).await;
-                    this = self.lowerer();
                     result
                 }?;
                 let stride = {
                     let frame = self.clone().rvalue(argument(4)?);
-                    drop(this);
                     let result = self.nest(frame).await;
-                    this = self.lowerer();
                     result
                 }?;
                 let layout = {
                     let frame = self.clone().rvalue(argument(5)?);
-                    drop(this);
                     let result = self.nest(frame).await;
-                    this = self.lowerer();
                     result
                 }?;
                 let interpretation = {
                     let frame = self.clone().rvalue(argument(6)?);
-                    drop(this);
                     let result = self.nest(frame).await;
-                    this = self.lowerer();
                     result
                 }?;
-                this.push(
-                    Statement::CooperativeVector(
-                        CooperativeVectorFunction::OuterProductAccumulate {
-                            a,
-                            b,
-                            matrix,
-                            offset,
-                            stride,
-                            layout,
-                            interpretation,
-                        },
-                    ),
-                    at,
-                );
+                self.with(|this| {
+                    this.push(
+                        Statement::CooperativeVector(
+                            CooperativeVectorFunction::OuterProductAccumulate {
+                                a,
+                                b,
+                                matrix,
+                                offset,
+                                stride,
+                                layout,
+                                interpretation,
+                            },
+                        ),
+                        at,
+                    )
+                })?;
                 Ok(None)
             }
             CooperativeCall::VectorMatMul { bias } => {
                 let input = {
                     let frame = self.clone().rvalue(argument(1)?);
-                    drop(this);
                     let result = self.nest(frame).await;
-                    this = self.lowerer();
                     result
                 }?;
                 let input_interpretation = {
                     let frame = self.clone().rvalue(argument(2)?);
-                    drop(this);
                     let result = self.nest(frame).await;
-                    this = self.lowerer();
                     result
                 }?;
                 let matrix = {
                     let frame = self.clone().array_pointer(argument(3)?, at);
-                    drop(this);
                     let result = self.nest(frame).await;
-                    this = self.lowerer();
                     result
                 }?;
                 let matrix_offset = {
                     let frame = self.clone().rvalue(argument(4)?);
-                    drop(this);
                     let result = self.nest(frame).await;
-                    this = self.lowerer();
                     result
                 }?;
                 let matrix_interpretation = {
                     let frame = self.clone().rvalue(argument(5)?);
-                    drop(this);
                     let result = self.nest(frame).await;
-                    this = self.lowerer();
                     result
                 }?;
                 let (bias, rest) = if bias {
                     let pointer = {
                         let frame = self.clone().array_pointer(argument(6)?, at);
-                        drop(this);
                         let result = self.nest(frame).await;
-                        this = self.lowerer();
                         result
                     }?;
                     let offset = {
                         let frame = self.clone().rvalue(argument(7)?);
-                        drop(this);
                         let result = self.nest(frame).await;
-                        this = self.lowerer();
                         result
                     }?;
                     let interpretation = {
                         let frame = self.clone().rvalue(argument(8)?);
-                        drop(this);
                         let result = self.nest(frame).await;
-                        this = self.lowerer();
                         result
                     }?;
                     (
@@ -644,134 +593,118 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 };
                 let rows = {
                     let frame = self.clone().rvalue(argument(rest)?);
-                    drop(this);
                     let result = self.nest(frame).await;
-                    this = self.lowerer();
                     result
                 }?;
                 let columns = {
                     let frame = self.clone().rvalue(argument(rest + 1)?);
-                    drop(this);
                     let result = self.nest(frame).await;
-                    this = self.lowerer();
                     result
                 }?;
                 let layout = {
                     let frame = self.clone().rvalue(argument(rest + 2)?);
-                    drop(this);
                     let result = self.nest(frame).await;
-                    this = self.lowerer();
                     result
                 }?;
                 let transpose = {
                     let frame = self.clone().rvalue(argument(rest + 3)?);
-                    drop(this);
                     let result = self.nest(frame).await;
-                    this = self.lowerer();
                     result
                 }?;
                 let stride = {
                     let frame = self.clone().rvalue(argument(rest + 4)?);
-                    drop(this);
                     let result = self.nest(frame).await;
-                    this = self.lowerer();
                     result
                 }?;
                 let result = argument(0)?;
-                let result_ty = this.info(result)?.ty.clone();
-                let ty = this.lw.ir_type(&result_ty, at)?;
+                let result_ty = self.with(|this| this.info(result))??.ty.clone();
+                let ty = self.with(|this| this.lw.ir_type(&result_ty, at))??;
                 let place = {
                     let frame = self.clone().place(result);
-                    drop(this);
                     let result = self.nest(frame).await;
-                    this = self.lowerer();
                     result
                 }?;
-                let value = this.add(
-                    Expression::CooperativeVectorMatMul {
-                        ty,
-                        operation: CooperativeVectorMatMul {
-                            input,
-                            input_interpretation,
-                            matrix,
-                            matrix_offset,
-                            matrix_interpretation,
-                            bias,
-                            rows,
-                            columns,
-                            layout,
-                            transpose,
-                            stride,
+                let value = self.with(|this| {
+                    this.add(
+                        Expression::CooperativeVectorMatMul {
+                            ty,
+                            operation: CooperativeVectorMatMul {
+                                input,
+                                input_interpretation,
+                                matrix,
+                                matrix_offset,
+                                matrix_interpretation,
+                                bias,
+                                rows,
+                                columns,
+                                layout,
+                                transpose,
+                                stride,
+                            },
                         },
-                    },
-                    at,
-                )?;
-                this.store(&place, value, at)?;
+                        at,
+                    )
+                })??;
+                self.with(|this| this.store(&place, value, at))??;
                 Ok(None)
             }
             CooperativeCall::SaturatedConvert => {
                 let target = argument(0)?;
-                let target_ty = this.info(target)?.ty.clone();
-                let ty = this.lw.ir_type(&target_ty, at)?;
+                let target_ty = self.with(|this| this.info(target))??.ty.clone();
+                let ty = self.with(|this| this.lw.ir_type(&target_ty, at))??;
                 let place = {
                     let frame = self.clone().place(target);
-                    drop(this);
                     let result = self.nest(frame).await;
-                    this = self.lowerer();
                     result
                 }?;
                 let expr = {
                     let frame = self.clone().rvalue(argument(1)?);
-                    drop(this);
                     let result = self.nest(frame).await;
-                    this = self.lowerer();
                     result
                 }?;
-                let family = this.cooperative_family();
-                let value = this.add(
-                    Expression::Convert {
-                        expr,
-                        ty,
-                        saturating: true,
-                        family,
-                    },
-                    at,
-                )?;
-                this.store(&place, value, at)?;
+                let family = self.with(|this| this.cooperative_family())?;
+                let value = self.with(|this| {
+                    this.add(
+                        Expression::Convert {
+                            expr,
+                            ty,
+                            saturating: true,
+                            family,
+                        },
+                        at,
+                    )
+                })??;
+                self.with(|this| this.store(&place, value, at))??;
                 Ok(None)
             }
             CooperativeCall::MulAdd { saturating, .. } => {
                 let a = {
                     let frame = self.clone().rvalue(argument(0)?);
-                    drop(this);
                     let result = self.nest(frame).await;
-                    this = self.lowerer();
                     result
                 }?;
                 let b = {
                     let frame = self.clone().rvalue(argument(1)?);
-                    drop(this);
                     let result = self.nest(frame).await;
-                    this = self.lowerer();
                     result
                 }?;
                 let c = {
                     let frame = self.clone().rvalue(argument(2)?);
-                    drop(this);
                     let result = self.nest(frame).await;
-                    this = self.lowerer();
                     result
                 }?;
-                this.add(
-                    Expression::CooperativeMultiplyAdd {
-                        a,
-                        b,
-                        c,
-                        saturating,
-                    },
-                    at,
-                )
-                .map(Some)
+                self.with(|this| {
+                    this.add(
+                        Expression::CooperativeMultiplyAdd {
+                            a,
+                            b,
+                            c,
+                            saturating,
+                        },
+                        at,
+                    )
+                    .map(Some)
+                })?
             }
             _ => Err(internal(at)),
         }
@@ -784,11 +717,10 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Handle<Expression>> {
-        let mut this = self.lowerer();
         let operation = match kind {
             TensorCall::CreateLayout | TensorCall::CreateView => {
-                let ty = this.lw.ir_type(result, at)?;
-                return this.add(Expression::TensorCreate { ty }, at);
+                let ty = self.with(|this| this.lw.ir_type(result, at))??;
+                return self.with(|this| this.add(Expression::TensorCreate { ty }, at))?;
             }
             TensorCall::LayoutSetBlockSize => TensorOperation::LayoutSetBlockSize,
             TensorCall::LayoutSetDimension => TensorOperation::LayoutSetDimension,
@@ -802,29 +734,27 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         let (base, rest) = arguments.split_first().ok_or_else(|| internal(at))?;
         let base = {
             let frame = self.clone().rvalue(base);
-            drop(this);
             let result = self.nest(frame).await;
-            this = self.lowerer();
             result
         }?;
         let mut operands = Vec::with_capacity(rest.len());
         for argument in rest {
             operands.push({
                 let frame = self.clone().rvalue(argument);
-                drop(this);
                 let result = self.nest(frame).await;
-                this = self.lowerer();
                 result
             }?);
         }
-        this.add(
-            Expression::TensorSet {
-                base,
-                operation,
-                operands,
-            },
-            at,
-        )
+        self.with(|this| {
+            this.add(
+                Expression::TensorSet {
+                    base,
+                    operation,
+                    operands,
+                },
+                at,
+            )
+        })?
     }
 
     pub(super) async fn matrix_call(
@@ -834,7 +764,6 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
-        let mut this = self.lowerer();
         let argument = |index: usize| arguments.get(index).ok_or_else(|| internal(at));
         let family = |ext: bool| {
             if ext {
@@ -849,24 +778,18 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     let frame = self
                         .clone()
                         .cooperative_element(argument(1)?, argument(2)?, at);
-                    drop(this);
                     let result = self.nest(frame).await;
-                    this = self.lowerer();
                     result
                 }?;
                 let layout = {
                     let frame = self.clone().rvalue(argument(3)?);
-                    drop(this);
                     let result = self.nest(frame).await;
-                    this = self.lowerer();
                     result
                 }?;
                 let view_value = if view {
                     Some({
                         let frame = self.clone().rvalue(argument(4)?);
-                        drop(this);
                         let result = self.nest(frame).await;
-                        this = self.lowerer();
                         result
                     }?)
                 } else {
@@ -876,38 +799,40 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 if let MatrixCall::StoreTensor { .. } = kind {
                     let value = {
                         let frame = self.clone().rvalue(argument(0)?);
-                        drop(this);
                         let result = self.nest(frame).await;
-                        this = self.lowerer();
                         result
                     }?;
-                    this.push(
-                        Statement::CooperativeMatrix {
-                            function: CooperativeMatrixFunction::StoreTensor {
-                                pointer,
-                                value,
-                                layout,
-                                view: view_value,
+                    self.with(|this| {
+                        this.push(
+                            Statement::CooperativeMatrix {
+                                function: CooperativeMatrixFunction::StoreTensor {
+                                    pointer,
+                                    value,
+                                    layout,
+                                    view: view_value,
+                                },
+                                result: None,
                             },
-                            result: None,
-                        },
-                        at,
-                    );
+                            at,
+                        )
+                    })?;
                     return Ok(None);
                 }
                 let decode = match arguments.get(start) {
-                    Some(argument) => Some(this.referenced_function(argument, at)?),
+                    Some(argument) => {
+                        Some(self.with(|this| this.referenced_function(argument, at))??)
+                    }
                     None => None,
                 };
                 let decode_vector = match arguments.get(start + 1) {
-                    Some(argument) => Some(this.referenced_function(argument, at)?),
+                    Some(argument) => {
+                        Some(self.with(|this| this.referenced_function(argument, at))??)
+                    }
                     None => None,
                 };
                 let object = {
                     let frame = self.clone().rvalue(argument(0)?);
-                    drop(this);
                     let result = self.nest(frame).await;
-                    this = self.lowerer();
                     result
                 }?;
                 (
@@ -925,9 +850,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             MatrixCall::Transpose { ext } => {
                 let matrix = {
                     let frame = self.clone().rvalue(argument(1)?);
-                    drop(this);
                     let result = self.nest(frame).await;
-                    this = self.lowerer();
                     result
                 }?;
                 (
@@ -941,12 +864,11 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             MatrixCall::Reduce { ext, mask } => {
                 let matrix = {
                     let frame = self.clone().rvalue(argument(1)?);
-                    drop(this);
                     let result = self.nest(frame).await;
-                    this = self.lowerer();
                     result
                 }?;
-                let combine = this.referenced_function(argument(3)?, at)?;
+                let combine =
+                    self.try_with(|this| Ok(this.referenced_function(argument(3)?, at)))??;
                 (
                     CooperativeMatrixFunction::Reduce {
                         matrix,
@@ -960,19 +882,16 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             MatrixCall::PerElement { ext } => {
                 let matrix = {
                     let frame = self.clone().rvalue(argument(1)?);
-                    drop(this);
                     let result = self.nest(frame).await;
-                    this = self.lowerer();
                     result
                 }?;
-                let function = this.referenced_function(argument(2)?, at)?;
+                let function =
+                    self.try_with(|this| Ok(this.referenced_function(argument(2)?, at)))??;
                 let mut extra = Vec::new();
                 for argument in arguments.iter().skip(3) {
                     extra.push({
                         let frame = self.clone().rvalue(argument);
-                        drop(this);
                         let result = self.nest(frame).await;
-                        this = self.lowerer();
                         result
                     }?);
                 }
@@ -989,16 +908,12 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             MatrixCall::GetCoordinate => {
                 let matrix = {
                     let frame = self.clone().rvalue(argument(0)?);
-                    drop(this);
                     let result = self.nest(frame).await;
-                    this = self.lowerer();
                     result
                 }?;
                 let index = {
                     let frame = self.clone().rvalue(argument(1)?);
-                    drop(this);
                     let result = self.nest(frame).await;
-                    this = self.lowerer();
                     result
                 }?;
                 (
@@ -1008,28 +923,28 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             }
         };
         let result_ty = match target {
-            Some(target) => this.info(target)?.ty.clone(),
+            Some(target) => self.with(|this| this.info(target))??.ty.clone(),
             None => result.clone(),
         };
-        let ty = this.lw.ir_type(&result_ty, at)?;
-        let value = this.result_statement(
-            Expression::CooperativeMatrixResult { ty },
-            |result| Statement::CooperativeMatrix {
-                function,
-                result: Some(result),
-            },
-            at,
-        );
+        let ty = self.with(|this| this.lw.ir_type(&result_ty, at))??;
+        let value = self.with(|this| {
+            this.result_statement(
+                Expression::CooperativeMatrixResult { ty },
+                |result| Statement::CooperativeMatrix {
+                    function,
+                    result: Some(result),
+                },
+                at,
+            )
+        })?;
         match target {
             Some(target) => {
                 let place = {
                     let frame = self.clone().place(target);
-                    drop(this);
                     let result = self.nest(frame).await;
-                    this = self.lowerer();
                     result
                 }?;
-                this.store(&place, value, at)?;
+                self.with(|this| this.store(&place, value, at))??;
                 Ok(None)
             }
             None => Ok(Some(value)),
@@ -1042,22 +957,17 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         element: &'b AstExpression,
         at: Span,
     ) -> Result<Handle<Expression>> {
-        let mut this = self.lowerer();
         let base = {
             let frame = self.clone().array_pointer(buffer, at);
-            drop(this);
             let result = self.nest(frame).await;
-            this = self.lowerer();
             result
         }?;
         let index = {
             let frame = self.clone().rvalue(element);
-            drop(this);
             let result = self.nest(frame).await;
-            this = self.lowerer();
             result
         }?;
-        this.add(Expression::Access { base, index }, at)
+        self.with(|this| this.add(Expression::Access { base, index }, at))?
     }
 
     async fn array_pointer(
@@ -1065,10 +975,8 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         buffer: &'b AstExpression,
         at: Span,
     ) -> Result<Handle<Expression>> {
-        let this = self.lowerer();
         let place = {
             let frame = self.clone().place(buffer);
-            drop(this);
             let result = self.nest(frame).await;
             result
         }?;
@@ -1083,15 +991,12 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<CooperativeData> {
-        let mut this = self.lowerer();
         let &[ref buffer, ref element, ref stride, ref layout] = arguments else {
             return Err(internal(at));
         };
         let place = {
             let frame = self.clone().place(buffer);
-            drop(this);
             let result = self.nest(frame).await;
-            this = self.lowerer();
             result
         }?;
         if place.swizzle.is_some() {
@@ -1099,28 +1004,25 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         }
         let index = {
             let frame = self.clone().rvalue(element);
-            drop(this);
             let result = self.nest(frame).await;
-            this = self.lowerer();
             result
         }?;
-        let pointer = this.add(
-            Expression::Access {
-                base: place.pointer,
-                index,
-            },
-            at,
-        )?;
+        let pointer = self.with(|this| {
+            this.add(
+                Expression::Access {
+                    base: place.pointer,
+                    index,
+                },
+                at,
+            )
+        })??;
         let stride = {
             let frame = self.clone().rvalue(stride);
-            drop(this);
             let result = self.nest(frame).await;
-            this = self.lowerer();
             result
         }?;
         let layout = {
             let frame = self.clone().rvalue(layout);
-            drop(this);
             let result = self.nest(frame).await;
             result
         }?;

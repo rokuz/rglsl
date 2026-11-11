@@ -1,4 +1,4 @@
-use std::cell::{RefCell, RefMut};
+use std::cell::RefCell;
 use std::future::Future;
 
 use rglsl_ast::ast::{
@@ -30,8 +30,8 @@ impl<'b, T> Cx<'b, T> {
         self.stack.call(frame)
     }
 
-    pub fn state(&self) -> RefMut<'b, T> {
-        self.state.borrow_mut()
+    pub fn with<R>(&self, work: impl FnOnce(&mut T) -> R) -> R {
+        work(&mut self.state.borrow_mut())
     }
 }
 

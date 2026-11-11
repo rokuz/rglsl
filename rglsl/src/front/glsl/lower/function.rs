@@ -1,5 +1,5 @@
 use alloc::{collections::BTreeMap, string::String, vec::Vec};
-use core::cell::{RefCell, RefMut};
+use core::cell::RefCell;
 use core::future::Future;
 
 use rglsl_types::stack::{Call, Stack};
@@ -49,7 +49,6 @@ pub(super) struct Cx<'b, 'l, 'a> {
     stack: Stack<'b>,
 }
 
-#[allow(clippy::await_holding_refcell_ref)]
 impl<'b, 'l, 'a> Cx<'b, 'l, 'a> {
     pub(super) const fn new(
         lowerer: &'b RefCell<&'b mut FunctionLowerer<'l, 'a>>,
@@ -58,8 +57,22 @@ impl<'b, 'l, 'a> Cx<'b, 'l, 'a> {
         Self { lowerer, stack }
     }
 
-    pub(super) fn lowerer(&self) -> RefMut<'b, &'b mut FunctionLowerer<'l, 'a>> {
-        self.lowerer.borrow_mut()
+    pub(super) fn with<T>(
+        &self,
+        work: impl FnOnce(&mut FunctionLowerer<'l, 'a>) -> T,
+    ) -> Result<T> {
+        let mut lowerer = self
+            .lowerer
+            .try_borrow_mut()
+            .map_err(|_| internal(Span::UNDEFINED))?;
+        Ok(work(&mut lowerer))
+    }
+
+    pub(super) fn try_with<T>(
+        &self,
+        work: impl FnOnce(&mut FunctionLowerer<'l, 'a>) -> Result<T>,
+    ) -> Result<T> {
+        self.with(work)?
     }
 
     pub(super) fn nest<T: 'b>(&self, frame: impl Future<Output = T> + 'b) -> Call<'b, T> {
@@ -67,11 +80,11 @@ impl<'b, 'l, 'a> Cx<'b, 'l, 'a> {
     }
 
     pub(super) async fn block_with<T>(self, frame: Call<'b, Result<T>>) -> Result<(Block, T)> {
-        let outer = self.lowerer().open_block();
+        let outer = self.with(|this| this.open_block())?;
         let result = frame.await;
         let mut value = None;
         let result = result.map(|inner| value = Some(inner));
-        let block = self.lowerer().close_block(outer, result)?;
+        let block = self.try_with(|this| this.close_block(outer, result))?;
         let at = Span::UNDEFINED;
         Ok((block, value.ok_or_else(|| internal(at))?))
     }
@@ -92,8 +105,19 @@ impl<'b, 'a> LowererCx<'b, 'a> {
         Self { lowerer, stack }
     }
 
-    pub(super) fn lowerer(&self) -> RefMut<'b, &'b mut Lowerer<'a>> {
-        self.lowerer.borrow_mut()
+    pub(super) fn with<T>(&self, work: impl FnOnce(&mut Lowerer<'a>) -> T) -> Result<T> {
+        let mut lowerer = self
+            .lowerer
+            .try_borrow_mut()
+            .map_err(|_| internal(Span::UNDEFINED))?;
+        Ok(work(&mut lowerer))
+    }
+
+    pub(super) fn try_with<T>(
+        &self,
+        work: impl FnOnce(&mut Lowerer<'a>) -> Result<T>,
+    ) -> Result<T> {
+        self.with(work)?
     }
 
     pub(super) fn nest<T: 'b>(&self, frame: impl Future<Output = T> + 'b) -> Call<'b, T> {
