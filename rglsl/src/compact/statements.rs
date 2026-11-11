@@ -188,6 +188,16 @@ impl FunctionTracer<'_> {
                         self.expressions_used.insert(target);
                         self.expressions_used.insert_iter(data.operands());
                     }
+                    St::HitObject { object, ref fun } => {
+                        self.expressions_used.insert(object);
+                        for operand in fun.operands() {
+                            self.expressions_used.insert(operand);
+                        }
+                    }
+                    St::ReorderThread { hint, bits, .. } => {
+                        self.expressions_used.insert(hint);
+                        self.expressions_used.insert(bits);
+                    }
                     St::RayPipelineFunction(ref func) => {
                         for operand in func.operands() {
                             self.expressions_used.insert(operand);
@@ -500,6 +510,23 @@ impl FunctionMap {
                         for operand in data.operands_mut() {
                             adjust(operand)?;
                         }
+                    }
+                    St::HitObject {
+                        ref mut object,
+                        ref mut fun,
+                    } => {
+                        adjust(object)?;
+                        for operand in fun.operands_mut() {
+                            adjust(operand)?;
+                        }
+                    }
+                    St::ReorderThread {
+                        ref mut hint,
+                        ref mut bits,
+                        ..
+                    } => {
+                        adjust(hint)?;
+                        adjust(bits)?;
                     }
                     St::RayPipelineFunction(ref mut func) => {
                         for operand in func.operands_mut() {

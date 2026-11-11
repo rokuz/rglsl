@@ -102,6 +102,28 @@ impl BlockContext<'_> {
                     Iv::ObjectRayOrigin => Op::RayQueryGetIntersectionObjectRayOriginKHR,
                     Iv::ObjectToWorld => Op::RayQueryGetIntersectionObjectToWorldKHR,
                     Iv::WorldToObject => Op::RayQueryGetIntersectionWorldToObjectKHR,
+                    Iv::ClusterId => {
+                        self.writer.require_cluster_acceleration_structure()?;
+                        Op::RayQueryGetIntersectionClusterIdNV
+                    }
+                    Iv::SpherePosition | Iv::SphereRadius | Iv::IsSphereHit => {
+                        self.writer.require_sphere_geometry()?;
+                        self.writer.require_lss_geometry()?;
+                        match value {
+                            Iv::SpherePosition => Op::RayQueryGetIntersectionSpherePositionNV,
+                            Iv::SphereRadius => Op::RayQueryGetIntersectionSphereRadiusNV,
+                            _ => Op::RayQueryIsSphereHitNV,
+                        }
+                    }
+                    Iv::LssPositions | Iv::LssRadii | Iv::LssHitValue | Iv::IsLssHit => {
+                        self.writer.require_lss_geometry()?;
+                        match value {
+                            Iv::LssPositions => Op::RayQueryGetIntersectionLSSPositionsNV,
+                            Iv::LssRadii => Op::RayQueryGetIntersectionLSSRadiiNV,
+                            Iv::LssHitValue => Op::RayQueryGetIntersectionLSSHitValueNV,
+                            _ => Op::RayQueryIsLSSHitNV,
+                        }
+                    }
                     Iv::TriangleVertexPositions => {
                         self.writer.require_any(
                             "ray query vertex positions",

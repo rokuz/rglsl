@@ -329,21 +329,20 @@ impl FunctionLowerer<'_, '_> {
                         continue;
                     }
                     let ty = variable.ty.clone();
-                    let ir = self.lw.variable_ir_type(&ty, &variable.qualifiers, at)?;
                     if ty
                         .as_opaque()
-                        .is_some_and(rglsl_sema::types::Opaque::is_ray_query)
+                        .is_some_and(rglsl_sema::types::Opaque::is_private_object)
                         || ty
                             .element_type()
                             .and_then(|element| element.as_opaque())
-                            .is_some_and(rglsl_sema::types::Opaque::is_ray_query)
+                            .is_some_and(rglsl_sema::types::Opaque::is_private_object)
                     {
-                        let global = self
-                            .lw
-                            .ray_query_global(declarator.name.node.clone(), ir, at);
-                        self.lw.globals.insert(symbol, GlobalRef::Variable(global));
+                        self.lw
+                            .deferred_private
+                            .insert(symbol, (declarator.name.node.clone(), at));
                         continue;
                     }
+                    let ir = self.lw.variable_ir_type(&ty, &variable.qualifiers, at)?;
                     let local = self.local_typed(ir, Some(declarator.name.node.clone()), at);
                     self.variables.insert(symbol, Local::Variable(local));
                     if let Some(ref initializer) = declarator.initializer {

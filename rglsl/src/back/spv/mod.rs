@@ -559,6 +559,7 @@ enum LocalType {
     },
     AccelerationStructure,
     RayQuery,
+    HitObject(crate::HitObjectKind),
     UntypedPointer {
         class: spirv::StorageClass,
     },

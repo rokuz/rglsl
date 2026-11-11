@@ -333,6 +333,8 @@ pub enum OpaqueKind {
     SubpassInput,
     AccelerationStructure,
     RayQuery,
+    HitObjectNv,
+    HitObjectExt,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -445,6 +447,17 @@ impl Opaque {
         matches!(self.kind, OpaqueKind::RayQuery)
     }
 
+    pub const fn is_hit_object(self) -> bool {
+        matches!(
+            self.kind,
+            OpaqueKind::HitObjectNv | OpaqueKind::HitObjectExt
+        )
+    }
+
+    pub const fn is_private_object(self) -> bool {
+        self.is_ray_query() || self.is_hit_object()
+    }
+
     pub fn from_keyword(word: &str) -> Option<Self> {
         match word {
             "sampler" => return Some(Self::plain_sampler(false)),
@@ -453,6 +466,8 @@ impl Opaque {
                 return Some(Self::ray(OpaqueKind::AccelerationStructure))
             }
             "rayQueryEXT" => return Some(Self::ray(OpaqueKind::RayQuery)),
+            "hitObjectNV" => return Some(Self::ray(OpaqueKind::HitObjectNv)),
+            "hitObjectEXT" => return Some(Self::ray(OpaqueKind::HitObjectExt)),
             _ => {}
         }
         let families = ["sampler", "texture", "image", "subpassInput"];
@@ -551,6 +566,8 @@ impl fmt::Display for Opaque {
                 return formatter.write_str("accelerationStructureEXT");
             }
             OpaqueKind::RayQuery => return formatter.write_str("rayQueryEXT"),
+            OpaqueKind::HitObjectNv => return formatter.write_str("hitObjectNV"),
+            OpaqueKind::HitObjectExt => return formatter.write_str("hitObjectEXT"),
             OpaqueKind::CombinedSampler => "sampler",
             OpaqueKind::Texture => "texture",
             OpaqueKind::Image => "image",
@@ -1322,6 +1339,8 @@ pub enum BlockStorage {
     HitAttribute,
     CallableData,
     CallableDataIn,
+    HitObjectAttributeNv,
+    HitObjectAttributeExt,
 }
 
 impl BlockStorage {

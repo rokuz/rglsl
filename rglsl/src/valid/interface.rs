@@ -892,6 +892,61 @@ impl VaryingContext<'_> {
                             _ => false,
                         },
                     ),
+                    Bi::ClusterId => (
+                        matches!(self.stage, St::AnyHit | St::ClosestHit) && !self.output,
+                        *ty_inner == Ti::Scalar(crate::Scalar::I32),
+                    ),
+                    Bi::HitKindFrontFacingMicroTriangle | Bi::HitKindBackFacingMicroTriangle => (
+                        self.stage.ray_tracing() && !self.output,
+                        *ty_inner == Ti::Scalar(crate::Scalar::U32),
+                    ),
+                    Bi::HitMicroTriangleVertexPositions
+                    | Bi::HitMicroTriangleVertexBarycentrics
+                    | Bi::HitLssPositions => {
+                        let (size, length) = match built_in {
+                            Bi::HitMicroTriangleVertexPositions => (Vs::Tri, 3),
+                            Bi::HitMicroTriangleVertexBarycentrics => (Vs::Bi, 3),
+                            _ => (Vs::Tri, 2),
+                        };
+                        (
+                            matches!(self.stage, St::AnyHit | St::ClosestHit) && !self.output,
+                            match *ty_inner {
+                                Ti::Array {
+                                    base,
+                                    size: crate::ArraySize::Constant(count),
+                                    ..
+                                } => {
+                                    count.get() == length
+                                        && self.types[base].inner
+                                            == Ti::Vector {
+                                                size,
+                                                scalar: crate::Scalar::F32,
+                                            }
+                                }
+                                _ => false,
+                            },
+                        )
+                    }
+                    Bi::HitLssRadii => (
+                        matches!(self.stage, St::AnyHit | St::ClosestHit) && !self.output,
+                        array_of(Ti::Scalar(crate::Scalar::F32)),
+                    ),
+                    Bi::HitIsSphere | Bi::HitIsLss => (
+                        matches!(self.stage, St::AnyHit | St::ClosestHit) && !self.output,
+                        *ty_inner == Ti::Scalar(crate::Scalar::BOOL),
+                    ),
+                    Bi::HitSpherePosition => (
+                        matches!(self.stage, St::AnyHit | St::ClosestHit) && !self.output,
+                        *ty_inner
+                            == Ti::Vector {
+                                size: Vs::Tri,
+                                scalar: crate::Scalar::F32,
+                            },
+                    ),
+                    Bi::HitSphereRadius => (
+                        matches!(self.stage, St::AnyHit | St::ClosestHit) && !self.output,
+                        *ty_inner == Ti::Scalar(crate::Scalar::F32),
+                    ),
                     // Validated elsewhere, shouldn't be here
                     Bi::VertexCount | Bi::PrimitiveCount | Bi::Vertices | Bi::Primitives => {
                         (false, true)
@@ -1589,7 +1644,7 @@ impl super::Validator {
                 (TypeFlags::empty(), true)
             }
             crate::AddressSpace::Private
-                if crate::proc::contains_ray_query(gctx.types, inner_ty) =>
+                if crate::proc::contains_ray_object(gctx.types, inner_ty) =>
             {
                 if var.init.is_some() {
                     return Err(GlobalVariableError::InitializerNotAllowed(var.space));
@@ -1630,7 +1685,8 @@ impl super::Validator {
             | crate::AddressSpace::IncomingRayPayload
             | crate::AddressSpace::HitAttribute
             | crate::AddressSpace::CallableData
-            | crate::AddressSpace::IncomingCallableData => {
+            | crate::AddressSpace::IncomingCallableData
+            | crate::AddressSpace::HitObjectAttribute { .. } => {
                 if !self
                     .capabilities
                     .contains(Capabilities::RAY_TRACING_PIPELINE)
@@ -1685,6 +1741,7 @@ impl super::Validator {
                 | crate::AddressSpace::IncomingRayPayload
                 | crate::AddressSpace::CallableData
                 | crate::AddressSpace::IncomingCallableData
+                | crate::AddressSpace::HitObjectAttribute { .. }
         ) && matches!(var.io, None | Some(crate::Binding::Location { .. }));
         if var.io.is_some() && !is_interface && !ray_location {
             return Err(GlobalVariableError::InvalidBinding);
@@ -2306,6 +2363,18 @@ impl super::Validator {
                 }
                 crate::AddressSpace::IncomingCallableData => {
                     if ep.stage != crate::ShaderStage::Callable {
+                        return Err(EntryPointError::RayDataInInvalidStage(var.space, ep.stage)
+                            .with_span_handle(var_handle, &module.global_variables));
+                    }
+                    GlobalUse::READ | GlobalUse::QUERY | GlobalUse::WRITE
+                }
+                crate::AddressSpace::HitObjectAttribute { .. } => {
+                    if !matches!(
+                        ep.stage,
+                        crate::ShaderStage::RayGeneration
+                            | crate::ShaderStage::ClosestHit
+                            | crate::ShaderStage::Miss
+                    ) {
                         return Err(EntryPointError::RayDataInInvalidStage(var.space, ep.stage)
                             .with_span_handle(var_handle, &module.global_variables));
                     }

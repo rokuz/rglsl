@@ -195,6 +195,25 @@ impl ExpressionTracer<'_> {
             Ex::AccelerationStructureFromAddress { address } => {
                 self.expressions_used.insert(address);
             }
+            Ex::HitObjectGet { object, value: _ } => {
+                self.expressions_used.insert(object);
+            }
+            Ex::FetchMicroTriangleVertex {
+                acceleration_structure,
+                instance_id,
+                geometry_index,
+                primitive_index,
+                barycentric,
+                value: _,
+            } => {
+                self.expressions_used.insert_iter([
+                    acceleration_structure,
+                    instance_id,
+                    geometry_index,
+                    primitive_index,
+                    barycentric,
+                ]);
+            }
             Ex::Unary { op: _, expr } => {
                 self.expressions_used.insert(expr);
             }
@@ -532,6 +551,24 @@ impl ModuleMap {
                 value: _,
             } => adjust(query)?,
             Ex::AccelerationStructureFromAddress { ref mut address } => adjust(address)?,
+            Ex::HitObjectGet {
+                ref mut object,
+                value: _,
+            } => adjust(object)?,
+            Ex::FetchMicroTriangleVertex {
+                ref mut acceleration_structure,
+                ref mut instance_id,
+                ref mut geometry_index,
+                ref mut primitive_index,
+                ref mut barycentric,
+                value: _,
+            } => {
+                adjust(acceleration_structure)?;
+                adjust(instance_id)?;
+                adjust(geometry_index)?;
+                adjust(primitive_index)?;
+                adjust(barycentric)?;
+            }
             Ex::CooperativeLoad {
                 ref mut ty,
                 ref mut data,

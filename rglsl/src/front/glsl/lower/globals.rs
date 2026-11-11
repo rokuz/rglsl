@@ -695,7 +695,9 @@ impl<'a> Lowerer<'a> {
             | Storage::RayPayloadIn
             | Storage::HitAttribute
             | Storage::CallableData
-            | Storage::CallableDataIn => self.ray_variable(symbol, name, at),
+            | Storage::CallableDataIn
+            | Storage::HitObjectAttributeNv
+            | Storage::HitObjectAttributeExt => self.ray_variable(symbol, name, at),
             Storage::None => self.private(symbol, name, declarator, at),
         }
     }
@@ -1133,7 +1135,9 @@ impl<'a> Lowerer<'a> {
             | BlockStorage::RayPayloadIn
             | BlockStorage::HitAttribute
             | BlockStorage::CallableData
-            | BlockStorage::CallableDataIn => {
+            | BlockStorage::CallableDataIn
+            | BlockStorage::HitObjectAttributeNv
+            | BlockStorage::HitObjectAttributeExt => {
                 return self.ray_block(symbol, id, instance_name, at);
             }
         };
@@ -1892,6 +1896,15 @@ impl<'a> Lowerer<'a> {
     pub(super) fn global_ref(&mut self, symbol: SymbolId, at: Span) -> Result<GlobalRef> {
         if let Some(found) = self.globals.get(&symbol) {
             return Ok(*found);
+        }
+        if let Some((name, span)) = self.deferred_private.remove(&symbol) {
+            let variable = self.variable(symbol).ok_or_else(|| internal(at))?;
+            let (ty, qualifiers) = (variable.ty.clone(), variable.qualifiers.clone());
+            let ty = self.variable_ir_type(&ty, &qualifiers, span)?;
+            let global = self.ray_query_global(name, ty, span);
+            let found = GlobalRef::Variable(global);
+            self.globals.insert(symbol, found);
+            return Ok(found);
         }
         if self.has_local_size_ids() && self.is_work_group_size(symbol) {
             let handle = self.work_group_size_override(at)?;

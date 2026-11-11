@@ -7,6 +7,7 @@ mod expression;
 mod function;
 mod globals;
 mod heap;
+mod hit_object;
 mod library;
 mod mesh;
 mod message;
@@ -368,6 +369,7 @@ pub(super) struct Lowerer<'a> {
     pub heap_runtime_offsets: BTreeMap<Handle<GlobalVariable>, &'a rglsl_ast::ast::Expression>,
     pub ray_data: BTreeMap<(usize, u32), Handle<GlobalVariable>>,
     pub incoming_ray_payload: Option<Handle<GlobalVariable>>,
+    pub deferred_private: BTreeMap<SymbolId, (String, Span)>,
     xfb: xfb::Xfb,
     stage_layout: stage::StageLayout,
     pub object: bool,
@@ -449,6 +451,7 @@ impl<'a> Lowerer<'a> {
             heap_runtime_offsets: BTreeMap::new(),
             ray_data: BTreeMap::new(),
             incoming_ray_payload: None,
+            deferred_private: BTreeMap::new(),
             xfb: xfb::Xfb::new(
                 matches!(
                     options.stage,

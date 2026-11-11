@@ -245,6 +245,8 @@ pub fn is_opaque_type_keyword(word: &str) -> bool {
             | "accelerationStructureNV"
             | "accelerationStructureEXT"
             | "rayQueryEXT"
+            | "hitObjectNV"
+            | "hitObjectEXT"
     ) {
         return true;
     }

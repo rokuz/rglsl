@@ -18,6 +18,10 @@ impl ir::PredeclaredType {
             Pt::ModfResult { size, scalar } => frexp_mod_name("modf", size, scalar),
             Pt::FrexpResult { size, scalar } => frexp_mod_name("frexp", size, scalar),
             Pt::WideResult { size, scalar } => wide_name(size, scalar),
+            Pt::F32Array { size, length } => match size {
+                Some(size) => format!("__vec{}_f32_array_{length}", size as u8),
+                None => format!("__f32_array_{length}"),
+            },
         }
     }
 }

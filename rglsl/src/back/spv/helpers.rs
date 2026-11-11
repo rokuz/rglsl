@@ -64,6 +64,12 @@ pub(super) const fn map_storage_class(space: crate::AddressSpace) -> spirv::Stor
         crate::AddressSpace::HitAttribute => spirv::StorageClass::HitAttributeKHR,
         crate::AddressSpace::CallableData => spirv::StorageClass::CallableDataKHR,
         crate::AddressSpace::IncomingCallableData => spirv::StorageClass::IncomingCallableDataKHR,
+        crate::AddressSpace::HitObjectAttribute {
+            kind: crate::HitObjectKind::Nv,
+        } => spirv::StorageClass::HitObjectAttributeNV,
+        crate::AddressSpace::HitObjectAttribute {
+            kind: crate::HitObjectKind::Ext,
+        } => spirv::StorageClass::HitObjectAttributeEXT,
         crate::AddressSpace::ShaderRecord => spirv::StorageClass::ShaderRecordBufferKHR,
         crate::AddressSpace::Input => spirv::StorageClass::Input,
         crate::AddressSpace::Output => spirv::StorageClass::Output,

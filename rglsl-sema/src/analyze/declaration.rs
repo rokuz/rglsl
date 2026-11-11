@@ -397,7 +397,9 @@ impl Analyzer<'_> {
                     | StorageQualifier::CallableDataNV
                     | StorageQualifier::CallableDataEXT
                     | StorageQualifier::CallableDataInNV
-                    | StorageQualifier::CallableDataInEXT => {
+                    | StorageQualifier::CallableDataInEXT
+                    | StorageQualifier::HitObjectAttributeNV
+                    | StorageQualifier::HitObjectAttributeEXT => {
                         result.storage = self.ray_storage_qualifier(single.span, *storage);
                     }
                     StorageQualifier::Attribute | StorageQualifier::Varying => {
@@ -1150,7 +1152,16 @@ impl Analyzer<'_> {
                 DiagnosticKind::RayQueryInitializer(name.node.clone()),
             );
         }
-        if qualifiers.storage != Storage::Uniform && self.opaque_outside_uniform(&ty) {
+        let hit_object = self.hit_object_checks(
+            name.span,
+            &name.node,
+            &qualifiers,
+            &ty,
+            initializer.is_some(),
+        );
+        if hit_object {
+            qualifiers.storage = Storage::None;
+        } else if qualifiers.storage != Storage::Uniform && self.opaque_outside_uniform(&ty) {
             self.error(name.span, DiagnosticKind::OpaqueNotAllowed(self.show(&ty)));
         } else if qualifiers.storage == Storage::Uniform
             && is_global

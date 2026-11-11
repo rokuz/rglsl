@@ -69,6 +69,8 @@ const fn stage_storage(storage: Storage) -> bool {
             | Storage::HitAttribute
             | Storage::CallableData
             | Storage::CallableDataIn
+            | Storage::HitObjectAttributeNv
+            | Storage::HitObjectAttributeExt
     )
 }
 

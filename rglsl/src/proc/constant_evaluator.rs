@@ -1394,7 +1394,9 @@ impl<'a> ConstantEvaluator<'a> {
             Expression::RayQueryProceedResult
             | Expression::RayQueryGet { .. }
             | Expression::ReportIntersectionResult
-            | Expression::AccelerationStructureFromAddress { .. } => {
+            | Expression::AccelerationStructureFromAddress { .. }
+            | Expression::HitObjectGet { .. }
+            | Expression::FetchMicroTriangleVertex { .. } => {
                 Err(ConstantEvaluatorError::RayQueryExpression)
             }
             Expression::SubgroupBallotResult => Err(ConstantEvaluatorError::SubgroupExpression),

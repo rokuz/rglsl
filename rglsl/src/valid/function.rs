@@ -276,6 +276,10 @@ pub enum FunctionError {
     InvalidRayOperand(Handle<crate::Expression>),
     #[error("The payload passed to `traceRay` must be a pointer directly to a global variable")]
     PayloadPointerNotGlobal,
+    #[error("Expression {0:?} is not a pointer to a hit object")]
+    InvalidHitObjectExpression(Handle<crate::Expression>),
+    #[error("This hit object operation is not available for {0:?} hit objects")]
+    InvalidHitObjectOperation(crate::HitObjectKind),
     #[error("The message type {0:?} of an abort does not hold its message and arguments")]
     InvalidAbortMessage(Handle<crate::Type>),
     #[error("Invalid operand {0:?} of a tensor write")]
@@ -1210,6 +1214,8 @@ impl super::Validator {
                             | Ex::HeapOffset { .. }
                             | Ex::RayQueryGet { .. }
                             | Ex::AccelerationStructureFromAddress { .. }
+                            | Ex::HitObjectGet { .. }
+                            | Ex::FetchMicroTriangleVertex { .. }
                             | Ex::CooperativeLoad { .. }
                             | Ex::CooperativeMultiplyAdd { .. }
                             | Ex::CooperativeMatrixLength { .. }
@@ -2156,6 +2162,41 @@ impl super::Validator {
                             ));
                     }
                 }
+                S::HitObject { object, ref fun } => {
+                    stages &= super::ShaderStages::RAY_GENERATION
+                        | super::ShaderStages::CLOSEST_HIT
+                        | super::ShaderStages::MISS;
+                    let kind =
+                        match *context.resolve_type_inner(object, &self.valid_expression_set)? {
+                            Ti::Pointer { base, .. } => match context.types[base].inner {
+                                Ti::HitObject { kind } => Some(kind),
+                                _ => None,
+                            },
+                            _ => None,
+                        };
+                    let Some(kind) = kind else {
+                        return Err(FunctionError::InvalidHitObjectExpression(object)
+                            .with_span_static(span, "invalid hit object expression"));
+                    };
+                    self.validate_hit_object_function(kind, fun, span, context)?;
+                    if matches!(
+                        *fun,
+                        crate::HitObjectFunction::ReorderThread { .. }
+                            | crate::HitObjectFunction::ReorderExecute { .. }
+                            | crate::HitObjectFunction::TraceReorderExecute { .. }
+                    ) {
+                        stages &= super::ShaderStages::RAY_GENERATION;
+                    }
+                }
+                S::ReorderThread {
+                    kind: _,
+                    hint,
+                    bits,
+                } => {
+                    stages &= super::ShaderStages::RAY_GENERATION;
+                    self.validate_ray_operand(hint, RayOperand::Uint, context)?;
+                    self.validate_ray_operand(bits, RayOperand::Uint, context)?;
+                }
                 S::RayPipelineFunction(ref fun) => match *fun {
                     crate::RayPipelineFunction::TraceRay {
                         acceleration_structure,
@@ -2404,6 +2445,7 @@ impl super::Validator {
 
 #[derive(Clone, Copy)]
 enum RayOperand {
+    Int,
     Uint,
     Float,
     Vector,
@@ -2430,6 +2472,7 @@ impl super::Validator {
     ) -> Result<(), WithSpan<FunctionError>> {
         let inner = context.resolve_type_inner(handle, &self.valid_expression_set)?;
         let valid = match kind {
+            RayOperand::Int => *inner == crate::TypeInner::Scalar(crate::Scalar::I32),
             RayOperand::Uint => *inner == crate::TypeInner::Scalar(crate::Scalar::U32),
             RayOperand::Float => *inner == crate::TypeInner::Scalar(crate::Scalar::F32),
             RayOperand::Vector => {
@@ -2445,6 +2488,193 @@ impl super::Validator {
         } else {
             Err(FunctionError::InvalidRayOperand(handle)
                 .with_span_handle(handle, context.expressions))
+        }
+    }
+
+    fn validate_hit_object_pointer(
+        &self,
+        pointer: Handle<crate::Expression>,
+        space: crate::AddressSpace,
+        context: &BlockContext,
+    ) -> Result<(), WithSpan<FunctionError>> {
+        let spaces: &[crate::AddressSpace] = match space {
+            crate::AddressSpace::RayPayload => &[
+                crate::AddressSpace::RayPayload,
+                crate::AddressSpace::IncomingRayPayload,
+            ],
+            _ => &[space],
+        };
+        self.validate_ray_data(crate::RayTracingData::Pointer(pointer), spaces, context)
+    }
+
+    fn validate_hit_object_function(
+        &self,
+        kind: crate::HitObjectKind,
+        fun: &crate::HitObjectFunction,
+        span: crate::Span,
+        context: &BlockContext,
+    ) -> Result<(), WithSpan<FunctionError>> {
+        use crate::{HitObjectFunction as Hf, HitObjectKind as Hk};
+        let attributes = crate::AddressSpace::HitObjectAttribute { kind };
+        let ext_only = |valid: bool| {
+            if valid {
+                Ok(())
+            } else {
+                Err(FunctionError::InvalidHitObjectOperation(kind)
+                    .with_span_static(span, "invalid hit object operation"))
+            }
+        };
+        let trace = |trace: &crate::HitObjectTrace| -> Result<(), WithSpan<FunctionError>> {
+            self.validate_acceleration_structure(trace.acceleration_structure, context)?;
+            for (operand, operand_kind) in [
+                (trace.flags, RayOperand::Uint),
+                (trace.cull_mask, RayOperand::Uint),
+                (trace.sbt_offset, RayOperand::Uint),
+                (trace.sbt_stride, RayOperand::Uint),
+                (trace.miss_index, RayOperand::Uint),
+                (trace.origin, RayOperand::Vector),
+                (trace.tmin, RayOperand::Float),
+                (trace.direction, RayOperand::Vector),
+                (trace.tmax, RayOperand::Float),
+            ]
+            .into_iter()
+            .chain(trace.time.map(|time| (time, RayOperand::Float)))
+            {
+                self.validate_ray_operand(operand, operand_kind, context)?;
+            }
+            self.validate_hit_object_pointer(
+                trace.payload,
+                crate::AddressSpace::RayPayload,
+                context,
+            )
+        };
+        let hint = |hint: Option<crate::ReorderHint>| -> Result<(), WithSpan<FunctionError>> {
+            for operand in hint.iter().flat_map(crate::ReorderHint::operands) {
+                self.validate_ray_operand(operand, RayOperand::Uint, context)?;
+            }
+            Ok(())
+        };
+        match *fun {
+            Hf::TraceRay(ref data) => trace(data),
+            Hf::TraceReorderExecute {
+                trace: ref data,
+                hint: reorder,
+            } => {
+                ext_only(kind == Hk::Ext)?;
+                trace(data)?;
+                hint(reorder)
+            }
+            Hf::RecordHit {
+                acceleration_structure,
+                instance_id,
+                primitive_id,
+                geometry_index,
+                hit_kind,
+                ref sbt_record,
+                origin,
+                tmin,
+                direction,
+                tmax,
+                time,
+                attributes: pointer,
+            } => {
+                ext_only(kind == Hk::Nv)?;
+                self.validate_acceleration_structure(acceleration_structure, context)?;
+                for (operand, operand_kind) in [
+                    (instance_id, RayOperand::Int),
+                    (primitive_id, RayOperand::Int),
+                    (geometry_index, RayOperand::Int),
+                    (hit_kind, RayOperand::Uint),
+                    (origin, RayOperand::Vector),
+                    (tmin, RayOperand::Float),
+                    (direction, RayOperand::Vector),
+                    (tmax, RayOperand::Float),
+                ]
+                .into_iter()
+                .chain(
+                    sbt_record
+                        .operands()
+                        .into_iter()
+                        .map(|operand| (operand, RayOperand::Uint)),
+                )
+                .chain(time.map(|time| (time, RayOperand::Float)))
+                {
+                    self.validate_ray_operand(operand, operand_kind, context)?;
+                }
+                self.validate_hit_object_pointer(pointer, attributes, context)
+            }
+            Hf::RecordMiss {
+                flags,
+                miss_index,
+                origin,
+                tmin,
+                direction,
+                tmax,
+                time,
+            } => {
+                ext_only(flags.is_some() == (kind == Hk::Ext))?;
+                for (operand, operand_kind) in [
+                    (miss_index, RayOperand::Uint),
+                    (origin, RayOperand::Vector),
+                    (tmin, RayOperand::Float),
+                    (direction, RayOperand::Vector),
+                    (tmax, RayOperand::Float),
+                ]
+                .into_iter()
+                .chain(flags.map(|flags| (flags, RayOperand::Uint)))
+                .chain(time.map(|time| (time, RayOperand::Float)))
+                {
+                    self.validate_ray_operand(operand, operand_kind, context)?;
+                }
+                Ok(())
+            }
+            Hf::RecordEmpty => Ok(()),
+            Hf::RecordFromQuery {
+                query,
+                sbt_record_index,
+                attributes: pointer,
+                hit_kind,
+            } => {
+                ext_only(kind == Hk::Ext)?;
+                let is_query =
+                    match *context.resolve_type_inner(query, &self.valid_expression_set)? {
+                        crate::TypeInner::Pointer { base, .. } => {
+                            matches!(context.types[base].inner, crate::TypeInner::RayQuery { .. })
+                        }
+                        _ => false,
+                    };
+                if !is_query {
+                    return Err(FunctionError::InvalidRayQueryExpression(query)
+                        .with_span_static(span, "invalid query expression"));
+                }
+                for operand in core::iter::once(sbt_record_index).chain(hit_kind) {
+                    self.validate_ray_operand(operand, RayOperand::Uint, context)?;
+                }
+                self.validate_hit_object_pointer(pointer, attributes, context)
+            }
+            Hf::ExecuteShader { payload } => {
+                self.validate_hit_object_pointer(payload, crate::AddressSpace::RayPayload, context)
+            }
+            Hf::ReorderExecute {
+                payload,
+                hint: reorder,
+            } => {
+                ext_only(kind == Hk::Ext)?;
+                self.validate_hit_object_pointer(
+                    payload,
+                    crate::AddressSpace::RayPayload,
+                    context,
+                )?;
+                hint(reorder)
+            }
+            Hf::GetAttributes {
+                attributes: pointer,
+            } => self.validate_hit_object_pointer(pointer, attributes, context),
+            Hf::SetShaderBindingTableRecordIndex { index } => {
+                ext_only(kind == Hk::Ext)?;
+                self.validate_ray_operand(index, RayOperand::Uint, context)
+            }
+            Hf::ReorderThread { hint: reorder } => hint(reorder),
         }
     }
 

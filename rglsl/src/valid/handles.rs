@@ -453,7 +453,8 @@ impl super::Validator {
             | crate::TypeInner::Sampler { .. }
             | crate::TypeInner::AccelerationStructure { .. }
             | crate::TypeInner::Tensor { .. }
-            | crate::TypeInner::RayQuery { .. } => None,
+            | crate::TypeInner::RayQuery { .. }
+            | crate::TypeInner::HitObject { .. } => None,
             crate::TypeInner::Pointer {
                 base,
                 space: crate::AddressSpace::PhysicalStorage { .. },
@@ -784,6 +785,28 @@ impl super::Validator {
             crate::Expression::AccelerationStructureFromAddress { address } => {
                 handle.check_dep(address)?;
             }
+            crate::Expression::HitObjectGet { object, value: _ } => {
+                handle.check_dep(object)?;
+            }
+            crate::Expression::FetchMicroTriangleVertex {
+                acceleration_structure,
+                instance_id,
+                geometry_index,
+                primitive_index,
+                barycentric,
+                value: _,
+            } => {
+                handle.check_dep_iter(
+                    [
+                        acceleration_structure,
+                        instance_id,
+                        geometry_index,
+                        primitive_index,
+                        barycentric,
+                    ]
+                    .into_iter(),
+                )?;
+            }
             crate::Expression::CooperativeLoad { ty, ref data } => {
                 validate_type(ty)?;
                 handle.check_dep_iter(data.operands())?;
@@ -1093,6 +1116,18 @@ impl super::Validator {
                     validate_expr(operand)?;
                 }
                 validate_expr_opt(fun.result())?;
+                Ok(())
+            }
+            crate::Statement::HitObject { object, ref fun } => {
+                validate_expr(object)?;
+                for operand in fun.operands() {
+                    validate_expr(operand)?;
+                }
+                Ok(())
+            }
+            crate::Statement::ReorderThread { hint, bits, .. } => {
+                validate_expr(hint)?;
+                validate_expr(bits)?;
                 Ok(())
             }
             crate::Statement::CooperativeMatrix {

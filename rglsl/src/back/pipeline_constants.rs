@@ -706,6 +706,26 @@ fn adjust_expr(new_pos: &HandleVec<Expression, Handle<Expression>>, expr: &mut E
         Expression::AccelerationStructureFromAddress { ref mut address } => {
             adjust(address);
         }
+        Expression::HitObjectGet {
+            ref mut object,
+            value: _,
+        } => {
+            adjust(object);
+        }
+        Expression::FetchMicroTriangleVertex {
+            ref mut acceleration_structure,
+            ref mut instance_id,
+            ref mut geometry_index,
+            ref mut primitive_index,
+            ref mut barycentric,
+            value: _,
+        } => {
+            adjust(acceleration_structure);
+            adjust(instance_id);
+            adjust(geometry_index);
+            adjust(primitive_index);
+            adjust(barycentric);
+        }
         Expression::Literal(_)
         | Expression::FunctionArgument(_)
         | Expression::GlobalVariable(_)
@@ -1060,6 +1080,23 @@ fn adjust_stmt(new_pos: &HandleVec<Expression, Handle<Expression>>, stmt: &mut S
             for operand in function.operands_mut() {
                 adjust(operand);
             }
+        }
+        Statement::HitObject {
+            ref mut object,
+            ref mut fun,
+        } => {
+            adjust(object);
+            for operand in fun.operands_mut() {
+                adjust(operand);
+            }
+        }
+        Statement::ReorderThread {
+            ref mut hint,
+            ref mut bits,
+            ..
+        } => {
+            adjust(hint);
+            adjust(bits);
         }
         Statement::RayPipelineFunction(ref mut func) => {
             for operand in func.operands_mut() {
