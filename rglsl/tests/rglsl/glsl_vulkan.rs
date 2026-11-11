@@ -6973,6 +6973,36 @@ fn constant_locals_are_folded_and_not_stored() {
 }
 
 #[test]
+fn bit_field_operands_are_not_clamped() {
+    let module = compile(
+        ShaderStage::Fragment,
+        "#version 450
+        layout(set = 0, binding = 0) uniform U { int value; int offset; int bits; };
+        layout(location = 0) out ivec2 color;
+        void main() {
+            color = ivec2(bitfieldExtract(value, offset, bits),
+                          bitfieldInsert(value, 7, offset, bits));
+        }",
+    );
+    let extract = instructions(&module, Op::BitFieldSExtract);
+    let insert = instructions(&module, Op::BitFieldInsert);
+    assert_eq!((extract.len(), insert.len()), (1, 1));
+    let loaded_operand = |id: u32| {
+        module
+            .all_inst_iter()
+            .find(|inst| inst.result_id == Some(id))
+            .map(|inst| inst.class.opcode)
+    };
+    for operand in extract[0].operands.iter().chain(&insert[0].operands[2..]) {
+        assert!(matches!(
+            loaded_operand(operand.unwrap_id_ref()),
+            Some(Op::Load | Op::Bitcast)
+        ));
+    }
+    assert!(instructions(&module, Op::ExtInst).is_empty());
+}
+
+#[test]
 fn constant_locals_can_be_indexed_dynamically() {
     let module = compile(
         ShaderStage::Fragment,
