@@ -42,6 +42,7 @@ impl FunctionTracer<'_> {
                         ref body,
                         ref continuing,
                         break_if,
+                        control: _,
                     } => {
                         if let Some(break_if) = break_if {
                             self.expressions_used.insert(break_if);
@@ -328,6 +329,7 @@ impl FunctionMap {
                         ref mut body,
                         ref mut continuing,
                         ref mut break_if,
+                        control: _,
                     } => {
                         if let Some(ref mut break_if) = *break_if {
                             adjust(break_if)?;

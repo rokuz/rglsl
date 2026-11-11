@@ -2963,6 +2963,12 @@ pub enum Statement {
         body: Block,
         continuing: Block,
         break_if: Option<Handle<Expression>>,
+        #[cfg_attr(feature = "deserialize", serde(default))]
+        #[cfg_attr(
+            feature = "serialize",
+            serde(skip_serializing_if = "LoopControl::is_default")
+        )]
+        control: LoopControl,
     },
 
     /// Exits the innermost enclosing [`Loop`] or [`Switch`].
@@ -3513,6 +3519,31 @@ pub struct EntryPoint {
         serde(skip_serializing_if = "TileShading::is_default")
     )]
     pub tile_shading: TileShading,
+}
+
+#[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub enum LoopDependency {
+    Infinite,
+    Length(u32),
+}
+
+#[derive(Clone, Copy, Debug, Default, Hash, Eq, PartialEq)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub struct LoopControl {
+    pub unroll: bool,
+    pub dont_unroll: bool,
+    pub dependency: Option<LoopDependency>,
+    pub min_iterations: Option<u32>,
+    pub max_iterations: Option<u32>,
+    pub iteration_multiple: Option<u32>,
+    pub peel_count: Option<u32>,
+    pub partial_count: Option<u32>,
+    pub multiple_wait_queues: Option<u32>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Hash, Eq, PartialEq)]

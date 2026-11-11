@@ -4108,6 +4108,7 @@ impl BlockContext<'_> {
                     ref body,
                     ref continuing,
                     break_if,
+                    control,
                 } => {
                     let preamble_id = self.gen_id();
                     self.function
@@ -4130,11 +4131,9 @@ impl BlockContext<'_> {
                             loc.line_position,
                         ))
                     }
-                    block.body.push(Instruction::loop_merge(
-                        merge_id,
-                        continuing_id,
-                        spirv::SelectionControl::NONE,
-                    ));
+                    block
+                        .body
+                        .push(self.loop_merge(merge_id, continuing_id, control));
 
                     if self.force_loop_bounding {
                         block = self.write_force_bounded_loop_instructions(block, merge_id);

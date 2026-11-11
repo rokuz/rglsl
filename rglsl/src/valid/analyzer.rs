@@ -1193,6 +1193,7 @@ impl FunctionInfo {
                     ref body,
                     ref continuing,
                     break_if,
+                    control: _,
                 } => {
                     let body_uniformity = self.process_block(
                         body,

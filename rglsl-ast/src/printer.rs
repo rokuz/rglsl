@@ -408,6 +408,25 @@ impl Printer {
                 self.body(&statement.body);
             }
             StatementKind::Jump(jump) => self.jump(jump),
+            StatementKind::Attributed {
+                attributes,
+                statement,
+            } => {
+                self.write("[[");
+                for (index, attribute) in attributes.iter().enumerate() {
+                    if index > 0 {
+                        self.write(", ");
+                    }
+                    self.write(&attribute.name.node);
+                    if let Some(argument) = &attribute.argument {
+                        self.write("(");
+                        self.expression(argument);
+                        self.write(")");
+                    }
+                }
+                self.write("]] ");
+                self.statement_content(statement);
+            }
         }
     }
 

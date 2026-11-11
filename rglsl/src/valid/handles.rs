@@ -911,6 +911,7 @@ impl super::Validator {
                 ref body,
                 ref continuing,
                 break_if,
+                control: _,
             } => {
                 validate_block(body)?;
                 validate_block(continuing)?;

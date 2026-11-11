@@ -1,3 +1,5 @@
+use alloc::vec::Vec;
+
 use spirv::{Capability, Decoration, Op, StorageClass, Word};
 
 use super::{Block, BlockContext, Error, Instruction, LocalImageType, LocalType, Writer};
@@ -9,6 +11,7 @@ use crate::{
 pub(super) const CAPABILITY_IMAGE_GATHER_LINEAR_QCOM: Word = 4543;
 pub(super) const CAPABILITY_IMAGE_GATHER_EXTENDED_MODES_QCOM: Word = 4544;
 pub(super) const OP_IMAGE_GATHER_QCOM: u32 = 4545;
+const LOOP_CONTROL_MULTIPLE_WAIT_QUEUES_QCOM: Word = 0x1000_0000;
 
 const SPV_QCOM_IMAGE_PROCESSING: &str = "SPV_QCOM_image_processing";
 const SPV_QCOM_IMAGE_PROCESSING2: &str = "SPV_QCOM_image_processing2";
@@ -47,6 +50,61 @@ impl Writer {
 }
 
 impl BlockContext<'_> {
+    pub(super) fn loop_merge(
+        &self,
+        merge_id: Word,
+        continuing_id: Word,
+        control: crate::LoopControl,
+    ) -> Instruction {
+        use spirv::LoopControl as Lc;
+        let mut mask = Lc::NONE.bits();
+        let mut operands = Vec::new();
+        let mut set = |enabled: bool, bit: Word, operand: Option<u32>| {
+            if enabled {
+                mask |= bit;
+                operands.extend(operand);
+            }
+        };
+        set(control.dont_unroll, Lc::DONT_UNROLL.bits(), None);
+        set(control.unroll, Lc::UNROLL.bits(), None);
+        let dependency = control
+            .dependency
+            .filter(|_| self.writer.lang_version() >= (1, 1));
+        match dependency {
+            Some(crate::LoopDependency::Infinite) => {
+                set(true, Lc::DEPENDENCY_INFINITE.bits(), None);
+            }
+            Some(crate::LoopDependency::Length(length)) => {
+                set(true, Lc::DEPENDENCY_LENGTH.bits(), Some(length));
+            }
+            None => {}
+        }
+        if self.writer.lang_version() >= (1, 4) {
+            for (value, bit) in [
+                (control.min_iterations, Lc::MIN_ITERATIONS),
+                (control.max_iterations, Lc::MAX_ITERATIONS),
+                (control.iteration_multiple, Lc::ITERATION_MULTIPLE),
+                (control.peel_count, Lc::PEEL_COUNT),
+                (control.partial_count, Lc::PARTIAL_COUNT),
+            ] {
+                set(value.is_some(), bit.bits(), value);
+            }
+        }
+        set(
+            control.multiple_wait_queues.is_some(),
+            LOOP_CONTROL_MULTIPLE_WAIT_QUEUES_QCOM,
+            control.multiple_wait_queues,
+        );
+        let mut instruction = Instruction::new(Op::LoopMerge);
+        instruction.add_operand(merge_id);
+        instruction.add_operand(continuing_id);
+        instruction.add_operand(mask);
+        for operand in operands {
+            instruction.add_operand(operand);
+        }
+        instruction
+    }
+
     pub(super) fn handle_class(&self, base: Handle<Expression>) -> StorageClass {
         match self.ir_function.expressions[base] {
             Expression::GlobalVariable(handle)

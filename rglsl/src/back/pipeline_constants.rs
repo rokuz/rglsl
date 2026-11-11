@@ -859,6 +859,7 @@ fn adjust_stmt(new_pos: &HandleVec<Expression, Handle<Expression>>, stmt: &mut S
             ref mut body,
             ref mut continuing,
             ref mut break_if,
+            control: _,
         } => {
             adjust_block(new_pos, body);
             adjust_block(new_pos, continuing);
@@ -1187,6 +1188,7 @@ fn filter_emits_in_block(block: &mut Block, expressions: &Arena<Expression>) {
                 mut body,
                 mut continuing,
                 break_if,
+                control,
             } => {
                 filter_emits_in_block(&mut body, expressions);
                 filter_emits_in_block(&mut continuing, expressions);
@@ -1195,6 +1197,7 @@ fn filter_emits_in_block(block: &mut Block, expressions: &Arena<Expression>) {
                         body,
                         continuing,
                         break_if,
+                        control,
                     },
                     span,
                 );

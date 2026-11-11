@@ -5165,3 +5165,36 @@ void main() {
     uint packed[1];
     bitcastQCOM(packed, values);
 }
+### loop attributes need an extension | comp 450 | 4:ExtensionRequired
+layout(local_size_x = 1) in;
+void main() {
+    [[unroll]] for (int i = 0; i < 4; ++i) {}
+}
+### multiple wait queues | comp 450 | ok
+#extension GL_QCOM_multiple_wait_queues : enable
+layout(local_size_x = 1) in;
+void main() {
+    [[multiple_wait_queuesQCOM]] for (int i = 0; i < 4; ++i) {}
+    [[multiple_wait_queuesQCOM(2)]] while (false) {}
+}
+### multiple wait queues must be positive | comp 450 | 5:InvalidAttribute
+#extension GL_QCOM_multiple_wait_queues : enable
+layout(local_size_x = 1) in;
+void main() {
+    [[multiple_wait_queuesQCOM(0)]] for (int i = 0; i < 4; ++i) {}
+}
+### selection attributes need the control flow extension | comp 450 | 6:ExtensionRequired
+#extension GL_QCOM_multiple_wait_queues : enable
+layout(local_size_x = 1) in;
+void main() {
+    bool flag = true;
+    [[flatten]] if (flag) {}
+}
+### control flow attributes | comp 450 | 6:InvalidAttribute
+#extension GL_EXT_control_flow_attributes : enable
+layout(local_size_x = 1) in;
+void main() {
+    [[unroll, dependency_length(2)]] for (int i = 0; i < 4; ++i) {}
+    [[dependency_length(-1)]] do {} while (false);
+    [[dont_flatten]] switch (1) { default: break; }
+}

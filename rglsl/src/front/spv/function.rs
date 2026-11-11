@@ -691,6 +691,7 @@ impl BlockContext<'_> {
                                 body,
                                 continuing,
                                 break_if,
+                                control: crate::LoopControl::default(),
                             },
                             crate::Span::default(),
                         )

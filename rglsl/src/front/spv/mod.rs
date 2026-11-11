@@ -1630,6 +1630,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                     ref mut body,
                     ref mut continuing,
                     break_if: _,
+                    control: _,
                 } => {
                     self.patch_statements(body, expressions, fun_parameter_sampling)?;
                     self.patch_statements(continuing, expressions, fun_parameter_sampling)?;

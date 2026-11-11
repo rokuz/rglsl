@@ -7256,3 +7256,43 @@ fn qcom_cooperative_matrix_conversions_match_glslang() {
         .collect();
     assert_eq!(indices, [8, 4]);
 }
+
+#[test]
+fn loop_attributes_match_glslang() {
+    let source = "#version 450
+        #extension GL_EXT_control_flow_attributes : enable
+        #extension GL_QCOM_multiple_wait_queues : enable
+        layout(local_size_x = 1) in;
+        layout(set = 0, binding = 0) buffer Data { uint value; } data;
+        void main() {
+            [[multiple_wait_queuesQCOM]] for (uint i = 0; i < data.value; ++i) { data.value += 1; }
+            [[multiple_wait_queuesQCOM(2), unroll]] while (data.value < 9) { data.value += 2; }
+            [[dependency_length(4), min_iterations(3), dont_unroll]] do { data.value += 3; } while (data.value < 20);
+            [[unroll, dont_unroll, dependency_infinite]] for (;;) { if (data.value > 40) break; data.value += 4; }
+        }";
+    let controls = |lang_version, target| {
+        QcomModule::new(ShaderStage::Compute, source, lang_version, target)
+            .all(Op::LoopMerge as u32)
+            .into_iter()
+            .map(|operands| operands[2..].to_vec())
+            .collect::<Vec<Vec<u32>>>()
+    };
+    assert_eq!(
+        controls((1, 4), "vulkan1.1spv1.4"),
+        [
+            vec![0x1000_0000, 0],
+            vec![0x1000_0001, 2],
+            vec![0x1a, 4, 3],
+            vec![0x6],
+        ]
+    );
+    assert_eq!(
+        controls((1, 0), "vulkan1.0"),
+        [
+            vec![0x1000_0000, 0],
+            vec![0x1000_0001, 2],
+            vec![0x2],
+            vec![0x2],
+        ]
+    );
+}
