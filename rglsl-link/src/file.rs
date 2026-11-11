@@ -1,4 +1,5 @@
 use rglsl::object::{ObjectModule, FORMAT_VERSION};
+use rglsl::valid::{Capabilities, ValidationFlags, ValidationMode, Validator};
 use rglsl::{Block, Span, Statement};
 
 pub const MAX_BLOCK_DEPTH: usize = 160;
@@ -11,6 +12,8 @@ pub enum FileError {
     Decode(String),
     #[error("object module format version {found} is not supported (expected {expected})")]
     Version { found: u32, expected: u32 },
+    #[error("invalid object module: {0}")]
+    Invalid(String),
 }
 
 #[derive(serde::Deserialize)]
@@ -75,7 +78,46 @@ pub fn decode(text: &str) -> Result<ObjectModule, FileError> {
     for (slot, flat) in slots.into_iter().zip(bodies) {
         *slot = unflatten(flat)?;
     }
+    validate(&object)?;
     Ok(object)
+}
+
+fn validate(object: &ObjectModule) -> Result<(), FileError> {
+    let mut pending = Vec::from([object]);
+    while let Some(object) = pending.pop() {
+        if object.format_version != FORMAT_VERSION {
+            return Err(FileError::Version {
+                found: object.format_version,
+                expected: FORMAT_VERSION,
+            });
+        }
+        let module = &object.module;
+        let mut validator = Validator::new(ValidationFlags::all(), Capabilities::all());
+        validator.mode(ValidationMode::Object);
+        validator
+            .validate(module)
+            .map_err(|error| FileError::Invalid(crate::message(error.as_inner())))?;
+        if object
+            .functions
+            .iter()
+            .any(|symbol| module.functions.try_get(symbol.function).is_err())
+        {
+            return Err(FileError::Invalid(String::from(
+                "a function symbol names a missing function",
+            )));
+        }
+        if object
+            .globals
+            .iter()
+            .any(|symbol| module.global_variables.try_get(symbol.global).is_err())
+        {
+            return Err(FileError::Invalid(String::from(
+                "a global symbol names a missing global variable",
+            )));
+        }
+        pending.extend(&object.variants);
+    }
+    Ok(())
 }
 
 fn decode_error(message: &str) -> FileError {
