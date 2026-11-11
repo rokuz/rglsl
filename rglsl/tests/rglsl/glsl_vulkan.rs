@@ -8148,3 +8148,135 @@ void main() {
         .collect();
     assert_eq!(records, [4, 5]);
 }
+
+#[test]
+fn explicit_offsets_may_be_out_of_order() {
+    let source = "#version 450
+layout(set = 0, binding = 0, std140) uniform n1 {
+    layout(offset = 8) int a;
+    layout(offset = 4) int b;
+    layout(offset = 0) int c;
+    layout(offset = 12) int d;
+} i1;
+layout(set = 0, binding = 1, std430) buffer n2 {
+    layout(offset = 32) vec3 e;
+    vec3 f;
+    layout(offset = 16) vec3 g;
+    layout(offset = 0) vec3 h;
+} i2;
+void main() {}
+";
+    compile(ShaderStage::Fragment, source);
+    let module = parse(ShaderStage::Fragment, source).unwrap();
+    let offsets = |name| -> Vec<u32> {
+        block_layout(&module, name)
+            .into_iter()
+            .map(|(offset, _)| offset)
+            .collect()
+    };
+    assert_eq!(offsets("n1"), [8, 4, 0, 12]);
+    assert_eq!(offsets("n2"), [32, 48, 16, 0]);
+}
+
+#[test]
+fn overlapping_explicit_offsets_are_rejected() {
+    let error = parse(
+        ShaderStage::Fragment,
+        "#version 450
+layout(binding = 0, std430) buffer B {
+    layout(offset = 16) vec4 a;
+    layout(offset = 0) vec4 b;
+    layout(offset = 8) float c;
+} b;
+void main() {}
+",
+    )
+    .unwrap_err();
+    assert!(error.contains("MemberOverlap"), "{error}");
+}
+
+const HLSL_OFFSETS: &str = "#version 450
+layout(binding = 0) buffer block {
+    float m0;
+    vec3 m4;
+    float m16;
+    layout(offset = 20) vec3 m20;
+    vec3 m32;
+    vec2 m48;
+    vec2 m56;
+    float m64;
+    vec2 m68;
+    float m76;
+    float m80;
+    layout(offset = 88) vec2 m88;
+    vec2 m96;
+    dvec2 m112;
+};
+void main() {}
+";
+
+#[test]
+fn hlsl_offsets_pack_vectors_like_glslang() {
+    let module = glsl::Frontend::default()
+        .parse(
+            &glsl::Options {
+                hlsl_offsets: true,
+                ..glsl::Options::from(ShaderStage::Vertex)
+            },
+            HLSL_OFFSETS,
+        )
+        .unwrap();
+    Validator::new(ValidationFlags::all(), Capabilities::all())
+        .validate(&module)
+        .unwrap();
+    let offsets: Vec<u32> = block_layout(&module, "block")
+        .into_iter()
+        .map(|(offset, _)| offset)
+        .collect();
+    assert_eq!(
+        offsets,
+        [0, 4, 16, 20, 32, 48, 56, 64, 68, 76, 80, 88, 96, 112]
+    );
+}
+
+#[test]
+fn misaligned_explicit_offsets_are_rounded_up() {
+    let source = "#version 450
+layout(binding = 0) buffer block {
+    float m0;
+    vec3 m4;
+    float m16;
+    layout(offset = 20) vec3 m20;
+    vec3 m32;
+};
+void main() {}
+";
+    let module = parse(ShaderStage::Vertex, source).unwrap();
+    let offsets: Vec<u32> = block_layout(&module, "block")
+        .into_iter()
+        .map(|(offset, _)| offset)
+        .collect();
+    assert_eq!(offsets, [0, 16, 28, 32, 48]);
+    assert!(parse(ShaderStage::Vertex, HLSL_OFFSETS)
+        .unwrap_err()
+        .contains("MemberOverlap"));
+}
+
+#[test]
+fn programs_resolve_includes() {
+    let mut includer = rglsl_pp::MemoryIncluder::new();
+    let root = includer.add_file("dir/main.vert", "");
+    includer.add_file("dir/inc/defs.h", "layout(location = 0) out vec4 color;\n");
+    let module = glsl::Frontend::default()
+        .parse_with_includer(
+            &glsl::Options::from(ShaderStage::Vertex),
+            "#version 450\n#include \"inc\\defs.h\"\nvoid main() { color = vec4(1.0); }\n",
+            root,
+            &mut includer,
+        )
+        .unwrap();
+    assert!(module
+        .global_variables
+        .iter()
+        .any(|(_, global)| global.name.as_deref() == Some("color")));
+}

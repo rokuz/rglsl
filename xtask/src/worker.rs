@@ -64,6 +64,8 @@ pub fn compile_one(
     spv_version: &str,
     auto_map: bool,
     object: bool,
+    hlsl_offsets: bool,
+    include_dirs: &[String],
     out: &Path,
 ) -> i32 {
     let source = match std::fs::read(input) {
@@ -95,12 +97,15 @@ pub fn compile_one(
         auto_map_bindings: auto_map,
         auto_map_locations: auto_map,
         spirv_version: Some(lang_version),
+        hlsl_offsets,
         ..glsl::Options::from(stage)
     };
+    let mut includer = rglsl_pp::FileSystemIncluder::new(include_dirs);
+    let root = includer.add_root(input);
     if object {
-        return compile_object(&mut frontend, &options, &source, out);
+        return compile_object(&mut frontend, &options, &source, root, &mut includer, out);
     }
-    let module = match frontend.parse(&options, &source) {
+    let module = match frontend.parse_with_includer(&options, &source, root, &mut includer) {
         Ok(module) => module,
         Err(errors) => {
             for error in &errors.errors {
@@ -298,9 +303,11 @@ fn compile_object(
     frontend: &mut glsl::Frontend,
     options: &glsl::Options,
     source: &str,
+    root: rglsl_pp::FileId,
+    includer: &mut rglsl_pp::FileSystemIncluder,
     out: &Path,
 ) -> i32 {
-    let object = match frontend.compile(options, source) {
+    let object = match frontend.compile_with_includer(options, source, root, includer) {
         Ok(object) => object,
         Err(errors) => {
             for error in &errors.errors {

@@ -93,7 +93,9 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   matrices to such members. The validator no longer checks offsets, strides and spans against
   WGSL alignment rules (`Disalignment::{ArrayStride, StructSpan, MemberOffset,
   MemberOffsetAfterStruct}` are removed); it checks only that members and array elements do
-  not overlap.
+  not overlap. Members need not be in offset order (GLSL's explicit `offset` allows any
+  order in Vulkan): the overlap check sorts members by offset, and a matrix member's extent is
+  measured with its `matrix_layout` stride.
 - **Stage inputs and outputs can be global variables** (`AddressSpace::Input`/`Output`,
   `GlobalVariable::io`, `EntryPoint::interface`, and `component`/`invariant`/`patch` on
   `Binding::Location`); see `docs/design/stage-io.md`. A vertex shader need not return a

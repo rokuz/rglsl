@@ -47,13 +47,18 @@ use crate::{
 
 pub(super) type Result<T> = core::result::Result<T, Error>;
 
-pub(super) fn parse(options: &Options, source: &str) -> core::result::Result<Module, ParseErrors> {
+pub(super) fn parse(
+    options: &Options,
+    source: &str,
+    root: rglsl_pp::FileId,
+    includer: &mut dyn rglsl_pp::Includer,
+) -> core::result::Result<Module, ParseErrors> {
     lower(
         options,
         source,
         Mode::Program,
-        rglsl_pp::FileId(0),
-        &mut rglsl_pp::NoIncluder,
+        root,
+        includer,
         &mut library::StageNames::default(),
     )
     .map(|object| object.module)
