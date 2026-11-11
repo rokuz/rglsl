@@ -284,6 +284,8 @@ pub enum FunctionError {
     InvalidAbortMessage(Handle<crate::Type>),
     #[error("Invalid operand {0:?} of a tensor write")]
     InvalidTensorWrite(Handle<crate::Expression>),
+    #[error("Operand {0:?} of a SPIR-V instruction is invalid")]
+    InvalidSpirvOperand(Handle<crate::Expression>),
     #[error("The argument {0:?} of an abort does not match its message type")]
     InvalidAbortArgument(Handle<crate::Expression>),
 }
@@ -585,7 +587,7 @@ impl super::Validator {
             )
             .with_span_handle(texel.coordinate, context.expressions));
         }
-        if arrayed != texel.array_index.is_some() {
+        if super::image_array_index_expected(dim, arrayed, class) != texel.array_index.is_some() {
             return Err(
                 FunctionError::InvalidImageAtomic(ExpressionError::InvalidImageArrayIndex)
                     .with_span_handle(texel.coordinate, context.expressions),
@@ -1199,6 +1201,7 @@ impl super::Validator {
                             | Ex::ArrayConversion { .. }
                             | Ex::ImageLoad { .. }
                             | Ex::ImageQuery { .. }
+                            | Ex::ImageSparseResident { .. }
                             | Ex::Unary { .. }
                             | Ex::Binary { .. }
                             | Ex::Select { .. }
@@ -1237,6 +1240,7 @@ impl super::Validator {
                             | Ex::ReportIntersectionResult
                             | Ex::SubgroupBallotResult
                             | Ex::SubgroupOperationResult { .. }
+                            | Ex::SpirvInstructionResult { .. }
                             | Ex::CooperativeMatrixResult { .. } => {
                                 return Err(FunctionError::EmitResult(handle)
                                     .with_span_handle(handle, context.expressions));
@@ -1458,6 +1462,38 @@ impl super::Validator {
                         context.resolve_type_inner(operand, &self.valid_expression_set)?;
                     }
                 }
+                S::SpirvInstruction {
+                    ref operands,
+                    result,
+                    ..
+                } => {
+                    for operand in operands {
+                        match *operand {
+                            crate::SpirvOperand::Value(value) => {
+                                context.resolve_type_inner(value, &self.valid_expression_set)?;
+                            }
+                            crate::SpirvOperand::Pointer(pointer) => {
+                                let inner = context
+                                    .resolve_type_inner(pointer, &self.valid_expression_set)?;
+                                if !matches!(*inner, Ti::Pointer { .. } | Ti::ValuePointer { .. }) {
+                                    return Err(FunctionError::InvalidSpirvOperand(pointer)
+                                        .with_span_handle(pointer, context.expressions));
+                                }
+                            }
+                            crate::SpirvOperand::Literal(_) => {}
+                        }
+                    }
+                    if let Some(result) = result {
+                        if !matches!(
+                            context.expressions[result],
+                            crate::Expression::SpirvInstructionResult { .. }
+                        ) {
+                            return Err(FunctionError::InvalidSpirvOperand(result)
+                                .with_span_handle(result, context.expressions));
+                        }
+                        self.emit_expression(result, context)?;
+                    }
+                }
                 S::Assume { condition } => {
                     let ty = context.resolve_type_inner(condition, &self.valid_expression_set)?;
                     if *ty != Ti::Scalar(crate::Scalar::BOOL) {
@@ -1672,6 +1708,7 @@ impl super::Validator {
                     image,
                     coordinate,
                     array_index,
+                    sample,
                     value,
                 } => {
                     //Note: this code uses a lot of `FunctionError::InvalidImageStore`,
@@ -1757,11 +1794,40 @@ impl super::Validator {
 
                     // The `array_index` operand should be present if and only if
                     // the image itself is arrayed.
-                    if arrayed != array_index.is_some() {
+                    if super::image_array_index_expected(dim, arrayed, class)
+                        != array_index.is_some()
+                    {
                         return Err(FunctionError::InvalidImageStore(
                             ExpressionError::InvalidImageArrayIndex,
                         )
                         .with_span_handle(coordinate, context.expressions));
+                    }
+
+                    match (sample, class.is_multisampled()) {
+                        (None, false) => {}
+                        (Some(sample), true) => {
+                            if !matches!(
+                                *context.resolve_type_inner(sample, &self.valid_expression_set)?,
+                                Ti::Scalar(crate::Scalar::I32 | crate::Scalar::U32)
+                            ) {
+                                return Err(FunctionError::InvalidImageStore(
+                                    ExpressionError::InvalidImageOtherIndexType(sample),
+                                )
+                                .with_span_handle(sample, context.expressions));
+                            }
+                        }
+                        (Some(_), false) => {
+                            return Err(FunctionError::InvalidImageStore(
+                                ExpressionError::InvalidImageSampleSelector,
+                            )
+                            .with_span_handle(image, context.expressions));
+                        }
+                        (None, true) => {
+                            return Err(FunctionError::InvalidImageStore(
+                                ExpressionError::MissingImageSampleSelector,
+                            )
+                            .with_span_handle(image, context.expressions));
+                        }
                     }
 
                     // If present, `array_index` must be a scalar integer type.

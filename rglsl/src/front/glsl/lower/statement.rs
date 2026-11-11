@@ -354,7 +354,10 @@ impl FunctionLowerer<'_, '_> {
                 }
                 Ok(())
             }
-            DeclarationKind::Precision { .. } | DeclarationKind::FunctionPrototype(_) => Ok(()),
+            DeclarationKind::Precision { .. }
+            | DeclarationKind::FunctionPrototype(_)
+            | DeclarationKind::SpirvInstruction { .. }
+            | DeclarationKind::SpirvExecutionMode(_) => Ok(()),
             DeclarationKind::Block { .. }
             | DeclarationKind::Qualifier(_)
             | DeclarationKind::QualifiedIdentifiers { .. } => {

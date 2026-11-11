@@ -116,6 +116,7 @@ fn populate_atomic_result() {
                 input_attachment_index: None,
                 heap_offset: None,
                 tile_attachment: false,
+                spirv_decorations: Vec::new(),
             },
             span,
         );
@@ -295,6 +296,7 @@ fn emit_workgroup_uniform_load_result() {
                 input_attachment_index: None,
                 heap_offset: None,
                 tile_attachment: false,
+                spirv_decorations: Vec::new(),
             },
             span,
         );
@@ -640,6 +642,7 @@ fn local_var_override_sized_array() {
             input_attachment_index: None,
             heap_offset: None,
             tile_attachment: false,
+            spirv_decorations: Vec::new(),
         },
         span,
     );
@@ -1021,6 +1024,7 @@ fn unexpected_task_payload() {
             input_attachment_index: None,
             heap_offset: None,
             tile_attachment: false,
+            spirv_decorations: Vec::new(),
         },
         err_span,
     );
@@ -1043,6 +1047,8 @@ fn unexpected_task_payload() {
         tessellation: None,
         mesh_shader: None,
         tile_shading: rglsl::TileShading::default(),
+        derivative_group: None,
+        spirv_execution_modes: Vec::new(),
     };
     module.entry_points.push(entry_point);
 

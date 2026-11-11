@@ -2034,7 +2034,8 @@ impl BlockContext<'_> {
             | crate::Expression::RayQueryProceedResult
             | crate::Expression::ReportIntersectionResult
             | crate::Expression::SubgroupBallotResult
-            | crate::Expression::SubgroupOperationResult { .. } => self.cached.get(expr_handle)?,
+            | crate::Expression::SubgroupOperationResult { .. }
+            | crate::Expression::SpirvInstructionResult { .. } => self.cached.get(expr_handle)?,
             crate::Expression::As {
                 expr,
                 kind,
@@ -2046,6 +2047,7 @@ impl BlockContext<'_> {
                 array_index,
                 sample,
                 level,
+                sparse,
             } => self.write_image_load(
                 result_type_id,
                 image,
@@ -2053,6 +2055,7 @@ impl BlockContext<'_> {
                 array_index,
                 level,
                 sample,
+                sparse.is_some(),
                 block,
             )?,
             crate::Expression::ImageSample {
@@ -2066,6 +2069,8 @@ impl BlockContext<'_> {
                 level,
                 depth_ref,
                 clamp_to_edge,
+                min_lod,
+                sparse,
             } => self.write_image_sample(
                 expr_handle,
                 result_type_id,
@@ -2078,8 +2083,23 @@ impl BlockContext<'_> {
                 level,
                 depth_ref,
                 clamp_to_edge,
+                min_lod,
+                sparse.is_some(),
                 block,
             )?,
+            crate::Expression::ImageSparseResident { code } => {
+                self.writer
+                    .require_any("sparse residency", &[spirv::Capability::SparseResidency])?;
+                let id = self.gen_id();
+                let code_id = self.cached.get(code)?;
+                block.body.push(Instruction::unary(
+                    spirv::Op::ImageSparseTexelsResident,
+                    result_type_id,
+                    id,
+                    code_id,
+                ));
+                id
+            }
             crate::Expression::Select {
                 condition,
                 accept,
@@ -4177,6 +4197,11 @@ impl BlockContext<'_> {
                     ref arguments,
                 } => self.write_debug_printf_statement(&mut block, format, arguments)?,
                 Statement::Assume { condition } => self.write_assume(condition, &mut block)?,
+                Statement::SpirvInstruction {
+                    ref instruction,
+                    ref operands,
+                    result,
+                } => self.write_spirv_instruction(&mut block, instruction, operands, result)?,
                 Statement::CooperativeMatrix {
                     ref function,
                     result,
@@ -4287,8 +4312,16 @@ impl BlockContext<'_> {
                     image,
                     coordinate,
                     array_index,
+                    sample,
                     value,
-                } => self.write_image_store(image, coordinate, array_index, value, &mut block)?,
+                } => self.write_image_store(
+                    image,
+                    coordinate,
+                    array_index,
+                    sample,
+                    value,
+                    &mut block,
+                )?,
                 Statement::TensorWrite {
                     tensor,
                     coordinates,

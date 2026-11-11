@@ -318,7 +318,9 @@ impl<'a> Lowerer<'a> {
                     space: AddressSpace::Private,
                 });
                 Local::Pointer(index)
-            } else if parameter.direction.is_output() {
+            } else if parameter.direction.is_output()
+                || matches!(parameter.ty.kind, rglsl_sema::TypeKind::Spirv(_))
+            {
                 ty = self.insert_type(TypeInner::Pointer {
                     base: ty,
                     space: AddressSpace::Function,
@@ -464,6 +466,7 @@ impl<'a> Lowerer<'a> {
                 .map(|conservative| EarlyDepthTest::Allow { conservative })
         };
         let opacity_micromap = self.opacity_micromap(at)?;
+        let spirv_execution_modes = self.spirv_execution_modes(at)?;
         let (geometry, tessellation) = self.stage_info();
         self.module.entry_points.push(EntryPoint {
             name: String::from("main"),
@@ -483,8 +486,25 @@ impl<'a> Lowerer<'a> {
             tessellation,
             mesh_shader: self.mesh_shader_info(),
             tile_shading: self.tile_shading(),
+            derivative_group: self.derivative_group(),
+            spirv_execution_modes,
         });
         Ok(())
+    }
+
+    fn derivative_group(&self) -> Option<crate::DerivativeGroup> {
+        let (shape, khr) = self.analysis.derivative_group?;
+        Some(crate::DerivativeGroup {
+            shape: match shape {
+                rglsl_sema::DerivativeGroup::Quads => crate::DerivativeGroupShape::Quads,
+                rglsl_sema::DerivativeGroup::Linear => crate::DerivativeGroupShape::Linear,
+            },
+            extension: if khr {
+                crate::DerivativeGroupExtension::Khr
+            } else {
+                crate::DerivativeGroupExtension::Nv
+            },
+        })
     }
 
     fn tile_shading(&self) -> crate::TileShading {

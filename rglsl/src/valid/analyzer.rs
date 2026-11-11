@@ -754,6 +754,8 @@ impl FunctionInfo {
                 level,
                 depth_ref,
                 clamp_to_edge: _,
+                min_lod,
+                sparse: _,
             } => {
                 let image_storage = GlobalOrArgument::from_expression(expression_arena, image)?;
                 if let Some(sampler) = sampler {
@@ -781,6 +783,7 @@ impl FunctionInfo {
                 };
                 let dref_nur = depth_ref.and_then(|h| self.add_ref(h));
                 let offset_nur = offset.and_then(|h| self.add_ref(h));
+                let min_lod_nur = min_lod.and_then(|h| self.add_ref(h));
                 Uniformity {
                     non_uniform_result: self
                         .add_ref(image)
@@ -789,7 +792,8 @@ impl FunctionInfo {
                         .or(array_nur)
                         .or(level_nur)
                         .or(dref_nur)
-                        .or(offset_nur),
+                        .or(offset_nur)
+                        .or(min_lod_nur),
                     requirements: if level.implicit_derivatives() {
                         UniformityRequirements::IMPLICIT_LEVEL
                     } else {
@@ -803,6 +807,7 @@ impl FunctionInfo {
                 array_index,
                 sample,
                 level,
+                sparse: _,
             } => {
                 let array_nur = array_index.and_then(|h| self.add_ref(h));
                 let sample_nur = sample.and_then(|h| self.add_ref(h));
@@ -820,13 +825,28 @@ impl FunctionInfo {
             E::ImageQuery { image, query } => {
                 let query_nur = match query {
                     crate::ImageQuery::Size { level: Some(h) } => self.add_ref(h),
+                    crate::ImageQuery::Lod {
+                        sampler,
+                        coordinate,
+                    } => {
+                        let sampler_nur = sampler.and_then(|h| self.add_ref(h));
+                        self.add_ref(coordinate).or(sampler_nur)
+                    }
                     _ => None,
                 };
                 Uniformity {
                     non_uniform_result: self.add_ref_impl(image, GlobalUse::QUERY).or(query_nur),
-                    requirements: UniformityRequirements::empty(),
+                    requirements: if matches!(query, crate::ImageQuery::Lod { .. }) {
+                        UniformityRequirements::IMPLICIT_LEVEL
+                    } else {
+                        UniformityRequirements::empty()
+                    },
                 }
             }
+            E::ImageSparseResident { code } => Uniformity {
+                non_uniform_result: self.add_ref(code),
+                requirements: UniformityRequirements::empty(),
+            },
             E::Unary { expr, .. } => Uniformity {
                 non_uniform_result: self.add_ref(expr),
                 requirements: UniformityRequirements::empty(),
@@ -914,7 +934,7 @@ impl FunctionInfo {
                 non_uniform_result: Some(handle),
                 requirements: UniformityRequirements::empty(),
             },
-            E::SubgroupOperationResult { .. } => Uniformity {
+            E::SubgroupOperationResult { .. } | E::SpirvInstructionResult { .. } => Uniformity {
                 non_uniform_result: Some(handle),
                 requirements: UniformityRequirements::empty(),
             },
@@ -1286,14 +1306,29 @@ impl FunctionInfo {
                     let _ = self.add_ref(value);
                     FunctionUniformity::new()
                 }
+                S::SpirvInstruction { ref operands, .. } => {
+                    for operand in operands {
+                        match *operand {
+                            crate::SpirvOperand::Value(value) => {
+                                let _ = self.add_ref(value);
+                            }
+                            crate::SpirvOperand::Pointer(pointer) => {
+                                let _ = self.add_ref_impl(pointer, GlobalUse::READ);
+                            }
+                            crate::SpirvOperand::Literal(_) => {}
+                        }
+                    }
+                    FunctionUniformity::new()
+                }
                 S::ImageStore {
                     image,
                     coordinate,
                     array_index,
+                    sample,
                     value,
                 } => {
                     let _ = self.add_ref_impl(image, GlobalUse::WRITE);
-                    if let Some(expr) = array_index {
+                    for expr in array_index.into_iter().chain(sample) {
                         let _ = self.add_ref(expr);
                     }
                     let _ = self.add_ref(coordinate);
@@ -1697,6 +1732,7 @@ fn uniform_control_flow() {
             input_attachment_index: None,
             heap_offset: None,
             tile_attachment: false,
+            spirv_decorations: Default::default(),
         },
         Default::default(),
     );
@@ -1713,6 +1749,7 @@ fn uniform_control_flow() {
             input_attachment_index: None,
             heap_offset: None,
             tile_attachment: false,
+            spirv_decorations: Default::default(),
         },
         Default::default(),
     );

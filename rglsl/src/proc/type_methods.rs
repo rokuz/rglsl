@@ -296,7 +296,7 @@ impl crate::TypeInner {
             Self::LongVector { size, scalar, .. } => {
                 size.known_or_one().checked_mul(u32::from(scalar.width))
             }
-            Self::TensorLayout { .. } | Self::TensorView { .. } => Some(0),
+            Self::TensorLayout { .. } | Self::TensorView { .. } | Self::Spirv { .. } => Some(0),
             Self::Pointer {
                 space: crate::AddressSpace::PhysicalStorage { .. },
                 ..
@@ -495,7 +495,8 @@ impl crate::TypeInner {
             | Ti::CooperativeMatrix { .. }
             | Ti::LongVector { .. }
             | Ti::TensorLayout { .. }
-            | Ti::TensorView { .. } => true,
+            | Ti::TensorView { .. }
+            | Ti::Spirv { .. } => true,
         }
     }
 
@@ -554,7 +555,8 @@ impl crate::TypeInner {
             | crate::TypeInner::RayQuery { .. }
             | crate::TypeInner::HitObject { .. }
             | crate::TypeInner::BindingArray { .. }
-            | crate::TypeInner::BufferDescriptor { .. } => None,
+            | crate::TypeInner::BufferDescriptor { .. }
+            | crate::TypeInner::Spirv { .. } => None,
         }
     }
 
@@ -584,7 +586,8 @@ impl crate::TypeInner {
             | crate::TypeInner::RayQuery { .. }
             | crate::TypeInner::HitObject { .. }
             | crate::TypeInner::BindingArray { .. }
-            | crate::TypeInner::BufferDescriptor { .. } => false,
+            | crate::TypeInner::BufferDescriptor { .. }
+            | crate::TypeInner::Spirv { .. } => false,
         }
     }
 

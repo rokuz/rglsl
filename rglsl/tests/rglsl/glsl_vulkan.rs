@@ -7643,6 +7643,119 @@ fn shader_core_builtins() {
 }
 
 #[test]
+fn formatless_multisampled_and_cube_storage_images() {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+        #extension GL_EXT_shader_image_load_formatted : require
+        layout(set = 0, binding = 0) uniform image2D plain;
+        layout(set = 0, binding = 1, rgba8) uniform image2DMS ms;
+        layout(set = 0, binding = 2, rgba8) uniform imageCubeArray cube;
+        layout(location = 0) out vec4 o;
+        void main() {
+            o = imageLoad(plain, ivec2(0)) + imageLoad(cube, ivec3(1, 2, 9));
+            imageStore(plain, ivec2(1), o);
+            imageStore(ms, ivec2(0), 3, o);
+            imageStore(cube, ivec3(0, 0, 7), o);
+        }",
+    );
+    assert!(has_capability(
+        &module,
+        spirv::Capability::StorageImageReadWithoutFormat
+    ));
+    assert!(has_capability(
+        &module,
+        spirv::Capability::StorageImageWriteWithoutFormat
+    ));
+    let formats: Vec<&Operand> = instructions(&module, Op::TypeImage)
+        .iter()
+        .map(|inst| &inst.operands[6])
+        .collect();
+    assert!(formats.contains(&&Operand::ImageFormat(spirv::ImageFormat::Unknown)));
+    let writes = instructions(&module, Op::ImageWrite);
+    assert_eq!(writes.len(), 3);
+    assert!(writes.iter().any(|inst| {
+        inst.operands.get(3) == Some(&Operand::ImageOperands(spirv::ImageOperands::SAMPLE))
+    }));
+}
+
+#[test]
+fn compute_shader_derivatives() {
+    let module = compile_valid(
+        ShaderStage::Compute,
+        "#version 450
+        #extension GL_KHR_compute_shader_derivatives : require
+        layout(local_size_x = 2, local_size_y = 2) in;
+        layout(derivative_group_quadsKHR) in;
+        layout(set = 0, binding = 0) uniform sampler2D s;
+        layout(set = 0, binding = 1) buffer B { vec4 v; float f; } b;
+        void main() {
+            b.f = dFdx(b.f) + fwidthCoarse(b.f);
+            b.v = texture(s, vec2(0.5), 0.25) + textureQueryLod(s, vec2(0.5)).xyxy;
+        }",
+    );
+    assert!(has_execution_mode(
+        &module,
+        spirv::ExecutionMode::DerivativeGroupQuadsKHR
+    ));
+    assert!(has_capability(
+        &module,
+        spirv::Capability::ComputeDerivativeGroupQuadsKHR
+    ));
+    assert_eq!(instructions(&module, Op::DPdx).len(), 1);
+    assert_eq!(instructions(&module, Op::ImageSampleImplicitLod).len(), 1);
+    assert_eq!(instructions(&module, Op::ImageQueryLod).len(), 1);
+
+    let module = compile_valid(
+        ShaderStage::Compute,
+        "#version 450
+        layout(local_size_x = 1) in;
+        layout(set = 0, binding = 0) uniform sampler2D s;
+        layout(set = 0, binding = 1) buffer B { vec4 v; } b;
+        void main() { b.v = texture(s, vec2(0.5), 0.25); }",
+    );
+    assert!(instructions(&module, Op::ImageSampleImplicitLod).is_empty());
+    assert_eq!(instructions(&module, Op::ImageSampleExplicitLod).len(), 1);
+}
+
+#[test]
+fn sparse_textures_and_lod_clamp() {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+        #extension GL_ARB_sparse_texture2 : require
+        #extension GL_ARB_sparse_texture_clamp : require
+        layout(set = 0, binding = 0) uniform sampler2D s;
+        layout(set = 0, binding = 1) uniform sampler2DShadow d;
+        layout(set = 0, binding = 2, rgba32f) uniform image2D i;
+        layout(location = 0) out vec4 o;
+        void main() {
+            float f;
+            vec4 t;
+            int code = sparseTextureARB(s, vec2(0.5), o);
+            code += sparseTextureClampARB(d, vec3(0.5), 0.5, f);
+            code += sparseTextureGatherARB(s, vec2(0.5), t, 1);
+            code += sparseTexelFetchARB(s, ivec2(0), 0, t);
+            code += sparseImageLoadARB(i, ivec2(0), t);
+            o += t + textureClampARB(s, vec2(0.5), 0.25);
+            if (sparseTexelsResidentARB(code)) o += f;
+        }",
+    );
+    assert!(has_capability(&module, spirv::Capability::SparseResidency));
+    assert!(has_capability(&module, spirv::Capability::MinLod));
+    for op in [
+        Op::ImageSparseSampleImplicitLod,
+        Op::ImageSparseSampleDrefImplicitLod,
+        Op::ImageSparseGather,
+        Op::ImageSparseFetch,
+        Op::ImageSparseRead,
+        Op::ImageSparseTexelsResident,
+    ] {
+        assert_eq!(instructions(&module, op).len(), 1, "{op:?}");
+    }
+}
+
+#[test]
 fn ext_hit_objects_take_payload_and_attribute_variables() {
     let module = compile(
         ShaderStage::RayGeneration,
@@ -7846,6 +7959,141 @@ void main() {
     ] {
         assert!(capabilities.contains(&capability), "{capability:?}");
     }
+}
+
+#[test]
+fn gather_with_a_level_or_a_bias() {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+        #extension GL_AMD_texture_gather_bias_lod : require
+        layout(set = 0, binding = 0) uniform sampler2D s;
+        layout(location = 0) out vec4 o;
+        void main() {
+            o = textureGatherLodAMD(s, vec2(0.5), 1.0, 2) + textureGather(s, vec2(0.5), 1, 0.5);
+        }",
+    );
+    assert!(has_capability(
+        &module,
+        spirv::Capability::ImageGatherBiasLodAMD
+    ));
+    let masks: Vec<&Operand> = instructions(&module, Op::ImageGather)
+        .iter()
+        .map(|inst| &inst.operands[3])
+        .collect();
+    assert_eq!(
+        masks,
+        [
+            &Operand::ImageOperands(spirv::ImageOperands::LOD),
+            &Operand::ImageOperands(spirv::ImageOperands::BIAS)
+        ]
+    );
+}
+
+#[test]
+fn spirv_instruction_passes_literals_and_pointers() {
+    let source = "#version 450
+#extension GL_EXT_spirv_intrinsics : enable
+spirv_instruction(id = 61)
+vec4 load(spirv_by_reference vec4 pointer, spirv_literal int memoryOperands);
+spirv_instruction(id = 62)
+void store(spirv_by_reference vec4 pointer, vec4 object, spirv_literal int memoryOperands);
+spirv_instruction(extensions = [\"SPV_KHR_non_semantic_info\"], set = \"NonSemantic.DebugBreak\", id = 1)
+void debugBreak();
+layout(location = 0) in vec4 vec4In;
+layout(location = 1) out vec4 vec4Out;
+void main() {
+    store(vec4Out, load(vec4In, 0x0), 0x1);
+    debugBreak();
+}
+";
+    let words = message_words(ShaderStage::Vertex, source, (1, 0));
+    let instructions = raw_instructions(&words);
+    assert!(instructions
+        .iter()
+        .any(|(op, operands)| *op == Op::Load as u32 && operands.len() == 4 && operands[3] == 0));
+    assert!(instructions
+        .iter()
+        .any(|(op, operands)| *op == Op::Store as u32 && operands.len() == 3 && operands[2] == 1));
+    let imports: Vec<String> = instructions
+        .iter()
+        .filter(|(op, _)| *op == Op::ExtInstImport as u32)
+        .map(|(_, operands)| literal_string(&operands[1..]))
+        .collect();
+    assert!(imports.contains(&"NonSemantic.DebugBreak".to_string()));
+    let extensions: Vec<String> = instructions
+        .iter()
+        .filter(|(op, _)| *op == Op::Extension as u32)
+        .map(|(_, operands)| literal_string(operands))
+        .collect();
+    assert!(extensions.contains(&"SPV_KHR_non_semantic_info".to_string()));
+}
+
+#[test]
+fn spirv_execution_modes_and_decorations() {
+    let source = "#version 460
+#extension GL_EXT_spirv_intrinsics : require
+layout(constant_id = 0) const int sx = 2;
+spirv_execution_mode_id(extensions = [\"SPV_AMDX_shader_enqueue\"], capabilities = [5067], 5077, sx + 1, sx, 1);
+spirv_decorate(0)
+spirv_decorate_string(extensions = [\"SPV_GOOGLE_hlsl_functionality1\"], 5635, \"foobar\")
+float y = 1.0;
+layout(local_size_x = 1) in;
+void main() {
+}
+";
+    let words = message_words(ShaderStage::Compute, source, (1, 4));
+    let instructions = raw_instructions(&words);
+    let modes: Vec<&Vec<u32>> = instructions
+        .iter()
+        .filter(|(op, _)| *op == Op::ExecutionModeId as u32)
+        .map(|(_, operands)| operands)
+        .collect();
+    assert_eq!(modes.len(), 1);
+    assert_eq!(modes[0][1], 5077);
+    assert_eq!(modes[0].len(), 5);
+    assert!(instructions
+        .iter()
+        .any(|(op, operands)| *op == Op::Capability as u32 && operands[0] == 5067));
+    assert!(instructions
+        .iter()
+        .any(|(op, operands)| *op == Op::Decorate as u32 && operands[1] == 0));
+    assert!(instructions
+        .iter()
+        .any(|(op, operands)| *op == Op::DecorateString as u32
+            && operands[1] == 5635
+            && literal_string(&operands[2..]) == "foobar"));
+}
+
+#[test]
+fn spirv_type_declares_a_raw_type() {
+    let source = "#version 460
+#extension GL_EXT_spirv_intrinsics : enable
+#define EmptyStruct spirv_type(id = 30)
+void func(EmptyStruct emptyStruct) {}
+void main() {
+    EmptyStruct dummy[2];
+    func(dummy[1]);
+}
+";
+    let words = message_words(ShaderStage::Vertex, source, (1, 0));
+    let instructions = raw_instructions(&words);
+    assert!(instructions
+        .iter()
+        .any(|(op, operands)| *op == Op::TypeStruct as u32 && operands.len() == 1));
+    let rejected = parse(
+        ShaderStage::Vertex,
+        "#version 450
+#extension GL_EXT_spirv_intrinsics : enable
+spirv_instruction(set = \"OpenCL.std\", id = 171)
+vec2 vloadn(uint offset, spirv_by_reference float p, spirv_literal int n);
+float data[4];
+void main() { vec2 v = vloadn(0u, data[0], 2); }
+",
+    )
+    .map(|_| ())
+    .unwrap_err();
+    assert!(rejected.contains("physical addressing"), "{rejected}");
 }
 
 #[test]

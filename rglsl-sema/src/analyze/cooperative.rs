@@ -172,7 +172,20 @@ impl Analyzer<'_> {
             .and_then(Type::scalar_type);
         match kind {
             ParameterizedType::CooperativeMatrix => {
-                let Some(scalar) = element_scalar.filter(|scalar| coopmat_scalar(*scalar)) else {
+                let spirv_scalar = match element.as_ref() {
+                    Some(element) if !element.is_array() => match element.kind {
+                        crate::types::TypeKind::Spirv(id) => self
+                            .types
+                            .spirv(id)
+                            .and_then(crate::spirv::SpirvType::scalar),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                let Some(scalar) = element_scalar
+                    .or(spirv_scalar)
+                    .filter(|scalar| coopmat_scalar(*scalar))
+                else {
                     return self.parameter_error(span, keyword, "invalid component type");
                 };
                 let [scope, rows, columns, usage] = values.as_slice() else {
@@ -187,6 +200,7 @@ impl Analyzer<'_> {
                     scalar,
                     [*scope, *rows, *columns],
                     usage,
+                    element_scalar.is_none(),
                 )
             }
             ParameterizedType::FloatCooperativeMatrixNv
@@ -222,6 +236,7 @@ impl Analyzer<'_> {
                     scalar,
                     [*scope, *rows, *columns],
                     CooperativeUse::Nv,
+                    false,
                 )
             }
             ParameterizedType::LongVector | ParameterizedType::CooperativeVectorNv => {
@@ -364,6 +379,7 @@ impl Analyzer<'_> {
         scalar: Scalar,
         [scope, rows, columns]: [Parameter; 3],
         usage: CooperativeUse,
+        spirv_element: bool,
     ) -> Type {
         let (Some(scope), Some(rows), Some(columns)) = (scope.size(), rows.size(), columns.size())
         else {
@@ -375,6 +391,7 @@ impl Analyzer<'_> {
             rows,
             columns,
             usage,
+            spirv_element,
         }))
     }
 

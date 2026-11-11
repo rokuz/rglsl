@@ -5,6 +5,7 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
+use crate::ast::NumericKind;
 use crate::ast::{
     ArrayDimension, ArraySpecifier, AssignmentOperator, Attribute, BasicType, BinaryOperator,
     BlockInstance, BlockStructure, CaseLabel, CompoundStatement, Condition, ConditionDeclaration,
@@ -13,9 +14,11 @@ use crate::ast::{
     FunctionIdentifier, FunctionPrototype, Identifier, InitDeclarator, InitDeclaratorList,
     Initializer, JumpStatement, LayoutQualifier, LayoutQualifierId, Node, NodeId, NumericLiteral,
     ParameterDeclaration, ParameterizedType, PostfixOperator, PrecisionQualifier,
-    SingleTypeQualifier, Spanned, Statement, StatementKind, StructDeclaration, StructDeclarator,
-    StructSpecifier, TranslationUnit, TypeParameters, TypeQualifier, TypeSpecifier,
-    TypeSpecifierNonArray, UnaryOperator,
+    SingleTypeQualifier, Spanned, SpirvDecorate, SpirvDecorateKind, SpirvExecutionMode,
+    SpirvExecutionModeKind, SpirvInstruction, SpirvInstructionQualifier, SpirvRequirement,
+    SpirvStorageClass, SpirvTypeParameter, SpirvTypeSpecifier, Statement, StatementKind,
+    StructDeclaration, StructDeclarator, StructSpecifier, TranslationUnit, TypeParameters,
+    TypeQualifier, TypeSpecifier, TypeSpecifierNonArray, UnaryOperator,
 };
 use crate::error::{ParseError, ParseErrorKind};
 use crate::extensions::{ExtensionState, Feature};
@@ -28,6 +31,21 @@ use crate::span::Span;
 pub const MAX_NESTING_DEPTH: u32 = 256;
 pub const NON_UNIFORM: &str = "nonuniformEXT";
 const NON_UNIFORM_EXTENSION: &str = "GL_EXT_nonuniform_qualifier";
+const SPIRV_INTRINSICS: &str = "GL_EXT_spirv_intrinsics";
+const SPIRV_TYPE: &str = "spirv_type";
+const SPIRV_QUALIFIERS: [&str; 6] = [
+    "spirv_storage_class",
+    "spirv_decorate",
+    "spirv_decorate_id",
+    "spirv_decorate_string",
+    "spirv_by_reference",
+    "spirv_literal",
+];
+const SPIRV_DECLARATIONS: [&str; 3] = [
+    "spirv_instruction",
+    "spirv_execution_mode",
+    "spirv_execution_mode_id",
+];
 pub const MAX_EXPRESSION_HEIGHT: u32 = 512;
 
 type Result<T> = core::result::Result<T, Box<ParseError>>;
@@ -45,6 +63,27 @@ struct PendingBinary {
 enum AfterQualifier {
     Declaration(Box<ExternalDeclaration>),
     Type(Spanned<TypeQualifier>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SpirvToken {
+    Int,
+    String,
+    Scalar,
+    ScalarOrName,
+    Any,
+}
+
+impl SpirvToken {
+    const fn expected(self) -> &'static str {
+        match self {
+            Self::Int => "an integer constant",
+            Self::String => "a string literal",
+            Self::Scalar => "a scalar constant",
+            Self::ScalarOrName => "a scalar constant or a variable",
+            Self::Any => "a scalar constant or a string literal",
+        }
+    }
 }
 
 struct Parser<'a> {
@@ -299,7 +338,13 @@ impl<'a> Parser<'a> {
     }
 
     fn is_type_name(&self, word: &str) -> bool {
-        is_type_keyword(word) || self.is_struct_name(word)
+        is_type_keyword(word)
+            || self.is_struct_name(word)
+            || self.is_spirv_word(word, &[SPIRV_TYPE])
+    }
+
+    fn is_spirv_word(&self, word: &str, words: &[&str]) -> bool {
+        words.contains(&word) && self.extensions.is_on(SPIRV_INTRINSICS)
     }
 
     fn declare_struct(&mut self, name: &'a str) {
@@ -356,6 +401,9 @@ impl<'a> Parser<'a> {
         }
         if matches!(word, "precision" | "struct" | "layout" | "subroutine")
             || SingleTypeQualifier::from_keyword(word).is_some()
+            || self.is_spirv_word(word, &SPIRV_QUALIFIERS)
+            || self.is_spirv_word(word, &SPIRV_DECLARATIONS)
+            || self.is_spirv_word(word, &[SPIRV_TYPE])
         {
             return true;
         }
@@ -424,6 +472,14 @@ impl<'a> Parser<'a> {
             let ty = self.parse_type_specifier()?;
             self.expect(";")?;
             return self.declaration(start, DeclarationKind::Precision { qualifier, ty });
+        }
+        if self.is_spirv_word_here(&["spirv_instruction"]) {
+            return self.parse_spirv_instruction_declaration(start);
+        }
+        if self.is_spirv_word_here(&["spirv_execution_mode", "spirv_execution_mode_id"]) {
+            let mode = self.parse_spirv_execution_mode()?;
+            self.expect(";")?;
+            return self.declaration(start, DeclarationKind::SpirvExecutionMode(mode));
         }
         let qualifier = self.parse_type_qualifier()?;
         let qualifier = match qualifier {
@@ -542,6 +598,26 @@ impl<'a> Parser<'a> {
         name: Identifier,
         allow_definition: bool,
     ) -> Result<ExternalDeclaration> {
+        let prototype = self.parse_prototype(start, return_type, name)?;
+        if self.eat(";") {
+            return self.declaration(start, DeclarationKind::FunctionPrototype(prototype));
+        }
+        if !allow_definition || !self.at("{") {
+            return Err(self.unexpected("`;`"));
+        }
+        let body = self.parse_compound_statement()?;
+        let definition = FunctionDefinition { prototype, body };
+        Ok(ExternalDeclaration::FunctionDefinition(
+            self.node(start, definition)?,
+        ))
+    }
+
+    fn parse_prototype(
+        &mut self,
+        start: u32,
+        return_type: Spanned<FullySpecifiedType>,
+        name: Identifier,
+    ) -> Result<Spanned<FunctionPrototype>> {
         self.expect("(")?;
         let mut parameters = Vec::new();
         let is_void_list = self.at_word("void") && self.at_nth(1, ")");
@@ -554,25 +630,253 @@ impl<'a> Parser<'a> {
             }
         }
         self.expect(")")?;
-        let prototype = self.spanned(
+        Ok(self.spanned(
             start,
             FunctionPrototype {
                 return_type,
                 name,
                 parameters,
             },
-        );
-        if self.eat(";") {
-            return self.declaration(start, DeclarationKind::FunctionPrototype(prototype));
-        }
-        if !allow_definition || !self.at("{") {
-            return Err(self.unexpected("`;`"));
-        }
-        let body = self.parse_compound_statement()?;
-        let definition = FunctionDefinition { prototype, body };
-        Ok(ExternalDeclaration::FunctionDefinition(
-            self.node(start, definition)?,
         ))
+    }
+
+    fn is_spirv_word_here(&self, words: &[&str]) -> bool {
+        matches!(self.peek().kind, TokenKind::Word(word) if self.is_spirv_word(word, words))
+    }
+
+    fn parse_spirv_instruction_declaration(&mut self, start: u32) -> Result<ExternalDeclaration> {
+        let instruction_start = self.start();
+        self.advance();
+        self.expect("(")?;
+        let requirements = self.parse_spirv_requirements()?;
+        let qualifiers = self.parse_spirv_instruction_qualifiers()?;
+        self.expect(")")?;
+        let instruction = self.spanned(
+            instruction_start,
+            SpirvInstruction {
+                requirements,
+                qualifiers,
+            },
+        );
+        let prototype_start = self.start();
+        let qualifier = self.parse_type_qualifier()?;
+        let specifier = self.parse_type_specifier()?;
+        let return_type = self.spanned(
+            prototype_start,
+            FullySpecifiedType {
+                qualifier,
+                specifier,
+            },
+        );
+        let name = self.identifier()?;
+        let prototype = self.parse_prototype(prototype_start, return_type, name)?;
+        self.expect(";")?;
+        self.declaration(
+            start,
+            DeclarationKind::SpirvInstruction {
+                instruction,
+                prototype,
+            },
+        )
+    }
+
+    fn at_spirv_requirement(&self) -> bool {
+        matches!(self.peek().kind, TokenKind::Word(_)) && self.at_nth(1, "=") && self.at_nth(2, "[")
+    }
+
+    fn parse_spirv_requirements(&mut self) -> Result<Vec<Spanned<SpirvRequirement>>> {
+        let mut requirements = Vec::new();
+        while self.at_spirv_requirement() {
+            let start = self.start();
+            let name = self.identifier()?;
+            self.expect("=")?;
+            self.expect("[")?;
+            let accepted = if matches!(self.peek().kind, TokenKind::String(_)) {
+                SpirvToken::String
+            } else {
+                SpirvToken::Int
+            };
+            let mut values = Vec::new();
+            loop {
+                values.push(self.parse_spirv_token(accepted)?);
+                if !self.eat(",") {
+                    break;
+                }
+            }
+            self.expect("]")?;
+            requirements.push(self.spanned(start, SpirvRequirement { name, values }));
+            self.expect(",")?;
+        }
+        Ok(requirements)
+    }
+
+    fn parse_spirv_instruction_qualifiers(
+        &mut self,
+    ) -> Result<Vec<Spanned<SpirvInstructionQualifier>>> {
+        let mut qualifiers = Vec::new();
+        loop {
+            let start = self.start();
+            let name = self.identifier()?;
+            self.expect("=")?;
+            let accepted = if matches!(self.peek().kind, TokenKind::String(_)) {
+                SpirvToken::String
+            } else {
+                SpirvToken::Int
+            };
+            let value = self.parse_spirv_token(accepted)?;
+            qualifiers.push(self.spanned(start, SpirvInstructionQualifier { name, value }));
+            let another = self.at(",")
+                && matches!(self.peek_nth(1).kind, TokenKind::Word(_))
+                && self.at_nth(2, "=");
+            if !another {
+                break;
+            }
+            self.advance();
+        }
+        Ok(qualifiers)
+    }
+
+    fn parse_spirv_token(&mut self, accepted: SpirvToken) -> Result<Expression> {
+        let token = self.peek();
+        let start = token.span.start;
+        let kind = match (token.kind, accepted) {
+            (TokenKind::String(index), SpirvToken::String | SpirvToken::Any) => {
+                ExpressionKind::String(self.strings.get(index).cloned().unwrap_or_default())
+            }
+            (TokenKind::Number { kind, text }, SpirvToken::Int) if kind == NumericKind::Int => {
+                ExpressionKind::Number(NumericLiteral {
+                    kind,
+                    text: text.to_owned(),
+                })
+            }
+            (
+                TokenKind::Number { kind, text },
+                SpirvToken::Scalar | SpirvToken::Any | SpirvToken::ScalarOrName,
+            ) if matches!(
+                kind,
+                NumericKind::Int | NumericKind::Uint | NumericKind::Float
+            ) =>
+            {
+                ExpressionKind::Number(NumericLiteral {
+                    kind,
+                    text: text.to_owned(),
+                })
+            }
+            (
+                TokenKind::Word(word @ ("true" | "false")),
+                SpirvToken::Scalar | SpirvToken::Any | SpirvToken::ScalarOrName,
+            ) => ExpressionKind::Bool(word == "true"),
+            (TokenKind::Word(word), SpirvToken::ScalarOrName) if !is_reserved_word(word) => {
+                ExpressionKind::Variable(word.to_owned())
+            }
+            _ => return Err(self.unexpected(accepted.expected())),
+        };
+        self.advance();
+        self.node(start, kind)
+    }
+
+    fn parse_spirv_execution_mode(&mut self) -> Result<Spanned<SpirvExecutionMode>> {
+        let start = self.start();
+        let kind = if self.eat_word("spirv_execution_mode_id") {
+            SpirvExecutionModeKind::Id
+        } else {
+            self.advance();
+            SpirvExecutionModeKind::Literal
+        };
+        self.expect("(")?;
+        let requirements = self.parse_spirv_requirements()?;
+        let mode = self.parse_spirv_token(SpirvToken::Int)?;
+        let mut operands = Vec::new();
+        if kind == SpirvExecutionModeKind::Id {
+            self.expect(",")?;
+            loop {
+                operands.push(self.parse_conditional()?.expression);
+                if !self.eat(",") {
+                    break;
+                }
+            }
+        } else {
+            while self.eat(",") {
+                operands.push(self.parse_spirv_token(SpirvToken::Any)?);
+            }
+        }
+        self.expect(")")?;
+        Ok(self.spanned(
+            start,
+            SpirvExecutionMode {
+                kind,
+                requirements,
+                mode,
+                operands,
+            },
+        ))
+    }
+
+    fn parse_spirv_qualifier(&mut self, word: &str) -> Result<SingleTypeQualifier> {
+        self.advance();
+        let kind = match word {
+            "spirv_by_reference" => return Ok(SingleTypeQualifier::SpirvByReference),
+            "spirv_literal" => return Ok(SingleTypeQualifier::SpirvLiteral),
+            "spirv_storage_class" => {
+                self.expect("(")?;
+                let requirements = self.parse_spirv_requirements()?;
+                let class = self.parse_spirv_token(SpirvToken::Int)?;
+                self.expect(")")?;
+                return Ok(SingleTypeQualifier::SpirvStorageClass(SpirvStorageClass {
+                    requirements,
+                    class,
+                }));
+            }
+            "spirv_decorate_id" => SpirvDecorateKind::Id,
+            "spirv_decorate_string" => SpirvDecorateKind::String,
+            _ => SpirvDecorateKind::Literal,
+        };
+        self.expect("(")?;
+        let requirements = self.parse_spirv_requirements()?;
+        let decoration = self.parse_spirv_token(SpirvToken::Int)?;
+        let operand = match kind {
+            SpirvDecorateKind::Literal => SpirvToken::Scalar,
+            SpirvDecorateKind::Id => SpirvToken::ScalarOrName,
+            SpirvDecorateKind::String => SpirvToken::String,
+        };
+        let mut operands = Vec::new();
+        if kind != SpirvDecorateKind::Literal {
+            self.expect(",")?;
+            operands.push(self.parse_spirv_token(operand)?);
+        }
+        while self.eat(",") {
+            operands.push(self.parse_spirv_token(operand)?);
+        }
+        self.expect(")")?;
+        Ok(SingleTypeQualifier::SpirvDecorate(SpirvDecorate {
+            kind,
+            requirements,
+            decoration,
+            operands,
+        }))
+    }
+
+    fn parse_spirv_type_specifier(&mut self) -> Result<SpirvTypeSpecifier> {
+        self.advance();
+        self.expect("(")?;
+        let requirements = self.parse_spirv_requirements()?;
+        let instruction = self.parse_spirv_instruction_qualifiers()?;
+        let mut parameters = Vec::new();
+        while self.eat(",") {
+            let parameter = match self.peek().kind {
+                TokenKind::Word(word) if word == "struct" || self.is_type_name(word) => {
+                    SpirvTypeParameter::Type(Box::new(self.parse_type_specifier()?))
+                }
+                _ => SpirvTypeParameter::Constant(self.parse_conditional()?.expression),
+            };
+            parameters.push(parameter);
+        }
+        self.expect(")")?;
+        Ok(SpirvTypeSpecifier {
+            requirements,
+            instruction,
+            parameters,
+        })
     }
 
     fn parse_parameter_declaration(&mut self) -> Result<Node<ParameterDeclaration>> {
@@ -659,6 +963,8 @@ impl<'a> Parser<'a> {
                 SingleTypeQualifier::Subroutine(self.parse_type_name_list()?)
             } else if word == NON_UNIFORM && self.at_nth(1, "(") {
                 break;
+            } else if self.is_spirv_word(word, &SPIRV_QUALIFIERS) {
+                self.parse_spirv_qualifier(word)?
             } else if let Some(single) = SingleTypeQualifier::from_keyword(word) {
                 if single == SingleTypeQualifier::NonUniform {
                     self.require_non_uniform(self.peek().span)?;
@@ -726,6 +1032,8 @@ impl<'a> Parser<'a> {
             };
             let non_array = if word == "struct" {
                 TypeSpecifierNonArray::Struct(parser.parse_struct_specifier()?)
+            } else if parser.is_spirv_word(word, &[SPIRV_TYPE]) {
+                TypeSpecifierNonArray::Spirv(Box::new(parser.parse_spirv_type_specifier()?))
             } else {
                 let non_array = if word == "void" {
                     TypeSpecifierNonArray::Void
@@ -757,7 +1065,9 @@ impl<'a> Parser<'a> {
             let (parameters, parameter_height) = if parser.at("<")
                 && !matches!(
                     non_array,
-                    TypeSpecifierNonArray::TypeName(_) | TypeSpecifierNonArray::Struct(_)
+                    TypeSpecifierNonArray::TypeName(_)
+                        | TypeSpecifierNonArray::Struct(_)
+                        | TypeSpecifierNonArray::Spirv(_)
                 ) {
                 if !matches!(non_array, TypeSpecifierNonArray::Parameterized(_)) {
                     return Err(parser.error(

@@ -1,7 +1,7 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use super::{Prototype, FRAGMENT};
+use super::{Prototype, COMPUTE, FRAGMENT, MESH, TASK};
 use crate::scope::Direction;
 use crate::types::{ArraySize, Opaque, OpaqueKind, SampledType, Scalar, TextureDimension, Type};
 
@@ -34,7 +34,29 @@ impl Emitter<'_> {
             stages,
         });
     }
+
+    fn sparse(
+        &mut self,
+        name: &str,
+        parameters: Vec<Type>,
+        texel: Type,
+        trailing: &[Type],
+        stages: u16,
+    ) {
+        let mut parameters: Vec<(Type, Direction)> = parameters.into_iter().map(input).collect();
+        parameters.push((texel, Direction::Out));
+        parameters.extend(trailing.iter().cloned().map(input));
+        self.prototypes.push(Prototype {
+            name: String::from(name),
+            result: Type::INT,
+            parameters,
+            stages,
+        });
+    }
 }
+
+const IMPLICIT_LOD_STAGES: u16 = FRAGMENT | COMPUTE;
+const DERIVATIVE_STAGES: u16 = FRAGMENT | COMPUTE | TASK | MESH;
 
 fn opaque_types() -> Vec<Opaque> {
     let mut types = Vec::new();
@@ -106,12 +128,16 @@ fn queries(emitter: &mut Emitter<'_>, opaque: Opaque) {
         return;
     }
     let coordinate = sized(Scalar::Float, opaque.dimension.coordinate_count());
-    emitter.staged(
-        "textureQueryLod",
-        Type::vector(Scalar::Float, 2),
-        alloc::vec![ty.clone(), coordinate],
-        FRAGMENT,
-    );
+    if opaque.kind == OpaqueKind::CombinedSampler {
+        for name in ["textureQueryLod", "textureQueryLOD"] {
+            emitter.staged(
+                name,
+                Type::vector(Scalar::Float, 2),
+                alloc::vec![ty.clone(), coordinate.clone()],
+                DERIVATIVE_STAGES,
+            );
+        }
+    }
     emitter.common("textureQueryLevels", Type::INT, alloc::vec![ty]);
 }
 
@@ -128,6 +154,9 @@ fn images(emitter: &mut Emitter<'_>, opaque: Opaque) {
         parameters
     };
     emitter.common("imageLoad", texel(opaque), base.clone());
+    if opaque.dimension != TextureDimension::D1 && !opaque.is_buffer() {
+        emitter.sparse("sparseImageLoadARB", base.clone(), texel(opaque), &[], 0);
+    }
     emitter.common("imageStore", Type::VOID, with(&[texel(opaque)]));
     let data = Type::scalar(opaque.sampled.scalar());
     let scope = [Type::INT, Type::INT, Type::INT];
@@ -181,6 +210,8 @@ struct Variant {
     fetch: bool,
     grad: bool,
     extra_proj: bool,
+    clamp: bool,
+    sparse: bool,
 }
 
 impl Variant {
@@ -194,15 +225,21 @@ impl Variant {
                         for fetch in flags {
                             for grad in flags {
                                 for extra_proj in flags {
-                                    variants.push(Self {
-                                        proj,
-                                        lod,
-                                        bias,
-                                        offset,
-                                        fetch,
-                                        grad,
-                                        extra_proj,
-                                    });
+                                    for clamp in flags {
+                                        for sparse in flags {
+                                            variants.push(Self {
+                                                proj,
+                                                lod,
+                                                bias,
+                                                offset,
+                                                fetch,
+                                                grad,
+                                                extra_proj,
+                                                clamp,
+                                                sparse,
+                                            });
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -260,17 +297,30 @@ impl Variant {
         if self.extra_proj && !self.proj {
             return false;
         }
+        if self.clamp && (self.proj || self.lod || self.fetch) {
+            return false;
+        }
+        if self.sparse && (dimension == TextureDimension::D1 || buffer || self.proj) {
+            return false;
+        }
         !(self.extra_proj && (dimension == TextureDimension::D3 || opaque.shadow))
     }
 
     fn name(self) -> String {
-        let mut name = String::from(if self.fetch { "texel" } else { "texture" });
+        let mut name = String::from(match (self.sparse, self.fetch) {
+            (true, true) => "sparseTexel",
+            (true, false) => "sparseTexture",
+            (false, true) => "texel",
+            (false, false) => "texture",
+        });
         for (enabled, part) in [
             (self.proj, "Proj"),
             (self.lod, "Lod"),
             (self.grad, "Grad"),
             (self.fetch, "Fetch"),
             (self.offset, "Offset"),
+            (self.clamp, "Clamp"),
+            (self.clamp || self.sparse, "ARB"),
         ] {
             if enabled {
                 name.push_str(part);
@@ -320,20 +370,30 @@ fn sampling(emitter: &mut Emitter<'_>, opaque: Opaque) {
         if variant.offset {
             parameters.push(sized(Scalar::Int, dimensions));
         }
-        if variant.bias {
+        if variant.clamp {
             parameters.push(Type::FLOAT);
         }
+        let bias = if variant.bias {
+            alloc::vec![Type::FLOAT]
+        } else {
+            Vec::new()
+        };
         let result = if opaque.shadow {
             Type::FLOAT
         } else {
             texel(opaque)
         };
-        let stages = if variant.bias && !variant.grad {
-            FRAGMENT
+        let stages = if !variant.grad && (variant.bias || variant.clamp) {
+            IMPLICIT_LOD_STAGES
         } else {
             0
         };
-        emitter.staged(&variant.name(), result, parameters, stages);
+        if variant.sparse {
+            emitter.sparse(&variant.name(), parameters, result, &bias, stages);
+        } else {
+            parameters.extend(bias);
+            emitter.staged(&variant.name(), result, parameters, stages);
+        }
     }
 }
 
@@ -354,7 +414,7 @@ fn gathers(emitter: &mut Emitter<'_>, opaque: Opaque) {
             Some(Type::vector(Scalar::Int, 2).array_of(ArraySize::Sized(4))),
         ),
     ];
-    for (name, offset) in offsets {
+    for (name, offset) in &offsets {
         if offset.is_some() && cube {
             continue;
         }
@@ -366,15 +426,78 @@ fn gathers(emitter: &mut Emitter<'_>, opaque: Opaque) {
             if opaque.shadow {
                 parameters.push(Type::FLOAT);
             }
-            if let Some(offset) = &offset {
+            if let Some(offset) = offset {
                 parameters.push(offset.clone());
             }
-            if component {
-                parameters.push(Type::INT);
-            }
+            let trailing = if component {
+                alloc::vec![Type::INT]
+            } else {
+                Vec::new()
+            };
+            let sparse_name = alloc::format!("sparse{}ARB", capitalized(name));
+            emitter.sparse(
+                &sparse_name,
+                parameters.clone(),
+                texel(opaque),
+                &trailing,
+                0,
+            );
+            parameters.extend(trailing);
             emitter.common(name, texel(opaque), parameters);
         }
     }
+    if opaque.shadow {
+        return;
+    }
+    for (name, offset) in &offsets {
+        if offset.is_some() && cube {
+            continue;
+        }
+        let mut biased = alloc::vec![Type::opaque(opaque), coordinate.clone()];
+        let mut lod = alloc::vec![Type::opaque(opaque), coordinate.clone(), Type::FLOAT];
+        if let Some(offset) = offset {
+            biased.push(offset.clone());
+            lod.push(offset.clone());
+        }
+        let biased_trailing = [Type::INT, Type::FLOAT];
+        emitter.sparse(
+            &alloc::format!("sparse{}ARB", capitalized(name)),
+            biased.clone(),
+            texel(opaque),
+            &biased_trailing,
+            DERIVATIVE_STAGES,
+        );
+        biased.extend(biased_trailing);
+        emitter.staged(name, texel(opaque), biased, DERIVATIVE_STAGES);
+        let lod_name = name.replacen("textureGather", "textureGatherLod", 1);
+        for component in [false, true] {
+            let trailing = if component {
+                alloc::vec![Type::INT]
+            } else {
+                Vec::new()
+            };
+            emitter.sparse(
+                &alloc::format!("sparse{}AMD", capitalized(&lod_name)),
+                lod.clone(),
+                texel(opaque),
+                &trailing,
+                0,
+            );
+            let mut parameters = lod.clone();
+            parameters.extend(trailing);
+            emitter.common(&alloc::format!("{lod_name}AMD"), texel(opaque), parameters);
+        }
+    }
+}
+
+fn capitalized(name: &str) -> String {
+    let mut characters = name.chars();
+    characters.next().map_or_else(String::new, |first| {
+        let mut capitalized = String::new();
+        capitalized.extend(first.to_uppercase());
+        capitalized.push_str(characters.as_str());
+        capitalized
+    })
 }
 
 fn qcom_gathers(emitter: &mut Emitter<'_>, opaque: Opaque) {

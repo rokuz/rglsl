@@ -129,6 +129,13 @@ pub(super) fn image_format(word: &str) -> Option<StorageFormat> {
     })
 }
 
+pub(super) const fn unknown_format(sampled: rglsl_sema::types::SampledType) -> StorageFormat {
+    StorageFormat::Unknown(crate::Scalar {
+        kind: sampled_kind(sampled),
+        width: 4,
+    })
+}
+
 pub(super) fn storage_access(qualifiers: &Qualifiers) -> StorageAccess {
     if qualifiers.readonly {
         StorageAccess::LOAD
@@ -446,7 +453,10 @@ impl<'a> Lowerer<'a> {
                 .collect(),
             DeclarationKind::Qualifier(ref qualifier)
             | DeclarationKind::QualifiedIdentifiers { ref qualifier, .. } => vec![qualifier],
-            DeclarationKind::FunctionPrototype(_) | DeclarationKind::Precision { .. } => Vec::new(),
+            DeclarationKind::FunctionPrototype(_)
+            | DeclarationKind::Precision { .. }
+            | DeclarationKind::SpirvInstruction { .. }
+            | DeclarationKind::SpirvExecutionMode(_) => Vec::new(),
         };
         if let Some(qualifier) = qualifiers.into_iter().find(|&qualifier| {
             layout_names(Some(qualifier))
@@ -462,7 +472,10 @@ impl<'a> Lowerer<'a> {
             self.xfb.mode = true;
         }
         match declaration.kind {
-            DeclarationKind::FunctionPrototype(_) | DeclarationKind::Precision { .. } => Ok(()),
+            DeclarationKind::FunctionPrototype(_)
+            | DeclarationKind::Precision { .. }
+            | DeclarationKind::SpirvInstruction { .. }
+            | DeclarationKind::SpirvExecutionMode(_) => Ok(()),
             DeclarationKind::InitDeclaratorList(ref list) => {
                 for declarator in &list.declarators {
                     let result = self.global_declarator(list, declarator);
@@ -682,6 +695,7 @@ impl<'a> Lowerer<'a> {
                         input_attachment_index: None,
                         heap_offset: None,
                         tile_attachment: false,
+                        spirv_decorations: Vec::new(),
                     },
                     at,
                 );
@@ -767,6 +781,7 @@ impl<'a> Lowerer<'a> {
                 input_attachment_index: None,
                 heap_offset: None,
                 tile_attachment: false,
+                spirv_decorations: Vec::new(),
             },
             at,
         );
@@ -817,6 +832,41 @@ impl<'a> Lowerer<'a> {
             _ => element,
         };
         let per_primitive = self.per_primitive_binding(qualifiers);
+        if qualifiers
+            .spirv_decorations
+            .iter()
+            .any(|decoration| decoration.decoration == crate::proc::SPIRV_DECORATION_BUILT_IN)
+        {
+            let handle = self.module.global_variables.append(
+                GlobalVariable {
+                    name: Some(name.clone()),
+                    space: if input {
+                        AddressSpace::Input
+                    } else {
+                        AddressSpace::Output
+                    },
+                    binding: None,
+                    ty,
+                    init: None,
+                    memory_decorations: MemoryDecorations::empty(),
+                    io: None,
+                    xfb: None,
+                    input_attachment_index: None,
+                    heap_offset: None,
+                    tile_attachment: false,
+                    spirv_decorations: Vec::new(),
+                },
+                at,
+            );
+            self.interface.push(handle);
+            self.globals.insert(symbol, GlobalRef::Variable(handle));
+            if input {
+                self.inputs.insert(name);
+            } else {
+                self.outputs.insert(name, handle);
+            }
+            return Ok(());
+        }
         let automatic_location = qualifiers.layout_entry("location").is_none();
         let location = match qualifiers.layout_entry("location").and_then(|e| e.value) {
             Some(location) => u32::try_from(location).map_err(|_| internal(at))?,
@@ -878,6 +928,7 @@ impl<'a> Lowerer<'a> {
                 input_attachment_index: None,
                 heap_offset: None,
                 tile_attachment: false,
+                spirv_decorations: Vec::new(),
             },
             at,
         );
@@ -959,6 +1010,10 @@ impl<'a> Lowerer<'a> {
                 };
                 return self.handle_global(symbol, name, inner, None, at);
             }
+            TypeKind::Spirv(id) => {
+                let inner = self.spirv_type(id, at)?;
+                return self.handle_global(symbol, name, inner, None, at);
+            }
             _ => {
                 return Err(semantic(
                     "non-opaque uniforms outside a block are not allowed when targeting Vulkan",
@@ -972,8 +1027,7 @@ impl<'a> Lowerer<'a> {
                 .iter()
                 .rev()
                 .find_map(|entry| image_format(&entry.name))
-                .ok_or_else(|| unsupported("storage images without a format qualifier", at))?;
-            let _ = sampled_kind(opaque.sampled);
+                .unwrap_or_else(|| unknown_format(opaque.sampled));
             TypeInner::Image {
                 dim: image_dimension(opaque),
                 arrayed: opaque.arrayed,
@@ -1055,6 +1109,7 @@ impl<'a> Lowerer<'a> {
                     .layout
                     .iter()
                     .any(|entry| entry.name.eq_ignore_ascii_case("tile_attachmentQCOM")),
+                spirv_decorations: Vec::new(),
             },
             at,
         );
@@ -1210,6 +1265,7 @@ impl<'a> Lowerer<'a> {
                 input_attachment_index: None,
                 heap_offset: None,
                 tile_attachment: false,
+                spirv_decorations: Vec::new(),
             },
             at,
         );
@@ -1528,6 +1584,7 @@ impl<'a> Lowerer<'a> {
                 input_attachment_index: None,
                 heap_offset: None,
                 tile_attachment: false,
+                spirv_decorations: Vec::new(),
             },
             at,
         );
@@ -1812,6 +1869,7 @@ impl<'a> Lowerer<'a> {
                 input_attachment_index: None,
                 heap_offset: None,
                 tile_attachment: false,
+                spirv_decorations: Vec::new(),
             },
             Span::UNDEFINED,
         );
@@ -2044,6 +2102,7 @@ impl<'a> Lowerer<'a> {
                 input_attachment_index: None,
                 heap_offset: None,
                 tile_attachment: false,
+                spirv_decorations: Vec::new(),
             },
             at,
         );

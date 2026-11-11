@@ -1,4 +1,4 @@
-use alloc::{format, vec::Vec};
+use alloc::{format, string::String, vec::Vec};
 
 use rglsl_ast::ast::{Expression as AstExpression, ExpressionKind};
 use rglsl_sema::scope::Function;
@@ -129,6 +129,62 @@ fn image_processing(name: &str) -> Option<ImageProcessingOperation> {
     })
 }
 
+pub(super) struct TextureCall {
+    base: String,
+    sparse: bool,
+    clamp: bool,
+}
+
+fn texture_call(name: &str) -> TextureCall {
+    let stripped = name
+        .strip_suffix("ARB")
+        .or_else(|| name.strip_suffix("AMD"))
+        .unwrap_or(name);
+    let (stripped, clamp) = match stripped.strip_suffix("Clamp") {
+        Some(base) if stripped != name => (base, true),
+        _ => (stripped, false),
+    };
+    let (rest, sparse) = match stripped.strip_prefix("sparse") {
+        Some(rest) if stripped != name => (rest, true),
+        _ => (stripped, false),
+    };
+    let mut characters = rest.chars();
+    let mut base = String::new();
+    if let Some(first) = characters.next() {
+        base.extend(first.to_lowercase());
+        base.push_str(characters.as_str());
+    }
+    TextureCall {
+        base,
+        sparse,
+        clamp,
+    }
+}
+
+const fn sampling_function(base: &str) -> bool {
+    matches!(
+        base.as_bytes(),
+        b"texture"
+            | b"textureProj"
+            | b"textureLod"
+            | b"textureOffset"
+            | b"textureProjOffset"
+            | b"textureLodOffset"
+            | b"textureProjLod"
+            | b"textureProjLodOffset"
+            | b"textureGrad"
+            | b"textureGradOffset"
+            | b"textureProjGrad"
+            | b"textureProjGradOffset"
+            | b"textureGather"
+            | b"textureGatherOffset"
+            | b"textureGatherOffsets"
+            | b"textureGatherLod"
+            | b"textureGatherLodOffset"
+            | b"textureGatherLodOffsets"
+    )
+}
+
 pub(super) fn derivative(name: &str) -> Option<(DerivativeAxis, DerivativeControl)> {
     let (axis, rest) = if let Some(rest) = name.strip_prefix("dFdx") {
         (DerivativeAxis::X, rest)
@@ -207,38 +263,38 @@ impl FunctionLowerer<'_, '_> {
         if let Some(result) = self.ray_builtin_call(name, arguments, at)? {
             return Ok(result);
         }
+        let call = texture_call(name);
+        if sampling_function(&call.base) {
+            return self
+                .sample(call, function, arguments, ImageGatherPattern::Quad, at)
+                .map(Some);
+        }
         match name {
-            "texture"
-            | "textureProj"
-            | "textureLod"
-            | "textureOffset"
-            | "textureProjOffset"
-            | "textureLodOffset"
-            | "textureProjLod"
-            | "textureProjLodOffset"
-            | "textureGrad"
-            | "textureGradOffset"
-            | "textureProjGrad"
-            | "textureProjGradOffset"
-            | "textureGather"
-            | "textureGatherOffset" => self
-                .sample(name, function, arguments, ImageGatherPattern::Quad, at)
-                .map(Some),
             _ if gather_pattern(name).is_some() => {
                 let (base, pattern) = gather_pattern(name).ok_or_else(|| internal(at))?;
-                self.sample(base, function, arguments, pattern, at)
+                self.sample(texture_call(base), function, arguments, pattern, at)
                     .map(Some)
             }
+            "sparseTexelFetchARB" => self.fetch(function, arguments, false, true, at).map(Some),
+            "sparseTexelFetchOffsetARB" => {
+                self.fetch(function, arguments, true, true, at).map(Some)
+            }
+            "sparseImageLoadARB" => self.image(name, function, arguments, at),
+            "sparseTexelsResidentARB" => {
+                let code = self.rvalue(arguments.first().ok_or_else(|| internal(at))?)?;
+                self.add(Expression::ImageSparseResident { code }, at)
+                    .map(Some)
+            }
+            "textureQueryLod" | "textureQueryLOD" => self.query_lod(arguments, at).map(Some),
             _ if image_processing(name).is_some() => {
                 let operation = image_processing(name).ok_or_else(|| internal(at))?;
                 self.image_processing(operation, arguments, at).map(Some)
             }
-            "texelFetch" => self.fetch(arguments, false, at).map(Some),
-            "texelFetchOffset" => self.fetch(arguments, true, at).map(Some),
-            "textureSize" | "textureQueryLevels" | "textureSamples" | "imageSize" => {
-                self.query(name, arguments, at).map(Some)
-            }
-            "imageLoad" | "imageStore" => self.image(name, arguments, at),
+            "texelFetch" => self.fetch(function, arguments, false, false, at).map(Some),
+            "texelFetchOffset" => self.fetch(function, arguments, true, false, at).map(Some),
+            "textureSize" | "textureQueryLevels" | "textureSamples" | "imageSize"
+            | "imageSamples" => self.query(name, arguments, at).map(Some),
+            "imageLoad" | "imageStore" => self.image(name, function, arguments, at),
             _ if name.starts_with("imageAtomic") => {
                 let first = arguments.first().ok_or_else(|| internal(at))?;
                 let Sampled {
@@ -1113,6 +1169,19 @@ impl FunctionLowerer<'_, '_> {
         Ok((point, array_index))
     }
 
+    pub(super) fn split_storage_coordinate(
+        &mut self,
+        coordinate: Handle<Expression>,
+        size: u32,
+        opaque: Opaque,
+        at: Span,
+    ) -> Result<(Handle<Expression>, Option<Handle<Expression>>)> {
+        if opaque.dimension == TextureDimension::Cube {
+            return Ok((coordinate, None));
+        }
+        self.split_coordinate(coordinate, size, opaque, false, at)
+    }
+
     fn image_processing(
         &mut self,
         operation: ImageProcessingOperation,
@@ -1159,12 +1228,13 @@ impl FunctionLowerer<'_, '_> {
 
     fn sample(
         &mut self,
-        name: &str,
+        call: TextureCall,
         function: &Function,
         arguments: &[AstExpression],
         gather_pattern: ImageGatherPattern,
         at: Span,
     ) -> Result<Handle<Expression>> {
+        let name = call.base;
         let first = arguments.first().ok_or_else(|| internal(at))?;
         let Sampled {
             image,
@@ -1179,7 +1249,7 @@ impl FunctionLowerer<'_, '_> {
         let proj = name.contains("Proj");
         let lod = name.contains("Lod");
         let grad = name.contains("Grad");
-        let offset = name.ends_with("Offset");
+        let offset = name.ends_with("Offset") || name.ends_with("Offsets");
         let coordinate_argument = arguments.get(1).ok_or_else(|| internal(at))?;
         let (coordinate, coordinate_ty) = self.typed(coordinate_argument)?;
         let mut size = u32::from(match coordinate_ty.kind {
@@ -1230,32 +1300,84 @@ impl FunctionLowerer<'_, '_> {
         if offset {
             sample_offset = Some(self.next_argument(arguments, &mut next, at)?);
         }
+        let mut min_lod = None;
+        if call.clamp {
+            min_lod = Some(self.next_argument(arguments, &mut next, at)?);
+        }
+        let texel_out = if call.sparse {
+            let index = next;
+            next += 1;
+            Some(index)
+        } else {
+            None
+        };
         let mut gather_component = None;
         if gather {
-            level = SampleLevel::Zero;
+            if !lod {
+                level = SampleLevel::Zero;
+            }
             let component = if opaque.shadow {
                 SwizzleComponent::X
             } else {
                 match arguments.get(next) {
-                    Some(component) => match self.constant_index(component) {
-                        Some(1) => SwizzleComponent::Y,
-                        Some(2) => SwizzleComponent::Z,
-                        Some(3) => SwizzleComponent::W,
-                        _ => SwizzleComponent::X,
-                    },
+                    Some(component) => {
+                        next += 1;
+                        match self.constant_index(component) {
+                            Some(0) => SwizzleComponent::X,
+                            Some(1) => SwizzleComponent::Y,
+                            Some(2) => SwizzleComponent::Z,
+                            Some(3) => SwizzleComponent::W,
+                            _ => {
+                                return Err(unsupported(
+                                    "a gather component that is not a constant",
+                                    at,
+                                ))
+                            }
+                        }
+                    }
                     None => SwizzleComponent::X,
                 }
             };
             gather_component = Some(component);
+            if !lod && next < function.parameters.len() {
+                level = SampleLevel::Bias(self.next_argument(arguments, &mut next, at)?);
+            }
         } else if !lod && !grad && next < function.parameters.len() {
             level = SampleLevel::Bias(self.next_argument(arguments, &mut next, at)?);
         }
-        if matches!(level, SampleLevel::Auto)
-            && !self.lw.library
-            && self.lw.options.stage != ShaderStage::Fragment
-        {
+        let stage = self.lw.options.stage;
+        let derivatives = stage == ShaderStage::Fragment
+            || (stage == ShaderStage::Compute && self.lw.analysis.derivative_group.is_some());
+        let implicit = match level {
+            SampleLevel::Auto => !self.lw.library,
+            SampleLevel::Bias(_) => true,
+            SampleLevel::Zero | SampleLevel::Exact(_) | SampleLevel::Gradient { .. } => false,
+        };
+        if implicit && !gather && !derivatives {
             level = SampleLevel::Zero;
+            if let Some(clamp) = min_lod.take() {
+                let zero = self.literal(Literal::F32(0.0), at)?;
+                level =
+                    SampleLevel::Exact(self.math_call(MathFunction::Max, &[clamp, zero], at)?);
+            }
         }
+        let sparse = match texel_out {
+            Some(_) => {
+                let texel = if opaque.shadow && !gather {
+                    crate::TypeInner::Scalar(crate::Scalar::F32)
+                } else {
+                    crate::TypeInner::Vector {
+                        size: crate::VectorSize::Quad,
+                        scalar: crate::Scalar {
+                            kind: super::types::sampled_kind(opaque.sampled),
+                            width: 4,
+                        },
+                    }
+                };
+                Some(self.lw.sparse_result_type(texel))
+            }
+            None => None,
+        };
         let sample = self.add(
             Expression::ImageSample {
                 image,
@@ -1268,13 +1390,48 @@ impl FunctionLowerer<'_, '_> {
                 level,
                 depth_ref,
                 clamp_to_edge: false,
+                min_lod,
+                sparse,
             },
             at,
         )?;
         if non_uniform {
             self.mark(sample, NonUniform::SAMPLED_IMAGE);
         }
-        Ok(sample)
+        match texel_out {
+            Some(index) => self.sparse_result(sample, function, arguments, index, at),
+            None => Ok(sample),
+        }
+    }
+
+    pub(super) fn sparse_result(
+        &mut self,
+        result: Handle<Expression>,
+        function: &Function,
+        arguments: &[AstExpression],
+        index: usize,
+        at: Span,
+    ) -> Result<Handle<Expression>> {
+        let output = arguments.get(index).ok_or_else(|| internal(at))?;
+        let parameter = function.parameters.get(index).ok_or_else(|| internal(at))?;
+        let texel = self.add(
+            Expression::AccessIndex {
+                base: result,
+                index: 1,
+            },
+            at,
+        )?;
+        let output_ty = self.info(output)?.ty.clone();
+        let place = self.place(output)?;
+        let texel = self.convert(texel, &parameter.ty, &output_ty, at)?;
+        self.store(&place, texel, at)?;
+        self.add(
+            Expression::AccessIndex {
+                base: result,
+                index: 0,
+            },
+            at,
+        )
     }
 
     fn next_argument(
@@ -1290,8 +1447,10 @@ impl FunctionLowerer<'_, '_> {
 
     fn fetch(
         &mut self,
+        function: &Function,
         arguments: &[AstExpression],
         offset: bool,
+        sparse: bool,
         at: Span,
     ) -> Result<Handle<Expression>> {
         let first = arguments.first().ok_or_else(|| internal(at))?;
@@ -1323,16 +1482,57 @@ impl FunctionLowerer<'_, '_> {
         } else {
             (None, extra)
         };
-        self.add(
+        let sparse_type = sparse.then(|| {
+            self.lw.sparse_result_type(crate::TypeInner::Vector {
+                size: crate::VectorSize::Quad,
+                scalar: crate::Scalar {
+                    kind: super::types::sampled_kind(opaque.sampled),
+                    width: 4,
+                },
+            })
+        });
+        let result = self.add(
             Expression::ImageLoad {
                 image,
                 coordinate: point,
                 array_index,
                 sample,
                 level,
+                sparse: sparse_type,
             },
             at,
-        )
+        )?;
+        if sparse {
+            let index = if offset { 4 } else { 3 };
+            self.sparse_result(result, function, arguments, index, at)
+        } else {
+            Ok(result)
+        }
+    }
+
+    fn query_lod(&mut self, arguments: &[AstExpression], at: Span) -> Result<Handle<Expression>> {
+        let first = arguments.first().ok_or_else(|| internal(at))?;
+        let Sampled {
+            image,
+            sampler,
+            non_uniform,
+            ..
+        } = self.sampled(first, at)?;
+        let coordinate = self.rvalue(arguments.get(1).ok_or_else(|| internal(at))?)?;
+        let query = self.add(
+            Expression::ImageQuery {
+                image,
+                query: ImageQuery::Lod {
+                    sampler,
+                    coordinate,
+                },
+            },
+            at,
+        )?;
+        if non_uniform {
+            self.mark(query, NonUniform::SAMPLED_IMAGE);
+        }
+        Ok(query)
     }
 
     fn subpass_load(
@@ -1364,6 +1564,7 @@ impl FunctionLowerer<'_, '_> {
                 array_index: None,
                 sample,
                 level: None,
+                sparse: None,
             },
             at,
         )
@@ -1372,6 +1573,7 @@ impl FunctionLowerer<'_, '_> {
     fn image(
         &mut self,
         name: &str,
+        function: &Function,
         arguments: &[AstExpression],
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
@@ -1385,20 +1587,42 @@ impl FunctionLowerer<'_, '_> {
         if non_uniform {
             self.mark(image, NonUniform::VALUE);
         }
-        if opaque.dimension == TextureDimension::Cube {
-            return Err(unsupported("cube storage images", at));
-        }
         let coordinate_argument = arguments.get(1).ok_or_else(|| internal(at))?;
         let (coordinate, ty) = self.typed(coordinate_argument)?;
         let size = ty.component_count().ok_or_else(|| internal(at))?;
-        let (point, array_index) = self.split_coordinate(coordinate, size, opaque, false, at)?;
-        if name == "imageLoad" {
-            let sample = if opaque.multisample {
-                let sample = arguments.get(2).ok_or_else(|| internal(at))?;
-                Some(self.rvalue(sample)?)
-            } else {
-                None
+        let (point, array_index) = self.split_storage_coordinate(coordinate, size, opaque, at)?;
+        let sample = if opaque.multisample {
+            let sample = arguments.get(2).ok_or_else(|| internal(at))?;
+            Some(self.rvalue(sample)?)
+        } else {
+            None
+        };
+        if name == "sparseImageLoadARB" {
+            let texel = crate::TypeInner::Vector {
+                size: crate::VectorSize::Quad,
+                scalar: crate::Scalar {
+                    kind: super::types::sampled_kind(opaque.sampled),
+                    width: 4,
+                },
             };
+            let sparse = Some(self.lw.sparse_result_type(texel));
+            let result = self.add(
+                Expression::ImageLoad {
+                    image,
+                    coordinate: point,
+                    array_index,
+                    sample,
+                    level: None,
+                    sparse,
+                },
+                at,
+            )?;
+            let index = 2 + usize::from(opaque.multisample);
+            return self
+                .sparse_result(result, function, arguments, index, at)
+                .map(Some);
+        }
+        if name == "imageLoad" {
             return self
                 .add(
                     Expression::ImageLoad {
@@ -1407,21 +1631,22 @@ impl FunctionLowerer<'_, '_> {
                         array_index,
                         sample,
                         level: None,
+                        sparse: None,
                     },
                     at,
                 )
                 .map(Some);
         }
-        if opaque.multisample {
-            return Err(unsupported("`imageStore` to multisampled images", at));
-        }
-        let value = arguments.get(2).ok_or_else(|| internal(at))?;
+        let value = arguments
+            .get(2 + usize::from(opaque.multisample))
+            .ok_or_else(|| internal(at))?;
         let value = self.rvalue(value)?;
         self.push(
             Statement::ImageStore {
                 image,
                 coordinate: point,
                 array_index,
+                sample,
                 value,
             },
             at,
@@ -1447,7 +1672,7 @@ impl FunctionLowerer<'_, '_> {
         }
         let query = match name {
             "textureQueryLevels" => ImageQuery::NumLevels,
-            "textureSamples" => ImageQuery::NumSamples,
+            "textureSamples" | "imageSamples" => ImageQuery::NumSamples,
             _ => {
                 let level = match arguments.get(1) {
                     Some(level) => Some(self.rvalue(level)?),

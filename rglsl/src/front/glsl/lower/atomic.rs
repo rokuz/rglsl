@@ -1,5 +1,5 @@
 use rglsl_ast::ast::Expression as AstExpression;
-use rglsl_sema::types::{Opaque, TextureDimension};
+use rglsl_sema::types::Opaque;
 
 use super::function::FunctionLowerer;
 use super::types::scalar;
@@ -245,14 +245,11 @@ impl FunctionLowerer<'_, '_> {
         if non_uniform {
             self.mark(image, NonUniform::VALUE);
         }
-        if opaque.dimension == TextureDimension::Cube {
-            return Err(unsupported("cube storage images", at));
-        }
         let coordinate_argument = arguments.get(1).ok_or_else(|| internal(at))?;
         let (coordinate, ty) = self.typed(coordinate_argument)?;
         let size = ty.component_count().ok_or_else(|| internal(at))?;
         let (coordinate, array_index) =
-            self.split_coordinate(coordinate, size, opaque, false, at)?;
+            self.split_storage_coordinate(coordinate, size, opaque, at)?;
         let mut rest = arguments.get(2..).ok_or_else(|| internal(at))?;
         let sample = if opaque.multisample {
             let (sample, tail) = rest.split_first().ok_or_else(|| internal(at))?;

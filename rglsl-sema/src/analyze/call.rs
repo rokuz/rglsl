@@ -462,6 +462,26 @@ impl Analyzer<'_> {
         }
         let first_argument = arguments.first().map_or(span, |argument| argument.span);
         let mut failed = false;
+        if function.spirv_instruction.is_some() {
+            let literal_failed =
+                operands
+                    .iter()
+                    .zip(&function.parameters)
+                    .any(|(operand, parameter)| {
+                        parameter.qualifiers.spirv_literal
+                            && (!operand.constant || operand.specialization)
+                    });
+            if literal_failed {
+                self.error(
+                    first_argument,
+                    DiagnosticKind::SpirvIntrinsic {
+                        subject: String::from("spirv_literal"),
+                        reason: "Non front-end constant expressions cannot be passed for 'spirv_literal' parameters.",
+                    },
+                );
+                failed = true;
+            }
+        }
         for ((argument, operand), parameter) in
             arguments.iter().zip(&operands).zip(&function.parameters)
         {
@@ -503,6 +523,9 @@ impl Analyzer<'_> {
         }
         if is_builtin && !failed {
             failed = !self.ray_builtin_checks(span, name, &operands);
+        }
+        if is_builtin && !failed {
+            failed = !self.texture_checks(span, name, &operands);
         }
         if is_builtin && !failed {
             failed = !self.builtin_checks(span, name, &operands);
@@ -701,6 +724,7 @@ impl Analyzer<'_> {
         if let Some(extension) = super::qcom::function_extension(name) {
             self.require_extension(span, extension, name);
         }
+        self.texture_extensions(span, name);
     }
 
     fn subgroup_checks(&mut self, span: Span, name: &str, operands: &[Operand]) -> bool {
@@ -859,9 +883,13 @@ impl Analyzer<'_> {
             }
         }
         let offset_index = match name {
-            "textureOffset" | "textureProjOffset" => Some(2),
-            "texelFetchOffset" | "textureLodOffset" | "textureProjLodOffset" => Some(3),
-            "textureGradOffset" | "textureProjGradOffset" => Some(4),
+            "textureOffset" | "textureProjOffset" | "sparseTextureOffsetARB" => Some(2),
+            "texelFetchOffset"
+            | "textureLodOffset"
+            | "textureProjLodOffset"
+            | "sparseTextureLodOffsetARB"
+            | "sparseTexelFetchOffsetARB" => Some(3),
+            "textureGradOffset" | "textureProjGradOffset" | "sparseTextureGradOffsetARB" => Some(4),
             _ => None,
         };
         if let Some(index) = offset_index {
@@ -899,7 +927,7 @@ impl Analyzer<'_> {
                 }
             }
         }
-        if name.starts_with("textureGather") && !shadow {
+        if name.starts_with("textureGather") && !name.contains("Lod") && !shadow {
             let index = if name == "textureGather"
                 || (super::qcom::gather_function(name) && !name.contains("Offset"))
             {

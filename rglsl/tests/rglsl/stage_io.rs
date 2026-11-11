@@ -87,6 +87,7 @@ impl Builder {
                 input_attachment_index: None,
                 heap_offset: None,
                 tile_attachment: false,
+                spirv_decorations: Vec::new(),
             },
             Span::UNDEFINED,
         )
@@ -204,6 +205,8 @@ impl Builder {
             tessellation: None,
             mesh_shader: None,
             tile_shading: rglsl::TileShading::default(),
+            derivative_group: None,
+            spirv_execution_modes: Vec::new(),
         });
         self.module
     }
@@ -554,6 +557,7 @@ fn invalid_interfaces_are_rejected() {
                 input_attachment_index: None,
                 heap_offset: None,
                 tile_attachment: false,
+                spirv_decorations: Vec::new(),
             },
             Span::UNDEFINED,
         );

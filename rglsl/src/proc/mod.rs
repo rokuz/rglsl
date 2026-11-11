@@ -74,9 +74,11 @@ impl From<super::StorageFormat> for super::Scalar {
             Sf::Rg16Snorm => Sk::Float,
             Sf::Rgba16Unorm => Sk::Float,
             Sf::Rgba16Snorm => Sk::Float,
+            Sf::Unknown(scalar) => scalar.kind,
         };
         let width = match format {
             Sf::R64Uint => 8,
+            Sf::Unknown(scalar) => scalar.width,
             _ => 4,
         };
         super::Scalar { kind, width }
@@ -1637,4 +1639,12 @@ impl crate::MeshFunction {
     pub const fn is_terminator(&self) -> bool {
         matches!(*self, Self::EmitMeshTasks { .. })
     }
+}
+
+pub const SPIRV_DECORATION_BUILT_IN: u32 = 11;
+
+pub fn has_spirv_built_in(var: &crate::GlobalVariable) -> bool {
+    var.spirv_decorations
+        .iter()
+        .any(|decoration| decoration.decoration == SPIRV_DECORATION_BUILT_IN)
 }
