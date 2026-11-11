@@ -3,9 +3,9 @@ use alloc::vec::Vec;
 
 use rglsl_ast::ast::{
     AssignmentOperator, BinaryOperator, Expression, ExpressionKind, Identifier, NumericKind,
-    NumericLiteral, PostfixOperator, UnaryOperator,
+    NumericLiteral, UnaryOperator,
 };
-use rglsl_ast::Span;
+use rglsl_ast::{Chain, Span, Spine};
 
 use super::{Analyzer, ExpressionInfo, Operand, Place};
 use crate::builtins::Stage;
@@ -286,9 +286,131 @@ impl Analyzer<'_> {
     }
 
     pub(crate) fn expression(&mut self, expression: &Expression) -> Operand {
+        match expression.kind.chain() {
+            Some(Chain::Binary) => self.binary_chain(expression),
+            Some(Chain::Unary | Chain::Postfix) => self.operand_chain(expression),
+            Some(Chain::Assignment | Chain::Conditional) => self.right_chain(expression),
+            None => {
+                let uses = self.specialization_uses;
+                let operand = self.expression_kind(expression);
+                self.recorded(expression, uses, operand)
+            }
+        }
+    }
+
+    fn binary_chain(&mut self, expression: &Expression) -> Operand {
         let uses = self.specialization_uses;
-        let operand = self.expression_kind(expression);
-        self.recorded(expression, uses, operand)
+        let spine = Spine::of(expression);
+        let mut operand = self.value_expression(spine.head);
+        for node in spine.links.into_iter().rev() {
+            if let ExpressionKind::Binary {
+                operator,
+                left,
+                right,
+            } = &node.kind
+            {
+                let span = Span::new(left.span.end, right.span.start);
+                let right_operand = self.value_expression(right);
+                operand = self.binary_checked(*operator, left, right, span, operand, right_operand);
+            }
+            operand = self.recorded(node, uses, operand);
+        }
+        operand
+    }
+
+    fn operand_chain(&mut self, expression: &Expression) -> Operand {
+        let uses = self.specialization_uses;
+        let spine = Spine::of(expression);
+        let mut operand = self.expression(spine.head);
+        for node in spine.links.into_iter().rev() {
+            operand = self.operand_link(node, operand);
+            operand = self.recorded(node, uses, operand);
+        }
+        operand
+    }
+
+    fn operand_link(&mut self, node: &Expression, operand: Operand) -> Operand {
+        let span = node.span;
+        match &node.kind {
+            ExpressionKind::Unary {
+                operator: operator @ (UnaryOperator::Increment | UnaryOperator::Decrement),
+                operand: inner,
+            } => self.increment_checked(span, inner, operator.symbol(), operand),
+            ExpressionKind::Unary { operator, .. } => self.unary_checked(span, *operator, operand),
+            ExpressionKind::Subscript { base, index } => {
+                let span = Span::new(base.span.end, index.span.start);
+                let index_operand = self.value_expression(index);
+                self.subscript_checked(base, index, span, operand, index_operand)
+            }
+            ExpressionKind::FieldSelection { field, .. } => self.field_checked(field, operand),
+            ExpressionKind::Postfix {
+                operand: inner,
+                operator,
+            } => self.increment_checked(
+                Span::new(inner.span.end, span.end),
+                inner,
+                operator.symbol(),
+                operand,
+            ),
+            _ => operand,
+        }
+    }
+
+    fn right_chain(&mut self, expression: &Expression) -> Operand {
+        let spine = Spine::of(expression);
+        let mut pending = Vec::with_capacity(spine.links.len());
+        for node in spine.links {
+            let uses = self.specialization_uses;
+            let first = match &node.kind {
+                ExpressionKind::Assignment { target, .. } => self.expression(target),
+                ExpressionKind::Conditional {
+                    condition,
+                    then_expression,
+                    ..
+                } => {
+                    let condition_operand = self.value_expression(condition);
+                    let then_operand = self.expression(then_expression);
+                    pending.push((node, uses, condition_operand));
+                    then_operand
+                }
+                _ => Operand::error(),
+            };
+            pending.push((node, uses, first));
+        }
+        let mut operand = self.expression(spine.head);
+        while let Some((node, uses, first)) = pending.pop() {
+            operand = match &node.kind {
+                ExpressionKind::Assignment {
+                    operator,
+                    target,
+                    value,
+                } => {
+                    let span = Span::new(target.span.end, value.span.start);
+                    self.assignment_checked(*operator, target, value, span, first, operand)
+                }
+                ExpressionKind::Conditional {
+                    condition,
+                    then_expression,
+                    else_expression,
+                } => {
+                    let condition_operand = pending
+                        .pop()
+                        .map_or_else(Operand::error, |(_, _, condition)| condition);
+                    let span = Span::new(condition.span.end, then_expression.span.start);
+                    self.conditional_checked(
+                        then_expression,
+                        else_expression,
+                        span,
+                        condition_operand,
+                        first,
+                        operand,
+                    )
+                }
+                _ => operand,
+            };
+            operand = self.recorded(node, uses, operand);
+        }
+        operand
     }
 
     fn recorded(&mut self, expression: &Expression, uses: u32, operand: Operand) -> Operand {
@@ -327,27 +449,15 @@ impl Analyzer<'_> {
             }
             ExpressionKind::String(_) => Operand::constant(Type::STRING, None),
             ExpressionKind::Parenthesized(inner) => self.expression(inner),
-            ExpressionKind::Subscript { base, index } => self.subscript(base, index),
             ExpressionKind::FunctionCall(call) => self.call(expression, call),
-            ExpressionKind::FieldSelection { base, field } => self.field(base, field),
-            ExpressionKind::Postfix { operand, operator } => self.postfix(span, operand, *operator),
-            ExpressionKind::Unary { operator, operand } => self.unary(span, *operator, operand),
-            ExpressionKind::Binary {
-                operator,
-                left,
-                right,
-            } => self.binary(*operator, left, right),
-            ExpressionKind::Conditional {
-                condition,
-                then_expression,
-                else_expression,
-            } => self.conditional(condition, then_expression, else_expression),
-            ExpressionKind::Assignment {
-                operator,
-                target,
-                value,
-            } => self.assignment(*operator, target, value),
             ExpressionKind::Sequence(expressions) => self.sequence(expressions),
+            ExpressionKind::Subscript { .. }
+            | ExpressionKind::FieldSelection { .. }
+            | ExpressionKind::Postfix { .. }
+            | ExpressionKind::Unary { .. }
+            | ExpressionKind::Binary { .. }
+            | ExpressionKind::Conditional { .. }
+            | ExpressionKind::Assignment { .. } => Operand::error(),
         }
     }
 
@@ -359,14 +469,6 @@ impl Analyzer<'_> {
             self.error(span, DiagnosticKind::LiteralTooBig(number.text.clone()));
             Operand::error()
         })
-    }
-
-    fn postfix(&mut self, span: Span, operand: &Expression, operator: PostfixOperator) -> Operand {
-        let symbol = match operator {
-            PostfixOperator::Increment => "++",
-            PostfixOperator::Decrement => "--",
-        };
-        self.increment(Span::new(operand.span.end, span.end), operand, symbol)
     }
 
     fn sequence(&mut self, expressions: &[Expression]) -> Operand {
@@ -694,13 +796,6 @@ impl Analyzer<'_> {
         }
     }
 
-    fn subscript(&mut self, base: &Expression, index: &Expression) -> Operand {
-        let span = Span::new(base.span.end, index.span.start);
-        let base_operand = self.expression(base);
-        let index_operand = self.value_expression(index);
-        self.subscript_checked(base, index, span, base_operand, index_operand)
-    }
-
     fn subscript_checked(
         &mut self,
         base: &Expression,
@@ -884,11 +979,6 @@ impl Analyzer<'_> {
         })
     }
 
-    fn field(&mut self, base: &Expression, field: &Identifier) -> Operand {
-        let base_operand = self.expression(base);
-        self.field_checked(field, base_operand)
-    }
-
     fn field_checked(&mut self, field: &Identifier, base_operand: Operand) -> Operand {
         if base_operand.ty.is_error() {
             return Operand::error();
@@ -1023,11 +1113,6 @@ impl Analyzer<'_> {
         }
     }
 
-    fn increment(&mut self, span: Span, operand: &Expression, symbol: &'static str) -> Operand {
-        let value = self.expression(operand);
-        self.increment_checked(span, operand, symbol, value)
-    }
-
     fn increment_checked(
         &mut self,
         span: Span,
@@ -1056,17 +1141,6 @@ impl Analyzer<'_> {
             non_uniform: value.non_uniform,
             ..Operand::temporary(value.ty)
         }
-    }
-
-    fn unary(&mut self, span: Span, operator: UnaryOperator, operand: &Expression) -> Operand {
-        if matches!(
-            operator,
-            UnaryOperator::Increment | UnaryOperator::Decrement
-        ) {
-            return self.increment(span, operand, operator.symbol());
-        }
-        let value = self.value_expression(operand);
-        self.unary_checked(span, operator, value)
     }
 
     fn unary_checked(&mut self, span: Span, operator: UnaryOperator, value: Operand) -> Operand {
@@ -1144,18 +1218,6 @@ impl Analyzer<'_> {
             .base_scalar()?
             .common(right.base_scalar()?, self.numeric_features())?;
         Some(left.with_scalar(scalar))
-    }
-
-    fn binary(
-        &mut self,
-        operator: BinaryOperator,
-        left: &Expression,
-        right: &Expression,
-    ) -> Operand {
-        let span = Span::new(left.span.end, right.span.start);
-        let left_operand = self.value_expression(left);
-        let right_operand = self.value_expression(right);
-        self.binary_checked(operator, left, right, span, left_operand, right_operand)
     }
 
     fn binary_checked(
@@ -1243,26 +1305,6 @@ impl Analyzer<'_> {
         }
     }
 
-    fn conditional(
-        &mut self,
-        condition: &Expression,
-        then_expression: &Expression,
-        else_expression: &Expression,
-    ) -> Operand {
-        let span = Span::new(condition.span.end, then_expression.span.start);
-        let condition_operand = self.value_expression(condition);
-        let then_operand = self.expression(then_expression);
-        let else_operand = self.expression(else_expression);
-        self.conditional_checked(
-            then_expression,
-            else_expression,
-            span,
-            condition_operand,
-            then_operand,
-            else_operand,
-        )
-    }
-
     fn conditional_checked(
         &mut self,
         then_expression: &Expression,
@@ -1331,18 +1373,6 @@ impl Analyzer<'_> {
             value,
             ..Operand::temporary(ty)
         }
-    }
-
-    fn assignment(
-        &mut self,
-        operator: AssignmentOperator,
-        target: &Expression,
-        value: &Expression,
-    ) -> Operand {
-        let span = Span::new(target.span.end, value.span.start);
-        let target_operand = self.expression(target);
-        let value_operand = self.value_expression(value);
-        self.assignment_checked(operator, target, value, span, target_operand, value_operand)
     }
 
     fn assignment_checked(

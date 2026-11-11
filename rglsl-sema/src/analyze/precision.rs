@@ -1,4 +1,5 @@
 use alloc::collections::{BTreeMap, BTreeSet};
+use alloc::vec::Vec;
 
 use rglsl_ast::ast::{
     AssignmentOperator, BinaryOperator, Condition, Declaration, DeclarationKind, Expression,
@@ -252,77 +253,69 @@ impl<'a> Pass<'a> {
     }
 
     fn propagate(&mut self, expression: &'a Expression, precision: Precision) {
-        if let Some(target) = self.converted(expression) {
-            let current = self
-                .conversion
-                .get(&expression.id)
-                .copied()
-                .unwrap_or_default();
-            if current != Precision::None || !participates(target, true) {
-                return;
-            }
-            self.conversion.insert(expression.id, precision);
-        }
-        self.propagate_inner(expression, precision);
+        self.spread(Vec::from([(expression, true)]), precision);
     }
 
     fn propagate_inner(&mut self, expression: &'a Expression, precision: Precision) {
-        let inner = strip(expression);
-        if self.own_of(inner) != Precision::None
-            || !self.ty(inner).is_some_and(|ty| participates(ty, true))
-        {
-            return;
-        }
-        self.set_own(inner, precision);
-        match inner.kind {
-            ExpressionKind::Binary {
-                ref left,
-                ref right,
-                ..
-            }
-            | ExpressionKind::Assignment {
-                target: ref left,
-                value: ref right,
-                ..
-            } => {
-                self.propagate(left, precision);
-                self.propagate(right, precision);
-            }
-            ExpressionKind::Subscript {
-                ref base,
-                ref index,
-            } => {
-                self.propagate(base, precision);
-                self.propagate(index, precision);
-            }
-            ExpressionKind::FieldSelection { ref base, .. } => self.propagate(base, precision),
-            ExpressionKind::Unary { ref operand, .. }
-            | ExpressionKind::Postfix { ref operand, .. } => {
-                self.propagate(operand, precision);
-            }
-            ExpressionKind::Conditional {
-                ref then_expression,
-                ref else_expression,
-                ..
-            } => {
-                self.propagate(then_expression, precision);
-                self.propagate(else_expression, precision);
-            }
-            ExpressionKind::FunctionCall(ref call) => {
-                for argument in &call.arguments {
-                    self.propagate(argument, precision);
+        self.spread(Vec::from([(expression, false)]), precision);
+    }
+
+    fn spread(&mut self, mut pending: Vec<(&'a Expression, bool)>, precision: Precision) {
+        while let Some((expression, converting)) = pending.pop() {
+            if converting {
+                if let Some(target) = self.converted(expression) {
+                    let current = self
+                        .conversion
+                        .get(&expression.id)
+                        .copied()
+                        .unwrap_or_default();
+                    if current != Precision::None || !participates(target, true) {
+                        continue;
+                    }
+                    self.conversion.insert(expression.id, precision);
                 }
             }
-            ExpressionKind::Sequence(ref expressions) => {
-                for item in expressions {
-                    self.propagate(item, precision);
-                }
+            let inner = strip(expression);
+            if self.own_of(inner) != Precision::None
+                || !self.ty(inner).is_some_and(|ty| participates(ty, true))
+            {
+                continue;
             }
-            ExpressionKind::Variable(_)
-            | ExpressionKind::Number(_)
-            | ExpressionKind::Bool(_)
-            | ExpressionKind::String(_)
-            | ExpressionKind::Parenthesized(_) => {}
+            self.set_own(inner, precision);
+            let operands: &[&'a Expression] = &match inner.kind {
+                ExpressionKind::Binary {
+                    ref left,
+                    ref right,
+                    ..
+                }
+                | ExpressionKind::Assignment {
+                    target: ref left,
+                    value: ref right,
+                    ..
+                }
+                | ExpressionKind::Subscript {
+                    base: ref left,
+                    index: ref right,
+                }
+                | ExpressionKind::Conditional {
+                    then_expression: ref left,
+                    else_expression: ref right,
+                    ..
+                } => Vec::from([&**left, &**right]),
+                ExpressionKind::FieldSelection {
+                    base: ref operand, ..
+                }
+                | ExpressionKind::Unary { ref operand, .. }
+                | ExpressionKind::Postfix { ref operand, .. } => Vec::from([&**operand]),
+                ExpressionKind::FunctionCall(ref call) => call.arguments.iter().collect(),
+                ExpressionKind::Sequence(ref expressions) => expressions.iter().collect(),
+                ExpressionKind::Variable(_)
+                | ExpressionKind::Number(_)
+                | ExpressionKind::Bool(_)
+                | ExpressionKind::String(_)
+                | ExpressionKind::Parenthesized(_) => Vec::new(),
+            };
+            pending.extend(operands.iter().rev().map(|operand| (*operand, true)));
         }
     }
 
@@ -351,7 +344,42 @@ impl<'a> Pass<'a> {
     }
 
     fn expression(&mut self, expression: &'a Expression) {
-        let inner = strip(expression);
+        let mut pending = Vec::from([(expression, false)]);
+        while let Some((expression, visited)) = pending.pop() {
+            let inner = strip(expression);
+            if visited {
+                self.finish(inner);
+                continue;
+            }
+            pending.push((inner, true));
+            let start = pending.len();
+            match inner.kind {
+                ExpressionKind::FunctionCall(ref call) => {
+                    if let FunctionIdentifier::Method { ref object, .. } = call.function.node {
+                        pending.push((object, false));
+                    }
+                    pending.extend(call.arguments.iter().map(|argument| (argument, false)));
+                }
+                ExpressionKind::Variable(_)
+                | ExpressionKind::Number(_)
+                | ExpressionKind::Bool(_)
+                | ExpressionKind::String(_)
+                | ExpressionKind::Parenthesized(_) => {}
+                _ => pending.extend(
+                    inner
+                        .kind
+                        .children()
+                        .into_iter()
+                        .map(|child| (child, false)),
+                ),
+            }
+            if let Some(children) = pending.get_mut(start..) {
+                children.reverse();
+            }
+        }
+    }
+
+    fn finish(&mut self, inner: &'a Expression) {
         match inner.kind {
             ExpressionKind::Variable(_) => {
                 let precision = self
@@ -365,12 +393,7 @@ impl<'a> Pass<'a> {
                 self.set_own(inner, Precision::None);
             }
             ExpressionKind::Parenthesized(_) => {}
-            ExpressionKind::Subscript {
-                ref base,
-                ref index,
-            } => {
-                self.expression(base);
-                self.expression(index);
+            ExpressionKind::Subscript { ref base, .. } => {
                 let precision = self.visible(base);
                 self.set_own(inner, precision);
             }
@@ -378,7 +401,6 @@ impl<'a> Pass<'a> {
                 ref base,
                 ref field,
             } => {
-                self.expression(base);
                 let precision = self
                     .member_precision(base, &field.node)
                     .unwrap_or_else(|| self.visible(base));
@@ -388,7 +410,6 @@ impl<'a> Pass<'a> {
                 operator,
                 ref operand,
             } => {
-                self.expression(operand);
                 let precision = match operator {
                     UnaryOperator::Plus => self.visible(operand),
                     _ if self.ty(inner).is_some_and(|ty| participates(ty, false)) => {
@@ -399,7 +420,6 @@ impl<'a> Pass<'a> {
                 self.set_own(inner, precision);
             }
             ExpressionKind::Postfix { ref operand, .. } => {
-                self.expression(operand);
                 let precision = if self.ty(inner).is_some_and(|ty| participates(ty, false)) {
                     self.visible(operand)
                 } else {
@@ -412,8 +432,6 @@ impl<'a> Pass<'a> {
                 ref left,
                 ref right,
             } => {
-                self.expression(left);
-                self.expression(right);
                 let shift = matches!(
                     operator,
                     BinaryOperator::ShiftLeft | BinaryOperator::ShiftRight
@@ -425,8 +443,6 @@ impl<'a> Pass<'a> {
                 ref target,
                 ref value,
             } => {
-                self.expression(target);
-                self.expression(value);
                 let shift = matches!(
                     operator,
                     AssignmentOperator::ShiftLeft | AssignmentOperator::ShiftRight
@@ -434,36 +450,22 @@ impl<'a> Pass<'a> {
                 self.update_binary(inner, target, value, shift);
             }
             ExpressionKind::Conditional {
-                ref condition,
                 ref then_expression,
                 ref else_expression,
+                ..
             } => {
-                self.expression(condition);
-                self.expression(then_expression);
-                self.expression(else_expression);
                 let precision = self
                     .visible(then_expression)
                     .max(self.visible(else_expression));
                 self.set_own(inner, precision);
             }
             ExpressionKind::Sequence(ref expressions) => {
-                for item in expressions {
-                    self.expression(item);
-                }
                 let precision = expressions
                     .last()
                     .map_or(Precision::None, |last| self.visible(last));
                 self.set_own(inner, precision);
             }
-            ExpressionKind::FunctionCall(ref call) => {
-                if let FunctionIdentifier::Method { ref object, .. } = call.function.node {
-                    self.expression(object);
-                }
-                for argument in &call.arguments {
-                    self.expression(argument);
-                }
-                self.call(inner, &call.arguments);
-            }
+            ExpressionKind::FunctionCall(ref call) => self.call(inner, &call.arguments),
         }
     }
 
