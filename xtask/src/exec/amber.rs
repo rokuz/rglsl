@@ -62,10 +62,14 @@ impl Amber {
                 command.args(["-B", dump]);
             }
         }
-        if let Some(dir) = script.parent() {
-            command.current_dir(dir);
+        match (script.parent(), script.file_name()) {
+            (Some(dir), Some(name)) if !dir.as_os_str().is_empty() => {
+                command.current_dir(dir).arg(name);
+            }
+            _ => {
+                command.arg(script);
+            }
         }
-        command.arg(script);
         let output = process::run(command, self.timeout).map_err(|e| format!("{e:#}"))?;
         match output.exit {
             Exit::Code(0) => {}
@@ -91,7 +95,7 @@ impl Amber {
     }
 }
 
-fn first_line(primary: &str, secondary: &str) -> String {
+pub fn first_line(primary: &str, secondary: &str) -> String {
     primary
         .lines()
         .chain(secondary.lines())

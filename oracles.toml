@@ -21,9 +21,9 @@ commit = "496543121ce6419f23d6fa5d7194ba66c36212d2"
 
 [kosmickrisp]
 repo = "https://github.com/rokuz/kosmickrisp-binaries"
-tag = "mesa-mesa-26.2.1"
+tag = "mesa-mesa-26.3.0"
 asset = "kosmickrisp-macos-arm64.zip"
-sha256 = "378658582554ae1f1fa0b25b47db15363d807e748fa233271ff4d01b599e9282"
+sha256 = "d92c1eb5be8be3c2723495fb0fad72f9e762e447029e6bfd0364a20c73ad9b74"
 
 [amber]
 repo = "https://github.com/google/amber"

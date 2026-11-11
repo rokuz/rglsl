@@ -10,8 +10,8 @@ use std::time::Duration;
 use anyhow::{bail, Context, Result};
 
 use crate::corpus::STAGE_EXTENSIONS;
-use crate::exec::Executor;
-use crate::fuzz_exec::{self, Run};
+use crate::exec::{self, Executor, TargetId};
+use crate::fuzz_exec::{self, Run, Staged};
 use crate::oracles;
 use crate::process::{self, Exit};
 use crate::worker::{EXIT_ACCEPTED, EXIT_BACKEND_FAILED, EXIT_REJECTED};
@@ -21,7 +21,7 @@ pub struct Options {
     pub shaders: PathBuf,
     pub jobs: Option<usize>,
     pub timeout_secs: u64,
-    pub exec: bool,
+    pub exec: Vec<TargetId>,
     pub exec_glslang: bool,
 }
 
@@ -143,20 +143,20 @@ pub fn run(root: &Path, options: Options) -> Result<()> {
         .unwrap_or_else(PoisonError::into_inner);
     outcomes.sort_by(|a, b| a.shader.cmp(&b.shader));
 
-    if options.exec {
-        let executor = Executor::new(root, &glslang.path, work.join("exec"), timeout)?;
+    let mut per_target = Vec::new();
+    for target in &options.exec {
+        let executor = Executor::new(*target, root, &glslang.path, &work.join("exec"), timeout)?;
         eprintln!(
-            "[xtask] exec on {} (Vulkan {}, {})",
-            executor.device.name, executor.device.api_version, executor.device.driver
+            "[xtask] exec on the {} target: {}",
+            target.label(),
+            executor.describe()
         );
-        metamorphic(
-            &executor,
-            &mut outcomes,
-            &spirv_dir,
-            options.exec_glslang,
-            jobs,
-        );
+        per_target.push((
+            *target,
+            metamorphic(&executor, &outcomes, options.exec_glslang),
+        ));
     }
+    merge(&mut outcomes, &per_target);
 
     let report = work.join("report.tsv");
     fs::write(&report, details(&shaders_dir, &outcomes))?;
@@ -269,57 +269,77 @@ fn compare(
 }
 
 type RunPair = (Run, Option<Run>);
+type StagedPair = (Staged, Option<Staged>);
+type Judgement = Option<(Verdict, String)>;
 
-fn run_all(
-    executor: &Executor,
-    outcomes: &[Outcome],
-    spirv_dir: &Path,
-    glslang: bool,
-    jobs: usize,
-) -> Vec<RunPair> {
-    let next = AtomicUsize::new(0);
-    let runs: Mutex<Vec<(usize, RunPair)>> = Mutex::new(Vec::new());
-    std::thread::scope(|scope| {
-        for _ in 0..jobs {
-            scope.spawn(|| loop {
-                let index = next.fetch_add(1, Ordering::Relaxed);
-                let Some(outcome) = outcomes.get(index) else {
-                    break;
-                };
-                let result = if outcome.verdict == Verdict::Agree
-                    && fuzz_exec::family_of(&outcome.shader).is_some()
-                {
-                    let dir = spirv_dir.join(format!("exec{index}"));
-                    let json = fuzz_exec::job_json(&outcome.shader);
-                    let ours = fuzz_exec::run_module(
-                        executor,
-                        &outcome.spirv,
-                        json.as_deref(),
-                        &dir,
-                        "rglsl",
-                    );
-                    let theirs = glslang.then(|| {
-                        fuzz_exec::run_module(
-                            executor,
-                            &outcome.spirv.with_extension("glslang.spv"),
-                            json.as_deref(),
-                            &dir,
-                            "glslang",
-                        )
-                    });
-                    (ours, theirs)
-                } else {
-                    (Run::Refused(String::new()), None)
-                };
-                runs.lock()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .push((index, result));
-            });
+fn stage_all(executor: &Executor, outcomes: &[Outcome], glslang: bool) -> Vec<StagedPair> {
+    let indices: Vec<usize> = (0..outcomes.len()).collect();
+    exec::parallel_map(&indices, |index| {
+        let Some(outcome) = outcomes.get(*index) else {
+            return (Staged::Refused(String::new()), None);
+        };
+        if outcome.verdict != Verdict::Agree || fuzz_exec::family_of(&outcome.shader).is_none() {
+            return (Staged::Refused(String::new()), None);
         }
-    });
-    let mut runs = runs.into_inner().unwrap_or_else(PoisonError::into_inner);
-    runs.sort_by_key(|(index, _)| *index);
-    runs.into_iter().map(|(_, run)| run).collect()
+        let dir = executor
+            .work_dir()
+            .join("fuzz")
+            .join(format!("exec{index}"));
+        let json = fuzz_exec::job_json(&outcome.shader);
+        let ours =
+            fuzz_exec::stage_module(executor, &outcome.spirv, json.as_deref(), &dir, "rglsl");
+        let theirs = glslang.then(|| {
+            fuzz_exec::stage_module(
+                executor,
+                &outcome.spirv.with_extension("glslang.spv"),
+                json.as_deref(),
+                &dir,
+                "glslang",
+            )
+        });
+        (ours, theirs)
+    })
+}
+
+fn execute(
+    executor: &Executor,
+    staged: &[StagedPair],
+    indices: &[usize],
+    alone: bool,
+) -> BTreeMap<usize, RunPair> {
+    let mut jobs = Vec::new();
+    for index in indices {
+        if let Some((ours, theirs)) = staged.get(*index) {
+            for stage in std::iter::once(ours).chain(theirs.iter()) {
+                if let Staged::Ready { job, .. } = stage {
+                    jobs.push(job.clone());
+                }
+            }
+        }
+    }
+    let results = if alone {
+        executor.confirm_jobs(&jobs)
+    } else {
+        executor.run_jobs(&jobs)
+    };
+    let mut results = results.into_iter();
+    let mut runs = BTreeMap::new();
+    for index in indices {
+        let Some((ours, theirs)) = staged.get(*index) else {
+            continue;
+        };
+        let mut finish = |stage: &Staged| {
+            let result = match stage {
+                Staged::Ready { .. } => results.next(),
+                Staged::Refused(_) => None,
+            };
+            fuzz_exec::finish(stage, result)
+        };
+        let ours = finish(ours);
+        let theirs = theirs.as_ref().map(&mut finish);
+        runs.insert(*index, (ours, theirs));
+    }
+    runs
 }
 
 fn differs(reference: &Run, variant: &Run) -> Option<Result<String, String>> {
@@ -338,100 +358,162 @@ fn differs(reference: &Run, variant: &Run) -> Option<Result<String, String>> {
     }
 }
 
-fn metamorphic(
-    executor: &Executor,
-    outcomes: &mut [Outcome],
-    spirv_dir: &Path,
-    glslang: bool,
-    jobs: usize,
-) {
-    let runs = run_all(executor, outcomes, spirv_dir, glslang, jobs);
-    let index_of: BTreeMap<PathBuf, usize> = outcomes
-        .iter()
-        .enumerate()
-        .map(|(index, outcome)| (outcome.shader.clone(), index))
-        .collect();
-    for index in 0..outcomes.len() {
-        let Some(outcome) = outcomes.get(index) else {
-            continue;
-        };
-        if outcome.verdict != Verdict::Agree {
-            continue;
-        }
-        let Some(reference) = fuzz_exec::family_of(&outcome.shader) else {
-            continue;
-        };
-        let Some((ours, theirs)) = runs.get(index) else {
-            continue;
-        };
-        let reference_runs = index_of.get(&reference).and_then(|i| runs.get(*i));
-        let (verdict, note) = if reference == outcome.shader {
-            match (ours, theirs) {
-                (Run::Refused(why), _) => (Verdict::ExecSkipped, why.clone()),
-                (Run::Failed(why), Some(Run::Failed(_))) => (
-                    Verdict::ExecSkipped,
-                    format!("glslang's module fails on the driver too: {why}"),
+fn judge(outcomes: &[Outcome], runs: &BTreeMap<usize, RunPair>, index: usize) -> Judgement {
+    let outcome = outcomes.get(index)?;
+    if outcome.verdict != Verdict::Agree {
+        return None;
+    }
+    let reference = fuzz_exec::family_of(&outcome.shader)?;
+    let (ours, theirs) = runs.get(&index)?;
+    let reference_index = outcomes.iter().position(|o| o.shader == reference);
+    let reference_runs = reference_index.and_then(|i| runs.get(&i));
+    Some(if reference == outcome.shader {
+        match (ours, theirs) {
+            (Run::Refused(why), _) => (Verdict::ExecSkipped, why.clone()),
+            (Run::Failed(why), Some(Run::Failed(_))) => (
+                Verdict::ExecSkipped,
+                format!("glslang's module fails on the driver too: {why}"),
+            ),
+            (Run::Failed(why), _) => (Verdict::ExecFailed, why.clone()),
+            (Run::Ran { .. }, Some(theirs)) => match differs(theirs, ours) {
+                Some(Ok(difference)) => (
+                    Verdict::WrongResult,
+                    format!("differs from glslang's reference: {difference}"),
                 ),
-                (Run::Failed(why), _) => (Verdict::ExecFailed, why.clone()),
-                (Run::Ran { .. }, Some(theirs)) => match differs(theirs, ours) {
-                    Some(Ok(difference)) => (
+                _ => (Verdict::Agree, String::new()),
+            },
+            (Run::Ran { .. }, None) => (Verdict::Agree, String::new()),
+        }
+    } else {
+        match (reference_runs, ours) {
+            (_, Run::Refused(why)) => (Verdict::ExecSkipped, why.clone()),
+            (_, Run::Failed(why)) => (Verdict::ExecFailed, why.clone()),
+            (Some((reference_ours @ Run::Ran { .. }, reference_theirs)), Run::Ran { .. }) => {
+                let glslang_difference = match (reference_theirs, theirs) {
+                    (Some(reference_theirs), Some(theirs)) => {
+                        differs(reference_theirs, theirs).map(|d| d.unwrap_or_else(|e| e))
+                    }
+                    _ => None,
+                };
+                match (differs(reference_ours, ours), glslang_difference) {
+                    (Some(Ok(difference)), None) => (
                         Verdict::WrongResult,
-                        format!("differs from glslang's reference: {difference}"),
+                        format!("differs from the reference: {difference}"),
+                    ),
+                    (Some(Ok(difference)), Some(_)) => (
+                        Verdict::WrongResultGlslang,
+                        format!("glslang's variant differs from its reference too: {difference}"),
+                    ),
+                    (_, Some(difference)) => (
+                        Verdict::WrongResultGlslang,
+                        format!("only glslang's variant differs from its reference: {difference}"),
                     ),
                     _ => (Verdict::Agree, String::new()),
-                },
-                (Run::Ran { .. }, None) => (Verdict::Agree, String::new()),
-            }
-        } else {
-            match (reference_runs, ours) {
-                (_, Run::Refused(why)) => (Verdict::ExecSkipped, why.clone()),
-                (_, Run::Failed(why)) => (Verdict::ExecFailed, why.clone()),
-                (Some((reference_ours @ Run::Ran { .. }, reference_theirs)), Run::Ran { .. }) => {
-                    let glslang_difference = match (reference_theirs, theirs) {
-                        (Some(reference_theirs), Some(theirs)) => {
-                            differs(reference_theirs, theirs).map(|d| d.unwrap_or_else(|e| e))
-                        }
-                        _ => None,
-                    };
-                    match (differs(reference_ours, ours), glslang_difference) {
-                        (Some(Ok(difference)), None) => (
-                            Verdict::WrongResult,
-                            format!("differs from the reference: {difference}"),
-                        ),
-                        (Some(Ok(difference)), Some(_)) => (
-                            Verdict::WrongResultGlslang,
-                            format!(
-                                "glslang's variant differs from its reference too: {difference}"
-                            ),
-                        ),
-                        (_, Some(difference)) => (
-                            Verdict::WrongResultGlslang,
-                            format!(
-                                "only glslang's variant differs from its reference: {difference}"
-                            ),
-                        ),
-                        _ => (Verdict::Agree, String::new()),
-                    }
                 }
-                (Some((reference, _)), Run::Ran { .. }) => (
-                    Verdict::ExecSkipped,
-                    match reference {
-                        Run::Refused(why) | Run::Failed(why) => {
-                            format!("the reference did not run: {why}")
-                        }
-                        Run::Ran { .. } => String::new(),
-                    },
-                ),
-                (None, Run::Ran { .. }) => (
-                    Verdict::ExecSkipped,
-                    "the reference was not compiled".to_string(),
-                ),
             }
-        };
-        if let Some(outcome) = outcomes.get_mut(index) {
-            outcome.verdict = verdict;
-            outcome.note = note;
+            (Some((reference, _)), Run::Ran { .. }) => (
+                Verdict::ExecSkipped,
+                match reference {
+                    Run::Refused(why) | Run::Failed(why) => {
+                        format!("the reference did not run: {why}")
+                    }
+                    Run::Ran { .. } => String::new(),
+                },
+            ),
+            (None, Run::Ran { .. }) => (
+                Verdict::ExecSkipped,
+                "the reference was not compiled".to_string(),
+            ),
         }
+    })
+}
+
+const fn needs_confirmation(verdict: Verdict) -> bool {
+    matches!(
+        verdict,
+        Verdict::WrongResult | Verdict::WrongResultGlslang | Verdict::ExecFailed
+    )
+}
+
+fn metamorphic(executor: &Executor, outcomes: &[Outcome], glslang: bool) -> Vec<Judgement> {
+    let staged = stage_all(executor, outcomes, glslang);
+    let all: Vec<usize> = (0..outcomes.len()).collect();
+    let mut runs = execute(executor, &staged, &all, false);
+    let mut judgements: Vec<Judgement> = all.iter().map(|i| judge(outcomes, &runs, *i)).collect();
+    let failing: Vec<usize> = judgements
+        .iter()
+        .enumerate()
+        .filter(|(_, j)| j.as_ref().is_some_and(|(v, _)| needs_confirmation(*v)))
+        .map(|(i, _)| i)
+        .collect();
+    if failing.is_empty() {
+        return judgements;
+    }
+    let mut involved: Vec<usize> = failing.clone();
+    for index in &failing {
+        let reference = outcomes
+            .get(*index)
+            .and_then(|o| fuzz_exec::family_of(&o.shader));
+        if let Some(position) = reference.and_then(|r| outcomes.iter().position(|o| o.shader == r))
+        {
+            involved.push(position);
+        }
+    }
+    involved.sort_unstable();
+    involved.dedup();
+    eprintln!(
+        "[xtask] confirming {} failing shaders alone on the {} target",
+        failing.len(),
+        executor.target.label()
+    );
+    runs.extend(execute(executor, &staged, &involved, true));
+    for index in failing {
+        let confirmed = judge(outcomes, &runs, index).map(|(verdict, note)| {
+            if needs_confirmation(verdict) {
+                (verdict, format!("{note} (confirmed alone)"))
+            } else {
+                (verdict, note)
+            }
+        });
+        if let Some(slot) = judgements.get_mut(index) {
+            *slot = confirmed;
+        }
+    }
+    judgements
+}
+
+fn merge(outcomes: &mut [Outcome], per_target: &[(TargetId, Vec<Judgement>)]) {
+    for (index, outcome) in outcomes.iter_mut().enumerate() {
+        let verdicts: Vec<(TargetId, &(Verdict, String))> = per_target
+            .iter()
+            .filter_map(|(target, judgements)| {
+                judgements
+                    .get(index)
+                    .and_then(Option::as_ref)
+                    .map(|j| (*target, j))
+            })
+            .collect();
+        let Some((target, (verdict, note))) = verdicts.iter().max_by_key(|(_, (v, _))| *v) else {
+            continue;
+        };
+        let mut text = if note.is_empty() {
+            String::new()
+        } else {
+            format!("{}: {note}", target.label())
+        };
+        for (other, (other_verdict, _)) in &verdicts {
+            if other != target && other_verdict != verdict {
+                let _ = write!(
+                    text,
+                    "{}{}: {}",
+                    if text.is_empty() { "" } else { "; " },
+                    other.label(),
+                    other_verdict.label()
+                );
+            }
+        }
+        outcome.verdict = *verdict;
+        outcome.note = text;
     }
 }
 
