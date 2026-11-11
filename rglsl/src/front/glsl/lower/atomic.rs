@@ -136,212 +136,6 @@ impl FunctionLowerer<'_, '_> {
         handle
     }
 
-    pub(super) fn atomic(
-        &mut self,
-        name: &str,
-        arguments: &[AstExpression],
-        at: Span,
-    ) -> Result<Option<Handle<Expression>>> {
-        let (memory, rest) = arguments.split_first().ok_or_else(|| internal(at))?;
-        let memory_ty = self.info(memory)?.ty.clone();
-        let element = memory_ty.scalar_type().ok_or_else(|| internal(at))?;
-        let element = scalar(element);
-        let place = self.place(memory)?;
-        let count = operand_count(name).min(rest.len());
-        let (values, scope) = rest.split_at(count);
-        let mut operands = alloc::vec::Vec::with_capacity(values.len());
-        for argument in values {
-            let (value, ty) = self.typed(argument)?;
-            operands.push(self.convert(value, &ty, &memory_ty, at)?);
-        }
-        let order = if scope.is_empty() {
-            None
-        } else {
-            Some(self.memory_order(scope, at)?)
-        };
-        let pointer = place.pointer;
-        match (name, order, operands.as_slice()) {
-            ("atomicLoad", Some(order), &[]) => {
-                let ty = self.lw.insert_type(TypeInner::Scalar(element));
-                let result = self.push_with_result(
-                    Expression::AtomicResult {
-                        ty,
-                        comparison: false,
-                    },
-                    |result| Statement::AtomicLoad {
-                        location: AtomicLocation::Pointer(pointer),
-                        order,
-                        result,
-                    },
-                    at,
-                );
-                return Ok(Some(result));
-            }
-            ("atomicStore", Some(order), &[value]) => {
-                self.push(
-                    Statement::AtomicStore {
-                        location: AtomicLocation::Pointer(pointer),
-                        value,
-                        order,
-                    },
-                    at,
-                );
-                return Ok(None);
-            }
-            _ => {}
-        }
-        let (fun, value, comparison) = match (atomic_function(name), operands.as_slice()) {
-            (Some(fun), &[value]) => (fun, value, false),
-            (None, &[compare, value]) if name == "atomicCompSwap" => (
-                AtomicFunction::Exchange {
-                    compare: Some(compare),
-                },
-                value,
-                true,
-            ),
-            _ => return Err(internal(at)),
-        };
-        let ty = if comparison {
-            self.lw.module.generate_predeclared_type(
-                PredeclaredType::AtomicCompareExchangeWeakResult(element),
-            )
-        } else {
-            self.lw.insert_type(TypeInner::Scalar(element))
-        };
-        let result = self.push_with_result(
-            Expression::AtomicResult { ty, comparison },
-            |result| Statement::Atomic {
-                pointer,
-                fun,
-                value,
-                result: Some(result),
-                order,
-            },
-            at,
-        );
-        if comparison {
-            self.add(
-                Expression::AccessIndex {
-                    base: result,
-                    index: 0,
-                },
-                at,
-            )
-            .map(Some)
-        } else {
-            Ok(Some(result))
-        }
-    }
-
-    pub(super) fn image_atomic(
-        &mut self,
-        name: &str,
-        image: Handle<Expression>,
-        opaque: Opaque,
-        non_uniform: bool,
-        arguments: &[AstExpression],
-        at: Span,
-    ) -> Result<Option<Handle<Expression>>> {
-        if non_uniform {
-            self.mark(image, NonUniform::VALUE);
-        }
-        let coordinate_argument = arguments.get(1).ok_or_else(|| internal(at))?;
-        let (coordinate, ty) = self.typed(coordinate_argument)?;
-        let size = ty.component_count().ok_or_else(|| internal(at))?;
-        let (coordinate, array_index) =
-            self.split_storage_coordinate(coordinate, size, opaque, at)?;
-        let mut rest = arguments.get(2..).ok_or_else(|| internal(at))?;
-        let sample = if opaque.multisample {
-            let (sample, tail) = rest.split_first().ok_or_else(|| internal(at))?;
-            rest = tail;
-            Some(self.rvalue(sample)?)
-        } else {
-            None
-        };
-        let count = operand_count(name).min(rest.len());
-        let (values, scope) = rest.split_at(count);
-        let mut operands = alloc::vec::Vec::with_capacity(values.len());
-        for argument in values {
-            operands.push(self.rvalue(argument)?);
-        }
-        let order = if scope.is_empty() {
-            let semantics = if self.lw.analysis.vulkan_memory_model && self.image_is_volatile(image)
-            {
-                MemorySemantics::VOLATILE
-            } else {
-                MemorySemantics::empty()
-            };
-            MemoryOrder {
-                scope: self.default_scope(),
-                semantics,
-                unequal: semantics,
-            }
-        } else {
-            self.memory_order(scope, at)?
-        };
-        let texel = Texel {
-            image,
-            coordinate,
-            array_index,
-            sample,
-        };
-        let element = rglsl_sema::types::Type::scalar(opaque.sampled.scalar());
-        let element = element.scalar_type().ok_or_else(|| internal(at))?;
-        let ty = self.lw.insert_type(TypeInner::Scalar(scalar(element)));
-        let result = Expression::AtomicResult {
-            ty,
-            comparison: false,
-        };
-        match (name, operands.as_slice()) {
-            ("imageAtomicLoad", &[]) => Ok(Some(self.push_with_result(
-                result,
-                |result| Statement::AtomicLoad {
-                    location: AtomicLocation::Texel(texel),
-                    order,
-                    result,
-                },
-                at,
-            ))),
-            ("imageAtomicStore", &[value]) => {
-                self.push(
-                    Statement::AtomicStore {
-                        location: AtomicLocation::Texel(texel),
-                        value,
-                        order,
-                    },
-                    at,
-                );
-                Ok(None)
-            }
-            _ => {
-                let (fun, value) = match (atomic_function(name), operands.as_slice()) {
-                    (Some(fun), &[value]) => (fun, value),
-                    (None, &[compare, value]) if name == "imageAtomicCompSwap" => (
-                        AtomicFunction::Exchange {
-                            compare: Some(compare),
-                        },
-                        value,
-                    ),
-                    _ => return Err(internal(at)),
-                };
-                Ok(Some(self.push_with_result(
-                    result,
-                    |result| Statement::ImageAtomic {
-                        image,
-                        coordinate,
-                        array_index,
-                        fun,
-                        value,
-                        sample,
-                        result: Some(result),
-                        order: Some(order),
-                    },
-                    at,
-                )))
-            }
-        }
-    }
-
     pub(super) fn barrier(
         &mut self,
         name: &str,
@@ -439,5 +233,246 @@ impl FunctionLowerer<'_, '_> {
         };
         self.push(statement, at);
         Ok(())
+    }
+}
+
+#[allow(clippy::await_holding_refcell_ref)]
+impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
+    pub(super) async fn atomic(
+        self,
+        name: &'b str,
+        arguments: &'b [AstExpression],
+        at: Span,
+    ) -> Result<Option<Handle<Expression>>> {
+        let mut this = self.lowerer();
+        let (memory, rest) = arguments.split_first().ok_or_else(|| internal(at))?;
+        let memory_ty = this.info(memory)?.ty.clone();
+        let element = memory_ty.scalar_type().ok_or_else(|| internal(at))?;
+        let element = scalar(element);
+        let place = {
+            let frame = self.clone().place(memory);
+            drop(this);
+            let result = self.nest(frame).await;
+            this = self.lowerer();
+            result
+        }?;
+        let count = operand_count(name).min(rest.len());
+        let (values, scope) = rest.split_at(count);
+        let mut operands = alloc::vec::Vec::with_capacity(values.len());
+        for argument in values {
+            let (value, ty) = {
+                let frame = self.clone().typed(argument);
+                drop(this);
+                let result = self.nest(frame).await;
+                this = self.lowerer();
+                result
+            }?;
+            operands.push(this.convert(value, &ty, &memory_ty, at)?);
+        }
+        let order = if scope.is_empty() {
+            None
+        } else {
+            Some(this.memory_order(scope, at)?)
+        };
+        let pointer = place.pointer;
+        match (name, order, operands.as_slice()) {
+            ("atomicLoad", Some(order), &[]) => {
+                let ty = this.lw.insert_type(TypeInner::Scalar(element));
+                let result = this.push_with_result(
+                    Expression::AtomicResult {
+                        ty,
+                        comparison: false,
+                    },
+                    |result| Statement::AtomicLoad {
+                        location: AtomicLocation::Pointer(pointer),
+                        order,
+                        result,
+                    },
+                    at,
+                );
+                return Ok(Some(result));
+            }
+            ("atomicStore", Some(order), &[value]) => {
+                this.push(
+                    Statement::AtomicStore {
+                        location: AtomicLocation::Pointer(pointer),
+                        value,
+                        order,
+                    },
+                    at,
+                );
+                return Ok(None);
+            }
+            _ => {}
+        }
+        let (fun, value, comparison) = match (atomic_function(name), operands.as_slice()) {
+            (Some(fun), &[value]) => (fun, value, false),
+            (None, &[compare, value]) if name == "atomicCompSwap" => (
+                AtomicFunction::Exchange {
+                    compare: Some(compare),
+                },
+                value,
+                true,
+            ),
+            _ => return Err(internal(at)),
+        };
+        let ty = if comparison {
+            this.lw.module.generate_predeclared_type(
+                PredeclaredType::AtomicCompareExchangeWeakResult(element),
+            )
+        } else {
+            this.lw.insert_type(TypeInner::Scalar(element))
+        };
+        let result = this.push_with_result(
+            Expression::AtomicResult { ty, comparison },
+            |result| Statement::Atomic {
+                pointer,
+                fun,
+                value,
+                result: Some(result),
+                order,
+            },
+            at,
+        );
+        if comparison {
+            this.add(
+                Expression::AccessIndex {
+                    base: result,
+                    index: 0,
+                },
+                at,
+            )
+            .map(Some)
+        } else {
+            Ok(Some(result))
+        }
+    }
+
+    pub(super) async fn image_atomic(
+        self,
+        name: &'b str,
+        image: Handle<Expression>,
+        opaque: Opaque,
+        non_uniform: bool,
+        arguments: &'b [AstExpression],
+        at: Span,
+    ) -> Result<Option<Handle<Expression>>> {
+        let mut this = self.lowerer();
+        if non_uniform {
+            this.mark(image, NonUniform::VALUE);
+        }
+        let coordinate_argument = arguments.get(1).ok_or_else(|| internal(at))?;
+        let (coordinate, ty) = {
+            let frame = self.clone().typed(coordinate_argument);
+            drop(this);
+            let result = self.nest(frame).await;
+            this = self.lowerer();
+            result
+        }?;
+        let size = ty.component_count().ok_or_else(|| internal(at))?;
+        let (coordinate, array_index) =
+            this.split_storage_coordinate(coordinate, size, opaque, at)?;
+        let mut rest = arguments.get(2..).ok_or_else(|| internal(at))?;
+        let sample = if opaque.multisample {
+            let (sample, tail) = rest.split_first().ok_or_else(|| internal(at))?;
+            rest = tail;
+            Some({
+                let frame = self.clone().rvalue(sample);
+                drop(this);
+                let result = self.nest(frame).await;
+                this = self.lowerer();
+                result
+            }?)
+        } else {
+            None
+        };
+        let count = operand_count(name).min(rest.len());
+        let (values, scope) = rest.split_at(count);
+        let mut operands = alloc::vec::Vec::with_capacity(values.len());
+        for argument in values {
+            operands.push({
+                let frame = self.clone().rvalue(argument);
+                drop(this);
+                let result = self.nest(frame).await;
+                this = self.lowerer();
+                result
+            }?);
+        }
+        let order = if scope.is_empty() {
+            let semantics = if this.lw.analysis.vulkan_memory_model && this.image_is_volatile(image)
+            {
+                MemorySemantics::VOLATILE
+            } else {
+                MemorySemantics::empty()
+            };
+            MemoryOrder {
+                scope: this.default_scope(),
+                semantics,
+                unequal: semantics,
+            }
+        } else {
+            this.memory_order(scope, at)?
+        };
+        let texel = Texel {
+            image,
+            coordinate,
+            array_index,
+            sample,
+        };
+        let element = rglsl_sema::types::Type::scalar(opaque.sampled.scalar());
+        let element = element.scalar_type().ok_or_else(|| internal(at))?;
+        let ty = this.lw.insert_type(TypeInner::Scalar(scalar(element)));
+        let result = Expression::AtomicResult {
+            ty,
+            comparison: false,
+        };
+        match (name, operands.as_slice()) {
+            ("imageAtomicLoad", &[]) => Ok(Some(this.push_with_result(
+                result,
+                |result| Statement::AtomicLoad {
+                    location: AtomicLocation::Texel(texel),
+                    order,
+                    result,
+                },
+                at,
+            ))),
+            ("imageAtomicStore", &[value]) => {
+                this.push(
+                    Statement::AtomicStore {
+                        location: AtomicLocation::Texel(texel),
+                        value,
+                        order,
+                    },
+                    at,
+                );
+                Ok(None)
+            }
+            _ => {
+                let (fun, value) = match (atomic_function(name), operands.as_slice()) {
+                    (Some(fun), &[value]) => (fun, value),
+                    (None, &[compare, value]) if name == "imageAtomicCompSwap" => (
+                        AtomicFunction::Exchange {
+                            compare: Some(compare),
+                        },
+                        value,
+                    ),
+                    _ => return Err(internal(at)),
+                };
+                Ok(Some(this.push_with_result(
+                    result,
+                    |result| Statement::ImageAtomic {
+                        image,
+                        coordinate,
+                        array_index,
+                        fun,
+                        value,
+                        sample,
+                        result: Some(result),
+                        order: Some(order),
+                    },
+                    at,
+                )))
+            }
+        }
     }
 }

@@ -17,6 +17,80 @@ use crate::object::{
 use crate::{Function, GlobalVariable, Handle, Linkage, Span, Type, TypeInner};
 
 impl Lowerer<'_> {
+    fn implicit_paths(
+        &self,
+        declared: &GlslType,
+        ty: Handle<Type>,
+        path: &mut Vec<PathStep>,
+        found: &mut Vec<Vec<PathStep>>,
+    ) {
+        let origin = path.len();
+        let mut pending = alloc::vec![(declared, ty, origin, None)];
+        while let Some((declared, ty, depth, step)) = pending.pop() {
+            path.truncate(depth);
+            path.extend(step);
+            let mut ty = ty;
+            let mut sized = true;
+            for size in &declared.array {
+                let base = match self.module.types[ty].inner {
+                    TypeInner::Array { base, .. } | TypeInner::BindingArray { base, .. } => base,
+                    _ => {
+                        sized = false;
+                        break;
+                    }
+                };
+                if *size == GlslArraySize::Unsized {
+                    found.push(path.clone());
+                }
+                path.push(PathStep::Element);
+                ty = base;
+            }
+            if !sized {
+                continue;
+            }
+            let members = match declared.kind {
+                TypeKind::Block(id) => self
+                    .analysis
+                    .types
+                    .block(id)
+                    .map(|block| block.members.as_slice()),
+                TypeKind::Struct(id) => self
+                    .analysis
+                    .types
+                    .structure(id)
+                    .map(|structure| structure.members.as_slice()),
+                _ => None,
+            };
+            let (
+                Some(members),
+                &TypeInner::Struct {
+                    members: ref ir, ..
+                },
+            ) = (members, &self.module.types[ty].inner)
+            else {
+                continue;
+            };
+            let depth = path.len();
+            let mut children = Vec::new();
+            for member in members {
+                let Some(index) = ir
+                    .iter()
+                    .position(|candidate| candidate.name.as_deref() == Some(member.name.as_str()))
+                else {
+                    continue;
+                };
+                let (Ok(index), Some(member_ty)) =
+                    (u32::try_from(index), ir.get(index).map(|ir| ir.ty))
+                else {
+                    continue;
+                };
+                children.push((&member.ty, member_ty, depth, Some(PathStep::Member(index))));
+            }
+            pending.extend(children.into_iter().rev());
+        }
+        path.truncate(origin);
+    }
+
     pub(super) fn undefined_functions(&self) -> Vec<FunctionId> {
         let mut seen = BTreeSet::new();
         self.analysis
@@ -203,69 +277,6 @@ impl Lowerer<'_> {
                 .find(|&&(global, _)| global == handle)
                 .map(|&(_, set)| set),
         }
-    }
-
-    fn implicit_paths(
-        &self,
-        declared: &GlslType,
-        ty: Handle<Type>,
-        path: &mut Vec<PathStep>,
-        found: &mut Vec<Vec<PathStep>>,
-    ) {
-        let mut ty = ty;
-        let depth = path.len();
-        for size in &declared.array {
-            let base = match self.module.types[ty].inner {
-                TypeInner::Array { base, .. } | TypeInner::BindingArray { base, .. } => base,
-                _ => {
-                    path.truncate(depth);
-                    return;
-                }
-            };
-            if *size == GlslArraySize::Unsized {
-                found.push(path.clone());
-            }
-            path.push(PathStep::Element);
-            ty = base;
-        }
-        let members = match declared.kind {
-            TypeKind::Block(id) => self
-                .analysis
-                .types
-                .block(id)
-                .map(|block| block.members.as_slice()),
-            TypeKind::Struct(id) => self
-                .analysis
-                .types
-                .structure(id)
-                .map(|structure| structure.members.as_slice()),
-            _ => None,
-        };
-        if let (
-            Some(members),
-            &TypeInner::Struct {
-                members: ref ir, ..
-            },
-        ) = (members, &self.module.types[ty].inner)
-        {
-            for member in members {
-                let Some(index) = ir
-                    .iter()
-                    .position(|candidate| candidate.name.as_deref() == Some(member.name.as_str()))
-                else {
-                    continue;
-                };
-                let (Ok(index), Some(member_ty)) =
-                    (u32::try_from(index), ir.get(index).map(|ir| ir.ty))
-                else {
-                    continue;
-                };
-                path.push(PathStep::Member(index));
-                self.implicit_paths(&member.ty, member_ty, path, found);
-                path.pop();
-            }
-        }
-        path.truncate(depth);
     }
 
     fn layout_record(&self) -> StageLayout {

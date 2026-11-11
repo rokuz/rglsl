@@ -62,6 +62,44 @@ fn layout_u32(qualifiers: &Qualifiers, name: &str, at: Span) -> Result<Option<u3
 }
 
 impl<'a> Lowerer<'a> {
+    fn contains_descriptor(&self, ty: &GlslType) -> bool {
+        let mut pending = alloc::vec![ty];
+        while let Some(ty) = pending.pop() {
+            match ty.kind {
+                TypeKind::Opaque(_) | TypeKind::Tensor { .. } => return true,
+                TypeKind::Block(id) => {
+                    if self
+                        .analysis
+                        .types
+                        .block(id)
+                        .is_some_and(|block| block.buffer_type)
+                    {
+                        return true;
+                    }
+                }
+                TypeKind::Struct(id) => {
+                    if let Some(structure) = self.analysis.types.structure(id) {
+                        pending.extend(structure.members.iter().map(|member| &member.ty));
+                    }
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+
+    fn heap_members(
+        &mut self,
+        block: Option<&Qualifiers>,
+        members: &[Member],
+        packing: Option<Packing>,
+        row_major: bool,
+        at: Span,
+    ) -> Result<Vec<StructMember>> {
+        super::function::lowerer_on_heap!(self, |cx| cx
+            .heap_members(block, members, packing, row_major, at))
+    }
+
     pub(super) fn is_heap_view(&self, qualifiers: &Qualifiers) -> bool {
         self.analysis.extensions.contains(HEAP_EXTENSION)
             && !qualifiers.has_layout("set")
@@ -71,24 +109,6 @@ impl<'a> Lowerer<'a> {
                     qualifiers.storage,
                     Storage::ResourceHeap | Storage::SamplerHeap
                 ))
-    }
-
-    fn contains_descriptor(&self, ty: &GlslType) -> bool {
-        match ty.kind {
-            TypeKind::Opaque(_) | TypeKind::Tensor { .. } => true,
-            TypeKind::Block(id) => self
-                .analysis
-                .types
-                .block(id)
-                .is_some_and(|block| block.buffer_type),
-            TypeKind::Struct(id) => self.analysis.types.structure(id).is_some_and(|structure| {
-                structure
-                    .members
-                    .iter()
-                    .any(|member| self.contains_descriptor(&member.ty))
-            }),
-            _ => false,
-        }
     }
 
     pub(super) fn heap_offset(
@@ -263,96 +283,6 @@ impl<'a> Lowerer<'a> {
             AddressSpace::Uniform
         };
         Ok(self.insert_type(TypeInner::BufferDescriptor { base, space }))
-    }
-
-    fn heap_leaf(
-        &mut self,
-        ty: &GlslType,
-        qualifiers: &Qualifiers,
-        at: Span,
-    ) -> Result<Handle<Type>> {
-        match ty.kind {
-            TypeKind::Opaque(_) | TypeKind::Tensor { .. } => {
-                let inner = self.heap_image(ty, qualifiers, at)?;
-                Ok(self.insert_type(inner))
-            }
-            TypeKind::Block(id) => self.buffer_descriptor(id, at),
-            TypeKind::Struct(id) => self.heap_struct(id, at),
-            _ => Err(internal(at)),
-        }
-    }
-
-    fn heap_struct(&mut self, id: StructId, at: Span) -> Result<Handle<Type>> {
-        if let Some(&handle) = self.heap_structs.get(&id) {
-            return Ok(handle);
-        }
-        let analysis = self.analysis;
-        let structure = analysis.types.structure(id).ok_or_else(|| internal(at))?;
-        let members = self.heap_members(None, &structure.members, None, false, at)?;
-        let handle = self.module.types.insert(
-            Type {
-                name: structure.name.clone(),
-                inner: TypeInner::Struct { members, span: 0 },
-            },
-            at,
-        );
-        self.heap_structs.insert(id, handle);
-        Ok(handle)
-    }
-
-    fn heap_members(
-        &mut self,
-        block: Option<&Qualifiers>,
-        members: &[Member],
-        packing: Option<Packing>,
-        row_major: bool,
-        at: Span,
-    ) -> Result<Vec<StructMember>> {
-        let offsets = match packing {
-            Some(packing) => Some(self.packed_offsets(block, members, packing, row_major, at)?),
-            None => None,
-        };
-        let mut lowered = Vec::with_capacity(members.len());
-        for (index, member) in members.iter().enumerate() {
-            let qualifiers = &member.qualifiers;
-            let member_row_major = member_row_major(qualifiers, row_major);
-            let explicit = layout_u32(qualifiers, "offset", at)?;
-            let offset = match offsets {
-                Some(ref offsets) => Some(*offsets.get(index).ok_or_else(|| internal(at))?),
-                None => explicit,
-            };
-            let size = layout_u32(qualifiers, "descriptor_size", at)?;
-            let (ty, matrix_layout) = if self.contains_descriptor(&member.ty) {
-                let element = GlslType::new(member.ty.kind);
-                let leaf = self.heap_leaf(&element, qualifiers, at)?;
-                let stride = if member.ty.is_array() {
-                    size.unwrap_or(0)
-                } else {
-                    0
-                };
-                (
-                    self.descriptor_arrays(leaf, &member.ty.array, stride, at)?,
-                    None,
-                )
-            } else {
-                let ty = self.heap_data_type(&member.ty, at)?;
-                let (ty, layout) =
-                    self.laid_out(&member.ty, ty, Packing::Scalar, member_row_major, at)?;
-                (ty, matrix_layout(&layout))
-            };
-            lowered.push(StructMember {
-                name: Some(member.name.clone()),
-                ty,
-                binding: None,
-                offset: offset.unwrap_or(0),
-                matrix_layout,
-                xfb_offset: None,
-                heap: Some(HeapMember { offset, size }),
-                memory_decorations: MemoryDecorations::empty(),
-                relaxed_precision: false,
-            });
-        }
-        Ok(lowered)
     }
 
     fn packed_offsets(
@@ -541,5 +471,121 @@ impl<'a> Lowerer<'a> {
         global: Handle<GlobalVariable>,
     ) -> Option<&'a AstExpression> {
         self.heap_runtime_offsets.get(&global).copied()
+    }
+}
+
+#[allow(clippy::await_holding_refcell_ref)]
+impl<'b, 'a> super::function::LowererCx<'b, 'a> {
+    async fn heap_leaf(
+        self,
+        ty: GlslType,
+        qualifiers: &'b Qualifiers,
+        at: Span,
+    ) -> Result<Handle<Type>> {
+        let ty = &ty;
+        let mut this = self.lowerer();
+        match ty.kind {
+            TypeKind::Opaque(_) | TypeKind::Tensor { .. } => {
+                let inner = this.heap_image(ty, qualifiers, at)?;
+                Ok(this.insert_type(inner))
+            }
+            TypeKind::Block(id) => this.buffer_descriptor(id, at),
+            TypeKind::Struct(id) => {
+                let frame = self.clone().heap_struct(id, at);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
+            _ => Err(internal(at)),
+        }
+    }
+
+    async fn heap_struct(self, id: StructId, at: Span) -> Result<Handle<Type>> {
+        let mut this = self.lowerer();
+        if let Some(&handle) = this.heap_structs.get(&id) {
+            return Ok(handle);
+        }
+        let analysis = this.analysis;
+        let structure = analysis.types.structure(id).ok_or_else(|| internal(at))?;
+        let members = {
+            let frame = self
+                .clone()
+                .heap_members(None, &structure.members, None, false, at);
+            drop(this);
+            let result = self.nest(frame).await;
+            this = self.lowerer();
+            result
+        }?;
+        let handle = this.module.types.insert(
+            Type {
+                name: structure.name.clone(),
+                inner: TypeInner::Struct { members, span: 0 },
+            },
+            at,
+        );
+        this.heap_structs.insert(id, handle);
+        Ok(handle)
+    }
+
+    async fn heap_members(
+        self,
+        block: Option<&'b Qualifiers>,
+        members: &'b [Member],
+        packing: Option<Packing>,
+        row_major: bool,
+        at: Span,
+    ) -> Result<Vec<StructMember>> {
+        let mut this = self.lowerer();
+        let offsets = match packing {
+            Some(packing) => Some(this.packed_offsets(block, members, packing, row_major, at)?),
+            None => None,
+        };
+        let mut lowered = Vec::with_capacity(members.len());
+        for (index, member) in members.iter().enumerate() {
+            let qualifiers = &member.qualifiers;
+            let member_row_major = member_row_major(qualifiers, row_major);
+            let explicit = layout_u32(qualifiers, "offset", at)?;
+            let offset = match offsets {
+                Some(ref offsets) => Some(*offsets.get(index).ok_or_else(|| internal(at))?),
+                None => explicit,
+            };
+            let size = layout_u32(qualifiers, "descriptor_size", at)?;
+            let (ty, matrix_layout) = if this.contains_descriptor(&member.ty) {
+                let element = GlslType::new(member.ty.kind);
+                let leaf = {
+                    let frame = self.clone().heap_leaf(element.clone(), qualifiers, at);
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }?;
+                let stride = if member.ty.is_array() {
+                    size.unwrap_or(0)
+                } else {
+                    0
+                };
+                (
+                    this.descriptor_arrays(leaf, &member.ty.array, stride, at)?,
+                    None,
+                )
+            } else {
+                let ty = this.heap_data_type(&member.ty, at)?;
+                let (ty, layout) =
+                    this.laid_out(&member.ty, ty, Packing::Scalar, member_row_major, at)?;
+                (ty, matrix_layout(&layout))
+            };
+            lowered.push(StructMember {
+                name: Some(member.name.clone()),
+                ty,
+                binding: None,
+                offset: offset.unwrap_or(0),
+                matrix_layout,
+                xfb_offset: None,
+                heap: Some(HeapMember { offset, size }),
+                memory_decorations: MemoryDecorations::empty(),
+                relaxed_precision: false,
+            });
+        }
+        Ok(lowered)
     }
 }

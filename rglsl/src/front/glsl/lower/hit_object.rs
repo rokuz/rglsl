@@ -93,15 +93,25 @@ impl FunctionLowerer<'_, '_> {
             crate::RayTracingData::Location(_) => Err(internal(at)),
         }
     }
+}
 
-    fn hit_object_trace(
-        &mut self,
-        arguments: &[AstExpression],
+#[allow(clippy::await_holding_refcell_ref)]
+impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
+    async fn hit_object_trace(
+        self,
+        arguments: &'b [AstExpression],
         motion: bool,
         at: Span,
     ) -> Result<(HitObjectTrace, Option<ReorderHint>)> {
+        let mut this = self.lowerer();
         let (payload, operands) = arguments.split_last().ok_or_else(|| internal(at))?;
-        let operands: Vec<_> = self.ray_operands(operands)?;
+        let operands: Vec<_> = {
+            let frame = self.clone().ray_operands(operands);
+            drop(this);
+            let result = self.nest(frame).await;
+            this = self.lowerer();
+            result
+        }?;
         let (fixed, rest) = operands.split_at_checked(10).ok_or_else(|| internal(at))?;
         let &[acceleration_structure, flags, cull_mask, sbt_offset, sbt_stride, miss_index, origin, tmin, direction, tmax] =
             fixed
@@ -119,7 +129,7 @@ impl FunctionLowerer<'_, '_> {
             [hint, bits] => Some(ReorderHint { hint, bits }),
             _ => return Err(internal(at)),
         };
-        let payload = self.located(payload, PAYLOADS, at)?;
+        let payload = this.located(payload, PAYLOADS, at)?;
         Ok((
             HitObjectTrace {
                 acceleration_structure,
@@ -139,31 +149,47 @@ impl FunctionLowerer<'_, '_> {
         ))
     }
 
-    fn hint(&mut self, arguments: &[AstExpression], at: Span) -> Result<Option<ReorderHint>> {
-        match *self.ray_operands(arguments)?.as_slice() {
+    async fn hint(self, arguments: &'b [AstExpression], at: Span) -> Result<Option<ReorderHint>> {
+        let this = self.lowerer();
+        match *{
+            let frame = self.clone().ray_operands(arguments);
+            drop(this);
+            let result = self.nest(frame).await;
+            result
+        }?
+        .as_slice()
+        {
             [] => Ok(None),
             [hint, bits] => Ok(Some(ReorderHint { hint, bits })),
             _ => Err(internal(at)),
         }
     }
 
-    pub(super) fn hit_object_call(
-        &mut self,
-        name: &str,
-        arguments: &[AstExpression],
+    pub(super) async fn hit_object_call(
+        self,
+        name: &'b str,
+        arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Option<Option<Handle<Expression>>>> {
+        let mut this = self.lowerer();
         if let Some(value) = match name {
             "fetchMicroTriangleVertexPositionNV" => Some(MicroTriangleVertexValue::Position),
             "fetchMicroTriangleVertexBarycentricNV" => Some(MicroTriangleVertexValue::Barycentric),
             _ => None,
         } {
             let [acceleration_structure, instance_id, geometry_index, primitive_index, barycentric] =
-                *self.ray_operands(arguments)?.as_slice()
+                *{
+                    let frame = self.clone().ray_operands(arguments);
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }?
+                .as_slice()
             else {
                 return Err(internal(at));
             };
-            let result = self.add(
+            let result = this.add(
                 Expression::FetchMicroTriangleVertex {
                     acceleration_structure,
                     instance_id,
@@ -184,36 +210,76 @@ impl FunctionLowerer<'_, '_> {
         }
         if stem == "reorderThread" {
             if let [ref hint, ref bits] = *arguments {
-                let hint = self.rvalue(hint)?;
-                let bits = self.rvalue(bits)?;
-                self.push(Statement::ReorderThread { kind, hint, bits }, at);
+                let hint = {
+                    let frame = self.clone().rvalue(hint);
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }?;
+                let bits = {
+                    let frame = self.clone().rvalue(bits);
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }?;
+                this.push(Statement::ReorderThread { kind, hint, bits }, at);
                 return Ok(Some(None));
             }
         }
         let (object, rest) = arguments.split_first().ok_or_else(|| internal(at))?;
-        let object = self.ray_query_pointer(object)?;
+        let object = {
+            let frame = self.clone().ray_query_pointer(object);
+            drop(this);
+            let result = self.nest(frame).await;
+            this = self.lowerer();
+            result
+        }?;
         if let Some(value) = hit_object_value(stem) {
-            self.generate_value_type(value);
-            let result = self.add(Expression::HitObjectGet { object, value }, at)?;
+            this.generate_value_type(value);
+            let result = this.add(Expression::HitObjectGet { object, value }, at)?;
             if let [ref output] = *rest {
-                let place = self.place(output)?;
-                self.store(&place, result, at)?;
+                let place = {
+                    let frame = self.clone().place(output);
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }?;
+                this.store(&place, result, at)?;
                 return Ok(Some(None));
             }
             return Ok(Some(Some(result)));
         }
         let fun = match stem {
             "hitObjectTraceRay" | "hitObjectTraceRayMotion" => {
-                let (trace, hint) =
-                    self.hit_object_trace(rest, stem == "hitObjectTraceRayMotion", at)?;
+                let (trace, hint) = {
+                    let frame =
+                        self.clone()
+                            .hit_object_trace(rest, stem == "hitObjectTraceRayMotion", at);
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }?;
                 if hint.is_some() {
                     return Err(internal(at));
                 }
                 HitObjectFunction::TraceRay(trace)
             }
             "hitObjectTraceReorderExecute" | "hitObjectTraceMotionReorderExecute" => {
-                let (trace, hint) =
-                    self.hit_object_trace(rest, stem == "hitObjectTraceMotionReorderExecute", at)?;
+                let (trace, hint) = {
+                    let frame = self.clone().hit_object_trace(
+                        rest,
+                        stem == "hitObjectTraceMotionReorderExecute",
+                        at,
+                    );
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }?;
                 HitObjectFunction::TraceReorderExecute { trace, hint }
             }
             "hitObjectRecordHit"
@@ -223,7 +289,13 @@ impl FunctionLowerer<'_, '_> {
                 let with_index = stem.starts_with("hitObjectRecordHitWithIndex");
                 let motion = stem.ends_with("Motion");
                 let (attributes, operands) = rest.split_last().ok_or_else(|| internal(at))?;
-                let operands = self.ray_operands(operands)?;
+                let operands = {
+                    let frame = self.clone().ray_operands(operands);
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }?;
                 let (head, tail) = operands
                     .split_at_checked(if with_index { 6 } else { 7 })
                     .ok_or_else(|| internal(at))?;
@@ -266,7 +338,7 @@ impl FunctionLowerer<'_, '_> {
                     }
                     _ => return Err(internal(at)),
                 };
-                let attributes = self.located(attributes, ATTRIBUTES, at)?;
+                let attributes = this.located(attributes, ATTRIBUTES, at)?;
                 HitObjectFunction::RecordHit {
                     acceleration_structure,
                     instance_id,
@@ -283,7 +355,13 @@ impl FunctionLowerer<'_, '_> {
                 }
             }
             "hitObjectRecordMiss" | "hitObjectRecordMissMotion" => {
-                let operands = self.ray_operands(rest)?;
+                let operands = {
+                    let frame = self.clone().ray_operands(rest);
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }?;
                 let (flags, operands) = match kind {
                     HitObjectKind::Nv => (None, operands.as_slice()),
                     HitObjectKind::Ext => {
@@ -317,12 +395,30 @@ impl FunctionLowerer<'_, '_> {
                 else {
                     return Err(internal(at));
                 };
-                let query = self.ray_query_pointer(query)?;
-                let sbt_record_index = self.rvalue(sbt_record_index)?;
-                let attributes = self.located(attributes, ATTRIBUTES, at)?;
+                let query = {
+                    let frame = self.clone().ray_query_pointer(query);
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }?;
+                let sbt_record_index = {
+                    let frame = self.clone().rvalue(sbt_record_index);
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }?;
+                let attributes = this.located(attributes, ATTRIBUTES, at)?;
                 let hit_kind = match *hit_kind {
                     [] => None,
-                    [ref hit_kind] => Some(self.rvalue(hit_kind)?),
+                    [ref hit_kind] => Some({
+                        let frame = self.clone().rvalue(hit_kind);
+                        drop(this);
+                        let result = self.nest(frame).await;
+                        this = self.lowerer();
+                        result
+                    }?),
                     _ => return Err(internal(at)),
                 };
                 HitObjectFunction::RecordFromQuery {
@@ -337,14 +433,20 @@ impl FunctionLowerer<'_, '_> {
                     return Err(internal(at));
                 };
                 HitObjectFunction::ExecuteShader {
-                    payload: self.located(payload, PAYLOADS, at)?,
+                    payload: this.located(payload, PAYLOADS, at)?,
                 }
             }
             "hitObjectReorderExecute" => {
                 let (payload, hint) = rest.split_last().ok_or_else(|| internal(at))?;
-                let hint = self.hint(hint, at)?;
+                let hint = {
+                    let frame = self.clone().hint(hint, at);
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }?;
                 HitObjectFunction::ReorderExecute {
-                    payload: self.located(payload, PAYLOADS, at)?,
+                    payload: this.located(payload, PAYLOADS, at)?,
                     hint,
                 }
             }
@@ -353,7 +455,7 @@ impl FunctionLowerer<'_, '_> {
                     return Err(internal(at));
                 };
                 HitObjectFunction::GetAttributes {
-                    attributes: self.located(attributes, ATTRIBUTES, at)?,
+                    attributes: this.located(attributes, ATTRIBUTES, at)?,
                 }
             }
             "hitObjectSetShaderBindingTableRecordIndex" => {
@@ -361,15 +463,27 @@ impl FunctionLowerer<'_, '_> {
                     return Err(internal(at));
                 };
                 HitObjectFunction::SetShaderBindingTableRecordIndex {
-                    index: self.rvalue(index)?,
+                    index: {
+                        let frame = self.clone().rvalue(index);
+                        drop(this);
+                        let result = self.nest(frame).await;
+                        this = self.lowerer();
+                        result
+                    }?,
                 }
             }
             "reorderThread" => HitObjectFunction::ReorderThread {
-                hint: self.hint(rest, at)?,
+                hint: {
+                    let frame = self.clone().hint(rest, at);
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }?,
             },
             _ => return Ok(None),
         };
-        self.push(Statement::HitObject { object, fun }, at);
+        this.push(Statement::HitObject { object, fun }, at);
         Ok(Some(None))
     }
 }

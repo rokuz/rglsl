@@ -64,6 +64,23 @@ fn block_access(qualifiers: &Qualifiers) -> StorageAccess {
 }
 
 impl Lowerer<'_> {
+    pub(super) fn variable_ir_type(
+        &mut self,
+        ty: &GlslType,
+        qualifiers: &Qualifiers,
+        span: Span,
+    ) -> Result<Handle<Type>> {
+        super::function::lowerer_on_heap!(self, |cx| cx.variable_ir_type(
+            ty.clone(),
+            qualifiers.clone(),
+            span
+        ))
+    }
+
+    pub(super) fn reference_type(&mut self, block: BlockId, span: Span) -> Result<Handle<Type>> {
+        super::function::lowerer_on_heap!(self, |cx| cx.reference_type(block, span))
+    }
+
     fn reference_space(
         &self,
         block: BlockId,
@@ -86,117 +103,6 @@ impl Lowerer<'_> {
         ))
     }
 
-    pub(super) fn reference_type(&mut self, block: BlockId, span: Span) -> Result<Handle<Type>> {
-        let (space, qualifiers) = self.reference_space(block, span)?;
-        if let Some(&handle) = self.references.get(&(block, qualifiers)) {
-            return Ok(handle);
-        }
-        if self.references_in_progress.contains(&block) {
-            let name = self
-                .analysis
-                .types
-                .block(block)
-                .map(|declared| declared.name.clone());
-            let placeholder = self.module.types.insert(
-                Type {
-                    name,
-                    inner: TypeInner::Struct {
-                        members: Vec::new(),
-                        span: 0,
-                    },
-                },
-                span,
-            );
-            let pointer = self.insert_type(TypeInner::Pointer {
-                base: placeholder,
-                space,
-            });
-            self.references.insert((block, qualifiers), pointer);
-            return Ok(pointer);
-        }
-        let layout = self
-            .analysis
-            .types
-            .block(block)
-            .and_then(|declared| declared.reference)
-            .ok_or_else(|| internal(span))?;
-        self.references_in_progress.insert(block);
-        let structure = self.block_struct(block, layout.packing, layout.row_major, span);
-        self.references_in_progress.remove(&block);
-        let structure = structure?;
-        let resolved = Type {
-            name: None,
-            inner: TypeInner::Pointer {
-                base: structure,
-                space,
-            },
-        };
-        match self.references.get(&(block, qualifiers)).copied() {
-            Some(pointer) => {
-                if self.module.types.get(&resolved).is_some() {
-                    return Err(internal(span));
-                }
-                self.module
-                    .types
-                    .replace(pointer, resolved)
-                    .map_err(|_| internal(span))?;
-                Ok(pointer)
-            }
-            None => {
-                let pointer = self.module.types.insert(resolved, span);
-                self.references.insert((block, qualifiers), pointer);
-                Ok(pointer)
-            }
-        }
-    }
-
-    pub(super) fn qualified_reference_type(
-        &mut self,
-        block: BlockId,
-        extra: PointerQualifiers,
-        span: Span,
-    ) -> Result<Handle<Type>> {
-        let plain = self.reference_type(block, span)?;
-        let (space, qualifiers) = self.reference_space(block, span)?;
-        let qualifiers = qualifiers | extra;
-        if let Some(&handle) = self.references.get(&(block, qualifiers)) {
-            return Ok(handle);
-        }
-        let TypeInner::Pointer { base, .. } = self.module.types[plain].inner else {
-            return Err(internal(span));
-        };
-        let AddressSpace::PhysicalStorage {
-            alignment, access, ..
-        } = space
-        else {
-            return Err(internal(span));
-        };
-        let handle = self.insert_type(TypeInner::Pointer {
-            base,
-            space: AddressSpace::PhysicalStorage {
-                alignment,
-                access,
-                qualifiers,
-            },
-        });
-        self.references.insert((block, qualifiers), handle);
-        self.qualified_references.insert(handle, plain);
-        Ok(handle)
-    }
-
-    pub(super) fn variable_ir_type(
-        &mut self,
-        ty: &GlslType,
-        qualifiers: &Qualifiers,
-        span: Span,
-    ) -> Result<Handle<Type>> {
-        let extra = pointer_qualifiers(qualifiers);
-        match ty.as_reference() {
-            Some(block) if !extra.is_empty() => self.qualified_reference_type(block, extra, span),
-            _ => self.ir_type(ty, span),
-        }
-    }
-
     pub(super) fn reference_element_size(&self, block: BlockId, span: Span) -> Result<u64> {
         self.analysis
             .types
@@ -208,7 +114,166 @@ impl Lowerer<'_> {
     }
 }
 
+#[allow(clippy::await_holding_refcell_ref)]
+impl<'b, 'a> super::function::LowererCx<'b, 'a> {
+    pub(super) async fn reference_type(self, block: BlockId, span: Span) -> Result<Handle<Type>> {
+        let mut this = self.lowerer();
+        let (space, qualifiers) = this.reference_space(block, span)?;
+        if let Some(&handle) = this.references.get(&(block, qualifiers)) {
+            return Ok(handle);
+        }
+        if this.references_in_progress.contains(&block) {
+            let name = this
+                .analysis
+                .types
+                .block(block)
+                .map(|declared| declared.name.clone());
+            let placeholder = this.module.types.insert(
+                Type {
+                    name,
+                    inner: TypeInner::Struct {
+                        members: Vec::new(),
+                        span: 0,
+                    },
+                },
+                span,
+            );
+            let pointer = this.insert_type(TypeInner::Pointer {
+                base: placeholder,
+                space,
+            });
+            this.references.insert((block, qualifiers), pointer);
+            return Ok(pointer);
+        }
+        let layout = this
+            .analysis
+            .types
+            .block(block)
+            .and_then(|declared| declared.reference)
+            .ok_or_else(|| internal(span))?;
+        this.references_in_progress.insert(block);
+        let structure = {
+            let frame = self
+                .clone()
+                .block_struct(block, layout.packing, layout.row_major, span);
+            drop(this);
+            let result = self.nest(frame).await;
+            this = self.lowerer();
+            result
+        };
+        this.references_in_progress.remove(&block);
+        let structure = structure?;
+        let resolved = Type {
+            name: None,
+            inner: TypeInner::Pointer {
+                base: structure,
+                space,
+            },
+        };
+        match this.references.get(&(block, qualifiers)).copied() {
+            Some(pointer) => {
+                if this.module.types.get(&resolved).is_some() {
+                    return Err(internal(span));
+                }
+                this.module
+                    .types
+                    .replace(pointer, resolved)
+                    .map_err(|_| internal(span))?;
+                Ok(pointer)
+            }
+            None => {
+                let pointer = this.module.types.insert(resolved, span);
+                this.references.insert((block, qualifiers), pointer);
+                Ok(pointer)
+            }
+        }
+    }
+
+    pub(super) async fn qualified_reference_type(
+        self,
+        block: BlockId,
+        extra: PointerQualifiers,
+        span: Span,
+    ) -> Result<Handle<Type>> {
+        let mut this = self.lowerer();
+        let plain = {
+            let frame = self.clone().reference_type(block, span);
+            drop(this);
+            let result = self.nest(frame).await;
+            this = self.lowerer();
+            result
+        }?;
+        let (space, qualifiers) = this.reference_space(block, span)?;
+        let qualifiers = qualifiers | extra;
+        if let Some(&handle) = this.references.get(&(block, qualifiers)) {
+            return Ok(handle);
+        }
+        let TypeInner::Pointer { base, .. } = this.module.types[plain].inner else {
+            return Err(internal(span));
+        };
+        let AddressSpace::PhysicalStorage {
+            alignment, access, ..
+        } = space
+        else {
+            return Err(internal(span));
+        };
+        let handle = this.insert_type(TypeInner::Pointer {
+            base,
+            space: AddressSpace::PhysicalStorage {
+                alignment,
+                access,
+                qualifiers,
+            },
+        });
+        this.references.insert((block, qualifiers), handle);
+        this.qualified_references.insert(handle, plain);
+        Ok(handle)
+    }
+
+    pub(super) async fn variable_ir_type(
+        self,
+        ty: GlslType,
+        qualifiers: Qualifiers,
+        span: Span,
+    ) -> Result<Handle<Type>> {
+        let ty = &ty;
+        let qualifiers = &qualifiers;
+        let this = self.lowerer();
+        let extra = pointer_qualifiers(qualifiers);
+        match ty.as_reference() {
+            Some(block) if !extra.is_empty() => {
+                let frame = self.clone().qualified_reference_type(block, extra, span);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
+            _ => {
+                let frame = self.clone().ir_type(ty.clone(), span);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
+        }
+    }
+}
+
 impl FunctionLowerer<'_, '_> {
+    fn physical_root(&self, pointer: Handle<Expression>) -> bool {
+        let mut current = pointer;
+        loop {
+            match self.expressions[current] {
+                Expression::Access { base, .. } | Expression::AccessIndex { base, .. } => {
+                    if self.physical_bases.contains_key(&base) {
+                        return true;
+                    }
+                    current = base;
+                }
+                Expression::PhysicalPointer { value, .. } => current = value,
+                _ => return false,
+            }
+        }
+    }
+
     pub(super) fn reference_member(
         &mut self,
         chain: Chain,
@@ -447,40 +512,6 @@ impl FunctionLowerer<'_, '_> {
         )
     }
 
-    pub(super) fn reference_construct(
-        &mut self,
-        ty: &GlslType,
-        argument: &AstExpression,
-        at: Span,
-    ) -> Result<Handle<Expression>> {
-        let (value, from) = self.typed(argument)?;
-        if let Some(block) = ty.as_reference() {
-            let target = self.lw.reference_type(block, at)?;
-            return self.add(Expression::PhysicalPointer { value, ty: target }, at);
-        }
-        if !from.is_reference() {
-            return Err(internal(at));
-        }
-        let split = !ty.is_scalar();
-        self.add(
-            Expression::PhysicalAddress {
-                pointer: value,
-                split,
-            },
-            at,
-        )
-    }
-
-    fn physical_root(&self, pointer: Handle<Expression>) -> bool {
-        match self.expressions[pointer] {
-            Expression::Access { base, .. } | Expression::AccessIndex { base, .. } => {
-                self.physical_bases.contains_key(&base) || self.physical_root(base)
-            }
-            Expression::PhysicalPointer { value, .. } => self.physical_root(value),
-            _ => false,
-        }
-    }
-
     pub(super) fn full_physical_swizzle(
         &self,
         pointer: Handle<Expression>,
@@ -557,5 +588,39 @@ impl FunctionLowerer<'_, '_> {
             Some(plain) => self.add(Expression::PhysicalPointer { value, ty: plain }, at),
             None => Ok(value),
         }
+    }
+}
+
+#[allow(clippy::await_holding_refcell_ref)]
+impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
+    pub(super) async fn reference_construct(
+        self,
+        ty: &'b GlslType,
+        argument: &'b AstExpression,
+        at: Span,
+    ) -> Result<Handle<Expression>> {
+        let mut this = self.lowerer();
+        let (value, from) = {
+            let frame = self.clone().typed(argument);
+            drop(this);
+            let result = self.nest(frame).await;
+            this = self.lowerer();
+            result
+        }?;
+        if let Some(block) = ty.as_reference() {
+            let target = this.lw.reference_type(block, at)?;
+            return this.add(Expression::PhysicalPointer { value, ty: target }, at);
+        }
+        if !from.is_reference() {
+            return Err(internal(at));
+        }
+        let split = !ty.is_scalar();
+        this.add(
+            Expression::PhysicalAddress {
+                pointer: value,
+                split,
+            },
+            at,
+        )
     }
 }

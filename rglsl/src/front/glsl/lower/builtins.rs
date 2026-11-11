@@ -250,142 +250,6 @@ impl FunctionLowerer<'_, '_> {
         self.add(Expression::Binary { op, left, right }, at)
     }
 
-    pub(super) fn builtin_call(
-        &mut self,
-        id: BuiltinFunctionId,
-        call_type: &GlslType,
-        arguments: &[AstExpression],
-        at: Span,
-    ) -> Result<Option<Handle<Expression>>> {
-        let analysis = self.lw.analysis;
-        let function = analysis.builtins.function(id).ok_or_else(|| internal(at))?;
-        let name = function.name.as_str();
-        if let Some(result) = self.ray_builtin_call(name, arguments, at)? {
-            return Ok(result);
-        }
-        let call = texture_call(name);
-        if sampling_function(&call.base) {
-            return self
-                .sample(call, function, arguments, ImageGatherPattern::Quad, at)
-                .map(Some);
-        }
-        match name {
-            _ if gather_pattern(name).is_some() => self.gather_call(name, function, arguments, at),
-            "sparseTexelFetchARB" => self.fetch(function, arguments, false, true, at).map(Some),
-            "sparseTexelFetchOffsetARB" => {
-                self.fetch(function, arguments, true, true, at).map(Some)
-            }
-            "sparseImageLoadARB" => self.image(name, function, arguments, at),
-            "sparseTexelsResidentARB" => self.sparse_texels_resident_call(arguments, at),
-            "textureQueryLod" | "textureQueryLOD" => self.query_lod(arguments, at).map(Some),
-            _ if image_processing(name).is_some() => {
-                self.image_processing_call(name, arguments, at)
-            }
-            "texelFetch" => self.fetch(function, arguments, false, false, at).map(Some),
-            "texelFetchOffset" => self.fetch(function, arguments, true, false, at).map(Some),
-            "textureSize" | "textureQueryLevels" | "textureSamples" | "imageSize"
-            | "imageSamples" => self.query(name, arguments, at).map(Some),
-            "imageLoad" | "imageStore" => self.image(name, function, arguments, at),
-            _ if name.starts_with("imageAtomic") => self.image_atomic_call(name, arguments, at),
-            "subpassLoad" => self.subpass_load(arguments, at).map(Some),
-            "barrier"
-            | "memoryBarrier"
-            | "memoryBarrierBuffer"
-            | "memoryBarrierShared"
-            | "memoryBarrierImage"
-            | "groupMemoryBarrier"
-            | "controlBarrier"
-            | "controlBarrierArrive"
-            | "controlBarrierWait" => self.barrier_call(name, arguments, at),
-            "beginInvocationInterlockARB" | "endInvocationInterlockARB" => {
-                self.interlock_call(name, at)
-            }
-            "helperInvocationEXT" => self.add(Expression::IsHelperInvocation, at).map(Some),
-            "textureFootprintNV"
-            | "textureFootprintClampNV"
-            | "textureFootprintLodNV"
-            | "textureFootprintGradNV"
-            | "textureFootprintGradClampNV" => self.footprint(name, arguments, at).map(Some),
-            "fragmentMaskFetchAMD" | "fragmentFetchAMD" => {
-                self.fragment_fetch_call(name, arguments, at)
-            }
-            "interpolateAtCentroid" | "interpolateAtSample" | "interpolateAtOffset" => {
-                self.interpolate(name, arguments, at).map(Some)
-            }
-            "colorAttachmentReadEXT" | "depthAttachmentReadEXT" | "stencilAttachmentReadEXT" => {
-                self.attachment_read_call(name, arguments, at)
-            }
-            "SetMeshOutputsEXT" | "EmitMeshTasksEXT" | "writePackedPrimitiveIndices4x8NV" => {
-                self.mesh_statement_call(name, arguments, at)
-            }
-            "EmitVertex" | "EndPrimitive" | "EmitStreamVertex" | "EndStreamPrimitive" => {
-                self.primitive_statement_call(name, arguments, at)
-            }
-            "expectEXT" => self.expect_call(arguments, at),
-            "assumeEXT" => self.assume_call(arguments, at),
-            "modf" | "frexp" => self.split(name, arguments, at).map(Some),
-            "atomicAdd" | "atomicMin" | "atomicMax" | "atomicAnd" | "atomicOr" | "atomicXor"
-            | "atomicExchange" | "atomicCompSwap" | "atomicLoad" | "atomicStore" => {
-                self.atomic(name, arguments, at)
-            }
-            "uaddCarry" | "usubBorrow" | "umulExtended" | "imulExtended" => {
-                self.wide(name, arguments, at)
-            }
-            _ if super::subgroup::is_subgroup_function(name) => self.subgroup(name, arguments, at),
-            _ => self
-                .generic(name, function, call_type, arguments, at)
-                .map(Some),
-        }
-    }
-
-    fn gather_call(
-        &mut self,
-        name: &str,
-        function: &Function,
-        arguments: &[AstExpression],
-        at: Span,
-    ) -> Result<Option<Handle<Expression>>> {
-        let (base, pattern) = gather_pattern(name).ok_or_else(|| internal(at))?;
-        self.sample(texture_call(base), function, arguments, pattern, at)
-            .map(Some)
-    }
-
-    fn sparse_texels_resident_call(
-        &mut self,
-        arguments: &[AstExpression],
-        at: Span,
-    ) -> Result<Option<Handle<Expression>>> {
-        let code = self.rvalue(arguments.first().ok_or_else(|| internal(at))?)?;
-        self.add(Expression::ImageSparseResident { code }, at)
-            .map(Some)
-    }
-
-    fn image_processing_call(
-        &mut self,
-        name: &str,
-        arguments: &[AstExpression],
-        at: Span,
-    ) -> Result<Option<Handle<Expression>>> {
-        let operation = image_processing(name).ok_or_else(|| internal(at))?;
-        self.image_processing(operation, arguments, at).map(Some)
-    }
-
-    fn image_atomic_call(
-        &mut self,
-        name: &str,
-        arguments: &[AstExpression],
-        at: Span,
-    ) -> Result<Option<Handle<Expression>>> {
-        let first = arguments.first().ok_or_else(|| internal(at))?;
-        let Sampled {
-            image,
-            opaque,
-            non_uniform,
-            ..
-        } = self.sampled(first, at)?;
-        self.image_atomic(name, image, opaque, non_uniform, arguments, at)
-    }
-
     fn barrier_call(
         &mut self,
         name: &str,
@@ -407,85 +271,6 @@ impl FunctionLowerer<'_, '_> {
         Ok(None)
     }
 
-    fn fragment_fetch_call(
-        &mut self,
-        name: &str,
-        arguments: &[AstExpression],
-        at: Span,
-    ) -> Result<Option<Handle<Expression>>> {
-        let first = arguments.first().ok_or_else(|| internal(at))?;
-        let subpass = self
-            .lw
-            .analysis
-            .type_of(first.id)
-            .and_then(GlslType::as_opaque)
-            .is_some_and(|opaque| opaque.kind == OpaqueKind::SubpassInput);
-        let image = self.rvalue(first)?;
-        let mut rest = arguments.iter().skip(1);
-        let coordinate = if subpass {
-            let zero = self.literal(Literal::I32(0), at)?;
-            let ty = self
-                .lw
-                .vector_type(crate::VectorSize::Bi, crate::Scalar::I32);
-            self.add(
-                Expression::Compose {
-                    ty,
-                    components: alloc::vec![zero, zero],
-                },
-                at,
-            )?
-        } else {
-            let coordinate = rest.next().ok_or_else(|| internal(at))?;
-            self.rvalue(coordinate)?
-        };
-        let fragment = match rest.next() {
-            Some(fragment) if name == "fragmentFetchAMD" => Some(self.rvalue(fragment)?),
-            _ => None,
-        };
-        self.add(
-            Expression::FragmentFetch {
-                image,
-                coordinate,
-                fragment,
-            },
-            at,
-        )
-        .map(Some)
-    }
-
-    fn attachment_read_call(
-        &mut self,
-        name: &str,
-        arguments: &[AstExpression],
-        at: Span,
-    ) -> Result<Option<Handle<Expression>>> {
-        let mut rest = arguments.iter();
-        let aspect = match name {
-            "colorAttachmentReadEXT" => {
-                let image = rest.next().ok_or_else(|| internal(at))?;
-                crate::AttachmentAspect::Color(self.rvalue(image)?)
-            }
-            "depthAttachmentReadEXT" => crate::AttachmentAspect::Depth,
-            _ => crate::AttachmentAspect::Stencil,
-        };
-        let sample = match rest.next() {
-            Some(sample) => Some(self.rvalue(sample)?),
-            None => None,
-        };
-        self.add(Expression::AttachmentRead { aspect, sample }, at)
-            .map(Some)
-    }
-
-    fn mesh_statement_call(
-        &mut self,
-        name: &str,
-        arguments: &[AstExpression],
-        at: Span,
-    ) -> Result<Option<Handle<Expression>>> {
-        self.mesh_statement(name, arguments, at)?;
-        Ok(None)
-    }
-
     fn primitive_statement_call(
         &mut self,
         name: &str,
@@ -494,53 +279,6 @@ impl FunctionLowerer<'_, '_> {
     ) -> Result<Option<Handle<Expression>>> {
         self.primitive_statement(name, arguments, at)?;
         Ok(None)
-    }
-
-    fn expect_call(
-        &mut self,
-        arguments: &[AstExpression],
-        at: Span,
-    ) -> Result<Option<Handle<Expression>>> {
-        let value = self.rvalue(arguments.first().ok_or_else(|| internal(at))?)?;
-        let expected = self.rvalue(arguments.get(1).ok_or_else(|| internal(at))?)?;
-        self.add(Expression::Expect { value, expected }, at)
-            .map(Some)
-    }
-
-    fn assume_call(
-        &mut self,
-        arguments: &[AstExpression],
-        at: Span,
-    ) -> Result<Option<Handle<Expression>>> {
-        let condition = self.rvalue(arguments.first().ok_or_else(|| internal(at))?)?;
-        self.flush();
-        self.push(Statement::Assume { condition }, at);
-        Ok(None)
-    }
-
-    fn generic(
-        &mut self,
-        name: &str,
-        function: &Function,
-        call_type: &GlslType,
-        arguments: &[AstExpression],
-        at: Span,
-    ) -> Result<Handle<Expression>> {
-        if function
-            .parameters
-            .iter()
-            .any(|parameter| parameter.direction.is_output())
-        {
-            return Err(unsupported(format!("the built-in function `{name}`"), at));
-        }
-        let mut values = Vec::with_capacity(arguments.len());
-        let mut types = Vec::with_capacity(arguments.len());
-        for argument in arguments {
-            let (value, ty) = self.typed(argument)?;
-            values.push(value);
-            types.push(ty);
-        }
-        self.generic_values(name, function, call_type, at, values, types)
     }
 
     fn generic_values(
@@ -1117,192 +855,6 @@ impl FunctionLowerer<'_, '_> {
         }
     }
 
-    fn split(
-        &mut self,
-        name: &str,
-        arguments: &[AstExpression],
-        at: Span,
-    ) -> Result<Handle<Expression>> {
-        let &[ref value, ref output] = arguments else {
-            return Err(internal(at));
-        };
-        let (value, ty) = self.typed(value)?;
-        let base = ty.base_scalar().ok_or_else(|| internal(at))?;
-        let size = match ty.kind {
-            TypeKind::Vector { size, .. } => vector_size(size),
-            _ => None,
-        };
-        let (special, fun) = if name == "modf" {
-            (
-                PredeclaredType::ModfResult {
-                    size,
-                    scalar: scalar(base),
-                },
-                MathFunction::Modf,
-            )
-        } else {
-            (
-                PredeclaredType::FrexpResult {
-                    size,
-                    scalar: scalar(base),
-                },
-                MathFunction::Frexp,
-            )
-        };
-        if ty.sized_vector_length().is_some() {
-            self.long_math_result(fun, &ty, at)?;
-        } else {
-            self.lw.module.generate_predeclared_type(special);
-        }
-        let result = self.math_call(fun, &[value], at)?;
-        let fraction = self.add(
-            Expression::AccessIndex {
-                base: result,
-                index: 0,
-            },
-            at,
-        )?;
-        let other = self.add(
-            Expression::AccessIndex {
-                base: result,
-                index: 1,
-            },
-            at,
-        )?;
-        let output_ty = self.info(output)?.ty.clone();
-        let place = self.place(output)?;
-        let other_ty = if name == "modf" {
-            ty.clone()
-        } else {
-            ty.with_scalar(GlslScalar::Int)
-        };
-        let other = self.convert(other, &other_ty, &output_ty, at)?;
-        self.store(&place, other, at)?;
-        Ok(fraction)
-    }
-
-    fn wide(
-        &mut self,
-        name: &str,
-        arguments: &[AstExpression],
-        at: Span,
-    ) -> Result<Option<Handle<Expression>>> {
-        let &[ref x, ref y, ref outputs @ ..] = arguments else {
-            return Err(internal(at));
-        };
-        let (x, ty) = self.typed(x)?;
-        let (y, _) = self.typed(y)?;
-        let base = ty.base_scalar().ok_or_else(|| internal(at))?;
-        let size = match ty.kind {
-            TypeKind::Vector { size, .. } => vector_size(size),
-            _ => None,
-        };
-        let fun = match name {
-            "uaddCarry" => MathFunction::AddCarry,
-            "usubBorrow" => MathFunction::SubBorrow,
-            _ => MathFunction::MulExtended,
-        };
-        if ty.sized_vector_length().is_some() {
-            self.long_math_result(fun, &ty, at)?;
-        } else {
-            self.lw
-                .module
-                .generate_predeclared_type(PredeclaredType::WideResult {
-                    size,
-                    scalar: scalar(base),
-                });
-        }
-        let result = self.math_call(fun, &[x, y], at)?;
-        let high = self.add(
-            Expression::AccessIndex {
-                base: result,
-                index: 1,
-            },
-            at,
-        )?;
-        let low = self.add(
-            Expression::AccessIndex {
-                base: result,
-                index: 0,
-            },
-            at,
-        )?;
-        let (stored, returned) = if fun == MathFunction::MulExtended {
-            (&[high, low][..], None)
-        } else {
-            (&[high][..], Some(low))
-        };
-        if outputs.len() != stored.len() {
-            return Err(internal(at));
-        }
-        for (output, &half) in outputs.iter().zip(stored) {
-            let output_ty = self.info(output)?.ty.clone();
-            let place = self.place(output)?;
-            let half = self.convert(half, &ty, &output_ty, at)?;
-            self.store(&place, half, at)?;
-        }
-        Ok(returned)
-    }
-
-    fn sampled(&mut self, argument: &AstExpression, at: Span) -> Result<Sampled> {
-        let analysis = self.lw.analysis;
-        let mut inner = strip(argument);
-        let mut non_uniform = false;
-        while let (&ExpressionKind::FunctionCall(ref call), Some(&Callee::NonUniform)) =
-            (&inner.kind, analysis.calls.get(&inner.id))
-        {
-            let Some(constructed) = call.arguments.first().map(strip) else {
-                break;
-            };
-            let is_constructor = matches!(
-                (&constructed.kind, analysis.calls.get(&constructed.id)),
-                (
-                    &ExpressionKind::FunctionCall(_),
-                    Some(&Callee::Constructor(_))
-                ) | (&ExpressionKind::FunctionCall(_), Some(&Callee::NonUniform))
-            );
-            if !is_constructor {
-                break;
-            }
-            inner = constructed;
-            non_uniform = true;
-        }
-        if let (&ExpressionKind::FunctionCall(ref call), Some(&Callee::Constructor(ref ty))) =
-            (&inner.kind, analysis.calls.get(&inner.id))
-        {
-            if let Some(opaque) = ty.as_opaque() {
-                let &[ref texture, ref sampler] = call.arguments.as_slice() else {
-                    return Err(internal(at));
-                };
-                let image = self.rvalue(texture)?;
-                let sampler = self.rvalue(sampler)?;
-                return Ok(Sampled {
-                    image,
-                    sampler: Some(sampler),
-                    opaque,
-                    non_uniform,
-                });
-            }
-        }
-        let ty = self.info(argument)?.ty.clone();
-        match ty.as_opaque() {
-            Some(opaque)
-                if opaque.kind == OpaqueKind::Image
-                    || opaque.kind == OpaqueKind::CombinedSampler
-                    || opaque.kind == OpaqueKind::Texture
-                    || opaque.kind == OpaqueKind::SubpassInput =>
-            {
-                Ok(Sampled {
-                    image: self.rvalue(argument)?,
-                    sampler: None,
-                    opaque,
-                    non_uniform: false,
-                })
-            }
-            _ => Err(unsupported("this texture argument", at)),
-        }
-    }
-
     fn resize(
         &mut self,
         vector: Handle<Expression>,
@@ -1377,25 +929,816 @@ impl FunctionLowerer<'_, '_> {
         }
         self.split_coordinate(coordinate, size, opaque, false, at)
     }
+}
 
-    fn image_processing(
-        &mut self,
-        operation: ImageProcessingOperation,
-        arguments: &[AstExpression],
+#[allow(clippy::await_holding_refcell_ref)]
+impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
+    pub(super) async fn builtin_call(
+        self,
+        id: BuiltinFunctionId,
+        call_type: &'b GlslType,
+        arguments: &'b [AstExpression],
+        at: Span,
+    ) -> Result<Option<Handle<Expression>>> {
+        let mut this = self.lowerer();
+        let analysis = this.lw.analysis;
+        let function = analysis.builtins.function(id).ok_or_else(|| internal(at))?;
+        let name = function.name.as_str();
+        if let Some(result) = {
+            let frame = self.clone().ray_builtin_call(name, arguments, at);
+            drop(this);
+            let result = self.nest(frame).await;
+            this = self.lowerer();
+            result
+        }? {
+            return Ok(result);
+        }
+        let call = texture_call(name);
+        if sampling_function(&call.base) {
+            return {
+                let frame =
+                    self.clone()
+                        .sample(call, function, arguments, ImageGatherPattern::Quad, at);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
+            .map(Some);
+        }
+        match name {
+            _ if gather_pattern(name).is_some() => {
+                let frame = self.clone().gather_call(name, function, arguments, at);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
+            "sparseTexelFetchARB" => {
+                let frame = self.clone().fetch(function, arguments, false, true, at);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
+            .map(Some),
+            "sparseTexelFetchOffsetARB" => {
+                let frame = self.clone().fetch(function, arguments, true, true, at);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
+            .map(Some),
+            "sparseImageLoadARB" => {
+                let frame = self.clone().image(name, function, arguments, at);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
+            "sparseTexelsResidentARB" => {
+                let frame = self.clone().sparse_texels_resident_call(arguments, at);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
+            "textureQueryLod" | "textureQueryLOD" => {
+                let frame = self.clone().query_lod(arguments, at);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
+            .map(Some),
+            _ if image_processing(name).is_some() => {
+                let frame = self.clone().image_processing_call(name, arguments, at);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
+            "texelFetch" => {
+                let frame = self.clone().fetch(function, arguments, false, false, at);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
+            .map(Some),
+            "texelFetchOffset" => {
+                let frame = self.clone().fetch(function, arguments, true, false, at);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
+            .map(Some),
+            "textureSize" | "textureQueryLevels" | "textureSamples" | "imageSize"
+            | "imageSamples" => {
+                let frame = self.clone().query(name, arguments, at);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
+            .map(Some),
+            "imageLoad" | "imageStore" => {
+                let frame = self.clone().image(name, function, arguments, at);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
+            _ if name.starts_with("imageAtomic") => {
+                let frame = self.clone().image_atomic_call(name, arguments, at);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
+            "subpassLoad" => {
+                let frame = self.clone().subpass_load(arguments, at);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
+            .map(Some),
+            "barrier"
+            | "memoryBarrier"
+            | "memoryBarrierBuffer"
+            | "memoryBarrierShared"
+            | "memoryBarrierImage"
+            | "groupMemoryBarrier"
+            | "controlBarrier"
+            | "controlBarrierArrive"
+            | "controlBarrierWait" => this.barrier_call(name, arguments, at),
+            "beginInvocationInterlockARB" | "endInvocationInterlockARB" => {
+                this.interlock_call(name, at)
+            }
+            "helperInvocationEXT" => this.add(Expression::IsHelperInvocation, at).map(Some),
+            "textureFootprintNV"
+            | "textureFootprintClampNV"
+            | "textureFootprintLodNV"
+            | "textureFootprintGradNV"
+            | "textureFootprintGradClampNV" => {
+                let frame = self.clone().footprint(name, arguments, at);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
+            .map(Some),
+            "fragmentMaskFetchAMD" | "fragmentFetchAMD" => {
+                let frame = self.clone().fragment_fetch_call(name, arguments, at);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
+            "interpolateAtCentroid" | "interpolateAtSample" | "interpolateAtOffset" => {
+                let frame = self.clone().interpolate(name, arguments, at);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
+            .map(Some),
+            "colorAttachmentReadEXT" | "depthAttachmentReadEXT" | "stencilAttachmentReadEXT" => {
+                let frame = self.clone().attachment_read_call(name, arguments, at);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
+            "SetMeshOutputsEXT" | "EmitMeshTasksEXT" | "writePackedPrimitiveIndices4x8NV" => {
+                let frame = self.clone().mesh_statement_call(name, arguments, at);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
+            "EmitVertex" | "EndPrimitive" | "EmitStreamVertex" | "EndStreamPrimitive" => {
+                this.primitive_statement_call(name, arguments, at)
+            }
+            "expectEXT" => {
+                let frame = self.clone().expect_call(arguments, at);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
+            "assumeEXT" => {
+                let frame = self.clone().assume_call(arguments, at);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
+            "modf" | "frexp" => {
+                let frame = self.clone().split(name, arguments, at);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
+            .map(Some),
+            "atomicAdd" | "atomicMin" | "atomicMax" | "atomicAnd" | "atomicOr" | "atomicXor"
+            | "atomicExchange" | "atomicCompSwap" | "atomicLoad" | "atomicStore" => {
+                let frame = self.clone().atomic(name, arguments, at);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
+            "uaddCarry" | "usubBorrow" | "umulExtended" | "imulExtended" => {
+                let frame = self.clone().wide(name, arguments, at);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
+            _ if super::subgroup::is_subgroup_function(name) => {
+                let frame = self.clone().subgroup(name, arguments, at);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
+            _ => {
+                let frame = self
+                    .clone()
+                    .generic(name, function, call_type, arguments, at);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
+            .map(Some),
+        }
+    }
+
+    async fn gather_call(
+        self,
+        name: &'b str,
+        function: &'b Function,
+        arguments: &'b [AstExpression],
+        at: Span,
+    ) -> Result<Option<Handle<Expression>>> {
+        let this = self.lowerer();
+        let (base, pattern) = gather_pattern(name).ok_or_else(|| internal(at))?;
+        {
+            let frame = self
+                .clone()
+                .sample(texture_call(base), function, arguments, pattern, at);
+            drop(this);
+            let result = self.nest(frame).await;
+            result
+        }
+        .map(Some)
+    }
+
+    async fn sparse_texels_resident_call(
+        self,
+        arguments: &'b [AstExpression],
+        at: Span,
+    ) -> Result<Option<Handle<Expression>>> {
+        let mut this = self.lowerer();
+        let code = {
+            let frame = self
+                .clone()
+                .rvalue(arguments.first().ok_or_else(|| internal(at))?);
+            drop(this);
+            let result = self.nest(frame).await;
+            this = self.lowerer();
+            result
+        }?;
+        this.add(Expression::ImageSparseResident { code }, at)
+            .map(Some)
+    }
+
+    async fn image_processing_call(
+        self,
+        name: &'b str,
+        arguments: &'b [AstExpression],
+        at: Span,
+    ) -> Result<Option<Handle<Expression>>> {
+        let this = self.lowerer();
+        let operation = image_processing(name).ok_or_else(|| internal(at))?;
+        {
+            let frame = self.clone().image_processing(operation, arguments, at);
+            drop(this);
+            let result = self.nest(frame).await;
+            result
+        }
+        .map(Some)
+    }
+
+    async fn image_atomic_call(
+        self,
+        name: &'b str,
+        arguments: &'b [AstExpression],
+        at: Span,
+    ) -> Result<Option<Handle<Expression>>> {
+        let mut this = self.lowerer();
+        let first = arguments.first().ok_or_else(|| internal(at))?;
+        let Sampled {
+            image,
+            opaque,
+            non_uniform,
+            ..
+        } = {
+            let frame = self.clone().sampled(first, at);
+            drop(this);
+            let result = self.nest(frame).await;
+            this = self.lowerer();
+            result
+        }?;
+        {
+            let frame = self
+                .clone()
+                .image_atomic(name, image, opaque, non_uniform, arguments, at);
+            drop(this);
+            let result = self.nest(frame).await;
+            result
+        }
+    }
+
+    async fn fragment_fetch_call(
+        self,
+        name: &'b str,
+        arguments: &'b [AstExpression],
+        at: Span,
+    ) -> Result<Option<Handle<Expression>>> {
+        let mut this = self.lowerer();
+        let first = arguments.first().ok_or_else(|| internal(at))?;
+        let subpass = this
+            .lw
+            .analysis
+            .type_of(first.id)
+            .and_then(GlslType::as_opaque)
+            .is_some_and(|opaque| opaque.kind == OpaqueKind::SubpassInput);
+        let image = {
+            let frame = self.clone().rvalue(first);
+            drop(this);
+            let result = self.nest(frame).await;
+            this = self.lowerer();
+            result
+        }?;
+        let mut rest = arguments.iter().skip(1);
+        let coordinate = if subpass {
+            let zero = this.literal(Literal::I32(0), at)?;
+            let ty = this
+                .lw
+                .vector_type(crate::VectorSize::Bi, crate::Scalar::I32);
+            this.add(
+                Expression::Compose {
+                    ty,
+                    components: alloc::vec![zero, zero],
+                },
+                at,
+            )?
+        } else {
+            let coordinate = rest.next().ok_or_else(|| internal(at))?;
+            {
+                let frame = self.clone().rvalue(coordinate);
+                drop(this);
+                let result = self.nest(frame).await;
+                this = self.lowerer();
+                result
+            }?
+        };
+        let fragment = match rest.next() {
+            Some(fragment) if name == "fragmentFetchAMD" => Some({
+                let frame = self.clone().rvalue(fragment);
+                drop(this);
+                let result = self.nest(frame).await;
+                this = self.lowerer();
+                result
+            }?),
+            _ => None,
+        };
+        this.add(
+            Expression::FragmentFetch {
+                image,
+                coordinate,
+                fragment,
+            },
+            at,
+        )
+        .map(Some)
+    }
+
+    async fn attachment_read_call(
+        self,
+        name: &'b str,
+        arguments: &'b [AstExpression],
+        at: Span,
+    ) -> Result<Option<Handle<Expression>>> {
+        let mut this = self.lowerer();
+        let mut rest = arguments.iter();
+        let aspect = match name {
+            "colorAttachmentReadEXT" => {
+                let image = rest.next().ok_or_else(|| internal(at))?;
+                crate::AttachmentAspect::Color({
+                    let frame = self.clone().rvalue(image);
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }?)
+            }
+            "depthAttachmentReadEXT" => crate::AttachmentAspect::Depth,
+            _ => crate::AttachmentAspect::Stencil,
+        };
+        let sample = match rest.next() {
+            Some(sample) => Some({
+                let frame = self.clone().rvalue(sample);
+                drop(this);
+                let result = self.nest(frame).await;
+                this = self.lowerer();
+                result
+            }?),
+            None => None,
+        };
+        this.add(Expression::AttachmentRead { aspect, sample }, at)
+            .map(Some)
+    }
+
+    async fn mesh_statement_call(
+        self,
+        name: &'b str,
+        arguments: &'b [AstExpression],
+        at: Span,
+    ) -> Result<Option<Handle<Expression>>> {
+        let this = self.lowerer();
+        {
+            let frame = self.clone().mesh_statement(name, arguments, at);
+            drop(this);
+            let result = self.nest(frame).await;
+            result
+        }?;
+        Ok(None)
+    }
+
+    async fn expect_call(
+        self,
+        arguments: &'b [AstExpression],
+        at: Span,
+    ) -> Result<Option<Handle<Expression>>> {
+        let mut this = self.lowerer();
+        let value = {
+            let frame = self
+                .clone()
+                .rvalue(arguments.first().ok_or_else(|| internal(at))?);
+            drop(this);
+            let result = self.nest(frame).await;
+            this = self.lowerer();
+            result
+        }?;
+        let expected = {
+            let frame = self
+                .clone()
+                .rvalue(arguments.get(1).ok_or_else(|| internal(at))?);
+            drop(this);
+            let result = self.nest(frame).await;
+            this = self.lowerer();
+            result
+        }?;
+        this.add(Expression::Expect { value, expected }, at)
+            .map(Some)
+    }
+
+    async fn assume_call(
+        self,
+        arguments: &'b [AstExpression],
+        at: Span,
+    ) -> Result<Option<Handle<Expression>>> {
+        let mut this = self.lowerer();
+        let condition = {
+            let frame = self
+                .clone()
+                .rvalue(arguments.first().ok_or_else(|| internal(at))?);
+            drop(this);
+            let result = self.nest(frame).await;
+            this = self.lowerer();
+            result
+        }?;
+        this.flush();
+        this.push(Statement::Assume { condition }, at);
+        Ok(None)
+    }
+
+    async fn generic(
+        self,
+        name: &'b str,
+        function: &'b Function,
+        call_type: &'b GlslType,
+        arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Handle<Expression>> {
-        let argument = |index: usize| arguments.get(index).ok_or_else(|| internal(at));
-        let source = self.sampled(argument(0)?, at)?;
-        let coordinate = self.rvalue(argument(1)?)?;
-        let (reference, reference_coordinate, size) = match operation {
-            ImageProcessingOperation::SampleWeighted => {
-                (Some(self.sampled(argument(2)?, at)?), None, None)
+        let mut this = self.lowerer();
+        if function
+            .parameters
+            .iter()
+            .any(|parameter| parameter.direction.is_output())
+        {
+            return Err(unsupported(format!("the built-in function `{name}`"), at));
+        }
+        let mut values = Vec::with_capacity(arguments.len());
+        let mut types = Vec::with_capacity(arguments.len());
+        for argument in arguments {
+            let (value, ty) = {
+                let frame = self.clone().typed(argument);
+                drop(this);
+                let result = self.nest(frame).await;
+                this = self.lowerer();
+                result
+            }?;
+            values.push(value);
+            types.push(ty);
+        }
+        this.generic_values(name, function, call_type, at, values, types)
+    }
+
+    async fn split(
+        self,
+        name: &'b str,
+        arguments: &'b [AstExpression],
+        at: Span,
+    ) -> Result<Handle<Expression>> {
+        let mut this = self.lowerer();
+        let &[ref value, ref output] = arguments else {
+            return Err(internal(at));
+        };
+        let (value, ty) = {
+            let frame = self.clone().typed(value);
+            drop(this);
+            let result = self.nest(frame).await;
+            this = self.lowerer();
+            result
+        }?;
+        let base = ty.base_scalar().ok_or_else(|| internal(at))?;
+        let size = match ty.kind {
+            TypeKind::Vector { size, .. } => vector_size(size),
+            _ => None,
+        };
+        let (special, fun) = if name == "modf" {
+            (
+                PredeclaredType::ModfResult {
+                    size,
+                    scalar: scalar(base),
+                },
+                MathFunction::Modf,
+            )
+        } else {
+            (
+                PredeclaredType::FrexpResult {
+                    size,
+                    scalar: scalar(base),
+                },
+                MathFunction::Frexp,
+            )
+        };
+        if ty.sized_vector_length().is_some() {
+            this.long_math_result(fun, &ty, at)?;
+        } else {
+            this.lw.module.generate_predeclared_type(special);
+        }
+        let result = this.math_call(fun, &[value], at)?;
+        let fraction = this.add(
+            Expression::AccessIndex {
+                base: result,
+                index: 0,
+            },
+            at,
+        )?;
+        let other = this.add(
+            Expression::AccessIndex {
+                base: result,
+                index: 1,
+            },
+            at,
+        )?;
+        let output_ty = this.info(output)?.ty.clone();
+        let place = {
+            let frame = self.clone().place(output);
+            drop(this);
+            let result = self.nest(frame).await;
+            this = self.lowerer();
+            result
+        }?;
+        let other_ty = if name == "modf" {
+            ty.clone()
+        } else {
+            ty.with_scalar(GlslScalar::Int)
+        };
+        let other = this.convert(other, &other_ty, &output_ty, at)?;
+        this.store(&place, other, at)?;
+        Ok(fraction)
+    }
+
+    async fn wide(
+        self,
+        name: &'b str,
+        arguments: &'b [AstExpression],
+        at: Span,
+    ) -> Result<Option<Handle<Expression>>> {
+        let mut this = self.lowerer();
+        let &[ref x, ref y, ref outputs @ ..] = arguments else {
+            return Err(internal(at));
+        };
+        let (x, ty) = {
+            let frame = self.clone().typed(x);
+            drop(this);
+            let result = self.nest(frame).await;
+            this = self.lowerer();
+            result
+        }?;
+        let (y, _) = {
+            let frame = self.clone().typed(y);
+            drop(this);
+            let result = self.nest(frame).await;
+            this = self.lowerer();
+            result
+        }?;
+        let base = ty.base_scalar().ok_or_else(|| internal(at))?;
+        let size = match ty.kind {
+            TypeKind::Vector { size, .. } => vector_size(size),
+            _ => None,
+        };
+        let fun = match name {
+            "uaddCarry" => MathFunction::AddCarry,
+            "usubBorrow" => MathFunction::SubBorrow,
+            _ => MathFunction::MulExtended,
+        };
+        if ty.sized_vector_length().is_some() {
+            this.long_math_result(fun, &ty, at)?;
+        } else {
+            this.lw
+                .module
+                .generate_predeclared_type(PredeclaredType::WideResult {
+                    size,
+                    scalar: scalar(base),
+                });
+        }
+        let result = this.math_call(fun, &[x, y], at)?;
+        let high = this.add(
+            Expression::AccessIndex {
+                base: result,
+                index: 1,
+            },
+            at,
+        )?;
+        let low = this.add(
+            Expression::AccessIndex {
+                base: result,
+                index: 0,
+            },
+            at,
+        )?;
+        let (stored, returned) = if fun == MathFunction::MulExtended {
+            (&[high, low][..], None)
+        } else {
+            (&[high][..], Some(low))
+        };
+        if outputs.len() != stored.len() {
+            return Err(internal(at));
+        }
+        for (output, &half) in outputs.iter().zip(stored) {
+            let output_ty = this.info(output)?.ty.clone();
+            let place = {
+                let frame = self.clone().place(output);
+                drop(this);
+                let result = self.nest(frame).await;
+                this = self.lowerer();
+                result
+            }?;
+            let half = this.convert(half, &ty, &output_ty, at)?;
+            this.store(&place, half, at)?;
+        }
+        Ok(returned)
+    }
+
+    async fn sampled(self, argument: &'b AstExpression, at: Span) -> Result<Sampled> {
+        let mut this = self.lowerer();
+        let analysis = this.lw.analysis;
+        let mut inner = strip(argument);
+        let mut non_uniform = false;
+        while let (&ExpressionKind::FunctionCall(ref call), Some(&Callee::NonUniform)) =
+            (&inner.kind, analysis.calls.get(&inner.id))
+        {
+            let Some(constructed) = call.arguments.first().map(strip) else {
+                break;
+            };
+            let is_constructor = matches!(
+                (&constructed.kind, analysis.calls.get(&constructed.id)),
+                (
+                    &ExpressionKind::FunctionCall(_),
+                    Some(&Callee::Constructor(_))
+                ) | (&ExpressionKind::FunctionCall(_), Some(&Callee::NonUniform))
+            );
+            if !is_constructor {
+                break;
             }
-            ImageProcessingOperation::BoxFilter => (None, None, Some(self.rvalue(argument(2)?)?)),
+            inner = constructed;
+            non_uniform = true;
+        }
+        if let (&ExpressionKind::FunctionCall(ref call), Some(&Callee::Constructor(ref ty))) =
+            (&inner.kind, analysis.calls.get(&inner.id))
+        {
+            if let Some(opaque) = ty.as_opaque() {
+                let &[ref texture, ref sampler] = call.arguments.as_slice() else {
+                    return Err(internal(at));
+                };
+                let image = {
+                    let frame = self.clone().rvalue(texture);
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }?;
+                let sampler = {
+                    let frame = self.clone().rvalue(sampler);
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    result
+                }?;
+                return Ok(Sampled {
+                    image,
+                    sampler: Some(sampler),
+                    opaque,
+                    non_uniform,
+                });
+            }
+        }
+        let ty = this.info(argument)?.ty.clone();
+        match ty.as_opaque() {
+            Some(opaque)
+                if opaque.kind == OpaqueKind::Image
+                    || opaque.kind == OpaqueKind::CombinedSampler
+                    || opaque.kind == OpaqueKind::Texture
+                    || opaque.kind == OpaqueKind::SubpassInput =>
+            {
+                Ok(Sampled {
+                    image: {
+                        let frame = self.clone().rvalue(argument);
+                        drop(this);
+                        let result = self.nest(frame).await;
+                        result
+                    }?,
+                    sampler: None,
+                    opaque,
+                    non_uniform: false,
+                })
+            }
+            _ => Err(unsupported("this texture argument", at)),
+        }
+    }
+
+    async fn image_processing(
+        self,
+        operation: ImageProcessingOperation,
+        arguments: &'b [AstExpression],
+        at: Span,
+    ) -> Result<Handle<Expression>> {
+        let mut this = self.lowerer();
+        let argument = |index: usize| arguments.get(index).ok_or_else(|| internal(at));
+        let source = {
+            let frame = self.clone().sampled(argument(0)?, at);
+            drop(this);
+            let result = self.nest(frame).await;
+            this = self.lowerer();
+            result
+        }?;
+        let coordinate = {
+            let frame = self.clone().rvalue(argument(1)?);
+            drop(this);
+            let result = self.nest(frame).await;
+            this = self.lowerer();
+            result
+        }?;
+        let (reference, reference_coordinate, size) = match operation {
+            ImageProcessingOperation::SampleWeighted => (
+                Some({
+                    let frame = self.clone().sampled(argument(2)?, at);
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }?),
+                None,
+                None,
+            ),
+            ImageProcessingOperation::BoxFilter => (
+                None,
+                None,
+                Some({
+                    let frame = self.clone().rvalue(argument(2)?);
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }?),
+            ),
             ImageProcessingOperation::BlockMatch { .. } => {
-                let reference = self.sampled(argument(2)?, at)?;
-                let reference_coordinate = self.rvalue(argument(3)?)?;
-                let size = self.rvalue(argument(4)?)?;
+                let reference = {
+                    let frame = self.clone().sampled(argument(2)?, at);
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }?;
+                let reference_coordinate = {
+                    let frame = self.clone().rvalue(argument(3)?);
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }?;
+                let size = {
+                    let frame = self.clone().rvalue(argument(4)?);
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }?;
                 (Some(reference), Some(reference_coordinate), Some(size))
             }
         };
@@ -1403,7 +1746,7 @@ impl FunctionLowerer<'_, '_> {
             || reference
                 .as_ref()
                 .is_some_and(|reference| reference.non_uniform);
-        let result = self.add(
+        let result = this.add(
             Expression::ImageProcessing {
                 operation,
                 image: source.image,
@@ -1417,19 +1760,20 @@ impl FunctionLowerer<'_, '_> {
             at,
         )?;
         if non_uniform {
-            self.mark(result, NonUniform::SAMPLED_IMAGE);
+            this.mark(result, NonUniform::SAMPLED_IMAGE);
         }
         Ok(result)
     }
 
-    fn sample(
-        &mut self,
+    async fn sample(
+        self,
         call: TextureCall,
-        function: &Function,
-        arguments: &[AstExpression],
+        function: &'b Function,
+        arguments: &'b [AstExpression],
         gather_pattern: ImageGatherPattern,
         at: Span,
     ) -> Result<Handle<Expression>> {
+        let mut this = self.lowerer();
         let name = call.base;
         let first = arguments.first().ok_or_else(|| internal(at))?;
         let Sampled {
@@ -1437,7 +1781,13 @@ impl FunctionLowerer<'_, '_> {
             sampler,
             opaque,
             non_uniform,
-        } = self.sampled(first, at)?;
+        } = {
+            let frame = self.clone().sampled(first, at);
+            drop(this);
+            let result = self.nest(frame).await;
+            this = self.lowerer();
+            result
+        }?;
         if sampler.is_none() && opaque.kind != OpaqueKind::CombinedSampler {
             return Err(internal(at));
         }
@@ -1447,7 +1797,13 @@ impl FunctionLowerer<'_, '_> {
         let grad = name.contains("Grad");
         let offset = name.ends_with("Offset") || name.ends_with("Offsets");
         let coordinate_argument = arguments.get(1).ok_or_else(|| internal(at))?;
-        let (coordinate, coordinate_ty) = self.typed(coordinate_argument)?;
+        let (coordinate, coordinate_ty) = {
+            let frame = self.clone().typed(coordinate_argument);
+            drop(this);
+            let result = self.nest(frame).await;
+            this = self.lowerer();
+            result
+        }?;
         let mut size = u32::from(match coordinate_ty.kind {
             TypeKind::Vector { size, .. } => size,
             _ => 1,
@@ -1456,49 +1812,127 @@ impl FunctionLowerer<'_, '_> {
         let separate_reference = opaque.shadow
             && (gather || (opaque.dimension == TextureDimension::Cube && opaque.arrayed));
         let reference_argument = if separate_reference {
-            Some(self.next_argument(arguments, &mut next, at)?)
+            Some({
+                let frame = self.clone().next_argument(
+                    arguments,
+                    {
+                        next += 1;
+                        next - 1
+                    },
+                    at,
+                );
+                drop(this);
+                let result = self.nest(frame).await;
+                this = self.lowerer();
+                result
+            }?)
         } else {
             None
         };
         let mut coordinate = coordinate;
         if proj {
             let last = size.checked_sub(1).ok_or_else(|| internal(at))?;
-            let q = self.component(coordinate, last, at)?;
-            let head = self.resize(coordinate, size, last, at)?;
+            let q = this.component(coordinate, last, at)?;
+            let head = this.resize(coordinate, size, last, at)?;
             let divisor = if last > 1 {
-                self.splat(q, u8::try_from(last).unwrap_or(0), at)?
+                this.splat(q, u8::try_from(last).unwrap_or(0), at)?
             } else {
                 q
             };
-            coordinate = self.binary_op(BinaryOperator::Divide, head, divisor, at)?;
+            coordinate = this.binary_op(BinaryOperator::Divide, head, divisor, at)?;
             size = last;
         }
         let depth_ref = match reference_argument {
             Some(reference) => Some(reference),
             None if opaque.shadow => {
                 let last = size.checked_sub(1).ok_or_else(|| internal(at))?;
-                let reference = self.component(coordinate, last, at)?;
+                let reference = this.component(coordinate, last, at)?;
                 Some(reference)
             }
             None => None,
         };
-        let (point, array_index) = self.split_coordinate(coordinate, size, opaque, true, at)?;
+        let (point, array_index) = this.split_coordinate(coordinate, size, opaque, true, at)?;
         let mut level = SampleLevel::Auto;
         if lod {
-            level = SampleLevel::Exact(self.next_argument(arguments, &mut next, at)?);
+            level = SampleLevel::Exact({
+                let frame = self.clone().next_argument(
+                    arguments,
+                    {
+                        next += 1;
+                        next - 1
+                    },
+                    at,
+                );
+                drop(this);
+                let result = self.nest(frame).await;
+                this = self.lowerer();
+                result
+            }?);
         }
         if grad {
-            let x = self.next_argument(arguments, &mut next, at)?;
-            let y = self.next_argument(arguments, &mut next, at)?;
+            let x = {
+                let frame = self.clone().next_argument(
+                    arguments,
+                    {
+                        next += 1;
+                        next - 1
+                    },
+                    at,
+                );
+                drop(this);
+                let result = self.nest(frame).await;
+                this = self.lowerer();
+                result
+            }?;
+            let y = {
+                let frame = self.clone().next_argument(
+                    arguments,
+                    {
+                        next += 1;
+                        next - 1
+                    },
+                    at,
+                );
+                drop(this);
+                let result = self.nest(frame).await;
+                this = self.lowerer();
+                result
+            }?;
             level = SampleLevel::Gradient { x, y };
         }
         let mut sample_offset = None;
         if offset {
-            sample_offset = Some(self.next_argument(arguments, &mut next, at)?);
+            sample_offset = Some({
+                let frame = self.clone().next_argument(
+                    arguments,
+                    {
+                        next += 1;
+                        next - 1
+                    },
+                    at,
+                );
+                drop(this);
+                let result = self.nest(frame).await;
+                this = self.lowerer();
+                result
+            }?);
         }
         let mut min_lod = None;
         if call.clamp {
-            min_lod = Some(self.next_argument(arguments, &mut next, at)?);
+            min_lod = Some({
+                let frame = self.clone().next_argument(
+                    arguments,
+                    {
+                        next += 1;
+                        next - 1
+                    },
+                    at,
+                );
+                drop(this);
+                let result = self.nest(frame).await;
+                this = self.lowerer();
+                result
+            }?);
         }
         let texel_out = if call.sparse {
             let index = next;
@@ -1518,7 +1952,7 @@ impl FunctionLowerer<'_, '_> {
                 match arguments.get(next) {
                     Some(component) => {
                         next += 1;
-                        match self.constant_index(component) {
+                        match this.constant_index(component) {
                             Some(0) => SwizzleComponent::X,
                             Some(1) => SwizzleComponent::Y,
                             Some(2) => SwizzleComponent::Z,
@@ -1536,25 +1970,51 @@ impl FunctionLowerer<'_, '_> {
             };
             gather_component = Some(component);
             if !lod && next < function.parameters.len() {
-                level = SampleLevel::Bias(self.next_argument(arguments, &mut next, at)?);
+                level = SampleLevel::Bias({
+                    let frame = self.clone().next_argument(
+                        arguments,
+                        {
+                            next += 1;
+                            next - 1
+                        },
+                        at,
+                    );
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }?);
             }
         } else if !lod && !grad && next < function.parameters.len() {
-            level = SampleLevel::Bias(self.next_argument(arguments, &mut next, at)?);
+            level = SampleLevel::Bias({
+                let frame = self.clone().next_argument(
+                    arguments,
+                    {
+                        next += 1;
+                        next - 1
+                    },
+                    at,
+                );
+                drop(this);
+                let result = self.nest(frame).await;
+                this = self.lowerer();
+                result
+            }?);
         }
-        let stage = self.lw.options.stage;
+        let stage = this.lw.options.stage;
         let derivatives = stage == ShaderStage::Fragment
-            || (stage == ShaderStage::Compute && self.lw.analysis.derivative_group.is_some());
+            || (stage == ShaderStage::Compute && this.lw.analysis.derivative_group.is_some());
         let implicit = match level {
-            SampleLevel::Auto => !self.lw.library,
+            SampleLevel::Auto => !this.lw.library,
             SampleLevel::Bias(_) => true,
             SampleLevel::Zero | SampleLevel::Exact(_) | SampleLevel::Gradient { .. } => false,
         };
         if implicit && !gather && !derivatives {
             level = SampleLevel::Zero;
             if let Some(clamp) = min_lod.take() {
-                let zero = self.literal(Literal::F32(0.0), at)?;
+                let zero = this.literal(Literal::F32(0.0), at)?;
                 level =
-                    SampleLevel::Exact(self.math_call(MathFunction::Max, &[clamp, zero], at)?);
+                    SampleLevel::Exact(this.math_call(MathFunction::Max, &[clamp, zero], at)?);
             }
         }
         let sparse = match texel_out {
@@ -1567,11 +2027,11 @@ impl FunctionLowerer<'_, '_> {
                         scalar: super::types::sampled_scalar(opaque.sampled),
                     }
                 };
-                Some(self.lw.sparse_result_type(texel))
+                Some(this.lw.sparse_result_type(texel))
             }
             None => None,
         };
-        let sample = self.add(
+        let sample = this.add(
             Expression::ImageSample {
                 image,
                 sampler,
@@ -1589,36 +2049,50 @@ impl FunctionLowerer<'_, '_> {
             at,
         )?;
         if non_uniform {
-            self.mark(sample, NonUniform::SAMPLED_IMAGE);
+            this.mark(sample, NonUniform::SAMPLED_IMAGE);
         }
         match texel_out {
-            Some(index) => self.sparse_result(sample, function, arguments, index, at),
+            Some(index) => {
+                let frame = self
+                    .clone()
+                    .sparse_result(sample, function, arguments, index, at);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
             None => Ok(sample),
         }
     }
 
-    pub(super) fn sparse_result(
-        &mut self,
+    pub(super) async fn sparse_result(
+        self,
         result: Handle<Expression>,
-        function: &Function,
-        arguments: &[AstExpression],
+        function: &'b Function,
+        arguments: &'b [AstExpression],
         index: usize,
         at: Span,
     ) -> Result<Handle<Expression>> {
+        let mut this = self.lowerer();
         let output = arguments.get(index).ok_or_else(|| internal(at))?;
         let parameter = function.parameters.get(index).ok_or_else(|| internal(at))?;
-        let texel = self.add(
+        let texel = this.add(
             Expression::AccessIndex {
                 base: result,
                 index: 1,
             },
             at,
         )?;
-        let output_ty = self.info(output)?.ty.clone();
-        let place = self.place(output)?;
-        let texel = self.convert(texel, &parameter.ty, &output_ty, at)?;
-        self.store(&place, texel, at)?;
-        self.add(
+        let output_ty = this.info(output)?.ty.clone();
+        let place = {
+            let frame = self.clone().place(output);
+            drop(this);
+            let result = self.nest(frame).await;
+            this = self.lowerer();
+            result
+        }?;
+        let texel = this.convert(texel, &parameter.ty, &output_ty, at)?;
+        this.store(&place, texel, at)?;
+        this.add(
             Expression::AccessIndex {
                 base: result,
                 index: 0,
@@ -1627,48 +2101,72 @@ impl FunctionLowerer<'_, '_> {
         )
     }
 
-    fn next_argument(
-        &mut self,
-        arguments: &[AstExpression],
-        next: &mut usize,
+    async fn next_argument(
+        self,
+        arguments: &'b [AstExpression],
+        index: usize,
         at: Span,
     ) -> Result<Handle<Expression>> {
-        let value = arguments.get(*next).ok_or_else(|| internal(at))?;
-        *next += 1;
-        self.rvalue(value)
+        let value = arguments.get(index).ok_or_else(|| internal(at))?;
+        self.nest(self.clone().rvalue(value)).await
     }
 
-    fn fetch(
-        &mut self,
-        function: &Function,
-        arguments: &[AstExpression],
+    async fn fetch(
+        self,
+        function: &'b Function,
+        arguments: &'b [AstExpression],
         offset: bool,
         sparse: bool,
         at: Span,
     ) -> Result<Handle<Expression>> {
+        let mut this = self.lowerer();
         let first = arguments.first().ok_or_else(|| internal(at))?;
         let Sampled {
             image,
             opaque,
             non_uniform,
             ..
-        } = self.sampled(first, at)?;
+        } = {
+            let frame = self.clone().sampled(first, at);
+            drop(this);
+            let result = self.nest(frame).await;
+            this = self.lowerer();
+            result
+        }?;
         if non_uniform {
-            self.mark(image, NonUniform::VALUE);
+            this.mark(image, NonUniform::VALUE);
         }
         let coordinate_argument = arguments.get(1).ok_or_else(|| internal(at))?;
-        let (coordinate, ty) = self.typed(coordinate_argument)?;
+        let (coordinate, ty) = {
+            let frame = self.clone().typed(coordinate_argument);
+            drop(this);
+            let result = self.nest(frame).await;
+            this = self.lowerer();
+            result
+        }?;
         let size = ty.component_count().ok_or_else(|| internal(at))?;
         let (mut point, array_index) =
-            self.split_coordinate(coordinate, size, opaque, false, at)?;
+            this.split_coordinate(coordinate, size, opaque, false, at)?;
         let extra = match arguments.get(2) {
-            Some(argument) => Some(self.rvalue(argument)?),
+            Some(argument) => Some({
+                let frame = self.clone().rvalue(argument);
+                drop(this);
+                let result = self.nest(frame).await;
+                this = self.lowerer();
+                result
+            }?),
             None => None,
         };
         if offset {
             let offset = arguments.get(3).ok_or_else(|| internal(at))?;
-            let offset = self.rvalue(offset)?;
-            point = self.binary_op(BinaryOperator::Add, point, offset, at)?;
+            let offset = {
+                let frame = self.clone().rvalue(offset);
+                drop(this);
+                let result = self.nest(frame).await;
+                this = self.lowerer();
+                result
+            }?;
+            point = this.binary_op(BinaryOperator::Add, point, offset, at)?;
         }
         let (sample, level) = if opaque.multisample {
             (extra, None)
@@ -1676,12 +2174,12 @@ impl FunctionLowerer<'_, '_> {
             (None, extra)
         };
         let sparse_type = sparse.then(|| {
-            self.lw.sparse_result_type(crate::TypeInner::Vector {
+            this.lw.sparse_result_type(crate::TypeInner::Vector {
                 size: crate::VectorSize::Quad,
                 scalar: super::types::sampled_scalar(opaque.sampled),
             })
         });
-        let result = self.add(
+        let result = this.add(
             Expression::ImageLoad {
                 image,
                 coordinate: point,
@@ -1694,22 +2192,48 @@ impl FunctionLowerer<'_, '_> {
         )?;
         if sparse {
             let index = if offset { 4 } else { 3 };
-            self.sparse_result(result, function, arguments, index, at)
+            {
+                let frame = self
+                    .clone()
+                    .sparse_result(result, function, arguments, index, at);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
         } else {
             Ok(result)
         }
     }
 
-    fn query_lod(&mut self, arguments: &[AstExpression], at: Span) -> Result<Handle<Expression>> {
+    async fn query_lod(
+        self,
+        arguments: &'b [AstExpression],
+        at: Span,
+    ) -> Result<Handle<Expression>> {
+        let mut this = self.lowerer();
         let first = arguments.first().ok_or_else(|| internal(at))?;
         let Sampled {
             image,
             sampler,
             non_uniform,
             ..
-        } = self.sampled(first, at)?;
-        let coordinate = self.rvalue(arguments.get(1).ok_or_else(|| internal(at))?)?;
-        let query = self.add(
+        } = {
+            let frame = self.clone().sampled(first, at);
+            drop(this);
+            let result = self.nest(frame).await;
+            this = self.lowerer();
+            result
+        }?;
+        let coordinate = {
+            let frame = self
+                .clone()
+                .rvalue(arguments.get(1).ok_or_else(|| internal(at))?);
+            drop(this);
+            let result = self.nest(frame).await;
+            this = self.lowerer();
+            result
+        }?;
+        let query = this.add(
             Expression::ImageQuery {
                 image,
                 query: ImageQuery::Lod {
@@ -1720,58 +2244,182 @@ impl FunctionLowerer<'_, '_> {
             at,
         )?;
         if non_uniform {
-            self.mark(query, NonUniform::SAMPLED_IMAGE);
+            this.mark(query, NonUniform::SAMPLED_IMAGE);
         }
         Ok(query)
     }
 
-    fn footprint(
-        &mut self,
-        name: &str,
-        arguments: &[AstExpression],
+    async fn footprint(
+        self,
+        name: &'b str,
+        arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Handle<Expression>> {
+        let mut this = self.lowerer();
         let mut next = 0;
-        let image = self.next_argument(arguments, &mut next, at)?;
-        let coordinate = self.next_argument(arguments, &mut next, at)?;
+        let image = {
+            let frame = self.clone().next_argument(
+                arguments,
+                {
+                    next += 1;
+                    next - 1
+                },
+                at,
+            );
+            drop(this);
+            let result = self.nest(frame).await;
+            this = self.lowerer();
+            result
+        }?;
+        let coordinate = {
+            let frame = self.clone().next_argument(
+                arguments,
+                {
+                    next += 1;
+                    next - 1
+                },
+                at,
+            );
+            drop(this);
+            let result = self.nest(frame).await;
+            this = self.lowerer();
+            result
+        }?;
         let mut level = SampleLevel::Auto;
         let mut min_lod = None;
         match name {
             "textureFootprintLodNV" => {
-                level = SampleLevel::Exact(self.next_argument(arguments, &mut next, at)?);
+                level = SampleLevel::Exact({
+                    let frame = self.clone().next_argument(
+                        arguments,
+                        {
+                            next += 1;
+                            next - 1
+                        },
+                        at,
+                    );
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }?);
             }
             "textureFootprintGradNV" | "textureFootprintGradClampNV" => {
-                let x = self.next_argument(arguments, &mut next, at)?;
-                let y = self.next_argument(arguments, &mut next, at)?;
+                let x = {
+                    let frame = self.clone().next_argument(
+                        arguments,
+                        {
+                            next += 1;
+                            next - 1
+                        },
+                        at,
+                    );
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }?;
+                let y = {
+                    let frame = self.clone().next_argument(
+                        arguments,
+                        {
+                            next += 1;
+                            next - 1
+                        },
+                        at,
+                    );
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }?;
                 level = SampleLevel::Gradient { x, y };
                 if name == "textureFootprintGradClampNV" {
-                    min_lod = Some(self.next_argument(arguments, &mut next, at)?);
+                    min_lod = Some({
+                        let frame = self.clone().next_argument(
+                            arguments,
+                            {
+                                next += 1;
+                                next - 1
+                            },
+                            at,
+                        );
+                        drop(this);
+                        let result = self.nest(frame).await;
+                        this = self.lowerer();
+                        result
+                    }?);
                 }
             }
             "textureFootprintClampNV" => {
-                min_lod = Some(self.next_argument(arguments, &mut next, at)?);
+                min_lod = Some({
+                    let frame = self.clone().next_argument(
+                        arguments,
+                        {
+                            next += 1;
+                            next - 1
+                        },
+                        at,
+                    );
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }?);
             }
             _ => {}
         }
-        let granularity = self.next_argument(arguments, &mut next, at)?;
-        let coarse = self.next_argument(arguments, &mut next, at)?;
+        let granularity = {
+            let frame = self.clone().next_argument(
+                arguments,
+                {
+                    next += 1;
+                    next - 1
+                },
+                at,
+            );
+            drop(this);
+            let result = self.nest(frame).await;
+            this = self.lowerer();
+            result
+        }?;
+        let coarse = {
+            let frame = self.clone().next_argument(
+                arguments,
+                {
+                    next += 1;
+                    next - 1
+                },
+                at,
+            );
+            drop(this);
+            let result = self.nest(frame).await;
+            this = self.lowerer();
+            result
+        }?;
         let output = arguments.get(next).ok_or_else(|| internal(at))?;
         next += 1;
         if let Some(bias) = arguments.get(next) {
-            level = SampleLevel::Bias(self.rvalue(bias)?);
+            level = SampleLevel::Bias({
+                let frame = self.clone().rvalue(bias);
+                drop(this);
+                let result = self.nest(frame).await;
+                this = self.lowerer();
+                result
+            }?);
         }
-        let output_ty = self.info(output)?.ty.clone();
-        let footprint = self.lw.ir_type(&output_ty, at)?;
+        let output_ty = this.info(output)?.ty.clone();
+        let footprint = this.lw.ir_type(&output_ty, at)?;
         let three = matches!(
-            self.lw.module.types[footprint].inner,
+            this.lw.module.types[footprint].inner,
             crate::TypeInner::Struct { ref members, .. }
                 if members.first().is_some_and(|member| matches!(
-                    self.lw.module.types[member.ty].inner,
+                    this.lw.module.types[member.ty].inner,
                     crate::TypeInner::Vector { size: crate::VectorSize::Tri, .. }
                 ))
         );
-        let ty = self.lw.footprint_result_type(three);
-        let result = self.add(
+        let ty = this.lw.footprint_result_type(three);
+        let result = this.add(
             Expression::ImageFootprint {
                 image,
                 coordinate,
@@ -1785,7 +2433,7 @@ impl FunctionLowerer<'_, '_> {
         )?;
         let mut components = Vec::with_capacity(5);
         for index in 1..6 {
-            components.push(self.add(
+            components.push(this.add(
                 Expression::AccessIndex {
                     base: result,
                     index,
@@ -1793,16 +2441,22 @@ impl FunctionLowerer<'_, '_> {
                 at,
             )?);
         }
-        let value = self.add(
+        let value = this.add(
             Expression::Compose {
                 ty: footprint,
                 components,
             },
             at,
         )?;
-        let place = self.place(output)?;
-        self.store(&place, value, at)?;
-        self.add(
+        let place = {
+            let frame = self.clone().place(output);
+            drop(this);
+            let result = self.nest(frame).await;
+            this = self.lowerer();
+            result
+        }?;
+        this.store(&place, value, at)?;
+        this.add(
             Expression::AccessIndex {
                 base: result,
                 index: 0,
@@ -1811,26 +2465,42 @@ impl FunctionLowerer<'_, '_> {
         )
     }
 
-    fn interpolate(
-        &mut self,
-        name: &str,
-        arguments: &[AstExpression],
+    async fn interpolate(
+        self,
+        name: &'b str,
+        arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Handle<Expression>> {
+        let mut this = self.lowerer();
         let first = arguments.first().ok_or_else(|| internal(at))?;
-        let super::expression::Chain::Place(place) = self.chain(first)? else {
+        let super::expression::Chain::Place(place) = {
+            let frame = self.clone().chain(first);
+            drop(this);
+            let result = self.nest(frame).await;
+            this = self.lowerer();
+            result
+        }?
+        else {
             return Err(internal(at));
         };
         let location = match (name, arguments.get(1)) {
-            ("interpolateAtSample", Some(sample)) => {
-                crate::InterpolationLocation::Sample(self.rvalue(sample)?)
-            }
-            ("interpolateAtOffset", Some(offset)) => {
-                crate::InterpolationLocation::Offset(self.rvalue(offset)?)
-            }
+            ("interpolateAtSample", Some(sample)) => crate::InterpolationLocation::Sample({
+                let frame = self.clone().rvalue(sample);
+                drop(this);
+                let result = self.nest(frame).await;
+                this = self.lowerer();
+                result
+            }?),
+            ("interpolateAtOffset", Some(offset)) => crate::InterpolationLocation::Offset({
+                let frame = self.clone().rvalue(offset);
+                drop(this);
+                let result = self.nest(frame).await;
+                this = self.lowerer();
+                result
+            }?),
             _ => crate::InterpolationLocation::Centroid,
         };
-        let value = self.add(
+        let value = this.add(
             Expression::InterpolateAt {
                 pointer: place.pointer,
                 location,
@@ -1841,12 +2511,12 @@ impl FunctionLowerer<'_, '_> {
             None => Ok(value),
             Some(ref components) if components.len() == 1 => {
                 let index = components.first().copied().ok_or_else(|| internal(at))?;
-                self.add(Expression::AccessIndex { base: value, index }, at)
+                this.add(Expression::AccessIndex { base: value, index }, at)
             }
             Some(ref components) => {
                 let size = vector_size(u8::try_from(components.len()).unwrap_or(0))
                     .ok_or_else(|| internal(at))?;
-                self.add(
+                this.add(
                     Expression::Swizzle {
                         size,
                         vector: value,
@@ -1858,29 +2528,42 @@ impl FunctionLowerer<'_, '_> {
         }
     }
 
-    fn subpass_load(
-        &mut self,
-        arguments: &[AstExpression],
+    async fn subpass_load(
+        self,
+        arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Handle<Expression>> {
+        let mut this = self.lowerer();
         let first = arguments.first().ok_or_else(|| internal(at))?;
-        let image = self.rvalue(first)?;
+        let image = {
+            let frame = self.clone().rvalue(first);
+            drop(this);
+            let result = self.nest(frame).await;
+            this = self.lowerer();
+            result
+        }?;
         let sample = match arguments.get(1) {
-            Some(argument) => Some(self.rvalue(argument)?),
+            Some(argument) => Some({
+                let frame = self.clone().rvalue(argument);
+                drop(this);
+                let result = self.nest(frame).await;
+                this = self.lowerer();
+                result
+            }?),
             None => None,
         };
-        let zero = self.literal(Literal::I32(0), at)?;
-        let ty = self
+        let zero = this.literal(Literal::I32(0), at)?;
+        let ty = this
             .lw
             .vector_type(crate::VectorSize::Bi, crate::Scalar::I32);
-        let coordinate = self.add(
+        let coordinate = this.add(
             Expression::Compose {
                 ty,
                 components: alloc::vec![zero, zero],
             },
             at,
         )?;
-        self.add(
+        this.add(
             Expression::ImageLoad {
                 image,
                 coordinate,
@@ -1893,30 +2576,49 @@ impl FunctionLowerer<'_, '_> {
         )
     }
 
-    fn image(
-        &mut self,
-        name: &str,
-        function: &Function,
-        arguments: &[AstExpression],
+    async fn image(
+        self,
+        name: &'b str,
+        function: &'b Function,
+        arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
+        let mut this = self.lowerer();
         let first = arguments.first().ok_or_else(|| internal(at))?;
         let Sampled {
             image,
             opaque,
             non_uniform,
             ..
-        } = self.sampled(first, at)?;
+        } = {
+            let frame = self.clone().sampled(first, at);
+            drop(this);
+            let result = self.nest(frame).await;
+            this = self.lowerer();
+            result
+        }?;
         if non_uniform {
-            self.mark(image, NonUniform::VALUE);
+            this.mark(image, NonUniform::VALUE);
         }
         let coordinate_argument = arguments.get(1).ok_or_else(|| internal(at))?;
-        let (coordinate, ty) = self.typed(coordinate_argument)?;
+        let (coordinate, ty) = {
+            let frame = self.clone().typed(coordinate_argument);
+            drop(this);
+            let result = self.nest(frame).await;
+            this = self.lowerer();
+            result
+        }?;
         let size = ty.component_count().ok_or_else(|| internal(at))?;
-        let (point, array_index) = self.split_storage_coordinate(coordinate, size, opaque, at)?;
+        let (point, array_index) = this.split_storage_coordinate(coordinate, size, opaque, at)?;
         let sample = if opaque.multisample {
             let sample = arguments.get(2).ok_or_else(|| internal(at))?;
-            Some(self.rvalue(sample)?)
+            Some({
+                let frame = self.clone().rvalue(sample);
+                drop(this);
+                let result = self.nest(frame).await;
+                this = self.lowerer();
+                result
+            }?)
         } else {
             None
         };
@@ -1925,8 +2627,8 @@ impl FunctionLowerer<'_, '_> {
                 size: crate::VectorSize::Quad,
                 scalar: super::types::sampled_scalar(opaque.sampled),
             };
-            let sparse = Some(self.lw.sparse_result_type(texel));
-            let result = self.add(
+            let sparse = Some(this.lw.sparse_result_type(texel));
+            let result = this.add(
                 Expression::ImageLoad {
                     image,
                     coordinate: point,
@@ -1938,12 +2640,18 @@ impl FunctionLowerer<'_, '_> {
                 at,
             )?;
             let index = 2 + usize::from(opaque.multisample);
-            return self
-                .sparse_result(result, function, arguments, index, at)
-                .map(Some);
+            return {
+                let frame = self
+                    .clone()
+                    .sparse_result(result, function, arguments, index, at);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
+            .map(Some);
         }
         if name == "imageLoad" {
-            return self
+            return this
                 .add(
                     Expression::ImageLoad {
                         image,
@@ -1960,8 +2668,14 @@ impl FunctionLowerer<'_, '_> {
         let value = arguments
             .get(2 + usize::from(opaque.multisample))
             .ok_or_else(|| internal(at))?;
-        let value = self.rvalue(value)?;
-        self.push(
+        let value = {
+            let frame = self.clone().rvalue(value);
+            drop(this);
+            let result = self.nest(frame).await;
+            this = self.lowerer();
+            result
+        }?;
+        this.push(
             Statement::ImageStore {
                 image,
                 coordinate: point,
@@ -1974,35 +2688,48 @@ impl FunctionLowerer<'_, '_> {
         Ok(None)
     }
 
-    fn query(
-        &mut self,
-        name: &str,
-        arguments: &[AstExpression],
+    async fn query(
+        self,
+        name: &'b str,
+        arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Handle<Expression>> {
+        let mut this = self.lowerer();
         let first = arguments.first().ok_or_else(|| internal(at))?;
         let Sampled {
             image,
             opaque,
             non_uniform,
             ..
-        } = self.sampled(first, at)?;
+        } = {
+            let frame = self.clone().sampled(first, at);
+            drop(this);
+            let result = self.nest(frame).await;
+            this = self.lowerer();
+            result
+        }?;
         if non_uniform {
-            self.mark(image, NonUniform::VALUE);
+            this.mark(image, NonUniform::VALUE);
         }
         let query = match name {
             "textureQueryLevels" => ImageQuery::NumLevels,
             "textureSamples" | "imageSamples" => ImageQuery::NumSamples,
             _ => {
                 let level = match arguments.get(1) {
-                    Some(level) => Some(self.rvalue(level)?),
+                    Some(level) => Some({
+                        let frame = self.clone().rvalue(level);
+                        drop(this);
+                        let result = self.nest(frame).await;
+                        this = self.lowerer();
+                        result
+                    }?),
                     None => None,
                 };
                 ImageQuery::Size { level }
             }
         };
         let sized = matches!(query, ImageQuery::Size { .. });
-        let mut value = self.add(Expression::ImageQuery { image, query }, at)?;
+        let mut value = this.add(Expression::ImageQuery { image, query }, at)?;
         if sized && opaque.arrayed {
             let base =
                 coordinate_count(opaque) - u32::from(opaque.dimension == TextureDimension::Cube);
@@ -2011,10 +2738,10 @@ impl FunctionLowerer<'_, '_> {
                 components.push(value);
             } else {
                 for index in 0..base {
-                    components.push(self.component(value, index, at)?);
+                    components.push(this.component(value, index, at)?);
                 }
             }
-            components.push(self.add(
+            components.push(this.add(
                 Expression::ImageQuery {
                     image,
                     query: ImageQuery::NumLayers,
@@ -2023,10 +2750,10 @@ impl FunctionLowerer<'_, '_> {
             )?);
             let size =
                 vector_size(u8::try_from(base + 1).unwrap_or(0)).ok_or_else(|| internal(at))?;
-            let ty = self.lw.vector_type(size, crate::Scalar::U32);
-            value = self.add(Expression::Compose { ty, components }, at)?;
+            let ty = this.lw.vector_type(size, crate::Scalar::U32);
+            value = this.add(Expression::Compose { ty, components }, at)?;
         }
-        self.as_kind(value, crate::Scalar::I32, at)
+        this.as_kind(value, crate::Scalar::I32, at)
     }
 }
 

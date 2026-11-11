@@ -16,10 +16,13 @@ pub(super) fn local_size_index(name: &str) -> Option<usize> {
 }
 
 pub(super) fn is_direct(expression: &AstExpression) -> bool {
-    match expression.kind {
-        ExpressionKind::Variable(_) => true,
-        ExpressionKind::Parenthesized(ref inner) => is_direct(inner),
-        _ => false,
+    let mut expression = expression;
+    loop {
+        match expression.kind {
+            ExpressionKind::Variable(_) => return true,
+            ExpressionKind::Parenthesized(ref inner) => expression = inner,
+            _ => return false,
+        }
     }
 }
 
@@ -130,13 +133,30 @@ fn not_specializable(span: Span) -> super::Error {
 }
 
 impl<'a> Lowerer<'a> {
+    pub(super) fn specialized_size(
+        &mut self,
+        size: SpecializedSize,
+        span: Span,
+    ) -> Result<Handle<Override>> {
+        super::function::lowerer_on_heap!(self, |cx| cx.specialized_size(size, span))
+    }
+
+    fn specialization_of(
+        &mut self,
+        source: Specialized<'_>,
+        name: Option<String>,
+        span: Span,
+    ) -> Result<Handle<Override>> {
+        super::function::lowerer_on_heap!(self, |cx| cx.specialization_of(source, name, span))
+    }
+
     pub(super) fn specialization(
         &mut self,
         expression: &AstExpression,
         name: Option<String>,
         span: Span,
     ) -> Result<Handle<Override>> {
-        self.specialization_of(Specialized::Expression(expression), name, span)
+        super::function::lowerer_on_heap!(self, |cx| cx.specialization(expression, name, span))
     }
 
     pub(super) fn specialized_initializer(
@@ -152,53 +172,6 @@ impl<'a> Lowerer<'a> {
                 self.specialization_of(Specialized::Initializer(initializer, ty), name, span)
             }
         }
-    }
-
-    fn specialization_of(
-        &mut self,
-        source: Specialized<'_>,
-        name: Option<String>,
-        span: Span,
-    ) -> Result<Handle<Override>> {
-        let (value, ty, expressions, statements, has_locals) = {
-            let mut scratch = FunctionLowerer::new(self);
-            scratch.specializing = true;
-            let (value, ty) = match source {
-                Specialized::Expression(expression) => scratch.typed(expression)?,
-                Specialized::Initializer(initializer, ty) => {
-                    (scratch.initializer(initializer, ty)?, ty.clone())
-                }
-            };
-            scratch.flush();
-            (
-                value,
-                ty,
-                core::mem::take(&mut scratch.expressions),
-                core::mem::take(&mut scratch.block),
-                !scratch.locals.is_empty(),
-            )
-        };
-        if has_locals
-            || statements
-                .iter()
-                .any(|statement| !matches!(*statement, Statement::Emit(_)))
-        {
-            return Err(not_specializable(span));
-        }
-        let root = self.global_tree(&expressions, value, span)?;
-        if let Expression::Override(handle) = self.module.global_expressions[root] {
-            return Ok(handle);
-        }
-        let ir = self.ir_type(&ty, span)?;
-        Ok(self.module.overrides.append(
-            Override {
-                name,
-                id: None,
-                ty: ir,
-                init: Some(root),
-            },
-            span,
-        ))
     }
 
     fn global_tree(
@@ -235,37 +208,6 @@ impl<'a> Lowerer<'a> {
             .copied()
             .flatten()
             .ok_or_else(|| internal(span))
-    }
-
-    pub(super) fn specialized_size(
-        &mut self,
-        size: SpecializedSize,
-        span: Span,
-    ) -> Result<Handle<Override>> {
-        match size {
-            SpecializedSize::Constant { symbol, .. } => match self.global_ref(symbol, span)? {
-                GlobalRef::Override(handle) => Ok(handle),
-                _ => Err(internal(span)),
-            },
-            SpecializedSize::Expression(node) => {
-                if let Some(&handle) = self.specialized_sizes.get(&node) {
-                    return Ok(handle);
-                }
-                if self.size_expressions.is_empty() {
-                    self.size_expressions = rglsl_ast::expressions(self.unit)
-                        .into_iter()
-                        .map(|expression| (expression.id, expression))
-                        .collect();
-                }
-                let expression = *self
-                    .size_expressions
-                    .get(&node)
-                    .ok_or_else(|| internal(span))?;
-                let handle = self.specialization(expression, None, span)?;
-                self.specialized_sizes.insert(node, handle);
-                Ok(handle)
-            }
-        }
     }
 
     fn local_size_override(
@@ -386,5 +328,122 @@ impl<'a> Lowerer<'a> {
         );
         self.work_group_size = Some(handle);
         Ok(handle)
+    }
+}
+
+#[allow(clippy::await_holding_refcell_ref)]
+impl<'b, 'a> super::function::LowererCx<'b, 'a> {
+    pub(super) async fn specialization(
+        self,
+        expression: &'b AstExpression,
+        name: Option<String>,
+        span: Span,
+    ) -> Result<Handle<Override>> {
+        let this = self.lowerer();
+        {
+            let frame =
+                self.clone()
+                    .specialization_of(Specialized::Expression(expression), name, span);
+            drop(this);
+            let result = self.nest(frame).await;
+            result
+        }
+    }
+
+    async fn specialization_of(
+        self,
+        source: Specialized<'_>,
+        name: Option<String>,
+        span: Span,
+    ) -> Result<Handle<Override>> {
+        let mut this = self.lowerer();
+        let (value, ty, expressions, statements, has_locals) = {
+            let mut scratch = FunctionLowerer::new(&mut this);
+            scratch.specializing = true;
+            let (value, ty) = match source {
+                Specialized::Expression(expression) => scratch.typed(expression)?,
+                Specialized::Initializer(initializer, ty) => {
+                    (scratch.initializer(initializer, ty)?, ty.clone())
+                }
+            };
+            scratch.flush();
+            (
+                value,
+                ty,
+                core::mem::take(&mut scratch.expressions),
+                core::mem::take(&mut scratch.block),
+                !scratch.locals.is_empty(),
+            )
+        };
+        if has_locals
+            || statements
+                .iter()
+                .any(|statement| !matches!(*statement, Statement::Emit(_)))
+        {
+            return Err(not_specializable(span));
+        }
+        let root = this.global_tree(&expressions, value, span)?;
+        if let Expression::Override(handle) = this.module.global_expressions[root] {
+            return Ok(handle);
+        }
+        let ir = {
+            let frame = self.clone().ir_type(ty.clone(), span);
+            drop(this);
+            let result = self.nest(frame).await;
+            this = self.lowerer();
+            result
+        }?;
+        Ok(this.module.overrides.append(
+            Override {
+                name,
+                id: None,
+                ty: ir,
+                init: Some(root),
+            },
+            span,
+        ))
+    }
+
+    pub(super) async fn specialized_size(
+        self,
+        size: SpecializedSize,
+        span: Span,
+    ) -> Result<Handle<Override>> {
+        let mut this = self.lowerer();
+        match size {
+            SpecializedSize::Constant { symbol, .. } => match {
+                let frame = self.clone().global_ref(symbol, span);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }? {
+                GlobalRef::Override(handle) => Ok(handle),
+                _ => Err(internal(span)),
+            },
+            SpecializedSize::Expression(node) => {
+                if let Some(&handle) = this.specialized_sizes.get(&node) {
+                    return Ok(handle);
+                }
+                if this.size_expressions.is_empty() {
+                    this.size_expressions = rglsl_ast::expressions(this.unit)
+                        .into_iter()
+                        .map(|expression| (expression.id, expression))
+                        .collect();
+                }
+                let expression = *this
+                    .size_expressions
+                    .get(&node)
+                    .ok_or_else(|| internal(span))?;
+                let handle = {
+                    let frame = self.clone().specialization(expression, None, span);
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }?;
+                this.specialized_sizes.insert(node, handle);
+                Ok(handle)
+            }
+        }
     }
 }

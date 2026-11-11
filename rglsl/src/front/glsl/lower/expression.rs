@@ -46,6 +46,7 @@ impl Place {
     }
 }
 
+#[derive(Clone)]
 pub(super) enum Chain {
     Place(Place),
     Value(Handle<Expression>),
@@ -97,19 +98,177 @@ pub(super) const fn compound(operator: AssignmentOperator) -> Option<AstBinary> 
 }
 
 impl<'a> FunctionLowerer<'_, 'a> {
+    pub(super) fn typed(
+        &mut self,
+        expression: &AstExpression,
+    ) -> Result<(Handle<Expression>, GlslType)> {
+        super::function::on_heap!(self, |cx| cx.typed(expression))
+    }
+
+    pub(super) fn rvalue(&mut self, expression: &AstExpression) -> Result<Handle<Expression>> {
+        super::function::on_heap!(self, |cx| cx.rvalue(expression))
+    }
+
+    fn relayout(
+        &mut self,
+        value: Handle<Expression>,
+        from: Handle<crate::Type>,
+        to: Handle<crate::Type>,
+        at: Span,
+    ) -> Result<Handle<Expression>> {
+        super::function::on_heap!(self, |cx| cx.relayout(value, from, to, at))
+    }
+
+    pub(super) fn initializer(
+        &mut self,
+        initializer: &Spanned<Initializer>,
+        ty: &GlslType,
+    ) -> Result<Handle<Expression>> {
+        super::function::on_heap!(self, |cx| cx.initializer(initializer, ty.clone()))
+    }
+
+    fn equality(
+        &mut self,
+        left: Handle<Expression>,
+        right: Handle<Expression>,
+        ty: &GlslType,
+        equal: bool,
+        at: Span,
+    ) -> Result<Handle<Expression>> {
+        super::function::on_heap!(self, |cx| cx.equality(left, right, ty.clone(), equal, at))
+    }
+
+    fn convert_booleans(
+        &mut self,
+        value: Handle<Expression>,
+        integer: Handle<crate::Type>,
+        to_bool: bool,
+        at: Span,
+    ) -> Result<Handle<Expression>> {
+        super::function::on_heap!(self, |cx| cx.convert_booleans(value, integer, to_bool, at))
+    }
+
+    pub(super) fn constant(
+        &mut self,
+        ty: &GlslType,
+        values: &[Value],
+        at: Span,
+    ) -> Result<Handle<Expression>> {
+        super::function::on_heap!(self, |cx| cx.constant(ty.clone(), values, at))
+    }
+
+    pub(super) fn heap_pointee(&self, pointer: Handle<Expression>) -> Option<Handle<crate::Type>> {
+        let module = &self.lw.module;
+        let mut steps = Vec::new();
+        let mut current = pointer;
+        let root = loop {
+            match self.expressions[current] {
+                Expression::GlobalVariable(handle) => {
+                    let global = &module.global_variables[handle];
+                    break match global.space {
+                        AddressSpace::DescriptorHeap(_) => Some(global.ty),
+                        _ => None,
+                    };
+                }
+                Expression::HeapOffset { pointer, .. } => current = pointer,
+                Expression::AccessIndex { base, index } => {
+                    steps.push(Some(index));
+                    current = base;
+                }
+                Expression::Access { base, .. } => {
+                    steps.push(None);
+                    current = base;
+                }
+                _ => break None,
+            }
+        };
+        let element = |ty: Handle<crate::Type>| match module.types[ty].inner {
+            crate::TypeInner::Array { base, .. } => Some(base),
+            _ => None,
+        };
+        steps
+            .into_iter()
+            .rev()
+            .try_fold(root?, |ty, step| match step {
+                Some(index) => match module.types[ty].inner {
+                    crate::TypeInner::Struct { ref members, .. } => usize::try_from(index)
+                        .ok()
+                        .and_then(|index| members.get(index))
+                        .map(|member| member.ty),
+                    _ => element(ty),
+                },
+                None => element(ty),
+            })
+    }
+
+    pub(super) fn buffer_pointee(
+        &self,
+        pointer: Handle<Expression>,
+    ) -> Option<Handle<crate::Type>> {
+        let module = &self.lw.module;
+        let mut steps = Vec::new();
+        let mut current = pointer;
+        let root = loop {
+            match self.expressions[current] {
+                Expression::GlobalVariable(handle) => {
+                    let global = &module.global_variables[handle];
+                    break match global.space {
+                        AddressSpace::Uniform
+                        | AddressSpace::Storage { .. }
+                        | AddressSpace::Immediate => Some(global.ty),
+                        _ => None,
+                    };
+                }
+                Expression::AccessIndex { base, index } => {
+                    steps.push(Some(index));
+                    current = base;
+                }
+                Expression::Access { base, .. } => {
+                    steps.push(None);
+                    current = base;
+                }
+                Expression::BufferPointer { descriptor } => {
+                    break self.heap_pointee(descriptor).and_then(|descriptor| {
+                        match module.types[descriptor].inner {
+                            crate::TypeInner::BufferDescriptor { base, .. } => Some(base),
+                            _ => None,
+                        }
+                    });
+                }
+                Expression::PhysicalPointer { value, .. }
+                    if !self.physical_bases.contains_key(&current) =>
+                {
+                    current = value;
+                }
+                _ => break self.physical_bases.get(&current).copied(),
+            }
+        };
+        let element = |ty: Handle<crate::Type>| match module.types[ty].inner {
+            crate::TypeInner::Array { base, .. } | crate::TypeInner::BindingArray { base, .. } => {
+                Some(base)
+            }
+            _ => None,
+        };
+        steps
+            .into_iter()
+            .rev()
+            .try_fold(root?, |ty, step| match step {
+                Some(index) => match module.types[ty].inner {
+                    crate::TypeInner::Struct { ref members, .. } => usize::try_from(index)
+                        .ok()
+                        .and_then(|index| members.get(index))
+                        .map(|member| member.ty),
+                    _ => element(ty),
+                },
+                None => element(ty),
+            })
+    }
+
     pub(super) fn info(&self, expression: &AstExpression) -> Result<&'a ExpressionInfo> {
         let analysis = self.lw.analysis;
         analysis
             .expression(expression.id)
             .ok_or_else(|| internal(self.at(expression.span)))
-    }
-
-    pub(super) fn typed(
-        &mut self,
-        expression: &AstExpression,
-    ) -> Result<(Handle<Expression>, GlslType)> {
-        let value = self.value(expression)?;
-        self.typed_value(expression, value)
     }
 
     pub(super) fn typed_value(
@@ -138,47 +297,8 @@ impl<'a> FunctionLowerer<'_, 'a> {
         }
     }
 
-    pub(super) fn rvalue(&mut self, expression: &AstExpression) -> Result<Handle<Expression>> {
-        self.typed(expression).map(|(value, _)| value)
-    }
-
-    pub(super) fn effect(&mut self, expression: &AstExpression) -> Result<()> {
-        self.value(expression).map(|_| ())
-    }
-
     pub(super) fn literal(&mut self, literal: Literal, at: Span) -> Result<Handle<Expression>> {
         self.add(Expression::Literal(literal), at)
-    }
-
-    pub(super) fn constant(
-        &mut self,
-        ty: &GlslType,
-        values: &[Value],
-        at: Span,
-    ) -> Result<Handle<Expression>> {
-        let analysis = self.lw.analysis;
-        match shape(ty, values, &analysis.types).ok_or_else(|| internal(at))? {
-            Shape::Literal(value) => self.literal(literal(value), at),
-            Shape::Compose(parts) => {
-                let mut components = Vec::with_capacity(parts.len());
-                for (part, start, size) in parts {
-                    let end = start.checked_add(size).ok_or_else(|| internal(at))?;
-                    let slice = values.get(start..end).ok_or_else(|| internal(at))?;
-                    components.push(self.constant(&part, slice, at)?);
-                }
-                let ty = self.lw.ir_type(ty, at)?;
-                self.add(Expression::Compose { ty, components }, at)
-            }
-        }
-    }
-
-    pub(super) fn value(
-        &mut self,
-        expression: &AstExpression,
-    ) -> Result<Option<Handle<Expression>>> {
-        self.stepped = None;
-        let value = self.unmarked_value(expression)?;
-        self.flagged(expression, value)
     }
 
     pub(super) fn flagged(
@@ -226,13 +346,6 @@ impl<'a> FunctionLowerer<'_, 'a> {
         Ok(value)
     }
 
-    fn unmarked_value(&mut self, expression: &AstExpression) -> Result<Option<Handle<Expression>>> {
-        match self.folded_value(expression)? {
-            Some(value) => Ok(Some(value)),
-            None => self.computed_value(expression),
-        }
-    }
-
     pub(super) fn folded_value(
         &mut self,
         expression: &AstExpression,
@@ -252,35 +365,6 @@ impl<'a> FunctionLowerer<'_, 'a> {
         Ok(None)
     }
 
-    fn computed_value(&mut self, expression: &AstExpression) -> Result<Option<Handle<Expression>>> {
-        let at = self.at(expression.span);
-        match expression.kind {
-            ExpressionKind::Variable(_)
-            | ExpressionKind::Subscript { .. }
-            | ExpressionKind::FieldSelection { .. } => self.chain_value(expression, at).map(Some),
-            ExpressionKind::Number(_) | ExpressionKind::Bool(_) => Err(internal(at)),
-            ExpressionKind::String(_) => Ok(None),
-            ExpressionKind::Parenthesized(ref inner) => self.value_converted(inner),
-            ExpressionKind::FunctionCall(ref call) => self.call(expression, call),
-            ExpressionKind::Postfix {
-                ref operand,
-                operator,
-            } => self
-                .increment(operand, operator == PostfixOperator::Increment, true, at)
-                .map(Some),
-            ExpressionKind::Unary { .. } => self.unary_chain(expression).map(Some),
-            ExpressionKind::Binary { .. } => self.binary_chain(expression).map(Some),
-            ExpressionKind::Conditional { .. } => self.conditional_chain(expression),
-            ExpressionKind::Assignment { .. } => self.assignment_chain(expression).map(Some),
-            ExpressionKind::Sequence(ref expressions) => self.sequence(expressions, at),
-        }
-    }
-
-    fn chain_value(&mut self, expression: &AstExpression, at: Span) -> Result<Handle<Expression>> {
-        let chain = self.chain(expression)?;
-        self.chain_loaded(expression, chain, at)
-    }
-
     fn chain_loaded(
         &mut self,
         expression: &AstExpression,
@@ -295,45 +379,6 @@ impl<'a> FunctionLowerer<'_, 'a> {
             self.unqualify(value, at)
         } else {
             Ok(value)
-        }
-    }
-
-    fn sequence(
-        &mut self,
-        expressions: &[AstExpression],
-        at: Span,
-    ) -> Result<Option<Handle<Expression>>> {
-        let Some((final_expression, leading)) = expressions.split_last() else {
-            return Err(internal(at));
-        };
-        for expression in leading {
-            self.value_converted(expression)?;
-        }
-        self.sequence_result(final_expression)
-    }
-
-    fn sequence_result(
-        &mut self,
-        expression: &AstExpression,
-    ) -> Result<Option<Handle<Expression>>> {
-        let inner = super::prepass::strip(expression);
-        let info = self.info(expression)?;
-        let lvalue = matches!(
-            inner.kind,
-            ExpressionKind::Variable(_)
-                | ExpressionKind::Subscript { .. }
-                | ExpressionKind::FieldSelection { .. }
-        );
-        if !lvalue || info.is_constant || info.is_specialization || info.conversion.is_some() {
-            return self.value_converted(expression);
-        }
-        match self.chain(inner)? {
-            Chain::Place(mut place) => {
-                place.non_uniform = false;
-                let at = self.at(expression.span);
-                self.load(&place, at).map(Some)
-            }
-            Chain::Value(value) => Ok(Some(value)),
         }
     }
 
@@ -357,17 +402,6 @@ impl<'a> FunctionLowerer<'_, 'a> {
             }
             _ => {}
         }
-    }
-
-    fn value_converted(
-        &mut self,
-        expression: &AstExpression,
-    ) -> Result<Option<Handle<Expression>>> {
-        let info = self.info(expression)?;
-        if info.ty.is_void() || info.ty.is_string() {
-            return self.value(expression);
-        }
-        self.rvalue(expression).map(Some)
     }
 
     pub(super) fn as_kind(
@@ -422,220 +456,11 @@ impl<'a> FunctionLowerer<'_, 'a> {
         }
     }
 
-    pub(super) fn place(&mut self, expression: &AstExpression) -> Result<Place> {
-        let chain = match self.dynamic_swizzle_component(expression)? {
-            Some(chain) => chain,
-            None => self.chain(expression)?,
-        };
-        match chain {
-            Chain::Place(place) => Ok(place),
-            Chain::Value(_) => Err(semantic(
-                "the expression is not an l-value",
-                self.at(expression.span),
-            )),
-        }
-    }
-
-    fn dynamic_swizzle_component(&mut self, expression: &AstExpression) -> Result<Option<Chain>> {
-        let ExpressionKind::Subscript {
-            ref base,
-            ref index,
-        } = super::prepass::strip(expression).kind
-        else {
-            return Ok(None);
-        };
-        let ExpressionKind::FieldSelection {
-            base: ref swizzled, ..
-        } = super::prepass::strip(base).kind
-        else {
-            return Ok(None);
-        };
-        let swizzled_ty = &self.info(swizzled)?.ty;
-        let is_swizzle = !swizzled_ty.is_array()
-            && matches!(
-                swizzled_ty.kind,
-                TypeKind::Scalar(_) | TypeKind::Vector { .. }
-            );
-        if !is_swizzle || !self.info(base)?.ty.is_vector() || self.constant_index(index).is_some() {
-            return Ok(None);
-        }
-        let at = self.at(expression.span);
-        let place = match self.chain(base)? {
-            Chain::Place(place) => place,
-            value @ Chain::Value(_) => return Ok(Some(value)),
-        };
-        let Some(ref components) = place.swizzle else {
-            return Err(internal(at));
-        };
-        let size = u8::try_from(components.len())
-            .ok()
-            .and_then(vector_size)
-            .ok_or_else(|| internal(at))?;
-        let mut selectors = Vec::with_capacity(components.len());
-        for &component in components {
-            selectors.push(self.literal(Literal::U32(component), at)?);
-        }
-        let ty = self.lw.insert_type(crate::TypeInner::Vector {
-            size,
-            scalar: crate::Scalar::U32,
-        });
-        let selectors = self.add(
-            Expression::Compose {
-                ty,
-                components: selectors,
-            },
-            at,
-        )?;
-        let selector = self.rvalue(index)?;
-        let component = self.add(
-            Expression::Access {
-                base: selectors,
-                index: selector,
-            },
-            at,
-        )?;
-        let pointer = self.add(
-            Expression::Access {
-                base: place.pointer,
-                index: component,
-            },
-            at,
-        )?;
-        let index_non_uniform = self.info(index)?.non_uniform;
-        let non_uniform = self.info(expression)?.non_uniform;
-        self.inherit_access(pointer, place.pointer, index_non_uniform);
-        let mut child = place.child(pointer, place.boolean);
-        child.non_uniform = non_uniform && !child.spilled;
-        Ok(Some(Chain::Place(child)))
-    }
-
-    fn variable_chain(&mut self, expression: &AstExpression) -> Result<Chain> {
-        let at = self.at(expression.span);
-        let analysis = self.lw.analysis;
-        let symbol = *analysis
-            .references
-            .get(&expression.id)
-            .ok_or_else(|| internal(at))?;
-        if let Some(local) = self.variables.get(&symbol).copied() {
-            return Ok(match local {
-                Local::Variable(handle) => Chain::Place(Place::pointer(
-                    self.add(Expression::LocalVariable(handle), at)?,
-                    false,
-                )),
-                Local::Pointer(index) => Chain::Place(Place::pointer(
-                    self.add(Expression::FunctionArgument(index), at)?,
-                    false,
-                )),
-                Local::Value(index) => {
-                    Chain::Value(self.add(Expression::FunctionArgument(index), at)?)
-                }
-                Local::Constant => {
-                    let variable = self.lw.variable(symbol).ok_or_else(|| internal(at))?;
-                    let value = variable.value.as_ref().ok_or_else(|| internal(at))?;
-                    Chain::Value(self.constant(&variable.ty, &value.values, at)?)
-                }
-            });
-        }
-        if let Some(&rglsl_sema::scope::SymbolKind::BlockMember { instance, index }) =
-            self.lw.symbol(symbol).map(|symbol| &symbol.kind)
-        {
-            if !self.lw.is_builtin_symbol(symbol) {
-                let block = self
-                    .lw
-                    .variable(instance)
-                    .and_then(|variable| match variable.ty.kind {
-                        TypeKind::Block(id) => Some(id),
-                        _ => None,
-                    })
-                    .ok_or_else(|| internal(at))?;
-                let GlobalRef::Variable(global) = self.lw.global_ref(instance, at)? else {
-                    return Err(internal(at));
-                };
-                let base = self.add(Expression::GlobalVariable(global), at)?;
-                let pointer = self.add(Expression::AccessIndex { base, index }, at)?;
-                let boolean = self.lw.block_bools.contains(&(block, index));
-                return Ok(Chain::Place(Place::pointer(pointer, boolean)));
-            }
-        }
-        if let Some((global, index)) = self.lw.per_vertex_member(symbol) {
-            let base = self.add(Expression::GlobalVariable(global), at)?;
-            let pointer = self.add(Expression::AccessIndex { base, index }, at)?;
-            return Ok(Chain::Place(Place::pointer(pointer, false)));
-        }
-        if let Some(chain) = self.ray_builtin_chain(symbol, at)? {
-            return Ok(chain);
-        }
-        let global = self.lw.global_ref(symbol, at)?;
-        if let GlobalRef::Variable(handle) = global {
-            if let Some(crate::Binding::BuiltIn(crate::BuiltIn::ShaderBallot(
-                crate::ShaderBallot::Mask(_),
-            ))) = self.lw.module.global_variables[handle].io
-            {
-                let pointer = self.add(Expression::GlobalVariable(handle), at)?;
-                let mask = self.add(Expression::Load { pointer }, at)?;
-                return Ok(Chain::Value(self.ballot_to_u64(mask, at)?));
-            }
-        }
-        let handle_space = matches!(global, GlobalRef::Variable(handle)
-            if self.lw.module.global_variables[handle].space == AddressSpace::Handle);
-        let expression = self.lw.global_expression(global);
-        let mut value = self.add(expression, at)?;
-        if let GlobalRef::Variable(handle) = global {
-            if let Some(offset) = self.lw.heap_offset_value(handle) {
-                let offset = self.rvalue(offset)?;
-                value = self.add(
-                    Expression::HeapOffset {
-                        pointer: value,
-                        offset,
-                    },
-                    at,
-                )?;
-            }
-        }
-        Ok(match global {
-            GlobalRef::Variable(_) if !handle_space => Chain::Place(Place::pointer(value, false)),
-            _ => Chain::Value(value),
-        })
-    }
-
     fn wide_index(&self, base_ty: &GlslType, index: &AstExpression) -> Result<bool> {
         let scalar = self.info(index)?.ty.scalar_type();
         Ok(!base_ty.is_vector()
             && (scalar.is_some_and(|scalar| scalar.bits() == 64)
                 || (self.lw.analysis.promote_uint32_indices && scalar == Some(GlslScalar::Uint))))
-    }
-
-    fn index_operand(
-        &mut self,
-        index: &AstExpression,
-        wide: bool,
-        at: Span,
-    ) -> Result<Handle<Expression>> {
-        if !wide {
-            return self.rvalue(index);
-        }
-        let info = self.info(index)?;
-        let narrow = info.ty.scalar_type() == Some(GlslScalar::Uint);
-        let constant = info
-            .value
-            .as_ref()
-            .filter(|_| info.is_constant && !info.is_specialization)
-            .and_then(|value| value.scalar_i64());
-        if let Some(value) = constant {
-            return self.literal(Literal::I64(value), at);
-        }
-        let value = self.rvalue(index)?;
-        if !narrow {
-            return Ok(value);
-        }
-        self.add(
-            Expression::As {
-                expr: value,
-                kind: crate::ScalarKind::Uint,
-                convert: Some(8),
-            },
-            at,
-        )
     }
 
     pub(super) fn constant_index(&self, expression: &AstExpression) -> Option<u32> {
@@ -657,10 +482,6 @@ impl<'a> FunctionLowerer<'_, 'a> {
         let pointer = self.local_pointer(local, at)?;
         self.push(Statement::Store { pointer, value }, at);
         self.local_pointer(local, at)
-    }
-
-    pub(super) fn chain(&mut self, expression: &AstExpression) -> Result<Chain> {
-        self.access_chain(expression)
     }
 
     pub(super) fn chain_marked(
@@ -723,77 +544,6 @@ impl<'a> FunctionLowerer<'_, 'a> {
         };
         let flags = (self.marked(base) & NonUniform::ACCESS) | own;
         self.mark(pointer, flags);
-    }
-
-    pub(super) fn chain_head(&mut self, expression: &AstExpression) -> Result<Chain> {
-        match expression.kind {
-            ExpressionKind::Parenthesized(ref inner) => self.chain(inner),
-            ExpressionKind::Variable(_) => self.variable_chain(expression),
-            _ => self.rvalue(expression).map(Chain::Value),
-        }
-    }
-
-    pub(super) fn subscript_chain(
-        &mut self,
-        chain: Chain,
-        base: &AstExpression,
-        index: &AstExpression,
-        at: Span,
-    ) -> Result<Chain> {
-        let base_ty = &self.info(base)?.ty;
-        if base_ty.is_reference() {
-            return self.reference_subscript_chain(chain, base, index, at);
-        }
-        let wide = self.wide_index(base_ty, index)?;
-        let constant = if wide {
-            None
-        } else {
-            self.constant_index(index)
-        };
-        let index_value = self.subscript_index(&chain, index, wide, constant, at)?;
-        self.subscript_access(chain, base, index, index_value, constant, at)
-    }
-
-    fn subscript_index(
-        &mut self,
-        chain: &Chain,
-        index: &AstExpression,
-        wide: bool,
-        constant: Option<u32>,
-        at: Span,
-    ) -> Result<Option<Handle<Expression>>> {
-        match *chain {
-            Chain::Place(Place {
-                swizzle: Some(ref components),
-                ..
-            }) => {
-                let component =
-                    constant.and_then(|c| components.get(usize::try_from(c).ok()?).copied());
-                match component {
-                    Some(_) => Ok(None),
-                    None => self.rvalue(index).map(Some),
-                }
-            }
-            _ if constant.is_some() => Ok(None),
-            _ => self.index_operand(index, wide, at).map(Some),
-        }
-    }
-
-    fn reference_subscript_chain(
-        &mut self,
-        chain: Chain,
-        base: &AstExpression,
-        index: &AstExpression,
-        at: Span,
-    ) -> Result<Chain> {
-        let base_ty = &self.info(base)?.ty;
-        let reference = match chain {
-            Chain::Place(place) => self.load(&place, at)?,
-            Chain::Value(value) => value,
-        };
-        let index = self.typed(index)?;
-        self.reference_offset((reference, base_ty), (index.0, &index.1), false, at)
-            .map(Chain::Value)
     }
 
     fn subscript_access(
@@ -1098,36 +848,6 @@ impl<'a> FunctionLowerer<'_, 'a> {
         }
     }
 
-    pub(super) fn heap_pointee(&self, pointer: Handle<Expression>) -> Option<Handle<crate::Type>> {
-        let module = &self.lw.module;
-        let element = |ty: Handle<crate::Type>| match module.types[ty].inner {
-            crate::TypeInner::Array { base, .. } => Some(base),
-            _ => None,
-        };
-        match self.expressions[pointer] {
-            Expression::GlobalVariable(handle) => {
-                let global = &module.global_variables[handle];
-                match global.space {
-                    AddressSpace::DescriptorHeap(_) => Some(global.ty),
-                    _ => None,
-                }
-            }
-            Expression::HeapOffset { pointer, .. } => self.heap_pointee(pointer),
-            Expression::AccessIndex { base, index } => {
-                let ty = self.heap_pointee(base)?;
-                match module.types[ty].inner {
-                    crate::TypeInner::Struct { ref members, .. } => usize::try_from(index)
-                        .ok()
-                        .and_then(|index| members.get(index))
-                        .map(|member| member.ty),
-                    _ => element(ty),
-                }
-            }
-            Expression::Access { base, .. } => element(self.heap_pointee(base)?),
-            _ => None,
-        }
-    }
-
     fn buffer_pointer(
         &mut self,
         pointer: Handle<Expression>,
@@ -1150,117 +870,6 @@ impl<'a> FunctionLowerer<'_, 'a> {
         )?;
         self.inherit_access(buffer, pointer, false);
         Ok(buffer)
-    }
-
-    pub(super) fn buffer_pointee(
-        &self,
-        pointer: Handle<Expression>,
-    ) -> Option<Handle<crate::Type>> {
-        let module = &self.lw.module;
-        let element = |ty: Handle<crate::Type>| match module.types[ty].inner {
-            crate::TypeInner::Array { base, .. } | crate::TypeInner::BindingArray { base, .. } => {
-                Some(base)
-            }
-            _ => None,
-        };
-        match self.expressions[pointer] {
-            Expression::GlobalVariable(handle) => {
-                let global = &module.global_variables[handle];
-                match global.space {
-                    AddressSpace::Uniform
-                    | AddressSpace::Storage { .. }
-                    | AddressSpace::Immediate => Some(global.ty),
-                    _ => None,
-                }
-            }
-            Expression::AccessIndex { base, index } => {
-                let ty = self.buffer_pointee(base)?;
-                match module.types[ty].inner {
-                    crate::TypeInner::Struct { ref members, .. } => usize::try_from(index)
-                        .ok()
-                        .and_then(|index| members.get(index))
-                        .map(|member| member.ty),
-                    _ => element(ty),
-                }
-            }
-            Expression::Access { base, .. } => element(self.buffer_pointee(base)?),
-            Expression::BufferPointer { descriptor } => {
-                match module.types[self.heap_pointee(descriptor)?].inner {
-                    crate::TypeInner::BufferDescriptor { base, .. } => Some(base),
-                    _ => None,
-                }
-            }
-            Expression::PhysicalPointer { value, .. }
-                if !self.physical_bases.contains_key(&pointer) =>
-            {
-                self.buffer_pointee(value)
-            }
-            _ => self.physical_bases.get(&pointer).copied(),
-        }
-    }
-
-    fn relayout(
-        &mut self,
-        value: Handle<Expression>,
-        from: Handle<crate::Type>,
-        to: Handle<crate::Type>,
-        at: Span,
-    ) -> Result<Handle<Expression>> {
-        if from == to {
-            return Ok(value);
-        }
-        let types = &self.lw.module.types;
-        let parts: Vec<(Handle<crate::Type>, Handle<crate::Type>)> =
-            match (&types[from].inner, &types[to].inner) {
-                (
-                    &crate::TypeInner::Struct {
-                        members: ref from_members,
-                        ..
-                    },
-                    &crate::TypeInner::Struct {
-                        members: ref to_members,
-                        ..
-                    },
-                ) if from_members.len() == to_members.len() => from_members
-                    .iter()
-                    .zip(to_members)
-                    .map(|(from, to)| (from.ty, to.ty))
-                    .collect(),
-                (
-                    &crate::TypeInner::Array {
-                        base: from_base,
-                        size: crate::ArraySize::Constant(from_size),
-                        ..
-                    },
-                    &crate::TypeInner::Array {
-                        base: to_base,
-                        size: crate::ArraySize::Constant(to_size),
-                        ..
-                    },
-                ) if from_size == to_size => {
-                    (0..from_size.get()).map(|_| (from_base, to_base)).collect()
-                }
-                (
-                    &(crate::TypeInner::Scalar(from_scalar)
-                    | crate::TypeInner::Vector {
-                        scalar: from_scalar,
-                        ..
-                    }),
-                    &(crate::TypeInner::Scalar(to_scalar)
-                    | crate::TypeInner::Vector {
-                        scalar: to_scalar, ..
-                    }),
-                ) if from_scalar != to_scalar => {
-                    return self.as_kind(value, to_scalar, at);
-                }
-                _ => return Err(internal(at)),
-            };
-        let mut components = Vec::with_capacity(parts.len());
-        for (index, (from, to)) in (0_u32..).zip(parts) {
-            let part = self.add(Expression::AccessIndex { base: value, index }, at)?;
-            components.push(self.relayout(part, from, to, at)?);
-        }
-        self.add(Expression::Compose { ty: to, components }, at)
     }
 
     fn laid_out_place(&self, place: &Place) -> Option<(Handle<crate::Type>, Handle<crate::Type>)> {
@@ -1320,66 +929,6 @@ impl<'a> FunctionLowerer<'_, 'a> {
             crate::TypeInner::Array { .. }
         )
         .then_some(ty)
-    }
-
-    fn convert_booleans(
-        &mut self,
-        value: Handle<Expression>,
-        integer: Handle<crate::Type>,
-        to_bool: bool,
-        at: Span,
-    ) -> Result<Handle<Expression>> {
-        match self.lw.module.types[integer].inner {
-            crate::TypeInner::Array {
-                base,
-                size: crate::ArraySize::Constant(count),
-                ..
-            } => {
-                let target = if to_bool {
-                    self.boolean_twin(integer, at)?
-                } else {
-                    integer
-                };
-                let mut components = Vec::new();
-                for index in 0..count.get() {
-                    let part = self.add(Expression::AccessIndex { base: value, index }, at)?;
-                    components.push(self.convert_booleans(part, base, to_bool, at)?);
-                }
-                self.add(
-                    Expression::Compose {
-                        ty: target,
-                        components,
-                    },
-                    at,
-                )
-            }
-            crate::TypeInner::Array { .. } => Err(internal(at)),
-            _ if to_bool => self.as_kind(value, crate::Scalar::BOOL, at),
-            _ => self.as_kind(value, crate::Scalar::U32, at),
-        }
-    }
-
-    fn boolean_twin(&mut self, ty: Handle<crate::Type>, at: Span) -> Result<Handle<crate::Type>> {
-        let scalar = crate::Scalar::BOOL;
-        let inner = match self.lw.module.types[ty].inner {
-            crate::TypeInner::Scalar(_) => crate::TypeInner::Scalar(scalar),
-            crate::TypeInner::Vector { size, .. } => crate::TypeInner::Vector { size, scalar },
-            crate::TypeInner::Array { base, size, .. } => {
-                let element = self.boolean_twin(base, at)?;
-                self.lw
-                    .layouter
-                    .update(self.lw.module.to_ctx())
-                    .map_err(|_| internal(at))?;
-                let stride = self.lw.layouter[element].to_stride();
-                crate::TypeInner::Array {
-                    base: element,
-                    size,
-                    stride,
-                }
-            }
-            _ => return Err(internal(at)),
-        };
-        Ok(self.lw.insert_type(inner))
     }
 
     pub(super) fn store(
@@ -1546,41 +1095,6 @@ impl<'a> FunctionLowerer<'_, 'a> {
         }
     }
 
-    pub(super) fn increment(
-        &mut self,
-        operand: &AstExpression,
-        increment: bool,
-        postfix: bool,
-        at: Span,
-    ) -> Result<Handle<Expression>> {
-        let ty = self.info(operand)?.ty.clone();
-        let place = self.place(operand)?;
-        let old = self.load(&place, at)?;
-        self.relax_load(operand, old);
-        let base = ty.base_scalar().ok_or_else(|| internal(at))?;
-        let one = Literal::one(scalar(base)).ok_or_else(|| internal(at))?;
-        let one = self.filled(&ty, one, at)?;
-        let op = if increment {
-            BinaryOperator::Add
-        } else {
-            BinaryOperator::Subtract
-        };
-        let new = self.add(
-            Expression::Binary {
-                op,
-                left: old,
-                right: one,
-            },
-            at,
-        )?;
-        if place.non_uniform {
-            self.mark_operation(new);
-        }
-        self.stepped = Some(new);
-        self.store(&place, new, at)?;
-        Ok(if postfix { old } else { new })
-    }
-
     pub(super) fn unary_typed(
         &mut self,
         operator: AstUnary,
@@ -1707,61 +1221,6 @@ impl<'a> FunctionLowerer<'_, 'a> {
         true
     }
 
-    pub(super) fn conditional_effect(
-        &mut self,
-        condition: Handle<Expression>,
-        [accept, reject]: [&AstExpression; 2],
-        at: Span,
-    ) -> Result<Option<Handle<Expression>>> {
-        let accept = self.nested(|this| this.effect(accept))?;
-        let reject = self.nested(|this| this.effect(reject))?;
-        self.push(
-            Statement::If {
-                condition,
-                accept,
-                reject,
-                control: crate::SelectionControl::None,
-            },
-            at,
-        );
-        Ok(None)
-    }
-
-    pub(super) fn conditional_local(
-        &mut self,
-        ty: &GlslType,
-        condition: Handle<Expression>,
-        [accept, reject]: [&AstExpression; 2],
-        at: Span,
-    ) -> Result<Option<Handle<Expression>>> {
-        let local = self.local(ty, None, at)?;
-        let accept = self.nested(|this| this.stored(accept, local, at))?;
-        let reject = self.nested(|this| this.stored(reject, local, at))?;
-        self.push(
-            Statement::If {
-                condition,
-                accept,
-                reject,
-                control: crate::SelectionControl::None,
-            },
-            at,
-        );
-        let pointer = self.local_pointer(local, at)?;
-        self.add(Expression::Load { pointer }, at).map(Some)
-    }
-
-    pub(super) fn stored(
-        &mut self,
-        expression: &AstExpression,
-        local: Handle<crate::LocalVariable>,
-        at: Span,
-    ) -> Result<()> {
-        let value = self.rvalue(expression)?;
-        let pointer = self.local_pointer(local, at)?;
-        self.push(Statement::Store { pointer, value }, at);
-        Ok(())
-    }
-
     pub(super) fn compound_old(
         &mut self,
         target: &AstExpression,
@@ -1805,41 +1264,6 @@ impl<'a> FunctionLowerer<'_, 'a> {
         Ok(result)
     }
 
-    pub(super) fn short_circuit(
-        &mut self,
-        operator: AstBinary,
-        left: Handle<Expression>,
-        right: &AstExpression,
-        at: Span,
-    ) -> Result<Handle<Expression>> {
-        let local = self.local(&GlslType::BOOL, None, at)?;
-        let pointer = self.local_pointer(local, at)?;
-        self.push(
-            Statement::Store {
-                pointer,
-                value: left,
-            },
-            at,
-        );
-        let rest = self.nested(|this| this.stored(right, local, at))?;
-        let (accept, reject) = if operator == AstBinary::LogicalAnd {
-            (rest, crate::Block::new())
-        } else {
-            (crate::Block::new(), rest)
-        };
-        self.push(
-            Statement::If {
-                condition: left,
-                accept,
-                reject,
-                control: crate::SelectionControl::None,
-            },
-            at,
-        );
-        let pointer = self.local_pointer(local, at)?;
-        self.add(Expression::Load { pointer }, at)
-    }
-
     pub(super) fn binary_typed(
         &mut self,
         operator: AstBinary,
@@ -1863,85 +1287,6 @@ impl<'a> FunctionLowerer<'_, 'a> {
             (false, false) => {}
         }
         self.binary(operator, (left, &left_ty), (right, &right_ty), at)
-    }
-
-    fn equality(
-        &mut self,
-        left: Handle<Expression>,
-        right: Handle<Expression>,
-        ty: &GlslType,
-        equal: bool,
-        at: Span,
-    ) -> Result<Handle<Expression>> {
-        let (op, combine, reduce) = if equal {
-            (
-                BinaryOperator::Equal,
-                BinaryOperator::LogicalAnd,
-                RelationalFunction::All,
-            )
-        } else {
-            (
-                BinaryOperator::NotEqual,
-                BinaryOperator::LogicalOr,
-                RelationalFunction::Any,
-            )
-        };
-        let parts: Vec<GlslType> = if ty.is_array() {
-            let element = ty.element_type().ok_or_else(|| internal(at))?;
-            let length = ty
-                .length()
-                .ok_or_else(|| unsupported("comparing runtime-sized arrays", at))?;
-            (0..length).map(|_| element.clone()).collect()
-        } else {
-            match ty.kind {
-                TypeKind::Scalar(_) => {
-                    return self.add(Expression::Binary { op, left, right }, at);
-                }
-                TypeKind::Vector { .. } => {
-                    let argument = self.add(Expression::Binary { op, left, right }, at)?;
-                    return self.add(
-                        Expression::Relational {
-                            fun: reduce,
-                            argument,
-                        },
-                        at,
-                    );
-                }
-                TypeKind::Matrix { columns, .. } => {
-                    let column = ty.column_type().ok_or_else(|| internal(at))?;
-                    (0..columns).map(|_| column.clone()).collect()
-                }
-                TypeKind::Struct(id) => self
-                    .lw
-                    .analysis
-                    .types
-                    .structure(id)
-                    .ok_or_else(|| internal(at))?
-                    .members
-                    .iter()
-                    .map(|member| member.ty.clone())
-                    .collect(),
-                _ => return Err(internal(at)),
-            }
-        };
-        let mut result = None;
-        for (index, part) in (0_u32..).zip(&parts) {
-            let l = self.add(Expression::AccessIndex { base: left, index }, at)?;
-            let r = self.add(Expression::AccessIndex { base: right, index }, at)?;
-            let compared = self.equality(l, r, part, equal, at)?;
-            result = Some(match result {
-                None => compared,
-                Some(previous) => self.add(
-                    Expression::Binary {
-                        op: combine,
-                        left: previous,
-                        right: compared,
-                    },
-                    at,
-                )?,
-            });
-        }
-        result.ok_or_else(|| internal(at))
     }
 
     fn columns(
@@ -2071,24 +1416,1137 @@ impl<'a> FunctionLowerer<'_, 'a> {
         }
         self.add(Expression::Binary { op, left, right }, at)
     }
+}
 
-    pub(super) fn initializer(
-        &mut self,
-        initializer: &Spanned<Initializer>,
-        ty: &GlslType,
+#[allow(clippy::await_holding_refcell_ref)]
+impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
+    pub(super) async fn typed(
+        self,
+        expression: &'b AstExpression,
+    ) -> Result<(Handle<Expression>, GlslType)> {
+        let mut this = self.lowerer();
+        let value = {
+            let frame = self.clone().value(expression);
+            drop(this);
+            let result = self.nest(frame).await;
+            this = self.lowerer();
+            result
+        }?;
+        this.typed_value(expression, value)
+    }
+
+    pub(super) async fn rvalue(self, expression: &'b AstExpression) -> Result<Handle<Expression>> {
+        let this = self.lowerer();
+        {
+            let frame = self.clone().typed(expression);
+            drop(this);
+            let result = self.nest(frame).await;
+            result
+        }
+        .map(|(value, _)| value)
+    }
+
+    pub(super) async fn effect(self, expression: &'b AstExpression) -> Result<()> {
+        let this = self.lowerer();
+        {
+            let frame = self.clone().value(expression);
+            drop(this);
+            let result = self.nest(frame).await;
+            result
+        }
+        .map(|_| ())
+    }
+
+    pub(super) async fn constant(
+        self,
+        ty: GlslType,
+        values: &'b [Value],
+        at: Span,
     ) -> Result<Handle<Expression>> {
-        let at = self.at(initializer.span);
+        let ty = &ty;
+        let mut this = self.lowerer();
+        let analysis = this.lw.analysis;
+        match shape(ty, values, &analysis.types).ok_or_else(|| internal(at))? {
+            Shape::Literal(value) => this.literal(literal(value), at),
+            Shape::Compose(parts) => {
+                let mut components = Vec::with_capacity(parts.len());
+                for (part, start, size) in parts {
+                    let end = start.checked_add(size).ok_or_else(|| internal(at))?;
+                    let slice = values.get(start..end).ok_or_else(|| internal(at))?;
+                    components.push({
+                        let frame = self.clone().constant(part, slice, at);
+                        drop(this);
+                        let result = self.nest(frame).await;
+                        this = self.lowerer();
+                        result
+                    }?);
+                }
+                let ty = this.lw.ir_type(ty, at)?;
+                this.add(Expression::Compose { ty, components }, at)
+            }
+        }
+    }
+
+    pub(super) async fn value(
+        self,
+        expression: &'b AstExpression,
+    ) -> Result<Option<Handle<Expression>>> {
+        let mut this = self.lowerer();
+        this.stepped = None;
+        let value = {
+            let frame = self.clone().unmarked_value(expression);
+            drop(this);
+            let result = self.nest(frame).await;
+            this = self.lowerer();
+            result
+        }?;
+        this.flagged(expression, value)
+    }
+
+    async fn unmarked_value(
+        self,
+        expression: &'b AstExpression,
+    ) -> Result<Option<Handle<Expression>>> {
+        let mut this = self.lowerer();
+        match this.folded_value(expression)? {
+            Some(value) => Ok(Some(value)),
+            None => {
+                let frame = self.clone().computed_value(expression);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
+        }
+    }
+
+    async fn computed_value(
+        self,
+        expression: &'b AstExpression,
+    ) -> Result<Option<Handle<Expression>>> {
+        let this = self.lowerer();
+        let at = this.at(expression.span);
+        match expression.kind {
+            ExpressionKind::Variable(_)
+            | ExpressionKind::Subscript { .. }
+            | ExpressionKind::FieldSelection { .. } => {
+                let frame = self.clone().chain_value(expression, at);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
+            .map(Some),
+            ExpressionKind::Number(_) | ExpressionKind::Bool(_) => Err(internal(at)),
+            ExpressionKind::String(_) => Ok(None),
+            ExpressionKind::Parenthesized(ref inner) => {
+                let frame = self.clone().value_converted(inner);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
+            ExpressionKind::FunctionCall(ref call) => {
+                let frame = self.clone().call(expression, call);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
+            ExpressionKind::Postfix {
+                ref operand,
+                operator,
+            } => {
+                let frame = self.clone().increment(
+                    operand,
+                    operator == PostfixOperator::Increment,
+                    true,
+                    at,
+                );
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
+            .map(Some),
+            ExpressionKind::Unary { .. } => {
+                let frame = self.clone().unary_chain(expression);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
+            .map(Some),
+            ExpressionKind::Binary { .. } => {
+                let frame = self.clone().binary_chain(expression);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
+            .map(Some),
+            ExpressionKind::Conditional { .. } => {
+                let frame = self.clone().conditional_chain(expression);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
+            ExpressionKind::Assignment { .. } => {
+                let frame = self.clone().assignment_chain(expression);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
+            .map(Some),
+            ExpressionKind::Sequence(ref expressions) => {
+                let frame = self.clone().sequence(expressions, at);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
+        }
+    }
+
+    async fn chain_value(
+        self,
+        expression: &'b AstExpression,
+        at: Span,
+    ) -> Result<Handle<Expression>> {
+        let mut this = self.lowerer();
+        let chain = {
+            let frame = self.clone().chain(expression);
+            drop(this);
+            let result = self.nest(frame).await;
+            this = self.lowerer();
+            result
+        }?;
+        this.chain_loaded(expression, chain, at)
+    }
+
+    async fn sequence(
+        self,
+        expressions: &'b [AstExpression],
+        at: Span,
+    ) -> Result<Option<Handle<Expression>>> {
+        let mut this = self.lowerer();
+        let Some((final_expression, leading)) = expressions.split_last() else {
+            return Err(internal(at));
+        };
+        for expression in leading {
+            {
+                let frame = self.clone().value_converted(expression);
+                drop(this);
+                let result = self.nest(frame).await;
+                this = self.lowerer();
+                result
+            }?;
+        }
+        {
+            let frame = self.clone().sequence_result(final_expression);
+            drop(this);
+            let result = self.nest(frame).await;
+            result
+        }
+    }
+
+    async fn sequence_result(
+        self,
+        expression: &'b AstExpression,
+    ) -> Result<Option<Handle<Expression>>> {
+        let mut this = self.lowerer();
+        let inner = super::prepass::strip(expression);
+        let info = this.info(expression)?;
+        let lvalue = matches!(
+            inner.kind,
+            ExpressionKind::Variable(_)
+                | ExpressionKind::Subscript { .. }
+                | ExpressionKind::FieldSelection { .. }
+        );
+        if !lvalue || info.is_constant || info.is_specialization || info.conversion.is_some() {
+            return {
+                let frame = self.clone().value_converted(expression);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            };
+        }
+        match {
+            let frame = self.clone().chain(inner);
+            drop(this);
+            let result = self.nest(frame).await;
+            this = self.lowerer();
+            result
+        }? {
+            Chain::Place(mut place) => {
+                place.non_uniform = false;
+                let at = this.at(expression.span);
+                this.load(&place, at).map(Some)
+            }
+            Chain::Value(value) => Ok(Some(value)),
+        }
+    }
+
+    async fn value_converted(
+        self,
+        expression: &'b AstExpression,
+    ) -> Result<Option<Handle<Expression>>> {
+        let this = self.lowerer();
+        let info = this.info(expression)?;
+        if info.ty.is_void() || info.ty.is_string() {
+            return {
+                let frame = self.clone().value(expression);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            };
+        }
+        {
+            let frame = self.clone().rvalue(expression);
+            drop(this);
+            let result = self.nest(frame).await;
+            result
+        }
+        .map(Some)
+    }
+
+    pub(super) async fn place(self, expression: &'b AstExpression) -> Result<Place> {
+        let mut this = self.lowerer();
+        let chain = match {
+            let frame = self.clone().dynamic_swizzle_component(expression);
+            drop(this);
+            let result = self.nest(frame).await;
+            this = self.lowerer();
+            result
+        }? {
+            Some(chain) => chain,
+            None => {
+                let frame = self.clone().chain(expression);
+                drop(this);
+                let result = self.nest(frame).await;
+                this = self.lowerer();
+                result
+            }?,
+        };
+        match chain {
+            Chain::Place(place) => Ok(place),
+            Chain::Value(_) => Err(semantic(
+                "the expression is not an l-value",
+                this.at(expression.span),
+            )),
+        }
+    }
+
+    async fn dynamic_swizzle_component(
+        self,
+        expression: &'b AstExpression,
+    ) -> Result<Option<Chain>> {
+        let mut this = self.lowerer();
+        let ExpressionKind::Subscript {
+            ref base,
+            ref index,
+        } = super::prepass::strip(expression).kind
+        else {
+            return Ok(None);
+        };
+        let ExpressionKind::FieldSelection {
+            base: ref swizzled, ..
+        } = super::prepass::strip(base).kind
+        else {
+            return Ok(None);
+        };
+        let swizzled_ty = &this.info(swizzled)?.ty;
+        let is_swizzle = !swizzled_ty.is_array()
+            && matches!(
+                swizzled_ty.kind,
+                TypeKind::Scalar(_) | TypeKind::Vector { .. }
+            );
+        if !is_swizzle || !this.info(base)?.ty.is_vector() || this.constant_index(index).is_some() {
+            return Ok(None);
+        }
+        let at = this.at(expression.span);
+        let place = match {
+            let frame = self.clone().chain(base);
+            drop(this);
+            let result = self.nest(frame).await;
+            this = self.lowerer();
+            result
+        }? {
+            Chain::Place(place) => place,
+            value @ Chain::Value(_) => return Ok(Some(value)),
+        };
+        let Some(ref components) = place.swizzle else {
+            return Err(internal(at));
+        };
+        let size = u8::try_from(components.len())
+            .ok()
+            .and_then(vector_size)
+            .ok_or_else(|| internal(at))?;
+        let mut selectors = Vec::with_capacity(components.len());
+        for &component in components {
+            selectors.push(this.literal(Literal::U32(component), at)?);
+        }
+        let ty = this.lw.insert_type(crate::TypeInner::Vector {
+            size,
+            scalar: crate::Scalar::U32,
+        });
+        let selectors = this.add(
+            Expression::Compose {
+                ty,
+                components: selectors,
+            },
+            at,
+        )?;
+        let selector = {
+            let frame = self.clone().rvalue(index);
+            drop(this);
+            let result = self.nest(frame).await;
+            this = self.lowerer();
+            result
+        }?;
+        let component = this.add(
+            Expression::Access {
+                base: selectors,
+                index: selector,
+            },
+            at,
+        )?;
+        let pointer = this.add(
+            Expression::Access {
+                base: place.pointer,
+                index: component,
+            },
+            at,
+        )?;
+        let index_non_uniform = this.info(index)?.non_uniform;
+        let non_uniform = this.info(expression)?.non_uniform;
+        this.inherit_access(pointer, place.pointer, index_non_uniform);
+        let mut child = place.child(pointer, place.boolean);
+        child.non_uniform = non_uniform && !child.spilled;
+        Ok(Some(Chain::Place(child)))
+    }
+
+    async fn variable_chain(self, expression: &'b AstExpression) -> Result<Chain> {
+        let mut this = self.lowerer();
+        let at = this.at(expression.span);
+        let analysis = this.lw.analysis;
+        let symbol = *analysis
+            .references
+            .get(&expression.id)
+            .ok_or_else(|| internal(at))?;
+        if let Some(local) = this.variables.get(&symbol).copied() {
+            return Ok(match local {
+                Local::Variable(handle) => Chain::Place(Place::pointer(
+                    this.add(Expression::LocalVariable(handle), at)?,
+                    false,
+                )),
+                Local::Pointer(index) => Chain::Place(Place::pointer(
+                    this.add(Expression::FunctionArgument(index), at)?,
+                    false,
+                )),
+                Local::Value(index) => {
+                    Chain::Value(this.add(Expression::FunctionArgument(index), at)?)
+                }
+                Local::Constant => {
+                    let variable = this.lw.variable(symbol).ok_or_else(|| internal(at))?;
+                    let value = variable.value.as_ref().ok_or_else(|| internal(at))?;
+                    Chain::Value({
+                        let frame = self
+                            .clone()
+                            .constant(variable.ty.clone(), &value.values, at);
+                        drop(this);
+                        let result = self.nest(frame).await;
+                        result
+                    }?)
+                }
+            });
+        }
+        if let Some(&rglsl_sema::scope::SymbolKind::BlockMember { instance, index }) =
+            this.lw.symbol(symbol).map(|symbol| &symbol.kind)
+        {
+            if !this.lw.is_builtin_symbol(symbol) {
+                let block = this
+                    .lw
+                    .variable(instance)
+                    .and_then(|variable| match variable.ty.kind {
+                        TypeKind::Block(id) => Some(id),
+                        _ => None,
+                    })
+                    .ok_or_else(|| internal(at))?;
+                let GlobalRef::Variable(global) = this.lw.global_ref(instance, at)? else {
+                    return Err(internal(at));
+                };
+                let base = this.add(Expression::GlobalVariable(global), at)?;
+                let pointer = this.add(Expression::AccessIndex { base, index }, at)?;
+                let boolean = this.lw.block_bools.contains(&(block, index));
+                return Ok(Chain::Place(Place::pointer(pointer, boolean)));
+            }
+        }
+        if let Some((global, index)) = this.lw.per_vertex_member(symbol) {
+            let base = this.add(Expression::GlobalVariable(global), at)?;
+            let pointer = this.add(Expression::AccessIndex { base, index }, at)?;
+            return Ok(Chain::Place(Place::pointer(pointer, false)));
+        }
+        if let Some(chain) = this.ray_builtin_chain(symbol, at)? {
+            return Ok(chain);
+        }
+        let global = this.lw.global_ref(symbol, at)?;
+        if let GlobalRef::Variable(handle) = global {
+            if let Some(crate::Binding::BuiltIn(crate::BuiltIn::ShaderBallot(
+                crate::ShaderBallot::Mask(_),
+            ))) = this.lw.module.global_variables[handle].io
+            {
+                let pointer = this.add(Expression::GlobalVariable(handle), at)?;
+                let mask = this.add(Expression::Load { pointer }, at)?;
+                return Ok(Chain::Value(this.ballot_to_u64(mask, at)?));
+            }
+        }
+        let handle_space = matches!(global, GlobalRef::Variable(handle)
+            if this.lw.module.global_variables[handle].space == AddressSpace::Handle);
+        let expression = this.lw.global_expression(global);
+        let mut value = this.add(expression, at)?;
+        if let GlobalRef::Variable(handle) = global {
+            if let Some(offset) = this.lw.heap_offset_value(handle) {
+                let offset = {
+                    let frame = self.clone().rvalue(offset);
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }?;
+                value = this.add(
+                    Expression::HeapOffset {
+                        pointer: value,
+                        offset,
+                    },
+                    at,
+                )?;
+            }
+        }
+        Ok(match global {
+            GlobalRef::Variable(_) if !handle_space => Chain::Place(Place::pointer(value, false)),
+            _ => Chain::Value(value),
+        })
+    }
+
+    async fn index_operand(
+        self,
+        index: &'b AstExpression,
+        wide: bool,
+        at: Span,
+    ) -> Result<Handle<Expression>> {
+        let mut this = self.lowerer();
+        if !wide {
+            return {
+                let frame = self.clone().rvalue(index);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            };
+        }
+        let info = this.info(index)?;
+        let narrow = info.ty.scalar_type() == Some(GlslScalar::Uint);
+        let constant = info
+            .value
+            .as_ref()
+            .filter(|_| info.is_constant && !info.is_specialization)
+            .and_then(|value| value.scalar_i64());
+        if let Some(value) = constant {
+            return this.literal(Literal::I64(value), at);
+        }
+        let value = {
+            let frame = self.clone().rvalue(index);
+            drop(this);
+            let result = self.nest(frame).await;
+            this = self.lowerer();
+            result
+        }?;
+        if !narrow {
+            return Ok(value);
+        }
+        this.add(
+            Expression::As {
+                expr: value,
+                kind: crate::ScalarKind::Uint,
+                convert: Some(8),
+            },
+            at,
+        )
+    }
+
+    pub(super) async fn chain(self, expression: &'b AstExpression) -> Result<Chain> {
+        let this = self.lowerer();
+        {
+            let frame = self.clone().access_chain(expression);
+            drop(this);
+            let result = self.nest(frame).await;
+            result
+        }
+    }
+
+    pub(super) async fn chain_head(self, expression: &'b AstExpression) -> Result<Chain> {
+        let this = self.lowerer();
+        match expression.kind {
+            ExpressionKind::Parenthesized(ref inner) => {
+                let frame = self.clone().chain(inner);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
+            ExpressionKind::Variable(_) => {
+                let frame = self.clone().variable_chain(expression);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
+            _ => {
+                let frame = self.clone().rvalue(expression);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
+            .map(Chain::Value),
+        }
+    }
+
+    pub(super) async fn subscript_chain(
+        self,
+        chain: Chain,
+        base: &'b AstExpression,
+        index: &'b AstExpression,
+        at: Span,
+    ) -> Result<Chain> {
+        let mut this = self.lowerer();
+        let base_ty = &this.info(base)?.ty;
+        if base_ty.is_reference() {
+            return {
+                let frame = self
+                    .clone()
+                    .reference_subscript_chain(chain, base, index, at);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            };
+        }
+        let wide = this.wide_index(base_ty, index)?;
+        let constant = if wide {
+            None
+        } else {
+            this.constant_index(index)
+        };
+        let index_value = {
+            let frame = self
+                .clone()
+                .subscript_index(chain.clone(), index, wide, constant, at);
+            drop(this);
+            let result = self.nest(frame).await;
+            this = self.lowerer();
+            result
+        }?;
+        this.subscript_access(chain, base, index, index_value, constant, at)
+    }
+
+    async fn subscript_index(
+        self,
+        chain: Chain,
+        index: &'b AstExpression,
+        wide: bool,
+        constant: Option<u32>,
+        at: Span,
+    ) -> Result<Option<Handle<Expression>>> {
+        let this = self.lowerer();
+        match chain {
+            Chain::Place(Place {
+                swizzle: Some(ref components),
+                ..
+            }) => {
+                let component =
+                    constant.and_then(|c| components.get(usize::try_from(c).ok()?).copied());
+                match component {
+                    Some(_) => Ok(None),
+                    None => {
+                        let frame = self.clone().rvalue(index);
+                        drop(this);
+                        let result = self.nest(frame).await;
+                        result
+                    }
+                    .map(Some),
+                }
+            }
+            _ if constant.is_some() => Ok(None),
+            _ => {
+                let frame = self.clone().index_operand(index, wide, at);
+                drop(this);
+                let result = self.nest(frame).await;
+                result
+            }
+            .map(Some),
+        }
+    }
+
+    async fn reference_subscript_chain(
+        self,
+        chain: Chain,
+        base: &'b AstExpression,
+        index: &'b AstExpression,
+        at: Span,
+    ) -> Result<Chain> {
+        let mut this = self.lowerer();
+        let base_ty = &this.info(base)?.ty;
+        let reference = match chain {
+            Chain::Place(place) => this.load(&place, at)?,
+            Chain::Value(value) => value,
+        };
+        let index = {
+            let frame = self.clone().typed(index);
+            drop(this);
+            let result = self.nest(frame).await;
+            this = self.lowerer();
+            result
+        }?;
+        this.reference_offset((reference, base_ty), (index.0, &index.1), false, at)
+            .map(Chain::Value)
+    }
+
+    async fn relayout(
+        self,
+        value: Handle<Expression>,
+        from: Handle<crate::Type>,
+        to: Handle<crate::Type>,
+        at: Span,
+    ) -> Result<Handle<Expression>> {
+        let mut this = self.lowerer();
+        if from == to {
+            return Ok(value);
+        }
+        let types = &this.lw.module.types;
+        let parts: Vec<(Handle<crate::Type>, Handle<crate::Type>)> =
+            match (&types[from].inner, &types[to].inner) {
+                (
+                    &crate::TypeInner::Struct {
+                        members: ref from_members,
+                        ..
+                    },
+                    &crate::TypeInner::Struct {
+                        members: ref to_members,
+                        ..
+                    },
+                ) if from_members.len() == to_members.len() => from_members
+                    .iter()
+                    .zip(to_members)
+                    .map(|(from, to)| (from.ty, to.ty))
+                    .collect(),
+                (
+                    &crate::TypeInner::Array {
+                        base: from_base,
+                        size: crate::ArraySize::Constant(from_size),
+                        ..
+                    },
+                    &crate::TypeInner::Array {
+                        base: to_base,
+                        size: crate::ArraySize::Constant(to_size),
+                        ..
+                    },
+                ) if from_size == to_size => {
+                    (0..from_size.get()).map(|_| (from_base, to_base)).collect()
+                }
+                (
+                    &(crate::TypeInner::Scalar(from_scalar)
+                    | crate::TypeInner::Vector {
+                        scalar: from_scalar,
+                        ..
+                    }),
+                    &(crate::TypeInner::Scalar(to_scalar)
+                    | crate::TypeInner::Vector {
+                        scalar: to_scalar, ..
+                    }),
+                ) if from_scalar != to_scalar => {
+                    return this.as_kind(value, to_scalar, at);
+                }
+                _ => return Err(internal(at)),
+            };
+        let mut components = Vec::with_capacity(parts.len());
+        for (index, (from, to)) in (0_u32..).zip(parts) {
+            let part = this.add(Expression::AccessIndex { base: value, index }, at)?;
+            components.push({
+                let frame = self.clone().relayout(part, from, to, at);
+                drop(this);
+                let result = self.nest(frame).await;
+                this = self.lowerer();
+                result
+            }?);
+        }
+        this.add(Expression::Compose { ty: to, components }, at)
+    }
+
+    async fn convert_booleans(
+        self,
+        value: Handle<Expression>,
+        integer: Handle<crate::Type>,
+        to_bool: bool,
+        at: Span,
+    ) -> Result<Handle<Expression>> {
+        let mut this = self.lowerer();
+        match this.lw.module.types[integer].inner {
+            crate::TypeInner::Array {
+                base,
+                size: crate::ArraySize::Constant(count),
+                ..
+            } => {
+                let target = if to_bool {
+                    {
+                        let frame = self.clone().boolean_twin(integer, at);
+                        drop(this);
+                        let result = self.nest(frame).await;
+                        this = self.lowerer();
+                        result
+                    }?
+                } else {
+                    integer
+                };
+                let mut components = Vec::new();
+                for index in 0..count.get() {
+                    let part = this.add(Expression::AccessIndex { base: value, index }, at)?;
+                    components.push({
+                        let frame = self.clone().convert_booleans(part, base, to_bool, at);
+                        drop(this);
+                        let result = self.nest(frame).await;
+                        this = self.lowerer();
+                        result
+                    }?);
+                }
+                this.add(
+                    Expression::Compose {
+                        ty: target,
+                        components,
+                    },
+                    at,
+                )
+            }
+            crate::TypeInner::Array { .. } => Err(internal(at)),
+            _ if to_bool => this.as_kind(value, crate::Scalar::BOOL, at),
+            _ => this.as_kind(value, crate::Scalar::U32, at),
+        }
+    }
+
+    async fn boolean_twin(self, ty: Handle<crate::Type>, at: Span) -> Result<Handle<crate::Type>> {
+        let mut this = self.lowerer();
+        let scalar = crate::Scalar::BOOL;
+        let inner = match this.lw.module.types[ty].inner {
+            crate::TypeInner::Scalar(_) => crate::TypeInner::Scalar(scalar),
+            crate::TypeInner::Vector { size, .. } => crate::TypeInner::Vector { size, scalar },
+            crate::TypeInner::Array { base, size, .. } => {
+                let element = {
+                    let frame = self.clone().boolean_twin(base, at);
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }?;
+                let lowerer = &mut **this;
+                lowerer
+                    .lw
+                    .layouter
+                    .update(lowerer.lw.module.to_ctx())
+                    .map_err(|_| internal(at))?;
+                let stride = lowerer.lw.layouter[element].to_stride();
+                crate::TypeInner::Array {
+                    base: element,
+                    size,
+                    stride,
+                }
+            }
+            _ => return Err(internal(at)),
+        };
+        Ok(this.lw.insert_type(inner))
+    }
+
+    pub(super) async fn increment(
+        self,
+        operand: &'b AstExpression,
+        increment: bool,
+        postfix: bool,
+        at: Span,
+    ) -> Result<Handle<Expression>> {
+        let mut this = self.lowerer();
+        let ty = this.info(operand)?.ty.clone();
+        let place = {
+            let frame = self.clone().place(operand);
+            drop(this);
+            let result = self.nest(frame).await;
+            this = self.lowerer();
+            result
+        }?;
+        let old = this.load(&place, at)?;
+        this.relax_load(operand, old);
+        let base = ty.base_scalar().ok_or_else(|| internal(at))?;
+        let one = Literal::one(scalar(base)).ok_or_else(|| internal(at))?;
+        let one = this.filled(&ty, one, at)?;
+        let op = if increment {
+            BinaryOperator::Add
+        } else {
+            BinaryOperator::Subtract
+        };
+        let new = this.add(
+            Expression::Binary {
+                op,
+                left: old,
+                right: one,
+            },
+            at,
+        )?;
+        if place.non_uniform {
+            this.mark_operation(new);
+        }
+        this.stepped = Some(new);
+        this.store(&place, new, at)?;
+        Ok(if postfix { old } else { new })
+    }
+
+    pub(super) async fn conditional_effect(
+        self,
+        condition: Handle<Expression>,
+        [accept, reject]: [&'b AstExpression; 2],
+        at: Span,
+    ) -> Result<Option<Handle<Expression>>> {
+        let mut this = self.lowerer();
+        let accept = {
+            drop(this);
+            let result = self
+                .clone()
+                .block(self.nest(self.clone().effect(accept)))
+                .await;
+            this = self.lowerer();
+            result
+        }?;
+        let reject = {
+            drop(this);
+            let result = self
+                .clone()
+                .block(self.nest(self.clone().effect(reject)))
+                .await;
+            this = self.lowerer();
+            result
+        }?;
+        this.push(
+            Statement::If {
+                condition,
+                accept,
+                reject,
+                control: crate::SelectionControl::None,
+            },
+            at,
+        );
+        Ok(None)
+    }
+
+    pub(super) async fn conditional_local(
+        self,
+        ty: &'b GlslType,
+        condition: Handle<Expression>,
+        [accept, reject]: [&'b AstExpression; 2],
+        at: Span,
+    ) -> Result<Option<Handle<Expression>>> {
+        let mut this = self.lowerer();
+        let local = this.local(ty, None, at)?;
+        let accept = {
+            drop(this);
+            let result = self
+                .clone()
+                .block(self.nest(self.clone().stored(accept, local, at)))
+                .await;
+            this = self.lowerer();
+            result
+        }?;
+        let reject = {
+            drop(this);
+            let result = self
+                .clone()
+                .block(self.nest(self.clone().stored(reject, local, at)))
+                .await;
+            this = self.lowerer();
+            result
+        }?;
+        this.push(
+            Statement::If {
+                condition,
+                accept,
+                reject,
+                control: crate::SelectionControl::None,
+            },
+            at,
+        );
+        let pointer = this.local_pointer(local, at)?;
+        this.add(Expression::Load { pointer }, at).map(Some)
+    }
+
+    pub(super) async fn stored(
+        self,
+        expression: &'b AstExpression,
+        local: Handle<crate::LocalVariable>,
+        at: Span,
+    ) -> Result<()> {
+        let mut this = self.lowerer();
+        let value = {
+            let frame = self.clone().rvalue(expression);
+            drop(this);
+            let result = self.nest(frame).await;
+            this = self.lowerer();
+            result
+        }?;
+        let pointer = this.local_pointer(local, at)?;
+        this.push(Statement::Store { pointer, value }, at);
+        Ok(())
+    }
+
+    pub(super) async fn short_circuit(
+        self,
+        operator: AstBinary,
+        left: Handle<Expression>,
+        right: &'b AstExpression,
+        at: Span,
+    ) -> Result<Handle<Expression>> {
+        let mut this = self.lowerer();
+        let local = this.local(&GlslType::BOOL, None, at)?;
+        let pointer = this.local_pointer(local, at)?;
+        this.push(
+            Statement::Store {
+                pointer,
+                value: left,
+            },
+            at,
+        );
+        let rest = {
+            drop(this);
+            let result = self
+                .clone()
+                .block(self.nest(self.clone().stored(right, local, at)))
+                .await;
+            this = self.lowerer();
+            result
+        }?;
+        let (accept, reject) = if operator == AstBinary::LogicalAnd {
+            (rest, crate::Block::new())
+        } else {
+            (crate::Block::new(), rest)
+        };
+        this.push(
+            Statement::If {
+                condition: left,
+                accept,
+                reject,
+                control: crate::SelectionControl::None,
+            },
+            at,
+        );
+        let pointer = this.local_pointer(local, at)?;
+        this.add(Expression::Load { pointer }, at)
+    }
+
+    async fn equality(
+        self,
+        left: Handle<Expression>,
+        right: Handle<Expression>,
+        ty: GlslType,
+        equal: bool,
+        at: Span,
+    ) -> Result<Handle<Expression>> {
+        let ty = &ty;
+        let mut this = self.lowerer();
+        let (op, combine, reduce) = if equal {
+            (
+                BinaryOperator::Equal,
+                BinaryOperator::LogicalAnd,
+                RelationalFunction::All,
+            )
+        } else {
+            (
+                BinaryOperator::NotEqual,
+                BinaryOperator::LogicalOr,
+                RelationalFunction::Any,
+            )
+        };
+        let parts: Vec<GlslType> = if ty.is_array() {
+            let element = ty.element_type().ok_or_else(|| internal(at))?;
+            let length = ty
+                .length()
+                .ok_or_else(|| unsupported("comparing runtime-sized arrays", at))?;
+            (0..length).map(|_| element.clone()).collect()
+        } else {
+            match ty.kind {
+                TypeKind::Scalar(_) => {
+                    return this.add(Expression::Binary { op, left, right }, at);
+                }
+                TypeKind::Vector { .. } => {
+                    let argument = this.add(Expression::Binary { op, left, right }, at)?;
+                    return this.add(
+                        Expression::Relational {
+                            fun: reduce,
+                            argument,
+                        },
+                        at,
+                    );
+                }
+                TypeKind::Matrix { columns, .. } => {
+                    let column = ty.column_type().ok_or_else(|| internal(at))?;
+                    (0..columns).map(|_| column.clone()).collect()
+                }
+                TypeKind::Struct(id) => this
+                    .lw
+                    .analysis
+                    .types
+                    .structure(id)
+                    .ok_or_else(|| internal(at))?
+                    .members
+                    .iter()
+                    .map(|member| member.ty.clone())
+                    .collect(),
+                _ => return Err(internal(at)),
+            }
+        };
+        let mut result = None;
+        for (index, part) in (0_u32..).zip(&parts) {
+            let l = this.add(Expression::AccessIndex { base: left, index }, at)?;
+            let r = this.add(Expression::AccessIndex { base: right, index }, at)?;
+            let compared = {
+                let frame = self.clone().equality(l, r, part.clone(), equal, at);
+                drop(this);
+                let result = self.nest(frame).await;
+                this = self.lowerer();
+                result
+            }?;
+            result = Some(match result {
+                None => compared,
+                Some(previous) => this.add(
+                    Expression::Binary {
+                        op: combine,
+                        left: previous,
+                        right: compared,
+                    },
+                    at,
+                )?,
+            });
+        }
+        result.ok_or_else(|| internal(at))
+    }
+
+    pub(super) async fn initializer(
+        self,
+        initializer: &'b Spanned<Initializer>,
+        ty: GlslType,
+    ) -> Result<Handle<Expression>> {
+        let ty = &ty;
+        let mut this = self.lowerer();
+        let at = this.at(initializer.span);
         match initializer.node {
             Initializer::Expression(ref expression) => {
-                let (value, from) = self.typed(expression)?;
+                let (value, from) = {
+                    let frame = self.clone().typed(expression);
+                    drop(this);
+                    let result = self.nest(frame).await;
+                    this = self.lowerer();
+                    result
+                }?;
                 if from.array.len() == ty.array.len() && from.kind == ty.kind {
                     return Ok(value);
                 }
-                self.convert(value, &from, ty, at)
+                this.convert(value, &from, ty, at)
             }
             Initializer::List(ref items) if items.is_empty() => {
-                let ty = self.lw.ir_type(ty, at)?;
-                self.add(Expression::ZeroValue(ty), at)
+                let ty = this.lw.ir_type(ty, at)?;
+                this.add(Expression::ZeroValue(ty), at)
             }
             Initializer::List(ref items) => {
                 let elements: Vec<GlslType> =
@@ -2096,7 +2554,7 @@ impl<'a> FunctionLowerer<'_, 'a> {
                         items.iter().map(|_| element.clone()).collect()
                     } else {
                         match ty.kind {
-                            TypeKind::Struct(id) => self
+                            TypeKind::Struct(id) => this
                                 .lw
                                 .analysis
                                 .types
@@ -2115,10 +2573,16 @@ impl<'a> FunctionLowerer<'_, 'a> {
                     };
                 let mut components = Vec::with_capacity(items.len());
                 for (item, element) in items.iter().zip(&elements) {
-                    components.push(self.initializer(item, element)?);
+                    components.push({
+                        let frame = self.clone().initializer(item, element.clone());
+                        drop(this);
+                        let result = self.nest(frame).await;
+                        this = self.lowerer();
+                        result
+                    }?);
                 }
-                let ty = self.lw.ir_type(ty, at)?;
-                self.add(Expression::Compose { ty, components }, at)
+                let ty = this.lw.ir_type(ty, at)?;
+                this.add(Expression::Compose { ty, components }, at)
             }
         }
     }
