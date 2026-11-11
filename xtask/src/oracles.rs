@@ -439,7 +439,14 @@ pub fn git_head(dir: &Path) -> Result<String> {
 fn copy_binary(from_dir: &Path, name: &str, to_dir: &Path) -> Result<()> {
     let exe = format!("{name}{}", std::env::consts::EXE_SUFFIX);
     let from = from_dir.join(&exe);
-    fs::copy(&from, to_dir.join(&exe)).with_context(|| format!("copying {}", from.display()))?;
+    let to = to_dir.join(&exe);
+    match fs::remove_file(&to) {
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+            return Err(error).with_context(|| format!("removing {}", to.display()));
+        }
+        _ => {}
+    }
+    fs::copy(&from, &to).with_context(|| format!("copying {}", from.display()))?;
     Ok(())
 }
 
