@@ -319,8 +319,9 @@ run before a generated mesh shader that marks each workgroup they launch. Ray tr
 trace 4×4 rays into a one-triangle or one-box scene: ray generation shaders with generated miss,
 hit and callable shaders, every other stage behind a generated ray generation shader whose
 payload has the stage's type and is written to a compared buffer; shader record buffers are
-filled like any other buffer, except for the fields the shader turns into acceleration
-structures, which hold the scene's address. Ray queries run in any stage against the same scene. Integers must
+filled like any other buffer. Ray queries run in any stage against the same scene. A field of a
+push constant, uniform, storage or shader record block that the shader turns into an
+acceleration structure holds the scene's address and is not compared. Integers must
 be equal; floats may differ by NaN
 payload, the sign of zero, or 4 ULP. A shader whose results differ is run again alone before it
 is counted as a failure. A shader is skipped, not failed, when the harness cannot bind it, the
