@@ -79,20 +79,6 @@ pub(super) const fn image_dimension(opaque: Opaque) -> ImageDimension {
     }
 }
 
-fn contains_bool(ty: &GlslType, registry: &rglsl_sema::TypeRegistry) -> bool {
-    match ty.kind {
-        TypeKind::Scalar(GlslScalar::Bool)
-        | TypeKind::Vector {
-            scalar: GlslScalar::Bool,
-            ..
-        } => true,
-        TypeKind::Struct(id) => registry
-            .structure(id)
-            .is_some_and(|structure| structure.scalars.contains(&GlslScalar::Bool)),
-        _ => false,
-    }
-}
-
 impl Lowerer<'_> {
     pub(super) fn folds_conversions_to(&self, target: Scalar) -> bool {
         let feature = match (target.kind, target.width) {
@@ -517,7 +503,10 @@ impl Lowerer<'_> {
     }
 
     fn record_relayout(&mut self, laid: Handle<Type>, plain: Handle<Type>) {
-        if laid == plain || self.relayout.insert(laid, plain).is_some() {
+        if laid == plain || self.holds_booleans(plain) {
+            return;
+        }
+        if self.relayout.insert(laid, plain).is_some() {
             return;
         }
         let types = &self.module.types;
@@ -544,6 +533,16 @@ impl Lowerer<'_> {
             };
         for (laid, plain) in pairs {
             self.record_relayout(laid, plain);
+        }
+    }
+
+    fn holds_booleans(&self, ty: Handle<Type>) -> bool {
+        match self.module.types[ty].inner {
+            TypeInner::Scalar(scalar) | TypeInner::Vector { scalar, .. } => {
+                scalar.kind == ScalarKind::Bool
+            }
+            TypeInner::Array { base, .. } => self.holds_booleans(base),
+            _ => false,
         }
     }
 
@@ -605,12 +604,6 @@ impl Lowerer<'_> {
                     self.ir_type(&lowered, span)?
                 }
                 None => {
-                    if contains_bool(member_ty, &analysis.types) {
-                        return Err(unsupported(
-                            "booleans inside arrays or structures in a block",
-                            span,
-                        ));
-                    }
                     if member_ty.contains_opaque(&analysis.types) {
                         return Err(unsupported("opaque types in blocks", span));
                     }

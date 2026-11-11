@@ -783,6 +783,23 @@ impl<'a> FunctionLowerer<'_, 'a> {
                         let index = index
                             .and_then(|index| u32::try_from(index).ok())
                             .ok_or_else(|| internal(at))?;
+                        let nested_boolean = match base_ty.kind {
+                            TypeKind::Struct(id) => analysis
+                                .types
+                                .structure(id)
+                                .and_then(|s| s.members.get(usize::try_from(index).ok()?))
+                                .is_some_and(|member| {
+                                    matches!(
+                                        member.ty.kind,
+                                        TypeKind::Scalar(rglsl_sema::types::Scalar::Bool)
+                                            | TypeKind::Vector {
+                                                scalar: rglsl_sema::types::Scalar::Bool,
+                                                ..
+                                            }
+                                    )
+                                }),
+                            _ => false,
+                        };
                         let boolean = block
                             .is_some_and(|block| self.lw.block_bools.contains(&(block, index)));
                         let chain = self.chain(base)?;
@@ -801,6 +818,8 @@ impl<'a> FunctionLowerer<'_, 'a> {
                                     at,
                                 )?;
                                 self.inherit_access(pointer, base_pointer, false);
+                                let boolean = boolean
+                                    || (nested_boolean && self.buffer_pointee(pointer).is_some());
                                 Ok(Chain::Place(place.child(pointer, boolean)))
                             }
                             Chain::Value(value) => Ok(Chain::Value(
@@ -994,6 +1013,19 @@ impl<'a> FunctionLowerer<'_, 'a> {
                     },
                 ) if from_size == to_size => {
                     (0..from_size.get()).map(|_| (from_base, to_base)).collect()
+                }
+                (
+                    &(crate::TypeInner::Scalar(from_scalar)
+                    | crate::TypeInner::Vector {
+                        scalar: from_scalar,
+                        ..
+                    }),
+                    &(crate::TypeInner::Scalar(to_scalar)
+                    | crate::TypeInner::Vector {
+                        scalar: to_scalar, ..
+                    }),
+                ) if from_scalar != to_scalar => {
+                    return self.as_kind(value, to_scalar, at);
                 }
                 _ => return Err(internal(at)),
             };

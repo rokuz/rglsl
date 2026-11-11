@@ -54,6 +54,28 @@ pub fn calculate_offset(
     errors: &mut Vec<Error>,
 ) -> TypeAlignSpan {
     let mut matrix_layout = None;
+    let integer = match types[ty].inner {
+        TypeInner::Scalar(Scalar {
+            kind: crate::ScalarKind::Bool,
+            ..
+        }) => Some(TypeInner::Scalar(Scalar::U32)),
+        TypeInner::Vector {
+            size,
+            scalar:
+                Scalar {
+                    kind: crate::ScalarKind::Bool,
+                    ..
+                },
+        } => Some(TypeInner::Vector {
+            size,
+            scalar: Scalar::U32,
+        }),
+        _ => None,
+    };
+    if let Some(inner) = integer {
+        let ty_span = types.get_span(ty);
+        ty = types.insert(Type { name: None, inner }, ty_span);
+    }
 
     // When using the std430 storage layout, shader storage blocks will be laid out in buffer storage
     // identically to uniform and shader storage blocks using the std140 layout, except
