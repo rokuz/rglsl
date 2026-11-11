@@ -376,7 +376,7 @@ fn reserved_words_cannot_be_names() {
         "goto",
         "inline",
         "pervertexNV",
-        "attachmentEXT",
+        "noinline",
     ] {
         assert!(is_unavailable_word(word), "{word}");
         for source in [

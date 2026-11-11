@@ -312,9 +312,87 @@ impl FunctionLowerer<'_, '_> {
             | "memoryBarrierShared"
             | "memoryBarrierImage"
             | "groupMemoryBarrier"
-            | "controlBarrier" => {
+            | "controlBarrier"
+            | "controlBarrierArrive"
+            | "controlBarrierWait" => {
                 self.barrier(name, arguments, at)?;
                 Ok(None)
+            }
+            "beginInvocationInterlockARB" | "endInvocationInterlockARB" => {
+                self.flush();
+                let statement = if name == "beginInvocationInterlockARB" {
+                    Statement::BeginInvocationInterlock
+                } else {
+                    Statement::EndInvocationInterlock
+                };
+                self.push(statement, at);
+                Ok(None)
+            }
+            "helperInvocationEXT" => self.add(Expression::IsHelperInvocation, at).map(Some),
+            "textureFootprintNV"
+            | "textureFootprintClampNV"
+            | "textureFootprintLodNV"
+            | "textureFootprintGradNV"
+            | "textureFootprintGradClampNV" => self.footprint(name, arguments, at).map(Some),
+            "fragmentMaskFetchAMD" | "fragmentFetchAMD" => {
+                let first = arguments.first().ok_or_else(|| internal(at))?;
+                let subpass = self
+                    .lw
+                    .analysis
+                    .type_of(first.id)
+                    .and_then(GlslType::as_opaque)
+                    .is_some_and(|opaque| opaque.kind == OpaqueKind::SubpassInput);
+                let image = self.rvalue(first)?;
+                let mut rest = arguments.iter().skip(1);
+                let coordinate = if subpass {
+                    let zero = self.literal(Literal::I32(0), at)?;
+                    let ty = self
+                        .lw
+                        .vector_type(crate::VectorSize::Bi, crate::Scalar::I32);
+                    self.add(
+                        Expression::Compose {
+                            ty,
+                            components: alloc::vec![zero, zero],
+                        },
+                        at,
+                    )?
+                } else {
+                    let coordinate = rest.next().ok_or_else(|| internal(at))?;
+                    self.rvalue(coordinate)?
+                };
+                let fragment = match rest.next() {
+                    Some(fragment) if name == "fragmentFetchAMD" => Some(self.rvalue(fragment)?),
+                    _ => None,
+                };
+                self.add(
+                    Expression::FragmentFetch {
+                        image,
+                        coordinate,
+                        fragment,
+                    },
+                    at,
+                )
+                .map(Some)
+            }
+            "interpolateAtCentroid" | "interpolateAtSample" | "interpolateAtOffset" => {
+                self.interpolate(name, arguments, at).map(Some)
+            }
+            "colorAttachmentReadEXT" | "depthAttachmentReadEXT" | "stencilAttachmentReadEXT" => {
+                let mut rest = arguments.iter();
+                let aspect = match name {
+                    "colorAttachmentReadEXT" => {
+                        let image = rest.next().ok_or_else(|| internal(at))?;
+                        crate::AttachmentAspect::Color(self.rvalue(image)?)
+                    }
+                    "depthAttachmentReadEXT" => crate::AttachmentAspect::Depth,
+                    _ => crate::AttachmentAspect::Stencil,
+                };
+                let sample = match rest.next() {
+                    Some(sample) => Some(self.rvalue(sample)?),
+                    None => None,
+                };
+                self.add(Expression::AttachmentRead { aspect, sample }, at)
+                    .map(Some)
             }
             "SetMeshOutputsEXT" | "EmitMeshTasksEXT" | "writePackedPrimitiveIndices4x8NV" => {
                 self.mesh_statement(name, arguments, at)?;
@@ -1385,10 +1463,7 @@ impl FunctionLowerer<'_, '_> {
                 } else {
                     crate::TypeInner::Vector {
                         size: crate::VectorSize::Quad,
-                        scalar: crate::Scalar {
-                            kind: super::types::sampled_kind(opaque.sampled),
-                            width: 4,
-                        },
+                        scalar: super::types::sampled_scalar(opaque.sampled),
                     }
                 };
                 Some(self.lw.sparse_result_type(texel))
@@ -1502,10 +1577,7 @@ impl FunctionLowerer<'_, '_> {
         let sparse_type = sparse.then(|| {
             self.lw.sparse_result_type(crate::TypeInner::Vector {
                 size: crate::VectorSize::Quad,
-                scalar: crate::Scalar {
-                    kind: super::types::sampled_kind(opaque.sampled),
-                    width: 4,
-                },
+                scalar: super::types::sampled_scalar(opaque.sampled),
             })
         });
         let result = self.add(
@@ -1550,6 +1622,139 @@ impl FunctionLowerer<'_, '_> {
             self.mark(query, NonUniform::SAMPLED_IMAGE);
         }
         Ok(query)
+    }
+
+    fn footprint(
+        &mut self,
+        name: &str,
+        arguments: &[AstExpression],
+        at: Span,
+    ) -> Result<Handle<Expression>> {
+        let mut next = 0;
+        let image = self.next_argument(arguments, &mut next, at)?;
+        let coordinate = self.next_argument(arguments, &mut next, at)?;
+        let mut level = SampleLevel::Auto;
+        let mut min_lod = None;
+        match name {
+            "textureFootprintLodNV" => {
+                level = SampleLevel::Exact(self.next_argument(arguments, &mut next, at)?);
+            }
+            "textureFootprintGradNV" | "textureFootprintGradClampNV" => {
+                let x = self.next_argument(arguments, &mut next, at)?;
+                let y = self.next_argument(arguments, &mut next, at)?;
+                level = SampleLevel::Gradient { x, y };
+                if name == "textureFootprintGradClampNV" {
+                    min_lod = Some(self.next_argument(arguments, &mut next, at)?);
+                }
+            }
+            "textureFootprintClampNV" => {
+                min_lod = Some(self.next_argument(arguments, &mut next, at)?);
+            }
+            _ => {}
+        }
+        let granularity = self.next_argument(arguments, &mut next, at)?;
+        let coarse = self.next_argument(arguments, &mut next, at)?;
+        let output = arguments.get(next).ok_or_else(|| internal(at))?;
+        next += 1;
+        if let Some(bias) = arguments.get(next) {
+            level = SampleLevel::Bias(self.rvalue(bias)?);
+        }
+        let output_ty = self.info(output)?.ty.clone();
+        let footprint = self.lw.ir_type(&output_ty, at)?;
+        let three = matches!(
+            self.lw.module.types[footprint].inner,
+            crate::TypeInner::Struct { ref members, .. }
+                if members.first().is_some_and(|member| matches!(
+                    self.lw.module.types[member.ty].inner,
+                    crate::TypeInner::Vector { size: crate::VectorSize::Tri, .. }
+                ))
+        );
+        let ty = self.lw.footprint_result_type(three);
+        let result = self.add(
+            Expression::ImageFootprint {
+                image,
+                coordinate,
+                granularity,
+                coarse,
+                level,
+                min_lod,
+                ty,
+            },
+            at,
+        )?;
+        let mut components = Vec::with_capacity(5);
+        for index in 1..6 {
+            components.push(self.add(
+                Expression::AccessIndex {
+                    base: result,
+                    index,
+                },
+                at,
+            )?);
+        }
+        let value = self.add(
+            Expression::Compose {
+                ty: footprint,
+                components,
+            },
+            at,
+        )?;
+        let place = self.place(output)?;
+        self.store(&place, value, at)?;
+        self.add(
+            Expression::AccessIndex {
+                base: result,
+                index: 0,
+            },
+            at,
+        )
+    }
+
+    fn interpolate(
+        &mut self,
+        name: &str,
+        arguments: &[AstExpression],
+        at: Span,
+    ) -> Result<Handle<Expression>> {
+        let first = arguments.first().ok_or_else(|| internal(at))?;
+        let super::expression::Chain::Place(place) = self.chain(first)? else {
+            return Err(internal(at));
+        };
+        let location = match (name, arguments.get(1)) {
+            ("interpolateAtSample", Some(sample)) => {
+                crate::InterpolationLocation::Sample(self.rvalue(sample)?)
+            }
+            ("interpolateAtOffset", Some(offset)) => {
+                crate::InterpolationLocation::Offset(self.rvalue(offset)?)
+            }
+            _ => crate::InterpolationLocation::Centroid,
+        };
+        let value = self.add(
+            Expression::InterpolateAt {
+                pointer: place.pointer,
+                location,
+            },
+            at,
+        )?;
+        match place.swizzle {
+            None => Ok(value),
+            Some(ref components) if components.len() == 1 => {
+                let index = components.first().copied().ok_or_else(|| internal(at))?;
+                self.add(Expression::AccessIndex { base: value, index }, at)
+            }
+            Some(ref components) => {
+                let size = vector_size(u8::try_from(components.len()).unwrap_or(0))
+                    .ok_or_else(|| internal(at))?;
+                self.add(
+                    Expression::Swizzle {
+                        size,
+                        vector: value,
+                        pattern: super::expression::pattern(components),
+                    },
+                    at,
+                )
+            }
+        }
     }
 
     fn subpass_load(
@@ -1617,10 +1822,7 @@ impl FunctionLowerer<'_, '_> {
         if name == "sparseImageLoadARB" {
             let texel = crate::TypeInner::Vector {
                 size: crate::VectorSize::Quad,
-                scalar: crate::Scalar {
-                    kind: super::types::sampled_kind(opaque.sampled),
-                    width: 4,
-                },
+                scalar: super::types::sampled_scalar(opaque.sampled),
             };
             let sparse = Some(self.lw.sparse_result_type(texel));
             let result = self.add(

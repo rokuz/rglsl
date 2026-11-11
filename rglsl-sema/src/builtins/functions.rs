@@ -325,6 +325,36 @@ int64_t atomicExchange(inout int64_t, int64_t, int, int, int)
 int64_t atomicCompSwap(inout int64_t, int64_t, int64_t, int, int, int, int, int)
 int64_t atomicLoad(int64_t, int, int, int)
 void atomicStore(out int64_t, int64_t, int, int, int)
+float16_t atomicAdd(inout float16_t, float16_t)
+float16_t atomicAdd(inout float16_t, float16_t, int, int, int)
+float atomicAdd(inout float, float)
+float atomicAdd(inout float, float, int, int, int)
+double atomicAdd(inout double, double)
+double atomicAdd(inout double, double, int, int, int)
+float16_t atomicMin(inout float16_t, float16_t)
+float16_t atomicMin(inout float16_t, float16_t, int, int, int)
+float atomicMin(inout float, float)
+float atomicMin(inout float, float, int, int, int)
+double atomicMin(inout double, double)
+double atomicMin(inout double, double, int, int, int)
+float16_t atomicMax(inout float16_t, float16_t)
+float16_t atomicMax(inout float16_t, float16_t, int, int, int)
+float atomicMax(inout float, float)
+float atomicMax(inout float, float, int, int, int)
+double atomicMax(inout double, double)
+double atomicMax(inout double, double, int, int, int)
+float16_t atomicExchange(inout float16_t, float16_t)
+float16_t atomicExchange(inout float16_t, float16_t, int, int, int)
+float atomicExchange(inout float, float)
+float atomicExchange(inout float, float, int, int, int)
+double atomicExchange(inout double, double)
+double atomicExchange(inout double, double, int, int, int)
+float16_t atomicLoad(float16_t, int, int, int)
+float atomicLoad(float, int, int, int)
+double atomicLoad(double, int, int, int)
+void atomicStore(out float16_t, float16_t, int, int, int)
+void atomicStore(out float, float, int, int, int)
+void atomicStore(out double, double, int, int, int)
 ";
 
 const DERIVATIVES: &str = "
@@ -365,6 +395,56 @@ void memoryBarrierImage()
 const SCOPED_BARRIERS: &str = "
 void controlBarrier(int, int, int, int)
 void memoryBarrier(int, int, int)
+";
+
+const SPLIT_BARRIERS: &str = "
+void controlBarrierArrive(int, int, int, int)
+void controlBarrierWait(int, int, int, int)
+";
+
+const COMPUTE_SPLIT_BARRIERS: &str = "
+void controlBarrierArrive()
+void controlBarrierWait()
+";
+
+const FRAGMENT_ONLY: &str = "
+void beginInvocationInterlockARB()
+void endInvocationInterlockARB()
+bool helperInvocationEXT()
+uint stencilAttachmentReadEXT()
+uint stencilAttachmentReadEXT(int)
+float depthAttachmentReadEXT()
+float depthAttachmentReadEXT(int)
+vec4 colorAttachmentReadEXT(attachmentEXT)
+vec4 colorAttachmentReadEXT(attachmentEXT, int)
+ivec4 colorAttachmentReadEXT(iattachmentEXT)
+ivec4 colorAttachmentReadEXT(iattachmentEXT, int)
+uvec4 colorAttachmentReadEXT(uattachmentEXT)
+uvec4 colorAttachmentReadEXT(uattachmentEXT, int)
+";
+
+const FRAGMENT_MASK: &str = "
+uint fragmentMaskFetchAMD(sampler2DMS, ivec2)
+uint fragmentMaskFetchAMD(isampler2DMS, ivec2)
+uint fragmentMaskFetchAMD(usampler2DMS, ivec2)
+uint fragmentMaskFetchAMD(sampler2DMSArray, ivec3)
+uint fragmentMaskFetchAMD(isampler2DMSArray, ivec3)
+uint fragmentMaskFetchAMD(usampler2DMSArray, ivec3)
+vec4 fragmentFetchAMD(sampler2DMS, ivec2, uint)
+ivec4 fragmentFetchAMD(isampler2DMS, ivec2, uint)
+uvec4 fragmentFetchAMD(usampler2DMS, ivec2, uint)
+vec4 fragmentFetchAMD(sampler2DMSArray, ivec3, uint)
+ivec4 fragmentFetchAMD(isampler2DMSArray, ivec3, uint)
+uvec4 fragmentFetchAMD(usampler2DMSArray, ivec3, uint)
+";
+
+const FRAGMENT_MASK_SUBPASS: &str = "
+uint fragmentMaskFetchAMD(subpassInputMS)
+uint fragmentMaskFetchAMD(isubpassInputMS)
+uint fragmentMaskFetchAMD(usubpassInputMS)
+vec4 fragmentFetchAMD(subpassInputMS, uint)
+ivec4 fragmentFetchAMD(isubpassInputMS, uint)
+uvec4 fragmentFetchAMD(usubpassInputMS, uint)
 ";
 
 const COMPUTE_MEMORY_BARRIERS: &str = "
@@ -601,6 +681,11 @@ pub(super) const SECTIONS: &[Section] = &[
     Section::new(BARRIER).in_stages(TESS_CONTROL | COMPUTE | MESH | TASK),
     Section::new(MEMORY_BARRIERS).in_stages(ALL_STAGES),
     Section::new(SCOPED_BARRIERS),
+    Section::new(SPLIT_BARRIERS),
+    Section::new(COMPUTE_SPLIT_BARRIERS).in_stages(COMPUTE),
+    Section::new(FRAGMENT_ONLY).in_stages(FRAGMENT),
+    Section::new(FRAGMENT_MASK),
+    Section::new(FRAGMENT_MASK_SUBPASS).in_stages(FRAGMENT),
     Section::new(COMPUTE_MEMORY_BARRIERS).in_stages(COMPUTE | MESH | TASK),
     Section::new(MESH_SHADER).in_stages(MESH),
     Section::new(TASK_SHADER).in_stages(TASK),

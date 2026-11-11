@@ -5,6 +5,7 @@ mod cooperative_matrix2;
 mod declaration;
 mod expression;
 mod extension;
+mod fragment;
 mod heap;
 mod layout_qualifiers;
 mod memory;
@@ -120,6 +121,7 @@ pub struct Analysis {
     pub subgroup_uniform_control_flow: bool,
     pub maximally_reconverges: bool,
     pub derivative_group: Option<(DerivativeGroup, bool)>,
+    pub fragment: FragmentLayout,
     pub spirv_requirements: SpirvRequirements,
     pub spirv_execution_modes: SpirvExecutionModes,
     pub no_contraction: BTreeSet<NodeId>,
@@ -174,6 +176,7 @@ fn symbol_type(symbols: &[Symbol], types: &TypeRegistry, id: SymbolId) -> Option
 }
 
 pub use declaration::is_null_initializer;
+pub use fragment::{FragmentLayout, Interlock};
 pub use ray::is_shader_record;
 
 pub fn analyze(unit: &TranslationUnit, options: &Options) -> Analysis {
@@ -353,6 +356,8 @@ pub(crate) struct Analyzer<'a> {
     pub subgroup_uniform_control_flow: bool,
     pub maximally_reconverges: bool,
     pub stage_layout: stage::StageLayout,
+    pub fragment_layout: FragmentLayout,
+    pub tile_image_locations: Vec<(u32, u32)>,
     pub spirv_requirements: SpirvRequirements,
     pub spirv_execution_modes: SpirvExecutionModes,
 }
@@ -428,6 +433,8 @@ impl<'a> Analyzer<'a> {
             subgroup_uniform_control_flow: false,
             maximally_reconverges: false,
             stage_layout: stage::StageLayout::default(),
+            fragment_layout: FragmentLayout::default(),
+            tile_image_locations: Vec::new(),
             spirv_requirements: SpirvRequirements::default(),
             spirv_execution_modes: SpirvExecutionModes::new(),
         }
@@ -621,6 +628,7 @@ impl<'a> Analyzer<'a> {
             subgroup_uniform_control_flow: self.subgroup_uniform_control_flow,
             maximally_reconverges: self.maximally_reconverges,
             derivative_group: self.derivative_group,
+            fragment: self.fragment_layout,
             spirv_requirements: self.spirv_requirements,
             spirv_execution_modes: self.spirv_execution_modes,
             no_contraction: BTreeSet::new(),

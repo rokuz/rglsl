@@ -647,10 +647,14 @@ impl super::Validator {
                     };
                 match scalar {
                     Some(
-                        scalar @ crate::Scalar {
+                        scalar @ (crate::Scalar {
                             kind: crate::ScalarKind::Sint | crate::ScalarKind::Uint,
                             width: 4 | 8,
-                        },
+                        }
+                        | crate::Scalar {
+                            kind: crate::ScalarKind::Float,
+                            width: 2 | 4 | 8,
+                        }),
                     ) => Ok(scalar),
                     _ => Err(AtomicError::InvalidPointer(pointer)
                         .with_span_handle(pointer, context.expressions)
@@ -663,7 +667,8 @@ impl super::Validator {
                     crate::StorageFormat::R32Sint
                     | crate::StorageFormat::R32Uint
                     | crate::StorageFormat::R32Float
-                    | crate::StorageFormat::R64Uint => Ok(format.into()),
+                    | crate::StorageFormat::R64Uint
+                    | crate::StorageFormat::R64Sint => Ok(format.into()),
                     _ => Err(FunctionError::InvalidImageAtomic(
                         ExpressionError::InvalidImageFormat(format),
                     )
@@ -712,14 +717,42 @@ impl super::Validator {
     ) -> Result<(), WithSpan<FunctionError>> {
         // The `pointer` operand must be a pointer to an atomic value.
         let pointer_inner = context.resolve_type_inner(pointer, &self.valid_expression_set)?;
+        let plain_float = |inner: &crate::TypeInner| {
+            matches!(
+                *inner,
+                crate::TypeInner::Pointer { base, .. }
+                    if matches!(
+                        context.types[base].inner,
+                        crate::TypeInner::Scalar(crate::Scalar {
+                            kind: crate::ScalarKind::Float,
+                            width: 2 | 4 | 8,
+                        })
+                    )
+            ) || matches!(
+                *inner,
+                crate::TypeInner::ValuePointer {
+                    size: None,
+                    scalar: crate::Scalar {
+                        kind: crate::ScalarKind::Float,
+                        width: 2 | 4 | 8,
+                    },
+                    ..
+                }
+            )
+        };
+        let plain_float = plain_float(pointer_inner);
         let (pointer_scalar, pointer_space) = match *pointer_inner {
             crate::TypeInner::Pointer { base, space } => match context.types[base].inner {
                 crate::TypeInner::Atomic(scalar) => (scalar, space),
                 crate::TypeInner::Scalar(
-                    scalar @ crate::Scalar {
+                    scalar @ (crate::Scalar {
                         kind: crate::ScalarKind::Sint | crate::ScalarKind::Uint,
                         width: 4 | 8,
-                    },
+                    }
+                    | crate::Scalar {
+                        kind: crate::ScalarKind::Float,
+                        width: 2 | 4 | 8,
+                    }),
                 ) => (scalar, space),
                 ref other => {
                     log::error!("Atomic pointer to type {other:?}");
@@ -731,10 +764,14 @@ impl super::Validator {
             crate::TypeInner::ValuePointer {
                 size: None,
                 scalar:
-                    scalar @ crate::Scalar {
+                    scalar @ (crate::Scalar {
                         kind: crate::ScalarKind::Sint | crate::ScalarKind::Uint,
                         width: 4 | 8,
-                    },
+                    }
+                    | crate::Scalar {
+                        kind: crate::ScalarKind::Float,
+                        width: 2 | 4 | 8,
+                    }),
                 space,
             } => (scalar, space),
             ref other => {
@@ -761,6 +798,19 @@ impl super::Validator {
         }
 
         match pointer_scalar {
+            _ if plain_float => {
+                if !matches!(
+                    *fun,
+                    crate::AtomicFunction::Add
+                        | crate::AtomicFunction::Min
+                        | crate::AtomicFunction::Max
+                        | crate::AtomicFunction::Exchange { compare: None }
+                ) {
+                    return Err(AtomicError::InvalidOperator(*fun)
+                        .with_span_handle(value, context.expressions)
+                        .into_other());
+                }
+            }
             // Check for the special restrictions on 64-bit atomic operations.
             //
             // We don't need to consider other widths here: this function has already checked
@@ -1231,9 +1281,12 @@ impl super::Validator {
                             | Ex::CooperativeVectorLoad { .. }
                             | Ex::CooperativeVectorMatMul { .. }
                             | Ex::TensorRead { .. }
-                            | Ex::TensorQuerySize { .. } => {
-                                self.emit_expression(handle, context)?
-                            }
+                            | Ex::TensorQuerySize { .. }
+                            | Ex::IsHelperInvocation
+                            | Ex::AttachmentRead { .. }
+                            | Ex::InterpolateAt { .. }
+                            | Ex::FragmentFetch { .. }
+                            | Ex::ImageFootprint { .. } => self.emit_expression(handle, context)?,
                             Ex::CallResult(_)
                             | Ex::AtomicResult { .. }
                             | Ex::WorkGroupUniformLoadResult { .. }
@@ -1441,9 +1494,10 @@ impl super::Validator {
                         }
                     }
                 }
-                S::Kill => {
+                S::Kill | S::Demote | S::BeginInvocationInterlock | S::EndInvocationInterlock => {
                     stages &= super::ShaderStages::FRAGMENT;
                 }
+                S::SplitBarrier { .. } => {}
                 S::EmitVertex { .. } | S::EndPrimitive { .. } => {
                     stages &= super::ShaderStages::GEOMETRY;
                 }
@@ -1714,12 +1768,22 @@ impl super::Validator {
                 } => {
                     //Note: this code uses a lot of `FunctionError::InvalidImageStore`,
                     // and could probably be refactored.
-                    let global_var;
+                    let global_ty;
                     let image_ty;
                     match *context.get_expression(image) {
                         crate::Expression::GlobalVariable(var_handle) => {
-                            global_var = &context.global_vars[var_handle];
-                            image_ty = global_var.ty;
+                            global_ty = context.global_vars[var_handle].ty;
+                            image_ty = global_ty;
+                        }
+                        crate::Expression::FunctionArgument(_) => {
+                            let Some(ty) = context.info[image].ty.handle() else {
+                                return Err(FunctionError::InvalidImageStore(
+                                    ExpressionError::ExpectedGlobalVariable,
+                                )
+                                .with_span_handle(image, context.expressions));
+                            };
+                            global_ty = ty;
+                            image_ty = ty;
                         }
                         // The `image` operand is indexing into a binding array,
                         // so punch through the `Access`* expression and look at
@@ -1734,15 +1798,15 @@ impl super::Validator {
                                 )
                                 .with_span_handle(image, context.expressions));
                             };
-                            global_var = &context.global_vars[var_handle];
+                            global_ty = context.global_vars[var_handle].ty;
 
                             // The global variable must be a binding array.
-                            let Ti::BindingArray { base, .. } = context.types[global_var.ty].inner
+                            let Ti::BindingArray { base, .. } = context.types[global_ty].inner
                             else {
                                 return Err(FunctionError::InvalidImageStore(
-                                    ExpressionError::ExpectedBindingArrayType(global_var.ty),
+                                    ExpressionError::ExpectedBindingArrayType(global_ty),
                                 )
-                                .with_span_handle(global_var.ty, context.types));
+                                .with_span_handle(global_ty, context.types));
                             };
 
                             image_ty = base;
@@ -1754,7 +1818,7 @@ impl super::Validator {
                                 )
                                 .with_span_handle(image, context.expressions));
                             };
-                            global_var = &context.global_vars[global];
+                            global_ty = context.global_vars[global].ty;
                             image_ty = ty;
                         }
                     };
@@ -1767,10 +1831,10 @@ impl super::Validator {
                     } = context.types[image_ty].inner
                     else {
                         return Err(FunctionError::InvalidImageStore(
-                            ExpressionError::ExpectedImageType(global_var.ty),
+                            ExpressionError::ExpectedImageType(global_ty),
                         )
                         .with_span()
-                        .with_handle(global_var.ty, context.types)
+                        .with_handle(global_ty, context.types)
                         .with_handle(image, context.expressions));
                     };
 
@@ -1918,7 +1982,7 @@ impl super::Validator {
                         .with_span_handle(image, context.expressions));
                     }
                     let supported = match format {
-                        crate::StorageFormat::R64Uint => {
+                        crate::StorageFormat::R64Uint | crate::StorageFormat::R64Sint => {
                             if !self
                                 .capabilities
                                 .intersects(super::Capabilities::TEXTURE_INT64_ATOMIC)
@@ -1942,9 +2006,13 @@ impl super::Validator {
                             }
                             !matches!(fun, crate::AtomicFunction::Subtract)
                         }
-                        crate::StorageFormat::R32Float => {
-                            matches!(fun, crate::AtomicFunction::Exchange { compare: None })
-                        }
+                        crate::StorageFormat::R32Float => matches!(
+                            fun,
+                            crate::AtomicFunction::Exchange { compare: None }
+                                | crate::AtomicFunction::Add
+                                | crate::AtomicFunction::Min
+                                | crate::AtomicFunction::Max
+                        ),
                         _ => {
                             return Err(FunctionError::InvalidImageAtomic(
                                 ExpressionError::InvalidImageFormat(format),

@@ -59,6 +59,7 @@ impl From<super::StorageFormat> for super::Scalar {
             Sf::Rgb10a2Unorm => Sk::Float,
             Sf::Rg11b10Ufloat => Sk::Float,
             Sf::R64Uint => Sk::Uint,
+            Sf::R64Sint => Sk::Sint,
             Sf::Rg32Uint => Sk::Uint,
             Sf::Rg32Sint => Sk::Sint,
             Sf::Rg32Float => Sk::Float,
@@ -77,7 +78,7 @@ impl From<super::StorageFormat> for super::Scalar {
             Sf::Unknown(scalar) => scalar.kind,
         };
         let width = match format {
-            Sf::R64Uint => 8,
+            Sf::R64Uint | Sf::R64Sint => 8,
             Sf::Unknown(scalar) => scalar.width,
             _ => 4,
         };
@@ -559,9 +560,26 @@ impl super::ImageClass {
         self.is_mipmapped()
             && !matches!(
                 dim,
-                crate::ImageDimension::Buffer | crate::ImageDimension::Subpass
+                crate::ImageDimension::Buffer
+                    | crate::ImageDimension::Subpass
+                    | crate::ImageDimension::TileImageData
             )
     }
+}
+
+pub fn is_tile_image(module: &crate::Module, global: &crate::GlobalVariable) -> bool {
+    let ty = match module.types[global.ty].inner {
+        crate::TypeInner::Array { base, .. } => base,
+        _ => global.ty,
+    };
+    global.space == crate::AddressSpace::Handle
+        && matches!(
+            module.types[ty].inner,
+            crate::TypeInner::Image {
+                dim: crate::ImageDimension::TileImageData,
+                ..
+            }
+        )
 }
 
 impl crate::Module {

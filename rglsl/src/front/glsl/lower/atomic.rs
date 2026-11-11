@@ -398,6 +398,36 @@ impl FunctionLowerer<'_, '_> {
                     semantics: self.semantics_arguments(storage, semantics, at)?,
                 }
             }
+            ("controlBarrierArrive" | "controlBarrierWait", arguments) => {
+                let phase = if name == "controlBarrierArrive" {
+                    crate::BarrierPhase::Arrive
+                } else {
+                    crate::BarrierPhase::Wait
+                };
+                let (execution, memory, semantics) = match *arguments {
+                    [] => (
+                        MemoryScope::Workgroup,
+                        MemoryScope::Workgroup,
+                        MemorySemantics::WORKGROUP_MEMORY
+                            | match phase {
+                                crate::BarrierPhase::Arrive => MemorySemantics::RELEASE,
+                                crate::BarrierPhase::Wait => MemorySemantics::ACQUIRE,
+                            },
+                    ),
+                    [ref execution, ref memory, ref storage, ref semantics] => (
+                        self.scope_argument(execution, at)?,
+                        self.scope_argument(memory, at)?,
+                        self.semantics_arguments(storage, semantics, at)?,
+                    ),
+                    _ => return Err(internal(at)),
+                };
+                Statement::SplitBarrier {
+                    phase,
+                    execution,
+                    memory,
+                    semantics,
+                }
+            }
             ("controlBarrier", &[ref execution, ref memory, ref storage, ref semantics]) => {
                 Statement::ScopedBarrier {
                     execution: Some(self.scope_argument(execution, at)?),

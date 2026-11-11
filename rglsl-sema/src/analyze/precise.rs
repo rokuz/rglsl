@@ -491,7 +491,9 @@ impl<'a> Precise<'a> {
                     FunctionIdentifier::Expression(ref callee) => {
                         self.collect(callee);
                     }
-                    FunctionIdentifier::Constructor(_) | FunctionIdentifier::Function(_) => {}
+                    FunctionIdentifier::Constructor(_)
+                    | FunctionIdentifier::Cast(_)
+                    | FunctionIdentifier::Function(_) => {}
                 }
                 for argument in &call.arguments {
                     self.collect(argument);

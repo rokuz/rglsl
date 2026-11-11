@@ -632,6 +632,7 @@ impl<I: Iterator<Item = u32>> super::Frontend<I> {
             name: ep.name,
             stage: ep.stage,
             early_depth_test: ep.early_depth_test,
+            fragment_modes: crate::FragmentModes::default(),
             workgroup_size: ep.workgroup_size,
             workgroup_size_overrides: None,
             function,

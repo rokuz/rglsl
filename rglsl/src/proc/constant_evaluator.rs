@@ -1417,6 +1417,15 @@ impl<'a> ConstantEvaluator<'a> {
                 Err(ConstantEvaluatorError::RayQueryExpression)
             }
             Expression::SubgroupBallotResult => Err(ConstantEvaluatorError::SubgroupExpression),
+            Expression::AttachmentRead { .. }
+            | Expression::FragmentFetch { .. }
+            | Expression::ImageFootprint { .. } => Err(ConstantEvaluatorError::ImageExpression),
+            Expression::InterpolateAt { .. } => Err(ConstantEvaluatorError::NotImplemented(
+                String::from("interpolation functions"),
+            )),
+            Expression::IsHelperInvocation => Err(ConstantEvaluatorError::NotImplemented(
+                String::from("helper invocation query"),
+            )),
             Expression::SubgroupOperationResult { .. } => {
                 Err(ConstantEvaluatorError::SubgroupExpression)
             }

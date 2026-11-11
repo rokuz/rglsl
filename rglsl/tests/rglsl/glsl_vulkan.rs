@@ -374,13 +374,6 @@ fn gl_names_are_reserved() {
         (
             ShaderStage::Fragment,
             "#version 450
-            #extension GL_ARB_shader_stencil_export : enable
-            out int gl_FragStencilRefARB;
-            void main() { gl_FragStencilRefARB = 1; }",
-        ),
-        (
-            ShaderStage::Fragment,
-            "#version 450
             void main() { float gl_foo = 1.0; }",
         ),
     ] {
@@ -873,15 +866,22 @@ fn booleans_in_blocks() {
     assert_eq!(offsets("B"), [0, 8]);
     assert_eq!(offsets("Anon"), [0, 8]);
 
-    let error = parse(
+    let module = compile_valid(
         ShaderStage::Fragment,
         "#version 450
-        struct S { bool flag; };
+        struct S { bool flag; bvec2 pair; bool many[2]; };
         layout(binding = 0) uniform U { S s; } u;
-        void main() {}",
-    )
-    .unwrap_err();
-    assert!(error.contains("booleans inside arrays"), "{error}");
+        layout(binding = 1) buffer B { S s; } b;
+        layout(location = 0) out vec4 o;
+        void main() {
+            S local = u.s;
+            b.s = local;
+            b.s.flag = u.s.many[1];
+            o = vec4(local.flag, b.s.pair, u.s.many[0]);
+        }",
+    );
+    assert!(!instructions(&module, Op::INotEqual).is_empty());
+    assert!(!instructions(&module, Op::Select).is_empty());
 }
 
 #[test]
@@ -1519,9 +1519,27 @@ fn post_depth_coverage_is_not_dropped() {
         layout(early_fragment_tests) in;
         layout(post_depth_coverage) in;
         void main() {}",
-    )
-    .unwrap_err();
-    assert!(error.contains("post_depth_coverage"), "{error}");
+    );
+    assert!(error.is_ok(), "{error:?}");
+
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+        #extension GL_ARB_post_depth_coverage : enable
+        layout(post_depth_coverage) in;
+        layout(location = 0) out int o;
+        void main() { o = gl_SampleMaskIn[0]; }",
+    );
+    let modes: Vec<spirv::ExecutionMode> = execution_modes(&module)
+        .into_iter()
+        .map(|(mode, _)| mode)
+        .collect();
+    assert!(modes.contains(&spirv::ExecutionMode::EarlyFragmentTests));
+    assert!(modes.contains(&spirv::ExecutionMode::PostDepthCoverage));
+    assert!(has_capability(
+        &module,
+        spirv::Capability::SampleMaskPostDepthCoverage
+    ));
 }
 
 fn block_variable_decorations(module: &dr::Module, block: &str) -> Vec<(Decoration, Vec<u32>)> {
@@ -8154,6 +8172,449 @@ void main() {
         .map(|(_, operands)| operands.len())
         .collect();
     assert_eq!(records, [4, 5]);
+}
+
+fn valid_words(stage: ShaderStage, source: &str, lang_version: (u8, u8), env: &str) -> Vec<u32> {
+    let words = compile_words(stage, source, lang_version);
+    crate::stage_io::spirv_val_in(&words, &["--target-env", env]);
+    words
+}
+
+fn opcode_count(words: &[u32], op: Op) -> usize {
+    raw_instructions(words)
+        .iter()
+        .filter(|(opcode, _)| *opcode == op as u32)
+        .count()
+}
+
+fn declares_capability(words: &[u32], capability: spirv::Capability) -> bool {
+    raw_instructions(words).iter().any(|(opcode, operands)| {
+        *opcode == Op::Capability as u32 && operands.first() == Some(&(capability as u32))
+    })
+}
+
+fn built_ins(words: &[u32]) -> Vec<u32> {
+    raw_instructions(words)
+        .iter()
+        .filter(|(opcode, operands)| {
+            *opcode == Op::Decorate as u32 && operands.get(1) == Some(&(Decoration::BuiltIn as u32))
+        })
+        .filter_map(|(_, operands)| operands.get(2).copied())
+        .collect()
+}
+
+#[test]
+fn fragment_built_ins_of_extensions() {
+    let words = valid_words(
+        ShaderStage::Fragment,
+        "#version 450
+        #extension GL_EXT_fragment_shading_rate : enable
+        #extension GL_EXT_fragment_invocation_density : enable
+        #extension GL_EXT_device_group : enable
+        #extension GL_NV_conservative_raster_underestimation : enable
+        #extension GL_ARB_shader_stencil_export : enable
+        layout(location = 0) out vec4 o;
+        out int gl_FragStencilRefARB;
+        void main() {
+            o = vec4(gl_ShadingRateEXT, gl_FragSizeEXT.x, gl_FragInvocationCountEXT, gl_DeviceIndex);
+            o.x += float(gl_FragFullyCoveredNV) + gl_SamplePosition.x;
+            gl_FragStencilRefARB = gl_ShadingRateFlag4VerticalPixelsEXT;
+        }",
+        (1, 3),
+        "vulkan1.1",
+    );
+    let found = built_ins(&words);
+    for built_in in [
+        spirv::BuiltIn::ShadingRateKHR,
+        spirv::BuiltIn::FragSizeEXT,
+        spirv::BuiltIn::FragInvocationCountEXT,
+        spirv::BuiltIn::DeviceIndex,
+        spirv::BuiltIn::FullyCoveredEXT,
+        spirv::BuiltIn::SamplePosition,
+        spirv::BuiltIn::FragStencilRefEXT,
+    ] {
+        assert!(found.contains(&(built_in as u32)), "{built_in:?}");
+    }
+    assert!(raw_instructions(&words).iter().any(|(opcode, operands)| {
+        *opcode == Op::ExecutionMode as u32
+            && operands.get(1) == Some(&(spirv::ExecutionMode::StencilRefReplacingEXT as u32))
+    }));
+
+    let error = parse(
+        ShaderStage::Fragment,
+        "#version 450
+        layout(location = 0) out vec2 o;
+        void main() { o = gl_FragSizeEXT; }",
+    )
+    .unwrap_err();
+    assert!(
+        error.contains("GL_EXT_fragment_invocation_density"),
+        "{error}"
+    );
+}
+
+#[test]
+fn draw_parameters_and_primitive_shading_rate() {
+    let words = valid_words(
+        ShaderStage::Vertex,
+        "#version 450
+        #extension GL_ARB_shader_draw_parameters : enable
+        #extension GL_EXT_fragment_shading_rate : enable
+        layout(location = 0) out vec3 p;
+        void main() {
+            p = vec3(gl_BaseVertexARB, gl_BaseInstanceARB, gl_DrawIDARB);
+            gl_PrimitiveShadingRateEXT = gl_ShadingRateFlag2VerticalPixelsEXT;
+        }",
+        (1, 0),
+        "vulkan1.0",
+    );
+    let found = built_ins(&words);
+    for built_in in [
+        spirv::BuiltIn::BaseVertex,
+        spirv::BuiltIn::BaseInstance,
+        spirv::BuiltIn::DrawIndex,
+        spirv::BuiltIn::PrimitiveShadingRateKHR,
+    ] {
+        assert!(found.contains(&(built_in as u32)), "{built_in:?}");
+    }
+    assert!(declares_capability(
+        &words,
+        spirv::Capability::DrawParameters
+    ));
+}
+
+#[test]
+fn demote_and_helper_invocation() {
+    let words = valid_words(
+        ShaderStage::Fragment,
+        "#version 450
+        #extension GL_EXT_demote_to_helper_invocation : enable
+        layout(location = 0) out vec4 o;
+        void main() {
+            if (gl_FragCoord.x > 2.0) demote;
+            o = vec4(helperInvocationEXT());
+        }",
+        (1, 0),
+        "vulkan1.0",
+    );
+    assert_eq!(opcode_count(&words, Op::DemoteToHelperInvocation), 1);
+    assert_eq!(opcode_count(&words, Op::IsHelperInvocationEXT), 1);
+
+    let error = parse(
+        ShaderStage::Fragment,
+        "#version 450
+        void main() { demote; }",
+    )
+    .unwrap_err();
+    assert!(
+        error.contains("GL_EXT_demote_to_helper_invocation"),
+        "{error}"
+    );
+}
+
+#[test]
+fn fragment_shader_interlock() {
+    let words = valid_words(
+        ShaderStage::Fragment,
+        "#version 450
+        #extension GL_ARB_fragment_shader_interlock : enable
+        layout(binding = 0, r32ui) coherent uniform uimage2D image;
+        void main() {
+            beginInvocationInterlockARB();
+            imageStore(image, ivec2(0), uvec4(1));
+            endInvocationInterlockARB();
+        }",
+        (1, 0),
+        "vulkan1.0",
+    );
+    assert_eq!(opcode_count(&words, Op::BeginInvocationInterlockEXT), 1);
+    assert_eq!(opcode_count(&words, Op::EndInvocationInterlockEXT), 1);
+    assert!(declares_capability(
+        &words,
+        spirv::Capability::FragmentShaderPixelInterlockEXT
+    ));
+
+    let error = parse(
+        ShaderStage::Fragment,
+        "#version 450
+        #extension GL_ARB_fragment_shader_interlock : enable
+        void main() { endInvocationInterlockARB(); beginInvocationInterlockARB(); }",
+    )
+    .unwrap_err();
+    assert!(error.contains("beginInvocationInterlockARB"), "{error}");
+}
+
+#[test]
+fn split_barriers() {
+    let words = valid_words(
+        ShaderStage::Compute,
+        "#version 450
+        #extension GL_KHR_memory_scope_semantics : require
+        #extension GL_EXT_split_barrier : require
+        layout(local_size_x = 4) in;
+        void main() {
+            controlBarrierArrive();
+            controlBarrierWait();
+            controlBarrierArrive(gl_ScopeWorkgroup, gl_ScopeWorkgroup, gl_StorageSemanticsShared, gl_SemanticsRelease);
+            controlBarrierWait(gl_ScopeWorkgroup, gl_ScopeWorkgroup, gl_StorageSemanticsShared, gl_SemanticsAcquire);
+        }",
+        (1, 3),
+        "vulkan1.1",
+    );
+    assert_eq!(opcode_count(&words, Op::ControlBarrierArriveINTEL), 2);
+    assert_eq!(opcode_count(&words, Op::ControlBarrierWaitINTEL), 2);
+
+    let error = parse(
+        ShaderStage::Compute,
+        "#version 450
+        #extension GL_KHR_memory_scope_semantics : require
+        #extension GL_EXT_split_barrier : require
+        void main() {
+            controlBarrierWait(gl_ScopeWorkgroup, gl_ScopeWorkgroup, gl_StorageSemanticsShared, gl_SemanticsRelease);
+        }",
+    )
+    .unwrap_err();
+    assert!(error.contains("gl_SemanticsAcquire"), "{error}");
+}
+
+#[test]
+fn float_atomics() {
+    let words = valid_words(
+        ShaderStage::Compute,
+        "#version 450
+        #extension GL_EXT_shader_atomic_float : enable
+        #extension GL_EXT_shader_atomic_float2 : enable
+        layout(local_size_x = 4) in;
+        layout(binding = 0) buffer B { float f; double d; } b;
+        layout(binding = 1, r32f) uniform image2D image;
+        shared float s;
+        void main() {
+            float r = atomicAdd(b.f, 1.0) + atomicMin(s, 2.0) + atomicExchange(b.f, 3.0);
+            r += imageAtomicAdd(image, ivec2(0), 1.0) + imageAtomicMax(image, ivec2(1), r);
+            b.d = atomicMax(b.d, double(r));
+        }",
+        (1, 3),
+        "vulkan1.1",
+    );
+    assert_eq!(opcode_count(&words, Op::AtomicFAddEXT), 2);
+    assert_eq!(opcode_count(&words, Op::AtomicFMinEXT), 1);
+    assert_eq!(opcode_count(&words, Op::AtomicFMaxEXT), 2);
+    assert!(declares_capability(
+        &words,
+        spirv::Capability::AtomicFloat32AddEXT
+    ));
+    assert!(declares_capability(
+        &words,
+        spirv::Capability::AtomicFloat64MinMaxEXT
+    ));
+
+    let error = parse(
+        ShaderStage::Compute,
+        "#version 450
+        layout(binding = 0) buffer B { float f; } b;
+        void main() { atomicAdd(b.f, 1.0); }",
+    )
+    .unwrap_err();
+    assert!(error.contains("GL_EXT_shader_atomic_float"), "{error}");
+}
+
+#[test]
+fn sixty_four_bit_images() {
+    let words = valid_words(
+        ShaderStage::Compute,
+        "#version 450
+        #extension GL_EXT_shader_explicit_arithmetic_types_int64 : enable
+        #extension GL_EXT_shader_image_int64 : enable
+        layout(local_size_x = 1) in;
+        layout(binding = 0, r64ui) uniform u64image2D u;
+        layout(binding = 1, r64i) uniform i64image1D i;
+        layout(binding = 2) buffer B { uint64_t x; int64_t y; } b;
+        void main() {
+            b.x = imageAtomicAdd(u, ivec2(0), b.x) + imageLoad(u, ivec2(1)).x;
+            b.y = imageAtomicMin(i, 0, b.y);
+            imageStore(i, 1, i64vec4(b.y));
+        }",
+        (1, 0),
+        "vulkan1.0",
+    );
+    assert!(declares_capability(
+        &words,
+        spirv::Capability::Int64ImageEXT
+    ));
+    assert!(declares_capability(&words, spirv::Capability::Int64Atomics));
+    assert_eq!(opcode_count(&words, Op::AtomicIAdd), 1);
+    assert_eq!(opcode_count(&words, Op::AtomicSMin), 1);
+}
+
+#[test]
+fn nontemporal_accesses() {
+    let words = valid_words(
+        ShaderStage::Fragment,
+        "#version 460
+        #pragma use_vulkan_memory_model
+        #extension GL_EXT_nontemporal_keyword : require
+        layout(binding = 0) buffer nontemporal B { int a; int b; };
+        layout(binding = 1, rgba8) uniform nontemporal image2D image;
+        layout(binding = 2) uniform writeonly nontemporal image2D other;
+        void accept(nontemporal writeonly image2D target) {
+            imageStore(target, ivec2(0), vec4(1.0));
+        }
+        void main() {
+            b = a;
+            imageStore(image, ivec2(0), imageLoad(image, ivec2(1)));
+            accept(other);
+        }",
+        (1, 6),
+        "vulkan1.3",
+    );
+    let nontemporal = raw_instructions(&words)
+        .iter()
+        .filter(|(opcode, operands)| {
+            (*opcode == Op::Load as u32 && operands.get(3).is_some_and(|mask| mask & 0x4 != 0))
+                || (*opcode == Op::Store as u32
+                    && operands.get(2).is_some_and(|mask| mask & 0x4 != 0))
+        })
+        .count();
+    assert_eq!(nontemporal, 2);
+
+    let error = parse(
+        ShaderStage::Fragment,
+        "#version 460
+        #extension GL_EXT_nontemporal_keyword : require
+        layout(binding = 1, rgba8) uniform nontemporal image2D image;
+        void reject(image2D target) {}
+        void main() { reject(image); }",
+    )
+    .unwrap_err();
+    assert!(error.contains("memory"), "{error}");
+}
+
+#[test]
+fn tile_image_reads() {
+    let words = valid_words(
+        ShaderStage::Fragment,
+        "#version 460
+        #extension GL_EXT_shader_tile_image : require
+        layout(non_coherent_color_attachment_readEXT) in;
+        layout(location = 1) tileImageEXT highp attachmentEXT color;
+        layout(location = 0) out vec4 o;
+        void main() {
+            o = colorAttachmentReadEXT(color) + vec4(depthAttachmentReadEXT(), stencilAttachmentReadEXT(), 0, 0);
+        }",
+        (1, 0),
+        "vulkan1.0",
+    );
+    assert_eq!(opcode_count(&words, Op::ColorAttachmentReadEXT), 1);
+    assert_eq!(opcode_count(&words, Op::DepthAttachmentReadEXT), 1);
+    assert_eq!(opcode_count(&words, Op::StencilAttachmentReadEXT), 1);
+    assert!(declares_capability(
+        &words,
+        spirv::Capability::TileImageColorReadAccessEXT
+    ));
+
+    let error = parse(
+        ShaderStage::Fragment,
+        "#version 460
+        #extension GL_EXT_shader_tile_image : require
+        layout(location = 0) tileImageEXT highp attachmentEXT a[2];
+        layout(location = 1) tileImageEXT highp attachmentEXT b;
+        void main() {}",
+    )
+    .unwrap_err();
+    assert!(error.contains("overlapping use of location"), "{error}");
+}
+
+#[test]
+fn interpolation_functions() {
+    let words = valid_words(
+        ShaderStage::Fragment,
+        "#version 450
+        layout(location = 0) in vec4 v;
+        layout(location = 1) flat in int sample_index;
+        layout(location = 0) out vec4 o;
+        void main() {
+            o = interpolateAtCentroid(v);
+            o.xy += interpolateAtSample(v.zx, sample_index);
+            o.x += interpolateAtOffset(v.y, vec2(0.25));
+        }",
+        (1, 0),
+        "vulkan1.0",
+    );
+    assert!(declares_capability(
+        &words,
+        spirv::Capability::InterpolationFunction
+    ));
+    assert_eq!(opcode_count(&words, Op::ExtInst), 3);
+}
+
+#[test]
+fn fragment_mask_fetches() {
+    let words = valid_words(
+        ShaderStage::Fragment,
+        "#version 450
+        #extension GL_AMD_shader_fragment_mask : enable
+        layout(binding = 0) uniform sampler2DMS image;
+        layout(location = 0) out vec4 o;
+        void main() {
+            uint mask = fragmentMaskFetchAMD(image, ivec2(0));
+            o = fragmentFetchAMD(image, ivec2(0), mask & 0xFu);
+        }",
+        (1, 0),
+        "vulkan1.0",
+    );
+    assert_eq!(opcode_count(&words, Op::FragmentMaskFetchAMD), 1);
+    assert_eq!(opcode_count(&words, Op::FragmentFetchAMD), 1);
+}
+
+#[test]
+fn explicit_type_casts() {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 460
+        #extension GL_NV_explicit_typecast : enable
+        layout(location = 0) in vec4 v;
+        layout(location = 0) out vec4 o;
+        void main() {
+            int i = (int) v.x;
+            o = (vec4) i + vec4((uvec2) v.xy, 0, 1);
+        }",
+    );
+    assert!(!instructions(&module, Op::ConvertFToS).is_empty());
+
+    let error = parse(
+        ShaderStage::Fragment,
+        "#version 460
+        #extension GL_NV_explicit_typecast : enable
+        struct S { uint u; };
+        void main() { S s = (S) 1u; }",
+    )
+    .unwrap_err();
+    assert!(error.contains("type cast has to be"), "{error}");
+}
+
+#[test]
+fn texture_footprints() {
+    let words = valid_words(
+        ShaderStage::Fragment,
+        "#version 450
+        #extension GL_NV_shader_texture_footprint : require
+        layout(binding = 0) uniform sampler2D image;
+        layout(location = 0) in vec2 p;
+        layout(location = 0) out uvec4 o;
+        void main() {
+            gl_TextureFootprint2DNV footprint;
+            bool single = textureFootprintClampNV(image, p, 0.5, 2, true, footprint);
+            o = uvec4(footprint.anchor, footprint.lod, uint(single));
+        }",
+        (1, 0),
+        "vulkan1.0",
+    );
+    assert_eq!(opcode_count(&words, Op::ImageSampleFootprintNV), 1);
+    assert!(declares_capability(
+        &words,
+        spirv::Capability::ImageFootprintNV
+    ));
+    assert!(declares_capability(&words, spirv::Capability::MinLod));
 }
 
 #[test]

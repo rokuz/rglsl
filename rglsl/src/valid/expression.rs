@@ -671,7 +671,9 @@ impl super::Validator {
                     crate::ImageDimension::D1 => 1,
                     crate::ImageDimension::D2 => 2,
                     crate::ImageDimension::D3 | crate::ImageDimension::Cube => 3,
-                    crate::ImageDimension::Buffer | crate::ImageDimension::Subpass => {
+                    crate::ImageDimension::Buffer
+                    | crate::ImageDimension::Subpass
+                    | crate::ImageDimension::TileImageData => {
                         return Err(ExpressionError::InvalidImageCoordinateType(dim, coordinate))
                     }
                 };
@@ -737,7 +739,8 @@ impl super::Validator {
                         crate::ImageDimension::D1
                         | crate::ImageDimension::D3
                         | crate::ImageDimension::Buffer
-                        | crate::ImageDimension::Subpass => {
+                        | crate::ImageDimension::Subpass
+                        | crate::ImageDimension::TileImageData => {
                             return Err(ExpressionError::InvalidGatherDimension(dim))
                         }
                     };
@@ -1068,7 +1071,8 @@ impl super::Validator {
                                     crate::ImageDimension::D2 => 2,
                                     crate::ImageDimension::D3 | crate::ImageDimension::Cube => 3,
                                     crate::ImageDimension::Buffer
-                                    | crate::ImageDimension::Subpass => 0,
+                                    | crate::ImageDimension::Subpass
+                                    | crate::ImageDimension::TileImageData => 0,
                                 };
                                 let coordinate_good = match resolver[coordinate] {
                                     Ti::Scalar(Sc::F32) => components == 1,
@@ -1782,6 +1786,144 @@ impl super::Validator {
                 }
             },
             E::SubgroupBallotResult | E::SubgroupOperationResult { .. } => self.subgroup_stages,
+            E::IsHelperInvocation => ShaderStages::FRAGMENT,
+            E::InterpolateAt { pointer, location } => {
+                if !matches!(
+                    resolver[pointer],
+                    Ti::Pointer {
+                        space: crate::AddressSpace::Input,
+                        ..
+                    } | Ti::ValuePointer {
+                        space: crate::AddressSpace::Input,
+                        ..
+                    }
+                ) {
+                    return Err(ExpressionError::InvalidPointerType(pointer));
+                }
+                match location {
+                    crate::InterpolationLocation::Centroid => {}
+                    crate::InterpolationLocation::Sample(sample) => {
+                        if !matches!(resolver[sample], Ti::Scalar(Sc::I32)) {
+                            return Err(ExpressionError::InvalidImageOtherIndexType(sample));
+                        }
+                    }
+                    crate::InterpolationLocation::Offset(offset) => {
+                        if !matches!(
+                            resolver[offset],
+                            Ti::Vector {
+                                size: crate::VectorSize::Bi,
+                                scalar: Sc::F32,
+                            }
+                        ) {
+                            return Err(ExpressionError::InvalidImageOtherIndexType(offset));
+                        }
+                    }
+                }
+                ShaderStages::FRAGMENT
+            }
+            E::ImageFootprint {
+                image,
+                coordinate,
+                granularity,
+                coarse,
+                level,
+                min_lod,
+                ty,
+            } => {
+                let dim = match resolver[image] {
+                    Ti::SampledImage {
+                        dim,
+                        class: crate::ImageClass::Sampled { multi: false, .. },
+                        arrayed: false,
+                    } => dim,
+                    _ => return Err(ExpressionError::ExpectedGlobalVariable),
+                };
+                if !resolver[coordinate].addresses_image(dim)
+                    && !matches!(
+                        resolver[coordinate],
+                        Ti::Vector {
+                            scalar: Sc::F32,
+                            ..
+                        }
+                    )
+                {
+                    return Err(ExpressionError::InvalidImageCoordinateType(dim, coordinate));
+                }
+                if !matches!(resolver[granularity], Ti::Scalar(Sc::I32)) {
+                    return Err(ExpressionError::InvalidImageOtherIndexType(granularity));
+                }
+                if !matches!(resolver[coarse], Ti::Scalar(Sc::BOOL)) {
+                    return Err(ExpressionError::InvalidImageOtherIndexType(coarse));
+                }
+                if let Some(min_lod) = min_lod {
+                    if !matches!(resolver[min_lod], Ti::Scalar(Sc::F32)) {
+                        return Err(ExpressionError::InvalidImageOtherIndexType(min_lod));
+                    }
+                }
+                if !matches!(module.types[ty].inner, Ti::Struct { .. }) {
+                    return Err(ExpressionError::InvalidSparseResultType(ty));
+                }
+                match level {
+                    crate::SampleLevel::Auto | crate::SampleLevel::Bias(_) => {
+                        ShaderStages::FRAGMENT
+                    }
+                    crate::SampleLevel::Zero
+                    | crate::SampleLevel::Exact(_)
+                    | crate::SampleLevel::Gradient { .. } => ShaderStages::all(),
+                }
+            }
+            E::FragmentFetch {
+                image,
+                coordinate,
+                fragment,
+            } => {
+                if !matches!(
+                    resolver[image],
+                    Ti::Image {
+                        class: crate::ImageClass::Sampled { multi: true, .. },
+                        ..
+                    } | Ti::SampledImage {
+                        class: crate::ImageClass::Sampled { multi: true, .. },
+                        ..
+                    }
+                ) {
+                    return Err(ExpressionError::ExpectedGlobalVariable);
+                }
+                if !matches!(
+                    resolver[coordinate],
+                    Ti::Vector {
+                        scalar: Sc::I32,
+                        ..
+                    }
+                ) {
+                    return Err(ExpressionError::InvalidImageOtherIndexType(coordinate));
+                }
+                if let Some(fragment) = fragment {
+                    if !matches!(resolver[fragment], Ti::Scalar(Sc::U32)) {
+                        return Err(ExpressionError::InvalidImageOtherIndexType(fragment));
+                    }
+                }
+                ShaderStages::all()
+            }
+            E::AttachmentRead { aspect, sample } => {
+                if let crate::AttachmentAspect::Color(image) = aspect {
+                    if !matches!(
+                        resolver[image],
+                        Ti::Image {
+                            dim: crate::ImageDimension::TileImageData,
+                            ..
+                        }
+                    ) {
+                        return Err(ExpressionError::ExpectedGlobalVariable);
+                    }
+                }
+                if let Some(sample) = sample {
+                    if !matches!(resolver[sample], Ti::Scalar(Sc::I32 | Sc::U32)) {
+                        return Err(ExpressionError::InvalidImageOtherIndexType(sample));
+                    }
+                }
+                ShaderStages::FRAGMENT
+            }
             E::SpirvInstructionResult { .. } => ShaderStages::all(),
             E::CooperativeLoad { ref data, .. } => {
                 if resolver[data.pointer]

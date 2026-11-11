@@ -776,6 +776,35 @@ impl VaryingContext<'_> {
                             )
                         }
                     }
+                    Bi::SamplePosition => (
+                        self.stage == St::Fragment && !self.output,
+                        *ty_inner
+                            == Ti::Vector {
+                                size: Vs::Bi,
+                                scalar: crate::Scalar::F32,
+                            },
+                    ),
+                    Bi::HelperInvocation | Bi::FullyCovered => (
+                        self.stage == St::Fragment && !self.output,
+                        *ty_inner == Ti::Scalar(crate::Scalar::BOOL),
+                    ),
+                    Bi::DeviceIndex => (!self.output, is_index_type(ty_inner)),
+                    Bi::ShadingRate | Bi::FragInvocationCount { .. } => (
+                        self.stage == St::Fragment && !self.output,
+                        *ty_inner == Ti::Scalar(crate::Scalar::I32),
+                    ),
+                    Bi::FragSize { .. } => (
+                        self.stage == St::Fragment && !self.output,
+                        *ty_inner
+                            == Ti::Vector {
+                                size: Vs::Bi,
+                                scalar: crate::Scalar::I32,
+                            },
+                    ),
+                    Bi::FragStencilRef => (
+                        self.stage == St::Fragment && self.output,
+                        *ty_inner == Ti::Scalar(crate::Scalar::I32),
+                    ),
                     Bi::PrimitiveShadingRate => (
                         pre_rasterization_output,
                         *ty_inner == Ti::Scalar(crate::Scalar::I32),
@@ -1731,7 +1760,16 @@ impl super::Validator {
             });
         }
 
-        if is_resource != var.binding.is_some() {
+        let located_tile_image = var.binding.is_none()
+            && matches!(var.io, Some(crate::Binding::Location { .. }))
+            && matches!(
+                gctx.types[var.ty].inner,
+                crate::TypeInner::Image {
+                    dim: crate::ImageDimension::TileImageData,
+                    ..
+                }
+            );
+        if is_resource != var.binding.is_some() && !located_tile_image {
             if self.flags.contains(super::ValidationFlags::BINDINGS) {
                 return Err(GlobalVariableError::InvalidBinding);
             }
@@ -1749,7 +1787,16 @@ impl super::Validator {
                 | crate::AddressSpace::IncomingCallableData
                 | crate::AddressSpace::HitObjectAttribute { .. }
         ) && matches!(var.io, None | Some(crate::Binding::Location { .. }));
-        if var.io.is_some() && !is_interface && !ray_location {
+        let tile_image = var.space == crate::AddressSpace::Handle
+            && matches!(var.io, Some(crate::Binding::Location { .. }))
+            && matches!(
+                gctx.types[var.ty].inner,
+                crate::TypeInner::Image {
+                    dim: crate::ImageDimension::TileImageData,
+                    ..
+                }
+            );
+        if var.io.is_some() && !is_interface && !ray_location && !tile_image {
             return Err(GlobalVariableError::InvalidBinding);
         }
         if var.space == crate::AddressSpace::Input && var.init.is_some() {

@@ -771,6 +771,58 @@ impl super::Validator {
             crate::Expression::ImageSparseResident { code } => {
                 handle.check_dep(code)?;
             }
+            crate::Expression::InterpolateAt { pointer, location } => {
+                handle.check_dep(pointer)?;
+                match location {
+                    crate::InterpolationLocation::Centroid => {}
+                    crate::InterpolationLocation::Sample(operand)
+                    | crate::InterpolationLocation::Offset(operand) => {
+                        handle.check_dep(operand)?;
+                    }
+                }
+            }
+            crate::Expression::ImageFootprint {
+                image,
+                coordinate,
+                granularity,
+                coarse,
+                level,
+                min_lod,
+                ty,
+            } => {
+                validate_type(ty)?;
+                handle
+                    .check_dep(image)?
+                    .check_dep(coordinate)?
+                    .check_dep(granularity)?
+                    .check_dep(coarse)?
+                    .check_dep_opt(min_lod)?;
+                match level {
+                    crate::SampleLevel::Auto | crate::SampleLevel::Zero => (),
+                    crate::SampleLevel::Exact(expr) | crate::SampleLevel::Bias(expr) => {
+                        handle.check_dep(expr)?;
+                    }
+                    crate::SampleLevel::Gradient { x, y } => {
+                        handle.check_dep(x)?.check_dep(y)?;
+                    }
+                };
+            }
+            crate::Expression::FragmentFetch {
+                image,
+                coordinate,
+                fragment,
+            } => {
+                handle
+                    .check_dep(image)?
+                    .check_dep(coordinate)?
+                    .check_dep_opt(fragment)?;
+            }
+            crate::Expression::AttachmentRead { aspect, sample } => {
+                if let crate::AttachmentAspect::Color(image) = aspect {
+                    handle.check_dep(image)?;
+                }
+                handle.check_dep_opt(sample)?;
+            }
             crate::Expression::Unary {
                 op: _,
                 expr: operand,
@@ -826,6 +878,7 @@ impl super::Validator {
             | crate::Expression::RayQueryProceedResult
             | crate::Expression::ReportIntersectionResult
             | crate::Expression::SubgroupBallotResult
+            | crate::Expression::IsHelperInvocation
             | crate::Expression::SubgroupOperationResult { .. }
             | crate::Expression::SpirvInstructionResult { .. }
             | crate::Expression::WorkGroupUniformLoadResult { .. } => (),
@@ -1278,6 +1331,10 @@ impl super::Validator {
             crate::Statement::Break
             | crate::Statement::Continue
             | crate::Statement::Kill
+            | crate::Statement::Demote
+            | crate::Statement::BeginInvocationInterlock
+            | crate::Statement::EndInvocationInterlock
+            | crate::Statement::SplitBarrier { .. }
             | crate::Statement::EmitVertex { .. }
             | crate::Statement::EndPrimitive { .. }
             | crate::Statement::ControlBarrier(_)

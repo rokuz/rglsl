@@ -554,6 +554,9 @@ impl Analyzer<'_> {
             if let Some(extension) = crate::builtins::view_extension(name) {
                 self.require_extension(expression.span, extension, name);
             }
+            if let Some(extension) = crate::builtins::variable_extension(name) {
+                self.require_extension(expression.span, extension, name);
+            }
             if let Some(extension) = super::qcom::variable_extension(name) {
                 self.require_extension(expression.span, extension, name);
             }
