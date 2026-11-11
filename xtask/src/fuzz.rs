@@ -358,6 +358,17 @@ fn differs(reference: &Run, variant: &Run) -> Option<Result<String, String>> {
     }
 }
 
+fn not_drawn(run: &Run) -> bool {
+    match run {
+        Run::Ran { plan, outputs } => crate::exec::untouched_draw(plan, outputs),
+        Run::Refused(_) | Run::Failed(_) => false,
+    }
+}
+
+fn drawn_only_by(drawn: &Run, other: &Run) -> bool {
+    matches!(drawn, Run::Ran { .. }) && !not_drawn(drawn) && not_drawn(other)
+}
+
 fn judge(outcomes: &[Outcome], runs: &BTreeMap<usize, RunPair>, index: usize) -> Judgement {
     let outcome = outcomes.get(index)?;
     if outcome.verdict != Verdict::Agree {
@@ -375,6 +386,9 @@ fn judge(outcomes: &[Outcome], runs: &BTreeMap<usize, RunPair>, index: usize) ->
                 format!("glslang's module fails on the driver too: {why}"),
             ),
             (Run::Failed(why), _) => (Verdict::ExecFailed, why.clone()),
+            (Run::Ran { .. }, Some(theirs)) if drawn_only_by(theirs, ours) => {
+                (Verdict::ExecFailed, crate::exec::NOT_DRAWN.to_string())
+            }
             (Run::Ran { .. }, Some(theirs)) => match differs(theirs, ours) {
                 Some(Ok(difference)) => (
                     Verdict::WrongResult,
@@ -388,6 +402,9 @@ fn judge(outcomes: &[Outcome], runs: &BTreeMap<usize, RunPair>, index: usize) ->
         match (reference_runs, ours) {
             (_, Run::Refused(why)) => (Verdict::ExecSkipped, why.clone()),
             (_, Run::Failed(why)) => (Verdict::ExecFailed, why.clone()),
+            (Some((reference_ours, _)), Run::Ran { .. }) if drawn_only_by(reference_ours, ours) => {
+                (Verdict::ExecFailed, crate::exec::NOT_DRAWN.to_string())
+            }
             (Some((reference_ours @ Run::Ran { .. }, reference_theirs)), Run::Ran { .. }) => {
                 let glslang_difference = match (reference_theirs, theirs) {
                     (Some(reference_theirs), Some(theirs)) => {
