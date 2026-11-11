@@ -291,7 +291,7 @@ impl<'a> Lowerer<'a> {
                 }
             }
         }
-        if let Some(main) = main {
+        if let (Some(main), false) = (main, self.object) {
             let mut reachable = BTreeSet::from([main]);
             let mut pending = Vec::from([main]);
             while let Some(caller) = pending.pop() {

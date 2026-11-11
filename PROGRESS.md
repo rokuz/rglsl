@@ -11,13 +11,13 @@ Shaders that glslang's own test suite (`gtests/*.FromFile.cpp`) compiles under V
 
 | Stage | Files | accept | diag | valid | interface | exec | link | crashes |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| **all** | 694 | 571 / 694 (82.3 %) | 124 / 143 (86.7 %) | 428 / 428 (100.0 %) | – | 104 / 104 (100.0 %) | – | 0 |
-| vert | 68 | 54 / 68 (79.4 %) | 8 / 9 (88.9 %) | 45 / 45 (100.0 %) | – | 25 / 25 (100.0 %) | – | 0 |
+| **all** | 694 | 572 / 694 (82.4 %) | 124 / 143 (86.7 %) | 428 / 428 (100.0 %) | – | 104 / 104 (100.0 %) | 12 / 12 (100.0 %) | 0 |
+| vert | 68 | 54 / 68 (79.4 %) | 8 / 9 (88.9 %) | 45 / 45 (100.0 %) | – | 25 / 25 (100.0 %) | 6 / 6 (100.0 %) | 0 |
 | tesc | 7 | 7 / 7 (100.0 %) | 1 / 1 (100.0 %) | 6 / 6 (100.0 %) | – | – | – | 0 |
 | tese | 4 | 4 / 4 (100.0 %) | – | 4 / 4 (100.0 %) | – | – | – | 0 |
 | geom | 4 | 4 / 4 (100.0 %) | – | 4 / 4 (100.0 %) | – | – | – | 0 |
-| frag | 207 | 161 / 207 (77.8 %) | 28 / 33 (84.8 %) | 128 / 128 (100.0 %) | – | 47 / 47 (100.0 %) | – | 0 |
-| comp | 296 | 265 / 296 (89.5 %) | 66 / 75 (88.0 %) | 190 / 190 (100.0 %) | – | 32 / 32 (100.0 %) | – | 0 |
+| frag | 207 | 161 / 207 (77.8 %) | 28 / 33 (84.8 %) | 128 / 128 (100.0 %) | – | 47 / 47 (100.0 %) | 4 / 4 (100.0 %) | 0 |
+| comp | 296 | 266 / 296 (89.9 %) | 66 / 75 (88.0 %) | 190 / 190 (100.0 %) | – | 32 / 32 (100.0 %) | 2 / 2 (100.0 %) | 0 |
 | mesh | 20 | 17 / 20 (85.0 %) | 4 / 4 (100.0 %) | 13 / 13 (100.0 %) | – | – | – | 0 |
 | task | 6 | 2 / 6 (33.3 %) | 1 / 1 (100.0 %) | 1 / 1 (100.0 %) | – | – | – | 0 |
 | rgen | 41 | 30 / 41 (73.2 %) | 6 / 10 (60.0 %) | 20 / 20 (100.0 %) | – | – | – | 0 |
@@ -31,7 +31,7 @@ Shaders that glslang's own test suite (`gtests/*.FromFile.cpp`) compiles under V
 
 | | we accept | we reject |
 |---|---:|---:|
-| glslang accepts | 428 | 123 |
+| glslang accepts | 429 | 122 |
 | glslang rejects | 0 | 143 |
 
 `exec` in detail:
@@ -56,14 +56,14 @@ Shaders that glslang's own test suite compiles under OpenGL semantics. Here glsl
 
 | Stage | Files | accept | diag | valid | interface | exec | link | crashes |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| **all** | 218 | 208 / 218 (95.4 %) | 103 / 145 (71.0 %) | 63 / 63 (100.0 %) | – | 32 / 32 (100.0 %) | – | 0 |
-| vert | 73 | 70 / 73 (95.9 %) | 22 / 35 (62.9 %) | 35 / 35 (100.0 %) | – | 19 / 19 (100.0 %) | – | 0 |
-| tesc | 6 | 6 / 6 (100.0 %) | 4 / 5 (80.0 %) | 1 / 1 (100.0 %) | – | – | – | 0 |
+| **all** | 218 | 214 / 218 (98.2 %) | 137 / 145 (94.5 %) | 69 / 69 (100.0 %) | – | 32 / 32 (100.0 %) | 15 / 15 (100.0 %) | 0 |
+| vert | 73 | 70 / 73 (95.9 %) | 32 / 35 (91.4 %) | 35 / 35 (100.0 %) | – | 19 / 19 (100.0 %) | 10 / 10 (100.0 %) | 0 |
+| tesc | 6 | 6 / 6 (100.0 %) | 5 / 5 (100.0 %) | 1 / 1 (100.0 %) | – | – | – | 0 |
 | tese | 2 | 2 / 2 (100.0 %) | 2 / 2 (100.0 %) | – | – | – | – | 0 |
-| geom | 11 | 11 / 11 (100.0 %) | 4 / 6 (66.7 %) | 5 / 5 (100.0 %) | – | – | – | 0 |
-| frag | 88 | 81 / 88 (92.0 %) | 40 / 62 (64.5 %) | 19 / 19 (100.0 %) | – | 12 / 12 (100.0 %) | – | 0 |
-| comp | 27 | 27 / 27 (100.0 %) | 20 / 24 (83.3 %) | 3 / 3 (100.0 %) | – | 1 / 1 (100.0 %) | – | 0 |
-| mesh | 4 | 4 / 4 (100.0 %) | 4 / 4 (100.0 %) | – | – | – | – | 0 |
+| geom | 11 | 11 / 11 (100.0 %) | 6 / 6 (100.0 %) | 5 / 5 (100.0 %) | – | – | 1 / 1 (100.0 %) | 0 |
+| frag | 88 | 87 / 88 (98.9 %) | 58 / 62 (93.5 %) | 25 / 25 (100.0 %) | – | 12 / 12 (100.0 %) | 2 / 2 (100.0 %) | 0 |
+| comp | 27 | 27 / 27 (100.0 %) | 23 / 24 (95.8 %) | 3 / 3 (100.0 %) | – | 1 / 1 (100.0 %) | – | 0 |
+| mesh | 4 | 4 / 4 (100.0 %) | 4 / 4 (100.0 %) | – | – | – | 2 / 2 (100.0 %) | 0 |
 | task | 1 | 1 / 1 (100.0 %) | 1 / 1 (100.0 %) | – | – | – | – | 0 |
 | rgen | 1 | 1 / 1 (100.0 %) | 1 / 1 (100.0 %) | – | – | – | – | 0 |
 | rint | 1 | 1 / 1 (100.0 %) | 1 / 1 (100.0 %) | – | – | – | – | 0 |
@@ -76,7 +76,7 @@ Shaders that glslang's own test suite compiles under OpenGL semantics. Here glsl
 
 | | we accept | we reject |
 |---|---:|---:|
-| glslang accepts | 63 | 10 |
+| glslang accepts | 69 | 4 |
 | glslang rejects | 0 | 145 |
 
 `exec` in detail:
@@ -91,8 +91,35 @@ Shaders that glslang's own test suite compiles under OpenGL semantics. Here glsl
 | skipped: capability or extension the harness cannot enable | 9 |
 | skipped: device feature missing on the driver | 6 |
 | skipped: resource or interface the harness cannot bind | 7 |
-| skipped: glslang's module is not valid SPIR-V | 7 |
+| skipped: glslang's module is not valid SPIR-V | 13 |
 | skipped: glslang's module fails on the driver | 1 |
+
+## rglsl link tests
+
+Our own tests of the rglsl-specific linking rules (`tests/link`): imports, libraries without a stage, duplicate and missing definitions, recursion through linking, merged globals, shared headers. Each test is a group of modules compiled and linked by rglsl; `accept` and `diag` compare with the test's `expect` file, and `exec` runs the linked program against glslang's build of the same program written as one file (`reference.*`).
+
+| Stage | Files | accept | diag | valid | interface | exec | link | crashes |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| **all** | 31 | 31 / 31 (100.0 %) | 18 / 18 (100.0 %) | 13 / 13 (100.0 %) | – | 9 / 9 (100.0 %) | 31 / 31 (100.0 %) | 0 |
+| vert | 2 | 2 / 2 (100.0 %) | – | 2 / 2 (100.0 %) | – | 2 / 2 (100.0 %) | 2 / 2 (100.0 %) | 0 |
+| frag | 23 | 23 / 23 (100.0 %) | 15 / 15 (100.0 %) | 8 / 8 (100.0 %) | – | 5 / 5 (100.0 %) | 23 / 23 (100.0 %) | 0 |
+| comp | 6 | 6 / 6 (100.0 %) | 3 / 3 (100.0 %) | 3 / 3 (100.0 %) | – | 2 / 2 (100.0 %) | 6 / 6 (100.0 %) | 0 |
+
+`accept` in detail:
+
+| | we accept | we reject |
+|---|---:|---:|
+| glslang accepts | 0 | 0 |
+| glslang rejects | 0 | 0 |
+
+`exec` in detail:
+
+| | shaders |
+|---|---:|
+| executed | 9 |
+| passed | 9 |
+| passed within the float tolerance | 0 |
+| failed | 0 |
 
 ## Modes
 
@@ -103,7 +130,7 @@ Shaders that glslang's own test suite compiles under OpenGL semantics. Here glsl
 | `valid` | we produce SPIR-V and `spirv-val` accepts it | shaders we accept |
 | `interface` | reflection matches glslang | not implemented yet (M9) |
 | `exec` | our module and glslang's, run by Amber on KosmicKrisp with the same inputs, write the same buffers, images and color attachments | shaders both accept and that we could execute; skips are counted apart |
-| `link` | our own linkage and `#include` tests | not implemented yet (M3) |
+| `link` | a group of files compiled and linked into one program gives glslang's verdict (accept, diag and valid as above, exec when the program has one stage); for our own tests, the verdict and the errors their `expect` file names | glslang's link tests (`gtests/Link.FromFile*.cpp`) in scope, and our tests in `tests/link` |
 
 `crashes` counts panics, aborts and timeouts of our compiler; each one is a bug.
 

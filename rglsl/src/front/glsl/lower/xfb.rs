@@ -39,6 +39,13 @@ pub(super) struct Widths {
 }
 
 impl Xfb {
+    pub(super) fn declared_strides(&self) -> Vec<(u32, u32)> {
+        self.strides
+            .iter()
+            .map(|(&buffer, &stride)| (buffer, stride))
+            .collect()
+    }
+
     pub(super) fn new(default_buffer: Option<u32>) -> Self {
         Self {
             default_buffer,

@@ -1,0 +1,7 @@
+#version 450
+layout(local_size_x = 4) in;
+void store(uint index);
+void main()
+{
+    store(gl_LocalInvocationIndex);
+}

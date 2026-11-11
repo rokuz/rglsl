@@ -100,6 +100,7 @@ pub mod error;
 pub mod front;
 pub mod ir;
 mod non_max_u32;
+pub mod object;
 pub mod proc;
 mod span;
 pub mod valid;

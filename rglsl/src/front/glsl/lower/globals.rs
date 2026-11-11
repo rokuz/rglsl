@@ -338,15 +338,22 @@ impl<'a> Lowerer<'a> {
             TypeKind::Block(id) => self.analysis.types.block(id),
             _ => None,
         };
-        match block {
-            Some(block) => {
+        match (block, variable.ty.kind) {
+            (Some(block), TypeKind::Block(id)) => {
                 let mut next = location_of(&block.qualifiers);
-                for member in &block.members {
-                    let count = match member.ty.element_type() {
+                for (index, member) in (0_u32..).zip(&block.members) {
+                    let mut member_ty = member.ty.clone();
+                    if member_ty.outer_size() == Some(GlslArraySize::Unsized) {
+                        let size = self.member_sizes.get(&(id, index)).copied().unwrap_or(1);
+                        if let Some(first) = member_ty.array.first_mut() {
+                            *first = GlslArraySize::Sized(size.max(1));
+                        }
+                    }
+                    let count = match member_ty.element_type() {
                         Some(element) if member.qualifiers.per_view => {
                             self.glsl_location_count(&element)
                         }
-                        _ => self.glsl_location_count(&member.ty),
+                        _ => self.glsl_location_count(&member_ty),
                     };
                     let start = location_of(&member.qualifiers).or(next);
                     if let Some(start) = start {
@@ -355,7 +362,7 @@ impl<'a> Lowerer<'a> {
                     next = start.map(|start| start.saturating_add(count));
                 }
             }
-            None => {
+            _ => {
                 if let Some(start) = location_of(&variable.qualifiers) {
                     let element = if self.is_per_vertex_io(&variable.qualifiers) {
                         variable.ty.element_type()
@@ -519,6 +526,17 @@ impl<'a> Lowerer<'a> {
                         "quad_derivatives" => self.quad_control.quad_derivatives = true,
                         "full_quads" => self.quad_control.require_full_quads = true,
                         "post_depth_coverage" => self.post_depth_coverage = Some(at),
+                        "local_size_x" | "local_size_y" | "local_size_z" => {
+                            let value = xfb::ast_layout_value(self, Some(qualifier), name);
+                            let index = match name {
+                                "local_size_x" => 0,
+                                "local_size_y" => 1,
+                                _ => 2,
+                            };
+                            if let Some(slot) = self.declared_local_size.get_mut(index) {
+                                *slot = value;
+                            }
+                        }
                         _ if name.eq_ignore_ascii_case("non_coherent_attachment_readQCOM") => {
                             self.non_coherent_tile_read = true;
                         }
@@ -692,7 +710,21 @@ impl<'a> Lowerer<'a> {
         let analysis = self.analysis;
         let variable = self.variable(symbol).ok_or_else(|| internal(at))?;
         let ty = &variable.ty;
-        let ir = self.variable_ir_type(ty, &variable.qualifiers, at)?;
+        let ir = if ty.outer_size() == Some(GlslArraySize::Unsized) {
+            let mut sized = ty.clone();
+            let size = self
+                .implicit_sizes
+                .get(&symbol)
+                .copied()
+                .unwrap_or(1)
+                .max(1);
+            if let Some(first) = sized.array.first_mut() {
+                *first = GlslArraySize::Sized(size);
+            }
+            self.variable_ir_type(&sized, &variable.qualifiers, at)?
+        } else {
+            self.variable_ir_type(ty, &variable.qualifiers, at)?
+        };
         let mut init = None;
         let mut runtime = None;
         if let Some(ref initializer) = declarator.initializer {
@@ -783,6 +815,7 @@ impl<'a> Lowerer<'a> {
             _ => element,
         };
         let per_primitive = self.per_primitive_binding(qualifiers);
+        let automatic_location = qualifiers.layout_entry("location").is_none();
         let location = match qualifiers.layout_entry("location").and_then(|e| e.value) {
             Some(location) => u32::try_from(location).map_err(|_| internal(at))?,
             None if self.options.auto_map_locations => {
@@ -848,6 +881,9 @@ impl<'a> Lowerer<'a> {
         );
         self.interface.push(handle);
         self.globals.insert(symbol, GlobalRef::Variable(handle));
+        if automatic_location {
+            self.automatic_locations.push(handle);
+        }
         if input {
             self.passthrough(handle, qualifiers);
             self.inputs.insert(name);
@@ -1278,10 +1314,14 @@ impl<'a> Lowerer<'a> {
         let mut offset = 0_u32;
         let mut alignment = Alignment::ONE;
         let mut member_locations = Vec::with_capacity(block.members.len());
-        for member in &block.members {
+        for (index, member) in (0_u32..).zip(&block.members) {
             let qualifiers = &member.qualifiers;
-            if member.ty.outer_size() == Some(GlslArraySize::Unsized) {
-                return Err(unsupported("unsized arrays in interface blocks", at));
+            let mut member_ty = member.ty.clone();
+            if member_ty.outer_size() == Some(GlslArraySize::Unsized) {
+                let size = self.member_sizes.get(&(id, index)).copied().unwrap_or(1);
+                if let Some(first) = member_ty.array.first_mut() {
+                    *first = GlslArraySize::Sized(size.max(1));
+                }
             }
             if qualifiers.invariant && input {
                 return Err(semantic("invariant can only apply to an output", at));
@@ -1294,7 +1334,7 @@ impl<'a> Lowerer<'a> {
                     ));
                 }
             }
-            let ty = self.ir_type(&member.ty, at)?;
+            let ty = self.ir_type(&member_ty, at)?;
             self.layouter
                 .update(self.module.to_ctx())
                 .map_err(|_| internal(at))?;
@@ -2125,6 +2165,7 @@ impl<'a> Lowerer<'a> {
     }
 
     fn assign_bindings(&mut self) {
+        self.automatic_bindings.clone_from(&self.unbound);
         let mut unbound = core::mem::take(&mut self.unbound);
         if unbound.is_empty() {
             return;

@@ -1,6 +1,6 @@
-use anyhow::{anyhow, Context as _};
+use anyhow::{anyhow, bail, Context as _};
 use std::fs;
-use std::{error::Error, fmt, io::Read, path::Path, str::FromStr};
+use std::{error::Error, fmt, io::Read, path::Path, path::PathBuf, str::FromStr};
 
 /// Translate shaders to different formats.
 #[derive(argh::FromArgs, Debug, Clone)]
@@ -152,6 +152,24 @@ struct Args {
     /// whether or not the mesh shader output should be validated.
     #[argh(option, default = "true")]
     validate_mesh_output: bool,
+
+    /// compile every input file (GLSL sources or `.rglo` object modules) and
+    /// link them into one program; writes `<stage>.spv` per stage, or `--output`
+    #[argh(switch)]
+    link: bool,
+
+    /// compile the input file into an object module (`.rglo`) for a later
+    /// `--link`; a module without `main` and with unresolved prototypes is fine
+    #[argh(switch)]
+    object: bool,
+
+    /// the output file of `--link` or `--object`
+    #[argh(option, short = 'o')]
+    output: Option<String>,
+
+    /// a directory searched by `#include`, repeatable
+    #[argh(option, short = 'I', long = "include-dir")]
+    include_dirs: Vec<String>,
 }
 
 /// Newtype so we can implement [`FromStr`] for `Option<TaskDispatchLimits>`.
@@ -502,6 +520,14 @@ fn run() -> anyhow::Result<()> {
         return bulk_validate(&args, &params);
     }
 
+    params.shader_stage = args.shader_stage;
+    if args.object {
+        return object_command(&args, &params);
+    }
+    if args.link {
+        return link_command(&args, &params);
+    }
+
     let mut files = args.files.iter();
 
     let (input_path, input) = if let Some(path) = args.stdin_file_path.as_ref() {
@@ -704,6 +730,7 @@ fn parse_input(input_path: &Path, input: Vec<u8>, params: &Parameters) -> anyhow
                             auto_map_bindings: params.auto_map_bindings,
                             auto_map_locations: params.auto_map_locations,
                             spirv_version: params.spirv_version,
+                            library: false,
                         },
                         &input,
                     )
@@ -857,3 +884,156 @@ fn bulk_validate(args: &Args, params: &Parameters) -> anyhow::Result<()> {
 
 use codespan_reporting::term::termcolor::{ColorChoice, StandardStream};
 use rglsl::{compact::KeepUnused, FastHashMap};
+
+const OBJECT_EXTENSION: &str = "rglo";
+
+fn compile_object_file(
+    path: &Path,
+    params: &Parameters,
+    include_dirs: &[String],
+) -> anyhow::Result<rglsl::object::ObjectModule> {
+    let extension = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or_default();
+    if extension == OBJECT_EXTENSION {
+        let text = fs::read_to_string(path)?;
+        return rglsl_link::decode(&text)
+            .with_context(|| format!("reading the object module {}", path.display()));
+    }
+    let inner = path
+        .file_stem()
+        .map(Path::new)
+        .and_then(|stem| stem.extension())
+        .and_then(|extension| extension.to_str());
+    let stage = params
+        .shader_stage
+        .map(|stage| stage.0)
+        .or_else(|| extension.parse::<ShaderStage>().ok().map(|stage| stage.0))
+        .or_else(|| {
+            (extension == "glsl")
+                .then(|| inner.and_then(|inner| inner.parse::<ShaderStage>().ok()))
+                .flatten()
+                .map(|stage| stage.0)
+        });
+    let library = stage.is_none();
+    if library && extension != "glsl" {
+        bail!(
+            "{}: cannot tell the shader stage; use a stage extension, `--shader-stage`, or `.glsl` for a library",
+            path.display()
+        );
+    }
+    let options = rglsl::front::glsl::Options {
+        defines: params.defines.clone(),
+        auto_map_bindings: params.auto_map_bindings,
+        auto_map_locations: params.auto_map_locations,
+        spirv_version: params.spirv_version,
+        library,
+        ..rglsl::front::glsl::Options::from(stage.unwrap_or(rglsl::ShaderStage::Compute))
+    };
+    let source = fs::read_to_string(path)?;
+    let mut includer = rglsl_pp::FileSystemIncluder::new(include_dirs.iter());
+    let root = includer.add_root(path);
+    match rglsl::front::glsl::Frontend::default().compile_with_includer(
+        &options,
+        &source,
+        root,
+        &mut includer,
+    ) {
+        Ok(object) => {
+            rglsl_link::validate_object(&object)?;
+            Ok(object)
+        }
+        Err(error) => {
+            error.emit_to_stderr_with_path(&source, &path.to_string_lossy())?;
+            bail!("could not compile {}", path.display())
+        }
+    }
+}
+
+fn object_command(args: &Args, params: &Parameters) -> anyhow::Result<()> {
+    let [input, outputs @ ..] = args.files.as_slice() else {
+        bail!("`--object` needs an input file");
+    };
+    let input = Path::new(input);
+    let object = compile_object_file(input, params, &args.include_dirs)?;
+    let output = match (args.output.as_ref(), outputs.first()) {
+        (Some(output), _) | (None, Some(output)) => PathBuf::from(output),
+        (None, None) => input.with_extension(OBJECT_EXTENSION),
+    };
+    fs::write(&output, rglsl_link::encode(&object)?)?;
+    Ok(())
+}
+
+fn link_command(args: &Args, params: &Parameters) -> anyhow::Result<()> {
+    if args.files.is_empty() {
+        bail!("`--link` needs input files");
+    }
+    let mut objects = Vec::with_capacity(args.files.len());
+    for file in &args.files {
+        objects.push(compile_object_file(
+            Path::new(file),
+            params,
+            &args.include_dirs,
+        )?);
+    }
+    let options = rglsl_link::Options {
+        auto_map_locations: params.auto_map_locations,
+        auto_map_bindings: params.auto_map_bindings,
+    };
+    let stages = match rglsl_link::link_objects(&objects, &options) {
+        Ok(stages) => stages,
+        Err(errors) => {
+            for error in errors.iter() {
+                eprintln!("error: {error}");
+            }
+            bail!("linking failed");
+        }
+    };
+    for warning in stages.iter().flat_map(|stage| &stage.warnings) {
+        eprintln!("warning: {warning}");
+    }
+    let mut spv_options = params.spv_out.clone();
+    spv_options.flags.set(
+        rglsl::back::spv::WriterFlags::SMALL_TYPE_CAPABILITIES_BY_USE,
+        true,
+    );
+    spv_options.flags.set(
+        rglsl::back::spv::WriterFlags::ADJUST_COORDINATE_SPACE,
+        false,
+    );
+    for stage in &stages {
+        let name = stage_name(stage.stage);
+        let output = match args.output.as_ref() {
+            Some(output) if stages.len() == 1 => PathBuf::from(output),
+            Some(output) => {
+                let output = Path::new(output);
+                output.with_extension(format!("{name}.spv"))
+            }
+            None => PathBuf::from(format!("{name}.spv")),
+        };
+        let words = rglsl::back::spv::write_vec(&stage.module, &stage.info, &spv_options, None)?;
+        let bytes: Vec<u8> = words.iter().flat_map(|word| word.to_le_bytes()).collect();
+        fs::write(output, bytes)?;
+    }
+    Ok(())
+}
+
+const fn stage_name(stage: rglsl::ShaderStage) -> &'static str {
+    match stage {
+        rglsl::ShaderStage::Vertex => "vert",
+        rglsl::ShaderStage::TessControl => "tesc",
+        rglsl::ShaderStage::TessEvaluation => "tese",
+        rglsl::ShaderStage::Geometry => "geom",
+        rglsl::ShaderStage::Fragment => "frag",
+        rglsl::ShaderStage::Compute => "comp",
+        rglsl::ShaderStage::Task => "task",
+        rglsl::ShaderStage::Mesh => "mesh",
+        rglsl::ShaderStage::RayGeneration => "rgen",
+        rglsl::ShaderStage::Miss => "rmiss",
+        rglsl::ShaderStage::AnyHit => "rahit",
+        rglsl::ShaderStage::ClosestHit => "rchit",
+        rglsl::ShaderStage::Intersection => "rint",
+        rglsl::ShaderStage::Callable => "rcall",
+    }
+}

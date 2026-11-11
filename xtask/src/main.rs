@@ -9,6 +9,7 @@ mod corpus;
 mod exec;
 mod fuzz;
 mod fuzz_exec;
+mod groups;
 mod oracles;
 mod process;
 mod report;
@@ -124,6 +125,7 @@ fn run(args: Vec<String>) -> Result<i32> {
             let spv = args.value("--spv")?.context("--spv is required")?;
             let out = args.value("--out")?.context("--out is required")?;
             let auto_map = args.flag("--auto-map");
+            let object = args.flag("--object");
             let input = args.next_positional().context("input file is required")?;
             args.finish()?;
             Ok(worker::compile_one(
@@ -131,7 +133,28 @@ fn run(args: Vec<String>) -> Result<i32> {
                 &stage,
                 &spv,
                 auto_map,
+                object,
                 Path::new(&out),
+            ))
+        }
+        "compile-group" => {
+            let spv = args.value("--spv")?.context("--spv is required")?;
+            let out_dir = args.value("--out-dir")?.context("--out-dir is required")?;
+            let auto_map_locations = args.flag("--auto-map-locations");
+            let auto_map_bindings = args.flag("--auto-map-bindings");
+            let mut inputs = Vec::new();
+            while let Some(input) = args.next_positional() {
+                inputs.push(input);
+            }
+            args.finish()?;
+            Ok(worker::compile_group(
+                &inputs,
+                &worker::GroupOptions {
+                    spv_version: &spv,
+                    auto_map_locations,
+                    auto_map_bindings,
+                    out_dir: Path::new(&out_dir),
+                },
             ))
         }
         "help" | "--help" | "-h" => {

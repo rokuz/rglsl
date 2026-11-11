@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
-use crate::corpus::{Corpus, STAGE_EXTENSIONS};
+use crate::corpus::{Corpus, Kind, STAGE_EXTENSIONS};
 use crate::exec::{Outcome, SkipReason};
 use crate::runner::{CaseResult, Environment, OracleResult, OursResult};
 
@@ -44,30 +44,40 @@ struct Row {
     diag: Score,
     valid: Score,
     exec: Score,
+    link: Score,
     crashes: usize,
 }
 
 impl Row {
     fn add(&mut self, result: &CaseResult) {
+        self.crashes += usize::from(matches!(result.ours, OursResult::Crashed));
+        self.link.add(result.link());
+        if matches!(result.case.kind, Kind::Group { .. }) {
+            return;
+        }
         self.files += 1;
         self.accept.add(result.accept());
         self.diag.add(result.diag());
         self.valid.add(result.valid());
         self.exec
             .add(result.exec.as_ref().and_then(Outcome::passed));
-        self.crashes += usize::from(matches!(result.ours, OursResult::Crashed));
     }
 
     fn line(&self, label: &str, exec: &str) -> String {
         format!(
-            "| {label} | {} | {} | {} | {} | – | {exec} | – | {} |\n",
+            "| {label} | {} | {} | {} | {} | – | {exec} | {} | {} |\n",
             self.files,
             self.accept.cell(),
             self.diag.cell(),
             self.valid.cell(),
+            self.link.cell(),
             self.crashes
         )
     }
+}
+
+fn counted(result: &CaseResult) -> bool {
+    !matches!(result.case.kind, Kind::Group { .. })
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -189,7 +199,7 @@ pub fn progress(env: &Environment, results: &[CaseResult], carried: Option<&Carr
         let _ = writeln!(out, "\n**Not a reference run:** {}.", caveats.join("; "));
     }
 
-    for corpus in Corpus::ALL {
+    for corpus in Corpus::ALL.into_iter().chain([Corpus::Link]) {
         let results: Vec<&CaseResult> =
             results.iter().filter(|r| r.case.corpus == corpus).collect();
         if !results.is_empty() {
@@ -208,7 +218,7 @@ pub fn progress(env: &Environment, results: &[CaseResult], carried: Option<&Carr
 | `valid` | we produce SPIR-V and `spirv-val` accepts it | shaders we accept |
 | `interface` | reflection matches glslang | not implemented yet (M9) |
 | `exec` | our module and glslang's, run by Amber on KosmicKrisp with the same inputs, write the same buffers, images and color attachments | shaders both accept and that we could execute; skips are counted apart |
-| `link` | our own linkage and `#include` tests | not implemented yet (M3) |
+| `link` | a group of files compiled and linked into one program gives glslang's verdict (accept, diag and valid as above, exec when the program has one stage); for our own tests, the verdict and the errors their `expect` file names | glslang's link tests (`gtests/Link.FromFile*.cpp`) in scope, and our tests in `tests/link` |
 
 `crashes` counts panics, aborts and timeouts of our compiler; each one is a bug.
 
@@ -242,6 +252,15 @@ const fn corpus_title(corpus: Corpus) -> (&'static str, &'static str) {
              compiles them for Vulkan 1.0 with automatic bindings and locations, so most of them \
              test that OpenGL-only constructs are rejected, and on which lines.",
         ),
+        Corpus::Link => (
+            "rglsl link tests",
+            "Our own tests of the rglsl-specific linking rules (`tests/link`): imports, \
+             libraries without a stage, duplicate and missing definitions, recursion through \
+             linking, merged globals, shared headers. Each test is a group of modules compiled \
+             and linked by rglsl; `accept` and `diag` compare with the test's `expect` file, and \
+             `exec` runs the linked program against glslang's build of the same program written \
+             as one file (`reference.*`).",
+        ),
     }
 }
 
@@ -256,7 +275,7 @@ fn corpus_rows(results: &[&CaseResult]) -> Vec<(String, Row)> {
         for result in results.iter().filter(|r| r.case.stage == *stage) {
             row.add(result);
         }
-        if row.files > 0 {
+        if row.files > 0 || row.link.total > 0 {
             rows.push(((*stage).to_string(), row));
         }
     }
@@ -326,6 +345,7 @@ fn corpus_section(out: &mut String, corpus: Corpus, results: &[&CaseResult], sou
     let count = |oracle: bool, ours: bool| {
         results
             .iter()
+            .filter(|r| r.case.kind.is_file())
             .filter(|r| {
                 let o = match r.oracle {
                     OracleResult::Accepted => true,
@@ -352,9 +372,11 @@ fn corpus_section(out: &mut String, corpus: Corpus, results: &[&CaseResult], sou
         count(false, true),
         count(false, false)
     );
+    let counted_results: Vec<&CaseResult> =
+        results.iter().copied().filter(|r| counted(r)).collect();
     match source {
         ExecSource::Ran => {
-            let _ = write!(out, "\n{}", ExecCounts::new(results).table());
+            let _ = write!(out, "\n{}", ExecCounts::new(&counted_results).table());
         }
         ExecSource::Carried(carried) => {
             if let Some(block) = carried.details.get(title) {
@@ -373,7 +395,7 @@ pub fn summary(results: &[CaseResult], exec: bool) -> String {
     } else {
         ExecSource::Absent
     };
-    for corpus in Corpus::ALL {
+    for corpus in Corpus::ALL.into_iter().chain([Corpus::Link]) {
         let results: Vec<&CaseResult> =
             results.iter().filter(|r| r.case.corpus == corpus).collect();
         if results.is_empty() {
@@ -387,8 +409,15 @@ pub fn summary(results: &[CaseResult], exec: bool) -> String {
         }
         out.push('\n');
         if exec {
-            out.push_str(&exec_summary(&results));
+            let counted_results: Vec<&CaseResult> =
+                results.iter().copied().filter(|r| counted(r)).collect();
+            out.push_str(&exec_summary(&counted_results));
             out.push('\n');
+        }
+        for result in &results {
+            if result.link() == Some(false) {
+                let _ = writeln!(out, "  link FAIL {}: {}", result.case.name, result.note);
+            }
         }
     }
     out
@@ -464,6 +493,7 @@ pub fn details(results: &[CaseResult]) -> String {
             match r.case.corpus {
                 Corpus::Vulkan => "vulkan",
                 Corpus::OpenGlAsVulkan => "opengl-as-vulkan",
+                Corpus::Link => "link",
             },
             r.case.version,
             r.case.stage,

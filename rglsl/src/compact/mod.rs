@@ -1,6 +1,7 @@
 mod expressions;
 mod functions;
 mod handle_set_map;
+mod remap;
 mod statements;
 mod types;
 
@@ -12,6 +13,7 @@ use crate::{
     ir,
 };
 use handle_set_map::HandleMap;
+pub use remap::Remap;
 
 #[cfg(test)]
 use alloc::{format, string::ToString};
@@ -21,13 +23,14 @@ use alloc::{format, string::ToString};
 pub enum KeepUnused {
     No,
     Yes,
+    Declarations,
 }
 
 impl From<KeepUnused> for bool {
     fn from(keep_unused: KeepUnused) -> Self {
         match keep_unused {
             KeepUnused::No => false,
-            KeepUnused::Yes => true,
+            KeepUnused::Yes | KeepUnused::Declarations => true,
         }
     }
 }
@@ -297,9 +300,11 @@ pub fn compact(module: &mut crate::Module, keep_unused: KeepUnused) -> Result<()
         }
 
         // Treat all named types as used.
-        for (handle, ty) in module.types.iter() {
-            if ty.name.is_some() {
-                module_tracer.types_used.insert(handle);
+        if keep_unused == KeepUnused::Yes {
+            for (handle, ty) in module.types.iter() {
+                if ty.name.is_some() {
+                    module_tracer.types_used.insert(handle);
+                }
             }
         }
     }
@@ -662,6 +667,7 @@ impl<'module> ModuleTracer<'module> {
     }
 }
 
+#[derive(Debug)]
 struct ModuleMap {
     functions: HandleMap<crate::Function>,
     types: HandleMap<crate::Type>,
@@ -770,6 +776,7 @@ impl ModuleMap {
     }
 }
 
+#[derive(Debug)]
 struct FunctionMap {
     expressions: HandleMap<crate::Expression>,
 }

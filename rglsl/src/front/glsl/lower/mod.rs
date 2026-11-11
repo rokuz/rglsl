@@ -7,8 +7,10 @@ mod expression;
 mod function;
 mod globals;
 mod heap;
+mod library;
 mod mesh;
 mod message;
+mod object;
 mod offset;
 mod prepass;
 mod ray;
@@ -44,6 +46,51 @@ use crate::{
 pub(super) type Result<T> = core::result::Result<T, Error>;
 
 pub(super) fn parse(options: &Options, source: &str) -> core::result::Result<Module, ParseErrors> {
+    lower(
+        options,
+        source,
+        false,
+        rglsl_pp::FileId(0),
+        &mut rglsl_pp::NoIncluder,
+    )
+    .map(|object| object.module)
+}
+
+pub(super) fn compile(
+    options: &Options,
+    source: &str,
+    root: rglsl_pp::FileId,
+    includer: &mut dyn rglsl_pp::Includer,
+) -> core::result::Result<crate::object::ObjectModule, ParseErrors> {
+    lower(options, source, true, root, includer)
+}
+
+const fn link_time(kind: &rglsl_sema::DiagnosticKind) -> bool {
+    matches!(
+        *kind,
+        rglsl_sema::DiagnosticKind::MissingEntryPoint
+            | rglsl_sema::DiagnosticKind::MissingFunctionBody(_)
+    )
+}
+
+fn lower(
+    options: &Options,
+    source: &str,
+    object: bool,
+    root: rglsl_pp::FileId,
+    includer: &mut dyn rglsl_pp::Includer,
+) -> core::result::Result<crate::object::ObjectModule, ParseErrors> {
+    let carrier;
+    let options = if options.library {
+        carrier = Options {
+            stage: ShaderStage::Compute,
+            defines: options.defines.clone(),
+            ..*options
+        };
+        &carrier
+    } else {
+        options
+    };
     let defines = options
         .defines
         .iter()
@@ -55,12 +102,7 @@ pub(super) fn parse(options: &Options, source: &str) -> core::result::Result<Mod
         stage: Some(preprocessor_stage(options.stage)),
         ..rglsl_pp::Options::default()
     };
-    let preprocessed = rglsl_pp::preprocess(
-        source,
-        rglsl_pp::FileId(0),
-        &preprocessor_options,
-        &mut rglsl_pp::NoIncluder,
-    );
+    let preprocessed = rglsl_pp::preprocess(source, root, &preprocessor_options, includer);
     let map = &preprocessed.source_map;
     if preprocessed.has_errors() {
         let errors = preprocessed
@@ -111,24 +153,34 @@ pub(super) fn parse(options: &Options, source: &str) -> core::result::Result<Mod
         });
         return Err(errors.into());
     }
-    if !analysis.diagnostics.is_empty() {
-        let errors = analysis
-            .diagnostics
-            .iter()
-            .map(|diagnostic| {
-                let start = diagnostic.offset(text);
-                Error {
-                    kind: ErrorKind::SemanticError(Cow::Owned(diagnostic.kind.to_string())),
-                    meta: original(
+    let errors = analysis
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| !(object && link_time(&diagnostic.kind)))
+        .map(|diagnostic| {
+            let start = diagnostic.offset(text);
+            let message = options
+                .library
+                .then(|| library::library_diagnostic(&diagnostic.kind, analysis.version))
+                .flatten()
+                .unwrap_or_else(|| diagnostic.kind.to_string());
+            Error {
+                kind: ErrorKind::SemanticError(Cow::Owned(message)),
+                meta: if link_time(&diagnostic.kind) {
+                    Span::UNDEFINED
+                } else {
+                    original(
                         map,
                         rglsl_ast::Span::new(start, diagnostic.span.end.max(start)),
-                    ),
-                }
-            })
-            .collect::<Vec<_>>();
+                    )
+                },
+            }
+        })
+        .collect::<Vec<_>>();
+    if !errors.is_empty() {
         return Err(errors.into());
     }
-    Lowerer::new(&unit, &analysis, options, map).run()
+    Lowerer::new(&unit, &analysis, options, map, object).run()
 }
 
 const fn external_end(declaration: &ExternalDeclaration) -> u32 {
@@ -318,6 +370,10 @@ pub(super) struct Lowerer<'a> {
     pub incoming_ray_payload: Option<Handle<GlobalVariable>>,
     xfb: xfb::Xfb,
     stage_layout: stage::StageLayout,
+    pub object: bool,
+    pub automatic_locations: Vec<Handle<GlobalVariable>>,
+    pub automatic_bindings: Vec<(Handle<GlobalVariable>, Option<u32>)>,
+    pub declared_local_size: [Option<u32>; 3],
 }
 
 impl<'a> Lowerer<'a> {
@@ -326,6 +382,7 @@ impl<'a> Lowerer<'a> {
         analysis: &'a Analysis,
         options: &'a Options,
         source_map: &'a rglsl_pp::SourceMap,
+        object: bool,
     ) -> Self {
         Self {
             source_map,
@@ -400,6 +457,10 @@ impl<'a> Lowerer<'a> {
                 .then_some(0),
             ),
             stage_layout: stage::StageLayout::default(),
+            object,
+            automatic_locations: Vec::new(),
+            automatic_bindings: Vec::new(),
+            declared_local_size: [None; 3],
         }
     }
 
@@ -424,7 +485,7 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    fn run(mut self) -> core::result::Result<Module, ParseErrors> {
+    fn run(mut self) -> core::result::Result<crate::object::ObjectModule, ParseErrors> {
         let unit = self.unit;
         let mut definitions: Vec<&'a Node<FunctionDefinition>> = Vec::new();
         for declaration in &unit.external_declarations {
@@ -438,6 +499,9 @@ impl<'a> Lowerer<'a> {
             }
         }
         self.prepass(&definitions);
+        if self.options.library {
+            self.check_library(&definitions);
+        }
         if self.options.auto_map_locations {
             self.reserve_explicit_locations();
         }
@@ -455,13 +519,19 @@ impl<'a> Lowerer<'a> {
         }
         let layout_errors = self.errors.len();
         self.passthrough_defaults();
-        self.check_stage_layout();
+        if !self.object {
+            self.check_stage_layout();
+        }
         let missing_layouts: Vec<Error> = self.errors.drain(layout_errors..).collect();
         let order = match self.function_order(&definitions) {
             Ok(order) => order,
             Err(error) => return Err(vec![error].into()),
         };
         let main = self.main_function();
+        if self.object {
+            let result = self.declare_imports();
+            self.report(result);
+        }
         for &(id, definition) in &order {
             let result = self.declare_function(id, definition);
             self.report(result);
@@ -478,6 +548,7 @@ impl<'a> Lowerer<'a> {
                 let result = self.entry_point(definition);
                 self.report(result);
             }
+            None if self.object => {}
             None => self.errors.push(semantic(
                 "the shader has no `main` function",
                 Span::UNDEFINED,
@@ -492,7 +563,7 @@ impl<'a> Lowerer<'a> {
             return Err(core::mem::take(&mut self.errors).into());
         }
         self.module.ray_tracing = self.ray_tracing_features();
-        Ok(self.module)
+        Ok(self.into_object())
     }
 
     fn directive(&mut self, directive: &rglsl_ast::ast::Directive) {

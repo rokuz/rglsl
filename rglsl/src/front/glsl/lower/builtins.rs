@@ -1250,7 +1250,10 @@ impl FunctionLowerer<'_, '_> {
         } else if !lod && !grad && next < function.parameters.len() {
             level = SampleLevel::Bias(self.next_argument(arguments, &mut next, at)?);
         }
-        if matches!(level, SampleLevel::Auto) && self.lw.options.stage != ShaderStage::Fragment {
+        if matches!(level, SampleLevel::Auto)
+            && !self.lw.options.library
+            && self.lw.options.stage != ShaderStage::Fragment
+        {
             level = SampleLevel::Zero;
         }
         let sample = self.add(
