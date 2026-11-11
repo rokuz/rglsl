@@ -12,13 +12,13 @@ Shaders that glslang's own test suite (`gtests/*.FromFile.cpp`) compiles under V
 
 | Stage | Files | accept | diag | valid | interface | exec local | exec remote | link | crashes |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| **all** | 694 | 684 / 694 (98.6 %) | 140 / 143 (97.9 %) | 540 / 540 (100.0 %) | – | 137 / 137 (100.0 %) | 196 / 196 (100.0 %) | 12 / 12 (100.0 %) | 0 |
+| **all** | 694 | 684 / 694 (98.6 %) | 140 / 143 (97.9 %) | 540 / 540 (100.0 %) | – | 141 / 141 (100.0 %) | 203 / 203 (100.0 %) | 12 / 12 (100.0 %) | 0 |
 | vert | 68 | 67 / 68 (98.5 %) | 9 / 9 (100.0 %) | 58 / 58 (100.0 %) | – | 32 / 32 (100.0 %) | 37 / 37 (100.0 %) | 6 / 6 (100.0 %) | 0 |
-| tesc | 7 | 7 / 7 (100.0 %) | 1 / 1 (100.0 %) | 6 / 6 (100.0 %) | – | 1 / 1 (100.0 %) | 1 / 1 (100.0 %) | – | 0 |
+| tesc | 7 | 7 / 7 (100.0 %) | 1 / 1 (100.0 %) | 6 / 6 (100.0 %) | – | 2 / 2 (100.0 %) | 3 / 3 (100.0 %) | – | 0 |
 | tese | 4 | 4 / 4 (100.0 %) | – | 4 / 4 (100.0 %) | – | 3 / 3 (100.0 %) | 4 / 4 (100.0 %) | – | 0 |
 | geom | 4 | 4 / 4 (100.0 %) | – | 4 / 4 (100.0 %) | – | – | 3 / 3 (100.0 %) | – | 0 |
-| frag | 207 | 201 / 207 (97.1 %) | 32 / 33 (97.0 %) | 168 / 168 (100.0 %) | – | 62 / 62 (100.0 %) | 73 / 73 (100.0 %) | 4 / 4 (100.0 %) | 0 |
-| comp | 296 | 293 / 296 (99.0 %) | 73 / 75 (97.3 %) | 217 / 217 (100.0 %) | – | 39 / 39 (100.0 %) | 58 / 58 (100.0 %) | 2 / 2 (100.0 %) | 0 |
+| frag | 207 | 201 / 207 (97.1 %) | 32 / 33 (97.0 %) | 168 / 168 (100.0 %) | – | 63 / 63 (100.0 %) | 74 / 74 (100.0 %) | 4 / 4 (100.0 %) | 0 |
+| comp | 296 | 293 / 296 (99.0 %) | 73 / 75 (97.3 %) | 217 / 217 (100.0 %) | – | 41 / 41 (100.0 %) | 62 / 62 (100.0 %) | 2 / 2 (100.0 %) | 0 |
 | mesh | 20 | 20 / 20 (100.0 %) | 4 / 4 (100.0 %) | 16 / 16 (100.0 %) | – | – | 6 / 6 (100.0 %) | – | 0 |
 | task | 6 | 6 / 6 (100.0 %) | 1 / 1 (100.0 %) | 5 / 5 (100.0 %) | – | – | – | – | 0 |
 | rgen | 41 | 41 / 41 (100.0 %) | 10 / 10 (100.0 %) | 31 / 31 (100.0 %) | – | – | 8 / 8 (100.0 %) | – | 0 |
@@ -39,8 +39,8 @@ Shaders that glslang's own test suite (`gtests/*.FromFile.cpp`) compiles under V
 
 | | shaders |
 |---|---:|
-| executed | 137 |
-| passed | 137 |
+| executed | 141 |
+| passed | 141 |
 | passed within the float tolerance | 0 |
 | failed | 0 |
 | skipped: capability or extension the harness cannot enable | 237 |
@@ -48,22 +48,20 @@ Shaders that glslang's own test suite (`gtests/*.FromFile.cpp`) compiles under V
 | skipped: resource or interface the harness cannot bind | 21 |
 | skipped: glslang's module is not valid SPIR-V | 11 |
 | skipped: glslang's module fails on the driver | 2 |
-| skipped: the shader reads undefined values | 4 |
 
 `exec remote` in detail:
 
 | | shaders |
 |---|---:|
-| executed | 196 |
-| passed | 196 |
+| executed | 203 |
+| passed | 203 |
 | passed within the float tolerance | 0 |
 | failed | 0 |
 | skipped: capability or extension the harness cannot enable | 268 |
 | skipped: device feature missing on the driver | 28 |
 | skipped: resource or interface the harness cannot bind | 26 |
 | skipped: glslang's module is not valid SPIR-V | 11 |
-| skipped: glslang's module fails on the driver | 5 |
-| skipped: the shader reads undefined values | 6 |
+| skipped: glslang's module fails on the driver | 4 |
 
 ## glslang OpenGL tests, compiled for Vulkan
 
@@ -192,7 +190,13 @@ be equal; floats may differ by NaN
 payload, the sign of zero, or 4 ULP. A shader whose results differ is run again alone before it
 is counted as a failure. A shader is skipped, not failed, when the harness cannot bind it, the
 driver lacks a feature, glslang's own module fails on the driver, or glslang's module gives
-different results on two runs. A target that is not run keeps the results of its last run. See
+different results on two runs. A shader whose results are undefined (uninitialized reads, races,
+implementation-defined values, unwritten tessellation levels) is listed in
+`xtask/exec-ub/undefined.toml` with a twin next to it that removes the undefined behaviour by the
+smallest edit; the original is still compiled and validated, but `exec` runs the twin, three
+times for each module: glslang's twin must give the same results on every run (otherwise the
+twin is broken and the shader fails), and ours must match it on every run. A target that is not
+run keeps the results of its last run. See
 `docs/PLAN.md` (Testing).
 
 Only shaders with `#version 450` or `460` are run. Per-shader results are written to
