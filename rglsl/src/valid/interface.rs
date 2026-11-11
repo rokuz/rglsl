@@ -783,6 +783,9 @@ impl VaryingContext<'_> {
                     Bi::PrimitiveIndicesNV => {
                         (mesh_interface, array_of(Ti::Scalar(crate::Scalar::U32)))
                     }
+                    Bi::ShaderCore(_) => {
+                        (!self.output, *ty_inner == Ti::Scalar(crate::Scalar::U32))
+                    }
                     Bi::MeshViewCountNV => (
                         self.stage.mesh_like() && !self.output,
                         *ty_inner == Ti::Scalar(crate::Scalar::U32),
@@ -1574,6 +1577,7 @@ impl super::Validator {
                     crate::TypeInner::Sampler { .. }
                     | crate::TypeInner::SampledImage { .. }
                     | crate::TypeInner::AccelerationStructure { .. }
+                    | crate::TypeInner::Tensor { .. }
                     | crate::TypeInner::RayQuery { .. } => {}
                     _ => {
                         return Err(GlobalVariableError::InvalidType(var.space));
@@ -2205,12 +2209,18 @@ impl super::Validator {
                             class: crate::ImageClass::Storage { access, .. },
                             ..
                         } => storage_usage(access),
+                        crate::TypeInner::Tensor { .. } => {
+                            GlobalUse::READ | GlobalUse::QUERY | GlobalUse::WRITE
+                        }
                         _ => GlobalUse::READ | GlobalUse::QUERY,
                     },
                     crate::TypeInner::Image {
                         class: crate::ImageClass::Storage { access, .. },
                         ..
                     } => storage_usage(access),
+                    crate::TypeInner::Tensor { .. } => {
+                        GlobalUse::READ | GlobalUse::QUERY | GlobalUse::WRITE
+                    }
                     _ => GlobalUse::READ | GlobalUse::QUERY,
                 },
                 crate::AddressSpace::Private | crate::AddressSpace::WorkGroup => {

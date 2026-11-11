@@ -114,7 +114,7 @@ impl Analyzer<'_> {
         if index.ty.is_error() {
             return Operand::error();
         }
-        if !index.ty.is_scalar_integer() {
+        if !self.valid_index(&index.ty) {
             self.error(
                 index_expression.span,
                 DiagnosticKind::IndexNotInteger(self.show(&index.ty)),

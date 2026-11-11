@@ -157,6 +157,26 @@ pub enum ExpressionError {
     UnsupportedWidth(crate::MathFunction, crate::ScalarKind, crate::Bytes),
     #[error("Invalid operand for cooperative op")]
     InvalidCooperativeOperand(Handle<crate::Expression>),
+    #[error("Invalid operand {0:?} for a tensor operation")]
+    InvalidTensorOperand(Handle<crate::Expression>),
+}
+
+pub(super) fn tensor_shape(
+    inner: &crate::TypeInner,
+    types: &UniqueArena<crate::Type>,
+) -> Option<(crate::Scalar, Option<u32>)> {
+    match *inner {
+        crate::TypeInner::Scalar(scalar) => Some((scalar, None)),
+        crate::TypeInner::Array {
+            base,
+            size: crate::ArraySize::Constant(length),
+            ..
+        } => match types[base].inner {
+            crate::TypeInner::Scalar(scalar) => Some((scalar, Some(length.get()))),
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 #[derive(Clone, Debug, thiserror::Error)]
@@ -406,7 +426,15 @@ impl super::Validator {
                     }
                     Err(crate::proc::ConstValueError::NonConst) => {}
                     Err(crate::proc::ConstValueError::InvalidType) => {
-                        return Err(ExpressionError::InvalidIndexType(index))
+                        match function.expressions[index] {
+                            crate::Expression::Literal(crate::Literal::I64(value)) if value < 0 => {
+                                return Err(ExpressionError::NegativeIndex(base))
+                            }
+                            crate::Expression::Literal(
+                                crate::Literal::I64(_) | crate::Literal::U64(_),
+                            ) => {}
+                            _ => return Err(ExpressionError::InvalidIndexType(index)),
+                        }
                     }
                 }
 
@@ -514,7 +542,10 @@ impl super::Validator {
                         space: crate::AddressSpace::DescriptorHeap(_),
                     } if matches!(
                         module.types[base].inner,
-                        Ti::Image { .. } | Ti::Sampler { .. } | Ti::AccelerationStructure { .. }
+                        Ti::Image { .. }
+                            | Ti::Sampler { .. }
+                            | Ti::AccelerationStructure { .. }
+                            | Ti::Tensor { .. }
                     ) => {}
                     Ti::ValuePointer { .. } => {}
                     ref other => {
@@ -1376,7 +1407,7 @@ impl super::Validator {
                     return Err(ExpressionError::InvalidWorkGroupUniformLoadResultType(ty));
                 }
             }
-            E::ArrayLength(expr) => match resolver[expr] {
+            E::ArrayLength(expr) | E::WideArrayLength(expr) => match resolver[expr] {
                 Ti::Pointer { base, .. } => {
                     let base_ty = &resolver.types[base];
                     if let Ti::Array {
@@ -1707,6 +1738,41 @@ impl super::Validator {
                     _ => return Err(ExpressionError::InvalidCooperativeOperand(root)),
                 }
             }
+            E::TensorRead {
+                ty,
+                tensor,
+                coordinates,
+                out_of_bounds,
+                ..
+            } => {
+                let (scalar, rank) = match resolver[tensor] {
+                    Ti::Tensor { scalar, rank } => (scalar, rank),
+                    _ => return Err(ExpressionError::InvalidTensorOperand(tensor)),
+                };
+                match tensor_shape(&resolver[coordinates], &module.types) {
+                    Some((index, Some(length)))
+                        if length == rank
+                            && matches!(
+                                index.kind,
+                                crate::ScalarKind::Uint | crate::ScalarKind::Sint
+                            ) => {}
+                    _ => return Err(ExpressionError::InvalidTensorOperand(coordinates)),
+                }
+                match tensor_shape(&module.types[ty].inner, &module.types) {
+                    Some((element, _)) if element == scalar => {}
+                    _ => return Err(ExpressionError::InvalidTensorOperand(root)),
+                }
+                if let Some(value) = out_of_bounds {
+                    if resolver[value] != Ti::Scalar(scalar) {
+                        return Err(ExpressionError::InvalidTensorOperand(value));
+                    }
+                }
+                ShaderStages::all()
+            }
+            E::TensorQuerySize { tensor, dimension } => match resolver[tensor] {
+                Ti::Tensor { rank, .. } if dimension < rank => ShaderStages::all(),
+                _ => return Err(ExpressionError::InvalidTensorOperand(tensor)),
+            },
             E::Expect { value, expected } => {
                 if resolver[value] != resolver[expected] {
                     return Err(ExpressionError::InvalidCooperativeOperand(expected));

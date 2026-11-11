@@ -14,6 +14,7 @@ mod reference;
 mod reference_expression;
 mod stage;
 mod statement;
+mod tensor;
 
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::format;
@@ -28,6 +29,7 @@ use rglsl_ast::{Span, TranslationUnit};
 pub use cooperative_call::CooperativeCall;
 pub use cooperative_matrix2::{MatrixCall, TensorCall};
 pub use qcom::QcomConversion;
+pub use tensor::TensorArmCall;
 
 use crate::builtins::{BuiltinFunctionId, Builtins, ResourceLimits, Stage};
 use crate::constant::Constant;
@@ -69,6 +71,7 @@ pub enum Callee {
     Cooperative(CooperativeCall),
     Tensor(TensorCall),
     Matrix(MatrixCall),
+    TensorArm(TensorArmCall),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -100,6 +103,8 @@ pub struct Analysis {
     pub diagnostics: Vec<Diagnostic>,
     pub warnings: Vec<Diagnostic>,
     pub vulkan_memory_model: bool,
+    pub shader_64bit_indexing: bool,
+    pub promote_uint32_indices: bool,
     pub primitive_culling: bool,
 }
 
@@ -318,6 +323,8 @@ pub(crate) struct Analyzer<'a> {
     pub buffer_packing: Packing,
     pub buffer_row_major: bool,
     pub vulkan_memory_model: bool,
+    pub shader_64bit_indexing: bool,
+    pub promote_uint32_indices: bool,
     pub ray_locations: [Vec<u32>; 2],
     pub primitive_culling: bool,
     pub stage_layout: stage::StageLayout,
@@ -386,6 +393,8 @@ impl<'a> Analyzer<'a> {
             buffer_packing: Packing::Std430,
             buffer_row_major: false,
             vulkan_memory_model: false,
+            shader_64bit_indexing: false,
+            promote_uint32_indices: false,
             ray_locations: [Vec::new(), Vec::new()],
             primitive_culling: false,
             stage_layout: stage::StageLayout::default(),
@@ -450,11 +459,17 @@ impl<'a> Analyzer<'a> {
 
     fn pragma(&mut self, span: Span, tokens: &[String]) {
         let words: Vec<&str> = tokens.iter().map(String::as_str).collect();
-        if words.first() == Some(&"use_vulkan_memory_model") {
+        let flag = match words.first() {
+            Some(&"use_vulkan_memory_model") => Some(&mut self.vulkan_memory_model),
+            Some(&"shader_64bit_indexing") => Some(&mut self.shader_64bit_indexing),
+            Some(&"promote_uint32_indices") => Some(&mut self.promote_uint32_indices),
+            _ => None,
+        };
+        if let Some(flag) = flag {
+            *flag = true;
             if words.len() != 1 {
                 self.error(span, DiagnosticKind::InvalidPragma("extra tokens"));
             }
-            self.vulkan_memory_model = true;
             return;
         }
         if words.first() != Some(&"STDGL") {
@@ -567,6 +582,8 @@ impl<'a> Analyzer<'a> {
             diagnostics: self.diagnostics,
             warnings: self.warnings,
             vulkan_memory_model: self.vulkan_memory_model,
+            shader_64bit_indexing: self.shader_64bit_indexing,
+            promote_uint32_indices: self.promote_uint32_indices,
             primitive_culling: self.primitive_culling,
         }
     }

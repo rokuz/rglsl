@@ -7387,3 +7387,219 @@ fn constant_locals_can_be_indexed_dynamically() {
     assert!(!instructions(&module, Op::ConstantComposite).is_empty());
     assert!(!instructions(&module, Op::AccessChain).is_empty());
 }
+
+fn has_extension(module: &dr::Module, name: &str) -> bool {
+    module
+        .extensions
+        .iter()
+        .any(|inst| inst.operands[0] == Operand::LiteralString(name.to_string()))
+}
+
+fn trailing_operands(inst: &dr::Instruction, skip: usize) -> Vec<Operand> {
+    inst.operands.iter().skip(skip).cloned().collect()
+}
+
+#[test]
+fn tensors_lower_to_spv_arm_tensors() {
+    let source = "#version 460
+        #extension GL_ARM_tensors : require
+        layout(local_size_x = 1) in;
+        layout(set = 0, binding = 0) uniform tensorARM<int, 2> t;
+        readonly layout(set = 0, binding = 1) uniform tensorARM<bool, 1> r;
+        writeonly layout(set = 0, binding = 2) uniform tensorARM<int, 2> w[2];
+        uint size(readonly tensorARM<int, 2> tensor) {
+            return tensorSizeARM(tensor, 1);
+        }
+        void main() {
+            int value;
+            int values[3];
+            bool flag;
+            tensorReadARM(t, uint[](0, 1), value, gl_TensorOperandsOutOfBoundsValueARM, 7);
+            tensorReadARM(t, uint[](1, 0), values);
+            tensorReadARM(r, uint[](0), flag);
+            tensorWriteARM(w[1], uint[](1, 1), values, gl_TensorOperandsNonTemporalARM);
+            tensorWriteARM(t, uint[](0, 0), value + int(size(t)) + int(tensorSizeARM(r, 0)));
+        }";
+    let module = compile_valid(ShaderStage::Compute, source);
+    assert!(has_capability(&module, spirv::Capability::TensorsARM));
+    assert!(has_extension(&module, "SPV_ARM_tensors"));
+    let ranks: Vec<u32> = instructions(&module, Op::TypeTensorARM)
+        .iter()
+        .map(|inst| constant(&module, &inst.operands[1]))
+        .collect();
+    assert_eq!(ranks, [2, 1]);
+    let reads = instructions(&module, Op::TensorReadARM);
+    assert_eq!(reads.len(), 3);
+    let out_of_bounds = trailing_operands(reads[0], 2);
+    assert_eq!(out_of_bounds.len(), 2);
+    assert_eq!(
+        out_of_bounds[0],
+        Operand::TensorOperands(spirv::TensorOperands::OUT_OF_BOUNDS_VALUE_ARM)
+    );
+    assert!(trailing_operands(reads[1], 2).is_empty());
+    let writes = instructions(&module, Op::TensorWriteARM);
+    assert_eq!(writes.len(), 2);
+    assert_eq!(
+        trailing_operands(writes[0], 3),
+        [Operand::TensorOperands(
+            spirv::TensorOperands::NONTEMPORAL_ARM
+        )]
+    );
+    let mut dimensions: Vec<u32> = instructions(&module, Op::TensorQuerySizeARM)
+        .iter()
+        .map(|inst| constant(&module, &inst.operands[1]))
+        .collect();
+    dimensions.sort_unstable();
+    assert_eq!(dimensions, [0, 1]);
+    assert!(variable_decorations(&module, "r")
+        .iter()
+        .any(|(decoration, _)| *decoration == Decoration::NonWritable));
+    assert!(variable_decorations(&module, "w")
+        .iter()
+        .any(|(decoration, _)| *decoration == Decoration::NonReadable));
+}
+
+#[test]
+fn tensor_errors() {
+    let cases = [
+        (
+            "#version 460
+            #extension GL_ARM_tensors : require
+            layout(set = 0, binding = 0) uniform tensorARM<int, 2> t;
+            void main() {
+                int value;
+                tensorReadARM(t, uint[](0), value);
+            }",
+            "number of coordinates",
+        ),
+        (
+            "#version 460
+            #extension GL_ARM_tensors : require
+            layout(set = 0, binding = 0) uniform tensorARM<int, 2> t;
+            void main() {
+                uint size = tensorSizeARM(t, 2);
+            }",
+            "exceeds tensor rank",
+        ),
+        (
+            "#version 460
+            #extension GL_ARM_tensors : require
+            tensorARM<int, 2> t;
+            void main() {}",
+            "tensorARM",
+        ),
+    ];
+    for (source, expected) in cases {
+        let error = parse(ShaderStage::Compute, source).unwrap_err();
+        assert!(error.contains(expected), "{expected}: {error}");
+    }
+}
+
+fn is_wide_int(module: &dr::Module, id: Option<u32>) -> bool {
+    module.types_global_values.iter().any(|ty| {
+        ty.result_id == id
+            && ty.class.opcode == Op::TypeInt
+            && ty.operands[0] == Operand::LiteralBit32(64)
+    })
+}
+
+fn has_wide_constant(module: &dr::Module, value: u64) -> bool {
+    module.types_global_values.iter().any(|inst| {
+        inst.class.opcode == Op::Constant
+            && inst.operands.first() == Some(&Operand::LiteralBit64(value))
+    })
+}
+
+#[test]
+fn sixty_four_bit_indices() {
+    let source = "#version 450
+        #extension GL_EXT_shader_explicit_arithmetic_types : require
+        #extension GL_EXT_shader_64bit_indexing : require
+        #pragma shader_64bit_indexing
+        layout(local_size_x = 1) in;
+        layout(set = 0, binding = 0) buffer B { float x[]; } b;
+        void main() {
+            uint64_t i = 3;
+            b.x[0] = b.x[i] + b.x[5000000000ul];
+            int64_t n = b.x.length64();
+            b.x[1] = float(n);
+        }";
+    let words = compile_words(ShaderStage::Compute, source, (1, 6));
+    crate::stage_io::spirv_val_in(&words, &["--target-env", "vulkan1.3"]);
+    let module = dr::load_words(words).expect("produced SPIR-V does not parse");
+    assert!(has_capability(
+        &module,
+        spirv::Capability::Shader64BitIndexingEXT
+    ));
+    assert!(has_extension(&module, "SPV_EXT_shader_64bit_indexing"));
+    assert!(module.execution_modes.iter().any(|inst| inst.operands[1]
+        == Operand::ExecutionMode(spirv::ExecutionMode::Shader64BitIndexingEXT)));
+    assert!(instructions(&module, Op::ArrayLength)
+        .iter()
+        .any(|inst| is_wide_int(&module, inst.result_type)));
+    assert!(has_wide_constant(&module, 5_000_000_000));
+}
+
+#[test]
+fn promoted_uint32_indices() {
+    let source = "#version 450
+        #extension GL_EXT_shader_64bit_indexing : require
+        #pragma promote_uint32_indices
+        layout(local_size_x = 1) in;
+        layout(set = 0, binding = 0) buffer B { uint i; float x[]; } b;
+        void main() {
+            b.x[0] = b.x[b.i] + b.x[4000000000u];
+        }";
+    let words = compile_words(ShaderStage::Compute, source, (1, 6));
+    crate::stage_io::spirv_val_in(&words, &["--target-env", "vulkan1.3"]);
+    let module = dr::load_words(words).expect("produced SPIR-V does not parse");
+    assert!(!has_capability(
+        &module,
+        spirv::Capability::Shader64BitIndexingEXT
+    ));
+    let conversions = instructions(&module, Op::UConvert);
+    assert_eq!(conversions.len(), 1);
+    assert!(is_wide_int(&module, conversions[0].result_type));
+    assert!(has_wide_constant(&module, 4_000_000_000));
+}
+
+#[test]
+fn shader_core_builtins() {
+    let source = "#version 450
+        #extension GL_NV_shader_sm_builtins : require
+        #extension GL_ARM_shader_core_builtins : require
+        layout(location = 0) out uvec4 o;
+        void main() {
+            o = uvec4(gl_WarpsPerSMNV, gl_SMCountNV, gl_WarpIDNV, gl_SMIDNV)
+                + uvec4(gl_CoreIDARM, gl_CoreCountARM, gl_CoreMaxIDARM, gl_WarpIDARM + gl_WarpMaxIDARM);
+        }";
+    let module = compile_valid(ShaderStage::Fragment, source);
+    assert!(has_capability(
+        &module,
+        spirv::Capability::ShaderSMBuiltinsNV
+    ));
+    assert!(has_capability(&module, spirv::Capability::CoreBuiltinsARM));
+    assert!(has_extension(&module, "SPV_NV_shader_sm_builtins"));
+    assert!(has_extension(&module, "SPV_ARM_core_builtins"));
+    for (name, built_in) in [
+        ("gl_WarpsPerSMNV", spirv::BuiltIn::WarpsPerSMNV),
+        ("gl_SMCountNV", spirv::BuiltIn::SMCountNV),
+        ("gl_WarpIDNV", spirv::BuiltIn::WarpIDNV),
+        ("gl_SMIDNV", spirv::BuiltIn::SMIDNV),
+        ("gl_CoreIDARM", spirv::BuiltIn::CoreIDARM),
+        ("gl_CoreCountARM", spirv::BuiltIn::CoreCountARM),
+        ("gl_CoreMaxIDARM", spirv::BuiltIn::CoreMaxIDARM),
+        ("gl_WarpIDARM", spirv::BuiltIn::WarpIDARM),
+        ("gl_WarpMaxIDARM", spirv::BuiltIn::WarpMaxIDARM),
+    ] {
+        let decorations = variable_decorations(&module, name);
+        assert!(
+            decorations.contains(&(Decoration::BuiltIn, vec![built_in as u32])),
+            "{name}: {decorations:?}"
+        );
+        assert!(
+            decorations.contains(&(Decoration::Flat, Vec::new())),
+            "{name}: {decorations:?}"
+        );
+    }
+}

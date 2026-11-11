@@ -118,6 +118,7 @@ mod small_types;
 mod specialization;
 mod stage;
 mod subgroup;
+mod tensor;
 mod writer;
 
 pub use nt::spv::*;

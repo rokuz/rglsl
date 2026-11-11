@@ -175,7 +175,8 @@ fn layout_with_depth(
         | TypeKind::CooperativeMatrix(_)
         | TypeKind::CooperativeVector { .. }
         | TypeKind::TensorLayout { .. }
-        | TypeKind::TensorView { .. } => None,
+        | TypeKind::TensorView { .. }
+        | TypeKind::Tensor { .. } => None,
     }
 }
 

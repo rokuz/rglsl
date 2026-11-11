@@ -38,7 +38,7 @@ mod tests;
 
 pub use analyze::{
     analyze, analyze_with_builtins, Analysis, Callee, CooperativeCall, ExpressionInfo, MatrixCall,
-    Options, QcomConversion, TensorCall,
+    Options, QcomConversion, TensorArmCall, TensorCall,
 };
 pub use builtins::{BuiltinFunctionId, Builtins, ResourceLimits, Stage};
 pub use diagnostic::{Diagnostic, DiagnosticKind};

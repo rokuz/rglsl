@@ -18,8 +18,8 @@ use super::{specialization, xfb};
 use crate::proc::Alignment;
 use crate::{
     AddressSpace, Binding, BuiltIn, ConservativeDepth, GlobalVariable, Handle, ImageClass,
-    Interpolation, MemoryDecorations, ResourceBinding, Sampling, ShaderBallot, Span, StorageAccess,
-    StorageFormat, SubgroupMask, TypeInner,
+    Interpolation, MemoryDecorations, ResourceBinding, Sampling, ShaderBallot, ShaderCore, Span,
+    StorageAccess, StorageFormat, SubgroupMask, TypeInner,
 };
 
 fn layout_names(qualifier: Option<&Spanned<TypeQualifier>>) -> Vec<&str> {
@@ -147,6 +147,20 @@ pub(super) fn image_access(qualifiers: &Qualifiers) -> StorageAccess {
     }
 }
 
+fn tensor_access(qualifiers: &Qualifiers, ty: &GlslType) -> MemoryDecorations {
+    let mut decorations = MemoryDecorations::empty();
+    if !matches!(ty.kind, TypeKind::Tensor { .. }) {
+        return decorations;
+    }
+    if qualifiers.readonly {
+        decorations |= MemoryDecorations::NON_WRITABLE;
+    }
+    if qualifiers.writeonly {
+        decorations |= MemoryDecorations::NON_READABLE;
+    }
+    decorations
+}
+
 fn memory(qualifiers: &Qualifiers) -> MemoryDecorations {
     let mut decorations = MemoryDecorations::empty();
     if qualifiers.coherent {
@@ -233,6 +247,15 @@ fn builtin_of(name: &str) -> Option<BuiltIn> {
         "gl_TileOffsetQCOM" => BuiltIn::TileOffset,
         "gl_TileDimensionQCOM" => BuiltIn::TileDimension,
         "gl_TileApronSizeQCOM" => BuiltIn::TileApronSize,
+        "gl_WarpsPerSMNV" => BuiltIn::ShaderCore(ShaderCore::WarpsPerSmNv),
+        "gl_SMCountNV" => BuiltIn::ShaderCore(ShaderCore::SmCountNv),
+        "gl_WarpIDNV" => BuiltIn::ShaderCore(ShaderCore::WarpIdNv),
+        "gl_SMIDNV" => BuiltIn::ShaderCore(ShaderCore::SmIdNv),
+        "gl_CoreIDARM" => BuiltIn::ShaderCore(ShaderCore::CoreIdArm),
+        "gl_CoreCountARM" => BuiltIn::ShaderCore(ShaderCore::CoreCountArm),
+        "gl_CoreMaxIDARM" => BuiltIn::ShaderCore(ShaderCore::CoreMaxIdArm),
+        "gl_WarpIDARM" => BuiltIn::ShaderCore(ShaderCore::WarpIdArm),
+        "gl_WarpMaxIDARM" => BuiltIn::ShaderCore(ShaderCore::WarpMaxIdArm),
         _ if super::mesh::mesh_builtin(name).is_some() => super::mesh::mesh_builtin(name)?,
         _ => {
             if let Some(mask) = name
@@ -886,11 +909,24 @@ impl<'a> Lowerer<'a> {
         let variable = self.variable(symbol).ok_or_else(|| internal(at))?;
         let qualifiers = &variable.qualifiers;
         let ty = &variable.ty;
-        let TypeKind::Opaque(opaque) = ty.kind else {
-            return Err(semantic(
-                "non-opaque uniforms outside a block are not allowed when targeting Vulkan",
-                at,
-            ));
+        let opaque = match ty.kind {
+            TypeKind::Opaque(opaque) => opaque,
+            TypeKind::Tensor {
+                scalar: element,
+                rank,
+            } => {
+                let inner = TypeInner::Tensor {
+                    scalar: super::types::scalar(element),
+                    rank,
+                };
+                return self.handle_global(symbol, name, inner, None, at);
+            }
+            _ => {
+                return Err(semantic(
+                    "non-opaque uniforms outside a block are not allowed when targeting Vulkan",
+                    at,
+                ))
+            }
         };
         let inner = if opaque.kind == OpaqueKind::Image {
             let format = qualifiers
@@ -917,6 +953,20 @@ impl<'a> Lowerer<'a> {
                 at,
             )?
         };
+        self.handle_global(symbol, name, inner, Some(opaque), at)
+    }
+
+    fn handle_global(
+        &mut self,
+        symbol: SymbolId,
+        name: String,
+        inner: TypeInner,
+        opaque: Option<rglsl_sema::types::Opaque>,
+        at: Span,
+    ) -> Result<()> {
+        let variable = self.variable(symbol).ok_or_else(|| internal(at))?;
+        let qualifiers = &variable.qualifiers;
+        let ty = &variable.ty;
         let mut handle_ty = self.insert_type(inner);
         match *ty.array.as_slice() {
             [] => {}
@@ -946,7 +996,7 @@ impl<'a> Lowerer<'a> {
             .layout_entry("input_attachment_index")
             .and_then(|entry| entry.value)
         {
-            Some(index) if opaque.kind == OpaqueKind::SubpassInput => {
+            Some(index) if opaque.is_some_and(|opaque| opaque.kind == OpaqueKind::SubpassInput) => {
                 Some(u32::try_from(index).map_err(|_| internal(at))?)
             }
             _ => None,
@@ -958,7 +1008,7 @@ impl<'a> Lowerer<'a> {
                 binding,
                 ty: handle_ty,
                 init: None,
-                memory_decorations: memory(qualifiers),
+                memory_decorations: memory(qualifiers) | tensor_access(qualifiers, ty),
                 io: None,
                 xfb: None,
                 input_attachment_index,

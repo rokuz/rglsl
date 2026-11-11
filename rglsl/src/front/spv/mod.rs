@@ -1659,6 +1659,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                 | S::MeshFunction(..)
                 | S::DebugPrintf { .. }
                 | S::Abort { .. }
+                | S::TensorWrite { .. }
                 | S::WorkGroupUniformLoad { .. }
                 | S::CooperativeStore { .. }
                 | S::Assume { .. }

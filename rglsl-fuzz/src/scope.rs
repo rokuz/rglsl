@@ -345,8 +345,12 @@ impl Finder<'_> {
             )) => {
                 vec![Direction::Out]
             }
+            Some(Callee::TensorArm(rglsl_sema::TensorArmCall::Read { .. })) => {
+                vec![Direction::In, Direction::In, Direction::Out]
+            }
             Some(
                 Callee::Constructor(_)
+                | Callee::TensorArm(_)
                 | Callee::Cooperative(_)
                 | Callee::Tensor(_)
                 | Callee::Matrix(_)

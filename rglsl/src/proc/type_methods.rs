@@ -330,6 +330,7 @@ impl crate::TypeInner {
             | Self::SampledImage { .. }
             | Self::Sampler { .. }
             | Self::AccelerationStructure { .. }
+            | Self::Tensor { .. }
             | Self::RayQuery { .. }
             | Self::BindingArray { .. }
             | Self::BufferDescriptor { .. } => Some(0),
@@ -482,6 +483,7 @@ impl crate::TypeInner {
             | Ti::SampledImage { .. }
             | Ti::Sampler { .. }
             | Ti::AccelerationStructure { .. }
+            | Ti::Tensor { .. }
             | Ti::BindingArray { .. }
             | Ti::BufferDescriptor { .. } => false,
             Ti::Scalar(_)
@@ -546,6 +548,7 @@ impl crate::TypeInner {
             | crate::TypeInner::SampledImage { .. }
             | crate::TypeInner::Sampler { .. }
             | crate::TypeInner::AccelerationStructure { .. }
+            | crate::TypeInner::Tensor { .. }
             | crate::TypeInner::RayQuery { .. }
             | crate::TypeInner::BindingArray { .. }
             | crate::TypeInner::BufferDescriptor { .. } => None,
@@ -574,6 +577,7 @@ impl crate::TypeInner {
             | crate::TypeInner::SampledImage { .. }
             | crate::TypeInner::Sampler { .. }
             | crate::TypeInner::AccelerationStructure { .. }
+            | crate::TypeInner::Tensor { .. }
             | crate::TypeInner::RayQuery { .. }
             | crate::TypeInner::BindingArray { .. }
             | crate::TypeInner::BufferDescriptor { .. } => false,

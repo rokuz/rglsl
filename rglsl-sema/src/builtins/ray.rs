@@ -195,6 +195,7 @@ pub(crate) fn variable_extensions(
         "gl_RayFlagsForceOpacityMicromap2StateEXT" => &[OPACITY_MICROMAP],
         "gl_EnableOpacityMicromapEXT" => &["GL_EXT_opacity_micromap_ray_query_mode"],
         _ if !stage.ray_tracing() || !name.starts_with("gl_") => return None,
+        "gl_WarpsPerSMNV" | "gl_SMCountNV" | "gl_WarpIDNV" | "gl_SMIDNV" => return None,
         _ if name.starts_with("gl_RayFlags")
             || name.starts_with("gl_HitKind") && name.ends_with("TriangleEXT")
             || name.starts_with("gl_RayQuery") =>

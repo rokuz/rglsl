@@ -515,6 +515,23 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   crate lacks in `back/spv/qcom.rs`, and records the pointer of every binding-array element it
   loads so that the image processing decorations land on the `OpAccessChain`, as glslang
   writes them.
+- **ARM tensors** (`GL_ARM_tensors`, `docs/design/cooperative.md`). New handle type
+  `TypeInner::Tensor { scalar, rank }` (an `OpTypeTensorARM`, valid in `Handle` globals, binding
+  arrays, function arguments and descriptor heaps), expressions `TensorRead { ty, tensor,
+  coordinates, nontemporal, out_of_bounds }` and `TensorQuerySize { tensor, dimension }`, and
+  the statement `TensorWrite { tensor, coordinates, value, nontemporal }`. `MemoryDecorations`
+  is now `u16` and gains `NON_WRITABLE`/`NON_READABLE`, written as `NonWritable`/`NonReadable`
+  on the global (the GLSL frontend sets them on `readonly`/`writeonly` tensors only).
+- **64-bit indexing** (`GL_EXT_shader_64bit_indexing`). `Access` takes 64-bit integer indices;
+  the validator accepts 64-bit index literals (a negative one is an error) and the SPIR-V
+  backend never bounds-checks a 64-bit index. New expression `WideArrayLength(pointer)`, an
+  `OpArrayLength` with a 64-bit unsigned result (`length64()`), and
+  `Module::shader_64bit_indexing`, which writes the `Shader64BitIndexingEXT` capability,
+  extension and execution mode.
+- **SM and core built-ins.** `BuiltIn::ShaderCore(ShaderCore)` covers
+  `WarpsPerSMNV`/`SMCountNV`/`WarpIDNV`/`SMIDNV` (`ShaderSMBuiltinsNV`) and
+  `CoreIDARM`/`CoreCountARM`/`CoreMaxIDARM`/`WarpIDARM`/`WarpMaxIDARM` (`CoreBuiltinsARM`):
+  `u32` inputs in every stage.
 
 ## Cherry-picked upstream commits
 

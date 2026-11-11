@@ -355,6 +355,7 @@ pub enum Feature {
     CooperativeMatrixNvType,
     IntegerCooperativeMatrixNvType,
     TensorType,
+    TensorArmType,
     CooperativeVectorType,
     LongVectorType,
     BFloat16Type,
@@ -408,6 +409,7 @@ impl Feature {
             Self::CooperativeMatrixNvType => &[names::NV_COOPERATIVE_MATRIX],
             Self::IntegerCooperativeMatrixNvType => &[names::NV_INTEGER_COOPERATIVE_MATRIX],
             Self::TensorType => &[names::NV_COOPERATIVE_MATRIX2],
+            Self::TensorArmType => &["GL_ARM_tensors"],
             Self::CooperativeVectorType => &[names::NV_COOPERATIVE_VECTOR],
             Self::LongVectorType => &[names::EXT_LONG_VECTOR],
             Self::BFloat16Type => &["GL_EXT_bfloat16"],
@@ -456,6 +458,8 @@ impl Feature {
             Self::IntegerCooperativeMatrixNvType
         } else if word == "tensorLayoutNV" || word == "tensorViewNV" {
             Self::TensorType
+        } else if word == "tensorARM" {
+            Self::TensorArmType
         } else if word == "coopvecNV" {
             Self::CooperativeVectorType
         } else if word == "vector" {

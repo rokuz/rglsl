@@ -536,10 +536,11 @@ pub enum ParameterizedType {
     LongVector,
     TensorLayoutNv,
     TensorViewNv,
+    TensorArm,
 }
 
 impl ParameterizedType {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::CooperativeMatrix,
         Self::FloatCooperativeMatrixNv,
         Self::IntCooperativeMatrixNv,
@@ -548,6 +549,7 @@ impl ParameterizedType {
         Self::LongVector,
         Self::TensorLayoutNv,
         Self::TensorViewNv,
+        Self::TensorArm,
     ];
 
     pub const fn keyword(self) -> &'static str {
@@ -560,6 +562,7 @@ impl ParameterizedType {
             Self::LongVector => "vector",
             Self::TensorLayoutNv => "tensorLayoutNV",
             Self::TensorViewNv => "tensorViewNV",
+            Self::TensorArm => "tensorARM",
         }
     }
 
