@@ -24,6 +24,11 @@ pub enum Scalar {
     BFloat16,
     FloatE4M3,
     FloatE5M2,
+    FloatE2M1,
+    FloatE3M2,
+    FloatE2M3,
+    FloatUE8M0,
+    FloatMXINT8,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
@@ -34,7 +39,7 @@ pub struct NumericFeatures {
 }
 
 impl Scalar {
-    pub const ALL: [Self; 15] = [
+    pub const ALL: [Self; 20] = [
         Self::Bool,
         Self::Int,
         Self::Uint,
@@ -50,6 +55,11 @@ impl Scalar {
         Self::BFloat16,
         Self::FloatE4M3,
         Self::FloatE5M2,
+        Self::FloatE2M1,
+        Self::FloatE3M2,
+        Self::FloatE2M3,
+        Self::FloatUE8M0,
+        Self::FloatMXINT8,
     ];
 
     pub const fn keyword(self) -> &'static str {
@@ -85,6 +95,11 @@ impl Scalar {
             Self::BFloat16 => ScalarType::BFloat16,
             Self::FloatE4M3 => ScalarType::FloatE4M3,
             Self::FloatE5M2 => ScalarType::FloatE5M2,
+            Self::FloatE2M1 => ScalarType::FloatE2M1,
+            Self::FloatE3M2 => ScalarType::FloatE3M2,
+            Self::FloatE2M3 => ScalarType::FloatE2M3,
+            Self::FloatUE8M0 => ScalarType::FloatUE8M0,
+            Self::FloatMXINT8 => ScalarType::FloatMXINT8,
         }
     }
 
@@ -94,7 +109,9 @@ impl Scalar {
             Self::Double | Self::Int64 | Self::Uint64 => 64,
             Self::Int8 | Self::Uint8 => 8,
             Self::Int16 | Self::Uint16 | Self::Float16 | Self::BFloat16 => 16,
-            Self::FloatE4M3 | Self::FloatE5M2 => 8,
+            Self::FloatE4M3 | Self::FloatE5M2 | Self::FloatUE8M0 | Self::FloatMXINT8 => 8,
+            Self::FloatE2M1 => 4,
+            Self::FloatE3M2 | Self::FloatE2M3 => 6,
         }
     }
 
@@ -193,7 +210,32 @@ impl Scalar {
     }
 
     pub const fn is_encoded_float(self) -> bool {
-        matches!(self, Self::BFloat16 | Self::FloatE4M3 | Self::FloatE5M2)
+        matches!(
+            self,
+            Self::BFloat16
+                | Self::FloatE4M3
+                | Self::FloatE5M2
+                | Self::FloatE2M1
+                | Self::FloatE3M2
+                | Self::FloatE2M3
+                | Self::FloatUE8M0
+                | Self::FloatMXINT8
+        )
+    }
+
+    pub const fn is_microscaling(self) -> bool {
+        matches!(
+            self,
+            Self::FloatE2M1
+                | Self::FloatE3M2
+                | Self::FloatE2M3
+                | Self::FloatUE8M0
+                | Self::FloatMXINT8
+        )
+    }
+
+    pub const fn is_sub_byte(self) -> bool {
+        matches!(self, Self::FloatE2M1 | Self::FloatE3M2 | Self::FloatE2M3)
     }
 
     pub const fn promotes_to(self, target: Self, features: NumericFeatures) -> bool {
@@ -205,6 +247,24 @@ impl Scalar {
             Self::FloatE4M3 | Self::FloatE5M2 => {
                 return matches!(target, Self::Float16 | Self::Float | Self::Double)
             }
+            Self::FloatE2M1 => {
+                return matches!(
+                    target,
+                    Self::Float16
+                        | Self::Float
+                        | Self::Double
+                        | Self::BFloat16
+                        | Self::FloatE4M3
+                        | Self::FloatE5M2
+                )
+            }
+            Self::FloatE3M2 | Self::FloatE2M3 | Self::FloatMXINT8 => {
+                return matches!(
+                    target,
+                    Self::Float16 | Self::Float | Self::Double | Self::BFloat16
+                )
+            }
+            Self::FloatUE8M0 => return false,
             _ => {}
         }
         if features.explicit_arithmetic && (self.is_promotion(target) || self.is_conversion(target))
@@ -1548,6 +1608,11 @@ impl From<rglsl_ast::ast::ScalarType> for Scalar {
             ScalarType::BFloat16 => Self::BFloat16,
             ScalarType::FloatE4M3 => Self::FloatE4M3,
             ScalarType::FloatE5M2 => Self::FloatE5M2,
+            ScalarType::FloatE2M1 => Self::FloatE2M1,
+            ScalarType::FloatE3M2 => Self::FloatE3M2,
+            ScalarType::FloatE2M3 => Self::FloatE2M3,
+            ScalarType::FloatUE8M0 => Self::FloatUE8M0,
+            ScalarType::FloatMXINT8 => Self::FloatMXINT8,
         }
     }
 }

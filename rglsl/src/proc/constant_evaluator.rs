@@ -332,6 +332,13 @@ impl LiteralVector {
             Literal::FE5M2(e) => {
                 Self::F32(arrayvec_of(crate::proc::small_float::fe5m2_to_f64(e) as f32))
             }
+            Literal::FE2M1(_)
+            | Literal::FE3M2(_)
+            | Literal::FE2M3(_)
+            | Literal::FUE8M0(_)
+            | Literal::FMXINT8(_) => Self::F32(arrayvec_of(
+                literal.encoded_float_value().unwrap_or(0.0) as f32,
+            )),
             Literal::F64(e) => Self::F64(arrayvec_of(e)),
             Literal::F32(e) => Self::F32(arrayvec_of(e)),
             Literal::U8(e) => Self::U8(arrayvec_of(e)),
@@ -371,9 +378,14 @@ impl LiteralVector {
             }};
         }
         Ok(match components[0] {
-            Literal::BF16(_) | Literal::FE4M3(_) | Literal::FE5M2(_) => {
-                return Err(ConstantEvaluatorError::InvalidMathArg)
-            }
+            Literal::BF16(_)
+            | Literal::FE4M3(_)
+            | Literal::FE5M2(_)
+            | Literal::FE2M1(_)
+            | Literal::FE3M2(_)
+            | Literal::FE2M3(_)
+            | Literal::FUE8M0(_)
+            | Literal::FMXINT8(_) => return Err(ConstantEvaluatorError::InvalidMathArg),
             Literal::I8(_) => compose_literals!(components, I8, I8),
             Literal::U8(_) => compose_literals!(components, U8, U8),
             Literal::I16(_) => compose_literals!(components, I16, I16),
@@ -1435,6 +1447,9 @@ impl<'a> ConstantEvaluator<'a> {
             | Expression::TensorQuerySize { .. } => {
                 Err(ConstantEvaluatorError::CooperativeOperation)
             }
+            Expression::Bitcast { .. } => Err(ConstantEvaluatorError::NotImplemented(
+                String::from("bitcast between shapes"),
+            )),
         }
     }
 
@@ -2583,7 +2598,7 @@ impl<'a> ConstantEvaluator<'a> {
                     Literal::BF16(v) => Literal::F64(crate::proc::small_float::bf16_to_f64(v)),
                     Literal::FE4M3(v) => Literal::F64(crate::proc::small_float::fe4m3_to_f64(v)),
                     Literal::FE5M2(v) => Literal::F64(crate::proc::small_float::fe5m2_to_f64(v)),
-                    other => other,
+                    other => other.encoded_float_value().map_or(other, Literal::F64),
                 };
                 let wide = |literal: Literal| -> Option<f64> {
                     Some(match literal {
@@ -2601,7 +2616,12 @@ impl<'a> ConstantEvaluator<'a> {
                         Literal::Bool(_)
                         | Literal::BF16(_)
                         | Literal::FE4M3(_)
-                        | Literal::FE5M2(_) => return None,
+                        | Literal::FE5M2(_)
+                        | Literal::FE2M1(_)
+                        | Literal::FE3M2(_)
+                        | Literal::FE2M3(_)
+                        | Literal::FUE8M0(_)
+                        | Literal::FMXINT8(_) => return None,
                     })
                 };
                 let literal = match target {
@@ -2623,6 +2643,13 @@ impl<'a> ConstantEvaluator<'a> {
                         }
                         None => return make_error(),
                     },
+                    Sc::FE2M1 | Sc::FE3M2 | Sc::FE2M3 | Sc::FUE8M0 | Sc::FMXINT8 => {
+                        match wide(literal).and_then(|value| Literal::encoded_float(target, value))
+                        {
+                            Some(literal) => literal,
+                            None => return make_error(),
+                        }
+                    }
                     Sc::I8 => Literal::I8(match literal {
                         Literal::I8(v) => v,
                         Literal::U8(v) => v as i8,
@@ -2636,9 +2663,14 @@ impl<'a> ConstantEvaluator<'a> {
                         Literal::F64(v) => v as i8,
                         Literal::AbstractInt(v) => v as i8,
                         Literal::AbstractFloat(v) => v as i8,
-                        Literal::BF16(_) | Literal::FE4M3(_) | Literal::FE5M2(_) => {
-                            return make_error()
-                        }
+                        Literal::BF16(_)
+                        | Literal::FE4M3(_)
+                        | Literal::FE5M2(_)
+                        | Literal::FE2M1(_)
+                        | Literal::FE3M2(_)
+                        | Literal::FE2M3(_)
+                        | Literal::FUE8M0(_)
+                        | Literal::FMXINT8(_) => return make_error(),
                         Literal::F16(v) => f16::to_f32(v) as i8,
                         Literal::Bool(v) => i8::from(v),
                     }),
@@ -2655,9 +2687,14 @@ impl<'a> ConstantEvaluator<'a> {
                         Literal::F64(v) => v as u8,
                         Literal::AbstractInt(v) => v as u8,
                         Literal::AbstractFloat(v) => v as u8,
-                        Literal::BF16(_) | Literal::FE4M3(_) | Literal::FE5M2(_) => {
-                            return make_error()
-                        }
+                        Literal::BF16(_)
+                        | Literal::FE4M3(_)
+                        | Literal::FE5M2(_)
+                        | Literal::FE2M1(_)
+                        | Literal::FE3M2(_)
+                        | Literal::FE2M3(_)
+                        | Literal::FUE8M0(_)
+                        | Literal::FMXINT8(_) => return make_error(),
                         Literal::F16(v) => f16::to_f32(v) as u8,
                         Literal::Bool(v) => u8::from(v),
                     }),
@@ -2678,9 +2715,14 @@ impl<'a> ConstantEvaluator<'a> {
                         Literal::U64(v) => v as i16,
                         Literal::AbstractInt(v) => v as i16,
                         Literal::AbstractFloat(v) => v as i16,
-                        Literal::BF16(_) | Literal::FE4M3(_) | Literal::FE5M2(_) => {
-                            return make_error()
-                        }
+                        Literal::BF16(_)
+                        | Literal::FE4M3(_)
+                        | Literal::FE5M2(_)
+                        | Literal::FE2M1(_)
+                        | Literal::FE3M2(_)
+                        | Literal::FE2M3(_)
+                        | Literal::FUE8M0(_)
+                        | Literal::FMXINT8(_) => return make_error(),
                     }),
                     Sc::U16 => Literal::U16(match literal {
                         Literal::U8(v) => v as u16,
@@ -2697,9 +2739,14 @@ impl<'a> ConstantEvaluator<'a> {
                         Literal::U64(v) => v as u16,
                         Literal::AbstractInt(v) => v as u16,
                         Literal::AbstractFloat(v) => v as u16,
-                        Literal::BF16(_) | Literal::FE4M3(_) | Literal::FE5M2(_) => {
-                            return make_error()
-                        }
+                        Literal::BF16(_)
+                        | Literal::FE4M3(_)
+                        | Literal::FE5M2(_)
+                        | Literal::FE2M1(_)
+                        | Literal::FE3M2(_)
+                        | Literal::FE2M3(_)
+                        | Literal::FUE8M0(_)
+                        | Literal::FMXINT8(_) => return make_error(),
                     }),
                     Sc::I32 => Literal::I32(match literal {
                         Literal::U8(v) => v as i32,
@@ -2716,9 +2763,14 @@ impl<'a> ConstantEvaluator<'a> {
                         Literal::U64(v) => v as i32,
                         Literal::AbstractInt(v) => i32::try_from_abstract(v)?,
                         Literal::AbstractFloat(v) => i32::try_from_abstract(v)?,
-                        Literal::BF16(_) | Literal::FE4M3(_) | Literal::FE5M2(_) => {
-                            return make_error()
-                        }
+                        Literal::BF16(_)
+                        | Literal::FE4M3(_)
+                        | Literal::FE5M2(_)
+                        | Literal::FE2M1(_)
+                        | Literal::FE3M2(_)
+                        | Literal::FE2M3(_)
+                        | Literal::FUE8M0(_)
+                        | Literal::FMXINT8(_) => return make_error(),
                     }),
                     Sc::U32 => Literal::U32(match literal {
                         Literal::U8(v) => v as u32,
@@ -2736,9 +2788,14 @@ impl<'a> ConstantEvaluator<'a> {
                         Literal::U64(v) => v as u32,
                         Literal::AbstractInt(v) => u32::try_from_abstract(v)?,
                         Literal::AbstractFloat(v) => u32::try_from_abstract(v)?,
-                        Literal::BF16(_) | Literal::FE4M3(_) | Literal::FE5M2(_) => {
-                            return make_error()
-                        }
+                        Literal::BF16(_)
+                        | Literal::FE4M3(_)
+                        | Literal::FE5M2(_)
+                        | Literal::FE2M1(_)
+                        | Literal::FE3M2(_)
+                        | Literal::FE2M3(_)
+                        | Literal::FUE8M0(_)
+                        | Literal::FMXINT8(_) => return make_error(),
                     }),
                     Sc::I64 => Literal::I64(match literal {
                         Literal::U8(v) => v as i64,
@@ -2755,9 +2812,14 @@ impl<'a> ConstantEvaluator<'a> {
                         Literal::F16(v) => f16::to_f32(v) as i64,
                         Literal::AbstractInt(v) => i64::try_from_abstract(v)?,
                         Literal::AbstractFloat(v) => i64::try_from_abstract(v)?,
-                        Literal::BF16(_) | Literal::FE4M3(_) | Literal::FE5M2(_) => {
-                            return make_error()
-                        }
+                        Literal::BF16(_)
+                        | Literal::FE4M3(_)
+                        | Literal::FE5M2(_)
+                        | Literal::FE2M1(_)
+                        | Literal::FE3M2(_)
+                        | Literal::FE2M3(_)
+                        | Literal::FUE8M0(_)
+                        | Literal::FMXINT8(_) => return make_error(),
                     }),
                     Sc::U64 => Literal::U64(match literal {
                         Literal::U8(v) => v as u64,
@@ -2775,9 +2837,14 @@ impl<'a> ConstantEvaluator<'a> {
                         Literal::F16(v) => f16::to_f32(v) as u64,
                         Literal::AbstractInt(v) => u64::try_from_abstract(v)?,
                         Literal::AbstractFloat(v) => u64::try_from_abstract(v)?,
-                        Literal::BF16(_) | Literal::FE4M3(_) | Literal::FE5M2(_) => {
-                            return make_error()
-                        }
+                        Literal::BF16(_)
+                        | Literal::FE4M3(_)
+                        | Literal::FE5M2(_)
+                        | Literal::FE2M1(_)
+                        | Literal::FE3M2(_)
+                        | Literal::FE2M3(_)
+                        | Literal::FUE8M0(_)
+                        | Literal::FMXINT8(_) => return make_error(),
                     }),
                     Sc::F16 => Literal::F16(match literal {
                         Literal::U8(v) => f16::from_f32(f32::from(v)),
@@ -2793,9 +2860,14 @@ impl<'a> ConstantEvaluator<'a> {
                         Literal::I32(v) => f16::from_f64(f64::from(v)),
                         Literal::U32(v) => f16::from_f64(f64::from(v)),
                         Literal::AbstractFloat(v) => f16::try_from_abstract(v)?,
-                        Literal::BF16(_) | Literal::FE4M3(_) | Literal::FE5M2(_) => {
-                            return make_error()
-                        }
+                        Literal::BF16(_)
+                        | Literal::FE4M3(_)
+                        | Literal::FE5M2(_)
+                        | Literal::FE2M1(_)
+                        | Literal::FE3M2(_)
+                        | Literal::FE2M3(_)
+                        | Literal::FUE8M0(_)
+                        | Literal::FMXINT8(_) => return make_error(),
                         Literal::AbstractInt(v) => f16::try_from_abstract(v)?,
                     }),
                     Sc::F32 => Literal::F32(match literal {
@@ -2813,9 +2885,14 @@ impl<'a> ConstantEvaluator<'a> {
                         Literal::F16(v) => f16::to_f32(v),
                         Literal::AbstractInt(v) => f32::try_from_abstract(v)?,
                         Literal::AbstractFloat(v) => f32::try_from_abstract(v)?,
-                        Literal::BF16(_) | Literal::FE4M3(_) | Literal::FE5M2(_) => {
-                            return make_error()
-                        }
+                        Literal::BF16(_)
+                        | Literal::FE4M3(_)
+                        | Literal::FE5M2(_)
+                        | Literal::FE2M1(_)
+                        | Literal::FE3M2(_)
+                        | Literal::FE2M3(_)
+                        | Literal::FUE8M0(_)
+                        | Literal::FMXINT8(_) => return make_error(),
                     }),
                     Sc::F64 => Literal::F64(match literal {
                         Literal::U8(v) => v as f64,
@@ -2832,9 +2909,14 @@ impl<'a> ConstantEvaluator<'a> {
                         Literal::U64(v) => v as f64,
                         Literal::AbstractInt(v) => f64::try_from_abstract(v)?,
                         Literal::AbstractFloat(v) => f64::try_from_abstract(v)?,
-                        Literal::BF16(_) | Literal::FE4M3(_) | Literal::FE5M2(_) => {
-                            return make_error()
-                        }
+                        Literal::BF16(_)
+                        | Literal::FE4M3(_)
+                        | Literal::FE5M2(_)
+                        | Literal::FE2M1(_)
+                        | Literal::FE3M2(_)
+                        | Literal::FE2M3(_)
+                        | Literal::FUE8M0(_)
+                        | Literal::FMXINT8(_) => return make_error(),
                     }),
                     Sc::BOOL => Literal::Bool(match literal {
                         Literal::U8(v) => v != 0,
@@ -2848,9 +2930,14 @@ impl<'a> ConstantEvaluator<'a> {
                         Literal::Bool(v) => v,
                         Literal::AbstractInt(v) => v != 0,
                         Literal::AbstractFloat(v) => v != 0.0,
-                        Literal::BF16(_) | Literal::FE4M3(_) | Literal::FE5M2(_) => {
-                            return make_error()
-                        }
+                        Literal::BF16(_)
+                        | Literal::FE4M3(_)
+                        | Literal::FE5M2(_)
+                        | Literal::FE2M1(_)
+                        | Literal::FE3M2(_)
+                        | Literal::FE2M3(_)
+                        | Literal::FUE8M0(_)
+                        | Literal::FMXINT8(_) => return make_error(),
                         Literal::F64(v) => v != 0.0,
                         Literal::I64(v) => v != 0,
                         Literal::U64(v) => v != 0,

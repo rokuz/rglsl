@@ -172,6 +172,7 @@ impl<'a> Lowerer<'a> {
                 heap_offset,
                 tile_attachment: false,
                 spirv_decorations: Vec::new(),
+                relaxed_precision: false,
                 immediate_bank: None,
             },
             at,
@@ -348,6 +349,7 @@ impl<'a> Lowerer<'a> {
                 xfb_offset: None,
                 heap: Some(HeapMember { offset, size }),
                 memory_decorations: MemoryDecorations::empty(),
+                relaxed_precision: false,
             });
         }
         Ok(lowered)
@@ -422,6 +424,7 @@ impl<'a> Lowerer<'a> {
                 xfb_offset: None,
                 heap: None,
                 memory_decorations: MemoryDecorations::empty(),
+                relaxed_precision: false,
             });
         }
         let span = alignment.round_up(end);

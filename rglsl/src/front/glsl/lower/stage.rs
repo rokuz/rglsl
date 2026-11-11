@@ -321,6 +321,7 @@ impl<'a> Lowerer<'a> {
                     xfb_offset: None,
                     heap: None,
                     memory_decorations: MemoryDecorations::empty(),
+                    relaxed_precision: false,
                 });
                 offset = offset.saturating_add(layout.size);
             }
@@ -349,6 +350,7 @@ impl<'a> Lowerer<'a> {
                 heap_offset: None,
                 tile_attachment: false,
                 spirv_decorations: Vec::new(),
+                relaxed_precision: false,
                 immediate_bank: None,
             },
             at,
@@ -575,6 +577,7 @@ impl<'a> Lowerer<'a> {
                 xfb_offset: None,
                 heap: None,
                 memory_decorations: MemoryDecorations::empty(),
+                relaxed_precision: false,
             });
             offset = offset.saturating_add(layout.size);
         }
@@ -607,6 +610,7 @@ impl<'a> Lowerer<'a> {
                 heap_offset: None,
                 tile_attachment: false,
                 spirv_decorations: Vec::new(),
+                relaxed_precision: false,
                 immediate_bank: None,
             },
             at,

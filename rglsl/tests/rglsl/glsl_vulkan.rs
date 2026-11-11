@@ -5874,18 +5874,25 @@ fn subgroup_builtins_are_flat_in_fragment_shaders() {
                 + uvec4(gl_SubgroupSize, gl_SubgroupInvocationID, 0, 0);
         }",
     );
-    for (name, builtin) in [
-        ("gl_SubgroupSize", Bi::SubgroupSize),
-        ("gl_SubgroupInvocationID", Bi::SubgroupLocalInvocationId),
-        ("gl_SubgroupEqMask", Bi::SubgroupEqMask),
-        ("gl_SubgroupLtMask", Bi::SubgroupLtMask),
+    for (name, builtin, relaxed) in [
+        ("gl_SubgroupSize", Bi::SubgroupSize, true),
+        (
+            "gl_SubgroupInvocationID",
+            Bi::SubgroupLocalInvocationId,
+            true,
+        ),
+        ("gl_SubgroupEqMask", Bi::SubgroupEqMask, false),
+        ("gl_SubgroupLtMask", Bi::SubgroupLtMask, false),
     ] {
+        let mut expected = Vec::new();
+        if relaxed {
+            expected.push((Decoration::RelaxedPrecision, vec![]));
+        }
+        expected.push((Decoration::BuiltIn, vec![builtin as u32]));
+        expected.push((Decoration::Flat, vec![]));
         assert_eq!(
             sorted_variable_decorations(&module, name),
-            [
-                (Decoration::BuiltIn, vec![builtin as u32]),
-                (Decoration::Flat, vec![]),
-            ],
+            expected,
             "{name}"
         );
     }
@@ -9014,6 +9021,260 @@ fn texture_footprints() {
         spirv::Capability::ImageFootprintNV
     ));
     assert!(declares_capability(&words, spirv::Capability::MinLod));
+}
+
+#[test]
+fn function_attributes_match_glslang() {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+        #extension GL_EXT_function_control_attributes : enable
+        layout(location = 0) out vec4 color;
+        [[inline]] int inlined(int i) { return i + 1; }
+        [[noinline]] int outlined(int i) { return i + 2; }
+        [[inline]] int declared(int i);
+        int declared(int i) { return i + 4; }
+        void main() { color = vec4(float(inlined(1) + outlined(2) + declared(3))); }",
+    );
+    let mut controls: Vec<(String, spirv::FunctionControl)> = instructions(&module, Op::Function)
+        .iter()
+        .filter_map(|inst| match inst.operands[0] {
+            Operand::FunctionControl(control) => {
+                Some((name_of(&module, inst.result_id.unwrap_or(0)), control))
+            }
+            _ => None,
+        })
+        .collect();
+    controls.sort_by(|left, right| left.0.cmp(&right.0));
+    assert_eq!(
+        controls,
+        [
+            ("declared".to_owned(), spirv::FunctionControl::INLINE),
+            ("inlined".to_owned(), spirv::FunctionControl::INLINE),
+            ("main".to_owned(), spirv::FunctionControl::NONE),
+            ("outlined".to_owned(), spirv::FunctionControl::DONT_INLINE),
+        ]
+    );
+    for (source, expected) in [
+        (
+            "#extension GL_EXT_function_control_attributes : enable\n[[inline, noinline]] int f(int i) { return i; }\nvoid main() {}",
+            "incompatible",
+        ),
+        (
+            "#extension GL_EXT_function_control_attributes : enable\n[[inline]] int f(int i);\n[[noinline]] int f(int i) { return i; }\nvoid main() {}",
+            "incompatible",
+        ),
+        (
+            "[[inline]] int f(int i) { return i; }\nvoid main() {}",
+            "GL_EXT_function_control_attributes",
+        ),
+    ] {
+        let error = parse(ShaderStage::Fragment, &format!("#version 450\n{source}"))
+            .expect_err("attributes accepted");
+        assert!(error.contains(expected), "{error}");
+    }
+}
+
+#[test]
+fn reconvergence_attributes_become_execution_modes() {
+    for (extension, attribute, mode, spv_extension) in [
+        (
+            "GL_EXT_subgroup_uniform_control_flow",
+            "subgroup_uniform_control_flow",
+            spirv::ExecutionMode::SubgroupUniformControlFlowKHR,
+            "SPV_KHR_subgroup_uniform_control_flow",
+        ),
+        (
+            "GL_EXT_maximal_reconvergence",
+            "maximally_reconverges",
+            spirv::ExecutionMode::MaximallyReconvergesKHR,
+            "SPV_KHR_maximal_reconvergence",
+        ),
+    ] {
+        let module = compile_valid(
+            ShaderStage::Vertex,
+            &format!(
+                "#version 460\n#extension {extension} : enable\n[[random(4)]] void main() [[{attribute}]] {{}}"
+            ),
+        );
+        assert!(has_execution_mode(&module, mode));
+        assert_eq!(extensions_of(&module), [spv_extension]);
+    }
+}
+
+fn microscaling_words(source: &str) -> Vec<u32> {
+    let module = parse(ShaderStage::Compute, source).unwrap_or_else(|e| panic!("{e}"));
+    let info = Validator::new(ValidationFlags::all(), Capabilities::all())
+        .validate(&module)
+        .expect("validated in parse");
+    let options = spv::Options {
+        lang_version: (1, 6),
+        flags: spv::WriterFlags::DEBUG | spv::WriterFlags::SMALL_TYPE_CAPABILITIES_BY_USE,
+        ..spv::Options::default()
+    };
+    let words = spv::write_vec(&module, &info, &options, None).expect("SPIR-V backend failed");
+    crate::stage_io::spirv_val_in(&words, &["--target-env", "vulkan1.3"]);
+    words
+}
+
+#[test]
+fn microscaling_types_match_glslang() {
+    let words = microscaling_words(
+        "#version 450
+        #extension GL_EXT_float_e2m1 : require
+        #extension GL_EXT_float_e3m2 : require
+        #extension GL_EXT_float_ue8m0 : require
+        #extension GL_EXT_float_mxint8 : require
+        #extension GL_EXT_shader_explicit_arithmetic_types : enable
+        layout(local_size_x = 1) in;
+        layout(std430, binding = 0) buffer B { uint8_t packed; floatue8m0_t scale; floatmxint8_t m; float f; };
+        void main() {
+            fe2m1vec2 pair = fe2m1vec2(10.fe2m1, floate2m1_t(-0.5));
+            packed = packFloat2xfe2m1EXT(pair);
+            floate3m2_t six = bitcastExtractfe3m2EXT(packed, 1u);
+            scale = floatue8m0_t(10.0);
+            m = floatmxint8_t(-1.0);
+            f = float(six) + float(pair.x);
+        }",
+    );
+    let instructions = raw_instructions(&words);
+    let mut floats: Vec<Vec<u32>> = instructions
+        .iter()
+        .filter(|(op, operands)| *op == Op::TypeFloat as u32 && operands.len() == 3)
+        .map(|(_, operands)| operands[1..].to_vec())
+        .collect();
+    floats.sort();
+    assert_eq!(floats, [[4, 4225], [6, 4224], [8, 4226], [8, 4227]]);
+    let capabilities: Vec<u32> = instructions
+        .iter()
+        .filter(|(op, _)| *op == Op::Capability as u32)
+        .map(|(_, operands)| operands[0])
+        .collect();
+    for capability in [4228, 4229, 4230, 4231, 4232] {
+        assert!(capabilities.contains(&capability), "{capability}");
+    }
+    let constants: Vec<u32> = instructions
+        .iter()
+        .filter(|(op, operands)| *op == Op::Constant as u32 && operands.len() == 3)
+        .map(|(_, operands)| operands[2])
+        .collect();
+    for value in [7, 9, 130, 192] {
+        assert!(constants.contains(&value), "{value} in {constants:?}");
+    }
+    assert_eq!(instructions.iter().filter(|(op, _)| *op == 4195).count(), 1);
+    assert!(instructions
+        .iter()
+        .any(|(op, operands)| *op == Op::Extension as u32
+            && operands.first() == Some(&u32::from_le_bytes(*b"SPV_"))));
+}
+
+fn decorated_ops(module: &dr::Module, decoration: Decoration) -> Vec<Op> {
+    let targets: Vec<u32> = module
+        .annotations
+        .iter()
+        .filter(|inst| {
+            inst.class.opcode == Op::Decorate
+                && inst.operands.get(1) == Some(&Operand::Decoration(decoration))
+        })
+        .filter_map(|inst| match inst.operands[0] {
+            Operand::IdRef(id) => Some(id),
+            _ => None,
+        })
+        .collect();
+    let mut found: Vec<Op> = module
+        .all_inst_iter()
+        .filter(|inst| inst.result_id.is_some_and(|id| targets.contains(&id)))
+        .map(|inst| inst.class.opcode)
+        .collect();
+    found.sort_by_key(|op| *op as u32);
+    found
+}
+
+#[test]
+fn precise_marks_the_operations_that_feed_it() {
+    let module = compile_valid(
+        ShaderStage::Vertex,
+        "#version 450
+        layout(location = 0) in vec4 a;
+        layout(location = 1) in vec4 b;
+        layout(location = 0) out float plain;
+        out gl_PerVertex { precise vec4 gl_Position; };
+        float helper(float x) { return x * 3.0; }
+        void main() {
+            vec4 sum = a * b + a;
+            float d = dot(sum, b);
+            plain = d * 2.0 + helper(d);
+            gl_Position = vec4(d) - b;
+        }",
+    );
+    assert_eq!(
+        decorated_ops(&module, Decoration::NoContraction),
+        [Op::FAdd, Op::FSub, Op::FMul, Op::Dot]
+    );
+}
+
+#[test]
+fn precise_follows_struct_members_and_compound_assignments() {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+        struct T { float f1; float f2; };
+        layout(location = 0) in float a;
+        layout(location = 0) out float color;
+        void main() {
+            precise float result;
+            T s;
+            s.f1 = a + 0.2;
+            s.f2 = a * 0.5;
+            result = s.f1;
+            result += a * a;
+            color = result;
+        }",
+    );
+    assert_eq!(
+        decorated_ops(&module, Decoration::NoContraction),
+        [Op::FAdd, Op::FAdd, Op::FMul]
+    );
+}
+
+#[test]
+fn precision_qualifiers_become_relaxed_precision() {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+        precision mediump float;
+        layout(location = 0) in vec2 uv;
+        layout(location = 1) in highp vec2 exact;
+        layout(binding = 0) uniform lowp sampler2D s;
+        layout(location = 0) out vec4 color;
+        struct S { mediump float m; highp float h; };
+        layout(location = 2) flat in highp int index;
+        void main() {
+            vec4 sum = texture(s, uv);
+            sum += vec4(exact, 0.0, 1.0);
+            sum *= 2.0;
+            color = sum + float(index);
+        }",
+    );
+    let relaxed = decorated_ops(&module, Decoration::RelaxedPrecision);
+    assert!(relaxed.contains(&Op::Variable));
+    assert!(relaxed.contains(&Op::ImageSampleImplicitLod));
+    assert!(relaxed.contains(&Op::VectorTimesScalar));
+    assert!(!relaxed.contains(&Op::ConvertSToF));
+    let adds = instructions(&module, Op::FAdd);
+    assert_eq!(adds.len(), 2);
+    assert!(relaxed.iter().all(|op| *op != Op::FAdd));
+    let names: Vec<String> = decorated(&module, Decoration::RelaxedPrecision)
+        .into_iter()
+        .filter(|name| !name.is_empty())
+        .collect();
+    for name in ["uv", "s", "color", "sum"] {
+        assert!(
+            names.iter().any(|found| found == name),
+            "{name} in {names:?}"
+        );
+    }
+    assert!(!names.iter().any(|found| found == "exact"));
 }
 
 #[test]

@@ -451,6 +451,23 @@ impl FunctionLowerer<'_, '_> {
             values.push(value);
             types.push(ty);
         }
+        if let Some(extract) = microscaling_bitcast(name) {
+            let ty = self.lw.ir_type(call_type, at)?;
+            let expr = values.first().copied().ok_or_else(|| internal(at))?;
+            let offset = if extract {
+                let offset = values.get(1).copied().ok_or_else(|| internal(at))?;
+                let unsigned =
+                    types.get(1).and_then(GlslType::base_scalar) == Some(GlslScalar::Uint);
+                Some(if unsigned {
+                    offset
+                } else {
+                    self.as_kind(offset, crate::Scalar::U32, at)?
+                })
+            } else {
+                None
+            };
+            return self.add(Expression::Bitcast { expr, ty, offset }, at);
+        }
         let long_shape = types
             .iter()
             .find(|ty| ty.sized_vector_length().is_some())
@@ -578,7 +595,15 @@ impl FunctionLowerer<'_, '_> {
             | "floate5m2BitsToIntEXT"
             | "floate5m2BitsToUintEXT"
             | "intBitsToFloate5m2EXT"
-            | "uintBitsToFloate5m2EXT" => {
+            | "uintBitsToFloate5m2EXT"
+            | "floatue8m0BitsToIntEXT"
+            | "floatue8m0BitsToUintEXT"
+            | "intBitsToFloatue8m0EXT"
+            | "uintBitsToFloatue8m0EXT"
+            | "floatmxint8BitsToIntEXT"
+            | "floatmxint8BitsToUintEXT"
+            | "intBitsToFloatmxint8EXT"
+            | "uintBitsToFloatmxint8EXT" => {
                 let kind = scalar(result.base_scalar().ok_or_else(|| internal(at))?).kind;
                 return self.add(
                     Expression::As {
@@ -1901,5 +1926,21 @@ impl FunctionLowerer<'_, '_> {
             value = self.add(Expression::Compose { ty, components }, at)?;
         }
         self.as_kind(value, crate::Scalar::I32, at)
+    }
+}
+
+fn microscaling_bitcast(name: &str) -> Option<bool> {
+    let microscaling = ["fe2m1EXT", "fe3m2EXT", "fe2m3EXT"]
+        .iter()
+        .any(|suffix| name.ends_with(suffix));
+    if !microscaling {
+        return None;
+    }
+    if name.starts_with("bitcastExtract") {
+        Some(true)
+    } else if name.starts_with("packFloat") || name.starts_with("unpackFloat") {
+        Some(false)
+    } else {
+        None
     }
 }

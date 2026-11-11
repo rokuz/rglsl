@@ -586,6 +586,18 @@ impl BlockContext<'_> {
                 self.writer.decorate_non_uniform(id)?;
             }
         }
+        let precision = self
+            .ir_function
+            .precision
+            .get(&expr_handle)
+            .copied()
+            .unwrap_or_default();
+        if !precision.is_empty() && self.produces_instruction(expr_handle) {
+            let id = self.cached.ids[expr_handle];
+            if id != 0 {
+                self.writer.decorate_precision(id, precision);
+            }
+        }
         Ok(())
     }
 
@@ -2201,6 +2213,11 @@ impl BlockContext<'_> {
                 index,
                 ty: _,
             } => self.write_array_conversion(result_type_id, conversion, expr, index, block)?,
+            crate::Expression::Bitcast {
+                expr,
+                ty: _,
+                offset,
+            } => self.write_bitcast(result_type_id, expr, offset, block)?,
             crate::Expression::TensorCreate { ty } => {
                 self.write_tensor_create(ty, result_type_id, block)?
             }
@@ -2360,8 +2377,7 @@ impl BlockContext<'_> {
         let expr_id = self.cached.get(expr)?;
         let ty = self.fun_info[expr].ty.inner_with(&self.ir_module.types);
 
-        let small =
-            |kind: crate::ScalarKind| matches!(kind, Sk::BFloat | Sk::FloatE4M3 | Sk::FloatE5M2);
+        let small = |kind: crate::ScalarKind| kind.is_encoded_float();
         if let crate::TypeInner::Scalar(scalar) | crate::TypeInner::Vector { scalar, .. } = *ty {
             if small(scalar.kind) || small(kind) {
                 return self.write_cooperative_cast(
@@ -2494,7 +2510,12 @@ impl BlockContext<'_> {
                     | Sk::AbstractFloat
                     | Sk::BFloat
                     | Sk::FloatE4M3
-                    | Sk::FloatE5M2 => {
+                    | Sk::FloatE5M2
+                    | Sk::FloatE2M1
+                    | Sk::FloatE3M2
+                    | Sk::FloatE2M3
+                    | Sk::FloatUE8M0
+                    | Sk::FloatMXINT8 => {
                         return Err(Error::Validation(
                             "conversion to bool from a non-numeric value",
                         ))
@@ -4220,6 +4241,9 @@ impl BlockContext<'_> {
                             self.cached.set(expr, id)?;
                             if self.non_uniform(expr).contains(crate::NonUniform::VALUE) {
                                 self.writer.decorate_non_uniform(id)?;
+                            }
+                            if let Some(&precision) = self.ir_function.precision.get(&expr) {
+                                self.writer.decorate_precision(id, precision);
                             }
                             self.get_expression_type_id(&self.fun_info[expr].ty)?
                         }

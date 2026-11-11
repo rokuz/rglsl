@@ -122,7 +122,12 @@ pub fn gl_uniform_function_name(ty: BasicType, array: bool) -> String {
         | ScalarType::Float16
         | ScalarType::BFloat16
         | ScalarType::FloatE4M3
-        | ScalarType::FloatE5M2 => "f",
+        | ScalarType::FloatE5M2
+        | ScalarType::FloatE2M1
+        | ScalarType::FloatE3M2
+        | ScalarType::FloatE2M3
+        | ScalarType::FloatUE8M0
+        | ScalarType::FloatMXINT8 => "f",
         ScalarType::Uint | ScalarType::Uint8 | ScalarType::Uint16 | ScalarType::Uint64 => "ui",
         ScalarType::Int
         | ScalarType::Bool
@@ -330,7 +335,12 @@ impl PipelineInfo {
             | ScalarType::Float16
             | ScalarType::BFloat16
             | ScalarType::FloatE4M3
-            | ScalarType::FloatE5M2 => float_value(0.0),
+            | ScalarType::FloatE5M2
+            | ScalarType::FloatE2M1
+            | ScalarType::FloatE3M2
+            | ScalarType::FloatE2M3
+            | ScalarType::FloatUE8M0
+            | ScalarType::FloatMXINT8 => float_value(0.0),
             _ => Value::from(0),
         })
     }
@@ -346,7 +356,12 @@ impl PipelineInfo {
             | ScalarType::Float16
             | ScalarType::BFloat16
             | ScalarType::FloatE4M3
-            | ScalarType::FloatE5M2 => float_value(random.next_float()),
+            | ScalarType::FloatE5M2
+            | ScalarType::FloatE2M1
+            | ScalarType::FloatE3M2
+            | ScalarType::FloatE2M3
+            | ScalarType::FloatUE8M0
+            | ScalarType::FloatMXINT8 => float_value(random.next_float()),
             ScalarType::Int
             | ScalarType::Uint
             | ScalarType::Int8

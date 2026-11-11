@@ -10,6 +10,8 @@ mod heap;
 mod layout_qualifiers;
 mod memory;
 mod mesh;
+mod precise;
+mod precision;
 mod qcom;
 mod ray;
 mod reference;
@@ -32,6 +34,7 @@ use rglsl_ast::{Span, TranslationUnit};
 
 pub use cooperative_call::CooperativeCall;
 pub use cooperative_matrix2::{MatrixCall, TensorCall};
+pub use precision::RelaxedPrecision;
 pub use qcom::QcomConversion;
 pub use tensor::TensorArmCall;
 
@@ -115,10 +118,14 @@ pub struct Analysis {
     pub shader_64bit_indexing: bool,
     pub promote_uint32_indices: bool,
     pub primitive_culling: bool,
+    pub subgroup_uniform_control_flow: bool,
+    pub maximally_reconverges: bool,
     pub derivative_group: Option<(DerivativeGroup, bool)>,
     pub fragment: FragmentLayout,
     pub spirv_requirements: SpirvRequirements,
     pub spirv_execution_modes: SpirvExecutionModes,
+    pub no_contraction: BTreeSet<NodeId>,
+    pub relaxed_precision: precision::RelaxedPrecision,
 }
 
 impl Analysis {
@@ -204,7 +211,10 @@ fn run(unit: &TranslationUnit, options: &Options, cached: Option<&Arc<Builtins>>
     let mut analyzer = Analyzer::new(options, builtins, diagnostics);
     analyzer.version = version;
     analyzer.unit(unit);
-    analyzer.finish()
+    let mut analysis = analyzer.finish();
+    analysis.no_contraction = precise::no_contraction(unit, &analysis);
+    analysis.relaxed_precision = precision::relaxed_precision(unit, &analysis);
+    analysis
 }
 
 fn version_of(unit: &TranslationUnit, diagnostics: &mut Vec<Diagnostic>) -> Option<u32> {
@@ -343,6 +353,8 @@ pub(crate) struct Analyzer<'a> {
     pub promote_uint32_indices: bool,
     pub ray_locations: [Vec<u32>; 3],
     pub primitive_culling: bool,
+    pub subgroup_uniform_control_flow: bool,
+    pub maximally_reconverges: bool,
     pub stage_layout: stage::StageLayout,
     pub fragment_layout: FragmentLayout,
     pub tile_image_locations: Vec<(u32, u32)>,
@@ -418,6 +430,8 @@ impl<'a> Analyzer<'a> {
             promote_uint32_indices: false,
             ray_locations: [Vec::new(), Vec::new(), Vec::new()],
             primitive_culling: false,
+            subgroup_uniform_control_flow: false,
+            maximally_reconverges: false,
             stage_layout: stage::StageLayout::default(),
             fragment_layout: FragmentLayout::default(),
             tile_image_locations: Vec::new(),
@@ -611,10 +625,14 @@ impl<'a> Analyzer<'a> {
             shader_64bit_indexing: self.shader_64bit_indexing,
             promote_uint32_indices: self.promote_uint32_indices,
             primitive_culling: self.primitive_culling,
+            subgroup_uniform_control_flow: self.subgroup_uniform_control_flow,
+            maximally_reconverges: self.maximally_reconverges,
             derivative_group: self.derivative_group,
             fragment: self.fragment_layout,
             spirv_requirements: self.spirv_requirements,
             spirv_execution_modes: self.spirv_execution_modes,
+            no_contraction: BTreeSet::new(),
+            relaxed_precision: precision::RelaxedPrecision::default(),
         }
     }
 

@@ -110,6 +110,15 @@ impl<'a> Walker<'a> {
             self.fully_specified(&parameter.ty);
             self.array(parameter.array.as_ref());
         }
+        for attribute in prototype
+            .attributes
+            .iter()
+            .chain(&prototype.trailing_attributes)
+        {
+            if let Some(argument) = &attribute.argument {
+                self.expression(argument);
+            }
+        }
     }
 
     fn initializer(&mut self, initializer: &'a Initializer) {

@@ -106,14 +106,14 @@ out int gl_ViewportMaskPerViewNV[]
         stages: VERTEX | TESS_CONTROL | TESS_EVALUATION | GEOMETRY | MESH,
         since: 450,
         text: "
-in int gl_ViewIndex
+in highp int gl_ViewIndex
 ",
     },
     Group {
         stages: FRAGMENT,
         since: 450,
         text: "
-flat in int gl_ViewIndex
+flat in highp int gl_ViewIndex
 ",
     },
     Group {
@@ -173,11 +173,11 @@ in bool gl_HelperInvocation
         stages: COMPUTE | MESH | TASK,
         since: 450,
         text: "
-in uvec3 gl_NumWorkGroups
-in uvec3 gl_WorkGroupID
-in uvec3 gl_LocalInvocationID
-in uvec3 gl_GlobalInvocationID
-in uint gl_LocalInvocationIndex
+in highp uvec3 gl_NumWorkGroups
+in highp uvec3 gl_WorkGroupID
+in highp uvec3 gl_LocalInvocationID
+in highp uvec3 gl_GlobalInvocationID
+in highp uint gl_LocalInvocationIndex
 ",
     },
     Group {
@@ -204,7 +204,7 @@ out uint gl_TaskCountNV
         text: "
 in uint gl_MeshViewCountNV
 in uint gl_MeshViewIndicesNV[4]
-in int gl_DeviceIndex
+in highp int gl_DeviceIndex
 in int gl_DrawIDARB
 ",
     },
@@ -259,20 +259,20 @@ flat in uvec2 gl_TileApronSizeQCOM
         stages: COMPUTE | MESH | TASK,
         since: 450,
         text: "
-in uint gl_NumSubgroups
-in uint gl_SubgroupID
+in highp uint gl_NumSubgroups
+in highp uint gl_SubgroupID
 ",
     },
 ];
 
 const SUBGROUP: &str = "
-in uint gl_SubgroupSize
-in uint gl_SubgroupInvocationID
-in uvec4 gl_SubgroupEqMask
-in uvec4 gl_SubgroupGeMask
-in uvec4 gl_SubgroupGtMask
-in uvec4 gl_SubgroupLeMask
-in uvec4 gl_SubgroupLtMask
+in mediump uint gl_SubgroupSize
+in mediump uint gl_SubgroupInvocationID
+in highp uvec4 gl_SubgroupEqMask
+in highp uvec4 gl_SubgroupGeMask
+in highp uvec4 gl_SubgroupGtMask
+in highp uvec4 gl_SubgroupLeMask
+in highp uvec4 gl_SubgroupLtMask
 in uint gl_SubGroupSizeARB
 in uint gl_SubGroupInvocationARB
 in uint64_t gl_SubGroupEqMaskARB
@@ -280,25 +280,25 @@ in uint64_t gl_SubGroupGeMaskARB
 in uint64_t gl_SubGroupGtMaskARB
 in uint64_t gl_SubGroupLeMaskARB
 in uint64_t gl_SubGroupLtMaskARB
-in uint gl_WarpsPerSMNV
-in uint gl_SMCountNV
-in uint gl_WarpIDNV
-in uint gl_SMIDNV
-in uint gl_CoreIDARM
-in uint gl_CoreCountARM
-in uint gl_CoreMaxIDARM
-in uint gl_WarpIDARM
-in uint gl_WarpMaxIDARM
+in highp uint gl_WarpsPerSMNV
+in highp uint gl_SMCountNV
+in highp uint gl_WarpIDNV
+in highp uint gl_SMIDNV
+in highp uint gl_CoreIDARM
+in highp uint gl_CoreCountARM
+in highp uint gl_CoreMaxIDARM
+in highp uint gl_WarpIDARM
+in highp uint gl_WarpMaxIDARM
 ";
 
 const FRAGMENT_SUBGROUP: &str = "
-flat in uint gl_SubgroupSize
-flat in uint gl_SubgroupInvocationID
-flat in uvec4 gl_SubgroupEqMask
-flat in uvec4 gl_SubgroupGeMask
-flat in uvec4 gl_SubgroupGtMask
-flat in uvec4 gl_SubgroupLeMask
-flat in uvec4 gl_SubgroupLtMask
+flat in mediump uint gl_SubgroupSize
+flat in mediump uint gl_SubgroupInvocationID
+flat in highp uvec4 gl_SubgroupEqMask
+flat in highp uvec4 gl_SubgroupGeMask
+flat in highp uvec4 gl_SubgroupGtMask
+flat in highp uvec4 gl_SubgroupLeMask
+flat in highp uvec4 gl_SubgroupLtMask
 flat in uint gl_SubGroupSizeARB
 flat in uint gl_SubGroupInvocationARB
 flat in uint64_t gl_SubGroupEqMaskARB
@@ -306,25 +306,25 @@ flat in uint64_t gl_SubGroupGeMaskARB
 flat in uint64_t gl_SubGroupGtMaskARB
 flat in uint64_t gl_SubGroupLeMaskARB
 flat in uint64_t gl_SubGroupLtMaskARB
-flat in uint gl_WarpsPerSMNV
-flat in uint gl_SMCountNV
-flat in uint gl_WarpIDNV
-flat in uint gl_SMIDNV
-flat in uint gl_CoreIDARM
-flat in uint gl_CoreCountARM
-flat in uint gl_CoreMaxIDARM
-flat in uint gl_WarpIDARM
-flat in uint gl_WarpMaxIDARM
+flat in highp uint gl_WarpsPerSMNV
+flat in highp uint gl_SMCountNV
+flat in highp uint gl_WarpIDNV
+flat in highp uint gl_SMIDNV
+flat in highp uint gl_CoreIDARM
+flat in highp uint gl_CoreCountARM
+flat in highp uint gl_CoreMaxIDARM
+flat in highp uint gl_WarpIDARM
+flat in highp uint gl_WarpMaxIDARM
 ";
 
 const RAY_TRACING_SUBGROUP: &str = "
-volatile in uint gl_SubgroupSize
-volatile in uint gl_SubgroupInvocationID
-volatile in uvec4 gl_SubgroupEqMask
-volatile in uvec4 gl_SubgroupGeMask
-volatile in uvec4 gl_SubgroupGtMask
-volatile in uvec4 gl_SubgroupLeMask
-volatile in uvec4 gl_SubgroupLtMask
+volatile in mediump uint gl_SubgroupSize
+volatile in mediump uint gl_SubgroupInvocationID
+volatile in highp uvec4 gl_SubgroupEqMask
+volatile in highp uvec4 gl_SubgroupGeMask
+volatile in highp uvec4 gl_SubgroupGtMask
+volatile in highp uvec4 gl_SubgroupLeMask
+volatile in highp uvec4 gl_SubgroupLtMask
 volatile in uint gl_SubGroupSizeARB
 volatile in uint gl_SubGroupInvocationARB
 volatile in uint64_t gl_SubGroupEqMaskARB
@@ -332,15 +332,15 @@ volatile in uint64_t gl_SubGroupGeMaskARB
 volatile in uint64_t gl_SubGroupGtMaskARB
 volatile in uint64_t gl_SubGroupLeMaskARB
 volatile in uint64_t gl_SubGroupLtMaskARB
-in uint gl_WarpsPerSMNV
-in uint gl_SMCountNV
-volatile in uint gl_WarpIDNV
-volatile in uint gl_SMIDNV
-in uint gl_CoreIDARM
-in uint gl_CoreCountARM
-in uint gl_CoreMaxIDARM
-in uint gl_WarpIDARM
-in uint gl_WarpMaxIDARM
+in highp uint gl_WarpsPerSMNV
+in highp uint gl_SMCountNV
+volatile in highp uint gl_WarpIDNV
+volatile in highp uint gl_SMIDNV
+in highp uint gl_CoreIDARM
+in highp uint gl_CoreCountARM
+in highp uint gl_CoreMaxIDARM
+in highp uint gl_WarpIDARM
+in highp uint gl_WarpMaxIDARM
 ";
 
 const PER_VERTEX: &str = "
@@ -482,6 +482,9 @@ fn parse_declaration(line: &[&str]) -> Option<Declared> {
             "volatile" => qualifiers.volatile = true,
             "perprimitiveNV" => qualifiers.per_primitive = true,
             "perviewNV" => qualifiers.per_view = true,
+            "lowp" => qualifiers.precision = Some(rglsl_ast::ast::PrecisionQualifier::Low),
+            "mediump" => qualifiers.precision = Some(rglsl_ast::ast::PrecisionQualifier::Medium),
+            "highp" => qualifiers.precision = Some(rglsl_ast::ast::PrecisionQualifier::High),
             "[" => {
                 let next = iterator.next()?;
                 if next == "]" {

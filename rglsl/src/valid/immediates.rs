@@ -225,6 +225,7 @@ mod tests {
             xfb_offset: None,
             heap: None,
             memory_decorations: crate::MemoryDecorations::empty(),
+            relaxed_precision: false,
         };
         let s = add(
             Some("S"),

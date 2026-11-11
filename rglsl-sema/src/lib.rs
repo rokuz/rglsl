@@ -45,5 +45,5 @@ pub use analyze::{
 pub use builtins::{BuiltinFunctionId, Builtins, ResourceLimits, Stage};
 pub use diagnostic::{Diagnostic, DiagnosticKind};
 pub use rglsl_ast::extensions;
-pub use scope::{FunctionId, SymbolId};
+pub use scope::{FunctionControl, FunctionId, SymbolId};
 pub use types::{NumericFeatures, Type, TypeKind, TypeRegistry};

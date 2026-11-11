@@ -40,6 +40,7 @@ impl Builder<'_> {
             heap_offset,
             tile_attachment,
             ref spirv_decorations,
+            relaxed_precision: _,
             immediate_bank,
         } = *candidate.global;
         if current.space != space {
@@ -208,6 +209,7 @@ impl Builder<'_> {
             tile_shading,
             derivative_group,
             spirv_execution_modes,
+            reconvergence,
         } = entry;
         function.diagnostic_filter_leaf = None;
         remap.adjust_function(&mut function).map_err(internal)?;
@@ -303,6 +305,7 @@ impl Builder<'_> {
             tile_shading,
             derivative_group,
             spirv_execution_modes,
+            reconvergence,
         })
     }
 

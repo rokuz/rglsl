@@ -125,3 +125,5 @@ pub const ABSTRACT_WIDTH: Bytes = 8;
 pub(crate) type NamedExpressions = FastIndexMap<Handle<Expression>, String>;
 
 pub type NonUniformExpressions = FastIndexMap<Handle<Expression>, NonUniform>;
+
+pub type PrecisionExpressions = FastIndexMap<Handle<Expression>, Precision>;

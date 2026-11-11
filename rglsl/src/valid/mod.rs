@@ -765,7 +765,12 @@ impl Validator {
                 | crate::Scalar::F64
                 | crate::Scalar::BF16
                 | crate::Scalar::FE4M3
-                | crate::Scalar::FE5M2,
+                | crate::Scalar::FE5M2
+                | crate::Scalar::FE2M1
+                | crate::Scalar::FE3M2
+                | crate::Scalar::FE2M3
+                | crate::Scalar::FUE8M0
+                | crate::Scalar::FMXINT8,
             ) => {}
             None if composite => {}
             _ => return Err(OverrideError::TypeNotScalar),

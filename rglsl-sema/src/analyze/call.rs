@@ -427,6 +427,11 @@ impl Analyzer<'_> {
             .any(|ty| ty.sized_vector_length().is_some() && !ty.is_array())
             && self.scopes.function_levels(name).is_empty()
             && !self.builtins.overloads(name).is_empty()
+            && !self.builtins.overloads(name).iter().any(|id| {
+                self.builtins
+                    .function(*id)
+                    .is_some_and(|function| function.same_parameter_types(&types))
+            })
         {
             return self.long_vector_builtin(expression, span, name, arguments, &operands);
         }
@@ -771,6 +776,16 @@ impl Analyzer<'_> {
             self.require_extension(span, "GL_EXT_float_e4m3", name);
         } else if lower.contains("floate5m2") {
             self.require_extension(span, "GL_EXT_float_e5m2", name);
+        } else if lower.contains("fe2m1") {
+            self.require_extension(span, "GL_EXT_float_e2m1", name);
+        } else if lower.contains("fe3m2") {
+            self.require_extension(span, "GL_EXT_float_e3m2", name);
+        } else if lower.contains("fe2m3") {
+            self.require_extension(span, "GL_EXT_float_e2m3", name);
+        } else if lower.contains("floatue8m0") {
+            self.require_extension(span, "GL_EXT_float_ue8m0", name);
+        } else if lower.contains("floatmxint8") {
+            self.require_extension(span, "GL_EXT_float_mxint8", name);
         }
         self.mesh_function_extension(span, name);
         if let Some(extension) = super::qcom::function_extension(name) {
@@ -1162,6 +1177,13 @@ impl Analyzer<'_> {
         {
             return fail(self, &ty, "can't convert");
         }
+        if microscaling_conversion(&ty, &operands) {
+            return fail(
+                self,
+                &ty,
+                "constructor argument must be a non-spec constant",
+            );
+        }
         if !ty.is_array()
             && matches!(
                 ty.kind,
@@ -1465,4 +1487,19 @@ impl Analyzer<'_> {
     }
 }
 
+fn microscaling_conversion(ty: &Type, operands: &[Operand]) -> bool {
+    if ty.is_array()
+        || !matches!(ty.kind, TypeKind::Scalar(_) | TypeKind::Vector { .. })
+        || !ty.base_scalar().is_some_and(Scalar::is_microscaling)
+    {
+        return false;
+    }
+    let constant = operands
+        .iter()
+        .all(|operand| operand.constant && !operand.specialization);
+    !constant
+        && operands
+            .iter()
+            .any(|operand| operand.ty.base_scalar() != ty.base_scalar())
+}
 pub(crate) const SPEC_CONSTANT_COMPOSITES: &str = "GL_EXT_spec_constant_composites";
