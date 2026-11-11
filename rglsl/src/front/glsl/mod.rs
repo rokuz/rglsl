@@ -60,6 +60,7 @@ pub struct Options {
     pub auto_map_locations: bool,
     pub spirv_version: Option<(u8, u8)>,
     pub library: bool,
+    pub hlsl_offsets: bool,
 }
 
 impl From<ShaderStage> for Options {
@@ -71,6 +72,7 @@ impl From<ShaderStage> for Options {
             auto_map_locations: false,
             spirv_version: None,
             library: false,
+            hlsl_offsets: false,
         }
     }
 }
@@ -109,7 +111,17 @@ impl Frontend {
     ///
     /// Multiple calls using the same `Frontend` and different shaders are supported.
     pub fn parse(&mut self, options: &Options, source: &str) -> Result<Module, ParseErrors> {
-        lower::parse(options, source)
+        lower::parse(options, source, FileId(0), &mut NoIncluder)
+    }
+
+    pub fn parse_with_includer(
+        &mut self,
+        options: &Options,
+        source: &str,
+        root: FileId,
+        includer: &mut dyn Includer,
+    ) -> Result<Module, ParseErrors> {
+        lower::parse(options, source, root, includer)
     }
 
     pub fn compile(

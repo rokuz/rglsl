@@ -314,6 +314,14 @@ fn run_case(
     if case.target.compile_only {
         command.arg("--object");
     }
+    let test_dir = env.glslang_dir.join("Test");
+    let runtests = corpus::runtests_options(&case.name);
+    for directory in runtests.include_dirs {
+        command.arg("--include-dir").arg(test_dir.join(directory));
+    }
+    if runtests.hlsl_offsets {
+        command.arg("--hlsl-offsets");
+    }
     command.arg(&case.path);
     let output = process::run(command, timeout)?;
     let first = output.stdout.lines().find_map(|l| l.strip_prefix("E "));
@@ -422,6 +430,9 @@ fn validate(
     if enables_extension(&case.path, "GL_EXT_scalar_block_layout") {
         command.arg("--scalar-block-layout");
     }
+    if corpus::runtests_options(&case.name).hlsl_offsets {
+        command.arg("--relax-block-layout");
+    }
     command.arg(module);
     let output = process::run(command, timeout)?;
     if matches!(output.exit, Exit::Code(0)) {
@@ -452,6 +463,16 @@ fn run_oracle(
         command
             .arg("-o")
             .arg(work_dir.join("glslang").join(format!("{}.spv", case.name)));
+    }
+    let runtests = corpus::runtests_options(&case.name);
+    for directory in runtests.include_dirs {
+        command.arg(format!("-I{directory}"));
+    }
+    if let Some(preamble) = runtests.glslang_preamble {
+        command.args(["--preamble-text", preamble]);
+    }
+    if runtests.hlsl_offsets {
+        command.arg("--hlsl-offsets");
     }
     command.arg(&case.name);
     let output = process::run(command, timeout)?;

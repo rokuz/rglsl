@@ -93,7 +93,9 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   matrices to such members. The validator no longer checks offsets, strides and spans against
   WGSL alignment rules (`Disalignment::{ArrayStride, StructSpan, MemberOffset,
   MemberOffsetAfterStruct}` are removed); it checks only that members and array elements do
-  not overlap.
+  not overlap. Members need not be in offset order (GLSL's explicit `offset` allows any
+  order in Vulkan): the overlap check sorts members by offset, and a matrix member's extent is
+  measured with its `matrix_layout` stride.
 - **Stage inputs and outputs can be global variables** (`AddressSpace::Input`/`Output`,
   `GlobalVariable::io`, `EntryPoint::interface`, and `component`/`invariant`/`patch` on
   `Binding::Location`); see `docs/design/stage-io.md`. A vertex shader need not return a
@@ -596,6 +598,27 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   global expressions); `Module::spirv_requirements` (extensions and capabilities). An `Input` or
   `Output` global with a raw `BuiltIn` decoration (`proc::has_spirv_built_in`) needs no binding.
   The SPIR-V backend writes them in `back/spv/intrinsics.rs`.
+
+- **A comparison sampler may sample a float texture that is not a depth image.**
+  `ImageSample` with a separate comparison sampler and a `depth_ref` accepts an
+  `ImageClass::Sampled { kind: Float, multi: false }` image and has a scalar `f32` result; the
+  SPIR-V backend combines it into an `OpTypeSampledImage` of the depth variant of the image
+  type, as glslang does for a texture used both with and without a shadow sampler.
+
+- **Workgroup variables may be null-initialized.** A `WorkGroup` global may have an
+  initializer when it is a `ZeroValue` (`GL_EXT_null_initializer`'s `shared T x = {};`); the
+  SPIR-V backend writes it as `OpConstantNull`, as glslang does.
+
+- **Composite overrides.** An `Override` without an id may have a matrix, cooperative matrix,
+  array or struct type (`GL_EXT_spec_constant_composites`); its initializer is a `Compose` or
+  `Replicate` of override expressions, written as `OpSpecConstantComposite` (or
+  `OpSpecConstantCompositeReplicateEXT`).
+
+- **Push constant banks** (`GL_NV_push_constant_bank`). `GlobalVariable::immediate_bank`
+  (`ImmediateBank { bank, member_offset }`), written as `BankNV` on the variable and its block
+  type and `MemberOffsetNV` on the variable, with `PushConstantBanksNV`. An entry point may use
+  several `Immediate` variables when no two of them have the same bank and member offset (no
+  bank is bank 0, offset 0); `EntryPointError::MoreThanOneImmediateUsed` is reported otherwise.
 
 ## Cherry-picked upstream commits
 

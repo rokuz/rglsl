@@ -177,7 +177,7 @@ pub enum EntryPointError {
     ForbiddenStageOperations,
     #[error("Global variable {0:?} is used incorrectly as {1:?}")]
     InvalidGlobalUsage(Handle<crate::GlobalVariable>, GlobalUse),
-    #[error("More than 1 immediate data variable is used")]
+    #[error("More than 1 immediate data variable is used in the same push constant bank")]
     MoreThanOneImmediateUsed,
     #[error("Argument {0} varying error")]
     Argument(u32, #[source] VaryingError),
@@ -1797,6 +1797,11 @@ impl super::Validator {
         if let Some(init) = var.init {
             match var.space {
                 crate::AddressSpace::Private | crate::AddressSpace::Function => {}
+                crate::AddressSpace::WorkGroup
+                    if matches!(
+                        gctx.global_expressions[init],
+                        crate::Expression::ZeroValue(_)
+                    ) => {}
                 _ => {
                     return Err(GlobalVariableError::InitializerNotAllowed(var.space));
                 }
@@ -2234,17 +2239,17 @@ impl super::Validator {
         }
 
         {
-            let mut used_immediates = module
-                .global_variables
-                .iter()
-                .filter(|&(_, var)| var.space == crate::AddressSpace::Immediate)
-                .map(|(handle, _)| handle)
-                .filter(|&handle| !info[handle].is_empty());
-            // Check if there is more than one immediate data, and error if so.
-            // Use a loop for when returning multiple errors is supported.
-            if let Some(handle) = used_immediates.nth(1) {
-                return Err(EntryPointError::MoreThanOneImmediateUsed
-                    .with_span_handle(handle, &module.global_variables));
+            let mut banks = crate::FastHashSet::default();
+            for (handle, var) in module.global_variables.iter() {
+                if var.space != crate::AddressSpace::Immediate || info[handle].is_empty() {
+                    continue;
+                }
+                let bank = var.immediate_bank.unwrap_or_default();
+                let key = (bank.bank.unwrap_or(0), bank.member_offset.unwrap_or(0));
+                if !banks.insert(key) {
+                    return Err(EntryPointError::MoreThanOneImmediateUsed
+                        .with_span_handle(handle, &module.global_variables));
+                }
             }
         }
 

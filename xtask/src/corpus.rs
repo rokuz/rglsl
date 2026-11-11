@@ -178,6 +178,32 @@ impl Corpus {
     pub const ALL: [Self; 2] = [Self::Vulkan, Self::OpenGlAsVulkan];
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RuntestsOptions {
+    pub include_dirs: &'static [&'static str],
+    pub glslang_preamble: Option<&'static str>,
+    pub hlsl_offsets: bool,
+}
+
+pub fn runtests_options(name: &str) -> RuntestsOptions {
+    match name {
+        "include.system.vert" => RuntestsOptions {
+            include_dirs: &["inc2"],
+            ..RuntestsOptions::default()
+        },
+        "glsl.-P.include.frag" => RuntestsOptions {
+            include_dirs: &["."],
+            glslang_preamble: Some("#extension GL_GOOGLE_include_directive : require"),
+            ..RuntestsOptions::default()
+        },
+        "spv.hlslOffsets.vert" => RuntestsOptions {
+            hlsl_offsets: true,
+            ..RuntestsOptions::default()
+        },
+        _ => RuntestsOptions::default(),
+    }
+}
+
 /// The `#version` numbers the project supports.
 pub const SUPPORTED_VERSIONS: &[u32] = &[450, 460];
 

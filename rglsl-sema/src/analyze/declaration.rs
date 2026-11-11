@@ -20,7 +20,8 @@ use crate::scope::{
     SymbolId, SymbolKind,
 };
 use crate::types::{
-    ArraySize, BlockStorage, BlockType, Member, Opaque, Scalar, SpecializedSize, Type, TypeKind,
+    ArraySize, BlockStorage, BlockType, Member, Opaque, OpaqueKind, Scalar, SpecializedSize, Type,
+    TypeKind,
 };
 
 const IMAGE_FORMATS: [&str; 41] = [
@@ -171,11 +172,40 @@ impl Analyzer<'_> {
         for index in 0..3 {
             if let (Some(name), Some(identifier)) = (names.get(index), identifiers.get(index)) {
                 if let Some(entry) = qualifiers.layout_entry(name) {
-                    if let Some(slot) = self.local_size.get_mut(index) {
-                        *slot = entry.value.and_then(|value| u32::try_from(value).ok());
+                    if entry.value == Some(0) {
+                        self.error(
+                            entry.span,
+                            DiagnosticKind::InvalidQualifier {
+                                qualifier: name,
+                                reason: "must be at least 1",
+                            },
+                        );
+                    }
+                    let value = entry.value.and_then(|value| u32::try_from(value).ok());
+                    let changed = self
+                        .local_size
+                        .get(index)
+                        .copied()
+                        .flatten()
+                        .is_some_and(|previous| value.is_some_and(|value| value != previous));
+                    if changed {
+                        self.local_size_changed(entry.span);
+                    } else if let Some(slot) = self.local_size.get_mut(index) {
+                        *slot = value;
                     }
                 }
-                if qualifiers.has_layout(identifier) {
+                if let Some(entry) = qualifiers.layout_entry(identifier) {
+                    let changed = self
+                        .local_size_ids
+                        .get(index)
+                        .copied()
+                        .flatten()
+                        .is_some_and(|previous| entry.value.is_some_and(|value| value != previous));
+                    if changed {
+                        self.local_size_changed(entry.span);
+                    } else if let Some(slot) = self.local_size_ids.get_mut(index) {
+                        *slot = entry.value;
+                    }
                     if let Some(slot) = self.local_size_specialized.get_mut(index) {
                         *slot = true;
                     }
@@ -510,7 +540,62 @@ impl Analyzer<'_> {
         }
         self.stage_layout_identifiers(&result);
         self.heap_layout_check(&result);
+        self.push_constant_bank_layout_check(&result);
+        self.removed_packing_check(&result);
         result
+    }
+
+    fn binding_required_check(
+        &mut self,
+        span: Span,
+        ty: &Type,
+        qualifiers: &Qualifiers,
+        block: bool,
+    ) {
+        if !self.options.require_bindings
+            || qualifiers.has_layout("binding")
+            || !matches!(qualifiers.storage, Storage::Uniform | Storage::Buffer)
+            || self.extension_enabled(super::heap::DESCRIPTOR_HEAP)
+        {
+            return;
+        }
+        let message = if block {
+            let exempt = [
+                "push_constant",
+                "buffer_reference",
+                "input_attachment_index",
+            ]
+            .iter()
+            .any(|name| qualifiers.has_layout(name))
+                || super::ray::is_shader_record(qualifiers);
+            (!exempt).then_some("uniform/buffer blocks require layout(binding=X)")
+        } else {
+            matches!(
+                ty.kind,
+                TypeKind::Opaque(Opaque {
+                    kind: OpaqueKind::Sampler
+                        | OpaqueKind::CombinedSampler
+                        | OpaqueKind::Texture
+                        | OpaqueKind::Image
+                        | OpaqueKind::SubpassInput,
+                    ..
+                })
+            )
+            .then_some("sampler/texture/image requires layout(binding=X)")
+        };
+        if let Some(message) = message {
+            self.error(span, DiagnosticKind::BindingRequired(message));
+        }
+    }
+
+    fn local_size_changed(&mut self, span: Span) {
+        self.error(
+            span,
+            DiagnosticKind::InvalidQualifier {
+                qualifier: "local_size",
+                reason: "cannot change previously set size",
+            },
+        );
     }
 
     fn input_attachment_index_value(&mut self, span: Span, value: Option<i64>, specialized: bool) {
@@ -1140,10 +1225,16 @@ impl Analyzer<'_> {
             ty = Type::ERROR;
             broken = true;
         }
-        let initializer = declarator
+        let initializer = declarator.initializer.as_ref().map(|initializer| {
+            (
+                name.span,
+                self.declaration_initializer(name.span, initializer, &ty),
+            )
+        });
+        let null_initializer = declarator
             .initializer
             .as_ref()
-            .map(|initializer| (name.span, self.initializer(name.span, initializer, &ty)));
+            .is_some_and(|initializer| is_null_initializer(&initializer.node));
         if broken {
             self.declare_variable(declarator, ty, qualifiers, None);
             return;
@@ -1221,6 +1312,9 @@ impl Analyzer<'_> {
         }
         self.global_storage_checks(&qualifiers, &ty, name.span, false);
         if is_global {
+            self.binding_required_check(name.span, &ty, &qualifiers, false);
+        }
+        if is_global {
             self.heap_object_check(name.span, &qualifiers);
             self.heap_declaration_check(name.span, &ty, &qualifiers, false);
         }
@@ -1269,12 +1363,9 @@ impl Analyzer<'_> {
         if let Some((span, operand)) = initializer {
             if matches!(
                 qualifiers.storage,
-                Storage::In
-                    | Storage::Out
-                    | Storage::Buffer
-                    | Storage::Shared
-                    | Storage::TaskPayloadShared
-            ) || (qualifiers.storage == Storage::Uniform && ty.contains_opaque(&self.types))
+                Storage::In | Storage::Out | Storage::Buffer | Storage::TaskPayloadShared
+            ) || (qualifiers.storage == Storage::Shared && !null_initializer)
+                || (qualifiers.storage == Storage::Uniform && ty.contains_opaque(&self.types))
             {
                 self.error(
                     span,
@@ -1467,6 +1558,40 @@ impl Analyzer<'_> {
         }
     }
 
+    fn declaration_initializer(
+        &mut self,
+        span: Span,
+        initializer: &Spanned<Initializer>,
+        expected: &Type,
+    ) -> Operand {
+        if !is_null_initializer(&initializer.node) {
+            return self.initializer(span, initializer, expected);
+        }
+        self.require_extension(initializer.span, NULL_INITIALIZER, "empty { } initializer");
+        if expected.is_error() {
+            return Operand::error();
+        }
+        let reason = if expected.array.contains(&ArraySize::Unsized) {
+            Some("null initializers can't size unsized arrays")
+        } else if expected.contains_opaque(&self.types) {
+            Some("null initializers can't be used on opaque values")
+        } else {
+            None
+        };
+        if let Some(reason) = reason {
+            self.error(span, DiagnosticKind::InvalidNullInitializer(reason));
+            return Operand::error();
+        }
+        let mut operand = Operand::temporary(expected.clone());
+        operand.value = expected.base_scalar().and_then(|scalar| {
+            let count = expected.flattened_size(&self.types)?;
+            let count = usize::try_from(count).ok()?;
+            Some(Constant::new(alloc::vec![Value::zero(scalar); count]))
+        });
+        operand.constant = operand.value.is_some();
+        operand
+    }
+
     pub(crate) fn initializer(
         &mut self,
         span: Span,
@@ -1514,6 +1639,7 @@ impl Analyzer<'_> {
         let mut constant = true;
         let mut values = Some(Vec::new());
         let mut failed = expected.is_error();
+        let uses = self.specialization_uses;
         if element_types.is_empty() && !failed {
             self.error(
                 span,
@@ -1571,9 +1697,16 @@ impl Analyzer<'_> {
         if failed {
             return Operand::error();
         }
+        let specialization = self.specialization_uses != uses;
+        if specialization && !self.extension_enabled(super::call::SPEC_CONSTANT_COMPOSITES) {
+            constant = false;
+        }
         let mut operand = Operand::temporary(result);
         operand.constant = constant;
-        operand.value = values.filter(|_| constant).map(Constant::new);
+        operand.specialization = constant && specialization;
+        operand.value = values
+            .filter(|_| constant && !specialization)
+            .map(Constant::new);
         operand
     }
 
@@ -1610,6 +1743,7 @@ impl Analyzer<'_> {
         self.shader_record_checks(structure.qualifier.span, &qualifiers, true);
         self.ray_variable_checks(structure.qualifier.span, &qualifiers);
         self.heap_object_check(structure.name.span, &qualifiers);
+        self.binding_required_check(structure.name.span, &Type::ERROR, &qualifiers, true);
         let buffer_type = qualifiers.has_layout("buffer_type");
         if buffer_type {
             let invalid =
@@ -2260,4 +2394,10 @@ const fn both_derivative_groups() -> DiagnosticKind {
         qualifier: "derivative_group_quads* and derivative_group_linear*",
         reason: "cannot be both specified",
     }
+}
+
+const NULL_INITIALIZER: &str = "GL_EXT_null_initializer";
+
+pub const fn is_null_initializer(initializer: &Initializer) -> bool {
+    matches!(*initializer, Initializer::List(ref items) if items.is_empty())
 }

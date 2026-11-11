@@ -200,14 +200,23 @@ fn run(args: Vec<String>) -> Result<i32> {
             let out = args.value("--out")?.context("--out is required")?;
             let auto_map = args.flag("--auto-map");
             let object = args.flag("--object");
+            let hlsl_offsets = args.flag("--hlsl-offsets");
+            let mut include_dirs = Vec::new();
+            while let Some(directory) = args.value("--include-dir")? {
+                include_dirs.push(directory);
+            }
             let input = args.next_positional().context("input file is required")?;
             args.finish()?;
             Ok(worker::compile_one(
                 Path::new(&input),
-                &stage,
-                &spv,
-                auto_map,
-                object,
+                &worker::OneOptions {
+                    stage: &stage,
+                    spv_version: &spv,
+                    auto_map,
+                    object,
+                    hlsl_offsets,
+                    include_dirs: &include_dirs,
+                },
                 Path::new(&out),
             ))
         }

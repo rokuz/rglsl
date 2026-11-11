@@ -734,9 +734,20 @@ impl Validator {
 
         let scalar = match gctx.types[o.ty].inner {
             crate::TypeInner::Scalar(scalar) => Some(scalar),
-            crate::TypeInner::Vector { scalar, .. } if o.id.is_none() => Some(scalar),
+            crate::TypeInner::Vector { scalar, .. }
+            | crate::TypeInner::Matrix { scalar, .. }
+            | crate::TypeInner::CooperativeMatrix { scalar, .. }
+                if o.id.is_none() =>
+            {
+                Some(scalar)
+            }
             _ => None,
         };
+        let composite = o.id.is_none()
+            && matches!(
+                gctx.types[o.ty].inner,
+                crate::TypeInner::Array { .. } | crate::TypeInner::Struct { .. }
+            );
         match scalar {
             Some(
                 crate::Scalar::BOOL
@@ -755,6 +766,7 @@ impl Validator {
                 | crate::Scalar::FE4M3
                 | crate::Scalar::FE5M2,
             ) => {}
+            None if composite => {}
             _ => return Err(OverrideError::TypeNotScalar),
         }
 
