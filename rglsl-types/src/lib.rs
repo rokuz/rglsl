@@ -6,6 +6,7 @@ extern crate std;
 
 pub mod small_float;
 pub mod spv;
+pub mod stack;
 
 /// Create a Markdown link definition referring to the `wgpu` crate.
 ///

@@ -1,8 +1,8 @@
 use alloc::boxed::Box;
 use alloc::vec::Vec;
-use core::mem;
 
 use crate::ast::{Expression, ExpressionKind, FunctionCall, FunctionIdentifier, NodeId};
+use crate::deep::{deep_clone, deep_eq, drop_owned, Nested};
 use crate::span::Span;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -312,13 +312,33 @@ impl ExpressionKind {
             _ => false,
         }
     }
+}
 
-    fn take_children(&mut self, into: &mut Vec<Expression>) {
-        for child in self.children_mut() {
-            if !child.kind.is_leaf() {
-                into.push(mem::replace(child, placeholder()));
-            }
-        }
+impl Nested for ExpressionKind {
+    type Node = Expression;
+
+    fn kind(node: &Expression) -> &Self {
+        &node.kind
+    }
+
+    fn rebuild(node: &Expression, kind: Self) -> Expression {
+        Expression::new(node.id, node.span, kind)
+    }
+
+    fn children(&self) -> Vec<&Expression> {
+        Self::children(self)
+    }
+
+    fn children_mut(&mut self) -> Vec<&mut Expression> {
+        Self::children_mut(self)
+    }
+
+    fn shell(&self) -> Self {
+        Self::shell(self)
+    }
+
+    fn same_shell(&self, other: &Self) -> bool {
+        Self::same_shell(self, other)
     }
 }
 
@@ -328,87 +348,20 @@ impl Drop for ExpressionKind {
             return;
         }
         let mut pending = Vec::new();
-        self.take_children(&mut pending);
-        while let Some(mut expression) = pending.pop() {
-            expression.kind.take_children(&mut pending);
-        }
-    }
-}
-
-enum CloneTask<'a> {
-    Visit(&'a Expression),
-    Build(&'a Expression),
-}
-
-fn fill(kind: &mut ExpressionKind, built: &mut Vec<Expression>) {
-    let mut slots = kind.children_mut();
-    let start = built.len().saturating_sub(slots.len());
-    for (slot, child) in slots.iter_mut().zip(built.drain(start..)) {
-        **slot = child;
+        self.take_owned(&mut pending);
+        drop_owned(pending);
     }
 }
 
 impl Clone for ExpressionKind {
     fn clone(&self) -> Self {
-        let mut shell = self.shell();
-        if self.is_leaf() {
-            return shell;
-        }
-        let mut built: Vec<Expression> = Vec::new();
-        let mut tasks: Vec<CloneTask<'_>> = self
-            .children()
-            .into_iter()
-            .rev()
-            .map(CloneTask::Visit)
-            .collect();
-        while let Some(task) = tasks.pop() {
-            match task {
-                CloneTask::Visit(expression) if expression.kind.is_leaf() => built.push(
-                    Expression::new(expression.id, expression.span, expression.kind.shell()),
-                ),
-                CloneTask::Visit(expression) => {
-                    tasks.push(CloneTask::Build(expression));
-                    tasks.extend(
-                        expression
-                            .kind
-                            .children()
-                            .into_iter()
-                            .rev()
-                            .map(CloneTask::Visit),
-                    );
-                }
-                CloneTask::Build(expression) => {
-                    let mut kind = expression.kind.shell();
-                    fill(&mut kind, &mut built);
-                    built.push(Expression::new(expression.id, expression.span, kind));
-                }
-            }
-        }
-        fill(&mut shell, &mut built);
-        shell
+        deep_clone(self)
     }
 }
 
 impl PartialEq for ExpressionKind {
     fn eq(&self, other: &Self) -> bool {
-        let mut pairs = Vec::from([(self, other)]);
-        while let Some((left, right)) = pairs.pop() {
-            if !left.same_shell(right) {
-                return false;
-            }
-            let left_children = left.children();
-            let right_children = right.children();
-            if left_children.len() != right_children.len() {
-                return false;
-            }
-            pairs.extend(
-                left_children
-                    .into_iter()
-                    .zip(right_children)
-                    .map(|(left, right)| (&left.kind, &right.kind)),
-            );
-        }
-        true
+        deep_eq(self, other)
     }
 }
 

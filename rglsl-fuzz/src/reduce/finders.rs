@@ -438,9 +438,10 @@ fn inline_outlined(unit: &TranslationUnit, builder: &mut Builder) -> Vec<Opportu
                 }
             }
         });
-        let StatementKind::Expression(Some(inlined)) = holder.kind else {
+        let StatementKind::Expression(Some(inlined)) = &mut holder.kind else {
             continue;
         };
+        let inlined = core::mem::replace(inlined, rglsl_ast::placeholder());
         let replacement = builder.paren(inlined);
         result.push(Opportunity::single(Change::Expression(
             expression.id,

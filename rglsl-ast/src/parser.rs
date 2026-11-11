@@ -1,9 +1,12 @@
 use alloc::borrow::ToOwned;
 use alloc::boxed::Box;
-use alloc::collections::BTreeSet;
+use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
+use core::cell::{Cell, RefCell};
+use core::future::Future;
+use core::ops::Deref;
 
 use crate::ast::NumericKind;
 use crate::ast::{
@@ -28,6 +31,7 @@ use crate::keywords::{
 };
 use crate::lexer::{tokenize, Token, TokenKind};
 use crate::span::Span;
+use rglsl_types::stack::{run, Call, Stack};
 
 pub const MAX_NESTING_DEPTH: u32 = 128;
 pub const NON_UNIFORM: &str = "nonuniformEXT";
@@ -135,19 +139,101 @@ impl SpirvToken {
     }
 }
 
+struct StructScopes<'a> {
+    scopes: Vec<BTreeSet<&'a str>>,
+    visible: BTreeMap<&'a str, usize>,
+}
+
+impl<'a> StructScopes<'a> {
+    fn new(names: &[&'a str]) -> Self {
+        let mut scopes = Self {
+            scopes: Vec::from([BTreeSet::new()]),
+            visible: BTreeMap::new(),
+        };
+        for name in names {
+            scopes.declare(name);
+        }
+        scopes
+    }
+
+    fn push(&mut self) {
+        self.scopes.push(BTreeSet::new());
+    }
+
+    fn pop(&mut self) {
+        let Some(scope) = self.scopes.pop() else {
+            return;
+        };
+        for name in scope {
+            if let Some(count) = self.visible.get_mut(name) {
+                *count = count.saturating_sub(1);
+                if *count == 0 {
+                    self.visible.remove(name);
+                }
+            }
+        }
+    }
+
+    fn contains(&self, name: &str) -> bool {
+        self.visible.contains_key(name)
+    }
+
+    fn declare(&mut self, name: &'a str) {
+        if let Some(scope) = self.scopes.last_mut() {
+            if scope.insert(name) {
+                *self.visible.entry(name).or_default() += 1;
+            }
+        }
+    }
+}
+
 struct Parser<'a> {
     source: &'a str,
     tokens: Vec<Token<'a>>,
     directives: Vec<Directive>,
     strings: Vec<String>,
     end: Token<'a>,
-    cursor: usize,
-    previous_end: u32,
-    next_id: u32,
-    depth: u32,
-    expression_depth: u32,
-    struct_scopes: Vec<BTreeSet<&'a str>>,
-    extensions: ExtensionState,
+    cursor: Cell<usize>,
+    previous_end: Cell<u32>,
+    next_id: Cell<u32>,
+    depth: Cell<u32>,
+    expression_depth: Cell<u32>,
+    struct_scopes: RefCell<StructScopes<'a>>,
+    extensions: RefCell<ExtensionState>,
+    nesting_limit: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ParseOptions {
+    pub nesting_limit: Option<u32>,
+}
+
+impl Default for ParseOptions {
+    fn default() -> Self {
+        Self {
+            nesting_limit: Some(MAX_NESTING_DEPTH),
+        }
+    }
+}
+
+#[derive(Clone)]
+struct Cx<'b, 'a> {
+    parser: &'b Parser<'a>,
+    stack: Stack<'b>,
+}
+
+impl<'a> Deref for Cx<'_, 'a> {
+    type Target = Parser<'a>;
+
+    fn deref(&self) -> &Parser<'a> {
+        self.parser
+    }
+}
+
+impl<'b> Cx<'b, '_> {
+    fn call<T: 'b>(&self, frame: impl Future<Output = T> + 'b) -> Call<'b, T> {
+        self.stack.call(frame)
+    }
 }
 
 pub fn parse(source: &str) -> core::result::Result<TranslationUnit, ParseError> {
@@ -158,6 +244,23 @@ pub fn parse(source: &str) -> core::result::Result<TranslationUnit, ParseError> 
 }
 
 pub fn parse_prefix(source: &str) -> (TranslationUnit, Option<ParseError>) {
+    parse_prefix_with(source, &ParseOptions::default())
+}
+
+pub fn parse_with(
+    source: &str,
+    options: &ParseOptions,
+) -> core::result::Result<TranslationUnit, ParseError> {
+    match parse_prefix_with(source, options) {
+        (unit, None) => Ok(unit),
+        (_, Some(error)) => Err(error),
+    }
+}
+
+pub fn parse_prefix_with(
+    source: &str,
+    options: &ParseOptions,
+) -> (TranslationUnit, Option<ParseError>) {
     let lexed = match tokenize(source) {
         Ok(lexed) => lexed,
         Err(error) => {
@@ -167,35 +270,47 @@ pub fn parse_prefix(source: &str) -> (TranslationUnit, Option<ParseError>) {
             )
         }
     };
-    let mut parser = Parser {
+    let parser = Parser {
         source,
         tokens: lexed.tokens,
         directives: lexed.directives,
         strings: lexed.strings,
         end: lexed.end,
-        cursor: 0,
-        previous_end: 0,
-        next_id: 0,
-        depth: 0,
-        expression_depth: 0,
-        struct_scopes: Vec::from([BTreeSet::from([
+        cursor: Cell::new(0),
+        previous_end: Cell::new(0),
+        next_id: Cell::new(0),
+        depth: Cell::new(0),
+        expression_depth: Cell::new(0),
+        struct_scopes: RefCell::new(StructScopes::new(&[
             "gl_TextureFootprint2DNV",
             "gl_TextureFootprint3DNV",
-        ])]),
-        extensions: ExtensionState::new(),
+        ])),
+        extensions: RefCell::new(ExtensionState::new()),
+        nesting_limit: options.nesting_limit,
     };
     let mut external_declarations = Vec::new();
     let mut failure = None;
     while parser.peek().kind != TokenKind::End {
-        match parser.parse_external_declaration() {
-            Ok(external) => external_declarations.push(external),
-            Err(error) => {
+        let parsed = run(|stack| {
+            Cx {
+                parser: &parser,
+                stack,
+            }
+            .parse_external_declaration()
+        });
+        match parsed {
+            Some(Ok(external)) => external_declarations.push(external),
+            Some(Err(error)) => {
                 failure = Some(*error);
+                break;
+            }
+            None => {
+                failure = Some(*parser.error(ParseErrorKind::Internal, parser.peek().span));
                 break;
             }
         }
     }
-    let unit = TranslationUnit::new(external_declarations, NodeId::new(parser.next_id));
+    let unit = TranslationUnit::new(external_declarations, NodeId::new(parser.next_id.get()));
     (unit, failure)
 }
 
@@ -205,18 +320,19 @@ impl<'a> Parser<'a> {
     }
 
     fn peek(&self) -> Token<'a> {
-        self.token_at(self.cursor)
+        self.token_at(self.cursor.get())
     }
 
     fn peek_nth(&self, distance: usize) -> Token<'a> {
-        self.token_at(self.cursor.saturating_add(distance))
+        self.token_at(self.cursor.get().saturating_add(distance))
     }
 
-    fn advance(&mut self) -> Token<'a> {
+    fn advance(&self) -> Token<'a> {
         let token = self.peek();
-        if self.cursor < self.tokens.len() {
-            self.cursor += 1;
-            self.previous_end = token.span.end;
+        let cursor = self.cursor.get();
+        if cursor < self.tokens.len() {
+            self.cursor.set(cursor + 1);
+            self.previous_end.set(token.span.end);
         }
         token
     }
@@ -233,7 +349,7 @@ impl<'a> Parser<'a> {
         matches!(self.peek().kind, TokenKind::Word(found) if found == word)
     }
 
-    fn eat(&mut self, punctuator: &str) -> bool {
+    fn eat(&self, punctuator: &str) -> bool {
         let found = self.at(punctuator);
         if found {
             self.advance();
@@ -241,7 +357,7 @@ impl<'a> Parser<'a> {
         found
     }
 
-    fn eat_word(&mut self, word: &str) -> bool {
+    fn eat_word(&self, word: &str) -> bool {
         let found = self.at_word(word);
         if found {
             self.advance();
@@ -249,7 +365,7 @@ impl<'a> Parser<'a> {
         found
     }
 
-    fn expect(&mut self, punctuator: &str) -> Result<Span> {
+    fn expect(&self, punctuator: &str) -> Result<Span> {
         if self.at(punctuator) {
             Ok(self.advance().span)
         } else {
@@ -257,7 +373,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn expect_word(&mut self, word: &str) -> Result<Span> {
+    fn expect_word(&self, word: &str) -> Result<Span> {
         if self.at_word(word) {
             Ok(self.advance().span)
         } else {
@@ -292,57 +408,58 @@ impl<'a> Parser<'a> {
     }
 
     fn span_from(&self, start: u32) -> Span {
-        Span::new(start, self.previous_end.max(start))
+        Span::new(start, self.previous_end.get().max(start))
     }
 
     fn spanned<T>(&self, start: u32, value: T) -> Spanned<T> {
         Spanned::new(self.span_from(start), value)
     }
 
-    fn node<K>(&mut self, start: u32, kind: K) -> Result<Node<K>> {
+    fn node<K>(&self, start: u32, kind: K) -> Result<Node<K>> {
         let span = self.span_from(start);
-        let id = NodeId::new(self.next_id);
-        self.next_id = self
+        let id = NodeId::new(self.next_id.get());
+        let next = self
             .next_id
+            .get()
             .checked_add(1)
             .ok_or_else(|| self.error(ParseErrorKind::TooManyNodes, span))?;
+        self.next_id.set(next);
         Ok(Node::new(id, span, kind))
     }
 
-    fn enter(&mut self) -> Result<()> {
-        if self.depth >= MAX_NESTING_DEPTH {
+    fn enter(&self) -> Result<()> {
+        let depth = self.depth.get();
+        if self.nesting_limit.is_some_and(|limit| depth >= limit) {
             return Err(self.error(ParseErrorKind::NestingTooDeep, self.peek().span));
         }
-        self.depth += 1;
+        self.depth.set(depth.saturating_add(1));
         Ok(())
     }
 
-    const fn leave(&mut self) {
-        self.depth = self.depth.saturating_sub(1);
+    fn leave(&self) {
+        self.depth.set(self.depth.get().saturating_sub(1));
     }
 
-    fn enter_expression(&mut self) -> Result<()> {
+    fn enter_expression(&self) -> Result<()> {
         self.enter()?;
-        self.expression_depth += 1;
+        self.expression_depth
+            .set(self.expression_depth.get().saturating_add(1));
         Ok(())
     }
 
-    const fn leave_expression(&mut self) {
-        self.expression_depth = self.expression_depth.saturating_sub(1);
+    fn leave_expression(&self) {
+        self.expression_depth
+            .set(self.expression_depth.get().saturating_sub(1));
         self.leave();
     }
 
-    fn nested<T>(&mut self, parse: impl FnOnce(&mut Self) -> Result<T>) -> Result<T> {
-        self.enter()?;
-        let result = parse(self);
-        self.leave();
-        result
-    }
-
-    fn measured(&mut self, start: u32, kind: ExpressionKind, heights: Heights) -> Result<Measured> {
+    fn measured(&self, start: u32, kind: ExpressionKind, heights: Heights) -> Result<Measured> {
         let height = heights.nested.saturating_add(1).max(heights.linked);
-        let enclosing = self.depth.saturating_sub(self.expression_depth);
-        if enclosing.saturating_add(height) > MAX_NESTING_DEPTH {
+        let enclosing = self.depth.get().saturating_sub(self.expression_depth.get());
+        if self
+            .nesting_limit
+            .is_some_and(|limit| enclosing.saturating_add(height) > limit)
+        {
             return Err(self.error(ParseErrorKind::NestingTooDeep, self.span_from(start)));
         }
         Ok(Measured {
@@ -351,7 +468,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn identifier(&mut self) -> Result<Identifier> {
+    fn identifier(&self) -> Result<Identifier> {
         let token = self.peek();
         match token.kind {
             TokenKind::Word(word) if is_reserved_word(word) => {
@@ -366,7 +483,7 @@ impl<'a> Parser<'a> {
     }
 
     fn require_type_extension(&self, word: &str, span: Span) -> Result<()> {
-        if self.extensions.keyword_enabled(word) {
+        if self.extensions.borrow().keyword_enabled(word) {
             return Ok(());
         }
         let extensions = Feature::of_type_keyword(word)
@@ -382,7 +499,7 @@ impl<'a> Parser<'a> {
     }
 
     fn require_non_uniform(&self, span: Span) -> Result<()> {
-        if self.extensions.is_on(NON_UNIFORM_EXTENSION) {
+        if self.extensions.borrow().is_on(NON_UNIFORM_EXTENSION) {
             return Ok(());
         }
         Err(self.error(
@@ -395,7 +512,7 @@ impl<'a> Parser<'a> {
     }
 
     fn is_struct_name(&self, word: &str) -> bool {
-        self.struct_scopes.iter().any(|scope| scope.contains(word))
+        self.struct_scopes.borrow().contains(word)
     }
 
     fn is_type_name(&self, word: &str) -> bool {
@@ -405,17 +522,15 @@ impl<'a> Parser<'a> {
     }
 
     fn is_spirv_word(&self, word: &str, words: &[&str]) -> bool {
-        words.contains(&word) && self.extensions.is_on(SPIRV_INTRINSICS)
+        words.contains(&word) && self.extensions.borrow().is_on(SPIRV_INTRINSICS)
     }
 
-    fn declare_struct(&mut self, name: &'a str) {
-        if let Some(scope) = self.struct_scopes.last_mut() {
-            scope.insert(name);
-        }
+    fn declare_struct(&self, name: &'a str) {
+        self.struct_scopes.borrow_mut().declare(name);
     }
 
     fn token_after_array_specifier(&self) -> TokenKind<'a> {
-        let mut index = self.cursor.saturating_add(1);
+        let mut index = self.cursor.get().saturating_add(1);
         if self.token_at(index).kind == TokenKind::Punctuator("<") {
             let mut angles = 0_u32;
             let mut parentheses = 0_u32;
@@ -485,295 +600,19 @@ impl<'a> Parser<'a> {
             )
     }
 
-    fn parse_external_declaration(&mut self) -> Result<ExternalDeclaration> {
-        let token = self.peek();
-        match token.kind {
-            TokenKind::Directive(index) => {
-                let directive = self
-                    .directives
-                    .get(index)
-                    .cloned()
-                    .ok_or_else(|| self.unexpected("a declaration"))?;
-                if let DirectiveKind::Extension { name, behavior } = &directive.kind {
-                    self.extensions.apply(name, *behavior);
-                }
-                self.advance();
-                Ok(ExternalDeclaration::Directive(Spanned::new(
-                    token.span, directive,
-                )))
-            }
-            TokenKind::Punctuator(";") => {
-                self.advance();
-                Ok(ExternalDeclaration::Semicolon(Spanned::new(token.span, ())))
-            }
-            _ => self.parse_declaration_or_definition(true),
-        }
-    }
-
-    fn parse_declaration(&mut self) -> Result<Declaration> {
-        match self.parse_declaration_or_definition(false)? {
-            ExternalDeclaration::Declaration(declaration) => Ok(declaration),
-            ExternalDeclaration::Directive(_)
-            | ExternalDeclaration::FunctionDefinition(_)
-            | ExternalDeclaration::Semicolon(_) => Err(self.unexpected("a declaration")),
-        }
-    }
-
-    fn declaration(&mut self, start: u32, kind: DeclarationKind) -> Result<ExternalDeclaration> {
+    fn declaration(&self, start: u32, kind: DeclarationKind) -> Result<ExternalDeclaration> {
         Ok(ExternalDeclaration::Declaration(self.node(start, kind)?))
-    }
-
-    fn parse_declaration_or_definition(
-        &mut self,
-        allow_definition: bool,
-    ) -> Result<ExternalDeclaration> {
-        let start = self.start();
-        if allow_definition && self.at_attribute_list() {
-            return self.parse_attributed_function(start);
-        }
-        if self.eat_word("precision") {
-            let qualifier = self.parse_precision_qualifier()?;
-            let ty = self.parse_type_specifier()?;
-            self.expect(";")?;
-            return self.declaration(start, DeclarationKind::Precision { qualifier, ty });
-        }
-        if self.is_spirv_word_here(&["spirv_instruction"]) {
-            return self.parse_spirv_instruction_declaration(start);
-        }
-        if self.is_spirv_word_here(&["spirv_execution_mode", "spirv_execution_mode_id"]) {
-            let mode = self.parse_spirv_execution_mode()?;
-            self.expect(";")?;
-            return self.declaration(start, DeclarationKind::SpirvExecutionMode(mode));
-        }
-        let qualifier = self.parse_type_qualifier()?;
-        let qualifier = match qualifier {
-            Some(qualifier) => match self.parse_qualifier_declaration(start, qualifier)? {
-                AfterQualifier::Declaration(declaration) => return Ok(*declaration),
-                AfterQualifier::Type(qualifier) => Some(qualifier),
-            },
-            None => None,
-        };
-        let specifier = self.parse_type_specifier()?;
-        let ty = self.spanned(
-            start,
-            FullySpecifiedType {
-                qualifier,
-                specifier,
-            },
-        );
-        if self.eat(";") {
-            let list = InitDeclaratorList {
-                ty,
-                declarators: Vec::new(),
-            };
-            return self.declaration(start, DeclarationKind::InitDeclaratorList(list));
-        }
-        let name = self.identifier()?;
-        if self.at("(") {
-            return self.parse_function(start, ty, name, Vec::new(), allow_definition);
-        }
-        let mut declarators = Vec::new();
-        declarators.push(self.parse_init_declarator(name)?);
-        while self.eat(",") {
-            let name = self.identifier()?;
-            declarators.push(self.parse_init_declarator(name)?);
-        }
-        self.expect(";")?;
-        let list = InitDeclaratorList { ty, declarators };
-        self.declaration(start, DeclarationKind::InitDeclaratorList(list))
-    }
-
-    fn parse_attributed_function(&mut self, start: u32) -> Result<ExternalDeclaration> {
-        let attributes = self.parse_attribute_list()?;
-        let qualifier = self.parse_type_qualifier()?;
-        let specifier = self.parse_type_specifier()?;
-        let return_type = self.spanned(
-            start,
-            FullySpecifiedType {
-                qualifier,
-                specifier,
-            },
-        );
-        let name = self.identifier()?;
-        if !self.at("(") {
-            return Err(self.unexpected("`(`"));
-        }
-        self.parse_function(start, return_type, name, attributes, true)
-    }
-
-    fn parse_qualifier_declaration(
-        &mut self,
-        start: u32,
-        qualifier: Spanned<TypeQualifier>,
-    ) -> Result<AfterQualifier> {
-        if self.eat(";") {
-            return self
-                .declaration(start, DeclarationKind::Qualifier(qualifier))
-                .map(|declaration| AfterQualifier::Declaration(Box::new(declaration)));
-        }
-        let TokenKind::Word(word) = self.peek().kind else {
-            return Ok(AfterQualifier::Type(qualifier));
-        };
-        if self.at_nth(1, "{") && word != "struct" {
-            let reference =
-                qualifier.has_layout("buffer_reference") || qualifier.has_layout("buffer_type");
-            let kind = self.parse_block(qualifier)?;
-            if reference {
-                self.declare_struct(word);
-            }
-            return self
-                .declaration(start, kind)
-                .map(|declaration| AfterQualifier::Declaration(Box::new(declaration)));
-        }
-        let names_follow = self.at_nth(1, ";") || self.at_nth(1, ",");
-        if names_follow && !self.is_type_name(word) {
-            let mut identifiers = Vec::from([self.identifier()?]);
-            while self.eat(",") {
-                identifiers.push(self.identifier()?);
-            }
-            self.expect(";")?;
-            if qualifier.has_layout("buffer_reference") {
-                for identifier in &identifiers {
-                    if let Some(name) = identifier.span.text(self.source) {
-                        self.declare_struct(name);
-                    }
-                }
-            }
-            let kind = DeclarationKind::QualifiedIdentifiers {
-                qualifier,
-                identifiers,
-            };
-            return self
-                .declaration(start, kind)
-                .map(|declaration| AfterQualifier::Declaration(Box::new(declaration)));
-        }
-        Ok(AfterQualifier::Type(qualifier))
-    }
-
-    fn parse_block(&mut self, qualifier: Spanned<TypeQualifier>) -> Result<DeclarationKind> {
-        let name = self.identifier()?;
-        let members = self.parse_struct_declaration_list()?;
-        let instance_start = self.start();
-        let instance = if self.at(";") {
-            None
-        } else {
-            let name = self.identifier()?;
-            let array = self.parse_array_specifier()?.0;
-            Some(self.spanned(instance_start, BlockInstance { name, array }))
-        };
-        self.expect(";")?;
-        let structure = BlockStructure {
-            qualifier,
-            name,
-            members,
-        };
-        Ok(DeclarationKind::Block {
-            structure,
-            instance,
-        })
-    }
-
-    fn parse_function(
-        &mut self,
-        start: u32,
-        return_type: Spanned<FullySpecifiedType>,
-        name: Identifier,
-        attributes: Vec<Attribute>,
-        allow_definition: bool,
-    ) -> Result<ExternalDeclaration> {
-        let mut prototype = self.parse_prototype(start, return_type, name)?;
-        prototype.attributes = attributes;
-        if self.at_attribute_list() {
-            prototype.trailing_attributes = self.parse_attribute_list()?;
-        }
-        if self.eat(";") {
-            return self.declaration(start, DeclarationKind::FunctionPrototype(prototype));
-        }
-        if !allow_definition || !self.at("{") {
-            return Err(self.unexpected("`;`"));
-        }
-        let body = self.parse_compound_statement()?;
-        let definition = FunctionDefinition { prototype, body };
-        Ok(ExternalDeclaration::FunctionDefinition(
-            self.node(start, definition)?,
-        ))
-    }
-
-    fn parse_prototype(
-        &mut self,
-        start: u32,
-        return_type: Spanned<FullySpecifiedType>,
-        name: Identifier,
-    ) -> Result<Spanned<FunctionPrototype>> {
-        self.expect("(")?;
-        let mut parameters = Vec::new();
-        let is_void_list = self.at_word("void") && self.at_nth(1, ")");
-        if is_void_list {
-            self.advance();
-        } else if !self.at(")") {
-            parameters.push(self.parse_parameter_declaration()?);
-            while self.eat(",") {
-                parameters.push(self.parse_parameter_declaration()?);
-            }
-        }
-        self.expect(")")?;
-        Ok(self.spanned(
-            start,
-            FunctionPrototype {
-                return_type,
-                name,
-                parameters,
-                attributes: Vec::new(),
-                trailing_attributes: Vec::new(),
-            },
-        ))
     }
 
     fn is_spirv_word_here(&self, words: &[&str]) -> bool {
         matches!(self.peek().kind, TokenKind::Word(word) if self.is_spirv_word(word, words))
     }
 
-    fn parse_spirv_instruction_declaration(&mut self, start: u32) -> Result<ExternalDeclaration> {
-        let instruction_start = self.start();
-        self.advance();
-        self.expect("(")?;
-        let requirements = self.parse_spirv_requirements()?;
-        let qualifiers = self.parse_spirv_instruction_qualifiers()?;
-        self.expect(")")?;
-        let instruction = self.spanned(
-            instruction_start,
-            SpirvInstruction {
-                requirements,
-                qualifiers,
-            },
-        );
-        let prototype_start = self.start();
-        let qualifier = self.parse_type_qualifier()?;
-        let specifier = self.parse_type_specifier()?;
-        let return_type = self.spanned(
-            prototype_start,
-            FullySpecifiedType {
-                qualifier,
-                specifier,
-            },
-        );
-        let name = self.identifier()?;
-        let prototype = self.parse_prototype(prototype_start, return_type, name)?;
-        self.expect(";")?;
-        self.declaration(
-            start,
-            DeclarationKind::SpirvInstruction {
-                instruction,
-                prototype,
-            },
-        )
-    }
-
     fn at_spirv_requirement(&self) -> bool {
         matches!(self.peek().kind, TokenKind::Word(_)) && self.at_nth(1, "=") && self.at_nth(2, "[")
     }
 
-    fn parse_spirv_requirements(&mut self) -> Result<Vec<Spanned<SpirvRequirement>>> {
+    fn parse_spirv_requirements(&self) -> Result<Vec<Spanned<SpirvRequirement>>> {
         let mut requirements = Vec::new();
         while self.at_spirv_requirement() {
             let start = self.start();
@@ -800,7 +639,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_spirv_instruction_qualifiers(
-        &mut self,
+        &self,
     ) -> Result<Vec<Spanned<SpirvInstructionQualifier>>> {
         let mut qualifiers = Vec::new();
         loop {
@@ -825,7 +664,7 @@ impl<'a> Parser<'a> {
         Ok(qualifiers)
     }
 
-    fn parse_spirv_token(&mut self, accepted: SpirvToken) -> Result<Expression> {
+    fn parse_spirv_token(&self, accepted: SpirvToken) -> Result<Expression> {
         let token = self.peek();
         let start = token.span.start;
         let kind = match (token.kind, accepted) {
@@ -864,44 +703,7 @@ impl<'a> Parser<'a> {
         self.node(start, kind)
     }
 
-    fn parse_spirv_execution_mode(&mut self) -> Result<Spanned<SpirvExecutionMode>> {
-        let start = self.start();
-        let kind = if self.eat_word("spirv_execution_mode_id") {
-            SpirvExecutionModeKind::Id
-        } else {
-            self.advance();
-            SpirvExecutionModeKind::Literal
-        };
-        self.expect("(")?;
-        let requirements = self.parse_spirv_requirements()?;
-        let mode = self.parse_spirv_token(SpirvToken::Int)?;
-        let mut operands = Vec::new();
-        if kind == SpirvExecutionModeKind::Id {
-            self.expect(",")?;
-            loop {
-                operands.push(self.parse_conditional()?.expression);
-                if !self.eat(",") {
-                    break;
-                }
-            }
-        } else {
-            while self.eat(",") {
-                operands.push(self.parse_spirv_token(SpirvToken::Any)?);
-            }
-        }
-        self.expect(")")?;
-        Ok(self.spanned(
-            start,
-            SpirvExecutionMode {
-                kind,
-                requirements,
-                mode,
-                operands,
-            },
-        ))
-    }
-
-    fn parse_spirv_qualifier(&mut self, word: &str) -> Result<SingleTypeQualifier> {
+    fn parse_spirv_qualifier(&self, word: &str) -> Result<SingleTypeQualifier> {
         self.advance();
         let kind = match word {
             "spirv_by_reference" => return Ok(SingleTypeQualifier::SpirvByReference),
@@ -945,86 +747,7 @@ impl<'a> Parser<'a> {
         }))
     }
 
-    fn parse_spirv_type_specifier(&mut self) -> Result<SpirvTypeSpecifier> {
-        self.advance();
-        self.expect("(")?;
-        let requirements = self.parse_spirv_requirements()?;
-        let instruction = self.parse_spirv_instruction_qualifiers()?;
-        let mut parameters = Vec::new();
-        while self.eat(",") {
-            let parameter = match self.peek().kind {
-                TokenKind::Word(word) if word == "struct" || self.is_type_name(word) => {
-                    SpirvTypeParameter::Type(Box::new(self.parse_type_specifier()?))
-                }
-                _ => SpirvTypeParameter::Constant(self.parse_conditional()?.expression),
-            };
-            parameters.push(parameter);
-        }
-        self.expect(")")?;
-        Ok(SpirvTypeSpecifier {
-            requirements,
-            instruction,
-            parameters,
-        })
-    }
-
-    fn parse_parameter_declaration(&mut self) -> Result<Node<ParameterDeclaration>> {
-        let start = self.start();
-        let qualifier = self.parse_type_qualifier()?;
-        let specifier = self.parse_type_specifier()?;
-        let ty = self.spanned(
-            start,
-            FullySpecifiedType {
-                qualifier,
-                specifier,
-            },
-        );
-        let (name, array) = if matches!(self.peek().kind, TokenKind::Word(_)) {
-            (Some(self.identifier()?), self.parse_array_specifier()?.0)
-        } else {
-            (None, None)
-        };
-        self.node(start, ParameterDeclaration { ty, name, array })
-    }
-
-    fn parse_init_declarator(&mut self, name: Identifier) -> Result<Node<InitDeclarator>> {
-        let start = name.span.start;
-        let array = self.parse_array_specifier()?.0;
-        let initializer = if self.eat("=") {
-            Some(self.parse_initializer()?)
-        } else {
-            None
-        };
-        self.node(
-            start,
-            InitDeclarator {
-                name,
-                array,
-                initializer,
-            },
-        )
-    }
-
-    fn parse_initializer(&mut self) -> Result<Spanned<Initializer>> {
-        self.nested(|parser| {
-            let start = parser.start();
-            if !parser.eat("{") {
-                let expression = parser.parse_assignment()?.expression;
-                return Ok(parser.spanned(start, Initializer::Expression(expression)));
-            }
-            let mut elements = Vec::new();
-            while !parser.at("}") {
-                elements.push(parser.parse_initializer()?);
-                if !parser.eat(",") {
-                    break;
-                }
-            }
-            parser.expect("}")?;
-            Ok(parser.spanned(start, Initializer::List(elements)))
-        })
-    }
-
-    fn parse_precision_qualifier(&mut self) -> Result<Spanned<PrecisionQualifier>> {
+    fn parse_precision_qualifier(&self) -> Result<Spanned<PrecisionQualifier>> {
         let token = self.peek();
         let qualifier = match token.kind {
             TokenKind::Word(word) => PrecisionQualifier::from_keyword(word),
@@ -1039,40 +762,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_type_qualifier(&mut self) -> Result<Option<Spanned<TypeQualifier>>> {
-        let start = self.start();
-        let mut qualifiers = Vec::new();
-        while let TokenKind::Word(word) = self.peek().kind {
-            let single_start = self.start();
-            let single = if word == "layout" {
-                self.advance();
-                SingleTypeQualifier::Layout(self.parse_layout_qualifier()?)
-            } else if word == "subroutine" {
-                self.advance();
-                SingleTypeQualifier::Subroutine(self.parse_type_name_list()?)
-            } else if word == NON_UNIFORM && self.at_nth(1, "(") {
-                break;
-            } else if self.is_spirv_word(word, &SPIRV_QUALIFIERS) {
-                self.parse_spirv_qualifier(word)?
-            } else if let Some(single) = SingleTypeQualifier::from_keyword(word) {
-                if single == SingleTypeQualifier::NonUniform {
-                    self.require_non_uniform(self.peek().span)?;
-                }
-                self.advance();
-                single
-            } else {
-                break;
-            };
-            qualifiers.push(self.spanned(single_start, single));
-        }
-        if qualifiers.is_empty() {
-            Ok(None)
-        } else {
-            Ok(Some(self.spanned(start, TypeQualifier { qualifiers })))
-        }
-    }
-
-    fn parse_type_name_list(&mut self) -> Result<Vec<Identifier>> {
+    fn parse_type_name_list(&self) -> Result<Vec<Identifier>> {
         let mut type_names = Vec::new();
         if self.eat("(") {
             type_names.push(self.identifier()?);
@@ -1084,64 +774,8 @@ impl<'a> Parser<'a> {
         Ok(type_names)
     }
 
-    fn parse_layout_qualifier(&mut self) -> Result<LayoutQualifier> {
-        self.expect("(")?;
-        let mut ids = Vec::new();
-        loop {
-            let start = self.start();
-            let name = if self.at_word("shared") {
-                let token = self.advance();
-                Spanned::new(token.span, String::from("shared"))
-            } else {
-                self.identifier()?
-            };
-            let value = if self.eat("=") {
-                Some(self.parse_assignment()?.expression)
-            } else {
-                None
-            };
-            ids.push(self.spanned(start, LayoutQualifierId { name, value }));
-            if !self.eat(",") {
-                break;
-            }
-        }
-        self.expect(")")?;
-        Ok(LayoutQualifier { ids })
-    }
-
-    fn parse_type_specifier(&mut self) -> Result<Spanned<TypeSpecifier>> {
-        Ok(self.parse_measured_type_specifier()?.0)
-    }
-
-    fn parse_measured_type_specifier(&mut self) -> Result<(Spanned<TypeSpecifier>, u32)> {
-        self.nested(|parser| {
-            let token = parser.peek();
-            let TokenKind::Word(word) = token.kind else {
-                return Err(parser.unexpected("a type"));
-            };
-            let non_array = parser.parse_type_specifier_non_array(token, word)?;
-            parser.finish_type_specifier(token, word, non_array)
-        })
-    }
-
-    fn parse_type_specifier_non_array(
-        &mut self,
-        token: Token<'a>,
-        word: &'a str,
-    ) -> Result<TypeSpecifierNonArray> {
-        if word == "struct" {
-            self.parse_struct_specifier()
-                .map(TypeSpecifierNonArray::Struct)
-        } else if self.is_spirv_word(word, &[SPIRV_TYPE]) {
-            self.parse_spirv_type_specifier()
-                .map(|spirv| TypeSpecifierNonArray::Spirv(Box::new(spirv)))
-        } else {
-            self.parse_simple_type_specifier(token, word)
-        }
-    }
-
     fn parse_simple_type_specifier(
-        &mut self,
+        &self,
         token: Token<'a>,
         word: &'a str,
     ) -> Result<TypeSpecifierNonArray> {
@@ -1169,476 +803,25 @@ impl<'a> Parser<'a> {
         Ok(non_array)
     }
 
-    fn finish_type_specifier(
-        &mut self,
-        token: Token<'a>,
-        word: &'a str,
-        non_array: TypeSpecifierNonArray,
-    ) -> Result<(Spanned<TypeSpecifier>, u32)> {
-        let (parameters, parameter_height) = if self.at("<")
-            && !matches!(
-                non_array,
-                TypeSpecifierNonArray::TypeName(_)
-                    | TypeSpecifierNonArray::Struct(_)
-                    | TypeSpecifierNonArray::Spirv(_)
-            ) {
-            if !matches!(non_array, TypeSpecifierNonArray::Parameterized(_)) {
-                return Err(self.error(
-                    ParseErrorKind::UnexpectedTypeParameters(word.to_owned()),
-                    token.span,
-                ));
-            }
-            let (parameters, height) = self.parse_type_parameters()?;
-            (Some(parameters), height)
-        } else {
-            (None, 0)
-        };
-        let (array, height) = self.parse_array_specifier()?;
-        let specifier = TypeSpecifier {
-            non_array,
-            parameters,
-            array,
-        };
-        Ok((
-            self.spanned(token.span.start, specifier),
-            height.max(parameter_height),
-        ))
-    }
-
-    fn parse_type_parameters(&mut self) -> Result<(Spanned<TypeParameters>, u32)> {
-        let start = self.start();
-        self.expect("<")?;
-        let mut height = 0;
-        let element = match self.peek().kind {
-            TokenKind::Word(word) if word == "struct" || self.is_type_name(word) => {
-                let (element, element_height) = self.parse_measured_type_specifier()?;
-                height = element_height;
-                Some(Box::new(element))
-            }
-            _ => None,
-        };
-        let mut values = Vec::new();
-        if element.is_none() || self.at(",") {
-            if element.is_some() {
-                self.advance();
-            }
-            loop {
-                let value = self.parse_unary()?;
-                height = height.max(value.height);
-                values.push(value.expression);
-                if !self.eat(",") {
-                    break;
-                }
-            }
-        }
-        self.expect(">")?;
-        Ok((
-            self.spanned(start, TypeParameters { element, values }),
-            height,
-        ))
-    }
-
-    fn parse_array_specifier(&mut self) -> Result<(Option<Spanned<ArraySpecifier>>, u32)> {
-        let start = self.start();
-        let mut dimensions = Vec::new();
-        let mut height = 0;
-        while self.at("[") {
-            let dimension_start = self.start();
-            self.advance();
-            let dimension = if self.at("]") {
-                ArrayDimension::Unsized
-            } else {
-                let size = self.parse_conditional()?;
-                height = height.max(size.height);
-                ArrayDimension::Sized(size.expression)
-            };
-            self.expect("]")?;
-            dimensions.push(self.spanned(dimension_start, dimension));
-        }
-        if dimensions.is_empty() {
-            Ok((None, 0))
-        } else {
-            Ok((
-                Some(self.spanned(start, ArraySpecifier { dimensions })),
-                height,
-            ))
-        }
-    }
-
-    fn parse_struct_specifier(&mut self) -> Result<StructSpecifier> {
-        self.expect_word("struct")?;
-        let name_token = self.peek();
-        let name = if self.at("{") {
-            None
-        } else {
-            Some(self.identifier()?)
-        };
-        let declarations = self.parse_struct_declaration_list()?;
-        if let (Some(_), TokenKind::Word(word)) = (&name, name_token.kind) {
-            self.declare_struct(word);
-        }
-        Ok(StructSpecifier { name, declarations })
-    }
-
-    fn parse_struct_declaration_list(&mut self) -> Result<Vec<Spanned<StructDeclaration>>> {
-        self.expect("{")?;
-        let mut declarations = Vec::new();
-        loop {
-            declarations.push(self.parse_struct_declaration()?);
-            if self.eat("}") {
-                return Ok(declarations);
-            }
-        }
-    }
-
-    fn parse_struct_declaration(&mut self) -> Result<Spanned<StructDeclaration>> {
-        let start = self.start();
-        let qualifier = self.parse_type_qualifier()?;
-        let specifier = if qualifier.is_some() && self.at("{") {
-            self.parse_inline_block()?
-        } else {
-            self.parse_type_specifier()?
-        };
-        self.finish_struct_declaration(start, qualifier, specifier)
-    }
-
-    fn parse_inline_block(&mut self) -> Result<Spanned<TypeSpecifier>> {
-        let block_start = self.start();
-        let members = self.nested(Self::parse_struct_declaration_list)?;
-        let non_array = TypeSpecifierNonArray::InlineBlock(members);
-        Ok(self.spanned(
-            block_start,
-            TypeSpecifier {
-                non_array,
-                parameters: None,
-                array: None,
-            },
-        ))
-    }
-
-    fn finish_struct_declaration(
-        &mut self,
-        start: u32,
-        qualifier: Option<Spanned<TypeQualifier>>,
-        specifier: Spanned<TypeSpecifier>,
-    ) -> Result<Spanned<StructDeclaration>> {
-        let ty = self.spanned(
-            start,
-            FullySpecifiedType {
-                qualifier,
-                specifier,
-            },
-        );
-        let mut declarators = Vec::new();
-        loop {
-            let name = self.identifier()?;
-            let array = self.parse_array_specifier()?.0;
-            declarators.push(self.spanned(name.span.start, StructDeclarator { name, array }));
-            if !self.eat(",") {
-                break;
-            }
-        }
-        self.expect(";")?;
-        Ok(self.spanned(start, StructDeclaration { ty, declarators }))
-    }
-
-    fn parse_compound_statement(&mut self) -> Result<Spanned<CompoundStatement>> {
-        let start = self.start();
-        self.expect("{")?;
-        self.struct_scopes.push(BTreeSet::new());
-        let statements = self.parse_statement_list();
-        self.struct_scopes.pop();
-        let statements = statements?;
-        self.expect("}")?;
-        Ok(self.spanned(start, CompoundStatement { statements }))
-    }
-
-    fn parse_statement_list(&mut self) -> Result<Vec<Statement>> {
-        let mut statements = Vec::new();
-        while !self.at("}") {
-            if self.peek().kind == TokenKind::End {
-                return Err(self.unexpected("`}`"));
-            }
-            statements.push(self.parse_statement()?);
-        }
-        Ok(statements)
-    }
-
-    fn parse_statement(&mut self) -> Result<Statement> {
-        self.enter()?;
-        let statement = self.parse_unguarded_statement();
-        self.leave();
-        statement
-    }
-
-    fn parse_unguarded_statement(&mut self) -> Result<Statement> {
-        match self.peek().kind {
-            TokenKind::Punctuator("{") => self.parse_compound_as_statement(),
-            TokenKind::Word("if") => self.parse_selection(),
-            TokenKind::Word("switch") => self.parse_switch(),
-            TokenKind::Word("case") => self.parse_case_label(),
-            TokenKind::Word("default") => self.parse_default_label(),
-            TokenKind::Word("while") => self.parse_while(),
-            TokenKind::Word("do") => self.parse_do_while(),
-            TokenKind::Word("for") => self.parse_for(),
-            TokenKind::Word("continue") => self.parse_jump(JumpStatement::Continue),
-            TokenKind::Word("break") => self.parse_jump(JumpStatement::Break),
-            TokenKind::Word("discard") => self.parse_jump(JumpStatement::Discard),
-            TokenKind::Word("demote") => self.parse_jump(JumpStatement::Demote),
-            TokenKind::Word("terminateRayEXT") => self.parse_jump(JumpStatement::TerminateRay),
-            TokenKind::Word("ignoreIntersectionEXT") => {
-                self.parse_jump(JumpStatement::IgnoreIntersection)
-            }
-            TokenKind::Word("return") => self.parse_return(),
-            TokenKind::Punctuator("[") if self.at_attribute_list() => self.parse_attributed(),
-            _ => self.parse_simple_statement(),
-        }
-    }
-
-    fn parse_attributed(&mut self) -> Result<Statement> {
-        let start = self.start();
-        let attributes = self.parse_attribute_list()?;
-        if !matches!(
-            self.peek().kind,
-            TokenKind::Word("if" | "switch" | "while" | "do" | "for")
-        ) {
-            return Err(self.unexpected("a selection, switch or iteration statement"));
-        }
-        let statement = Box::new(self.parse_unguarded_statement()?);
-        self.node(
-            start,
-            StatementKind::Attributed {
-                attributes,
-                statement,
-            },
-        )
-    }
-
-    fn parse_attribute_list(&mut self) -> Result<Vec<Attribute>> {
-        self.expect("[")?;
-        self.expect("[")?;
-        let mut attributes = Vec::new();
-        loop {
-            let token = self.peek();
-            let TokenKind::Word(word) = token.kind else {
-                return Err(self.unexpected("an attribute"));
-            };
-            self.advance();
-            let name = Spanned::new(token.span, word.to_owned());
-            let argument = if self.eat("(") {
-                let argument = self.parse_conditional()?.expression;
-                self.expect(")")?;
-                Some(argument)
-            } else {
-                None
-            };
-            attributes.push(Attribute { name, argument });
-            if !self.eat(",") {
-                break;
-            }
-        }
-        self.expect("]")?;
-        self.expect("]")?;
-        Ok(attributes)
-    }
-
     fn at_attribute_list(&self) -> bool {
         self.at("[") && self.at_nth(1, "[")
     }
 
-    fn parse_compound_as_statement(&mut self) -> Result<Statement> {
-        let start = self.start();
-        let compound = self.parse_compound_statement()?.node;
-        self.node(start, StatementKind::Compound(compound))
-    }
-
-    fn parse_simple_statement(&mut self) -> Result<Statement> {
-        let start = self.start();
-        let kind = if self.eat(";") {
-            StatementKind::Expression(None)
-        } else if self.starts_declaration() {
-            StatementKind::Declaration(Box::new(self.parse_declaration()?))
-        } else {
-            let expression = self.parse_expression()?.expression;
-            self.expect(";")?;
-            StatementKind::Expression(Some(expression))
-        };
-        self.node(start, kind)
-    }
-
-    fn parse_case_label(&mut self) -> Result<Statement> {
-        let start = self.start();
-        self.expect_word("case")?;
-        let label = self.parse_expression()?.expression;
-        self.expect(":")?;
-        self.node(start, StatementKind::CaseLabel(CaseLabel::Case(label)))
-    }
-
-    fn parse_default_label(&mut self) -> Result<Statement> {
+    fn parse_default_label(&self) -> Result<Statement> {
         let start = self.start();
         self.expect_word("default")?;
         self.expect(":")?;
         self.node(start, StatementKind::CaseLabel(CaseLabel::Default))
     }
 
-    fn parse_jump(&mut self, jump: JumpStatement) -> Result<Statement> {
+    fn parse_jump(&self, jump: JumpStatement) -> Result<Statement> {
         let start = self.start();
         self.advance();
         self.expect(";")?;
         self.node(start, StatementKind::Jump(jump))
     }
 
-    fn parse_return(&mut self) -> Result<Statement> {
-        let start = self.start();
-        self.expect_word("return")?;
-        let value = if self.at(";") {
-            None
-        } else {
-            Some(self.parse_expression()?.expression)
-        };
-        self.expect(";")?;
-        self.node(start, StatementKind::Jump(JumpStatement::Return(value)))
-    }
-
-    fn parse_parenthesized_expression(&mut self) -> Result<Expression> {
-        self.expect("(")?;
-        let expression = self.parse_expression()?.expression;
-        self.expect(")")?;
-        Ok(expression)
-    }
-
-    fn parse_selection(&mut self) -> Result<Statement> {
-        let start = self.start();
-        self.expect_word("if")?;
-        let condition = self.parse_parenthesized_expression()?;
-        let then_branch = Box::new(self.parse_statement()?);
-        let else_branch = if self.eat_word("else") {
-            Some(Box::new(self.parse_statement()?))
-        } else {
-            None
-        };
-        let kind = StatementKind::Selection {
-            condition,
-            then_branch,
-            else_branch,
-        };
-        self.node(start, kind)
-    }
-
-    fn parse_switch(&mut self) -> Result<Statement> {
-        let start = self.start();
-        self.expect_word("switch")?;
-        let selector = self.parse_parenthesized_expression()?;
-        self.expect("{")?;
-        self.struct_scopes.push(BTreeSet::new());
-        let statements = self.parse_statement_list();
-        self.struct_scopes.pop();
-        let statements = statements?;
-        self.expect("}")?;
-        let kind = StatementKind::Switch {
-            selector,
-            statements,
-        };
-        self.node(start, kind)
-    }
-
-    fn parse_condition(&mut self) -> Result<Condition> {
-        if !self.starts_declaration() {
-            return Ok(Condition::Expression(self.parse_expression()?.expression));
-        }
-        let start = self.start();
-        let qualifier = self.parse_type_qualifier()?;
-        let specifier = self.parse_type_specifier()?;
-        let ty = self.spanned(
-            start,
-            FullySpecifiedType {
-                qualifier,
-                specifier,
-            },
-        );
-        let name = self.identifier()?;
-        self.expect("=")?;
-        let initializer = self.parse_initializer()?;
-        let declaration = ConditionDeclaration {
-            ty,
-            name,
-            initializer,
-        };
-        Ok(Condition::Declaration(Box::new(
-            self.node(start, declaration)?,
-        )))
-    }
-
-    fn parse_while(&mut self) -> Result<Statement> {
-        self.struct_scopes.push(BTreeSet::new());
-        let statement = self.parse_unscoped_while();
-        self.struct_scopes.pop();
-        statement
-    }
-
-    fn parse_unscoped_while(&mut self) -> Result<Statement> {
-        let start = self.start();
-        self.expect_word("while")?;
-        self.expect("(")?;
-        let condition = self.parse_condition()?;
-        self.expect(")")?;
-        let body = Box::new(self.parse_statement()?);
-        self.node(start, StatementKind::While { condition, body })
-    }
-
-    fn parse_do_while(&mut self) -> Result<Statement> {
-        let start = self.start();
-        self.expect_word("do")?;
-        let body = Box::new(self.parse_statement()?);
-        self.expect_word("while")?;
-        let condition = self.parse_parenthesized_expression()?;
-        self.expect(";")?;
-        self.node(start, StatementKind::DoWhile { body, condition })
-    }
-
-    fn parse_for(&mut self) -> Result<Statement> {
-        self.struct_scopes.push(BTreeSet::new());
-        let statement = self.parse_unscoped_for();
-        self.struct_scopes.pop();
-        statement
-    }
-
-    fn parse_unscoped_for(&mut self) -> Result<Statement> {
-        let start = self.start();
-        let header = self.parse_for_header()?;
-        let body = self.parse_statement()?;
-        self.finish_for(start, header, body)
-    }
-
-    fn parse_for_header(&mut self) -> Result<Box<ForHeader>> {
-        self.expect_word("for")?;
-        self.expect("(")?;
-        let init = self.parse_simple_statement()?;
-        let condition = if self.at(";") {
-            None
-        } else {
-            Some(self.parse_condition()?)
-        };
-        self.expect(";")?;
-        let increment = if self.at(")") {
-            None
-        } else {
-            Some(self.parse_expression()?.expression)
-        };
-        self.expect(")")?;
-        Ok(Box::new(ForHeader {
-            init,
-            condition,
-            increment,
-        }))
-    }
-
-    fn finish_for(
-        &mut self,
-        start: u32,
-        header: Box<ForHeader>,
-        body: Statement,
-    ) -> Result<Statement> {
+    fn finish_for(&self, start: u32, header: Box<ForHeader>, body: Statement) -> Result<Statement> {
         let ForHeader {
             init,
             condition,
@@ -1653,84 +836,7 @@ impl<'a> Parser<'a> {
         self.node(start, StatementKind::For(Box::new(statement)))
     }
 
-    fn parse_expression(&mut self) -> Result<Measured> {
-        let start = self.start();
-        let first = self.parse_assignment()?;
-        if self.at(",") {
-            self.parse_sequence(start, first)
-        } else {
-            Ok(first)
-        }
-    }
-
-    fn parse_sequence(&mut self, start: u32, first: Measured) -> Result<Measured> {
-        let mut height = first.height;
-        let mut expressions = Vec::from([first.expression]);
-        while self.eat(",") {
-            let next = self.parse_assignment()?;
-            height = height.max(next.height);
-            expressions.push(next.expression);
-        }
-        self.measured(
-            start,
-            ExpressionKind::Sequence(expressions),
-            Heights::nested(height),
-        )
-    }
-
-    fn parse_assignment(&mut self) -> Result<Measured> {
-        self.enter_expression()?;
-        let expression = self.parse_right_chain(true);
-        self.leave_expression();
-        expression
-    }
-
-    fn parse_conditional(&mut self) -> Result<Measured> {
-        self.parse_right_chain(false)
-    }
-
-    fn parse_right_chain(&mut self, assigning: bool) -> Result<Measured> {
-        let mut pending = Vec::new();
-        let innermost = loop {
-            let start = self.start();
-            let operand = self.parse_binary()?;
-            if self.eat("?") {
-                let then_expression = self.parse_expression()?;
-                self.expect(":")?;
-                pending.push(PendingRight::Conditional {
-                    start,
-                    condition: operand,
-                    then_expression,
-                });
-                continue;
-            }
-            let operator = match self.peek().kind {
-                TokenKind::Punctuator(symbol) if assigning || !pending.is_empty() => {
-                    AssignmentOperator::from_symbol(symbol)
-                }
-                _ => None,
-            };
-            let Some(operator) = operator else {
-                break operand;
-            };
-            if matches!(operand.expression.kind, ExpressionKind::Binary { .. }) {
-                return Err(self.unexpected("the end of the expression"));
-            }
-            self.advance();
-            pending.push(PendingRight::Assignment {
-                start,
-                target: operand,
-                operator,
-            });
-        };
-        let mut result = innermost;
-        while let Some(right) = pending.pop() {
-            result = self.reduce_right(right, result)?;
-        }
-        Ok(result)
-    }
-
-    fn reduce_right(&mut self, right: PendingRight, inner: Measured) -> Result<Measured> {
+    fn reduce_right(&self, right: PendingRight, inner: Measured) -> Result<Measured> {
         match right {
             PendingRight::Assignment {
                 start,
@@ -1769,45 +875,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_binary(&mut self) -> Result<Measured> {
-        let start = self.start();
-        let first = self.parse_unary()?;
-        if self.peek_binary_operator().is_some() {
-            self.parse_binary_operands(start, first)
-        } else {
-            Ok(first)
-        }
-    }
-
-    fn parse_binary_operands(&mut self, start: u32, first: Measured) -> Result<Measured> {
-        let mut pending = PendingBinary {
-            operands: Vec::from([(start, first)]),
-            operators: Vec::new(),
-        };
-        while let Some(operator) = self.peek_binary_operator() {
-            while pending
-                .operators
-                .last()
-                .is_some_and(|waiting| waiting.precedence() >= operator.precedence())
-            {
-                self.reduce_binary(&mut pending)?;
-            }
-            self.advance();
-            pending.operators.push(operator);
-            let operand_start = self.start();
-            let operand = self.parse_unary()?;
-            pending.operands.push((operand_start, operand));
-        }
-        while !pending.operators.is_empty() {
-            self.reduce_binary(&mut pending)?;
-        }
-        match pending.operands.pop() {
-            Some((_, expression)) if pending.operands.is_empty() => Ok(expression),
-            _ => Err(self.unexpected("an expression")),
-        }
-    }
-
-    fn reduce_binary(&mut self, pending: &mut PendingBinary) -> Result<()> {
+    fn reduce_binary(&self, pending: &mut PendingBinary) -> Result<()> {
         let operator = pending.operators.pop();
         let right = pending.operands.pop();
         let left = pending.operands.pop();
@@ -1826,14 +894,1223 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    fn parse_unary(&mut self) -> Result<Measured> {
+    fn starts_cast(&self) -> bool {
+        if !self.at("(") || !self.extensions.borrow().is_on(EXPLICIT_TYPECAST) {
+            return false;
+        }
+        match self.token_at(self.cursor.get().saturating_add(1)).kind {
+            TokenKind::Word(word) if self.is_type_name(word) => true,
+            TokenKind::Word(word) => self.casts_to_name(word),
+            _ => false,
+        }
+    }
+
+    fn casts_to_name(&self, word: &str) -> bool {
+        if is_reserved_word(word)
+            || self.token_at(self.cursor.get().saturating_add(2)).kind != TokenKind::Punctuator(")")
+        {
+            return false;
+        }
+        match self.token_at(self.cursor.get().saturating_add(3)).kind {
+            TokenKind::Word(next) => !is_reserved_word(next) || matches!(next, "true" | "false"),
+            TokenKind::Number { .. } => true,
+            _ => false,
+        }
+    }
+
+    fn at_postfix(&self) -> bool {
+        matches!(
+            self.peek().kind,
+            TokenKind::Punctuator("[" | "." | "(" | "++" | "--")
+        )
+    }
+
+    fn parse_postfix_operator(
+        &self,
+        start: u32,
+        operand: Measured,
+        operator: PostfixOperator,
+    ) -> Result<Measured> {
+        self.advance();
+        let heights = Heights::default().linked(Chain::Postfix, &operand);
+        let kind = ExpressionKind::Postfix {
+            operand: Box::new(operand.expression),
+            operator,
+        };
+        self.measured(start, kind, heights)
+    }
+
+    fn parse_literal(&self, token: Token<'a>) -> Result<Measured> {
+        let start = token.span.start;
+        self.advance();
+        let kind = match token.kind {
+            TokenKind::Number { kind, text } => ExpressionKind::Number(NumericLiteral {
+                kind,
+                text: text.to_owned(),
+            }),
+            TokenKind::String(index) => {
+                ExpressionKind::String(self.strings.get(index).cloned().unwrap_or_default())
+            }
+            TokenKind::Word(word) => ExpressionKind::Bool(word == "true"),
+            _ => return Err(self.unexpected("an expression")),
+        };
+        self.measured(start, kind, Heights::default())
+    }
+}
+
+impl<'b, 'a: 'b> Cx<'b, 'a> {
+    async fn parse_external_declaration(self) -> Result<ExternalDeclaration> {
+        let token = self.peek();
+        match token.kind {
+            TokenKind::Directive(index) => {
+                let directive = self
+                    .directives
+                    .get(index)
+                    .cloned()
+                    .ok_or_else(|| self.unexpected("a declaration"))?;
+                if let DirectiveKind::Extension { name, behavior } = &directive.kind {
+                    self.extensions.borrow_mut().apply(name, *behavior);
+                }
+                self.advance();
+                Ok(ExternalDeclaration::Directive(Spanned::new(
+                    token.span, directive,
+                )))
+            }
+            TokenKind::Punctuator(";") => {
+                self.advance();
+                Ok(ExternalDeclaration::Semicolon(Spanned::new(token.span, ())))
+            }
+            _ => {
+                self.call(self.clone().parse_declaration_or_definition(true))
+                    .await
+            }
+        }
+    }
+
+    async fn parse_declaration(self) -> Result<Declaration> {
+        match self
+            .call(self.clone().parse_declaration_or_definition(false))
+            .await?
+        {
+            ExternalDeclaration::Declaration(declaration) => Ok(declaration),
+            ExternalDeclaration::Directive(_)
+            | ExternalDeclaration::FunctionDefinition(_)
+            | ExternalDeclaration::Semicolon(_) => Err(self.unexpected("a declaration")),
+        }
+    }
+
+    async fn parse_declaration_or_definition(
+        self,
+        allow_definition: bool,
+    ) -> Result<ExternalDeclaration> {
+        let start = self.start();
+        if allow_definition && self.at_attribute_list() {
+            return self
+                .call(self.clone().parse_attributed_function(start))
+                .await;
+        }
+        if self.eat_word("precision") {
+            let qualifier = self.parse_precision_qualifier()?;
+            let ty = self.call(self.clone().parse_type_specifier()).await?;
+            self.expect(";")?;
+            return self.declaration(start, DeclarationKind::Precision { qualifier, ty });
+        }
+        if self.is_spirv_word_here(&["spirv_instruction"]) {
+            return self
+                .call(self.clone().parse_spirv_instruction_declaration(start))
+                .await;
+        }
+        if self.is_spirv_word_here(&["spirv_execution_mode", "spirv_execution_mode_id"]) {
+            let mode = self.call(self.clone().parse_spirv_execution_mode()).await?;
+            self.expect(";")?;
+            return self.declaration(start, DeclarationKind::SpirvExecutionMode(mode));
+        }
+        let qualifier = self.call(self.clone().parse_type_qualifier()).await?;
+        let qualifier = match qualifier {
+            Some(qualifier) => match self
+                .call(self.clone().parse_qualifier_declaration(start, qualifier))
+                .await?
+            {
+                AfterQualifier::Declaration(declaration) => return Ok(*declaration),
+                AfterQualifier::Type(qualifier) => Some(qualifier),
+            },
+            None => None,
+        };
+        let specifier = self.call(self.clone().parse_type_specifier()).await?;
+        let ty = self.spanned(
+            start,
+            FullySpecifiedType {
+                qualifier,
+                specifier,
+            },
+        );
+        if self.eat(";") {
+            let list = InitDeclaratorList {
+                ty,
+                declarators: Vec::new(),
+            };
+            return self.declaration(start, DeclarationKind::InitDeclaratorList(list));
+        }
+        let name = self.identifier()?;
+        if self.at("(") {
+            return self
+                .call(
+                    self.clone()
+                        .parse_function(start, ty, name, Vec::new(), allow_definition),
+                )
+                .await;
+        }
+        let mut declarators = Vec::new();
+        declarators.push(self.call(self.clone().parse_init_declarator(name)).await?);
+        while self.eat(",") {
+            let name = self.identifier()?;
+            declarators.push(self.call(self.clone().parse_init_declarator(name)).await?);
+        }
+        self.expect(";")?;
+        let list = InitDeclaratorList { ty, declarators };
+        self.declaration(start, DeclarationKind::InitDeclaratorList(list))
+    }
+
+    async fn parse_attributed_function(self, start: u32) -> Result<ExternalDeclaration> {
+        let attributes = self.call(self.clone().parse_attribute_list()).await?;
+        let qualifier = self.call(self.clone().parse_type_qualifier()).await?;
+        let specifier = self.call(self.clone().parse_type_specifier()).await?;
+        let return_type = self.spanned(
+            start,
+            FullySpecifiedType {
+                qualifier,
+                specifier,
+            },
+        );
+        let name = self.identifier()?;
+        if !self.at("(") {
+            return Err(self.unexpected("`(`"));
+        }
+        self.call(
+            self.clone()
+                .parse_function(start, return_type, name, attributes, true),
+        )
+        .await
+    }
+
+    async fn parse_qualifier_declaration(
+        self,
+        start: u32,
+        qualifier: Spanned<TypeQualifier>,
+    ) -> Result<AfterQualifier> {
+        if self.eat(";") {
+            return self
+                .declaration(start, DeclarationKind::Qualifier(qualifier))
+                .map(|declaration| AfterQualifier::Declaration(Box::new(declaration)));
+        }
+        let TokenKind::Word(word) = self.peek().kind else {
+            return Ok(AfterQualifier::Type(qualifier));
+        };
+        if self.at_nth(1, "{") && word != "struct" {
+            let reference =
+                qualifier.has_layout("buffer_reference") || qualifier.has_layout("buffer_type");
+            let kind = self.call(self.clone().parse_block(qualifier)).await?;
+            if reference {
+                self.declare_struct(word);
+            }
+            return self
+                .declaration(start, kind)
+                .map(|declaration| AfterQualifier::Declaration(Box::new(declaration)));
+        }
+        let names_follow = self.at_nth(1, ";") || self.at_nth(1, ",");
+        if names_follow && !self.is_type_name(word) {
+            let mut identifiers = Vec::from([self.identifier()?]);
+            while self.eat(",") {
+                identifiers.push(self.identifier()?);
+            }
+            self.expect(";")?;
+            if qualifier.has_layout("buffer_reference") {
+                for identifier in &identifiers {
+                    if let Some(name) = identifier.span.text(self.source) {
+                        self.declare_struct(name);
+                    }
+                }
+            }
+            let kind = DeclarationKind::QualifiedIdentifiers {
+                qualifier,
+                identifiers,
+            };
+            return self
+                .declaration(start, kind)
+                .map(|declaration| AfterQualifier::Declaration(Box::new(declaration)));
+        }
+        Ok(AfterQualifier::Type(qualifier))
+    }
+
+    async fn parse_block(self, qualifier: Spanned<TypeQualifier>) -> Result<DeclarationKind> {
+        let name = self.identifier()?;
+        let members = self
+            .call(self.clone().parse_struct_declaration_list())
+            .await?;
+        let instance_start = self.start();
+        let instance = if self.at(";") {
+            None
+        } else {
+            let name = self.identifier()?;
+            let array = self.call(self.clone().parse_array_specifier()).await?.0;
+            Some(self.spanned(instance_start, BlockInstance { name, array }))
+        };
+        self.expect(";")?;
+        let structure = BlockStructure {
+            qualifier,
+            name,
+            members,
+        };
+        Ok(DeclarationKind::Block {
+            structure,
+            instance,
+        })
+    }
+
+    async fn parse_function(
+        self,
+        start: u32,
+        return_type: Spanned<FullySpecifiedType>,
+        name: Identifier,
+        attributes: Vec<Attribute>,
+        allow_definition: bool,
+    ) -> Result<ExternalDeclaration> {
+        let mut prototype = self
+            .call(self.clone().parse_prototype(start, return_type, name))
+            .await?;
+        prototype.attributes = attributes;
+        if self.at_attribute_list() {
+            prototype.trailing_attributes = self.call(self.clone().parse_attribute_list()).await?;
+        }
+        if self.eat(";") {
+            return self.declaration(start, DeclarationKind::FunctionPrototype(prototype));
+        }
+        if !allow_definition || !self.at("{") {
+            return Err(self.unexpected("`;`"));
+        }
+        let body = self.call(self.clone().parse_compound_statement()).await?;
+        let definition = FunctionDefinition { prototype, body };
+        Ok(ExternalDeclaration::FunctionDefinition(
+            self.node(start, definition)?,
+        ))
+    }
+
+    async fn parse_prototype(
+        self,
+        start: u32,
+        return_type: Spanned<FullySpecifiedType>,
+        name: Identifier,
+    ) -> Result<Spanned<FunctionPrototype>> {
+        self.expect("(")?;
+        let mut parameters = Vec::new();
+        let is_void_list = self.at_word("void") && self.at_nth(1, ")");
+        if is_void_list {
+            self.advance();
+        } else if !self.at(")") {
+            parameters.push(
+                self.call(self.clone().parse_parameter_declaration())
+                    .await?,
+            );
+            while self.eat(",") {
+                parameters.push(
+                    self.call(self.clone().parse_parameter_declaration())
+                        .await?,
+                );
+            }
+        }
+        self.expect(")")?;
+        Ok(self.spanned(
+            start,
+            FunctionPrototype {
+                return_type,
+                name,
+                parameters,
+                attributes: Vec::new(),
+                trailing_attributes: Vec::new(),
+            },
+        ))
+    }
+
+    async fn parse_spirv_instruction_declaration(self, start: u32) -> Result<ExternalDeclaration> {
+        let instruction_start = self.start();
+        self.advance();
+        self.expect("(")?;
+        let requirements = self.parse_spirv_requirements()?;
+        let qualifiers = self.parse_spirv_instruction_qualifiers()?;
+        self.expect(")")?;
+        let instruction = self.spanned(
+            instruction_start,
+            SpirvInstruction {
+                requirements,
+                qualifiers,
+            },
+        );
+        let prototype_start = self.start();
+        let qualifier = self.call(self.clone().parse_type_qualifier()).await?;
+        let specifier = self.call(self.clone().parse_type_specifier()).await?;
+        let return_type = self.spanned(
+            prototype_start,
+            FullySpecifiedType {
+                qualifier,
+                specifier,
+            },
+        );
+        let name = self.identifier()?;
+        let prototype = self
+            .call(
+                self.clone()
+                    .parse_prototype(prototype_start, return_type, name),
+            )
+            .await?;
+        self.expect(";")?;
+        self.declaration(
+            start,
+            DeclarationKind::SpirvInstruction {
+                instruction,
+                prototype,
+            },
+        )
+    }
+
+    async fn parse_spirv_execution_mode(self) -> Result<Spanned<SpirvExecutionMode>> {
+        let start = self.start();
+        let kind = if self.eat_word("spirv_execution_mode_id") {
+            SpirvExecutionModeKind::Id
+        } else {
+            self.advance();
+            SpirvExecutionModeKind::Literal
+        };
+        self.expect("(")?;
+        let requirements = self.parse_spirv_requirements()?;
+        let mode = self.parse_spirv_token(SpirvToken::Int)?;
+        let mut operands = Vec::new();
+        if kind == SpirvExecutionModeKind::Id {
+            self.expect(",")?;
+            loop {
+                operands.push(
+                    self.call(self.clone().parse_conditional())
+                        .await?
+                        .expression,
+                );
+                if !self.eat(",") {
+                    break;
+                }
+            }
+        } else {
+            while self.eat(",") {
+                operands.push(self.parse_spirv_token(SpirvToken::Any)?);
+            }
+        }
+        self.expect(")")?;
+        Ok(self.spanned(
+            start,
+            SpirvExecutionMode {
+                kind,
+                requirements,
+                mode,
+                operands,
+            },
+        ))
+    }
+
+    async fn parse_spirv_type_specifier(self) -> Result<SpirvTypeSpecifier> {
+        self.advance();
+        self.expect("(")?;
+        let requirements = self.parse_spirv_requirements()?;
+        let instruction = self.parse_spirv_instruction_qualifiers()?;
+        let mut parameters = Vec::new();
+        while self.eat(",") {
+            let parameter = match self.peek().kind {
+                TokenKind::Word(word) if word == "struct" || self.is_type_name(word) => {
+                    SpirvTypeParameter::Type(Box::new(
+                        self.call(self.clone().parse_type_specifier()).await?,
+                    ))
+                }
+                _ => SpirvTypeParameter::Constant(
+                    self.call(self.clone().parse_conditional())
+                        .await?
+                        .expression,
+                ),
+            };
+            parameters.push(parameter);
+        }
+        self.expect(")")?;
+        Ok(SpirvTypeSpecifier {
+            requirements,
+            instruction,
+            parameters,
+        })
+    }
+
+    async fn parse_parameter_declaration(self) -> Result<Node<ParameterDeclaration>> {
+        let start = self.start();
+        let qualifier = self.call(self.clone().parse_type_qualifier()).await?;
+        let specifier = self.call(self.clone().parse_type_specifier()).await?;
+        let ty = self.spanned(
+            start,
+            FullySpecifiedType {
+                qualifier,
+                specifier,
+            },
+        );
+        let (name, array) = if matches!(self.peek().kind, TokenKind::Word(_)) {
+            (
+                Some(self.identifier()?),
+                self.call(self.clone().parse_array_specifier()).await?.0,
+            )
+        } else {
+            (None, None)
+        };
+        self.node(start, ParameterDeclaration { ty, name, array })
+    }
+
+    async fn parse_init_declarator(self, name: Identifier) -> Result<Node<InitDeclarator>> {
+        let start = name.span.start;
+        let array = self.call(self.clone().parse_array_specifier()).await?.0;
+        let initializer = if self.eat("=") {
+            Some(self.call(self.clone().parse_initializer()).await?)
+        } else {
+            None
+        };
+        self.node(
+            start,
+            InitDeclarator {
+                name,
+                array,
+                initializer,
+            },
+        )
+    }
+
+    async fn parse_initializer(self) -> Result<Spanned<Initializer>> {
+        self.enter()?;
+        let initializer = self.call(self.clone().parse_unguarded_initializer()).await;
+        self.leave();
+        initializer
+    }
+
+    async fn parse_unguarded_initializer(self) -> Result<Spanned<Initializer>> {
+        let start = self.start();
+        if !self.eat("{") {
+            let expression = self.call(self.clone().parse_assignment()).await?.expression;
+            return Ok(self.spanned(start, Initializer::Expression(expression)));
+        }
+        let mut elements = Vec::new();
+        while !self.at("}") {
+            elements.push(self.call(self.clone().parse_initializer()).await?);
+            if !self.eat(",") {
+                break;
+            }
+        }
+        self.expect("}")?;
+        Ok(self.spanned(start, Initializer::List(elements)))
+    }
+
+    async fn parse_type_qualifier(self) -> Result<Option<Spanned<TypeQualifier>>> {
+        let start = self.start();
+        let mut qualifiers = Vec::new();
+        while let TokenKind::Word(word) = self.peek().kind {
+            let single_start = self.start();
+            let single = if word == "layout" {
+                self.advance();
+                SingleTypeQualifier::Layout(self.call(self.clone().parse_layout_qualifier()).await?)
+            } else if word == "subroutine" {
+                self.advance();
+                SingleTypeQualifier::Subroutine(self.parse_type_name_list()?)
+            } else if word == NON_UNIFORM && self.at_nth(1, "(") {
+                break;
+            } else if self.is_spirv_word(word, &SPIRV_QUALIFIERS) {
+                self.parse_spirv_qualifier(word)?
+            } else if let Some(single) = SingleTypeQualifier::from_keyword(word) {
+                if single == SingleTypeQualifier::NonUniform {
+                    self.require_non_uniform(self.peek().span)?;
+                }
+                self.advance();
+                single
+            } else {
+                break;
+            };
+            qualifiers.push(self.spanned(single_start, single));
+        }
+        if qualifiers.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(self.spanned(start, TypeQualifier { qualifiers })))
+        }
+    }
+
+    async fn parse_layout_qualifier(self) -> Result<LayoutQualifier> {
+        self.expect("(")?;
+        let mut ids = Vec::new();
+        loop {
+            let start = self.start();
+            let name = if self.at_word("shared") {
+                let token = self.advance();
+                Spanned::new(token.span, String::from("shared"))
+            } else {
+                self.identifier()?
+            };
+            let value = if self.eat("=") {
+                Some(self.call(self.clone().parse_assignment()).await?.expression)
+            } else {
+                None
+            };
+            ids.push(self.spanned(start, LayoutQualifierId { name, value }));
+            if !self.eat(",") {
+                break;
+            }
+        }
+        self.expect(")")?;
+        Ok(LayoutQualifier { ids })
+    }
+
+    async fn parse_type_specifier(self) -> Result<Spanned<TypeSpecifier>> {
+        Ok(self
+            .call(self.clone().parse_measured_type_specifier())
+            .await?
+            .0)
+    }
+
+    async fn parse_measured_type_specifier(self) -> Result<(Spanned<TypeSpecifier>, u32)> {
+        self.enter()?;
+        let specifier = self
+            .call(self.clone().parse_unguarded_type_specifier())
+            .await;
+        self.leave();
+        specifier
+    }
+
+    async fn parse_unguarded_type_specifier(self) -> Result<(Spanned<TypeSpecifier>, u32)> {
+        let token = self.peek();
+        let TokenKind::Word(word) = token.kind else {
+            return Err(self.unexpected("a type"));
+        };
+        let non_array = self
+            .call(self.clone().parse_type_specifier_non_array(token, word))
+            .await?;
+        self.call(self.clone().finish_type_specifier(token, word, non_array))
+            .await
+    }
+
+    async fn parse_type_specifier_non_array(
+        self,
+        token: Token<'a>,
+        word: &'a str,
+    ) -> Result<TypeSpecifierNonArray> {
+        if word == "struct" {
+            self.call(self.clone().parse_struct_specifier())
+                .await
+                .map(TypeSpecifierNonArray::Struct)
+        } else if self.is_spirv_word(word, &[SPIRV_TYPE]) {
+            self.call(self.clone().parse_spirv_type_specifier())
+                .await
+                .map(|spirv| TypeSpecifierNonArray::Spirv(Box::new(spirv)))
+        } else {
+            self.parse_simple_type_specifier(token, word)
+        }
+    }
+
+    async fn finish_type_specifier(
+        self,
+        token: Token<'a>,
+        word: &'a str,
+        non_array: TypeSpecifierNonArray,
+    ) -> Result<(Spanned<TypeSpecifier>, u32)> {
+        let (parameters, parameter_height) = if self.at("<")
+            && !matches!(
+                non_array,
+                TypeSpecifierNonArray::TypeName(_)
+                    | TypeSpecifierNonArray::Struct(_)
+                    | TypeSpecifierNonArray::Spirv(_)
+            ) {
+            if !matches!(non_array, TypeSpecifierNonArray::Parameterized(_)) {
+                return Err(self.error(
+                    ParseErrorKind::UnexpectedTypeParameters(word.to_owned()),
+                    token.span,
+                ));
+            }
+            let (parameters, height) = self.call(self.clone().parse_type_parameters()).await?;
+            (Some(parameters), height)
+        } else {
+            (None, 0)
+        };
+        let (array, height) = self.call(self.clone().parse_array_specifier()).await?;
+        let specifier = TypeSpecifier {
+            non_array,
+            parameters,
+            array,
+        };
+        Ok((
+            self.spanned(token.span.start, specifier),
+            height.max(parameter_height),
+        ))
+    }
+
+    async fn parse_type_parameters(self) -> Result<(Spanned<TypeParameters>, u32)> {
+        let start = self.start();
+        self.expect("<")?;
+        let mut height = 0;
+        let element = match self.peek().kind {
+            TokenKind::Word(word) if word == "struct" || self.is_type_name(word) => {
+                let (element, element_height) = self
+                    .call(self.clone().parse_measured_type_specifier())
+                    .await?;
+                height = element_height;
+                Some(Box::new(element))
+            }
+            _ => None,
+        };
+        let mut values = Vec::new();
+        if element.is_none() || self.at(",") {
+            if element.is_some() {
+                self.advance();
+            }
+            loop {
+                let value = self.call(self.clone().parse_unary()).await?;
+                height = height.max(value.height);
+                values.push(value.expression);
+                if !self.eat(",") {
+                    break;
+                }
+            }
+        }
+        self.expect(">")?;
+        Ok((
+            self.spanned(start, TypeParameters { element, values }),
+            height,
+        ))
+    }
+
+    async fn parse_array_specifier(self) -> Result<(Option<Spanned<ArraySpecifier>>, u32)> {
+        let start = self.start();
+        let mut dimensions = Vec::new();
+        let mut height = 0;
+        while self.at("[") {
+            let dimension_start = self.start();
+            self.advance();
+            let dimension = if self.at("]") {
+                ArrayDimension::Unsized
+            } else {
+                let size = self.call(self.clone().parse_conditional()).await?;
+                height = height.max(size.height);
+                ArrayDimension::Sized(size.expression)
+            };
+            self.expect("]")?;
+            dimensions.push(self.spanned(dimension_start, dimension));
+        }
+        if dimensions.is_empty() {
+            Ok((None, 0))
+        } else {
+            Ok((
+                Some(self.spanned(start, ArraySpecifier { dimensions })),
+                height,
+            ))
+        }
+    }
+
+    async fn parse_struct_specifier(self) -> Result<StructSpecifier> {
+        self.expect_word("struct")?;
+        let name_token = self.peek();
+        let name = if self.at("{") {
+            None
+        } else {
+            Some(self.identifier()?)
+        };
+        let declarations = self
+            .call(self.clone().parse_struct_declaration_list())
+            .await?;
+        if let (Some(_), TokenKind::Word(word)) = (&name, name_token.kind) {
+            self.declare_struct(word);
+        }
+        Ok(StructSpecifier { name, declarations })
+    }
+
+    async fn parse_struct_declaration_list(self) -> Result<Vec<Spanned<StructDeclaration>>> {
+        self.expect("{")?;
+        let mut declarations = Vec::new();
+        loop {
+            declarations.push(self.call(self.clone().parse_struct_declaration()).await?);
+            if self.eat("}") {
+                return Ok(declarations);
+            }
+        }
+    }
+
+    async fn parse_struct_declaration(self) -> Result<Spanned<StructDeclaration>> {
+        let start = self.start();
+        let qualifier = self.call(self.clone().parse_type_qualifier()).await?;
+        let specifier = if qualifier.is_some() && self.at("{") {
+            self.call(self.clone().parse_inline_block()).await?
+        } else {
+            self.call(self.clone().parse_type_specifier()).await?
+        };
+        self.call(
+            self.clone()
+                .finish_struct_declaration(start, qualifier, specifier),
+        )
+        .await
+    }
+
+    async fn parse_inline_block(self) -> Result<Spanned<TypeSpecifier>> {
+        let block_start = self.start();
+        self.enter()?;
+        let members = self
+            .call(self.clone().parse_struct_declaration_list())
+            .await;
+        self.leave();
+        let members = members?;
+        let non_array = TypeSpecifierNonArray::InlineBlock(members);
+        Ok(self.spanned(
+            block_start,
+            TypeSpecifier {
+                non_array,
+                parameters: None,
+                array: None,
+            },
+        ))
+    }
+
+    async fn finish_struct_declaration(
+        self,
+        start: u32,
+        qualifier: Option<Spanned<TypeQualifier>>,
+        specifier: Spanned<TypeSpecifier>,
+    ) -> Result<Spanned<StructDeclaration>> {
+        let ty = self.spanned(
+            start,
+            FullySpecifiedType {
+                qualifier,
+                specifier,
+            },
+        );
+        let mut declarators = Vec::new();
+        loop {
+            let name = self.identifier()?;
+            let array = self.call(self.clone().parse_array_specifier()).await?.0;
+            declarators.push(self.spanned(name.span.start, StructDeclarator { name, array }));
+            if !self.eat(",") {
+                break;
+            }
+        }
+        self.expect(";")?;
+        Ok(self.spanned(start, StructDeclaration { ty, declarators }))
+    }
+
+    async fn parse_compound_statement(self) -> Result<Spanned<CompoundStatement>> {
+        let start = self.start();
+        self.expect("{")?;
+        self.struct_scopes.borrow_mut().push();
+        let statements = self.call(self.clone().parse_statement_list()).await;
+        self.struct_scopes.borrow_mut().pop();
+        let statements = statements?;
+        self.expect("}")?;
+        Ok(self.spanned(start, CompoundStatement { statements }))
+    }
+
+    async fn parse_statement_list(self) -> Result<Vec<Statement>> {
+        let mut statements = Vec::new();
+        while !self.at("}") {
+            if self.peek().kind == TokenKind::End {
+                return Err(self.unexpected("`}`"));
+            }
+            statements.push(self.call(self.clone().parse_statement()).await?);
+        }
+        Ok(statements)
+    }
+
+    async fn parse_statement(self) -> Result<Statement> {
+        self.enter()?;
+        let statement = self.call(self.clone().parse_unguarded_statement()).await;
+        self.leave();
+        statement
+    }
+
+    async fn parse_unguarded_statement(self) -> Result<Statement> {
+        match self.peek().kind {
+            TokenKind::Punctuator("{") => {
+                self.call(self.clone().parse_compound_as_statement()).await
+            }
+            TokenKind::Word("if") => self.call(self.clone().parse_selection()).await,
+            TokenKind::Word("switch") => self.call(self.clone().parse_switch()).await,
+            TokenKind::Word("case") => self.call(self.clone().parse_case_label()).await,
+            TokenKind::Word("default") => self.parse_default_label(),
+            TokenKind::Word("while") => self.call(self.clone().parse_while()).await,
+            TokenKind::Word("do") => self.call(self.clone().parse_do_while()).await,
+            TokenKind::Word("for") => self.call(self.clone().parse_for()).await,
+            TokenKind::Word("continue") => self.parse_jump(JumpStatement::Continue),
+            TokenKind::Word("break") => self.parse_jump(JumpStatement::Break),
+            TokenKind::Word("discard") => self.parse_jump(JumpStatement::Discard),
+            TokenKind::Word("demote") => self.parse_jump(JumpStatement::Demote),
+            TokenKind::Word("terminateRayEXT") => self.parse_jump(JumpStatement::TerminateRay),
+            TokenKind::Word("ignoreIntersectionEXT") => {
+                self.parse_jump(JumpStatement::IgnoreIntersection)
+            }
+            TokenKind::Word("return") => self.call(self.clone().parse_return()).await,
+            TokenKind::Punctuator("[") if self.at_attribute_list() => {
+                self.call(self.clone().parse_attributed()).await
+            }
+            _ => self.call(self.clone().parse_simple_statement()).await,
+        }
+    }
+
+    async fn parse_attributed(self) -> Result<Statement> {
+        let start = self.start();
+        let attributes = self.call(self.clone().parse_attribute_list()).await?;
+        if !matches!(
+            self.peek().kind,
+            TokenKind::Word("if" | "switch" | "while" | "do" | "for")
+        ) {
+            return Err(self.unexpected("a selection, switch or iteration statement"));
+        }
+        let statement = Box::new(self.call(self.clone().parse_unguarded_statement()).await?);
+        self.node(
+            start,
+            StatementKind::Attributed {
+                attributes,
+                statement,
+            },
+        )
+    }
+
+    async fn parse_attribute_list(self) -> Result<Vec<Attribute>> {
+        self.expect("[")?;
+        self.expect("[")?;
+        let mut attributes = Vec::new();
+        loop {
+            let token = self.peek();
+            let TokenKind::Word(word) = token.kind else {
+                return Err(self.unexpected("an attribute"));
+            };
+            self.advance();
+            let name = Spanned::new(token.span, word.to_owned());
+            let argument = if self.eat("(") {
+                let argument = self
+                    .call(self.clone().parse_conditional())
+                    .await?
+                    .expression;
+                self.expect(")")?;
+                Some(argument)
+            } else {
+                None
+            };
+            attributes.push(Attribute { name, argument });
+            if !self.eat(",") {
+                break;
+            }
+        }
+        self.expect("]")?;
+        self.expect("]")?;
+        Ok(attributes)
+    }
+
+    async fn parse_compound_as_statement(self) -> Result<Statement> {
+        let start = self.start();
+        let compound = self
+            .call(self.clone().parse_compound_statement())
+            .await?
+            .node;
+        self.node(start, StatementKind::Compound(compound))
+    }
+
+    async fn parse_simple_statement(self) -> Result<Statement> {
+        let start = self.start();
+        let kind = if self.eat(";") {
+            StatementKind::Expression(None)
+        } else if self.starts_declaration() {
+            StatementKind::Declaration(Box::new(self.call(self.clone().parse_declaration()).await?))
+        } else {
+            let expression = self.call(self.clone().parse_expression()).await?.expression;
+            self.expect(";")?;
+            StatementKind::Expression(Some(expression))
+        };
+        self.node(start, kind)
+    }
+
+    async fn parse_case_label(self) -> Result<Statement> {
+        let start = self.start();
+        self.expect_word("case")?;
+        let label = self.call(self.clone().parse_expression()).await?.expression;
+        self.expect(":")?;
+        self.node(start, StatementKind::CaseLabel(CaseLabel::Case(label)))
+    }
+
+    async fn parse_return(self) -> Result<Statement> {
+        let start = self.start();
+        self.expect_word("return")?;
+        let value = if self.at(";") {
+            None
+        } else {
+            Some(self.call(self.clone().parse_expression()).await?.expression)
+        };
+        self.expect(";")?;
+        self.node(start, StatementKind::Jump(JumpStatement::Return(value)))
+    }
+
+    async fn parse_parenthesized_expression(self) -> Result<Expression> {
+        self.expect("(")?;
+        let expression = self.call(self.clone().parse_expression()).await?.expression;
+        self.expect(")")?;
+        Ok(expression)
+    }
+
+    async fn parse_selection(self) -> Result<Statement> {
+        let start = self.start();
+        self.expect_word("if")?;
+        let condition = self
+            .call(self.clone().parse_parenthesized_expression())
+            .await?;
+        let then_branch = Box::new(self.call(self.clone().parse_statement()).await?);
+        let else_branch = if self.eat_word("else") {
+            Some(Box::new(self.call(self.clone().parse_statement()).await?))
+        } else {
+            None
+        };
+        let kind = StatementKind::Selection {
+            condition,
+            then_branch,
+            else_branch,
+        };
+        self.node(start, kind)
+    }
+
+    async fn parse_switch(self) -> Result<Statement> {
+        let start = self.start();
+        self.expect_word("switch")?;
+        let selector = self
+            .call(self.clone().parse_parenthesized_expression())
+            .await?;
+        self.expect("{")?;
+        self.struct_scopes.borrow_mut().push();
+        let statements = self.call(self.clone().parse_statement_list()).await;
+        self.struct_scopes.borrow_mut().pop();
+        let statements = statements?;
+        self.expect("}")?;
+        let kind = StatementKind::Switch {
+            selector,
+            statements,
+        };
+        self.node(start, kind)
+    }
+
+    async fn parse_condition(self) -> Result<Condition> {
+        if !self.starts_declaration() {
+            return Ok(Condition::Expression(
+                self.call(self.clone().parse_expression()).await?.expression,
+            ));
+        }
+        let start = self.start();
+        let qualifier = self.call(self.clone().parse_type_qualifier()).await?;
+        let specifier = self.call(self.clone().parse_type_specifier()).await?;
+        let ty = self.spanned(
+            start,
+            FullySpecifiedType {
+                qualifier,
+                specifier,
+            },
+        );
+        let name = self.identifier()?;
+        self.expect("=")?;
+        let initializer = self.call(self.clone().parse_initializer()).await?;
+        let declaration = ConditionDeclaration {
+            ty,
+            name,
+            initializer,
+        };
+        Ok(Condition::Declaration(Box::new(
+            self.node(start, declaration)?,
+        )))
+    }
+
+    async fn parse_while(self) -> Result<Statement> {
+        self.struct_scopes.borrow_mut().push();
+        let statement = self.call(self.clone().parse_unscoped_while()).await;
+        self.struct_scopes.borrow_mut().pop();
+        statement
+    }
+
+    async fn parse_unscoped_while(self) -> Result<Statement> {
+        let start = self.start();
+        self.expect_word("while")?;
+        self.expect("(")?;
+        let condition = self.call(self.clone().parse_condition()).await?;
+        self.expect(")")?;
+        let body = Box::new(self.call(self.clone().parse_statement()).await?);
+        self.node(start, StatementKind::While { condition, body })
+    }
+
+    async fn parse_do_while(self) -> Result<Statement> {
+        let start = self.start();
+        self.expect_word("do")?;
+        let body = Box::new(self.call(self.clone().parse_statement()).await?);
+        self.expect_word("while")?;
+        let condition = self
+            .call(self.clone().parse_parenthesized_expression())
+            .await?;
+        self.expect(";")?;
+        self.node(start, StatementKind::DoWhile { body, condition })
+    }
+
+    async fn parse_for(self) -> Result<Statement> {
+        self.struct_scopes.borrow_mut().push();
+        let statement = self.call(self.clone().parse_unscoped_for()).await;
+        self.struct_scopes.borrow_mut().pop();
+        statement
+    }
+
+    async fn parse_unscoped_for(self) -> Result<Statement> {
+        let start = self.start();
+        let header = self.call(self.clone().parse_for_header()).await?;
+        let body = self.call(self.clone().parse_statement()).await?;
+        self.finish_for(start, header, body)
+    }
+
+    async fn parse_for_header(self) -> Result<Box<ForHeader>> {
+        self.expect_word("for")?;
+        self.expect("(")?;
+        let init = self.call(self.clone().parse_simple_statement()).await?;
+        let condition = if self.at(";") {
+            None
+        } else {
+            Some(self.call(self.clone().parse_condition()).await?)
+        };
+        self.expect(";")?;
+        let increment = if self.at(")") {
+            None
+        } else {
+            Some(self.call(self.clone().parse_expression()).await?.expression)
+        };
+        self.expect(")")?;
+        Ok(Box::new(ForHeader {
+            init,
+            condition,
+            increment,
+        }))
+    }
+
+    async fn parse_expression(self) -> Result<Measured> {
+        let start = self.start();
+        let first = self.call(self.clone().parse_assignment()).await?;
+        if self.at(",") {
+            self.call(self.clone().parse_sequence(start, first)).await
+        } else {
+            Ok(first)
+        }
+    }
+
+    async fn parse_sequence(self, start: u32, first: Measured) -> Result<Measured> {
+        let mut height = first.height;
+        let mut expressions = Vec::from([first.expression]);
+        while self.eat(",") {
+            let next = self.call(self.clone().parse_assignment()).await?;
+            height = height.max(next.height);
+            expressions.push(next.expression);
+        }
+        self.measured(
+            start,
+            ExpressionKind::Sequence(expressions),
+            Heights::nested(height),
+        )
+    }
+
+    async fn parse_assignment(self) -> Result<Measured> {
         self.enter_expression()?;
-        let expression = self.parse_unary_chain();
+        let expression = self.call(self.clone().parse_right_chain(true)).await;
         self.leave_expression();
         expression
     }
 
-    fn parse_unary_chain(&mut self) -> Result<Measured> {
+    async fn parse_conditional(self) -> Result<Measured> {
+        self.call(self.clone().parse_right_chain(false)).await
+    }
+
+    async fn parse_right_chain(self, assigning: bool) -> Result<Measured> {
+        let mut pending = Vec::new();
+        let innermost = loop {
+            let start = self.start();
+            let operand = self.call(self.clone().parse_binary()).await?;
+            if self.eat("?") {
+                let then_expression = self.call(self.clone().parse_expression()).await?;
+                self.expect(":")?;
+                pending.push(PendingRight::Conditional {
+                    start,
+                    condition: operand,
+                    then_expression,
+                });
+                continue;
+            }
+            let operator = match self.peek().kind {
+                TokenKind::Punctuator(symbol) if assigning || !pending.is_empty() => {
+                    AssignmentOperator::from_symbol(symbol)
+                }
+                _ => None,
+            };
+            let Some(operator) = operator else {
+                break operand;
+            };
+            if matches!(operand.expression.kind, ExpressionKind::Binary { .. }) {
+                return Err(self.unexpected("the end of the expression"));
+            }
+            self.advance();
+            pending.push(PendingRight::Assignment {
+                start,
+                target: operand,
+                operator,
+            });
+        };
+        let mut result = innermost;
+        while let Some(right) = pending.pop() {
+            result = self.reduce_right(right, result)?;
+        }
+        Ok(result)
+    }
+
+    async fn parse_binary(self) -> Result<Measured> {
+        let start = self.start();
+        let first = self.call(self.clone().parse_unary()).await?;
+        if self.peek_binary_operator().is_some() {
+            self.call(self.clone().parse_binary_operands(start, first))
+                .await
+        } else {
+            Ok(first)
+        }
+    }
+
+    async fn parse_binary_operands(self, start: u32, first: Measured) -> Result<Measured> {
+        let mut pending = PendingBinary {
+            operands: Vec::from([(start, first)]),
+            operators: Vec::new(),
+        };
+        while let Some(operator) = self.peek_binary_operator() {
+            while pending
+                .operators
+                .last()
+                .is_some_and(|waiting| waiting.precedence() >= operator.precedence())
+            {
+                self.reduce_binary(&mut pending)?;
+            }
+            self.advance();
+            pending.operators.push(operator);
+            let operand_start = self.start();
+            let operand = self.call(self.clone().parse_unary()).await?;
+            pending.operands.push((operand_start, operand));
+        }
+        while !pending.operators.is_empty() {
+            self.reduce_binary(&mut pending)?;
+        }
+        match pending.operands.pop() {
+            Some((_, expression)) if pending.operands.is_empty() => Ok(expression),
+            _ => Err(self.unexpected("an expression")),
+        }
+    }
+
+    async fn parse_unary(self) -> Result<Measured> {
+        self.enter_expression()?;
+        let expression = self.call(self.clone().parse_unary_chain()).await;
+        self.leave_expression();
+        expression
+    }
+
+    async fn parse_unary_chain(self) -> Result<Measured> {
         let mut operators = Vec::new();
         while let TokenKind::Punctuator(symbol) = self.peek().kind {
             let Some(operator) = UnaryOperator::from_symbol(symbol) else {
@@ -1843,9 +2120,9 @@ impl<'a> Parser<'a> {
             self.advance();
         }
         let mut result = if self.starts_cast() {
-            self.parse_cast()?
+            self.call(self.clone().parse_cast()).await?
         } else {
-            self.parse_postfix()?
+            self.call(self.clone().parse_postfix()).await?
         };
         while let Some((start, operator)) = operators.pop() {
             let heights = Heights::default().linked(Chain::Unary, &result);
@@ -1858,31 +2135,7 @@ impl<'a> Parser<'a> {
         Ok(result)
     }
 
-    fn starts_cast(&self) -> bool {
-        if !self.at("(") || !self.extensions.is_on(EXPLICIT_TYPECAST) {
-            return false;
-        }
-        match self.token_at(self.cursor.saturating_add(1)).kind {
-            TokenKind::Word(word) if self.is_type_name(word) => true,
-            TokenKind::Word(word) => self.casts_to_name(word),
-            _ => false,
-        }
-    }
-
-    fn casts_to_name(&self, word: &str) -> bool {
-        if is_reserved_word(word)
-            || self.token_at(self.cursor.saturating_add(2)).kind != TokenKind::Punctuator(")")
-        {
-            return false;
-        }
-        match self.token_at(self.cursor.saturating_add(3)).kind {
-            TokenKind::Word(next) => !is_reserved_word(next) || matches!(next, "true" | "false"),
-            TokenKind::Number { .. } => true,
-            _ => false,
-        }
-    }
-
-    fn parse_cast(&mut self) -> Result<Measured> {
+    async fn parse_cast(self) -> Result<Measured> {
         let start = self.start();
         self.expect("(")?;
         let name = match self.peek().kind {
@@ -1900,10 +2153,13 @@ impl<'a> Parser<'a> {
                 };
                 (Spanned::new(span, specifier), 0)
             }
-            None => self.parse_measured_type_specifier()?,
+            None => {
+                self.call(self.clone().parse_measured_type_specifier())
+                    .await?
+            }
         };
         self.expect(")")?;
-        let operand = self.parse_unary()?;
+        let operand = self.call(self.clone().parse_unary()).await?;
         let function = Spanned::new(
             specifier.span,
             FunctionIdentifier::Cast(Box::new(specifier.node)),
@@ -1915,27 +2171,30 @@ impl<'a> Parser<'a> {
         self.measured(start, kind, Heights::nested(height.max(operand.height)))
     }
 
-    fn parse_postfix(&mut self) -> Result<Measured> {
+    async fn parse_postfix(self) -> Result<Measured> {
         let start = self.start();
-        let mut base = self.parse_primary()?;
+        let mut base = self.call(self.clone().parse_primary()).await?;
         while self.at_postfix() {
-            base = self.parse_postfix_step(start, base)?;
+            base = self
+                .call(self.clone().parse_postfix_step(start, base))
+                .await?;
         }
         Ok(base)
     }
 
-    fn at_postfix(&self) -> bool {
-        matches!(
-            self.peek().kind,
-            TokenKind::Punctuator("[" | "." | "(" | "++" | "--")
-        )
-    }
-
-    fn parse_postfix_step(&mut self, start: u32, base: Measured) -> Result<Measured> {
+    async fn parse_postfix_step(self, start: u32, base: Measured) -> Result<Measured> {
         match self.peek().kind {
-            TokenKind::Punctuator("[") => self.parse_subscript(start, base),
-            TokenKind::Punctuator(".") => self.parse_field_selection(start, base),
-            TokenKind::Punctuator("(") => self.parse_expression_call(start, base),
+            TokenKind::Punctuator("[") => {
+                self.call(self.clone().parse_subscript(start, base)).await
+            }
+            TokenKind::Punctuator(".") => {
+                self.call(self.clone().parse_field_selection(start, base))
+                    .await
+            }
+            TokenKind::Punctuator("(") => {
+                self.call(self.clone().parse_expression_call(start, base))
+                    .await
+            }
             TokenKind::Punctuator("++") => {
                 self.parse_postfix_operator(start, base, PostfixOperator::Increment)
             }
@@ -1943,15 +2202,16 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_expression_call(&mut self, start: u32, base: Measured) -> Result<Measured> {
+    async fn parse_expression_call(self, start: u32, base: Measured) -> Result<Measured> {
         let callee = FunctionIdentifier::Expression(Box::new(base.expression));
         let function = self.spanned(start, callee);
-        self.parse_call(start, function, base.height)
+        self.call(self.clone().parse_call(start, function, base.height))
+            .await
     }
 
-    fn parse_subscript(&mut self, start: u32, base: Measured) -> Result<Measured> {
+    async fn parse_subscript(self, start: u32, base: Measured) -> Result<Measured> {
         self.expect("[")?;
-        let index = self.parse_expression()?;
+        let index = self.call(self.clone().parse_expression()).await?;
         self.expect("]")?;
         let heights = Heights::nested(index.height).linked(Chain::Postfix, &base);
         let kind = ExpressionKind::Subscript {
@@ -1961,7 +2221,7 @@ impl<'a> Parser<'a> {
         self.measured(start, kind, heights)
     }
 
-    fn parse_field_selection(&mut self, start: u32, base: Measured) -> Result<Measured> {
+    async fn parse_field_selection(self, start: u32, base: Measured) -> Result<Measured> {
         self.expect(".")?;
         let field = self.identifier()?;
         if self.at("(") {
@@ -1970,7 +2230,9 @@ impl<'a> Parser<'a> {
                 name: field,
             };
             let function = self.spanned(start, method);
-            return self.parse_call(start, function, base.height);
+            return self
+                .call(self.clone().parse_call(start, function, base.height))
+                .await;
         }
         let heights = Heights::default().linked(Chain::Postfix, &base);
         let kind = ExpressionKind::FieldSelection {
@@ -1980,23 +2242,8 @@ impl<'a> Parser<'a> {
         self.measured(start, kind, heights)
     }
 
-    fn parse_postfix_operator(
-        &mut self,
-        start: u32,
-        operand: Measured,
-        operator: PostfixOperator,
-    ) -> Result<Measured> {
-        self.advance();
-        let heights = Heights::default().linked(Chain::Postfix, &operand);
-        let kind = ExpressionKind::Postfix {
-            operand: Box::new(operand.expression),
-            operator,
-        };
-        self.measured(start, kind, heights)
-    }
-
-    fn parse_call(
-        &mut self,
+    async fn parse_call(
+        self,
         start: u32,
         function: Spanned<FunctionIdentifier>,
         function_height: u32,
@@ -2009,7 +2256,7 @@ impl<'a> Parser<'a> {
             self.advance();
         } else if !self.at(")") {
             loop {
-                let argument = self.parse_assignment()?;
+                let argument = self.call(self.clone().parse_assignment()).await?;
                 height = height.max(argument.height);
                 arguments.push(argument.expression);
                 if !self.eat(",") {
@@ -2029,16 +2276,22 @@ impl<'a> Parser<'a> {
         )
     }
 
-    fn parse_primary(&mut self) -> Result<Measured> {
+    async fn parse_primary(self) -> Result<Measured> {
         let token = self.peek();
         match token.kind {
             TokenKind::Number { .. } | TokenKind::String(_) | TokenKind::Word("true" | "false") => {
                 self.parse_literal(token)
             }
-            TokenKind::Punctuator("(") => self.parse_parenthesized(),
-            TokenKind::Word(NON_UNIFORM) if self.at_nth(1, "(") => self.parse_non_uniform(token),
-            TokenKind::Word(word) if self.starts_constructor(word) => self.parse_constructor(),
-            TokenKind::Word(word) if !is_reserved_word(word) => self.parse_name(token, word),
+            TokenKind::Punctuator("(") => self.call(self.clone().parse_parenthesized()).await,
+            TokenKind::Word(NON_UNIFORM) if self.at_nth(1, "(") => {
+                self.call(self.clone().parse_non_uniform(token)).await
+            }
+            TokenKind::Word(word) if self.starts_constructor(word) => {
+                self.call(self.clone().parse_constructor()).await
+            }
+            TokenKind::Word(word) if !is_reserved_word(word) => {
+                self.call(self.clone().parse_name(token, word)).await
+            }
             TokenKind::Word(word) if is_unavailable_word(word) => {
                 Err(self.error(ParseErrorKind::ReservedWord(word.to_owned()), token.span))
             }
@@ -2046,39 +2299,23 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_literal(&mut self, token: Token<'a>) -> Result<Measured> {
-        let start = token.span.start;
-        self.advance();
-        let kind = match token.kind {
-            TokenKind::Number { kind, text } => ExpressionKind::Number(NumericLiteral {
-                kind,
-                text: text.to_owned(),
-            }),
-            TokenKind::String(index) => {
-                ExpressionKind::String(self.strings.get(index).cloned().unwrap_or_default())
-            }
-            TokenKind::Word(word) => ExpressionKind::Bool(word == "true"),
-            _ => return Err(self.unexpected("an expression")),
-        };
-        self.measured(start, kind, Heights::default())
-    }
-
-    fn parse_non_uniform(&mut self, token: Token<'a>) -> Result<Measured> {
+    async fn parse_non_uniform(self, token: Token<'a>) -> Result<Measured> {
         self.require_non_uniform(token.span)?;
         self.advance();
         let function = Spanned::new(
             token.span,
             FunctionIdentifier::Function(NON_UNIFORM.to_owned()),
         );
-        self.parse_call(token.span.start, function, 0)
+        self.call(self.clone().parse_call(token.span.start, function, 0))
+            .await
     }
 
-    fn parse_name(&mut self, token: Token<'a>, word: &str) -> Result<Measured> {
+    async fn parse_name(self, token: Token<'a>, word: &str) -> Result<Measured> {
         let start = token.span.start;
         self.advance();
         if self.at("(") {
             let function = Spanned::new(token.span, FunctionIdentifier::Function(word.to_owned()));
-            self.parse_call(start, function, 0)
+            self.call(self.clone().parse_call(start, function, 0)).await
         } else {
             self.measured(
                 start,
@@ -2088,22 +2325,25 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_parenthesized(&mut self) -> Result<Measured> {
+    async fn parse_parenthesized(self) -> Result<Measured> {
         let start = self.start();
         self.expect("(")?;
-        let inner = self.parse_expression()?;
+        let inner = self.call(self.clone().parse_expression()).await?;
         self.expect(")")?;
         let kind = ExpressionKind::Parenthesized(Box::new(inner.expression));
         self.measured(start, kind, Heights::nested(inner.height))
     }
 
-    fn parse_constructor(&mut self) -> Result<Measured> {
+    async fn parse_constructor(self) -> Result<Measured> {
         let start = self.start();
-        let (specifier, height) = self.parse_measured_type_specifier()?;
+        let (specifier, height) = self
+            .call(self.clone().parse_measured_type_specifier())
+            .await?;
         let function = Spanned::new(
             specifier.span,
             FunctionIdentifier::Constructor(Box::new(specifier.node)),
         );
-        self.parse_call(start, function, height)
+        self.call(self.clone().parse_call(start, function, height))
+            .await
     }
 }

@@ -27,6 +27,7 @@ extern crate std;
 
 pub mod ast;
 mod chain;
+mod deep;
 mod error;
 pub mod extensions;
 pub mod keywords;
@@ -42,7 +43,10 @@ mod tests;
 pub use ast::TranslationUnit;
 pub use chain::{placeholder, Chain, Spine};
 pub use error::{ParseError, ParseErrorKind};
-pub use parser::{parse, parse_prefix, MAX_NESTING_DEPTH, NON_UNIFORM};
+pub use parser::{
+    parse, parse_prefix, parse_prefix_with, parse_with, ParseOptions, MAX_NESTING_DEPTH,
+    NON_UNIFORM,
+};
 pub use printer::print;
 pub use span::{line_column, LineColumn, Span};
 pub use walk::expressions;

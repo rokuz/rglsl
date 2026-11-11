@@ -54,4 +54,6 @@ pub enum ParseErrorKind {
     ExtensionRequired { word: String, extensions: String },
     #[error("`{0}` does not take type parameters")]
     UnexpectedTypeParameters(String),
+    #[error("internal parser error")]
+    Internal,
 }

@@ -140,7 +140,8 @@ fn defines_main(
     if preprocessed.has_errors() {
         return None;
     }
-    let (unit, _) = rglsl_ast::parse_prefix(preprocessed.text.as_str());
+    let (unit, _) =
+        rglsl_ast::parse_prefix_with(preprocessed.text.as_str(), &parse_options(options));
     Some(unit.external_declarations.iter().any(|declaration| {
         matches!(
             *declaration,
@@ -189,7 +190,7 @@ fn lower(
         return Err(earlier.into());
     }
     let text = preprocessed.text.as_str();
-    let (unit, failure) = rglsl_ast::parse_prefix(text);
+    let (unit, failure) = rglsl_ast::parse_prefix_with(text, &parse_options(options));
     let analysis = rglsl_sema::analyze(&unit, &sema_options(options, text));
     if let Some(error) = failure {
         let earlier = analysis.diagnostics.iter().filter(|diagnostic| {
@@ -247,6 +248,16 @@ fn lower(
     Lowerer::new(&unit, &analysis, options, map, mode).run()
 }
 
+fn parse_options(options: &Options) -> rglsl_ast::ParseOptions {
+    if options.nesting_limits {
+        rglsl_ast::ParseOptions::default()
+    } else {
+        rglsl_ast::ParseOptions {
+            nesting_limit: None,
+        }
+    }
+}
+
 fn sema_options(options: &Options, text: &str) -> rglsl_sema::Options {
     rglsl_sema::Options {
         spirv_version: options.spirv_version,
@@ -263,7 +274,7 @@ fn semantic_errors_before(
 ) -> Vec<Error> {
     let map = &preprocessed.source_map;
     let text = preprocessed.text.as_str();
-    let (unit, failure) = rglsl_ast::parse_prefix(text);
+    let (unit, failure) = rglsl_ast::parse_prefix_with(text, &parse_options(options));
     let analysis = rglsl_sema::analyze(&unit, &sema_options(options, text));
     let parsed = failure.map_or(u32::MAX, |error| error.span.start);
     let mut errors: Vec<Error> = analysis

@@ -13,6 +13,7 @@ license.workspace = true
 name = "rglsl_ast"
 
 [dependencies]
+rglsl-types.workspace = true
 thiserror.workspace = true
 
 [lints]
