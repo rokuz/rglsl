@@ -79,8 +79,6 @@ impl Define {
 pub struct Limits {
     pub max_if_nesting: usize,
     pub max_macro_expansion_depth: usize,
-    pub max_include_depth: usize,
-    pub max_expression_depth: usize,
     pub max_tokens: usize,
     pub max_output_bytes: usize,
 }
@@ -90,8 +88,6 @@ impl Default for Limits {
         Self {
             max_if_nesting: 65,
             max_macro_expansion_depth: 200,
-            max_include_depth: 64,
-            max_expression_depth: 256,
             max_tokens: 1 << 23,
             max_output_bytes: 1 << 26,
         }

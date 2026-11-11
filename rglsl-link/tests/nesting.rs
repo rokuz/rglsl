@@ -14,12 +14,11 @@ const TYPE_LIMIT: usize = 64;
 const HUGE: usize = 20_000;
 const LONG: usize = 4_000;
 
-const REJECTIONS: [&str; 7] = [
+const REJECTIONS: [&str; 6] = [
     "nested too deeply",
     "maximum nesting depth exceeded",
     "macro expansion depth limit exceeded",
-    "include depth limit exceeded",
-    "expression nested too deeply",
+    "recursive include",
     "preprocessing token limit exceeded",
     "a function body is nested too deeply",
 ];
@@ -42,7 +41,7 @@ impl Includer for Recursive {
         depth: usize,
     ) -> Result<IncludedFile, IncludeError> {
         Ok(IncludedFile {
-            file: FileId(u32::try_from(depth).unwrap() + 1),
+            file: FileId(1),
             name: format!("level{depth}.h"),
             source: String::from("#include \"next.h\"\nint f(int a) { return a; }\n"),
         })
@@ -408,7 +407,7 @@ fn preprocessor_nesting_is_bounded_on_a_small_stack() {
             "",
         )
     };
-    assert!(deepest("#if expression", parentheses, false) >= limits.max_expression_depth - 2);
+    assert_eq!(check(parentheses(HUGE), false), Outcome::Compiled);
     let include = shader(
         "#extension GL_GOOGLE_include_directive : enable\n#include \"first.h\"",
         "",
@@ -700,4 +699,145 @@ fn object_files_are_bounded_on_a_small_stack() {
     assert_eq!(linked_object(deeper), Outcome::TooDeep);
     let hostile = on_small_stack(|| nested_object(4 * MAX_BLOCK_DEPTH));
     assert_eq!(linked_object(hostile), Outcome::TooDeep);
+}
+
+const FRONTEND_STACK: usize = 256 << 10;
+const FRONTEND_DEPTHS: [usize; 2] = [10_000, 100_000];
+const RESOURCE_LIMITS: [&str; 2] = [
+    "preprocessing token limit exceeded",
+    "preprocessed output limit exceeded",
+];
+
+struct IncludeChain {
+    levels: usize,
+}
+
+impl Includer for IncludeChain {
+    fn include(
+        &mut self,
+        _requested: &str,
+        _kind: IncludeKind,
+        _from: FileId,
+        depth: usize,
+    ) -> Result<IncludedFile, IncludeError> {
+        let source = if depth < self.levels {
+            String::from("#include \"next.h\"\n")
+        } else {
+            String::from("int g(int a) { return a; }\n")
+        };
+        Ok(IncludedFile {
+            file: FileId(u32::try_from(depth).unwrap()),
+            name: format!("level{depth}.h"),
+            source,
+        })
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum Lowering {
+    Lowered,
+    ResourceLimit,
+    Rejected(String),
+}
+
+fn frontend(source: String, includes: Option<usize>) -> Lowering {
+    std::thread::Builder::new()
+        .stack_size(FRONTEND_STACK)
+        .spawn(move || {
+            let options = Options {
+                nesting_limits: false,
+                ..Options::from(ShaderStage::Fragment)
+            };
+            let parsed = match includes {
+                Some(levels) => Frontend::default().parse_with_includer(
+                    &options,
+                    &source,
+                    FileId(0),
+                    &mut IncludeChain { levels },
+                ),
+                None => Frontend::default().parse(&options, &source),
+            };
+            match parsed {
+                Ok(module) => {
+                    core::mem::forget(module);
+                    Lowering::Lowered
+                }
+                Err(errors) => {
+                    let messages: Vec<String> =
+                        errors.errors.iter().map(ToString::to_string).collect();
+                    if messages
+                        .iter()
+                        .any(|message| RESOURCE_LIMITS.iter().any(|limit| message.contains(limit)))
+                    {
+                        Lowering::ResourceLimit
+                    } else {
+                        Lowering::Rejected(messages.join("\n"))
+                    }
+                }
+            }
+        })
+        .unwrap()
+        .join()
+        .unwrap()
+}
+
+fn frontend_case(name: &str, source: impl Fn(usize) -> String, expected: &Lowering) {
+    for depth in FRONTEND_DEPTHS {
+        assert_eq!(
+            &frontend(source(depth), None),
+            expected,
+            "{name} at {depth}"
+        );
+    }
+}
+
+#[test]
+fn the_frontend_handles_deep_preprocessor_nesting_on_a_small_stack() {
+    frontend_case(
+        "macro arguments",
+        |count| {
+            shader(
+                "#define F(x) x",
+                &format!("b = {}b{};", "F(".repeat(count), ")".repeat(count)),
+            )
+        },
+        &Lowering::ResourceLimit,
+    );
+    frontend_case(
+        "macro definitions",
+        |count| {
+            let mut globals = String::from("#define F0(x) x\n");
+            for level in 1..count {
+                globals.push_str(&format!("#define F{level}(x) F{}(x)\n", level - 1));
+            }
+            shader(&globals, &format!("b = F{}(b);", count - 1))
+        },
+        &Lowering::Lowered,
+    );
+    frontend_case(
+        "#if expressions",
+        |count| {
+            shader(
+                &format!("#if {}1{}\n#endif", "(".repeat(count), ")".repeat(count)),
+                "",
+            )
+        },
+        &Lowering::Lowered,
+    );
+    frontend_case(
+        "#if operators",
+        |count| shader(&format!("#if {}1\n#endif", "- ~ ".repeat(count)), ""),
+        &Lowering::Lowered,
+    );
+    for depth in FRONTEND_DEPTHS {
+        let source = shader(
+            "#extension GL_GOOGLE_include_directive : enable\n#include \"first.h\"",
+            "",
+        );
+        assert_eq!(
+            frontend(source, Some(depth)),
+            Lowering::Lowered,
+            "includes at {depth}"
+        );
+    }
 }

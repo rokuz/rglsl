@@ -116,12 +116,16 @@ fn preprocess(
         .iter()
         .map(|(name, value)| rglsl_pp::Define::new(name.clone(), Some(value.as_str())))
         .collect();
-    let preprocessor_options = rglsl_pp::Options {
+    let mut preprocessor_options = rglsl_pp::Options {
         defines,
         vulkan_client_version: Some(100),
         stage: stage.map(preprocessor_stage),
         ..rglsl_pp::Options::default()
     };
+    if !options.nesting_limits {
+        preprocessor_options.limits.max_macro_expansion_depth = usize::MAX;
+        preprocessor_options.limits.max_if_nesting = usize::MAX;
+    }
     rglsl_pp::preprocess(source, root, &preprocessor_options, includer)
 }
 

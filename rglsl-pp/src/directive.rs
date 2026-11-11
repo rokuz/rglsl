@@ -191,6 +191,7 @@ impl Preprocessor<'_> {
             let name = name.clone();
             self.report(DiagnosticKind::MacroRedefined { name, how }, define_at);
         }
+        self.record_macro(&name);
         self.macros.insert(name, definition);
         Token::new(Kind::Newline, token.at)
     }
@@ -207,6 +208,7 @@ impl Preprocessor<'_> {
             return token;
         }
         self.reserved_check(&token.text, "#undef", token.at);
+        self.record_macro(&token.text);
         if let Some(definition) = self.macros.get_mut(&*token.text) {
             definition.undef = true;
         }
@@ -530,7 +532,7 @@ impl Preprocessor<'_> {
         let from = self.innermost_file().map_or(self.root, |file| file.file);
         let depth = self.include_stack.len() + 1;
         match self.includer.include(&name, kind, from, depth) {
-            Ok(included) => self.enter_include(included, name, depth, directive_at),
+            Ok(included) => self.enter_include(included, name, directive_at),
             Err(error) => {
                 let message = error.message;
                 let name = format!("for header name: {name}");
@@ -543,14 +545,10 @@ impl Preprocessor<'_> {
         token
     }
 
-    fn enter_include(&mut self, included: IncludedFile, requested: String, depth: usize, at: At) {
-        if depth > self.options.limits.max_include_depth {
+    fn enter_include(&mut self, included: IncludedFile, requested: String, at: At) {
+        if self.includes_itself(included.file) {
             let name = requested;
-            if self.include_stack.contains(&included.file) {
-                self.report(DiagnosticKind::RecursiveInclude { name }, at);
-            } else {
-                self.report(DiagnosticKind::IncludeTooDeep { name }, at);
-            }
+            self.report(DiagnosticKind::RecursiveInclude { name }, at);
             return;
         }
         self.files.insert(included.file, included.name.clone());
@@ -563,13 +561,13 @@ impl Preprocessor<'_> {
             number,
             name: Some(included.name),
         });
-        self.include_stack.push(included.file);
-        self.inputs.push(Input::File(FileInput::new(
+        self.enter_include_stack(included.file);
+        self.push_file(FileInput::new(
             included.file,
             Rc::from(included.source.as_str()),
             Role::Included,
             index,
-        )));
+        ));
     }
 
     fn pragma(&mut self, at: At) -> Token {
@@ -699,6 +697,7 @@ impl Preprocessor<'_> {
                 return;
             }
         };
+        self.record_extensions();
         if name == "all" {
             if matches!(behavior, "require" | "enable") {
                 self.report(DiagnosticKind::ExtensionAllEnabled, at);
