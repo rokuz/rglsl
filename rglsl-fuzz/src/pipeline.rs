@@ -268,6 +268,7 @@ impl PipelineInfo {
     pub fn add_uniform_binding(&mut self, name: &str, push_constant: bool, number: u32) {
         if let Some(entry) = self.entry_mut(name) {
             if push_constant {
+                entry.remove("binding");
                 entry.insert(String::from("push_constant"), Value::Bool(true));
             } else {
                 entry.insert(String::from("binding"), Value::from(number));
@@ -294,6 +295,17 @@ impl PipelineInfo {
             .and_then(|entry| entry.get("binding"))
             .and_then(Value::as_u64)
             .and_then(|binding| u32::try_from(binding).ok())
+    }
+
+    pub fn bindings(&self) -> std::collections::BTreeSet<u32> {
+        self.uniform_names()
+            .iter()
+            .filter_map(|name| self.binding(name))
+            .collect()
+    }
+
+    pub fn function(&self, name: &str) -> Option<String> {
+        self.function_of(name).map(str::to_owned)
     }
 
     pub fn is_sampler(&self, name: &str) -> bool {

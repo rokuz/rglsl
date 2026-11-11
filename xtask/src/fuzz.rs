@@ -26,7 +26,7 @@ pub struct Options {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum Verdict {
+pub enum Verdict {
     Agree,
     GlslangRejects,
     WeReject,
@@ -40,7 +40,7 @@ enum Verdict {
 }
 
 impl Verdict {
-    const fn label(self) -> &'static str {
+    pub const fn label(self) -> &'static str {
         match self {
             Self::Agree => "agree",
             Self::GlslangRejects => "glslang-rejects",
@@ -69,9 +69,9 @@ impl Verdict {
 }
 
 #[derive(Debug)]
-struct Outcome {
+pub struct Outcome {
     shader: PathBuf,
-    verdict: Verdict,
+    pub verdict: Verdict,
     note: String,
     spirv: PathBuf,
 }
@@ -195,7 +195,7 @@ fn collect_shaders(dir: &Path) -> Result<Vec<PathBuf>> {
     Ok(shaders)
 }
 
-fn compare(
+pub fn compare(
     glslang: &Path,
     spirv_val: &Path,
     self_exe: &Path,

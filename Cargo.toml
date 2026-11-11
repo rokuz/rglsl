@@ -43,6 +43,7 @@ authors = ["rglsl developers", "gfx-rs developers"]
 [workspace.dependencies]
 rglsl = { version = "0.1.0", path = "./rglsl" }
 rglsl-ast = { version = "0.1.0", path = "./rglsl-ast" }
+rglsl-fuzz = { version = "0.1.0", path = "./rglsl-fuzz" }
 rglsl-sema = { version = "0.1.0", path = "./rglsl-sema" }
 rglsl-pp = { version = "0.1.0", path = "./rglsl-pp" }
 rglsl-link = { version = "0.1.0", path = "./rglsl-link" }

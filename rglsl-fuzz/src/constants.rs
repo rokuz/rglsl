@@ -29,6 +29,10 @@ pub const INJECTION_SWITCH: &str = "injectionSwitch";
 pub const OUTLINED_FUNCTION_PREFIX: &str = "_GLF_outlined_";
 pub const GL_FRAG_COORD: &str = "gl_FragCoord";
 
+pub const GLF_GLOBAL_LOOP_COUNT: &str = "_GLF_global_loop_count";
+pub const GLF_GLOBAL_LOOP_BOUND: &str = "_GLF_global_loop_bound";
+pub const GLOBAL_LOOP_BOUNDS: [u32; 4] = [100, 1_000, 10_000, 100_000];
+
 pub const END_OF_GENERATED_HEADER: &str = "// END OF GENERATED HEADER";
 pub const MAX_GENERATED_EXPRESSIONS_FOR_ARRAY_CONSTRUCTOR: u32 = 20;
 

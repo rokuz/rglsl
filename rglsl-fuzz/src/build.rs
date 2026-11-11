@@ -1,6 +1,10 @@
 use rglsl_ast::ast::{
-    BasicType, BinaryOperator, Expression, ExpressionKind, FunctionCall, FunctionIdentifier,
-    Identifier, Node, NodeId, NumericKind, NumericLiteral, Spanned, TypeSpecifier, UnaryOperator,
+    ArrayDimension, ArraySpecifier, AssignmentOperator, BasicType, BinaryOperator, CaseLabel,
+    CompoundStatement, Condition, Declaration, DeclarationKind, Expression, ExpressionKind,
+    ForStatement, FullySpecifiedType, FunctionCall, FunctionIdentifier, Identifier, InitDeclarator,
+    InitDeclaratorList, Initializer, JumpStatement, Node, NodeId, NumericKind, NumericLiteral,
+    PostfixOperator, Spanned, Statement, StatementKind, TypeSpecifier, TypeSpecifierNonArray,
+    UnaryOperator,
 };
 use rglsl_ast::Span;
 
@@ -26,6 +30,12 @@ impl Builder {
         let id = NodeId::new(self.next_id);
         self.next_id = self.next_id.saturating_add(1);
         id
+    }
+
+    pub const fn reserve(&mut self, count: u32) -> Self {
+        let reserved = *self;
+        self.next_id = self.next_id.saturating_add(count);
+        reserved
     }
 
     pub const fn node(&mut self, kind: ExpressionKind) -> Expression {
@@ -181,6 +191,176 @@ impl Builder {
             FunctionIdentifier::Constructor(Box::new(specifier)),
             arguments,
         )
+    }
+}
+
+impl Builder {
+    pub const fn statement(&mut self, kind: StatementKind) -> Statement {
+        Node::new(self.id(), Span::new(0, 0), kind)
+    }
+
+    pub const fn block(&mut self, statements: Vec<Statement>) -> Statement {
+        self.statement(StatementKind::Compound(CompoundStatement { statements }))
+    }
+
+    pub const fn expression_statement(&mut self, expression: Expression) -> Statement {
+        self.statement(StatementKind::Expression(Some(expression)))
+    }
+
+    pub const fn null_statement(&mut self) -> Statement {
+        self.statement(StatementKind::Expression(None))
+    }
+
+    pub const fn jump(&mut self, jump: JumpStatement) -> Statement {
+        self.statement(StatementKind::Jump(jump))
+    }
+
+    pub fn if_statement(
+        &mut self,
+        condition: Expression,
+        then_branch: Statement,
+        else_branch: Option<Statement>,
+    ) -> Statement {
+        self.statement(StatementKind::Selection {
+            condition,
+            then_branch: Box::new(then_branch),
+            else_branch: else_branch.map(Box::new),
+        })
+    }
+
+    pub fn while_statement(&mut self, condition: Expression, body: Statement) -> Statement {
+        self.statement(StatementKind::While {
+            condition: Condition::Expression(condition),
+            body: Box::new(body),
+        })
+    }
+
+    pub fn do_while(&mut self, body: Statement, condition: Expression) -> Statement {
+        self.statement(StatementKind::DoWhile {
+            body: Box::new(body),
+            condition,
+        })
+    }
+
+    pub fn for_statement(
+        &mut self,
+        init: Statement,
+        condition: Option<Expression>,
+        increment: Option<Expression>,
+        body: Statement,
+    ) -> Statement {
+        self.statement(StatementKind::For(Box::new(ForStatement {
+            init,
+            condition: condition.map(Condition::Expression),
+            increment,
+            body,
+        })))
+    }
+
+    pub const fn switch(&mut self, selector: Expression, statements: Vec<Statement>) -> Statement {
+        self.statement(StatementKind::Switch {
+            selector,
+            statements,
+        })
+    }
+
+    pub fn case(&mut self, value: i64) -> Statement {
+        let label = self.int(value);
+        self.statement(StatementKind::CaseLabel(CaseLabel::Case(label)))
+    }
+
+    pub const fn default_label(&mut self) -> Statement {
+        self.statement(StatementKind::CaseLabel(CaseLabel::Default))
+    }
+
+    pub fn assign(&mut self, target: Expression, value: Expression) -> Expression {
+        let value = self.argument(value);
+        self.node(ExpressionKind::Assignment {
+            operator: AssignmentOperator::Assign,
+            target: Box::new(target),
+            value: Box::new(value),
+        })
+    }
+
+    pub fn postfix(&mut self, operand: Expression, operator: PostfixOperator) -> Expression {
+        let operand = self.operand(operand);
+        self.node(ExpressionKind::Postfix {
+            operand: Box::new(operand),
+            operator,
+        })
+    }
+
+    pub fn declaration_with(
+        &mut self,
+        ty: FullySpecifiedType,
+        declarators: Vec<(String, Option<u32>, Option<Expression>)>,
+    ) -> Declaration {
+        let declarators = declarators
+            .into_iter()
+            .map(|(name, size, initializer)| {
+                let array = size.map(|size| {
+                    let size = self.int(i64::from(size));
+                    Spanned::new(
+                        Span::new(0, 0),
+                        ArraySpecifier {
+                            dimensions: vec![Spanned::new(
+                                Span::new(0, 0),
+                                ArrayDimension::Sized(size),
+                            )],
+                        },
+                    )
+                });
+                let initializer = initializer.map(|value| {
+                    let value = self.argument(value);
+                    Spanned::new(Span::new(0, 0), Initializer::Expression(value))
+                });
+                Node::new(
+                    self.id(),
+                    Span::new(0, 0),
+                    InitDeclarator {
+                        name: Identifier::new(Span::new(0, 0), name),
+                        array,
+                        initializer,
+                    },
+                )
+            })
+            .collect();
+        Node::new(
+            self.id(),
+            Span::new(0, 0),
+            DeclarationKind::InitDeclaratorList(InitDeclaratorList {
+                ty: Spanned::new(Span::new(0, 0), ty),
+                declarators,
+            }),
+        )
+    }
+
+    pub fn declare(
+        &mut self,
+        specifier: TypeSpecifier,
+        name: &str,
+        initializer: Option<Expression>,
+    ) -> Statement {
+        let declaration = self.declaration_with(
+            unqualified(specifier),
+            vec![(name.to_owned(), None, initializer)],
+        );
+        self.statement(StatementKind::Declaration(Box::new(declaration)))
+    }
+}
+
+pub const fn unqualified(specifier: TypeSpecifier) -> FullySpecifiedType {
+    FullySpecifiedType {
+        qualifier: None,
+        specifier: Spanned::new(Span::new(0, 0), specifier),
+    }
+}
+
+pub const fn named_type(name: String) -> TypeSpecifier {
+    TypeSpecifier {
+        non_array: TypeSpecifierNonArray::TypeName(name),
+        parameters: None,
+        array: None,
     }
 }
 
