@@ -5265,11 +5265,12 @@ pub(super) fn member_memory_decorations(
 }
 
 #[test]
-fn test_write_physical_layout() {
-    let mut writer = Writer::new(&Options::default()).unwrap();
+fn test_write_physical_layout() -> crate::TestResult {
+    let mut writer = Writer::new(&Options::default())?;
     assert_eq!(writer.physical_layout.bound, 0);
     writer.write_physical_layout();
     assert_eq!(writer.physical_layout.bound, 3);
+    Ok(())
 }
 
 impl Writer {

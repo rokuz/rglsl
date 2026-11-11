@@ -1586,7 +1586,7 @@ fn array_size_deps() {
 }
 
 #[test]
-fn array_size_override() {
+fn array_size_override() -> crate::TestResult {
     use super::Validator;
     use crate::{ArraySize, Override, Scalar, Span, Type, TypeInner};
 
@@ -1603,7 +1603,7 @@ fn array_size_override() {
     );
 
     let bad_override: Handle<Override> =
-        Handle::new(crate::non_max_u32::NonMaxU32::new(1000).unwrap());
+        Handle::new(crate::non_max_u32::NonMaxU32::new(1000).ok_or("1000 is a valid index")?);
     let _ty_arr = m.types.insert(
         Type {
             name: Some("bad_array".to_string()),
@@ -1617,6 +1617,7 @@ fn array_size_override() {
     );
 
     assert!(Validator::validate_module_handles(&m).is_err());
+    Ok(())
 }
 
 #[test]

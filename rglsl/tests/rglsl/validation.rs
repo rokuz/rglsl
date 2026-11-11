@@ -23,10 +23,9 @@ fn expect_validation_error_impl<I: IntoIterator<Item = rglsl::Span>>(
     validation_flags: valid::ValidationFlags,
     capabilities: valid::Capabilities,
     spans: Option<I>,
-) -> rglsl::valid::ValidationError {
-    let err = valid::Validator::new(validation_flags, capabilities)
-        .validate(module)
-        .expect_err("module should be invalid");
+) -> crate::TestResult<rglsl::valid::ValidationError> {
+    let err =
+        crate::rejected(valid::Validator::new(validation_flags, capabilities).validate(module))?;
 
     if let Some(expected_spans_iter) = spans {
         let actual_spans = err.spans().map(|sctx| sctx.0).collect::<Vec<_>>();
@@ -37,12 +36,12 @@ fn expect_validation_error_impl<I: IntoIterator<Item = rglsl::Span>>(
         );
     }
 
-    err.into_inner()
+    Ok(err.into_inner())
 }
 
 /// Validate `module` with the given `validation_flags` and `capabilities`.
 ///
-/// Panics if validation succeeds or fails with an error not associated with
+/// Fails if validation succeeds or fails with an error not associated with
 /// `span`. Otherwise, returns the validation error.
 ///
 /// Note that only the span is checked, not the associated context string.
@@ -52,7 +51,7 @@ fn expect_validation_error_with_span(
     validation_flags: valid::ValidationFlags,
     capabilities: valid::Capabilities,
     span: rglsl::Span,
-) -> rglsl::valid::ValidationError {
+) -> crate::TestResult<rglsl::valid::ValidationError> {
     expect_validation_error_impl(
         module,
         validation_flags,
@@ -64,7 +63,7 @@ fn expect_validation_error_with_span(
 /// Validation should fail if `AtomicResult` expressions are not
 /// populated by `Atomic` statements.
 #[test]
-fn populate_atomic_result() {
+fn populate_atomic_result() -> crate::TestResult {
     use rglsl::{Module, Type, TypeInner};
 
     /// Different variants of the test case that we want to exercise.
@@ -169,13 +168,14 @@ fn populate_atomic_result() {
         .validate(&module)
     }
 
-    try_variant(Variant::Atomic).expect("module should validate");
+    try_variant(Variant::Atomic)?;
     assert!(try_variant(Variant::Emit).is_err());
     assert!(try_variant(Variant::None).is_err());
+    Ok(())
 }
 
 #[test]
-fn populate_call_result() {
+fn populate_call_result() -> crate::TestResult {
     use rglsl::{Module, Type, TypeInner};
 
     /// Different variants of the test case that we want to exercise.
@@ -258,13 +258,14 @@ fn populate_call_result() {
         .validate(&module)
     }
 
-    try_variant(Variant::Call).expect("should validate");
+    try_variant(Variant::Call)?;
     assert!(try_variant(Variant::Emit).is_err());
     assert!(try_variant(Variant::None).is_err());
+    Ok(())
 }
 
 #[test]
-fn emit_workgroup_uniform_load_result() {
+fn emit_workgroup_uniform_load_result() -> crate::TestResult {
     use rglsl::{Module, Type, TypeInner};
 
     // We want to ensure that the *only* problem with the code is the
@@ -338,12 +339,13 @@ fn emit_workgroup_uniform_load_result() {
         .validate(&module)
     }
 
-    variant(true).expect("module should validate");
+    variant(true)?;
     assert!(variant(false).is_err());
+    Ok(())
 }
 
 #[test]
-fn builtin_cross_product_args() {
+fn builtin_cross_product_args() -> crate::TestResult {
     use rglsl::{MathFunction, Module, Type, TypeInner, VectorSize};
 
     // We want to ensure that the *only* problem with the code is the
@@ -425,11 +427,12 @@ fn builtin_cross_product_args() {
     assert!(variant(VectorSize::Bi, 2).is_err());
 
     assert!(variant(VectorSize::Tri, 1).is_err());
-    variant(VectorSize::Tri, 2).expect("module should validate");
+    variant(VectorSize::Tri, 2)?;
     assert!(variant(VectorSize::Tri, 3).is_err());
     assert!(variant(VectorSize::Tri, 4).is_err());
 
     assert!(variant(VectorSize::Quad, 2).is_err());
+    Ok(())
 }
 
 struct BindingArrayFixture {
@@ -442,7 +445,7 @@ struct BindingArrayFixture {
 }
 
 impl BindingArrayFixture {
-    fn new() -> Self {
+    fn new() -> crate::TestResult<Self> {
         let mut module = Module::default();
         let span = rglsl::Span::default();
         let ty_u32 = module.types.insert(
@@ -457,7 +460,9 @@ impl BindingArrayFixture {
                 name: Some("array<u32, 10>".into()),
                 inner: rglsl::TypeInner::Array {
                     base: ty_u32,
-                    size: rglsl::ArraySize::Constant(core::num::NonZeroU32::new(10).unwrap()),
+                    size: rglsl::ArraySize::Constant(
+                        core::num::NonZeroU32::new(10).ok_or("zero length")?,
+                    ),
                     stride: 4,
                 },
             },
@@ -484,20 +489,20 @@ impl BindingArrayFixture {
             span,
         );
         let validator = rglsl::valid::Validator::new(Default::default(), Default::default());
-        BindingArrayFixture {
+        Ok(BindingArrayFixture {
             module,
             span,
             ty_u32,
             ty_array,
             ty_struct,
             validator,
-        }
+        })
     }
 }
 
 #[test]
-fn binding_arrays_hold_structs() {
-    let mut t = BindingArrayFixture::new();
+fn binding_arrays_hold_structs() -> crate::TestResult {
+    let mut t = BindingArrayFixture::new()?;
     let _binding_array = t.module.types.insert(
         rglsl::Type {
             name: Some("binding_array_of_struct".into()),
@@ -510,11 +515,12 @@ fn binding_arrays_hold_structs() {
     );
 
     assert!(t.validator.validate(&t.module).is_ok());
+    Ok(())
 }
 
 #[test]
-fn binding_arrays_cannot_hold_arrays() {
-    let mut t = BindingArrayFixture::new();
+fn binding_arrays_cannot_hold_arrays() -> crate::TestResult {
+    let mut t = BindingArrayFixture::new()?;
     let _binding_array = t.module.types.insert(
         rglsl::Type {
             name: Some("binding_array_of_array".into()),
@@ -527,11 +533,12 @@ fn binding_arrays_cannot_hold_arrays() {
     );
 
     assert!(t.validator.validate(&t.module).is_err());
+    Ok(())
 }
 
 #[test]
-fn binding_arrays_cannot_hold_scalars() {
-    let mut t = BindingArrayFixture::new();
+fn binding_arrays_cannot_hold_scalars() -> crate::TestResult {
+    let mut t = BindingArrayFixture::new()?;
     let _binding_array = t.module.types.insert(
         rglsl::Type {
             name: Some("binding_array_of_scalar".into()),
@@ -544,6 +551,7 @@ fn binding_arrays_cannot_hold_scalars() {
     );
 
     assert!(t.validator.validate(&t.module).is_err());
+    Ok(())
 }
 
 // Adds IR for `override len: u32` and the type `array<u32, len>`.
@@ -624,7 +632,7 @@ fn make_zero_value_local_variable(fun: &mut Function, ty: rglsl::Handle<ir::Type
 }
 
 #[test]
-fn local_var_override_sized_array() {
+fn local_var_override_sized_array() -> crate::TestResult {
     // Similar to a test in wgsl_errors::invalid_local_vars.
     // ```
     // override len: u32;
@@ -684,7 +692,8 @@ fn local_var_override_sized_array() {
 
     let err = valid::Validator::new(Default::default(), valid::Capabilities::all())
         .validate(&module)
-        .expect_err("module should be invalid")
+        .err()
+        .ok_or("module should be invalid")?
         .into_inner();
 
     assert!(matches!(
@@ -698,10 +707,11 @@ fn local_var_override_sized_array() {
             ..
         } if local_var_name == "x"
     ));
+    Ok(())
 }
 
 #[test]
-fn invalid_zero_value_runtime_array() {
+fn invalid_zero_value_runtime_array() -> crate::TestResult {
     // Similar to a test in wgsl_errors::invalid_zero_value_constructors.
     // ```
     // fn main() {
@@ -724,7 +734,8 @@ fn invalid_zero_value_runtime_array() {
 
     let err = valid::Validator::new(Default::default(), valid::Capabilities::all())
         .validate(&module)
-        .expect_err("module should be invalid")
+        .err()
+        .ok_or("module should be invalid")?
         .into_inner();
 
     assert!(matches!(
@@ -738,10 +749,11 @@ fn invalid_zero_value_runtime_array() {
             ..
         } if local_var_name == "x"
     ));
+    Ok(())
 }
 
 #[test]
-fn zero_value_override_array() {
+fn zero_value_override_array() -> crate::TestResult {
     // Similar to a test in wgsl_errors::invalid_zero_value_constructors.
     // ```
     // override len: u32;
@@ -763,13 +775,12 @@ fn zero_value_override_array() {
 
     module.functions.append(fun, span);
 
-    valid::Validator::new(Default::default(), valid::Capabilities::all())
-        .validate(&module)
-        .expect("SPIR-V accepts arrays sized by specialization constants here");
+    valid::Validator::new(Default::default(), valid::Capabilities::all()).validate(&module)?;
+    Ok(())
 }
 
 #[test]
-fn invalid_zero_value_texture() {
+fn invalid_zero_value_texture() -> crate::TestResult {
     // Similar to a test in wgsl_errors::invalid_zero_value_constructors.
     // ```
     // fn main() {
@@ -807,7 +818,8 @@ fn invalid_zero_value_texture() {
 
     let err = valid::Validator::new(Default::default(), valid::Capabilities::all())
         .validate(&module)
-        .expect_err("module should be invalid")
+        .err()
+        .ok_or("module should be invalid")?
         .into_inner();
 
     assert!(matches!(
@@ -821,11 +833,12 @@ fn invalid_zero_value_texture() {
             ..
         } if local_var_name == "x"
     ));
+    Ok(())
 }
 
 /// Test for non-zero-value runtime-sized array constructor.
 #[test]
-fn invalid_constructor_runtime_array() {
+fn invalid_constructor_runtime_array() -> crate::TestResult {
     // Similar to a test in wgsl_errors::invalid_zero_value_constructors.
     // ```
     // fn main() {
@@ -876,7 +889,8 @@ fn invalid_constructor_runtime_array() {
 
     let err = valid::Validator::new(Default::default(), valid::Capabilities::all())
         .validate(&module)
-        .expect_err("module should be invalid")
+        .err()
+        .ok_or("module should be invalid")?
         .into_inner();
 
     assert!(matches!(
@@ -890,10 +904,11 @@ fn invalid_constructor_runtime_array() {
             ..
         } if local_var_name == "x"
     ));
+    Ok(())
 }
 
 #[test]
-fn invalid_constructor_unsized_struct() {
+fn invalid_constructor_unsized_struct() -> crate::TestResult {
     // Similar to a test in wgsl_errors::invalid_zero_value_constructors:
     // ```
     // struct Unsized { data: array<f32> }
@@ -940,7 +955,8 @@ fn invalid_constructor_unsized_struct() {
 
     let err = valid::Validator::new(Default::default(), valid::Capabilities::all())
         .validate(&module)
-        .expect_err("module should be invalid")
+        .err()
+        .ok_or("module should be invalid")?
         .into_inner();
 
     assert!(matches!(
@@ -953,6 +969,7 @@ fn invalid_constructor_unsized_struct() {
             ..
         },
     ));
+    Ok(())
 }
 
 #[test]
@@ -1014,7 +1031,7 @@ fn arity_check() {
 }
 
 #[test]
-fn unexpected_task_payload() {
+fn unexpected_task_payload() -> crate::TestResult {
     let mut test_spans = TestSpanGenerator::default();
     let mut module = Module::default();
 
@@ -1078,7 +1095,7 @@ fn unexpected_task_payload() {
         ValidationFlags::default(),
         Capabilities::MESH_SHADER,
         err_span,
-    );
+    )?;
 
     assert!(matches!(
         err,
@@ -1087,4 +1104,5 @@ fn unexpected_task_payload() {
             ..
         }
     ));
+    Ok(())
 }

@@ -157,25 +157,28 @@ pub fn parse_dump(text: &str) -> Result<BTreeMap<String, Vec<u8>>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anyhow::Context;
 
     #[test]
-    fn parses_buffer_dumps() {
+    fn parses_buffer_dumps() -> anyhow::Result<()> {
         let text = "main:0:0\n 03 00 00 00 06 00\n 0a\n\ndump:0:1\n ff\n\nempty\n";
-        let buffers = parse_dump(text).unwrap();
+        let buffers = parse_dump(text).map_err(anyhow::Error::msg)?;
         assert_eq!(buffers["main:0:0"], [3, 0, 0, 0, 6, 0, 10]);
         assert_eq!(buffers["dump:0:1"], [255]);
         assert!(buffers["empty"].is_empty());
         assert!(parse_dump(" 00\n").is_err());
         assert!(parse_dump("x\n zz\n").is_err());
+        Ok(())
     }
 
     #[test]
-    fn parses_device_properties() {
+    fn parses_device_properties() -> anyhow::Result<()> {
         let text = "Amber        : c9f1e28\n\nPhysical device properties:\n  apiVersion: 1.4.354\n  deviceName: Apple M4 Max\n  driverName: KosmicKrisp\n  driverInfo: Mesa 26.2.1\nEnd of physical device properties.\n";
-        let device = parse_device(text).unwrap();
+        let device = parse_device(text).context("no device properties")?;
         assert_eq!(device.name, "Apple M4 Max");
         assert_eq!(device.api_version, "1.4.354");
         assert_eq!(device.driver, "KosmicKrisp Mesa 26.2.1");
         assert!(parse_device("Summary: 0 pass").is_none());
+        Ok(())
     }
 }

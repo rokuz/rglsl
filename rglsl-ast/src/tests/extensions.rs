@@ -10,7 +10,7 @@ use crate::extensions::{
 };
 use crate::{parse, ParseErrorKind};
 
-use super::{expression, round_trip, unit};
+use super::{expression, rejected, round_trip, unit, TestResult};
 
 fn declared_types(source: &str) -> Vec<TypeSpecifierNonArray> {
     unit(source)
@@ -123,7 +123,7 @@ fn type_keywords_depend_on_their_extensions() {
 }
 
 #[test]
-fn extension_keywords_are_never_names() {
+fn extension_keywords_are_never_names() -> TestResult {
     for prefix in [
         "",
         "#extension GL_EXT_shader_explicit_arithmetic_types : enable\n",
@@ -142,8 +142,10 @@ fn extension_keywords_are_never_names() {
             ("int nonuniformEXT;\n", "nonuniformEXT"),
             ("int coopmat;\n", "coopmat"),
         ] {
-            let error = parse(&alloc::format!("{prefix}{source}"))
-                .expect_err("an extension keyword is not a name");
+            let error = rejected(
+                parse(&alloc::format!("{prefix}{source}")),
+                "an extension keyword is not a name",
+            )?;
             assert_eq!(
                 error.kind,
                 ParseErrorKind::ReservedWord(word.into()),
@@ -151,12 +153,15 @@ fn extension_keywords_are_never_names() {
             );
         }
     }
+    Ok(())
 }
 
 #[test]
-fn extension_types_without_their_extension_are_rejected() {
-    let error = parse("#version 450\nvoid main() {\n    float16_t x;\n}\n")
-        .expect_err("float16_t needs an extension");
+fn extension_types_without_their_extension_are_rejected() -> TestResult {
+    let error = rejected(
+        parse("#version 450\nvoid main() {\n    float16_t x;\n}\n"),
+        "float16_t needs an extension",
+    )?;
     assert_eq!(error.position.line, 3);
     let ParseErrorKind::ExtensionRequired { word, extensions } = error.kind else {
         panic!("{error}");
@@ -166,16 +171,19 @@ fn extension_types_without_their_extension_are_rejected() {
         extensions.contains("GL_EXT_shader_explicit_arithmetic_types_float16"),
         "{extensions}"
     );
-    let error = parse("#version 450\nvoid main() { i64vec2 v = i64vec2(1); }\n")
-        .expect_err("i64vec2 needs an extension");
+    let error = rejected(
+        parse("#version 450\nvoid main() { i64vec2 v = i64vec2(1); }\n"),
+        "i64vec2 needs an extension",
+    )?;
     assert!(matches!(
         error.kind,
         ParseErrorKind::ExtensionRequired { .. }
     ));
+    Ok(())
 }
 
 #[test]
-fn explicit_type_keywords_are_types_with_the_extension() {
+fn explicit_type_keywords_are_types_with_the_extension() -> TestResult {
     let source = "#version 450\n#extension GL_EXT_shader_explicit_arithmetic_types : enable\n\
         float16_t a;\nf16mat2x3 b;\ni64vec4 c;\nuint8_t d;\nfloat32_t e;\nf64vec2 f;\nu32vec3 g;\n";
     let types = declared_types(source);
@@ -207,19 +215,23 @@ fn explicit_type_keywords_are_types_with_the_extension() {
     );
     let printed = round_trip(source);
     assert!(printed.contains("f16mat2x3 b;"), "{printed}");
-    let error =
-        parse("#extension GL_EXT_shader_explicit_arithmetic_types : enable\nint float16_t;\n")
-            .expect_err("a keyword with the extension");
+    let error = rejected(
+        parse("#extension GL_EXT_shader_explicit_arithmetic_types : enable\nint float16_t;\n"),
+        "a keyword with the extension",
+    )?;
     assert_eq!(error.kind, ParseErrorKind::ReservedWord("float16_t".into()));
     unit(
         "#version 450\n#extension GL_EXT_shader_16bit_storage : enable\nfloat16_t a;\nu16vec2 b;\n",
     );
+    Ok(())
 }
 
 #[test]
-fn storage_extension_does_not_enable_half_matrices() {
-    let error = parse("#extension GL_EXT_shader_16bit_storage : enable\nf16mat2 m;\n")
-        .expect_err("matrices need arithmetic");
+fn storage_extension_does_not_enable_half_matrices() -> TestResult {
+    let error = rejected(
+        parse("#extension GL_EXT_shader_16bit_storage : enable\nf16mat2 m;\n"),
+        "matrices need arithmetic",
+    )?;
     assert!(
         matches!(error.kind, ParseErrorKind::ExtensionRequired { ref word, .. } if word == "f16mat2"),
         "{error}"
@@ -227,6 +239,7 @@ fn storage_extension_does_not_enable_half_matrices() {
     let disabled = "#extension GL_EXT_shader_16bit_storage : enable\n\
         #extension GL_EXT_shader_16bit_storage : disable\nfloat16_t x;\n";
     assert!(parse(disabled).is_err());
+    Ok(())
 }
 
 #[test]
@@ -260,22 +273,23 @@ fn sized_literal_suffixes_are_lexed_like_glslang() {
 }
 
 #[test]
-fn a_prefix_is_returned_with_the_first_syntax_error() {
+fn a_prefix_is_returned_with_the_first_syntax_error() -> TestResult {
     let (unit, error) = crate::parse_prefix("float a;\nvoid f() {}\nfloat16_t b;\nint c;\n");
     assert!(matches!(
         error.as_ref().map(|error| &error.kind),
         Some(ParseErrorKind::ExtensionRequired { .. })
     ));
     assert_eq!(unit.external_declarations.len(), 2);
-    let error = error.expect("float16_t is not a type here");
+    let error = error.ok_or("float16_t is not a type here")?;
     assert_eq!(error.position.line, 3);
     let (unit, error) = crate::parse_prefix("float a;\n");
     assert_eq!(unit.external_declarations.len(), 1);
     assert!(error.is_none());
+    Ok(())
 }
 
 #[test]
-fn nonuniform_needs_its_extension() {
+fn nonuniform_needs_its_extension() -> TestResult {
     for (source, line) in [
         ("#version 450\nnonuniformEXT float g;\n", 2),
         (
@@ -284,7 +298,7 @@ fn nonuniform_needs_its_extension() {
         ),
         ("#version 450\nvoid f(nonuniformEXT int a) {}\n", 2),
     ] {
-        let error = parse(source).expect_err("nonuniformEXT needs an extension");
+        let error = rejected(parse(source), "nonuniformEXT needs an extension")?;
         assert_eq!(error.position.line, line, "{source}");
         assert_eq!(
             error.kind,
@@ -295,6 +309,7 @@ fn nonuniform_needs_its_extension() {
             "{source}"
         );
     }
+    Ok(())
 }
 
 #[test]

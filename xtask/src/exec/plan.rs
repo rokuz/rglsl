@@ -1087,6 +1087,7 @@ mod tests {
     use crate::exec::reflect::{
         AddressField, DataType, Interpolation, RayVariable, Resource, Varying, VaryingType,
     };
+    use anyhow::Context;
 
     const F32: Scalar = Scalar {
         kind: ScalarKind::Float,
@@ -1118,6 +1119,10 @@ mod tests {
         }
     }
 
+    fn planned(module: &Reflection, inputs: &Inputs) -> anyhow::Result<Plan> {
+        Plan::new(module, inputs).map_err(|refusal| anyhow::anyhow!("{refusal:?}"))
+    }
+
     fn paths() -> (PathBuf, PathBuf, PathBuf) {
         (
             PathBuf::from("/w/tested.spv"),
@@ -1127,7 +1132,7 @@ mod tests {
     }
 
     #[test]
-    fn compute_script_binds_every_resource() {
+    fn compute_script_binds_every_resource() -> anyhow::Result<()> {
         let mut module = reflection(ExecutionModel::GLCompute);
         module.resources = vec![
             Resource {
@@ -1161,7 +1166,7 @@ mod tests {
             seed: "a.comp".into(),
             ..Inputs::default()
         };
-        let plan = Plan::new(&module, &inputs).unwrap();
+        let plan = planned(&module, &inputs)?;
         assert_eq!(plan.files.len(), 3);
         assert_eq!(plan.files[0].1.len(), 64 * 4);
         assert_eq!(plan.targets.len(), 1);
@@ -1185,12 +1190,13 @@ mod tests {
         assert!(script.contains("PIPELINE compute dump\n  ATTACH dumper\n  BIND BUFFER r0_0 AS storage DESCRIPTOR_SET 0 BINDING 0\nEND\n"));
         assert!(script.ends_with("END\nRUN main 1 1 1\n"));
 
-        let again = Plan::new(&module, &inputs).unwrap();
+        let again = planned(&module, &inputs)?;
         assert_eq!(again.files, plan.files);
+        Ok(())
     }
 
     #[test]
-    fn fragment_script_renders_and_dumps_attachments() {
+    fn fragment_script_renders_and_dumps_attachments() -> anyhow::Result<()> {
         let mut module = reflection(ExecutionModel::Fragment);
         module.inputs = vec![Varying {
             location: 1,
@@ -1220,7 +1226,7 @@ mod tests {
             patch: false,
             per_primitive: false,
         }];
-        let plan = Plan::new(&module, &Inputs::default()).unwrap();
+        let plan = planned(&module, &Inputs::default())?;
         assert_eq!(plan.harness.len(), 1);
         assert!(plan.harness[0]
             .1
@@ -1244,10 +1250,11 @@ mod tests {
         assert!(script.contains("  BIND BUFFER fb0 AS color LOCATION 0\n"));
         assert!(script.contains("  BIND BUFFER fb0 AS storage DESCRIPTOR_SET 0 BINDING 0\n"));
         assert!(script.ends_with("RUN main DRAW_RECT POS 0 0 SIZE 32 32\n"));
+        Ok(())
     }
 
     #[test]
-    fn refuses_what_it_cannot_bind() {
+    fn refuses_what_it_cannot_bind() -> anyhow::Result<()> {
         let mut module = reflection(ExecutionModel::GLCompute);
         module.capabilities.insert(spirv::Capability::Int64ImageEXT);
         assert!(matches!(
@@ -1262,8 +1269,8 @@ mod tests {
             kind: ResourceKind::Unsupported("arrays of descriptors".into()),
         });
         assert_eq!(
-            Plan::new(&module, &Inputs::default()).unwrap_err(),
-            Refusal::Binding("arrays of descriptors".into())
+            Plan::new(&module, &Inputs::default()).err(),
+            Some(Refusal::Binding("arrays of descriptors".into()))
         );
         assert!(matches!(
             Plan::new(&reflection(ExecutionModel::MeshNV), &Inputs::default()),
@@ -1279,14 +1286,14 @@ mod tests {
         ));
         let mut module = reflection(ExecutionModel::GLCompute);
         module.capabilities.insert(spirv::Capability::Float64);
-        assert!(Plan::new(&module, &Inputs::default())
-            .unwrap()
+        assert!(planned(&module, &Inputs::default())?
             .needs
             .contains(&Need::Feature("shaderFloat64")));
+        Ok(())
     }
 
     #[test]
-    fn descriptor_arrays_bind_one_buffer_per_element() {
+    fn descriptor_arrays_bind_one_buffer_per_element() -> anyhow::Result<()> {
         let mut module = reflection(ExecutionModel::GLCompute);
         module.resources.push(Resource {
             set: 0,
@@ -1297,7 +1304,7 @@ mod tests {
                 writable: true,
             },
         });
-        let plan = Plan::new(&module, &Inputs::default()).unwrap();
+        let plan = planned(&module, &Inputs::default())?;
         assert_eq!(plan.files.len(), 2);
         assert_eq!(plan.targets.len(), 2);
         assert_eq!(plan.targets[1].buffer, "r0_3_1");
@@ -1310,10 +1317,11 @@ mod tests {
             .bindings
             .contains("  BIND BUFFER_ARRAY r0_3_0 r0_3_1 AS storage DESCRIPTOR_SET 0 BINDING 3\n"));
         assert_ne!(plan.files[0].1, plan.files[1].1);
+        Ok(())
     }
 
     #[test]
-    fn given_values_override_random_data() {
+    fn given_values_override_random_data() -> anyhow::Result<()> {
         let mut module = reflection(ExecutionModel::Fragment);
         module.resources.push(Resource {
             set: 0,
@@ -1333,10 +1341,11 @@ mod tests {
         inputs
             .values
             .insert((0, 0), vec![Value::Float(0.0), Value::Float(1.0)]);
-        let plan = Plan::new(&module, &inputs).unwrap();
+        let plan = planned(&module, &inputs)?;
         let bytes = &plan.files[0].1;
         assert_eq!(&bytes[0..4], &0f32.to_le_bytes());
         assert_eq!(&bytes[4..8], &1f32.to_le_bytes());
+        Ok(())
     }
 
     fn shaders(plan: &Plan) -> Vec<ShaderKind> {
@@ -1351,12 +1360,12 @@ mod tests {
     }
 
     #[test]
-    fn geometry_and_tessellation_get_generated_stages() {
+    fn geometry_and_tessellation_get_generated_stages() -> anyhow::Result<()> {
         let mut module = reflection(ExecutionModel::Geometry);
         module
             .modes
             .insert(ExecutionMode::InputLinesAdjacency as u32, Vec::new());
-        let plan = Plan::new(&module, &Inputs::default()).unwrap();
+        let plan = planned(&module, &Inputs::default())?;
         assert_eq!(shaders(&plan), [ShaderKind::Vertex, ShaderKind::Fragment]);
         let (tested, dump, data) = paths();
         let harness = harness_paths(&plan);
@@ -1373,7 +1382,7 @@ mod tests {
 
         let mut module = reflection(ExecutionModel::TessellationEvaluation);
         module.capabilities.insert(spirv::Capability::Tessellation);
-        let plan = Plan::new(&module, &Inputs::default()).unwrap();
+        let plan = planned(&module, &Inputs::default())?;
         assert_eq!(
             shaders(&plan),
             [
@@ -1394,11 +1403,10 @@ mod tests {
         assert!(script.contains("  ATTACH harness0\n  ATTACH harness1\n  ATTACH tested\n"));
         assert!(script.contains("DRAW_ARRAY AS PATCH_LIST"));
 
-        let plan = Plan::new(
+        let plan = planned(
             &reflection(ExecutionModel::TessellationControl),
             &Inputs::default(),
-        )
-        .unwrap();
+        )?;
         assert_eq!(
             shaders(&plan),
             [
@@ -1407,10 +1415,11 @@ mod tests {
                 ShaderKind::Fragment
             ]
         );
+        Ok(())
     }
 
     #[test]
-    fn ray_generation_runs_in_a_ray_tracing_pipeline() {
+    fn ray_generation_runs_in_a_ray_tracing_pipeline() -> anyhow::Result<()> {
         let mut module = reflection(ExecutionModel::RayGenerationKHR);
         module.capabilities.insert(spirv::Capability::RayTracingKHR);
         module.resources.push(Resource {
@@ -1419,7 +1428,7 @@ mod tests {
             count: None,
             kind: ResourceKind::AccelerationStructure,
         });
-        let plan = Plan::new(&module, &Inputs::default()).unwrap();
+        let plan = planned(&module, &Inputs::default())?;
         assert_eq!(
             shaders(&plan),
             [
@@ -1449,12 +1458,12 @@ mod tests {
         module.shader_record = Some(Ok(Layout::Struct {
             members: vec![(0, Layout::Scalar(U32)), (4, Layout::Scalar(F32))],
         }));
-        let plan = Plan::new(&module, &Inputs::default()).unwrap();
+        let plan = planned(&module, &Inputs::default())?;
         let record = plan
             .files
             .iter()
             .find(|(name, _)| name == "rglsl_record.bin")
-            .unwrap();
+            .context("no shader record file")?;
         assert_eq!(record.1.len(), 8);
         let script = plan.script(ScriptPaths {
             tested: &tested,
@@ -1480,12 +1489,12 @@ mod tests {
             buffer: AddressBuffer::ShaderRecord,
             offset: 8,
         }];
-        let plan = Plan::new(&module, &Inputs::default()).unwrap();
+        let plan = planned(&module, &Inputs::default())?;
         let record = plan
             .files
             .iter()
             .find(|(name, _)| name == "rglsl_record.bin")
-            .unwrap();
+            .context("no shader record file")?;
         assert_eq!(record.1.len(), 16);
         assert_eq!(record.1[8..16], [0; 8]);
         let script = plan.script(ScriptPaths {
@@ -1497,10 +1506,11 @@ mod tests {
         assert!(script.contains("    g_raygen SHADER_RECORD rglsl_record\n"));
         assert!(script
             .contains("END\nACCELERATION_STRUCTURE ADDRESS tlas BUFFER rglsl_record OFFSET 8\n"));
+        Ok(())
     }
 
     #[test]
-    fn addresses_in_push_constants_and_buffers_hold_the_scene() {
+    fn addresses_in_push_constants_and_buffers_hold_the_scene() -> anyhow::Result<()> {
         let address = Layout::Vector {
             scalar: U32,
             count: 2,
@@ -1535,17 +1545,17 @@ mod tests {
                 offset: 8,
             },
         ];
-        let plan = Plan::new(&module, &Inputs::default()).unwrap();
+        let plan = planned(&module, &Inputs::default())?;
         let file = |name: &str| {
             plan.files
                 .iter()
                 .find(|(file, _)| file == name)
                 .map(|(_, bytes)| bytes.clone())
-                .unwrap()
+                .with_context(|| format!("no file {name}"))
         };
-        assert_eq!(file("push.bin")[0..8], [0; 8]);
-        assert_eq!(file("r0_2_1.bin")[8..16], [0; 8]);
-        assert_ne!(file("r0_2_0.bin")[8..16], [0; 8]);
+        assert_eq!(file("push.bin")?[0..8], [0; 8]);
+        assert_eq!(file("r0_2_1.bin")?[8..16], [0; 8]);
+        assert_ne!(file("r0_2_0.bin")?[8..16], [0; 8]);
         let slots = |buffer: &str| {
             plan.targets
                 .iter()
@@ -1557,10 +1567,10 @@ mod tests {
                         .map(|slot| slot.offset)
                         .collect::<Vec<_>>()
                 })
-                .unwrap()
+                .with_context(|| format!("no target for {buffer}"))
         };
-        assert_eq!(slots("r0_2_0"), [0, 8, 12]);
-        assert_eq!(slots("r0_2_1"), [0]);
+        assert_eq!(slots("r0_2_0")?, [0, 8, 12]);
+        assert_eq!(slots("r0_2_1")?, [0]);
         let (tested, dump, data) = paths();
         let script = plan.script(ScriptPaths {
             tested: &tested,
@@ -1577,15 +1587,16 @@ mod tests {
 
         module.addresses[0].offset = 4;
         assert_eq!(
-            Plan::new(&module, &Inputs::default()).unwrap_err(),
-            Refusal::Binding(
+            Plan::new(&module, &Inputs::default()).err(),
+            Some(Refusal::Binding(
                 "acceleration structure address at offset 4 outside buffer push".into()
-            )
+            ))
         );
+        Ok(())
     }
 
     #[test]
-    fn hit_stages_run_behind_a_generated_ray_generation_shader() {
+    fn hit_stages_run_behind_a_generated_ray_generation_shader() -> anyhow::Result<()> {
         let mut module = reflection(ExecutionModel::ClosestHitKHR);
         module.capabilities.insert(spirv::Capability::RayTracingKHR);
         module.resources.push(Resource {
@@ -1602,7 +1613,7 @@ mod tests {
                 count: 4,
             }),
         });
-        let plan = Plan::new(&module, &Inputs::default()).unwrap();
+        let plan = planned(&module, &Inputs::default())?;
         assert_eq!(plan.harness_env, Some("vulkan1.2"));
         assert_eq!(plan.harness[0].0, ShaderKind::RayGeneration);
         assert!(plan.harness[0]
@@ -1626,10 +1637,11 @@ mod tests {
         assert!(script.contains("SHADER closest_hit tested SPIRV-BIN FILE /w/tested.spv\n"));
         assert!(script.contains("  SHADER_GROUP g_hit tested\n"));
         assert!(script.contains("BUFFER rglsl_out DATA_TYPE uint8 SIZE 256 FILE BINARY"));
+        Ok(())
     }
 
     #[test]
-    fn ray_queries_bind_the_scene_in_any_stage() {
+    fn ray_queries_bind_the_scene_in_any_stage() -> anyhow::Result<()> {
         let mut module = reflection(ExecutionModel::Fragment);
         module.capabilities.insert(spirv::Capability::RayQueryKHR);
         module.resources.push(Resource {
@@ -1638,7 +1650,7 @@ mod tests {
             count: None,
             kind: ResourceKind::AccelerationStructure,
         });
-        let plan = Plan::new(&module, &Inputs::default()).unwrap();
+        let plan = planned(&module, &Inputs::default())?;
         assert!(plan
             .needs
             .contains(&Need::Feature("RayQueryFeaturesKHR.rayQuery")));
@@ -1649,10 +1661,11 @@ mod tests {
             .bindings
             .contains("  BIND ACCELERATION_STRUCTURE tlas DESCRIPTOR_SET 0 BINDING 2\n"));
         assert_eq!(plan.draw, Draw::Rect);
+        Ok(())
     }
 
     #[test]
-    fn mesh_shaders_draw_mesh_tasks() {
+    fn mesh_shaders_draw_mesh_tasks() -> anyhow::Result<()> {
         let mut module = reflection(ExecutionModel::MeshEXT);
         module
             .capabilities
@@ -1672,7 +1685,7 @@ mod tests {
             per_primitive: true,
         }];
         module.task_payload = Some(Ok(DataType::Scalar(U32)));
-        let plan = Plan::new(&module, &Inputs::default()).unwrap();
+        let plan = planned(&module, &Inputs::default())?;
         assert_eq!(shaders(&plan), [ShaderKind::Task, ShaderKind::Fragment]);
         assert!(plan.harness[1]
             .1
@@ -1695,14 +1708,15 @@ mod tests {
         module
             .capabilities
             .insert(spirv::Capability::MeshShadingEXT);
-        let plan = Plan::new(&module, &Inputs::default()).unwrap();
+        let plan = planned(&module, &Inputs::default())?;
         assert_eq!(shaders(&plan), [ShaderKind::Mesh, ShaderKind::Fragment]);
         assert_eq!(plan.attachments.len(), 2);
         assert_eq!(plan.draw, Draw::Mesh);
+        Ok(())
     }
 
     #[test]
-    fn texel_buffers_are_bound_and_dumped() {
+    fn texel_buffers_are_bound_and_dumped() -> anyhow::Result<()> {
         let image = ImageType {
             dim: Dim::DimBuffer,
             depth: false,
@@ -1728,7 +1742,7 @@ mod tests {
             count: None,
             kind: ResourceKind::StorageTexelBuffer(image),
         });
-        let plan = Plan::new(&module, &Inputs::default()).unwrap();
+        let plan = planned(&module, &Inputs::default())?;
         assert!(plan
             .declarations
             .contains("BUFFER r0_0 DATA_TYPE R32G32B32A32_UINT DATA\n"));
@@ -1759,5 +1773,6 @@ mod tests {
             panic!("cube images are refused");
         };
         assert!(reason.contains("Amber"));
+        Ok(())
     }
 }

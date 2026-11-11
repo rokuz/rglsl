@@ -6,6 +6,8 @@ use rglsl_fuzz::ast::{
 };
 use rglsl_fuzz::basic;
 
+use super::TestResult;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Value {
     pub scalar: ScalarType,
@@ -110,20 +112,20 @@ impl Evaluator {
         evaluator
     }
 
-    pub fn eval(&mut self, expression: &Expression) -> Value {
-        match &expression.kind {
+    pub fn eval(&mut self, expression: &Expression) -> TestResult<Value> {
+        Ok(match &expression.kind {
             ExpressionKind::Variable(name) => self
                 .variables
                 .get(name)
                 .cloned()
-                .unwrap_or_else(|| panic!("unknown variable {name}")),
+                .ok_or_else(|| format!("unknown variable {name}"))?,
             ExpressionKind::Number(literal) => {
                 let digits = literal.digits();
                 match literal.kind {
-                    NumericKind::Int => Value::scalar(ScalarType::Int, digits.parse().unwrap()),
-                    NumericKind::Uint => Value::scalar(ScalarType::Uint, digits.parse().unwrap()),
+                    NumericKind::Int => Value::scalar(ScalarType::Int, digits.parse()?),
+                    NumericKind::Uint => Value::scalar(ScalarType::Uint, digits.parse()?),
                     NumericKind::Float | NumericKind::Double => {
-                        Value::scalar(ScalarType::Float, digits.parse().unwrap())
+                        Value::scalar(ScalarType::Float, digits.parse()?)
                     }
                     other => panic!("the fuzzer does not generate {other:?} literals"),
                 }
@@ -132,9 +134,9 @@ impl Evaluator {
                 Value::scalar(ScalarType::Bool, f64::from(u8::from(*value)))
             }
             ExpressionKind::String(value) => panic!("cannot evaluate the string {value:?}"),
-            ExpressionKind::Parenthesized(inner) => self.eval(inner),
+            ExpressionKind::Parenthesized(inner) => self.eval(inner)?,
             ExpressionKind::FieldSelection { base, field } => {
-                let base = self.eval(base);
+                let base = self.eval(base)?;
                 let data: Vec<f64> = field
                     .node
                     .chars()
@@ -143,11 +145,11 @@ impl Evaluator {
                             .find(component)
                             .or_else(|| "rgba".find(component))
                             .or_else(|| "stpq".find(component))
-                            .expect("a swizzle component");
-                        base.data[index]
+                            .ok_or_else(|| format!("{component} is not a swizzle component"))?;
+                        Ok::<f64, String>(base.data[index])
                     })
-                    .collect();
-                let rows = u32::try_from(data.len()).unwrap();
+                    .collect::<Result<_, _>>()?;
+                let rows = u32::try_from(data.len())?;
                 Value {
                     scalar: base.scalar,
                     columns: 1,
@@ -156,8 +158,8 @@ impl Evaluator {
                 }
             }
             ExpressionKind::Subscript { base, index } => {
-                let base = self.eval(base);
-                let index = self.eval(index).data[0] as usize;
+                let base = self.eval(base)?;
+                let index = self.eval(index)?.data[0] as usize;
                 if base.is_matrix() {
                     let rows = base.rows as usize;
                     Value {
@@ -175,15 +177,18 @@ impl Evaluator {
                     let TypeSpecifierNonArray::Basic(ty) = specifier.non_array else {
                         panic!("unsupported constructor");
                     };
-                    let arguments: Vec<Value> =
-                        call.arguments.iter().map(|a| self.eval(a)).collect();
+                    let arguments: Vec<Value> = call
+                        .arguments
+                        .iter()
+                        .map(|a| self.eval(a))
+                        .collect::<TestResult<_>>()?;
                     construct(ty, &arguments)
                 }
-                FunctionIdentifier::Function(name) => self.call(name, &call.arguments),
+                FunctionIdentifier::Function(name) => self.call(name, &call.arguments)?,
                 _ => panic!("unsupported call"),
             },
             ExpressionKind::Unary { operator, operand } => {
-                let value = self.eval(operand);
+                let value = self.eval(operand)?;
                 let scalar = value.scalar;
                 let data = value
                     .data
@@ -207,25 +212,25 @@ impl Evaluator {
                 right,
             } => match operator {
                 BinaryOperator::LogicalAnd => {
-                    let left = self.eval(left);
+                    let left = self.eval(left)?;
                     if left.data[0] == 0.0 {
                         left
                     } else {
-                        self.eval(right)
+                        self.eval(right)?
                     }
                 }
                 BinaryOperator::LogicalOr => {
-                    let left = self.eval(left);
+                    let left = self.eval(left)?;
                     if left.data[0] != 0.0 {
                         left
                     } else {
-                        self.eval(right)
+                        self.eval(right)?
                     }
                 }
                 _ => {
-                    let left = self.eval(left);
-                    let right = self.eval(right);
-                    binary(*operator, &left, &right)
+                    let left = self.eval(left)?;
+                    let right = self.eval(right)?;
+                    binary(*operator, &left, &right)?
                 }
             },
             ExpressionKind::Conditional {
@@ -233,30 +238,30 @@ impl Evaluator {
                 then_expression,
                 else_expression,
             } => {
-                if self.eval(condition).data[0] != 0.0 {
-                    self.eval(then_expression)
+                if self.eval(condition)?.data[0] != 0.0 {
+                    self.eval(then_expression)?
                 } else {
-                    self.eval(else_expression)
+                    self.eval(else_expression)?
                 }
             }
             ExpressionKind::Sequence(expressions) => {
                 let mut last = None;
                 for expression in expressions {
-                    last = Some(self.eval(expression));
+                    last = Some(self.eval(expression)?);
                 }
-                last.expect("a non-empty sequence")
+                last.ok_or("an empty sequence")?
             }
             ExpressionKind::Postfix { .. } | ExpressionKind::Assignment { .. } => {
                 panic!("side effect")
             }
-        }
+        })
     }
 
-    fn call(&mut self, name: &str, arguments: &[Expression]) -> Value {
-        match name {
+    fn call(&mut self, name: &str, arguments: &[Expression]) -> TestResult<Value> {
+        Ok(match name {
             "_GLF_IDENTITY" | "_GLF_ZERO" | "_GLF_ONE" | "_GLF_TRUE" | "_GLF_FALSE" => {
-                let recorded = self.eval(&arguments[0]);
-                let value = self.eval(&arguments[1]);
+                let recorded = self.eval(&arguments[0])?;
+                let value = self.eval(&arguments[1])?;
                 assert!(
                     recorded.approx_eq(&value),
                     "{name}: {recorded:?} differs from {value:?} in {}",
@@ -265,12 +270,15 @@ impl Evaluator {
                 self.checked_identities += 1;
                 value
             }
-            "_GLF_FUZZED" | "_GLF_DEAD" => self.eval(&arguments[0]),
+            "_GLF_FUZZED" | "_GLF_DEAD" => self.eval(&arguments[0])?,
             _ => {
-                let values: Vec<Value> = arguments.iter().map(|a| self.eval(a)).collect();
+                let values: Vec<Value> = arguments
+                    .iter()
+                    .map(|a| self.eval(a))
+                    .collect::<TestResult<_>>()?;
                 builtin(name, &values)
             }
-        }
+        })
     }
 }
 
@@ -359,17 +367,17 @@ fn integer_op(operator: BinaryOperator, scalar: ScalarType, a: f64, b: f64) -> f
     }
 }
 
-fn binary(operator: BinaryOperator, left: &Value, right: &Value) -> Value {
+fn binary(operator: BinaryOperator, left: &Value, right: &Value) -> TestResult<Value> {
     let boolean = |value: bool| Value::scalar(ScalarType::Bool, f64::from(u8::from(value)));
     match operator {
-        BinaryOperator::Equal => return boolean(left.approx_eq(right)),
-        BinaryOperator::NotEqual => return boolean(!left.approx_eq(right)),
-        BinaryOperator::Less => return boolean(left.data[0] < right.data[0]),
-        BinaryOperator::Greater => return boolean(left.data[0] > right.data[0]),
-        BinaryOperator::LessEqual => return boolean(left.data[0] <= right.data[0]),
-        BinaryOperator::GreaterEqual => return boolean(left.data[0] >= right.data[0]),
+        BinaryOperator::Equal => return Ok(boolean(left.approx_eq(right))),
+        BinaryOperator::NotEqual => return Ok(boolean(!left.approx_eq(right))),
+        BinaryOperator::Less => return Ok(boolean(left.data[0] < right.data[0])),
+        BinaryOperator::Greater => return Ok(boolean(left.data[0] > right.data[0])),
+        BinaryOperator::LessEqual => return Ok(boolean(left.data[0] <= right.data[0])),
+        BinaryOperator::GreaterEqual => return Ok(boolean(left.data[0] >= right.data[0])),
         BinaryOperator::LogicalXor => {
-            return boolean((left.data[0] != 0.0) != (right.data[0] != 0.0))
+            return Ok(boolean((left.data[0] != 0.0) != (right.data[0] != 0.0)))
         }
         _ => {}
     }
@@ -405,10 +413,10 @@ fn binary(operator: BinaryOperator, left: &Value, right: &Value) -> Value {
             }
         })
         .collect();
-    shape.with_data(data)
+    Ok(shape.with_data(data))
 }
 
-fn linear_product(left: &Value, right: &Value) -> Value {
+fn linear_product(left: &Value, right: &Value) -> TestResult<Value> {
     let (left_columns, left_rows) = if left.is_matrix() {
         (left.columns as usize, left.rows as usize)
     } else {
@@ -437,22 +445,22 @@ fn linear_product(left: &Value, right: &Value) -> Value {
             data.push(sum);
         }
     }
-    if left.is_matrix() && right.is_matrix() {
+    Ok(if left.is_matrix() && right.is_matrix() {
         Value {
             scalar: ScalarType::Float,
-            columns: u32::try_from(right_columns).unwrap(),
-            rows: u32::try_from(left_rows).unwrap(),
+            columns: u32::try_from(right_columns)?,
+            rows: u32::try_from(left_rows)?,
             data,
         }
     } else {
-        let rows = u32::try_from(data.len()).unwrap();
+        let rows = u32::try_from(data.len())?;
         Value {
             scalar: ScalarType::Float,
             columns: 1,
             rows,
             data,
         }
-    }
+    })
 }
 
 fn determinant(data: &[f64], size: usize) -> f64 {

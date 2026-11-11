@@ -1,10 +1,12 @@
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+#![allow(clippy::panic)]
 
 use std::fs;
 use std::path::Path;
 
 use rglsl::front::glsl::{Frontend, Options};
 use rglsl::ShaderStage;
+
+type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 fn stage(extension: &str) -> Option<ShaderStage> {
     Some(match extension {
@@ -29,11 +31,12 @@ fn spirv_version(test: &Path) -> Option<(u8, u8)> {
     Some((major.parse().ok()?, minor.parse().ok()?))
 }
 
-fn run(test: &Path) -> (bool, Vec<String>) {
+fn run(test: &Path) -> TestResult<(bool, Vec<String>)> {
     let spirv = spirv_version(test);
-    let mut names: Vec<String> = fs::read_dir(test)
-        .unwrap()
-        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+    let mut names: Vec<String> = fs::read_dir(test)?
+        .map(|entry| entry.map(|entry| entry.file_name().to_string_lossy().into_owned()))
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
         .filter(|name| !name.starts_with("reference."))
         .filter(|name| {
             name.rsplit_once('.')
@@ -45,7 +48,7 @@ fn run(test: &Path) -> (bool, Vec<String>) {
     let mut objects = Vec::new();
     for name in names {
         let path = test.join(&name);
-        let source = fs::read_to_string(&path).unwrap();
+        let source = fs::read_to_string(&path)?;
         let extension = name.rsplit_once('.').map_or("", |(_, extension)| extension);
         let options = Options {
             auto_map_locations: true,
@@ -65,7 +68,7 @@ fn run(test: &Path) -> (bool, Vec<String>) {
         }
     }
     if !messages.is_empty() {
-        return (false, messages);
+        return Ok((false, messages));
     }
     let options = rglsl_link::Options {
         auto_map_locations: true,
@@ -82,34 +85,34 @@ fn run(test: &Path) -> (bool, Vec<String>) {
                         ..rglsl::back::spv::Options::default()
                     },
                     None,
-                )
-                .unwrap();
+                )?;
             }
-            (true, Vec::new())
+            Ok((true, Vec::new()))
         }
-        Err(errors) => (false, errors.iter().map(ToString::to_string).collect()),
+        Err(errors) => Ok((false, errors.iter().map(ToString::to_string).collect())),
     }
 }
 
 #[test]
-fn link_tests() {
+fn link_tests() -> TestResult {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../tests/link");
-    let mut tests: Vec<_> = fs::read_dir(&root)
-        .unwrap()
-        .map(|entry| entry.unwrap().path())
+    let mut tests: Vec<_> = fs::read_dir(&root)?
+        .map(|entry| entry.map(|entry| entry.path()))
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
         .filter(|path| path.is_dir())
         .collect();
     tests.sort();
     assert!(!tests.is_empty());
     let mut failures = Vec::new();
     for test in tests {
-        let expect = fs::read_to_string(test.join("expect")).unwrap();
+        let expect = fs::read_to_string(test.join("expect"))?;
         let mut lines = expect
             .lines()
             .map(str::trim)
             .filter(|line| !line.is_empty());
         let accept = lines.next() == Some("accept");
-        let (accepted, messages) = run(&test);
+        let (accepted, messages) = run(&test)?;
         let missing: Vec<&str> = lines
             .filter(|expected| !messages.iter().any(|message| message.contains(expected)))
             .collect();
@@ -121,4 +124,5 @@ fn link_tests() {
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
+    Ok(())
 }

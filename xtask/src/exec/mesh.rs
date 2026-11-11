@@ -67,7 +67,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn task_writes_the_mesh_payload() {
+    fn task_writes_the_mesh_payload() -> anyhow::Result<()> {
         let payload = DataType::Struct(vec![
             DataType::Array {
                 element: Box::new(DataType::Scalar(Scalar {
@@ -84,13 +84,14 @@ mod tests {
                 count: 4,
             },
         ]);
-        let source = task_for_mesh(Some(&payload), &mut Rng::new(5)).unwrap();
+        let source = task_for_mesh(Some(&payload), &mut Rng::new(5)).map_err(anyhow::Error::msg)?;
         assert!(source.contains("taskPayloadSharedEXT RglslStruct0 rglsl_payload;"));
         assert!(source.contains("    rglsl_payload.m0[1] = "));
         assert!(source.contains("    rglsl_payload.m1 = vec4("));
         assert!(source.ends_with("    EmitMeshTasksEXT(1u, 1u, 1u);\n}\n"));
-        let empty = task_for_mesh(None, &mut Rng::new(5)).unwrap();
+        let empty = task_for_mesh(None, &mut Rng::new(5)).map_err(anyhow::Error::msg)?;
         assert!(!empty.contains("taskPayloadSharedEXT"));
+        Ok(())
     }
 
     #[test]

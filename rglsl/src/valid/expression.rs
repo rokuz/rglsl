@@ -2341,12 +2341,15 @@ fn validate_with_const_expression(
 
 /// Using F64 in a function's expression arena is forbidden.
 #[test]
-fn f64_runtime_literals() {
+fn f64_runtime_literals() -> crate::TestResult {
     let result = validate_with_expression(
         crate::Expression::Literal(crate::Literal::F64(0.57721_56649)),
         super::Capabilities::default(),
     );
-    let error = result.unwrap_err().into_inner();
+    let Err(error) = result else {
+        return Err("the f64 literal was accepted".into());
+    };
+    let error = error.into_inner();
     assert!(matches!(
         error,
         crate::valid::ValidationError::Function {
@@ -2368,16 +2371,20 @@ fn f64_runtime_literals() {
         super::Capabilities::default() | super::Capabilities::FLOAT64,
     );
     assert!(result.is_ok());
+    Ok(())
 }
 
 /// Using F64 in a module's constant expression arena is forbidden.
 #[test]
-fn f64_const_literals() {
+fn f64_const_literals() -> crate::TestResult {
     let result = validate_with_const_expression(
         crate::Expression::Literal(crate::Literal::F64(0.57721_56649)),
         super::Capabilities::default(),
     );
-    let error = result.unwrap_err().into_inner();
+    let Err(error) = result else {
+        return Err("the f64 literal was accepted".into());
+    };
+    let error = error.into_inner();
     assert!(matches!(
         error,
         crate::valid::ValidationError::ConstExpression {
@@ -2396,6 +2403,7 @@ fn f64_const_literals() {
         super::Capabilities::default() | super::Capabilities::FLOAT64,
     );
     assert!(result.is_ok());
+    Ok(())
 }
 
 fn sampled_texel(class: crate::ImageClass) -> crate::TypeInner {

@@ -1,4 +1,4 @@
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+#![allow(clippy::panic)]
 
 use rglsl::back::spv;
 use rglsl::compact::{compact, KeepUnused};
@@ -7,6 +7,8 @@ use rglsl::valid::{Capabilities, ValidationFlags, Validator};
 use rglsl::ShaderStage;
 use rglsl_link::{decode, encode, link, Options as LinkOptions, MAX_BLOCK_DEPTH};
 use rglsl_pp::{FileId, IncludeError, IncludeKind, IncludedFile, Includer, Limits};
+
+type TestResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 const STACK: usize = 1 << 20;
 const LIMIT: usize = 128;
@@ -48,13 +50,12 @@ impl Includer for Recursive {
     }
 }
 
-fn on_small_stack<T: Send + 'static>(run: impl FnOnce() -> T + Send + 'static) -> T {
+fn on_small_stack<T: Send + 'static>(run: impl FnOnce() -> T + Send + 'static) -> TestResult<T> {
     std::thread::Builder::new()
         .stack_size(STACK)
-        .spawn(run)
-        .unwrap()
+        .spawn(run)?
         .join()
-        .unwrap()
+        .map_err(|_| "the thread on the small stack panicked".into())
 }
 
 fn rejection(messages: &[String]) -> Outcome {
@@ -149,36 +150,37 @@ fn struct_chain(count: usize) -> String {
     globals
 }
 
-fn deepest(name: &str, source: impl Fn(usize) -> String, includes: bool) -> usize {
+fn deepest(name: &str, source: impl Fn(usize) -> String, includes: bool) -> TestResult<usize> {
     let mut accepted = 0;
     let mut rejected = HUGE;
-    let outcome = check(source(rejected), includes);
+    let outcome = check(source(rejected), includes)?;
     assert_eq!(outcome, Outcome::TooDeep, "{name} at {rejected}");
     while rejected - accepted > 1 {
         let middle = accepted + (rejected - accepted) / 2;
-        match check(source(middle), includes) {
+        match check(source(middle), includes)? {
             Outcome::Compiled => accepted = middle,
             Outcome::TooDeep => rejected = middle,
             Outcome::Failed(message) => panic!("{name} at {middle}: {message}"),
         }
     }
-    accepted
+    Ok(accepted)
 }
 
-fn check(source: String, includes: bool) -> Outcome {
+fn check(source: String, includes: bool) -> TestResult<Outcome> {
     on_small_stack(move || pipeline(&source, includes))
 }
 
-fn assert_deep(name: &str, source: impl Fn(usize) -> String, minimum: usize) {
-    let accepted = deepest(name, source, false);
+fn assert_deep(name: &str, source: impl Fn(usize) -> String, minimum: usize) -> TestResult {
+    let accepted = deepest(name, source, false)?;
     assert!(
         accepted >= minimum,
         "{name}: only {accepted} levels compile, expected at least {minimum}"
     );
+    Ok(())
 }
 
 #[test]
-fn expressions_at_the_nesting_limit_compile_on_a_small_stack() {
+fn expressions_at_the_nesting_limit_compile_on_a_small_stack() -> TestResult {
     let cases: [(&str, &str, &str, &str, &str, usize); 24] = [
         ("parentheses", "b = ", "(", "b", ")", 2),
         ("negation", "b = ", "-(", "b", ")", 2),
@@ -223,12 +225,13 @@ fn expressions_at_the_nesting_limit_compile_on_a_small_stack() {
                 ),
             )
         };
-        assert_deep(name, source, (LIMIT - 8) / units);
+        assert_deep(name, source, (LIMIT - 8) / units)?;
     }
+    Ok(())
 }
 
 #[test]
-fn statements_at_the_nesting_limit_compile_on_a_small_stack() {
+fn statements_at_the_nesting_limit_compile_on_a_small_stack() -> TestResult {
     let cases: [(&str, &str, &str, &str, usize); 10] = [
         ("blocks", "{ ", "b = 2;", " }", 1),
         ("if", "if (t) ", "b = 2;", "", 1),
@@ -254,12 +257,13 @@ fn statements_at_the_nesting_limit_compile_on_a_small_stack() {
         ),
     ];
     for (name, open, core, close, units) in cases {
-        assert_deep(name, wrapped(open, core, close), (LIMIT - 8) / units);
+        assert_deep(name, wrapped(open, core, close), (LIMIT - 8) / units)?;
     }
+    Ok(())
 }
 
 #[test]
-fn nested_declarations_compile_on_a_small_stack() {
+fn nested_declarations_compile_on_a_small_stack() -> TestResult {
     assert_deep(
         "initializer lists",
         |count| {
@@ -275,7 +279,7 @@ fn nested_declarations_compile_on_a_small_stack() {
             )
         },
         TYPE_LIMIT - 2,
-    );
+    )?;
     assert_deep(
         "struct chains",
         |count| {
@@ -288,7 +292,7 @@ fn nested_declarations_compile_on_a_small_stack() {
             )
         },
         TYPE_LIMIT - 2,
-    );
+    )?;
     assert_deep(
         "struct initializers",
         |count| {
@@ -306,7 +310,7 @@ fn nested_declarations_compile_on_a_small_stack() {
             )
         },
         TYPE_LIMIT - 2,
-    );
+    )?;
     assert_deep(
         "struct constructors",
         |count| {
@@ -324,7 +328,7 @@ fn nested_declarations_compile_on_a_small_stack() {
             )
         },
         TYPE_LIMIT - 2,
-    );
+    )?;
     assert_deep(
         "array dimensions",
         |count| {
@@ -337,7 +341,7 @@ fn nested_declarations_compile_on_a_small_stack() {
             )
         },
         TYPE_LIMIT - 2,
-    );
+    )?;
     for count in [LIMIT - 8, HUGE] {
         let source = shader(
             &format!(
@@ -347,16 +351,17 @@ fn nested_declarations_compile_on_a_small_stack() {
             ),
             "",
         );
-        let outcome = check(source, false);
+        let outcome = check(source, false)?;
         assert!(!matches!(outcome, Outcome::Compiled), "inline structs");
         if count == HUGE {
             assert_eq!(outcome, Outcome::TooDeep);
         }
     }
+    Ok(())
 }
 
 #[test]
-fn the_worst_combination_compiles_on_a_small_stack() {
+fn the_worst_combination_compiles_on_a_small_stack() -> TestResult {
     let depth = 24;
     let mut globals = String::from("struct S0 { int a; };\n");
     for level in 1..depth {
@@ -381,11 +386,12 @@ fn the_worst_combination_compiles_on_a_small_stack() {
         );
         shader(&globals, &body)
     };
-    assert_deep("statements, types and calls together", combined, 16);
+    assert_deep("statements, types and calls together", combined, 16)?;
+    Ok(())
 }
 
 #[test]
-fn preprocessor_nesting_is_bounded_on_a_small_stack() {
+fn preprocessor_nesting_is_bounded_on_a_small_stack() -> TestResult {
     let limits = Limits::default();
     let macros = |count: usize| {
         shader(
@@ -393,26 +399,27 @@ fn preprocessor_nesting_is_bounded_on_a_small_stack() {
             &format!("b = {}b{};", "F(".repeat(count), ")".repeat(count)),
         )
     };
-    assert!(deepest("macro arguments", macros, false) >= limits.max_macro_expansion_depth - 2);
+    assert!(deepest("macro arguments", macros, false)? >= limits.max_macro_expansion_depth - 2);
     let conditions = |count: usize| {
         shader(
             &format!("{}\n{}", "#if 1\n".repeat(count), "#endif\n".repeat(count)),
             "",
         )
     };
-    assert!(deepest("#if", conditions, false) >= limits.max_if_nesting - 2);
+    assert!(deepest("#if", conditions, false)? >= limits.max_if_nesting - 2);
     let parentheses = |count: usize| {
         shader(
             &format!("#if {}1{}\n#endif", "(".repeat(count), ")".repeat(count)),
             "",
         )
     };
-    assert_eq!(check(parentheses(HUGE), false), Outcome::Compiled);
+    assert_eq!(check(parentheses(HUGE), false)?, Outcome::Compiled);
     let include = shader(
         "#extension GL_GOOGLE_include_directive : enable\n#include \"first.h\"",
         "",
     );
-    assert_eq!(check(include, true), Outcome::TooDeep);
+    assert_eq!(check(include, true)?, Outcome::TooDeep);
+    Ok(())
 }
 
 fn repeated(open: &str, core: &str, close: &str) -> String {
@@ -420,7 +427,7 @@ fn repeated(open: &str, core: &str, close: &str) -> String {
 }
 
 #[test]
-fn flat_chains_compile_on_a_small_stack() {
+fn flat_chains_compile_on_a_small_stack() -> TestResult {
     let cases = [
         (
             "binary chain",
@@ -584,13 +591,14 @@ fn flat_chains_compile_on_a_small_stack() {
         ),
     ];
     for (name, globals, body) in cases {
-        let outcome = check(shader(globals, &body), false);
+        let outcome = check(shader(globals, &body), false)?;
         assert_eq!(outcome, Outcome::Compiled, "{name}");
     }
+    Ok(())
 }
 
 #[test]
-fn long_flat_inputs_compile_on_a_small_stack() {
+fn long_flat_inputs_compile_on_a_small_stack() -> TestResult {
     let long = [
         shader("", &"b = b + 1;\n".repeat(LONG)),
         shader(
@@ -638,15 +646,16 @@ fn long_flat_inputs_compile_on_a_small_stack() {
         },
     ];
     for source in long {
-        assert_eq!(check(source, false), Outcome::Compiled);
+        assert_eq!(check(source, false)?, Outcome::Compiled);
     }
+    Ok(())
 }
 
-fn nested_object(depth: usize) -> String {
+fn nested_object(depth: usize) -> TestResult<String> {
     let options = Options::from(ShaderStage::Fragment);
     let mut object = Frontend::default()
         .compile(&options, &shader("", "b = 2;"))
-        .unwrap();
+        .map_err(|errors| format!("{errors:?}"))?;
     let function = &mut object.module.entry_points[0].function;
     let condition = function.expressions.append(
         rglsl::Expression::Literal(rglsl::Literal::Bool(true)),
@@ -667,10 +676,10 @@ fn nested_object(depth: usize) -> String {
         body = outer;
     }
     function.body = body;
-    encode(&object).unwrap()
+    Ok(encode(&object)?)
 }
 
-fn linked_object(text: String) -> Outcome {
+fn linked_object(text: String) -> TestResult<Outcome> {
     on_small_stack(move || {
         let object = match decode(&text) {
             Ok(object) => object,
@@ -692,13 +701,14 @@ fn linked_object(text: String) -> Outcome {
 }
 
 #[test]
-fn object_files_are_bounded_on_a_small_stack() {
-    let deepest = on_small_stack(|| nested_object(MAX_BLOCK_DEPTH));
-    assert_eq!(linked_object(deepest), Outcome::Compiled);
-    let deeper = on_small_stack(|| nested_object(MAX_BLOCK_DEPTH + 1));
-    assert_eq!(linked_object(deeper), Outcome::TooDeep);
-    let hostile = on_small_stack(|| nested_object(4 * MAX_BLOCK_DEPTH));
-    assert_eq!(linked_object(hostile), Outcome::TooDeep);
+fn object_files_are_bounded_on_a_small_stack() -> TestResult {
+    let deepest = on_small_stack(|| nested_object(MAX_BLOCK_DEPTH))??;
+    assert_eq!(linked_object(deepest)?, Outcome::Compiled);
+    let deeper = on_small_stack(|| nested_object(MAX_BLOCK_DEPTH + 1))??;
+    assert_eq!(linked_object(deeper)?, Outcome::TooDeep);
+    let hostile = on_small_stack(|| nested_object(4 * MAX_BLOCK_DEPTH))??;
+    assert_eq!(linked_object(hostile)?, Outcome::TooDeep);
+    Ok(())
 }
 
 const FRONTEND_STACK: usize = 256 << 10;
@@ -726,7 +736,9 @@ impl Includer for IncludeChain {
             String::from("int g(int a) { return a; }\n")
         };
         Ok(IncludedFile {
-            file: FileId(u32::try_from(depth).unwrap()),
+            file: FileId(
+                u32::try_from(depth).map_err(|error| IncludeError::new(error.to_string()))?,
+            ),
             name: format!("level{depth}.h"),
             source,
         })
@@ -740,7 +752,7 @@ enum Lowering {
     Rejected(String),
 }
 
-fn frontend(source: String, includes: Option<usize>) -> Lowering {
+fn frontend(source: String, includes: Option<usize>) -> TestResult<Lowering> {
     std::thread::Builder::new()
         .stack_size(FRONTEND_STACK)
         .spawn(move || {
@@ -775,24 +787,24 @@ fn frontend(source: String, includes: Option<usize>) -> Lowering {
                     }
                 }
             }
-        })
-        .unwrap()
+        })?
         .join()
-        .unwrap()
+        .map_err(|_| "the frontend thread panicked".into())
 }
 
-fn frontend_case(name: &str, source: impl Fn(usize) -> String, expected: &Lowering) {
+fn frontend_case(name: &str, source: impl Fn(usize) -> String, expected: &Lowering) -> TestResult {
     for depth in FRONTEND_DEPTHS {
         assert_eq!(
-            &frontend(source(depth), None),
+            &frontend(source(depth), None)?,
             expected,
             "{name} at {depth}"
         );
     }
+    Ok(())
 }
 
 #[test]
-fn the_frontend_handles_deep_preprocessor_nesting_on_a_small_stack() {
+fn the_frontend_handles_deep_preprocessor_nesting_on_a_small_stack() -> TestResult {
     frontend_case(
         "macro arguments",
         |count| {
@@ -802,7 +814,7 @@ fn the_frontend_handles_deep_preprocessor_nesting_on_a_small_stack() {
             )
         },
         &Lowering::ResourceLimit,
-    );
+    )?;
     frontend_case(
         "macro definitions",
         |count| {
@@ -813,7 +825,7 @@ fn the_frontend_handles_deep_preprocessor_nesting_on_a_small_stack() {
             shader(&globals, &format!("b = F{}(b);", count - 1))
         },
         &Lowering::Lowered,
-    );
+    )?;
     frontend_case(
         "#if expressions",
         |count| {
@@ -823,23 +835,24 @@ fn the_frontend_handles_deep_preprocessor_nesting_on_a_small_stack() {
             )
         },
         &Lowering::Lowered,
-    );
+    )?;
     frontend_case(
         "#if operators",
         |count| shader(&format!("#if {}1\n#endif", "- ~ ".repeat(count)), ""),
         &Lowering::Lowered,
-    );
+    )?;
     for depth in FRONTEND_DEPTHS {
         let source = shader(
             "#extension GL_GOOGLE_include_directive : enable\n#include \"first.h\"",
             "",
         );
         assert_eq!(
-            frontend(source, Some(depth)),
+            frontend(source, Some(depth))?,
             Lowering::Lowered,
             "includes at {depth}"
         );
     }
+    Ok(())
 }
 
 fn nested_body(prefix: &str, open: &str, core: &str, close: &str) -> impl Fn(usize) -> String {
@@ -862,7 +875,7 @@ fn nested_body(prefix: &str, open: &str, core: &str, close: &str) -> impl Fn(usi
 }
 
 #[test]
-fn the_frontend_handles_deep_expressions_on_a_small_stack() {
+fn the_frontend_handles_deep_expressions_on_a_small_stack() -> TestResult {
     let cases = [
         ("parentheses", "b = ", "(", "b", ")"),
         ("negation", "b = ", "-(", "b", ")"),
@@ -907,12 +920,13 @@ fn the_frontend_handles_deep_expressions_on_a_small_stack() {
             name,
             nested_body(prefix, open, core, close),
             &Lowering::Lowered,
-        );
+        )?;
     }
+    Ok(())
 }
 
 #[test]
-fn the_frontend_handles_deep_statements_on_a_small_stack() {
+fn the_frontend_handles_deep_statements_on_a_small_stack() -> TestResult {
     let cases = [
         ("blocks", "{ ", " }"),
         ("if", "if (t) ", ""),
@@ -933,12 +947,13 @@ fn the_frontend_handles_deep_statements_on_a_small_stack() {
             name,
             nested_body("", open, "b = 2;", close),
             &Lowering::Lowered,
-        );
+        )?;
     }
+    Ok(())
 }
 
 #[test]
-fn the_frontend_handles_deep_declarations_on_a_small_stack() {
+fn the_frontend_handles_deep_declarations_on_a_small_stack() -> TestResult {
     let initializer_lists = |count: usize| {
         shader(
             "",
@@ -952,7 +967,7 @@ fn the_frontend_handles_deep_declarations_on_a_small_stack() {
         )
     };
     assert_eq!(
-        frontend(initializer_lists(FRONTEND_DEPTHS[0]), None),
+        frontend(initializer_lists(FRONTEND_DEPTHS[0]), None)?,
         Lowering::Lowered,
         "array initializer lists"
     );
@@ -965,7 +980,7 @@ fn the_frontend_handles_deep_declarations_on_a_small_stack() {
             )
         },
         &Lowering::Lowered,
-    );
+    )?;
     frontend_case(
         "struct initializers",
         |count| {
@@ -979,7 +994,7 @@ fn the_frontend_handles_deep_declarations_on_a_small_stack() {
             )
         },
         &Lowering::Lowered,
-    );
+    )?;
     frontend_case(
         "struct constructors",
         |count| {
@@ -993,7 +1008,7 @@ fn the_frontend_handles_deep_declarations_on_a_small_stack() {
             )
         },
         &Lowering::Lowered,
-    );
+    )?;
     frontend_case(
         "array dimensions",
         |count| {
@@ -1006,7 +1021,7 @@ fn the_frontend_handles_deep_declarations_on_a_small_stack() {
             )
         },
         &Lowering::Lowered,
-    );
+    )?;
     for depth in FRONTEND_DEPTHS {
         let source = shader(
             &format!(
@@ -1017,8 +1032,9 @@ fn the_frontend_handles_deep_declarations_on_a_small_stack() {
             "",
         );
         assert!(
-            matches!(frontend(source, None), Lowering::Rejected(_)),
+            matches!(frontend(source, None)?, Lowering::Rejected(_)),
             "inline structs at {depth}"
         );
     }
+    Ok(())
 }

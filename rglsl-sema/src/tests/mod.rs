@@ -9,6 +9,8 @@ use crate::{analyze, Analysis, DiagnosticKind, Options, Stage};
 
 const CASES: &str = include_str!("cases.txt");
 
+type TestResult<T = ()> = Result<T, alloc::boxed::Box<dyn core::error::Error>>;
+
 pub(crate) struct Case {
     pub name: String,
     pub stage: Stage,
@@ -49,35 +51,35 @@ pub(crate) fn reported(analysis: &Analysis, source: &str) -> Vec<(u32, String)> 
     found
 }
 
-pub(crate) fn cases() -> Vec<Case> {
+pub(crate) fn cases() -> TestResult<Vec<Case>> {
     let mut cases = Vec::new();
     for block in CASES.split("### ").skip(1) {
-        let (header, body) = block.split_once('\n').expect("a case has a header line");
+        let (header, body) = block.split_once('\n').ok_or("a case has no header line")?;
         let fields: Vec<&str> = header.split(" | ").collect();
         let [name, target, expectations] = fields.as_slice() else {
-            panic!("malformed case header: {header}");
+            return Err(format!("malformed case header: {header}").into());
         };
         let mut target = target.split(' ');
         let stage = target
             .next()
             .and_then(Stage::from_extension)
-            .unwrap_or_else(|| panic!("unknown stage in: {header}"));
+            .ok_or_else(|| format!("unknown stage in: {header}"))?;
         let version = target.next().unwrap_or("450");
         let mut expected: Vec<(u32, String)> = if *expectations == "ok" {
             Vec::new()
         } else {
             expectations
                 .split(", ")
-                .map(|expectation| {
+                .map(|expectation| -> TestResult<(u32, String)> {
                     let (line, kind) = expectation
                         .split_once(':')
-                        .unwrap_or_else(|| panic!("malformed expectation in: {header}"));
+                        .ok_or_else(|| format!("malformed expectation in: {header}"))?;
                     let line = line
                         .parse()
-                        .unwrap_or_else(|_| panic!("malformed line in: {header}"));
-                    (line, kind.to_string())
+                        .map_err(|_| format!("malformed line in: {header}"))?;
+                    Ok((line, kind.to_string()))
                 })
-                .collect()
+                .collect::<TestResult<_>>()?
         };
         expected.sort();
         cases.push(Case {
@@ -87,13 +89,13 @@ pub(crate) fn cases() -> Vec<Case> {
             expected,
         });
     }
-    cases
+    Ok(cases)
 }
 
-fn run(filter: impl Fn(&Case) -> bool) -> usize {
+fn run(filter: impl Fn(&Case) -> bool) -> TestResult<usize> {
     let mut failures = Vec::new();
     let mut count = 0;
-    for case in cases().into_iter().filter(|case| filter(case)) {
+    for case in cases()?.into_iter().filter(|case| filter(case)) {
         count += 1;
         let unit = match rglsl_ast::parse(&case.source) {
             Ok(unit) => unit,
@@ -112,28 +114,31 @@ fn run(filter: impl Fn(&Case) -> bool) -> usize {
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
-    count
+    Ok(count)
 }
 
 #[test]
-fn accepted_shaders_have_no_diagnostics() {
-    let count = run(|case| case.expected.is_empty());
+fn accepted_shaders_have_no_diagnostics() -> TestResult {
+    let count = run(|case| case.expected.is_empty())?;
     assert!(count >= 100, "{count}");
+    Ok(())
 }
 
 #[test]
-fn rejected_shaders_report_the_expected_kind_on_the_expected_line() {
-    let count = run(|case| !case.expected.is_empty());
+fn rejected_shaders_report_the_expected_kind_on_the_expected_line() -> TestResult {
+    let count = run(|case| !case.expected.is_empty())?;
     assert!(count >= 150, "{count}");
+    Ok(())
 }
 
 #[test]
-fn case_names_are_unique() {
-    let mut names: Vec<String> = cases().into_iter().map(|case| case.name).collect();
+fn case_names_are_unique() -> TestResult {
+    let mut names: Vec<String> = cases()?.into_iter().map(|case| case.name).collect();
     let total = names.len();
     names.sort();
     names.dedup();
     assert_eq!(names.len(), total);
+    Ok(())
 }
 
 fn words(source: &str) -> Vec<&str> {
@@ -155,7 +160,7 @@ fn words(source: &str) -> Vec<&str> {
 }
 
 #[test]
-fn mutated_shaders_are_analysed_without_panicking() {
+fn mutated_shaders_are_analysed_without_panicking() -> TestResult {
     use alloc::collections::BTreeMap;
     use alloc::sync::Arc;
 
@@ -171,7 +176,7 @@ fn mutated_shaders_are_analysed_without_panicking() {
     };
     let mut analysed = 0;
     let mut rejected = 0;
-    for case in cases() {
+    for case in cases()? {
         let version = if case.source.starts_with("#version 460") {
             460
         } else {
@@ -219,4 +224,5 @@ fn mutated_shaders_are_analysed_without_panicking() {
     }
     assert!(analysed > 1000, "{analysed}");
     assert!(rejected > 300, "{rejected}");
+    Ok(())
 }

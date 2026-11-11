@@ -129,41 +129,47 @@ mod tests {
     }
 
     #[test]
-    fn writes_a_manifest_relative_to_the_root() {
+    fn writes_a_manifest_relative_to_the_root() -> anyhow::Result<()> {
         let jobs = [
             job("/w/a.comp", "glslang.amber", &["dump:0:0", "dump:0:1"]),
             job("/w/probes/x", "p.amber", &[]),
         ];
-        let text = manifest(Path::new("/w"), &jobs).unwrap();
+        let text = manifest(Path::new("/w"), &jobs).map_err(anyhow::Error::msg)?;
         assert_eq!(
             text,
             "0\ta.comp\tglslang.amber\tdump:0:0,dump:0:1\n1\tprobes/x\tp.amber\t\n"
         );
         assert!(manifest(Path::new("/other"), &jobs).is_err());
         assert_eq!(dirs(Path::new("/w"), &jobs), ["a.comp", "probes/x"]);
+        Ok(())
     }
 
     #[test]
-    fn reads_remote_results() {
+    fn reads_remote_results() -> anyhow::Result<()> {
         let dump = "dump:0:0\n 01 02\n";
         assert_eq!(
-            parse_result("ok\n\n", Some(dump), true).unwrap()["dump:0:0"],
+            parse_result("ok\n\n", Some(dump), true).map_err(anyhow::Error::msg)?["dump:0:0"],
             [1, 2]
         );
-        assert!(parse_result("ok\n\n", None, false).unwrap().is_empty());
+        assert!(parse_result("ok\n\n", None, false)
+            .map_err(anyhow::Error::msg)?
+            .is_empty());
         assert_eq!(
-            parse_result("ok\n\n", None, true).unwrap_err(),
-            "the remote run returned no dump"
+            parse_result("ok\n\n", None, true).err().as_deref(),
+            Some("the remote run returned no dump")
         );
         assert_eq!(
-            parse_result("exit\namber exited with 1: bad\n", None, true).unwrap_err(),
-            "amber exited with 1: bad"
+            parse_result("exit\namber exited with 1: bad\n", None, true)
+                .err()
+                .as_deref(),
+            Some("amber exited with 1: bad")
         );
         assert_eq!(
-            parse_result("timeout\n", None, true).unwrap_err(),
-            "timeout"
+            parse_result("timeout\n", None, true).err().as_deref(),
+            Some("timeout")
         );
         assert!(parse_result("", None, true).is_err());
+        Ok(())
     }
 
     #[test]

@@ -44,11 +44,14 @@ goal, the language rules for linkage and `#include`, and the milestones (M0–M9
   `MAX_TYPE_DEPTH`, the preprocessor limits, `MAX_BLOCK_DEPTH`), with small frames, and the
   same test runs the whole pipeline at every limit on a 1 MiB debug stack; fix an overflow
   there by shrinking frames, never by raising the stack size (`docs/design/stack.md`).
-- **No `unwrap` or other panics in non-test code.** `unwrap`, `expect`, `panic!`,
-  `unreachable!`, `unimplemented!` and `todo!` are denied by clippy in every crate; return a
-  `Result` instead, and never a silent default that hides a broken invariant. Tests may use
-  them (`clippy.toml`). The only exception is the arena handle overflow in
-  `Handle::from_usize`, an allocation limit like `Vec::push`.
+- **No `unwrap` or `expect` anywhere, no other panics in non-test code.** `unwrap`, `expect`,
+  `panic!`, `unreachable!`, `unimplemented!` and `todo!` are denied by clippy in every crate;
+  return a `Result` instead, and never a silent default that hides a broken invariant.
+  `unwrap`/`expect` (and `unwrap_err`/`expect_err`) are banned in tests too (`clippy.toml`):
+  tests and their helpers return `Result` and use `?`, an `Option` becomes an error with
+  `ok_or`/`context` or a `let ... else`, and `unwrap_or_else(|| panic!(..))` is no way around
+  it. Tests may still fail with `assert!`/`panic!`. The only exception is the arena handle
+  overflow in `Handle::from_usize`, an allocation limit like `Vec::push`.
 - The compiler is called **rglsl** everywhere (crates, binary, docs); "naga" only names
   the upstream project it was forked from.
 - Keep the IR's style: arenas, typed handles, exhaustive `match`, `Result` errors.

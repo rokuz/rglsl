@@ -24,12 +24,7 @@ mod fuzz {
             Options {
                 stage: proxy.stage,
                 // NOTE: This is a workaround needed due to lack of rust-fuzz/arbitrary support for hashbrown.
-                defines: FastHashMap::from_iter(
-                    proxy
-                        .defines
-                        .keys()
-                        .map(|k| (k.clone(), proxy.defines.get(&k.clone()).unwrap().clone())),
-                ),
+                defines: FastHashMap::from_iter(proxy.defines),
                 auto_map_bindings: proxy.auto_map_bindings,
                 auto_map_locations: proxy.auto_map_locations,
             }

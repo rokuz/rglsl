@@ -124,6 +124,9 @@ pub const ABSTRACT_WIDTH: Bytes = 8;
 /// Map of expressions that have associated variable names
 pub(crate) type NamedExpressions = FastIndexMap<Handle<Expression>, String>;
 
+#[cfg(test)]
+type TestResult<T = ()> = Result<T, alloc::boxed::Box<dyn core::error::Error>>;
+
 pub type NonUniformExpressions = FastIndexMap<Handle<Expression>, NonUniform>;
 
 pub type PrecisionExpressions = FastIndexMap<Handle<Expression>, Precision>;

@@ -450,23 +450,25 @@ mod tests {
     }
 
     #[test]
-    fn vertex_harness_feeds_every_input() {
+    fn vertex_harness_feeds_every_input() -> anyhow::Result<()> {
         let source = vertex_for_fragment(&[
             varying(0, ScalarKind::Float, 4),
             varying(2, ScalarKind::Sint, 1),
         ])
-        .unwrap();
+        .map_err(anyhow::Error::msg)?;
         assert!(source.contains("layout(location = 0) out vec4 v0;"));
         assert!(source.contains("layout(location = 2) flat out int v2;"));
         assert!(source.contains("v2 = int((gl_VertexIndex + 8));"));
         assert!(source.contains("gl_Position = a_pos;"));
+        Ok(())
     }
 
     #[test]
-    fn harnesses_handle_arrays() {
+    fn harnesses_handle_arrays() -> anyhow::Result<()> {
         let mut array = varying(2, ScalarKind::Float, 4);
         array.array = Some(2);
-        let source = vertex_for_fragment(std::slice::from_ref(&array)).unwrap();
+        let source =
+            vertex_for_fragment(std::slice::from_ref(&array)).map_err(anyhow::Error::msg)?;
         assert!(source.contains("layout(location = 2) out vec4 v2[2];"));
         assert!(source.contains("v2[1] = vec4("));
         let (source, attachments, ignored) = fragment_for_vertex(&[array]);
@@ -474,6 +476,7 @@ mod tests {
         assert_eq!(attachments.len(), 3);
         assert!(source.contains("layout(location = 2) in vec4 v2[2];"));
         assert!(source.contains("o2 = vec4(v2[1]);"));
+        Ok(())
     }
 
     #[test]
@@ -504,18 +507,19 @@ mod tests {
     }
 
     #[test]
-    fn tessellation_harnesses_forward_varyings() {
+    fn tessellation_harnesses_forward_varyings() -> anyhow::Result<()> {
         let mut patch = varying(4, ScalarKind::Float, 2);
         patch.patch = true;
-        let source =
-            control_for_evaluation(&[varying(1, ScalarKind::Uint, 1), patch.clone()]).unwrap();
+        let source = control_for_evaluation(&[varying(1, ScalarKind::Uint, 1), patch.clone()])
+            .map_err(anyhow::Error::msg)?;
         assert!(source.contains("layout(vertices = 3) out;"));
         assert!(source.contains("layout(location = 1) out uint v1[];"));
         assert!(source.contains("v1[gl_InvocationID] = uint(uint(gl_InvocationID + 4));"));
         assert!(source.contains("layout(location = 4) patch out vec2 p4;"));
         assert!(source.contains("gl_TessLevelInner[1] = 3.0;"));
         let (source, forwarded) =
-            evaluation_for_control(&[varying(0, ScalarKind::Float, 4), patch], 4).unwrap();
+            evaluation_for_control(&[varying(0, ScalarKind::Float, 4), patch], 4)
+                .map_err(anyhow::Error::msg)?;
         assert!(source.contains("layout(location = 0) in vec4 i0[];"));
         assert!(source.contains("gl_TessCoord.z * i0[2]"));
         assert!(source.contains("layout(location = 4) patch in vec2 i4;"));
@@ -523,5 +527,6 @@ mod tests {
         let mut array = varying(2, ScalarKind::Float, 4);
         array.array = Some(2);
         assert!(evaluation_for_control(&[array], 3).is_err());
+        Ok(())
     }
 }

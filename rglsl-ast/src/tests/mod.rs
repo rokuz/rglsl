@@ -17,6 +17,15 @@ use crate::ast::{
 };
 use crate::{parse, placeholder, print};
 
+type TestResult<T = ()> = Result<T, alloc::boxed::Box<dyn core::error::Error>>;
+
+fn rejected<T, E>(result: Result<T, E>, why: &str) -> TestResult<E> {
+    match result {
+        Ok(_) => Err(format!("accepted, but {why}").into()),
+        Err(error) => Ok(error),
+    }
+}
+
 fn unit(source: &str) -> TranslationUnit {
     match parse(source) {
         Ok(unit) => unit,

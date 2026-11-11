@@ -4,6 +4,7 @@ use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
 
+use super::TestResult;
 use crate::builtins::{Builtins, ResourceLimits, Stage};
 use crate::scope::{Direction, Storage, SymbolKind};
 use crate::types::{
@@ -600,7 +601,7 @@ fn constants_take_their_values_from_the_resource_limits() {
 }
 
 #[test]
-fn opaque_type_names_round_trip() {
+fn opaque_type_names_round_trip() -> TestResult {
     let names = [
         "sampler",
         "samplerShadow",
@@ -637,7 +638,7 @@ fn opaque_type_names_round_trip() {
         "usubpassInputMS",
     ];
     for name in names {
-        let opaque = Opaque::from_keyword(name).unwrap_or_else(|| panic!("{name}"));
+        let opaque = Opaque::from_keyword(name).ok_or_else(|| format!("{name} is not opaque"))?;
         assert_eq!(opaque.to_string(), name);
     }
     for name in [
@@ -653,15 +654,16 @@ fn opaque_type_names_round_trip() {
     ] {
         assert_eq!(Opaque::from_keyword(name), None, "{name}");
     }
-    let image = Opaque::from_keyword("uimage2DArray").expect("an image type");
+    let image = Opaque::from_keyword("uimage2DArray").ok_or("uimage2DArray is not opaque")?;
     assert_eq!(image.kind, OpaqueKind::Image);
     assert_eq!(image.sampled, SampledType::Uint);
     assert_eq!(image.dimension, TextureDimension::D2);
     assert!(image.arrayed && !image.shadow && !image.multisample);
+    Ok(())
 }
 
 #[test]
-fn type_helpers() {
+fn type_helpers() -> TestResult {
     let registry = TypeRegistry::new();
     let vec3 = Type::vector(Scalar::Float, 3);
     let mat = Type::matrix(Scalar::Double, 4, 2);
@@ -688,7 +690,7 @@ fn type_helpers() {
     assert_eq!(nested.display(&registry).to_string(), "int[][3]");
     assert_eq!(nested.length(), None);
     assert_eq!(nested.component_count(), None);
-    let inner = nested.element_type().expect("an element type");
+    let inner = nested.element_type().ok_or("no element type")?;
     assert_eq!(inner.display(&registry).to_string(), "int[3]");
     assert_eq!(inner.length(), Some(3));
     assert_eq!(inner.flattened_size(&registry), Some(3));
@@ -700,6 +702,7 @@ fn type_helpers() {
     assert!(!vec3.is_opaque());
     assert!(Type::ERROR.is_error() && Type::VOID.is_void());
     assert_eq!(Type::ERROR.display(&registry).to_string(), "<error>");
+    Ok(())
 }
 
 #[test]
@@ -749,7 +752,7 @@ fn implicit_conversions_follow_the_rank() {
 }
 
 #[test]
-fn structs_are_interned_with_their_properties() {
+fn structs_are_interned_with_their_properties() -> TestResult {
     use crate::scope::Qualifiers;
     use crate::types::Member;
     let mut registry = TypeRegistry::new();
@@ -766,7 +769,7 @@ fn structs_are_interned_with_their_properties() {
                 member("image", Type::opaque(Opaque::plain_sampler(false))),
             ],
         )
-        .expect("a struct id");
+        .ok_or("no struct id")?;
     let outer = registry
         .add_struct(
             Some("Outer".to_string()),
@@ -775,7 +778,7 @@ fn structs_are_interned_with_their_properties() {
                 member("count", Type::INT),
             ],
         )
-        .expect("a struct id");
+        .ok_or("no struct id")?;
     let same = registry
         .add_struct(
             Some("Outer".to_string()),
@@ -784,7 +787,7 @@ fn structs_are_interned_with_their_properties() {
                 member("count", Type::INT),
             ],
         )
-        .expect("a struct id");
+        .ok_or("no struct id")?;
     assert_ne!(outer, same);
     let ty = Type::structure(outer);
     assert!(ty.contains_opaque(&registry));
@@ -801,8 +804,9 @@ fn structs_are_interned_with_their_properties() {
         "Outer[2]"
     );
     assert!(matches!(ty.kind, TypeKind::Struct(_)));
-    let structure = registry.structure(outer).expect("the struct");
+    let structure = registry.structure(outer).ok_or("no struct")?;
     assert_eq!(structure.member("count").map(|(index, _)| index), Some(1));
     assert_eq!(structure.flattened_size, None);
     assert_eq!(registry.structs().len(), 3);
+    Ok(())
 }
