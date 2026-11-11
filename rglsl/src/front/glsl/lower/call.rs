@@ -218,6 +218,16 @@ impl FunctionLowerer<'_, '_> {
                 values.push(self.ray_query_pointer(argument)?);
                 continue;
             }
+            if parameter.direction == Direction::In
+                && matches!(parameter.ty.kind, TypeKind::Spirv(_))
+            {
+                let value = self.rvalue(argument)?;
+                let local = self.local(&parameter.ty, None, at)?;
+                let pointer = self.local_pointer(local, at)?;
+                self.push(Statement::Store { pointer, value }, at);
+                values.push(self.local_pointer(local, at)?);
+                continue;
+            }
             if parameter.direction == Direction::In {
                 let value = self.rvalue(argument)?;
                 let source = match self.expressions[value] {

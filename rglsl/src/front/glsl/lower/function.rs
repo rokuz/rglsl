@@ -318,7 +318,9 @@ impl<'a> Lowerer<'a> {
                     space: AddressSpace::Private,
                 });
                 Local::Pointer(index)
-            } else if parameter.direction.is_output() {
+            } else if parameter.direction.is_output()
+                || matches!(parameter.ty.kind, rglsl_sema::TypeKind::Spirv(_))
+            {
                 ty = self.insert_type(TypeInner::Pointer {
                     base: ty,
                     space: AddressSpace::Function,

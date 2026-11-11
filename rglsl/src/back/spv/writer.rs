@@ -1811,6 +1811,7 @@ impl Writer {
                     | crate::TypeInner::TensorLayout { .. }
                     | crate::TypeInner::TensorView { .. }
                     | crate::TypeInner::Spirv { .. } => None,
+                    _ if contains_raw_type(&ir_module.types, variable.ty) => None,
                     _ => {
                         let plain = context.writer.plain_type_id(type_id);
                         if context.writer.contains_physical_type(plain) {
@@ -5545,4 +5546,17 @@ fn reachable_functions(module: &crate::Module) -> Vec<&crate::Function> {
         calls(&function.body, &mut pending);
     }
     reached
+}
+
+fn contains_raw_type(types: &UniqueArena<crate::Type>, ty: Handle<crate::Type>) -> bool {
+    match types[ty].inner {
+        crate::TypeInner::Spirv { .. } => true,
+        crate::TypeInner::Array { base, .. } | crate::TypeInner::BindingArray { base, .. } => {
+            contains_raw_type(types, base)
+        }
+        crate::TypeInner::Struct { ref members, .. } => members
+            .iter()
+            .any(|member| contains_raw_type(types, member.ty)),
+        _ => false,
+    }
 }
