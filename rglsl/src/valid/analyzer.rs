@@ -1733,6 +1733,7 @@ fn uniform_control_flow() {
             heap_offset: None,
             tile_attachment: false,
             spirv_decorations: Default::default(),
+            immediate_bank: None,
         },
         Default::default(),
     );
@@ -1750,6 +1751,7 @@ fn uniform_control_flow() {
             heap_offset: None,
             tile_attachment: false,
             spirv_decorations: Default::default(),
+            immediate_bank: None,
         },
         Default::default(),
     );

@@ -88,6 +88,7 @@ impl Builder {
                 heap_offset: None,
                 tile_attachment: false,
                 spirv_decorations: Vec::new(),
+                immediate_bank: None,
             },
             Span::UNDEFINED,
         )
@@ -558,6 +559,7 @@ fn invalid_interfaces_are_rejected() {
                 heap_offset: None,
                 tile_attachment: false,
                 spirv_decorations: Vec::new(),
+                immediate_bank: None,
             },
             Span::UNDEFINED,
         );

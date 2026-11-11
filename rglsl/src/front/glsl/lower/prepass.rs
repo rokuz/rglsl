@@ -84,6 +84,7 @@ impl<'a> Lowerer<'a> {
     pub(super) fn prepass(&mut self, _definitions: &[&'a Node<FunctionDefinition>]) {
         let analysis = self.analysis;
         let mut edges: Vec<(SymbolId, SymbolId)> = Vec::new();
+        let mut plain: BTreeSet<SymbolId> = BTreeSet::new();
         for expression in rglsl_ast::expressions(self.unit) {
             match expression.kind {
                 ExpressionKind::Variable(_) => {
@@ -102,12 +103,16 @@ impl<'a> Lowerer<'a> {
                             let Some(opaque) = ty.as_opaque() else {
                                 continue;
                             };
-                            if opaque.kind != OpaqueKind::CombinedSampler || !opaque.shadow {
+                            if opaque.kind != OpaqueKind::CombinedSampler {
                                 continue;
                             }
-                            if let Some(texture) =
-                                call.arguments.first().and_then(|a| self.variable_symbol(a))
-                            {
+                            let texture =
+                                call.arguments.first().and_then(|a| self.variable_symbol(a));
+                            if !opaque.shadow {
+                                plain.extend(texture);
+                                continue;
+                            }
+                            if let Some(texture) = texture {
                                 self.depth.insert(texture);
                             }
                             if let Some(sampler) =
@@ -195,7 +200,7 @@ impl<'a> Lowerer<'a> {
         loop {
             let mut changed = false;
             for &(argument, parameter) in &edges {
-                for set in [&mut self.depth, &mut self.comparison] {
+                for set in [&mut self.depth, &mut self.comparison, &mut plain] {
                     if set.contains(&argument) != set.contains(&parameter) {
                         set.insert(argument);
                         set.insert(parameter);
@@ -207,6 +212,7 @@ impl<'a> Lowerer<'a> {
                 break;
             }
         }
+        self.depth.retain(|texture| !plain.contains(texture));
     }
 
     pub(super) fn function_order(
