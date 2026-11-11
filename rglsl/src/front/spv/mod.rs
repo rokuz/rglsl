@@ -973,6 +973,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                     name: None,
                     ty,
                     init: None,
+                    relaxed_precision: false,
                 },
                 crate::Span::default(),
             );
@@ -2628,6 +2629,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                 matrix_layout: None,
                 xfb_offset: None,
                 heap: None,
+                relaxed_precision: false,
             });
         }
 
@@ -3088,6 +3090,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                     heap_offset: None,
                     tile_attachment: false,
                     spirv_decorations: Vec::new(),
+                    relaxed_precision: false,
                     immediate_bank: None,
                 };
                 (Variable::Global, var)
@@ -3143,6 +3146,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                     heap_offset: None,
                     tile_attachment: false,
                     spirv_decorations: Vec::new(),
+                    relaxed_precision: false,
                     immediate_bank: None,
                 };
 
@@ -3150,6 +3154,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                     name: dec.name,
                     ty: unsigned_ty,
                     binding: Some(binding),
+                    relaxed_precision: false,
                 });
                 (inner, var)
             }
@@ -3211,9 +3216,14 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                     heap_offset: None,
                     tile_attachment: false,
                     spirv_decorations: Vec::new(),
+                    relaxed_precision: false,
                     immediate_bank: None,
                 };
-                let inner = Variable::Output(crate::FunctionResult { ty, binding });
+                let inner = Variable::Output(crate::FunctionResult {
+                    ty,
+                    binding,
+                    relaxed_precision: false,
+                });
                 (inner, var)
             }
         };

@@ -471,6 +471,9 @@ impl<'a> Parser<'a> {
         allow_definition: bool,
     ) -> Result<ExternalDeclaration> {
         let start = self.start();
+        if allow_definition && self.at_attribute_list() {
+            return self.parse_attributed_function(start);
+        }
         if self.eat_word("precision") {
             let qualifier = self.parse_precision_qualifier()?;
             let ty = self.parse_type_specifier()?;
@@ -510,7 +513,7 @@ impl<'a> Parser<'a> {
         }
         let name = self.identifier()?;
         if self.at("(") {
-            return self.parse_function(start, ty, name, allow_definition);
+            return self.parse_function(start, ty, name, Vec::new(), allow_definition);
         }
         let mut declarators = Vec::new();
         declarators.push(self.parse_init_declarator(name)?);
@@ -521,6 +524,24 @@ impl<'a> Parser<'a> {
         self.expect(";")?;
         let list = InitDeclaratorList { ty, declarators };
         self.declaration(start, DeclarationKind::InitDeclaratorList(list))
+    }
+
+    fn parse_attributed_function(&mut self, start: u32) -> Result<ExternalDeclaration> {
+        let attributes = self.parse_attribute_list()?;
+        let qualifier = self.parse_type_qualifier()?;
+        let specifier = self.parse_type_specifier()?;
+        let return_type = self.spanned(
+            start,
+            FullySpecifiedType {
+                qualifier,
+                specifier,
+            },
+        );
+        let name = self.identifier()?;
+        if !self.at("(") {
+            return Err(self.unexpected("`(`"));
+        }
+        self.parse_function(start, return_type, name, attributes, true)
     }
 
     fn parse_qualifier_declaration(
@@ -600,9 +621,14 @@ impl<'a> Parser<'a> {
         start: u32,
         return_type: Spanned<FullySpecifiedType>,
         name: Identifier,
+        attributes: Vec<Attribute>,
         allow_definition: bool,
     ) -> Result<ExternalDeclaration> {
-        let prototype = self.parse_prototype(start, return_type, name)?;
+        let mut prototype = self.parse_prototype(start, return_type, name)?;
+        prototype.attributes = attributes;
+        if self.at_attribute_list() {
+            prototype.trailing_attributes = self.parse_attribute_list()?;
+        }
         if self.eat(";") {
             return self.declaration(start, DeclarationKind::FunctionPrototype(prototype));
         }
@@ -640,6 +666,8 @@ impl<'a> Parser<'a> {
                 return_type,
                 name,
                 parameters,
+                attributes: Vec::new(),
+                trailing_attributes: Vec::new(),
             },
         ))
     }
@@ -1265,13 +1293,31 @@ impl<'a> Parser<'a> {
                 self.parse_jump(JumpStatement::IgnoreIntersection)
             }
             TokenKind::Word("return") => self.parse_return(),
-            TokenKind::Punctuator("[") if self.at_nth(1, "[") => self.parse_attributed(),
+            TokenKind::Punctuator("[") if self.at_attribute_list() => self.parse_attributed(),
             _ => self.parse_simple_statement(),
         }
     }
 
     fn parse_attributed(&mut self) -> Result<Statement> {
         let start = self.start();
+        let attributes = self.parse_attribute_list()?;
+        if !matches!(
+            self.peek().kind,
+            TokenKind::Word("if" | "switch" | "while" | "do" | "for")
+        ) {
+            return Err(self.unexpected("a selection, switch or iteration statement"));
+        }
+        let statement = Box::new(self.parse_unguarded_statement()?);
+        self.node(
+            start,
+            StatementKind::Attributed {
+                attributes,
+                statement,
+            },
+        )
+    }
+
+    fn parse_attribute_list(&mut self) -> Result<Vec<Attribute>> {
         self.expect("[")?;
         self.expect("[")?;
         let mut attributes = Vec::new();
@@ -1296,20 +1342,11 @@ impl<'a> Parser<'a> {
         }
         self.expect("]")?;
         self.expect("]")?;
-        if !matches!(
-            self.peek().kind,
-            TokenKind::Word("if" | "switch" | "while" | "do" | "for")
-        ) {
-            return Err(self.unexpected("a selection, switch or iteration statement"));
-        }
-        let statement = Box::new(self.parse_unguarded_statement()?);
-        self.node(
-            start,
-            StatementKind::Attributed {
-                attributes,
-                statement,
-            },
-        )
+        Ok(attributes)
+    }
+
+    fn at_attribute_list(&self) -> bool {
+        self.at("[") && self.at_nth(1, "[")
     }
 
     fn parse_compound_as_statement(&mut self) -> Result<Statement> {

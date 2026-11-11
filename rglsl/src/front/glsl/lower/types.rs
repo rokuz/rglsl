@@ -33,6 +33,11 @@ pub(super) const fn scalar(scalar: GlslScalar) -> Scalar {
         GlslScalar::BFloat16 => Scalar::BF16,
         GlslScalar::FloatE4M3 => Scalar::FE4M3,
         GlslScalar::FloatE5M2 => Scalar::FE5M2,
+        GlslScalar::FloatE2M1 => Scalar::FE2M1,
+        GlslScalar::FloatE3M2 => Scalar::FE3M2,
+        GlslScalar::FloatE2M3 => Scalar::FE2M3,
+        GlslScalar::FloatUE8M0 => Scalar::FUE8M0,
+        GlslScalar::FloatMXINT8 => Scalar::FMXINT8,
     }
 }
 
@@ -117,6 +122,7 @@ impl Lowerer<'_> {
                     matrix_layout: None,
                     xfb_offset: None,
                     heap: None,
+                    relaxed_precision: false,
                 },
                 StructMember {
                     name: None,
@@ -126,6 +132,7 @@ impl Lowerer<'_> {
                     matrix_layout: None,
                     xfb_offset: None,
                     heap: None,
+                    relaxed_precision: false,
                 },
             ],
             span,
@@ -153,6 +160,7 @@ impl Lowerer<'_> {
                 matrix_layout: None,
                 xfb_offset: None,
                 heap: None,
+                relaxed_precision: false,
             })
             .collect();
         self.insert_type(TypeInner::Struct { members, span })
@@ -464,6 +472,7 @@ impl Lowerer<'_> {
                 matrix_layout: None,
                 xfb_offset: None,
                 heap: None,
+                relaxed_precision: super::relaxed(&member.qualifiers),
             });
             offset = offset.saturating_add(layout.size);
         }
@@ -671,6 +680,7 @@ impl Lowerer<'_> {
                 matrix_layout: info.matrix_layout,
                 xfb_offset: None,
                 heap: None,
+                relaxed_precision: super::relaxed(qualifiers),
             });
             extent = extent.max(offset.saturating_add(info.span));
             offset = offset.saturating_add(placement.size);

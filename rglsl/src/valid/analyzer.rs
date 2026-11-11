@@ -1089,6 +1089,12 @@ impl FunctionInfo {
                     requirements: UniformityRequirements::empty(),
                 }
             }
+            E::Bitcast { expr, offset, .. } => Uniformity {
+                non_uniform_result: self
+                    .add_ref(expr)
+                    .or(offset.and_then(|offset| self.add_ref(offset))),
+                requirements: UniformityRequirements::empty(),
+            },
             E::ArrayConversion { expr, index, .. } => Uniformity {
                 non_uniform_result: self
                     .add_ref(expr)
@@ -1815,6 +1821,7 @@ fn uniform_control_flow() {
             heap_offset: None,
             tile_attachment: false,
             spirv_decorations: Default::default(),
+            relaxed_precision: false,
             immediate_bank: None,
         },
         Default::default(),
@@ -1833,6 +1840,7 @@ fn uniform_control_flow() {
             heap_offset: None,
             tile_attachment: false,
             spirv_decorations: Default::default(),
+            relaxed_precision: false,
             immediate_bank: None,
         },
         Default::default(),

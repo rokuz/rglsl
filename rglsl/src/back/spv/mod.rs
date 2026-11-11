@@ -109,6 +109,7 @@ mod intrinsics;
 mod layout;
 mod mesh_shader;
 mod message;
+mod microscaling;
 mod physical;
 mod plain_types;
 mod qcom;

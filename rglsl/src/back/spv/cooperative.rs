@@ -369,8 +369,7 @@ impl BlockContext<'_> {
             return Ok(expr_id);
         }
         let id = self.gen_id();
-        let float =
-            |kind: Sk| matches!(kind, Sk::Float | Sk::BFloat | Sk::FloatE4M3 | Sk::FloatE5M2);
+        let float = |kind: Sk| kind.is_any_float();
         if convert.is_some() && (float(source.kind) || float(kind)) && source.kind != Sk::Bool {
             let op = match (float(source.kind), kind) {
                 (true, Sk::Sint) => Some(Op::ConvertFToS),
@@ -846,15 +845,7 @@ impl BlockContext<'_> {
         let target = self.result_scalar(result)?;
         let matrix_id = self.cached.get(matrix)?;
         let integer = |kind: ScalarKind| matches!(kind, ScalarKind::Sint | ScalarKind::Uint);
-        let float = |kind: ScalarKind| {
-            matches!(
-                kind,
-                ScalarKind::Float
-                    | ScalarKind::BFloat
-                    | ScalarKind::FloatE4M3
-                    | ScalarKind::FloatE5M2
-            )
-        };
+        let float = |kind: ScalarKind| kind.is_any_float();
         let op = match (source.kind, target.kind) {
             _ if source == target => Op::CooperativeMatrixConvertNV,
             (from, to) if float(from) && float(to) => Op::FConvert,

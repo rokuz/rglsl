@@ -598,6 +598,29 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   global expressions); `Module::spirv_requirements` (extensions and capabilities). An `Input` or
   `Output` global with a raw `BuiltIn` decoration (`proc::has_spirv_built_in`) needs no binding.
   The SPIR-V backend writes them in `back/spv/intrinsics.rs`.
+- **Function attributes.** `Function::control` (`FunctionControl::{None, Inline,
+  DontInline}`, serialized only when not `None`) is the `OpFunction` control of
+  `GL_EXT_function_control_attributes`. `EntryPoint::reconvergence` (`Reconvergence {
+  subgroup_uniform_control_flow, maximally_reconverges }`) writes the
+  `SubgroupUniformControlFlowKHR` and `MaximallyReconvergesKHR` execution modes. As in glslang,
+  the two reconvergence attributes apply to the compilation unit, whichever function carries
+  them; the linker keeps the entry unit's.
+- **OCP microscaling types** (`docs/design/cooperative.md`). Scalar kinds
+  `ScalarKind::{FloatE2M1, FloatE3M2, FloatE2M3, FloatUE8M0, FloatMXINT8}` with
+  `Literal::{FE2M1, FE3M2, FE2M3, FUE8M0, FMXINT8}` (the bits) and `Scalar::{FE2M1, FE3M2, FE2M3,
+  FUE8M0, FMXINT8}`; their `width` is one byte, `Scalar::bit_width` gives the 4 or 6 bits of
+  the sub-byte ones. `ScalarKind::is_encoded_float` and `is_any_float` name the float kinds.
+  `Expression::Bitcast { expr, ty, offset }` reinterprets bits across shapes: without an offset
+  `ty` has the bit size of `expr` (`OpBitcast`), with one it is `OpBitcastExtractEXT`. The
+  backend writes the types, capabilities and `SPV_EXT_ocp_microscaling_types` in
+  `back/spv/microscaling.rs`, with raw enumerant values the `spirv` crate lacks.
+- **Precision decorations** (`docs/design/precision.md`). `Function::precision`
+  (`PrecisionExpressions`: expression handles with `Precision` flags `RELAXED` and
+  `NO_CONTRACTION`, kept like `Function::non_uniform`) puts `RelaxedPrecision` and
+  `NoContraction` on the instruction the backend writes for an expression. `relaxed_precision`
+  (new, serialized only when set) on `GlobalVariable`, `LocalVariable`, `FunctionArgument`,
+  `FunctionResult` and `StructMember` decorates the variable, the parameter, the function and
+  the member; a struct member's flag is part of the struct type. Upstream has no precision.
 
 - **Built-ins of fragment and draw extensions.** `BuiltIn::SamplePosition`,
   `HelperInvocation` (`Volatile` from SPIR-V 1.6 without the Vulkan memory model, as glslang

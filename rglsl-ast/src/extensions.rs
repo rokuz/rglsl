@@ -365,6 +365,11 @@ pub enum Feature {
     BFloat16Type,
     FloatE4M3Type,
     FloatE5M2Type,
+    FloatE2M1Type,
+    FloatE3M2Type,
+    FloatE2M3Type,
+    FloatUE8M0Type,
+    FloatMXINT8Type,
     Int64ImageType,
     TileImageType,
 }
@@ -423,6 +428,11 @@ impl Feature {
             Self::BFloat16Type => &["GL_EXT_bfloat16"],
             Self::FloatE4M3Type => &["GL_EXT_float_e4m3"],
             Self::FloatE5M2Type => &["GL_EXT_float_e5m2"],
+            Self::FloatE2M1Type => &["GL_EXT_float_e2m1"],
+            Self::FloatE3M2Type => &["GL_EXT_float_e3m2"],
+            Self::FloatE2M3Type => &["GL_EXT_float_e2m3"],
+            Self::FloatUE8M0Type => &["GL_EXT_float_ue8m0"],
+            Self::FloatMXINT8Type => &["GL_EXT_float_mxint8"],
             Self::Int64ImageType => &["GL_EXT_shader_image_int64"],
             Self::TileImageType => &["GL_EXT_shader_tile_image"],
         }
@@ -488,6 +498,16 @@ impl Feature {
             Self::FloatE4M3Type
         } else if word == "floate5m2_t" || vector("fe5m2vec") {
             Self::FloatE5M2Type
+        } else if word == "floate2m1_t" || vector("fe2m1vec") {
+            Self::FloatE2M1Type
+        } else if word == "floate3m2_t" || vector("fe3m2vec") {
+            Self::FloatE3M2Type
+        } else if word == "floate2m3_t" || vector("fe2m3vec") {
+            Self::FloatE2M3Type
+        } else if word == "floatue8m0_t" || vector("fue8m0vec") {
+            Self::FloatUE8M0Type
+        } else if word == "floatmxint8_t" || vector("fmxint8vec") {
+            Self::FloatMXINT8Type
         } else if family(["int64_t", "uint64_t"], ["i64vec", "u64vec"]) {
             Self::Int64Type
         } else if family(["int8_t", "uint8_t"], ["i8vec", "u8vec"]) {

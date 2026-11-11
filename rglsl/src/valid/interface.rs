@@ -314,7 +314,12 @@ impl LocationShape {
                 | Sk::AbstractFloat
                 | Sk::BFloat
                 | Sk::FloatE4M3
-                | Sk::FloatE5M2 => return None,
+                | Sk::FloatE5M2
+                | Sk::FloatE2M1
+                | Sk::FloatE3M2
+                | Sk::FloatE2M3
+                | Sk::FloatUE8M0
+                | Sk::FloatMXINT8 => return None,
             };
             // A double takes two components, so a `dvec3` or `dvec4` spills
             // into a second location.

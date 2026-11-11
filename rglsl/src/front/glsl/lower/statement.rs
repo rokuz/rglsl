@@ -306,9 +306,6 @@ impl FunctionLowerer<'_, '_> {
                         continue;
                     };
                     let variable = self.lw.variable(symbol).ok_or_else(|| internal(at))?;
-                    if variable.qualifiers.precise {
-                        return Err(unsupported("`precise`", at));
-                    }
                     if variable.qualifiers.specialization {
                         if let Some(initializer) = declarator.initializer.as_ref() {
                             let name = Some(declarator.name.node.clone());
@@ -358,6 +355,13 @@ impl FunctionLowerer<'_, '_> {
             | DeclarationKind::FunctionPrototype(_)
             | DeclarationKind::SpirvInstruction { .. }
             | DeclarationKind::SpirvExecutionMode(_) => Ok(()),
+            DeclarationKind::QualifiedIdentifiers { ref qualifier, .. }
+                if qualifier.qualifiers.iter().all(|single| {
+                    matches!(single.node, rglsl_ast::ast::SingleTypeQualifier::Precise)
+                }) =>
+            {
+                Ok(())
+            }
             DeclarationKind::Block { .. }
             | DeclarationKind::Qualifier(_)
             | DeclarationKind::QualifiedIdentifiers { .. } => {

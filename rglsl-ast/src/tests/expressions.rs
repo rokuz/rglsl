@@ -203,6 +203,11 @@ fn numeric_literals_keep_their_text_and_suffix() {
         ("3.0lf", NumericKind::Double, "lf"),
         (".5e1LF", NumericKind::Double, "LF"),
         ("09.5", NumericKind::Float, ""),
+        ("10.fe2m1", NumericKind::FloatE2M1, "fe2m1"),
+        ("1.0fe3m2", NumericKind::FloatE3M2, "fe3m2"),
+        ("1e2fe2m3", NumericKind::FloatE2M3, "fe2m3"),
+        ("1.0fue8m0", NumericKind::FloatUE8M0, "fue8m0"),
+        ("0.5fmxint8", NumericKind::FloatMXINT8, "fmxint8"),
     ];
     for (text, kind, suffix) in cases {
         let parsed = expression(text);
@@ -220,7 +225,18 @@ fn numeric_literals_keep_their_text_and_suffix() {
 #[test]
 fn malformed_numeric_literals_are_errors() {
     for text in [
-        "08", "1f", "0x", "1.0lff", "1e", "1.0fu", "12abc", "1.x", "0x1.0",
+        "08",
+        "1f",
+        "0x",
+        "1.0lff",
+        "1e",
+        "1.0fu",
+        "12abc",
+        "1.x",
+        "0x1.0",
+        "1.0Fe2m1",
+        "1.0fe2m1x",
+        "1.0fe4m3",
     ] {
         let source = format!("void f() {{ a = {text}; }}");
         match parse(&source) {

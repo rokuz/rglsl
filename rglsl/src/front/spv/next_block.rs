@@ -161,6 +161,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                                 _ => lookup_ty.handle,
                             },
                             init,
+                            relaxed_precision: false,
                         },
                         span,
                     );
@@ -190,6 +191,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                             name: Some(name),
                             ty: self.lookup_type.lookup(result_type_id)?.handle,
                             init: None,
+                            relaxed_precision: false,
                         },
                         self.span_from(start),
                     );

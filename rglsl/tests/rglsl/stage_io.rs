@@ -88,6 +88,7 @@ impl Builder {
                 heap_offset: None,
                 tile_attachment: false,
                 spirv_decorations: Vec::new(),
+                relaxed_precision: false,
                 immediate_bank: None,
             },
             Span::UNDEFINED,
@@ -110,6 +111,7 @@ impl Builder {
                 matrix_layout: None,
                 xfb_offset: None,
                 heap: None,
+                relaxed_precision: false,
             })
             .collect::<Vec<_>>();
         let span = 16 * u32::try_from(members.len()).unwrap();
@@ -209,6 +211,7 @@ impl Builder {
             tile_shading: rglsl::TileShading::default(),
             derivative_group: None,
             spirv_execution_modes: Vec::new(),
+            reconvergence: rglsl::Reconvergence::default(),
         });
         self.module
     }
@@ -560,6 +563,7 @@ fn invalid_interfaces_are_rejected() {
                 heap_offset: None,
                 tile_attachment: false,
                 spirv_decorations: Vec::new(),
+                relaxed_precision: false,
                 immediate_bank: None,
             },
             Span::UNDEFINED,

@@ -487,6 +487,13 @@ fn process_function(
             .entry(adjusted_local_expressions[expr_h])
             .or_default() |= flags;
     }
+    let precision = mem::take(&mut function.precision);
+    for (expr_h, flags) in precision {
+        *function
+            .precision
+            .entry(adjusted_local_expressions[expr_h])
+            .or_default() |= flags;
+    }
 
     Ok(())
 }
@@ -885,6 +892,16 @@ fn adjust_expr(new_pos: &HandleVec<Expression, Handle<Expression>>, expr: &mut E
             adjust(expr);
             if let Some(index) = index.as_mut() {
                 adjust(index);
+            }
+        }
+        Expression::Bitcast {
+            ref mut expr,
+            ref mut offset,
+            ..
+        } => {
+            adjust(expr);
+            if let Some(offset) = offset.as_mut() {
+                adjust(offset);
             }
         }
         Expression::CooperativeMatrixResult { .. } | Expression::TensorCreate { .. } => {}

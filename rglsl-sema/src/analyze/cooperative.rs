@@ -696,6 +696,18 @@ impl Analyzer<'_> {
                 (all_same(1) && long_first && element.is_integer()).then(|| long(signed(element)))
             }
             "expectEXT" => (all_same(2) && long_first && !element.is_floating()).then_some(first),
+            "bitcastExtractfe2m1EXT" | "bitcastExtractfe3m2EXT" | "bitcastExtractfe2m3EXT" => {
+                let target = match name {
+                    "bitcastExtractfe2m1EXT" => Scalar::FloatE2M1,
+                    "bitcastExtractfe3m2EXT" => Scalar::FloatE3M2,
+                    _ => Scalar::FloatE2M3,
+                };
+                (operands.len() == 2
+                    && long_first
+                    && element == Scalar::Uint8
+                    && scalar_integers(1..2))
+                .then(|| long(target))
+            }
             "frexp" | "ldexp" => {
                 let exponent = operands.get(1).map(|operand| &operand.ty);
                 (operands.len() == 2

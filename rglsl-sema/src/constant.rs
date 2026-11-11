@@ -23,6 +23,11 @@ pub enum Value {
     BFloat16(f64),
     FloatE4M3(f64),
     FloatE5M2(f64),
+    FloatE2M1(f64),
+    FloatE3M2(f64),
+    FloatE2M3(f64),
+    FloatUE8M0(f64),
+    FloatMXINT8(f64),
 }
 
 fn round_to_half(value: f64) -> f64 {
@@ -59,6 +64,11 @@ impl Value {
             Self::BFloat16(_) => Scalar::BFloat16,
             Self::FloatE4M3(_) => Scalar::FloatE4M3,
             Self::FloatE5M2(_) => Scalar::FloatE5M2,
+            Self::FloatE2M1(_) => Scalar::FloatE2M1,
+            Self::FloatE3M2(_) => Scalar::FloatE3M2,
+            Self::FloatE2M3(_) => Scalar::FloatE2M3,
+            Self::FloatUE8M0(_) => Scalar::FloatUE8M0,
+            Self::FloatMXINT8(_) => Scalar::FloatMXINT8,
         }
     }
 
@@ -78,7 +88,12 @@ impl Value {
             | Scalar::Float16
             | Scalar::BFloat16
             | Scalar::FloatE4M3
-            | Scalar::FloatE5M2 => Self::floating(scalar, wide as f64),
+            | Scalar::FloatE5M2
+            | Scalar::FloatE2M1
+            | Scalar::FloatE3M2
+            | Scalar::FloatE2M3
+            | Scalar::FloatUE8M0
+            | Scalar::FloatMXINT8 => Self::floating(scalar, wide as f64),
         }
     }
 
@@ -96,6 +111,11 @@ impl Value {
             Scalar::FloatE5M2 => Self::FloatE5M2(small_float::fe5m2_to_f64(
                 small_float::fe5m2_from_f64(value),
             )),
+            Scalar::FloatE2M1 => Self::FloatE2M1(value),
+            Scalar::FloatE3M2 => Self::FloatE3M2(value),
+            Scalar::FloatE2M3 => Self::FloatE2M3(value),
+            Scalar::FloatUE8M0 => Self::FloatUE8M0(value),
+            Scalar::FloatMXINT8 => Self::FloatMXINT8(value),
             _ => Self::integer(scalar, truncate_float(value)),
         }
     }
@@ -121,7 +141,12 @@ impl Value {
             | Self::Float16(value)
             | Self::BFloat16(value)
             | Self::FloatE4M3(value)
-            | Self::FloatE5M2(value) => Some(value),
+            | Self::FloatE5M2(value)
+            | Self::FloatE2M1(value)
+            | Self::FloatE3M2(value)
+            | Self::FloatE2M3(value)
+            | Self::FloatUE8M0(value)
+            | Self::FloatMXINT8(value) => Some(value),
             _ => None,
         }
     }
@@ -153,7 +178,12 @@ impl Value {
             | Self::Float16(value)
             | Self::BFloat16(value)
             | Self::FloatE4M3(value)
-            | Self::FloatE5M2(value) => value,
+            | Self::FloatE5M2(value)
+            | Self::FloatE2M1(value)
+            | Self::FloatE3M2(value)
+            | Self::FloatE2M3(value)
+            | Self::FloatUE8M0(value)
+            | Self::FloatMXINT8(value) => value,
             other => other.wide().map_or(0.0, |value| value as f64),
         }
     }

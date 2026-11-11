@@ -224,6 +224,7 @@ mod tests {
             matrix_layout: None,
             xfb_offset: None,
             heap: None,
+            relaxed_precision: false,
         };
         let s = add(
             Some("S"),

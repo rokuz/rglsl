@@ -1270,6 +1270,7 @@ fn local_expression_override() {
         result: Some(crate::FunctionResult {
             ty: ty_u32,
             binding: None,
+            relaxed_precision: false,
         }),
         ..crate::Function::default()
     };

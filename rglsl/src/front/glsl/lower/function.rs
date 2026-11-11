@@ -31,6 +31,8 @@ pub(super) struct FunctionLowerer<'l, 'a> {
     pub variables: BTreeMap<SymbolId, Local>,
     pub specializing: bool,
     pub non_uniform: crate::NonUniformExpressions,
+    pub precision: crate::PrecisionExpressions,
+    pub stepped: Option<Handle<Expression>>,
     pub physical_bases: BTreeMap<Handle<Expression>, Handle<crate::Type>>,
     pub argument_types: Vec<Handle<crate::Type>>,
 }
@@ -80,8 +82,20 @@ impl<'l, 'a> FunctionLowerer<'l, 'a> {
             variables: BTreeMap::new(),
             specializing: false,
             non_uniform: crate::NonUniformExpressions::default(),
+            precision: crate::PrecisionExpressions::default(),
+            stepped: None,
             physical_bases: BTreeMap::new(),
             argument_types: Vec::new(),
+        }
+    }
+
+    pub(super) fn mark_precision(
+        &mut self,
+        expression: Handle<Expression>,
+        flags: crate::Precision,
+    ) {
+        if !flags.is_empty() {
+            *self.precision.entry(expression).or_default() |= flags;
         }
     }
 
@@ -122,6 +136,19 @@ impl<'l, 'a> FunctionLowerer<'l, 'a> {
     pub(super) fn flush(&mut self) {
         let emitted = self.emitter.finish(&self.expressions);
         self.block.extend(emitted);
+        let analysis = self.lw.analysis;
+        for (&symbol, local) in &self.variables {
+            let Local::Variable(handle) = *local else {
+                continue;
+            };
+            let relaxed_symbol = analysis
+                .symbol(symbol)
+                .and_then(|symbol| symbol.variable())
+                .is_some_and(|variable| super::relaxed(&variable.qualifiers));
+            if relaxed_symbol {
+                self.locals[handle].relaxed_precision = true;
+            }
+        }
         self.emitter.start(&self.expressions);
     }
 
@@ -207,6 +234,7 @@ impl<'l, 'a> FunctionLowerer<'l, 'a> {
                 name,
                 ty: ir,
                 init: None,
+                relaxed_precision: false,
             },
             span,
         ))
@@ -223,6 +251,7 @@ impl<'l, 'a> FunctionLowerer<'l, 'a> {
                 name,
                 ty,
                 init: None,
+                relaxed_precision: false,
             },
             span,
         )
@@ -261,9 +290,11 @@ impl<'l, 'a> FunctionLowerer<'l, 'a> {
             expressions: self.expressions,
             named_expressions: crate::NamedExpressions::default(),
             non_uniform: self.non_uniform,
+            precision: self.precision,
             body,
             diagnostic_filter_leaf: None,
             linkage: crate::Linkage::Definition,
+            control: crate::FunctionControl::None,
         }
     }
 }
@@ -323,9 +354,6 @@ impl<'a> Lowerer<'a> {
                 .get(usize::try_from(index).unwrap_or(usize::MAX))
                 .copied()
                 .flatten();
-            if parameter.qualifiers.precise {
-                return Err(unsupported("`precise`", span));
-            }
             let mut ty = self.parameter_type(&parameter.ty, symbol, span)?;
             let ray_query = parameter
                 .ty
@@ -353,6 +381,7 @@ impl<'a> Lowerer<'a> {
                 name: parameter.name.clone(),
                 ty,
                 binding: None,
+                relaxed_precision: super::relaxed(&parameter.qualifiers),
             });
         }
         let result = if function.return_type.is_void() {
@@ -361,6 +390,7 @@ impl<'a> Lowerer<'a> {
             Some(FunctionResult {
                 ty: self.ir_type(&function.return_type, span)?,
                 binding: None,
+                relaxed_precision: super::relaxed(&function.return_qualifiers),
             })
         };
         Ok((arguments, result, locals))
@@ -457,8 +487,15 @@ impl<'a> Lowerer<'a> {
             let pointer = lowerer.add(Expression::GlobalVariable(initialization.global), span)?;
             lowerer.push(Statement::Store { pointer, value }, span);
         }
+        let control = match (function.control.inline, function.control.dont_inline) {
+            (true, false) => crate::FunctionControl::Inline,
+            (false, true) => crate::FunctionControl::DontInline,
+            (true, true) | (false, false) => crate::FunctionControl::None,
+        };
         lowerer.statements(&definition.body.statements)?;
-        Ok(lowerer.finish(result, arguments, name))
+        let mut lowered = lowerer.finish(result, arguments, name);
+        lowered.control = control;
+        Ok(lowered)
     }
 
     pub(super) fn entry_point(&mut self, definition: &'a Node<FunctionDefinition>) -> Result<()> {
@@ -509,6 +546,10 @@ impl<'a> Lowerer<'a> {
             tile_shading: self.tile_shading(),
             derivative_group: self.derivative_group(),
             spirv_execution_modes,
+            reconvergence: crate::Reconvergence {
+                subgroup_uniform_control_flow: self.analysis.subgroup_uniform_control_flow,
+                maximally_reconverges: self.analysis.maximally_reconverges,
+            },
         });
         Ok(())
     }

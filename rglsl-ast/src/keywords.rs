@@ -98,7 +98,7 @@ const RESERVED_UNDER_VULKAN: [&str; 7] = [
 
 const EXTENSION_ONLY: [&str; 4] = ["inline", "noinline", "pervertexNV", "pervertexEXT"];
 
-const EXTENSION_KEYWORDS: [&str; 105] = [
+const EXTENSION_KEYWORDS: [&str; 85] = [
     "terminateInvocation",
     "terminateRayEXT",
     "ignoreIntersectionEXT",
@@ -111,26 +111,6 @@ const EXTENSION_KEYWORDS: [&str; 105] = [
     "nonprivate",
     "i64image2DRect",
     "u64image2DRect",
-    "floate2m1_t",
-    "fe2m1vec2",
-    "fe2m1vec3",
-    "fe2m1vec4",
-    "floate3m2_t",
-    "fe3m2vec2",
-    "fe3m2vec3",
-    "fe3m2vec4",
-    "floate2m3_t",
-    "fe2m3vec2",
-    "fe2m3vec3",
-    "fe2m3vec4",
-    "floatue8m0_t",
-    "fue8m0vec2",
-    "fue8m0vec3",
-    "fue8m0vec4",
-    "floatmxint8_t",
-    "fmxint8vec2",
-    "fmxint8vec3",
-    "fmxint8vec4",
     "spirv_instruction",
     "spirv_execution_mode",
     "spirv_execution_mode_id",
