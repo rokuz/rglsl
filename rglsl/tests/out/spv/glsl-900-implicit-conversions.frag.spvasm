@@ -8,24 +8,24 @@ OpMemoryModel Logical GLSL450
 OpEntryPoint Fragment %31 "main"
 OpExecutionMode %31 OriginUpperLeft
 %2 = OpTypeVoid
-%3 = OpTypeFloat 32
-%4 = OpTypeInt 32 1
-%5 = OpTypeVector %3 3
-%9 = OpTypeFunction %2 %4
-%11 = OpTypePointer Function %4
-%12 = OpConstantNull  %4
-%17 = OpTypeFunction %2 %3
-%19 = OpTypePointer Function %3
-%20 = OpConstantNull  %3
+%3 = OpTypeInt 32 1
+%4 = OpTypeFloat 32
+%5 = OpTypeVector %4 3
+%9 = OpTypeFunction %2 %3
+%11 = OpTypePointer Function %3
+%12 = OpConstantNull  %3
+%17 = OpTypeFunction %2 %4
+%19 = OpTypePointer Function %4
+%20 = OpConstantNull  %4
 %25 = OpTypeFunction %2 %5
 %27 = OpTypePointer Function %5
 %28 = OpConstantNull  %5
 %32 = OpTypeFunction %2
-%33 = OpConstant  %4  1
-%34 = OpConstant  %3  1
+%33 = OpConstant  %3  1
+%34 = OpConstant  %4  1
 %35 = OpConstantComposite  %5  %34 %34 %34
 %8 = OpFunction  %2  None %9
-%7 = OpFunctionParameter  %4
+%7 = OpFunctionParameter  %3
 %6 = OpLabel
 %10 = OpVariable  %11  Function %12
 OpBranch %13
@@ -34,7 +34,7 @@ OpStore %10 %7
 OpReturn
 OpFunctionEnd
 %16 = OpFunction  %2  None %17
-%15 = OpFunctionParameter  %3
+%15 = OpFunctionParameter  %4
 %14 = OpLabel
 %18 = OpVariable  %19  Function %20
 OpBranch %21
