@@ -516,7 +516,65 @@ pub struct LayoutQualifierId {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TypeSpecifier {
     pub non_array: TypeSpecifierNonArray,
+    pub parameters: Option<Spanned<TypeParameters>>,
     pub array: Option<Spanned<ArraySpecifier>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TypeParameters {
+    pub element: Option<Box<Spanned<TypeSpecifier>>>,
+    pub values: Vec<Expression>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ParameterizedType {
+    CooperativeMatrix,
+    FloatCooperativeMatrixNv,
+    IntCooperativeMatrixNv,
+    UintCooperativeMatrixNv,
+    CooperativeVectorNv,
+    LongVector,
+    TensorLayoutNv,
+    TensorViewNv,
+}
+
+impl ParameterizedType {
+    pub const ALL: [Self; 8] = [
+        Self::CooperativeMatrix,
+        Self::FloatCooperativeMatrixNv,
+        Self::IntCooperativeMatrixNv,
+        Self::UintCooperativeMatrixNv,
+        Self::CooperativeVectorNv,
+        Self::LongVector,
+        Self::TensorLayoutNv,
+        Self::TensorViewNv,
+    ];
+
+    pub const fn keyword(self) -> &'static str {
+        match self {
+            Self::CooperativeMatrix => "coopmat",
+            Self::FloatCooperativeMatrixNv => "fcoopmatNV",
+            Self::IntCooperativeMatrixNv => "icoopmatNV",
+            Self::UintCooperativeMatrixNv => "ucoopmatNV",
+            Self::CooperativeVectorNv => "coopvecNV",
+            Self::LongVector => "vector",
+            Self::TensorLayoutNv => "tensorLayoutNV",
+            Self::TensorViewNv => "tensorViewNV",
+        }
+    }
+
+    pub fn from_keyword(word: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|kind| kind.keyword() == word)
+    }
+
+    pub const fn is_nv_matrix(self) -> bool {
+        matches!(
+            self,
+            Self::FloatCooperativeMatrixNv
+                | Self::IntCooperativeMatrixNv
+                | Self::UintCooperativeMatrixNv
+        )
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -524,6 +582,7 @@ pub enum TypeSpecifierNonArray {
     Void,
     Basic(BasicType),
     Opaque(String),
+    Parameterized(ParameterizedType),
     Struct(StructSpecifier),
     TypeName(String),
     InlineBlock(Vec<Spanned<StructDeclaration>>),
@@ -554,10 +613,13 @@ pub enum ScalarType {
     Int64,
     Uint64,
     Float16,
+    BFloat16,
+    FloatE4M3,
+    FloatE5M2,
 }
 
 impl ScalarType {
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 15] = [
         Self::Bool,
         Self::Int,
         Self::Uint,
@@ -570,6 +632,9 @@ impl ScalarType {
         Self::Int64,
         Self::Uint64,
         Self::Float16,
+        Self::BFloat16,
+        Self::FloatE4M3,
+        Self::FloatE5M2,
     ];
 
     pub const fn keyword(self) -> &'static str {
@@ -586,6 +651,9 @@ impl ScalarType {
             Self::Int64 => "int64_t",
             Self::Uint64 => "uint64_t",
             Self::Float16 => "float16_t",
+            Self::BFloat16 => "bfloat16_t",
+            Self::FloatE4M3 => "floate4m3_t",
+            Self::FloatE5M2 => "floate5m2_t",
         }
     }
 
@@ -603,6 +671,9 @@ impl ScalarType {
             Self::Int64 => "i64vec",
             Self::Uint64 => "u64vec",
             Self::Float16 => "f16vec",
+            Self::BFloat16 => "bf16vec",
+            Self::FloatE4M3 => "fe4m3vec",
+            Self::FloatE5M2 => "fe5m2vec",
         }
     }
 

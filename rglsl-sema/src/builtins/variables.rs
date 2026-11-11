@@ -547,6 +547,52 @@ pub(super) const MEMORY_SCOPE_CONSTANTS: [(&str, i32); 18] = [
     ("gl_StorageSemanticsOutput", 0x1000),
 ];
 
+const COOPERATIVE_CONSTANTS: [(&str, i32); 40] = [
+    ("gl_MatrixUseA", 0),
+    ("gl_MatrixUseB", 1),
+    ("gl_MatrixUseAccumulator", 2),
+    ("gl_MatrixOperandsSaturatingAccumulation", 0x10),
+    ("gl_CooperativeMatrixLayoutRowMajor", 0),
+    ("gl_CooperativeMatrixLayoutColumnMajor", 1),
+    ("gl_CooperativeMatrixLayoutRowBlockedInterleavedARM", 4202),
+    (
+        "gl_CooperativeMatrixLayoutColumnBlockedInterleavedARM",
+        4203,
+    ),
+    ("gl_CooperativeMatrixReduceRowNV", 0x1),
+    ("gl_CooperativeMatrixReduceColumnNV", 0x2),
+    ("gl_CooperativeMatrixReduceRowAndColumnNV", 0x3),
+    ("gl_CooperativeMatrixReduce2x2NV", 0x4),
+    ("gl_CooperativeMatrixReduceRowEXT", 0x1),
+    ("gl_CooperativeMatrixReduceColumnEXT", 0x2),
+    ("gl_CooperativeMatrixReduceRowAndColumnEXT", 0x3),
+    ("gl_CooperativeMatrixReduce2x2EXT", 0x4),
+    ("gl_CooperativeMatrixClampModeUndefinedNV", 0x0),
+    ("gl_CooperativeMatrixClampModeConstantNV", 0x1),
+    ("gl_CooperativeMatrixClampModeClampToEdgeNV", 0x2),
+    ("gl_CooperativeMatrixClampModeRepeatNV", 0x3),
+    ("gl_CooperativeMatrixClampModeMirrorRepeatNV", 0x4),
+    ("gl_CooperativeVectorMatrixLayoutRowMajorNV", 0),
+    ("gl_CooperativeVectorMatrixLayoutColumnMajorNV", 1),
+    ("gl_CooperativeVectorMatrixLayoutInferencingOptimalNV", 2),
+    ("gl_CooperativeVectorMatrixLayoutTrainingOptimalNV", 3),
+    ("gl_ComponentTypeFloat16NV", 0),
+    ("gl_ComponentTypeFloat32NV", 1),
+    ("gl_ComponentTypeFloat64NV", 2),
+    ("gl_ComponentTypeSignedInt8NV", 3),
+    ("gl_ComponentTypeSignedInt16NV", 4),
+    ("gl_ComponentTypeSignedInt32NV", 5),
+    ("gl_ComponentTypeSignedInt64NV", 6),
+    ("gl_ComponentTypeUnsignedInt8NV", 7),
+    ("gl_ComponentTypeUnsignedInt16NV", 8),
+    ("gl_ComponentTypeUnsignedInt32NV", 9),
+    ("gl_ComponentTypeUnsignedInt64NV", 10),
+    ("gl_ComponentTypeSignedInt8PackedNV", 1_000_491_000),
+    ("gl_ComponentTypeUnsignedInt8PackedNV", 1_000_491_001),
+    ("gl_ComponentTypeFloatE4M3NV", 1_000_491_002),
+    ("gl_ComponentTypeFloatE5M2NV", 1_000_491_003),
+];
+
 pub(super) fn build(
     version: u32,
     stage: Stage,
@@ -560,7 +606,10 @@ pub(super) fn build(
     for (name, value) in limits.integer_constants() {
         builder.constant(name, Type::INT, alloc::vec![Value::Int(value)]);
     }
-    for (name, value) in MEMORY_SCOPE_CONSTANTS {
+    for (name, value) in MEMORY_SCOPE_CONSTANTS
+        .into_iter()
+        .chain(COOPERATIVE_CONSTANTS)
+    {
         builder.constant(name, Type::INT, alloc::vec![Value::Int(value)]);
     }
     let triple = |values: [i32; 3]| values.iter().map(|value| Value::Int(*value)).collect();

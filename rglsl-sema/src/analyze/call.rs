@@ -228,19 +228,33 @@ impl Analyzer<'_> {
             return Operand::error();
         }
         self.calls.insert(expression.id, Callee::Length);
+        let matrix_usage = operand
+            .ty
+            .as_cooperative_matrix()
+            .map(|matrix| matrix.usage);
+        if matrix_usage.is_some_and(|usage| usage != crate::types::CooperativeUse::Nv) {
+            return Operand::temporary(Type::INT);
+        }
+        let specialized = matrix_usage.is_some()
+            || matches!(
+                operand.ty.sized_vector_length(),
+                Some(ArraySize::Specialized(_))
+            )
+            || (operand.ty.length().is_none()
+                && matches!(operand.ty.outer_size(), Some(ArraySize::Specialized(_))));
+        if specialized {
+            self.specialization_uses += 1;
+            return Operand {
+                specialization: true,
+                ..Operand::constant(Type::INT, None)
+            };
+        }
         match operand.ty.length() {
             Some(length) => {
                 let value = i32::try_from(length)
                     .ok()
                     .map(|length| Constant::single(Value::Int(length)));
                 Operand::constant(Type::INT, value)
-            }
-            None if matches!(operand.ty.outer_size(), Some(ArraySize::Specialized(_))) => {
-                self.specialization_uses += 1;
-                Operand {
-                    specialization: true,
-                    ..Operand::constant(Type::INT, None)
-                }
             }
             None if operand.ty.is_array() => {
                 let resizable = matches!(
@@ -318,6 +332,19 @@ impl Analyzer<'_> {
         if name == DEBUG_PRINTF || name == ABORT {
             return self.message_call(expression, span, name, arguments);
         }
+        if super::cooperative_call::cooperative_function(name)
+            && self.scopes.function_levels(name).is_empty()
+        {
+            return self.cooperative_call(expression, span, name, arguments);
+        }
+        if self.scopes.function_levels(name).is_empty() {
+            if let Some(call) = super::cooperative_matrix2::tensor_call(name) {
+                return self.tensor_function(expression, span, name, call, arguments);
+            }
+            if super::cooperative_matrix2::matrix_call(name) {
+                return self.matrix2_function(expression, span, name, arguments);
+            }
+        }
         let operands: Vec<Operand> = arguments
             .iter()
             .map(|argument| self.expression(argument))
@@ -333,6 +360,14 @@ impl Analyzer<'_> {
             }
         }
         let types: Vec<Type> = operands.iter().map(|operand| operand.ty.clone()).collect();
+        if types
+            .iter()
+            .any(|ty| ty.sized_vector_length().is_some() && !ty.is_array())
+            && self.scopes.function_levels(name).is_empty()
+            && !self.builtins.overloads(name).is_empty()
+        {
+            return self.long_vector_builtin(expression, span, name, arguments, &operands);
+        }
         let levels: Vec<Vec<Candidate>> = self
             .scopes
             .function_levels(name)
@@ -618,12 +653,23 @@ impl Analyzer<'_> {
         Operand::temporary(Type::VOID)
     }
 
-    fn builtin_extensions(&mut self, span: Span, name: &str) {
+    pub(crate) fn builtin_extensions(&mut self, span: Span, name: &str) {
         if matches!(name, "subgroupQuadAll" | "subgroupQuadAny") {
             self.require_extension(span, subgroup::QUAD_CONTROL, name);
         }
         if let Some(extension) = subgroup::function_extension(name) {
             self.require_extension(span, extension, name);
+        }
+        if matches!(name, "expectEXT" | "assumeEXT") {
+            self.require_extension(span, "GL_EXT_expect_assume", name);
+        }
+        let lower = name.to_ascii_lowercase();
+        if lower.contains("bfloat16") {
+            self.require_extension(span, "GL_EXT_bfloat16", name);
+        } else if lower.contains("floate4m3") {
+            self.require_extension(span, "GL_EXT_float_e4m3", name);
+        } else if lower.contains("floate5m2") {
+            self.require_extension(span, "GL_EXT_float_e5m2", name);
         }
         self.mesh_function_extension(span, name);
     }
@@ -933,6 +979,30 @@ impl Analyzer<'_> {
         if operands.iter().any(|operand| operand.ty.is_string()) {
             return fail(self, &ty, "cannot convert a string");
         }
+        let encoded = |ty: &Type| ty.base_scalar().is_some_and(Scalar::is_encoded_float);
+        let boolean = |ty: &Type| ty.base_scalar() == Some(Scalar::Bool);
+        if !ty.is_array()
+            && operands.iter().any(|operand| {
+                (encoded(&ty) && boolean(&operand.ty)) || (boolean(&ty) && encoded(&operand.ty))
+            })
+        {
+            return fail(self, &ty, "can't convert");
+        }
+        if !ty.is_array()
+            && matches!(
+                ty.kind,
+                TypeKind::CooperativeMatrix(_)
+                    | TypeKind::LongVector { .. }
+                    | TypeKind::CooperativeVector { .. }
+            )
+        {
+            let operand = self.cooperative_constructor(span, &ty, &operands);
+            if !operand.ty.is_error() {
+                self.calls
+                    .insert(expression.id, Callee::Constructor(ty.clone()));
+            }
+            return operand;
+        }
         let numeric =
             !ty.is_array() && matches!(ty.kind, TypeKind::Scalar(_) | TypeKind::Vector { .. });
         if ty.is_reference() || numeric {
@@ -1168,7 +1238,7 @@ impl Analyzer<'_> {
         }
     }
 
-    fn fold_constructor(
+    pub(crate) fn fold_constructor(
         &self,
         ty: &Type,
         scalar: Scalar,

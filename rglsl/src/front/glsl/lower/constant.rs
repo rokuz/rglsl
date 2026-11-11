@@ -1,7 +1,7 @@
 use alloc::vec::Vec;
 
 use rglsl_sema::constant::Value;
-use rglsl_sema::types::{Type as GlslType, TypeKind};
+use rglsl_sema::types::{ArraySize, Type as GlslType, TypeKind};
 
 use super::{internal, Lowerer, Result};
 use crate::{Expression, Handle, Literal, Span};
@@ -20,6 +20,9 @@ pub(super) fn literal(value: Value) -> Literal {
         Value::Float16(value) => Literal::F16(half::f16::from_f64(value)),
         Value::Int8(value) => Literal::I8(value),
         Value::Uint8(value) => Literal::U8(value),
+        Value::BFloat16(value) => Literal::BF16(crate::proc::small_float::bf16_from_f64(value)),
+        Value::FloatE4M3(value) => Literal::FE4M3(crate::proc::small_float::fe4m3_from_f64(value)),
+        Value::FloatE5M2(value) => Literal::FE5M2(crate::proc::small_float::fe5m2_from_f64(value)),
     }
 }
 
@@ -45,6 +48,18 @@ pub(super) fn shape(
         TypeKind::Scalar(_) => values.first().copied().map(Shape::Literal),
         TypeKind::Vector { scalar, size } => Some(Shape::Compose(
             (0..usize::from(size))
+                .map(|index| (GlslType::scalar(scalar), index, 1))
+                .collect(),
+        )),
+        TypeKind::LongVector {
+            scalar,
+            size: ArraySize::Sized(size),
+        }
+        | TypeKind::CooperativeVector {
+            scalar,
+            size: ArraySize::Sized(size),
+        } => Some(Shape::Compose(
+            (0..usize::try_from(size).ok()?)
                 .map(|index| (GlslType::scalar(scalar), index, 1))
                 .collect(),
         )),

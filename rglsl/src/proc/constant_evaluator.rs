@@ -323,6 +323,15 @@ impl LiteralVector {
             v
         }
         match literal {
+            Literal::BF16(e) => {
+                Self::F32(arrayvec_of(crate::proc::small_float::bf16_to_f64(e) as f32))
+            }
+            Literal::FE4M3(e) => {
+                Self::F32(arrayvec_of(crate::proc::small_float::fe4m3_to_f64(e) as f32))
+            }
+            Literal::FE5M2(e) => {
+                Self::F32(arrayvec_of(crate::proc::small_float::fe5m2_to_f64(e) as f32))
+            }
             Literal::F64(e) => Self::F64(arrayvec_of(e)),
             Literal::F32(e) => Self::F32(arrayvec_of(e)),
             Literal::U8(e) => Self::U8(arrayvec_of(e)),
@@ -362,6 +371,9 @@ impl LiteralVector {
             }};
         }
         Ok(match components[0] {
+            Literal::BF16(_) | Literal::FE4M3(_) | Literal::FE5M2(_) => {
+                return Err(ConstantEvaluatorError::InvalidMathArg)
+            }
             Literal::I8(_) => compose_literals!(components, I8, I8),
             Literal::U8(_) => compose_literals!(components, U8, U8),
             Literal::I16(_) => compose_literals!(components, I16, I16),
@@ -803,7 +815,9 @@ impl ExpressionKindTracker {
             Expression::Literal(_) | Expression::ZeroValue(_) | Expression::Constant(_) => {
                 ExpressionKind::Const
             }
-            Expression::Override(_) => ExpressionKind::Override,
+            Expression::Override(_) | Expression::CooperativeMatrixLength { .. } => {
+                ExpressionKind::Override
+            }
             Expression::Compose { ref components, .. } => {
                 let mut expr_type = ExpressionKind::Const;
                 for component in components {
@@ -811,7 +825,9 @@ impl ExpressionKindTracker {
                 }
                 expr_type
             }
-            Expression::Splat { value, .. } => self.type_of(value),
+            Expression::Splat { value, .. } | Expression::Replicate { value, .. } => {
+                self.type_of(value)
+            }
             Expression::AccessIndex { base, .. } => self.type_of(base),
             Expression::Access { base, index } => self.type_of(base).max(self.type_of(index)),
             Expression::Swizzle { vector, .. } => self.type_of(vector),
@@ -1264,6 +1280,10 @@ impl<'a> ConstantEvaluator<'a> {
                 let value = self.check_and_get(value)?;
                 self.register_evaluated_expr(Expression::Splat { size, value }, span)
             }
+            Expression::Replicate { ty, value } => {
+                let value = self.check_and_get(value)?;
+                self.register_evaluated_expr(Expression::Replicate { ty, value }, span)
+            }
             Expression::AccessIndex { base, index } => {
                 let base = self.check_and_get(base)?;
 
@@ -1378,9 +1398,16 @@ impl<'a> ConstantEvaluator<'a> {
             Expression::SubgroupOperationResult { .. } => {
                 Err(ConstantEvaluatorError::SubgroupExpression)
             }
-            Expression::CooperativeLoad { .. } | Expression::CooperativeMultiplyAdd { .. } => {
-                Err(ConstantEvaluatorError::CooperativeOperation)
-            }
+            Expression::CooperativeLoad { .. }
+            | Expression::CooperativeMultiplyAdd { .. }
+            | Expression::CooperativeMatrixLength { .. }
+            | Expression::Expect { .. }
+            | Expression::CooperativeVectorLoad { .. }
+            | Expression::CooperativeVectorMatMul { .. }
+            | Expression::Convert { .. }
+            | Expression::CooperativeMatrixResult { .. }
+            | Expression::TensorCreate { .. }
+            | Expression::TensorSet { .. } => Err(ConstantEvaluatorError::CooperativeOperation),
         }
     }
 
@@ -2525,7 +2552,50 @@ impl<'a> ConstantEvaluator<'a> {
 
         let expr = match self.expressions[expr] {
             Expression::Literal(literal) => {
+                let literal = match literal {
+                    Literal::BF16(v) => Literal::F64(crate::proc::small_float::bf16_to_f64(v)),
+                    Literal::FE4M3(v) => Literal::F64(crate::proc::small_float::fe4m3_to_f64(v)),
+                    Literal::FE5M2(v) => Literal::F64(crate::proc::small_float::fe5m2_to_f64(v)),
+                    other => other,
+                };
+                let wide = |literal: Literal| -> Option<f64> {
+                    Some(match literal {
+                        Literal::F64(v) | Literal::AbstractFloat(v) => v,
+                        Literal::F32(v) => f64::from(v),
+                        Literal::F16(v) => f16::to_f64(v),
+                        Literal::U8(v) => f64::from(v),
+                        Literal::I8(v) => f64::from(v),
+                        Literal::U16(v) => f64::from(v),
+                        Literal::I16(v) => f64::from(v),
+                        Literal::U32(v) => f64::from(v),
+                        Literal::I32(v) => f64::from(v),
+                        Literal::U64(v) => v as f64,
+                        Literal::I64(v) | Literal::AbstractInt(v) => v as f64,
+                        Literal::Bool(_)
+                        | Literal::BF16(_)
+                        | Literal::FE4M3(_)
+                        | Literal::FE5M2(_) => return None,
+                    })
+                };
                 let literal = match target {
+                    Sc::BF16 => match wide(literal) {
+                        Some(value) => {
+                            Literal::BF16(crate::proc::small_float::bf16_from_f64(value))
+                        }
+                        None => return make_error(),
+                    },
+                    Sc::FE4M3 => match wide(literal) {
+                        Some(value) => {
+                            Literal::FE4M3(crate::proc::small_float::fe4m3_from_f64(value))
+                        }
+                        None => return make_error(),
+                    },
+                    Sc::FE5M2 => match wide(literal) {
+                        Some(value) => {
+                            Literal::FE5M2(crate::proc::small_float::fe5m2_from_f64(value))
+                        }
+                        None => return make_error(),
+                    },
                     Sc::I8 => Literal::I8(match literal {
                         Literal::I8(v) => v,
                         Literal::U8(v) => v as i8,
@@ -2539,6 +2609,9 @@ impl<'a> ConstantEvaluator<'a> {
                         Literal::F64(v) => v as i8,
                         Literal::AbstractInt(v) => v as i8,
                         Literal::AbstractFloat(v) => v as i8,
+                        Literal::BF16(_) | Literal::FE4M3(_) | Literal::FE5M2(_) => {
+                            return make_error()
+                        }
                         Literal::F16(v) => f16::to_f32(v) as i8,
                         Literal::Bool(v) => i8::from(v),
                     }),
@@ -2555,6 +2628,9 @@ impl<'a> ConstantEvaluator<'a> {
                         Literal::F64(v) => v as u8,
                         Literal::AbstractInt(v) => v as u8,
                         Literal::AbstractFloat(v) => v as u8,
+                        Literal::BF16(_) | Literal::FE4M3(_) | Literal::FE5M2(_) => {
+                            return make_error()
+                        }
                         Literal::F16(v) => f16::to_f32(v) as u8,
                         Literal::Bool(v) => u8::from(v),
                     }),
@@ -2575,6 +2651,9 @@ impl<'a> ConstantEvaluator<'a> {
                         Literal::U64(v) => v as i16,
                         Literal::AbstractInt(v) => v as i16,
                         Literal::AbstractFloat(v) => v as i16,
+                        Literal::BF16(_) | Literal::FE4M3(_) | Literal::FE5M2(_) => {
+                            return make_error()
+                        }
                     }),
                     Sc::U16 => Literal::U16(match literal {
                         Literal::U8(v) => v as u16,
@@ -2591,6 +2670,9 @@ impl<'a> ConstantEvaluator<'a> {
                         Literal::U64(v) => v as u16,
                         Literal::AbstractInt(v) => v as u16,
                         Literal::AbstractFloat(v) => v as u16,
+                        Literal::BF16(_) | Literal::FE4M3(_) | Literal::FE5M2(_) => {
+                            return make_error()
+                        }
                     }),
                     Sc::I32 => Literal::I32(match literal {
                         Literal::U8(v) => v as i32,
@@ -2607,6 +2689,9 @@ impl<'a> ConstantEvaluator<'a> {
                         Literal::U64(v) => v as i32,
                         Literal::AbstractInt(v) => i32::try_from_abstract(v)?,
                         Literal::AbstractFloat(v) => i32::try_from_abstract(v)?,
+                        Literal::BF16(_) | Literal::FE4M3(_) | Literal::FE5M2(_) => {
+                            return make_error()
+                        }
                     }),
                     Sc::U32 => Literal::U32(match literal {
                         Literal::U8(v) => v as u32,
@@ -2624,6 +2709,9 @@ impl<'a> ConstantEvaluator<'a> {
                         Literal::U64(v) => v as u32,
                         Literal::AbstractInt(v) => u32::try_from_abstract(v)?,
                         Literal::AbstractFloat(v) => u32::try_from_abstract(v)?,
+                        Literal::BF16(_) | Literal::FE4M3(_) | Literal::FE5M2(_) => {
+                            return make_error()
+                        }
                     }),
                     Sc::I64 => Literal::I64(match literal {
                         Literal::U8(v) => v as i64,
@@ -2640,6 +2728,9 @@ impl<'a> ConstantEvaluator<'a> {
                         Literal::F16(v) => f16::to_f32(v) as i64,
                         Literal::AbstractInt(v) => i64::try_from_abstract(v)?,
                         Literal::AbstractFloat(v) => i64::try_from_abstract(v)?,
+                        Literal::BF16(_) | Literal::FE4M3(_) | Literal::FE5M2(_) => {
+                            return make_error()
+                        }
                     }),
                     Sc::U64 => Literal::U64(match literal {
                         Literal::U8(v) => v as u64,
@@ -2657,6 +2748,9 @@ impl<'a> ConstantEvaluator<'a> {
                         Literal::F16(v) => f16::to_f32(v) as u64,
                         Literal::AbstractInt(v) => u64::try_from_abstract(v)?,
                         Literal::AbstractFloat(v) => u64::try_from_abstract(v)?,
+                        Literal::BF16(_) | Literal::FE4M3(_) | Literal::FE5M2(_) => {
+                            return make_error()
+                        }
                     }),
                     Sc::F16 => Literal::F16(match literal {
                         Literal::U8(v) => f16::from_f32(f32::from(v)),
@@ -2672,6 +2766,9 @@ impl<'a> ConstantEvaluator<'a> {
                         Literal::I32(v) => f16::from_f64(f64::from(v)),
                         Literal::U32(v) => f16::from_f64(f64::from(v)),
                         Literal::AbstractFloat(v) => f16::try_from_abstract(v)?,
+                        Literal::BF16(_) | Literal::FE4M3(_) | Literal::FE5M2(_) => {
+                            return make_error()
+                        }
                         Literal::AbstractInt(v) => f16::try_from_abstract(v)?,
                     }),
                     Sc::F32 => Literal::F32(match literal {
@@ -2689,6 +2786,9 @@ impl<'a> ConstantEvaluator<'a> {
                         Literal::F16(v) => f16::to_f32(v),
                         Literal::AbstractInt(v) => f32::try_from_abstract(v)?,
                         Literal::AbstractFloat(v) => f32::try_from_abstract(v)?,
+                        Literal::BF16(_) | Literal::FE4M3(_) | Literal::FE5M2(_) => {
+                            return make_error()
+                        }
                     }),
                     Sc::F64 => Literal::F64(match literal {
                         Literal::U8(v) => v as f64,
@@ -2705,6 +2805,9 @@ impl<'a> ConstantEvaluator<'a> {
                         Literal::U64(v) => v as f64,
                         Literal::AbstractInt(v) => f64::try_from_abstract(v)?,
                         Literal::AbstractFloat(v) => f64::try_from_abstract(v)?,
+                        Literal::BF16(_) | Literal::FE4M3(_) | Literal::FE5M2(_) => {
+                            return make_error()
+                        }
                     }),
                     Sc::BOOL => Literal::Bool(match literal {
                         Literal::U8(v) => v != 0,
@@ -2718,6 +2821,9 @@ impl<'a> ConstantEvaluator<'a> {
                         Literal::Bool(v) => v,
                         Literal::AbstractInt(v) => v != 0,
                         Literal::AbstractFloat(v) => v != 0.0,
+                        Literal::BF16(_) | Literal::FE4M3(_) | Literal::FE5M2(_) => {
+                            return make_error()
+                        }
                         Literal::F64(v) => v != 0.0,
                         Literal::I64(v) => v != 0,
                         Literal::U64(v) => v != 0,
@@ -2758,6 +2864,11 @@ impl<'a> ConstantEvaluator<'a> {
                         rows,
                         scalar: target,
                     },
+                    TypeInner::LongVector { size, class, .. } => TypeInner::LongVector {
+                        size,
+                        scalar: target,
+                        class,
+                    },
                     _ => return make_error(),
                 };
 
@@ -2783,6 +2894,35 @@ impl<'a> ConstantEvaluator<'a> {
                     size,
                     value: cast_value,
                 }
+            }
+            Expression::Replicate { ty, value } => {
+                let inner = match self.types[ty].inner {
+                    TypeInner::LongVector { size, class, .. } => TypeInner::LongVector {
+                        size,
+                        scalar: target,
+                        class,
+                    },
+                    TypeInner::CooperativeMatrix {
+                        columns,
+                        rows,
+                        role,
+                        scope,
+                        class,
+                        ..
+                    } => TypeInner::CooperativeMatrix {
+                        columns,
+                        rows,
+                        scalar: target,
+                        role,
+                        scope,
+                        class,
+                    },
+                    _ => return make_error(),
+                };
+                let value_span = self.expressions.get_span(value);
+                let value = self.cast(value, target, value_span)?;
+                let ty = self.types.insert(Type { name: None, inner }, span);
+                Expression::Replicate { ty, value }
             }
             _ => return make_error(),
         };

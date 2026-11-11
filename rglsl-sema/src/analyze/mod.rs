@@ -1,4 +1,7 @@
 mod call;
+mod cooperative;
+mod cooperative_call;
+mod cooperative_matrix2;
 mod declaration;
 mod expression;
 mod extension;
@@ -20,6 +23,9 @@ use alloc::vec::Vec;
 use rglsl_ast::ast::{DirectiveKind, ExternalDeclaration, NodeId};
 use rglsl_ast::extensions::ExtensionState;
 use rglsl_ast::{Span, TranslationUnit};
+
+pub use cooperative_call::CooperativeCall;
+pub use cooperative_matrix2::{MatrixCall, TensorCall};
 
 use crate::builtins::{BuiltinFunctionId, Builtins, ResourceLimits, Stage};
 use crate::constant::Constant;
@@ -58,6 +64,9 @@ pub enum Callee {
     NonUniform,
     DebugPrintf,
     Abort,
+    Cooperative(CooperativeCall),
+    Tensor(TensorCall),
+    Matrix(MatrixCall),
 }
 
 #[derive(Debug, Clone, PartialEq)]

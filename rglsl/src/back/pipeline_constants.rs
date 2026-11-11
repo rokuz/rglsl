@@ -723,17 +723,55 @@ fn adjust_expr(new_pos: &HandleVec<Expression, Handle<Expression>>, expr: &mut E
         | Expression::SubgroupBallotResult
         | Expression::SubgroupOperationResult { .. } => {}
         Expression::CooperativeLoad { ref mut data, .. } => {
-            adjust(&mut data.pointer);
-            adjust(&mut data.stride);
+            for operand in data.operands_mut() {
+                adjust(operand);
+            }
         }
         Expression::CooperativeMultiplyAdd {
             ref mut a,
             ref mut b,
             ref mut c,
+            ..
         } => {
             adjust(a);
             adjust(b);
             adjust(c);
+        }
+        Expression::CooperativeMatrixLength { .. } => {}
+        Expression::Replicate { ref mut value, .. } => adjust(value),
+        Expression::Expect {
+            ref mut value,
+            ref mut expected,
+        } => {
+            adjust(value);
+            adjust(expected);
+        }
+        Expression::Convert { ref mut expr, .. } => adjust(expr),
+        Expression::CooperativeMatrixResult { .. } | Expression::TensorCreate { .. } => {}
+        Expression::TensorSet {
+            ref mut base,
+            ref mut operands,
+            ..
+        } => {
+            adjust(base);
+            for operand in operands {
+                adjust(operand);
+            }
+        }
+        Expression::CooperativeVectorLoad {
+            ref mut pointer,
+            ref mut offset,
+            ..
+        } => {
+            adjust(pointer);
+            adjust(offset);
+        }
+        Expression::CooperativeVectorMatMul {
+            ref mut operation, ..
+        } => {
+            for operand in operation.operands_mut() {
+                adjust(operand);
+            }
         }
     }
 }
@@ -964,8 +1002,9 @@ fn adjust_stmt(new_pos: &HandleVec<Expression, Handle<Expression>>, stmt: &mut S
             ref mut data,
         } => {
             adjust(target);
-            adjust(&mut data.pointer);
-            adjust(&mut data.stride);
+            for operand in data.operands_mut() {
+                adjust(operand);
+            }
         }
         Statement::MeshFunction(ref mut function) => {
             for operand in function.operands_mut() {
@@ -978,6 +1017,23 @@ fn adjust_stmt(new_pos: &HandleVec<Expression, Handle<Expression>>, stmt: &mut S
             }
             if let Some(result) = func.result_mut() {
                 adjust(result);
+            }
+        }
+        Statement::Assume { ref mut condition } => adjust(condition),
+        Statement::CooperativeMatrix {
+            ref mut function,
+            ref mut result,
+        } => {
+            for operand in function.operands_mut() {
+                adjust(operand);
+            }
+            if let Some(ref mut result) = *result {
+                adjust(result);
+            }
+        }
+        Statement::CooperativeVector(ref mut function) => {
+            for operand in function.operands_mut() {
+                adjust(operand);
             }
         }
         Statement::DebugPrintf {

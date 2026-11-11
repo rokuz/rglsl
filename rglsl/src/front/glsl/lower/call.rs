@@ -27,7 +27,10 @@ impl FunctionLowerer<'_, '_> {
             Some(&Callee::NonUniform) => self.non_uniform_value(&call.arguments, at).map(Some),
             Some(&Callee::DebugPrintf) => self.debug_printf(&call.arguments, at).map(|()| None),
             Some(&Callee::Abort) => self.abort(&call.arguments, at).map(|()| None),
-            Some(&Callee::Builtin(id)) => self.builtin_call(id, &call.arguments, at),
+            Some(&Callee::Builtin(id)) => {
+                let result = self.info(expression)?.ty.clone();
+                self.builtin_call(id, &result, &call.arguments, at)
+            }
             Some(&Callee::Constructor(ref ty)) => {
                 if ty
                     .as_opaque()
@@ -45,6 +48,16 @@ impl FunctionLowerer<'_, '_> {
                 }
                 self.construct(ty, &call.arguments, at).map(Some)
             }
+            Some(&Callee::Cooperative(kind)) => self.cooperative_call(kind, &call.arguments, at),
+            Some(&Callee::Tensor(kind)) => {
+                let result = self.info(expression)?.ty.clone();
+                self.tensor_call(kind, &result, &call.arguments, at)
+                    .map(Some)
+            }
+            Some(&Callee::Matrix(kind)) => {
+                let result = self.info(expression)?.ty.clone();
+                self.matrix_call(kind, &result, &call.arguments, at)
+            }
             Some(&Callee::Length) => match call.function.node {
                 FunctionIdentifier::Method { ref object, .. } => self.length(object, at).map(Some),
                 _ => Err(internal(at)),
@@ -59,7 +72,12 @@ impl FunctionLowerer<'_, '_> {
             let length = i32::try_from(length).map_err(|_| internal(at))?;
             return self.literal(Literal::I32(length), at);
         }
-        if let Some(ArraySize::Specialized(size)) = ty.outer_size() {
+        if ty.as_cooperative_matrix().is_some() {
+            let matrix = self.lw.ir_type(&ty, at)?;
+            let length = self.add(Expression::CooperativeMatrixLength { ty: matrix }, at)?;
+            return self.as_kind(length, crate::Scalar::I32, at);
+        }
+        if let Some(ArraySize::Specialized(size)) = ty.outer_size().or(ty.sized_vector_length()) {
             let handle = self.lw.specialized_size(size, at)?;
             let value = self.add(Expression::Override(handle), at)?;
             let size_ty = self.lw.module.overrides[handle].ty;
@@ -246,9 +264,18 @@ impl FunctionLowerer<'_, '_> {
             let source = ty.base_scalar().ok_or_else(|| internal(at))?;
             match ty.kind {
                 TypeKind::Scalar(_) => components.push(self.scalar_to(value, source, target, at)?),
-                TypeKind::Vector { size, .. } => {
+                TypeKind::Vector { .. }
+                | TypeKind::LongVector {
+                    size: ArraySize::Sized(_),
+                    ..
+                }
+                | TypeKind::CooperativeVector {
+                    size: ArraySize::Sized(_),
+                    ..
+                } => {
+                    let size = ty.component_count().ok_or_else(|| internal(at))?;
                     let converted = self.convert(value, ty, &ty.with_scalar(target), at)?;
-                    for index in 0..u32::from(size) {
+                    for index in 0..size {
                         components.push(self.component(converted, index, at)?);
                     }
                 }
@@ -293,11 +320,19 @@ impl FunctionLowerer<'_, '_> {
             values.push(self.typed(argument)?);
         }
         let target = ty.base_scalar().ok_or_else(|| internal(at))?;
+        if matches!(
+            ty.kind,
+            TypeKind::LongVector { .. }
+                | TypeKind::CooperativeVector { .. }
+                | TypeKind::CooperativeMatrix(_)
+        ) {
+            return self.construct_cooperative(ty, target, &values, at);
+        }
         match (ty.kind, values.as_slice()) {
             (TypeKind::Scalar(_), &[(value, ref from), ..]) => {
                 let source = from.base_scalar().ok_or_else(|| internal(at))?;
                 let mut first = value;
-                if from.is_vector() {
+                if from.is_vector() || from.sized_vector_length().is_some() {
                     first = self.component(first, 0, at)?;
                 } else if from.is_matrix() {
                     first = self.component(first, 0, at)?;
@@ -407,6 +442,46 @@ impl FunctionLowerer<'_, '_> {
                 self.add(Expression::Compose { ty: ir, components }, at)
             }
             _ => Err(internal(at)),
+        }
+    }
+
+    fn construct_cooperative(
+        &mut self,
+        ty: &GlslType,
+        target: GlslScalar,
+        values: &[(Handle<Expression>, GlslType)],
+        at: Span,
+    ) -> Result<Handle<Expression>> {
+        match *values {
+            [(value, ref from)] if from.is_scalar() => {
+                let source = from.base_scalar().ok_or_else(|| internal(at))?;
+                let converted = self.scalar_to(value, source, target, at)?;
+                self.replicate(converted, ty, at)
+            }
+            [(value, ref from)] if from.same_shape(ty) => self.convert(value, from, ty, at),
+            [(expr, ref from)] if from.as_cooperative_matrix().is_some() => {
+                let ty = self.lw.ir_type(ty, at)?;
+                self.add(
+                    Expression::Convert {
+                        expr,
+                        ty,
+                        saturating: false,
+                        family: self.cooperative_family(),
+                    },
+                    at,
+                )
+            }
+            _ if ty.as_cooperative_matrix().is_some() => Err(internal(at)),
+            _ => {
+                let mut components = self.flatten(values, target, at)?;
+                let count = ty
+                    .component_count()
+                    .or(ty.sized_vector_length().and_then(ArraySize::nominal))
+                    .ok_or_else(|| internal(at))?;
+                components.truncate(usize::try_from(count).map_err(|_| internal(at))?);
+                let ir = self.lw.ir_type(ty, at)?;
+                self.add(Expression::Compose { ty: ir, components }, at)
+            }
         }
     }
 }

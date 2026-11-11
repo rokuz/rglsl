@@ -232,7 +232,9 @@ impl<'a> ResolveContext<'a> {
                 Ti::Matrix { rows, scalar, .. } => {
                     TypeResolution::Value(Ti::Vector { size: rows, scalar })
                 }
-                Ti::Vector { size: _, scalar } => TypeResolution::Value(Ti::Scalar(scalar)),
+                Ti::Vector { size: _, scalar }
+                | Ti::LongVector { scalar, .. }
+                | Ti::CooperativeMatrix { scalar, .. } => TypeResolution::Value(Ti::Scalar(scalar)),
                 Ti::ValuePointer {
                     size: Some(_),
                     scalar,
@@ -245,7 +247,9 @@ impl<'a> ResolveContext<'a> {
                 Ti::Pointer { base, space } => {
                     TypeResolution::Value(match types[base].inner {
                         Ti::Array { base, .. } => Ti::Pointer { base, space },
-                        Ti::Vector { size: _, scalar } => Ti::ValuePointer {
+                        Ti::Vector { size: _, scalar }
+                        | Ti::LongVector { scalar, .. }
+                        | Ti::CooperativeMatrix { scalar, .. } => Ti::ValuePointer {
                             size: None,
                             scalar,
                             space,
@@ -285,6 +289,15 @@ impl<'a> ResolveContext<'a> {
                         if index >= size as u32 {
                             return Err(ResolveError::OutOfBoundsIndex { expr: base, index });
                         }
+                        TypeResolution::Value(Ti::Scalar(scalar))
+                    }
+                    Ti::LongVector { size, scalar, .. } => {
+                        if size.known().is_some_and(|size| index >= size) {
+                            return Err(ResolveError::OutOfBoundsIndex { expr: base, index });
+                        }
+                        TypeResolution::Value(Ti::Scalar(scalar))
+                    }
+                    Ti::CooperativeMatrix { scalar, .. } => {
                         TypeResolution::Value(Ti::Scalar(scalar))
                     }
                     Ti::Matrix {
@@ -333,6 +346,21 @@ impl<'a> ResolveContext<'a> {
                                 space,
                             }
                         }
+                        Ti::LongVector { size, scalar, .. } => {
+                            if size.known().is_some_and(|size| index >= size) {
+                                return Err(ResolveError::OutOfBoundsIndex { expr: base, index });
+                            }
+                            Ti::ValuePointer {
+                                size: None,
+                                scalar,
+                                space,
+                            }
+                        }
+                        Ti::CooperativeMatrix { scalar, .. } => Ti::ValuePointer {
+                            size: None,
+                            scalar,
+                            space,
+                        },
                         Ti::Matrix {
                             rows,
                             columns,
@@ -560,21 +588,11 @@ impl<'a> ResolveContext<'a> {
                         }),
                         (&Ti::Scalar { .. }, _) => res_right.clone(),
                         (_, &Ti::Scalar { .. }) => res_left.clone(),
-                        (&Ti::Vector { .. }, &Ti::Vector { .. }) => res_left.clone(),
-                        (
-                            &Ti::CooperativeMatrix {
-                                columns: _,
-                                rows,
-                                scalar,
-                                role,
-                            },
-                            &Ti::CooperativeMatrix { columns, .. },
-                        ) => TypeResolution::Value(Ti::CooperativeMatrix {
-                            columns,
-                            rows,
-                            scalar,
-                            role,
-                        }),
+                        (&Ti::Vector { .. }, &Ti::Vector { .. })
+                        | (&Ti::LongVector { .. }, &Ti::LongVector { .. })
+                        | (&Ti::CooperativeMatrix { .. }, &Ti::CooperativeMatrix { .. }) => {
+                            res_left.clone()
+                        }
                         (tl, tr) => {
                             return Err(ResolveError::IncompatibleOperands(format!(
                                 "{tl:?} * {tr:?}"
@@ -593,6 +611,11 @@ impl<'a> ResolveContext<'a> {
                     let inner = match *past(left)?.inner_with(types) {
                         Ti::Scalar { .. } => Ti::Scalar(scalar),
                         Ti::Vector { size, .. } => Ti::Vector { size, scalar },
+                        Ti::LongVector { size, class, .. } => Ti::LongVector {
+                            size,
+                            scalar,
+                            class,
+                        },
                         ref other => {
                             return Err(ResolveError::IncompatibleOperands(format!(
                                 "{op:?}({other:?}, _)"
@@ -636,6 +659,13 @@ impl<'a> ResolveContext<'a> {
                             scalar: crate::Scalar::BOOL,
                             size,
                         }),
+                        Ti::LongVector { size, class, .. } => {
+                            TypeResolution::Value(Ti::LongVector {
+                                scalar: crate::Scalar::BOOL,
+                                size,
+                                class,
+                            })
+                        }
                         ref other => {
                             return Err(ResolveError::IncompatibleOperands(format!(
                                 "{fun:?}({other:?})"
@@ -652,6 +682,39 @@ impl<'a> ResolveContext<'a> {
                 arg3: _,
             } => {
                 use crate::proc::OverloadSet as _;
+
+                if let (
+                    crate::MathFunction::Dot,
+                    &Ti::Vector {
+                        scalar:
+                            scalar @ crate::Scalar {
+                                kind: crate::ScalarKind::BFloat,
+                                ..
+                            },
+                        ..
+                    },
+                ) = (fun, past(arg)?.inner_with(types))
+                {
+                    return Ok(TypeResolution::Value(Ti::Scalar(scalar)));
+                }
+                if let Ti::LongVector { scalar, .. } = *past(arg)?.inner_with(types) {
+                    if let Some(result) =
+                        crate::proc::long_math_result(fun, past(arg)?.inner_with(types), types)
+                    {
+                        return types
+                            .get(&result)
+                            .map(TypeResolution::Handle)
+                            .ok_or(ResolveError::BuiltinArgumentsInvalid(format!("{fun:?}")));
+                    }
+                    return Ok(match fun {
+                        crate::MathFunction::Dot
+                        | crate::MathFunction::Length
+                        | crate::MathFunction::Distance => {
+                            TypeResolution::Value(Ti::Scalar(scalar))
+                        }
+                        _ => past(arg)?.clone(),
+                    });
+                }
 
                 let mut overloads = fun.overloads();
                 log::debug!(
@@ -729,6 +792,36 @@ impl<'a> ResolveContext<'a> {
                         scalar,
                     })
                 }
+                Ti::LongVector {
+                    size,
+                    scalar: crate::Scalar { kind: _, width },
+                    class,
+                } => TypeResolution::Value(Ti::LongVector {
+                    size,
+                    scalar: crate::Scalar {
+                        kind,
+                        width: convert.unwrap_or(width),
+                    },
+                    class,
+                }),
+                Ti::CooperativeMatrix {
+                    columns,
+                    rows,
+                    scalar: crate::Scalar { kind: _, width },
+                    role,
+                    scope,
+                    class,
+                } => TypeResolution::Value(Ti::CooperativeMatrix {
+                    columns,
+                    rows,
+                    scalar: crate::Scalar {
+                        kind,
+                        width: convert.unwrap_or(width),
+                    },
+                    role,
+                    scope,
+                    class,
+                }),
                 ref other => {
                     return Err(ResolveError::IncompatibleOperands(format!(
                         "{other:?} as {kind:?}"
@@ -836,25 +929,19 @@ impl<'a> ResolveContext<'a> {
                 scalar: crate::Scalar::U32,
                 size: crate::VectorSize::Quad,
             }),
-            crate::Expression::CooperativeLoad {
-                columns,
-                rows,
-                role,
-                ref data,
-            } => {
-                let scalar = past(data.pointer)?
-                    .inner_with(types)
-                    .pointer_base_type()
-                    .and_then(|tr| tr.inner_with(types).scalar())
-                    .ok_or(ResolveError::InvalidPointer(data.pointer))?;
-                TypeResolution::Value(Ti::CooperativeMatrix {
-                    columns,
-                    rows,
-                    scalar,
-                    role,
-                })
+            crate::Expression::CooperativeLoad { ty, .. }
+            | crate::Expression::Replicate { ty, .. } => TypeResolution::Handle(ty),
+            crate::Expression::CooperativeMultiplyAdd { c, .. } => past(c)?.clone(),
+            crate::Expression::Expect { value, .. } => past(value)?.clone(),
+            crate::Expression::CooperativeVectorLoad { ty, .. }
+            | crate::Expression::CooperativeVectorMatMul { ty, .. }
+            | crate::Expression::Convert { ty, .. }
+            | crate::Expression::CooperativeMatrixResult { ty }
+            | crate::Expression::TensorCreate { ty } => TypeResolution::Handle(ty),
+            crate::Expression::TensorSet { base, .. } => past(base)?.clone(),
+            crate::Expression::CooperativeMatrixLength { .. } => {
+                TypeResolution::Value(Ti::Scalar(crate::Scalar::U32))
             }
-            crate::Expression::CooperativeMultiplyAdd { a: _, b: _, c } => past(c)?.clone(),
         })
     }
 }

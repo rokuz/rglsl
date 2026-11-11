@@ -126,6 +126,13 @@ pub(crate) fn binary_types(
     if left.is_array() || right.is_array() {
         return None;
     }
+    let encoded = |ty: &Type| ty.base_scalar().is_some_and(Scalar::is_encoded_float);
+    if encoded(left) || encoded(right) {
+        return None;
+    }
+    if let Some(result) = cooperative_binary_types(operator, left, right, features) {
+        return result;
+    }
     let left_scalar = left.base_scalar()?;
     let right_scalar = right.base_scalar()?;
     let is_matrix = |ty: &Type| matches!(ty.kind, TypeKind::Matrix { .. });
@@ -194,6 +201,55 @@ pub(crate) fn binary_types(
             }),
         Op::Equal | Op::NotEqual => None,
     }
+}
+
+fn cooperative_binary_types(
+    operator: BinaryOperator,
+    left: &Type,
+    right: &Type,
+    features: NumericFeatures,
+) -> Option<Option<BinaryResult>> {
+    use BinaryOperator as Op;
+    let left_matrix = left.as_cooperative_matrix();
+    let right_matrix = right.as_cooperative_matrix();
+    if left_matrix.is_none() && right_matrix.is_none() {
+        return None;
+    }
+    let arithmetic = matches!(operator, Op::Add | Op::Subtract | Op::Multiply | Op::Divide);
+    Some(match (left_matrix, right_matrix) {
+        (Some(_), Some(_)) => (arithmetic && left == right).then(|| BinaryResult {
+            ty: left.clone(),
+            left: left.clone(),
+            right: right.clone(),
+            foldable: false,
+        }),
+        (Some(matrix), None) | (None, Some(matrix)) => {
+            let (scalar, matrix_ty) = if left_matrix.is_some() {
+                (right, left)
+            } else {
+                (left, right)
+            };
+            let target = Type::scalar(matrix.scalar);
+            (operator == Op::Multiply
+                && scalar.is_scalar()
+                && scalar.converts_with(&target, features))
+            .then(|| BinaryResult {
+                ty: matrix_ty.clone(),
+                left: if left_matrix.is_some() {
+                    left.clone()
+                } else {
+                    target.clone()
+                },
+                right: if right_matrix.is_some() {
+                    right.clone()
+                } else {
+                    target
+                },
+                foldable: false,
+            })
+        }
+        (None, None) => None,
+    })
 }
 
 const fn compound_operator(operator: AssignmentOperator) -> Option<BinaryOperator> {
@@ -926,7 +982,7 @@ impl Analyzer<'_> {
         if !self.require_lvalue(span, &value) {
             return Operand::error();
         }
-        if !value.ty.is_numeric() || !self.small_arithmetic_allowed(&[&value.ty]) {
+        if !value.ty.is_arithmetic() || !self.small_arithmetic_allowed(&[&value.ty]) {
             self.error(
                 span,
                 DiagnosticKind::InvalidOperand {
@@ -954,7 +1010,7 @@ impl Analyzer<'_> {
             return Operand::error();
         }
         let valid = match operator {
-            UnaryOperator::Plus | UnaryOperator::Minus => value.ty.is_numeric(),
+            UnaryOperator::Plus | UnaryOperator::Minus => value.ty.is_arithmetic(),
             UnaryOperator::LogicalNot => value.ty.is_bool(),
             UnaryOperator::BitNot => {
                 value.ty.is_integer() && !matches!(value.ty.kind, TypeKind::Matrix { .. })

@@ -67,6 +67,14 @@ impl<'a> Walker<'a> {
             TypeSpecifierNonArray::InlineBlock(declarations) => self.members(declarations),
             _ => {}
         }
+        if let Some(parameters) = &specifier.parameters {
+            if let Some(element) = &parameters.element {
+                self.specifier(element);
+            }
+            for value in &parameters.values {
+                self.expression(value);
+            }
+        }
         self.array(specifier.array.as_ref());
     }
 

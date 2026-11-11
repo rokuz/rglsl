@@ -16,7 +16,10 @@ impl crate::ScalarKind {
             | crate::ScalarKind::Uint
             | crate::ScalarKind::Float
             | crate::ScalarKind::AbstractInt
-            | crate::ScalarKind::AbstractFloat => true,
+            | crate::ScalarKind::AbstractFloat
+            | crate::ScalarKind::BFloat
+            | crate::ScalarKind::FloatE4M3
+            | crate::ScalarKind::FloatE5M2 => true,
             crate::ScalarKind::Bool => false,
         }
     }
@@ -50,6 +53,18 @@ impl crate::Scalar {
     pub const F16: Self = Self {
         kind: crate::ScalarKind::Float,
         width: 2,
+    };
+    pub const BF16: Self = Self {
+        kind: crate::ScalarKind::BFloat,
+        width: 2,
+    };
+    pub const FE4M3: Self = Self {
+        kind: crate::ScalarKind::FloatE4M3,
+        width: 1,
+    };
+    pub const FE5M2: Self = Self {
+        kind: crate::ScalarKind::FloatE5M2,
+        width: 1,
     };
     pub const F32: Self = Self {
         kind: crate::ScalarKind::Float,
@@ -86,7 +101,10 @@ impl crate::Scalar {
             crate::ScalarKind::Sint
             | crate::ScalarKind::Uint
             | crate::ScalarKind::Float
-            | crate::ScalarKind::Bool => false,
+            | crate::ScalarKind::Bool
+            | crate::ScalarKind::BFloat
+            | crate::ScalarKind::FloatE4M3
+            | crate::ScalarKind::FloatE5M2 => false,
         }
     }
 
@@ -146,6 +164,22 @@ pub fn vector_sizes() -> impl Iterator<Item = ir::VectorSize> + Clone {
 const POINTER_SPAN: u32 = 4;
 const PHYSICAL_POINTER_SPAN: u32 = 8;
 
+impl crate::CooperativeSize {
+    pub const fn known(self) -> Option<u32> {
+        match self {
+            Self::Constant(size) => Some(size.get()),
+            Self::Pending(_) => None,
+        }
+    }
+
+    pub const fn known_or_one(self) -> u32 {
+        match self {
+            Self::Constant(size) => size.get(),
+            Self::Pending(_) => 1,
+        }
+    }
+}
+
 impl crate::TypeInner {
     /// Return the scalar type of `self`.
     ///
@@ -162,7 +196,7 @@ impl crate::TypeInner {
         match *self {
             Ti::Scalar(scalar) | Ti::Vector { scalar, .. } => Some(scalar),
             Ti::Matrix { scalar, .. } => Some(scalar),
-            Ti::CooperativeMatrix { scalar, .. } => Some(scalar),
+            Ti::CooperativeMatrix { scalar, .. } | Ti::LongVector { scalar, .. } => Some(scalar),
             _ => None,
         }
     }
@@ -254,8 +288,15 @@ impl crate::TypeInner {
                 columns,
                 rows,
                 scalar,
-                role: _,
-            } => Some(columns as u32 * rows as u32 * scalar.width as u32),
+                ..
+            } => columns
+                .known_or_one()
+                .checked_mul(rows.known_or_one())?
+                .checked_mul(u32::from(scalar.width)),
+            Self::LongVector { size, scalar, .. } => {
+                size.known_or_one().checked_mul(u32::from(scalar.width))
+            }
+            Self::TensorLayout { .. } | Self::TensorView { .. } => Some(0),
             Self::Pointer {
                 space: crate::AddressSpace::PhysicalStorage { .. },
                 ..
@@ -447,7 +488,10 @@ impl crate::TypeInner {
             | Ti::Vector { .. }
             | Ti::Matrix { .. }
             | Ti::RayQuery { .. }
-            | Ti::CooperativeMatrix { .. } => true,
+            | Ti::CooperativeMatrix { .. }
+            | Ti::LongVector { .. }
+            | Ti::TensorLayout { .. }
+            | Ti::TensorView { .. } => true,
         }
     }
 
@@ -490,6 +534,9 @@ impl crate::TypeInner {
             crate::TypeInner::Vector { size, scalar } => Some((Some(size), scalar)),
             crate::TypeInner::Matrix { .. }
             | crate::TypeInner::CooperativeMatrix { .. }
+            | crate::TypeInner::LongVector { .. }
+            | crate::TypeInner::TensorLayout { .. }
+            | crate::TypeInner::TensorView { .. }
             | crate::TypeInner::Atomic(_)
             | crate::TypeInner::Pointer { .. }
             | crate::TypeInner::ValuePointer { .. }
@@ -517,6 +564,9 @@ impl crate::TypeInner {
             | crate::TypeInner::Atomic(scalar) => scalar.is_abstract(),
             crate::TypeInner::Array { base, .. } => types[base].inner.is_abstract(types),
             crate::TypeInner::CooperativeMatrix { .. }
+            | crate::TypeInner::LongVector { .. }
+            | crate::TypeInner::TensorLayout { .. }
+            | crate::TypeInner::TensorView { .. }
             | crate::TypeInner::ValuePointer { .. }
             | crate::TypeInner::Pointer { .. }
             | crate::TypeInner::Struct { .. }

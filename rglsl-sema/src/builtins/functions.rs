@@ -1,5 +1,46 @@
 use super::{Section, ALL_STAGES, COMPUTE, FRAGMENT, GEOMETRY, MESH, TASK, TESS_CONTROL};
 
+const ENCODED_FLOATS: &str = "
+int16_t bfloat16BitsToIntEXT(bfloat16_t)
+i16vecN bfloat16BitsToIntEXT(bf16vecN)
+uint16_t bfloat16BitsToUintEXT(bfloat16_t)
+u16vecN bfloat16BitsToUintEXT(bf16vecN)
+bfloat16_t intBitsToBFloat16EXT(int16_t)
+bf16vecN intBitsToBFloat16EXT(i16vecN)
+bfloat16_t uintBitsToBFloat16EXT(uint16_t)
+bf16vecN uintBitsToBFloat16EXT(u16vecN)
+bfloat16_t dot(bf16vecN, bf16vecN)
+int8_t floate4m3BitsToIntEXT(floate4m3_t)
+i8vecN floate4m3BitsToIntEXT(fe4m3vecN)
+uint8_t floate4m3BitsToUintEXT(floate4m3_t)
+u8vecN floate4m3BitsToUintEXT(fe4m3vecN)
+floate4m3_t intBitsToFloate4m3EXT(int8_t)
+fe4m3vecN intBitsToFloate4m3EXT(i8vecN)
+floate4m3_t uintBitsToFloate4m3EXT(uint8_t)
+fe4m3vecN uintBitsToFloate4m3EXT(u8vecN)
+int8_t floate5m2BitsToIntEXT(floate5m2_t)
+i8vecN floate5m2BitsToIntEXT(fe5m2vecN)
+uint8_t floate5m2BitsToUintEXT(floate5m2_t)
+u8vecN floate5m2BitsToUintEXT(fe5m2vecN)
+floate5m2_t intBitsToFloate5m2EXT(int8_t)
+fe5m2vecN intBitsToFloate5m2EXT(i8vecN)
+floate5m2_t uintBitsToFloate5m2EXT(uint8_t)
+fe5m2vecN uintBitsToFloate5m2EXT(u8vecN)
+";
+
+const EXPECT_ASSUME: &str = "
+void assumeEXT(bool)
+genB expectEXT(genB, genB)
+genI expectEXT(genI, genI)
+genU expectEXT(genU, genU)
+genI8 expectEXT(genI8, genI8)
+genU8 expectEXT(genU8, genU8)
+genI16 expectEXT(genI16, genI16)
+genU16 expectEXT(genU16, genU16)
+genI64 expectEXT(genI64, genI64)
+genU64 expectEXT(genU64, genU64)
+";
+
 const ANGLE_AND_TRIGONOMETRY: &str = "
 genF radians(genF)
 genF degrees(genF)
@@ -517,4 +558,6 @@ pub(super) const SECTIONS: &[Section] = &[
     Section::new(MESH_SHADER).in_stages(MESH),
     Section::new(TASK_SHADER).in_stages(TASK),
     Section::new(SHADER_INVOCATION_GROUP).since(460),
+    Section::new(EXPECT_ASSUME),
+    Section::new(ENCODED_FLOATS),
 ];

@@ -509,6 +509,9 @@ impl crate::TypeInner {
             | Self::Vector { .. }
             | Self::Matrix { .. }
             | Self::CooperativeMatrix { .. }
+            | Self::LongVector { .. }
+            | Self::TensorLayout { .. }
+            | Self::TensorView { .. }
             | Self::Array {
                 size: crate::ArraySize::Constant(_),
                 ..
@@ -704,7 +707,10 @@ impl Validator {
                 | crate::Scalar::U32
                 | crate::Scalar::F16
                 | crate::Scalar::F32
-                | crate::Scalar::F64,
+                | crate::Scalar::F64
+                | crate::Scalar::BF16
+                | crate::Scalar::FE4M3
+                | crate::Scalar::FE5M2,
             ) => {}
             _ => return Err(OverrideError::TypeNotScalar),
         }

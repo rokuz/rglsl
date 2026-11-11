@@ -144,6 +144,16 @@ pub enum DiagnosticKind {
     InitializerNotAllowed(String),
     #[error("an array size must be a constant integer expression")]
     ArraySizeNotConstant,
+    #[error("invalid type parameters of `{ty}`: {reason}")]
+    InvalidTypeParameters {
+        ty: &'static str,
+        reason: &'static str,
+    },
+    #[error("`{function}`: {reason}")]
+    InvalidCooperativeCall {
+        function: String,
+        reason: &'static str,
+    },
     #[error("an array size must be greater than zero")]
     ArraySizeNotPositive,
     #[error("an array size is required here")]

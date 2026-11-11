@@ -47,6 +47,22 @@ pub fn validate_compose(
                 });
             }
         }
+        Ti::LongVector { size, scalar, .. } => {
+            let given = component_resolutions.len() as u32;
+            for (index, comp_res) in component_resolutions.enumerate() {
+                if *comp_res.inner_with(gctx.types) != Ti::Scalar(scalar) {
+                    return Err(ComposeError::ComponentType {
+                        index: index as u32,
+                    });
+                }
+            }
+            if size.known().is_some_and(|size| size != given) {
+                return Err(ComposeError::ComponentCount {
+                    expected: size.known_or_one(),
+                    given,
+                });
+            }
+        }
         // matrix are composed from column vectors
         Ti::Matrix {
             columns,

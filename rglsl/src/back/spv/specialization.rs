@@ -31,6 +31,8 @@ fn literal_words(literal: Literal) -> Vec<Word> {
             vec![bits as u32, (bits >> 32) as u32]
         }
         Literal::Bool(value) => vec![u32::from(value)],
+        Literal::BF16(value) => vec![u32::from(value)],
+        Literal::FE4M3(value) | Literal::FE5M2(value) => vec![u32::from(value)],
     }
 }
 
@@ -465,6 +467,17 @@ impl Writer {
         };
         let not_allowed = Error::SpecializationConstant;
         let id = match module.global_expressions[handle] {
+            Expression::CooperativeMatrixLength { ty } => {
+                let matrix_type = self.get_handle_type_id(ty)?;
+                let opcode = match module.types[ty].inner {
+                    TypeInner::CooperativeMatrix {
+                        class: crate::CooperativeMatrixClass::Nv,
+                        ..
+                    } => Op::CooperativeMatrixLengthNV,
+                    _ => Op::CooperativeMatrixLengthKHR,
+                };
+                self.spec_op(type_id, opcode, &[matrix_type])
+            }
             Expression::Unary { op, expr } => {
                 let operand = self.written(expr)?;
                 let (_, scalar) = operand_inner(expr);

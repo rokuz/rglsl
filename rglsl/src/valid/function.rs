@@ -97,13 +97,17 @@ const fn is_ballot(inner: &crate::TypeInner) -> bool {
 const fn is_scalar_or_vector(inner: &crate::TypeInner) -> bool {
     matches!(
         *inner,
-        crate::TypeInner::Scalar(_) | crate::TypeInner::Vector { .. }
+        crate::TypeInner::Scalar(_)
+            | crate::TypeInner::Vector { .. }
+            | crate::TypeInner::LongVector { .. }
     )
 }
 
 const fn is_numeric(inner: &crate::TypeInner) -> bool {
     match *inner {
-        crate::TypeInner::Scalar(scalar) | crate::TypeInner::Vector { scalar, .. } => matches!(
+        crate::TypeInner::Scalar(scalar)
+        | crate::TypeInner::Vector { scalar, .. }
+        | crate::TypeInner::LongVector { scalar, .. } => matches!(
             scalar.kind,
             crate::ScalarKind::Sint | crate::ScalarKind::Uint | crate::ScalarKind::Float
         ),
@@ -997,7 +1001,8 @@ impl super::Validator {
 
         let (is_scalar, scalar) = match *argument_inner {
             crate::TypeInner::Scalar(scalar) => (true, scalar),
-            crate::TypeInner::Vector { scalar, .. } => (false, scalar),
+            crate::TypeInner::Vector { scalar, .. }
+            | crate::TypeInner::LongVector { scalar, .. } => (false, scalar),
             _ => {
                 log::error!("Subgroup operand type {argument_inner:?}");
                 return Err(SubgroupError::InvalidOperand(argument)
@@ -1201,7 +1206,15 @@ impl super::Validator {
                             | Ex::RayQueryGet { .. }
                             | Ex::AccelerationStructureFromAddress { .. }
                             | Ex::CooperativeLoad { .. }
-                            | Ex::CooperativeMultiplyAdd { .. } => {
+                            | Ex::CooperativeMultiplyAdd { .. }
+                            | Ex::CooperativeMatrixLength { .. }
+                            | Ex::Replicate { .. }
+                            | Ex::Expect { .. }
+                            | Ex::Convert { .. }
+                            | Ex::TensorCreate { .. }
+                            | Ex::TensorSet { .. }
+                            | Ex::CooperativeVectorLoad { .. }
+                            | Ex::CooperativeVectorMatMul { .. } => {
                                 self.emit_expression(handle, context)?
                             }
                             Ex::CallResult(_)
@@ -1210,7 +1223,8 @@ impl super::Validator {
                             | Ex::RayQueryProceedResult
                             | Ex::ReportIntersectionResult
                             | Ex::SubgroupBallotResult
-                            | Ex::SubgroupOperationResult { .. } => {
+                            | Ex::SubgroupOperationResult { .. }
+                            | Ex::CooperativeMatrixResult { .. } => {
                                 return Err(FunctionError::EmitResult(handle)
                                     .with_span_handle(handle, context.expressions));
                             }
@@ -1413,6 +1427,29 @@ impl super::Validator {
                 }
                 S::EmitVertex { .. } | S::EndPrimitive { .. } => {
                     stages &= super::ShaderStages::GEOMETRY;
+                }
+                S::CooperativeMatrix {
+                    ref function,
+                    result,
+                } => {
+                    for operand in function.operands() {
+                        context.resolve_type_inner(operand, &self.valid_expression_set)?;
+                    }
+                    if let Some(result) = result {
+                        self.emit_expression(result, context)?;
+                    }
+                }
+                S::CooperativeVector(ref function) => {
+                    for operand in function.operands() {
+                        context.resolve_type_inner(operand, &self.valid_expression_set)?;
+                    }
+                }
+                S::Assume { condition } => {
+                    let ty = context.resolve_type_inner(condition, &self.valid_expression_set)?;
+                    if *ty != Ti::Scalar(crate::Scalar::BOOL) {
+                        return Err(FunctionError::InvalidIfType(condition)
+                            .with_span_handle(condition, context.expressions));
+                    }
                 }
                 S::MeshFunction(ref function) => {
                     stages &= match *function {
@@ -2051,23 +2088,20 @@ impl super::Validator {
                     self.validate_subgroup_function(fun, result, context)?;
                 }
                 S::CooperativeStore { target, ref data } => {
-                    stages &= super::ShaderStages::COMPUTE;
-
-                    let target_scalar =
-                        match *context.resolve_type_inner(target, &self.valid_expression_set)? {
-                            Ti::CooperativeMatrix { scalar, .. } => scalar,
-                            ref other => {
-                                log::error!("Target operand type: {other:?}");
-                                return Err(FunctionError::InvalidCooperativeStoreTarget(target)
-                                    .with_span_handle(target, context.expressions));
-                            }
-                        };
+                    match *context.resolve_type_inner(target, &self.valid_expression_set)? {
+                        Ti::CooperativeMatrix { .. } => {}
+                        ref other => {
+                            log::error!("Target operand type: {other:?}");
+                            return Err(FunctionError::InvalidCooperativeStoreTarget(target)
+                                .with_span_handle(target, context.expressions));
+                        }
+                    };
 
                     let ptr_ty = context.resolve_pointer_type(data.pointer);
                     let ptr_scalar = ptr_ty
                         .pointer_base_type()
                         .and_then(|tr| tr.inner_with(context.types).scalar());
-                    if ptr_scalar != Some(target_scalar) {
+                    if ptr_scalar.is_none() {
                         return Err(FunctionError::InvalidCooperativeDataPointer(data.pointer)
                             .with_span_handle(data.pointer, context.expressions));
                     }

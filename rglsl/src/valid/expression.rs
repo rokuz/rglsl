@@ -207,6 +207,81 @@ impl core::ops::Index<Handle<crate::Expression>> for ExpressionTypeResolver<'_> 
 }
 
 impl super::Validator {
+    fn validate_long_expression(
+        expression: &crate::Expression,
+        resolver: &ExpressionTypeResolver,
+    ) -> Result<Option<ShaderStages>, ExpressionError> {
+        use crate::{Expression as E, TypeInner as Ti};
+        let long = |handle: Handle<crate::Expression>| {
+            let encoded = resolver[handle].scalar_kind().is_some_and(|kind| {
+                matches!(
+                    kind,
+                    crate::ScalarKind::BFloat
+                        | crate::ScalarKind::FloatE4M3
+                        | crate::ScalarKind::FloatE5M2
+                )
+            });
+            encoded
+                || matches!(
+                    resolver[handle],
+                    Ti::LongVector { .. } | Ti::CooperativeMatrix { .. }
+                )
+        };
+        let shape = |handle: Handle<crate::Expression>| match resolver[handle] {
+            Ti::LongVector { size, class, .. } => Some((Some(size), Some(class), None)),
+            Ti::Vector { size, .. } => Some((None, None, Some(size))),
+            Ti::CooperativeMatrix { .. } => Some((None, None, None)),
+            Ti::Scalar(_) => None,
+            _ => Some((None, None, None)),
+        };
+        let operands: arrayvec::ArrayVec<Handle<crate::Expression>, 4> = match *expression {
+            E::Unary { expr, .. }
+            | E::Derivative { expr, .. }
+            | E::As { expr, .. }
+            | E::Relational { argument: expr, .. } => [expr].into_iter().collect(),
+            E::Binary { left, right, .. } => [left, right].into_iter().collect(),
+            E::Select { accept, reject, .. } => [accept, reject].into_iter().collect(),
+            E::Math {
+                arg,
+                arg1,
+                arg2,
+                arg3,
+                ..
+            } => [Some(arg), arg1, arg2, arg3]
+                .into_iter()
+                .flatten()
+                .collect(),
+            _ => return Ok(None),
+        };
+        if !operands.iter().any(|&operand| long(operand)) {
+            return Ok(None);
+        }
+        let mut expected = None;
+        for &operand in &operands {
+            let Some(current) = shape(operand) else {
+                continue;
+            };
+            match expected {
+                None => expected = Some(current),
+                Some(previous) if previous == current => {}
+                Some(_) => {
+                    if let E::Math {
+                        fun: crate::MathFunction::Ldexp | crate::MathFunction::Frexp,
+                        ..
+                    } = *expression
+                    {
+                        continue;
+                    }
+                    return Err(ExpressionError::InvalidCooperativeOperand(operand));
+                }
+            }
+        }
+        Ok(Some(match *expression {
+            E::Derivative { .. } => ShaderStages::FRAGMENT,
+            _ => ShaderStages::all(),
+        }))
+    }
+
     pub(super) fn validate_const_expression(
         &self,
         handle: Handle<crate::Expression>,
@@ -264,12 +339,18 @@ impl super::Validator {
             info,
         };
 
+        if let Some(stages) = Self::validate_long_expression(expression, &resolver)? {
+            return Ok(stages);
+        }
+
         let stages = match *expression {
             E::Access { base, index } => {
                 let base_type = &resolver[base];
                 match *base_type {
                     Ti::Matrix { .. }
                     | Ti::Vector { .. }
+                    | Ti::LongVector { .. }
+                    | Ti::CooperativeMatrix { .. }
                     | Ti::Array { .. }
                     | Ti::Pointer { .. }
                     | Ti::ValuePointer { size: Some(_), .. }
@@ -291,6 +372,10 @@ impl super::Validator {
                     }
                 }
 
+                let behind_pointer = matches!(
+                    *base_type,
+                    Ti::Pointer { base, .. } if matches!(module.types[base].inner, Ti::Array { .. })
+                );
                 // If index is const we can do check for non-negative index
                 match module
                     .to_ctx()
@@ -305,7 +390,7 @@ impl super::Validator {
                         // If we know both the length and the index, we can do the
                         // bounds check now.
                         if let crate::proc::IndexableLength::Known(known_length) = length {
-                            if value >= known_length {
+                            if value >= known_length && !behind_pointer {
                                 return Err(ExpressionError::IndexOutOfBounds(base, value));
                             }
                         }
@@ -334,6 +419,8 @@ impl super::Validator {
                             size: Some(size), ..
                         } => size as u32,
                         Ti::Matrix { columns, .. } => columns as u32,
+                        Ti::LongVector { size, .. } => size.known().unwrap_or(u32::MAX),
+                        Ti::CooperativeMatrix { .. } => u32::MAX,
                         Ti::Array {
                             size: crate::ArraySize::Constant(len),
                             ..
@@ -850,7 +937,12 @@ impl super::Validator {
                     Bo::Add | Bo::Subtract => match *left_inner {
                         Ti::Scalar(scalar) | Ti::Vector { scalar, .. } => match scalar.kind {
                             Sk::Uint | Sk::Sint | Sk::Float => left_inner == right_inner,
-                            Sk::Bool | Sk::AbstractInt | Sk::AbstractFloat => false,
+                            Sk::Bool
+                            | Sk::AbstractInt
+                            | Sk::AbstractFloat
+                            | Sk::BFloat
+                            | Sk::FloatE4M3
+                            | Sk::FloatE5M2 => false,
                         },
                         Ti::Matrix { .. } | Ti::CooperativeMatrix { .. } => {
                             left_inner == right_inner
@@ -860,14 +952,27 @@ impl super::Validator {
                     Bo::Divide | Bo::Modulo => match *left_inner {
                         Ti::Scalar(scalar) | Ti::Vector { scalar, .. } => match scalar.kind {
                             Sk::Uint | Sk::Sint | Sk::Float => left_inner == right_inner,
-                            Sk::Bool | Sk::AbstractInt | Sk::AbstractFloat => false,
+                            Sk::Bool
+                            | Sk::AbstractInt
+                            | Sk::AbstractFloat
+                            | Sk::BFloat
+                            | Sk::FloatE4M3
+                            | Sk::FloatE5M2 => false,
                         },
                         _ => false,
                     },
                     Bo::Multiply => {
                         let kind_allowed = match left_inner.scalar_kind() {
                             Some(Sk::Uint | Sk::Sint | Sk::Float) => true,
-                            Some(Sk::Bool | Sk::AbstractInt | Sk::AbstractFloat) | None => false,
+                            Some(
+                                Sk::Bool
+                                | Sk::AbstractInt
+                                | Sk::AbstractFloat
+                                | Sk::BFloat
+                                | Sk::FloatE4M3
+                                | Sk::FloatE5M2,
+                            )
+                            | None => false,
                         };
                         let types_match = match (left_inner, right_inner) {
                             // Straight scalar and mixed scalar/vector.
@@ -950,7 +1055,12 @@ impl super::Validator {
                         match *left_inner {
                             Ti::Scalar(scalar) | Ti::Vector { scalar, .. } => match scalar.kind {
                                 Sk::Uint | Sk::Sint | Sk::Float => left_inner == right_inner,
-                                Sk::Bool | Sk::AbstractInt | Sk::AbstractFloat => false,
+                                Sk::Bool
+                                | Sk::AbstractInt
+                                | Sk::AbstractFloat
+                                | Sk::BFloat
+                                | Sk::FloatE4M3
+                                | Sk::FloatE5M2 => false,
                             },
                             ref other => {
                                 log::debug!("Op {op:?} left type {other:?}");
@@ -972,7 +1082,12 @@ impl super::Validator {
                     Bo::And | Bo::InclusiveOr => match *left_inner {
                         Ti::Scalar(scalar) | Ti::Vector { scalar, .. } => match scalar.kind {
                             Sk::Bool | Sk::Sint | Sk::Uint => left_inner == right_inner,
-                            Sk::Float | Sk::AbstractInt | Sk::AbstractFloat => false,
+                            Sk::Float
+                            | Sk::AbstractInt
+                            | Sk::AbstractFloat
+                            | Sk::BFloat
+                            | Sk::FloatE4M3
+                            | Sk::FloatE5M2 => false,
                         },
                         ref other => {
                             log::debug!("Op {op:?} left type {other:?}");
@@ -982,7 +1097,13 @@ impl super::Validator {
                     Bo::ExclusiveOr => match *left_inner {
                         Ti::Scalar(scalar) | Ti::Vector { scalar, .. } => match scalar.kind {
                             Sk::Sint | Sk::Uint => left_inner == right_inner,
-                            Sk::Bool | Sk::Float | Sk::AbstractInt | Sk::AbstractFloat => false,
+                            Sk::Bool
+                            | Sk::Float
+                            | Sk::AbstractInt
+                            | Sk::AbstractFloat
+                            | Sk::BFloat
+                            | Sk::FloatE4M3
+                            | Sk::FloatE5M2 => false,
                         },
                         ref other => {
                             log::debug!("Op {op:?} left type {other:?}");
@@ -1011,7 +1132,13 @@ impl super::Validator {
                         };
                         match base_scalar.kind {
                             Sk::Sint | Sk::Uint => base_size.is_ok() && base_size == shift_size,
-                            Sk::Float | Sk::AbstractInt | Sk::AbstractFloat | Sk::Bool => false,
+                            Sk::Float
+                            | Sk::AbstractInt
+                            | Sk::AbstractFloat
+                            | Sk::Bool
+                            | Sk::BFloat
+                            | Sk::FloatE4M3
+                            | Sk::FloatE5M2 => false,
                         }
                     }
                 };
@@ -1358,9 +1485,9 @@ impl super::Validator {
                 {
                     return Err(ExpressionError::InvalidPointerType(data.pointer));
                 }
-                ShaderStages::COMPUTE
+                ShaderStages::all()
             }
-            E::CooperativeMultiplyAdd { a, b, c } => {
+            E::CooperativeMultiplyAdd { a, b, c, .. } => {
                 let roles = [
                     crate::CooperativeRole::A,
                     crate::CooperativeRole::B,
@@ -1368,14 +1495,62 @@ impl super::Validator {
                 ];
                 for (operand, expected_role) in [a, b, c].into_iter().zip(roles) {
                     match resolver[operand] {
+                        Ti::CooperativeMatrix {
+                            class: crate::CooperativeMatrixClass::Nv,
+                            ..
+                        } => {}
                         Ti::CooperativeMatrix { role, .. } if role == expected_role => {}
                         ref other => {
                             log::debug!("{expected_role:?} operand type: {other:?}");
-                            return Err(ExpressionError::InvalidCooperativeOperand(a));
+                            return Err(ExpressionError::InvalidCooperativeOperand(operand));
                         }
                     }
                 }
-                ShaderStages::COMPUTE
+                ShaderStages::all()
+            }
+            E::CooperativeMatrixLength { ty } => match module.types[ty].inner {
+                Ti::CooperativeMatrix { .. } => ShaderStages::all(),
+                _ => return Err(ExpressionError::InvalidCooperativeOperand(root)),
+            },
+            E::CooperativeMatrixResult { .. } | E::TensorCreate { .. } => ShaderStages::all(),
+            E::TensorSet { base, .. } => match resolver[base] {
+                Ti::TensorLayout { .. } | Ti::TensorView { .. } => ShaderStages::all(),
+                _ => return Err(ExpressionError::InvalidCooperativeOperand(base)),
+            },
+            E::Convert { expr, ty, .. } => {
+                let source = resolver[expr].scalar();
+                let target = module.types[ty].inner.scalar();
+                if source.is_none() || target.is_none() {
+                    return Err(ExpressionError::InvalidCastArgument);
+                }
+                ShaderStages::all()
+            }
+            E::CooperativeVectorLoad { ty, .. } | E::CooperativeVectorMatMul { ty, .. } => {
+                match module.types[ty].inner {
+                    Ti::LongVector {
+                        class: crate::LongVectorClass::CooperativeNv,
+                        ..
+                    } => ShaderStages::all(),
+                    _ => return Err(ExpressionError::InvalidCooperativeOperand(root)),
+                }
+            }
+            E::Expect { value, expected } => {
+                if resolver[value] != resolver[expected] {
+                    return Err(ExpressionError::InvalidCooperativeOperand(expected));
+                }
+                ShaderStages::all()
+            }
+            E::Replicate { ty, value } => {
+                let scalar = match module.types[ty].inner {
+                    Ti::CooperativeMatrix { scalar, .. }
+                    | Ti::LongVector { scalar, .. }
+                    | Ti::Vector { scalar, .. } => scalar,
+                    _ => return Err(ExpressionError::InvalidCooperativeOperand(root)),
+                };
+                if resolver[value] != Ti::Scalar(scalar) {
+                    return Err(ExpressionError::InvalidCooperativeOperand(value));
+                }
+                ShaderStages::all()
             }
         };
         Ok(stages)

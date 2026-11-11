@@ -228,9 +228,9 @@ fn words(text: &str) -> Vec<&str> {
     found
 }
 
-const SIZED_STEMS: [&str; 15] = [
+const SIZED_STEMS: [&str; 18] = [
     "vec", "ivec", "uvec", "bvec", "dvec", "mat", "dmat", "f16vec", "f16mat", "i64vec", "u64vec",
-    "i16vec", "u16vec", "i8vec", "u8vec",
+    "i16vec", "u16vec", "i8vec", "u8vec", "bf16vec", "fe4m3vec", "fe5m2vec",
 ];
 
 #[derive(Clone, Copy, Default)]

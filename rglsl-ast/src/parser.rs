@@ -12,9 +12,10 @@ use crate::ast::{
     ForStatement, FullySpecifiedType, FunctionCall, FunctionDefinition, FunctionIdentifier,
     FunctionPrototype, Identifier, InitDeclarator, InitDeclaratorList, Initializer, JumpStatement,
     LayoutQualifier, LayoutQualifierId, Node, NodeId, NumericLiteral, ParameterDeclaration,
-    PostfixOperator, PrecisionQualifier, SingleTypeQualifier, Spanned, Statement, StatementKind,
-    StructDeclaration, StructDeclarator, StructSpecifier, TranslationUnit, TypeQualifier,
-    TypeSpecifier, TypeSpecifierNonArray, UnaryOperator,
+    ParameterizedType, PostfixOperator, PrecisionQualifier, SingleTypeQualifier, Spanned,
+    Statement, StatementKind, StructDeclaration, StructDeclarator, StructSpecifier,
+    TranslationUnit, TypeParameters, TypeQualifier, TypeSpecifier, TypeSpecifierNonArray,
+    UnaryOperator,
 };
 use crate::error::{ParseError, ParseErrorKind};
 use crate::extensions::{ExtensionState, Feature};
@@ -309,6 +310,29 @@ impl<'a> Parser<'a> {
 
     fn token_after_array_specifier(&self) -> TokenKind<'a> {
         let mut index = self.cursor.saturating_add(1);
+        if self.token_at(index).kind == TokenKind::Punctuator("<") {
+            let mut angles = 0_u32;
+            let mut parentheses = 0_u32;
+            loop {
+                match self.token_at(index).kind {
+                    TokenKind::End => return TokenKind::End,
+                    TokenKind::Punctuator("(") => parentheses = parentheses.saturating_add(1),
+                    TokenKind::Punctuator(")") => parentheses = parentheses.saturating_sub(1),
+                    TokenKind::Punctuator("<") if parentheses == 0 => {
+                        angles = angles.saturating_add(1);
+                    }
+                    TokenKind::Punctuator(">") if parentheses == 0 => {
+                        angles = angles.saturating_sub(1);
+                        if angles == 0 {
+                            index = index.saturating_add(1);
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+                index = index.saturating_add(1);
+            }
+        }
         let mut open_brackets = 0_u32;
         loop {
             let kind = self.token_at(index).kind;
@@ -339,7 +363,10 @@ impl<'a> Parser<'a> {
     }
 
     fn starts_constructor(&self, word: &str) -> bool {
-        if BasicType::from_keyword(word).is_some() || is_opaque_type_keyword(word) {
+        if BasicType::from_keyword(word).is_some()
+            || is_opaque_type_keyword(word)
+            || ParameterizedType::from_keyword(word).is_some()
+        {
             return true;
         }
         self.is_struct_name(word)
@@ -708,6 +735,9 @@ impl<'a> Parser<'a> {
                 } else if is_opaque_type_keyword(word) {
                     parser.require_type_extension(word, token.span)?;
                     TypeSpecifierNonArray::Opaque(word.to_owned())
+                } else if let Some(kind) = ParameterizedType::from_keyword(word) {
+                    parser.require_type_extension(word, token.span)?;
+                    TypeSpecifierNonArray::Parameterized(kind)
                 } else if parser.is_struct_name(word) {
                     TypeSpecifierNonArray::TypeName(word.to_owned())
                 } else if is_unavailable_word(word) {
@@ -724,10 +754,66 @@ impl<'a> Parser<'a> {
                 parser.advance();
                 non_array
             };
+            let (parameters, parameter_height) = if parser.at("<")
+                && !matches!(
+                    non_array,
+                    TypeSpecifierNonArray::TypeName(_) | TypeSpecifierNonArray::Struct(_)
+                ) {
+                if !matches!(non_array, TypeSpecifierNonArray::Parameterized(_)) {
+                    return Err(parser.error(
+                        ParseErrorKind::UnexpectedTypeParameters(word.to_owned()),
+                        token.span,
+                    ));
+                }
+                let (parameters, height) = parser.parse_type_parameters()?;
+                (Some(parameters), height)
+            } else {
+                (None, 0)
+            };
             let (array, height) = parser.parse_array_specifier()?;
-            let specifier = TypeSpecifier { non_array, array };
-            Ok((parser.spanned(token.span.start, specifier), height))
+            let specifier = TypeSpecifier {
+                non_array,
+                parameters,
+                array,
+            };
+            Ok((
+                parser.spanned(token.span.start, specifier),
+                height.max(parameter_height),
+            ))
         })
+    }
+
+    fn parse_type_parameters(&mut self) -> Result<(Spanned<TypeParameters>, u32)> {
+        let start = self.start();
+        self.expect("<")?;
+        let mut height = 0;
+        let element = match self.peek().kind {
+            TokenKind::Word(word) if self.is_type_name(word) => {
+                let (element, element_height) = self.parse_measured_type_specifier()?;
+                height = element_height;
+                Some(Box::new(element))
+            }
+            _ => None,
+        };
+        let mut values = Vec::new();
+        if element.is_none() || self.at(",") {
+            if element.is_some() {
+                self.advance();
+            }
+            loop {
+                let value = self.parse_unary()?;
+                height = height.max(value.height);
+                values.push(value.expression);
+                if !self.eat(",") {
+                    break;
+                }
+            }
+        }
+        self.expect(">")?;
+        Ok((
+            self.spanned(start, TypeParameters { element, values }),
+            height,
+        ))
     }
 
     fn parse_array_specifier(&mut self) -> Result<(Option<Spanned<ArraySpecifier>>, u32)> {
@@ -786,6 +872,7 @@ impl<'a> Parser<'a> {
                     block_start,
                     TypeSpecifier {
                         non_array,
+                        parameters: None,
                         array: None,
                     },
                 )

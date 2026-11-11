@@ -80,15 +80,6 @@ impl From<crate::VectorSize> for Alignment {
     }
 }
 
-impl From<crate::CooperativeSize> for Alignment {
-    fn from(size: crate::CooperativeSize) -> Self {
-        match size {
-            crate::CooperativeSize::Eight => Alignment::EIGHT,
-            crate::CooperativeSize::Sixteen => Alignment::SIXTEEN,
-        }
-    }
-}
-
 /// Size and alignment information for a type.
 #[derive(Clone, Copy, Debug, Hash, PartialEq)]
 #[cfg_attr(feature = "serialize", derive(serde::Serialize))]
@@ -220,21 +211,34 @@ impl Layouter {
                             .ok_or(LayoutErrorInner::TooLarge.with(ty_handle))?,
                     }
                 }
-                Ti::CooperativeMatrix {
-                    columns: _,
-                    rows,
+                Ti::CooperativeMatrix { scalar, .. } => {
+                    let alignment = Alignment::new(scalar.width as u32)
+                        .ok_or(LayoutErrorInner::NonPowerOfTwoWidth.with(ty_handle))?;
+                    TypeLayout { size, alignment }
+                }
+                Ti::LongVector {
+                    size: count,
                     scalar,
-                    role: _,
+                    ..
                 } => {
                     let alignment = Alignment::new(scalar.width as u32)
                         .ok_or(LayoutErrorInner::NonPowerOfTwoWidth.with(ty_handle))?;
+                    let factor = match count.known_or_one() {
+                        1 => Alignment::ONE,
+                        2 => Alignment::TWO,
+                        _ => Alignment::FOUR,
+                    };
                     TypeLayout {
                         size,
-                        alignment: Alignment::from(rows)
+                        alignment: factor
                             .checked_mul(alignment)
                             .ok_or(LayoutErrorInner::TooLarge.with(ty_handle))?,
                     }
                 }
+                Ti::TensorLayout { .. } | Ti::TensorView { .. } => TypeLayout {
+                    size,
+                    alignment: Alignment::ONE,
+                },
                 Ti::Pointer {
                     space: crate::AddressSpace::PhysicalStorage { .. },
                     ..

@@ -98,6 +98,7 @@ are read-only.
 
 mod atomic;
 mod block;
+mod cooperative;
 mod f16_polyfill;
 mod heap;
 mod helpers;
@@ -477,6 +478,13 @@ enum CooperativeType {
         rows: crate::CooperativeSize,
         scalar: crate::Scalar,
         role: crate::CooperativeRole,
+        scope: crate::CooperativeSize,
+        class: crate::CooperativeMatrixClass,
+    },
+    Vector {
+        size: crate::CooperativeSize,
+        scalar: crate::Scalar,
+        class: crate::LongVectorClass,
     },
 }
 
@@ -804,7 +812,8 @@ impl ExpressionConstnessTracker {
                     let any_spec = components.iter().any(|&h| specialized.contains(h));
                     (all_known && !any_spec, all_known && any_spec)
                 }
-                crate::Expression::Splat { value, .. } => {
+                crate::Expression::Splat { value, .. }
+                | crate::Expression::Replicate { value, .. } => {
                     (inner.contains(value), specialized.contains(value))
                 }
                 _ => (false, false),

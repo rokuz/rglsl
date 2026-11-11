@@ -6766,3 +6766,164 @@ fn mesh_shader_errors() {
         assert!(error.contains(expected), "{expected}: {error}");
     }
 }
+
+#[test]
+fn long_vectors_lower_to_vector_types() {
+    let module = compile(
+        ShaderStage::Compute,
+        "#version 460
+        #extension GL_EXT_long_vector : require
+        layout(local_size_x = 1) in;
+        layout(std430, binding = 0) buffer B { float d[8]; };
+        void main() {
+            vector<float, 8> a = vector<float, 8>(d[0]);
+            vector<float, 8> b = a * 2.0 + a;
+            d[1] = dot(a, b);
+        }",
+    );
+    let long = instructions(&module, Op::TypeVector)
+        .into_iter()
+        .any(|inst| inst.operands[1] == Operand::LiteralBit32(8));
+    assert!(long);
+    assert!(!instructions(&module, Op::Dot).is_empty());
+}
+
+#[test]
+fn khr_cooperative_matrix_multiply_add() {
+    let module = compile(
+        ShaderStage::Compute,
+        "#version 450
+        #extension GL_KHR_cooperative_matrix : require
+        #extension GL_KHR_memory_scope_semantics : require
+        #extension GL_EXT_shader_explicit_arithmetic_types : require
+        layout(local_size_x = 32) in;
+        layout(std430, binding = 0) buffer B { float16_t x[256]; float y[]; };
+        void main() {
+            coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseA> a;
+            coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseB> b;
+            coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator> c =
+                coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator>(0.0);
+            coopMatLoad(a, x, 0, 16, gl_CooperativeMatrixLayoutRowMajor);
+            coopMatLoad(b, x, 0, 16, gl_CooperativeMatrixLayoutColumnMajor);
+            c = coopMatMulAdd(a, b, c);
+            coopMatStore(c, y, 0, 16, gl_CooperativeMatrixLayoutRowMajor);
+        }",
+    );
+    assert_eq!(instructions(&module, Op::TypeCooperativeMatrixKHR).len(), 3);
+    assert_eq!(instructions(&module, Op::CooperativeMatrixLoadKHR).len(), 2);
+    assert_eq!(
+        instructions(&module, Op::CooperativeMatrixMulAddKHR).len(),
+        1
+    );
+    assert_eq!(
+        instructions(&module, Op::CooperativeMatrixStoreKHR).len(),
+        1
+    );
+}
+
+#[test]
+fn nv_cooperative_matrix_length_is_a_specialization_constant() {
+    let module = compile(
+        ShaderStage::Compute,
+        "#version 450
+        #extension GL_NV_cooperative_matrix : require
+        #extension GL_KHR_memory_scope_semantics : require
+        layout(local_size_x = 32) in;
+        layout(std430, binding = 0) buffer B { float y[]; };
+        void main() {
+            fcoopmatNV<32, gl_ScopeSubgroup, 16, 8> m;
+            int lengths[m.length() + 1];
+            y[0] = float(lengths.length());
+        }",
+    );
+    let lengths = instructions(&module, Op::SpecConstantOp);
+    assert!(lengths.iter().any(|inst| {
+        inst.operands[0] == Operand::LiteralSpecConstantOpInteger(Op::CooperativeMatrixLengthNV)
+    }));
+}
+
+#[test]
+fn bfloat16_constants_are_encoded() {
+    let module = compile(
+        ShaderStage::Compute,
+        "#version 450
+        #extension GL_EXT_bfloat16 : require
+        layout(local_size_x = 1) in;
+        layout(std430, binding = 0) buffer B { float y[]; };
+        void main() {
+            bfloat16_t one = bfloat16_t(y[1]);
+            y[0] = float(one);
+        }",
+    );
+    let encoded = instructions(&module, Op::TypeFloat)
+        .into_iter()
+        .any(|inst| inst.operands.len() == 2 && inst.operands[0] == Operand::LiteralBit32(16));
+    assert!(encoded);
+}
+
+#[test]
+fn cooperative_vector_matrix_multiply() {
+    let module = compile(
+        ShaderStage::Compute,
+        "#version 450
+        #extension GL_NV_cooperative_vector : require
+        #extension GL_EXT_shader_explicit_arithmetic_types : require
+        layout(local_size_x = 32) in;
+        layout(std430, binding = 0) buffer B { float16_t m[256]; float16_t v[]; };
+        void main() {
+            coopvecNV<float16_t, 16> a;
+            coopvecNV<float16_t, 16> r;
+            coopVecLoadNV(a, v, 0);
+            coopVecMatMulNV(r, a, gl_ComponentTypeFloat16NV, m, 0, gl_ComponentTypeFloat16NV,
+                16, 16, gl_CooperativeVectorMatrixLayoutRowMajorNV, false, 32);
+            coopVecStoreNV(r, v, 64);
+        }",
+    );
+    assert_eq!(
+        instructions(&module, Op::CooperativeVectorMatrixMulNV).len(),
+        1
+    );
+    assert_eq!(instructions(&module, Op::CooperativeVectorStoreNV).len(), 1);
+}
+
+#[test]
+fn cooperative_errors() {
+    let cases = [
+        (
+            "#version 450
+            #extension GL_KHR_cooperative_matrix : require
+            #extension GL_KHR_memory_scope_semantics : require
+            layout(local_size_x = 32) in;
+            void main() {
+                coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator> a;
+                coopmat<float, gl_ScopeSubgroup, 8, 8, gl_MatrixUseAccumulator> b;
+                a = a + b;
+            }",
+            "cannot be applied",
+        ),
+        (
+            "#version 460
+            #extension GL_EXT_long_vector : require
+            layout(local_size_x = 1) in;
+            void main() {
+                vector<float, 8> a;
+                a[8] = 1.0;
+            }",
+            "out of range",
+        ),
+        (
+            "#version 450
+            #extension GL_EXT_bfloat16 : require
+            layout(local_size_x = 1) in;
+            void main() {
+                bfloat16_t a = bfloat16_t(1.0);
+                a = a * a;
+            }",
+            "cannot be applied",
+        ),
+    ];
+    for (source, expected) in cases {
+        let error = parse(ShaderStage::Compute, source).unwrap_err();
+        assert!(error.contains(expected), "{expected}: {error}");
+    }
+}

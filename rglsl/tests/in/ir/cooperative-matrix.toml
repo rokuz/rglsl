@@ -1,6 +1,0 @@
-targets = "SPIRV"
-capabilities = "COOPERATIVE_MATRIX"
-
-[spv]
-debug = false
-version = [1, 4]

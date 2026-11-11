@@ -36,7 +36,10 @@ pub mod types;
 #[cfg(test)]
 mod tests;
 
-pub use analyze::{analyze, analyze_with_builtins, Analysis, Callee, ExpressionInfo, Options};
+pub use analyze::{
+    analyze, analyze_with_builtins, Analysis, Callee, CooperativeCall, ExpressionInfo, MatrixCall,
+    Options, TensorCall,
+};
 pub use builtins::{BuiltinFunctionId, Builtins, ResourceLimits, Stage};
 pub use diagnostic::{Diagnostic, DiagnosticKind};
 pub use rglsl_ast::extensions;

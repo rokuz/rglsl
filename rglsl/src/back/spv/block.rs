@@ -20,7 +20,9 @@ use crate::{
 const fn get_dimension(type_inner: &crate::TypeInner) -> Result<Dimension, Error> {
     match *type_inner {
         crate::TypeInner::Scalar(_) => Ok(Dimension::Scalar),
-        crate::TypeInner::Vector { .. } => Ok(Dimension::Vector),
+        crate::TypeInner::Vector { .. } | crate::TypeInner::LongVector { .. } => {
+            Ok(Dimension::Vector)
+        }
         crate::TypeInner::Matrix { .. } => Ok(Dimension::Matrix),
         crate::TypeInner::CooperativeMatrix { .. } => Ok(Dimension::CooperativeMatrix),
         _ => Err(Error::Validation(
@@ -852,7 +854,10 @@ impl BlockContext<'_> {
                         GuardedIndex::Expression(index),
                         block,
                     )?,
-                    crate::TypeInner::Array { .. } | crate::TypeInner::Matrix { .. } => {
+                    crate::TypeInner::Array { .. }
+                    | crate::TypeInner::Matrix { .. }
+                    | crate::TypeInner::LongVector { .. }
+                    | crate::TypeInner::CooperativeMatrix { .. } => {
                         // See if `index` is known at compile time.
                         match GuardedIndex::from_expression(
                             index,
@@ -971,6 +976,8 @@ impl BlockContext<'_> {
                     }
                     crate::TypeInner::Vector { .. }
                     | crate::TypeInner::Matrix { .. }
+                    | crate::TypeInner::LongVector { .. }
+                    | crate::TypeInner::CooperativeMatrix { .. }
                     | crate::TypeInner::Array { .. }
                     | crate::TypeInner::Struct { .. } => {
                         // We never need bounds checks here: dynamically sized arrays can
@@ -1107,10 +1114,14 @@ impl BlockContext<'_> {
                     let spirv_op = match op {
                         crate::BinaryOperator::Add => match *left_ty_inner {
                             crate::TypeInner::Scalar(scalar)
-                            | crate::TypeInner::Vector { scalar, .. } => match scalar.kind {
-                                crate::ScalarKind::Float => spirv::Op::FAdd,
-                                _ => spirv::Op::IAdd,
-                            },
+                            | crate::TypeInner::Vector { scalar, .. }
+                            | crate::TypeInner::LongVector { scalar, .. }
+                            | crate::TypeInner::CooperativeMatrix { scalar, .. } => {
+                                match scalar.kind {
+                                    crate::ScalarKind::Float => spirv::Op::FAdd,
+                                    _ => spirv::Op::IAdd,
+                                }
+                            }
                             crate::TypeInner::Matrix {
                                 columns,
                                 rows,
@@ -1133,7 +1144,6 @@ impl BlockContext<'_> {
                                 self.cached.set(expr_handle, id)?;
                                 return Ok(());
                             }
-                            crate::TypeInner::CooperativeMatrix { .. } => spirv::Op::FAdd,
                             _ => {
                                 return Err(Error::Validation(
                                     "invalid operand type for a binary operator",
@@ -1142,10 +1152,14 @@ impl BlockContext<'_> {
                         },
                         crate::BinaryOperator::Subtract => match *left_ty_inner {
                             crate::TypeInner::Scalar(scalar)
-                            | crate::TypeInner::Vector { scalar, .. } => match scalar.kind {
-                                crate::ScalarKind::Float => spirv::Op::FSub,
-                                _ => spirv::Op::ISub,
-                            },
+                            | crate::TypeInner::Vector { scalar, .. }
+                            | crate::TypeInner::LongVector { scalar, .. }
+                            | crate::TypeInner::CooperativeMatrix { scalar, .. } => {
+                                match scalar.kind {
+                                    crate::ScalarKind::Float => spirv::Op::FSub,
+                                    _ => spirv::Op::ISub,
+                                }
+                            }
                             crate::TypeInner::Matrix {
                                 columns,
                                 rows,
@@ -1167,7 +1181,6 @@ impl BlockContext<'_> {
                                 self.cached.set(expr_handle, id)?;
                                 return Ok(());
                             }
-                            crate::TypeInner::CooperativeMatrix { .. } => spirv::Op::FSub,
                             _ => {
                                 return Err(Error::Validation(
                                     "invalid operand type for a binary operator",
@@ -1222,16 +1235,18 @@ impl BlockContext<'_> {
                                 }
                                 (Dimension::Vector, Dimension::Vector)
                                 | (Dimension::Scalar, Dimension::Scalar)
+                                | (Dimension::CooperativeMatrix, Dimension::CooperativeMatrix)
                                     if left_ty_inner.scalar_kind()
                                         == Some(crate::ScalarKind::Float) =>
                                 {
                                     spirv::Op::FMul
                                 }
                                 (Dimension::Vector, Dimension::Vector)
-                                | (Dimension::Scalar, Dimension::Scalar) => spirv::Op::IMul,
-                                (Dimension::CooperativeMatrix, Dimension::CooperativeMatrix)
-                                //Note: technically can do `FMul` but IR doesn't have matrix per-component multiplication
-                                | (Dimension::CooperativeMatrix, _)
+                                | (Dimension::Scalar, Dimension::Scalar)
+                                | (Dimension::CooperativeMatrix, Dimension::CooperativeMatrix) => {
+                                    spirv::Op::IMul
+                                }
+                                (Dimension::CooperativeMatrix, _)
                                 | (_, Dimension::CooperativeMatrix) => {
                                     return Err(Error::FeatureNotImplemented(
                                         "component-wise multiplication of cooperative matrices",
@@ -1381,6 +1396,18 @@ impl BlockContext<'_> {
                 arg3,
             } => {
                 use crate::MathFunction as Mf;
+                let bfloat_dot = fun == Mf::Dot
+                    && self.fun_info[arg]
+                        .ty
+                        .inner_with(&self.ir_module.types)
+                        .scalar_kind()
+                        == Some(crate::ScalarKind::BFloat);
+                if bfloat_dot {
+                    self.writer.require_any(
+                        "bfloat16 dot product",
+                        &[spirv::Capability::BFloat16DotProductKHR],
+                    )?;
+                }
                 enum MathOp {
                     Ext(spirv::GlslStd450Op),
                     Custom(Instruction),
@@ -1532,6 +1559,22 @@ impl BlockContext<'_> {
                             scalar:
                                 crate::Scalar {
                                     kind: crate::ScalarKind::Float,
+                                    ..
+                                },
+                            ..
+                        }
+                        | crate::TypeInner::LongVector {
+                            scalar:
+                                crate::Scalar {
+                                    kind: crate::ScalarKind::Float,
+                                    ..
+                                },
+                            ..
+                        }
+                        | crate::TypeInner::Vector {
+                            scalar:
+                                crate::Scalar {
+                                    kind: crate::ScalarKind::BFloat,
                                     ..
                                 },
                             ..
@@ -2273,71 +2316,50 @@ impl BlockContext<'_> {
                 ));
                 id
             }
-            crate::Expression::CooperativeLoad { ref data, .. } => {
-                self.writer.require_any(
-                    "CooperativeMatrix",
-                    &[spirv::Capability::CooperativeMatrixKHR],
-                )?;
-                let layout = if data.row_major {
-                    spirv::CooperativeMatrixLayout::RowMajorKHR
-                } else {
-                    spirv::CooperativeMatrixLayout::ColumnMajorKHR
-                };
-                let layout_id = self.get_index_constant(layout as u32);
-                let stride_id = self.cached.get(data.stride)?;
-                match self.write_access_chain(data.pointer, block, AccessTypeAdjustment::None)? {
-                    ExpressionPointer::Ready { pointer_id } => {
-                        let id = self.gen_id();
-                        block.body.push(Instruction::coop_load(
-                            result_type_id,
-                            id,
-                            pointer_id,
-                            layout_id,
-                            stride_id,
-                        ));
-                        id
-                    }
-                    ExpressionPointer::Conditional {
-                        condition,
-                        pointer_id,
-                        access,
-                    } => self.write_conditional_indexed_load(
-                        result_type_id,
-                        condition,
-                        block,
-                        |id_gen, block| {
-                            block.body.push(access);
-                            let id = id_gen.next();
-                            block.body.push(Instruction::coop_load(
-                                result_type_id,
-                                id,
-                                pointer_id,
-                                layout_id,
-                                stride_id,
-                            ));
-                            id
-                        },
-                    ),
-                }
+            crate::Expression::CooperativeLoad { ty, ref data } => {
+                self.write_cooperative_load(ty, data, result_type_id, block)?
             }
-            crate::Expression::CooperativeMultiplyAdd { a, b, c } => {
-                self.writer.require_any(
-                    "CooperativeMatrix",
-                    &[spirv::Capability::CooperativeMatrixKHR],
-                )?;
-                let a_id = self.cached.get(a)?;
-                let b_id = self.cached.get(b)?;
-                let c_id = self.cached.get(c)?;
-                let id = self.gen_id();
-                block.body.push(Instruction::coop_mul_add(
-                    result_type_id,
-                    id,
-                    a_id,
-                    b_id,
-                    c_id,
-                ));
-                id
+            crate::Expression::CooperativeMultiplyAdd {
+                a,
+                b,
+                c,
+                saturating,
+            } => self.write_cooperative_mul_add(
+                expr_handle,
+                [a, b, c],
+                saturating,
+                result_type_id,
+                block,
+            )?,
+            crate::Expression::CooperativeMatrixLength { ty } => {
+                self.write_cooperative_length(ty, result_type_id, block)?
             }
+            crate::Expression::Replicate { ty, value } => {
+                self.write_replicate(expr_handle, ty, value, result_type_id, block)?
+            }
+            crate::Expression::Expect { value, expected } => {
+                self.write_expect(value, expected, result_type_id, block)?
+            }
+            crate::Expression::CooperativeVectorLoad {
+                pointer, offset, ..
+            } => self.write_cooperative_vector_load(pointer, offset, result_type_id, block)?,
+            crate::Expression::Convert {
+                expr,
+                ty,
+                saturating,
+                family,
+            } => self.write_convert(expr, ty, (saturating, family), result_type_id, block)?,
+            crate::Expression::CooperativeMatrixResult { .. } => self.cached.get(expr_handle)?,
+            crate::Expression::TensorCreate { ty } => {
+                self.write_tensor_create(ty, result_type_id, block)?
+            }
+            crate::Expression::TensorSet {
+                base,
+                operation,
+                ref operands,
+            } => self.write_tensor_set(base, operation, operands, result_type_id, block)?,
+            crate::Expression::CooperativeVectorMatMul { ref operation, .. } => self
+                .write_cooperative_vector_mat_mul(expr_handle, operation, result_type_id, block)?,
         };
 
         self.cached.set(expr_handle, id)?;
@@ -2471,6 +2493,31 @@ impl BlockContext<'_> {
         let expr_id = self.cached.get(expr)?;
         let ty = self.fun_info[expr].ty.inner_with(&self.ir_module.types);
 
+        let small =
+            |kind: crate::ScalarKind| matches!(kind, Sk::BFloat | Sk::FloatE4M3 | Sk::FloatE5M2);
+        if let crate::TypeInner::Scalar(scalar) | crate::TypeInner::Vector { scalar, .. } = *ty {
+            if small(scalar.kind) || small(kind) {
+                return self.write_cooperative_cast(
+                    expr,
+                    scalar,
+                    (kind, convert),
+                    block,
+                    result_type_id,
+                );
+            }
+        }
+        if let crate::TypeInner::LongVector { scalar, .. }
+        | crate::TypeInner::CooperativeMatrix { scalar, .. } = *ty
+        {
+            return self.write_cooperative_cast(
+                expr,
+                scalar,
+                (kind, convert),
+                block,
+                result_type_id,
+            );
+        }
+
         // Matrix casts needs special treatment in SPIR-V, as the cast functions
         // can take vectors or scalars, but not matrices. In order to cast a matrix
         // we need to cast each column of the matrix individually and construct a new
@@ -2575,7 +2622,12 @@ impl BlockContext<'_> {
                 let op = match src_scalar.kind {
                     Sk::Sint | Sk::Uint => spirv::Op::INotEqual,
                     Sk::Float => spirv::Op::FUnordNotEqual,
-                    Sk::Bool | Sk::AbstractInt | Sk::AbstractFloat => {
+                    Sk::Bool
+                    | Sk::AbstractInt
+                    | Sk::AbstractFloat
+                    | Sk::BFloat
+                    | Sk::FloatE4M3
+                    | Sk::FloatE5M2 => {
                         return Err(Error::Validation(
                             "conversion to bool from a non-numeric value",
                         ))
@@ -3404,6 +3456,23 @@ impl BlockContext<'_> {
                 size,
                 scalar: crate::Scalar { kind, .. },
             } => (size, kind),
+            crate::TypeInner::LongVector {
+                scalar:
+                    crate::Scalar {
+                        kind: crate::ScalarKind::Float,
+                        ..
+                    },
+                ..
+            } => {
+                block.body.push(Instruction::binary(
+                    spirv::Op::VectorTimesScalar,
+                    result_type_id,
+                    result_id,
+                    vector_id,
+                    scalar_id,
+                ));
+                return Ok(());
+            }
             _ => {
                 return Err(Error::Validation(
                     "vector-scalar multiplication of a non-vector",
@@ -4142,6 +4211,16 @@ impl BlockContext<'_> {
                     ref format,
                     ref arguments,
                 } => self.write_debug_printf_statement(&mut block, format, arguments)?,
+                Statement::Assume { condition } => self.write_assume(condition, &mut block)?,
+                Statement::CooperativeMatrix {
+                    ref function,
+                    result,
+                } => {
+                    self.write_cooperative_matrix_function(function, result, &mut block)?;
+                }
+                Statement::CooperativeVector(ref function) => {
+                    self.write_cooperative_vector_function(function, &mut block)?;
+                }
                 Statement::MeshFunction(ref function) => {
                     match self.write_mesh_function(block, function)? {
                         Some(next) => block = next,
@@ -4682,43 +4761,7 @@ impl BlockContext<'_> {
                     self.write_subgroup_function(fun, result, &mut block)?;
                 }
                 Statement::CooperativeStore { target, ref data } => {
-                    let target_id = self.cached.get(target)?;
-                    let layout = if data.row_major {
-                        spirv::CooperativeMatrixLayout::RowMajorKHR
-                    } else {
-                        spirv::CooperativeMatrixLayout::ColumnMajorKHR
-                    };
-                    let layout_id = self.get_index_constant(layout as u32);
-                    let stride_id = self.cached.get(data.stride)?;
-                    match self.write_access_chain(
-                        data.pointer,
-                        &mut block,
-                        AccessTypeAdjustment::None,
-                    )? {
-                        ExpressionPointer::Ready { pointer_id } => {
-                            block.body.push(Instruction::coop_store(
-                                target_id, pointer_id, layout_id, stride_id,
-                            ));
-                        }
-                        ExpressionPointer::Conditional {
-                            condition,
-                            pointer_id,
-                            access,
-                        } => {
-                            let mut selection = Selection::start(&mut block, ());
-                            selection.if_true(self, condition, ());
-
-                            // The in-bounds path. Perform the access and the store.
-                            selection.block().body.push(access);
-                            selection.block().body.push(Instruction::coop_store(
-                                target_id, pointer_id, layout_id, stride_id,
-                            ));
-
-                            // Finish the in-bounds block and start the merge block. This
-                            // is the block we'll leave current on return.
-                            selection.finish(self, ());
-                        }
-                    };
+                    self.write_cooperative_store(target, data, &mut block)?;
                 }
                 Statement::RayPipelineFunction(ref fun) => {
                     if let Some(terminator) =

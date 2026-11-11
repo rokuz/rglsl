@@ -126,7 +126,10 @@ fn ldexp() -> List {
             ir::ScalarKind::Sint
             | ir::ScalarKind::Uint
             | ir::ScalarKind::Bool
-            | ir::ScalarKind::AbstractInt => None,
+            | ir::ScalarKind::AbstractInt
+            | ir::ScalarKind::BFloat
+            | ir::ScalarKind::FloatE4M3
+            | ir::ScalarKind::FloatE5M2 => None,
         }
     }
 

@@ -2,6 +2,8 @@ use alloc::vec::Vec;
 
 use rglsl_ast::ast::{BinaryOperator, UnaryOperator};
 
+use rglsl_types::small_float;
+
 use crate::types::Scalar;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -18,6 +20,9 @@ pub enum Value {
     Int64(i64),
     Uint64(u64),
     Float16(f64),
+    BFloat16(f64),
+    FloatE4M3(f64),
+    FloatE5M2(f64),
 }
 
 fn round_to_half(value: f64) -> f64 {
@@ -51,6 +56,9 @@ impl Value {
             Self::Int64(_) => Scalar::Int64,
             Self::Uint64(_) => Scalar::Uint64,
             Self::Float16(_) => Scalar::Float16,
+            Self::BFloat16(_) => Scalar::BFloat16,
+            Self::FloatE4M3(_) => Scalar::FloatE4M3,
+            Self::FloatE5M2(_) => Scalar::FloatE5M2,
         }
     }
 
@@ -65,7 +73,12 @@ impl Value {
             Scalar::Uint16 => Self::Uint16(wide as u16),
             Scalar::Int64 => Self::Int64(wide as i64),
             Scalar::Uint64 => Self::Uint64(wide as u64),
-            Scalar::Float | Scalar::Double | Scalar::Float16 => Self::floating(scalar, wide as f64),
+            Scalar::Float
+            | Scalar::Double
+            | Scalar::Float16
+            | Scalar::BFloat16
+            | Scalar::FloatE4M3
+            | Scalar::FloatE5M2 => Self::floating(scalar, wide as f64),
         }
     }
 
@@ -74,6 +87,15 @@ impl Value {
             Scalar::Float => Self::Float(round_to_single(value)),
             Scalar::Double => Self::Double(value),
             Scalar::Float16 => Self::Float16(round_to_half(value)),
+            Scalar::BFloat16 => {
+                Self::BFloat16(small_float::bf16_to_f64(small_float::bf16_from_f64(value)))
+            }
+            Scalar::FloatE4M3 => Self::FloatE4M3(small_float::fe4m3_to_f64(
+                small_float::fe4m3_from_f64(value),
+            )),
+            Scalar::FloatE5M2 => Self::FloatE5M2(small_float::fe5m2_to_f64(
+                small_float::fe5m2_from_f64(value),
+            )),
             _ => Self::integer(scalar, truncate_float(value)),
         }
     }
@@ -94,7 +116,12 @@ impl Value {
 
     pub const fn float(self) -> Option<f64> {
         match self {
-            Self::Float(value) | Self::Double(value) | Self::Float16(value) => Some(value),
+            Self::Float(value)
+            | Self::Double(value)
+            | Self::Float16(value)
+            | Self::BFloat16(value)
+            | Self::FloatE4M3(value)
+            | Self::FloatE5M2(value) => Some(value),
             _ => None,
         }
     }
@@ -121,7 +148,12 @@ impl Value {
     fn as_f64(self) -> f64 {
         match self {
             Self::Bool(value) => f64::from(u8::from(value)),
-            Self::Float(value) | Self::Double(value) | Self::Float16(value) => value,
+            Self::Float(value)
+            | Self::Double(value)
+            | Self::Float16(value)
+            | Self::BFloat16(value)
+            | Self::FloatE4M3(value)
+            | Self::FloatE5M2(value) => value,
             other => other.wide().map_or(0.0, |value| value as f64),
         }
     }
@@ -133,7 +165,7 @@ impl Value {
                 other => other.as_f64() != 0.0,
             });
         }
-        if target.is_floating() {
+        if target.is_floating() || target.is_encoded_float() {
             return Self::floating(target, self.as_f64());
         }
         match self {

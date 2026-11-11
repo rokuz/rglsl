@@ -81,6 +81,31 @@ pub fn calculate_offset(
             },
             size as u32 * width as u32,
         ),
+        TypeInner::LongVector {
+            size,
+            scalar: Scalar { width, .. },
+            ..
+        } => {
+            let count = match size {
+                crate::CooperativeSize::Constant(size) => size.get(),
+                crate::CooperativeSize::Pending(handle) => {
+                    pending.get(handle.index()).copied().unwrap_or(1)
+                }
+            };
+            let vector = match count {
+                1 => None,
+                2 => Some(VectorSize::Bi),
+                _ => Some(VectorSize::Quad),
+            };
+            (
+                if layout == Packing::Scalar {
+                    member_alignment(None, width, meta, errors)
+                } else {
+                    member_alignment(vector, width, meta, errors)
+                },
+                count * u32::from(width),
+            )
+        }
         TypeInner::Pointer {
             space: crate::AddressSpace::PhysicalStorage { .. },
             ..

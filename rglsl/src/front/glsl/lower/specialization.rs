@@ -28,7 +28,8 @@ fn operands(expression: &Expression) -> Option<Vec<Handle<Expression>>> {
         Expression::Literal(_)
         | Expression::Constant(_)
         | Expression::Override(_)
-        | Expression::ZeroValue(_) => Vec::new(),
+        | Expression::ZeroValue(_)
+        | Expression::CooperativeMatrixLength { .. } => Vec::new(),
         Expression::Compose { ref components, .. } => components.clone(),
         Expression::Splat { value, .. } => vec![value],
         Expression::Swizzle { vector, .. } => vec![vector],

@@ -7,6 +7,7 @@ mod emitter;
 pub mod index;
 mod layouter;
 mod overloads;
+pub use rglsl_types::small_float;
 mod subgroup;
 mod terminator;
 mod type_methods;
@@ -98,6 +99,8 @@ pub enum HashableLiteral {
     Bool(bool),
     AbstractInt(i64),
     AbstractFloat(u64),
+    BF16(u16),
+    BF8(u8, bool),
 }
 
 impl From<crate::Literal> for HashableLiteral {
@@ -117,6 +120,9 @@ impl From<crate::Literal> for HashableLiteral {
             crate::Literal::Bool(v) => Self::Bool(v),
             crate::Literal::AbstractInt(v) => Self::AbstractInt(v),
             crate::Literal::AbstractFloat(v) => Self::AbstractFloat(v.to_bits()),
+            crate::Literal::BF16(v) => Self::BF16(v),
+            crate::Literal::FE4M3(v) => Self::BF8(v, false),
+            crate::Literal::FE5M2(v) => Self::BF8(v, true),
         }
     }
 }
@@ -172,7 +178,8 @@ impl crate::Literal {
             Self::F64(_) | Self::I64(_) | Self::U64(_) => 8,
             Self::F32(_) | Self::U32(_) | Self::I32(_) => 4,
             Self::F16(_) | Self::U16(_) | Self::I16(_) => 2,
-            Self::U8(_) | Self::I8(_) => 1,
+            Self::U8(_) | Self::I8(_) | Self::FE4M3(_) | Self::FE5M2(_) => 1,
+            Self::BF16(_) => 2,
             Self::Bool(_) => crate::BOOL_WIDTH,
             Self::AbstractInt(_) | Self::AbstractFloat(_) => crate::ABSTRACT_WIDTH,
         }
@@ -193,6 +200,9 @@ impl crate::Literal {
             Self::Bool(_) => crate::Scalar::BOOL,
             Self::AbstractInt(_) => crate::Scalar::ABSTRACT_INT,
             Self::AbstractFloat(_) => crate::Scalar::ABSTRACT_FLOAT,
+            Self::BF16(_) => crate::Scalar::BF16,
+            Self::FE4M3(_) => crate::Scalar::FE4M3,
+            Self::FE5M2(_) => crate::Scalar::FE5M2,
         }
     }
     pub const fn scalar_kind(&self) -> crate::ScalarKind {
@@ -1305,6 +1315,74 @@ pub fn contains_ray_query(
         crate::TypeInner::Array { base, .. } => contains_ray_query(types, base),
         _ => false,
     }
+}
+
+pub fn long_math_result_members(
+    fun: crate::MathFunction,
+    argument: &crate::TypeInner,
+) -> Option<[crate::TypeInner; 2]> {
+    let crate::TypeInner::LongVector {
+        size,
+        scalar: _,
+        class,
+    } = *argument
+    else {
+        return None;
+    };
+    match fun {
+        crate::MathFunction::Modf
+        | crate::MathFunction::AddCarry
+        | crate::MathFunction::SubBorrow
+        | crate::MathFunction::MulExtended => Some([argument.clone(), argument.clone()]),
+        crate::MathFunction::Frexp => Some([
+            argument.clone(),
+            crate::TypeInner::LongVector {
+                size,
+                scalar: crate::Scalar::I32,
+                class,
+            },
+        ]),
+        _ => None,
+    }
+}
+
+pub fn long_math_result(
+    fun: crate::MathFunction,
+    argument: &crate::TypeInner,
+    types: &crate::UniqueArena<crate::Type>,
+) -> Option<crate::Type> {
+    let [first, second] = long_math_result_members(fun, argument)?;
+    let lookup = |inner: crate::TypeInner| types.get(&crate::Type { name: None, inner });
+    let size_of = |inner: &crate::TypeInner| match *inner {
+        crate::TypeInner::LongVector { size, scalar, .. } => {
+            size.known_or_one().checked_mul(u32::from(scalar.width))
+        }
+        _ => None,
+    };
+    let first_size = size_of(&first)?;
+    let second_size = size_of(&second)?;
+    let first = lookup(first)?;
+    let second = lookup(second)?;
+    let offset = first_size.checked_next_multiple_of(32)?;
+    let span = offset
+        .checked_add(second_size)?
+        .checked_next_multiple_of(32)?;
+    let member = |ty, offset| crate::StructMember {
+        name: None,
+        ty,
+        binding: None,
+        offset,
+        matrix_layout: None,
+        xfb_offset: None,
+        heap: None,
+    };
+    Some(crate::Type {
+        name: None,
+        inner: crate::TypeInner::Struct {
+            members: alloc::vec![member(first, 0), member(second, offset)],
+            span,
+        },
+    })
 }
 
 impl crate::MeshFunction {

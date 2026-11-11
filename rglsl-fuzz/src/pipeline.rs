@@ -117,7 +117,12 @@ pub fn gl_uniform_function_name(ty: BasicType, array: bool) -> String {
         _ => name.push_str(&basic::num_elements(ty).to_string()),
     }
     name.push_str(match basic::element(ty) {
-        ScalarType::Float | ScalarType::Double | ScalarType::Float16 => "f",
+        ScalarType::Float
+        | ScalarType::Double
+        | ScalarType::Float16
+        | ScalarType::BFloat16
+        | ScalarType::FloatE4M3
+        | ScalarType::FloatE5M2 => "f",
         ScalarType::Uint | ScalarType::Uint8 | ScalarType::Uint16 | ScalarType::Uint64 => "ui",
         ScalarType::Int
         | ScalarType::Bool
@@ -320,7 +325,12 @@ impl PipelineInfo {
 
     pub fn zero_unset_uniforms(&mut self, unit: &TranslationUnit) -> Result<(), Error> {
         self.set_uniforms(unit, &mut |scalar| match scalar {
-            ScalarType::Float | ScalarType::Double | ScalarType::Float16 => float_value(0.0),
+            ScalarType::Float
+            | ScalarType::Double
+            | ScalarType::Float16
+            | ScalarType::BFloat16
+            | ScalarType::FloatE4M3
+            | ScalarType::FloatE5M2 => float_value(0.0),
             _ => Value::from(0),
         })
     }
@@ -331,9 +341,12 @@ impl PipelineInfo {
         random: &mut Random,
     ) -> Result<(), Error> {
         self.set_uniforms(unit, &mut |scalar| match scalar {
-            ScalarType::Float | ScalarType::Double | ScalarType::Float16 => {
-                float_value(random.next_float())
-            }
+            ScalarType::Float
+            | ScalarType::Double
+            | ScalarType::Float16
+            | ScalarType::BFloat16
+            | ScalarType::FloatE4M3
+            | ScalarType::FloatE5M2 => float_value(random.next_float()),
             ScalarType::Int
             | ScalarType::Uint
             | ScalarType::Int8

@@ -622,6 +622,9 @@ impl Analyzer<'_> {
                     Type::ERROR
                 }
             },
+            TypeSpecifierNonArray::Parameterized(kind) => {
+                self.parameterized_type(*kind, specifier.parameters.as_ref(), span)
+            }
             TypeSpecifierNonArray::Struct(structure) => self.struct_specifier(structure),
             TypeSpecifierNonArray::TypeName(name) => match self.lookup(name) {
                 Some(Lookup::Symbol(id)) => match self.symbol(id).map(|symbol| &symbol.kind) {
@@ -857,6 +860,20 @@ impl Analyzer<'_> {
             return;
         }
         let stage = self.options.stage;
+        if matches!(qualifiers.storage, Storage::In | Storage::Out) {
+            let bfloat = ty.contains_scalar(&self.types, Scalar::BFloat16);
+            let float8 = ty.contains_scalar(&self.types, Scalar::FloatE4M3)
+                || ty.contains_scalar(&self.types, Scalar::FloatE5M2);
+            if bfloat || float8 {
+                let reason = if bfloat {
+                    "bfloat16 types not allowed as input/output"
+                } else {
+                    "fp8 types not allowed as input/output"
+                };
+                self.error(span, invalid("in/out", reason));
+                return;
+            }
+        }
         if qualifiers.storage == Storage::Inout {
             self.error(span, invalid("inout", "not allowed at global scope"));
             return;

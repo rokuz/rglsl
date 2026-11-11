@@ -23,8 +23,8 @@ const fn scalar_size(scalar: Scalar) -> u32 {
     match scalar {
         Scalar::Bool | Scalar::Int | Scalar::Uint | Scalar::Float => 4,
         Scalar::Double | Scalar::Int64 | Scalar::Uint64 => 8,
-        Scalar::Int16 | Scalar::Uint16 | Scalar::Float16 => 2,
-        Scalar::Int8 | Scalar::Uint8 => 1,
+        Scalar::Int16 | Scalar::Uint16 | Scalar::Float16 | Scalar::BFloat16 => 2,
+        Scalar::Int8 | Scalar::Uint8 | Scalar::FloatE4M3 | Scalar::FloatE5M2 => 1,
     }
 }
 
@@ -155,7 +155,27 @@ fn layout_with_depth(
             alignment: 4,
             size: 4,
         }),
-        TypeKind::Error | TypeKind::Void | TypeKind::String => None,
+        TypeKind::LongVector { scalar, size } => {
+            let component = scalar_size(scalar);
+            let count = size.nominal().unwrap_or(1);
+            let alignment = match packing {
+                Packing::Scalar => component,
+                Packing::Std140 | Packing::Std430 if count == 1 => component,
+                Packing::Std140 | Packing::Std430 if count == 2 => component * 2,
+                Packing::Std140 | Packing::Std430 => component * 4,
+            };
+            Some(Layout {
+                alignment,
+                size: component.checked_mul(count)?,
+            })
+        }
+        TypeKind::Error
+        | TypeKind::Void
+        | TypeKind::String
+        | TypeKind::CooperativeMatrix(_)
+        | TypeKind::CooperativeVector { .. }
+        | TypeKind::TensorLayout { .. }
+        | TypeKind::TensorView { .. } => None,
     }
 }
 

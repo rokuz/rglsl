@@ -2,8 +2,8 @@ use alloc::vec::Vec;
 use core::num::NonZeroU32;
 
 use rglsl_sema::types::{
-    ArraySize as GlslArraySize, BlockId, BlockStorage, Opaque, OpaqueKind, SampledType,
-    Scalar as GlslScalar, StructId, TextureDimension, Type as GlslType, TypeKind,
+    ArraySize as GlslArraySize, BlockId, BlockStorage, CooperativeUse, Opaque, OpaqueKind,
+    SampledType, Scalar as GlslScalar, StructId, TextureDimension, Type as GlslType, TypeKind,
 };
 
 use super::offset::{calculate_offset, TypeAlignSpan};
@@ -11,8 +11,9 @@ use rglsl_ast::extensions::Feature;
 
 use super::{internal, unsupported, Lowerer, Packing, Result};
 use crate::{
-    proc::Alignment, ArraySize, Handle, ImageClass, ImageDimension, Scalar, ScalarKind, Span,
-    StructMember, Type, TypeInner, VectorSize,
+    proc::Alignment, ArraySize, CooperativeMatrixClass, CooperativeRole, CooperativeSize, Handle,
+    ImageClass, ImageDimension, LongVectorClass, Scalar, ScalarKind, Span, StructMember, Type,
+    TypeInner, VectorSize,
 };
 
 pub(super) const fn scalar(scalar: GlslScalar) -> Scalar {
@@ -29,6 +30,9 @@ pub(super) const fn scalar(scalar: GlslScalar) -> Scalar {
         GlslScalar::Uint64 => Scalar::U64,
         GlslScalar::Int8 => Scalar::I8,
         GlslScalar::Uint8 => Scalar::U8,
+        GlslScalar::BFloat16 => Scalar::BF16,
+        GlslScalar::FloatE4M3 => Scalar::FE4M3,
+        GlslScalar::FloatE5M2 => Scalar::FE5M2,
     }
 }
 
@@ -155,6 +159,22 @@ impl Lowerer<'_> {
         }
     }
 
+    pub(super) fn cooperative_size(
+        &mut self,
+        size: GlslArraySize,
+        span: Span,
+    ) -> Result<CooperativeSize> {
+        match size {
+            GlslArraySize::Sized(size) => NonZeroU32::new(size)
+                .map(CooperativeSize::Constant)
+                .ok_or_else(|| internal(span)),
+            GlslArraySize::Specialized(size) => self
+                .specialized_size(size, span)
+                .map(CooperativeSize::Pending),
+            GlslArraySize::Unsized => Err(internal(span)),
+        }
+    }
+
     pub(super) fn unsized_binding_array(
         &mut self,
         symbol: rglsl_sema::SymbolId,
@@ -196,6 +216,69 @@ impl Lowerer<'_> {
             }
             TypeKind::Reference(block) => return self.reference_type(block, span),
             TypeKind::Opaque(opaque) => self.opaque_inner(opaque, depth, comparison, span)?,
+            TypeKind::CooperativeMatrix(matrix) => TypeInner::CooperativeMatrix {
+                columns: self.cooperative_size(matrix.columns, span)?,
+                rows: self.cooperative_size(matrix.rows, span)?,
+                scalar: scalar(matrix.scalar),
+                role: match matrix.usage {
+                    CooperativeUse::A => CooperativeRole::A,
+                    CooperativeUse::B => CooperativeRole::B,
+                    CooperativeUse::Accumulator | CooperativeUse::Nv => CooperativeRole::C,
+                },
+                scope: self.cooperative_size(matrix.scope, span)?,
+                class: match matrix.usage {
+                    CooperativeUse::Nv => CooperativeMatrixClass::Nv,
+                    CooperativeUse::A | CooperativeUse::B | CooperativeUse::Accumulator => {
+                        CooperativeMatrixClass::Khr
+                    }
+                },
+            },
+            TypeKind::LongVector {
+                scalar: s,
+                size: GlslArraySize::Sized(size),
+            } if (2..=4).contains(&size) => TypeInner::Vector {
+                size: u8::try_from(size)
+                    .ok()
+                    .and_then(vector_size)
+                    .ok_or_else(|| internal(span))?,
+                scalar: scalar(s),
+            },
+            TypeKind::LongVector { scalar: s, size } => TypeInner::LongVector {
+                size: self.cooperative_size(size, span)?,
+                scalar: scalar(s),
+                class: LongVectorClass::Plain,
+            },
+            TypeKind::CooperativeVector { scalar: s, size } => TypeInner::LongVector {
+                size: self.cooperative_size(size, span)?,
+                scalar: scalar(s),
+                class: LongVectorClass::CooperativeNv,
+            },
+            TypeKind::TensorLayout {
+                dimensions,
+                clamp_mode,
+            } => TypeInner::TensorLayout {
+                dimensions: self.cooperative_size(dimensions, span)?,
+                clamp_mode: match clamp_mode {
+                    GlslArraySize::Sized(0) => None,
+                    other => Some(self.cooperative_size(other, span)?),
+                },
+            },
+            TypeKind::TensorView {
+                dimensions,
+                has_dimensions,
+                permutation,
+            } => {
+                let count = dimensions.nominal().unwrap_or(1).min(5);
+                TypeInner::TensorView {
+                    dimensions: self.cooperative_size(dimensions, span)?,
+                    has_dimensions,
+                    permutation: permutation
+                        .iter()
+                        .take(usize::try_from(count).unwrap_or(5))
+                        .map(|&index| u32::from(index))
+                        .collect(),
+                }
+            }
         };
         Ok(self.insert_type(inner))
     }
