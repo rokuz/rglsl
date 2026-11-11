@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::collections::BTreeSet;
 use std::rc::Rc;
 
@@ -11,7 +12,10 @@ use rglsl_sema::analyze::Callee;
 use rglsl_sema::scope::{Direction, Origin, Storage, SymbolKind};
 use rglsl_sema::Analysis;
 
+use rglsl_types::stack::run;
+
 use crate::basic;
+use crate::stack::Cx;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Variable {
@@ -62,9 +66,9 @@ pub fn find_points(unit: &TranslationUnit, analysis: &Analysis) -> Vec<Point> {
                         finder.add(variable);
                     }
                 }
-                for statement in &definition.body.statements {
-                    finder.statement(statement);
-                }
+                let state = RefCell::new(finder);
+                let _ = run(|stack| Cx::new(&state, stack).statements(&definition.body.statements));
+                finder = state.into_inner();
                 finder.pop();
             }
             ExternalDeclaration::Declaration(declaration) => finder.declaration(declaration),
@@ -226,11 +230,12 @@ impl Finder<'_> {
     }
 
     fn initializer(&mut self, initializer: &Initializer) {
-        match initializer {
-            Initializer::Expression(expression) => self.expression(expression),
-            Initializer::List(items) => {
-                for item in items {
-                    self.initializer(item);
+        let mut pending = vec![initializer];
+        while let Some(initializer) = pending.pop() {
+            match initializer {
+                Initializer::Expression(expression) => self.expression(expression),
+                Initializer::List(items) => {
+                    pending.extend(items.iter().map(|item| &item.node).rev())
                 }
             }
         }
@@ -287,78 +292,6 @@ impl Finder<'_> {
                 self.add(variable);
             }
         }
-    }
-
-    fn statement(&mut self, statement: &Statement) {
-        match &statement.kind {
-            StatementKind::Compound(compound) => {
-                self.scopes.push(Vec::new());
-                for statement in &compound.statements {
-                    self.statement(statement);
-                }
-                self.pop();
-            }
-            StatementKind::Declaration(declaration) => self.declaration(declaration),
-            StatementKind::Expression(expression) => {
-                if let Some(expression) = expression {
-                    self.expression(expression);
-                }
-            }
-            StatementKind::Selection {
-                condition,
-                then_branch,
-                else_branch,
-            } => {
-                self.expression(condition);
-                self.nested(then_branch);
-                if let Some(else_branch) = else_branch {
-                    self.nested(else_branch);
-                }
-            }
-            StatementKind::Switch {
-                selector,
-                statements,
-            } => {
-                self.expression(selector);
-                self.scopes.push(Vec::new());
-                for statement in statements {
-                    self.statement(statement);
-                }
-                self.pop();
-            }
-            StatementKind::CaseLabel(CaseLabel::Case(_) | CaseLabel::Default) => {}
-            StatementKind::While { condition, body } => {
-                self.scopes.push(Vec::new());
-                self.condition(condition);
-                self.statement(body);
-                self.pop();
-            }
-            StatementKind::DoWhile { body, condition } => {
-                self.nested(body);
-                self.expression(condition);
-            }
-            StatementKind::For(statement) => {
-                self.scopes.push(Vec::new());
-                self.statement(&statement.init);
-                if let Some(condition) = &statement.condition {
-                    self.condition(condition);
-                }
-                if let Some(increment) = &statement.increment {
-                    self.expression(increment);
-                }
-                self.statement(&statement.body);
-                self.pop();
-            }
-            StatementKind::Jump(JumpStatement::Return(Some(value))) => self.expression(value),
-            StatementKind::Jump(_) => {}
-            StatementKind::Attributed { statement, .. } => self.statement(statement),
-        }
-    }
-
-    fn nested(&mut self, statement: &Statement) {
-        self.scopes.push(Vec::new());
-        self.statement(statement);
-        self.pop();
     }
 
     fn point(&mut self, expression: &Expression) {
@@ -447,6 +380,86 @@ impl Finder<'_> {
             }
             if let Some(added) = pending.get_mut(start..) {
                 added.reverse();
+            }
+        }
+    }
+}
+
+impl<'b, 'a: 'b> Cx<'b, Finder<'a>> {
+    async fn statements(self, statements: &'b [Statement]) {
+        for statement in statements {
+            self.call(self.clone().statement(statement)).await;
+        }
+    }
+
+    async fn nested(self, statement: &'b Statement) {
+        self.state().scopes.push(Vec::new());
+        self.call(self.clone().statement(statement)).await;
+        self.state().pop();
+    }
+
+    async fn statement(self, statement: &'b Statement) {
+        match &statement.kind {
+            StatementKind::Compound(compound) => {
+                self.state().scopes.push(Vec::new());
+                self.clone().statements(&compound.statements).await;
+                self.state().pop();
+            }
+            StatementKind::Declaration(declaration) => self.state().declaration(declaration),
+            StatementKind::Expression(expression) => {
+                if let Some(expression) = expression {
+                    self.state().expression(expression);
+                }
+            }
+            StatementKind::Selection {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                self.state().expression(condition);
+                self.clone().nested(then_branch).await;
+                if let Some(else_branch) = else_branch {
+                    self.clone().nested(else_branch).await;
+                }
+            }
+            StatementKind::Switch {
+                selector,
+                statements,
+            } => {
+                self.state().expression(selector);
+                self.state().scopes.push(Vec::new());
+                self.clone().statements(statements).await;
+                self.state().pop();
+            }
+            StatementKind::CaseLabel(CaseLabel::Case(_) | CaseLabel::Default) => {}
+            StatementKind::While { condition, body } => {
+                self.state().scopes.push(Vec::new());
+                self.state().condition(condition);
+                self.call(self.clone().statement(body)).await;
+                self.state().pop();
+            }
+            StatementKind::DoWhile { body, condition } => {
+                self.clone().nested(body).await;
+                self.state().expression(condition);
+            }
+            StatementKind::For(statement) => {
+                self.state().scopes.push(Vec::new());
+                self.call(self.clone().statement(&statement.init)).await;
+                if let Some(condition) = &statement.condition {
+                    self.state().condition(condition);
+                }
+                if let Some(increment) = &statement.increment {
+                    self.state().expression(increment);
+                }
+                self.call(self.clone().statement(&statement.body)).await;
+                self.state().pop();
+            }
+            StatementKind::Jump(JumpStatement::Return(Some(value))) => {
+                self.state().expression(value);
+            }
+            StatementKind::Jump(_) => {}
+            StatementKind::Attributed { statement, .. } => {
+                self.call(self.clone().statement(statement)).await;
             }
         }
     }

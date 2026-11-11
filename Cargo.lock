@@ -569,6 +569,7 @@ version = "0.1.0"
 dependencies = [
  "rglsl-ast",
  "rglsl-sema",
+ "rglsl-types",
  "serde_json",
 ]
 

@@ -25,6 +25,7 @@ pub mod rename;
 pub mod rewrite;
 pub mod scope;
 pub mod split_loop;
+mod stack;
 pub mod statements;
 pub mod strip;
 pub mod structify;

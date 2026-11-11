@@ -19,6 +19,7 @@ path = "src/bin/rglsl-fuzz.rs"
 [dependencies]
 rglsl-ast.workspace = true
 rglsl-sema.workspace = true
+rglsl-types.workspace = true
 serde_json.workspace = true
 
 [lints]

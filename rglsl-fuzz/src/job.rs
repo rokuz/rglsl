@@ -177,26 +177,13 @@ pub fn add_braces(unit: &mut TranslationUnit) {
 }
 
 fn count_statements(statement: &Statement) -> usize {
-    1 + match &statement.kind {
-        StatementKind::Compound(compound) => compound.statements.iter().map(count_statements).sum(),
-        StatementKind::Selection {
-            then_branch,
-            else_branch,
-            ..
-        } => count_statements(then_branch) + else_branch.as_deref().map_or(0, count_statements),
-        StatementKind::Switch { statements, .. } => statements.iter().map(count_statements).sum(),
-        StatementKind::While { body, .. } | StatementKind::DoWhile { body, .. } => {
-            count_statements(body)
-        }
-        StatementKind::For(for_statement) => {
-            count_statements(&for_statement.init) + count_statements(&for_statement.body)
-        }
-        StatementKind::Attributed { statement, .. } => count_statements(statement),
-        StatementKind::Declaration(_)
-        | StatementKind::Expression(_)
-        | StatementKind::CaseLabel(_)
-        | StatementKind::Jump(_) => 0,
+    let mut count = 0;
+    let mut pending = vec![statement];
+    while let Some(statement) = pending.pop() {
+        count += 1;
+        pending.extend(crate::stack::child_statements(&statement.kind));
     }
+    count
 }
 
 fn binding_values(unit: &TranslationUnit) -> BTreeSet<u32> {
