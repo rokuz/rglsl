@@ -629,6 +629,17 @@ fn adjust_expr(new_pos: &HandleVec<Expression, Handle<Expression>>, expr: &mut E
         Expression::ImageSparseResident { ref mut code } => {
             adjust(code);
         }
+        Expression::InterpolateAt {
+            ref mut pointer,
+            ref mut location,
+        } => {
+            adjust(pointer);
+            match *location {
+                crate::InterpolationLocation::Centroid => {}
+                crate::InterpolationLocation::Sample(ref mut operand)
+                | crate::InterpolationLocation::Offset(ref mut operand) => adjust(operand),
+            }
+        }
         Expression::AttachmentRead {
             ref mut aspect,
             ref mut sample,

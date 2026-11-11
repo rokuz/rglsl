@@ -2036,6 +2036,43 @@ impl BlockContext<'_> {
             | crate::Expression::SubgroupBallotResult
             | crate::Expression::SubgroupOperationResult { .. }
             | crate::Expression::SpirvInstructionResult { .. } => self.cached.get(expr_handle)?,
+            crate::Expression::InterpolateAt { pointer, location } => {
+                self.writer.require_any(
+                    "interpolation functions",
+                    &[spirv::Capability::InterpolationFunction],
+                )?;
+                let pointer_id =
+                    match self.write_access_chain(pointer, block, AccessTypeAdjustment::None)? {
+                        ExpressionPointer::Ready { pointer_id } => pointer_id,
+                        ExpressionPointer::Conditional { .. } => {
+                            return Err(Error::FeatureNotImplemented("bounds-checked interpolants"))
+                        }
+                    };
+                let (op, operand) = match location {
+                    crate::InterpolationLocation::Centroid => {
+                        (spirv::GlslStd450Op::InterpolateAtCentroid, None)
+                    }
+                    crate::InterpolationLocation::Sample(sample) => (
+                        spirv::GlslStd450Op::InterpolateAtSample,
+                        Some(self.cached.get(sample)?),
+                    ),
+                    crate::InterpolationLocation::Offset(offset) => (
+                        spirv::GlslStd450Op::InterpolateAtOffset,
+                        Some(self.cached.get(offset)?),
+                    ),
+                };
+                let id = self.gen_id();
+                let mut operands = alloc::vec![pointer_id];
+                operands.extend(operand);
+                block.body.push(Instruction::ext_inst_gl_op(
+                    self.writer.gl450_ext_inst_id,
+                    op,
+                    result_type_id,
+                    id,
+                    &operands,
+                ));
+                id
+            }
             crate::Expression::AttachmentRead { aspect, sample } => {
                 self.write_attachment_read(aspect, sample, result_type_id, block)?
             }

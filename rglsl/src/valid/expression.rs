@@ -1740,6 +1740,40 @@ impl super::Validator {
             },
             E::SubgroupBallotResult | E::SubgroupOperationResult { .. } => self.subgroup_stages,
             E::IsHelperInvocation => ShaderStages::FRAGMENT,
+            E::InterpolateAt { pointer, location } => {
+                if !matches!(
+                    resolver[pointer],
+                    Ti::Pointer {
+                        space: crate::AddressSpace::Input,
+                        ..
+                    } | Ti::ValuePointer {
+                        space: crate::AddressSpace::Input,
+                        ..
+                    }
+                ) {
+                    return Err(ExpressionError::InvalidPointerType(pointer));
+                }
+                match location {
+                    crate::InterpolationLocation::Centroid => {}
+                    crate::InterpolationLocation::Sample(sample) => {
+                        if !matches!(resolver[sample], Ti::Scalar(Sc::I32)) {
+                            return Err(ExpressionError::InvalidImageOtherIndexType(sample));
+                        }
+                    }
+                    crate::InterpolationLocation::Offset(offset) => {
+                        if !matches!(
+                            resolver[offset],
+                            Ti::Vector {
+                                size: crate::VectorSize::Bi,
+                                scalar: Sc::F32,
+                            }
+                        ) {
+                            return Err(ExpressionError::InvalidImageOtherIndexType(offset));
+                        }
+                    }
+                }
+                ShaderStages::FRAGMENT
+            }
             E::AttachmentRead { aspect, sample } => {
                 if let crate::AttachmentAspect::Color(image) = aspect {
                     if !matches!(

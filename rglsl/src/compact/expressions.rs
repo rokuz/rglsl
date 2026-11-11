@@ -206,6 +206,16 @@ impl ExpressionTracer<'_> {
             Ex::ImageSparseResident { code } => {
                 self.expressions_used.insert(code);
             }
+            Ex::InterpolateAt { pointer, location } => {
+                self.expressions_used.insert(pointer);
+                match location {
+                    crate::InterpolationLocation::Centroid => {}
+                    crate::InterpolationLocation::Sample(operand)
+                    | crate::InterpolationLocation::Offset(operand) => {
+                        self.expressions_used.insert(operand);
+                    }
+                }
+            }
             Ex::AttachmentRead { aspect, sample } => {
                 if let crate::AttachmentAspect::Color(image) = aspect {
                     self.expressions_used.insert(image);
@@ -501,6 +511,17 @@ impl ModuleMap {
                 }
             }
             Ex::ImageSparseResident { ref mut code } => adjust(code)?,
+            Ex::InterpolateAt {
+                ref mut pointer,
+                ref mut location,
+            } => {
+                adjust(pointer)?;
+                match *location {
+                    crate::InterpolationLocation::Centroid => {}
+                    crate::InterpolationLocation::Sample(ref mut operand)
+                    | crate::InterpolationLocation::Offset(ref mut operand) => adjust(operand)?,
+                }
+            }
             Ex::AttachmentRead {
                 ref mut aspect,
                 ref mut sample,

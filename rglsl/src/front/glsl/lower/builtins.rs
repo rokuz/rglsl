@@ -329,6 +329,9 @@ impl FunctionLowerer<'_, '_> {
                 Ok(None)
             }
             "helperInvocationEXT" => self.add(Expression::IsHelperInvocation, at).map(Some),
+            "interpolateAtCentroid" | "interpolateAtSample" | "interpolateAtOffset" => {
+                self.interpolate(name, arguments, at).map(Some)
+            }
             "colorAttachmentReadEXT" | "depthAttachmentReadEXT" | "stencilAttachmentReadEXT" => {
                 let mut rest = arguments.iter();
                 let aspect = match name {
@@ -1557,6 +1560,53 @@ impl FunctionLowerer<'_, '_> {
             self.mark(query, NonUniform::SAMPLED_IMAGE);
         }
         Ok(query)
+    }
+
+    fn interpolate(
+        &mut self,
+        name: &str,
+        arguments: &[AstExpression],
+        at: Span,
+    ) -> Result<Handle<Expression>> {
+        let first = arguments.first().ok_or_else(|| internal(at))?;
+        let super::expression::Chain::Place(place) = self.chain(first)? else {
+            return Err(internal(at));
+        };
+        let location = match (name, arguments.get(1)) {
+            ("interpolateAtSample", Some(sample)) => {
+                crate::InterpolationLocation::Sample(self.rvalue(sample)?)
+            }
+            ("interpolateAtOffset", Some(offset)) => {
+                crate::InterpolationLocation::Offset(self.rvalue(offset)?)
+            }
+            _ => crate::InterpolationLocation::Centroid,
+        };
+        let value = self.add(
+            Expression::InterpolateAt {
+                pointer: place.pointer,
+                location,
+            },
+            at,
+        )?;
+        match place.swizzle {
+            None => Ok(value),
+            Some(ref components) if components.len() == 1 => {
+                let index = components.first().copied().ok_or_else(|| internal(at))?;
+                self.add(Expression::AccessIndex { base: value, index }, at)
+            }
+            Some(ref components) => {
+                let size = vector_size(u8::try_from(components.len()).unwrap_or(0))
+                    .ok_or_else(|| internal(at))?;
+                self.add(
+                    Expression::Swizzle {
+                        size,
+                        vector: value,
+                        pattern: super::expression::pattern(components),
+                    },
+                    at,
+                )
+            }
+        }
     }
 
     fn subpass_load(

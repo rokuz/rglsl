@@ -930,6 +930,17 @@ impl FunctionInfo {
                     .or(self.add_ref(barycentric)),
                 requirements: UniformityRequirements::empty(),
             },
+            E::InterpolateAt { pointer, location } => Uniformity {
+                non_uniform_result: self
+                    .add_ref(pointer)
+                    .or(match location {
+                        crate::InterpolationLocation::Centroid => None,
+                        crate::InterpolationLocation::Sample(operand)
+                        | crate::InterpolationLocation::Offset(operand) => self.add_ref(operand),
+                    })
+                    .or(Some(handle)),
+                requirements: UniformityRequirements::empty(),
+            },
             E::AttachmentRead { aspect, sample } => Uniformity {
                 non_uniform_result: match aspect {
                     crate::AttachmentAspect::Color(image) => self.add_ref(image),

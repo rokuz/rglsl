@@ -1029,6 +1029,19 @@ impl<'a> ResolveContext<'a> {
             crate::Expression::IsHelperInvocation => {
                 TypeResolution::Value(Ti::Scalar(crate::Scalar::BOOL))
             }
+            crate::Expression::InterpolateAt { pointer, .. } => {
+                match *past(pointer)?.inner_with(types) {
+                    Ti::Pointer { base, .. } => TypeResolution::Handle(base),
+                    Ti::ValuePointer { size, scalar, .. } => TypeResolution::Value(match size {
+                        Some(size) => Ti::Vector { size, scalar },
+                        None => Ti::Scalar(scalar),
+                    }),
+                    ref other => {
+                        log::error!("Interpolant type {other:?}");
+                        return Err(ResolveError::InvalidPointer(pointer));
+                    }
+                }
+            }
             crate::Expression::AttachmentRead { aspect, .. } => match aspect {
                 crate::AttachmentAspect::Color(image) => match *past(image)?.inner_with(types) {
                     Ti::Image {

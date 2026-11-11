@@ -67,7 +67,7 @@ pub(super) fn swizzle_indices(name: &str) -> Vec<u32> {
     indices
 }
 
-fn pattern(indices: &[u32]) -> [SwizzleComponent; 4] {
+pub(super) fn pattern(indices: &[u32]) -> [SwizzleComponent; 4] {
     let mut pattern = [SwizzleComponent::X; 4];
     for (slot, index) in pattern.iter_mut().zip(indices) {
         *slot = match *index {

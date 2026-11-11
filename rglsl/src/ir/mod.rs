@@ -1719,6 +1719,16 @@ pub enum AtomicFunction {
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub enum InterpolationLocation {
+    Centroid,
+    Sample(Handle<Expression>),
+    Offset(Handle<Expression>),
+}
+
+#[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum AttachmentAspect {
     Color(Handle<Expression>),
     Depth,
@@ -2974,6 +2984,10 @@ pub enum Expression {
         code: Handle<Expression>,
     },
     IsHelperInvocation,
+    InterpolateAt {
+        pointer: Handle<Expression>,
+        location: InterpolationLocation,
+    },
     AttachmentRead {
         aspect: AttachmentAspect,
         sample: Option<Handle<Expression>>,

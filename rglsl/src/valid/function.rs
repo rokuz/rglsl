@@ -1282,7 +1282,8 @@ impl super::Validator {
                             | Ex::TensorRead { .. }
                             | Ex::TensorQuerySize { .. }
                             | Ex::IsHelperInvocation
-                            | Ex::AttachmentRead { .. } => self.emit_expression(handle, context)?,
+                            | Ex::AttachmentRead { .. }
+                            | Ex::InterpolateAt { .. } => self.emit_expression(handle, context)?,
                             Ex::CallResult(_)
                             | Ex::AtomicResult { .. }
                             | Ex::WorkGroupUniformLoadResult { .. }

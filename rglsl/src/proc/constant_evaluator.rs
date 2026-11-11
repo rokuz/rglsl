@@ -1406,6 +1406,9 @@ impl<'a> ConstantEvaluator<'a> {
             }
             Expression::SubgroupBallotResult => Err(ConstantEvaluatorError::SubgroupExpression),
             Expression::AttachmentRead { .. } => Err(ConstantEvaluatorError::ImageExpression),
+            Expression::InterpolateAt { .. } => Err(ConstantEvaluatorError::NotImplemented(
+                String::from("interpolation functions"),
+            )),
             Expression::IsHelperInvocation => Err(ConstantEvaluatorError::NotImplemented(
                 String::from("helper invocation query"),
             )),

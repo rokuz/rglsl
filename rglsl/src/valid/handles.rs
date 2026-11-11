@@ -752,6 +752,16 @@ impl super::Validator {
             crate::Expression::ImageSparseResident { code } => {
                 handle.check_dep(code)?;
             }
+            crate::Expression::InterpolateAt { pointer, location } => {
+                handle.check_dep(pointer)?;
+                match location {
+                    crate::InterpolationLocation::Centroid => {}
+                    crate::InterpolationLocation::Sample(operand)
+                    | crate::InterpolationLocation::Offset(operand) => {
+                        handle.check_dep(operand)?;
+                    }
+                }
+            }
             crate::Expression::AttachmentRead { aspect, sample } => {
                 if let crate::AttachmentAspect::Color(image) = aspect {
                     handle.check_dep(image)?;
