@@ -129,19 +129,62 @@ pub fn build(root: &Path, glslang_dir: Option<&Path>, selection: Selection) -> R
 }
 
 pub fn build_remote(root: &Path) -> Result<()> {
+    use crate::exec::amber::Device;
+    use crate::exec::remote::{self, Remote, RemoteSpec};
+    use crate::exec::TargetId;
     let pins = load_pins(root)?;
-    let remote =
-        crate::exec::remote::Remote::from_env(Duration::from_secs(60)).with_context(|| {
-            format!(
-                "set {} to the SSH host alias of a Windows machine with Vulkan",
-                crate::exec::remote::HOST_VAR
-            )
-        })?;
-    let device = remote.setup(&pins.exec, &crate::exec::remote::local_dir(root))?;
-    eprintln!(
-        "[xtask] remote Vulkan device: {} (API {}, {})",
-        device.name, device.api_version, device.driver
-    );
+    let specs = RemoteSpec::from_env()?;
+    if specs.is_empty() {
+        bail!(
+            "set {} to the SSH host aliases of Windows machines with Vulkan",
+            remote::HOST_VAR
+        );
+    }
+    let remotes: Vec<Remote> = specs
+        .iter()
+        .map(|spec| Remote::new(spec, Duration::from_secs(60)))
+        .collect();
+    let mut builds: Vec<&Remote> = Vec::new();
+    for candidate in &remotes {
+        if !builds
+            .iter()
+            .any(|b| b.build_key() == candidate.build_key())
+        {
+            builds.push(candidate);
+        }
+    }
+    let local = remote::local_dir(root);
+    let built = crate::exec::parallel_map(&builds, |remote| {
+        remote
+            .setup(&pins.exec, &local.join(remote.build_key()))
+            .with_context(|| format!("preparing {}", remote.host))
+    });
+    built.into_iter().collect::<Result<Vec<()>>>()?;
+    let mut failures = Vec::new();
+    let mut found = Vec::new();
+    for (spec, remote) in specs.iter().zip(&remotes) {
+        match remote.device() {
+            Ok(device) => found.push((spec, device)),
+            Err(error) => failures.push(format!("{}: {error}", spec.entry())),
+        }
+    }
+    let devices: Vec<(TargetId, Device)> = found
+        .iter()
+        .map(|(_, device)| (TargetId::Remote(String::new()), device.clone()))
+        .collect();
+    for ((spec, device), label) in found.iter().zip(crate::exec::target_labels(&devices)) {
+        eprintln!(
+            "[xtask] {}: Vulkan device {} (API {}, {}), exec target `{}`",
+            spec.entry(),
+            device.name,
+            device.api_version,
+            device.driver,
+            label.label()
+        );
+    }
+    if !failures.is_empty() {
+        bail!("remote smoke check failed:\n{}", failures.join("\n"));
+    }
     Ok(())
 }
 

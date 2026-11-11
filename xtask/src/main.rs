@@ -31,8 +31,8 @@ commands:
                           (its HEAD must be the pinned commit)
       --no-exec           do not install KosmicKrisp and Amber
       --exec-only         only install KosmicKrisp and Amber
-      --remote            only build Amber on the remote Windows target named by
-                          RGLSL_EXEC_REMOTE (an SSH host alias), from the pins in oracles.toml
+      --remote            only build Amber on every remote Windows target listed in
+                          RGLSL_EXEC_REMOTE, from the pins in oracles.toml, and smoke check them
   test                run the glslang corpus and write PROGRESS.md
       --glslang-dir DIR   glslang checkout whose Test/ and gtests/ are used
                           (default: target/oracles/src/glslang)
@@ -43,14 +43,16 @@ commands:
       --no-exec           do not run shaders on any Vulkan target; PROGRESS.md keeps the
                           exec results of the last run that had them
       --no-local-exec     do not run shaders on KosmicKrisp on this Mac
-      --no-remote-exec    do not run shaders on the remote Windows target
+      --no-remote-exec    do not run shaders on the remote Windows targets
   fuzz                compare rglsl with glslang on a directory of shaders
                       (accepted or not, valid SPIR-V, crashes)
       --shaders DIR       the shaders to compare (searched recursively)
       --exec              also run every shader family of rglsl-fuzz on the Vulkan targets
                           (local and remote, as for `test`): a variant whose image differs
                           from its reference is a wrong result; failures are rerun alone
-      --exec-target T     with --exec, run on one target only: local or remote
+      --exec-target T     with --exec, run on these targets only: local, remote (every remote
+                          target) or an entry of RGLSL_EXEC_REMOTE (`alias` or `alias@device`);
+                          with --reduce it must name one target
       --exec-glslang      with --exec, also run the modules glslang compiles
       --reduce JOB        reduce the variant shader job JOB (a .json next to its shader) with
                           rglsl-fuzz's reducer instead of comparing a directory
@@ -72,10 +74,13 @@ commands:
 environment:
   RGLSL_GLSLANG, RGLSL_SPIRV_VAL   override the oracle binaries
   RGLSL_AMBER, RGLSL_VK_ICD        override Amber and the Vulkan driver manifest
-  RGLSL_EXEC_REMOTE                SSH host alias of a Windows machine with Vulkan: the remote
-                                   exec target (unset: the remote target is skipped with a warning)
-  RGLSL_EXEC_REMOTE_DIR            work directory on that machine (default C:/rglsl-exec)
-  RGLSL_EXEC_REMOTE_JOBS           parallel Amber processes there (default 4)
+  RGLSL_EXEC_REMOTE                remote exec targets: comma-separated SSH host aliases of Windows
+                                   machines with Vulkan, each optionally followed by @DEVICE, a
+                                   substring of the GPU's name (unset: the remote targets are
+                                   skipped with a warning); a target is named after its GPU vendor
+  RGLSL_EXEC_REMOTE_DIR            work directory on each machine (default C:/rglsl-exec); one
+                                   value, or comma-separated ALIAS=DIR entries and a default
+  RGLSL_EXEC_REMOTE_JOBS           parallel Amber processes per machine (default 4); same syntax
 ";
 
 fn main() {
@@ -131,7 +136,7 @@ fn run(args: Vec<String>) -> Result<i32> {
                     if none {
                         Vec::new()
                     } else {
-                        exec::select_targets(local, remote)
+                        exec::select_targets(local, remote)?
                     }
                 },
             };
@@ -151,9 +156,14 @@ fn run(args: Vec<String>) -> Result<i32> {
                 interesting: fuzz_reduce::Interesting::parse(&interesting)
                     .with_context(|| format!("unknown interestingness test `{interesting}`"))?,
                 target: match args.value("--exec-target")? {
-                    Some(name) => exec::TargetId::parse(&name)
-                        .with_context(|| format!("unknown exec target `{name}`"))?,
-                    None => exec::TargetId::Local,
+                    Some(name) => {
+                        let mut targets = exec::named_targets(&name)?;
+                        match (targets.pop(), targets.is_empty()) {
+                            (Some(target), true) => target,
+                            _ => bail!("--exec-target `{name}` names several targets; name one"),
+                        }
+                    }
+                    None => exec::TargetSpec::Local,
                 },
                 preserve_semantics: args.flag("--preserve-semantics"),
                 max_steps: args.parsed("--max-steps")?.unwrap_or(2000),
@@ -179,9 +189,8 @@ fn run(args: Vec<String>) -> Result<i32> {
                     match (exec, only) {
                         (false, Some(_)) => bail!("--exec-target needs --exec"),
                         (false, None) => Vec::new(),
-                        (true, None) => exec::select_targets(true, true),
-                        (true, Some(name)) => vec![exec::TargetId::parse(&name)
-                            .with_context(|| format!("unknown exec target `{name}`"))?],
+                        (true, None) => exec::select_targets(true, true)?,
+                        (true, Some(name)) => exec::named_targets(&name)?,
                     }
                 },
                 exec_glslang: args.flag("--exec-glslang"),

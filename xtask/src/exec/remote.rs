@@ -24,38 +24,127 @@ const BUILD: Duration = Duration::from_secs(3 * 3600);
 
 static BATCHES: AtomicUsize = AtomicUsize::new(0);
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemoteSpec {
+    pub host: String,
+    pub device: Option<String>,
+}
+
+impl RemoteSpec {
+    pub fn from_env() -> Result<Vec<Self>> {
+        let text = std::env::var(HOST_VAR).unwrap_or_default();
+        parse_specs(&text).map_err(|error| anyhow!("{HOST_VAR}: {error}"))
+    }
+
+    pub fn entry(&self) -> String {
+        match &self.device {
+            Some(device) => format!("{}@{device}", self.host),
+            None => self.host.clone(),
+        }
+    }
+
+    pub fn matches(&self, name: &str) -> bool {
+        let name = name.trim();
+        name.eq_ignore_ascii_case(&self.entry()) || name.eq_ignore_ascii_case(&self.host)
+    }
+
+    pub fn work_name(&self) -> String {
+        let mut name = format!("remote-{}", slug(&self.host));
+        if let Some(device) = &self.device {
+            name.push('-');
+            name.push_str(&slug(device));
+        }
+        name
+    }
+}
+
+pub fn parse_specs(text: &str) -> Result<Vec<RemoteSpec>, String> {
+    let mut specs: Vec<RemoteSpec> = Vec::new();
+    for entry in text.split(',').map(str::trim).filter(|e| !e.is_empty()) {
+        let (host, device) = match entry.split_once('@') {
+            Some((host, device)) => (host.trim(), Some(device.trim())),
+            None => (entry, None),
+        };
+        if host.is_empty() || host.contains(|c: char| c.is_whitespace() || c == '"' || c == '=') {
+            return Err(format!("`{entry}` does not start with an SSH host alias"));
+        }
+        let device = match device {
+            Some(device) if device.is_empty() || device.contains(['"', '@', '%']) => {
+                return Err(format!("`{entry}` has no usable device name after `@`"));
+            }
+            Some(device) => Some(device.to_string()),
+            None => None,
+        };
+        let spec = RemoteSpec {
+            host: host.to_string(),
+            device,
+        };
+        if specs
+            .iter()
+            .any(|s| s.entry().eq_ignore_ascii_case(&spec.entry()))
+        {
+            return Err(format!("`{entry}` is listed twice"));
+        }
+        specs.push(spec);
+    }
+    Ok(specs)
+}
+
+pub fn slug(text: &str) -> String {
+    text.split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(str::to_ascii_lowercase)
+        .collect::<Vec<_>>()
+        .join("-")
+}
+
+fn per_host(text: &str, host: &str) -> Option<String> {
+    let mut default = None;
+    for item in text.split(',').map(str::trim).filter(|i| !i.is_empty()) {
+        match item.split_once('=') {
+            Some((name, value)) if name.trim() == host => return Some(value.trim().to_string()),
+            Some(_) => {}
+            None => default = Some(item.to_string()),
+        }
+    }
+    default
+}
+
+fn host_setting(var: &str, host: &str) -> Option<String> {
+    let text = std::env::var(var).ok()?;
+    per_host(&text, host).filter(|v| !v.is_empty())
+}
+
 #[derive(Debug, Clone)]
 pub struct Remote {
     pub host: String,
+    pub device_name: Option<String>,
     pub dir: String,
     pub jobs: usize,
     pub timeout: Duration,
 }
 
 impl Remote {
-    pub fn from_env(timeout: Duration) -> Option<Self> {
-        let host = std::env::var(HOST_VAR)
-            .ok()
-            .filter(|h| !h.trim().is_empty())?;
-        Some(Self::new(host.trim(), timeout))
-    }
-
-    pub fn new(host: &str, timeout: Duration) -> Self {
-        let dir = std::env::var(DIR_VAR)
-            .ok()
-            .filter(|d| !d.trim().is_empty())
-            .map_or_else(|| DEFAULT_DIR.to_string(), |d| d.trim().replace('\\', "/"));
-        let jobs = std::env::var(JOBS_VAR)
-            .ok()
-            .and_then(|j| j.trim().parse().ok())
+    pub fn new(spec: &RemoteSpec, timeout: Duration) -> Self {
+        let dir = host_setting(DIR_VAR, &spec.host)
+            .map_or_else(|| DEFAULT_DIR.to_string(), |d| d.replace('\\', "/"));
+        let jobs = host_setting(JOBS_VAR, &spec.host)
+            .and_then(|j| j.parse().ok())
             .unwrap_or(DEFAULT_JOBS)
             .max(1);
         Self {
-            host: host.to_string(),
+            host: spec.host.clone(),
+            device_name: spec.device.clone(),
             dir: dir.trim_end_matches('/').to_string(),
             jobs,
             timeout,
         }
+    }
+
+    fn device_args(&self) -> String {
+        self.device_name
+            .as_ref()
+            .map_or_else(String::new, |name| format!(" --device-name \"{name}\""))
     }
 
     fn path(&self, relative: &str) -> String {
@@ -136,7 +225,11 @@ impl Remote {
 
     pub fn device(&self) -> Result<Device, String> {
         let output = self.ssh(
-            &format!("\"{}\" -d -v {VULKAN_VERSION} -V", self.amber()),
+            &format!(
+                "\"{}\" -d -v {VULKAN_VERSION} -V{}",
+                self.amber(),
+                self.device_args()
+            ),
             CONNECT,
         )?;
         if !matches!(output.exit, Exit::Code(0)) {
@@ -153,11 +246,11 @@ impl Remote {
         })
     }
 
-    pub fn setup(&self, pins: &ExecPins, local: &Path) -> Result<Device> {
+    pub fn setup(&self, pins: &ExecPins, local: &Path) -> Result<()> {
         fs::create_dir_all(local)?;
         let script = local.join("rglsl-setup.bat");
         fs::write(&script, setup_script(pins).replace('\n', "\r\n"))?;
-        eprintln!("[xtask] preparing {} on the remote target", self.dir);
+        eprintln!("[xtask] preparing {} on {}", self.dir, self.host);
         self.ssh_ok(
             &format!("if not exist \"{0}\" mkdir \"{0}\"", self.windows("runs")),
             CONNECT,
@@ -166,7 +259,10 @@ impl Remote {
         .map_err(|e| anyhow!(e))?;
         self.upload(&[script.as_path()], "", CONNECT)
             .map_err(|e| anyhow!(e))?;
-        eprintln!("[xtask] building Amber on the remote target (MSVC, CMake, Ninja)");
+        eprintln!(
+            "[xtask] building Amber on {} (MSVC, CMake, Ninja)",
+            self.host
+        );
         let mut command = self.ssh_command();
         command.arg(format!("\"{}\"", self.windows("rglsl-setup.bat")));
         let output = process::run(command, BUILD)?;
@@ -181,14 +277,18 @@ impl Remote {
                 .collect();
             let start = tail.len().saturating_sub(15);
             bail!(
-                "the remote Amber build failed ({:?}); log in {}:\n{}",
+                "the Amber build on {} failed ({:?}); log in {}:\n{}",
+                self.host,
                 output.exit,
                 log.display(),
                 tail.get(start..).unwrap_or_default().join("\n")
             );
         }
-        self.device()
-            .map_err(|error| anyhow!("remote smoke check failed: {error}"))
+        Ok(())
+    }
+
+    pub fn build_key(&self) -> String {
+        format!("{}-{}", slug(&self.host), slug(&self.dir))
     }
 
     pub fn run(&self, root: &Path, jobs: &[Job]) -> Vec<JobResult> {
@@ -271,14 +371,15 @@ impl Remote {
         let budget = self.timeout.saturating_mul(rounds.saturating_add(1)) + CONNECT;
         let base = format!("runs/{id}");
         let command = format!(
-            "python \"{}.py\" \"{}.tgz\" \"{}\" \"{manifest_name}\" \"{}.out.tgz\" \"{}\" {} {} {VULKAN_VERSION}",
+            "python \"{}.py\" \"{}.tgz\" \"{}\" \"{manifest_name}\" \"{}.out.tgz\" \"{}\" {} {} {VULKAN_VERSION} \"{}\"",
             self.windows(&base),
             self.windows(&base),
             self.windows(&base),
             self.windows(&base),
             self.amber(),
             self.jobs,
-            self.timeout.as_secs().max(1)
+            self.timeout.as_secs().max(1),
+            self.device_name.as_deref().unwrap_or_default()
         );
         self.ssh_ok(&command, budget, "the batch driver")?;
         let out = local.join("out.tgz");
@@ -389,6 +490,7 @@ mod tests {
     fn remote_paths_use_the_work_directory() {
         let remote = Remote {
             host: "target".into(),
+            device_name: Some("RTX".into()),
             dir: "C:/work".into(),
             jobs: 2,
             timeout: Duration::from_secs(5),
@@ -396,5 +498,36 @@ mod tests {
         assert_eq!(remote.windows("runs/b1"), "C:\\work\\runs\\b1");
         assert_eq!(remote.amber(), "C:\\work\\bin\\amber.exe");
         assert_eq!(remote.path("runs"), "C:/work/runs");
+        assert_eq!(remote.device_args(), " --device-name \"RTX\"");
+    }
+
+    #[test]
+    fn parses_remote_targets_with_device_filters() -> Result<()> {
+        let specs =
+            parse_specs(" first, second@NVIDIA ,,third@Radeon RX ").map_err(|e| anyhow!(e))?;
+        let entries: Vec<String> = specs.iter().map(RemoteSpec::entry).collect();
+        assert_eq!(entries, ["first", "second@NVIDIA", "third@Radeon RX"]);
+        assert_eq!(
+            specs.get(1).map(RemoteSpec::work_name).as_deref(),
+            Some("remote-second-nvidia")
+        );
+        assert!(specs
+            .get(2)
+            .is_some_and(|s| s.matches("THIRD") && s.matches("third@radeon rx")));
+        assert!(parse_specs("").map_err(|e| anyhow!(e))?.is_empty());
+        assert!(parse_specs("a@").is_err());
+        assert!(parse_specs("@x").is_err());
+        assert!(parse_specs("a@x\"y").is_err());
+        assert!(parse_specs("a@x, a@X").is_err());
+        assert!(parse_specs("a, a@x").is_ok());
+        Ok(())
+    }
+
+    #[test]
+    fn settings_can_differ_per_host() {
+        assert_eq!(per_host("C:/a", "x").as_deref(), Some("C:/a"));
+        assert_eq!(per_host("C:/a, x=D:/b", "x").as_deref(), Some("D:/b"));
+        assert_eq!(per_host("x=D:/b,C:/a", "y").as_deref(), Some("C:/a"));
+        assert_eq!(per_host("x=D:/b", "y"), None);
     }
 }

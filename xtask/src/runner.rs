@@ -12,7 +12,7 @@ use anyhow::{bail, Context, Result};
 
 use crate::corpus::{self, Case, Kind};
 use crate::exec::known::{self, Known};
-use crate::exec::{self, ExecCase, Executor, TargetId};
+use crate::exec::{self, ExecCase, Executor, TargetId, TargetSpec};
 use crate::groups;
 use crate::oracles::{self, Tool};
 use crate::process::{self, Exit};
@@ -26,7 +26,7 @@ pub struct Options {
     pub jobs: Option<usize>,
     pub timeout_secs: u64,
     pub write_progress: bool,
-    pub targets: Vec<TargetId>,
+    pub targets: Vec<TargetSpec>,
 }
 
 /// What glslang did with a shader.
@@ -174,21 +174,13 @@ pub fn run(root: &Path, options: Options) -> Result<()> {
         glslang_dir,
         pins,
     };
-    for target in &options.targets {
-        let executor = Executor::new(
-            *target,
-            root,
-            &env.glslang.path,
-            &root.join("target").join("xtask").join("exec"),
-            Duration::from_secs(options.timeout_secs),
-        )?;
-        eprintln!(
-            "[xtask] exec on the {} target: {}",
-            target.label(),
-            executor.describe()
-        );
-        env.executors.push(executor);
-    }
+    env.executors = exec::open_executors(
+        &options.targets,
+        root,
+        &env.glslang.path,
+        &root.join("target").join("xtask").join("exec"),
+        Duration::from_secs(options.timeout_secs),
+    )?;
     if env.glslang_commit.as_deref() != Some(env.pins.glslang.commit.as_str()) {
         eprintln!(
             "[xtask] warning: the corpus checkout is not at the pinned glslang commit {}",
@@ -269,14 +261,22 @@ pub fn run(root: &Path, options: Options) -> Result<()> {
         results.len(),
         started.elapsed().as_secs_f64()
     );
-    for executor in &env.executors {
+    let outcomes = exec::parallel_map(&env.executors, |executor| {
         let started = Instant::now();
-        run_exec(executor, &mut results);
+        let outcomes = run_exec(executor, &results);
         eprintln!(
             "[xtask] exec on the {} target took {:.1}s",
             executor.target.label(),
             started.elapsed().as_secs_f64()
         );
+        outcomes
+    });
+    for (executor, outcomes) in env.executors.iter().zip(outcomes) {
+        for (index, outcome) in outcomes {
+            if let Some(result) = results.get_mut(index) {
+                result.exec.insert(executor.target.clone(), outcome);
+            }
+        }
     }
 
     let details = root.join("target").join("xtask").join("results.tsv");
@@ -289,7 +289,7 @@ pub fn run(root: &Path, options: Options) -> Result<()> {
         fs::write(root.join("PROGRESS.md"), &summary)?;
         eprintln!("[xtask] wrote PROGRESS.md");
     }
-    let ran: Vec<TargetId> = env.executors.iter().map(|e| e.target).collect();
+    let ran: Vec<TargetId> = env.executors.iter().map(|e| e.target.clone()).collect();
     print!("{}", report::summary(&results, &ran));
     eprintln!("[xtask] per-shader results: {}", details.display());
     Ok(())
@@ -497,31 +497,27 @@ fn twin_input(
     })
 }
 
-fn run_exec(executor: &Executor, results: &mut [CaseResult]) {
+fn run_exec(executor: &Executor, results: &[CaseResult]) -> Vec<(usize, exec::Outcome)> {
+    let mut outcomes = Vec::new();
     let mut cases = Vec::new();
     let mut indices = Vec::new();
-    for (index, result) in results.iter_mut().enumerate() {
+    for (index, result) in results.iter().enumerate() {
         let Some(input) = &result.exec_input else {
             continue;
         };
         if let Some(Twin::Broken(message)) = &input.twin {
-            result
-                .exec
-                .insert(executor.target, exec::Outcome::Fail(message.clone()));
+            outcomes.push((index, exec::Outcome::Fail(message.clone())));
             continue;
         }
         if let Some(why) = executor.driver_bugs.get(&result.case.name) {
-            result.exec.insert(
-                executor.target,
-                exec::Outcome::skip(exec::SkipReason::DriverBug, why),
-            );
+            outcomes.push((index, exec::Outcome::skip(exec::SkipReason::DriverBug, why)));
             continue;
         }
         if let Some(message) = &input.invalid_reference {
-            result.exec.insert(
-                executor.target,
+            outcomes.push((
+                index,
                 exec::Outcome::skip(exec::SkipReason::ReferenceInvalid, message.clone()),
-            );
+            ));
             continue;
         }
         cases.push(ExecCase {
@@ -532,12 +528,8 @@ fn run_exec(executor: &Executor, results: &mut [CaseResult]) {
         });
         indices.push(index);
     }
-    let outcomes = executor.exec_all(&cases);
-    for (index, outcome) in indices.into_iter().zip(outcomes) {
-        if let Some(result) = results.get_mut(index) {
-            result.exec.insert(executor.target, outcome);
-        }
-    }
+    outcomes.extend(indices.into_iter().zip(executor.exec_all(&cases)));
+    outcomes
 }
 
 fn validate(

@@ -7,7 +7,7 @@ use rglsl_fuzz::amber::amber_script;
 use rglsl_fuzz::reduce::{finalise, reduce, ReduceOptions};
 use rglsl_fuzz::{ShaderJob, STAGE_EXTENSIONS};
 
-use crate::exec::{Executor, TargetId};
+use crate::exec::{Executor, TargetSpec};
 use crate::fuzz::{compare, Verdict};
 use crate::fuzz_exec::{self, Run};
 use crate::oracles;
@@ -47,7 +47,7 @@ impl Interesting {
 pub struct Options {
     pub job: PathBuf,
     pub interesting: Interesting,
-    pub target: TargetId,
+    pub target: TargetSpec,
     pub preserve_semantics: bool,
     pub max_steps: u32,
     pub guards: bool,
@@ -187,7 +187,7 @@ pub fn run(root: &Path, options: Options) -> Result<()> {
     fs::create_dir_all(&work)?;
     let executor = if options.interesting.needs_exec() {
         Some(Executor::new(
-            options.target,
+            &options.target,
             root,
             &tools.glslang,
             &work.join("exec"),
