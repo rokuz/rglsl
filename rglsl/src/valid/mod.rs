@@ -9,6 +9,8 @@ mod function;
 mod handles;
 pub(crate) mod immediates;
 mod interface;
+#[cfg(test)]
+mod malformed;
 mod r#type;
 
 use alloc::{boxed::Box, string::String, vec, vec::Vec};
