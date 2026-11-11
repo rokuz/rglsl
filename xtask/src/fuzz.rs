@@ -10,6 +10,8 @@ use std::time::Duration;
 use anyhow::{bail, Context, Result};
 
 use crate::corpus::STAGE_EXTENSIONS;
+use crate::exec::Executor;
+use crate::fuzz_exec::{self, Run};
 use crate::oracles;
 use crate::process::{self, Exit};
 use crate::worker::{EXIT_ACCEPTED, EXIT_BACKEND_FAILED, EXIT_REJECTED};
@@ -19,6 +21,8 @@ pub struct Options {
     pub shaders: PathBuf,
     pub jobs: Option<usize>,
     pub timeout_secs: u64,
+    pub exec: bool,
+    pub exec_glslang: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -29,6 +33,10 @@ enum Verdict {
     BackendFailed,
     InvalidSpirv,
     Crash,
+    ExecSkipped,
+    WrongResultGlslang,
+    ExecFailed,
+    WrongResult,
 }
 
 impl Verdict {
@@ -40,13 +48,22 @@ impl Verdict {
             Self::BackendFailed => "backend-failed",
             Self::InvalidSpirv => "invalid-spirv",
             Self::Crash => "crash",
+            Self::ExecSkipped => "exec-skipped",
+            Self::WrongResultGlslang => "wrong-result-glslang",
+            Self::ExecFailed => "exec-failed",
+            Self::WrongResult => "wrong-result",
         }
     }
 
     const fn is_failure(self) -> bool {
         matches!(
             self,
-            Self::WeReject | Self::BackendFailed | Self::InvalidSpirv | Self::Crash
+            Self::WeReject
+                | Self::BackendFailed
+                | Self::InvalidSpirv
+                | Self::Crash
+                | Self::ExecFailed
+                | Self::WrongResult
         )
     }
 }
@@ -56,6 +73,7 @@ struct Outcome {
     shader: PathBuf,
     verdict: Verdict,
     note: String,
+    spirv: PathBuf,
 }
 
 pub fn run(root: &Path, options: Options) -> Result<()> {
@@ -125,6 +143,21 @@ pub fn run(root: &Path, options: Options) -> Result<()> {
         .unwrap_or_else(PoisonError::into_inner);
     outcomes.sort_by(|a, b| a.shader.cmp(&b.shader));
 
+    if options.exec {
+        let executor = Executor::new(root, &glslang.path, work.join("exec"), timeout)?;
+        eprintln!(
+            "[xtask] exec on {} (Vulkan {}, {})",
+            executor.device.name, executor.device.api_version, executor.device.driver
+        );
+        metamorphic(
+            &executor,
+            &mut outcomes,
+            &spirv_dir,
+            options.exec_glslang,
+            jobs,
+        );
+    }
+
     let report = work.join("report.tsv");
     fs::write(&report, details(&shaders_dir, &outcomes))?;
     print!("{}", summary(&outcomes));
@@ -174,6 +207,7 @@ fn compare(
         shader: shader.to_path_buf(),
         verdict,
         note,
+        spirv: spirv.to_path_buf(),
     };
     let stage = stage_of(shader).context("not a shader file")?;
 
@@ -232,6 +266,173 @@ fn compare(
         return Ok(outcome(Verdict::InvalidSpirv, note.to_string()));
     }
     Ok(outcome(Verdict::Agree, String::new()))
+}
+
+type RunPair = (Run, Option<Run>);
+
+fn run_all(
+    executor: &Executor,
+    outcomes: &[Outcome],
+    spirv_dir: &Path,
+    glslang: bool,
+    jobs: usize,
+) -> Vec<RunPair> {
+    let next = AtomicUsize::new(0);
+    let runs: Mutex<Vec<(usize, RunPair)>> = Mutex::new(Vec::new());
+    std::thread::scope(|scope| {
+        for _ in 0..jobs {
+            scope.spawn(|| loop {
+                let index = next.fetch_add(1, Ordering::Relaxed);
+                let Some(outcome) = outcomes.get(index) else {
+                    break;
+                };
+                let result = if outcome.verdict == Verdict::Agree
+                    && fuzz_exec::family_of(&outcome.shader).is_some()
+                {
+                    let dir = spirv_dir.join(format!("exec{index}"));
+                    let json = fuzz_exec::job_json(&outcome.shader);
+                    let ours = fuzz_exec::run_module(
+                        executor,
+                        &outcome.spirv,
+                        json.as_deref(),
+                        &dir,
+                        "rglsl",
+                    );
+                    let theirs = glslang.then(|| {
+                        fuzz_exec::run_module(
+                            executor,
+                            &outcome.spirv.with_extension("glslang.spv"),
+                            json.as_deref(),
+                            &dir,
+                            "glslang",
+                        )
+                    });
+                    (ours, theirs)
+                } else {
+                    (Run::Refused(String::new()), None)
+                };
+                runs.lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .push((index, result));
+            });
+        }
+    });
+    let mut runs = runs.into_inner().unwrap_or_else(PoisonError::into_inner);
+    runs.sort_by_key(|(index, _)| *index);
+    runs.into_iter().map(|(_, run)| run).collect()
+}
+
+fn differs(reference: &Run, variant: &Run) -> Option<Result<String, String>> {
+    match (reference, variant) {
+        (
+            Run::Ran {
+                plan: reference_plan,
+                outputs: reference_outputs,
+            },
+            Run::Ran { plan, outputs },
+        ) => fuzz_exec::compare_runs((reference_plan, reference_outputs), (plan, outputs))
+            .err()
+            .map(Ok),
+        (Run::Ran { .. }, Run::Failed(error)) => Some(Err(error.clone())),
+        _ => None,
+    }
+}
+
+fn metamorphic(
+    executor: &Executor,
+    outcomes: &mut [Outcome],
+    spirv_dir: &Path,
+    glslang: bool,
+    jobs: usize,
+) {
+    let runs = run_all(executor, outcomes, spirv_dir, glslang, jobs);
+    let index_of: BTreeMap<PathBuf, usize> = outcomes
+        .iter()
+        .enumerate()
+        .map(|(index, outcome)| (outcome.shader.clone(), index))
+        .collect();
+    for index in 0..outcomes.len() {
+        let Some(outcome) = outcomes.get(index) else {
+            continue;
+        };
+        if outcome.verdict != Verdict::Agree {
+            continue;
+        }
+        let Some(reference) = fuzz_exec::family_of(&outcome.shader) else {
+            continue;
+        };
+        let Some((ours, theirs)) = runs.get(index) else {
+            continue;
+        };
+        let reference_runs = index_of.get(&reference).and_then(|i| runs.get(*i));
+        let (verdict, note) = if reference == outcome.shader {
+            match (ours, theirs) {
+                (Run::Refused(why), _) => (Verdict::ExecSkipped, why.clone()),
+                (Run::Failed(why), Some(Run::Failed(_))) => (
+                    Verdict::ExecSkipped,
+                    format!("glslang's module fails on the driver too: {why}"),
+                ),
+                (Run::Failed(why), _) => (Verdict::ExecFailed, why.clone()),
+                (Run::Ran { .. }, Some(theirs)) => match differs(theirs, ours) {
+                    Some(Ok(difference)) => (
+                        Verdict::WrongResult,
+                        format!("differs from glslang's reference: {difference}"),
+                    ),
+                    _ => (Verdict::Agree, String::new()),
+                },
+                (Run::Ran { .. }, None) => (Verdict::Agree, String::new()),
+            }
+        } else {
+            match (reference_runs, ours) {
+                (_, Run::Refused(why)) => (Verdict::ExecSkipped, why.clone()),
+                (_, Run::Failed(why)) => (Verdict::ExecFailed, why.clone()),
+                (Some((reference_ours @ Run::Ran { .. }, reference_theirs)), Run::Ran { .. }) => {
+                    let glslang_difference = match (reference_theirs, theirs) {
+                        (Some(reference_theirs), Some(theirs)) => {
+                            differs(reference_theirs, theirs).map(|d| d.unwrap_or_else(|e| e))
+                        }
+                        _ => None,
+                    };
+                    match (differs(reference_ours, ours), glslang_difference) {
+                        (Some(Ok(difference)), None) => (
+                            Verdict::WrongResult,
+                            format!("differs from the reference: {difference}"),
+                        ),
+                        (Some(Ok(difference)), Some(_)) => (
+                            Verdict::WrongResultGlslang,
+                            format!(
+                                "glslang's variant differs from its reference too: {difference}"
+                            ),
+                        ),
+                        (_, Some(difference)) => (
+                            Verdict::WrongResultGlslang,
+                            format!(
+                                "only glslang's variant differs from its reference: {difference}"
+                            ),
+                        ),
+                        _ => (Verdict::Agree, String::new()),
+                    }
+                }
+                (Some((reference, _)), Run::Ran { .. }) => (
+                    Verdict::ExecSkipped,
+                    match reference {
+                        Run::Refused(why) | Run::Failed(why) => {
+                            format!("the reference did not run: {why}")
+                        }
+                        Run::Ran { .. } => String::new(),
+                    },
+                ),
+                (None, Run::Ran { .. }) => (
+                    Verdict::ExecSkipped,
+                    "the reference was not compiled".to_string(),
+                ),
+            }
+        };
+        if let Some(outcome) = outcomes.get_mut(index) {
+            outcome.verdict = verdict;
+            outcome.note = note;
+        }
+    }
 }
 
 fn details(root: &Path, outcomes: &[Outcome]) -> String {

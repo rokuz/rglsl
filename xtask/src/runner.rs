@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 use anyhow::{bail, Context, Result};
 
 use crate::corpus::{self, Case};
+use crate::exec::{self, Executor};
 use crate::oracles::{self, Tool};
 use crate::process::{self, Exit};
 use crate::report;
@@ -22,6 +23,7 @@ pub struct Options {
     pub jobs: Option<usize>,
     pub timeout_secs: u64,
     pub write_progress: bool,
+    pub exec: bool,
 }
 
 /// What glslang did with a shader.
@@ -58,6 +60,7 @@ pub struct CaseResult {
     pub spirv_val: Option<bool>,
     /// First diagnostic, for the per-file report.
     pub note: String,
+    pub exec: Option<exec::Outcome>,
 }
 
 impl CaseResult {
@@ -106,6 +109,7 @@ pub struct Environment {
     pub glslang: Tool,
     pub spirv_val: Tool,
     pub pins: oracles::Pins,
+    pub executor: Option<Executor>,
 }
 
 pub fn run(root: &Path, options: Options) -> Result<()> {
@@ -120,13 +124,27 @@ pub fn run(root: &Path, options: Options) -> Result<()> {
             glslang_dir.display()
         );
     }
-    let env = Environment {
+    let mut env = Environment {
         glslang_commit: oracles::git_head(&glslang_dir).ok(),
         glslang: oracles::find_tool(root, "glslang", "RGLSL_GLSLANG")?,
         spirv_val: oracles::find_tool(root, "spirv-val", "RGLSL_SPIRV_VAL")?,
+        executor: None,
         glslang_dir,
         pins,
     };
+    if options.exec {
+        let executor = Executor::new(
+            root,
+            &env.glslang.path,
+            root.join("target").join("xtask").join("exec"),
+            Duration::from_secs(options.timeout_secs),
+        )?;
+        eprintln!(
+            "[xtask] exec on {} (Vulkan {}, {})",
+            executor.device.name, executor.device.api_version, executor.device.driver
+        );
+        env.executor = Some(executor);
+    }
     if env.glslang_commit.as_deref() != Some(env.pins.glslang.commit.as_str()) {
         eprintln!(
             "[xtask] warning: the corpus checkout is not at the pinned glslang commit {}",
@@ -208,12 +226,19 @@ pub fn run(root: &Path, options: Options) -> Result<()> {
 
     let details = root.join("target").join("xtask").join("results.tsv");
     fs::write(&details, report::details(&results))?;
-    let summary = report::progress(&env, &results);
+    let carried = if env.executor.is_none() {
+        fs::read_to_string(root.join("PROGRESS.md"))
+            .ok()
+            .map(|text| report::Carried::parse(&text))
+    } else {
+        None
+    };
+    let summary = report::progress(&env, &results, carried.as_ref());
     if options.write_progress && options.filter.is_none() {
         fs::write(root.join("PROGRESS.md"), &summary)?;
         eprintln!("[xtask] wrote PROGRESS.md");
     }
-    print!("{}", report::summary(&results));
+    print!("{}", report::summary(&results, env.executor.is_some()));
     eprintln!("[xtask] per-shader results: {}", details.display());
     Ok(())
 }
@@ -268,27 +293,27 @@ fn run_case(
 
     let spirv_val = match ours {
         OursResult::Accepted => {
-            let mut command = Command::new(&env.spirv_val.path);
-            command.args(["--target-env", &case.target.spirv_val_env()]);
-            if enables_extension(&case.path, "GL_EXT_texture_offset_non_const") {
-                command.arg("--allow-offset-texture-operand");
-            }
-            if enables_extension(&case.path, "GL_EXT_scalar_block_layout") {
-                command.arg("--scalar-block-layout");
-            }
-            command.arg(&out);
-            let output = process::run(command, timeout)?;
-            let ok = matches!(output.exit, Exit::Code(0));
-            if !ok {
-                let message = output
-                    .stderr
-                    .lines()
-                    .chain(output.stdout.lines())
-                    .find(|l| !l.trim().is_empty())
-                    .unwrap_or("spirv-val failed");
+            let failure = validate(env, case, &out, timeout)?;
+            if let Some(message) = &failure {
                 note = format!("spirv-val: {message}");
             }
-            Some(ok)
+            Some(failure.is_none())
+        }
+        _ => None,
+    };
+
+    let reference = work_dir.join("glslang").join(format!("{}.spv", case.name));
+    let exec = match &env.executor {
+        Some(executor)
+            if matches!(oracle, OracleResult::Accepted)
+                && spirv_val == Some(true)
+                && !case.target.compile_only
+                && reference.is_file() =>
+        {
+            Some(match validate(env, case, &reference, timeout)? {
+                Some(message) => exec::Outcome::skip(exec::SkipReason::ReferenceInvalid, message),
+                None => executor.exec(&case.name, &out, &reference),
+            })
         }
         _ => None,
     };
@@ -299,7 +324,38 @@ fn run_case(
         ours,
         spirv_val,
         note,
+        exec,
     })
+}
+
+fn validate(
+    env: &Environment,
+    case: &Case,
+    module: &Path,
+    timeout: Duration,
+) -> Result<Option<String>> {
+    let mut command = Command::new(&env.spirv_val.path);
+    command.args(["--target-env", &case.target.spirv_val_env()]);
+    if enables_extension(&case.path, "GL_EXT_texture_offset_non_const") {
+        command.arg("--allow-offset-texture-operand");
+    }
+    if enables_extension(&case.path, "GL_EXT_scalar_block_layout") {
+        command.arg("--scalar-block-layout");
+    }
+    command.arg(module);
+    let output = process::run(command, timeout)?;
+    if matches!(output.exit, Exit::Code(0)) {
+        return Ok(None);
+    }
+    Ok(Some(
+        output
+            .stderr
+            .lines()
+            .chain(output.stdout.lines())
+            .find(|l| !l.trim().is_empty())
+            .unwrap_or("spirv-val failed")
+            .to_string(),
+    ))
 }
 
 fn run_oracle(

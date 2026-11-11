@@ -46,6 +46,28 @@ cargo xtask test --glslang-dir ../glslang --filter spv.100ops --no-progress-file
 
 Per-shader results go to `target/xtask/results.tsv`.
 
+### Running shaders (`exec`)
+
+The `exec` column runs our module and glslang's on a Vulkan driver and compares what they
+write. The driver is [KosmicKrisp](https://docs.mesa3d.org/drivers/kosmickrisp.html), Mesa's
+Vulkan driver on Metal, so `exec` needs macOS on Apple silicon. The modules are run by
+[Amber](https://github.com/google/amber). Both are pinned in `oracles.toml` and installed by
+`cargo xtask oracles`: it downloads the prebuilt KosmicKrisp release, checks its sha256, unpacks
+it into `target/oracles/kosmickrisp/` with an ICD manifest that points at the driver by absolute
+path, builds Amber against that loader, and prints the Vulkan device it finds. Requirements:
+`cmake`, `ninja` (optional), `python3`, `curl`, `unzip`, `shasum`, and Homebrew's `spirv-tools`
+(`brew install spirv-tools`), which the prebuilt driver links against.
+
+```sh
+cargo xtask oracles --exec-only          # install only KosmicKrisp and Amber
+cargo xtask test --no-exec               # skip exec; PROGRESS.md keeps the last exec results
+cargo xtask fuzz --shaders DIR --exec    # metamorphic check of rglsl-fuzz shader families
+```
+
+On other platforms `cargo xtask oracles` skips the exec oracles and `cargo xtask test` needs
+`--no-exec`. `RGLSL_AMBER` and `RGLSL_VK_ICD` select another Amber binary or driver manifest.
+Scripts, inputs and dumps of the last run are kept in `target/xtask/exec/<shader>/`.
+
 ## Command line
 
 ```sh

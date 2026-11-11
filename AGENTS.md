@@ -21,7 +21,7 @@ goal, the language rules for linkage and `#include`, and the milestones (M0–M9
 | `rglsl-test/`, `rglsl/tests/` | upstream snapshot tests |
 | `rglsl/xtask/` | snapshot validation (`cd rglsl && cargo xtask validate spv`) |
 | `xtask/` | project automation: `cargo xtask oracles`, `cargo xtask test` |
-| `oracles.toml` | pinned glslang / SPIRV-Tools / SPIRV-Headers commits |
+| `oracles.toml` | pinned glslang / SPIRV-Tools / SPIRV-Headers commits, KosmicKrisp release and Amber commit (exec) |
 
 ## Rules
 
@@ -57,7 +57,7 @@ cargo test --workspace --all-features
 cargo deny check
 
 cargo xtask oracles [--glslang-dir ../glslang]     # build pinned glslang + spirv-val
-cargo xtask test [--glslang-dir ../glslang]        # corpus run, rewrites PROGRESS.md
+cargo xtask test [--glslang-dir ../glslang]        # corpus run, rewrites PROGRESS.md (--no-exec off macOS arm64)
 cargo xtask test --filter NAME --no-progress-file  # quick local check
 ```
 
