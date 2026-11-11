@@ -25,3 +25,23 @@ twin = "stores `uint(gl_SubgroupInvocationID < gl_SubgroupSize)` in place of `gl
 ["spv.viewportArray2.perVertex.notRequested.tesc"]
 undefined = "never writes the tessellation levels, so the tessellated primitives and the color attachment are undefined (glslang's own module rendered differently on two runs on the remote target)"
 twin = "invocation 0 writes every outer and inner tessellation level as 2.0; drops the comment"
+
+["implicitArraySizeBuiltin.vert"]
+undefined = "sizes `gl_ClipDistance` to 7 and `gl_CullDistance` to 2, and 9 is more than `maxCombinedClipAndCullDistances` (8 on both targets; VUID-VkPipelineShaderStageCreateInfo-maxCombinedClipAndCullDistances-00710, which the validation layer does not check): KosmicKrisp fails to create the pipeline because the cull distances spill into a varying the fragment stage reads but the vertex stage never writes"
+twin = "writes `gl_ClipDistance[5]` in place of `gl_ClipDistance[6]`, so the implicit sizes are 6 and 2"
+
+["spv.relaxSetBindingLimits.frag"]
+undefined = "uses descriptor set 300, so its pipeline layout needs 301 set layouts, more than `maxBoundDescriptorSets` (32 on both targets; VUID-VkPipelineLayoutCreateInfo-setLayoutCount-00286): KosmicKrisp reads past its 32-entry set layout array while hashing the pipeline and crashes"
+twin = "uses set 31, the last set both targets bind; the binding stays 70000"
+
+["spv.atomiAddEXT.task"]
+undefined = "the task shader returns without executing `EmitMeshTasksEXT`, which SPV_EXT_mesh_shader makes undefined (the AMD driver loses the device)"
+twin = "calls `EmitMeshTasksEXT(1, 1, 1)` after the atomics; the payload atomic still reads the uninitialized `mytask`, but the generated mesh shader does not read the payload; drops the comment"
+
+["spv.coopmatKHR_constructor.comp"]
+undefined = "declares 8×8 cooperative matrices of types no device lists in `VkCooperativeMatrixPropertiesKHR` (the AMD target lists only 16×16 with float16, uint8 and int8 for `gl_MatrixUseA`; VUID-RuntimeSpirv-OpTypeCooperativeMatrixKHR-10163): the AMD driver crashes compiling it"
+twin = "uses 16×16 matrices and only the `gl_MatrixUseA` component types the AMD target lists (float16_t, uint8_t, int8_t): the float, uint32_t, uint16_t, int32_t and int16_t conversions are dropped, and `mat` and `matArr` are float16_t"
+
+["spv.for-notest.vert"]
+undefined = "the loop has no condition and no exit, so the vertex shader never terminates and the draw has no result (the AMD driver crashes compiling it; Metal's compiler deletes the loop)"
+twin = "the loop body breaks after `r = 3`"
