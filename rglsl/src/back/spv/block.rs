@@ -2073,6 +2073,30 @@ impl BlockContext<'_> {
                 ));
                 id
             }
+            crate::Expression::FragmentFetch {
+                image,
+                coordinate,
+                fragment,
+            } => {
+                self.writer.use_extension("SPV_AMD_shader_fragment_mask");
+                self.writer
+                    .require_any("fragment mask", &[spirv::Capability::FragmentMaskAMD])?;
+                let image_id = self.get_image_id(image, block)?;
+                let id = self.gen_id();
+                let mut instruction = Instruction::new(match fragment {
+                    None => spirv::Op::FragmentMaskFetchAMD,
+                    Some(_) => spirv::Op::FragmentFetchAMD,
+                });
+                instruction.set_type(result_type_id);
+                instruction.set_result(id);
+                instruction.add_operand(image_id);
+                instruction.add_operand(self.cached.get(coordinate)?);
+                if let Some(fragment) = fragment {
+                    instruction.add_operand(self.cached.get(fragment)?);
+                }
+                block.body.push(instruction);
+                id
+            }
             crate::Expression::AttachmentRead { aspect, sample } => {
                 self.write_attachment_read(aspect, sample, result_type_id, block)?
             }

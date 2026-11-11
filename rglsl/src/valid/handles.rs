@@ -762,6 +762,16 @@ impl super::Validator {
                     }
                 }
             }
+            crate::Expression::FragmentFetch {
+                image,
+                coordinate,
+                fragment,
+            } => {
+                handle
+                    .check_dep(image)?
+                    .check_dep(coordinate)?
+                    .check_dep_opt(fragment)?;
+            }
             crate::Expression::AttachmentRead { aspect, sample } => {
                 if let crate::AttachmentAspect::Color(image) = aspect {
                     handle.check_dep(image)?;

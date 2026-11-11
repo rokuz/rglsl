@@ -941,6 +941,17 @@ impl FunctionInfo {
                     .or(Some(handle)),
                 requirements: UniformityRequirements::empty(),
             },
+            E::FragmentFetch {
+                image,
+                coordinate,
+                fragment,
+            } => Uniformity {
+                non_uniform_result: self
+                    .add_ref(image)
+                    .or(self.add_ref(coordinate))
+                    .or(fragment.and_then(|fragment| self.add_ref(fragment))),
+                requirements: UniformityRequirements::empty(),
+            },
             E::AttachmentRead { aspect, sample } => Uniformity {
                 non_uniform_result: match aspect {
                     crate::AttachmentAspect::Color(image) => self.add_ref(image),

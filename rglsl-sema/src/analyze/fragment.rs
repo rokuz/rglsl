@@ -68,6 +68,7 @@ const TILE_IMAGE: &str = "GL_EXT_shader_tile_image";
 pub(crate) fn function_extension(name: &str) -> Option<&'static str> {
     Some(match name {
         "helperInvocationEXT" => "GL_EXT_demote_to_helper_invocation",
+        "fragmentMaskFetchAMD" | "fragmentFetchAMD" => "GL_AMD_shader_fragment_mask",
         "controlBarrierArrive" | "controlBarrierWait" => "GL_EXT_split_barrier",
         "colorAttachmentReadEXT" | "depthAttachmentReadEXT" | "stencilAttachmentReadEXT" => {
             TILE_IMAGE

@@ -2988,6 +2988,11 @@ pub enum Expression {
         pointer: Handle<Expression>,
         location: InterpolationLocation,
     },
+    FragmentFetch {
+        image: Handle<Expression>,
+        coordinate: Handle<Expression>,
+        fragment: Option<Handle<Expression>>,
+    },
     AttachmentRead {
         aspect: AttachmentAspect,
         sample: Option<Handle<Expression>>,

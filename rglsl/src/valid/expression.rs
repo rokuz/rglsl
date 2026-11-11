@@ -1774,6 +1774,39 @@ impl super::Validator {
                 }
                 ShaderStages::FRAGMENT
             }
+            E::FragmentFetch {
+                image,
+                coordinate,
+                fragment,
+            } => {
+                if !matches!(
+                    resolver[image],
+                    Ti::Image {
+                        class: crate::ImageClass::Sampled { multi: true, .. },
+                        ..
+                    } | Ti::SampledImage {
+                        class: crate::ImageClass::Sampled { multi: true, .. },
+                        ..
+                    }
+                ) {
+                    return Err(ExpressionError::ExpectedGlobalVariable);
+                }
+                if !matches!(
+                    resolver[coordinate],
+                    Ti::Vector {
+                        scalar: Sc::I32,
+                        ..
+                    }
+                ) {
+                    return Err(ExpressionError::InvalidImageOtherIndexType(coordinate));
+                }
+                if let Some(fragment) = fragment {
+                    if !matches!(resolver[fragment], Ti::Scalar(Sc::U32)) {
+                        return Err(ExpressionError::InvalidImageOtherIndexType(fragment));
+                    }
+                }
+                ShaderStages::all()
+            }
             E::AttachmentRead { aspect, sample } => {
                 if let crate::AttachmentAspect::Color(image) = aspect {
                     if !matches!(

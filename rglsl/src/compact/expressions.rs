@@ -216,6 +216,17 @@ impl ExpressionTracer<'_> {
                     }
                 }
             }
+            Ex::FragmentFetch {
+                image,
+                coordinate,
+                fragment,
+            } => {
+                self.expressions_used.insert(image);
+                self.expressions_used.insert(coordinate);
+                if let Some(fragment) = fragment {
+                    self.expressions_used.insert(fragment);
+                }
+            }
             Ex::AttachmentRead { aspect, sample } => {
                 if let crate::AttachmentAspect::Color(image) = aspect {
                     self.expressions_used.insert(image);
@@ -520,6 +531,17 @@ impl ModuleMap {
                     crate::InterpolationLocation::Centroid => {}
                     crate::InterpolationLocation::Sample(ref mut operand)
                     | crate::InterpolationLocation::Offset(ref mut operand) => adjust(operand)?,
+                }
+            }
+            Ex::FragmentFetch {
+                ref mut image,
+                ref mut coordinate,
+                ref mut fragment,
+            } => {
+                adjust(image)?;
+                adjust(coordinate)?;
+                if let Some(ref mut fragment) = *fragment {
+                    adjust(fragment)?;
                 }
             }
             Ex::AttachmentRead {

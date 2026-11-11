@@ -640,6 +640,17 @@ fn adjust_expr(new_pos: &HandleVec<Expression, Handle<Expression>>, expr: &mut E
                 | crate::InterpolationLocation::Offset(ref mut operand) => adjust(operand),
             }
         }
+        Expression::FragmentFetch {
+            ref mut image,
+            ref mut coordinate,
+            ref mut fragment,
+        } => {
+            adjust(image);
+            adjust(coordinate);
+            if let Some(ref mut fragment) = *fragment {
+                adjust(fragment);
+            }
+        }
         Expression::AttachmentRead {
             ref mut aspect,
             ref mut sample,

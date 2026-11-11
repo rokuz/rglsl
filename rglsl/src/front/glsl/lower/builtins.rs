@@ -329,6 +329,46 @@ impl FunctionLowerer<'_, '_> {
                 Ok(None)
             }
             "helperInvocationEXT" => self.add(Expression::IsHelperInvocation, at).map(Some),
+            "fragmentMaskFetchAMD" | "fragmentFetchAMD" => {
+                let first = arguments.first().ok_or_else(|| internal(at))?;
+                let subpass = self
+                    .lw
+                    .analysis
+                    .type_of(first.id)
+                    .and_then(GlslType::as_opaque)
+                    .is_some_and(|opaque| opaque.kind == OpaqueKind::SubpassInput);
+                let image = self.rvalue(first)?;
+                let mut rest = arguments.iter().skip(1);
+                let coordinate = if subpass {
+                    let zero = self.literal(Literal::I32(0), at)?;
+                    let ty = self
+                        .lw
+                        .vector_type(crate::VectorSize::Bi, crate::Scalar::I32);
+                    self.add(
+                        Expression::Compose {
+                            ty,
+                            components: alloc::vec![zero, zero],
+                        },
+                        at,
+                    )?
+                } else {
+                    let coordinate = rest.next().ok_or_else(|| internal(at))?;
+                    self.rvalue(coordinate)?
+                };
+                let fragment = match rest.next() {
+                    Some(fragment) if name == "fragmentFetchAMD" => Some(self.rvalue(fragment)?),
+                    _ => None,
+                };
+                self.add(
+                    Expression::FragmentFetch {
+                        image,
+                        coordinate,
+                        fragment,
+                    },
+                    at,
+                )
+                .map(Some)
+            }
             "interpolateAtCentroid" | "interpolateAtSample" | "interpolateAtOffset" => {
                 self.interpolate(name, arguments, at).map(Some)
             }
