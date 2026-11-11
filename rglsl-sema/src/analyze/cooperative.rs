@@ -4,6 +4,7 @@ use alloc::vec::Vec;
 use rglsl_ast::ast::{Expression, ExpressionKind, ParameterizedType, Spanned, TypeParameters};
 use rglsl_ast::Span;
 
+use super::frames::Cx;
 use super::{Analyzer, Operand};
 use crate::constant::Value;
 use crate::diagnostic::DiagnosticKind;
@@ -64,8 +65,11 @@ const fn coopmat_scalar(scalar: Scalar) -> bool {
 }
 
 impl Analyzer<'_> {
-    fn type_parameter(&mut self, expression: &Expression) -> Option<Parameter> {
-        let operand = self.expression(expression);
+    fn type_parameter_with(
+        &mut self,
+        expression: &Expression,
+        operand: &Operand,
+    ) -> Option<Parameter> {
         if operand.ty.is_error() {
             return None;
         }
@@ -115,57 +119,14 @@ impl Analyzer<'_> {
         Type::ERROR
     }
 
-    pub(crate) fn parameterized_type(
+    fn parameterized_type_with(
         &mut self,
         kind: ParameterizedType,
-        parameters: Option<&Spanned<TypeParameters>>,
         span: Span,
+        element: Option<Type>,
+        values: Vec<Parameter>,
     ) -> Type {
         let keyword = kind.keyword();
-        if !matches!(
-            kind,
-            ParameterizedType::LongVector | ParameterizedType::TensorArm
-        ) {
-            self.vulkan_memory_model = true;
-        }
-        let Some(parameters) = parameters else {
-            let reason = if kind == ParameterizedType::TensorArm {
-                "tensor type is missing type parameters"
-            } else {
-                "missing type parameters"
-            };
-            return self.parameter_error(span, keyword, reason);
-        };
-        let element = match &parameters.element {
-            Some(element) => {
-                let ty = self.type_specifier(element);
-                if ty.is_error() {
-                    return Type::ERROR;
-                }
-                if matches!(ty.kind, TypeKind::Struct(_)) {
-                    return self.parameter_error(
-                        span,
-                        keyword,
-                        "structure type not allowed as type parameter",
-                    );
-                }
-                Some(ty)
-            }
-            None => None,
-        };
-        let mut values = Vec::with_capacity(parameters.values.len());
-        let mut failed = false;
-        let uses = self.specialization_uses;
-        for value in &parameters.values {
-            match self.type_parameter(value) {
-                Some(parameter) => values.push(parameter),
-                None => failed = true,
-            }
-        }
-        self.specialization_uses = uses;
-        if failed {
-            return Type::ERROR;
-        }
         let element_scalar = element
             .as_ref()
             .filter(|ty| ty.is_scalar())
@@ -731,3 +692,62 @@ const NO_DOUBLE_LONG_VECTOR: [&str; 19] = [
     "radians", "degrees", "sin", "cos", "tan", "acos", "asin", "atan", "acosh", "asinh", "atanh",
     "tanh", "cosh", "sinh", "pow", "exp", "log", "exp2", "log2",
 ];
+
+impl<'b> Cx<'b, Analyzer<'_>> {
+    pub(crate) async fn parameterized_type(
+        self,
+        kind: ParameterizedType,
+        parameters: Option<&'b Spanned<TypeParameters>>,
+        span: Span,
+    ) -> Type {
+        let keyword = kind.keyword();
+        if !matches!(
+            kind,
+            ParameterizedType::LongVector | ParameterizedType::TensorArm
+        ) {
+            self.with(|analyzer| analyzer.vulkan_memory_model = true);
+        }
+        let Some(parameters) = parameters else {
+            let reason = if kind == ParameterizedType::TensorArm {
+                "tensor type is missing type parameters"
+            } else {
+                "missing type parameters"
+            };
+            return self.with(|analyzer| analyzer.parameter_error(span, keyword, reason));
+        };
+        let element = match &parameters.element {
+            Some(element) => {
+                let ty = self.call(self.clone().type_specifier(element)).await;
+                if ty.is_error() {
+                    return Type::ERROR;
+                }
+                if matches!(ty.kind, TypeKind::Struct(_)) {
+                    return self.with(|analyzer| {
+                        analyzer.parameter_error(
+                            span,
+                            keyword,
+                            "structure type not allowed as type parameter",
+                        )
+                    });
+                }
+                Some(ty)
+            }
+            None => None,
+        };
+        let mut values = Vec::with_capacity(parameters.values.len());
+        let mut failed = false;
+        let uses = self.with(|analyzer| analyzer.specialization_uses);
+        for value in &parameters.values {
+            let operand = self.call(self.clone().expression(value)).await;
+            match self.with(|analyzer| analyzer.type_parameter_with(value, &operand)) {
+                Some(parameter) => values.push(parameter),
+                None => failed = true,
+            }
+        }
+        self.with(|analyzer| analyzer.specialization_uses = uses);
+        if failed {
+            return Type::ERROR;
+        }
+        self.with(|analyzer| analyzer.parameterized_type_with(kind, span, element, values))
+    }
+}

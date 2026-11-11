@@ -263,6 +263,9 @@ fn sema_options(options: &Options, text: &str) -> rglsl_sema::Options {
         spirv_version: options.spirv_version,
         end_of_input: u32::try_from(text.len()).ok(),
         require_bindings: !options.auto_map_bindings,
+        type_depth_limit: options
+            .nesting_limits
+            .then_some(rglsl_sema::types::MAX_TYPE_DEPTH),
         ..rglsl_sema::Options::new(stage(options.stage))
     }
 }

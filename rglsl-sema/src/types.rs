@@ -983,16 +983,15 @@ impl Type {
     }
 
     pub fn contains_cooperative(&self, registry: &TypeRegistry) -> bool {
-        match self.kind {
-            TypeKind::CooperativeMatrix(_) | TypeKind::CooperativeVector { .. } => true,
-            TypeKind::Struct(id) => registry.structure(id).is_some_and(|structure| {
-                structure
-                    .members
-                    .iter()
-                    .any(|member| member.ty.contains_cooperative(registry))
-            }),
-            _ => false,
-        }
+        registry
+            .find_in_members(self, |ty| {
+                matches!(
+                    ty.kind,
+                    TypeKind::CooperativeMatrix(_) | TypeKind::CooperativeVector { .. }
+                )
+                .then_some(())
+            })
+            .is_some()
     }
 
     pub const fn scalar_type(&self) -> Option<Scalar> {
@@ -1519,6 +1518,27 @@ impl BlockType {
             .iter()
             .enumerate()
             .find(|(_, member)| member.name == name)
+    }
+}
+
+impl TypeRegistry {
+    pub fn find_in_members<'t, T>(
+        &'t self,
+        ty: &'t Type,
+        mut found: impl FnMut(&'t Type) -> Option<T>,
+    ) -> Option<T> {
+        let mut pending = Vec::from([ty]);
+        while let Some(ty) = pending.pop() {
+            if let Some(result) = found(ty) {
+                return Some(result);
+            }
+            if let TypeKind::Struct(id) = ty.kind {
+                if let Some(structure) = self.structure(id) {
+                    pending.extend(structure.members.iter().rev().map(|member| &member.ty));
+                }
+            }
+        }
+        None
     }
 }
 

@@ -1,5 +1,8 @@
 use alloc::string::String;
 use alloc::vec::Vec;
+use core::cell::RefCell;
+
+use rglsl_types::stack::run;
 
 use rglsl_ast::ast::{
     ArrayDimension, ArraySpecifier, BlockInstance, BlockStructure, Declaration, DeclarationKind,
@@ -10,6 +13,7 @@ use rglsl_ast::ast::{
 };
 use rglsl_ast::Span;
 
+use super::frames::Cx;
 use super::heap::is_heap_storage;
 use super::{Analyzer, DerivativeGroup, FunctionContext, Operand, Place};
 use crate::builtins::Stage;
@@ -73,6 +77,32 @@ struct MemberPlace<'q> {
     in_block: Option<&'q Qualifiers>,
     in_heap: bool,
     last: bool,
+}
+
+struct List {
+    element_types: Vec<Type>,
+    result: Type,
+    mismatch: bool,
+    constant: bool,
+    values: Option<Vec<Value>>,
+    failed: bool,
+    uses: u32,
+}
+
+struct Placement {
+    in_block: Option<Qualifiers>,
+    in_heap: bool,
+    last: bool,
+}
+
+impl Placement {
+    const fn place(&self) -> MemberPlace<'_> {
+        MemberPlace {
+            in_block: self.in_block.as_ref(),
+            in_heap: self.in_heap,
+            last: self.last,
+        }
+    }
 }
 
 impl Analyzer<'_> {
@@ -397,204 +427,193 @@ impl Analyzer<'_> {
     }
 
     pub(crate) fn qualifiers(&mut self, qualifier: &Spanned<TypeQualifier>) -> Qualifiers {
-        let mut result = Qualifiers::default();
-        for single in &qualifier.qualifiers {
-            match &single.node {
-                SingleTypeQualifier::Storage(storage) => match storage {
-                    StorageQualifier::Const => result.constant = true,
-                    StorageQualifier::In => {
-                        result.storage = if result.storage == Storage::Out {
-                            Storage::Inout
-                        } else {
-                            Storage::In
-                        };
-                    }
-                    StorageQualifier::Out => {
-                        result.storage = if result.storage == Storage::In {
-                            Storage::Inout
-                        } else {
-                            Storage::Out
-                        };
-                    }
-                    StorageQualifier::Inout => result.storage = Storage::Inout,
-                    StorageQualifier::Uniform => result.storage = Storage::Uniform,
-                    StorageQualifier::Buffer => result.storage = Storage::Buffer,
-                    StorageQualifier::Shared => result.storage = Storage::Shared,
-                    StorageQualifier::ResourceHeap => result.storage = Storage::ResourceHeap,
-                    StorageQualifier::SamplerHeap => result.storage = Storage::SamplerHeap,
-                    StorageQualifier::Centroid => result.centroid = true,
-                    StorageQualifier::Patch => result.patch = true,
-                    StorageQualifier::Sample => result.sample = true,
-                    StorageQualifier::Coherent => result.coherent = true,
-                    StorageQualifier::DeviceCoherent => {
-                        self.require_scope_extension(single.span, storage.keyword());
-                        result.device_coherent = true;
-                    }
-                    StorageQualifier::QueueFamilyCoherent => {
-                        self.require_scope_extension(single.span, storage.keyword());
-                        result.queue_family_coherent = true;
-                    }
-                    StorageQualifier::WorkgroupCoherent => {
-                        self.require_scope_extension(single.span, storage.keyword());
-                        result.workgroup_coherent = true;
-                    }
-                    StorageQualifier::SubgroupCoherent => {
-                        self.require_scope_extension(single.span, storage.keyword());
-                        result.subgroup_coherent = true;
-                    }
-                    StorageQualifier::NonPrivate => {
-                        self.require_scope_extension(single.span, storage.keyword());
-                        result.nonprivate = true;
-                    }
-                    StorageQualifier::NonTemporal => {
-                        self.require_extension(
-                            single.span,
-                            "GL_EXT_nontemporal_keyword",
-                            storage.keyword(),
-                        );
-                        result.nontemporal = true;
-                    }
-                    StorageQualifier::ShaderCallCoherent => {
-                        self.require_extension(
-                            single.span,
-                            "GL_EXT_ray_tracing",
-                            "shadercallcoherent",
-                        );
-                        result.shader_call_coherent = true;
-                    }
-                    StorageQualifier::PerPrimitiveNV | StorageQualifier::PerPrimitiveEXT => {
-                        self.mesh_qualifier(single.span, *storage);
-                        result.per_primitive = true;
-                    }
-                    StorageQualifier::PerViewNV => {
-                        self.mesh_qualifier(single.span, *storage);
-                        result.per_view = true;
-                    }
-                    StorageQualifier::TaskNV => {
-                        self.mesh_qualifier(single.span, *storage);
-                        result.per_task = true;
-                    }
-                    StorageQualifier::TaskPayloadSharedEXT => {
-                        self.mesh_qualifier(single.span, *storage);
-                        result.storage = Storage::TaskPayloadShared;
-                    }
-                    StorageQualifier::TileImageEXT => {
-                        self.require_extension(
-                            single.span,
-                            "GL_EXT_shader_tile_image",
-                            storage.keyword(),
-                        );
-                        result.storage = Storage::TileImage;
-                    }
-                    StorageQualifier::Volatile => result.volatile = true,
-                    StorageQualifier::Restrict => result.restrict = true,
-                    StorageQualifier::Readonly => result.readonly = true,
-                    StorageQualifier::Writeonly => result.writeonly = true,
-                    StorageQualifier::RayPayloadNV
-                    | StorageQualifier::RayPayloadEXT
-                    | StorageQualifier::RayPayloadInNV
-                    | StorageQualifier::RayPayloadInEXT
-                    | StorageQualifier::HitAttributeNV
-                    | StorageQualifier::HitAttributeEXT
-                    | StorageQualifier::CallableDataNV
-                    | StorageQualifier::CallableDataEXT
-                    | StorageQualifier::CallableDataInNV
-                    | StorageQualifier::CallableDataInEXT
-                    | StorageQualifier::HitObjectAttributeNV
-                    | StorageQualifier::HitObjectAttributeEXT => {
-                        result.storage = self.ray_storage_qualifier(single.span, *storage);
-                    }
-                    StorageQualifier::Attribute | StorageQualifier::Varying => {
-                        self.error(
-                            single.span,
-                            DiagnosticKind::InvalidQualifier {
-                                qualifier: storage.keyword(),
-                                reason: "removed from the core profile",
-                            },
-                        );
-                    }
-                },
-                SingleTypeQualifier::Subroutine(_) => {
+        let finished = {
+            let analyzer = RefCell::new(&mut *self);
+            run(|stack| Cx::new(&analyzer, stack).qualifiers(qualifier))
+        };
+        finished.unwrap_or_else(|| self.stalled(Qualifiers::default()))
+    }
+
+    fn single_qualifier(&mut self, single: &Spanned<SingleTypeQualifier>, result: &mut Qualifiers) {
+        match &single.node {
+            SingleTypeQualifier::Storage(storage) => match storage {
+                StorageQualifier::Const => result.constant = true,
+                StorageQualifier::In => {
+                    result.storage = if result.storage == Storage::Out {
+                        Storage::Inout
+                    } else {
+                        Storage::In
+                    };
+                }
+                StorageQualifier::Out => {
+                    result.storage = if result.storage == Storage::In {
+                        Storage::Inout
+                    } else {
+                        Storage::Out
+                    };
+                }
+                StorageQualifier::Inout => result.storage = Storage::Inout,
+                StorageQualifier::Uniform => result.storage = Storage::Uniform,
+                StorageQualifier::Buffer => result.storage = Storage::Buffer,
+                StorageQualifier::Shared => result.storage = Storage::Shared,
+                StorageQualifier::ResourceHeap => result.storage = Storage::ResourceHeap,
+                StorageQualifier::SamplerHeap => result.storage = Storage::SamplerHeap,
+                StorageQualifier::Centroid => result.centroid = true,
+                StorageQualifier::Patch => result.patch = true,
+                StorageQualifier::Sample => result.sample = true,
+                StorageQualifier::Coherent => result.coherent = true,
+                StorageQualifier::DeviceCoherent => {
+                    self.require_scope_extension(single.span, storage.keyword());
+                    result.device_coherent = true;
+                }
+                StorageQualifier::QueueFamilyCoherent => {
+                    self.require_scope_extension(single.span, storage.keyword());
+                    result.queue_family_coherent = true;
+                }
+                StorageQualifier::WorkgroupCoherent => {
+                    self.require_scope_extension(single.span, storage.keyword());
+                    result.workgroup_coherent = true;
+                }
+                StorageQualifier::SubgroupCoherent => {
+                    self.require_scope_extension(single.span, storage.keyword());
+                    result.subgroup_coherent = true;
+                }
+                StorageQualifier::NonPrivate => {
+                    self.require_scope_extension(single.span, storage.keyword());
+                    result.nonprivate = true;
+                }
+                StorageQualifier::NonTemporal => {
+                    self.require_extension(
+                        single.span,
+                        "GL_EXT_nontemporal_keyword",
+                        storage.keyword(),
+                    );
+                    result.nontemporal = true;
+                }
+                StorageQualifier::ShaderCallCoherent => {
+                    self.require_extension(single.span, "GL_EXT_ray_tracing", "shadercallcoherent");
+                    result.shader_call_coherent = true;
+                }
+                StorageQualifier::PerPrimitiveNV | StorageQualifier::PerPrimitiveEXT => {
+                    self.mesh_qualifier(single.span, *storage);
+                    result.per_primitive = true;
+                }
+                StorageQualifier::PerViewNV => {
+                    self.mesh_qualifier(single.span, *storage);
+                    result.per_view = true;
+                }
+                StorageQualifier::TaskNV => {
+                    self.mesh_qualifier(single.span, *storage);
+                    result.per_task = true;
+                }
+                StorageQualifier::TaskPayloadSharedEXT => {
+                    self.mesh_qualifier(single.span, *storage);
+                    result.storage = Storage::TaskPayloadShared;
+                }
+                StorageQualifier::TileImageEXT => {
+                    self.require_extension(
+                        single.span,
+                        "GL_EXT_shader_tile_image",
+                        storage.keyword(),
+                    );
+                    result.storage = Storage::TileImage;
+                }
+                StorageQualifier::Volatile => result.volatile = true,
+                StorageQualifier::Restrict => result.restrict = true,
+                StorageQualifier::Readonly => result.readonly = true,
+                StorageQualifier::Writeonly => result.writeonly = true,
+                StorageQualifier::RayPayloadNV
+                | StorageQualifier::RayPayloadEXT
+                | StorageQualifier::RayPayloadInNV
+                | StorageQualifier::RayPayloadInEXT
+                | StorageQualifier::HitAttributeNV
+                | StorageQualifier::HitAttributeEXT
+                | StorageQualifier::CallableDataNV
+                | StorageQualifier::CallableDataEXT
+                | StorageQualifier::CallableDataInNV
+                | StorageQualifier::CallableDataInEXT
+                | StorageQualifier::HitObjectAttributeNV
+                | StorageQualifier::HitObjectAttributeEXT => {
+                    result.storage = self.ray_storage_qualifier(single.span, *storage);
+                }
+                StorageQualifier::Attribute | StorageQualifier::Varying => {
                     self.error(
                         single.span,
-                        DiagnosticKind::RemovedUnderVulkan(String::from("subroutine")),
+                        DiagnosticKind::InvalidQualifier {
+                            qualifier: storage.keyword(),
+                            reason: "removed from the core profile",
+                        },
                     );
                 }
-                SingleTypeQualifier::Layout(layout) => {
-                    for id in &layout.ids {
-                        let value = id.value.as_ref().and_then(|expression| {
-                            let operand = self.expression(expression);
-                            let value = operand.value.as_ref().and_then(Constant::scalar_i64);
-                            let name = &id.name.node;
-                            if operand.ty.is_error() {
-                                return None;
-                            }
-                            if name == "heap_offset" && !operand.constant {
-                                let read_only = operand.storage == Storage::Uniform
-                                    || operand.place == Place::ReadOnly("it is read-only");
-                                if !operand.ty.is_scalar_integer() || !read_only {
-                                    self.error(
-                                        expression.span,
-                                        DiagnosticKind::InvalidQualifier {
-                                            qualifier: "heap_offset",
-                                            reason: "must be a literal or read-only variable value",
-                                        },
-                                    );
-                                }
-                            } else if !operand.constant || !operand.ty.is_scalar_integer() {
-                                self.error(
-                                    expression.span,
-                                    DiagnosticKind::LayoutValueNotConstant(name.clone()),
-                                );
-                            } else if value.is_some_and(|value| value < 0) {
-                                self.error(
-                                    expression.span,
-                                    DiagnosticKind::LayoutValueNegative(name.clone()),
-                                );
-                            } else if name == "input_attachment_index" {
-                                self.input_attachment_index_value(
-                                    expression.span,
-                                    value,
-                                    operand.specialization,
-                                );
-                            }
-                            value
-                        });
-                        result.layout.push(LayoutEntry {
-                            name: id.name.node.clone(),
-                            has_value: id.value.is_some(),
-                            value,
-                            span: id.span,
-                        });
-                    }
-                }
-                SingleTypeQualifier::Precision(precision) => result.precision = Some(*precision),
-                SingleTypeQualifier::Interpolation(interpolation) => {
-                    result.interpolation = Some(*interpolation);
-                }
-                SingleTypeQualifier::Invariant => result.invariant = true,
-                SingleTypeQualifier::Precise => result.precise = true,
-                SingleTypeQualifier::NonUniform => result.nonuniform = true,
-                SingleTypeQualifier::SpirvStorageClass(class) => {
-                    if let Some(class) = self.spirv_storage_class(single.span, class) {
-                        result.spirv_storage_class = Some(class);
-                        result.storage = super::spirv::spirv_storage(class);
-                    }
-                }
-                SingleTypeQualifier::SpirvDecorate(decorate) => {
-                    if let Some(decoration) = self.spirv_decorate(decorate) {
-                        result.spirv_decorations.push(decoration);
-                    }
-                }
-                SingleTypeQualifier::SpirvByReference => result.spirv_by_reference = true,
-                SingleTypeQualifier::SpirvLiteral => result.spirv_literal = true,
+            },
+            SingleTypeQualifier::Subroutine(_) => {
+                self.error(
+                    single.span,
+                    DiagnosticKind::RemovedUnderVulkan(String::from("subroutine")),
+                );
             }
+            SingleTypeQualifier::Precision(precision) => result.precision = Some(*precision),
+            SingleTypeQualifier::Interpolation(interpolation) => {
+                result.interpolation = Some(*interpolation);
+            }
+            SingleTypeQualifier::Invariant => result.invariant = true,
+            SingleTypeQualifier::Precise => result.precise = true,
+            SingleTypeQualifier::NonUniform => result.nonuniform = true,
+            SingleTypeQualifier::SpirvStorageClass(class) => {
+                if let Some(class) = self.spirv_storage_class(single.span, class) {
+                    result.spirv_storage_class = Some(class);
+                    result.storage = super::spirv::spirv_storage(class);
+                }
+            }
+            SingleTypeQualifier::SpirvByReference => result.spirv_by_reference = true,
+            SingleTypeQualifier::SpirvLiteral => result.spirv_literal = true,
+            SingleTypeQualifier::Layout(_) | SingleTypeQualifier::SpirvDecorate(_) => {}
         }
-        self.stage_layout_identifiers(&result);
-        self.heap_layout_check(&result);
-        self.push_constant_bank_layout_check(&result);
-        self.removed_packing_check(&result);
-        result
+    }
+
+    fn layout_value(
+        &mut self,
+        name: &str,
+        expression: &Expression,
+        operand: &Operand,
+    ) -> Option<i64> {
+        let value = operand.value.as_ref().and_then(Constant::scalar_i64);
+        if operand.ty.is_error() {
+            return None;
+        }
+        if name == "heap_offset" && !operand.constant {
+            let read_only = operand.storage == Storage::Uniform
+                || operand.place == Place::ReadOnly("it is read-only");
+            if !operand.ty.is_scalar_integer() || !read_only {
+                self.error(
+                    expression.span,
+                    DiagnosticKind::InvalidQualifier {
+                        qualifier: "heap_offset",
+                        reason: "must be a literal or read-only variable value",
+                    },
+                );
+            }
+        } else if !operand.constant || !operand.ty.is_scalar_integer() {
+            self.error(
+                expression.span,
+                DiagnosticKind::LayoutValueNotConstant(String::from(name)),
+            );
+        } else if value.is_some_and(|value| value < 0) {
+            self.error(
+                expression.span,
+                DiagnosticKind::LayoutValueNegative(String::from(name)),
+            );
+        } else if name == "input_attachment_index" {
+            self.input_attachment_index_value(expression.span, value, operand.specialization);
+        }
+        value
+    }
+
+    fn finish_qualifiers(&mut self, result: &Qualifiers) {
+        self.stage_layout_identifiers(result);
+        self.heap_layout_check(result);
+        self.push_constant_bank_layout_check(result);
+        self.removed_packing_check(result);
     }
 
     fn binding_required_check(
@@ -701,37 +720,33 @@ impl Analyzer<'_> {
         }
     }
 
-    fn optional_qualifiers(&mut self, ty: &FullySpecifiedType) -> Qualifiers {
-        let mut qualifiers = match &ty.qualifier {
-            Some(qualifier) => self.qualifiers(qualifier),
-            None => Qualifiers::default(),
+    pub(crate) fn optional_qualifiers(&mut self, ty: &FullySpecifiedType) -> Qualifiers {
+        let finished = {
+            let analyzer = RefCell::new(&mut *self);
+            run(|stack| Cx::new(&analyzer, stack).optional_qualifiers(ty))
         };
+        finished.unwrap_or_else(|| self.stalled(Qualifiers::default()))
+    }
+
+    fn default_precision_of(&mut self, ty: &FullySpecifiedType, qualifiers: &mut Qualifiers) {
         if qualifiers.precision.is_none() {
             qualifiers.precision =
                 precision_key(&ty.specifier).map(|key| self.scopes.default_precision(&key));
         }
-        qualifiers
     }
 
     pub(crate) fn array_sizes(
         &mut self,
         specifier: Option<&Spanned<ArraySpecifier>>,
     ) -> Vec<ArraySize> {
-        let Some(specifier) = specifier else {
-            return Vec::new();
+        let finished = {
+            let analyzer = RefCell::new(&mut *self);
+            run(|stack| Cx::new(&analyzer, stack).array_sizes(specifier))
         };
-        specifier
-            .dimensions
-            .iter()
-            .map(|dimension| match &dimension.node {
-                ArrayDimension::Unsized => ArraySize::Unsized,
-                ArrayDimension::Sized(expression) => self.array_size(expression),
-            })
-            .collect()
+        finished.unwrap_or_else(|| self.stalled(Vec::new()))
     }
 
-    fn array_size(&mut self, expression: &Expression) -> ArraySize {
-        let operand = self.expression(expression);
+    fn array_size_with(&mut self, expression: &Expression, operand: &Operand) -> ArraySize {
         if operand.ty.is_error() {
             return ArraySize::Sized(1);
         }
@@ -778,7 +793,15 @@ impl Analyzer<'_> {
     }
 
     pub(crate) fn bare_type_specifier(&mut self, specifier: &TypeSpecifier, span: Span) -> Type {
-        let base = match &specifier.non_array {
+        let finished = {
+            let analyzer = RefCell::new(&mut *self);
+            run(|stack| Cx::new(&analyzer, stack).bare_type_specifier(specifier, span))
+        };
+        finished.unwrap_or_else(|| self.stalled(Type::ERROR))
+    }
+
+    fn base_type(&mut self, specifier: &TypeSpecifier, span: Span) -> Type {
+        match &specifier.non_array {
             TypeSpecifierNonArray::Void => Type::VOID,
             TypeSpecifierNonArray::Basic(basic) => Type::from(*basic),
             TypeSpecifierNonArray::Opaque(name) => match Opaque::from_keyword(name) {
@@ -801,10 +824,9 @@ impl Analyzer<'_> {
                     Type::ERROR
                 }
             },
-            TypeSpecifierNonArray::Parameterized(kind) => {
-                self.parameterized_type(*kind, specifier.parameters.as_ref(), span)
-            }
-            TypeSpecifierNonArray::Struct(structure) => self.struct_specifier(structure, span),
+            TypeSpecifierNonArray::Parameterized(_)
+            | TypeSpecifierNonArray::Struct(_)
+            | TypeSpecifierNonArray::Spirv(_) => Type::ERROR,
             TypeSpecifierNonArray::TypeName(name) => match self.lookup(name) {
                 Some(Lookup::Symbol(id)) => match self.symbol(id).map(|symbol| &symbol.kind) {
                     Some(SymbolKind::Struct(structure)) => Type::structure(*structure),
@@ -830,18 +852,7 @@ impl Analyzer<'_> {
                 );
                 Type::ERROR
             }
-            TypeSpecifierNonArray::Spirv(spirv) => self.spirv_type_specifier(spirv),
-        };
-        let dimensions = self.array_sizes(specifier.array.as_ref());
-        self.bounded_type(base.with_dimensions(&dimensions), span)
-    }
-
-    pub(crate) fn bounded_type(&mut self, ty: Type, span: Span) -> Type {
-        if ty.depth(&self.types) > crate::types::MAX_TYPE_DEPTH {
-            self.error(span, DiagnosticKind::TypeTooDeep);
-            return Type::ERROR;
         }
-        ty
     }
 
     pub(crate) fn struct_members(
@@ -849,81 +860,21 @@ impl Analyzer<'_> {
         declarations: &[Spanned<StructDeclaration>],
         in_block: Option<&Qualifiers>,
     ) -> Vec<Member> {
-        let in_heap = in_block.is_some_and(|block| is_heap_storage(block.storage));
-        let mut members: Vec<Member> = Vec::new();
-        let count = declarations.len();
-        for (position, declaration) in declarations.iter().enumerate() {
-            let place = MemberPlace {
-                in_block,
-                in_heap,
-                last: position + 1 == count,
-            };
-            if let TypeSpecifierNonArray::InlineBlock(ref inner) =
-                declaration.ty.specifier.node.non_array
-            {
-                self.inline_block_members(declaration, inner, place, &mut members);
-            } else {
-                self.plain_members(declaration, place, &mut members);
-            }
-        }
-        members
+        let finished = {
+            let analyzer = RefCell::new(&mut *self);
+            run(|stack| Cx::new(&analyzer, stack).struct_members(declarations, in_block.cloned()))
+        };
+        finished.unwrap_or_else(|| self.stalled(Vec::new()))
     }
 
-    fn inline_block_members(
-        &mut self,
-        declaration: &Spanned<StructDeclaration>,
-        inner: &[Spanned<StructDeclaration>],
-        place: MemberPlace<'_>,
-        members: &mut Vec<Member>,
-    ) {
-        let MemberPlace {
-            in_block, in_heap, ..
-        } = place;
-        let qualifiers = self.optional_qualifiers(&declaration.ty.node);
-        let base = self.inline_reference(declaration.ty.span, &qualifiers, inner, in_heap);
-        let mut member_qualifiers = Qualifiers::default();
-        if let Some(block) = in_block {
-            member_qualifiers.storage = block.storage;
-        }
-        for declarator in &declaration.declarators {
-            let dimensions = self.array_sizes(declarator.array.as_ref());
-            let ty = base.clone().with_dimensions(&dimensions);
-            members.push(Member {
-                name: declarator.name.node.clone(),
-                ty: self.bounded_type(ty, declarator.name.span),
-                qualifiers: member_qualifiers.clone(),
-            });
-        }
-    }
-
-    fn plain_members(
-        &mut self,
-        declaration: &Spanned<StructDeclaration>,
-        place: MemberPlace<'_>,
-        members: &mut Vec<Member>,
-    ) {
-        let qualifiers = self.member_qualifiers(declaration, place.in_heap);
-        if matches!(
-            declaration.ty.specifier.non_array,
-            TypeSpecifierNonArray::Struct(_)
-        ) {
-            self.error(
-                declaration.ty.specifier.span,
-                DiagnosticKind::NestedStructDefinition,
-            );
-        }
-        let base = self.type_specifier(&declaration.ty.specifier);
-        self.typed_members(declaration, qualifiers, &base, place, members);
-    }
-
-    fn member_qualifiers(
+    fn member_qualifier_checks(
         &mut self,
         declaration: &Spanned<StructDeclaration>,
         in_heap: bool,
-    ) -> Qualifiers {
-        let mut qualifiers = self.optional_qualifiers(&declaration.ty.node);
+        qualifiers: &mut Qualifiers,
+    ) {
         if let Some(qualifier) = &declaration.ty.node.qualifier {
-            self.heap_member_checks(qualifier.span, &qualifiers, in_heap);
+            self.heap_member_checks(qualifier.span, qualifiers, in_heap);
         }
         if qualifiers.nonuniform {
             self.non_uniform_error(
@@ -932,22 +883,14 @@ impl Analyzer<'_> {
             );
             qualifiers.nonuniform = false;
         }
-        qualifiers
     }
 
-    fn typed_members(
+    fn member_storage(
         &mut self,
         declaration: &Spanned<StructDeclaration>,
         qualifiers: Qualifiers,
-        base: &Type,
-        place: MemberPlace<'_>,
-        members: &mut Vec<Member>,
-    ) {
-        let MemberPlace {
-            in_block,
-            in_heap,
-            last,
-        } = place;
+        in_block: Option<&Qualifiers>,
+    ) -> Qualifiers {
         let mut qualifiers = qualifiers;
         if let Some(block) = in_block {
             if qualifiers.storage == Storage::None && !qualifiers.constant {
@@ -979,62 +922,82 @@ impl Analyzer<'_> {
             qualifiers.per_view |= block.per_view;
             qualifiers.per_task |= block.per_task;
         }
-        for declarator in &declaration.declarators {
-            let name = &declarator.name;
-            let dimensions = self.array_sizes(declarator.array.as_ref());
-            let ty = base.clone().with_dimensions(&dimensions);
-            let mut ty = self.bounded_type(ty, name.span);
-            if in_block.is_some() {
-                self.per_view_dimension(name.span, &qualifiers, &mut ty, true);
-            }
-            let reason = if ty.is_void() {
-                Some("a member cannot be `void`")
-            } else if members.iter().any(|member| member.name == name.node) {
-                Some("the name is already used by another member")
-            } else if in_block.is_none() && ty.array.contains(&ArraySize::Unsized) {
-                Some("an array size is required")
-            } else if in_block.is_some()
-                && ty.contains_opaque(&self.types)
-                && !(in_heap && self.extension_enabled(super::heap::STRUCTURED_DESCRIPTOR_HEAP))
-            {
-                Some("a block member cannot have an opaque type")
-            } else if in_heap && !last && ty.array.first() == Some(&ArraySize::Unsized) {
-                Some("an array size is required")
-            } else if ty
-                .array
-                .iter()
-                .skip(1)
-                .any(|size| *size == ArraySize::Unsized)
-            {
-                Some("only the outermost array dimension can be unsized")
-            } else {
-                None
-            };
-            if let Some(reason) = reason {
-                self.error(
-                    name.span,
-                    DiagnosticKind::InvalidStructMember {
-                        name: name.node.clone(),
-                        reason,
-                    },
-                );
-            } else if in_block.is_some() {
-                self.input_attachment_check(&qualifiers, &ty, name.span);
-            }
-            members.push(Member {
-                name: name.node.clone(),
-                ty,
-                qualifiers: qualifiers.clone(),
-            });
-        }
+        qualifiers
     }
 
-    fn struct_specifier(&mut self, specifier: &StructSpecifier, span: Span) -> Type {
-        let members = self.struct_members(&specifier.declarations, None);
-        if members
-            .iter()
-            .any(|member| member.ty.depth(&self.types) >= crate::types::MAX_TYPE_DEPTH)
+    #[allow(clippy::too_many_arguments)]
+    fn typed_member(
+        &mut self,
+        declarator: &Spanned<rglsl_ast::ast::StructDeclarator>,
+        qualifiers: &Qualifiers,
+        base: &Type,
+        place: MemberPlace<'_>,
+        members: &mut Vec<Member>,
+        dimensions: &[ArraySize],
+    ) {
+        let MemberPlace {
+            in_block,
+            in_heap,
+            last,
+        } = place;
+        let name = &declarator.name;
+        let ty = base.clone().with_dimensions(dimensions);
+        let mut ty = self.bounded_type(ty, name.span);
+        if in_block.is_some() {
+            self.per_view_dimension(name.span, qualifiers, &mut ty, true);
+        }
+        let reason = if ty.is_void() {
+            Some("a member cannot be `void`")
+        } else if members.iter().any(|member| member.name == name.node) {
+            Some("the name is already used by another member")
+        } else if in_block.is_none() && ty.array.contains(&ArraySize::Unsized) {
+            Some("an array size is required")
+        } else if in_block.is_some()
+            && ty.contains_opaque(&self.types)
+            && !(in_heap && self.extension_enabled(super::heap::STRUCTURED_DESCRIPTOR_HEAP))
         {
+            Some("a block member cannot have an opaque type")
+        } else if in_heap && !last && ty.array.first() == Some(&ArraySize::Unsized) {
+            Some("an array size is required")
+        } else if ty
+            .array
+            .iter()
+            .skip(1)
+            .any(|size| *size == ArraySize::Unsized)
+        {
+            Some("only the outermost array dimension can be unsized")
+        } else {
+            None
+        };
+        if let Some(reason) = reason {
+            self.error(
+                name.span,
+                DiagnosticKind::InvalidStructMember {
+                    name: name.node.clone(),
+                    reason,
+                },
+            );
+        } else if in_block.is_some() {
+            self.input_attachment_check(qualifiers, &ty, name.span);
+        }
+        members.push(Member {
+            name: name.node.clone(),
+            ty,
+            qualifiers: qualifiers.clone(),
+        });
+    }
+
+    fn struct_specifier_with(
+        &mut self,
+        specifier: &StructSpecifier,
+        span: Span,
+        members: Vec<Member>,
+    ) -> Type {
+        if self.options.type_depth_limit.is_some_and(|limit| {
+            members
+                .iter()
+                .any(|member| member.ty.depth(&self.types) >= limit)
+        }) {
             self.error(span, DiagnosticKind::TypeTooDeep);
             return Type::ERROR;
         }
@@ -1049,6 +1012,18 @@ impl Analyzer<'_> {
             }
         }
         Type::structure(id)
+    }
+
+    pub(crate) fn bounded_type(&mut self, ty: Type, span: Span) -> Type {
+        if self
+            .options
+            .type_depth_limit
+            .is_some_and(|limit| ty.depth(&self.types) > limit)
+        {
+            self.error(span, DiagnosticKind::TypeTooDeep);
+            return Type::ERROR;
+        }
+        ty
     }
 
     fn init_declarator_list(&mut self, list: &InitDeclaratorList) {
@@ -1751,18 +1726,14 @@ impl Analyzer<'_> {
         initializer: &Spanned<Initializer>,
         expected: &Type,
     ) -> Operand {
-        match &initializer.node {
-            Initializer::Expression(expression) => self.value_expression(expression),
-            Initializer::List(items) => self.initializer_list(span, items, expected),
-        }
+        let finished = {
+            let analyzer = RefCell::new(&mut *self);
+            run(|stack| Cx::new(&analyzer, stack).initializer(span, initializer, expected.clone()))
+        };
+        finished.unwrap_or_else(|| self.stalled(Operand::error()))
     }
 
-    fn initializer_list(
-        &mut self,
-        span: Span,
-        items: &[Spanned<Initializer>],
-        expected: &Type,
-    ) -> Operand {
+    fn start_list(&mut self, span: Span, items: &[Spanned<Initializer>], expected: &Type) -> List {
         let count = u32::try_from(items.len()).unwrap_or(u32::MAX);
         let mut element_types: Vec<Type> = Vec::new();
         let mut result = expected.clone();
@@ -1789,8 +1760,6 @@ impl Analyzer<'_> {
             mismatch = expected.length() != Some(count);
             element_types = items.iter().map(|_| element.clone()).collect();
         }
-        let mut constant = true;
-        let mut values = Some(Vec::new());
         let mut failed = expected.is_error();
         let uses = self.specialization_uses;
         if element_types.is_empty() && !failed {
@@ -1803,40 +1772,68 @@ impl Analyzer<'_> {
             );
             failed = true;
         }
-        for (index, item) in items.iter().enumerate() {
-            let element = element_types.get(index).cloned().unwrap_or(Type::ERROR);
-            let operand = self.initializer(span, item, &element);
-            constant &= operand.constant;
-            if operand.ty.is_error() {
-                failed = true;
-            } else if !element.is_error() && !self.converts(&operand.ty, &element) {
-                let unsized_match = element.outer_size() == Some(ArraySize::Unsized)
-                    && operand.ty.kind == element.kind
-                    && operand.ty.array.get(1..) == element.array.get(1..);
-                if !unsized_match {
-                    failed = true;
-                    let aggregate = expected.is_array() || expected.is_struct();
-                    let located = match items.first() {
-                        Some(first) if aggregate => first.span,
-                        _ => span,
-                    };
-                    self.error(
-                        located,
-                        DiagnosticKind::CannotConvert {
-                            from: self.show(&operand.ty),
-                            to: self.show(&element),
-                        },
-                    );
-                }
-            }
-            match (&mut values, operand.value, element.base_scalar()) {
-                (Some(collected), Some(value), Some(scalar)) => {
-                    collected.extend(value.convert(scalar).values);
-                }
-                (Some(collected), Some(value), None) => collected.extend(value.values),
-                _ => values = None,
+        List {
+            element_types,
+            result,
+            mismatch,
+            constant: true,
+            values: Some(Vec::new()),
+            failed,
+            uses,
+        }
+    }
+
+    fn list_item(
+        &mut self,
+        span: Span,
+        items: &[Spanned<Initializer>],
+        expected: &Type,
+        list: &mut List,
+        element: &Type,
+        operand: Operand,
+    ) {
+        list.constant &= operand.constant;
+        if operand.ty.is_error() {
+            list.failed = true;
+        } else if !element.is_error() && !self.converts(&operand.ty, element) {
+            let unsized_match = element.outer_size() == Some(ArraySize::Unsized)
+                && operand.ty.kind == element.kind
+                && operand.ty.array.get(1..) == element.array.get(1..);
+            if !unsized_match {
+                list.failed = true;
+                let aggregate = expected.is_array() || expected.is_struct();
+                let located = match items.first() {
+                    Some(first) if aggregate => first.span,
+                    _ => span,
+                };
+                self.error(
+                    located,
+                    DiagnosticKind::CannotConvert {
+                        from: self.show(&operand.ty),
+                        to: self.show(element),
+                    },
+                );
             }
         }
+        match (&mut list.values, operand.value, element.base_scalar()) {
+            (Some(collected), Some(value), Some(scalar)) => {
+                collected.extend(value.convert(scalar).values);
+            }
+            (Some(collected), Some(value), None) => collected.extend(value.values),
+            _ => list.values = None,
+        }
+    }
+
+    fn finish_list(&mut self, span: Span, expected: &Type, list: List) -> Operand {
+        let List {
+            result,
+            mismatch,
+            mut constant,
+            values,
+            mut failed,
+            uses,
+            ..
+        } = list;
         if mismatch && !failed {
             self.error(
                 span,
@@ -2666,4 +2663,273 @@ const NULL_INITIALIZER: &str = "GL_EXT_null_initializer";
 
 pub const fn is_null_initializer(initializer: &Initializer) -> bool {
     matches!(*initializer, Initializer::List(ref items) if items.is_empty())
+}
+
+impl<'b> Cx<'b, Analyzer<'_>> {
+    pub(crate) async fn qualifiers(self, qualifier: &'b Spanned<TypeQualifier>) -> Qualifiers {
+        let mut result = Qualifiers::default();
+        for single in &qualifier.qualifiers {
+            match &single.node {
+                SingleTypeQualifier::Layout(layout) => {
+                    for id in &layout.ids {
+                        let value = match &id.value {
+                            Some(expression) => {
+                                let operand = self.call(self.clone().expression(expression)).await;
+                                self.with(|analyzer| {
+                                    analyzer.layout_value(&id.name.node, expression, &operand)
+                                })
+                            }
+                            None => None,
+                        };
+                        result.layout.push(LayoutEntry {
+                            name: id.name.node.clone(),
+                            has_value: id.value.is_some(),
+                            value,
+                            span: id.span,
+                        });
+                    }
+                }
+                SingleTypeQualifier::SpirvDecorate(decorate) => {
+                    if let Some(decoration) = self.call(self.clone().spirv_decorate(decorate)).await
+                    {
+                        result.spirv_decorations.push(decoration);
+                    }
+                }
+                _ => self.with(|analyzer| analyzer.single_qualifier(single, &mut result)),
+            }
+        }
+        self.with(|analyzer| analyzer.finish_qualifiers(&result));
+        result
+    }
+
+    pub(crate) async fn optional_qualifiers(self, ty: &'b FullySpecifiedType) -> Qualifiers {
+        let mut qualifiers = match &ty.qualifier {
+            Some(qualifier) => self.call(self.clone().qualifiers(qualifier)).await,
+            None => Qualifiers::default(),
+        };
+        self.with(|analyzer| analyzer.default_precision_of(ty, &mut qualifiers));
+        qualifiers
+    }
+
+    pub(crate) async fn array_sizes(
+        self,
+        specifier: Option<&'b Spanned<ArraySpecifier>>,
+    ) -> Vec<ArraySize> {
+        let Some(specifier) = specifier else {
+            return Vec::new();
+        };
+        let mut sizes = Vec::with_capacity(specifier.dimensions.len());
+        for dimension in &specifier.dimensions {
+            sizes.push(match &dimension.node {
+                ArrayDimension::Unsized => ArraySize::Unsized,
+                ArrayDimension::Sized(expression) => {
+                    let operand = self.call(self.clone().expression(expression)).await;
+                    self.with(|analyzer| analyzer.array_size_with(expression, &operand))
+                }
+            });
+        }
+        sizes
+    }
+
+    pub(crate) async fn type_specifier(self, specifier: &'b Spanned<TypeSpecifier>) -> Type {
+        self.call(
+            self.clone()
+                .bare_type_specifier(&specifier.node, specifier.span),
+        )
+        .await
+    }
+
+    pub(crate) async fn bare_type_specifier(
+        self,
+        specifier: &'b TypeSpecifier,
+        span: Span,
+    ) -> Type {
+        let base = match &specifier.non_array {
+            TypeSpecifierNonArray::Parameterized(kind) => {
+                self.call(self.clone().parameterized_type(
+                    *kind,
+                    specifier.parameters.as_ref(),
+                    span,
+                ))
+                .await
+            }
+            TypeSpecifierNonArray::Struct(structure) => {
+                self.call(self.clone().struct_specifier(structure, span))
+                    .await
+            }
+            TypeSpecifierNonArray::Spirv(spirv) => {
+                self.call(self.clone().spirv_type_specifier(spirv)).await
+            }
+            _ => self.with(|analyzer| analyzer.base_type(specifier, span)),
+        };
+        let dimensions = self
+            .call(self.clone().array_sizes(specifier.array.as_ref()))
+            .await;
+        self.with(|analyzer| analyzer.bounded_type(base.with_dimensions(&dimensions), span))
+    }
+
+    pub(crate) async fn struct_members(
+        self,
+        declarations: &'b [Spanned<StructDeclaration>],
+        in_block: Option<Qualifiers>,
+    ) -> Vec<Member> {
+        let in_heap = in_block
+            .as_ref()
+            .is_some_and(|block| is_heap_storage(block.storage));
+        let mut members: Vec<Member> = Vec::new();
+        let count = declarations.len();
+        for (position, declaration) in declarations.iter().enumerate() {
+            let placement = Placement {
+                in_block: in_block.clone(),
+                in_heap,
+                last: position + 1 == count,
+            };
+            if let TypeSpecifierNonArray::InlineBlock(ref inner) =
+                declaration.ty.specifier.node.non_array
+            {
+                members = self
+                    .call(
+                        self.clone()
+                            .inline_block_members(declaration, inner, placement, members),
+                    )
+                    .await;
+            } else {
+                members = self
+                    .call(self.clone().plain_members(declaration, placement, members))
+                    .await;
+            }
+        }
+        members
+    }
+
+    async fn inline_block_members(
+        self,
+        declaration: &'b Spanned<StructDeclaration>,
+        inner: &'b [Spanned<StructDeclaration>],
+        placement: Placement,
+        mut members: Vec<Member>,
+    ) -> Vec<Member> {
+        let qualifiers = self
+            .call(self.clone().optional_qualifiers(&declaration.ty.node))
+            .await;
+        let base = self
+            .call(self.clone().inline_reference(
+                declaration.ty.span,
+                qualifiers,
+                inner,
+                placement.in_heap,
+            ))
+            .await;
+        let mut member_qualifiers = Qualifiers::default();
+        if let Some(block) = &placement.in_block {
+            member_qualifiers.storage = block.storage;
+        }
+        for declarator in &declaration.declarators {
+            let dimensions = self
+                .call(self.clone().array_sizes(declarator.array.as_ref()))
+                .await;
+            let ty = base.clone().with_dimensions(&dimensions);
+            let ty = self.with(|analyzer| analyzer.bounded_type(ty, declarator.name.span));
+            members.push(Member {
+                name: declarator.name.node.clone(),
+                ty,
+                qualifiers: member_qualifiers.clone(),
+            });
+        }
+        members
+    }
+
+    async fn plain_members(
+        self,
+        declaration: &'b Spanned<StructDeclaration>,
+        placement: Placement,
+        mut members: Vec<Member>,
+    ) -> Vec<Member> {
+        let mut qualifiers = self
+            .call(self.clone().optional_qualifiers(&declaration.ty.node))
+            .await;
+        self.with(|analyzer| {
+            analyzer.member_qualifier_checks(declaration, placement.in_heap, &mut qualifiers);
+            if matches!(
+                declaration.ty.specifier.non_array,
+                TypeSpecifierNonArray::Struct(_)
+            ) {
+                analyzer.error(
+                    declaration.ty.specifier.span,
+                    DiagnosticKind::NestedStructDefinition,
+                );
+            }
+        });
+        let base = self
+            .call(self.clone().type_specifier(&declaration.ty.specifier))
+            .await;
+        let qualifiers = self.with(|analyzer| {
+            analyzer.member_storage(declaration, qualifiers, placement.in_block.as_ref())
+        });
+        for declarator in &declaration.declarators {
+            let dimensions = self
+                .call(self.clone().array_sizes(declarator.array.as_ref()))
+                .await;
+            self.with(|analyzer| {
+                analyzer.typed_member(
+                    declarator,
+                    &qualifiers,
+                    &base,
+                    placement.place(),
+                    &mut members,
+                    &dimensions,
+                );
+            });
+        }
+        members
+    }
+
+    async fn struct_specifier(self, specifier: &'b StructSpecifier, span: Span) -> Type {
+        let members = self
+            .call(self.clone().struct_members(&specifier.declarations, None))
+            .await;
+        self.with(|analyzer| analyzer.struct_specifier_with(specifier, span, members))
+    }
+}
+
+impl<'b> Cx<'b, Analyzer<'_>> {
+    pub(crate) async fn initializer(
+        self,
+        span: Span,
+        initializer: &'b Spanned<Initializer>,
+        expected: Type,
+    ) -> Operand {
+        match &initializer.node {
+            Initializer::Expression(expression) => {
+                self.call(self.clone().value_expression(expression)).await
+            }
+            Initializer::List(items) => {
+                self.call(self.clone().initializer_list(span, items, expected))
+                    .await
+            }
+        }
+    }
+
+    async fn initializer_list(
+        self,
+        span: Span,
+        items: &'b [Spanned<Initializer>],
+        expected: Type,
+    ) -> Operand {
+        let mut list = self.with(|analyzer| analyzer.start_list(span, items, &expected));
+        for (index, item) in items.iter().enumerate() {
+            let element = list
+                .element_types
+                .get(index)
+                .cloned()
+                .unwrap_or(Type::ERROR);
+            let operand = self
+                .call(self.clone().initializer(span, item, element.clone()))
+                .await;
+            self.with(|analyzer| {
+                analyzer.list_item(span, items, &expected, &mut list, &element, operand);
+            });
+        }
+        self.with(|analyzer| analyzer.finish_list(span, &expected, list))
+    }
 }

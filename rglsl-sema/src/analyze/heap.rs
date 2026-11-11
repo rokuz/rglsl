@@ -4,6 +4,7 @@ use alloc::vec::Vec;
 use rglsl_ast::ast::{BlockStructure, Spanned, StructDeclaration};
 use rglsl_ast::Span;
 
+use super::frames::Cx;
 use super::reference::{matrix_of, packing_of};
 use super::Analyzer;
 use crate::diagnostic::DiagnosticKind;
@@ -145,13 +146,12 @@ impl Analyzer<'_> {
         block
     }
 
-    pub(crate) fn inline_reference(
+    fn inline_reference_allowed(
         &mut self,
         span: Span,
         qualifiers: &Qualifiers,
-        members: &[Spanned<StructDeclaration>],
         in_heap: bool,
-    ) -> Type {
+    ) -> bool {
         if !in_heap {
             self.error(
                 span,
@@ -169,9 +169,12 @@ impl Analyzer<'_> {
                     "only buffer_reference blocks can be declared inline inside a heap block",
                 ),
             );
-            return Type::ERROR;
+            return false;
         }
-        let members = self.struct_members(members, Some(qualifiers));
+        true
+    }
+
+    fn inline_reference_with(&mut self, qualifiers: &Qualifiers, members: Vec<Member>) -> Type {
         let packing = packing_of(qualifiers).unwrap_or(self.buffer_packing);
         let row_major = matrix_of(qualifiers).unwrap_or(self.buffer_row_major);
         let mut block = BlockType {
@@ -255,5 +258,26 @@ impl Analyzer<'_> {
                 ),
             );
         }
+    }
+}
+
+impl<'b> Cx<'b, Analyzer<'_>> {
+    pub(crate) async fn inline_reference(
+        self,
+        span: Span,
+        qualifiers: Qualifiers,
+        members: &'b [Spanned<StructDeclaration>],
+        in_heap: bool,
+    ) -> Type {
+        if !self.with(|analyzer| analyzer.inline_reference_allowed(span, &qualifiers, in_heap)) {
+            return Type::ERROR;
+        }
+        let members = self
+            .call(
+                self.clone()
+                    .struct_members(members, Some(qualifiers.clone())),
+            )
+            .await;
+        self.with(|analyzer| analyzer.inline_reference_with(&qualifiers, members))
     }
 }

@@ -303,11 +303,17 @@ pub enum DeclareError {
 #[derive(Debug, Clone, Default)]
 pub struct Scopes {
     levels: Vec<Level>,
+    bound: BTreeMap<String, Vec<usize>>,
+    precise_levels: Vec<usize>,
 }
 
 impl Scopes {
     pub const fn new() -> Self {
-        Self { levels: Vec::new() }
+        Self {
+            levels: Vec::new(),
+            bound: BTreeMap::new(),
+            precise_levels: Vec::new(),
+        }
     }
 
     pub fn push(&mut self) {
@@ -315,7 +321,47 @@ impl Scopes {
     }
 
     pub fn pop(&mut self) {
-        self.levels.pop();
+        let Some(level) = self.levels.pop() else {
+            return;
+        };
+        let index = self.levels.len();
+        for name in level.symbols.keys().chain(
+            level
+                .functions
+                .keys()
+                .filter(|name| !level.symbols.contains_key(*name)),
+        ) {
+            self.unbind(name, index);
+        }
+        if self.precise_levels.last() == Some(&index) {
+            self.precise_levels.pop();
+        }
+    }
+
+    fn bind(&mut self, name: &str, index: usize) {
+        let levels = self.bound.entry(String::from(name)).or_default();
+        if levels.last() != Some(&index) {
+            levels.push(index);
+        }
+    }
+
+    fn unbind(&mut self, name: &str, index: usize) {
+        if let Some(levels) = self.bound.get_mut(name) {
+            if let Some(position) = levels.iter().rposition(|level| *level == index) {
+                levels.remove(position);
+            }
+            if levels.is_empty() {
+                self.bound.remove(name);
+            }
+        }
+    }
+
+    fn binding_levels(&self, name: &str) -> impl Iterator<Item = (usize, &Level)> {
+        self.bound
+            .get(name)
+            .into_iter()
+            .flat_map(|levels| levels.iter().rev())
+            .filter_map(|&index| self.levels.get(index).map(|level| (index, level)))
     }
 
     pub const fn depth(&self) -> usize {
@@ -323,15 +369,20 @@ impl Scopes {
     }
 
     pub fn set_default_precision(&mut self, key: PrecisionKey, precision: PrecisionQualifier) {
+        let index = self.levels.len().saturating_sub(1);
         if let Some(level) = self.levels.last_mut() {
             level.precisions.insert(key, precision);
+            if self.precise_levels.last() != Some(&index) {
+                self.precise_levels.push(index);
+            }
         }
     }
 
     pub fn default_precision(&self, key: &PrecisionKey) -> PrecisionQualifier {
-        self.levels
+        self.precise_levels
             .iter()
             .rev()
+            .filter_map(|&index| self.levels.get(index))
             .find_map(|level| level.precisions.get(key).copied())
             .unwrap_or(PrecisionQualifier::High)
     }
@@ -348,6 +399,8 @@ impl Scopes {
             return Err(DeclareError::Redeclaration);
         }
         level.symbols.insert(String::from(name), id);
+        let index = self.levels.len().saturating_sub(1);
+        self.bind(name, index);
         Ok(())
     }
 
@@ -362,8 +415,14 @@ impl Scopes {
     }
 
     pub fn remove_builtin(&mut self, name: &str) {
-        if let Some(level) = self.levels.first_mut() {
-            level.symbols.remove(name);
+        let unbound = match self.levels.first_mut() {
+            Some(level) => {
+                level.symbols.remove(name).is_some() && !level.functions.contains_key(name)
+            }
+            None => false,
+        };
+        if unbound {
+            self.unbind(name, 0);
         }
     }
 
@@ -379,11 +438,13 @@ impl Scopes {
             .entry(String::from(name))
             .or_default()
             .push(id);
+        let index = self.levels.len().saturating_sub(1);
+        self.bind(name, index);
         Ok(())
     }
 
     pub fn lookup(&self, name: &str) -> Option<Lookup<'_>> {
-        for level in self.levels.iter().rev() {
+        for (_, level) in self.binding_levels(name) {
             if let Some(id) = level.symbols.get(name) {
                 return Some(Lookup::Symbol(*id));
             }
@@ -406,7 +467,7 @@ impl Scopes {
     }
 
     pub fn lookup_level(&self, name: &str) -> Option<(usize, Lookup<'_>)> {
-        for (index, level) in self.levels.iter().enumerate().rev() {
+        for (index, level) in self.binding_levels(name) {
             if let Some(id) = level.symbols.get(name) {
                 return Some((index, Lookup::Symbol(*id)));
             }
@@ -419,7 +480,7 @@ impl Scopes {
 
     pub fn function_levels(&self, name: &str) -> Vec<&[FunctionId]> {
         let mut found = Vec::new();
-        for level in self.levels.iter().rev() {
+        for (_, level) in self.binding_levels(name) {
             if level.symbols.contains_key(name) {
                 break;
             }

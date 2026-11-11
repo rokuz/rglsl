@@ -84,18 +84,7 @@ impl Analyzer<'_> {
             })
     }
 
-    pub(crate) fn cooperative_call(
-        &mut self,
-        expression: &Expression,
-        span: Span,
-        name: &str,
-        arguments: &[Expression],
-    ) -> Operand {
-        let operands = self.operands(arguments);
-        self.cooperative_call_with(expression, span, name, arguments, operands)
-    }
-
-    fn cooperative_call_with(
+    pub(crate) fn cooperative_call_with(
         &mut self,
         expression: &Expression,
         span: Span,

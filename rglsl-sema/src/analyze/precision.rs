@@ -159,10 +159,11 @@ struct Pass<'a> {
 }
 
 fn strip(expression: &Expression) -> &Expression {
-    match expression.kind {
-        ExpressionKind::Parenthesized(ref inner) => strip(inner),
-        _ => expression,
+    let mut current = expression;
+    while let ExpressionKind::Parenthesized(ref inner) = current.kind {
+        current = inner;
     }
+    current
 }
 
 const fn participates(ty: &Type, half: bool) -> bool {
@@ -582,11 +583,12 @@ impl<'a> Pass<'a> {
     }
 
     fn initializer(&mut self, initializer: &'a Initializer) {
-        match initializer {
-            Initializer::Expression(expression) => self.expression(expression),
-            Initializer::List(items) => {
-                for item in items {
-                    self.initializer(item);
+        let mut pending = Vec::from([initializer]);
+        while let Some(initializer) = pending.pop() {
+            match initializer {
+                Initializer::Expression(expression) => self.expression(expression),
+                Initializer::List(items) => {
+                    pending.extend(items.iter().rev().map(|item| &item.node))
                 }
             }
         }
@@ -624,11 +626,20 @@ impl<'a> Pass<'a> {
     }
 
     fn statement(&mut self, statement: &'a Statement) {
+        let mut pending = Vec::from([Step::Statement(statement)]);
+        while let Some(step) = pending.pop() {
+            match step {
+                Step::Statement(statement) => self.statement_step(statement, &mut pending),
+                Step::Expression(expression) => self.expression(expression),
+                Step::Condition(condition) => self.condition(condition),
+            }
+        }
+    }
+
+    fn statement_step(&mut self, statement: &'a Statement, pending: &mut Vec<Step<'a>>) {
         match statement.kind {
             StatementKind::Compound(ref compound) => {
-                for inner in &compound.statements {
-                    self.statement(inner);
-                }
+                pending.extend(compound.statements.iter().rev().map(Step::Statement));
             }
             StatementKind::Declaration(ref declaration) => self.declaration(declaration),
             StatementKind::Expression(ref expression) => {
@@ -642,19 +653,17 @@ impl<'a> Pass<'a> {
                 ref else_branch,
             } => {
                 self.expression(condition);
-                self.statement(then_branch);
                 if let Some(else_branch) = else_branch {
-                    self.statement(else_branch);
+                    pending.push(Step::Statement(else_branch));
                 }
+                pending.push(Step::Statement(then_branch));
             }
             StatementKind::Switch {
                 ref selector,
                 ref statements,
             } => {
                 self.expression(selector);
-                for inner in statements {
-                    self.statement(inner);
-                }
+                pending.extend(statements.iter().rev().map(Step::Statement));
             }
             StatementKind::CaseLabel(ref label) => {
                 if let rglsl_ast::ast::CaseLabel::Case(ref value) = *label {
@@ -666,24 +675,24 @@ impl<'a> Pass<'a> {
                 ref body,
             } => {
                 self.condition(condition);
-                self.statement(body);
+                pending.push(Step::Statement(body));
             }
             StatementKind::DoWhile {
                 ref body,
                 ref condition,
             } => {
-                self.statement(body);
-                self.expression(condition);
+                pending.push(Step::Expression(condition));
+                pending.push(Step::Statement(body));
             }
             StatementKind::For(ref looping) => {
-                self.statement(&looping.init);
-                if let Some(ref condition) = looping.condition {
-                    self.condition(condition);
-                }
+                pending.push(Step::Statement(&looping.body));
                 if let Some(ref increment) = looping.increment {
-                    self.expression(increment);
+                    pending.push(Step::Expression(increment));
                 }
-                self.statement(&looping.body);
+                if let Some(ref condition) = looping.condition {
+                    pending.push(Step::Condition(condition));
+                }
+                pending.push(Step::Statement(&looping.init));
             }
             StatementKind::Jump(JumpStatement::Return(Some(ref value))) => {
                 self.expression(value);
@@ -697,7 +706,15 @@ impl<'a> Pass<'a> {
                 }
             }
             StatementKind::Jump(_) => {}
-            StatementKind::Attributed { ref statement, .. } => self.statement(statement),
+            StatementKind::Attributed { ref statement, .. } => {
+                pending.push(Step::Statement(statement));
+            }
         }
     }
+}
+
+enum Step<'a> {
+    Statement(&'a Statement),
+    Expression(&'a Expression),
+    Condition(&'a Condition),
 }
