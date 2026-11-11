@@ -46,7 +46,10 @@ fn run(test: &Path) -> (bool, Vec<String>) {
         let mut includer = rglsl_pp::FileSystemIncluder::new(Vec::<String>::new());
         let root = includer.add_root(&path);
         match Frontend::default().compile_with_includer(&options, &source, root, &mut includer) {
-            Ok(object) => objects.push(object),
+            Ok(mut object) => {
+                object.name = Some(name.clone());
+                objects.push(object);
+            }
             Err(errors) => messages.extend(errors.errors.iter().map(ToString::to_string)),
         }
     }

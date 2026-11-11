@@ -212,7 +212,10 @@ pub fn compile_group(inputs: &[String], options: &GroupOptions) -> i32 {
             root,
             &mut includer,
         ) {
-            Ok(object) => {
+            Ok(mut object) => {
+                object.name = path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned());
                 if let Err(errors) = rglsl_link::validate_object(&object) {
                     for error in errors.iter() {
                         diagnostic("validate", None, &error.to_string());

@@ -1,0 +1,9 @@
+#version 450
+layout(set = 0, binding = 0) buffer Data {
+    uint values[];
+} data;
+uint twice(uint x);
+void main()
+{
+    data.values[gl_LocalInvocationIndex] = twice(gl_LocalInvocationIndex);
+}

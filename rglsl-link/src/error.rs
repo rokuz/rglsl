@@ -44,6 +44,17 @@ pub enum LinkError {
         name: String,
         what: &'static str,
     },
+    #[error(
+        "library {library} cannot be linked into a {stage_name} shader: {message}{at}",
+        stage_name = .stage.name(),
+        at = line_suffix(*.line)
+    )]
+    LibraryStage {
+        library: String,
+        stage: ShaderStage,
+        line: Option<u32>,
+        message: String,
+    },
     #[error("not implemented: {0}")]
     Unsupported(String),
     #[error("the linked module is not valid: {0}")]
@@ -93,4 +104,8 @@ impl std::error::Error for LinkErrors {}
 
 pub(crate) fn internal(error: impl fmt::Display) -> LinkError {
     LinkError::Internal(error.to_string())
+}
+
+fn line_suffix(line: Option<u32>) -> String {
+    line.map_or_else(String::new, |line| format!(" (line {line})"))
 }

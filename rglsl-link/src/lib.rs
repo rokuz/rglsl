@@ -54,6 +54,11 @@ pub fn link(objects: &[ObjectModule], options: &Options) -> Result<Linked, LinkE
 pub fn validate_object(object: &ObjectModule) -> Result<ModuleInfo, LinkErrors> {
     let mut validator = Validator::new(ValidationFlags::all(), Capabilities::all());
     validator.mode(ValidationMode::Object);
+    for variant in &object.variants {
+        validator
+            .validate(&variant.module)
+            .map_err(|error| LinkError::Validation(message(error.as_inner())))?;
+    }
     validator
         .validate(&object.module)
         .map_err(|error| LinkError::Validation(message(error.as_inner())).into())
@@ -96,6 +101,39 @@ pub(crate) fn merge(objects: &[ObjectModule], options: &Options) -> Result<Merge
             Some(_) => {}
         }
     }
+    let specialized: Vec<ObjectModule> = match stage {
+        Some(stage) => objects
+            .iter()
+            .filter_map(|object| {
+                if !object.is_library() {
+                    return Some(object.clone());
+                }
+                match object.for_stage(stage) {
+                    Ok(specialized) => Some(specialized),
+                    Err(rejection) => {
+                        errors.push(LinkError::LibraryStage {
+                            library: object.name.as_ref().map_or_else(
+                                || String::from("(unnamed)"),
+                                |name| format!("`{name}`"),
+                            ),
+                            stage,
+                            line: rejection.line,
+                            message: rejection.message,
+                        });
+                        None
+                    }
+                }
+            })
+            .collect(),
+        None => objects.to_vec(),
+    };
+    if errors
+        .iter()
+        .any(|error| matches!(*error, LinkError::LibraryStage { .. }))
+    {
+        return Err(errors.into());
+    }
+    let objects = specialized.as_slice();
     let mains: Vec<usize> = objects
         .iter()
         .enumerate()

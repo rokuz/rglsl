@@ -107,11 +107,95 @@ fn shader_layouts(
     })
 }
 
+const PRE_RASTERIZATION: &[Stage] = &[
+    Stage::Vertex,
+    Stage::TessControl,
+    Stage::TessEvaluation,
+    Stage::Geometry,
+];
+
+const COMPUTE_LIKE: &[Stage] = &[Stage::Compute, Stage::Task, Stage::Mesh];
+
+fn layout_stages(name: &str) -> Option<&'static [Stage]> {
+    Some(match name {
+        "local_size_x" | "local_size_y" | "local_size_z" | "local_size_x_id"
+        | "local_size_y_id" | "local_size_z_id" | "shading_rate_xqcom" | "shading_rate_yqcom"
+        | "shading_rate_zqcom" => COMPUTE_LIKE,
+        "vertices" => &[Stage::TessControl],
+        "max_vertices" | "points" | "lines" => &[Stage::Geometry, Stage::Mesh],
+        "max_primitives" => &[Stage::Mesh],
+        "invocations"
+        | "stream"
+        | "line_strip"
+        | "lines_adjacency"
+        | "triangles_adjacency"
+        | "triangle_strip"
+        | "passthrough" => &[Stage::Geometry],
+        "triangles" => &[Stage::Geometry, Stage::TessEvaluation, Stage::Mesh],
+        "quads"
+        | "isolines"
+        | "equal_spacing"
+        | "fractional_even_spacing"
+        | "fractional_odd_spacing"
+        | "cw"
+        | "ccw"
+        | "point_mode" => &[Stage::TessEvaluation],
+        "index"
+        | "origin_upper_left"
+        | "pixel_center_integer"
+        | "early_fragment_tests"
+        | "early_and_late_fragment_tests_amd"
+        | "post_depth_coverage"
+        | "non_coherent_color_attachment_readext"
+        | "non_coherent_depth_attachment_readext"
+        | "non_coherent_stencil_attachment_readext"
+        | "depth_any"
+        | "depth_greater"
+        | "depth_less"
+        | "depth_unchanged"
+        | "pixel_interlock_ordered"
+        | "pixel_interlock_unordered"
+        | "sample_interlock_ordered"
+        | "sample_interlock_unordered"
+        | "shading_rate_interlock_ordered"
+        | "shading_rate_interlock_unordered"
+        | "override_coverage"
+        | "full_quads"
+        | "non_coherent_attachment_readqcom" => &[Stage::Fragment],
+        "tile_attachmentqcom" => &[Stage::Fragment, Stage::Compute],
+        "viewport_relative"
+        | "secondary_view_offset"
+        | "xfb_buffer"
+        | "xfb_offset"
+        | "xfb_stride" => PRE_RASTERIZATION,
+        _ if name.starts_with("blend_support_") || name.starts_with("stencil_ref_") => {
+            &[Stage::Fragment]
+        }
+        _ => return None,
+    })
+}
+
 const fn invalid(qualifier: &'static str, reason: &'static str) -> DiagnosticKind {
     DiagnosticKind::InvalidQualifier { qualifier, reason }
 }
 
 impl Analyzer<'_> {
+    pub(crate) fn stage_layout_identifiers(&mut self, qualifiers: &Qualifiers) {
+        let stage = self.options.stage;
+        for entry in &qualifiers.layout {
+            let name = entry.name.to_ascii_lowercase();
+            if layout_stages(&name).is_some_and(|stages| !stages.contains(&stage)) {
+                self.error(
+                    entry.span,
+                    DiagnosticKind::NotSupportedInStage {
+                        feature: alloc::format!("layout({name})"),
+                        stage: stage.name(),
+                    },
+                );
+            }
+        }
+    }
+
     pub(crate) fn passthrough_extension(&mut self, qualifiers: &Qualifiers) {
         if self.options.stage != Stage::Geometry {
             return;
