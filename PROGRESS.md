@@ -11,19 +11,19 @@ Shaders that glslang's own test suite (`gtests/*.FromFile.cpp`) compiles under V
 
 | Stage | Files | accept | diag | valid | interface | exec | link | crashes |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| **all** | 694 | 535 / 694 (77.1 %) | 119 / 143 (83.2 %) | 392 / 392 (100.0 %) | – | 103 / 103 (100.0 %) | – | 0 |
-| vert | 68 | 51 / 68 (75.0 %) | 8 / 9 (88.9 %) | 42 / 42 (100.0 %) | – | 25 / 25 (100.0 %) | – | 0 |
+| **all** | 694 | 551 / 694 (79.4 %) | 124 / 143 (86.7 %) | 408 / 408 (100.0 %) | – | 103 / 103 (100.0 %) | – | 0 |
+| vert | 68 | 53 / 68 (77.9 %) | 8 / 9 (88.9 %) | 44 / 44 (100.0 %) | – | 25 / 25 (100.0 %) | – | 0 |
 | tesc | 7 | 7 / 7 (100.0 %) | 1 / 1 (100.0 %) | 6 / 6 (100.0 %) | – | – | – | 0 |
 | tese | 4 | 4 / 4 (100.0 %) | – | 4 / 4 (100.0 %) | – | – | – | 0 |
 | geom | 4 | 4 / 4 (100.0 %) | – | 4 / 4 (100.0 %) | – | – | – | 0 |
-| frag | 207 | 144 / 207 (69.6 %) | 28 / 33 (84.8 %) | 111 / 111 (100.0 %) | – | 46 / 46 (100.0 %) | – | 0 |
-| comp | 296 | 250 / 296 (84.5 %) | 61 / 75 (81.3 %) | 175 / 175 (100.0 %) | – | 32 / 32 (100.0 %) | – | 0 |
+| frag | 207 | 147 / 207 (71.0 %) | 28 / 33 (84.8 %) | 114 / 114 (100.0 %) | – | 46 / 46 (100.0 %) | – | 0 |
+| comp | 296 | 260 / 296 (87.8 %) | 66 / 75 (88.0 %) | 185 / 185 (100.0 %) | – | 32 / 32 (100.0 %) | – | 0 |
 | mesh | 20 | 17 / 20 (85.0 %) | 4 / 4 (100.0 %) | 13 / 13 (100.0 %) | – | – | – | 0 |
 | task | 6 | 2 / 6 (33.3 %) | 1 / 1 (100.0 %) | 1 / 1 (100.0 %) | – | – | – | 0 |
 | rgen | 41 | 30 / 41 (73.2 %) | 6 / 10 (60.0 %) | 20 / 20 (100.0 %) | – | – | – | 0 |
 | rint | 5 | 5 / 5 (100.0 %) | 2 / 2 (100.0 %) | 3 / 3 (100.0 %) | – | – | – | 0 |
 | rahit | 10 | 8 / 10 (80.0 %) | 2 / 2 (100.0 %) | 6 / 6 (100.0 %) | – | – | – | 0 |
-| rchit | 13 | 5 / 13 (38.5 %) | 2 / 2 (100.0 %) | 3 / 3 (100.0 %) | – | – | – | 0 |
+| rchit | 13 | 6 / 13 (46.2 %) | 2 / 2 (100.0 %) | 4 / 4 (100.0 %) | – | – | – | 0 |
 | rmiss | 9 | 4 / 9 (44.4 %) | 2 / 2 (100.0 %) | 2 / 2 (100.0 %) | – | – | – | 0 |
 | rcall | 4 | 4 / 4 (100.0 %) | 2 / 2 (100.0 %) | 2 / 2 (100.0 %) | – | – | – | 0 |
 
@@ -31,7 +31,7 @@ Shaders that glslang's own test suite (`gtests/*.FromFile.cpp`) compiles under V
 
 | | we accept | we reject |
 |---|---:|---:|
-| glslang accepts | 392 | 159 |
+| glslang accepts | 408 | 143 |
 | glslang rejects | 0 | 143 |
 
 `exec` in detail:
@@ -42,8 +42,8 @@ Shaders that glslang's own test suite (`gtests/*.FromFile.cpp`) compiles under V
 | passed | 103 |
 | passed within the float tolerance | 0 |
 | failed | 0 |
-| skipped: stage not executed by the harness | 58 |
-| skipped: capability or extension the harness cannot enable | 179 |
+| skipped: stage not executed by the harness | 59 |
+| skipped: capability or extension the harness cannot enable | 194 |
 | skipped: device feature missing on the driver | 19 |
 | skipped: resource or interface the harness cannot bind | 20 |
 | skipped: glslang's module is not valid SPIR-V | 10 |
