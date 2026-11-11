@@ -12,6 +12,7 @@ pub mod rays;
 pub mod reflect;
 pub mod remote;
 pub mod requirements;
+pub mod twin;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -65,11 +66,10 @@ pub enum SkipReason {
     ReferenceInvalid,
     ReferenceFails,
     Nondeterministic,
-    Undefined,
 }
 
 impl SkipReason {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 7] = [
         Self::Stage,
         Self::Capability,
         Self::DeviceFeature,
@@ -77,7 +77,6 @@ impl SkipReason {
         Self::ReferenceInvalid,
         Self::ReferenceFails,
         Self::Nondeterministic,
-        Self::Undefined,
     ];
 
     pub const fn label(self) -> &'static str {
@@ -89,7 +88,6 @@ impl SkipReason {
             Self::ReferenceInvalid => "glslang's module is not valid SPIR-V",
             Self::ReferenceFails => "glslang's module fails on the driver",
             Self::Nondeterministic => "nondeterministic (glslang's module differs between runs)",
-            Self::Undefined => "the shader reads undefined values",
         }
     }
 
@@ -102,7 +100,6 @@ impl SkipReason {
             Self::ReferenceInvalid => "reference-invalid",
             Self::ReferenceFails => "reference-fails",
             Self::Nondeterministic => "nondeterministic",
-            Self::Undefined => "undefined",
         }
     }
 }
@@ -214,6 +211,7 @@ pub struct ExecCase {
     pub name: String,
     pub ours: PathBuf,
     pub reference: PathBuf,
+    pub twin: bool,
 }
 
 #[derive(Debug)]
@@ -221,6 +219,7 @@ struct Ready {
     plan: Plan,
     theirs: Job,
     ours: Job,
+    twin: bool,
 }
 
 pub fn select_targets(local: bool, remote: bool) -> Vec<TargetId> {
@@ -534,9 +533,6 @@ impl Executor {
         if let Some(shared) = shared_binding(&theirs) {
             return Err(Outcome::skip(SkipReason::Binding, shared));
         }
-        if let Some(why) = known::undefined(&case.name) {
-            return Err(Outcome::skip(SkipReason::Undefined, why));
-        }
         if let Some(difference) = interface_difference(&theirs, &mine) {
             return Err(Outcome::Fail(format!("interface differs: {difference}")));
         }
@@ -567,11 +563,20 @@ impl Executor {
             plan,
             theirs: theirs_job,
             ours: ours_job,
+            twin: case.twin,
         })
     }
 
     pub fn exec_all(&self, cases: &[ExecCase]) -> Vec<Outcome> {
-        let staged = parallel_map(cases, |case| self.stage_case(case));
+        let staged = parallel_map(cases, |case| {
+            self.stage_case(case).map_err(|outcome| {
+                if case.twin {
+                    twin::refused(outcome)
+                } else {
+                    outcome
+                }
+            })
+        });
         let mut jobs = Vec::new();
         for ready in staged.iter().flatten() {
             jobs.push(ready.theirs.clone());
@@ -580,6 +585,7 @@ impl Executor {
         let mut first = self.run_jobs(&jobs).into_iter();
         let mut outcomes: Vec<Option<Outcome>> = Vec::with_capacity(staged.len());
         let mut pending: Vec<(usize, Option<Outputs>)> = Vec::new();
+        let mut twins: Vec<(usize, Vec<(JobResult, JobResult)>)> = Vec::new();
         for (index, entry) in staged.iter().enumerate() {
             match entry {
                 Err(outcome) => outcomes.push(Some(outcome.clone())),
@@ -590,6 +596,11 @@ impl Executor {
                     let actual = first
                         .next()
                         .unwrap_or_else(|| Err("no result from the batch".into()));
+                    if ready.twin {
+                        outcomes.push(None);
+                        twins.push((index, vec![(expected, actual)]));
+                        continue;
+                    }
                     if let (Ok(e), Ok(a)) = (&expected, &actual) {
                         if let Ok(tolerated) = compare_outputs(&ready.plan, e, a) {
                             outcomes.push(Some(Outcome::Pass { tolerated }));
@@ -624,10 +635,44 @@ impl Executor {
                 *slot = Some(outcome);
             }
         }
+        self.repeat_twins(&staged, &mut twins);
+        for (index, runs) in twins {
+            if let (Some(Ok(ready)), Some(slot)) = (staged.get(index), outcomes.get_mut(index)) {
+                *slot = Some(twin::judge(&ready.plan, runs));
+            }
+        }
         outcomes
             .into_iter()
             .map(|o| o.unwrap_or_else(|| Outcome::skip(SkipReason::ReferenceFails, "no result")))
             .collect()
+    }
+}
+
+impl Executor {
+    fn repeat_twins(
+        &self,
+        staged: &[Result<Ready, Outcome>],
+        twins: &mut [(usize, Vec<(JobResult, JobResult)>)],
+    ) {
+        for _ in 1..twin::RUNS {
+            let mut jobs = Vec::new();
+            for (index, _) in twins.iter() {
+                if let Some(Ok(ready)) = staged.get(*index) {
+                    jobs.push(ready.theirs.clone());
+                    jobs.push(ready.ours.clone());
+                }
+            }
+            let mut results = self.run_jobs(&jobs).into_iter();
+            for (_, runs) in twins.iter_mut() {
+                let expected = results
+                    .next()
+                    .unwrap_or_else(|| Err("no result from the batch".into()));
+                let actual = results
+                    .next()
+                    .unwrap_or_else(|| Err("no result from the batch".into()));
+                runs.push((expected, actual));
+            }
+        }
     }
 }
 
