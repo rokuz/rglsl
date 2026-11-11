@@ -1,62 +1,59 @@
 ; SPIR-V
 ; Version: 1.1
 ; Generator: rspirv
-; Bound: 40
+; Bound: 37
 OpCapability Shader
 %1 = OpExtInstImport "GLSL.std.450"
 OpMemoryModel Logical GLSL450
-OpEntryPoint Fragment %31 "main"
-OpExecutionMode %31 OriginUpperLeft
+OpEntryPoint Fragment %28 "main"
+OpExecutionMode %28 OriginUpperLeft
 %2 = OpTypeVoid
 %3 = OpTypeInt 32 1
 %4 = OpTypeFloat 32
 %5 = OpTypeVector %4 3
 %9 = OpTypeFunction %2 %3
 %11 = OpTypePointer Function %3
-%12 = OpConstantNull  %3
-%17 = OpTypeFunction %2 %4
-%19 = OpTypePointer Function %4
-%20 = OpConstantNull  %4
-%25 = OpTypeFunction %2 %5
-%27 = OpTypePointer Function %5
-%28 = OpConstantNull  %5
-%32 = OpTypeFunction %2
-%33 = OpConstant  %3  1
-%34 = OpConstant  %4  1
-%35 = OpConstantComposite  %5  %34 %34 %34
+%16 = OpTypeFunction %2 %4
+%18 = OpTypePointer Function %4
+%23 = OpTypeFunction %2 %5
+%25 = OpTypePointer Function %5
+%29 = OpTypeFunction %2
+%30 = OpConstant  %3  1
+%31 = OpConstant  %4  1
+%32 = OpConstantComposite  %5  %31 %31 %31
 %8 = OpFunction  %2  None %9
 %7 = OpFunctionParameter  %3
 %6 = OpLabel
-%10 = OpVariable  %11  Function %12
-OpBranch %13
-%13 = OpLabel
+%10 = OpVariable  %11  Function
+OpBranch %12
+%12 = OpLabel
 OpStore %10 %7
 OpReturn
 OpFunctionEnd
-%16 = OpFunction  %2  None %17
-%15 = OpFunctionParameter  %4
-%14 = OpLabel
-%18 = OpVariable  %19  Function %20
-OpBranch %21
-%21 = OpLabel
-OpStore %18 %15
+%15 = OpFunction  %2  None %16
+%14 = OpFunctionParameter  %4
+%13 = OpLabel
+%17 = OpVariable  %18  Function
+OpBranch %19
+%19 = OpLabel
+OpStore %17 %14
 OpReturn
 OpFunctionEnd
-%24 = OpFunction  %2  None %25
-%23 = OpFunctionParameter  %5
-%22 = OpLabel
-%26 = OpVariable  %27  Function %28
-OpBranch %29
-%29 = OpLabel
-OpStore %26 %23
+%22 = OpFunction  %2  None %23
+%21 = OpFunctionParameter  %5
+%20 = OpLabel
+%24 = OpVariable  %25  Function
+OpBranch %26
+%26 = OpLabel
+OpStore %24 %21
 OpReturn
 OpFunctionEnd
-%31 = OpFunction  %2  None %32
-%30 = OpLabel
-OpBranch %36
-%36 = OpLabel
-%37 = OpFunctionCall  %2  %8 %33
-%38 = OpFunctionCall  %2  %16 %34
-%39 = OpFunctionCall  %2  %24 %35
+%28 = OpFunction  %2  None %29
+%27 = OpLabel
+OpBranch %33
+%33 = OpLabel
+%34 = OpFunctionCall  %2  %8 %30
+%35 = OpFunctionCall  %2  %15 %31
+%36 = OpFunctionCall  %2  %22 %32
 OpReturn
 OpFunctionEnd

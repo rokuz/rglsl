@@ -59,6 +59,35 @@ changelog was dropped; see upstream for the history before the fork.
   with the WGSL frontend before it was removed, so the SPIR-V backend keeps that coverage.
   The 24 snapshots that embedded the WGSL source as debug information lost it.
 
+- **WGSL semantics in the SPIR-V backend.** Code that made the output behave as WGSL
+  requires and that glslang does not emit, since GLSL leaves those cases undefined or does
+  not define them that way:
+  - the `FClamp` of a float to the range of the integer type before `OpConvertFToS` and
+    `OpConvertFToU` (GLSL leaves an out-of-range conversion undefined; glslang converts
+    directly);
+  - the integer division and remainder wrappers (`rglsl_div`, `rglsl_mod`) that replaced a
+    zero divisor and `INT_MIN / -1`, with the `Options::emit_int_div_checks` option, and the
+    `a - b * (a / b)` lowering of signed `%`: signed `%` is `OpSMod`, unsigned `OpUMod`, and
+    division is `OpSDiv`/`OpUDiv`, as glslang writes them (GLSL leaves a zero divisor and
+    negative operands of `%` undefined);
+  - integer `clamp` written as `min(max(x, low), high)`: it is `SClamp`/`UClamp`, as glslang
+    writes it (GLSL leaves `low > high` undefined; constant folding still follows glslang's
+    folding);
+  - loop bounding (`Options::force_loop_bounding`, the `loop_bound` counter in every loop);
+  - zero initialisation of workgroup memory (`Options::zero_initialize_workgroup_memory`,
+    `ZeroInitializeWorkgroupMemoryMode`, the `LocalInvocationIndex == 0` store-and-barrier
+    polyfill and the `OpConstantNull` initializer of the native mode);
+  - the `OpConstantNull` initializer of `Private` globals and function variables without an
+    initializer: a variable is initialised only when the IR gives it an `init`, as glslang
+    initialises only declarations with an initializer (or `GL_EXT_null_initializer`'s `{}`);
+  - the splat of a scalar `Select` condition to a vector from SPIR-V 1.4 on, where `OpSelect`
+    takes the scalar condition, as glslang writes it (before 1.4 the condition is still
+    splatted, as in glslang).
+
+  Bounds checks were already off by default (`BoundsCheckPolicy::Unchecked`), and the
+  coordinate-space flip, frag-depth clamp, mesh output clamp and task dispatch limits only
+  apply to entry points with WGSL-style arguments and results, which the GLSL front end does
+  not produce.
 - **The GLSL frontend's parser and one-pass lowering** (`front/glsl/{lex,token,ast,parser,
   parser/*,parser_tests,context,functions,builtins,types,variables}.rs`), the
   `ShaderMetadata`, `Profile`, `Precision`, `TokenValue` and `ExpectedToken` types,
@@ -110,9 +139,6 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   other storage classes (`back/spv/plain_types.rs`) point to an undecorated twin of such a
   type, or of any struct or array containing one; loads and stores through them convert
   between the twins with `OpCopyLogical` from SPIR-V 1.4 and member by member before.
-- **The workgroup zero-initialisation polyfill reuses a declared `LocalInvocationIndex`**
-  input global instead of declaring a second one, which Vulkan forbids
-  (VUID-StandaloneSpirv-OpEntryPoint-09658).
 - **`MathFunction::Outer` typing.** `outer(c, r)` has one row per component of `c` and one
   column per component of `r`, as in GLSL and SPIR-V; upstream had them swapped
   (`proc/overloads/mathfunction.rs`).

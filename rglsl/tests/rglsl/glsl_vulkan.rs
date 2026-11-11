@@ -41,8 +41,6 @@ fn compile(stage: ShaderStage, source: &str) -> dr::Module {
         flags: spv::WriterFlags::DEBUG
             | spv::WriterFlags::LABEL_VARYINGS
             | spv::WriterFlags::SMALL_TYPE_CAPABILITIES_BY_USE,
-        force_loop_bounding: false,
-        zero_initialize_workgroup_memory: spv::ZeroInitializeWorkgroupMemoryMode::None,
         ..spv::Options::default()
     };
     let words = spv::write_vec(&module, &info, &options, None).expect("SPIR-V backend failed");
@@ -2577,8 +2575,6 @@ fn compile_for(stage: ShaderStage, source: &str, lang_version: (u8, u8)) -> dr::
     let options = spv::Options {
         lang_version,
         flags: spv::WriterFlags::DEBUG | spv::WriterFlags::LABEL_VARYINGS,
-        force_loop_bounding: false,
-        zero_initialize_workgroup_memory: spv::ZeroInitializeWorkgroupMemoryMode::None,
         ..spv::Options::default()
     };
     let words = spv::write_vec(&module, &info, &options, None).expect("SPIR-V backend failed");
@@ -4615,8 +4611,6 @@ fn message_words(stage: ShaderStage, source: &str, lang_version: (u8, u8)) -> Ve
         flags: spv::WriterFlags::DEBUG
             | spv::WriterFlags::LABEL_VARYINGS
             | spv::WriterFlags::SMALL_TYPE_CAPABILITIES_BY_USE,
-        force_loop_bounding: false,
-        zero_initialize_workgroup_memory: spv::ZeroInitializeWorkgroupMemoryMode::None,
         ..spv::Options::default()
     };
     let words = spv::write_vec(&module, &info, &options, None).expect("SPIR-V backend failed");
@@ -8309,4 +8303,109 @@ fn reference_member_access_qualifiers_decorate_their_member() {
     assert_eq!(names(Decoration::NonWritable), ["u", "v", "x"]);
     assert_eq!(names(Decoration::NonReadable), ["y"]);
     assert_eq!(names(Decoration::Restrict), ["v"]);
+}
+
+fn glsl_ops(module: &dr::Module) -> Vec<u32> {
+    module
+        .all_inst_iter()
+        .filter(|inst| inst.class.opcode == Op::ExtInst)
+        .filter_map(|inst| match inst.operands.get(1) {
+            Some(&Operand::LiteralExtInstInteger(op)) => Some(op),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn integer_arithmetic_is_written_as_glslang_writes_it() {
+    let module = compile_valid(
+        ShaderStage::Compute,
+        "#version 450
+        layout(local_size_x = 1) in;
+        layout(std430, binding = 0) buffer B { int i[3]; uint u[3]; float f; vec3 v; } b;
+        void main() {
+            b.i[0] = b.i[1] % b.i[2] + b.i[1] / b.i[2] + clamp(b.i[0], b.i[1], b.i[2]);
+            b.u[0] = b.u[1] % b.u[2] + b.u[1] / b.u[2] + clamp(b.u[0], b.u[1], b.u[2]);
+            b.i[1] = int(b.f) + ivec3(b.v).y;
+            b.u[1] = uint(b.f);
+        }",
+    );
+    for op in [Op::SMod, Op::SDiv, Op::UMod, Op::UDiv, Op::ConvertFToU] {
+        assert_eq!(instructions(&module, op).len(), 1, "{op:?}");
+    }
+    assert_eq!(instructions(&module, Op::ConvertFToS).len(), 2);
+    assert!(instructions(&module, Op::SRem).is_empty());
+    assert!(instructions(&module, Op::FunctionCall).is_empty());
+    assert_eq!(
+        glsl_ops(&module),
+        [
+            spirv::GlslStd450Op::SClamp as u32,
+            spirv::GlslStd450Op::UClamp as u32
+        ]
+    );
+}
+
+#[test]
+fn variables_are_initialized_only_when_declared_so() {
+    let module = compile_valid(
+        ShaderStage::Compute,
+        "#version 450
+        layout(local_size_x = 4) in;
+        layout(std430, binding = 0) buffer B { float f[]; } b;
+        shared float s[4];
+        float g;
+        void main() {
+            float l;
+            if (b.f[0] > 0.0) { l = 1.0; } else { l = 2.0; }
+            s[gl_LocalInvocationIndex] = l;
+            g = s[0];
+            for (int k = 0; k < int(b.f[1]); ++k) { b.f[k] = g; }
+        }",
+    );
+    let variables = instructions(&module, Op::Variable);
+    let initialized: Vec<_> = variables
+        .iter()
+        .filter(|inst| inst.operands.len() > 1)
+        .filter_map(|inst| inst.result_id)
+        .map(|id| name_of(&module, id))
+        .collect();
+    assert_eq!(initialized, Vec::<String>::new());
+    assert!(instructions(&module, Op::ControlBarrier).is_empty());
+    assert!(module
+        .debug_names
+        .iter()
+        .all(|inst| inst.operands.get(1) != Some(&Operand::LiteralString("loop_bound".into()))));
+}
+
+#[test]
+fn select_keeps_a_scalar_condition_from_spirv_1_4() {
+    let source = "#version 450
+        layout(location = 0) flat in int i;
+        layout(location = 1) in vec3 a;
+        layout(location = 0) out vec3 o;
+        void main() { o = i > 1 ? a : vec3(2.0); }";
+    let module = parse(ShaderStage::Fragment, source).unwrap();
+    let info = Validator::new(ValidationFlags::all(), Capabilities::all())
+        .validate(&module)
+        .unwrap();
+    let select_conditions = |lang_version| {
+        let options = spv::Options {
+            lang_version,
+            flags: spv::WriterFlags::DEBUG,
+            ..spv::Options::default()
+        };
+        let words = spv::write_vec(&module, &info, &options, None).unwrap();
+        crate::stage_io::spirv_val_in(&words, &["--target-env", "vulkan1.2"]);
+        let module = dr::load_words(words).unwrap();
+        let composites = instructions(&module, Op::CompositeConstruct)
+            .iter()
+            .filter_map(|inst| inst.result_id)
+            .collect::<Vec<_>>();
+        instructions(&module, Op::Select)
+            .iter()
+            .map(|inst| composites.contains(&inst.operands[0].unwrap_id_ref()))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(select_conditions((1, 0)), [true]);
+    assert_eq!(select_conditions((1, 4)), [false]);
 }

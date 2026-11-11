@@ -269,7 +269,6 @@ struct Function {
     parameters: Vec<FunctionArgument>,
     variables: crate::FastHashMap<Handle<crate::LocalVariable>, LocalVariable>,
     /// List of local variables used as a counters to ensure that all loops are bounded.
-    force_loop_bounding_vars: Vec<LocalVariable>,
 
     /// A map from a rglsl expression to the temporary SPIR-V variable we have
     /// spilled its value to, if any.
@@ -436,47 +435,6 @@ enum NumericType {
     },
 }
 
-impl NumericType {
-    const fn from_inner(inner: &crate::TypeInner) -> Option<Self> {
-        match *inner {
-            crate::TypeInner::Scalar(scalar) | crate::TypeInner::Atomic(scalar) => {
-                Some(NumericType::Scalar(scalar))
-            }
-            crate::TypeInner::Vector { size, scalar } => Some(NumericType::Vector { size, scalar }),
-            crate::TypeInner::Matrix {
-                columns,
-                rows,
-                scalar,
-            } => Some(NumericType::Matrix {
-                columns,
-                rows,
-                scalar,
-            }),
-            _ => None,
-        }
-    }
-
-    const fn scalar(self) -> crate::Scalar {
-        match self {
-            NumericType::Scalar(scalar)
-            | NumericType::Vector { scalar, .. }
-            | NumericType::Matrix { scalar, .. } => scalar,
-        }
-    }
-
-    const fn with_scalar(self, scalar: crate::Scalar) -> Self {
-        match self {
-            NumericType::Scalar(_) => NumericType::Scalar(scalar),
-            NumericType::Vector { size, .. } => NumericType::Vector { size, scalar },
-            NumericType::Matrix { columns, rows, .. } => NumericType::Matrix {
-                columns,
-                rows,
-                scalar,
-            },
-        }
-    }
-}
-
 /// A cooperative type, for use in [`LocalType`].
 #[derive(Debug, PartialEq, Hash, Eq, Copy, Clone)]
 enum CooperativeType {
@@ -622,17 +580,8 @@ enum Dimension {
 /// for the expression. See [`Writer::wrapped_functions`].
 #[derive(Debug, Eq, PartialEq, Hash)]
 enum WrappedFunction {
-    BinaryOp {
-        op: crate::BinaryOperator,
-        left_type_id: Word,
-        right_type_id: Word,
-    },
-    ConvertFromStd140CompatType {
-        r#type: Handle<crate::Type>,
-    },
-    MatCx2GetColumn {
-        r#type: Handle<crate::Type>,
-    },
+    ConvertFromStd140CompatType { r#type: Handle<crate::Type> },
+    MatCx2GetColumn { r#type: Handle<crate::Type> },
 }
 
 /// A map from evaluated [`Expression`](crate::Expression)s to their SPIR-V ids.
@@ -876,8 +825,6 @@ struct BlockContext<'w> {
     /// Tracks the constness of `Expression`s residing in `self.ir_function.expressions`
     expression_constness: ExpressionConstnessTracker,
 
-    force_loop_bounding: bool,
-
     /// Hash from an expression whose type is a ray query / pointer to a ray query to its tracker.
     /// Note: this is sparse, so can't be a handle vec
     physical_component_load: bool,
@@ -962,12 +909,9 @@ pub struct Writer {
     annotations: Vec<Instruction>,
     flags: WriterFlags,
     bounds_check_policies: BoundsCheckPolicies,
-    zero_initialize_workgroup_memory: ZeroInitializeWorkgroupMemoryMode,
-    force_loop_bounding: bool,
     vulkan_memory_model: bool,
     device_scope_used: bool,
     use_storage_input_output_16: bool,
-    emit_int_div_checks: bool,
     void_type: Word,
     tuple_of_u32s_ty_id: Option<Word>,
     //TODO: convert most of these into vectors, addressable by handle indices
@@ -1075,15 +1019,6 @@ bitflags::bitflags! {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ZeroInitializeWorkgroupMemoryMode {
-    /// Via `VK_KHR_zero_initialize_workgroup_memory` or Vulkan 1.3
-    Native,
-    /// Via assignments + barrier
-    Polyfill,
-    None,
-}
-
 #[derive(Debug, Clone)]
 pub struct Options<'a> {
     /// (Major, Minor) target version of the SPIR-V.
@@ -1109,13 +1044,6 @@ pub struct Options<'a> {
     /// indices that are out of range?
     pub bounds_check_policies: BoundsCheckPolicies,
 
-    /// Dictates the way workgroup variables should be zero initialized
-    pub zero_initialize_workgroup_memory: ZeroInitializeWorkgroupMemoryMode,
-
-    /// If set, loops will have code injected into them, forcing the compiler
-    /// to think the number of iterations is bounded.
-    pub force_loop_bounding: bool,
-
     /// Whether to use the `StorageInputOutput16` capability for `f16` shader I/O.
     /// When false, `f16` I/O is polyfilled using `f32` types with conversions.
     pub use_storage_input_output_16: bool,
@@ -1132,17 +1060,6 @@ pub struct Options<'a> {
     ///
     /// Currently this validation is unimplemented.
     pub mesh_shader_primitive_indices_clamp: bool,
-
-    /// If true (the default), integer division and modulo operations emit
-    /// wrapper functions that replace a zero divisor with one, and for signed
-    /// integers also guard against `INT_MIN / -1` overflow. This matches the
-    /// WGSL spec's requirement that these cases produce defined results.
-    ///
-    /// Set to `false` to emit raw `OpSDiv`/`OpUDiv`/`OpSRem`/`OpUMod`
-    /// instructions without checks. This is faster but produces
-    /// implementation-defined results when the divisor is zero. Appropriate
-    /// for compute shaders where the developer guarantees non-zero divisors.
-    pub emit_int_div_checks: bool,
 }
 
 impl Default for Options<'_> {
@@ -1160,13 +1077,10 @@ impl Default for Options<'_> {
             binding_map: BindingMap::default(),
             capabilities: None,
             bounds_check_policies: BoundsCheckPolicies::default(),
-            zero_initialize_workgroup_memory: ZeroInitializeWorkgroupMemoryMode::Polyfill,
-            force_loop_bounding: true,
             use_storage_input_output_16: true,
             debug_info: None,
             task_dispatch_limits: None,
             mesh_shader_primitive_indices_clamp: true,
-            emit_int_div_checks: true,
         }
     }
 }

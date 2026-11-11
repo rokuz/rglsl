@@ -1,7 +1,7 @@
 ; SPIR-V
 ; Version: 1.1
 ; Generator: rspirv
-; Bound: 36
+; Bound: 35
 OpCapability Shader
 %1 = OpExtInstImport "GLSL.std.450"
 OpMemoryModel Logical GLSL450
@@ -22,26 +22,25 @@ OpExecutionMode %8 LocalSize 1 1 1
 %16 = OpConstantComposite  %3  %14 %10
 %18 = OpTypePointer Function %5
 %20 = OpTypePointer Function %3
-%21 = OpConstantNull  %3
-%23 = OpTypePointer Function %6
-%25 = OpTypeInt 32 0
-%24 = OpConstant  %25  0
-%28 = OpConstant  %25  1
-%31 = OpTypeBool
-%34 = OpTypeVector %31 2
+%22 = OpTypePointer Function %6
+%24 = OpTypeInt 32 0
+%23 = OpConstant  %24  0
+%27 = OpConstant  %24  1
+%30 = OpTypeBool
+%33 = OpTypeVector %30 2
 %8 = OpFunction  %2  None %9
 %7 = OpLabel
 %17 = OpVariable  %18  Function %13
-%19 = OpVariable  %20  Function %21
-OpBranch %22
-%22 = OpLabel
-%26 = OpAccessChain  %23  %17 %24
-%27 = OpLoad  %6  %26
-%29 = OpAccessChain  %23  %17 %28
-%30 = OpLoad  %6  %29
-%32 = OpSLessThan  %31  %27 %30
-%35 = OpCompositeConstruct  %34  %32 %32
-%33 = OpSelect  %3  %35 %16 %15
-OpStore %19 %33
+%19 = OpVariable  %20  Function
+OpBranch %21
+%21 = OpLabel
+%25 = OpAccessChain  %22  %17 %23
+%26 = OpLoad  %6  %25
+%28 = OpAccessChain  %22  %17 %27
+%29 = OpLoad  %6  %28
+%31 = OpSLessThan  %30  %26 %29
+%34 = OpCompositeConstruct  %33  %31 %31
+%32 = OpSelect  %3  %34 %16 %15
+OpStore %19 %32
 OpReturn
 OpFunctionEnd
