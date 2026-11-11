@@ -1882,7 +1882,7 @@ impl ModuleInfo {
 }
 
 #[test]
-fn uniform_control_flow() {
+fn uniform_control_flow() -> crate::TestResult {
     use crate::{Expression as E, Statement as S};
 
     let mut type_arena = crate::UniqueArena::new();
@@ -1997,8 +1997,7 @@ fn uniform_control_flow() {
             &[],
             &resolve_context,
             super::Capabilities::empty(),
-        )
-        .unwrap();
+        )?;
     }
     assert_eq!(info[non_uniform_global_expr].ref_count, 1);
     assert_eq!(info[uniform_global_expr].ref_count, 1);
@@ -2167,4 +2166,5 @@ fn uniform_control_flow() {
         }),
     );
     assert_eq!(info[non_uniform_global], GlobalUse::READ | GlobalUse::WRITE);
+    Ok(())
 }

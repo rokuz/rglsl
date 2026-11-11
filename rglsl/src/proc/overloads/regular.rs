@@ -353,16 +353,18 @@ mod test {
     /// Assert that `set` has a most preferred candidate whose type
     /// conclusion is `expected`.
     #[track_caller]
-    fn check_return_type(set: &Regular, expected: &ir::TypeInner, arena: &UniqueArena<ir::Type>) {
+    fn check_return_type(
+        set: &Regular,
+        expected: &ir::TypeInner,
+        arena: &UniqueArena<ir::Type>,
+    ) -> crate::TestResult {
         assert!(!set.is_empty());
 
         let special_types = ir::SpecialTypes::default();
 
-        let preferred = set.most_preferred().unwrap();
+        let preferred = set.most_preferred().ok_or("no most preferred candidate")?;
         let conclusion = preferred.conclusion;
-        let resolution = conclusion
-            .into_resolution(&special_types)
-            .expect("special types should have been pre-registered");
+        let resolution = conclusion.into_resolution(&special_types)?;
         let inner = resolution.inner_with(arena);
 
         assert!(
@@ -371,32 +373,35 @@ mod test {
             expected.for_debug(arena),
             inner.for_debug(arena),
         );
+        Ok(())
     }
 
     #[test]
-    fn unary_vec_or_scalar_numeric_scalar() {
+    fn unary_vec_or_scalar_numeric_scalar() -> crate::TestResult {
         let arena = UniqueArena::default();
 
         let builtin = regular!(1, SCALAR of NUMERIC);
 
         let ok = builtin.arg(0, &scalar(ir::Scalar::U32), &arena);
-        check_return_type(&ok, &scalar(ir::Scalar::U32), &arena);
+        check_return_type(&ok, &scalar(ir::Scalar::U32), &arena)?;
 
         let err = builtin.arg(0, &scalar(ir::Scalar::BOOL), &arena);
         assert!(err.is_empty());
+        Ok(())
     }
 
     #[test]
-    fn unary_vec_or_scalar_numeric_vector() {
+    fn unary_vec_or_scalar_numeric_vector() -> crate::TestResult {
         let arena = UniqueArena::default();
 
         let builtin = regular!(1, VECN|SCALAR of NUMERIC);
 
         let ok = builtin.arg(0, &vec3(ir::Scalar::F64), &arena);
-        check_return_type(&ok, &vec3(ir::Scalar::F64), &arena);
+        check_return_type(&ok, &vec3(ir::Scalar::F64), &arena)?;
 
         let err = builtin.arg(0, &vec3(ir::Scalar::BOOL), &arena);
         assert!(err.is_empty());
+        Ok(())
     }
 
     #[test]
@@ -419,7 +424,7 @@ mod test {
 
     #[test]
     #[rustfmt::skip]
-    fn binary_vec_or_scalar_numeric_scalar() {
+    fn binary_vec_or_scalar_numeric_scalar() -> crate::TestResult {
         let arena = UniqueArena::default();
 
         let builtin = regular!(2, VECN|SCALAR of NUMERIC);
@@ -427,32 +432,32 @@ mod test {
         let ok = builtin
             .arg(0, &scalar(ir::Scalar::F32), &arena)
             .arg(1, &scalar(ir::Scalar::F32), &arena);
-        check_return_type(&ok, &scalar(ir::Scalar::F32), &arena);
+        check_return_type(&ok, &scalar(ir::Scalar::F32), &arena)?;
 
         let ok = builtin
             .arg(0, &scalar(ir::Scalar::ABSTRACT_FLOAT), &arena)
             .arg(1, &scalar(ir::Scalar::F32), &arena);
-        check_return_type(&ok, &scalar(ir::Scalar::F32), &arena);
+        check_return_type(&ok, &scalar(ir::Scalar::F32), &arena)?;
 
         let ok = builtin
             .arg(0, &scalar(ir::Scalar::F32), &arena)
             .arg(1, &scalar(ir::Scalar::ABSTRACT_INT), &arena);
-        check_return_type(&ok, &scalar(ir::Scalar::F32), &arena);
+        check_return_type(&ok, &scalar(ir::Scalar::F32), &arena)?;
 
         let ok = builtin
             .arg(0, &scalar(ir::Scalar::U32), &arena)
             .arg(1, &scalar(ir::Scalar::U32), &arena);
-        check_return_type(&ok, &scalar(ir::Scalar::U32), &arena);
+        check_return_type(&ok, &scalar(ir::Scalar::U32), &arena)?;
 
         let ok = builtin
             .arg(0, &scalar(ir::Scalar::U32), &arena)
             .arg(1, &scalar(ir::Scalar::ABSTRACT_INT), &arena);
-        check_return_type(&ok, &scalar(ir::Scalar::U32), &arena);
+        check_return_type(&ok, &scalar(ir::Scalar::U32), &arena)?;
 
         let ok = builtin
             .arg(0, &scalar(ir::Scalar::ABSTRACT_INT), &arena)
             .arg(1, &scalar(ir::Scalar::U32), &arena);
-        check_return_type(&ok, &scalar(ir::Scalar::U32), &arena);
+        check_return_type(&ok, &scalar(ir::Scalar::U32), &arena)?;
 
         // Not numeric.
         let err = builtin
@@ -477,11 +482,12 @@ mod test {
             .arg(0, &vec2(ir::Scalar::F32), &arena)
             .arg(1, &vec3(ir::Scalar::F32), &arena);
         assert!(err.is_empty());
+        Ok(())
     }
 
     #[test]
     #[rustfmt::skip]
-    fn binary_vec_or_scalar_numeric_vector() {
+    fn binary_vec_or_scalar_numeric_vector() -> crate::TestResult {
         let arena = UniqueArena::default();
 
         let builtin = regular!(2, VECN|SCALAR of NUMERIC);
@@ -489,7 +495,7 @@ mod test {
         let ok = builtin
             .arg(0, &vec3(ir::Scalar::F32), &arena)
             .arg(1, &vec3(ir::Scalar::F32), &arena);
-        check_return_type(&ok, &vec3(ir::Scalar::F32), &arena);
+        check_return_type(&ok, &vec3(ir::Scalar::F32), &arena)?;
 
         // Different vector sizes.
         let err = builtin
@@ -508,11 +514,12 @@ mod test {
             .arg(0, &scalar(ir::Scalar::F32), &arena)
             .arg(1, &vec3(ir::Scalar::F32), &arena);
         assert!(err.is_empty());
+        Ok(())
     }
 
     #[test]
     #[rustfmt::skip]
-    fn binary_vec_or_scalar_numeric_vector_abstract() {
+    fn binary_vec_or_scalar_numeric_vector_abstract() -> crate::TestResult {
         let arena = UniqueArena::default();
 
         let builtin = regular!(2, VECN|SCALAR of NUMERIC);
@@ -520,17 +527,17 @@ mod test {
         let ok = builtin
             .arg(0, &vec2(ir::Scalar::ABSTRACT_INT), &arena)
             .arg(1, &vec2(ir::Scalar::U32), &arena);
-        check_return_type(&ok, &vec2(ir::Scalar::U32), &arena);
+        check_return_type(&ok, &vec2(ir::Scalar::U32), &arena)?;
 
         let ok = builtin
             .arg(0, &vec3(ir::Scalar::ABSTRACT_INT), &arena)
             .arg(1, &vec3(ir::Scalar::F32), &arena);
-        check_return_type(&ok, &vec3(ir::Scalar::F32), &arena);
+        check_return_type(&ok, &vec3(ir::Scalar::F32), &arena)?;
 
         let ok = builtin
             .arg(0, &scalar(ir::Scalar::ABSTRACT_FLOAT), &arena)
             .arg(1, &scalar(ir::Scalar::F32), &arena);
-        check_return_type(&ok, &scalar(ir::Scalar::F32), &arena);
+        check_return_type(&ok, &scalar(ir::Scalar::F32), &arena)?;
 
         let err = builtin
             .arg(0, &scalar(ir::Scalar::ABSTRACT_FLOAT), &arena)
@@ -541,5 +548,6 @@ mod test {
             .arg(0, &scalar(ir::Scalar::I32), &arena)
             .arg(1, &scalar(ir::Scalar::U32), &arena);
         assert!(err.is_empty());
+        Ok(())
     }
 }

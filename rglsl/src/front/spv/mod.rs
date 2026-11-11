@@ -3348,7 +3348,7 @@ mod test {
     use alloc::vec;
 
     #[test]
-    fn parse() {
+    fn parse() -> crate::TestResult {
         let bin = vec![
             // Magic number.           Version number: 1.0.
             0x03, 0x02, 0x23, 0x07, 0x00, 0x00, 0x01, 0x00,
@@ -3358,6 +3358,7 @@ mod test {
             0x0e, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, // GLSL450.
             0x01, 0x00, 0x00, 0x00,
         ];
-        let _ = super::parse_u8_slice(&bin, &Default::default()).unwrap();
+        super::parse_u8_slice(&bin, &Default::default())?;
+        Ok(())
     }
 }

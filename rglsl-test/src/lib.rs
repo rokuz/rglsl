@@ -1,11 +1,4 @@
 #![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::panic,
-    clippy::unreachable,
-    reason = "test support code fails by panicking"
-)]
-#![allow(
     dead_code,
     unused_imports,
     reason = "A lot of the code can be unused based on configuration flags; \
@@ -21,6 +14,8 @@ use std::{
 
 use rglsl::compact::KeepUnused;
 use ron::de;
+
+type Fallible<T> = Result<T, Box<dyn std::error::Error>>;
 
 bitflags::bitflags! {
     #[derive(Clone, Copy, serde::Deserialize)]
@@ -240,46 +235,51 @@ impl Input {
         subdirectory: &'a str,
         file_extensions: &'a [&'a str],
         dir_in: &str,
-    ) -> impl Iterator<Item = Input> + 'a {
+    ) -> Fallible<Vec<Input>> {
         let input_directory = Path::new(dir_in).join(subdirectory);
 
-        let entries = match std::fs::read_dir(&input_directory) {
-            Ok(entries) => entries,
-            Err(err) => panic!(
-                "Error opening directory '{}': {}",
-                input_directory.display(),
-                err
-            ),
-        };
+        let entries = std::fs::read_dir(&input_directory).map_err(|err| {
+            format!(
+                "Error opening directory '{}': {err}",
+                input_directory.display()
+            )
+        })?;
 
-        entries.filter_map(move |result| {
-            let entry = result.expect("error reading directory");
-            if !entry.file_type().unwrap().is_file() {
-                return None;
+        let mut inputs = Vec::new();
+        for result in entries {
+            let entry = result?;
+            if !entry.file_type()?.is_file() {
+                continue;
             }
 
             let file_name = PathBuf::from(entry.file_name());
             let extension = file_name
                 .extension()
-                .expect("all files in snapshot input directory should have extensions");
+                .and_then(|extension| extension.to_str())
+                .ok_or_else(|| {
+                    format!(
+                        "{}: files in a snapshot input directory need UTF-8 extensions",
+                        file_name.display()
+                    )
+                })?;
 
-            if !file_extensions.contains(&extension.to_str().unwrap()) {
-                return None;
+            if !file_extensions.contains(&extension) {
+                continue;
             }
 
             if let Ok(pat) = std::env::var("RGLSL_SNAPSHOT") {
                 if !file_name.to_string_lossy().contains(&pat) {
-                    return None;
+                    continue;
                 }
             }
 
-            let input = Input::new(
-                subdirectory,
-                file_name.file_stem().unwrap().to_str().unwrap(),
-                extension.to_str().unwrap(),
-            );
-            Some(input)
-        })
+            let stem = file_name
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .ok_or_else(|| format!("{}: not a UTF-8 file name", file_name.display()))?;
+            inputs.push(Input::new(subdirectory, stem, extension));
+        }
+        Ok(inputs)
     }
 
     /// Return the path to the input directory.
@@ -324,79 +324,68 @@ impl Input {
     }
 
     /// Return the contents of the input file as a string.
-    pub fn read_source(&self, dir_in: &str, print: bool) -> String {
+    pub fn read_source(&self, dir_in: &str, print: bool) -> Fallible<String> {
         if print {
             println!("Processing '{}'", self.file_name.display());
         }
         let input_path = self.input_path(dir_in);
-        match fs::read_to_string(&input_path) {
-            Ok(source) => source,
-            Err(err) => {
-                panic!(
-                    "Couldn't read shader input file `{}`: {}",
-                    input_path.display(),
-                    err
-                );
-            }
-        }
+        fs::read_to_string(&input_path).map_err(|err| {
+            format!(
+                "Couldn't read shader input file `{}`: {err}",
+                input_path.display()
+            )
+            .into()
+        })
     }
 
     /// Return the contents of the input file as a vector of bytes.
-    pub fn read_bytes(&self, dir_in: &str, print: bool) -> Vec<u8> {
+    pub fn read_bytes(&self, dir_in: &str, print: bool) -> Fallible<Vec<u8>> {
         if print {
             println!("Processing '{}'", self.file_name.display());
         }
         let input_path = self.input_path(dir_in);
-        match fs::read(&input_path) {
-            Ok(bytes) => bytes,
-            Err(err) => {
-                panic!(
-                    "Couldn't read shader input file `{}`: {}",
-                    input_path.display(),
-                    err
-                );
-            }
-        }
+        fs::read(&input_path).map_err(|err| {
+            format!(
+                "Couldn't read shader input file `{}`: {err}",
+                input_path.display()
+            )
+            .into()
+        })
     }
 
-    pub fn bytes(&self, dir_in: &str) -> u64 {
+    pub fn bytes(&self, dir_in: &str) -> Fallible<u64> {
         let input_path = self.input_path(dir_in);
-        std::fs::metadata(input_path).unwrap().len()
+        Ok(std::fs::metadata(input_path)?.len())
     }
 
     /// Return this input's parameter file, parsed.
-    pub fn read_parameters(&self, dir_in: &str) -> Parameters {
+    pub fn read_parameters(&self, dir_in: &str) -> Fallible<Parameters> {
         let mut param_path = self.input_path(dir_in);
         param_path.set_extension("toml");
         let mut params = match fs::read_to_string(&param_path) {
-            Ok(string) => match toml::de::from_str(&string) {
-                Ok(params) => params,
-                Err(e) => panic!(
+            Ok(string) => toml::de::from_str(&string).map_err(|e| {
+                format!(
                     "Couldn't parse param file: {} due to: {e}",
                     param_path.display()
-                ),
-            },
+                )
+            })?,
             Err(_) => Parameters::default(),
         };
 
         if params.targets.is_none() {
-            match self
-                .input_path(dir_in)
+            let input_path = self.input_path(dir_in);
+            match input_path
                 .extension()
-                .unwrap()
-                .to_str()
-                .unwrap()
+                .and_then(|extension| extension.to_str())
             {
-                "ron" | "spvasm" | "vert" | "frag" | "comp" => {
+                Some("ron" | "spvasm" | "vert" | "frag" | "comp") => {
                     params.targets = Some(Targets::default_targets())
                 }
-                e => {
-                    panic!("Unknown extension: {e}");
-                }
+                _ => return Err(format!("Unknown extension: {}", input_path.display()).into()),
             }
         }
 
-        params
+        Ok(params)
     }
 
     /// Write `data` to a file corresponding to this input file in
@@ -407,11 +396,13 @@ impl Input {
         extension: &str,
         data: impl AsRef<[u8]>,
         dir_out: &str,
-    ) {
+    ) -> Fallible<()> {
         let output_path = self.output_path(subdirectory, extension, dir_out);
-        fs::create_dir_all(output_path.parent().unwrap()).unwrap();
-        if let Err(err) = fs::write(&output_path, data) {
-            panic!("Error writing {}: {}", output_path.display(), err);
-        }
+        let parent = output_path
+            .parent()
+            .ok_or_else(|| format!("{}: no parent directory", output_path.display()))?;
+        fs::create_dir_all(parent)?;
+        fs::write(&output_path, data)
+            .map_err(|err| format!("Error writing {}: {err}", output_path.display()).into())
     }
 }

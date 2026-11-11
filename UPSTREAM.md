@@ -398,6 +398,12 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   its handle; an abstract scalar reaching a type or constant declaration makes
   `Writer::write` fail. `process_overrides` reports the new `PipelineConstantError` variants
   `UnresolvedOverride` and `InvalidOverrideType` instead of panicking.
+- **No `unwrap`/`expect` in tests.** The unit tests taken from upstream (`compact`,
+  `proc::constant_evaluator`, `proc::overloads::regular`, `valid`, `back::spv::writer`,
+  `front::spv`), the integration tests in `rglsl/tests` and the `rglsl-test` snapshot support
+  return `Result` (the crate's test-only `TestResult`) and use `?` instead of
+  `unwrap`/`expect`/`unwrap_err`. The `glsl_parser` fuzz target builds its `defines` map without
+  `unwrap`.
 - **Ray tracing in SPIR-V shape** ([docs/design/ray-tracing.md](docs/design/ray-tracing.md)).
   `ShaderStage::{Intersection, Callable}` and `ShaderStage::ray_tracing`; address spaces
   `HitAttribute`, `CallableData`, `IncomingCallableData`, `ShaderRecord`; payload and callable

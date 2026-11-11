@@ -4589,7 +4589,7 @@ mod tests {
     use super::{Behavior, ConstantEvaluator, ExpressionKindTracker, WgslRestrictions};
 
     #[test]
-    fn unary_op() {
+    fn unary_op() -> crate::TestResult {
         let mut types = UniqueArena::new();
         let mut constants = Arena::new();
         let overrides = Arena::new();
@@ -4678,15 +4678,9 @@ mod tests {
             layouter: &mut crate::proc::Layouter::default(),
         };
 
-        let res1 = solver
-            .try_eval_and_append(expr2, Default::default())
-            .unwrap();
-        let res2 = solver
-            .try_eval_and_append(expr3, Default::default())
-            .unwrap();
-        let res3 = solver
-            .try_eval_and_append(expr4, Default::default())
-            .unwrap();
+        let res1 = solver.try_eval_and_append(expr2, Default::default())?;
+        let res2 = solver.try_eval_and_append(expr3, Default::default())?;
+        let res3 = solver.try_eval_and_append(expr4, Default::default())?;
 
         assert_eq!(
             global_expressions[res1],
@@ -4708,28 +4702,29 @@ mod tests {
                 assert_eq!(*ty, vec_ty);
                 let mut components_iter = components.iter().copied();
                 assert_eq!(
-                    global_expressions[components_iter.next().unwrap()],
+                    global_expressions[components_iter.next().ok_or("missing component")?],
                     Expression::Literal(Literal::I32(!4))
                 );
                 assert_eq!(
-                    global_expressions[components_iter.next().unwrap()],
+                    global_expressions[components_iter.next().ok_or("missing component")?],
                     Expression::Literal(Literal::I32(!8))
                 );
                 assert!(components_iter.next().is_none());
             }
             _ => panic!("Expected vector"),
         }
+        Ok(())
     }
 
     #[test]
-    fn matrix_op() {
-        let mut helper = MatrixTestHelper::new();
+    fn matrix_op() -> crate::TestResult {
+        let mut helper = MatrixTestHelper::new()?;
 
         for nc in 2..=4 {
             for nr in 2..=4 {
                 // Validates multiplication on vector-matrix.
                 // vecR(0, 1, .., r) * matCxR(0, 1, .., nc * nr)
-                let evaluated = helper.eval_vector_multiply_matrix(nc, nr);
+                let evaluated = helper.eval_vector_multiply_matrix(nc, nr)?;
                 let expected = (0..nc)
                     .map(|c| (0..nr).map(|r| (r * (c * nr + r)) as f32).sum())
                     .collect::<Vec<f32>>();
@@ -4737,7 +4732,7 @@ mod tests {
 
                 // Validates multiplication on matrix-vector.
                 // matCxR(0, 1, .., nc * nr) * vecC(0, 1, .., nc)
-                let evaluated = helper.eval_matrix_multiply_vector(nc, nr);
+                let evaluated = helper.eval_matrix_multiply_vector(nc, nr)?;
                 let expected = (0..nr)
                     .map(|r| (0..nc).map(|c| (c * (c * nr + r)) as f32).sum())
                     .collect::<Vec<f32>>();
@@ -4746,7 +4741,7 @@ mod tests {
                 for k in 2..=4 {
                     // Validates multiplication on matrix-matrix.
                     // matKxR(0, 1, .., k * nr) * matCxK(0, 1, .., nc * k)
-                    let evaluated = helper.eval_matrix_multiply_matrix(nr, nc, k);
+                    let evaluated = helper.eval_matrix_multiply_matrix(nr, nc, k)?;
                     let expected = (0..nc)
                         .flat_map(|c| {
                             (0..nr).map(move |r| {
@@ -4758,6 +4753,7 @@ mod tests {
                 }
             }
         }
+        Ok(())
     }
 
     /// Test fixture providing pre-built f32 vector and matrix constant
@@ -4773,7 +4769,7 @@ mod tests {
     }
 
     impl MatrixTestHelper {
-        fn new() -> Self {
+        fn new() -> crate::TestResult<Self> {
             let mut types = UniqueArena::new();
             let mut expressions = Arena::new();
             let span = crate::Span::default();
@@ -4817,10 +4813,10 @@ mod tests {
             for c in 2..=4 {
                 let expr = expressions.append(
                     Expression::Compose {
-                        ty: *vec_tys.get(&c).unwrap(),
+                        ty: *vec_tys.get(&c).ok_or("no vector type")?,
                         components: (0..c)
-                            .map(|i| *lit_exprs.get(&i).unwrap())
-                            .collect::<Vec<_>>(),
+                            .map(|i| lit_exprs.get(&i).copied().ok_or("no literal"))
+                            .collect::<Result<Vec<_>, _>>()?,
                     },
                     span,
                 );
@@ -4835,10 +4831,10 @@ mod tests {
                         let start = cc * r;
                         let expr = expressions.append(
                             Expression::Compose {
-                                ty: *vec_tys.get(&r).unwrap(),
+                                ty: *vec_tys.get(&r).ok_or("no vector type")?,
                                 components: (start..start + r)
-                                    .map(|i| *lit_exprs.get(&i).unwrap())
-                                    .collect::<Vec<_>>(),
+                                    .map(|i| lit_exprs.get(&i).copied().ok_or("no literal"))
+                                    .collect::<Result<Vec<_>, _>>()?,
                             },
                             span,
                         );
@@ -4847,7 +4843,7 @@ mod tests {
 
                     let expr = expressions.append(
                         Expression::Compose {
-                            ty: *mat_tys.get(&(c, r)).unwrap(),
+                            ty: *mat_tys.get(&(c, r)).ok_or("no matrix type")?,
                             components: columns,
                         },
                         span,
@@ -4856,16 +4852,20 @@ mod tests {
                 }
             }
 
-            Self {
+            Ok(Self {
                 types,
                 expressions,
                 vec_exprs,
                 mat_exprs,
-            }
+            })
         }
 
         /// Evaluates vec[0..nr] * mat[0..nc*nr] and returns the result as f32s.
-        fn eval_vector_multiply_matrix(&mut self, nc: usize, nr: usize) -> Vec<f32> {
+        fn eval_vector_multiply_matrix(
+            &mut self,
+            nc: usize,
+            nr: usize,
+        ) -> crate::TestResult<Vec<f32>> {
             let expression_kind_tracker = &mut ExpressionKindTracker::from_arena(&self.expressions);
             let mut solver = ConstantEvaluator {
                 behavior: Behavior::Wgsl(WgslRestrictions::Const(None)),
@@ -4877,21 +4877,23 @@ mod tests {
                 layouter: &mut crate::proc::Layouter::default(),
             };
 
-            let result = solver
-                .try_eval_and_append(
-                    Expression::Binary {
-                        op: BinaryOperator::Multiply,
-                        left: *self.vec_exprs.get(&nr).unwrap(),
-                        right: *self.mat_exprs.get(&(nc, nr)).unwrap(),
-                    },
-                    Default::default(),
-                )
-                .unwrap();
-            self.flatten(result)
+            let result = solver.try_eval_and_append(
+                Expression::Binary {
+                    op: BinaryOperator::Multiply,
+                    left: *self.vec_exprs.get(&nr).ok_or("no vector")?,
+                    right: *self.mat_exprs.get(&(nc, nr)).ok_or("no matrix")?,
+                },
+                Default::default(),
+            )?;
+            Ok(self.flatten(result))
         }
 
         /// Evaluates mat[0..nc*nr] * vec[0..nc] and returns the result as f32s.
-        fn eval_matrix_multiply_vector(&mut self, nc: usize, nr: usize) -> Vec<f32> {
+        fn eval_matrix_multiply_vector(
+            &mut self,
+            nc: usize,
+            nr: usize,
+        ) -> crate::TestResult<Vec<f32>> {
             let expression_kind_tracker = &mut ExpressionKindTracker::from_arena(&self.expressions);
             let mut solver = ConstantEvaluator {
                 behavior: Behavior::Wgsl(WgslRestrictions::Const(None)),
@@ -4903,22 +4905,25 @@ mod tests {
                 layouter: &mut crate::proc::Layouter::default(),
             };
 
-            let result = solver
-                .try_eval_and_append(
-                    Expression::Binary {
-                        op: BinaryOperator::Multiply,
-                        left: *self.mat_exprs.get(&(nc, nr)).unwrap(),
-                        right: *self.vec_exprs.get(&nc).unwrap(),
-                    },
-                    Default::default(),
-                )
-                .unwrap();
-            self.flatten(result)
+            let result = solver.try_eval_and_append(
+                Expression::Binary {
+                    op: BinaryOperator::Multiply,
+                    left: *self.mat_exprs.get(&(nc, nr)).ok_or("no matrix")?,
+                    right: *self.vec_exprs.get(&nc).ok_or("no vector")?,
+                },
+                Default::default(),
+            )?;
+            Ok(self.flatten(result))
         }
 
         /// Evaluates mat[0..k*l_nr] * mat[0..r_nc*k] and returns the result as
         /// f32s.
-        fn eval_matrix_multiply_matrix(&mut self, l_nr: usize, r_nc: usize, k: usize) -> Vec<f32> {
+        fn eval_matrix_multiply_matrix(
+            &mut self,
+            l_nr: usize,
+            r_nc: usize,
+            k: usize,
+        ) -> crate::TestResult<Vec<f32>> {
             let expression_kind_tracker = &mut ExpressionKindTracker::from_arena(&self.expressions);
             let mut solver = ConstantEvaluator {
                 behavior: Behavior::Wgsl(WgslRestrictions::Const(None)),
@@ -4930,17 +4935,15 @@ mod tests {
                 layouter: &mut crate::proc::Layouter::default(),
             };
 
-            let result = solver
-                .try_eval_and_append(
-                    Expression::Binary {
-                        op: BinaryOperator::Multiply,
-                        left: *self.mat_exprs.get(&(k, l_nr)).unwrap(),
-                        right: *self.mat_exprs.get(&(r_nc, k)).unwrap(),
-                    },
-                    Default::default(),
-                )
-                .unwrap();
-            self.flatten(result)
+            let result = solver.try_eval_and_append(
+                Expression::Binary {
+                    op: BinaryOperator::Multiply,
+                    left: *self.mat_exprs.get(&(k, l_nr)).ok_or("no matrix")?,
+                    right: *self.mat_exprs.get(&(r_nc, k)).ok_or("no matrix")?,
+                },
+                Default::default(),
+            )?;
+            Ok(self.flatten(result))
         }
 
         fn flatten(&self, expr: Handle<Expression>) -> Vec<f32> {
@@ -4981,7 +4984,7 @@ mod tests {
     }
 
     #[test]
-    fn cast() {
+    fn cast() -> crate::TestResult {
         let mut types = UniqueArena::new();
         let mut constants = Arena::new();
         let overrides = Arena::new();
@@ -5024,18 +5027,17 @@ mod tests {
             layouter: &mut crate::proc::Layouter::default(),
         };
 
-        let res = solver
-            .try_eval_and_append(root, Default::default())
-            .unwrap();
+        let res = solver.try_eval_and_append(root, Default::default())?;
 
         assert_eq!(
             global_expressions[res],
             Expression::Literal(Literal::Bool(true))
         );
+        Ok(())
     }
 
     #[test]
-    fn access() {
+    fn access() -> crate::TestResult {
         let mut types = UniqueArena::new();
         let mut constants = Arena::new();
         let overrides = Arena::new();
@@ -5145,18 +5147,14 @@ mod tests {
 
         let root1 = Expression::AccessIndex { base, index: 1 };
 
-        let res1 = solver
-            .try_eval_and_append(root1, Default::default())
-            .unwrap();
+        let res1 = solver.try_eval_and_append(root1, Default::default())?;
 
         let root2 = Expression::AccessIndex {
             base: res1,
             index: 2,
         };
 
-        let res2 = solver
-            .try_eval_and_append(root2, Default::default())
-            .unwrap();
+        let res2 = solver.try_eval_and_append(root2, Default::default())?;
 
         match global_expressions[res1] {
             Expression::Compose {
@@ -5166,15 +5164,15 @@ mod tests {
                 assert_eq!(*ty, vec_ty);
                 let mut components_iter = components.iter().copied();
                 assert_eq!(
-                    global_expressions[components_iter.next().unwrap()],
+                    global_expressions[components_iter.next().ok_or("missing component")?],
                     Expression::Literal(Literal::F32(3.))
                 );
                 assert_eq!(
-                    global_expressions[components_iter.next().unwrap()],
+                    global_expressions[components_iter.next().ok_or("missing component")?],
                     Expression::Literal(Literal::F32(4.))
                 );
                 assert_eq!(
-                    global_expressions[components_iter.next().unwrap()],
+                    global_expressions[components_iter.next().ok_or("missing component")?],
                     Expression::Literal(Literal::F32(5.))
                 );
                 assert!(components_iter.next().is_none());
@@ -5186,10 +5184,11 @@ mod tests {
             global_expressions[res2],
             Expression::Literal(Literal::F32(5.))
         );
+        Ok(())
     }
 
     #[test]
-    fn compose_of_constants() {
+    fn compose_of_constants() -> crate::TestResult {
         let mut types = UniqueArena::new();
         let mut constants = Arena::new();
         let overrides = Arena::new();
@@ -5237,24 +5236,20 @@ mod tests {
             layouter: &mut crate::proc::Layouter::default(),
         };
 
-        let solved_compose = solver
-            .try_eval_and_append(
-                Expression::Compose {
-                    ty: vec2_i32_ty,
-                    components: vec![h_expr, h_expr],
-                },
-                Default::default(),
-            )
-            .unwrap();
-        let solved_negate = solver
-            .try_eval_and_append(
-                Expression::Unary {
-                    op: UnaryOperator::Negate,
-                    expr: solved_compose,
-                },
-                Default::default(),
-            )
-            .unwrap();
+        let solved_compose = solver.try_eval_and_append(
+            Expression::Compose {
+                ty: vec2_i32_ty,
+                components: vec![h_expr, h_expr],
+            },
+            Default::default(),
+        )?;
+        let solved_negate = solver.try_eval_and_append(
+            Expression::Unary {
+                op: UnaryOperator::Negate,
+                expr: solved_compose,
+            },
+            Default::default(),
+        )?;
 
         let pass = match global_expressions[solved_negate] {
             Expression::Compose { ty, ref components } => {
@@ -5269,10 +5264,11 @@ mod tests {
         if !pass {
             panic!("unexpected evaluation result")
         }
+        Ok(())
     }
 
     #[test]
-    fn splat_of_constant() {
+    fn splat_of_constant() -> crate::TestResult {
         let mut types = UniqueArena::new();
         let mut constants = Arena::new();
         let overrides = Arena::new();
@@ -5320,24 +5316,20 @@ mod tests {
             layouter: &mut crate::proc::Layouter::default(),
         };
 
-        let solved_compose = solver
-            .try_eval_and_append(
-                Expression::Splat {
-                    size: VectorSize::Bi,
-                    value: h_expr,
-                },
-                Default::default(),
-            )
-            .unwrap();
-        let solved_negate = solver
-            .try_eval_and_append(
-                Expression::Unary {
-                    op: UnaryOperator::Negate,
-                    expr: solved_compose,
-                },
-                Default::default(),
-            )
-            .unwrap();
+        let solved_compose = solver.try_eval_and_append(
+            Expression::Splat {
+                size: VectorSize::Bi,
+                value: h_expr,
+            },
+            Default::default(),
+        )?;
+        let solved_negate = solver.try_eval_and_append(
+            Expression::Unary {
+                op: UnaryOperator::Negate,
+                expr: solved_compose,
+            },
+            Default::default(),
+        )?;
 
         let pass = match global_expressions[solved_negate] {
             Expression::Compose { ty, ref components } => {
@@ -5352,10 +5344,11 @@ mod tests {
         if !pass {
             panic!("unexpected evaluation result")
         }
+        Ok(())
     }
 
     #[test]
-    fn splat_of_zero_value() {
+    fn splat_of_zero_value() -> crate::TestResult {
         let mut types = UniqueArena::new();
         let constants = Arena::new();
         let overrides = Arena::new();
@@ -5409,16 +5402,14 @@ mod tests {
             layouter: &mut crate::proc::Layouter::default(),
         };
 
-        let solved_add = solver
-            .try_eval_and_append(
-                Expression::Binary {
-                    op: BinaryOperator::Add,
-                    left: zero_splat,
-                    right: five_splat,
-                },
-                Default::default(),
-            )
-            .unwrap();
+        let solved_add = solver.try_eval_and_append(
+            Expression::Binary {
+                op: BinaryOperator::Add,
+                left: zero_splat,
+                right: five_splat,
+            },
+            Default::default(),
+        )?;
 
         let pass = match global_expressions[solved_add] {
             Expression::Compose { ty, ref components } => {
@@ -5433,5 +5424,6 @@ mod tests {
         if !pass {
             panic!("unexpected evaluation result")
         }
+        Ok(())
     }
 }

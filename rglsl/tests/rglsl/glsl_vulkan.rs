@@ -32,19 +32,17 @@ fn parse(stage: ShaderStage, source: &str) -> Result<rglsl::Module, String> {
 }
 
 /// Compiles `source` to SPIR-V with the options the conformance runner uses.
-fn compile(stage: ShaderStage, source: &str) -> dr::Module {
-    let module = parse(stage, source).unwrap_or_else(|e| panic!("shader rejected: {e}"));
-    let info = Validator::new(ValidationFlags::all(), Capabilities::all())
-        .validate(&module)
-        .expect("validated in parse");
+fn compile(stage: ShaderStage, source: &str) -> crate::TestResult<dr::Module> {
+    let module = parse(stage, source).map_err(|e| format!("shader rejected: {e}"))?;
+    let info = Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&module)?;
     let options = spv::Options {
         flags: spv::WriterFlags::DEBUG
             | spv::WriterFlags::LABEL_VARYINGS
             | spv::WriterFlags::SMALL_TYPE_CAPABILITIES_BY_USE,
         ..spv::Options::default()
     };
-    let words = spv::write_vec(&module, &info, &options, None).expect("SPIR-V backend failed");
-    dr::load_words(words).expect("produced SPIR-V does not parse")
+    let words = spv::write_vec(&module, &info, &options, None)?;
+    Ok(dr::load_words(words)?)
 }
 
 fn instructions(module: &dr::Module, op: Op) -> Vec<&dr::Instruction> {
@@ -55,7 +53,7 @@ fn instructions(module: &dr::Module, op: Op) -> Vec<&dr::Instruction> {
 }
 
 /// The value of the 32-bit `OpConstant` that `operand` refers to.
-fn constant(module: &dr::Module, operand: &Operand) -> u32 {
+fn constant(module: &dr::Module, operand: &Operand) -> crate::TestResult<u32> {
     let id = match *operand {
         Operand::IdRef(id) | Operand::IdScope(id) | Operand::IdMemorySemantics(id) => id,
         ref other => panic!("operand {other:?} is not an id"),
@@ -64,11 +62,11 @@ fn constant(module: &dr::Module, operand: &Operand) -> u32 {
         .types_global_values
         .iter()
         .find(|inst| inst.result_id == Some(id) && inst.class.opcode == Op::Constant)
-        .expect("operand is not an OpConstant");
-    match inst.operands[0] {
+        .ok_or("operand is not an OpConstant")?;
+    Ok(match inst.operands[0] {
         Operand::LiteralBit32(value) => value,
         ref other => panic!("unexpected constant operand {other:?}"),
-    }
+    })
 }
 
 /// The debug names of the variables decorated with `decoration`.
@@ -119,7 +117,7 @@ fn name_of(module: &dr::Module, id: u32) -> String {
 
 /// `barrier()` synchronizes the work group, not the subgroup.
 #[test]
-fn barrier_is_a_workgroup_barrier() {
+fn barrier_is_a_workgroup_barrier() -> crate::TestResult {
     let module = compile(
         ShaderStage::Compute,
         "#version 450
@@ -127,24 +125,28 @@ fn barrier_is_a_workgroup_barrier() {
         layout(std430, binding = 0) buffer B { float d[]; };
         shared float s;
         void main() { s = 1.0; barrier(); d[0] = s; }",
-    );
+    )?;
     let barriers = instructions(&module, Op::ControlBarrier);
     assert_eq!(barriers.len(), 1);
     let [execution, memory, semantics] = barriers[0].operands.as_slice() else {
         panic!("OpControlBarrier takes three operands");
     };
-    assert_eq!(constant(&module, execution), spirv::Scope::Workgroup as u32);
-    assert_eq!(constant(&module, memory), spirv::Scope::Workgroup as u32);
     assert_eq!(
-        constant(&module, semantics),
+        constant(&module, execution)?,
+        spirv::Scope::Workgroup as u32
+    );
+    assert_eq!(constant(&module, memory)?, spirv::Scope::Workgroup as u32);
+    assert_eq!(
+        constant(&module, semantics)?,
         (spirv::MemorySemantics::ACQUIRE_RELEASE | spirv::MemorySemantics::WORKGROUP_MEMORY).bits()
     );
+    Ok(())
 }
 
 /// `gl_VertexIndex` and the other index built-ins are `int`, so arithmetic on
 /// them is signed.
 #[test]
-fn index_builtins_are_signed() {
+fn index_builtins_are_signed() -> crate::TestResult {
     let module = compile(
         ShaderStage::Vertex,
         "#version 460
@@ -154,7 +156,7 @@ fn index_builtins_are_signed() {
             o = float(gl_VertexIndex - 10) + float(sum);
             gl_Position = vec4(0.0);
         }",
-    );
+    )?;
     assert!(!instructions(&module, Op::ConvertSToF).is_empty());
     assert!(instructions(&module, Op::ConvertUToF).is_empty());
 
@@ -163,7 +165,7 @@ fn index_builtins_are_signed() {
         "#version 450
         layout(location = 0) out vec4 o;
         void main() { int i = gl_PrimitiveID + gl_SampleID; o = vec4(i); }",
-    );
+    )?;
 
     // `gl_LocalInvocationIndex` is the one unsigned index.
     compile(
@@ -172,12 +174,13 @@ fn index_builtins_are_signed() {
         layout(local_size_x = 1) in;
         layout(std430, binding = 0) buffer B { uint d[]; };
         void main() { uint i = gl_LocalInvocationIndex; d[0] = i; }",
-    );
+    )?;
+    Ok(())
 }
 
 /// `sample` and `centroid` are kept when no interpolation qualifier is given.
 #[test]
-fn auxiliary_qualifiers_without_interpolation() {
+fn auxiliary_qualifiers_without_interpolation() -> crate::TestResult {
     let module = compile(
         ShaderStage::Fragment,
         "#version 450
@@ -186,15 +189,16 @@ fn auxiliary_qualifiers_without_interpolation() {
         layout(location = 2) in vec4 c;
         layout(location = 0) out vec4 o;
         void main() { o = a + b + c; }",
-    );
+    )?;
     assert_eq!(decorated(&module, Decoration::Sample), ["a"]);
     assert_eq!(decorated(&module, Decoration::Centroid), ["b"]);
+    Ok(())
 }
 
 /// `out` and `inout` arguments are copied in and out, so two parameters never
 /// alias and any l-value can be passed.
 #[test]
-fn out_arguments_are_copied() {
+fn out_arguments_are_copied() -> crate::TestResult {
     let source = "#version 450
         layout(location = 0) out vec4 o;
         struct S { float m; vec3 v; };
@@ -212,15 +216,15 @@ fn out_arguments_are_copied() {
         }";
     // Array elements, struct members and vector components used to make the
     // SPIR-V backend panic.
-    compile(ShaderStage::Fragment, source);
+    compile(ShaderStage::Fragment, source)?;
 
     // In `add(x, x)` each parameter gets its own temporary.
-    let module = parse(ShaderStage::Fragment, source).unwrap();
+    let module = parse(ShaderStage::Fragment, source)?;
     let (add, _) = module
         .functions
         .iter()
         .find(|(_, f)| f.name.as_deref() == Some("add"))
-        .unwrap();
+        .ok_or("no function add")?;
     let main = &module.entry_points[0].function;
     let user_main = module
         .functions
@@ -238,7 +242,7 @@ fn out_arguments_are_copied() {
             } if function == add => Some(arguments),
             _ => None,
         })
-        .expect("main calls add");
+        .ok_or("main calls add")?;
     let locals: Vec<_> = arguments
         .iter()
         .map(|&argument| match user_main.expressions[argument] {
@@ -248,12 +252,13 @@ fn out_arguments_are_copied() {
         .collect();
     assert_eq!(locals.len(), 2);
     assert_ne!(locals[0], locals[1]);
+    Ok(())
 }
 
 /// `outerProduct(c, r)` has one row per component of `c` and one column per
 /// component of `r`.
 #[test]
-fn outer_product_shape() {
+fn outer_product_shape() -> crate::TestResult {
     compile(
         ShaderStage::Fragment,
         "#version 450
@@ -265,7 +270,7 @@ fn outer_product_shape() {
             mat3x2 n = outerProduct(r, c);
             o = vec4(m[1], n[2].x);
         }",
-    );
+    )?;
     assert!(parse(
         ShaderStage::Fragment,
         "#version 450
@@ -274,11 +279,12 @@ fn outer_product_shape() {
         void main() { mat3x2 m = outerProduct(c, r); }",
     )
     .is_err());
+    Ok(())
 }
 
 /// An array specifier applies to its own declarator only.
 #[test]
-fn array_specifier_does_not_leak_to_next_declarator() {
+fn array_specifier_does_not_leak_to_next_declarator() -> crate::TestResult {
     compile(
         ShaderStage::Fragment,
         "#version 450
@@ -288,13 +294,14 @@ fn array_specifier_does_not_leak_to_next_declarator() {
             c = 1.0; b[1] = 2.0; a = c;
             o = vec4(a + b[1]);
         }",
-    );
+    )?;
+    Ok(())
 }
 
 /// `#pragma STDGL invariant(all)` and `invariant` declarations take effect
 /// or are rejected; they are never dropped.
 #[test]
-fn invariant_is_applied_or_rejected() {
+fn invariant_is_applied_or_rejected() -> crate::TestResult {
     for source in [
         "#version 450
         #pragma STDGL invariant(all)
@@ -308,7 +315,7 @@ fn invariant_is_applied_or_rejected() {
         invariant gl_Position;
         void main() { gl_Position = vec4(1.0); }",
     ] {
-        let module = compile(ShaderStage::Vertex, source);
+        let module = compile(ShaderStage::Vertex, source)?;
         assert_eq!(decorated(&module, Decoration::Invariant), ["gl_Position"]);
     }
 
@@ -319,7 +326,7 @@ fn invariant_is_applied_or_rejected() {
         #pragma optimize(off)
         #pragma something else
         void main() { gl_Position = vec4(1.0); }",
-    );
+    )?;
     assert!(decorated(&module, Decoration::Invariant).is_empty());
 
     // User-defined outputs, whether the pragma comes before or after them.
@@ -342,7 +349,7 @@ fn invariant_is_applied_or_rejected() {
         invariant gl_Position;
         void main() { v = vec4(1.0); gl_Position = vec4(1.0); }",
     ] {
-        let module = compile(ShaderStage::Vertex, source);
+        let module = compile(ShaderStage::Vertex, source)?;
         let mut invariant = decorated(&module, Decoration::Invariant);
         invariant.sort_unstable();
         assert_eq!(invariant, ["gl_Position", "v"]);
@@ -355,13 +362,15 @@ fn invariant_is_applied_or_rejected() {
         layout(location = 0) invariant in vec4 v;
         void main() {}",
     )
-    .unwrap_err();
+    .err()
+    .ok_or("expected an error")?;
     assert!(error.contains("invariant"), "{error}");
+    Ok(())
 }
 
 /// Redeclaring a built-in must not create a user variable with a location.
 #[test]
-fn gl_names_are_reserved() {
+fn gl_names_are_reserved() -> crate::TestResult {
     for (stage, source) in [
         (
             ShaderStage::Vertex,
@@ -376,7 +385,7 @@ fn gl_names_are_reserved() {
         ),
     ] {
         if source.contains("gl_ClipDistance[4]") {
-            let module = compile(stage, source);
+            let module = compile(stage, source)?;
             assert_eq!(
                 decorated(&module, Decoration::BuiltIn),
                 [
@@ -386,19 +395,24 @@ fn gl_names_are_reserved() {
                     "gl_CullDistance"
                 ]
             );
-            assert!(module.types_global_values.iter().any(|inst| {
-                inst.class.opcode == Op::TypeArray && constant(&module, &inst.operands[1]) == 4
-            }));
+            assert!(module
+                .types_global_values
+                .iter()
+                .filter(|inst| inst.class.opcode == Op::TypeArray)
+                .map(|inst| constant(&module, &inst.operands[1]))
+                .collect::<crate::TestResult<Vec<_>>>()?
+                .contains(&4));
             continue;
         }
-        let error = parse(stage, source).unwrap_err();
+        let error = parse(stage, source).err().ok_or("expected an error")?;
         assert!(error.contains("reserved"), "{error}");
     }
+    Ok(())
 }
 
 /// Shadow samplers honour the LOD, gradients and bias they are given.
 #[test]
-fn shadow_sampling_keeps_lod_gradients_and_bias() {
+fn shadow_sampling_keeps_lod_gradients_and_bias() -> crate::TestResult {
     let module = compile(
         ShaderStage::Fragment,
         "#version 450
@@ -413,7 +427,7 @@ fn shadow_sampling_keeps_lod_gradients_and_bias() {
             float e = textureLodOffset(sampler2DShadow(t, s), c, 1.0, ivec2(1));
             o = vec4(a, b, d, e);
         }",
-    );
+    )?;
     let image_operands = |inst: &dr::Instruction| {
         inst.operands
             .iter()
@@ -421,13 +435,13 @@ fn shadow_sampling_keeps_lod_gradients_and_bias() {
                 Operand::ImageOperands(mask) => Some(mask),
                 _ => None,
             })
-            .expect("sample has image operands")
+            .ok_or("sample has image operands")
     };
 
     let explicit: Vec<_> = instructions(&module, Op::ImageSampleDrefExplicitLod)
         .into_iter()
         .map(image_operands)
-        .collect();
+        .collect::<Result<_, _>>()?;
     assert_eq!(
         explicit,
         [
@@ -440,21 +454,22 @@ fn shadow_sampling_keeps_lod_gradients_and_bias() {
     let lod = instructions(&module, Op::ImageSampleDrefExplicitLod)[0]
         .operands
         .last()
-        .unwrap();
-    assert_eq!(constant(&module, lod), 2.0f32.to_bits());
+        .ok_or("the sample has no operands")?;
+    assert_eq!(constant(&module, lod)?, 2.0f32.to_bits());
 
     let implicit: Vec<_> = instructions(&module, Op::ImageSampleDrefImplicitLod)
         .into_iter()
         .map(image_operands)
-        .collect();
+        .collect::<Result<_, _>>()?;
     assert_eq!(implicit, [spirv::ImageOperands::BIAS]);
+    Ok(())
 }
 
 /// Automatic bindings follow glslang's `--auto-map-bindings`: resources the
 /// shader uses get the lowest free binding of their set, the ones with an
 /// explicit `set` first; unused resources get binding 0.
 #[test]
-fn automatic_bindings_match_glslang() {
+fn automatic_bindings_match_glslang() -> crate::TestResult {
     let source = "#version 450
         layout(binding = 1) uniform texture2D explicit1;
         uniform texture2D unusedTex;
@@ -479,10 +494,8 @@ fn automatic_bindings_match_glslang() {
         auto_map_bindings: true,
         ..glsl::Options::from(ShaderStage::Fragment)
     };
-    let module = glsl::Frontend::default().parse(&options, source).unwrap();
-    Validator::new(ValidationFlags::all(), Capabilities::all())
-        .validate(&module)
-        .unwrap();
+    let module = glsl::Frontend::default().parse(&options, source)?;
+    Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&module)?;
 
     let mut bindings: Vec<(&str, u32, u32)> = module
         .global_variables
@@ -512,12 +525,15 @@ fn automatic_bindings_match_glslang() {
     );
 
     // Without the option a missing binding is an error, as in glslang.
-    let error = parse(ShaderStage::Fragment, source).unwrap_err();
+    let error = parse(ShaderStage::Fragment, source)
+        .err()
+        .ok_or("expected an error")?;
     assert!(error.contains("binding"), "{error}");
+    Ok(())
 }
 
 #[test]
-fn discarded_results_keep_their_resources_live() {
+fn discarded_results_keep_their_resources_live() -> crate::TestResult {
     let source = "#version 450
         uniform textureBuffer tBuf;
         uniform sampler s;
@@ -535,7 +551,7 @@ fn discarded_results_keep_their_resources_live() {
         auto_map_bindings: true,
         ..glsl::Options::from(ShaderStage::Vertex)
     };
-    let module = glsl::Frontend::default().parse(&options, source).unwrap();
+    let module = glsl::Frontend::default().parse(&options, source)?;
     let mut bindings: Vec<(&str, u32)> = module
         .global_variables
         .iter()
@@ -552,10 +568,11 @@ fn discarded_results_keep_their_resources_live() {
             ("itBuf", 4)
         ]
     );
+    Ok(())
 }
 
 #[test]
-fn automatic_locations_skip_explicit_ones() {
+fn automatic_locations_skip_explicit_ones() -> crate::TestResult {
     let source = "#version 450
         in vec4 i0;
         in mat3 i1;
@@ -575,29 +592,31 @@ fn automatic_locations_skip_explicit_ones() {
         auto_map_locations: true,
         ..glsl::Options::from(ShaderStage::Fragment)
     };
-    let module = glsl::Frontend::default().parse(&options, source).unwrap();
-    Validator::new(ValidationFlags::all(), Capabilities::all())
-        .validate(&module)
-        .unwrap();
+    let module = glsl::Frontend::default().parse(&options, source)?;
+    Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&module)?;
 
-    let locations = |space| -> Vec<(&str, u32)> {
-        let mut locations: Vec<_> = module.entry_points[0]
+    let locations = |space| -> crate::TestResult<Vec<(&str, u32)>> {
+        let mut locations = module.entry_points[0]
             .interface
             .iter()
             .map(|&handle| &module.global_variables[handle])
             .filter(|global| global.space == space)
             .map(|global| match global.io {
-                Some(rglsl::Binding::Location { location, .. }) => {
-                    (global.name.as_deref().unwrap(), location)
-                }
-                ref other => panic!("not a location: {other:?}"),
+                Some(rglsl::Binding::Location { location, .. }) => Ok((
+                    global
+                        .name
+                        .as_deref()
+                        .ok_or("an unnamed interface variable")?,
+                    location,
+                )),
+                ref other => Err(format!("not a location: {other:?}")),
             })
-            .collect();
+            .collect::<Result<Vec<_>, String>>()?;
         locations.sort_unstable();
-        locations
+        Ok(locations)
     };
     assert_eq!(
-        locations(rglsl::AddressSpace::Input),
+        locations(rglsl::AddressSpace::Input)?,
         [
             ("i0", 0),
             ("i1", 2),
@@ -608,19 +627,22 @@ fn automatic_locations_skip_explicit_ones() {
         ]
     );
     assert_eq!(
-        locations(rglsl::AddressSpace::Output),
+        locations(rglsl::AddressSpace::Output)?,
         [("o0", 1), ("o1", 2), ("oexp", 0)]
     );
 
     // Without the option a missing location is an error, as in glslang.
-    let error = parse(ShaderStage::Fragment, source).unwrap_err();
+    let error = parse(ShaderStage::Fragment, source)
+        .err()
+        .ok_or("expected an error")?;
     assert!(error.contains("location"), "{error}");
+    Ok(())
 }
 
 /// Vulkan has no default uniform block: only opaque types and blocks can be
 /// `uniform`.
 #[test]
-fn loose_uniforms_are_rejected() {
+fn loose_uniforms_are_rejected() -> crate::TestResult {
     let error = parse(
         ShaderStage::Fragment,
         "#version 450
@@ -628,19 +650,18 @@ fn loose_uniforms_are_rejected() {
         layout(location = 0) out vec4 o;
         void main() { o = color; }",
     )
-    .unwrap_err();
+    .err()
+    .ok_or("expected an error")?;
     assert!(error.contains("outside a block"), "{error}");
 
     // An array of an opaque type is still opaque. (Not validated: the frontend
     // does not turn such arrays into binding arrays yet.)
-    glsl::Frontend::default()
-        .parse(
-            &glsl::Options::from(ShaderStage::Fragment),
-            "#version 450
+    glsl::Frontend::default().parse(
+        &glsl::Options::from(ShaderStage::Fragment),
+        "#version 450
             layout(binding = 0) uniform texture2D textures[8];
             void main() {}",
-        )
-        .unwrap();
+    )?;
 
     compile(
         ShaderStage::Fragment,
@@ -650,13 +671,14 @@ fn loose_uniforms_are_rejected() {
         layout(binding = 2) uniform texture2D t;
         layout(location = 0) out vec4 o;
         void main() { o = color + texture(sampler2D(t, s), vec2(0.0)); }",
-    );
+    )?;
+    Ok(())
 }
 
 /// Integers and doubles must be `flat` only where they enter the fragment
 /// stage; vertex outputs need no qualifier.
 #[test]
-fn flat_is_required_on_fragment_inputs_only() {
+fn flat_is_required_on_fragment_inputs_only() -> crate::TestResult {
     let module = compile(
         ShaderStage::Vertex,
         "#version 450
@@ -664,7 +686,7 @@ fn flat_is_required_on_fragment_inputs_only() {
         layout(location = 1) out uvec2 b;
         layout(location = 2) flat out int c;
         void main() { a = 1; b = uvec2(2); c = 3; gl_Position = vec4(0.0); }",
-    );
+    )?;
     assert_eq!(decorated(&module, Decoration::Flat), ["c"]);
 
     compile(
@@ -673,7 +695,7 @@ fn flat_is_required_on_fragment_inputs_only() {
         layout(location = 0) flat in int a;
         layout(location = 0) out vec4 o;
         void main() { o = vec4(a); }",
-    );
+    )?;
     for ty in ["int", "uvec3", "double"] {
         let error = parse(
             ShaderStage::Fragment,
@@ -684,27 +706,30 @@ fn flat_is_required_on_fragment_inputs_only() {
                 void main() {{ o = vec4(1.0); }}"
             ),
         )
-        .unwrap_err();
+        .err()
+        .ok_or("expected an error")?;
         assert!(error.contains("must be `flat`"), "{error}");
     }
+    Ok(())
 }
 
 /// `writeonly` buffer blocks are valid and are marked `NonReadable`.
 #[test]
-fn write_only_buffer_blocks() {
+fn write_only_buffer_blocks() -> crate::TestResult {
     let module = compile(
         ShaderStage::Compute,
         "#version 450
         layout(local_size_x = 1) in;
         layout(std430, binding = 0) writeonly buffer B { float d[]; } b;
         void main() { b.d[0] = 1.0; }",
-    );
+    )?;
     assert_eq!(decorated(&module, Decoration::NonReadable), ["d", "b"]);
+    Ok(())
 }
 
 /// Integer textures can be sampled, not only fetched.
 #[test]
-fn integer_textures_can_be_sampled() {
+fn integer_textures_can_be_sampled() -> crate::TestResult {
     let module = compile(
         ShaderStage::Fragment,
         "#version 450
@@ -718,23 +743,26 @@ fn integer_textures_can_be_sampled() {
             uvec4 b = textureLod(usampler2D(u, s), c, 0.0);
             o = vec4(a) + vec4(b);
         }",
-    );
+    )?;
     assert_eq!(instructions(&module, Op::ImageSampleImplicitLod).len(), 1);
     assert_eq!(instructions(&module, Op::ImageSampleExplicitLod).len(), 1);
+    Ok(())
 }
 
 /// The members of the block struct named `name`: (offset, matrix stride and
 /// majorness if the member is a matrix).
-fn block_layout(module: &rglsl::Module, name: &str) -> Vec<(u32, Option<(u32, bool)>)> {
+type MemberLayout = (u32, Option<(u32, bool)>);
+
+fn block_layout(module: &rglsl::Module, name: &str) -> crate::TestResult<Vec<MemberLayout>> {
     let (_, ty) = module
         .types
         .iter()
         .rfind(|(_, ty)| ty.name.as_deref() == Some(name))
-        .unwrap_or_else(|| panic!("no type named {name}"));
+        .ok_or_else(|| format!("no type named {name}"))?;
     let rglsl::TypeInner::Struct { ref members, .. } = ty.inner else {
         panic!("{name} is not a struct");
     };
-    members
+    Ok(members
         .iter()
         .map(|member| {
             (
@@ -744,13 +772,13 @@ fn block_layout(module: &rglsl::Module, name: &str) -> Vec<(u32, Option<(u32, bo
                     .map(|layout| (layout.stride, layout.row_major)),
             )
         })
-        .collect()
+        .collect())
 }
 
 /// std140, std430 and row_major layouts are computed as glslang computes
 /// them, including two-row matrices and nested structures.
 #[test]
-fn block_layouts_match_glslang() {
+fn block_layouts_match_glslang() -> crate::TestResult {
     let source = "#version 450
         struct Inner { float f; vec3 v; mat2 m2; };
         struct Small { float a; };
@@ -773,14 +801,14 @@ fn block_layouts_match_glslang() {
             b.m42 = r.m42;
         }";
     // The module is valid, and the backend accepts it.
-    compile(ShaderStage::Fragment, source);
+    compile(ShaderStage::Fragment, source)?;
 
-    let module = parse(ShaderStage::Fragment, source).unwrap();
+    let module = parse(ShaderStage::Fragment, source)?;
     let column = |stride| Some((stride, false));
     let row = |stride| Some((stride, true));
     // Offsets and strides are the ones in glslang's output for this shader.
     assert_eq!(
-        block_layout(&module, "U"),
+        block_layout(&module, "U")?,
         [
             (0, None),
             (16, column(16)),
@@ -798,11 +826,11 @@ fn block_layouts_match_glslang() {
     );
     // `Inner` as laid out inside the std140 block.
     assert_eq!(
-        block_layout(&module, "Inner"),
+        block_layout(&module, "Inner")?,
         [(0, None), (16, None), (32, column(16))]
     );
     assert_eq!(
-        block_layout(&module, "B"),
+        block_layout(&module, "B")?,
         [
             (0, None),
             (8, column(8)),
@@ -814,7 +842,7 @@ fn block_layouts_match_glslang() {
         ]
     );
     assert_eq!(
-        block_layout(&module, "R"),
+        block_layout(&module, "R")?,
         [
             (0, None),
             (16, row(16)),
@@ -824,10 +852,11 @@ fn block_layouts_match_glslang() {
             (192, row(16)),
         ]
     );
+    Ok(())
 }
 
 #[test]
-fn align_qualifier_places_members_as_glslang() {
+fn align_qualifier_places_members_as_glslang() -> crate::TestResult {
     let source = "#version 450
         layout(local_size_x = 1) in;
         layout(std430, binding = 0) buffer B {
@@ -847,10 +876,10 @@ fn align_qualifier_places_members_as_glslang() {
             b.a = u.x + u.y.x + u.z + u.w + b.c + b.d[1] + b.e[0][0];
             b.b = vec3(1);
         }";
-    compile(ShaderStage::Compute, source);
-    let module = parse(ShaderStage::Compute, source).unwrap();
+    compile(ShaderStage::Compute, source)?;
+    let module = parse(ShaderStage::Compute, source)?;
     assert_eq!(
-        block_layout(&module, "B"),
+        block_layout(&module, "B")?,
         [
             (0, None),
             (64, None),
@@ -860,15 +889,16 @@ fn align_qualifier_places_members_as_glslang() {
         ]
     );
     assert_eq!(
-        block_layout(&module, "U"),
+        block_layout(&module, "U")?,
         [(0, None), (32, None), (128, None), (144, None)]
     );
+    Ok(())
 }
 
 /// A boolean in a block is stored as an unsigned integer and converted where
 /// it is read or written.
 #[test]
-fn booleans_in_blocks() {
+fn booleans_in_blocks() -> crate::TestResult {
     let source = "#version 450
         layout(std140, binding = 0) uniform U { bool b; bvec3 bv; float f; bvec4 b4; } u;
         layout(std430, binding = 1) buffer B { bool b; bvec2 bv; } s;
@@ -889,19 +919,19 @@ fn booleans_in_blocks() {
             setb(s.bv.y);
             o += vec4(l, lv, any(u.b4));
         }";
-    compile(ShaderStage::Fragment, source);
+    compile(ShaderStage::Fragment, source)?;
 
     // The layout is the one of `uint` members, as in glslang's output.
-    let module = parse(ShaderStage::Fragment, source).unwrap();
-    let offsets = |name| -> Vec<u32> {
-        block_layout(&module, name)
+    let module = parse(ShaderStage::Fragment, source)?;
+    let offsets = |name| -> crate::TestResult<Vec<u32>> {
+        Ok(block_layout(&module, name)?
             .into_iter()
             .map(|(offset, _)| offset)
-            .collect()
+            .collect())
     };
-    assert_eq!(offsets("U"), [0, 16, 28, 32]);
-    assert_eq!(offsets("B"), [0, 8]);
-    assert_eq!(offsets("Anon"), [0, 8]);
+    assert_eq!(offsets("U")?, [0, 16, 28, 32]);
+    assert_eq!(offsets("B")?, [0, 8]);
+    assert_eq!(offsets("Anon")?, [0, 8]);
 
     let module = compile_valid(
         ShaderStage::Fragment,
@@ -916,13 +946,14 @@ fn booleans_in_blocks() {
             b.s.flag = u.s.many[1];
             o = vec4(local.flag, b.s.pair, u.s.many[0]);
         }",
-    );
+    )?;
     assert!(!instructions(&module, Op::INotEqual).is_empty());
     assert!(!instructions(&module, Op::Select).is_empty());
+    Ok(())
 }
 
 #[test]
-fn boolean_arrays_in_blocks() {
+fn boolean_arrays_in_blocks() -> crate::TestResult {
     let source = "#version 450
         layout(local_size_x = 1) in;
         layout(binding = 0, std430) buffer B { bool a[3]; bvec2 v[2][2]; bool r[]; } b;
@@ -935,10 +966,10 @@ fn boolean_arrays_in_blocks() {
             b.v[1] = w[0];
             b.r[2] = b.v[1][0].x || ub.u[1];
         }";
-    let module = compile(ShaderStage::Compute, source);
+    let module = compile(ShaderStage::Compute, source)?;
     assert!(!instructions(&module, Op::INotEqual).is_empty());
     assert!(!instructions(&module, Op::Select).is_empty());
-    let ir = parse(ShaderStage::Compute, source).unwrap();
+    let ir = parse(ShaderStage::Compute, source)?;
     let element = ir.types.iter().find_map(|(_, ty)| match ty.inner {
         rglsl::TypeInner::Struct { ref members, .. } if ty.name.as_deref() == Some("U") => {
             match ir.types[members[0].ty].inner {
@@ -948,31 +979,33 @@ fn boolean_arrays_in_blocks() {
         }
         _ => None,
     });
-    let (base, stride) = element.expect("U has an array member");
+    let (base, stride) = element.ok_or("U has an array member")?;
     assert_eq!(stride, 16);
     assert_eq!(
         ir.types[base].inner,
         rglsl::TypeInner::Scalar(rglsl::Scalar::U32)
     );
+    Ok(())
 }
 
 /// Reading one member of a block does not load the whole block, so a buffer
 /// block that ends in a runtime-sized array can be read.
 #[test]
-fn members_of_blocks_with_runtime_arrays() {
+fn members_of_blocks_with_runtime_arrays() -> crate::TestResult {
     let module = compile(
         ShaderStage::Fragment,
         "#version 450
         layout(std430, binding = 0) buffer B { float head; vec4 d[]; } b;
         layout(location = 0) out vec4 o;
         void main() { o = vec4(b.head) + b.d[1] + vec4(b.d.length()); }",
-    );
+    )?;
     assert_eq!(instructions(&module, Op::ArrayLength).len(), 1);
+    Ok(())
 }
 
 /// A vector constructed from one boolean replicates it to every component.
 #[test]
-fn vector_from_scalar_bool() {
+fn vector_from_scalar_bool() -> crate::TestResult {
     compile(
         ShaderStage::Fragment,
         "#version 450
@@ -982,13 +1015,14 @@ fn vector_from_scalar_bool() {
             ivec2 v = ivec2(a);
             o = vec4(a) + vec4(v, 0, 0) + vec4(vec2(bvec2(a)), 0.0, 0.0);
         }",
-    );
+    )?;
+    Ok(())
 }
 
 /// User-defined inputs and outputs are the stage's interface variables
 /// themselves: any type, `component`, structures, and no private copies.
 #[test]
-fn varyings_are_interface_variables() {
+fn varyings_are_interface_variables() -> crate::TestResult {
     let module = compile(
         ShaderStage::Vertex,
         "#version 450
@@ -1020,10 +1054,10 @@ fn varyings_are_interface_variables() {
             v_cent = a_pos;
             v_lin = a_pos;
         }",
-    );
+    )?;
 
     // The decorations glslang gives the same shader.
-    let location = |name: &str| -> Vec<u32> {
+    let location = |name: &str| -> crate::TestResult<Vec<u32>> {
         let id = module
             .debug_names
             .iter()
@@ -1031,10 +1065,10 @@ fn varyings_are_interface_variables() {
                 inst.class.opcode == Op::Name
                     && inst.operands[1] == Operand::LiteralString(name.to_string())
             })
-            .unwrap_or_else(|| panic!("no variable named {name}"))
+            .ok_or_else(|| format!("no variable named {name}"))?
             .operands[0]
             .unwrap_id_ref();
-        module
+        Ok(module
             .annotations
             .iter()
             .filter(|inst| {
@@ -1049,16 +1083,16 @@ fn varyings_are_interface_variables() {
                 Operand::LiteralBit32(value) => value,
                 ref other => panic!("unexpected operand {other:?}"),
             })
-            .collect()
+            .collect())
     };
-    assert_eq!(location("a_basis"), [1]);
-    assert_eq!(location("a_uv"), [4]);
-    assert_eq!(location("a_unused"), [6]);
-    assert_eq!(location("v_basis"), [0]);
-    assert_eq!(location("v_w"), [3]);
-    assert_eq!(location("v_uv"), [5, 0]);
-    assert_eq!(location("v_fade"), [5, 2]);
-    assert_eq!(location("v_light"), [7]);
+    assert_eq!(location("a_basis")?, [1]);
+    assert_eq!(location("a_uv")?, [4]);
+    assert_eq!(location("a_unused")?, [6]);
+    assert_eq!(location("v_basis")?, [0]);
+    assert_eq!(location("v_w")?, [3]);
+    assert_eq!(location("v_uv")?, [5, 0]);
+    assert_eq!(location("v_fade")?, [5, 2]);
+    assert_eq!(location("v_light")?, [7]);
     assert_eq!(decorated(&module, Decoration::Flat), ["v_ids"]);
     assert_eq!(decorated(&module, Decoration::Centroid), ["v_cent"]);
     assert_eq!(decorated(&module, Decoration::NoPerspective), ["v_lin"]);
@@ -1077,12 +1111,14 @@ fn varyings_are_interface_variables() {
         layout(location = 3) in vec4 v;
         void main() { gl_Position = v + vec4(m[0], 1.0); }",
     )
-    .unwrap_err();
+    .err()
+    .ok_or("expected an error")?;
     assert!(error.contains("BindingCollision"), "{error}");
+    Ok(())
 }
 
 #[test]
-fn layer_count_of_storage_images() {
+fn layer_count_of_storage_images() -> crate::TestResult {
     let module = compile(
         ShaderStage::Compute,
         "#version 450
@@ -1090,19 +1126,20 @@ fn layer_count_of_storage_images() {
         layout(rgba8, binding = 0) uniform image2DArray img;
         layout(std430, binding = 1) buffer B { ivec3 d; };
         void main() { d = imageSize(img); }",
-    );
+    )?;
     assert!(instructions(&module, Op::ImageQuerySizeLod).is_empty());
     assert!(!instructions(&module, Op::ImageQuerySize).is_empty());
+    Ok(())
 }
 
 #[test]
-fn frag_depth_output_replaces_depth() {
+fn frag_depth_output_replaces_depth() -> crate::TestResult {
     let module = compile(
         ShaderStage::Fragment,
         "#version 450
         layout(location = 0) in float depth;
         void main() { gl_FragDepth = depth; }",
-    );
+    )?;
     let modes: Vec<_> = instructions(&module, Op::ExecutionMode)
         .into_iter()
         .filter_map(|inst| match inst.operands.get(1) {
@@ -1114,10 +1151,11 @@ fn frag_depth_output_replaces_depth() {
         modes.contains(&spirv::ExecutionMode::DepthReplacing),
         "{modes:?}"
     );
+    Ok(())
 }
 
 #[test]
-fn switch_fall_through_after_grouped_labels() {
+fn switch_fall_through_after_grouped_labels() -> crate::TestResult {
     let module = compile(
         ShaderStage::Fragment,
         "#version 450
@@ -1128,45 +1166,47 @@ fn switch_fall_through_after_grouped_labels() {
             switch (k) { case 1: case 2: j += 1.0; case 3: j += 2.0; break; default: j = 5.0; }
             o = vec4(j);
         }",
-    );
+    )?;
     for function in &module.functions {
         for block in &function.blocks {
             let label = block.label.as_ref().and_then(|label| label.result_id);
-            let last = block.instructions.last().expect("a block has a terminator");
+            let last = block
+                .instructions
+                .last()
+                .ok_or("a block has a terminator")?;
             if last.class.opcode == Op::Branch {
                 assert_ne!(Some(last.operands[0].unwrap_id_ref()), label);
             }
         }
     }
+    Ok(())
 }
 
-fn compile_valid(stage: ShaderStage, source: &str) -> dr::Module {
-    let module = parse(stage, source).unwrap_or_else(|e| panic!("shader rejected: {e}"));
-    let info = Validator::new(ValidationFlags::all(), Capabilities::all())
-        .validate(&module)
-        .expect("validated in parse");
+fn compile_valid(stage: ShaderStage, source: &str) -> crate::TestResult<dr::Module> {
+    let module = parse(stage, source).map_err(|e| format!("shader rejected: {e}"))?;
+    let info = Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&module)?;
     let options = spv::Options {
         flags: spv::WriterFlags::DEBUG
             | spv::WriterFlags::LABEL_VARYINGS
             | spv::WriterFlags::SMALL_TYPE_CAPABILITIES_BY_USE,
         ..spv::Options::default()
     };
-    let words = spv::write_vec(&module, &info, &options, None).expect("SPIR-V backend failed");
-    crate::stage_io::spirv_val(&words);
-    dr::load_words(words).expect("produced SPIR-V does not parse")
+    let words = spv::write_vec(&module, &info, &options, None)?;
+    crate::stage_io::spirv_val(&words)?;
+    Ok(dr::load_words(words)?)
 }
 
-fn named(module: &dr::Module, name: &str) -> u32 {
-    module
+fn named(module: &dr::Module, name: &str) -> crate::TestResult<u32> {
+    Ok(module
         .debug_names
         .iter()
         .find(|inst| {
             inst.class.opcode == Op::Name
                 && inst.operands[1] == Operand::LiteralString(name.to_string())
         })
-        .unwrap_or_else(|| panic!("nothing named {name}"))
+        .ok_or_else(|| format!("nothing named {name}"))?
         .operands[0]
-        .unwrap_id_ref()
+        .unwrap_id_ref())
 }
 
 fn literal(operand: &Operand) -> u32 {
@@ -1177,9 +1217,12 @@ fn literal(operand: &Operand) -> u32 {
     }
 }
 
-fn variable_decorations(module: &dr::Module, name: &str) -> Vec<(Decoration, Vec<u32>)> {
-    let id = named(module, name);
-    module
+fn variable_decorations(
+    module: &dr::Module,
+    name: &str,
+) -> crate::TestResult<Vec<(Decoration, Vec<u32>)>> {
+    let id = named(module, name)?;
+    Ok(module
         .annotations
         .iter()
         .filter(|inst| inst.class.opcode == Op::Decorate && inst.operands[0] == Operand::IdRef(id))
@@ -1189,11 +1232,14 @@ fn variable_decorations(module: &dr::Module, name: &str) -> Vec<(Decoration, Vec
             };
             (decoration, inst.operands[2..].iter().map(literal).collect())
         })
-        .collect()
+        .collect())
 }
 
-fn member_decorations(module: &dr::Module, name: &str) -> Vec<(u32, Decoration, Vec<u32>)> {
-    let id = named(module, name);
+fn member_decorations(
+    module: &dr::Module,
+    name: &str,
+) -> crate::TestResult<Vec<(u32, Decoration, Vec<u32>)>> {
+    let id = named(module, name)?;
     let mut decorations: Vec<_> = module
         .annotations
         .iter()
@@ -1212,11 +1258,11 @@ fn member_decorations(module: &dr::Module, name: &str) -> Vec<(u32, Decoration, 
         })
         .collect();
     decorations.sort_by_key(|&(member, decoration, _)| (member, decoration as u32));
-    decorations
+    Ok(decorations)
 }
 
-fn struct_members(module: &dr::Module, name: &str) -> Vec<String> {
-    let id = named(module, name);
+fn struct_members(module: &dr::Module, name: &str) -> crate::TestResult<Vec<String>> {
+    let id = named(module, name)?;
     let mut members: Vec<(u32, String)> = module
         .debug_names
         .iter()
@@ -1231,18 +1277,18 @@ fn struct_members(module: &dr::Module, name: &str) -> Vec<String> {
         })
         .collect();
     members.sort();
-    members.into_iter().map(|(_, name)| name).collect()
+    Ok(members.into_iter().map(|(_, name)| name).collect())
 }
 
-fn array_lengths(module: &dr::Module) -> Vec<u32> {
+fn array_lengths(module: &dr::Module) -> crate::TestResult<Vec<u32>> {
     let mut lengths: Vec<u32> = module
         .types_global_values
         .iter()
         .filter(|inst| inst.class.opcode == Op::TypeArray)
         .map(|inst| constant(module, &inst.operands[1]))
-        .collect();
+        .collect::<crate::TestResult<_>>()?;
     lengths.sort_unstable();
-    lengths
+    Ok(lengths)
 }
 
 fn has_capability(module: &dr::Module, capability: spirv::Capability) -> bool {
@@ -1253,7 +1299,7 @@ fn has_capability(module: &dr::Module, capability: spirv::Capability) -> bool {
 }
 
 #[test]
-fn user_interface_blocks_match_glslang() {
+fn user_interface_blocks_match_glslang() -> crate::TestResult {
     let source = "#version 450
         layout(location = 0) in vec4 p;
         out VS_OUT {
@@ -1284,12 +1330,12 @@ fn user_interface_blocks_match_glslang() {
         layout(location = 0) in vec2 uv;
         layout(location = 0) out VS_OUT { vec2 TexCoords; } vs_out;
         void main() { gl_Position = vec4(0.0); vs_out.TexCoords = uv; }",
-    );
-    let module = compile_valid(ShaderStage::Vertex, source);
+    )?;
+    let module = compile_valid(ShaderStage::Vertex, source)?;
     let location = |member, location| (member, Decoration::Location, vec![location]);
     let flag = |member, decoration| (member, decoration, vec![]);
     assert_eq!(
-        member_decorations(&module, "VS_OUT"),
+        member_decorations(&module, "VS_OUT")?,
         [
             location(0, 1),
             location(1, 3),
@@ -1302,7 +1348,7 @@ fn user_interface_blocks_match_glslang() {
         ]
     );
     assert_eq!(
-        member_decorations(&module, "Blk"),
+        member_decorations(&module, "Blk")?,
         [
             flag(0, Decoration::Centroid),
             location(0, 7),
@@ -1315,31 +1361,32 @@ fn user_interface_blocks_match_glslang() {
         ]
     );
     assert_eq!(
-        variable_decorations(&module, "VS_OUT"),
+        variable_decorations(&module, "VS_OUT")?,
         [(Decoration::Block, vec![])]
     );
-    assert!(variable_decorations(&module, "vs_out").is_empty());
+    assert!(variable_decorations(&module, "vs_out")?.is_empty());
     assert!(module.annotations.iter().all(|inst| !matches!(
         inst.operands.get(2),
         Some(&Operand::Decoration(Decoration::Offset))
     )));
+    Ok(())
 }
 
 #[test]
-fn interface_blocks_at_a_location() {
+fn interface_blocks_at_a_location() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Fragment,
         "#version 450
         layout(location = 2) in VS_OUT { vec4 a; vec2 b; flat int c; } vs_in;
         layout(location = 0) out vec4 o;
         void main() { o = vs_in.a + vec4(vs_in.b, float(vs_in.c), 0.0); }",
-    );
+    )?;
     assert_eq!(
-        variable_decorations(&module, "vs_in"),
+        variable_decorations(&module, "vs_in")?,
         [(Decoration::Location, vec![2])]
     );
     assert_eq!(
-        member_decorations(&module, "VS_OUT"),
+        member_decorations(&module, "VS_OUT")?,
         [(2, Decoration::Flat, vec![])]
     );
 
@@ -1354,12 +1401,12 @@ fn interface_blocks_at_a_location() {
             vs_out[1].TexCoords = aTexCoords;
             after = vec4(1.0);
         }",
-    );
+    )?;
     assert_eq!(
-        variable_decorations(&module, "vs_out"),
+        variable_decorations(&module, "vs_out")?,
         [(Decoration::Location, vec![0])]
     );
-    assert!(member_decorations(&module, "VS_OUT").is_empty());
+    assert!(member_decorations(&module, "VS_OUT")?.is_empty());
 
     let error = parse(
         ShaderStage::Vertex,
@@ -1368,12 +1415,14 @@ fn interface_blocks_at_a_location() {
         layout(location = 1) out vec4 overlapping;
         void main() { gl_Position = vec4(0.0); }",
     )
-    .unwrap_err();
+    .err()
+    .ok_or("expected an error")?;
     assert!(error.contains("BindingCollision"), "{error}");
+    Ok(())
 }
 
 #[test]
-fn interface_block_locations_follow_glslang() {
+fn interface_block_locations_follow_glslang() -> crate::TestResult {
     for (source, expected) in [
         (
             "#version 450
@@ -1400,7 +1449,9 @@ fn interface_block_locations_follow_glslang() {
             "invariant",
         ),
     ] {
-        let error = parse(ShaderStage::Vertex, source).unwrap_err();
+        let error = parse(ShaderStage::Vertex, source)
+            .err()
+            .ok_or("expected an error")?;
         assert!(error.contains(expected), "{error}");
     }
 
@@ -1408,16 +1459,14 @@ fn interface_block_locations_follow_glslang() {
         auto_map_locations: true,
         ..glsl::Options::from(ShaderStage::Vertex)
     };
-    let module = glsl::Frontend::default()
-        .parse(
-            &options,
-            "#version 450
+    let module = glsl::Frontend::default().parse(
+        &options,
+        "#version 450
             out A { layout(location = 7) vec4 a; layout(location = 8) vec4 b; } a;
             out B { vec4 c; mat2 d; } b;
             out vec4 e;
             void main() { gl_Position = vec4(0.0); }",
-        )
-        .unwrap();
+    )?;
     let io: Vec<_> = module.entry_points[0]
         .interface
         .iter()
@@ -1430,10 +1479,11 @@ fn interface_block_locations_follow_glslang() {
         })
         .collect();
     assert_eq!(io, [("b".to_string(), 2), ("e".to_string(), 5)]);
+    Ok(())
 }
 
 #[test]
-fn gl_per_vertex_matches_glslang() {
+fn gl_per_vertex_matches_glslang() -> crate::TestResult {
     let unused = "#version 450
         layout(location = 0) in vec4 p;
         void main() { }";
@@ -1447,15 +1497,15 @@ fn gl_per_vertex_matches_glslang() {
     let redeclared_unused = "#version 450
         out gl_PerVertex { vec4 gl_Position; float gl_PointSize; };
         void main() { }";
-    compile_valid(ShaderStage::Vertex, unused);
-    let module = compile_valid(ShaderStage::Vertex, unused);
+    compile_valid(ShaderStage::Vertex, unused)?;
+    let module = compile_valid(ShaderStage::Vertex, unused)?;
     assert!(!module.debug_names.iter().any(|inst| {
         inst.operands.get(1) == Some(&Operand::LiteralString("gl_PerVertex".to_string()))
     }));
 
-    let module = compile_valid(ShaderStage::Vertex, implicit);
+    let module = compile_valid(ShaderStage::Vertex, implicit)?;
     assert_eq!(
-        struct_members(&module, "gl_PerVertex"),
+        struct_members(&module, "gl_PerVertex")?,
         [
             "gl_Position",
             "gl_PointSize",
@@ -1463,13 +1513,13 @@ fn gl_per_vertex_matches_glslang() {
             "gl_CullDistance"
         ]
     );
-    assert_eq!(array_lengths(&module), [1, 3]);
+    assert_eq!(array_lengths(&module)?, [1, 3]);
     assert!(has_capability(&module, spirv::Capability::ClipDistance));
     assert!(!has_capability(&module, spirv::Capability::CullDistance));
     let built_in =
         |member, built_in: spirv::BuiltIn| (member, Decoration::BuiltIn, vec![built_in as u32]);
     assert_eq!(
-        member_decorations(&module, "gl_PerVertex"),
+        member_decorations(&module, "gl_PerVertex")?,
         [
             built_in(0, spirv::BuiltIn::Position),
             built_in(1, spirv::BuiltIn::PointSize),
@@ -1478,27 +1528,28 @@ fn gl_per_vertex_matches_glslang() {
         ]
     );
     assert_eq!(
-        variable_decorations(&module, "gl_PerVertex"),
+        variable_decorations(&module, "gl_PerVertex")?,
         [(Decoration::Block, vec![])]
     );
 
-    let module = compile_valid(ShaderStage::Vertex, redeclared);
+    let module = compile_valid(ShaderStage::Vertex, redeclared)?;
     assert_eq!(
-        struct_members(&module, "gl_PerVertex"),
+        struct_members(&module, "gl_PerVertex")?,
         ["gl_Position", "gl_PointSize", "gl_CullDistance"]
     );
-    assert_eq!(array_lengths(&module), [3]);
+    assert_eq!(array_lengths(&module)?, [3]);
     assert!(has_capability(&module, spirv::Capability::CullDistance));
 
-    let module = compile_valid(ShaderStage::Vertex, redeclared_unused);
+    let module = compile_valid(ShaderStage::Vertex, redeclared_unused)?;
     assert_eq!(
-        struct_members(&module, "gl_PerVertex"),
+        struct_members(&module, "gl_PerVertex")?,
         ["gl_Position", "gl_PointSize"]
     );
+    Ok(())
 }
 
 #[test]
-fn invariant_position_in_gl_per_vertex() {
+fn invariant_position_in_gl_per_vertex() -> crate::TestResult {
     let sources = [
         "#version 450
         out gl_PerVertex { invariant vec4 gl_Position; float gl_ClipDistance[3]; };
@@ -1511,15 +1562,15 @@ fn invariant_position_in_gl_per_vertex() {
         invariant gl_Position;
         void main() { gl_Position = vec4(1.0); gl_PointSize = 1.0; }",
     ];
-    let module = compile_valid(ShaderStage::Vertex, sources[2]);
+    let module = compile_valid(ShaderStage::Vertex, sources[2])?;
     assert_eq!(decorated(&module, Decoration::Invariant), ["gl_Position"]);
     for source in sources {
-        let module = compile_valid(ShaderStage::Vertex, source);
+        let module = compile_valid(ShaderStage::Vertex, source)?;
         assert_eq!(decorated(&module, Decoration::Invariant), ["gl_Position"]);
     }
-    let module = compile_valid(ShaderStage::Vertex, sources[0]);
+    let module = compile_valid(ShaderStage::Vertex, sources[0])?;
     assert_eq!(
-        member_decorations(&module, "gl_PerVertex"),
+        member_decorations(&module, "gl_PerVertex")?,
         [
             (
                 0,
@@ -1534,11 +1585,12 @@ fn invariant_position_in_gl_per_vertex() {
             ),
         ]
     );
-    assert_eq!(array_lengths(&module), [3]);
+    assert_eq!(array_lengths(&module)?, [3]);
+    Ok(())
 }
 
 #[test]
-fn post_depth_coverage_is_not_dropped() {
+fn post_depth_coverage_is_not_dropped() -> crate::TestResult {
     let error = parse(
         ShaderStage::Fragment,
         "#version 450
@@ -1546,7 +1598,8 @@ fn post_depth_coverage_is_not_dropped() {
         layout(post_depth_coverage) in;
         void main() {}",
     )
-    .unwrap_err();
+    .err()
+    .ok_or("expected an error")?;
     assert!(error.contains("requires early_fragment_tests"), "{error}");
 
     let error = parse(
@@ -1566,7 +1619,7 @@ fn post_depth_coverage_is_not_dropped() {
         layout(post_depth_coverage) in;
         layout(location = 0) out int o;
         void main() { o = gl_SampleMaskIn[0]; }",
-    );
+    )?;
     let modes: Vec<spirv::ExecutionMode> = execution_modes(&module)
         .into_iter()
         .map(|(mode, _)| mode)
@@ -1577,10 +1630,14 @@ fn post_depth_coverage_is_not_dropped() {
         &module,
         spirv::Capability::SampleMaskPostDepthCoverage
     ));
+    Ok(())
 }
 
-fn block_variable_decorations(module: &dr::Module, block: &str) -> Vec<(Decoration, Vec<u32>)> {
-    let structure = named(module, block);
+fn block_variable_decorations(
+    module: &dr::Module,
+    block: &str,
+) -> crate::TestResult<Vec<(Decoration, Vec<u32>)>> {
+    let structure = named(module, block)?;
     let pointer = module
         .types_global_values
         .iter()
@@ -1588,13 +1645,13 @@ fn block_variable_decorations(module: &dr::Module, block: &str) -> Vec<(Decorati
             inst.class.opcode == Op::TypePointer && inst.operands[1] == Operand::IdRef(structure)
         })
         .and_then(|inst| inst.result_id)
-        .unwrap_or_else(|| panic!("no pointer to {block}"));
+        .ok_or_else(|| format!("no pointer to {block}"))?;
     let variable = module
         .types_global_values
         .iter()
         .find(|inst| inst.class.opcode == Op::Variable && inst.result_type == Some(pointer))
         .and_then(|inst| inst.result_id)
-        .unwrap_or_else(|| panic!("no variable of {block}"));
+        .ok_or_else(|| format!("no variable of {block}"))?;
     let mut decorations: Vec<_> = module
         .annotations
         .iter()
@@ -1609,13 +1666,16 @@ fn block_variable_decorations(module: &dr::Module, block: &str) -> Vec<(Decorati
         })
         .collect();
     decorations.sort_by_key(|&(decoration, _)| decoration as u32);
-    decorations
+    Ok(decorations)
 }
 
-fn sorted_variable_decorations(module: &dr::Module, name: &str) -> Vec<(Decoration, Vec<u32>)> {
-    let mut decorations = variable_decorations(module, name);
+fn sorted_variable_decorations(
+    module: &dr::Module,
+    name: &str,
+) -> crate::TestResult<Vec<(Decoration, Vec<u32>)>> {
+    let mut decorations = variable_decorations(module, name)?;
     decorations.sort_by_key(|&(decoration, _)| decoration as u32);
-    decorations
+    Ok(decorations)
 }
 
 fn has_execution_mode(module: &dr::Module, mode: spirv::ExecutionMode) -> bool {
@@ -1626,7 +1686,7 @@ fn has_execution_mode(module: &dr::Module, mode: spirv::ExecutionMode) -> bool {
 }
 
 #[test]
-fn transform_feedback_matches_glslang() {
+fn transform_feedback_matches_glslang() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Vertex,
         "#version 450
@@ -1649,7 +1709,7 @@ fn transform_feedback_matches_glslang() {
             vec4 x;
         };
         void main() {}",
-    );
+    )?;
     assert!(has_capability(
         &module,
         spirv::Capability::TransformFeedback
@@ -1663,39 +1723,39 @@ fn transform_feedback_matches_glslang() {
         decorations
     };
     assert_eq!(
-        sorted_variable_decorations(&module, "out1"),
+        sorted_variable_decorations(&module, "out1")?,
         xfb(0, Some(12), 3, 48)
     );
     assert_eq!(
-        sorted_variable_decorations(&module, "out4"),
+        sorted_variable_decorations(&module, "out4")?,
         xfb(4, Some(4), 0, 72)
     );
     assert_eq!(
-        sorted_variable_decorations(&module, "s"),
+        sorted_variable_decorations(&module, "s")?,
         xfb(5, Some(0), 3, 48)
     );
     assert_eq!(
-        block_variable_decorations(&module, "outXfb"),
+        block_variable_decorations(&module, "outXfb")?,
         xfb(1, None, 2, 32)
     );
     assert_eq!(
-        block_variable_decorations(&module, "outXfb2"),
+        block_variable_decorations(&module, "outXfb2")?,
         xfb(3, None, 1, 64)
     );
     assert_eq!(
-        block_variable_decorations(&module, "block2"),
+        block_variable_decorations(&module, "block2")?,
         xfb(7, None, 0, 72)
     );
     assert_eq!(
-        member_decorations(&module, "outXfb"),
+        member_decorations(&module, "outXfb")?,
         [(0, Decoration::Offset, vec![8])]
     );
     assert_eq!(
-        member_decorations(&module, "outXfb2"),
+        member_decorations(&module, "outXfb2")?,
         [(0, Decoration::Offset, vec![60])]
     );
     assert_eq!(
-        member_decorations(&module, "block2")
+        member_decorations(&module, "block2")?
             .into_iter()
             .filter(|&(_, decoration, _)| decoration == Decoration::Offset)
             .map(|(member, _, offset)| (member, offset[0]))
@@ -1708,14 +1768,14 @@ fn transform_feedback_matches_glslang() {
         "#version 450
         layout(location = 0) out vec4 c;
         void main() { c = vec4(1.0); gl_Position = c; }",
-    );
+    )?;
     assert!(!has_capability(
         &module,
         spirv::Capability::TransformFeedback
     ));
     assert!(!has_execution_mode(&module, spirv::ExecutionMode::Xfb));
     assert_eq!(
-        sorted_variable_decorations(&module, "c"),
+        sorted_variable_decorations(&module, "c")?,
         [(Decoration::Location, vec![0])]
     );
 
@@ -1724,16 +1784,17 @@ fn transform_feedback_matches_glslang() {
         "#version 450
         layout(xfb_buffer = 1) out;
         void main() {}",
-    );
+    )?;
     assert!(has_capability(
         &module,
         spirv::Capability::TransformFeedback
     ));
     assert!(has_execution_mode(&module, spirv::ExecutionMode::Xfb));
+    Ok(())
 }
 
 #[test]
-fn transform_feedback_of_gl_per_vertex() {
+fn transform_feedback_of_gl_per_vertex() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Vertex,
         "#version 450
@@ -1743,9 +1804,9 @@ fn transform_feedback_of_gl_per_vertex() {
             vec4 gl_Position;
         };
         void main() { gl_Position = vec4(1.0); gl_PointSize = 2.0; }",
-    );
+    )?;
     assert_eq!(
-        member_decorations(&module, "gl_PerVertex"),
+        member_decorations(&module, "gl_PerVertex")?,
         [
             (
                 0,
@@ -1762,7 +1823,7 @@ fn transform_feedback_of_gl_per_vertex() {
         ]
     );
     assert_eq!(
-        block_variable_decorations(&module, "gl_PerVertex"),
+        block_variable_decorations(&module, "gl_PerVertex")?,
         [
             (Decoration::XfbBuffer, vec![1]),
             (Decoration::XfbStride, vec![64])
@@ -1776,9 +1837,9 @@ fn transform_feedback_of_gl_per_vertex() {
             layout(xfb_stride = 80) vec4 gl_Position;
         };
         void main() { gl_Position = vec4(1.0); }",
-    );
+    )?;
     assert_eq!(
-        block_variable_decorations(&module, "gl_PerVertex"),
+        block_variable_decorations(&module, "gl_PerVertex")?,
         [
             (Decoration::XfbBuffer, vec![3]),
             (Decoration::XfbStride, vec![80])
@@ -1791,9 +1852,9 @@ fn transform_feedback_of_gl_per_vertex() {
         layout(xfb_buffer = 2) out;
         layout(location = 5, xfb_stride = 20) out block { float y1; vec4 y2; };
         void main() { y1 = 7.0; gl_Position = vec4(0.0); }",
-    );
+    )?;
     assert_eq!(
-        block_variable_decorations(&module, "block"),
+        block_variable_decorations(&module, "block")?,
         [
             (Decoration::Location, vec![5]),
             (Decoration::XfbBuffer, vec![2]),
@@ -1801,16 +1862,17 @@ fn transform_feedback_of_gl_per_vertex() {
         ]
     );
     assert_eq!(
-        block_variable_decorations(&module, "gl_PerVertex"),
+        block_variable_decorations(&module, "gl_PerVertex")?,
         [
             (Decoration::XfbBuffer, vec![0]),
             (Decoration::XfbStride, vec![0])
         ]
     );
+    Ok(())
 }
 
 #[test]
-fn transform_feedback_errors() {
+fn transform_feedback_errors() -> crate::TestResult {
     for (stage, source, expected) in [
         (
             ShaderStage::Vertex,
@@ -1857,46 +1919,50 @@ fn transform_feedback_errors() {
             "not supported in this stage",
         ),
     ] {
-        let error = parse(stage, source).unwrap_err();
+        let error = parse(stage, source).err().ok_or("expected an error")?;
         assert!(error.contains(expected), "{error}");
     }
+    Ok(())
 }
 
-fn type_instruction(module: &dr::Module, id: u32) -> &dr::Instruction {
+fn type_instruction(module: &dr::Module, id: u32) -> crate::TestResult<&dr::Instruction> {
     module
         .types_global_values
         .iter()
         .find(|inst| inst.result_id == Some(id))
-        .unwrap_or_else(|| panic!("no type %{id}"))
+        .ok_or_else(|| format!("no type %{id}").into())
 }
 
-fn variable_type(module: &dr::Module, name: &str) -> (spirv::StorageClass, Vec<Op>) {
-    let id = named(module, name);
+fn variable_type(
+    module: &dr::Module,
+    name: &str,
+) -> crate::TestResult<(spirv::StorageClass, Vec<Op>)> {
+    let id = named(module, name)?;
     let variable = module
         .types_global_values
         .iter()
         .find(|inst| inst.class.opcode == Op::Variable && inst.result_id == Some(id))
-        .unwrap_or_else(|| panic!("{name} is not a global variable"));
-    let pointer = type_instruction(module, variable.result_type.expect("typed"));
+        .ok_or_else(|| format!("{name} is not a global variable"))?;
+    let pointer = type_instruction(module, variable.result_type.ok_or("typed")?)?;
     let Operand::StorageClass(class) = pointer.operands[0] else {
         panic!("not a pointer");
     };
     let mut chain = Vec::new();
-    let mut current = type_instruction(module, pointer.operands[1].unwrap_id_ref());
+    let mut current = type_instruction(module, pointer.operands[1].unwrap_id_ref())?;
     loop {
         chain.push(current.class.opcode);
         match current.class.opcode {
             Op::TypeArray | Op::TypeSampledImage => {
-                current = type_instruction(module, current.operands[0].unwrap_id_ref());
+                current = type_instruction(module, current.operands[0].unwrap_id_ref())?;
             }
             _ => break,
         }
     }
-    (class, chain)
+    Ok((class, chain))
 }
 
 #[test]
-fn combined_samplers_match_glslang() {
+fn combined_samplers_match_glslang() -> crate::TestResult {
     let source = "#version 450
         layout(binding = 1) uniform sampler2D explicit1;
         uniform sampler2D unusedSampler;
@@ -1917,10 +1983,8 @@ fn combined_samplers_match_glslang() {
         auto_map_bindings: true,
         ..glsl::Options::from(ShaderStage::Fragment)
     };
-    let module = glsl::Frontend::default().parse(&options, source).unwrap();
-    let info = Validator::new(ValidationFlags::all(), Capabilities::all())
-        .validate(&module)
-        .unwrap();
+    let module = glsl::Frontend::default().parse(&options, source)?;
+    let info = Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&module)?;
     let mut bindings: Vec<(&str, u32, u32)> = module
         .global_variables
         .iter()
@@ -1952,31 +2016,30 @@ fn combined_samplers_match_glslang() {
             ..spv::Options::default()
         },
         None,
-    )
-    .expect("SPIR-V backend failed");
-    crate::stage_io::spirv_val(&words);
-    let module = dr::load_words(words).expect("produced SPIR-V does not parse");
+    )?;
+    crate::stage_io::spirv_val(&words)?;
+    let module = dr::load_words(words)?;
     let sampled = vec![Op::TypeSampledImage, Op::TypeImage];
     for name in ["explicit1", "unusedSampler", "shadow", "multi"] {
         assert_eq!(
-            variable_type(&module, name),
+            variable_type(&module, name)?,
             (spirv::StorageClass::UniformConstant, sampled.clone()),
             "{name}"
         );
     }
     assert_eq!(
-        variable_type(&module, "layers"),
+        variable_type(&module, "layers")?,
         (
             spirv::StorageClass::UniformConstant,
             vec![Op::TypeArray, Op::TypeSampledImage, Op::TypeImage]
         )
     );
     assert_eq!(
-        variable_type(&module, "tex"),
+        variable_type(&module, "tex")?,
         (spirv::StorageClass::UniformConstant, vec![Op::TypeImage])
     );
     assert_eq!(
-        sorted_variable_decorations(&module, "shadow"),
+        sorted_variable_decorations(&module, "shadow")?,
         [
             (Decoration::Binding, vec![2]),
             (Decoration::DescriptorSet, vec![0])
@@ -1990,10 +2053,11 @@ fn combined_samplers_match_glslang() {
     assert_eq!(instructions(&module, Op::SampledImage).len(), 1);
     assert_eq!(instructions(&module, Op::Image).len(), 3);
     assert!(has_capability(&module, spirv::Capability::ImageQuery));
+    Ok(())
 }
 
 #[test]
-fn combined_samplers_as_function_parameters() {
+fn combined_samplers_as_function_parameters() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Fragment,
         "#version 450
@@ -2008,25 +2072,26 @@ fn combined_samplers_as_function_parameters() {
         void main() {
             o = forward(single) + sampleIt(many[2]) + sampleIt(many[index]) + compare(cube);
         }",
-    );
+    )?;
     let parameters = instructions(&module, Op::FunctionParameter);
     assert_eq!(parameters.len(), 3);
     for parameter in parameters {
-        let pointer = type_instruction(&module, parameter.result_type.expect("typed"));
+        let pointer = type_instruction(&module, parameter.result_type.ok_or("typed")?)?;
         assert_eq!(pointer.class.opcode, Op::TypePointer);
         assert_eq!(
             pointer.operands[0],
             Operand::StorageClass(spirv::StorageClass::UniformConstant)
         );
-        let pointee = type_instruction(&module, pointer.operands[1].unwrap_id_ref());
+        let pointee = type_instruction(&module, pointer.operands[1].unwrap_id_ref())?;
         assert_eq!(pointee.class.opcode, Op::TypeSampledImage);
     }
     assert!(instructions(&module, Op::SampledImage).is_empty());
     assert_eq!(instructions(&module, Op::FunctionCall).len(), 5);
+    Ok(())
 }
 
 #[test]
-fn sampler_constructors_at_point_of_use() {
+fn sampler_constructors_at_point_of_use() -> crate::TestResult {
     let error = parse(
         ShaderStage::Fragment,
         "#version 450
@@ -2036,7 +2101,8 @@ fn sampler_constructors_at_point_of_use() {
         vec4 f(sampler2D x) { return texture(x, vec2(0.5)); }
         void main() { o = f(sampler2D(t, s)); }",
     )
-    .unwrap_err();
+    .err()
+    .ok_or("expected an error")?;
     assert!(error.contains("point of use"), "{error}");
 
     compile_valid(
@@ -2054,11 +2120,12 @@ fn sampler_constructors_at_point_of_use() {
                 + vec4(textureSize(sampler2DArray(ta, s), 0), 0.0)
                 + vec4(texture(sampler2DArrayShadow(depth, ss), vec4(0.5)));
         }",
-    );
+    )?;
+    Ok(())
 }
 
 #[test]
-fn dynamic_indexing_of_opaque_arrays_is_not_non_uniform() {
+fn dynamic_indexing_of_opaque_arrays_is_not_non_uniform() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Fragment,
         "#version 450
@@ -2073,17 +2140,18 @@ fn dynamic_indexing_of_opaque_arrays_is_not_non_uniform() {
                 + texture(sampler2D(textures[index], s), vec2(0.5))
                 + imageLoad(images[index], ivec2(0));
         }",
-    );
+    )?;
     assert!(decorated(&module, Decoration::NonUniform).is_empty());
     assert!(!has_capability(
         &module,
         spirv::Capability::ShaderNonUniform
     ));
     assert!(module.extensions.is_empty());
+    Ok(())
 }
 
 #[test]
-fn buffer_blocks_decorate_their_own_struct() {
+fn buffer_blocks_decorate_their_own_struct() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Fragment,
         "#version 450
@@ -2098,26 +2166,26 @@ fn buffer_blocks_decorate_their_own_struct() {
             sb.data[2] = 3u;
             o.x += sb.x + float(sb.data.length());
         }",
-    );
+    )?;
     let mut blocks = decorated(&module, Decoration::Block);
     blocks.sort_unstable();
     assert_eq!(blocks, ["B", "P", "U", "U2"]);
     for (variable, block) in [("ub", "U"), ("sb", "B"), ("pc", "P"), ("", "U2")] {
-        let id = named(&module, variable);
-        let pointer = module
+        let id = named(&module, variable)?;
+        let ty = module
             .types_global_values
             .iter()
             .find(|inst| inst.class.opcode == Op::Variable && inst.result_id == Some(id))
             .and_then(|inst| inst.result_type)
-            .map(|ty| type_instruction(&module, ty))
-            .expect("a global variable");
+            .ok_or("a global variable")?;
+        let pointer = type_instruction(&module, ty)?;
         assert_eq!(
             name_of(&module, pointer.operands[1].unwrap_id_ref()),
             block,
             "{variable}"
         );
     }
-    let ub = named(&module, "ub");
+    let ub = named(&module, "ub")?;
     let chains: Vec<usize> = instructions(&module, Op::AccessChain)
         .iter()
         .filter(|inst| inst.operands[0] == Operand::IdRef(ub))
@@ -2126,19 +2194,18 @@ fn buffer_blocks_decorate_their_own_struct() {
     assert_eq!(chains, [1, 2, 2, 3]);
     let wrappers = instructions(&module, Op::TypeStruct)
         .into_iter()
-        .filter(|inst| {
-            inst.operands.len() == 1
-                && type_instruction(&module, inst.operands[0].unwrap_id_ref())
-                    .class
-                    .opcode
-                    == Op::TypeStruct
-        })
+        .filter(|inst| inst.operands.len() == 1)
+        .map(|inst| type_instruction(&module, inst.operands[0].unwrap_id_ref()))
+        .collect::<crate::TestResult<Vec<_>>>()?
+        .into_iter()
+        .filter(|member| member.class.opcode == Op::TypeStruct)
         .count();
     assert_eq!(wrappers, 0);
+    Ok(())
 }
 
 #[test]
-fn resources_may_share_a_binding() {
+fn resources_may_share_a_binding() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Fragment,
         "#version 460
@@ -2149,10 +2216,10 @@ fn resources_may_share_a_binding() {
         layout(binding = 4) uniform U { vec4 v; };
         layout(location = 0) out vec4 o;
         void main() { o = texture(sampler2D(t, s), uv) + texture(c, uv) + v; }",
-    );
+    )?;
     for (name, binding) in [("t", 0), ("s", 0), ("c", 4), ("", 4)] {
         assert_eq!(
-            sorted_variable_decorations(&module, name),
+            sorted_variable_decorations(&module, name)?,
             [
                 (Decoration::Binding, vec![binding]),
                 (Decoration::DescriptorSet, vec![0])
@@ -2160,10 +2227,11 @@ fn resources_may_share_a_binding() {
             "{name}"
         );
     }
+    Ok(())
 }
 
 #[test]
-fn structs_cross_between_buffers_and_functions() {
+fn structs_cross_between_buffers_and_functions() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Compute,
         "#version 450
@@ -2184,7 +2252,7 @@ fn structs_cross_between_buffers_and_functions() {
             b.arr[0].inner[1] = u.s.inner[0];
             if (b.arr[0] == local) { b.s.a = 3; }
         }",
-    );
+    )?;
     let laid_out: Vec<u32> = module
         .annotations
         .iter()
@@ -2192,23 +2260,30 @@ fn structs_cross_between_buffers_and_functions() {
         .map(|inst| inst.operands[0].unwrap_id_ref())
         .collect();
     for parameter in instructions(&module, Op::FunctionParameter) {
-        let mut ty = type_instruction(&module, parameter.result_type.expect("typed"));
+        let mut ty = type_instruction(&module, parameter.result_type.ok_or("typed")?)?;
         if ty.class.opcode == Op::TypePointer {
-            ty = type_instruction(&module, ty.operands[1].unwrap_id_ref());
+            ty = type_instruction(&module, ty.operands[1].unwrap_id_ref())?;
         }
         assert_eq!(ty.class.opcode, Op::TypeStruct);
-        assert!(!laid_out.contains(&ty.result_id.expect("a type")));
+        assert!(!laid_out.contains(&ty.result_id.ok_or("a type")?));
     }
     let names: Vec<String> = instructions(&module, Op::TypeStruct)
         .iter()
-        .map(|inst| name_of(&module, inst.result_id.expect("a type")))
+        .map(|inst| {
+            inst.result_id
+                .map(|id| name_of(&module, id))
+                .ok_or("a type")
+        })
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
         .filter(|name| name == "S")
         .collect();
     assert_eq!(names.len(), 4);
+    Ok(())
 }
 
 #[test]
-fn buffer_textures_and_images_match_glslang() {
+fn buffer_textures_and_images_match_glslang() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Fragment,
         "#version 450
@@ -2228,7 +2303,7 @@ fn buffer_textures_and_images_match_glslang() {
             imageStore(uib, i, uvec4(imageLoad(uib, i).x + 1u));
             o = v + vec4(textureSize(sb) + textureSize(isb) + imageSize(ib) + imageSize(uib));
         }",
-    );
+    )?;
     for capability in [
         spirv::Capability::SampledBuffer,
         spirv::Capability::ImageBuffer,
@@ -2249,15 +2324,13 @@ fn buffer_textures_and_images_match_glslang() {
     assert!(instructions(&module, Op::ImageQuerySizeLod).is_empty());
     assert_eq!(instructions(&module, Op::ImageRead).len(), 2);
     assert_eq!(instructions(&module, Op::ImageWrite).len(), 2);
+    Ok(())
 }
 
-fn compile_with_offsets(stage: ShaderStage, source: &str) -> dr::Module {
-    let module = parse(stage, source).unwrap_or_else(|e| panic!("shader rejected: {e}"));
-    let info = Validator::new(ValidationFlags::all(), Capabilities::all())
-        .validate(&module)
-        .expect("validated in parse");
-    let words = spv::write_vec(&module, &info, &spv::Options::default(), None)
-        .expect("SPIR-V backend failed");
+fn compile_with_offsets(stage: ShaderStage, source: &str) -> crate::TestResult<dr::Module> {
+    let module = parse(stage, source).map_err(|e| format!("shader rejected: {e}"))?;
+    let info = Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&module)?;
+    let words = spv::write_vec(&module, &info, &spv::Options::default(), None)?;
     crate::stage_io::spirv_val_in(
         &words,
         &[
@@ -2265,8 +2338,8 @@ fn compile_with_offsets(stage: ShaderStage, source: &str) -> dr::Module {
             "vulkan1.0",
             "--allow-offset-texture-operand",
         ],
-    );
-    dr::load_words(words).expect("produced SPIR-V does not parse")
+    )?;
+    Ok(dr::load_words(words)?)
 }
 
 fn image_operands(inst: &dr::Instruction) -> spirv::ImageOperands {
@@ -2280,7 +2353,7 @@ fn image_operands(inst: &dr::Instruction) -> spirv::ImageOperands {
 }
 
 #[test]
-fn non_constant_texture_offsets() {
+fn non_constant_texture_offsets() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Fragment,
         "#version 450
@@ -2293,7 +2366,7 @@ fn non_constant_texture_offsets() {
             o = textureGatherOffset(s, uv, delta) + textureGatherOffset(s, uv, ivec2(1, 2))
                 + texelFetchOffset(s, ivec2(uv), 0, delta);
         }",
-    );
+    )?;
     assert!(has_capability(
         &module,
         spirv::Capability::ImageGatherExtended
@@ -2322,7 +2395,7 @@ fn non_constant_texture_offsets() {
             o = textureOffset(s, uv, delta) + textureLodOffset(s, uv, 1.0, ivec2(1));
             gl_Position = vec4(0.0);
         }",
-    );
+    )?;
     let samples: Vec<spirv::ImageOperands> = instructions(&module, Op::ImageSampleExplicitLod)
         .into_iter()
         .map(image_operands)
@@ -2338,6 +2411,7 @@ fn non_constant_texture_offsets() {
         &module,
         spirv::Capability::ImageGatherExtended
     ));
+    Ok(())
 }
 
 fn capabilities_of(module: &dr::Module) -> Vec<spirv::Capability> {
@@ -2373,7 +2447,7 @@ fn sorted(mut capabilities: Vec<spirv::Capability>) -> Vec<spirv::Capability> {
 }
 
 #[test]
-fn sixteen_bit_storage_without_arithmetic_matches_glslang() {
+fn sixteen_bit_storage_without_arithmetic_matches_glslang() -> crate::TestResult {
     use spirv::Capability as C;
     {
         let module = compile_valid(
@@ -2390,7 +2464,7 @@ fn sixteen_bit_storage_without_arithmetic_matches_glslang() {
                 o = pc.h;
                 vec4 x = vec4(a, b, 1.0);
             }",
-        );
+        )?;
         assert_eq!(
             capabilities_of(&module),
             sorted(vec![
@@ -2402,10 +2476,11 @@ fn sixteen_bit_storage_without_arithmetic_matches_glslang() {
         );
         assert_eq!(extensions_of(&module), ["SPV_KHR_16bit_storage"]);
     }
+    Ok(())
 }
 
 #[test]
-fn explicit_arithmetic_types_capabilities_match_glslang() {
+fn explicit_arithmetic_types_capabilities_match_glslang() -> crate::TestResult {
     use spirv::Capability as C;
     {
         let module = compile_valid(
@@ -2421,7 +2496,7 @@ fn explicit_arithmetic_types_capabilities_match_glslang() {
                 outp = f16vec4(inp * scale, inp.yx);
                 int8_t doubled = value * int8_t(2);
             }",
-        );
+        )?;
         assert_eq!(
             capabilities_of(&module),
             sorted(vec![
@@ -2438,10 +2513,11 @@ fn explicit_arithmetic_types_capabilities_match_glslang() {
             ["SPV_KHR_16bit_storage", "SPV_KHR_8bit_storage"]
         );
     }
+    Ok(())
 }
 
 #[test]
-fn eight_bit_storage_conversions_need_no_int8() {
+fn eight_bit_storage_conversions_need_no_int8() -> crate::TestResult {
     use spirv::Capability as C;
     {
         let module = compile_valid(
@@ -2455,7 +2531,7 @@ fn eight_bit_storage_conversions_need_no_int8() {
                 total = uint(a) + uint(b.x);
                 copy = b.y;
             }",
-        );
+        )?;
         assert_eq!(
             capabilities_of(&module),
             sorted(vec![
@@ -2466,10 +2542,11 @@ fn eight_bit_storage_conversions_need_no_int8() {
         );
         assert_eq!(extensions_of(&module), ["SPV_KHR_8bit_storage"]);
     }
+    Ok(())
 }
 
 #[test]
-fn sized_integer_built_ins_produce_valid_spirv() {
+fn sized_integer_built_ins_produce_valid_spirv() -> crate::TestResult {
     {
         let module = compile_valid(
             ShaderStage::Compute,
@@ -2493,15 +2570,16 @@ fn sized_integer_built_ins_produce_valid_spirv() {
                 wide = packInt2x32(unpackInt2x32(wide)) + doubleBitsToInt64(real);
                 pair = halfBitsToInt16(halves) + i16vec2(bitfieldExtract(pair.x, 1s, 2s));
             }",
-        );
+        )?;
         assert!(has_capability(&module, spirv::Capability::Int64));
         assert!(has_capability(&module, spirv::Capability::Int16));
         assert!(has_capability(&module, spirv::Capability::Int8));
     }
+    Ok(())
 }
 
 #[test]
-fn sixteen_bit_types_need_their_extension() {
+fn sixteen_bit_types_need_their_extension() -> crate::TestResult {
     {
         let error = parse(
             ShaderStage::Fragment,
@@ -2510,7 +2588,8 @@ fn sixteen_bit_types_need_their_extension() {
             layout(binding = 0) buffer B { float16_t a; };
             void main() { a = a * a; }",
         )
-        .unwrap_err();
+        .err()
+        .ok_or("expected an error")?;
         assert!(error.contains("cannot be applied"), "{error}");
         assert!(parse(
             ShaderStage::Fragment,
@@ -2524,13 +2603,15 @@ fn sixteen_bit_types_need_their_extension() {
             #extension GL_EXT_unknown_thing : require
             void main() {}",
         )
-        .unwrap_err();
+        .err()
+        .ok_or("expected an error")?;
         assert!(error.contains("GL_EXT_unknown_thing"), "{error}");
     }
+    Ok(())
 }
 
 #[test]
-fn analysis_errors_before_a_syntax_error_are_reported_first() {
+fn analysis_errors_before_a_syntax_error_are_reported_first() -> crate::TestResult {
     {
         let source = "#version 450
 #extension GL_EXT_shader_16bit_storage : enable
@@ -2540,7 +2621,8 @@ void main() {}
 ";
         let errors = glsl::Frontend::default()
             .parse(&glsl::Options::from(ShaderStage::Fragment), source)
-            .unwrap_err();
+            .err()
+            .ok_or("expected an error")?;
         let lines: Vec<u32> = errors
             .errors
             .iter()
@@ -2548,6 +2630,7 @@ void main() {}
             .collect();
         assert_eq!(lines, [3, 4]);
     }
+    Ok(())
 }
 
 fn constant_words(module: &dr::Module) -> Vec<u32> {
@@ -2562,16 +2645,18 @@ fn constant_words(module: &dr::Module) -> Vec<u32> {
         .collect()
 }
 
-fn compile_words(stage: ShaderStage, source: &str, lang_version: (u8, u8)) -> Vec<u32> {
-    let module = parse(stage, source).unwrap_or_else(|e| panic!("shader rejected: {e}"));
-    let info = Validator::new(ValidationFlags::all(), Capabilities::all())
-        .validate(&module)
-        .expect("validated in parse");
+fn compile_words(
+    stage: ShaderStage,
+    source: &str,
+    lang_version: (u8, u8),
+) -> crate::TestResult<Vec<u32>> {
+    let module = parse(stage, source).map_err(|e| format!("shader rejected: {e}"))?;
+    let info = Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&module)?;
     let options = spv::Options {
         lang_version,
         ..spv::Options::default()
     };
-    spv::write_vec(&module, &info, &options, None).expect("SPIR-V backend failed")
+    Ok(spv::write_vec(&module, &info, &options, None)?)
 }
 
 fn raw_instructions(words: &[u32]) -> Vec<(u32, Vec<u32>)> {
@@ -2585,26 +2670,28 @@ fn raw_instructions(words: &[u32]) -> Vec<(u32, Vec<u32>)> {
     found
 }
 
-fn compile_for(stage: ShaderStage, source: &str, lang_version: (u8, u8)) -> dr::Module {
-    let module = parse(stage, source).unwrap_or_else(|e| panic!("shader rejected: {e}"));
-    let info = Validator::new(ValidationFlags::all(), Capabilities::all())
-        .validate(&module)
-        .expect("validated in parse");
+fn compile_for(
+    stage: ShaderStage,
+    source: &str,
+    lang_version: (u8, u8),
+) -> crate::TestResult<dr::Module> {
+    let module = parse(stage, source).map_err(|e| format!("shader rejected: {e}"))?;
+    let info = Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&module)?;
     let options = spv::Options {
         lang_version,
         flags: spv::WriterFlags::DEBUG | spv::WriterFlags::LABEL_VARYINGS,
         ..spv::Options::default()
     };
-    let words = spv::write_vec(&module, &info, &options, None).expect("SPIR-V backend failed");
-    dr::load_words(words).expect("produced SPIR-V does not parse")
+    let words = spv::write_vec(&module, &info, &options, None)?;
+    Ok(dr::load_words(words)?)
 }
 
-fn global_value(module: &dr::Module, id: u32) -> &dr::Instruction {
+fn global_value(module: &dr::Module, id: u32) -> crate::TestResult<&dr::Instruction> {
     module
         .types_global_values
         .iter()
         .find(|inst| inst.result_id == Some(id))
-        .unwrap_or_else(|| panic!("%{id} is not a global value"))
+        .ok_or_else(|| format!("%{id} is not a global value").into())
 }
 
 fn id_operand(operand: &Operand) -> u32 {
@@ -2645,7 +2732,7 @@ fn spec_operations(module: &dr::Module) -> Vec<Op> {
 }
 
 #[test]
-fn constant_folding_follows_glslang_outside_the_domain() {
+fn constant_folding_follows_glslang_outside_the_domain() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Fragment,
         "#version 450
@@ -2660,7 +2747,7 @@ fn constant_folding_follows_glslang_outside_the_domain() {
             int s = (1 << 33) + (7 >> 40) + (-8 >> 33) + int(1u << 32) + clamp(1, 3, 2) + 5 % 0;
             i = ivec4(s, 5 / 0, int(5u / 0u), 0);
         }",
-    );
+    )?;
     let words = constant_words(&module);
     for expected in [6_u32, i32::MAX.cast_unsigned(), u32::MAX, 2.0_f32.to_bits()] {
         assert!(words.contains(&expected), "{expected:#x} in {words:x?}");
@@ -2669,10 +2756,11 @@ fn constant_folding_follows_glslang_outside_the_domain() {
         words.iter().any(|&word| f32::from_bits(word).is_nan()),
         "{words:x?}"
     );
+    Ok(())
 }
 
 #[test]
-fn extended_integer_arithmetic_and_scalar_refract() {
+fn extended_integer_arithmetic_and_scalar_refract() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Fragment,
         "#version 450
@@ -2695,7 +2783,7 @@ fn extended_integer_arithmetic_and_scalar_refract() {
             p = high + low;
             r = refract(f, 1.0, 0.5);
         }",
-    );
+    )?;
     for op in [
         Op::IAddCarry,
         Op::ISubBorrow,
@@ -2704,6 +2792,7 @@ fn extended_integer_arithmetic_and_scalar_refract() {
     ] {
         assert_eq!(instructions(&module, op).len(), 1, "{op:?}");
     }
+    Ok(())
 }
 
 fn function_ops(module: &dr::Module) -> Vec<Op> {
@@ -2717,7 +2806,7 @@ fn function_ops(module: &dr::Module) -> Vec<Op> {
 }
 
 #[test]
-fn specialization_constants_match_glslang() {
+fn specialization_constants_match_glslang() -> crate::TestResult {
     let module = compile(
         ShaderStage::Fragment,
         r#"#version 450
@@ -2740,24 +2829,28 @@ void main() {
   if (B) o.y = 0.0;
 }
 "#,
-    );
+    )?;
     let ids = spec_ids(&module);
     assert_eq!(
         ids.iter().map(|&(spec, _)| spec).collect::<Vec<_>>(),
         [1, 4, 6, 7]
     );
-    let default = |spec: u32| {
-        let id = ids.iter().find(|&&(s, _)| s == spec).unwrap().1;
-        global_value(&module, id).clone()
+    let default = |spec: u32| -> crate::TestResult<dr::Instruction> {
+        let id = ids
+            .iter()
+            .find(|&&(s, _)| s == spec)
+            .ok_or_else(|| format!("no specialization constant {spec}"))?
+            .1;
+        Ok(global_value(&module, id)?.clone())
     };
-    assert_eq!(default(1).class.opcode, Op::SpecConstant);
-    assert_eq!(default(1).operands, [Operand::LiteralBit32(5)]);
+    assert_eq!(default(1)?.class.opcode, Op::SpecConstant);
+    assert_eq!(default(1)?.operands, [Operand::LiteralBit32(5)]);
     assert_eq!(
-        default(4).operands,
+        default(4)?.operands,
         [Operand::LiteralBit32(1.5f32.to_bits())]
     );
-    assert_eq!(default(6).operands, [Operand::LiteralBit32(2)]);
-    assert_eq!(default(7).class.opcode, Op::SpecConstantTrue);
+    assert_eq!(default(6)?.operands, [Operand::LiteralBit32(2)]);
+    assert_eq!(default(7)?.class.opcode, Op::SpecConstantTrue);
     let ops = spec_operations(&module);
     for expected in [
         Op::SGreaterThan,
@@ -2776,10 +2869,11 @@ void main() {
     let body = function_ops(&module);
     assert!(body.contains(&Op::VectorTimesScalar));
     assert!(body.contains(&Op::ConvertSToF));
+    Ok(())
 }
 
 #[test]
-fn specialization_constant_array_sizes() {
+fn specialization_constant_array_sizes() -> crate::TestResult {
     let module = compile(
         ShaderStage::Compute,
         r#"#version 450
@@ -2794,15 +2888,13 @@ void main() {
   total = local.length() + s.v.length() + tail.length() + local[0];
 }
 "#,
-    );
+    )?;
     let lengths: Vec<Op> = instructions(&module, Op::TypeArray)
         .iter()
         .map(|inst| {
-            global_value(&module, id_operand(&inst.operands[1]))
-                .class
-                .opcode
+            global_value(&module, id_operand(&inst.operands[1])).map(|value| value.class.opcode)
         })
-        .collect();
+        .collect::<crate::TestResult<_>>()?;
     assert!(lengths.contains(&Op::SpecConstant));
     assert!(lengths.contains(&Op::SpecConstantOp));
     assert!(lengths
@@ -2811,10 +2903,11 @@ void main() {
     assert_eq!(spec_ids(&module).len(), 1);
     assert!(spec_operations(&module).contains(&Op::IMul));
     assert!(!function_ops(&module).contains(&Op::ArrayLength));
+    Ok(())
 }
 
 #[test]
-fn specialized_workgroup_size() {
+fn specialized_workgroup_size() -> crate::TestResult {
     let source = r#"#version 450
 layout(local_size_x_id = 18, local_size_z_id = 19) in;
 layout(local_size_x = 32, local_size_y = 4) in;
@@ -2825,26 +2918,26 @@ void main() {
   a = gl_WorkGroupSize.x * gl_WorkGroupSize.y * gl_WorkGroupSize.z + tile[0];
 }
 "#;
-    let module = compile_for(ShaderStage::Compute, source, (1, 0));
+    let module = compile_for(ShaderStage::Compute, source, (1, 0))?;
     let ids = spec_ids(&module);
     assert_eq!(
         ids.iter().map(|&(spec, _)| spec).collect::<Vec<_>>(),
         [18, 19]
     );
     assert_eq!(
-        global_value(&module, ids[0].1).operands,
+        global_value(&module, ids[0].1)?.operands,
         [Operand::LiteralBit32(32)]
     );
     assert_eq!(
-        global_value(&module, ids[1].1).operands,
+        global_value(&module, ids[1].1)?.operands,
         [Operand::LiteralBit32(1)]
     );
     let builtin = module
         .annotations
         .iter()
         .find(|inst| inst.operands.get(2) == Some(&Operand::BuiltIn(spirv::BuiltIn::WorkgroupSize)))
-        .expect("no WorkgroupSize decoration");
-    let composite = global_value(&module, id_operand(&builtin.operands[0]));
+        .ok_or("no WorkgroupSize decoration")?;
+    let composite = global_value(&module, id_operand(&builtin.operands[0]))?;
     assert_eq!(composite.class.opcode, Op::SpecConstantComposite);
     assert_eq!(id_operand(&composite.operands[0]), ids[0].1);
     assert_eq!(id_operand(&composite.operands[2]), ids[1].1);
@@ -2861,7 +2954,7 @@ void main() {
     );
     assert!(spec_operations(&module).contains(&Op::CompositeExtract));
 
-    let raw = raw_instructions(&compile_words(ShaderStage::Compute, source, (1, 6)));
+    let raw = raw_instructions(&compile_words(ShaderStage::Compute, source, (1, 6))?);
     let find = |op: Op| {
         raw.iter()
             .filter(move |&&(code, _)| code == op as u32)
@@ -2874,7 +2967,7 @@ void main() {
         ]));
     let mode = find(Op::ExecutionModeId)
         .next()
-        .expect("no ExecutionModeId");
+        .ok_or("no ExecutionModeId")?;
     assert_eq!(mode[1], spirv::ExecutionMode::LocalSizeId as u32);
     let spec_of = |id: u32| {
         find(Op::Decorate)
@@ -2885,10 +2978,11 @@ void main() {
     assert_eq!(spec_of(mode[3]), None);
     assert_eq!(spec_of(mode[4]), Some(19));
     assert!(find(Op::Constant).any(|operands| operands[1] == mode[3] && operands[2] == 4));
+    Ok(())
 }
 
 #[test]
-fn specialization_constant_swizzles() {
+fn specialization_constant_swizzles() -> crate::TestResult {
     let raw = raw_instructions(&compile_words(
         ShaderStage::Fragment,
         r#"#version 450
@@ -2899,19 +2993,20 @@ layout(location = 0) out ivec2 o;
 void main() { o = S; }
 "#,
         (1, 0),
-    ));
+    )?);
     let shuffle = raw
         .iter()
         .find(|&&(code, ref operands)| {
             code == Op::SpecConstantOp as u32 && operands[2] == Op::VectorShuffle as u32
         })
-        .expect("no OpSpecConstantOp VectorShuffle");
+        .ok_or("no OpSpecConstantOp VectorShuffle")?;
     assert_eq!(shuffle.1[3], shuffle.1[4]);
     assert_eq!(shuffle.1[5..], [2, 0]);
+    Ok(())
 }
 
 #[test]
-fn specialization_constant_errors() {
+fn specialization_constant_errors() -> crate::TestResult {
     let case = parse(
         ShaderStage::Fragment,
         r#"#version 450
@@ -2922,7 +3017,10 @@ void main() {
 }
 "#,
     );
-    assert!(case.unwrap_err().contains("case label"));
+    assert!(case
+        .err()
+        .ok_or("expected an error")?
+        .contains("case label"));
     let derived = parse(
         ShaderStage::Fragment,
         r#"#version 450
@@ -2932,7 +3030,10 @@ layout(location = 0) out vec4 o;
 void main() { o = vec4(M); }
 "#,
     );
-    assert!(derived.unwrap_err().contains("constant_id"));
+    assert!(derived
+        .err()
+        .ok_or("expected an error")?
+        .contains("constant_id"));
     let floating = parse(
         ShaderStage::Fragment,
         r#"#version 450
@@ -2943,10 +3044,11 @@ void main() { o = vec4(G); }
 "#,
     );
     assert!(floating.is_err());
+    Ok(())
 }
 
 #[test]
-fn specialization_constants_baked_by_process_overrides() {
+fn specialization_constants_baked_by_process_overrides() -> crate::TestResult {
     let module = parse(
         ShaderStage::Compute,
         r#"#version 450
@@ -2957,25 +3059,22 @@ shared int tile[M];
 layout(std430, binding = 0) buffer Out { int a; };
 void main() { tile[0] = M * 2; a = tile[0]; }
 "#,
-    )
-    .unwrap();
-    let info = Validator::new(ValidationFlags::all(), Capabilities::all())
-        .validate(&module)
-        .unwrap();
+    )?;
+    let info = Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&module)?;
     let constants = rglsl::back::PipelineConstants::from_iter([("3".to_string(), 7.0)]);
     let (module, info) =
-        rglsl::back::pipeline_constants::process_overrides(&module, &info, None, &constants)
-            .unwrap();
-    let words = spv::write_vec(&module, &info, &spv::Options::default(), None).unwrap();
-    let module = dr::load_words(words).unwrap();
+        rglsl::back::pipeline_constants::process_overrides(&module, &info, None, &constants)?;
+    let words = spv::write_vec(&module, &info, &spv::Options::default(), None)?;
+    let module = dr::load_words(words)?;
     assert!(spec_ids(&module).is_empty());
     assert!(instructions(&module, Op::SpecConstantOp).is_empty());
     let array = instructions(&module, Op::TypeArray)[0];
-    assert_eq!(constant(&module, &array.operands[1]), 8);
+    assert_eq!(constant(&module, &array.operands[1])?, 8);
+    Ok(())
 }
 
 #[test]
-fn arrays_of_buffer_blocks_match_glslang() {
+fn arrays_of_buffer_blocks_match_glslang() -> crate::TestResult {
     let source = "#version 450
         layout(local_size_x = 1) in;
         struct S { vec4 x; float y[2]; };
@@ -2994,10 +3093,8 @@ fn arrays_of_buffer_blocks_match_glslang() {
         auto_map_bindings: true,
         ..glsl::Options::from(ShaderStage::Compute)
     };
-    let module = glsl::Frontend::default().parse(&options, source).unwrap();
-    let info = Validator::new(ValidationFlags::all(), Capabilities::all())
-        .validate(&module)
-        .unwrap();
+    let module = glsl::Frontend::default().parse(&options, source)?;
+    let info = Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&module)?;
     let words = spv::write_vec(
         &module,
         &info,
@@ -3006,13 +3103,12 @@ fn arrays_of_buffer_blocks_match_glslang() {
             ..spv::Options::default()
         },
         None,
-    )
-    .expect("SPIR-V backend failed");
-    crate::stage_io::spirv_val(&words);
-    let module = dr::load_words(words).expect("produced SPIR-V does not parse");
+    )?;
+    crate::stage_io::spirv_val(&words)?;
+    let module = dr::load_words(words)?;
     for (name, binding) in [("u", 0), ("b", 1), ("c", 2), ("implicit", 3)] {
         assert_eq!(
-            sorted_variable_decorations(&module, name),
+            sorted_variable_decorations(&module, name)?,
             [
                 (Decoration::Binding, vec![binding]),
                 (Decoration::DescriptorSet, vec![0])
@@ -3023,11 +3119,12 @@ fn arrays_of_buffer_blocks_match_glslang() {
     let mut blocks = decorated(&module, Decoration::Block);
     blocks.sort_unstable();
     assert_eq!(blocks, ["B", "C", "I", "P", "U"]);
-    assert_eq!(array_lengths(&module), [1, 2, 2, 2, 4, 4, 4]);
+    assert_eq!(array_lengths(&module)?, [1, 2, 2, 2, 4, 4, 4]);
+    Ok(())
 }
 
 #[test]
-fn function_variables_have_no_explicit_layout() {
+fn function_variables_have_no_explicit_layout() -> crate::TestResult {
     let module = parse(
         ShaderStage::Compute,
         "#version 450 core
@@ -3046,18 +3143,16 @@ fn function_variables_have_no_explicit_layout() {
             s = small;
         }",
     )
-    .unwrap_or_else(|e| panic!("shader rejected: {e}"));
-    let info = Validator::new(ValidationFlags::all(), Capabilities::all())
-        .validate(&module)
-        .unwrap();
+    .map_err(|e| format!("shader rejected: {e}"))?;
+    let info = Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&module)?;
     let options = spv::Options {
         lang_version: (1, 6),
         flags: spv::WriterFlags::DEBUG,
         ..spv::Options::default()
     };
-    let words = spv::write_vec(&module, &info, &options, None).expect("SPIR-V backend failed");
-    crate::stage_io::spirv_val_in(&words, &["--target-env", "vulkan1.3"]);
-    let module = dr::load_words(words).expect("produced SPIR-V does not parse");
+    let words = spv::write_vec(&module, &info, &options, None)?;
+    crate::stage_io::spirv_val_in(&words, &["--target-env", "vulkan1.3"])?;
+    let module = dr::load_words(words)?;
     let laid_out: Vec<u32> = module
         .annotations
         .iter()
@@ -3076,10 +3171,11 @@ fn function_variables_have_no_explicit_layout() {
         assert!(!laid_out.contains(&pointer.operands[1].unwrap_id_ref()));
     }
     assert!(!instructions(&module, Op::CopyLogical).is_empty());
+    Ok(())
 }
 
 #[test]
-fn layout_free_copies_before_spirv_1_4() {
+fn layout_free_copies_before_spirv_1_4() -> crate::TestResult {
     let source = "#version 450 core
         layout(local_size_x = 64) in;
         layout(set = 0, binding = 0, std430) buffer foo { int x[4]; } f;
@@ -3108,28 +3204,27 @@ fn layout_free_copies_before_spirv_1_4() {
             f.x[0] = int(dynamic) + x[gl_LocalInvocationIndex % 4u] + spilled + y[dynamic];
         }";
     let module =
-        parse(ShaderStage::Compute, source).unwrap_or_else(|e| panic!("shader rejected: {e}"));
-    let info = Validator::new(ValidationFlags::all(), Capabilities::all())
-        .validate(&module)
-        .unwrap();
+        parse(ShaderStage::Compute, source).map_err(|e| format!("shader rejected: {e}"))?;
+    let info = Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&module)?;
     for (lang_version, env) in [((1, 0), "vulkan1.0"), ((1, 6), "vulkan1.3")] {
         let options = spv::Options {
             lang_version,
             flags: spv::WriterFlags::DEBUG,
             ..spv::Options::default()
         };
-        let words = spv::write_vec(&module, &info, &options, None).expect("SPIR-V backend failed");
-        crate::stage_io::spirv_val_in(&words, &["--target-env", env]);
-        let spirv = dr::load_words(words).expect("produced SPIR-V does not parse");
+        let words = spv::write_vec(&module, &info, &options, None)?;
+        crate::stage_io::spirv_val_in(&words, &["--target-env", env])?;
+        let spirv = dr::load_words(words)?;
         assert_eq!(
             instructions(&spirv, Op::CopyLogical).is_empty(),
             lang_version < (1, 4)
         );
     }
+    Ok(())
 }
 
 #[test]
-fn unsized_arrays_of_opaque_types_match_glslang() {
+fn unsized_arrays_of_opaque_types_match_glslang() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Fragment,
         "#version 450
@@ -3142,8 +3237,8 @@ fn unsized_arrays_of_opaque_types_match_glslang() {
         void main() {
             o = texture(s[2], vec2(0.5)) + texture(sampler2D(t[1], sm), vec2(0.5));
         }",
-    );
-    assert_eq!(array_lengths(&module), [1, 1, 2, 3]);
+    )?;
+    assert_eq!(array_lengths(&module)?, [1, 1, 2, 3]);
     assert!(instructions(&module, Op::TypeRuntimeArray).is_empty());
     assert!(!has_capability(
         &module,
@@ -3158,12 +3253,14 @@ fn unsized_arrays_of_opaque_types_match_glslang() {
         layout(location = 0) out vec4 o;
         void main() { o = texture(s[i], vec2(0.5)); }",
     )
-    .unwrap_err();
+    .err()
+    .ok_or("expected an error")?;
     assert!(error.contains("non-constant"), "{error}");
+    Ok(())
 }
 
 #[test]
-fn specialization_constant_texture_offsets_are_constant() {
+fn specialization_constant_texture_offsets_are_constant() -> crate::TestResult {
     let module = compile(
         ShaderStage::Fragment,
         r#"#version 450
@@ -3174,21 +3271,22 @@ void main() {
   color_out = textureLodOffset(tex, vec2(0.0), 0.0, ivec2(offs, offs));
 }
 "#,
-    );
+    )?;
     let sample = instructions(&module, Op::ImageSampleExplicitLod)[0];
     assert_eq!(
         sample.operands[2],
         Operand::ImageOperands(spirv::ImageOperands::LOD | spirv::ImageOperands::CONST_OFFSET)
     );
-    let offset = global_value(&module, id_operand(&sample.operands[4]));
+    let offset = global_value(&module, id_operand(&sample.operands[4]))?;
     assert_eq!(offset.class.opcode, Op::SpecConstantComposite);
     assert!(!module.capabilities.iter().any(
         |inst| inst.operands[0] == Operand::Capability(spirv::Capability::ImageGatherExtended)
     ));
+    Ok(())
 }
 
 #[test]
-fn unsigned_specialization_conversions_avoid_uconvert_before_spirv_1_4() {
+fn unsigned_specialization_conversions_avoid_uconvert_before_spirv_1_4() -> crate::TestResult {
     let source = r#"#version 450
 #extension GL_EXT_shader_explicit_arithmetic_types : require
 layout(local_size_x = 1) in;
@@ -3204,12 +3302,13 @@ void main() {
   a = uint(u_to_u16) + u16_to_u + u64_to_u + uint(u_to_u64);
 }
 "#;
-    let old = spec_operations(&compile_for(ShaderStage::Compute, source, (1, 0)));
+    let old = spec_operations(&compile_for(ShaderStage::Compute, source, (1, 0))?);
     assert!(!old.contains(&Op::UConvert), "{old:?}");
     assert!(old.contains(&Op::SConvert));
     assert!(old.contains(&Op::BitwiseAnd));
-    let new = spec_operations(&compile_for(ShaderStage::Compute, source, (1, 4)));
+    let new = spec_operations(&compile_for(ShaderStage::Compute, source, (1, 4))?);
     assert!(new.contains(&Op::UConvert), "{new:?}");
+    Ok(())
 }
 
 fn non_uniform_ops(module: &dr::Module) -> Vec<Op> {
@@ -3256,7 +3355,7 @@ fn uses_descriptor_indexing(module: &dr::Module) -> bool {
 }
 
 #[test]
-fn nonuniform_index_decorates_the_descriptor_access() {
+fn nonuniform_index_decorates_the_descriptor_access() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Fragment,
         "#version 450
@@ -3267,7 +3366,7 @@ fn nonuniform_index_decorates_the_descriptor_access() {
         void main() {
             o = ubos[nonuniformEXT(index)].v;
         }",
-    );
+    )?;
     assert_eq!(
         non_uniform_ops(&module),
         [Op::Load, Op::AccessChain, Op::Load]
@@ -3282,10 +3381,11 @@ fn nonuniform_index_decorates_the_descriptor_access() {
     }
     assert!(uses_descriptor_indexing(&module));
     assert_eq!(instructions(&module, Op::TypeRuntimeArray).len(), 1);
+    Ok(())
 }
 
 #[test]
-fn nonuniform_texel_buffer_and_image_accesses() {
+fn nonuniform_texel_buffer_and_image_accesses() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Fragment,
         "#version 450
@@ -3300,7 +3400,7 @@ fn nonuniform_texel_buffer_and_image_accesses() {
             o += texelFetch(texels[nonuniformEXT(index)], 1);
             imageStore(images[nonuniformEXT(index)], ivec2(0), o);
         }",
-    );
+    )?;
     assert_eq!(
         non_uniform_ops(&module),
         [
@@ -3324,10 +3424,11 @@ fn nonuniform_texel_buffer_and_image_accesses() {
     ] {
         assert!(capabilities.contains(&capability), "{capability:?}");
     }
+    Ok(())
 }
 
 #[test]
-fn nonuniform_sampler_constructor_decorates_the_sampled_image() {
+fn nonuniform_sampler_constructor_decorates_the_sampled_image() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Fragment,
         "#version 450
@@ -3339,15 +3440,16 @@ fn nonuniform_sampler_constructor_decorates_the_sampled_image() {
         void main() {
             o = texture(nonuniformEXT(sampler2D(textures[index], samp)), vec2(0.5));
         }",
-    );
+    )?;
     assert_eq!(non_uniform_ops(&module), [Op::SampledImage]);
     let capabilities = capabilities(&module);
     assert!(capabilities.contains(&spirv::Capability::ShaderNonUniform));
     assert!(!capabilities.contains(&spirv::Capability::SampledImageArrayNonUniformIndexing));
+    Ok(())
 }
 
 #[test]
-fn constructed_sampler_from_a_nonuniform_texture_is_not_non_uniform() {
+fn constructed_sampler_from_a_nonuniform_texture_is_not_non_uniform() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Fragment,
         "#version 450
@@ -3359,17 +3461,18 @@ fn constructed_sampler_from_a_nonuniform_texture_is_not_non_uniform() {
         void main() {
             o = texture(sampler2D(textures[nonuniformEXT(index)], samp), vec2(0.5));
         }",
-    );
+    )?;
     assert_eq!(
         non_uniform_ops(&module),
         [Op::Load, Op::AccessChain, Op::Load]
     );
     assert!(capabilities(&module).contains(&spirv::Capability::SampledImageArrayNonUniformIndexing));
     assert!(instructions(&module, Op::TypeRuntimeArray).is_empty());
+    Ok(())
 }
 
 #[test]
-fn uniform_dynamic_indexing_of_texel_buffers_needs_descriptor_indexing() {
+fn uniform_dynamic_indexing_of_texel_buffers_needs_descriptor_indexing() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Fragment,
         "#version 450
@@ -3382,7 +3485,7 @@ fn uniform_dynamic_indexing_of_texel_buffers_needs_descriptor_indexing() {
             o = texelFetch(texels[index], 0) + imageLoad(images[index], 0)
                 + texture(textures[index], vec2(0.5));
         }",
-    );
+    )?;
     assert!(non_uniform_ops(&module).is_empty());
     let capabilities = capabilities(&module);
     assert!(capabilities.contains(&spirv::Capability::UniformTexelBufferArrayDynamicIndexing));
@@ -3390,10 +3493,11 @@ fn uniform_dynamic_indexing_of_texel_buffers_needs_descriptor_indexing() {
     assert!(!capabilities.contains(&spirv::Capability::ShaderNonUniform));
     assert!(!capabilities.contains(&spirv::Capability::SampledImageArrayDynamicIndexing));
     assert!(uses_descriptor_indexing(&module));
+    Ok(())
 }
 
 #[test]
-fn nonuniform_propagates_through_operators_but_not_conversions_or_calls() {
+fn nonuniform_propagates_through_operators_but_not_conversions_or_calls() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Fragment,
         "#version 450
@@ -3409,7 +3513,7 @@ fn nonuniform_propagates_through_operators_but_not_conversions_or_calls() {
             bool chosen = index > 0 ? n > 0 : false;
             o = float(sum) + converted + float(absolute) + constructed + float(chosen);
         }",
-    );
+    )?;
     assert_eq!(
         non_uniform_ops(&module),
         [
@@ -3422,10 +3526,11 @@ fn nonuniform_propagates_through_operators_but_not_conversions_or_calls() {
             Op::SGreaterThan,
         ]
     );
+    Ok(())
 }
 
 #[test]
-fn nonuniform_vectors_swizzles_and_assignments() {
+fn nonuniform_vectors_swizzles_and_assignments() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Fragment,
         "#version 450
@@ -3440,7 +3545,7 @@ fn nonuniform_vectors_swizzles_and_assignments() {
             v *= 2.0;
             o = vec4(xy, b, v.w);
         }",
-    );
+    )?;
     assert_eq!(
         non_uniform_ops(&module),
         [
@@ -3453,10 +3558,11 @@ fn nonuniform_vectors_swizzles_and_assignments() {
             Op::Load,
         ]
     );
+    Ok(())
 }
 
 #[test]
-fn nonuniform_function_results_parameters_and_out_arguments() {
+fn nonuniform_function_results_parameters_and_out_arguments() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Fragment,
         "#version 450
@@ -3473,7 +3579,7 @@ fn nonuniform_function_results_parameters_and_out_arguments() {
             int chosen = pick(index, written);
             o = blocks[chosen].v + blocks[written].v;
         }",
-    );
+    )?;
     let ops = non_uniform_ops(&module);
     assert_eq!(
         ops,
@@ -3488,10 +3594,11 @@ fn nonuniform_function_results_parameters_and_out_arguments() {
             Op::FAdd,
         ]
     );
+    Ok(())
 }
 
 #[test]
-fn nonuniform_stores_decorate_the_access_chain() {
+fn nonuniform_stores_decorate_the_access_chain() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Fragment,
         "#version 450
@@ -3501,15 +3608,16 @@ fn nonuniform_stores_decorate_the_access_chain() {
         void main() {
             buffers[nonuniformEXT(index)].value = 1.0;
         }",
-    );
+    )?;
     assert_eq!(non_uniform_ops(&module), [Op::Load, Op::AccessChain]);
     assert!(
         capabilities(&module).contains(&spirv::Capability::StorageBufferArrayNonUniformIndexing)
     );
+    Ok(())
 }
 
 #[test]
-fn nonuniform_constant_and_global_operands_get_a_fresh_value() {
+fn nonuniform_constant_and_global_operands_get_a_fresh_value() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Fragment,
         "#version 450
@@ -3520,7 +3628,7 @@ fn nonuniform_constant_and_global_operands_get_a_fresh_value() {
         void main() {
             o = blocks[nonuniformEXT(3)].v + texture(nonuniformEXT(single), vec2(0.5));
         }",
-    );
+    )?;
     assert_eq!(
         non_uniform_ops(&module),
         [
@@ -3531,10 +3639,11 @@ fn nonuniform_constant_and_global_operands_get_a_fresh_value() {
             Op::FAdd
         ]
     );
+    Ok(())
 }
 
 #[test]
-fn unsized_descriptor_arrays_indexed_with_constants_stay_sized() {
+fn unsized_descriptor_arrays_indexed_with_constants_stay_sized() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Fragment,
         "#version 450
@@ -3544,14 +3653,15 @@ fn unsized_descriptor_arrays_indexed_with_constants_stay_sized() {
         void main() {
             o = texture(textures[2], vec2(0.5));
         }",
-    );
+    )?;
     assert!(instructions(&module, Op::TypeRuntimeArray).is_empty());
-    assert_eq!(array_lengths(&module), [3]);
+    assert_eq!(array_lengths(&module)?, [3]);
     assert!(!capabilities(&module).contains(&spirv::Capability::RuntimeDescriptorArray));
+    Ok(())
 }
 
 #[test]
-fn descriptor_indexing_is_core_in_spirv_1_5() {
+fn descriptor_indexing_is_core_in_spirv_1_5() -> crate::TestResult {
     let module = compile_for(
         ShaderStage::Fragment,
         "#version 450
@@ -3563,13 +3673,14 @@ fn descriptor_indexing_is_core_in_spirv_1_5() {
             o = texture(textures[nonuniformEXT(index)], vec2(0.5));
         }",
         (1, 5),
-    );
+    )?;
     assert!(!uses_descriptor_indexing(&module));
     assert!(capabilities(&module).contains(&spirv::Capability::ShaderNonUniform));
+    Ok(())
 }
 
 #[test]
-fn nonuniform_matrices_and_indexed_temporaries() {
+fn nonuniform_matrices_and_indexed_temporaries() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Fragment,
         "#version 450
@@ -3584,7 +3695,7 @@ fn nonuniform_matrices_and_indexed_temporaries() {
             int picked = int[3](1, 2, 3)[n];
             o = vec4(sum[0], product[1]) + vec4(picked);
         }",
-    );
+    )?;
     assert_eq!(
         non_uniform_ops(&module),
         [
@@ -3596,6 +3707,7 @@ fn nonuniform_matrices_and_indexed_temporaries() {
             Op::Load,
         ]
     );
+    Ok(())
 }
 
 fn physical_accesses(module: &dr::Module) -> Vec<(Op, u32)> {
@@ -3680,7 +3792,7 @@ fn constants_64(module: &dr::Module) -> Vec<u64> {
 }
 
 #[test]
-fn buffer_reference_addressing_model_and_layout() {
+fn buffer_reference_addressing_model_and_layout() -> crate::TestResult {
     let module = compile(
         ShaderStage::Fragment,
         "#version 450
@@ -3694,10 +3806,10 @@ fn buffer_reference_addressing_model_and_layout() {
         };
         layout(binding = 0, std430) buffer Root { Node head; } root;
         void main() { root.head.next.value = root.head.value; }",
-    );
+    )?;
     assert!(module.capabilities.iter().any(|inst| inst.operands[0]
         == Operand::Capability(spirv::Capability::PhysicalStorageBufferAddresses)));
-    let model = &module.memory_model.as_ref().expect("memory model").operands;
+    let model = &module.memory_model.as_ref().ok_or("memory model")?.operands;
     assert_eq!(
         model[0],
         Operand::AddressingModel(spirv::AddressingModel::PhysicalStorageBuffer64)
@@ -3715,10 +3827,11 @@ fn buffer_reference_addressing_model_and_layout() {
             .contains(&(String::from("basis"), 16))
     );
     assert!(decorated(&module, Decoration::Block).contains(&String::from("Node")));
+    Ok(())
 }
 
 #[test]
-fn buffer_reference_scalar_layout() {
+fn buffer_reference_scalar_layout() -> crate::TestResult {
     let module = compile(
         ShaderStage::Fragment,
         "#version 450
@@ -3727,7 +3840,7 @@ fn buffer_reference_scalar_layout() {
         layout(buffer_reference, scalar) buffer S { float a; vec3 b; vec3 c[2]; float d; };
         layout(binding = 0) buffer Root { S s; } root;
         void main() { root.s.d = root.s.c[1].y; }",
-    );
+    )?;
     let offsets = physical_member_decorations(&module, Decoration::Offset);
     for (name, offset) in [("a", 0), ("b", 4), ("c", 16), ("d", 40)] {
         assert!(
@@ -3736,10 +3849,11 @@ fn buffer_reference_scalar_layout() {
         );
     }
     assert_eq!(physical_accesses(&module), [(Op::Load, 4), (Op::Store, 8)]);
+    Ok(())
 }
 
 #[test]
-fn buffer_reference_aligned_operands() {
+fn buffer_reference_aligned_operands() -> crate::TestResult {
     let module = compile(
         ShaderStage::Fragment,
         "#version 450
@@ -3757,7 +3871,7 @@ fn buffer_reference_aligned_operands() {
             root.r.c = root.r.v.y;
             root.s.y = root.s.x;
         }",
-    );
+    )?;
     assert_eq!(
         physical_accesses(&module),
         [
@@ -3769,10 +3883,11 @@ fn buffer_reference_aligned_operands() {
             (Op::Store, 4),
         ]
     );
+    Ok(())
 }
 
 #[test]
-fn buffer_reference_loads_of_references_are_aligned_to_eight() {
+fn buffer_reference_loads_of_references_are_aligned_to_eight() -> crate::TestResult {
     let module = compile(
         ShaderStage::Fragment,
         "#version 450
@@ -3782,14 +3897,15 @@ fn buffer_reference_loads_of_references_are_aligned_to_eight() {
         layout(buffer_reference, buffer_reference_align = 64, std430) buffer A { uint y; };
         layout(binding = 0) buffer Root { B b; } root;
         void main() { root.b.a.y = root.b.x; }",
-    );
+    )?;
     let mut accesses = physical_accesses(&module);
     accesses.sort_by_key(|&(op, alignment)| (op as u32, alignment));
     assert_eq!(accesses, [(Op::Load, 4), (Op::Load, 8), (Op::Store, 64)]);
+    Ok(())
 }
 
 #[test]
-fn buffer_reference_arithmetic_uses_padded_block_size() {
+fn buffer_reference_arithmetic_uses_padded_block_size() -> crate::TestResult {
     let module = compile(
         ShaderStage::Fragment,
         "#version 450
@@ -3805,7 +3921,7 @@ fn buffer_reference_arithmetic_uses_padded_block_size() {
             root.u = root.u + 5;
             root.d = (t + 1) - t;
         }",
-    );
+    )?;
     let constants = constants_64(&module);
     for expected in [24, 16, 80, 8] {
         assert!(constants.contains(&expected), "{constants:?}");
@@ -3813,10 +3929,11 @@ fn buffer_reference_arithmetic_uses_padded_block_size() {
     assert!(!instructions(&module, Op::ConvertPtrToU).is_empty());
     assert!(!instructions(&module, Op::ConvertUToPtr).is_empty());
     assert!(!instructions(&module, Op::SDiv).is_empty());
+    Ok(())
 }
 
 #[test]
-fn buffer_reference_constant_folding() {
+fn buffer_reference_constant_folding() -> crate::TestResult {
     let module = compile(
         ShaderStage::Fragment,
         "#version 450
@@ -3826,7 +3943,7 @@ fn buffer_reference_constant_folding() {
         const uint64_t size = uint64_t(T(uint64_t(0)) + 1);
         layout(location = 0) out vec4 o;
         void main() { float a[int(size)]; o = vec4(a.length()); }",
-    );
+    )?;
     let constants: Vec<u32> = module
         .types_global_values
         .iter()
@@ -3837,10 +3954,11 @@ fn buffer_reference_constant_folding() {
         })
         .collect();
     assert!(constants.contains(&64), "{constants:?}");
+    Ok(())
 }
 
 #[test]
-fn buffer_reference_uvec2_conversions_are_bitcasts() {
+fn buffer_reference_uvec2_conversions_are_bitcasts() -> crate::TestResult {
     let module = compile(
         ShaderStage::Fragment,
         "#version 450
@@ -3849,13 +3967,14 @@ fn buffer_reference_uvec2_conversions_are_bitcasts() {
         layout(location = 0) flat in uvec2 address;
         layout(location = 0) out uvec2 o;
         void main() { T t = T(address); t.x = 1; o = uvec2(t); }",
-    );
+    )?;
     assert_eq!(instructions(&module, Op::Bitcast).len(), 2);
     assert!(instructions(&module, Op::ConvertUToPtr).is_empty());
+    Ok(())
 }
 
 #[test]
-fn buffer_reference_pointer_decorations() {
+fn buffer_reference_pointer_decorations() -> crate::TestResult {
     let module = compile(
         ShaderStage::Fragment,
         "#version 450
@@ -3871,7 +3990,7 @@ fn buffer_reference_pointer_decorations() {
             global = plain;
             root.v = f(local) + g(plain) + global.x;
         }",
-    );
+    )?;
     let aliased = decorated(&module, Decoration::AliasedPointer);
     for name in ["plain", "global", "b"] {
         assert!(aliased.contains(&String::from(name)), "{aliased:?}");
@@ -3884,10 +4003,11 @@ fn buffer_reference_pointer_decorations() {
         physical_member_decorations(&module, Decoration::NonWritable)
             .contains(&(String::from("x"), 0))
     );
+    Ok(())
 }
 
 #[test]
-fn buffer_reference_coherent_uses_vulkan_memory_model() {
+fn buffer_reference_coherent_uses_vulkan_memory_model() -> crate::TestResult {
     let module = compile(
         ShaderStage::Compute,
         "#version 450
@@ -3896,8 +4016,8 @@ fn buffer_reference_coherent_uses_vulkan_memory_model() {
         layout(buffer_reference, std430) buffer Ref { coherent uint c; volatile uint v; uint p; };
         layout(push_constant) uniform Push { Ref ref; } pc;
         void main() { pc.ref.c = pc.ref.v + pc.ref.p; }",
-    );
-    let model = &module.memory_model.as_ref().expect("memory model").operands;
+    )?;
+    let model = &module.memory_model.as_ref().ok_or("memory model")?.operands;
     assert_eq!(model[1], Operand::MemoryModel(spirv::MemoryModel::Vulkan));
     let masks = memory_masks(&module);
     use spirv::MemoryAccess as Ma;
@@ -3910,10 +4030,11 @@ fn buffer_reference_coherent_uses_vulkan_memory_model() {
         Op::Store,
         Ma::ALIGNED | Ma::MAKE_POINTER_AVAILABLE | Ma::NON_PRIVATE_POINTER
     )));
+    Ok(())
 }
 
 #[test]
-fn buffer_reference_atomics() {
+fn buffer_reference_atomics() -> crate::TestResult {
     let module = compile(
         ShaderStage::Fragment,
         "#version 450
@@ -3922,14 +4043,15 @@ fn buffer_reference_atomics() {
         layout(binding = 0) buffer Root { T t; } root;
         layout(location = 0) flat in uint i;
         void main() { atomicAdd(root.t.x[i], 1u); }",
-    );
+    )?;
     let atomics = instructions(&module, Op::AtomicIAdd);
     assert_eq!(atomics.len(), 1);
     assert_eq!(
-        constant(&module, &atomics[0].operands[1]),
+        constant(&module, &atomics[0].operands[1])?,
         spirv::Scope::Device as u32
     );
-    assert_eq!(constant(&module, &atomics[0].operands[2]), 0);
+    assert_eq!(constant(&module, &atomics[0].operands[2])?, 0);
+    Ok(())
 }
 
 #[test]
@@ -3981,7 +4103,7 @@ fn buffer_reference_errors() {
 }
 
 #[test]
-fn reference_strides_agree_with_block_layouts() {
+fn reference_strides_agree_with_block_layouts() -> crate::TestResult {
     for packing in ["std140", "std430", "scalar"] {
         let source = format!(
             "#version 450
@@ -4007,17 +4129,15 @@ fn reference_strides_agree_with_block_layouts() {
             }}"
         );
         let module = parse(ShaderStage::Fragment, &source)
-            .unwrap_or_else(|e| panic!("{packing}: shader rejected: {e}"));
-        let info = Validator::new(ValidationFlags::all(), Capabilities::all())
-            .validate(&module)
-            .unwrap();
-        let words = spv::write_vec(&module, &info, &spv::Options::default(), None)
-            .expect("SPIR-V backend failed");
+            .map_err(|e| format!("{packing}: shader rejected: {e}"))?;
+        let info = Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&module)?;
+        let words = spv::write_vec(&module, &info, &spv::Options::default(), None)?;
         crate::stage_io::spirv_val_in(
             &words,
             &["--target-env", "vulkan1.0", "--scalar-block-layout"],
-        );
+        )?;
     }
+    Ok(())
 }
 
 fn image_type_operands(module: &dr::Module) -> Vec<Vec<Operand>> {
@@ -4040,7 +4160,7 @@ fn literal_operands(module: &dr::Module, decoration: Decoration) -> Vec<u32> {
 }
 
 #[test]
-fn subpass_inputs_are_read_at_the_fragment() {
+fn subpass_inputs_are_read_at_the_fragment() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Fragment,
         "#version 450
@@ -4056,7 +4176,7 @@ fn subpass_inputs_are_read_at_the_fragment() {
             i = subpassLoad(samples, 3);
             read(samples);
         }",
-    );
+    )?;
     let subpass = |multi: u32| {
         vec![
             Operand::Dim(spirv::Dim::DimSubpassData),
@@ -4078,10 +4198,10 @@ fn subpass_inputs_are_read_at_the_fragment() {
             .types_global_values
             .iter()
             .find(|inst| inst.result_id == Some(coordinate))
-            .expect("the coordinate is a constant");
+            .ok_or("the coordinate is a constant")?;
         assert_eq!(composite.class.opcode, Op::ConstantComposite);
         for component in &composite.operands {
-            assert_eq!(constant(&module, component), 0);
+            assert_eq!(constant(&module, component)?, 0);
         }
     }
     let mut samples: Vec<u32> = reads
@@ -4094,7 +4214,7 @@ fn subpass_inputs_are_read_at_the_fragment() {
             );
             constant(&module, &read.operands[3])
         })
-        .collect();
+        .collect::<crate::TestResult<_>>()?;
     samples.sort_unstable();
     assert_eq!(samples, [2, 3]);
     assert!(instructions(&module, Op::ImageFetch).is_empty());
@@ -4107,10 +4227,11 @@ fn subpass_inputs_are_read_at_the_fragment() {
         [1, 2]
     );
     assert!(capabilities(&module).contains(&spirv::Capability::InputAttachment));
+    Ok(())
 }
 
 #[test]
-fn optional_input_attachment_index_is_not_decorated() {
+fn optional_input_attachment_index_is_not_decorated() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Fragment,
         "#version 460
@@ -4120,13 +4241,14 @@ fn optional_input_attachment_index_is_not_decorated() {
         void main() {
             o = subpassLoad(ia);
         }",
-    );
+    )?;
     assert!(decorated(&module, Decoration::InputAttachmentIndex).is_empty());
     assert_eq!(instructions(&module, Op::ImageRead).len(), 1);
+    Ok(())
 }
 
 #[test]
-fn subpass_input_arrays_declare_the_indexing_capabilities() {
+fn subpass_input_arrays_declare_the_indexing_capabilities() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Fragment,
         "#version 450
@@ -4142,7 +4264,7 @@ fn subpass_input_arrays_declare_the_indexing_capabilities() {
             o += subpassLoad(nonUniform[nonuniformEXT(index)]);
             o += subpassLoad(sized[2]);
         }",
-    );
+    )?;
     assert_eq!(
         non_uniform_ops(&module),
         [Op::Load, Op::AccessChain, Op::Load]
@@ -4163,10 +4285,11 @@ fn subpass_input_arrays_declare_the_indexing_capabilities() {
         literal_operands(&module, Decoration::InputAttachmentIndex),
         [0, 1, 2]
     );
+    Ok(())
 }
 
 #[test]
-fn nonuniform_subpass_input_is_copied() {
+fn nonuniform_subpass_input_is_copied() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Fragment,
         "#version 450
@@ -4176,12 +4299,13 @@ fn nonuniform_subpass_input_is_copied() {
         void main() {
             o = subpassLoad(nonuniformEXT(ia));
         }",
-    );
+    )?;
     assert_eq!(non_uniform_ops(&module), [Op::CopyObject]);
+    Ok(())
 }
 
 #[test]
-fn subpass_input_errors() {
+fn subpass_input_errors() -> crate::TestResult {
     let cases = [
         (
             ShaderStage::Vertex,
@@ -4236,22 +4360,25 @@ fn subpass_input_errors() {
     ];
     for (stage, declarations, expected) in cases {
         let source = format!("#version 450\n{declarations}\nvoid main() {{}}\n");
-        let error = parse(stage, &source).unwrap_err();
+        let error = parse(stage, &source).err().ok_or("expected an error")?;
         assert!(error.contains(expected), "{source}: {error}");
     }
+    Ok(())
 }
 
-fn compile_valid_1_3(stage: ShaderStage, source: &str) -> dr::Module {
-    let words = compile_words_with_names(stage, source, (1, 3));
-    crate::stage_io::spirv_val_in(&words, &["--target-env", "vulkan1.1"]);
-    dr::load_words(words).expect("produced SPIR-V does not parse")
+fn compile_valid_1_3(stage: ShaderStage, source: &str) -> crate::TestResult<dr::Module> {
+    let words = compile_words_with_names(stage, source, (1, 3))?;
+    crate::stage_io::spirv_val_in(&words, &["--target-env", "vulkan1.1"])?;
+    Ok(dr::load_words(words)?)
 }
 
-fn compile_words_with_names(stage: ShaderStage, source: &str, lang_version: (u8, u8)) -> Vec<u32> {
-    let module = parse(stage, source).unwrap_or_else(|e| panic!("shader rejected: {e}"));
-    let info = Validator::new(ValidationFlags::all(), Capabilities::all())
-        .validate(&module)
-        .expect("validated in parse");
+fn compile_words_with_names(
+    stage: ShaderStage,
+    source: &str,
+    lang_version: (u8, u8),
+) -> crate::TestResult<Vec<u32>> {
+    let module = parse(stage, source).map_err(|e| format!("shader rejected: {e}"))?;
+    let info = Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&module)?;
     let options = spv::Options {
         lang_version,
         flags: spv::WriterFlags::DEBUG
@@ -4259,7 +4386,7 @@ fn compile_words_with_names(stage: ShaderStage, source: &str, lang_version: (u8,
             | spv::WriterFlags::SMALL_TYPE_CAPABILITIES_BY_USE,
         ..spv::Options::default()
     };
-    spv::write_vec(&module, &info, &options, None).expect("SPIR-V backend failed")
+    Ok(spv::write_vec(&module, &info, &options, None)?)
 }
 
 fn has_decoration(module: &dr::Module, id: u32, decoration: Decoration) -> bool {
@@ -4270,15 +4397,19 @@ fn has_decoration(module: &dr::Module, id: u32, decoration: Decoration) -> bool 
     })
 }
 
-fn scope_and_semantics(module: &dr::Module, inst: &dr::Instruction, first: usize) -> (u32, u32) {
-    (
-        constant(module, &inst.operands[first]),
-        constant(module, &inst.operands[first + 1]),
-    )
+fn scope_and_semantics(
+    module: &dr::Module,
+    inst: &dr::Instruction,
+    first: usize,
+) -> crate::TestResult<(u32, u32)> {
+    Ok((
+        constant(module, &inst.operands[first])?,
+        constant(module, &inst.operands[first + 1])?,
+    ))
 }
 
 #[test]
-fn image_atomics_match_glslang() {
+fn image_atomics_match_glslang() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Compute,
         "#version 450
@@ -4299,7 +4430,7 @@ fn image_atomics_match_glslang() {
             r[8] = uint(imageAtomicMin(a, ivec3(1, 2, 3), -1));
             r[9] = uint(imageAtomicExchange(f, ivec2(0), 1.0));
         }",
-    );
+    )?;
     assert_eq!(instructions(&module, Op::ImageTexelPointer).len(), 10);
     for (op, count) in [
         (Op::AtomicIAdd, 1),
@@ -4316,24 +4447,25 @@ fn image_atomics_match_glslang() {
         assert_eq!(atomics.len(), count, "{op:?}");
         for atomic in atomics {
             assert_eq!(
-                scope_and_semantics(&module, atomic, 1),
+                scope_and_semantics(&module, atomic, 1)?,
                 (spirv::Scope::Device as u32, 0),
                 "{op:?}"
             );
         }
     }
     let swap = instructions(&module, Op::AtomicCompareExchange)[0];
-    assert_eq!(constant(&module, &swap.operands[3]), 0);
-    assert_eq!(constant(&module, &swap.operands[4]), 9);
-    assert_eq!(constant(&module, &swap.operands[5]), 8);
+    assert_eq!(constant(&module, &swap.operands[3])?, 0);
+    assert_eq!(constant(&module, &swap.operands[4])?, 9);
+    assert_eq!(constant(&module, &swap.operands[5])?, 8);
     for pointer in instructions(&module, Op::ImageTexelPointer) {
-        assert_eq!(constant(&module, &pointer.operands[2]), 0);
+        assert_eq!(constant(&module, &pointer.operands[2])?, 0);
     }
     assert!(decorated(&module, Decoration::NonUniform).is_empty());
+    Ok(())
 }
 
 #[test]
-fn image_atomics_on_non_uniform_elements() {
+fn image_atomics_on_non_uniform_elements() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Fragment,
         "#version 450
@@ -4344,21 +4476,25 @@ fn image_atomics_on_non_uniform_elements() {
             imageAtomicAdd(data[nonuniformEXT(rIndex)], 0, 0);
             imageAtomicAdd(data[rIndex], 1, 1);
         }",
-    );
+    )?;
     let chains = instructions(&module, Op::AccessChain);
     let pointers = instructions(&module, Op::ImageTexelPointer);
     assert_eq!((chains.len(), pointers.len()), (2, 2));
+    let first_chain = chains[0].result_id.ok_or("an untyped chain")?;
+    let second_chain = chains[1].result_id.ok_or("an untyped chain")?;
     let image_loads = instructions(&module, Op::Load)
         .into_iter()
         .filter(|load| {
-            load.operands[0] == Operand::IdRef(chains[0].result_id.unwrap())
-                || load.operands[0] == Operand::IdRef(chains[1].result_id.unwrap())
+            load.operands[0] == Operand::IdRef(first_chain)
+                || load.operands[0] == Operand::IdRef(second_chain)
         })
         .count();
     assert_eq!(image_loads, 0);
     for (index, non_uniform) in [(0, true), (1, false)] {
-        let chain = chains[index].result_id.unwrap();
-        let pointer = pointers[index].result_id.unwrap();
+        let chain = chains[index].result_id.ok_or("a chain without a result")?;
+        let pointer = pointers[index]
+            .result_id
+            .ok_or("a pointer without a result")?;
         assert_eq!(
             has_decoration(&module, chain, Decoration::NonUniform),
             non_uniform
@@ -4377,10 +4513,11 @@ fn image_atomics_on_non_uniform_elements() {
     ] {
         assert!(has_capability(&module, capability), "{capability:?}");
     }
+    Ok(())
 }
 
 #[test]
-fn image_atomics_on_multisampled_images() {
+fn image_atomics_on_multisampled_images() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Compute,
         "#version 450
@@ -4391,7 +4528,7 @@ fn image_atomics_on_multisampled_images() {
             imageAtomicOr(ms, ivec2(1), 3, 5);
             imageAtomicAdd(u, ivec2(0), 1u);
         }",
-    );
+    )?;
     assert!(has_capability(
         &module,
         spirv::Capability::StorageImageMultisample
@@ -4401,12 +4538,13 @@ fn image_atomics_on_multisampled_images() {
     let samples: Vec<u32> = pointers
         .iter()
         .map(|pointer| constant(&module, &pointer.operands[2]))
-        .collect();
+        .collect::<crate::TestResult<_>>()?;
     assert_eq!(samples, [3, 0]);
+    Ok(())
 }
 
 #[test]
-fn scoped_atomics_match_glslang() {
+fn scoped_atomics_match_glslang() -> crate::TestResult {
     let module = compile_valid_1_3(
         ShaderStage::Compute,
         "#version 450
@@ -4425,30 +4563,31 @@ fn scoped_atomics_match_glslang() {
             imageAtomicStore(image, ivec2(0), v, gl_ScopeDevice, gl_StorageSemanticsImage, gl_SemanticsRelease);
             imageAtomicXor(image, ivec2(0), v, gl_ScopeInvocation, 0, 0);
         }",
-    );
+    )?;
     let loads = instructions(&module, Op::AtomicLoad);
     assert_eq!(loads.len(), 2);
-    assert_eq!(scope_and_semantics(&module, loads[0], 1), (1, 0x42));
-    assert_eq!(scope_and_semantics(&module, loads[1], 1), (1, 0x802));
+    assert_eq!(scope_and_semantics(&module, loads[0], 1)?, (1, 0x42));
+    assert_eq!(scope_and_semantics(&module, loads[1], 1)?, (1, 0x802));
     let stores = instructions(&module, Op::AtomicStore);
     assert_eq!(stores.len(), 2);
-    assert_eq!(scope_and_semantics(&module, stores[0], 1), (2, 0x104));
-    assert_eq!(scope_and_semantics(&module, stores[1], 1), (1, 0x804));
+    assert_eq!(scope_and_semantics(&module, stores[0], 1)?, (2, 0x104));
+    assert_eq!(scope_and_semantics(&module, stores[1], 1)?, (1, 0x804));
     let add = instructions(&module, Op::AtomicIAdd)[0];
-    assert_eq!(scope_and_semantics(&module, add, 1), (3, 0));
+    assert_eq!(scope_and_semantics(&module, add, 1)?, (3, 0));
     let swap = instructions(&module, Op::AtomicCompareExchange)[0];
-    assert_eq!(scope_and_semantics(&module, swap, 1), (1, 0x48));
-    assert_eq!(constant(&module, &swap.operands[3]), 0x42);
+    assert_eq!(scope_and_semantics(&module, swap, 1)?, (1, 0x48));
+    assert_eq!(constant(&module, &swap.operands[3])?, 0x42);
     let xor = instructions(&module, Op::AtomicXor)[0];
-    assert_eq!(scope_and_semantics(&module, xor, 1), (4, 0));
+    assert_eq!(scope_and_semantics(&module, xor, 1)?, (4, 0));
     assert!(!has_capability(
         &module,
         spirv::Capability::VulkanMemoryModel
     ));
+    Ok(())
 }
 
 #[test]
-fn availability_semantics_select_the_vulkan_memory_model() {
+fn availability_semantics_select_the_vulkan_memory_model() -> crate::TestResult {
     let module = compile_valid_1_3(
         ShaderStage::Compute,
         "#version 450
@@ -4459,19 +4598,24 @@ fn availability_semantics_select_the_vulkan_memory_model() {
             atomicStore(b.x, 1u, gl_ScopeQueueFamily, gl_StorageSemanticsBuffer,
                 gl_SemanticsRelease | gl_SemanticsMakeAvailable);
         }",
-    );
+    )?;
     assert!(has_capability(
         &module,
         spirv::Capability::VulkanMemoryModel
     ));
-    let model = &module.memory_model.as_ref().unwrap().operands[1];
+    let model = &module
+        .memory_model
+        .as_ref()
+        .ok_or("no memory model")?
+        .operands[1];
     assert_eq!(*model, Operand::MemoryModel(spirv::MemoryModel::Vulkan));
     let store = instructions(&module, Op::AtomicStore)[0];
-    assert_eq!(scope_and_semantics(&module, store, 1), (5, 0x2044));
+    assert_eq!(scope_and_semantics(&module, store, 1)?, (5, 0x2044));
+    Ok(())
 }
 
 #[test]
-fn scoped_barriers_match_glslang() {
+fn scoped_barriers_match_glslang() -> crate::TestResult {
     let module = compile_valid_1_3(
         ShaderStage::Compute,
         "#version 450
@@ -4487,15 +4631,15 @@ fn scoped_barriers_match_glslang() {
             memoryBarrierImage();
             groupMemoryBarrier();
         }",
-    );
+    )?;
     let control = instructions(&module, Op::ControlBarrier);
     assert_eq!(control.len(), 1);
-    assert_eq!(constant(&module, &control[0].operands[0]), 2);
-    assert_eq!(scope_and_semantics(&module, control[0], 1), (1, 0x148));
+    assert_eq!(constant(&module, &control[0].operands[0])?, 2);
+    assert_eq!(scope_and_semantics(&module, control[0], 1)?, (1, 0x148));
     let memory: Vec<(u32, u32)> = instructions(&module, Op::MemoryBarrier)
         .into_iter()
         .map(|barrier| scope_and_semantics(&module, barrier, 0))
-        .collect();
+        .collect::<crate::TestResult<_>>()?;
     assert_eq!(
         memory,
         [
@@ -4507,10 +4651,11 @@ fn scoped_barriers_match_glslang() {
             (2, 0xd48)
         ]
     );
+    Ok(())
 }
 
 #[test]
-fn coherent_images_under_the_vulkan_memory_model() {
+fn coherent_images_under_the_vulkan_memory_model() -> crate::TestResult {
     use spirv::ImageOperands as Io;
     let module = compile_valid_1_3(
         ShaderStage::Compute,
@@ -4527,8 +4672,8 @@ fn coherent_images_under_the_vulkan_memory_model() {
             imageStore(w, ivec2(0), t);
             imageAtomicAdd(v, ivec2(0), 1);
         }",
-    );
-    let operands = |inst: &dr::Instruction, from: usize| -> (u32, Option<u32>) {
+    )?;
+    let operands = |inst: &dr::Instruction, from: usize| -> crate::TestResult<(u32, Option<u32>)> {
         let mask = match inst.operands.get(from) {
             Some(&Operand::ImageOperands(mask)) => mask.bits(),
             None => 0,
@@ -4537,28 +4682,32 @@ fn coherent_images_under_the_vulkan_memory_model() {
         let scope = inst
             .operands
             .get(from + 1)
-            .map(|scope| constant(&module, scope));
-        (mask, scope)
+            .map(|scope| constant(&module, scope))
+            .transpose()?;
+        Ok((mask, scope))
     };
     let reads = instructions(&module, Op::ImageRead);
     assert_eq!(
-        operands(reads[0], 2),
+        operands(reads[0], 2)?,
         (
             (Io::MAKE_TEXEL_VISIBLE | Io::NON_PRIVATE_TEXEL | Io::VOLATILE_TEXEL).bits(),
             Some(spirv::Scope::QueueFamily as u32)
         )
     );
     assert_eq!(
-        operands(reads[1], 2),
+        operands(reads[1], 2)?,
         (
             (Io::MAKE_TEXEL_VISIBLE | Io::NON_PRIVATE_TEXEL).bits(),
             Some(spirv::Scope::Workgroup as u32)
         )
     );
     let writes = instructions(&module, Op::ImageWrite);
-    assert_eq!(operands(writes[0], 3), (Io::NON_PRIVATE_TEXEL.bits(), None));
     assert_eq!(
-        operands(writes[1], 3),
+        operands(writes[0], 3)?,
+        (Io::NON_PRIVATE_TEXEL.bits(), None)
+    );
+    assert_eq!(
+        operands(writes[1], 3)?,
         (
             (Io::MAKE_TEXEL_AVAILABLE | Io::NON_PRIVATE_TEXEL).bits(),
             Some(spirv::Scope::Workgroup as u32)
@@ -4566,14 +4715,15 @@ fn coherent_images_under_the_vulkan_memory_model() {
     );
     let add = instructions(&module, Op::AtomicIAdd)[0];
     assert_eq!(
-        scope_and_semantics(&module, add, 1),
+        scope_and_semantics(&module, add, 1)?,
         (spirv::Scope::QueueFamily as u32, 0x8000)
     );
     assert!(decorated(&module, Decoration::Coherent).is_empty());
+    Ok(())
 }
 
 #[test]
-fn memory_scope_semantics_errors() {
+fn memory_scope_semantics_errors() -> crate::TestResult {
     let cases = [
         (
             "void main() { memoryBarrier(gl_ScopeDevice, 0, 0); }",
@@ -4614,16 +4764,21 @@ fn memory_scope_semantics_errors() {
     ];
     for (body, expected) in cases {
         let source = format!("#version 450\nlayout(local_size_x = 1) in;\n{body}\n");
-        let error = parse(ShaderStage::Compute, &source).unwrap_err();
+        let error = parse(ShaderStage::Compute, &source)
+            .err()
+            .ok_or("expected an error")?;
         assert!(error.contains(expected), "{source}: {error}");
     }
+    Ok(())
 }
 
-fn message_words(stage: ShaderStage, source: &str, lang_version: (u8, u8)) -> Vec<u32> {
-    let module = parse(stage, source).unwrap_or_else(|e| panic!("shader rejected: {e}"));
-    let info = Validator::new(ValidationFlags::all(), Capabilities::all())
-        .validate(&module)
-        .expect("validated in parse");
+fn message_words(
+    stage: ShaderStage,
+    source: &str,
+    lang_version: (u8, u8),
+) -> crate::TestResult<Vec<u32>> {
+    let module = parse(stage, source).map_err(|e| format!("shader rejected: {e}"))?;
+    let info = Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&module)?;
     let options = spv::Options {
         lang_version,
         flags: spv::WriterFlags::DEBUG
@@ -4631,41 +4786,41 @@ fn message_words(stage: ShaderStage, source: &str, lang_version: (u8, u8)) -> Ve
             | spv::WriterFlags::SMALL_TYPE_CAPABILITIES_BY_USE,
         ..spv::Options::default()
     };
-    let words = spv::write_vec(&module, &info, &options, None).expect("SPIR-V backend failed");
+    let words = spv::write_vec(&module, &info, &options, None)?;
     let env = match lang_version {
         (1, 4) => "vulkan1.1spv1.4",
         _ => "vulkan1.0",
     };
-    crate::stage_io::spirv_val_in(&words, &["--target-env", env, "--scalar-block-layout"]);
-    words
+    crate::stage_io::spirv_val_in(&words, &["--target-env", env, "--scalar-block-layout"])?;
+    Ok(words)
 }
 
 const OP_ABORT: u32 = 5121;
 const OP_CONSTANT_DATA: u32 = 5147;
 
-fn literal_string(words: &[u32]) -> String {
+fn literal_string(words: &[u32]) -> crate::TestResult<String> {
     let bytes: Vec<u8> = words.iter().flat_map(|word| word.to_le_bytes()).collect();
     let end = bytes
         .iter()
         .position(|&byte| byte == 0)
         .unwrap_or(bytes.len());
-    String::from_utf8(bytes[..end].to_vec()).unwrap()
+    Ok(String::from_utf8(bytes[..end].to_vec())?)
 }
 
-fn abort_layout(words: &[u32]) -> Vec<(u32, u32, Vec<u32>)> {
+fn abort_layout(words: &[u32]) -> crate::TestResult<Vec<(u32, u32, Vec<u32>)>> {
     let instructions = raw_instructions(words);
     let message_type = instructions
         .iter()
         .find(|(op, _)| *op == OP_ABORT)
         .map(|(_, operands)| operands[0])
-        .expect("an OpAbortKHR");
+        .ok_or("an OpAbortKHR")?;
     let mut members: Vec<(u32, u32, Vec<u32>)> = instructions
         .iter()
         .filter(|(op, operands)| *op == Op::MemberDecorate as u32 && operands[0] == message_type)
         .map(|(_, operands)| (operands[1], operands[2], operands[3..].to_vec()))
         .collect();
     members.sort();
-    members
+    Ok(members)
 }
 
 fn offsets(layout: &[(u32, u32, Vec<u32>)]) -> Vec<u32> {
@@ -4677,7 +4832,7 @@ fn offsets(layout: &[(u32, u32, Vec<u32>)]) -> Vec<u32> {
 }
 
 #[test]
-fn debug_printf_passes_its_arguments_unchanged() {
+fn debug_printf_passes_its_arguments_unchanged() -> crate::TestResult {
     let source = "#version 450
 #extension GL_EXT_debug_printf : enable
 #extension GL_ARB_gpu_shader_fp64 : enable
@@ -4692,7 +4847,7 @@ void main() {
     o = vec4(v, 0.0, 1.0);
 }
 ";
-    let module = compile(ShaderStage::Fragment, source);
+    let module = compile(ShaderStage::Fragment, source)?;
     let imports: Vec<String> = instructions(&module, Op::ExtInstImport)
         .iter()
         .map(|inst| match inst.operands[0] {
@@ -4707,10 +4862,13 @@ void main() {
     let strings: Vec<(u32, String)> = instructions(&module, Op::String)
         .iter()
         .map(|inst| match inst.operands[0] {
-            Operand::LiteralString(ref text) => (inst.result_id.unwrap(), text.clone()),
+            Operand::LiteralString(ref text) => inst
+                .result_id
+                .map(|id| (id, text.clone()))
+                .ok_or("an OpString without a result"),
             ref other => panic!("{other:?}"),
         })
-        .collect();
+        .collect::<Result<_, _>>()?;
     let texts: Vec<&str> = strings.iter().map(|(_, text)| text.as_str()).collect();
     assert_eq!(
         texts,
@@ -4723,30 +4881,31 @@ void main() {
     assert_eq!(first.operands.len(), 2 + 6);
     assert_eq!(first.operands[4], Operand::IdRef(same));
     assert_eq!(first.operands[5], Operand::IdRef(same));
-    let argument_type = |operand: &Operand| {
+    let argument_type = |operand: &Operand| -> crate::TestResult<Option<Op>> {
         let id = operand.unwrap_id_ref();
-        module
+        let Some(ty) = module
             .all_inst_iter()
             .find(|inst| inst.result_id == Some(id))
             .and_then(|inst| inst.result_type)
-            .map(|ty| {
-                module
-                    .types_global_values
-                    .iter()
-                    .find(|inst| inst.result_id == Some(ty))
-                    .unwrap()
-                    .class
-                    .opcode
-            })
+        else {
+            return Ok(None);
+        };
+        let declaration = module
+            .types_global_values
+            .iter()
+            .find(|inst| inst.result_id == Some(ty))
+            .ok_or_else(|| format!("%{ty} is not declared"))?;
+        Ok(Some(declaration.class.opcode))
     };
-    assert_eq!(argument_type(&first.operands[3]), Some(Op::TypeBool));
-    assert_eq!(argument_type(&first.operands[6]), Some(Op::TypeVector));
-    assert_eq!(argument_type(&first.operands[7]), Some(Op::TypeFloat));
+    assert_eq!(argument_type(&first.operands[3])?, Some(Op::TypeBool));
+    assert_eq!(argument_type(&first.operands[6])?, Some(Op::TypeVector));
+    assert_eq!(argument_type(&first.operands[7])?, Some(Op::TypeFloat));
     assert_eq!(prints[2].operands[2], Operand::IdRef(same));
+    Ok(())
 }
 
 #[test]
-fn abort_packs_its_message_with_scalar_rules() {
+fn abort_packs_its_message_with_scalar_rules() -> crate::TestResult {
     let source = "#version 450
 #extension GL_EXT_abort : require
 layout(local_size_x = 1) in;
@@ -4759,7 +4918,7 @@ void main() {
 }
 ";
     for version in [(1, 0), (1, 4)] {
-        let words = message_words(ShaderStage::Compute, source, version);
+        let words = message_words(ShaderStage::Compute, source, version)?;
         let instructions = raw_instructions(&words);
         let capabilities: Vec<u32> = instructions
             .iter()
@@ -4773,7 +4932,7 @@ void main() {
             .iter()
             .filter(|(op, _)| *op == Op::Extension as u32)
             .map(|(_, operands)| literal_string(operands))
-            .collect();
+            .collect::<crate::TestResult<_>>()?;
         assert!(extensions.contains(&"SPV_KHR_abort".to_string()));
         assert!(extensions.contains(&"SPV_KHR_constant_data".to_string()));
         let data: Vec<&Vec<u32>> = instructions
@@ -4783,21 +4942,22 @@ void main() {
             .collect();
         assert_eq!(data.len(), 1);
         assert_eq!(
-            literal_string(&data[0][2..]),
+            literal_string(&data[0][2..])?,
             "mixed: %d %v4f %u %v3i %f %v2u"
         );
         assert_eq!(data[0].len() - 2, 8);
-        assert_eq!(offsets(&abort_layout(&words)), [0, 32, 36, 52, 56, 68, 72]);
+        assert_eq!(offsets(&abort_layout(&words)?), [0, 32, 36, 52, 56, 68, 72]);
         let stores = instructions
             .iter()
             .filter(|(op, _)| *op == Op::Store as u32)
             .count();
         assert_eq!(stores, 0);
     }
+    Ok(())
 }
 
 #[test]
-fn abort_lays_out_nested_aggregates() {
+fn abort_lays_out_nested_aggregates() -> crate::TestResult {
     let source = "#version 450
 #extension GL_EXT_abort : require
 layout(local_size_x = 1) in;
@@ -4812,8 +4972,8 @@ void main() {
     abortEXT(\"\", inner, outer, vectors, mat3x2(s), bvec3(s > 0.0), s > 1.0);
 }
 ";
-    let words = message_words(ShaderStage::Compute, source, (1, 4));
-    let layout = abort_layout(&words);
+    let words = message_words(ShaderStage::Compute, source, (1, 4))?;
+    let layout = abort_layout(&words)?;
     assert_eq!(offsets(&layout), [0, 4, 16, 56, 80, 104, 116]);
     let matrix_stride: Vec<(u32, u32)> = layout
         .iter()
@@ -4842,10 +5002,11 @@ void main() {
         .filter(|(op, _)| *op == Op::Select as u32)
         .count();
     assert_eq!(selects, 2);
+    Ok(())
 }
 
 #[test]
-fn abort_ends_its_block() {
+fn abort_ends_its_block() -> crate::TestResult {
     let source = "#version 450
 #extension GL_EXT_abort : require
 layout(local_size_x = 1) in;
@@ -4868,13 +5029,13 @@ void main() {
     data.value = 5u;
 }
 ";
-    let words = message_words(ShaderStage::Compute, source, (1, 4));
+    let words = message_words(ShaderStage::Compute, source, (1, 4))?;
     let instructions = raw_instructions(&words);
     let messages: Vec<String> = instructions
         .iter()
         .filter(|(op, _)| *op == OP_CONSTANT_DATA)
         .map(|(_, operands)| literal_string(&operands[2..]))
-        .collect();
+        .collect::<crate::TestResult<_>>()?;
     assert_eq!(messages, ["first: %u", "loop %d", "", "abc"]);
     assert_eq!(
         instructions
@@ -4886,10 +5047,11 @@ void main() {
     assert!(!instructions
         .iter()
         .any(|(op, operands)| *op == Op::Constant as u32 && operands[2] == 5));
+    Ok(())
 }
 
 #[test]
-fn string_literal_misuse_is_rejected() {
+fn string_literal_misuse_is_rejected() -> crate::TestResult {
     let cases = [
         (
             ShaderStage::Fragment,
@@ -4954,11 +5116,12 @@ fn string_literal_misuse_is_rejected() {
     ];
     for (stage, body, expected) in cases {
         let source = format!("#version 450\n{body}\n");
-        let error = parse(stage, &source).unwrap_err();
+        let error = parse(stage, &source).err().ok_or("expected an error")?;
         assert!(error.contains(expected), "{source}: {error}");
     }
     let guarded = "#version 450\n#ifndef GUARD\n#define GUARD\nvoid main() { \"a\"; }\n#endif\n";
-    parse(ShaderStage::Fragment, guarded).unwrap();
+    parse(ShaderStage::Fragment, guarded)?;
+    Ok(())
 }
 
 struct Words {
@@ -4984,12 +5147,12 @@ impl Words {
             .any(|operands| operands == &[capability as u32])
     }
 
-    fn named(&self, name: &str) -> u32 {
+    fn named(&self, name: &str) -> crate::TestResult<u32> {
         self.of(Op::Name)
             .into_iter()
             .find(|operands| string_operand(&operands[1..]) == name)
             .map(|operands| operands[0])
-            .unwrap_or_else(|| panic!("nothing named {name}"))
+            .ok_or_else(|| format!("nothing named {name}").into())
     }
 
     fn constant(&self, id: u32) -> Option<u32> {
@@ -5033,11 +5196,9 @@ fn string_operand(words: &[u32]) -> String {
     String::from_utf8(bytes).unwrap_or_default()
 }
 
-fn compile_heap(stage: ShaderStage, source: &str) -> Words {
-    let module = parse(stage, source).unwrap_or_else(|e| panic!("shader rejected: {e}"));
-    let info = Validator::new(ValidationFlags::all(), Capabilities::all())
-        .validate(&module)
-        .expect("validated in parse");
+fn compile_heap(stage: ShaderStage, source: &str) -> crate::TestResult<Words> {
+    let module = parse(stage, source).map_err(|e| format!("shader rejected: {e}"))?;
+    let info = Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&module)?;
     let options = spv::Options {
         lang_version: (1, 4),
         flags: spv::WriterFlags::DEBUG
@@ -5045,8 +5206,8 @@ fn compile_heap(stage: ShaderStage, source: &str) -> Words {
             | spv::WriterFlags::SMALL_TYPE_CAPABILITIES_BY_USE,
         ..spv::Options::default()
     };
-    let words = spv::write_vec(&module, &info, &options, None).expect("SPIR-V backend failed");
-    crate::stage_io::spirv_val_in(&words, &["--target-env", "vulkan1.1spv1.4"]);
+    let words = spv::write_vec(&module, &info, &options, None)?;
+    crate::stage_io::spirv_val_in(&words, &["--target-env", "vulkan1.1spv1.4"])?;
     let mut instructions = Vec::new();
     let mut rest = &words[5..];
     while let Some(&first) = rest.first() {
@@ -5055,11 +5216,11 @@ fn compile_heap(stage: ShaderStage, source: &str) -> Words {
         instructions.push((first & 0xffff, rest[1..count].to_vec()));
         rest = &rest[count..];
     }
-    Words { instructions }
+    Ok(Words { instructions })
 }
 
 #[test]
-fn descriptor_heap_buffer_arrays() {
+fn descriptor_heap_buffer_arrays() -> crate::TestResult {
     let module = compile_heap(
         ShaderStage::Compute,
         "#version 450
@@ -5069,7 +5230,7 @@ fn descriptor_heap_buffer_arrays() {
         layout(descriptor_heap) readonly buffer R { uint value; } reads[];
         layout(descriptor_heap, descriptor_stride = 512) buffer O { uint outputData; } ssbo[];
         void main() { ssbo[8].outputData = ubo[9].inputData + reads[1].value; }",
-    );
+    )?;
     assert!(module.capability(spirv::Capability::DescriptorHeapEXT));
     assert!(module.capability(spirv::Capability::UntypedPointersKHR));
     assert_eq!(module.count(Op::UntypedVariableKHR), 1);
@@ -5077,7 +5238,7 @@ fn descriptor_heap_buffer_arrays() {
     assert_eq!(module.count(Op::TypeBufferEXT), 2);
     assert_eq!(module.count(Op::UntypedAccessChainKHR), 3);
     assert_eq!(
-        module.decorations(module.named("resource_heap")),
+        module.decorations(module.named("resource_heap")?),
         [vec![
             Decoration::BuiltIn as u32,
             spirv::BuiltIn::ResourceHeapEXT as u32
@@ -5089,16 +5250,17 @@ fn descriptor_heap_buffer_arrays() {
         .iter()
         .any(|&stride| module.constant(stride) == Some(512)));
     assert_eq!(module.count(Op::ConstantSizeOfEXT), 2);
-    let readonly = module.member_decorations(module.named("R"));
+    let readonly = module.member_decorations(module.named("R")?);
     assert!(readonly.contains(&vec![0, Decoration::NonWritable as u32]));
     let pointers = module.of(Op::BufferPointerEXT);
     assert!(pointers.iter().any(|operands| module
         .decorations(operands[1])
         .contains(&vec![Decoration::NonWritable as u32])));
+    Ok(())
 }
 
 #[test]
-fn descriptor_heap_images_and_samplers() {
+fn descriptor_heap_images_and_samplers() -> crate::TestResult {
     let module = compile_heap(
         ShaderStage::Fragment,
         "#version 460
@@ -5111,16 +5273,16 @@ fn descriptor_heap_images_and_samplers() {
             vec4 texel = texture(sampler2D(textures[2], samplers[1]), uv);
             imageStore(writes[3], ivec2(0), texel);
         }",
-    );
+    )?;
     assert_eq!(module.count(Op::UntypedVariableKHR), 2);
     assert_eq!(
-        module.decorations(module.named("sampler_heap")),
+        module.decorations(module.named("sampler_heap")?),
         [vec![
             Decoration::BuiltIn as u32,
             spirv::BuiltIn::SamplerHeapEXT as u32
         ]]
     );
-    let wrapper = module.named("writes_heap");
+    let wrapper = module.named("writes_heap")?;
     assert_eq!(
         module.member_decorations(wrapper),
         [vec![0, Decoration::NonReadable as u32]]
@@ -5128,10 +5290,11 @@ fn descriptor_heap_images_and_samplers() {
     let offsets = module.id_decorations(Op::MemberDecorateIdEXT, Decoration::OffsetIdEXT);
     assert_eq!(offsets.len(), 1);
     assert_eq!(module.constant(offsets[0]), Some(0));
+    Ok(())
 }
 
 #[test]
-fn structured_descriptor_heap_offsets() {
+fn structured_descriptor_heap_offsets() -> crate::TestResult {
     let module = compile_heap(
         ShaderStage::Compute,
         "#version 460
@@ -5149,7 +5312,7 @@ fn structured_descriptor_heap_offsets() {
             imageStore(heap.destinations[1], ivec2(0), imageLoad(heap.sources[0], ivec2(0)));
             heap.data.value = heap.after;
         }",
-    );
+    )?;
     let offsets: Vec<Option<u32>> = module
         .id_decorations(Op::MemberDecorateIdEXT, Decoration::OffsetIdEXT)
         .into_iter()
@@ -5157,10 +5320,11 @@ fn structured_descriptor_heap_offsets() {
         .collect();
     assert_eq!(offsets, [Some(0), Some(256), Some(384), Some(512)]);
     assert_eq!(module.count(Op::BufferPointerEXT), 1);
+    Ok(())
 }
 
 #[test]
-fn structured_descriptor_heap_offsets_are_specializable() {
+fn structured_descriptor_heap_offsets_are_specializable() -> crate::TestResult {
     let module = compile_heap(
         ShaderStage::Compute,
         "#version 460
@@ -5184,7 +5348,7 @@ fn structured_descriptor_heap_offsets_are_specializable() {
             resources.data.data0 = resources.count + plain.value;
             result.color = textureLod(sampler2D(resources.textures[1], samplers.samplers[1]), vec2(0.5), 0.0);
         }",
-    );
+    )?;
     let offsets = module.id_decorations(Op::MemberDecorateIdEXT, Decoration::OffsetIdEXT);
     let spec = module.of(Op::SpecConstant)[0][1];
     assert!(offsets.contains(&spec));
@@ -5194,23 +5358,24 @@ fn structured_descriptor_heap_offsets_are_specializable() {
         .into_iter()
         .find(|operands| operands[1] == 8)
         .map(|operands| operands[0])
-        .expect("an 8-bit integer type");
+        .ok_or("an 8-bit integer type")?;
     let byte_array = module
         .of(Op::TypeRuntimeArray)
         .into_iter()
         .find(|operands| operands[1] == byte)
         .map(|operands| operands[0])
-        .expect("a byte array moves heap views by their offset");
+        .ok_or("a byte array moves heap views by their offset")?;
     let shifted = module
         .of(Op::UntypedAccessChainKHR)
         .into_iter()
         .filter(|operands| operands[2] == byte_array)
         .count();
     assert_eq!(shifted, 2);
+    Ok(())
 }
 
 #[test]
-fn descriptor_heap_image_atomics() {
+fn descriptor_heap_image_atomics() -> crate::TestResult {
     let module = compile_heap(
         ShaderStage::Compute,
         "#version 460
@@ -5218,13 +5383,14 @@ fn descriptor_heap_image_atomics() {
         layout(local_size_x = 1) in;
         layout(descriptor_heap, r32i) uniform iimage1D images[];
         void main() { imageAtomicAdd(images[1], 1, 1); }",
-    );
+    )?;
     assert_eq!(module.count(Op::UntypedImageTexelPointerEXT), 1);
     assert_eq!(module.count(Op::AtomicIAdd), 1);
+    Ok(())
 }
 
 #[test]
-fn descriptor_heap_requested_replaces_non_uniform_decorations() {
+fn descriptor_heap_requested_replaces_non_uniform_decorations() -> crate::TestResult {
     let module = compile_heap(
         ShaderStage::Fragment,
         "#version 450
@@ -5235,7 +5401,7 @@ fn descriptor_heap_requested_replaces_non_uniform_decorations() {
         layout(location = 0) flat in uint index;
         layout(location = 0) out vec4 color;
         void main() { color = ubo[nonuniformEXT(index)].data + heap[nonuniformEXT(index)].a; }",
-    );
+    )?;
     assert!(!module
         .of(Op::Decorate)
         .iter()
@@ -5244,10 +5410,11 @@ fn descriptor_heap_requested_replaces_non_uniform_decorations() {
     assert!(module.capability(spirv::Capability::DescriptorHeapEXT));
     assert!(module.capability(spirv::Capability::UniformBufferArrayNonUniformIndexing));
     assert!(module.capability(spirv::Capability::StorageBufferArrayNonUniformIndexing));
+    Ok(())
 }
 
 #[test]
-fn descriptor_heap_rejections() {
+fn descriptor_heap_rejections() -> crate::TestResult {
     let cases = [
         (
             "layout(descriptor_heap) uniform sampler2D s[];",
@@ -5270,13 +5437,16 @@ fn descriptor_heap_rejections() {
         let source = format!(
             "#version 450\n#extension GL_EXT_descriptor_heap : require\n{declaration}\nvoid main() {{}}\n"
         );
-        let error = parse(ShaderStage::Fragment, &source).unwrap_err();
+        let error = parse(ShaderStage::Fragment, &source)
+            .err()
+            .ok_or("expected an error")?;
         assert!(error.contains(expected), "{declaration}: {error}");
     }
+    Ok(())
 }
 
 #[test]
-fn heap_resources_are_not_passed_to_user_functions() {
+fn heap_resources_are_not_passed_to_user_functions() -> crate::TestResult {
     let error = parse(
         ShaderStage::Fragment,
         "#version 460 core
@@ -5288,8 +5458,10 @@ fn heap_resources_are_not_passed_to_user_functions() {
         vec4 fetch(texture2D t, sampler s) { return texture(sampler2D(t, s), uvs); }
         void main() { fragColor = fetch(heapTexture2D[3], heapSampler[0]); }",
     )
-    .unwrap_err();
+    .err()
+    .ok_or("expected an error")?;
     assert!(error.contains("descriptor heap resource"), "{error}");
+    Ok(())
 }
 
 fn execution_mode_operands(module: &dr::Module, mode: spirv::ExecutionMode) -> Option<Vec<u32>> {
@@ -5315,7 +5487,7 @@ fn execution_model(module: &dr::Module) -> spirv::ExecutionModel {
     }
 }
 
-fn variable_array_length(module: &dr::Module, name: &str) -> u32 {
+fn variable_array_length(module: &dr::Module, name: &str) -> crate::TestResult<u32> {
     let variable = module
         .types_global_values
         .iter()
@@ -5323,24 +5495,24 @@ fn variable_array_length(module: &dr::Module, name: &str) -> u32 {
             inst.class.opcode == Op::Variable
                 && inst.result_id.is_some_and(|id| name_of(module, id) == name)
         })
-        .unwrap_or_else(|| panic!("{name} is not declared"));
+        .ok_or_else(|| format!("{name} is not declared"))?;
     let pointer = module
         .types_global_values
         .iter()
         .find(|inst| inst.result_id == variable.result_type)
-        .expect("a variable has a pointer type");
+        .ok_or("a variable has a pointer type")?;
     let pointee = pointer.operands[1].unwrap_id_ref();
     let array = module
         .types_global_values
         .iter()
         .find(|inst| inst.result_id == Some(pointee))
-        .expect("the pointee is declared");
+        .ok_or("the pointee is declared")?;
     assert_eq!(array.class.opcode, Op::TypeArray, "{name}");
     constant(module, &array.operands[1])
 }
 
 #[test]
-fn geometry_execution_modes_and_capabilities() {
+fn geometry_execution_modes_and_capabilities() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Geometry,
         "#version 450 core
@@ -5353,7 +5525,7 @@ fn geometry_execution_modes_and_capabilities() {
             gl_Layer = 2;
             gl_ViewportIndex = 3;
         }",
-    );
+    )?;
     assert_eq!(execution_model(&module), spirv::ExecutionModel::Geometry);
     assert_eq!(
         execution_mode_operands(&module, spirv::ExecutionMode::Triangles),
@@ -5379,18 +5551,19 @@ fn geometry_execution_modes_and_capabilities() {
         assert!(has_capability(&module, capability), "{capability:?}");
     }
     assert!(!has_capability(&module, spirv::Capability::ClipDistance));
-    assert_eq!(variable_array_length(&module, "gl_in"), 3);
+    assert_eq!(variable_array_length(&module, "gl_in")?, 3);
+    Ok(())
 }
 
 #[test]
-fn geometry_invocations_default_to_one() {
+fn geometry_invocations_default_to_one() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Geometry,
         "#version 450
         layout(points) in;
         layout(points, max_vertices = 1) out;
         void main() { gl_Position = gl_in[0].gl_Position; EmitVertex(); EndPrimitive(); }",
-    );
+    )?;
     assert_eq!(
         execution_mode_operands(&module, spirv::ExecutionMode::Invocations),
         Some(vec![1])
@@ -5402,10 +5575,11 @@ fn geometry_invocations_default_to_one() {
         &module,
         spirv::Capability::GeometryPointSize
     ));
+    Ok(())
 }
 
 #[test]
-fn geometry_streams() {
+fn geometry_streams() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Geometry,
         "#version 450
@@ -5422,11 +5596,11 @@ fn geometry_streams() {
             b = vec4(2.0);
             EmitVertex();
         }",
-    );
+    )?;
     assert!(has_capability(&module, spirv::Capability::GeometryStreams));
     let emits = instructions(&module, Op::EmitStreamVertex);
     assert_eq!(emits.len(), 1);
-    assert_eq!(constant(&module, &emits[0].operands[0]), 1);
+    assert_eq!(constant(&module, &emits[0].operands[0])?, 1);
     assert_eq!(instructions(&module, Op::EndStreamPrimitive).len(), 1);
     let streams: Vec<(String, u32)> = module
         .annotations
@@ -5445,10 +5619,11 @@ fn geometry_streams() {
             "{name} {stream} in {streams:?}"
         );
     }
+    Ok(())
 }
 
 #[test]
-fn geometry_per_vertex_inputs_take_element_locations() {
+fn geometry_per_vertex_inputs_take_element_locations() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Geometry,
         "#version 450
@@ -5466,23 +5641,24 @@ fn geometry_per_vertex_inputs_take_element_locations() {
                 EmitVertex();
             }
         }",
-    );
+    )?;
     assert!(has_execution_mode(
         &module,
         spirv::ExecutionMode::InputLinesAdjacency
     ));
-    assert_eq!(variable_array_length(&module, "a"), 4);
-    assert_eq!(variable_array_length(&module, "blocks"), 4);
+    assert_eq!(variable_array_length(&module, "a")?, 4);
+    assert_eq!(variable_array_length(&module, "blocks")?, 4);
     let primitive_ids = module
         .annotations
         .iter()
         .filter(|inst| inst.operands.get(2) == Some(&Operand::BuiltIn(spirv::BuiltIn::PrimitiveId)))
         .count();
     assert_eq!(primitive_ids, 2);
+    Ok(())
 }
 
 #[test]
-fn tessellation_control_interface() {
+fn tessellation_control_interface() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::TessControl,
         "#version 450 core
@@ -5502,7 +5678,7 @@ fn tessellation_control_interface() {
                 gl_TessLevelInner[1] = float(gl_PatchVerticesIn);
             }
         }",
-    );
+    )?;
     assert_eq!(
         execution_model(&module),
         spirv::ExecutionModel::TessellationControl
@@ -5532,20 +5708,21 @@ fn tessellation_control_interface() {
     for name in ["patchOut", "tcBlock", "inNormal", "outNormal"] {
         assert!(locations.contains(&name.to_string()), "{name}");
     }
-    assert_eq!(variable_array_length(&module, "gl_in"), 32);
-    assert_eq!(variable_array_length(&module, "gl_out"), 4);
-    assert_eq!(variable_array_length(&module, "inNormal"), 32);
-    assert_eq!(variable_array_length(&module, "outNormal"), 4);
+    assert_eq!(variable_array_length(&module, "gl_in")?, 32);
+    assert_eq!(variable_array_length(&module, "gl_out")?, 4);
+    assert_eq!(variable_array_length(&module, "inNormal")?, 32);
+    assert_eq!(variable_array_length(&module, "outNormal")?, 4);
     let barriers = instructions(&module, Op::ControlBarrier);
     assert_eq!(barriers.len(), 1);
     assert_eq!(
-        constant(&module, &barriers[0].operands[0]),
+        constant(&module, &barriers[0].operands[0])?,
         spirv::Scope::Workgroup as u32
     );
+    Ok(())
 }
 
 #[test]
-fn tessellation_evaluation_modes() {
+fn tessellation_evaluation_modes() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::TessEvaluation,
         "#version 450
@@ -5558,7 +5735,7 @@ fn tessellation_evaluation_modes() {
             gl_Position = gl_in[1].gl_Position;
             gl_PointSize = 2.0;
         }",
-    );
+    )?;
     for mode in [
         spirv::ExecutionMode::Isolines,
         spirv::ExecutionMode::SpacingFractionalOdd,
@@ -5576,7 +5753,7 @@ fn tessellation_evaluation_modes() {
         "#version 450
         layout(triangles) in;
         void main() { gl_Position = gl_in[0].gl_Position * gl_TessCoord.x; }",
-    );
+    )?;
     for mode in [
         spirv::ExecutionMode::Triangles,
         spirv::ExecutionMode::SpacingEqual,
@@ -5588,17 +5765,19 @@ fn tessellation_evaluation_modes() {
         &defaults,
         spirv::ExecutionMode::PointMode
     ));
+    Ok(())
 }
 
 #[test]
-fn layer_before_rasterization_needs_an_extension() {
+fn layer_before_rasterization_needs_an_extension() -> crate::TestResult {
     let error = parse(
         ShaderStage::TessEvaluation,
         "#version 450
         layout(triangles) in;
         void main() { gl_Layer = 1; }",
     )
-    .unwrap_err();
+    .err()
+    .ok_or("expected an error")?;
     assert!(
         error.contains("GL_ARB_shader_viewport_layer_array"),
         "{error}"
@@ -5609,16 +5788,17 @@ fn layer_before_rasterization_needs_an_extension() {
         #extension GL_ARB_shader_viewport_layer_array : require
         layout(triangles) in;
         void main() { gl_Layer = 1; gl_ViewportIndex = 2; }",
-    );
+    )?;
     assert!(has_capability(
         &module,
         spirv::Capability::ShaderViewportIndexLayerEXT
     ));
     assert!(!has_capability(&module, spirv::Capability::Geometry));
+    Ok(())
 }
 
 #[test]
-fn geometry_passthrough() {
+fn geometry_passthrough() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Geometry,
         "#version 450
@@ -5627,7 +5807,7 @@ fn geometry_passthrough() {
         layout(passthrough) in gl_PerVertex { vec4 gl_Position; };
         layout(passthrough, location = 0) in Inputs { vec2 texcoord; vec4 baseColor; };
         void main() {}",
-    );
+    )?;
     assert!(has_capability(
         &module,
         spirv::Capability::GeometryShaderPassthroughNV
@@ -5646,10 +5826,11 @@ fn geometry_passthrough() {
         execution_mode_operands(&module, spirv::ExecutionMode::OutputVertices),
         Some(vec![3])
     );
+    Ok(())
 }
 
 #[test]
-fn geometry_and_tessellation_rejections() {
+fn geometry_and_tessellation_rejections() -> crate::TestResult {
     let cases = [
         (
             ShaderStage::Geometry,
@@ -5724,9 +5905,10 @@ fn geometry_and_tessellation_rejections() {
     ];
     for (stage, body, expected) in cases {
         let source = format!("#version 450\n{body}\n");
-        let error = parse(stage, &source).unwrap_err();
+        let error = parse(stage, &source).err().ok_or("expected an error")?;
         assert!(error.contains(expected), "{source}: {error}");
     }
+    Ok(())
 }
 
 fn parse_for_spirv(stage: ShaderStage, source: &str, version: (u8, u8)) -> Result<(), String> {
@@ -5757,14 +5939,13 @@ fn is_constant(module: &dr::Module, operand: &Operand) -> bool {
         .any(|inst| inst.result_id == Some(id) && inst.class.opcode == Op::Constant)
 }
 
-fn group_operation(
-    module: &dr::Module,
-    op: Op,
-) -> Vec<(u32, Option<spirv::GroupOperation>, Vec<u32>)> {
+type GroupInstruction = (u32, Option<spirv::GroupOperation>, Vec<u32>);
+
+fn group_operation(module: &dr::Module, op: Op) -> crate::TestResult<Vec<GroupInstruction>> {
     instructions(module, op)
         .into_iter()
         .map(|inst| {
-            let scope = constant(module, &inst.operands[0]);
+            let scope = constant(module, &inst.operands[0])?;
             let group = inst.operands.iter().find_map(|operand| match *operand {
                 Operand::GroupOperation(group) => Some(group),
                 _ => None,
@@ -5775,14 +5956,14 @@ fn group_operation(
                 .skip(1)
                 .filter(|operand| is_constant(module, operand))
                 .map(|operand| constant(module, operand))
-                .collect();
-            (scope, group, extra)
+                .collect::<crate::TestResult<_>>()?;
+            Ok((scope, group, extra))
         })
         .collect()
 }
 
 #[test]
-fn subgroup_operations_match_glslang() {
+fn subgroup_operations_match_glslang() -> crate::TestResult {
     use spirv::{Capability as C, GroupOperation as G};
     let module = compile_valid_1_3(
         ShaderStage::Compute,
@@ -5804,48 +5985,48 @@ fn subgroup_operations_match_glslang() {
             f = subgroupQuadSwapDiagonal(f);
             subgroupBarrier();
         }",
-    );
+    )?;
     assert_eq!(
-        group_operation(&module, Op::GroupNonUniformFAdd),
+        group_operation(&module, Op::GroupNonUniformFAdd)?,
         [(3, Some(G::InclusiveScan), vec![])]
     );
     assert_eq!(
-        group_operation(&module, Op::GroupNonUniformFMax),
+        group_operation(&module, Op::GroupNonUniformFMax)?,
         [(3, Some(G::ClusteredReduce), vec![4])]
     );
     assert_eq!(
-        group_operation(&module, Op::GroupNonUniformBitwiseOr),
+        group_operation(&module, Op::GroupNonUniformBitwiseOr)?,
         [(3, Some(G::ExclusiveScan), vec![])]
     );
     assert_eq!(
-        group_operation(&module, Op::GroupNonUniformBroadcast),
+        group_operation(&module, Op::GroupNonUniformBroadcast)?,
         [(3, None, vec![3])]
     );
     assert_eq!(
-        group_operation(&module, Op::GroupNonUniformShuffleXor).len(),
+        group_operation(&module, Op::GroupNonUniformShuffleXor)?.len(),
         1
     );
     assert_eq!(
-        group_operation(&module, Op::GroupNonUniformBallotBitCount),
+        group_operation(&module, Op::GroupNonUniformBallotBitCount)?,
         [(3, Some(G::InclusiveScan), vec![])]
     );
     assert_eq!(
-        group_operation(&module, Op::GroupNonUniformAllEqual).len(),
+        group_operation(&module, Op::GroupNonUniformAllEqual)?.len(),
         1
     );
-    assert_eq!(group_operation(&module, Op::GroupNonUniformElect).len(), 1);
+    assert_eq!(group_operation(&module, Op::GroupNonUniformElect)?.len(), 1);
     assert_eq!(
-        group_operation(&module, Op::GroupNonUniformInverseBallot).len(),
+        group_operation(&module, Op::GroupNonUniformInverseBallot)?.len(),
         1
     );
     assert_eq!(
-        group_operation(&module, Op::GroupNonUniformQuadSwap),
+        group_operation(&module, Op::GroupNonUniformQuadSwap)?,
         [(3, None, vec![2])]
     );
     let barriers = instructions(&module, Op::ControlBarrier);
     assert_eq!(barriers.len(), 1);
-    assert_eq!(constant(&module, &barriers[0].operands[0]), 3);
-    assert_eq!(constant(&module, &barriers[0].operands[1]), 3);
+    assert_eq!(constant(&module, &barriers[0].operands[0])?, 3);
+    assert_eq!(constant(&module, &barriers[0].operands[1])?, 3);
     assert_eq!(
         capabilities_of(&module),
         sorted(vec![
@@ -5859,10 +6040,11 @@ fn subgroup_operations_match_glslang() {
             C::GroupNonUniformQuad,
         ])
     );
+    Ok(())
 }
 
 #[test]
-fn subgroup_builtins_are_flat_in_fragment_shaders() {
+fn subgroup_builtins_are_flat_in_fragment_shaders() -> crate::TestResult {
     use spirv::BuiltIn as Bi;
     let module = compile_valid_1_3(
         ShaderStage::Fragment,
@@ -5873,7 +6055,7 @@ fn subgroup_builtins_are_flat_in_fragment_shaders() {
             data = gl_SubgroupEqMask + gl_SubgroupLtMask
                 + uvec4(gl_SubgroupSize, gl_SubgroupInvocationID, 0, 0);
         }",
-    );
+    )?;
     for (name, builtin, relaxed) in [
         ("gl_SubgroupSize", Bi::SubgroupSize, true),
         (
@@ -5891,16 +6073,17 @@ fn subgroup_builtins_are_flat_in_fragment_shaders() {
         expected.push((Decoration::BuiltIn, vec![builtin as u32]));
         expected.push((Decoration::Flat, vec![]));
         assert_eq!(
-            sorted_variable_decorations(&module, name),
+            sorted_variable_decorations(&module, name)?,
             expected,
             "{name}"
         );
     }
     assert!(capabilities_of(&module).contains(&spirv::Capability::GroupNonUniformBallot));
+    Ok(())
 }
 
 #[test]
-fn shader_ballot_uses_the_khr_extensions() {
+fn shader_ballot_uses_the_khr_extensions() -> crate::TestResult {
     use spirv::Capability as C;
     let module = compile_valid(
         ShaderStage::Compute,
@@ -5915,7 +6098,7 @@ fn shader_ballot_uses_the_khr_extensions() {
             f.xy = readInvocationARB(f.xy, gl_SubGroupInvocationARB) + readFirstInvocationARB(f.zw);
             b = anyInvocationARB(b) || allInvocationsEqualARB(b);
         }",
-    );
+    )?;
     assert_eq!(instructions(&module, Op::SubgroupBallotKHR).len(), 1);
     assert_eq!(
         instructions(&module, Op::SubgroupReadInvocationKHR).len(),
@@ -5941,16 +6124,17 @@ fn shader_ballot_uses_the_khr_extensions() {
         ])
     );
     assert_eq!(
-        sorted_variable_decorations(&module, "gl_SubGroupGeMaskARB"),
+        sorted_variable_decorations(&module, "gl_SubGroupGeMaskARB")?,
         [(
             Decoration::BuiltIn,
             vec![spirv::BuiltIn::SubgroupGeMask as u32]
         )]
     );
+    Ok(())
 }
 
 #[test]
-fn rotate_partition_and_quad_control_match_glslang() {
+fn rotate_partition_and_quad_control_match_glslang() -> crate::TestResult {
     use spirv::{Capability as C, GroupOperation as G};
     let module = compile_valid_1_3(
         ShaderStage::Fragment,
@@ -5969,18 +6153,21 @@ fn rotate_partition_and_quad_control_match_glslang() {
                 + subgroupPartitionedExclusiveAddNV(value, groups);
             if (subgroupQuadAll(value > 0u)) { result = 0u; }
         }",
-    );
+    )?;
     let rotates = instructions(&module, Op::GroupNonUniformRotateKHR);
     assert_eq!(rotates.len(), 2);
     assert!(rotates
         .iter()
-        .any(|inst| inst.operands.len() == 4 && constant(&module, &inst.operands[3]) == 4));
+        .filter(|inst| inst.operands.len() == 4)
+        .map(|inst| constant(&module, &inst.operands[3]))
+        .collect::<crate::TestResult<Vec<_>>>()?
+        .contains(&4));
     assert_eq!(
         instructions(&module, Op::GroupNonUniformPartitionNV).len(),
         1
     );
     assert_eq!(
-        group_operation(&module, Op::GroupNonUniformIAdd),
+        group_operation(&module, Op::GroupNonUniformIAdd)?,
         [(3, Some(G::PartitionedExclusiveScanEXT), vec![])]
     );
     let quad = instructions(&module, Op::GroupNonUniformQuadAllKHR);
@@ -6011,10 +6198,11 @@ fn rotate_partition_and_quad_control_match_glslang() {
     ] {
         assert!(capabilities.contains(&capability), "{capability:?}");
     }
+    Ok(())
 }
 
 #[test]
-fn amd_shader_ballot_uses_group_operations() {
+fn amd_shader_ballot_uses_group_operations() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Compute,
         "#version 450
@@ -6025,7 +6213,7 @@ fn amd_shader_ballot_uses_group_operations() {
             f = minInvocationsInclusiveScanAMD(f);
             i = addInvocationsNonUniformAMD(i);
         }",
-    );
+    )?;
     let mins = instructions(&module, Op::GroupFMin);
     assert_eq!(mins.len(), 2);
     assert_eq!(
@@ -6035,10 +6223,11 @@ fn amd_shader_ballot_uses_group_operations() {
     assert_eq!(instructions(&module, Op::GroupIAddNonUniformAMD).len(), 1);
     assert_eq!(extensions_of(&module), ["SPV_AMD_shader_ballot"]);
     assert!(capabilities_of(&module).contains(&spirv::Capability::Groups));
+    Ok(())
 }
 
 #[test]
-fn subgroup_features_are_checked_like_glslang() {
+fn subgroup_features_are_checked_like_glslang() -> crate::TestResult {
     let cases = [
         (
             "void main() { uint size = gl_SubgroupSize; }",
@@ -6071,42 +6260,49 @@ fn subgroup_features_are_checked_like_glslang() {
     ];
     for (body, expected) in cases {
         let source = format!("#version 450\n{body}\n");
-        let error = parse_for_spirv(ShaderStage::Compute, &source, (1, 3)).unwrap_err();
+        let error = parse_for_spirv(ShaderStage::Compute, &source, (1, 3))
+            .err()
+            .ok_or("expected an error")?;
         assert!(error.contains(expected), "{body}: {error}");
     }
     let dynamic_broadcast = "#version 450
         #extension GL_KHR_shader_subgroup_ballot : enable
         void main() { uint id = 2u; subgroupBroadcast(1.0, id); }";
-    parse_for_spirv(ShaderStage::Compute, dynamic_broadcast, (1, 5)).unwrap();
+    parse_for_spirv(ShaderStage::Compute, dynamic_broadcast, (1, 5))?;
     let old_spirv = "#version 450
         #extension GL_KHR_shader_subgroup_vote : enable
         void main() { subgroupAll(true); }";
-    let error = parse_for_spirv(ShaderStage::Compute, old_spirv, (1, 0)).unwrap_err();
+    let error = parse_for_spirv(ShaderStage::Compute, old_spirv, (1, 0))
+        .err()
+        .ok_or("expected an error")?;
     assert!(error.contains("SPIR-V 1.3"), "{error}");
     let fragment = "#version 450
         #extension GL_KHR_shader_subgroup_basic : enable
         void main() { uint n = gl_NumSubgroups; }";
-    let error = parse_for_spirv(ShaderStage::Fragment, fragment, (1, 3)).unwrap_err();
+    let error = parse_for_spirv(ShaderStage::Fragment, fragment, (1, 3))
+        .err()
+        .ok_or("expected an error")?;
     assert!(error.contains("gl_NumSubgroups"), "{error}");
+    Ok(())
 }
 
 #[test]
-fn subgroup_builtins_are_volatile_in_ray_tracing_stages() {
+fn subgroup_builtins_are_volatile_in_ray_tracing_stages() -> crate::TestResult {
     let source = "#version 460
         #extension GL_EXT_ray_tracing : enable
         #extension GL_KHR_shader_subgroup_ballot : enable
         layout(binding = 0, std430) buffer B { uvec4 v; };
         void main() { v = gl_SubgroupEqMask + uvec4(gl_SubgroupSize); }";
-    let words = compile_words_with_names(ShaderStage::RayGeneration, source, (1, 4));
-    crate::stage_io::spirv_val_in(&words, &["--target-env", "vulkan1.2"]);
-    let module = dr::load_words(words).expect("produced SPIR-V does not parse");
+    let words = compile_words_with_names(ShaderStage::RayGeneration, source, (1, 4))?;
+    crate::stage_io::spirv_val_in(&words, &["--target-env", "vulkan1.2"])?;
+    let module = dr::load_words(words)?;
     for name in ["gl_SubgroupEqMask", "gl_SubgroupSize"] {
         assert!(
-            sorted_variable_decorations(&module, name).contains(&(Decoration::Volatile, vec![])),
+            sorted_variable_decorations(&module, name)?.contains(&(Decoration::Volatile, vec![])),
             "{name}"
         );
         assert!(
-            !sorted_variable_decorations(&module, name).contains(&(Decoration::Coherent, vec![])),
+            !sorted_variable_decorations(&module, name)?.contains(&(Decoration::Coherent, vec![])),
             "{name}"
         );
     }
@@ -6115,15 +6311,16 @@ fn subgroup_builtins_are_volatile_in_ray_tracing_stages() {
         "#version 460\n#pragma use_vulkan_memory_model\n",
         1,
     );
-    let words = compile_words_with_names(ShaderStage::RayGeneration, &model, (1, 4));
-    crate::stage_io::spirv_val_in(&words, &["--target-env", "vulkan1.2"]);
-    let module = dr::load_words(words).expect("produced SPIR-V does not parse");
+    let words = compile_words_with_names(ShaderStage::RayGeneration, &model, (1, 4))?;
+    crate::stage_io::spirv_val_in(&words, &["--target-env", "vulkan1.2"])?;
+    let module = dr::load_words(words)?;
     let loads = instructions(&module, Op::Load);
     assert_eq!(loads.len(), 2);
     assert!(loads
         .iter()
         .all(|load| load.operands.last()
             == Some(&Operand::MemoryAccess(spirv::MemoryAccess::VOLATILE))));
+    Ok(())
 }
 
 fn storage_classes(module: &dr::Module) -> Vec<spirv::StorageClass> {
@@ -6139,7 +6336,7 @@ fn storage_classes(module: &dr::Module) -> Vec<spirv::StorageClass> {
 }
 
 #[test]
-fn trace_ray_takes_every_operand_and_the_payload_variable() {
+fn trace_ray_takes_every_operand_and_the_payload_variable() -> crate::TestResult {
     let module = compile(
         ShaderStage::RayGeneration,
         r#"#version 460
@@ -6152,25 +6349,26 @@ void main() {
     traceRayEXT(scene, gl_RayFlagsOpaqueEXT, 0x7Fu, 3u, 4u, 5u, origin, 0.5, vec3(1.0), 7.0, 2);
 }
 "#,
-    );
+    )?;
     let traces = instructions(&module, Op::TraceRayKHR);
     assert_eq!(traces.len(), 1);
     let operands = &traces[0].operands;
-    assert_eq!(constant(&module, &operands[1]), 1);
-    assert_eq!(constant(&module, &operands[2]), 0x7F);
-    assert_eq!(constant(&module, &operands[3]), 3);
-    assert_eq!(constant(&module, &operands[4]), 4);
-    assert_eq!(constant(&module, &operands[5]), 5);
+    assert_eq!(constant(&module, &operands[1])?, 1);
+    assert_eq!(constant(&module, &operands[2])?, 0x7F);
+    assert_eq!(constant(&module, &operands[3])?, 3);
+    assert_eq!(constant(&module, &operands[4])?, 4);
+    assert_eq!(constant(&module, &operands[5])?, 5);
     assert_eq!(name_of(&module, operands[10].unwrap_id_ref()), "other");
     assert!(decorated(&module, Decoration::Location).is_empty());
     let classes = storage_classes(&module);
     assert!(classes.contains(&spirv::StorageClass::RayPayloadKHR));
     assert!(classes.contains(&spirv::StorageClass::ShaderRecordBufferKHR));
     assert!(capabilities(&module).contains(&spirv::Capability::RayTracingKHR));
+    Ok(())
 }
 
 #[test]
-fn nv_ray_tracing_uses_locations() {
+fn nv_ray_tracing_uses_locations() -> crate::TestResult {
     let module = compile(
         ShaderStage::RayGeneration,
         r#"#version 460
@@ -6181,16 +6379,17 @@ void main() {
     traceNV(scene, 0u, 0xFFu, 0u, 1u, 0u, vec3(0.0), 0.5, vec3(1.0), 7.0, 3);
 }
 "#,
-    );
+    )?;
     let traces = instructions(&module, Op::TraceNV);
     assert_eq!(traces.len(), 1);
-    assert_eq!(constant(&module, &traces[0].operands[10]), 3);
+    assert_eq!(constant(&module, &traces[0].operands[10])?, 3);
     assert_eq!(decorated(&module, Decoration::Location), ["payload"]);
     assert!(capabilities(&module).contains(&spirv::Capability::RayTracingNV));
+    Ok(())
 }
 
 #[test]
-fn any_hit_terminators_end_the_block() {
+fn any_hit_terminators_end_the_block() -> crate::TestResult {
     let module = compile(
         ShaderStage::AnyHit,
         r#"#version 460
@@ -6204,14 +6403,15 @@ void main() {
     terminateRayEXT;
 }
 "#,
-    );
+    )?;
     assert_eq!(instructions(&module, Op::IgnoreIntersectionKHR).len(), 1);
     assert_eq!(instructions(&module, Op::TerminateRayKHR).len(), 1);
     assert!(instructions(&module, Op::Return).is_empty());
+    Ok(())
 }
 
 #[test]
-fn intersection_reports_hits_and_hit_attributes() {
+fn intersection_reports_hits_and_hit_attributes() -> crate::TestResult {
     let module = compile(
         ShaderStage::Intersection,
         r#"#version 460
@@ -6222,14 +6422,15 @@ void main() {
     bool accepted = reportIntersectionEXT(gl_RayTmaxEXT, 1u);
 }
 "#,
-    );
+    )?;
     assert_eq!(instructions(&module, Op::ReportIntersectionKHR).len(), 1);
     assert!(storage_classes(&module).contains(&spirv::StorageClass::HitAttributeKHR));
     assert_eq!(decorated(&module, Decoration::Volatile), ["gl_RayTmaxEXT"]);
+    Ok(())
 }
 
 #[test]
-fn callable_data_follows_the_location() {
+fn callable_data_follows_the_location() -> crate::TestResult {
     let module = compile(
         ShaderStage::Callable,
         r#"#version 460
@@ -6241,7 +6442,7 @@ void main() {
     executeCallableEXT(2u, 0);
 }
 "#,
-    );
+    )?;
     let calls = instructions(&module, Op::ExecuteCallableKHR);
     assert_eq!(calls.len(), 1);
     assert_eq!(
@@ -6251,10 +6452,11 @@ void main() {
     let classes = storage_classes(&module);
     assert!(classes.contains(&spirv::StorageClass::CallableDataKHR));
     assert!(classes.contains(&spirv::StorageClass::IncomingCallableDataKHR));
+    Ok(())
 }
 
 #[test]
-fn transposed_matrices_read_the_same_builtin() {
+fn transposed_matrices_read_the_same_builtin() -> crate::TestResult {
     let module = compile(
         ShaderStage::ClosestHit,
         r#"#version 460
@@ -6266,13 +6468,14 @@ void main() {
     payload = a[0] + vec4(b[0], gl_HitTEXT + gl_RayTmaxEXT);
 }
 "#,
-    );
+    )?;
     assert_eq!(decorated(&module, Decoration::BuiltIn).len(), 2);
     assert_eq!(instructions(&module, Op::Transpose).len(), 1);
+    Ok(())
 }
 
 #[test]
-fn ray_queries_are_private_and_passed_by_pointer() {
+fn ray_queries_are_private_and_passed_by_pointer() -> crate::TestResult {
     let module = compile(
         ShaderStage::Compute,
         r#"#version 460
@@ -6290,19 +6493,20 @@ void main() {
     t = rayQueryGetIntersectionTEXT(query, true) + rayQueryGetRayTMinEXT(query);
 }
 "#,
-    );
+    )?;
     assert!(storage_classes(&module).contains(&spirv::StorageClass::Private));
     assert_eq!(instructions(&module, Op::RayQueryInitializeKHR).len(), 1);
     assert_eq!(instructions(&module, Op::RayQueryProceedKHR).len(), 1);
     let getters = instructions(&module, Op::RayQueryGetIntersectionTKHR);
     assert_eq!(getters.len(), 1);
-    assert_eq!(constant(&module, &getters[0].operands[1]), 1);
+    assert_eq!(constant(&module, &getters[0].operands[1])?, 1);
     assert_eq!(instructions(&module, Op::RayQueryGetRayTMinKHR).len(), 1);
     assert!(capabilities(&module).contains(&spirv::Capability::RayQueryKHR));
+    Ok(())
 }
 
 #[test]
-fn opacity_micromap_ray_query_mode_names_the_constant() {
+fn opacity_micromap_ray_query_mode_names_the_constant() -> crate::TestResult {
     let module = parse(
         ShaderStage::Compute,
         r#"#version 460
@@ -6313,22 +6517,20 @@ const bool gl_EnableOpacityMicromapEXT = true;
 void main() {}
 "#,
     )
-    .unwrap_or_else(|e| panic!("shader rejected: {e}"));
+    .map_err(|e| format!("shader rejected: {e}"))?;
     assert!(module.entry_points[0].opacity_micromap.is_some());
-    let info = Validator::new(ValidationFlags::all(), Capabilities::all())
-        .validate(&module)
-        .expect("validated in parse");
-    let words = spv::write_vec(&module, &info, &spv::Options::default(), None)
-        .expect("SPIR-V backend failed");
+    let info = Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&module)?;
+    let words = spv::write_vec(&module, &info, &spv::Options::default(), None)?;
     let execution_mode_id = (4 << 16) | Op::ExecutionModeId as u32;
     let position = words
         .iter()
         .position(|&word| word == execution_mode_id)
-        .expect("no OpExecutionModeId");
+        .ok_or("no OpExecutionModeId")?;
     assert_eq!(words.get(position + 2), Some(&6031));
     assert!(words
         .windows(2)
         .any(|pair| pair == [(2 << 16) | Op::Capability as u32, 6032]));
+    Ok(())
 }
 
 fn decoration_operands(module: &dr::Module, id: u32, decoration: Decoration) -> Option<Vec<u32>> {
@@ -6344,17 +6546,17 @@ fn decoration_operands(module: &dr::Module, id: u32, decoration: Decoration) -> 
 }
 
 #[test]
-fn view_index_needs_multiview() {
+fn view_index_needs_multiview() -> crate::TestResult {
     let source = "#version 450
         #extension GL_EXT_multiview : enable
         layout(location = 0) out vec4 color;
         void main() { color = vec4(gl_ViewIndex, 0, 0, 0); }";
-    let module = compile_valid(ShaderStage::Fragment, source);
+    let module = compile_valid(ShaderStage::Fragment, source)?;
     assert!(has_capability(&module, spirv::Capability::MultiView));
     assert!(extensions_of(&module).contains(&"SPV_KHR_multiview".to_string()));
-    let view = named(&module, "gl_ViewIndex");
+    let view = named(&module, "gl_ViewIndex")?;
     assert!(has_decoration(&module, view, Decoration::Flat));
-    let module = compile_valid_1_3(ShaderStage::Fragment, source);
+    let module = compile_valid_1_3(ShaderStage::Fragment, source)?;
     assert!(has_capability(&module, spirv::Capability::MultiView));
     assert!(extensions_of(&module).is_empty());
     let error = parse(
@@ -6362,7 +6564,8 @@ fn view_index_needs_multiview() {
         "#version 450
         void main() { gl_Position = vec4(gl_ViewIndex); }",
     )
-    .unwrap_err();
+    .err()
+    .ok_or("expected an error")?;
     assert!(error.contains("GL_EXT_multiview"), "{error}");
     let module = compile_valid(
         ShaderStage::Geometry,
@@ -6371,13 +6574,14 @@ fn view_index_needs_multiview() {
         layout(points) in;
         layout(points, max_vertices = 1) out;
         void main() { gl_Layer = gl_ViewIndex; EmitVertex(); }",
-    );
-    let view = named(&module, "gl_ViewIndex");
+    )?;
+    let view = named(&module, "gl_ViewIndex")?;
     assert!(!has_decoration(&module, view, Decoration::Flat));
+    Ok(())
 }
 
 #[test]
-fn per_view_attributes_match_glslang() {
+fn per_view_attributes_match_glslang() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Vertex,
         "#version 450
@@ -6386,15 +6590,15 @@ fn per_view_attributes_match_glslang() {
             gl_ViewportMaskPerViewNV[0] = 1;
             gl_PositionPerViewNV[1] = gl_Position;
         }",
-    );
+    )?;
     assert!(has_capability(
         &module,
         spirv::Capability::PerViewAttributesNV
     ));
     assert!(extensions_of(&module).contains(&"SPV_NVX_multiview_per_view_attributes".to_string()));
-    assert_eq!(variable_array_length(&module, "gl_PositionPerViewNV"), 2);
+    assert_eq!(variable_array_length(&module, "gl_PositionPerViewNV")?, 2);
     assert_eq!(
-        variable_array_length(&module, "gl_ViewportMaskPerViewNV"),
+        variable_array_length(&module, "gl_ViewportMaskPerViewNV")?,
         1
     );
     let error = parse(
@@ -6402,15 +6606,17 @@ fn per_view_attributes_match_glslang() {
         "#version 450
         void main() { gl_PositionPerViewNV[0] = vec4(1.0); }",
     )
-    .unwrap_err();
+    .err()
+    .ok_or("expected an error")?;
     assert!(
         error.contains("GL_NVX_multiview_per_view_attributes"),
         "{error}"
     );
+    Ok(())
 }
 
 #[test]
-fn per_vertex_members_of_view_extensions() {
+fn per_vertex_members_of_view_extensions() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::TessControl,
         "#version 450
@@ -6421,7 +6627,7 @@ fn per_vertex_members_of_view_extensions() {
             gl_out[gl_InvocationID].gl_ViewportMask[2] = 4;
             gl_out[gl_InvocationID].gl_PositionPerViewNV[1] = gl_in[0].gl_PositionPerViewNV[3];
         }",
-    );
+    )?;
     let built_ins = decorated(&module, Decoration::BuiltIn);
     for name in [
         "gl_ViewportMask",
@@ -6456,12 +6662,14 @@ fn per_vertex_members_of_view_extensions() {
         in gl_PerVertex { vec4 gl_Position; vec4 gl_SecondaryPositionNV; } gl_in[];
         void main() { gl_Position = gl_in[0].gl_SecondaryPositionNV; EmitVertex(); }",
     )
-    .unwrap_err();
+    .err()
+    .ok_or("expected an error")?;
     assert!(error.contains("GL_NV_stereo_view_rendering"), "{error}");
+    Ok(())
 }
 
 #[test]
-fn viewport_relative_layer() {
+fn viewport_relative_layer() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Vertex,
         "#version 450
@@ -6473,8 +6681,8 @@ fn viewport_relative_layer() {
             gl_SecondaryViewportMaskNV[0] = 1;
             gl_SecondaryPositionNV = gl_Position;
         }",
-    );
-    let layer = named(&module, "gl_Layer");
+    )?;
+    let layer = named(&module, "gl_Layer")?;
     assert_eq!(
         decoration_operands(&module, layer, Decoration::ViewportRelativeNV),
         Some(Vec::new())
@@ -6508,7 +6716,8 @@ fn viewport_relative_layer() {
         layout(viewport_relative) out highp int gl_Layer;
         void main() {}",
     )
-    .unwrap_err();
+    .err()
+    .ok_or("expected an error")?;
     assert!(error.contains("GL_NV_viewport_array2"), "{error}");
     let error = parse(
         ShaderStage::Vertex,
@@ -6517,20 +6726,22 @@ fn viewport_relative_layer() {
         layout(secondary_view_offset = -2) out highp int gl_Layer;
         void main() {}",
     )
-    .unwrap_err();
+    .err()
+    .ok_or("expected an error")?;
     assert!(error.contains("negative"), "{error}");
+    Ok(())
 }
 
 #[test]
-fn sample_mask_override_coverage() {
+fn sample_mask_override_coverage() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Fragment,
         "#version 450
         #extension GL_NV_sample_mask_override_coverage : enable
         layout(override_coverage) out int gl_SampleMask[];
         void main() { gl_SampleMask[0] = gl_SampleMaskIn[0]; }",
-    );
-    let mask = named(&module, "gl_SampleMask");
+    )?;
+    let mask = named(&module, "gl_SampleMask")?;
     assert!(has_decoration(
         &module,
         mask,
@@ -6540,24 +6751,29 @@ fn sample_mask_override_coverage() {
         &module,
         spirv::Capability::SampleMaskOverrideCoverageNV
     ));
-    let mask_in = named(&module, "gl_SampleMaskIn");
+    let mask_in = named(&module, "gl_SampleMaskIn")?;
     assert!(has_decoration(&module, mask_in, Decoration::Flat));
     assert!(!has_decoration(
         &module,
         mask_in,
         Decoration::OverrideCoverageNV
     ));
+    Ok(())
 }
 
-fn compile_mesh(stage: ShaderStage, source: &str, lang_version: (u8, u8)) -> dr::Module {
-    let words = compile_words_with_names(stage, source, lang_version);
+fn compile_mesh(
+    stage: ShaderStage,
+    source: &str,
+    lang_version: (u8, u8),
+) -> crate::TestResult<dr::Module> {
+    let words = compile_words_with_names(stage, source, lang_version)?;
     let env = if lang_version >= (1, 4) {
         "vulkan1.2"
     } else {
         "vulkan1.0"
     };
-    crate::stage_io::spirv_val_in(&words, &["--target-env", env]);
-    dr::load_words(words).expect("produced SPIR-V does not parse")
+    crate::stage_io::spirv_val_in(&words, &["--target-env", env])?;
+    Ok(dr::load_words(words)?)
 }
 
 fn execution_modes(module: &dr::Module) -> Vec<(spirv::ExecutionMode, Vec<u32>)> {
@@ -6581,7 +6797,7 @@ fn execution_modes(module: &dr::Module) -> Vec<(spirv::ExecutionMode, Vec<u32>)>
 }
 
 #[test]
-fn ext_mesh_shader_outputs() {
+fn ext_mesh_shader_outputs() -> crate::TestResult {
     let module = compile_mesh(
         ShaderStage::Mesh,
         "#version 460
@@ -6602,7 +6818,7 @@ fn ext_mesh_shader_outputs() {
             normal[i] = vec4(0.0);
         }",
         (1, 4),
-    );
+    )?;
     assert_eq!(execution_model(&module), spirv::ExecutionModel::MeshEXT);
     let modes = execution_modes(&module);
     for mode in [
@@ -6631,16 +6847,17 @@ fn ext_mesh_shader_outputs() {
         );
     }
     assert!(!per_primitive.contains(&"color".to_string()));
-    let indices = named(&module, "gl_PrimitiveTriangleIndicesEXT");
-    let variable = global_value(&module, indices);
+    let indices = named(&module, "gl_PrimitiveTriangleIndicesEXT")?;
+    let variable = global_value(&module, indices)?;
     assert_eq!(
         variable.operands[0],
         Operand::StorageClass(spirv::StorageClass::Output)
     );
+    Ok(())
 }
 
 #[test]
-fn ext_task_shader_payload() {
+fn ext_task_shader_payload() -> crate::TestResult {
     let module = compile_mesh(
         ShaderStage::Task,
         "#version 450
@@ -6654,22 +6871,23 @@ fn ext_task_shader_payload() {
             EmitMeshTasksEXT(2u, 1u, 1u);
         }",
         (1, 4),
-    );
+    )?;
     assert_eq!(execution_model(&module), spirv::ExecutionModel::TaskEXT);
     let emit = instructions(&module, Op::EmitMeshTasksEXT);
     assert_eq!(emit.len(), 1);
     assert_eq!(emit[0].operands.len(), 4);
-    let payload = named(&module, "payload");
+    let payload = named(&module, "payload")?;
     assert_eq!(emit[0].operands[3], Operand::IdRef(payload));
-    let variable = global_value(&module, payload);
+    let variable = global_value(&module, payload)?;
     assert_eq!(
         variable.operands[0],
         Operand::StorageClass(spirv::StorageClass::TaskPayloadWorkgroupEXT)
     );
+    Ok(())
 }
 
 #[test]
-fn ext_task_shader_without_payload() {
+fn ext_task_shader_without_payload() -> crate::TestResult {
     let module = compile_mesh(
         ShaderStage::Task,
         "#version 450
@@ -6677,13 +6895,14 @@ fn ext_task_shader_without_payload() {
         layout(local_size_x = 1) in;
         void main() { EmitMeshTasksEXT(1u, 1u, 1u); }",
         (1, 4),
-    );
+    )?;
     let emit = instructions(&module, Op::EmitMeshTasksEXT);
     assert_eq!(emit[0].operands.len(), 3);
+    Ok(())
 }
 
 #[test]
-fn nv_mesh_shader_built_ins() {
+fn nv_mesh_shader_built_ins() -> crate::TestResult {
     let module = compile_mesh(
         ShaderStage::Mesh,
         "#version 450
@@ -6708,7 +6927,7 @@ fn nv_mesh_shader_built_ins() {
             c[i][view] = vec4(3.0);
         }",
         (1, 0),
-    );
+    )?;
     assert_eq!(execution_model(&module), spirv::ExecutionModel::MeshNV);
     assert!(has_capability(&module, spirv::Capability::MeshShadingNV));
     assert!(has_capability(
@@ -6726,33 +6945,34 @@ fn nv_mesh_shader_built_ins() {
         instructions(&module, Op::WritePackedPrimitiveIndices4x8NV).len(),
         1
     );
-    let indices = named(&module, "gl_PrimitiveIndicesNV");
-    let variable = global_value(&module, indices);
-    let pointer = global_value(&module, variable.result_type.unwrap());
-    let array = global_value(&module, id_operand(&pointer.operands[1]));
-    assert_eq!(constant(&module, &array.operands[1]), 64);
+    let indices = named(&module, "gl_PrimitiveIndicesNV")?;
+    let variable = global_value(&module, indices)?;
+    let pointer = global_value(&module, variable.result_type.ok_or("an untyped variable")?)?;
+    let array = global_value(&module, id_operand(&pointer.operands[1]))?;
+    assert_eq!(constant(&module, &array.operands[1])?, 64);
     let per_view = decorated(&module, Decoration::PerViewNV);
     for name in ["a", "c", "gl_PositionPerViewNV", "gl_LayerPerViewNV"] {
         assert!(per_view.contains(&name.to_string()), "{per_view:?}");
     }
     assert!(!per_view.contains(&"b".to_string()));
-    let location = |name: &str| {
-        let id = named(&module, name);
-        module
+    let location = |name: &str| -> crate::TestResult<Option<u32>> {
+        let id = named(&module, name)?;
+        Ok(module
             .annotations
             .iter()
             .find(|inst| {
                 inst.operands[0] == Operand::IdRef(id)
                     && inst.operands[1] == Operand::Decoration(Decoration::Location)
             })
-            .map(|inst| literal(&inst.operands[2]))
+            .map(|inst| literal(&inst.operands[2])))
     };
-    assert_eq!(location("blk"), Some(0));
-    assert_eq!(location("c"), Some(10));
+    assert_eq!(location("blk")?, Some(0));
+    assert_eq!(location("c")?, Some(10));
+    Ok(())
 }
 
 #[test]
-fn nv_task_memory_blocks() {
+fn nv_task_memory_blocks() -> crate::TestResult {
     let module = compile_mesh(
         ShaderStage::Task,
         "#version 450
@@ -6765,7 +6985,7 @@ fn nv_task_memory_blocks() {
             gl_TaskCountNV = 3u;
         }",
         (1, 0),
-    );
+    )?;
     assert_eq!(execution_model(&module), spirv::ExecutionModel::TaskNV);
     let per_task = decorated(&module, Decoration::PerTaskNV);
     assert_eq!(per_task, ["dummy", "submesh", "view"]);
@@ -6780,10 +7000,11 @@ fn nv_task_memory_blocks() {
         .collect();
     assert_eq!(offsets, [0, 8, 32]);
     assert_eq!(decorated(&module, Decoration::BuiltIn).len(), 3);
+    Ok(())
 }
 
 #[test]
-fn per_primitive_fragment_inputs() {
+fn per_primitive_fragment_inputs() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Fragment,
         "#version 460
@@ -6792,13 +7013,14 @@ fn per_primitive_fragment_inputs() {
         layout(location = 4) in C { flat centroid float h; };
         layout(location = 8) out float g;
         void main() { g = f + h; }",
-    );
+    )?;
     assert!(has_capability(&module, spirv::Capability::MeshShadingNV));
     assert_eq!(decorated(&module, Decoration::PerPrimitiveEXT), ["f"]);
+    Ok(())
 }
 
 #[test]
-fn mesh_shader_errors() {
+fn mesh_shader_errors() -> crate::TestResult {
     let cases = [
         (
             ShaderStage::Mesh,
@@ -6858,13 +7080,14 @@ fn mesh_shader_errors() {
         ),
     ];
     for (stage, source, expected) in cases {
-        let error = parse(stage, source).unwrap_err();
+        let error = parse(stage, source).err().ok_or("expected an error")?;
         assert!(error.contains(expected), "{expected}: {error}");
     }
+    Ok(())
 }
 
 #[test]
-fn long_vectors_lower_to_vector_types() {
+fn long_vectors_lower_to_vector_types() -> crate::TestResult {
     let module = compile(
         ShaderStage::Compute,
         "#version 460
@@ -6876,16 +7099,17 @@ fn long_vectors_lower_to_vector_types() {
             vector<float, 8> b = a * 2.0 + a;
             d[1] = dot(a, b);
         }",
-    );
+    )?;
     let long = instructions(&module, Op::TypeVector)
         .into_iter()
         .any(|inst| inst.operands[1] == Operand::LiteralBit32(8));
     assert!(long);
     assert!(!instructions(&module, Op::Dot).is_empty());
+    Ok(())
 }
 
 #[test]
-fn khr_cooperative_matrix_multiply_add() {
+fn khr_cooperative_matrix_multiply_add() -> crate::TestResult {
     let module = compile(
         ShaderStage::Compute,
         "#version 450
@@ -6904,7 +7128,7 @@ fn khr_cooperative_matrix_multiply_add() {
             c = coopMatMulAdd(a, b, c);
             coopMatStore(c, y, 0, 16, gl_CooperativeMatrixLayoutRowMajor);
         }",
-    );
+    )?;
     assert_eq!(instructions(&module, Op::TypeCooperativeMatrixKHR).len(), 3);
     assert_eq!(instructions(&module, Op::CooperativeMatrixLoadKHR).len(), 2);
     assert_eq!(
@@ -6915,10 +7139,11 @@ fn khr_cooperative_matrix_multiply_add() {
         instructions(&module, Op::CooperativeMatrixStoreKHR).len(),
         1
     );
+    Ok(())
 }
 
 #[test]
-fn nv_cooperative_matrix_length_is_a_specialization_constant() {
+fn nv_cooperative_matrix_length_is_a_specialization_constant() -> crate::TestResult {
     let module = compile(
         ShaderStage::Compute,
         "#version 450
@@ -6931,15 +7156,16 @@ fn nv_cooperative_matrix_length_is_a_specialization_constant() {
             int lengths[m.length() + 1];
             y[0] = float(lengths.length());
         }",
-    );
+    )?;
     let lengths = instructions(&module, Op::SpecConstantOp);
     assert!(lengths.iter().any(|inst| {
         inst.operands[0] == Operand::LiteralSpecConstantOpInteger(Op::CooperativeMatrixLengthNV)
     }));
+    Ok(())
 }
 
 #[test]
-fn bfloat16_constants_are_encoded() {
+fn bfloat16_constants_are_encoded() -> crate::TestResult {
     let module = compile(
         ShaderStage::Compute,
         "#version 450
@@ -6950,15 +7176,16 @@ fn bfloat16_constants_are_encoded() {
             bfloat16_t one = bfloat16_t(y[1]);
             y[0] = float(one);
         }",
-    );
+    )?;
     let encoded = instructions(&module, Op::TypeFloat)
         .into_iter()
         .any(|inst| inst.operands.len() == 2 && inst.operands[0] == Operand::LiteralBit32(16));
     assert!(encoded);
+    Ok(())
 }
 
 #[test]
-fn cooperative_vector_matrix_multiply() {
+fn cooperative_vector_matrix_multiply() -> crate::TestResult {
     let module = compile(
         ShaderStage::Compute,
         "#version 450
@@ -6974,16 +7201,17 @@ fn cooperative_vector_matrix_multiply() {
                 16, 16, gl_CooperativeVectorMatrixLayoutRowMajorNV, false, 32);
             coopVecStoreNV(r, v, 64);
         }",
-    );
+    )?;
     assert_eq!(
         instructions(&module, Op::CooperativeVectorMatrixMulNV).len(),
         1
     );
     assert_eq!(instructions(&module, Op::CooperativeVectorStoreNV).len(), 1);
+    Ok(())
 }
 
 #[test]
-fn cooperative_errors() {
+fn cooperative_errors() -> crate::TestResult {
     let cases = [
         (
             "#version 450
@@ -7019,9 +7247,12 @@ fn cooperative_errors() {
         ),
     ];
     for (source, expected) in cases {
-        let error = parse(ShaderStage::Compute, source).unwrap_err();
+        let error = parse(ShaderStage::Compute, source)
+            .err()
+            .ok_or("expected an error")?;
         assert!(error.contains(expected), "{expected}: {error}");
     }
+    Ok(())
 }
 
 struct QcomModule {
@@ -7029,12 +7260,17 @@ struct QcomModule {
 }
 
 impl QcomModule {
-    fn new(stage: ShaderStage, source: &str, lang_version: (u8, u8), target: &str) -> Self {
-        let words = compile_words_with_names(stage, source, lang_version);
-        crate::stage_io::spirv_val_in(&words, &["--target-env", target]);
-        Self {
+    fn new(
+        stage: ShaderStage,
+        source: &str,
+        lang_version: (u8, u8),
+        target: &str,
+    ) -> crate::TestResult<Self> {
+        let words = compile_words_with_names(stage, source, lang_version)?;
+        crate::stage_io::spirv_val_in(&words, &["--target-env", target])?;
+        Ok(Self {
             instructions: raw_instructions(&words),
-        }
+        })
     }
 
     fn all(&self, op: u32) -> Vec<&[u32]> {
@@ -7045,12 +7281,12 @@ impl QcomModule {
             .collect()
     }
 
-    fn id(&self, name: &str) -> u32 {
+    fn id(&self, name: &str) -> crate::TestResult<u32> {
         self.all(Op::Name as u32)
             .into_iter()
             .find(|operands| string_operand(&operands[1..]) == name)
             .map(|operands| operands[0])
-            .unwrap_or_else(|| panic!("no `{name}`"))
+            .ok_or_else(|| format!("no `{name}`").into())
     }
 
     fn decorations(&self, id: u32) -> Vec<u32> {
@@ -7084,15 +7320,15 @@ impl QcomModule {
         found
     }
 
-    fn constant(&self, id: u32) -> u32 {
+    fn constant(&self, id: u32) -> crate::TestResult<u32> {
         self.all(Op::Constant as u32)
             .into_iter()
             .find(|operands| operands[1] == id)
             .map(|operands| operands[2])
-            .unwrap_or_else(|| panic!("%{id} is not a constant"))
+            .ok_or_else(|| format!("%{id} is not a constant").into())
     }
 
-    fn defining_op(&self, id: u32) -> u32 {
+    fn defining_op(&self, id: u32) -> crate::TestResult<u32> {
         self.instructions
             .iter()
             .find(|(op, operands)| {
@@ -7100,12 +7336,12 @@ impl QcomModule {
                     && operands.get(1) == Some(&id)
             })
             .map(|(op, _)| *op)
-            .unwrap_or_else(|| panic!("%{id} is not defined"))
+            .ok_or_else(|| format!("%{id} is not defined").into())
     }
 }
 
 #[test]
-fn qcom_image_processing_matches_glslang() {
+fn qcom_image_processing_matches_glslang() -> crate::TestResult {
     let module = QcomModule::new(
         ShaderStage::Fragment,
         "#version 450
@@ -7129,7 +7365,7 @@ fn qcom_image_processing_matches_glslang() {
         }",
         (1, 4),
         "vulkan1.1spv1.4",
-    );
+    )?;
     for (op, count) in [(4480, 1), (4481, 1), (4482, 1), (4501, 1), (4502, 1)] {
         assert_eq!(module.all(op).len(), count, "opcode {op}");
     }
@@ -7141,23 +7377,24 @@ fn qcom_image_processing_matches_glslang() {
     let block_texture = Decoration::BlockMatchTextureQCOM as u32;
     let block_sampler = Decoration::BlockMatchSamplerQCOM as u32;
     let weight = Decoration::WeightTextureQCOM as u32;
-    let qcom = |name: &str| {
-        module
-            .decorations(module.id(name))
+    let qcom = |name: &str| -> crate::TestResult<Vec<u32>> {
+        Ok(module
+            .decorations(module.id(name)?)
             .into_iter()
             .filter(|decoration| *decoration > 4000)
-            .collect::<Vec<u32>>()
+            .collect())
     };
-    assert_eq!(qcom("weights"), [weight]);
-    assert_eq!(qcom("target"), [block_texture]);
-    assert_eq!(qcom("combined"), [block_texture]);
-    assert_eq!(qcom("window"), [block_texture, block_sampler]);
-    assert_eq!(qcom("reference"), [block_texture]);
-    assert_eq!(qcom("samp"), [block_sampler]);
+    assert_eq!(qcom("weights")?, [weight]);
+    assert_eq!(qcom("target")?, [block_texture]);
+    assert_eq!(qcom("combined")?, [block_texture]);
+    assert_eq!(qcom("window")?, [block_texture, block_sampler]);
+    assert_eq!(qcom("reference")?, [block_texture]);
+    assert_eq!(qcom("samp")?, [block_sampler]);
+    Ok(())
 }
 
 #[test]
-fn qcom_block_matching_decorates_array_elements() {
+fn qcom_block_matching_decorates_array_elements() -> crate::TestResult {
     let module = QcomModule::new(
         ShaderStage::Fragment,
         "#version 450
@@ -7174,7 +7411,7 @@ fn qcom_block_matching_decorates_array_elements() {
         }",
         (1, 4),
         "vulkan1.1spv1.4",
-    );
+    )?;
     let decorated: Vec<u32> = module
         .all(Op::Decorate as u32)
         .into_iter()
@@ -7183,12 +7420,13 @@ fn qcom_block_matching_decorates_array_elements() {
         .collect();
     assert_eq!(decorated.len(), 2);
     for id in decorated {
-        assert_eq!(module.defining_op(id), Op::AccessChain as u32);
+        assert_eq!(module.defining_op(id)?, Op::AccessChain as u32);
     }
+    Ok(())
 }
 
 #[test]
-fn qcom_gather_modes_match_glslang() {
+fn qcom_gather_modes_match_glslang() -> crate::TestResult {
     let module = QcomModule::new(
         ShaderStage::Vertex,
         "#version 460
@@ -7208,18 +7446,18 @@ fn qcom_gather_modes_match_glslang() {
         }",
         (1, 4),
         "vulkan1.1spv1.4",
-    );
+    )?;
     let gathers: Vec<(u32, u32, Option<u32>)> = module
         .all(4545)
         .into_iter()
         .map(|operands| {
-            (
-                module.constant(operands[4]),
-                module.constant(operands[5]),
+            Ok((
+                module.constant(operands[4])?,
+                module.constant(operands[5])?,
                 operands.get(6).copied(),
-            )
+            ))
         })
-        .collect();
+        .collect::<crate::TestResult<_>>()?;
     assert_eq!(
         gathers,
         [(0, 0, None), (1, 3, None), (2, 2, None), (3, 1, Some(0x10))]
@@ -7227,10 +7465,11 @@ fn qcom_gather_modes_match_glslang() {
     assert_eq!(module.all(Op::ImageGather as u32).len(), 1);
     assert_eq!(module.capabilities(), [1, 25, 4543, 4544]);
     assert_eq!(module.extensions(), ["SPV_QCOM_image_processing3"]);
+    Ok(())
 }
 
 #[test]
-fn qcom_tile_shading_matches_glslang() {
+fn qcom_tile_shading_matches_glslang() -> crate::TestResult {
     let compute = QcomModule::new(
         ShaderStage::Compute,
         "#version 460
@@ -7247,7 +7486,7 @@ fn qcom_tile_shading_matches_glslang() {
         }",
         (1, 0),
         "vulkan1.0",
-    );
+    )?;
     let modes: Vec<Vec<u32>> = compute
         .all(Op::ExecutionMode as u32)
         .into_iter()
@@ -7257,12 +7496,12 @@ fn qcom_tile_shading_matches_glslang() {
     assert_eq!(compute.capabilities(), [1, 4495]);
     assert_eq!(compute.extensions(), ["SPV_QCOM_tile_shading"]);
     for name in ["color", "stencil"] {
-        let id = compute.id(name);
+        let id = compute.id(name)?;
         let variable = compute
             .all(Op::Variable as u32)
             .into_iter()
             .find(|operands| operands[1] == id)
-            .unwrap();
+            .ok_or_else(|| format!("no variable {name}"))?;
         assert_eq!(variable[2], 4491, "{name}");
     }
     let built_ins: Vec<u32> = compute
@@ -7287,7 +7526,7 @@ fn qcom_tile_shading_matches_glslang() {
         }",
         (1, 0),
         "vulkan1.0",
-    );
+    )?;
     let modes: Vec<u32> = fragment
         .all(Op::ExecutionMode as u32)
         .into_iter()
@@ -7301,13 +7540,14 @@ fn qcom_tile_shading_matches_glslang() {
         ]
     );
     for name in ["gl_TileOffsetQCOM", "gl_TileDimensionQCOM"] {
-        let decorations = fragment.decorations(fragment.id(name));
+        let decorations = fragment.decorations(fragment.id(name)?);
         assert!(decorations.contains(&(Decoration::Flat as u32)), "{name}");
     }
+    Ok(())
 }
 
 #[test]
-fn qcom_cooperative_matrix_conversions_match_glslang() {
+fn qcom_cooperative_matrix_conversions_match_glslang() -> crate::TestResult {
     let module = QcomModule::new(
         ShaderStage::Compute,
         "#version 450
@@ -7337,7 +7577,7 @@ fn qcom_cooperative_matrix_conversions_match_glslang() {
         }",
         (1, 3),
         "vulkan1.1",
-    );
+    )?;
     for (op, count) in [(4497, 2), (4542, 2), (4540, 1), (4541, 1)] {
         assert_eq!(module.all(op).len(), count, "opcode {op}");
     }
@@ -7349,12 +7589,13 @@ fn qcom_cooperative_matrix_conversions_match_glslang() {
         .all(4542)
         .into_iter()
         .map(|operands| module.constant(operands[3]))
-        .collect();
+        .collect::<crate::TestResult<_>>()?;
     assert_eq!(indices, [8, 4]);
+    Ok(())
 }
 
 #[test]
-fn loop_attributes_match_glslang() {
+fn loop_attributes_match_glslang() -> crate::TestResult {
     let source = "#version 450
         #extension GL_EXT_control_flow_attributes : enable
         #extension GL_QCOM_multiple_wait_queues : enable
@@ -7366,15 +7607,17 @@ fn loop_attributes_match_glslang() {
             [[dependency_length(4), min_iterations(3), dont_unroll]] do { data.value += 3; } while (data.value < 20);
             [[unroll, dont_unroll, dependency_infinite]] for (;;) { if (data.value > 40) break; data.value += 4; }
         }";
-    let controls = |lang_version, target| {
-        QcomModule::new(ShaderStage::Compute, source, lang_version, target)
-            .all(Op::LoopMerge as u32)
-            .into_iter()
-            .map(|operands| operands[2..].to_vec())
-            .collect::<Vec<Vec<u32>>>()
+    let controls = |lang_version, target| -> crate::TestResult<Vec<Vec<u32>>> {
+        Ok(
+            QcomModule::new(ShaderStage::Compute, source, lang_version, target)?
+                .all(Op::LoopMerge as u32)
+                .into_iter()
+                .map(|operands| operands[2..].to_vec())
+                .collect(),
+        )
     };
     assert_eq!(
-        controls((1, 4), "vulkan1.1spv1.4"),
+        controls((1, 4), "vulkan1.1spv1.4")?,
         [
             vec![0x1000_0000, 0],
             vec![0x1000_0001, 2],
@@ -7383,7 +7626,7 @@ fn loop_attributes_match_glslang() {
         ]
     );
     assert_eq!(
-        controls((1, 0), "vulkan1.0"),
+        controls((1, 0), "vulkan1.0")?,
         [
             vec![0x1000_0000, 0],
             vec![0x1000_0001, 2],
@@ -7391,10 +7634,11 @@ fn loop_attributes_match_glslang() {
             vec![0x2],
         ]
     );
+    Ok(())
 }
 
 #[test]
-fn uncalled_functions_are_not_compiled() {
+fn uncalled_functions_are_not_compiled() -> crate::TestResult {
     let module = compile(
         ShaderStage::Fragment,
         "#version 450
@@ -7403,7 +7647,7 @@ fn uncalled_functions_are_not_compiled() {
         float used(float x) { return x * 2.0; }
         double unused(int16_t value) { f64vec2 v = f64vec2(value); return v.x; }
         void main() { color = vec4(used(1.0)); }",
-    );
+    )?;
     assert_eq!(instructions(&module, Op::Function).len(), 2);
     assert!(instructions(&module, Op::TypeFloat)
         .iter()
@@ -7411,10 +7655,11 @@ fn uncalled_functions_are_not_compiled() {
     let capabilities = capabilities(&module);
     assert!(!capabilities.contains(&spirv::Capability::Float64));
     assert!(!capabilities.contains(&spirv::Capability::Int16));
+    Ok(())
 }
 
 #[test]
-fn constant_locals_are_folded_and_not_stored() {
+fn constant_locals_are_folded_and_not_stored() -> crate::TestResult {
     let module = compile(
         ShaderStage::Vertex,
         "#version 460
@@ -7424,7 +7669,7 @@ fn constant_locals_are_folded_and_not_stored() {
             const dmat2 d = matrixCompMult(dmat2(2.0), dmat2(1.5));
             o = float(f[0][0] + d[1][1]);
         }",
-    );
+    )?;
     assert!(!capabilities(&module).contains(&spirv::Capability::Float64));
     assert!(instructions(&module, Op::TypeFloat)
         .iter()
@@ -7434,11 +7679,15 @@ fn constant_locals_are_folded_and_not_stored() {
         .all(|inst| inst.operands[0] != Operand::StorageClass(spirv::StorageClass::Function)));
     let stores = instructions(&module, Op::Store);
     assert_eq!(stores.len(), 1);
-    assert_eq!(constant(&module, &stores[0].operands[1]), 6.0_f32.to_bits());
+    assert_eq!(
+        constant(&module, &stores[0].operands[1])?,
+        6.0_f32.to_bits()
+    );
+    Ok(())
 }
 
 #[test]
-fn bit_field_operands_are_not_clamped() {
+fn bit_field_operands_are_not_clamped() -> crate::TestResult {
     let module = compile(
         ShaderStage::Fragment,
         "#version 450
@@ -7448,7 +7697,7 @@ fn bit_field_operands_are_not_clamped() {
             color = ivec2(bitfieldExtract(value, offset, bits),
                           bitfieldInsert(value, 7, offset, bits));
         }",
-    );
+    )?;
     let extract = instructions(&module, Op::BitFieldSExtract);
     let insert = instructions(&module, Op::BitFieldInsert);
     assert_eq!((extract.len(), insert.len()), (1, 1));
@@ -7465,10 +7714,11 @@ fn bit_field_operands_are_not_clamped() {
         ));
     }
     assert!(instructions(&module, Op::ExtInst).is_empty());
+    Ok(())
 }
 
 #[test]
-fn constant_locals_can_be_indexed_dynamically() {
+fn constant_locals_can_be_indexed_dynamically() -> crate::TestResult {
     let module = compile(
         ShaderStage::Fragment,
         "#version 450
@@ -7479,9 +7729,10 @@ fn constant_locals_can_be_indexed_dynamically() {
             const mat2 m = mat2(1.0, 2.0, 3.0, 4.0);
             color = vec4(table[i], m[i][i], table[1], m[1][0]);
         }",
-    );
+    )?;
     assert!(!instructions(&module, Op::ConstantComposite).is_empty());
     assert!(!instructions(&module, Op::AccessChain).is_empty());
+    Ok(())
 }
 
 fn has_extension(module: &dr::Module, name: &str) -> bool {
@@ -7496,7 +7747,7 @@ fn trailing_operands(inst: &dr::Instruction, skip: usize) -> Vec<Operand> {
 }
 
 #[test]
-fn tensors_lower_to_spv_arm_tensors() {
+fn tensors_lower_to_spv_arm_tensors() -> crate::TestResult {
     let source = "#version 460
         #extension GL_ARM_tensors : require
         layout(local_size_x = 1) in;
@@ -7516,13 +7767,13 @@ fn tensors_lower_to_spv_arm_tensors() {
             tensorWriteARM(w[1], uint[](1, 1), values, gl_TensorOperandsNonTemporalARM);
             tensorWriteARM(t, uint[](0, 0), value + int(size(t)) + int(tensorSizeARM(r, 0)));
         }";
-    let module = compile_valid(ShaderStage::Compute, source);
+    let module = compile_valid(ShaderStage::Compute, source)?;
     assert!(has_capability(&module, spirv::Capability::TensorsARM));
     assert!(has_extension(&module, "SPV_ARM_tensors"));
     let ranks: Vec<u32> = instructions(&module, Op::TypeTensorARM)
         .iter()
         .map(|inst| constant(&module, &inst.operands[1]))
-        .collect();
+        .collect::<crate::TestResult<_>>()?;
     assert_eq!(ranks, [2, 1]);
     let reads = instructions(&module, Op::TensorReadARM);
     assert_eq!(reads.len(), 3);
@@ -7544,19 +7795,20 @@ fn tensors_lower_to_spv_arm_tensors() {
     let mut dimensions: Vec<u32> = instructions(&module, Op::TensorQuerySizeARM)
         .iter()
         .map(|inst| constant(&module, &inst.operands[1]))
-        .collect();
+        .collect::<crate::TestResult<_>>()?;
     dimensions.sort_unstable();
     assert_eq!(dimensions, [0, 1]);
-    assert!(variable_decorations(&module, "r")
+    assert!(variable_decorations(&module, "r")?
         .iter()
         .any(|(decoration, _)| *decoration == Decoration::NonWritable));
-    assert!(variable_decorations(&module, "w")
+    assert!(variable_decorations(&module, "w")?
         .iter()
         .any(|(decoration, _)| *decoration == Decoration::NonReadable));
+    Ok(())
 }
 
 #[test]
-fn tensor_errors() {
+fn tensor_errors() -> crate::TestResult {
     let cases = [
         (
             "#version 460
@@ -7586,9 +7838,12 @@ fn tensor_errors() {
         ),
     ];
     for (source, expected) in cases {
-        let error = parse(ShaderStage::Compute, source).unwrap_err();
+        let error = parse(ShaderStage::Compute, source)
+            .err()
+            .ok_or("expected an error")?;
         assert!(error.contains(expected), "{expected}: {error}");
     }
+    Ok(())
 }
 
 fn is_wide_int(module: &dr::Module, id: Option<u32>) -> bool {
@@ -7607,7 +7862,7 @@ fn has_wide_constant(module: &dr::Module, value: u64) -> bool {
 }
 
 #[test]
-fn sixty_four_bit_indices() {
+fn sixty_four_bit_indices() -> crate::TestResult {
     let source = "#version 450
         #extension GL_EXT_shader_explicit_arithmetic_types : require
         #extension GL_EXT_shader_64bit_indexing : require
@@ -7620,9 +7875,9 @@ fn sixty_four_bit_indices() {
             int64_t n = b.x.length64();
             b.x[1] = float(n);
         }";
-    let words = compile_words(ShaderStage::Compute, source, (1, 6));
-    crate::stage_io::spirv_val_in(&words, &["--target-env", "vulkan1.3"]);
-    let module = dr::load_words(words).expect("produced SPIR-V does not parse");
+    let words = compile_words(ShaderStage::Compute, source, (1, 6))?;
+    crate::stage_io::spirv_val_in(&words, &["--target-env", "vulkan1.3"])?;
+    let module = dr::load_words(words)?;
     assert!(has_capability(
         &module,
         spirv::Capability::Shader64BitIndexingEXT
@@ -7634,10 +7889,11 @@ fn sixty_four_bit_indices() {
         .iter()
         .any(|inst| is_wide_int(&module, inst.result_type)));
     assert!(has_wide_constant(&module, 5_000_000_000));
+    Ok(())
 }
 
 #[test]
-fn promoted_uint32_indices() {
+fn promoted_uint32_indices() -> crate::TestResult {
     let source = "#version 450
         #extension GL_EXT_shader_64bit_indexing : require
         #pragma promote_uint32_indices
@@ -7646,9 +7902,9 @@ fn promoted_uint32_indices() {
         void main() {
             b.x[0] = b.x[b.i] + b.x[4000000000u];
         }";
-    let words = compile_words(ShaderStage::Compute, source, (1, 6));
-    crate::stage_io::spirv_val_in(&words, &["--target-env", "vulkan1.3"]);
-    let module = dr::load_words(words).expect("produced SPIR-V does not parse");
+    let words = compile_words(ShaderStage::Compute, source, (1, 6))?;
+    crate::stage_io::spirv_val_in(&words, &["--target-env", "vulkan1.3"])?;
+    let module = dr::load_words(words)?;
     assert!(!has_capability(
         &module,
         spirv::Capability::Shader64BitIndexingEXT
@@ -7657,10 +7913,11 @@ fn promoted_uint32_indices() {
     assert_eq!(conversions.len(), 1);
     assert!(is_wide_int(&module, conversions[0].result_type));
     assert!(has_wide_constant(&module, 4_000_000_000));
+    Ok(())
 }
 
 #[test]
-fn shader_core_builtins() {
+fn shader_core_builtins() -> crate::TestResult {
     let source = "#version 450
         #extension GL_NV_shader_sm_builtins : require
         #extension GL_ARM_shader_core_builtins : require
@@ -7669,7 +7926,7 @@ fn shader_core_builtins() {
             o = uvec4(gl_WarpsPerSMNV, gl_SMCountNV, gl_WarpIDNV, gl_SMIDNV)
                 + uvec4(gl_CoreIDARM, gl_CoreCountARM, gl_CoreMaxIDARM, gl_WarpIDARM + gl_WarpMaxIDARM);
         }";
-    let module = compile_valid(ShaderStage::Fragment, source);
+    let module = compile_valid(ShaderStage::Fragment, source)?;
     assert!(has_capability(
         &module,
         spirv::Capability::ShaderSMBuiltinsNV
@@ -7688,7 +7945,7 @@ fn shader_core_builtins() {
         ("gl_WarpIDARM", spirv::BuiltIn::WarpIDARM),
         ("gl_WarpMaxIDARM", spirv::BuiltIn::WarpMaxIDARM),
     ] {
-        let decorations = variable_decorations(&module, name);
+        let decorations = variable_decorations(&module, name)?;
         assert!(
             decorations.contains(&(Decoration::BuiltIn, vec![built_in as u32])),
             "{name}: {decorations:?}"
@@ -7698,10 +7955,11 @@ fn shader_core_builtins() {
             "{name}: {decorations:?}"
         );
     }
+    Ok(())
 }
 
 #[test]
-fn formatless_multisampled_and_cube_storage_images() {
+fn formatless_multisampled_and_cube_storage_images() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Fragment,
         "#version 450
@@ -7716,7 +7974,7 @@ fn formatless_multisampled_and_cube_storage_images() {
             imageStore(ms, ivec2(0), 3, o);
             imageStore(cube, ivec3(0, 0, 7), o);
         }",
-    );
+    )?;
     assert!(has_capability(
         &module,
         spirv::Capability::StorageImageReadWithoutFormat
@@ -7735,10 +7993,11 @@ fn formatless_multisampled_and_cube_storage_images() {
     assert!(writes.iter().any(|inst| {
         inst.operands.get(3) == Some(&Operand::ImageOperands(spirv::ImageOperands::SAMPLE))
     }));
+    Ok(())
 }
 
 #[test]
-fn compute_shader_derivatives() {
+fn compute_shader_derivatives() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Compute,
         "#version 450
@@ -7751,7 +8010,7 @@ fn compute_shader_derivatives() {
             b.f = dFdx(b.f) + fwidthCoarse(b.f);
             b.v = texture(s, vec2(0.5), 0.25) + textureQueryLod(s, vec2(0.5)).xyxy;
         }",
-    );
+    )?;
     assert!(has_execution_mode(
         &module,
         spirv::ExecutionMode::DerivativeGroupQuadsKHR
@@ -7771,13 +8030,14 @@ fn compute_shader_derivatives() {
         layout(set = 0, binding = 0) uniform sampler2D s;
         layout(set = 0, binding = 1) buffer B { vec4 v; } b;
         void main() { b.v = texture(s, vec2(0.5), 0.25); }",
-    );
+    )?;
     assert!(instructions(&module, Op::ImageSampleImplicitLod).is_empty());
     assert_eq!(instructions(&module, Op::ImageSampleExplicitLod).len(), 1);
+    Ok(())
 }
 
 #[test]
-fn sparse_textures_and_lod_clamp() {
+fn sparse_textures_and_lod_clamp() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Fragment,
         "#version 450
@@ -7798,7 +8058,7 @@ fn sparse_textures_and_lod_clamp() {
             o += t + textureClampARB(s, vec2(0.5), 0.25);
             if (sparseTexelsResidentARB(code)) o += f;
         }",
-    );
+    )?;
     assert!(has_capability(&module, spirv::Capability::SparseResidency));
     assert!(has_capability(&module, spirv::Capability::MinLod));
     for op in [
@@ -7811,10 +8071,11 @@ fn sparse_textures_and_lod_clamp() {
     ] {
         assert_eq!(instructions(&module, op).len(), 1, "{op:?}");
     }
+    Ok(())
 }
 
 #[test]
-fn ext_hit_objects_take_payload_and_attribute_variables() {
+fn ext_hit_objects_take_payload_and_attribute_variables() -> crate::TestResult {
     let module = compile(
         ShaderStage::RayGeneration,
         r#"#version 460
@@ -7839,13 +8100,13 @@ void main() {
     hitObjectReorderExecuteEXT(hit, 9u, 1u, 1);
 }
 "#,
-    );
+    )?;
     let traces = instructions(&module, Op::HitObjectTraceRayEXT);
     assert_eq!(traces.len(), 1);
     let operands = &traces[0].operands;
     assert_eq!(name_of(&module, operands[0].unwrap_id_ref()), "hit");
     for (index, value) in [(2, 1), (3, 2), (4, 3), (5, 4), (6, 5)] {
-        assert_eq!(constant(&module, &operands[index]), value);
+        assert_eq!(constant(&module, &operands[index])?, value);
     }
     assert_eq!(name_of(&module, operands[11].unwrap_id_ref()), "other");
     let records = instructions(&module, Op::HitObjectRecordFromQueryEXT);
@@ -7854,7 +8115,7 @@ void main() {
         name_of(&module, records[0].operands[1].unwrap_id_ref()),
         "query"
     );
-    assert_eq!(constant(&module, &records[0].operands[2]), 6);
+    assert_eq!(constant(&module, &records[0].operands[2])?, 6);
     assert_eq!(
         name_of(&module, records[0].operands[3].unwrap_id_ref()),
         "attributes"
@@ -7878,18 +8139,19 @@ void main() {
         name_of(&module, execute[0].operands[1].unwrap_id_ref()),
         "payload"
     );
-    assert_eq!(constant(&module, &execute[0].operands[2]), 9);
-    assert_eq!(constant(&module, &execute[0].operands[3]), 1);
+    assert_eq!(constant(&module, &execute[0].operands[2])?, 9);
+    assert_eq!(constant(&module, &execute[0].operands[3])?, 1);
     assert!(decorated(&module, Decoration::Location).is_empty());
     let classes = storage_classes(&module);
     assert!(classes.contains(&spirv::StorageClass::HitObjectAttributeEXT));
     assert!(classes.contains(&spirv::StorageClass::Private));
     assert_eq!(instructions(&module, Op::TypeHitObjectEXT).len(), 1);
     assert!(capabilities(&module).contains(&spirv::Capability::ShaderInvocationReorderEXT));
+    Ok(())
 }
 
 #[test]
-fn nv_hit_objects_record_hits_and_reorder() {
+fn nv_hit_objects_record_hits_and_reorder() -> crate::TestResult {
     let module = compile(
         ShaderStage::RayGeneration,
         r#"#version 460
@@ -7911,14 +8173,14 @@ void main() {
     reorderThreadNV(1u, 2u);
 }
 "#,
-    );
+    )?;
     let hits = instructions(&module, Op::HitObjectRecordHitNV);
     assert_eq!(hits.len(), 1);
     let operands = &hits[0].operands;
     assert_eq!(operands.len(), 13);
-    assert_eq!(constant(&module, &operands[2]), 1);
-    assert_eq!(constant(&module, &operands[5]), 4);
-    assert_eq!(constant(&module, &operands[7]), 6);
+    assert_eq!(constant(&module, &operands[2])?, 1);
+    assert_eq!(constant(&module, &operands[5])?, 4);
+    assert_eq!(constant(&module, &operands[7])?, 6);
     assert_eq!(
         instructions(&module, Op::HitObjectRecordHitWithIndexMotionNV)[0]
             .operands
@@ -7946,10 +8208,11 @@ void main() {
     let capabilities = capabilities(&module);
     assert!(capabilities.contains(&spirv::Capability::ShaderInvocationReorderNV));
     assert!(capabilities.contains(&spirv::Capability::RayTracingMotionBlurNV));
+    Ok(())
 }
 
 #[test]
-fn unused_hit_objects_declare_nothing() {
+fn unused_hit_objects_declare_nothing() -> crate::TestResult {
     let module = compile(
         ShaderStage::Fragment,
         r#"#version 460
@@ -7965,7 +8228,7 @@ void main() {
     radius = radii[0] + rayQueryGetIntersectionSphereRadiusNV(query, false);
 }
 "#,
-    );
+    )?;
     assert!(instructions(&module, Op::TypeHitObjectNV).is_empty());
     assert_eq!(
         instructions(&module, Op::RayQueryGetIntersectionLSSRadiiNV).len(),
@@ -7975,10 +8238,11 @@ void main() {
     assert!(!capabilities.contains(&spirv::Capability::ShaderInvocationReorderNV));
     assert!(capabilities.contains(&spirv::Capability::RayTracingSpheresGeometryNV));
     assert!(capabilities.contains(&spirv::Capability::RayTracingLinearSweptSpheresGeometryNV));
+    Ok(())
 }
 
 #[test]
-fn swept_sphere_and_cluster_built_ins() {
+fn swept_sphere_and_cluster_built_ins() -> crate::TestResult {
     let module = compile(
         ShaderStage::ClosestHit,
         r#"#version 460
@@ -7997,7 +8261,7 @@ void main() {
     }
 }
 "#,
-    );
+    )?;
     let mut builtins = decorated(&module, Decoration::BuiltIn);
     builtins.sort();
     assert_eq!(
@@ -8017,10 +8281,11 @@ void main() {
     ] {
         assert!(capabilities.contains(&capability), "{capability:?}");
     }
+    Ok(())
 }
 
 #[test]
-fn gather_with_a_level_or_a_bias() {
+fn gather_with_a_level_or_a_bias() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Fragment,
         "#version 450
@@ -8030,7 +8295,7 @@ fn gather_with_a_level_or_a_bias() {
         void main() {
             o = textureGatherLodAMD(s, vec2(0.5), 1.0, 2) + textureGather(s, vec2(0.5), 1, 0.5);
         }",
-    );
+    )?;
     assert!(has_capability(
         &module,
         spirv::Capability::ImageGatherBiasLodAMD
@@ -8046,10 +8311,11 @@ fn gather_with_a_level_or_a_bias() {
             &Operand::ImageOperands(spirv::ImageOperands::BIAS)
         ]
     );
+    Ok(())
 }
 
 #[test]
-fn spirv_instruction_passes_literals_and_pointers() {
+fn spirv_instruction_passes_literals_and_pointers() -> crate::TestResult {
     let source = "#version 450
 #extension GL_EXT_spirv_intrinsics : enable
 spirv_instruction(id = 61)
@@ -8065,7 +8331,7 @@ void main() {
     debugBreak();
 }
 ";
-    let words = message_words(ShaderStage::Vertex, source, (1, 0));
+    let words = message_words(ShaderStage::Vertex, source, (1, 0))?;
     let instructions = raw_instructions(&words);
     assert!(instructions
         .iter()
@@ -8077,18 +8343,19 @@ void main() {
         .iter()
         .filter(|(op, _)| *op == Op::ExtInstImport as u32)
         .map(|(_, operands)| literal_string(&operands[1..]))
-        .collect();
+        .collect::<crate::TestResult<_>>()?;
     assert!(imports.contains(&"NonSemantic.DebugBreak".to_string()));
     let extensions: Vec<String> = instructions
         .iter()
         .filter(|(op, _)| *op == Op::Extension as u32)
         .map(|(_, operands)| literal_string(operands))
-        .collect();
+        .collect::<crate::TestResult<_>>()?;
     assert!(extensions.contains(&"SPV_KHR_non_semantic_info".to_string()));
+    Ok(())
 }
 
 #[test]
-fn spirv_execution_modes_and_decorations() {
+fn spirv_execution_modes_and_decorations() -> crate::TestResult {
     let source = "#version 460
 #extension GL_EXT_spirv_intrinsics : require
 layout(constant_id = 0) const int sx = 2;
@@ -8100,7 +8367,7 @@ layout(local_size_x = 1) in;
 void main() {
 }
 ";
-    let words = message_words(ShaderStage::Compute, source, (1, 4));
+    let words = message_words(ShaderStage::Compute, source, (1, 4))?;
     let instructions = raw_instructions(&words);
     let modes: Vec<&Vec<u32>> = instructions
         .iter()
@@ -8118,13 +8385,15 @@ void main() {
         .any(|(op, operands)| *op == Op::Decorate as u32 && operands[1] == 0));
     assert!(instructions
         .iter()
-        .any(|(op, operands)| *op == Op::DecorateString as u32
-            && operands[1] == 5635
-            && literal_string(&operands[2..]) == "foobar"));
+        .filter(|(op, operands)| *op == Op::DecorateString as u32 && operands[1] == 5635)
+        .map(|(_, operands)| literal_string(&operands[2..]))
+        .collect::<crate::TestResult<Vec<_>>>()?
+        .contains(&"foobar".to_string()));
+    Ok(())
 }
 
 #[test]
-fn spirv_type_declares_a_raw_type() {
+fn spirv_type_declares_a_raw_type() -> crate::TestResult {
     let source = "#version 460
 #extension GL_EXT_spirv_intrinsics : enable
 #define EmptyStruct spirv_type(id = 30)
@@ -8134,7 +8403,7 @@ void main() {
     func(dummy[1]);
 }
 ";
-    let words = message_words(ShaderStage::Vertex, source, (1, 0));
+    let words = message_words(ShaderStage::Vertex, source, (1, 0))?;
     let instructions = raw_instructions(&words);
     assert!(instructions
         .iter()
@@ -8150,12 +8419,14 @@ void main() { vec2 v = vloadn(0u, data[0], 2); }
 ",
     )
     .map(|_| ())
-    .unwrap_err();
+    .err()
+    .ok_or("expected an error")?;
     assert!(rejected.contains("physical addressing"), "{rejected}");
+    Ok(())
 }
 
 #[test]
-fn displacement_micromap_fetches_in_compute() {
+fn displacement_micromap_fetches_in_compute() -> crate::TestResult {
     let module = compile(
         ShaderStage::Compute,
         r#"#version 460
@@ -8169,20 +8440,21 @@ void main() {
     barycentric = fetchMicroTriangleVertexBarycentricNV(scene, 1, 2, 3, ivec2(1, 0));
 }
 "#,
-    );
+    )?;
     let positions = instructions(&module, Op::FetchMicroTriangleVertexPositionNV);
     assert_eq!(positions.len(), 1);
     assert_eq!(positions[0].operands.len(), 5);
-    assert_eq!(constant(&module, &positions[0].operands[3]), 3);
+    assert_eq!(constant(&module, &positions[0].operands[3])?, 3);
     assert_eq!(
         instructions(&module, Op::FetchMicroTriangleVertexBarycentricNV).len(),
         1
     );
     assert!(capabilities(&module).contains(&spirv::Capability::DisplacementMicromapNV));
+    Ok(())
 }
 
 #[test]
-fn hit_object_record_from_query_passes_the_hit_kind() {
+fn hit_object_record_from_query_passes_the_hit_kind() -> crate::TestResult {
     let words = compile_words(
         ShaderStage::ClosestHit,
         r#"#version 460
@@ -8198,17 +8470,21 @@ void main() {
 }
 "#,
         (1, 4),
-    );
+    )?;
     let records: Vec<_> = raw_instructions(&words)
         .into_iter()
         .filter(|&(op, _)| op == Op::HitObjectRecordFromQueryEXT as u32)
         .map(|(_, operands)| operands.len())
         .collect();
     assert_eq!(records, [4, 5]);
+    Ok(())
 }
 
-fn memory_decorations_of(module: &dr::Module, name: &str) -> Vec<(u32, Decoration)> {
-    let mut decorations: Vec<_> = member_decorations(module, name)
+fn memory_decorations_of(
+    module: &dr::Module,
+    name: &str,
+) -> crate::TestResult<Vec<(u32, Decoration)>> {
+    let mut decorations: Vec<_> = member_decorations(module, name)?
         .into_iter()
         .filter(|&(_, decoration, _)| {
             matches!(
@@ -8223,11 +8499,11 @@ fn memory_decorations_of(module: &dr::Module, name: &str) -> Vec<(u32, Decoratio
         .map(|(member, decoration, _)| (member, decoration))
         .collect();
     decorations.sort_by_key(|&(member, decoration)| (member, decoration as u32));
-    decorations
+    Ok(decorations)
 }
 
 #[test]
-fn member_memory_qualifiers_decorate_their_member() {
+fn member_memory_qualifiers_decorate_their_member() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Compute,
         "#version 450
@@ -8244,9 +8520,9 @@ fn member_memory_qualifiers_decorate_their_member() {
         } b;
         layout(std430, binding = 1) coherent restrict buffer C { float x; readonly float y; } c;
         void main() { b.a = b.b + b.c + b.e + b.f + b.g + c.y; b.d = 1.0; c.x = b.a; }",
-    );
+    )?;
     assert_eq!(
-        memory_decorations_of(&module, "B"),
+        memory_decorations_of(&module, "B")?,
         [
             (0, Decoration::Coherent),
             (1, Decoration::Volatile),
@@ -8257,14 +8533,14 @@ fn member_memory_qualifiers_decorate_their_member() {
             (6, Decoration::Coherent),
         ]
     );
-    assert!(variable_decorations(&module, "b")
+    assert!(variable_decorations(&module, "b")?
         .iter()
         .all(|&(decoration, _)| !matches!(
             decoration,
             Decoration::Coherent | Decoration::Volatile | Decoration::Restrict
         )));
     assert_eq!(
-        memory_decorations_of(&module, "C"),
+        memory_decorations_of(&module, "C")?,
         [
             (0, Decoration::Restrict),
             (0, Decoration::Coherent),
@@ -8273,16 +8549,17 @@ fn member_memory_qualifiers_decorate_their_member() {
             (1, Decoration::NonWritable),
         ]
     );
-    let variable: Vec<_> = variable_decorations(&module, "c")
+    let variable: Vec<_> = variable_decorations(&module, "c")?
         .into_iter()
         .map(|(decoration, _)| decoration)
         .filter(|decoration| matches!(decoration, Decoration::Coherent | Decoration::Restrict))
         .collect();
     assert_eq!(variable, [Decoration::Coherent, Decoration::Restrict]);
+    Ok(())
 }
 
 #[test]
-fn member_memory_qualifiers_select_memory_operands() {
+fn member_memory_qualifiers_select_memory_operands() -> crate::TestResult {
     let module = compile(
         ShaderStage::Compute,
         "#version 450
@@ -8290,23 +8567,24 @@ fn member_memory_qualifiers_select_memory_operands() {
         layout(local_size_x = 1) in;
         layout(std430, binding = 0) buffer B { coherent float a; float e; volatile uint n; } b;
         void main() { b.e = b.a; atomicAdd(b.n, 1u); }",
-    );
+    )?;
     use spirv::MemoryAccess as Ma;
     assert_eq!(
         memory_masks(&module),
         [(Op::Load, Ma::MAKE_POINTER_VISIBLE | Ma::NON_PRIVATE_POINTER)]
     );
-    assert!(memory_decorations_of(&module, "B").is_empty());
+    assert!(memory_decorations_of(&module, "B")?.is_empty());
     let atomics = instructions(&module, Op::AtomicIAdd);
     assert_eq!(atomics.len(), 1);
     assert_eq!(
-        constant(&module, &atomics[0].operands[2]),
+        constant(&module, &atomics[0].operands[2])?,
         spirv::MemorySemantics::VOLATILE.bits()
     );
+    Ok(())
 }
 
 #[test]
-fn reference_member_access_qualifiers_decorate_their_member() {
+fn reference_member_access_qualifiers_decorate_their_member() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Compute,
         "#version 450
@@ -8316,7 +8594,7 @@ fn reference_member_access_qualifiers_decorate_their_member() {
         layout(buffer_reference, std430) readonly buffer S { float u; restrict float v; };
         layout(push_constant) uniform P { R r; S s; } p;
         void main() { p.r.y = p.r.x + p.r.z + p.s.u + p.s.v; }",
-    );
+    )?;
     let names = |decoration| {
         let mut names: Vec<_> = physical_member_decorations(&module, decoration)
             .into_iter()
@@ -8328,6 +8606,7 @@ fn reference_member_access_qualifiers_decorate_their_member() {
     assert_eq!(names(Decoration::NonWritable), ["u", "v", "x"]);
     assert_eq!(names(Decoration::NonReadable), ["y"]);
     assert_eq!(names(Decoration::Restrict), ["v"]);
+    Ok(())
 }
 
 fn glsl_ops(module: &dr::Module) -> Vec<u32> {
@@ -8342,7 +8621,7 @@ fn glsl_ops(module: &dr::Module) -> Vec<u32> {
 }
 
 #[test]
-fn integer_arithmetic_is_written_as_glslang_writes_it() {
+fn integer_arithmetic_is_written_as_glslang_writes_it() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Compute,
         "#version 450
@@ -8354,7 +8633,7 @@ fn integer_arithmetic_is_written_as_glslang_writes_it() {
             b.i[1] = int(b.f) + ivec3(b.v).y;
             b.u[1] = uint(b.f);
         }",
-    );
+    )?;
     for op in [Op::SMod, Op::SDiv, Op::UMod, Op::UDiv, Op::ConvertFToU] {
         assert_eq!(instructions(&module, op).len(), 1, "{op:?}");
     }
@@ -8368,10 +8647,11 @@ fn integer_arithmetic_is_written_as_glslang_writes_it() {
             spirv::GlslStd450Op::UClamp as u32
         ]
     );
+    Ok(())
 }
 
 #[test]
-fn variables_are_initialized_only_when_declared_so() {
+fn variables_are_initialized_only_when_declared_so() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Compute,
         "#version 450
@@ -8386,7 +8666,7 @@ fn variables_are_initialized_only_when_declared_so() {
             g = s[0];
             for (int k = 0; k < int(b.f[1]); ++k) { b.f[k] = g; }
         }",
-    );
+    )?;
     let variables = instructions(&module, Op::Variable);
     let initialized: Vec<_> = variables
         .iter()
@@ -8400,39 +8680,39 @@ fn variables_are_initialized_only_when_declared_so() {
         .debug_names
         .iter()
         .all(|inst| inst.operands.get(1) != Some(&Operand::LiteralString("loop_bound".into()))));
+    Ok(())
 }
 
 #[test]
-fn select_keeps_a_scalar_condition_from_spirv_1_4() {
+fn select_keeps_a_scalar_condition_from_spirv_1_4() -> crate::TestResult {
     let source = "#version 450
         layout(location = 0) flat in int i;
         layout(location = 1) in vec3 a;
         layout(location = 0) out vec3 o;
         void main() { o = i > 1 ? a : vec3(2.0); }";
-    let module = parse(ShaderStage::Fragment, source).unwrap();
-    let info = Validator::new(ValidationFlags::all(), Capabilities::all())
-        .validate(&module)
-        .unwrap();
-    let select_conditions = |lang_version| {
+    let module = parse(ShaderStage::Fragment, source)?;
+    let info = Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&module)?;
+    let select_conditions = |lang_version| -> crate::TestResult<Vec<bool>> {
         let options = spv::Options {
             lang_version,
             flags: spv::WriterFlags::DEBUG,
             ..spv::Options::default()
         };
-        let words = spv::write_vec(&module, &info, &options, None).unwrap();
-        crate::stage_io::spirv_val_in(&words, &["--target-env", "vulkan1.2"]);
-        let module = dr::load_words(words).unwrap();
+        let words = spv::write_vec(&module, &info, &options, None)?;
+        crate::stage_io::spirv_val_in(&words, &["--target-env", "vulkan1.2"])?;
+        let module = dr::load_words(words)?;
         let composites = instructions(&module, Op::CompositeConstruct)
             .iter()
             .filter_map(|inst| inst.result_id)
             .collect::<Vec<_>>();
-        instructions(&module, Op::Select)
+        Ok(instructions(&module, Op::Select)
             .iter()
             .map(|inst| composites.contains(&inst.operands[0].unwrap_id_ref()))
-            .collect::<Vec<_>>()
+            .collect())
     };
-    assert_eq!(select_conditions((1, 0)), [true]);
-    assert_eq!(select_conditions((1, 4)), [false]);
+    assert_eq!(select_conditions((1, 0))?, [true]);
+    assert_eq!(select_conditions((1, 4))?, [false]);
+    Ok(())
 }
 
 fn selection_controls(module: &dr::Module) -> Vec<spirv::SelectionControl> {
@@ -8446,7 +8726,7 @@ fn selection_controls(module: &dr::Module) -> Vec<spirv::SelectionControl> {
 }
 
 #[test]
-fn selection_attributes_select_the_merge_control() {
+fn selection_attributes_select_the_merge_control() -> crate::TestResult {
     use spirv::SelectionControl as Sc;
     let module = compile_valid(
         ShaderStage::Fragment,
@@ -8467,7 +8747,7 @@ fn selection_attributes_select_the_merge_control() {
             [[dont_flatten]] switch (i) { }
             [[flatten]] if (i > 6) { } else { }
         }",
-    );
+    )?;
     assert_eq!(
         selection_controls(&module),
         [
@@ -8483,10 +8763,11 @@ fn selection_attributes_select_the_merge_control() {
         ]
     );
     assert_eq!(instructions(&module, Op::Switch).len(), 2);
+    Ok(())
 }
 
 #[test]
-fn unused_heap_views_declare_only_the_heap() {
+fn unused_heap_views_declare_only_the_heap() -> crate::TestResult {
     let tensors = spirv::Capability::TensorsARM as u32;
     let count = |raw: &[(u32, Vec<u32>)], op: Op| {
         raw.iter().filter(|&&(code, _)| code == op as u32).count()
@@ -8508,7 +8789,7 @@ fn unused_heap_views_declare_only_the_heap() {
         layout(descriptor_heap) uniform texture2D textures[];
         void main() {}",
         (1, 0),
-    ));
+    )?);
     assert!(!capabilities(&raw).contains(&tensors));
     assert_eq!(count(&raw, Op::TypeTensorARM), 0);
     assert_eq!(count(&raw, Op::TypeImage), 0);
@@ -8526,9 +8807,10 @@ fn unused_heap_views_declare_only_the_heap() {
         layout(std430, binding = 0) buffer B { uint size; } b;
         void main() { b.size = tensorSizeARM(intTensors[1], 0); }",
         (1, 0),
-    ));
+    )?);
     assert!(capabilities(&raw).contains(&tensors));
     assert_eq!(count(&raw, Op::TypeTensorARM), 1);
+    Ok(())
 }
 
 fn workgroup_size_builtins(raw: &[(u32, Vec<u32>)]) -> Vec<Vec<u32>> {
@@ -8541,7 +8823,7 @@ fn workgroup_size_builtins(raw: &[(u32, Vec<u32>)]) -> Vec<Vec<u32>> {
         })
         .map(|(_, operands)| operands[0])
         .collect();
-    let constant = |id: u32| {
+    let constant_of = |id: u32| {
         raw.iter()
             .find(|&&(op, ref operands)| op == Op::Constant as u32 && operands.get(1) == Some(&id))
             .map_or(u32::MAX, |(_, operands)| operands[2])
@@ -8551,39 +8833,45 @@ fn workgroup_size_builtins(raw: &[(u32, Vec<u32>)]) -> Vec<Vec<u32>> {
             (op == Op::ConstantComposite as u32 || op == Op::SpecConstantComposite as u32)
                 && decorated.contains(&operands[1])
         })
-        .map(|(_, operands)| operands[2..].iter().map(|&id| constant(id)).collect())
+        .map(|(_, operands)| operands[2..].iter().map(|&id| constant_of(id)).collect())
         .collect()
 }
 
 #[test]
-fn declared_local_size_is_a_workgroup_size_builtin() {
+fn declared_local_size_is_a_workgroup_size_builtin() -> crate::TestResult {
     let source = "#version 450
         layout(local_size_x = 8, local_size_y = 4) in;
         layout(std430, binding = 0) buffer B { uint v; } b;
         void main() { b.v = 1u; }";
-    let raw = raw_instructions(&compile_words(ShaderStage::Compute, source, (1, 0)));
+    let raw = raw_instructions(&compile_words(ShaderStage::Compute, source, (1, 0))?);
     assert_eq!(workgroup_size_builtins(&raw), [vec![8, 4, 1]]);
-    let raw = raw_instructions(&compile_words(ShaderStage::Compute, source, (1, 6)));
+    let raw = raw_instructions(&compile_words(ShaderStage::Compute, source, (1, 6))?);
     assert!(workgroup_size_builtins(&raw).is_empty());
 
     let source = "#version 450
         layout(std430, binding = 0) buffer B { uint v; } b;
         void main() { b.v = 1u; }";
-    let raw = raw_instructions(&compile_words(ShaderStage::Compute, source, (1, 0)));
+    let raw = raw_instructions(&compile_words(ShaderStage::Compute, source, (1, 0))?);
     assert!(workgroup_size_builtins(&raw).is_empty());
 
     let source = "#version 450
         layout(local_size_x = 2) in;
         layout(std430, binding = 0) buffer B { uvec3 v; } b;
         void main() { b.v = gl_WorkGroupSize; }";
-    let raw = raw_instructions(&compile_words(ShaderStage::Compute, source, (1, 0)));
+    let raw = raw_instructions(&compile_words(ShaderStage::Compute, source, (1, 0))?);
     assert_eq!(workgroup_size_builtins(&raw), [vec![2, 1, 1]]);
+    Ok(())
 }
 
-fn valid_words(stage: ShaderStage, source: &str, lang_version: (u8, u8), env: &str) -> Vec<u32> {
-    let words = compile_words(stage, source, lang_version);
-    crate::stage_io::spirv_val_in(&words, &["--target-env", env]);
-    words
+fn valid_words(
+    stage: ShaderStage,
+    source: &str,
+    lang_version: (u8, u8),
+    env: &str,
+) -> crate::TestResult<Vec<u32>> {
+    let words = compile_words(stage, source, lang_version)?;
+    crate::stage_io::spirv_val_in(&words, &["--target-env", env])?;
+    Ok(words)
 }
 
 fn opcode_count(words: &[u32], op: Op) -> usize {
@@ -8610,7 +8898,7 @@ fn built_ins(words: &[u32]) -> Vec<u32> {
 }
 
 #[test]
-fn fragment_built_ins_of_extensions() {
+fn fragment_built_ins_of_extensions() -> crate::TestResult {
     let words = valid_words(
         ShaderStage::Fragment,
         "#version 450
@@ -8628,7 +8916,7 @@ fn fragment_built_ins_of_extensions() {
         }",
         (1, 3),
         "vulkan1.1",
-    );
+    )?;
     let found = built_ins(&words);
     for built_in in [
         spirv::BuiltIn::ShadingRateKHR,
@@ -8652,15 +8940,17 @@ fn fragment_built_ins_of_extensions() {
         layout(location = 0) out vec2 o;
         void main() { o = gl_FragSizeEXT; }",
     )
-    .unwrap_err();
+    .err()
+    .ok_or("expected an error")?;
     assert!(
         error.contains("GL_EXT_fragment_invocation_density"),
         "{error}"
     );
+    Ok(())
 }
 
 #[test]
-fn draw_parameters_and_primitive_shading_rate() {
+fn draw_parameters_and_primitive_shading_rate() -> crate::TestResult {
     let words = valid_words(
         ShaderStage::Vertex,
         "#version 450
@@ -8673,7 +8963,7 @@ fn draw_parameters_and_primitive_shading_rate() {
         }",
         (1, 0),
         "vulkan1.0",
-    );
+    )?;
     let found = built_ins(&words);
     for built_in in [
         spirv::BuiltIn::BaseVertex,
@@ -8687,10 +8977,11 @@ fn draw_parameters_and_primitive_shading_rate() {
         &words,
         spirv::Capability::DrawParameters
     ));
+    Ok(())
 }
 
 #[test]
-fn demote_and_helper_invocation() {
+fn demote_and_helper_invocation() -> crate::TestResult {
     let words = valid_words(
         ShaderStage::Fragment,
         "#version 450
@@ -8702,7 +8993,7 @@ fn demote_and_helper_invocation() {
         }",
         (1, 0),
         "vulkan1.0",
-    );
+    )?;
     assert_eq!(opcode_count(&words, Op::DemoteToHelperInvocation), 1);
     assert_eq!(opcode_count(&words, Op::IsHelperInvocationEXT), 1);
 
@@ -8711,15 +9002,17 @@ fn demote_and_helper_invocation() {
         "#version 450
         void main() { demote; }",
     )
-    .unwrap_err();
+    .err()
+    .ok_or("expected an error")?;
     assert!(
         error.contains("GL_EXT_demote_to_helper_invocation"),
         "{error}"
     );
+    Ok(())
 }
 
 #[test]
-fn fragment_shader_interlock() {
+fn fragment_shader_interlock() -> crate::TestResult {
     let words = valid_words(
         ShaderStage::Fragment,
         "#version 450
@@ -8732,7 +9025,7 @@ fn fragment_shader_interlock() {
         }",
         (1, 0),
         "vulkan1.0",
-    );
+    )?;
     assert_eq!(opcode_count(&words, Op::BeginInvocationInterlockEXT), 1);
     assert_eq!(opcode_count(&words, Op::EndInvocationInterlockEXT), 1);
     assert!(declares_capability(
@@ -8746,12 +9039,14 @@ fn fragment_shader_interlock() {
         #extension GL_ARB_fragment_shader_interlock : enable
         void main() { endInvocationInterlockARB(); beginInvocationInterlockARB(); }",
     )
-    .unwrap_err();
+    .err()
+    .ok_or("expected an error")?;
     assert!(error.contains("beginInvocationInterlockARB"), "{error}");
+    Ok(())
 }
 
 #[test]
-fn split_barriers() {
+fn split_barriers() -> crate::TestResult {
     let words = valid_words(
         ShaderStage::Compute,
         "#version 450
@@ -8766,7 +9061,7 @@ fn split_barriers() {
         }",
         (1, 3),
         "vulkan1.1",
-    );
+    )?;
     assert_eq!(opcode_count(&words, Op::ControlBarrierArriveINTEL), 2);
     assert_eq!(opcode_count(&words, Op::ControlBarrierWaitINTEL), 2);
 
@@ -8779,12 +9074,14 @@ fn split_barriers() {
             controlBarrierWait(gl_ScopeWorkgroup, gl_ScopeWorkgroup, gl_StorageSemanticsShared, gl_SemanticsRelease);
         }",
     )
-    .unwrap_err();
+        .err()
+        .ok_or("expected an error")?;
     assert!(error.contains("gl_SemanticsAcquire"), "{error}");
+    Ok(())
 }
 
 #[test]
-fn float_atomics() {
+fn float_atomics() -> crate::TestResult {
     let words = valid_words(
         ShaderStage::Compute,
         "#version 450
@@ -8801,7 +9098,7 @@ fn float_atomics() {
         }",
         (1, 3),
         "vulkan1.1",
-    );
+    )?;
     assert_eq!(opcode_count(&words, Op::AtomicFAddEXT), 2);
     assert_eq!(opcode_count(&words, Op::AtomicFMinEXT), 1);
     assert_eq!(opcode_count(&words, Op::AtomicFMaxEXT), 2);
@@ -8820,12 +9117,14 @@ fn float_atomics() {
         layout(binding = 0) buffer B { float f; } b;
         void main() { atomicAdd(b.f, 1.0); }",
     )
-    .unwrap_err();
+    .err()
+    .ok_or("expected an error")?;
     assert!(error.contains("GL_EXT_shader_atomic_float"), "{error}");
+    Ok(())
 }
 
 #[test]
-fn sixty_four_bit_images() {
+fn sixty_four_bit_images() -> crate::TestResult {
     let words = valid_words(
         ShaderStage::Compute,
         "#version 450
@@ -8842,7 +9141,7 @@ fn sixty_four_bit_images() {
         }",
         (1, 0),
         "vulkan1.0",
-    );
+    )?;
     assert!(declares_capability(
         &words,
         spirv::Capability::Int64ImageEXT
@@ -8850,10 +9149,11 @@ fn sixty_four_bit_images() {
     assert!(declares_capability(&words, spirv::Capability::Int64Atomics));
     assert_eq!(opcode_count(&words, Op::AtomicIAdd), 1);
     assert_eq!(opcode_count(&words, Op::AtomicSMin), 1);
+    Ok(())
 }
 
 #[test]
-fn nontemporal_accesses() {
+fn nontemporal_accesses() -> crate::TestResult {
     let words = valid_words(
         ShaderStage::Fragment,
         "#version 460
@@ -8872,7 +9172,7 @@ fn nontemporal_accesses() {
         }",
         (1, 6),
         "vulkan1.3",
-    );
+    )?;
     let nontemporal = raw_instructions(&words)
         .iter()
         .filter(|(opcode, operands)| {
@@ -8891,12 +9191,14 @@ fn nontemporal_accesses() {
         void reject(image2D target) {}
         void main() { reject(image); }",
     )
-    .unwrap_err();
+    .err()
+    .ok_or("expected an error")?;
     assert!(error.contains("memory"), "{error}");
+    Ok(())
 }
 
 #[test]
-fn tile_image_reads() {
+fn tile_image_reads() -> crate::TestResult {
     let words = valid_words(
         ShaderStage::Fragment,
         "#version 460
@@ -8909,7 +9211,7 @@ fn tile_image_reads() {
         }",
         (1, 0),
         "vulkan1.0",
-    );
+    )?;
     assert_eq!(opcode_count(&words, Op::ColorAttachmentReadEXT), 1);
     assert_eq!(opcode_count(&words, Op::DepthAttachmentReadEXT), 1);
     assert_eq!(opcode_count(&words, Op::StencilAttachmentReadEXT), 1);
@@ -8926,12 +9228,14 @@ fn tile_image_reads() {
         layout(location = 1) tileImageEXT highp attachmentEXT b;
         void main() {}",
     )
-    .unwrap_err();
+    .err()
+    .ok_or("expected an error")?;
     assert!(error.contains("overlapping use of location"), "{error}");
+    Ok(())
 }
 
 #[test]
-fn interpolation_functions() {
+fn interpolation_functions() -> crate::TestResult {
     let words = valid_words(
         ShaderStage::Fragment,
         "#version 450
@@ -8945,16 +9249,17 @@ fn interpolation_functions() {
         }",
         (1, 0),
         "vulkan1.0",
-    );
+    )?;
     assert!(declares_capability(
         &words,
         spirv::Capability::InterpolationFunction
     ));
     assert_eq!(opcode_count(&words, Op::ExtInst), 3);
+    Ok(())
 }
 
 #[test]
-fn fragment_mask_fetches() {
+fn fragment_mask_fetches() -> crate::TestResult {
     let words = valid_words(
         ShaderStage::Fragment,
         "#version 450
@@ -8967,13 +9272,14 @@ fn fragment_mask_fetches() {
         }",
         (1, 0),
         "vulkan1.0",
-    );
+    )?;
     assert_eq!(opcode_count(&words, Op::FragmentMaskFetchAMD), 1);
     assert_eq!(opcode_count(&words, Op::FragmentFetchAMD), 1);
+    Ok(())
 }
 
 #[test]
-fn explicit_type_casts() {
+fn explicit_type_casts() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Fragment,
         "#version 460
@@ -8984,7 +9290,7 @@ fn explicit_type_casts() {
             int i = (int) v.x;
             o = (vec4) i + vec4((uvec2) v.xy, 0, 1);
         }",
-    );
+    )?;
     assert!(!instructions(&module, Op::ConvertFToS).is_empty());
 
     let error = parse(
@@ -8994,12 +9300,14 @@ fn explicit_type_casts() {
         struct S { uint u; };
         void main() { S s = (S) 1u; }",
     )
-    .unwrap_err();
+    .err()
+    .ok_or("expected an error")?;
     assert!(error.contains("type cast has to be"), "{error}");
+    Ok(())
 }
 
 #[test]
-fn texture_footprints() {
+fn texture_footprints() -> crate::TestResult {
     let words = valid_words(
         ShaderStage::Fragment,
         "#version 450
@@ -9014,17 +9322,18 @@ fn texture_footprints() {
         }",
         (1, 0),
         "vulkan1.0",
-    );
+    )?;
     assert_eq!(opcode_count(&words, Op::ImageSampleFootprintNV), 1);
     assert!(declares_capability(
         &words,
         spirv::Capability::ImageFootprintNV
     ));
     assert!(declares_capability(&words, spirv::Capability::MinLod));
+    Ok(())
 }
 
 #[test]
-fn function_attributes_match_glslang() {
+fn function_attributes_match_glslang() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Fragment,
         "#version 450
@@ -9035,7 +9344,7 @@ fn function_attributes_match_glslang() {
         [[inline]] int declared(int i);
         int declared(int i) { return i + 4; }
         void main() { color = vec4(float(inlined(1) + outlined(2) + declared(3))); }",
-    );
+    )?;
     let mut controls: Vec<(String, spirv::FunctionControl)> = instructions(&module, Op::Function)
         .iter()
         .filter_map(|inst| match inst.operands[0] {
@@ -9070,13 +9379,15 @@ fn function_attributes_match_glslang() {
         ),
     ] {
         let error = parse(ShaderStage::Fragment, &format!("#version 450\n{source}"))
-            .expect_err("attributes accepted");
+        .err()
+        .ok_or("attributes accepted")?;
         assert!(error.contains(expected), "{error}");
     }
+    Ok(())
 }
 
 #[test]
-fn reconvergence_attributes_become_execution_modes() {
+fn reconvergence_attributes_become_execution_modes() -> crate::TestResult {
     for (extension, attribute, mode, spv_extension) in [
         (
             "GL_EXT_subgroup_uniform_control_flow",
@@ -9096,29 +9407,28 @@ fn reconvergence_attributes_become_execution_modes() {
             &format!(
                 "#version 460\n#extension {extension} : enable\n[[random(4)]] void main() [[{attribute}]] {{}}"
             ),
-        );
+        )?;
         assert!(has_execution_mode(&module, mode));
         assert_eq!(extensions_of(&module), [spv_extension]);
     }
+    Ok(())
 }
 
-fn microscaling_words(source: &str) -> Vec<u32> {
-    let module = parse(ShaderStage::Compute, source).unwrap_or_else(|e| panic!("{e}"));
-    let info = Validator::new(ValidationFlags::all(), Capabilities::all())
-        .validate(&module)
-        .expect("validated in parse");
+fn microscaling_words(source: &str) -> crate::TestResult<Vec<u32>> {
+    let module = parse(ShaderStage::Compute, source)?;
+    let info = Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&module)?;
     let options = spv::Options {
         lang_version: (1, 6),
         flags: spv::WriterFlags::DEBUG | spv::WriterFlags::SMALL_TYPE_CAPABILITIES_BY_USE,
         ..spv::Options::default()
     };
-    let words = spv::write_vec(&module, &info, &options, None).expect("SPIR-V backend failed");
-    crate::stage_io::spirv_val_in(&words, &["--target-env", "vulkan1.3"]);
-    words
+    let words = spv::write_vec(&module, &info, &options, None)?;
+    crate::stage_io::spirv_val_in(&words, &["--target-env", "vulkan1.3"])?;
+    Ok(words)
 }
 
 #[test]
-fn microscaling_types_match_glslang() {
+fn microscaling_types_match_glslang() -> crate::TestResult {
     let words = microscaling_words(
         "#version 450
         #extension GL_EXT_float_e2m1 : require
@@ -9136,7 +9446,7 @@ fn microscaling_types_match_glslang() {
             m = floatmxint8_t(-1.0);
             f = float(six) + float(pair.x);
         }",
-    );
+    )?;
     let instructions = raw_instructions(&words);
     let mut floats: Vec<Vec<u32>> = instructions
         .iter()
@@ -9166,6 +9476,7 @@ fn microscaling_types_match_glslang() {
         .iter()
         .any(|(op, operands)| *op == Op::Extension as u32
             && operands.first() == Some(&u32::from_le_bytes(*b"SPV_"))));
+    Ok(())
 }
 
 fn decorated_ops(module: &dr::Module, decoration: Decoration) -> Vec<Op> {
@@ -9191,7 +9502,7 @@ fn decorated_ops(module: &dr::Module, decoration: Decoration) -> Vec<Op> {
 }
 
 #[test]
-fn precise_marks_the_operations_that_feed_it() {
+fn precise_marks_the_operations_that_feed_it() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Vertex,
         "#version 450
@@ -9206,15 +9517,16 @@ fn precise_marks_the_operations_that_feed_it() {
             plain = d * 2.0 + helper(d);
             gl_Position = vec4(d) - b;
         }",
-    );
+    )?;
     assert_eq!(
         decorated_ops(&module, Decoration::NoContraction),
         [Op::FAdd, Op::FSub, Op::FMul, Op::Dot]
     );
+    Ok(())
 }
 
 #[test]
-fn precise_follows_struct_members_and_compound_assignments() {
+fn precise_follows_struct_members_and_compound_assignments() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Fragment,
         "#version 450
@@ -9230,15 +9542,16 @@ fn precise_follows_struct_members_and_compound_assignments() {
             result += a * a;
             color = result;
         }",
-    );
+    )?;
     assert_eq!(
         decorated_ops(&module, Decoration::NoContraction),
         [Op::FAdd, Op::FAdd, Op::FMul]
     );
+    Ok(())
 }
 
 #[test]
-fn precision_qualifiers_become_relaxed_precision() {
+fn precision_qualifiers_become_relaxed_precision() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Fragment,
         "#version 450
@@ -9255,7 +9568,7 @@ fn precision_qualifiers_become_relaxed_precision() {
             sum *= 2.0;
             color = sum + float(index);
         }",
-    );
+    )?;
     let relaxed = decorated_ops(&module, Decoration::RelaxedPrecision);
     assert!(relaxed.contains(&Op::Variable));
     assert!(relaxed.contains(&Op::ImageSampleImplicitLod));
@@ -9275,10 +9588,11 @@ fn precision_qualifiers_become_relaxed_precision() {
         );
     }
     assert!(!names.iter().any(|found| found == "exact"));
+    Ok(())
 }
 
 #[test]
-fn explicit_offsets_may_be_out_of_order() {
+fn explicit_offsets_may_be_out_of_order() -> crate::TestResult {
     let source = "#version 450
 layout(set = 0, binding = 0, std140) uniform n1 {
     layout(offset = 8) int a;
@@ -9294,20 +9608,21 @@ layout(set = 0, binding = 1, std430) buffer n2 {
 } i2;
 void main() {}
 ";
-    compile(ShaderStage::Fragment, source);
-    let module = parse(ShaderStage::Fragment, source).unwrap();
-    let offsets = |name| -> Vec<u32> {
-        block_layout(&module, name)
+    compile(ShaderStage::Fragment, source)?;
+    let module = parse(ShaderStage::Fragment, source)?;
+    let offsets = |name| -> crate::TestResult<Vec<u32>> {
+        Ok(block_layout(&module, name)?
             .into_iter()
             .map(|(offset, _)| offset)
-            .collect()
+            .collect())
     };
-    assert_eq!(offsets("n1"), [8, 4, 0, 12]);
-    assert_eq!(offsets("n2"), [32, 48, 16, 0]);
+    assert_eq!(offsets("n1")?, [8, 4, 0, 12]);
+    assert_eq!(offsets("n2")?, [32, 48, 16, 0]);
+    Ok(())
 }
 
 #[test]
-fn overlapping_explicit_offsets_are_rejected() {
+fn overlapping_explicit_offsets_are_rejected() -> crate::TestResult {
     let error = parse(
         ShaderStage::Fragment,
         "#version 450
@@ -9319,8 +9634,10 @@ layout(binding = 0, std430) buffer B {
 void main() {}
 ",
     )
-    .unwrap_err();
+    .err()
+    .ok_or("expected an error")?;
     assert!(error.contains("MemberOverlap"), "{error}");
+    Ok(())
 }
 
 const HLSL_OFFSETS: &str = "#version 450
@@ -9344,20 +9661,16 @@ void main() {}
 ";
 
 #[test]
-fn hlsl_offsets_pack_vectors_like_glslang() {
-    let module = glsl::Frontend::default()
-        .parse(
-            &glsl::Options {
-                hlsl_offsets: true,
-                ..glsl::Options::from(ShaderStage::Vertex)
-            },
-            HLSL_OFFSETS,
-        )
-        .unwrap();
-    Validator::new(ValidationFlags::all(), Capabilities::all())
-        .validate(&module)
-        .unwrap();
-    let offsets: Vec<u32> = block_layout(&module, "block")
+fn hlsl_offsets_pack_vectors_like_glslang() -> crate::TestResult {
+    let module = glsl::Frontend::default().parse(
+        &glsl::Options {
+            hlsl_offsets: true,
+            ..glsl::Options::from(ShaderStage::Vertex)
+        },
+        HLSL_OFFSETS,
+    )?;
+    Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&module)?;
+    let offsets: Vec<u32> = block_layout(&module, "block")?
         .into_iter()
         .map(|(offset, _)| offset)
         .collect();
@@ -9365,10 +9678,11 @@ fn hlsl_offsets_pack_vectors_like_glslang() {
         offsets,
         [0, 4, 16, 20, 32, 48, 56, 64, 68, 76, 80, 88, 96, 112]
     );
+    Ok(())
 }
 
 #[test]
-fn misaligned_explicit_offsets_are_rounded_up() {
+fn misaligned_explicit_offsets_are_rounded_up() -> crate::TestResult {
     let source = "#version 450
 layout(binding = 0) buffer block {
     float m0;
@@ -9379,38 +9693,39 @@ layout(binding = 0) buffer block {
 };
 void main() {}
 ";
-    let module = parse(ShaderStage::Vertex, source).unwrap();
-    let offsets: Vec<u32> = block_layout(&module, "block")
+    let module = parse(ShaderStage::Vertex, source)?;
+    let offsets: Vec<u32> = block_layout(&module, "block")?
         .into_iter()
         .map(|(offset, _)| offset)
         .collect();
     assert_eq!(offsets, [0, 16, 28, 32, 48]);
     assert!(parse(ShaderStage::Vertex, HLSL_OFFSETS)
-        .unwrap_err()
+        .err()
+        .ok_or("expected an error")?
         .contains("MemberOverlap"));
+    Ok(())
 }
 
 #[test]
-fn programs_resolve_includes() {
+fn programs_resolve_includes() -> crate::TestResult {
     let mut includer = rglsl_pp::MemoryIncluder::new();
     let root = includer.add_file("dir/main.vert", "");
     includer.add_file("dir/inc/defs.h", "layout(location = 0) out vec4 color;\n");
-    let module = glsl::Frontend::default()
-        .parse_with_includer(
-            &glsl::Options::from(ShaderStage::Vertex),
-            "#version 450\n#include \"inc\\defs.h\"\nvoid main() { color = vec4(1.0); }\n",
-            root,
-            &mut includer,
-        )
-        .unwrap();
+    let module = glsl::Frontend::default().parse_with_includer(
+        &glsl::Options::from(ShaderStage::Vertex),
+        "#version 450\n#include \"inc\\defs.h\"\nvoid main() { color = vec4(1.0); }\n",
+        root,
+        &mut includer,
+    )?;
     assert!(module
         .global_variables
         .iter()
         .any(|(_, global)| global.name.as_deref() == Some("color")));
+    Ok(())
 }
 
 #[test]
-fn push_constant_banks() {
+fn push_constant_banks() -> crate::TestResult {
     let module = compile(
         ShaderStage::Vertex,
         "#version 460
@@ -9425,10 +9740,10 @@ void main() {
     r.bank[2] = p2.data;
 }
 ",
-    );
+    )?;
     assert!(capabilities_of(&module).contains(&spirv::Capability::PushConstantBanksNV));
     assert!(extensions_of(&module).contains(&"SPV_NV_push_constant_bank".to_string()));
-    let mut variables = variable_decorations(&module, "p2");
+    let mut variables = variable_decorations(&module, "p2")?;
     variables.sort_by_key(|(decoration, _)| *decoration as u32);
     assert_eq!(
         variables,
@@ -9438,15 +9753,16 @@ void main() {
         ]
     );
     assert_eq!(
-        variable_decorations(&module, "p1"),
+        variable_decorations(&module, "p1")?,
         [(Decoration::BankNV, vec![1])]
     );
-    assert!(variable_decorations(&module, "p0").is_empty());
-    assert!(variable_decorations(&module, "P1").contains(&(Decoration::BankNV, vec![1])));
+    assert!(variable_decorations(&module, "p0")?.is_empty());
+    assert!(variable_decorations(&module, "P1")?.contains(&(Decoration::BankNV, vec![1])));
+    Ok(())
 }
 
 #[test]
-fn push_constant_blocks_in_one_bank_are_rejected() {
+fn push_constant_blocks_in_one_bank_are_rejected() -> crate::TestResult {
     let error = parse(
         ShaderStage::Vertex,
         "#version 460
@@ -9460,12 +9776,14 @@ void main() {
 }
 ",
     )
-    .unwrap_err();
+    .err()
+    .ok_or("expected an error")?;
     assert!(error.contains("MoreThanOneImmediateUsed"), "{error}");
+    Ok(())
 }
 
 #[test]
-fn null_initializers_are_null_constants() {
+fn null_initializers_are_null_constants() -> crate::TestResult {
     let module = compile(
         ShaderStage::Compute,
         "#version 460
@@ -9482,7 +9800,7 @@ void main() {
     b.value = local.a + int(f) + s.a + global.a;
 }
 ",
-    );
+    )?;
     let nulls = instructions(&module, Op::ConstantNull).len();
     assert!(nulls >= 2, "{nulls}");
     let workgroup_initialized = instructions(&module, Op::Variable)
@@ -9493,10 +9811,11 @@ void main() {
         })
         .count();
     assert_eq!(workgroup_initialized, 2);
+    Ok(())
 }
 
 #[test]
-fn spec_constant_composites_are_spec_constants() {
+fn spec_constant_composites_are_spec_constants() -> crate::TestResult {
     let module = compile(
         ShaderStage::Compute,
         "#version 450
@@ -9512,7 +9831,7 @@ void main() {
     buf.value = s.b + a[1] + b[1][2];
 }
 ",
-    );
+    )?;
     let composites = instructions(&module, Op::SpecConstantComposite).len();
     assert_eq!(composites, 3);
     let workgroup_size: Vec<u32> = module
@@ -9528,10 +9847,11 @@ void main() {
         .all(|inst| inst
             .result_id
             .is_some_and(|id| workgroup_size.contains(&id))));
+    Ok(())
 }
 
 #[test]
-fn spec_constant_initializer_lists_are_not_folded() {
+fn spec_constant_initializer_lists_are_not_folded() -> crate::TestResult {
     let error = parse(
         ShaderStage::Compute,
         "#version 450
@@ -9541,23 +9861,28 @@ const int a[3] = {five, five, five};
 void main() {}
 ",
     )
-    .unwrap_err();
+    .err()
+    .ok_or("expected an error")?;
     assert!(error.contains("must be a constant expression"), "{error}");
+    Ok(())
 }
 
-fn first_error_line(source: &str, options: &glsl::Options) -> Option<usize> {
+fn first_error_line(source: &str, options: &glsl::Options) -> crate::TestResult<Option<usize>> {
     let errors = glsl::Frontend::default()
         .parse(options, source)
-        .expect_err("the shader must be rejected");
-    let first = errors.errors.first()?;
-    first
+        .err()
+        .ok_or("the shader must be rejected")?;
+    let Some(first) = errors.errors.first() else {
+        return Ok(None);
+    };
+    Ok(first
         .meta
         .is_defined()
-        .then(|| first.meta.location(source).line_number as usize)
+        .then(|| first.meta.location(source).line_number as usize))
 }
 
 #[test]
-fn missing_bindings_are_reported_in_declaration_order() {
+fn missing_bindings_are_reported_in_declaration_order() -> crate::TestResult {
     let source = "#version 450
 uniform sampler s;
 layout(binding = 1) uniform texture2D t;
@@ -9566,21 +9891,22 @@ void main() {
 }
 ";
     let options = glsl::Options::from(ShaderStage::Fragment);
-    assert_eq!(first_error_line(source, &options), Some(2));
+    assert_eq!(first_error_line(source, &options)?, Some(2));
     let automatic = glsl::Options {
         auto_map_bindings: true,
         ..glsl::Options::from(ShaderStage::Fragment)
     };
-    assert_eq!(first_error_line(source, &automatic), Some(5));
+    assert_eq!(first_error_line(source, &automatic)?, Some(5));
     let block = "#version 450
 layout(std140) uniform U { vec4 v; } u;
 void main() {}
 ";
-    assert_eq!(first_error_line(block, &options), Some(2));
+    assert_eq!(first_error_line(block, &options)?, Some(2));
+    Ok(())
 }
 
 #[test]
-fn semantic_errors_before_a_preprocessor_error_come_first() {
+fn semantic_errors_before_a_preprocessor_error_come_first() -> crate::TestResult {
     let source = "#version 450
 uniform float f;
 #define bad ## float
@@ -9588,18 +9914,19 @@ bad x;
 void main() {}
 ";
     let options = glsl::Options::from(ShaderStage::Vertex);
-    assert_eq!(first_error_line(source, &options), Some(2));
+    assert_eq!(first_error_line(source, &options)?, Some(2));
     let later = "#version 450
 #define bad ## float
 bad x;
 uniform float f;
 void main() {}
 ";
-    assert_eq!(first_error_line(later, &options), Some(3));
+    assert_eq!(first_error_line(later, &options)?, Some(3));
+    Ok(())
 }
 
 #[test]
-fn a_texture_may_be_sampled_with_and_without_a_shadow_sampler() {
+fn a_texture_may_be_sampled_with_and_without_a_shadow_sampler() -> crate::TestResult {
     let module = compile(
         ShaderStage::Fragment,
         "#version 450
@@ -9613,7 +9940,7 @@ void main() {
     color.x += texture(sampler2DShadow(t, c), uv);
 }
 ",
-    );
+    )?;
     assert_eq!(
         instructions(&module, Op::ImageSampleDrefImplicitLod).len(),
         1
@@ -9624,10 +9951,11 @@ void main() {
         .map(|inst| literal(&inst.operands[2]))
         .collect();
     assert!(depths.contains(&0) && depths.contains(&1), "{depths:?}");
+    Ok(())
 }
 
 #[test]
-fn local_arrays_sized_by_spec_constants_keep_the_spec_length() {
+fn local_arrays_sized_by_spec_constants_keep_the_spec_length() -> crate::TestResult {
     let module = compile(
         ShaderStage::Compute,
         "#version 450
@@ -9643,7 +9971,7 @@ void main() {
     b.o = a[1] + c[2] + float(a.length());
 }
 ",
-    );
+    )?;
     let spec: Vec<u32> = module
         .types_global_values
         .iter()
@@ -9662,6 +9990,7 @@ void main() {
         lengths.iter().all(|length| spec.contains(length)),
         "{lengths:?}"
     );
+    Ok(())
 }
 
 fn block_shape(block: &rglsl::Block) -> (usize, usize) {
@@ -9701,7 +10030,7 @@ fn left_operands(function: &rglsl::Function, root: rglsl::Handle<rglsl::Expressi
 }
 
 #[test]
-fn long_chains_lower_in_order_to_flat_control_flow() {
+fn long_chains_lower_in_order_to_flat_control_flow() -> crate::TestResult {
     let links = 2000;
     let shader = |body: &str| {
         format!(
@@ -9710,12 +10039,12 @@ fn long_chains_lower_in_order_to_flat_control_flow() {
              void main() {{ int b = dynamic; bool t = b > 1; {body} }}\n"
         )
     };
-    let main = |body: &str| {
-        let module = parse(ShaderStage::Fragment, &shader(body)).unwrap();
-        module.entry_points[0].function.clone()
+    let main = |body: &str| -> crate::TestResult<rglsl::Function> {
+        let module = parse(ShaderStage::Fragment, &shader(body))?;
+        Ok(module.entry_points[0].function.clone())
     };
 
-    let function = main(&format!("result = b{};", " - 1".repeat(links)));
+    let function = main(&format!("result = b{};", " - 1".repeat(links)))?;
     let stored = function
         .body
         .iter()
@@ -9730,16 +10059,16 @@ fn long_chains_lower_in_order_to_flat_control_flow() {
     let function = main(&format!(
         "t = t{}; result = int(t);",
         " && (b++ > 0) || (b-- < 9)".repeat(links / 2)
-    ));
-    let base = block_shape(&main("result = b;").body).0;
+    ))?;
+    let base = block_shape(&main("result = b;")?.body).0;
     assert_eq!(block_shape(&function.body), (base + 2, links));
 
-    let function = main(&format!("result = {}b;", "b > 2 ? b++ : ".repeat(links)));
+    let function = main(&format!("result = {}b;", "b > 2 ? b++ : ".repeat(links)))?;
     let (depth, ifs) = block_shape(&function.body);
     assert!(depth <= base + 2, "{depth}");
     assert!(ifs >= 2 * links - 1, "{ifs}");
 
-    let function = main(&format!("result = {}b;", "t ? b : ".repeat(links)));
+    let function = main(&format!("result = {}b;", "t ? b : ".repeat(links)))?;
     assert_eq!(block_shape(&function.body), (base, 0));
     let selects = function
         .expressions
@@ -9748,17 +10077,18 @@ fn long_chains_lower_in_order_to_flat_control_flow() {
         .count();
     assert_eq!(selects, links);
 
-    let function = main("result = t ? b++ : b > 2 ? b-- : 7;");
+    let function = main("result = t ? b++ : b > 2 ? b-- : 7;")?;
     assert_eq!(block_shape(&function.body).0, base + 2);
+    Ok(())
 }
 
-fn composite_constants(module: &dr::Module, operand: &Operand) -> Vec<u32> {
+fn composite_constants(module: &dr::Module, operand: &Operand) -> crate::TestResult<Vec<u32>> {
     let id = operand.unwrap_id_ref();
     let composite = module
         .types_global_values
         .iter()
         .find(|inst| inst.result_id == Some(id) && inst.class.opcode == Op::ConstantComposite)
-        .expect("operand is not an OpConstantComposite");
+        .ok_or("operand is not an OpConstantComposite")?;
     composite
         .operands
         .iter()
@@ -9767,7 +10097,7 @@ fn composite_constants(module: &dr::Module, operand: &Operand) -> Vec<u32> {
 }
 
 #[test]
-fn dynamic_index_into_a_swizzle_is_an_lvalue() {
+fn dynamic_index_into_a_swizzle_is_an_lvalue() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Fragment,
         "#version 450
@@ -9785,12 +10115,12 @@ void main() {
     o = v;
 }
 ",
-    );
+    )?;
     let extracts = instructions(&module, Op::VectorExtractDynamic);
     let selectors: Vec<Vec<u32>> = extracts
         .iter()
         .map(|extract| composite_constants(&module, &extract.operands[0]))
-        .collect();
+        .collect::<crate::TestResult<_>>()?;
     assert_eq!(
         selectors,
         vec![
@@ -9803,7 +10133,7 @@ void main() {
     );
     let chains = instructions(&module, Op::AccessChain);
     for extract in &extracts {
-        let component = extract.result_id.expect("the extract has a result");
+        let component = extract.result_id.ok_or("the extract has a result")?;
         assert!(
             chains
                 .iter()
@@ -9811,10 +10141,11 @@ void main() {
             "no access chain selects component %{component}"
         );
     }
+    Ok(())
 }
 
 #[test]
-fn falling_off_a_function_returns_undef() {
+fn falling_off_a_function_returns_undef() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Fragment,
         "#version 450
@@ -9836,7 +10167,7 @@ void main() {
     o = vec4(float(find(3)), pick(s.y), 0.0, 1.0);
 }
 ",
-    );
+    )?;
     let undefs: Vec<u32> = instructions(&module, Op::Undef)
         .iter()
         .filter_map(|inst| inst.result_id)
@@ -9858,10 +10189,11 @@ void main() {
         "{returned:?}"
     );
     assert!(returned.iter().all(|value| !nulls.contains(value)));
+    Ok(())
 }
 
 #[test]
-fn declarations_after_a_jump_stay_in_scope() {
+fn declarations_after_a_jump_stay_in_scope() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Fragment,
         "#version 450
@@ -9880,21 +10212,22 @@ void main() {
     }
 }
 ",
-    );
-    named(&module, "b");
+    )?;
+    let b = named(&module, "b")?;
     assert!(instructions(&module, Op::Store)
         .iter()
-        .all(|store| store.operands[0].unwrap_id_ref() != named(&module, "b")));
+        .all(|store| store.operands[0].unwrap_id_ref() != b));
+    Ok(())
 }
 
-fn function_blocks(module: &dr::Module, name: &str) -> Vec<Vec<Op>> {
-    let id = named(module, name);
+fn function_blocks(module: &dr::Module, name: &str) -> crate::TestResult<Vec<Vec<Op>>> {
+    let id = named(module, name)?;
     let function = module
         .functions
         .iter()
         .find(|function| function.def_id() == Some(id))
-        .unwrap_or_else(|| panic!("no function {name}"));
-    function
+        .ok_or_else(|| format!("no function {name}"))?;
+    Ok(function
         .blocks
         .iter()
         .map(|block| {
@@ -9905,7 +10238,7 @@ fn function_blocks(module: &dr::Module, name: &str) -> Vec<Vec<Op>> {
                 .filter(|&op| !matches!(op, Op::Line | Op::NoLine))
                 .collect()
         })
-        .collect()
+        .collect())
 }
 
 fn count_in(blocks: &[Vec<Op>], op: Op) -> usize {
@@ -9925,14 +10258,14 @@ fn compile_valid_at(
     source: &str,
     lang_version: (u8, u8),
     env: &str,
-) -> dr::Module {
-    let words = compile_words_with_names(stage, source, lang_version);
-    crate::stage_io::spirv_val_in(&words, &["--target-env", env]);
-    dr::load_words(words).expect("produced SPIR-V does not parse")
+) -> crate::TestResult<dr::Module> {
+    let words = compile_words_with_names(stage, source, lang_version)?;
+    crate::stage_io::spirv_val_in(&words, &["--target-env", env])?;
+    Ok(dr::load_words(words)?)
 }
 
 #[test]
-fn code_after_jumps_is_not_emitted() {
+fn code_after_jumps_is_not_emitted() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Fragment,
         "#version 450
@@ -9948,17 +10281,18 @@ void main() {
     o = vec4(5.0);
 }
 ",
-    );
-    let output = named(&module, "o");
+    )?;
+    let output = named(&module, "o")?;
     let stores = instructions(&module, Op::Store)
         .into_iter()
         .filter(|store| store.operands[0].unwrap_id_ref() == output)
         .count();
     assert_eq!(stores, 1);
+    Ok(())
 }
 
 #[test]
-fn unreachable_merge_blocks_are_unreachable() {
+fn unreachable_merge_blocks_are_unreachable() -> crate::TestResult {
     let source = "#version 450
 layout(location = 0) out vec4 o;
 layout(set = 0, binding = 0) uniform U { int s; };
@@ -9987,24 +10321,25 @@ void main() {
     o = vec4(float(branches(s) + cases(s) + broken(s)));
 }
 ";
-    let module = compile_valid(ShaderStage::Fragment, source);
-    let branches = function_blocks(&module, "branches");
+    let module = compile_valid(ShaderStage::Fragment, source)?;
+    let branches = function_blocks(&module, "branches")?;
     assert!(ends_unreachable(&branches), "{branches:?}");
     assert_eq!(count_in(&branches, Op::ReturnValue), 1);
     assert_eq!(count_in(&branches, Op::Kill), 1);
     assert_eq!(count_in(&branches, Op::Store), 1);
-    let cases = function_blocks(&module, "cases");
+    let cases = function_blocks(&module, "cases")?;
     assert!(ends_unreachable(&cases), "{cases:?}");
     assert_eq!(count_in(&cases, Op::ReturnValue), 2);
-    let broken = function_blocks(&module, "broken");
+    let broken = function_blocks(&module, "broken")?;
     assert!(!ends_unreachable(&broken), "{broken:?}");
     assert_eq!(count_in(&broken, Op::ReturnValue), 3);
     assert!(instructions(&module, Op::Undef).is_empty());
-    compile_valid_at(ShaderStage::Fragment, source, (1, 6), "vulkan1.3");
+    compile_valid_at(ShaderStage::Fragment, source, (1, 6), "vulkan1.3")?;
+    Ok(())
 }
 
 #[test]
-fn loops_that_never_exit_end_the_function() {
+fn loops_that_never_exit_end_the_function() -> crate::TestResult {
     let source = "#version 450
 layout(location = 0) out vec4 o;
 layout(set = 0, binding = 0) uniform U { int s; };
@@ -10047,28 +10382,29 @@ void main() {
     o = vec4(float(forever(s) + spin(s) + nested(s) + once(s) + body(s)));
 }
 ";
-    let module = compile_valid(ShaderStage::Fragment, source);
+    let module = compile_valid(ShaderStage::Fragment, source)?;
     for name in ["forever", "spin", "nested", "body"] {
-        let blocks = function_blocks(&module, name);
+        let blocks = function_blocks(&module, name)?;
         assert!(ends_unreachable(&blocks), "{name}: {blocks:?}");
     }
-    let spin = function_blocks(&module, "spin");
+    let spin = function_blocks(&module, "spin")?;
     assert_eq!(count_in(&spin, Op::BranchConditional), 1, "{spin:?}");
     assert_eq!(count_in(&spin, Op::ReturnValue), 1, "{spin:?}");
-    let nested = function_blocks(&module, "nested");
+    let nested = function_blocks(&module, "nested")?;
     assert_eq!(count_in(&nested, Op::Store), 3, "{nested:?}");
-    let once = function_blocks(&module, "once");
+    let once = function_blocks(&module, "once")?;
     assert!(!ends_unreachable(&once), "{once:?}");
     assert_eq!(count_in(&once, Op::IAdd), 0, "{once:?}");
-    let body = function_blocks(&module, "body");
+    let body = function_blocks(&module, "body")?;
     assert_eq!(count_in(&body, Op::SGreaterThan), 0, "{body:?}");
     assert!(body.contains(&vec![Op::Branch]), "{body:?}");
     assert!(instructions(&module, Op::Undef).is_empty());
-    compile_valid_at(ShaderStage::Fragment, source, (1, 6), "vulkan1.3");
+    compile_valid_at(ShaderStage::Fragment, source, (1, 6), "vulkan1.3")?;
+    Ok(())
 }
 
 #[test]
-fn falling_off_after_a_loop_with_a_break_still_returns_undef() {
+fn falling_off_after_a_loop_with_a_break_still_returns_undef() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Fragment,
         "#version 450
@@ -10085,14 +10421,15 @@ void main() {
     o = vec4(float(find(s)));
 }
 ",
-    );
-    let blocks = function_blocks(&module, "find");
+    )?;
+    let blocks = function_blocks(&module, "find")?;
     assert!(!ends_unreachable(&blocks), "{blocks:?}");
     assert_eq!(instructions(&module, Op::Undef).len(), 1);
+    Ok(())
 }
 
 #[test]
-fn emit_mesh_tasks_ends_the_block() {
+fn emit_mesh_tasks_ends_the_block() -> crate::TestResult {
     let module = compile_mesh(
         ShaderStage::Task,
         "#version 450
@@ -10108,16 +10445,17 @@ fn emit_mesh_tasks_ends_the_block() {
             payload = 3u;
         }",
         (1, 4),
-    );
-    let blocks = function_blocks(&module, "main");
+    )?;
+    let blocks = function_blocks(&module, "main")?;
     assert!(ends_unreachable(&blocks), "{blocks:?}");
     assert_eq!(count_in(&blocks, Op::EmitMeshTasksEXT), 2);
     assert_eq!(count_in(&blocks, Op::Store), 0);
     assert_eq!(count_in(&blocks, Op::Return), 0);
+    Ok(())
 }
 
 #[test]
-fn ray_tracing_terminators_end_the_block() {
+fn ray_tracing_terminators_end_the_block() -> crate::TestResult {
     let module = compile_valid_at(
         ShaderStage::AnyHit,
         r#"#version 460
@@ -10134,15 +10472,16 @@ void main() {
 "#,
         (1, 4),
         "vulkan1.2",
-    );
-    let blocks = function_blocks(&module, "main");
+    )?;
+    let blocks = function_blocks(&module, "main")?;
     assert!(ends_unreachable(&blocks), "{blocks:?}");
     assert_eq!(count_in(&blocks, Op::Store), 0);
     assert_eq!(count_in(&blocks, Op::Return), 0);
+    Ok(())
 }
 
 #[test]
-fn globals_used_only_in_dead_code_keep_their_bindings() {
+fn globals_used_only_in_dead_code_keep_their_bindings() -> crate::TestResult {
     let source = "#version 450
 layout(location = 0) out vec4 o;
 layout(set = 0, binding = 0) uniform U { int s; };
@@ -10159,18 +10498,17 @@ void main() {
         auto_map_bindings: true,
         ..glsl::Options::from(ShaderStage::Fragment)
     };
-    let module = glsl::Frontend::default().parse(&options, source).unwrap();
-    let info = Validator::new(ValidationFlags::all(), Capabilities::all())
-        .validate(&module)
-        .unwrap();
+    let module = glsl::Frontend::default().parse(&options, source)?;
+    let info = Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&module)?;
     let options = spv::Options {
         flags: spv::WriterFlags::DEBUG,
         ..spv::Options::default()
     };
-    let words = spv::write_vec(&module, &info, &options, None).unwrap();
-    crate::stage_io::spirv_val(&words);
-    let module = dr::load_words(words).unwrap();
-    assert!(variable_decorations(&module, "dead").contains(&(Decoration::Binding, vec![1])));
-    assert!(variable_decorations(&module, "live").contains(&(Decoration::Binding, vec![2])));
+    let words = spv::write_vec(&module, &info, &options, None)?;
+    crate::stage_io::spirv_val(&words)?;
+    let module = dr::load_words(words)?;
+    assert!(variable_decorations(&module, "dead")?.contains(&(Decoration::Binding, vec![1])));
+    assert!(variable_decorations(&module, "live")?.contains(&(Decoration::Binding, vec![2])));
     assert_eq!(instructions(&module, Op::ImageSampleImplicitLod).len(), 1);
+    Ok(())
 }

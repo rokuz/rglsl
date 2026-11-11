@@ -14,6 +14,11 @@ use rglsl::{
 use rspirv::dr::{self, Operand};
 use spirv::{Decoration, Op, StorageClass};
 
+use crate::TestResult;
+
+const ONE: core::num::NonZeroU32 = core::num::NonZeroU32::MIN;
+const TWO: core::num::NonZeroU32 = ONE.saturating_add(1);
+
 /// A module under construction, with one entry point.
 struct Builder {
     module: Module,
@@ -102,12 +107,12 @@ impl Builder {
     ) -> Handle<Type> {
         let members = members
             .iter()
-            .enumerate()
-            .map(|(index, &(name, ty, ref binding))| StructMember {
+            .zip((0u32..).step_by(16))
+            .map(|(&(name, ty, ref binding), offset)| StructMember {
                 name: Some(name.into()),
                 ty,
                 binding: Some(binding.clone()),
-                offset: 16 * u32::try_from(index).unwrap(),
+                offset,
                 matrix_layout: None,
                 xfb_offset: None,
                 heap: None,
@@ -115,7 +120,7 @@ impl Builder {
                 relaxed_precision: false,
             })
             .collect::<Vec<_>>();
-        let span = 16 * u32::try_from(members.len()).unwrap();
+        let span = members.last().map_or(0, |member| member.offset + 16);
         self.module.types.insert(
             Type {
                 name: Some(name.into()),
@@ -253,18 +258,18 @@ fn block_location(location: u32) -> Binding {
     located(location, None)
 }
 
-pub(crate) fn spirv_val(words: &[u32]) {
-    spirv_val_in(words, &["--target-env", "vulkan1.0"]);
+pub(crate) fn spirv_val(words: &[u32]) -> TestResult {
+    spirv_val_in(words, &["--target-env", "vulkan1.0"])
 }
 
-pub(crate) fn spirv_val_in(words: &[u32], arguments: &[&str]) {
+pub(crate) fn spirv_val_in(words: &[u32], arguments: &[&str]) -> TestResult {
     let validator = std::path::Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../target/oracles/bin/spirv-val"
     ));
     if !validator.exists() {
         println!("spirv-val not found at {}", validator.display());
-        return;
+        return Ok(());
     }
     let path = std::env::temp_dir().join(format!(
         "rglsl-stage-io-{}-{:?}.spv",
@@ -272,18 +277,18 @@ pub(crate) fn spirv_val_in(words: &[u32], arguments: &[&str]) {
         std::thread::current().id()
     ));
     let bytes: Vec<u8> = words.iter().flat_map(|word| word.to_le_bytes()).collect();
-    std::fs::write(&path, bytes).unwrap();
+    std::fs::write(&path, bytes)?;
     let output = std::process::Command::new(validator)
         .args(arguments)
         .arg(&path)
-        .output()
-        .unwrap();
+        .output()?;
     let _ = std::fs::remove_file(&path);
     assert!(
         output.status.success(),
         "spirv-val: {}",
         String::from_utf8_lossy(&output.stderr)
     );
+    Ok(())
 }
 
 fn validate(module: &Module) -> Result<rglsl::valid::ModuleInfo, String> {
@@ -292,18 +297,24 @@ fn validate(module: &Module) -> Result<rglsl::valid::ModuleInfo, String> {
         .map_err(|error| format!("{:?}", error.into_inner()))
 }
 
-fn compile(module: &Module) -> dr::Module {
-    let info = validate(module).unwrap_or_else(|error| panic!("invalid module: {error}"));
+fn compile(module: &Module) -> TestResult<dr::Module> {
+    let info = validate(module).map_err(|error| format!("invalid module: {error}"))?;
     let options = spv::Options {
         flags: spv::WriterFlags::DEBUG,
         ..spv::Options::default()
     };
-    let words = spv::write_vec(module, &info, &options, None).expect("SPIR-V backend failed");
-    spirv_val(&words);
-    dr::load_words(words).expect("produced SPIR-V does not parse")
+    let words = spv::write_vec(module, &info, &options, None)?;
+    spirv_val(&words)?;
+    Ok(
+        dr::load_words(words)
+            .map_err(|error| format!("produced SPIR-V does not parse: {error}"))?,
+    )
 }
 
-fn member_decorations(module: &dr::Module, name: &str) -> Vec<(u32, Decoration, Vec<u32>)> {
+fn member_decorations(
+    module: &dr::Module,
+    name: &str,
+) -> TestResult<Vec<(u32, Decoration, Vec<u32>)>> {
     let id = module
         .debug_names
         .iter()
@@ -311,7 +322,7 @@ fn member_decorations(module: &dr::Module, name: &str) -> Vec<(u32, Decoration, 
             inst.class.opcode == Op::Name
                 && inst.operands[1] == Operand::LiteralString(name.to_string())
         })
-        .unwrap_or_else(|| panic!("nothing named {name}"))
+        .ok_or_else(|| format!("nothing named {name}"))?
         .operands[0]
         .unwrap_id_ref();
     let mut decorations: Vec<_> = module
@@ -339,11 +350,11 @@ fn member_decorations(module: &dr::Module, name: &str) -> Vec<(u32, Decoration, 
         })
         .collect();
     decorations.sort_by_key(|&(member, decoration, _)| (member, decoration as u32));
-    decorations
+    Ok(decorations)
 }
 
 /// The decorations of the variable named `name`, with their literal operands.
-fn decorations(module: &dr::Module, name: &str) -> Vec<(Decoration, Vec<u32>)> {
+fn decorations(module: &dr::Module, name: &str) -> TestResult<Vec<(Decoration, Vec<u32>)>> {
     let id = module
         .debug_names
         .iter()
@@ -351,7 +362,7 @@ fn decorations(module: &dr::Module, name: &str) -> Vec<(Decoration, Vec<u32>)> {
             inst.class.opcode == Op::Name
                 && inst.operands[1] == Operand::LiteralString(name.to_string())
         })
-        .unwrap_or_else(|| panic!("no variable named {name}"))
+        .ok_or_else(|| format!("no variable named {name}"))?
         .operands[0]
         .unwrap_id_ref();
     let mut decorations: Vec<_> = module
@@ -374,7 +385,7 @@ fn decorations(module: &dr::Module, name: &str) -> Vec<(Decoration, Vec<u32>)> {
         })
         .collect();
     decorations.sort_by_key(|&(decoration, _)| decoration as u32);
-    decorations
+    Ok(decorations)
 }
 
 /// A vertex shader whose interface has every supported shape of variable.
@@ -390,7 +401,7 @@ fn vertex_module() -> Module {
     });
     let floats = b.ty(TypeInner::Array {
         base: float,
-        size: rglsl::ArraySize::Constant(2.try_into().unwrap()),
+        size: rglsl::ArraySize::Constant(TWO),
         stride: 4,
     });
 
@@ -440,24 +451,24 @@ fn vertex_module() -> Module {
 }
 
 #[test]
-fn interface_variables_are_emitted_directly() {
-    let module = compile(&vertex_module());
+fn interface_variables_are_emitted_directly() -> TestResult {
+    let module = compile(&vertex_module())?;
 
     let location = |location| (Decoration::Location, vec![location]);
     let component = |component| (Decoration::Component, vec![component]);
-    assert_eq!(decorations(&module, "a_position"), [location(0)]);
-    assert_eq!(decorations(&module, "a_unused"), [location(1)]);
-    assert_eq!(decorations(&module, "a_basis"), [location(2)]);
-    assert_eq!(decorations(&module, "a_weights"), [location(5)]);
+    assert_eq!(decorations(&module, "a_position")?, [location(0)]);
+    assert_eq!(decorations(&module, "a_unused")?, [location(1)]);
+    assert_eq!(decorations(&module, "a_basis")?, [location(2)]);
+    assert_eq!(decorations(&module, "a_weights")?, [location(5)]);
     assert_eq!(
-        decorations(&module, "gl_Position"),
+        decorations(&module, "gl_Position")?,
         [(Decoration::BuiltIn, vec![spirv::BuiltIn::Position as u32])]
     );
-    assert_eq!(decorations(&module, "v_basis"), [location(0)]);
-    assert_eq!(decorations(&module, "v_weights"), [location(3)]);
-    assert_eq!(decorations(&module, "v_uv"), [location(5), component(0)]);
+    assert_eq!(decorations(&module, "v_basis")?, [location(0)]);
+    assert_eq!(decorations(&module, "v_weights")?, [location(3)]);
+    assert_eq!(decorations(&module, "v_uv")?, [location(5), component(0)]);
     assert_eq!(
-        decorations(&module, "v_fade"),
+        decorations(&module, "v_fade")?,
         [(Decoration::Invariant, vec![]), location(5), component(2)]
     );
 
@@ -479,24 +490,31 @@ fn interface_variables_are_emitted_directly() {
     let entry_point = &module.entry_points[0];
     // Execution model, function, name, then the interface.
     assert_eq!(entry_point.operands.len() - 3, 9);
+    Ok(())
 }
 
 #[test]
-fn compact_keeps_the_interface() {
+fn compact_keeps_the_interface() -> TestResult {
     let mut module = vertex_module();
-    rglsl::compact::compact(&mut module, rglsl::compact::KeepUnused::No).unwrap();
-    let names: Vec<_> = module.entry_points[0]
+    rglsl::compact::compact(&mut module, rglsl::compact::KeepUnused::No)?;
+    let names = module.entry_points[0]
         .interface
         .iter()
-        .map(|&handle| module.global_variables[handle].name.clone().unwrap())
-        .collect();
+        .map(|&handle| {
+            module.global_variables[handle]
+                .name
+                .clone()
+                .ok_or("an unnamed interface variable")
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     assert_eq!(names.len(), 9);
     assert!(names.contains(&"a_unused".to_string()));
-    compile(&module);
+    compile(&module)?;
+    Ok(())
 }
 
 #[test]
-fn invalid_interfaces_are_rejected() {
+fn invalid_interfaces_are_rejected() -> TestResult {
     let fragment = |build: &dyn Fn(&mut Builder)| {
         let mut b = Builder::new();
         build(&mut b);
@@ -504,7 +522,7 @@ fn invalid_interfaces_are_rejected() {
     };
 
     // Overlapping locations: a mat3 at 0 covers 0..=2.
-    let error = fragment(&|b| {
+    let error = crate::rejected(fragment(&|b| {
         let vec4 = b.vector(VectorSize::Quad);
         let mat3 = b.ty(TypeInner::Matrix {
             columns: VectorSize::Tri,
@@ -513,8 +531,7 @@ fn invalid_interfaces_are_rejected() {
         });
         b.variable("m", AddressSpace::Input, mat3, location(0));
         b.variable("v", AddressSpace::Input, vec4, location(2));
-    })
-    .unwrap_err();
+    }))?;
     assert!(error.contains("BindingCollision"), "{error}");
 
     // Inputs and outputs have separate locations.
@@ -522,34 +539,31 @@ fn invalid_interfaces_are_rejected() {
         let vec4 = b.vector(VectorSize::Quad);
         b.variable("i", AddressSpace::Input, vec4, location(0));
         b.variable("o", AddressSpace::Output, vec4, location(0));
-    })
-    .unwrap();
+    })?;
 
     // A variable the code uses must be listed.
-    let error = fragment(&|b| {
+    let error = crate::rejected(fragment(&|b| {
         let vec4 = b.vector(VectorSize::Quad);
         let input = b.declare("i", AddressSpace::Input, vec4, location(0));
         let output = b.variable("o", AddressSpace::Output, vec4, location(0));
         b.copy(input, output);
-    })
-    .unwrap_err();
+    }))?;
     assert!(error.contains("NotInInterface"), "{error}");
 
     // An input cannot be written.
-    let error = fragment(&|b| {
+    let error = crate::rejected(fragment(&|b| {
         let vec4 = b.vector(VectorSize::Quad);
         let a = b.variable("a", AddressSpace::Input, vec4, location(0));
         let c = b.variable("c", AddressSpace::Input, vec4, location(1));
         b.copy(a, c);
-    })
-    .unwrap_err();
+    }))?;
     assert!(
         error.contains("InvalidStorePointer") || error.contains("Store"),
         "{error}"
     );
 
     // Only inputs and outputs belong in an interface.
-    let error = fragment(&|b| {
+    let error = crate::rejected(fragment(&|b| {
         let vec4 = b.vector(VectorSize::Quad);
         let private = b.module.global_variables.append(
             GlobalVariable {
@@ -571,12 +585,11 @@ fn invalid_interfaces_are_rejected() {
             Span::UNDEFINED,
         );
         b.interface.push(private);
-    })
-    .unwrap_err();
+    }))?;
     assert!(error.contains("InterfaceNotInputOrOutput"), "{error}");
 
     // A built-in in the wrong stage.
-    let error = fragment(&|b| {
+    let error = crate::rejected(fragment(&|b| {
         let vec4 = b.vector(VectorSize::Quad);
         b.variable(
             "gl_Position",
@@ -584,12 +597,11 @@ fn invalid_interfaces_are_rejected() {
             vec4,
             Binding::BuiltIn(BuiltIn::Position { invariant: false }),
         );
-    })
-    .unwrap_err();
+    }))?;
     assert!(error.contains("InvalidBuiltInStage"), "{error}");
 
     // A component that does not leave room for the value.
-    let error = fragment(&|b| {
+    let error = crate::rejected(fragment(&|b| {
         let vec4 = b.vector(VectorSize::Quad);
         let Binding::Location {
             interpolation,
@@ -615,9 +627,9 @@ fn invalid_interfaces_are_rejected() {
                 per_view: false,
             },
         );
-    })
-    .unwrap_err();
+    }))?;
     assert!(error.contains("InvalidComponent"), "{error}");
+    Ok(())
 }
 
 fn per_vertex(b: &mut Builder) -> Handle<GlobalVariable> {
@@ -625,7 +637,7 @@ fn per_vertex(b: &mut Builder) -> Handle<GlobalVariable> {
     let float = b.ty(TypeInner::Scalar(Scalar::F32));
     let distances = b.ty(TypeInner::Array {
         base: float,
-        size: rglsl::ArraySize::Constant(1.try_into().unwrap()),
+        size: rglsl::ArraySize::Constant(ONE),
         stride: 4,
     });
     let ty = b.block_type(
@@ -709,7 +721,7 @@ fn block_module() -> Module {
     let element = b.block_type("Arr", &[("t", vec2, located(11, perspective))]);
     let elements = b.ty(TypeInner::Array {
         base: element,
-        size: rglsl::ArraySize::Constant(2.try_into().unwrap()),
+        size: rglsl::ArraySize::Constant(TWO),
         stride: 16,
     });
     let arr = b.block(
@@ -727,12 +739,12 @@ fn block_module() -> Module {
 }
 
 #[test]
-fn interface_blocks_are_emitted_as_blocks() {
-    let module = compile(&block_module());
+fn interface_blocks_are_emitted_as_blocks() -> TestResult {
+    let module = compile(&block_module())?;
 
     for name in ["gl_PerVertex", "VS_OUT", "Blk", "Arr"] {
         assert_eq!(
-            decorations(&module, name),
+            decorations(&module, name)?,
             [(Decoration::Block, vec![])],
             "{name}"
         );
@@ -742,7 +754,7 @@ fn interface_blocks_are_emitted_as_blocks() {
         |index: u32, (decoration, operands): (Decoration, Vec<u32>)| (index, decoration, operands);
     let location = |location| (Decoration::Location, vec![location]);
     assert_eq!(
-        member_decorations(&module, "gl_PerVertex"),
+        member_decorations(&module, "gl_PerVertex")?,
         [
             member(0, built_in(spirv::BuiltIn::Position)),
             member(0, (Decoration::Invariant, vec![])),
@@ -752,7 +764,7 @@ fn interface_blocks_are_emitted_as_blocks() {
         ]
     );
     assert_eq!(
-        member_decorations(&module, "VS_OUT"),
+        member_decorations(&module, "VS_OUT")?,
         [
             member(0, location(1)),
             member(1, location(3)),
@@ -762,16 +774,16 @@ fn interface_blocks_are_emitted_as_blocks() {
             member(3, location(5)),
         ]
     );
-    assert!(decorations(&module, "vs_out").is_empty());
+    assert!(decorations(&module, "vs_out")?.is_empty());
     assert_eq!(
-        member_decorations(&module, "Blk"),
+        member_decorations(&module, "Blk")?,
         [
             member(0, (Decoration::Centroid, vec![])),
             member(2, (Decoration::Flat, vec![])),
         ]
     );
-    assert!(member_decorations(&module, "Arr").is_empty());
-    assert_eq!(decorations(&module, "arr"), [location(11)]);
+    assert!(member_decorations(&module, "Arr")?.is_empty());
+    assert_eq!(decorations(&module, "arr")?, [location(11)]);
 
     assert!(module.capabilities.iter().all(|inst| !matches!(
         inst.operands[0],
@@ -796,10 +808,11 @@ fn interface_blocks_are_emitted_as_blocks() {
         .count();
     assert_eq!(variables, 4);
     assert_eq!(module.entry_points[0].operands.len() - 3, 5);
+    Ok(())
 }
 
 #[test]
-fn fragment_input_blocks() {
+fn fragment_input_blocks() -> TestResult {
     let mut b = Builder::new();
     let vec4 = b.vector(VectorSize::Quad);
     let int = b.ty(TypeInner::Scalar(Scalar::I32));
@@ -833,19 +846,20 @@ fn fragment_input_blocks() {
         },
         Span::UNDEFINED,
     );
-    let module = compile(&b.finish(ShaderStage::Fragment));
+    let module = compile(&b.finish(ShaderStage::Fragment))?;
     assert_eq!(
-        decorations(&module, "vs_in"),
+        decorations(&module, "vs_in")?,
         [(Decoration::Location, vec![2])]
     );
     assert_eq!(
-        member_decorations(&module, "VS_OUT"),
+        member_decorations(&module, "VS_OUT")?,
         [(1, Decoration::Flat, vec![])]
     );
+    Ok(())
 }
 
 #[test]
-fn invalid_blocks_are_rejected() {
+fn invalid_blocks_are_rejected() -> TestResult {
     let vertex = |build: &dyn Fn(&mut Builder)| {
         let mut b = Builder::new();
         build(&mut b);
@@ -853,7 +867,7 @@ fn invalid_blocks_are_rejected() {
     };
     let perspective = Some(rglsl::Interpolation::Perspective);
 
-    let error = vertex(&|b| {
+    let error = crate::rejected(vertex(&|b| {
         let vec4 = b.vector(VectorSize::Quad);
         let ty = b.block_type(
             "Mixed",
@@ -867,11 +881,10 @@ fn invalid_blocks_are_rejected() {
             ],
         );
         b.block("", AddressSpace::Output, ty, None);
-    })
-    .unwrap_err();
+    }))?;
     assert!(error.contains("MixedBlockBindings"), "{error}");
 
-    let error = vertex(&|b| {
+    let error = crate::rejected(vertex(&|b| {
         let vec4 = b.vector(VectorSize::Quad);
         let ty = b.block_type(
             "B",
@@ -881,38 +894,35 @@ fn invalid_blocks_are_rejected() {
             ],
         );
         b.block("", AddressSpace::Output, ty, Some(block_location(4)));
-    })
-    .unwrap_err();
+    }))?;
     assert!(error.contains("BlockMemberLocation"), "{error}");
 
-    let error = vertex(&|b| {
+    let error = crate::rejected(vertex(&|b| {
         let vec4 = b.vector(VectorSize::Quad);
         let ty = b.block_type("B", &[("a", vec4, located(0, perspective))]);
         let array = b.ty(TypeInner::Array {
             base: ty,
-            size: rglsl::ArraySize::Constant(2.try_into().unwrap()),
+            size: rglsl::ArraySize::Constant(TWO),
             stride: 16,
         });
         b.block("b", AddressSpace::Output, array, None);
-    })
-    .unwrap_err();
+    }))?;
     assert!(error.contains("MemberLocationInBlockArray"), "{error}");
 
-    let error = vertex(&|b| {
+    let error = crate::rejected(vertex(&|b| {
         let vec4 = b.vector(VectorSize::Quad);
         let ty = b.block_type("B", &[("a", vec4, located(0, perspective))]);
         let array = b.ty(TypeInner::Array {
             base: ty,
-            size: rglsl::ArraySize::Constant(2.try_into().unwrap()),
+            size: rglsl::ArraySize::Constant(TWO),
             stride: 16,
         });
         b.block("b", AddressSpace::Output, array, Some(block_location(0)));
         b.variable("v", AddressSpace::Output, vec4, location(1));
-    })
-    .unwrap_err();
+    }))?;
     assert!(error.contains("BindingCollision"), "{error}");
 
-    let error = vertex(&|b| {
+    let error = crate::rejected(vertex(&|b| {
         let vec4 = b.vector(VectorSize::Quad);
         per_vertex(b);
         b.variable(
@@ -921,25 +931,23 @@ fn invalid_blocks_are_rejected() {
             vec4,
             Binding::BuiltIn(BuiltIn::Position { invariant: false }),
         );
-    })
-    .unwrap_err();
+    }))?;
     assert!(error.contains("DuplicateBuiltIn"), "{error}");
 
-    let error = vertex(&|b| {
+    let error = crate::rejected(vertex(&|b| {
         let vec4 = b.vector(VectorSize::Quad);
         let ty = b.block_type("B", &[("a", vec4, located(0, None))]);
         b.block("", AddressSpace::Output, ty, None);
-    })
-    .unwrap_err();
+    }))?;
     assert!(error.contains("MissingInterpolation"), "{error}");
 
-    let error = vertex(&|b| {
+    let error = crate::rejected(vertex(&|b| {
         let vec4 = b.vector(VectorSize::Quad);
         let ty = b.block_type("B", &[("a", vec4, located(0, perspective))]);
         b.block("", AddressSpace::Output, ty, Some(location(0)));
-    })
-    .unwrap_err();
+    }))?;
     assert!(error.contains("InvalidBlockBinding"), "{error}");
+    Ok(())
 }
 
 fn geometry_info() -> rglsl::GeometryInfo {
@@ -953,12 +961,13 @@ fn geometry_info() -> rglsl::GeometryInfo {
     }
 }
 
-fn arrayed(b: &mut Builder, base: Handle<Type>, length: u32) -> Handle<Type> {
-    b.ty(TypeInner::Array {
+fn arrayed(b: &mut Builder, base: Handle<Type>, length: u32) -> TestResult<Handle<Type>> {
+    let length = core::num::NonZeroU32::new(length).ok_or("an array of length zero")?;
+    Ok(b.ty(TypeInner::Array {
         base,
-        size: rglsl::ArraySize::Constant(core::num::NonZeroU32::new(length).unwrap()),
+        size: rglsl::ArraySize::Constant(length),
         stride: 16,
-    })
+    }))
 }
 
 fn patch(location: u32) -> Binding {
@@ -976,70 +985,72 @@ fn patch(location: u32) -> Binding {
 }
 
 #[test]
-fn per_vertex_inputs_take_the_locations_of_one_element() {
+fn per_vertex_inputs_take_the_locations_of_one_element() -> TestResult {
     let mut b = Builder::new();
     let vec4 = b.vector(VectorSize::Quad);
-    let per_vertex = arrayed(&mut b, vec4, 3);
+    let per_vertex = arrayed(&mut b, vec4, 3)?;
     b.variable("a", AddressSpace::Input, per_vertex, location(0));
     b.variable("c", AddressSpace::Input, per_vertex, location(1));
     b.variable("o", AddressSpace::Output, vec4, location(0));
     let mut module = b.finish(ShaderStage::Geometry);
     module.entry_points[0].geometry = Some(geometry_info());
-    let spirv = compile(&module);
-    assert_eq!(decorations(&spirv, "a"), [(Decoration::Location, vec![0])]);
-    assert_eq!(decorations(&spirv, "c"), [(Decoration::Location, vec![1])]);
+    let spirv = compile(&module)?;
+    assert_eq!(decorations(&spirv, "a")?, [(Decoration::Location, vec![0])]);
+    assert_eq!(decorations(&spirv, "c")?, [(Decoration::Location, vec![1])]);
+    Ok(())
 }
 
 #[test]
-fn invalid_geometry_and_tessellation_interfaces_are_rejected() {
+fn invalid_geometry_and_tessellation_interfaces_are_rejected() -> TestResult {
     let mut b = Builder::new();
     let vec4 = b.vector(VectorSize::Quad);
     b.variable("a", AddressSpace::Input, vec4, location(0));
     let mut module = b.finish(ShaderStage::Geometry);
     module.entry_points[0].geometry = Some(geometry_info());
-    let error = validate(&module).unwrap_err();
+    let error = crate::rejected(validate(&module))?;
     assert!(error.contains("ArrayedInterfaceNotArray"), "{error}");
 
     let mut b = Builder::new();
     let vec4 = b.vector(VectorSize::Quad);
-    let per_vertex = arrayed(&mut b, vec4, 3);
+    let per_vertex = arrayed(&mut b, vec4, 3)?;
     b.variable("a", AddressSpace::Input, per_vertex, location(0));
-    let error = validate(&b.finish(ShaderStage::Geometry)).unwrap_err();
+    let error = crate::rejected(validate(&b.finish(ShaderStage::Geometry)))?;
     assert!(error.contains("ExpectedGeometryInfo"), "{error}");
 
     let mut b = Builder::new();
     let vec4 = b.vector(VectorSize::Quad);
     b.variable("p", AddressSpace::Input, vec4, patch(0));
-    let error = validate(&b.finish(ShaderStage::Fragment)).unwrap_err();
+    let error = crate::rejected(validate(&b.finish(ShaderStage::Fragment)))?;
     assert!(error.contains("patch"), "{error}");
 
     let mut module = Builder::new().finish(ShaderStage::TessControl);
-    let error = validate(&module).unwrap_err();
+    let error = crate::rejected(validate(&module))?;
     assert!(error.contains("ExpectedOutputVertices"), "{error}");
     module.entry_points[0].tessellation = Some(rglsl::TessellationInfo {
         output_vertices: Some(4),
         ..rglsl::TessellationInfo::default()
     });
-    validate(&module).unwrap();
+    validate(&module)?;
 
     let mut module = Builder::new().finish(ShaderStage::Vertex);
     module.entry_points[0].geometry = Some(geometry_info());
-    let error = validate(&module).unwrap_err();
+    let error = crate::rejected(validate(&module))?;
     assert!(error.contains("UnexpectedGeometryInfo"), "{error}");
 
     let mut b = Builder::new();
     b.function
         .body
         .push(Statement::EmitVertex { stream: None }, Span::UNDEFINED);
-    let error = validate(&b.finish(ShaderStage::Vertex)).unwrap_err();
+    let error = crate::rejected(validate(&b.finish(ShaderStage::Vertex)))?;
     assert!(error.contains("ForbiddenStageOperations"), "{error}");
+    Ok(())
 }
 
 #[test]
-fn patch_outputs_have_their_own_locations() {
+fn patch_outputs_have_their_own_locations() -> TestResult {
     let mut b = Builder::new();
     let vec4 = b.vector(VectorSize::Quad);
-    let per_vertex = arrayed(&mut b, vec4, 4);
+    let per_vertex = arrayed(&mut b, vec4, 4)?;
     b.variable("v", AddressSpace::Output, per_vertex, location(0));
     b.variable("p", AddressSpace::Output, vec4, patch(0));
     let mut module = b.finish(ShaderStage::TessControl);
@@ -1047,22 +1058,23 @@ fn patch_outputs_have_their_own_locations() {
         output_vertices: Some(4),
         ..rglsl::TessellationInfo::default()
     });
-    let spirv = compile(&module);
+    let spirv = compile(&module)?;
     assert_eq!(
-        decorations(&spirv, "p"),
+        decorations(&spirv, "p")?,
         [
             (Decoration::Patch, Vec::new()),
             (Decoration::Location, vec![0])
         ]
     );
-    assert_eq!(decorations(&spirv, "v"), [(Decoration::Location, vec![0])]);
+    assert_eq!(decorations(&spirv, "v")?, [(Decoration::Location, vec![0])]);
+    Ok(())
 }
 
 #[test]
-fn tessellation_levels_are_patch_built_ins() {
+fn tessellation_levels_are_patch_built_ins() -> TestResult {
     let mut b = Builder::new();
     let float = b.ty(TypeInner::Scalar(Scalar::F32));
-    let outer = arrayed(&mut b, float, 4);
+    let outer = arrayed(&mut b, float, 4)?;
     b.variable(
         "gl_TessLevelOuter",
         AddressSpace::Output,
@@ -1074,9 +1086,9 @@ fn tessellation_levels_are_patch_built_ins() {
         output_vertices: Some(3),
         ..rglsl::TessellationInfo::default()
     });
-    let spirv = compile(&module);
+    let spirv = compile(&module)?;
     assert_eq!(
-        decorations(&spirv, "gl_TessLevelOuter"),
+        decorations(&spirv, "gl_TessLevelOuter")?,
         [
             (
                 Decoration::BuiltIn,
@@ -1085,4 +1097,5 @@ fn tessellation_levels_are_patch_built_ins() {
             (Decoration::Patch, Vec::new())
         ]
     );
+    Ok(())
 }

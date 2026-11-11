@@ -835,7 +835,7 @@ impl From<FunctionTracer<'_>> for FunctionMap {
 }
 
 #[test]
-fn type_expression_interdependence() {
+fn type_expression_interdependence() -> crate::TestResult {
     let mut module: crate::Module = Default::default();
     let u32 = module.types.insert(
         crate::Type {
@@ -942,7 +942,7 @@ fn type_expression_interdependence() {
     let ty_init = type_needs_expression(&mut module, expr_trace);
     type_needed(&mut module, ty_init);
     let untouched = module.clone();
-    compact(&mut module, KeepUnused::Yes).unwrap();
+    compact(&mut module, KeepUnused::Yes)?;
     assert!(cmp_modules(&module, &untouched));
     let unused_expr = module.global_expressions.append(
         crate::Expression::Literal(crate::Literal::U32(1)),
@@ -950,12 +950,13 @@ fn type_expression_interdependence() {
     );
     type_needs_expression(&mut module, unused_expr);
     assert!(!cmp_modules(&module, &untouched));
-    compact(&mut module, KeepUnused::Yes).unwrap();
+    compact(&mut module, KeepUnused::Yes)?;
     assert!(cmp_modules(&module, &untouched));
+    Ok(())
 }
 
 #[test]
-fn array_length_override() {
+fn array_length_override() -> crate::TestResult {
     let mut module: crate::Module = Default::default();
     let ty_bool = module.types.insert(
         crate::Type {
@@ -1011,14 +1012,15 @@ fn array_length_override() {
     );
 
     assert!(validator.validate(&module).is_ok());
-    compact(&mut module, KeepUnused::Yes).unwrap();
+    compact(&mut module, KeepUnused::Yes)?;
     assert!(validator.validate(&module).is_ok());
+    Ok(())
 }
 
 /// Test mutual references between types and expressions via override
 /// lengths.
 #[test]
-fn array_length_override_mutual() {
+fn array_length_override_mutual() -> crate::TestResult {
     use crate::Expression as Ex;
     use crate::Scalar as Sc;
     use crate::TypeInner as Ti;
@@ -1117,12 +1119,13 @@ fn array_length_override_mutual() {
     );
 
     assert!(validator.validate(&module).is_ok());
-    compact(&mut module, KeepUnused::Yes).unwrap();
+    compact(&mut module, KeepUnused::Yes)?;
     assert!(validator.validate(&module).is_ok());
+    Ok(())
 }
 
 #[test]
-fn array_length_expression() {
+fn array_length_expression() -> crate::TestResult {
     let mut module: crate::Module = Default::default();
     let ty_u32 = module.types.insert(
         crate::Type {
@@ -1166,12 +1169,13 @@ fn array_length_expression() {
     );
 
     assert!(validator.validate(&module).is_ok());
-    compact(&mut module, KeepUnused::Yes).unwrap();
+    compact(&mut module, KeepUnused::Yes)?;
     assert!(validator.validate(&module).is_ok());
+    Ok(())
 }
 
 #[test]
-fn global_expression_override() {
+fn global_expression_override() -> crate::TestResult {
     let mut module: crate::Module = Default::default();
     let ty_u32 = module.types.insert(
         crate::Type {
@@ -1222,12 +1226,13 @@ fn global_expression_override() {
     );
 
     assert!(validator.validate(&module).is_ok());
-    compact(&mut module, KeepUnused::Yes).unwrap();
+    compact(&mut module, KeepUnused::Yes)?;
     assert!(validator.validate(&module).is_ok());
+    Ok(())
 }
 
 #[test]
-fn local_expression_override() {
+fn local_expression_override() -> crate::TestResult {
     let mut module: crate::Module = Default::default();
     let ty_u32 = module.types.insert(
         crate::Type {
@@ -1294,12 +1299,13 @@ fn local_expression_override() {
     );
 
     assert!(validator.validate(&module).is_ok());
-    compact(&mut module, KeepUnused::Yes).unwrap();
+    compact(&mut module, KeepUnused::Yes)?;
     assert!(validator.validate(&module).is_ok());
+    Ok(())
 }
 
 #[test]
-fn unnamed_constant_type() {
+fn unnamed_constant_type() -> crate::TestResult {
     let mut module = crate::Module::default();
     let nowhere = crate::Span::default();
 
@@ -1366,12 +1372,13 @@ fn unnamed_constant_type() {
     );
 
     assert!(validator.validate(&module).is_ok());
-    compact(&mut module, KeepUnused::Yes).unwrap();
+    compact(&mut module, KeepUnused::Yes)?;
     assert!(validator.validate(&module).is_ok());
+    Ok(())
 }
 
 #[test]
-fn unnamed_override_type() {
+fn unnamed_override_type() -> crate::TestResult {
     let mut module = crate::Module::default();
     let nowhere = crate::Span::default();
 
@@ -1438,8 +1445,9 @@ fn unnamed_override_type() {
     );
 
     assert!(validator.validate(&module).is_ok());
-    compact(&mut module, KeepUnused::Yes).unwrap();
+    compact(&mut module, KeepUnused::Yes)?;
     assert!(validator.validate(&module).is_ok());
+    Ok(())
 }
 
 fn spirv_decoration_ids(

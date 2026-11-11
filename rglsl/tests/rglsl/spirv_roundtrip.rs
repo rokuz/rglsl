@@ -7,23 +7,22 @@ fn words_to_bytes(words: &[u32]) -> Vec<u8> {
 }
 
 #[test]
-fn atomic_compare_exchange_roundtrip_to_spirv() {
+fn atomic_compare_exchange_roundtrip_to_spirv() -> crate::TestResult {
     let source = include_str!("../in/ir/atomicCompareExchange.ron");
-    let module: rglsl::Module = ron::de::from_str(source).unwrap();
+    let module: rglsl::Module = ron::de::from_str(source)?;
 
     let mut validator = rglsl::valid::Validator::new(
         rglsl::valid::ValidationFlags::all(),
         rglsl::valid::Capabilities::empty(),
     );
-    let info = validator.validate(&module).unwrap();
+    let info = validator.validate(&module)?;
 
     let pipeline_options = rglsl::back::spv::PipelineOptions {
         entry_point: "test_atomic_compare_exchange_u32".to_string(),
         shader_stage: rglsl::ShaderStage::Compute,
     };
     let options = rglsl::back::spv::Options::default();
-    let spv_words =
-        rglsl::back::spv::write_vec(&module, &info, &options, Some(&pipeline_options)).unwrap();
+    let spv_words = rglsl::back::spv::write_vec(&module, &info, &options, Some(&pipeline_options))?;
 
     let spv_bytes = words_to_bytes(&spv_words);
     let parsed = rglsl::front::spv::parse_u8_slice(
@@ -33,9 +32,9 @@ fn atomic_compare_exchange_roundtrip_to_spirv() {
             strict_capabilities: false,
             block_ctx_dump_prefix: None,
         },
-    )
-    .unwrap();
+    )?;
 
-    let parsed_info = validator.validate(&parsed).unwrap();
-    rglsl::back::spv::write_vec(&parsed, &parsed_info, &options, Some(&pipeline_options)).unwrap();
+    let parsed_info = validator.validate(&parsed)?;
+    rglsl::back::spv::write_vec(&parsed, &parsed_info, &options, Some(&pipeline_options))?;
+    Ok(())
 }
