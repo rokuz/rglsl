@@ -176,13 +176,11 @@ const fn nest(
 
 const ALL_PRECEDENCES: &str = "a || b ^^ c && d | e ^ f & g == h < i << j + k * (";
 
-const NESTS: [Nest; 17] = [
+const NESTS: [Nest; 15] = [
     nest("(", "a", ")", ";", 2),
-    nest("!", "a", "", ";", 1),
-    nest("-+", "a", "", ";", 2),
-    nest("a = ", "a", "", ";", 1),
-    nest("a ? a : ", "a", "", ";", 1),
     nest("a ? ", "a", " : a", ";", 2),
+    nest("-(", "a", ")", ";", 2),
+    nest("a = (", "a", ")", ";", 2),
     nest("f(", "a", ")", ";", 2),
     nest("a[", "a", "]", ";", 2),
     nest(ALL_PRECEDENCES, "a", ")", ";", 12),
@@ -259,26 +257,83 @@ fn nesting_up_to_the_limit_is_accepted() {
 }
 
 #[test]
-fn long_operator_chains_are_bounded_by_the_nesting_depth() {
+fn flat_chains_do_not_count_against_the_nesting_depth() {
+    let huge = 20_000;
+    let chain =
+        |link: &str, links: usize| alloc::format!("void f() {{ a = a{}; }}", link.repeat(links));
+    for link in [
+        " + a",
+        " * a - a",
+        " * a + a * a",
+        " && a || a",
+        " == a",
+        ", a",
+        ".x",
+        "[0]",
+        "++",
+        ".x[0].y",
+    ] {
+        let source = chain(link, huge);
+        let parsed = unit(&source);
+        assert_eq!(parsed.clone(), parsed, "{link}");
+        round_trip(&source);
+    }
+    for (open, core) in [
+        ("-", "a"),
+        ("- ", "a"),
+        ("!", "a"),
+        ("~-", "a"),
+        ("a = ", "a"),
+        ("a += ", "a"),
+        ("a ? a : ", "a"),
+        ("a == a ? a + a : ", "a"),
+    ] {
+        let source = alloc::format!("void f() {{ {}{core}; }}", open.repeat(huge));
+        let parsed = unit(&source);
+        assert_eq!(parsed.clone(), parsed, "{open}");
+        round_trip(&source);
+    }
+    let nested_in_chain = alloc::format!(
+        "void f() {{ a = {}a{}; }}",
+        "a + (a + ".repeat(70),
+        ")".repeat(70)
+    );
+    assert!(nesting_error(&nested_in_chain));
+}
+
+#[test]
+fn nested_operands_of_chains_count_against_the_nesting_depth() {
     let limit = usize::try_from(MAX_NESTING_DEPTH).unwrap_or(0);
     let chain =
         |link: &str, links: usize| alloc::format!("void f() {{ a = a{}; }}", link.repeat(links));
-    for (link, height_per_link) in [
-        (" + a", 1),
-        (" * a - a", 2),
-        (" && a || a", 2),
-        (".x", 1),
-        ("[0]", 1),
-        ("++", 1),
-        ("(a)", 1),
-        (".length()", 1),
-    ] {
+    for (link, height_per_link) in [("(a)", 1), (".length()", 1)] {
         let source = chain(link, (limit - 8) / height_per_link);
         let parsed = unit(&source);
         round_trip(&source);
         assert!(alloc::format!("{:?}", parsed.clone()).len() > source.len());
         assert!(nesting_error(&chain(link, limit + 8)), "{link}");
         assert!(nesting_error(&chain(link, 300_000)), "{link}");
+    }
+    for (open, close, per_level) in [
+        ("a + (", ")", 2),
+        ("a * a + (", ")", 2),
+        ("a + a * (", ")", 3),
+        ("-(", ")", 2),
+        ("a ? a : (", ")", 2),
+        ("a ? (", ") : a", 3),
+        ("a = (", ")", 2),
+        ("a[(", ")]", 4),
+    ] {
+        let fits = (limit - 8) / per_level;
+        let source = |count: usize| {
+            alloc::format!(
+                "void f() {{ {}a{}; }}",
+                open.repeat(count),
+                close.repeat(count)
+            )
+        };
+        round_trip(&source(fits));
+        assert!(nesting_error(&source(limit)), "{open}");
     }
     for source in [
         alloc::format!("void f() {{ g({}a); }}", "a, ".repeat(100_000)),

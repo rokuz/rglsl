@@ -20,6 +20,7 @@ use crate::ast::{
     StructDeclaration, StructDeclarator, StructSpecifier, TranslationUnit, TypeParameters,
     TypeQualifier, TypeSpecifier, TypeSpecifierNonArray, UnaryOperator,
 };
+use crate::chain::Chain;
 use crate::error::{ParseError, ParseErrorKind};
 use crate::extensions::{ExtensionState, Feature};
 use crate::keywords::{
@@ -53,6 +54,48 @@ type Result<T> = core::result::Result<T, Box<ParseError>>;
 struct Measured {
     expression: Expression,
     height: u32,
+}
+
+#[derive(Default)]
+struct Heights {
+    nested: u32,
+    linked: u32,
+}
+
+impl Heights {
+    const fn nested(height: u32) -> Self {
+        Self {
+            nested: height,
+            linked: 0,
+        }
+    }
+
+    fn linked(self, chain: Chain, child: &Measured) -> Self {
+        if child.expression.kind.chain() == Some(chain) {
+            Self {
+                linked: child.height,
+                ..self
+            }
+        } else {
+            Self {
+                nested: self.nested.max(child.height),
+                ..self
+            }
+        }
+    }
+}
+
+enum PendingRight {
+    Assignment {
+        start: u32,
+        target: Measured,
+        operator: AssignmentOperator,
+    },
+    Conditional {
+        start: u32,
+        condition: Measured,
+        then_expression: Measured,
+    },
 }
 
 struct ForHeader {
@@ -296,13 +339,8 @@ impl<'a> Parser<'a> {
         result
     }
 
-    fn measured(
-        &mut self,
-        start: u32,
-        kind: ExpressionKind,
-        child_height: u32,
-    ) -> Result<Measured> {
-        let height = child_height.saturating_add(1);
+    fn measured(&mut self, start: u32, kind: ExpressionKind, heights: Heights) -> Result<Measured> {
+        let height = heights.nested.saturating_add(1).max(heights.linked);
         let enclosing = self.depth.saturating_sub(self.expression_depth);
         if enclosing.saturating_add(height) > MAX_NESTING_DEPTH {
             return Err(self.error(ParseErrorKind::NestingTooDeep, self.span_from(start)));
@@ -1633,78 +1671,95 @@ impl<'a> Parser<'a> {
             height = height.max(next.height);
             expressions.push(next.expression);
         }
-        self.measured(start, ExpressionKind::Sequence(expressions), height)
+        self.measured(
+            start,
+            ExpressionKind::Sequence(expressions),
+            Heights::nested(height),
+        )
     }
 
     fn parse_assignment(&mut self) -> Result<Measured> {
         self.enter_expression()?;
-        let expression = self.parse_unguarded_assignment();
+        let expression = self.parse_right_chain(true);
         self.leave_expression();
         expression
     }
 
-    fn parse_unguarded_assignment(&mut self) -> Result<Measured> {
-        let start = self.start();
-        let target = self.parse_conditional()?;
-        let operator = match self.peek().kind {
-            TokenKind::Punctuator(symbol) => AssignmentOperator::from_symbol(symbol),
-            _ => None,
-        };
-        match operator {
-            Some(operator) => self.parse_assigned_value(start, target, operator),
-            None => Ok(target),
-        }
-    }
-
-    fn parse_assigned_value(
-        &mut self,
-        start: u32,
-        target: Measured,
-        operator: AssignmentOperator,
-    ) -> Result<Measured> {
-        let is_unary_expression = !matches!(
-            target.expression.kind,
-            ExpressionKind::Binary { .. } | ExpressionKind::Conditional { .. }
-        );
-        if !is_unary_expression {
-            return Err(self.unexpected("the end of the expression"));
-        }
-        self.advance();
-        let value = self.parse_assignment()?;
-        let height = target.height.max(value.height);
-        let kind = ExpressionKind::Assignment {
-            operator,
-            target: Box::new(target.expression),
-            value: Box::new(value.expression),
-        };
-        self.measured(start, kind, height)
-    }
-
     fn parse_conditional(&mut self) -> Result<Measured> {
-        let start = self.start();
-        let condition = self.parse_binary()?;
-        if self.at("?") {
-            self.parse_conditional_branches(start, condition)
-        } else {
-            Ok(condition)
-        }
+        self.parse_right_chain(false)
     }
 
-    fn parse_conditional_branches(&mut self, start: u32, condition: Measured) -> Result<Measured> {
-        self.expect("?")?;
-        let then_expression = self.parse_expression()?;
-        self.expect(":")?;
-        let else_expression = self.parse_assignment()?;
-        let height = condition
-            .height
-            .max(then_expression.height)
-            .max(else_expression.height);
-        let kind = ExpressionKind::Conditional {
-            condition: Box::new(condition.expression),
-            then_expression: Box::new(then_expression.expression),
-            else_expression: Box::new(else_expression.expression),
+    fn parse_right_chain(&mut self, assigning: bool) -> Result<Measured> {
+        let mut pending = Vec::new();
+        let innermost = loop {
+            let start = self.start();
+            let operand = self.parse_binary()?;
+            if self.eat("?") {
+                let then_expression = self.parse_expression()?;
+                self.expect(":")?;
+                pending.push(PendingRight::Conditional {
+                    start,
+                    condition: operand,
+                    then_expression,
+                });
+                continue;
+            }
+            let operator = match self.peek().kind {
+                TokenKind::Punctuator(symbol) if assigning || !pending.is_empty() => {
+                    AssignmentOperator::from_symbol(symbol)
+                }
+                _ => None,
+            };
+            let Some(operator) = operator else {
+                break operand;
+            };
+            if matches!(operand.expression.kind, ExpressionKind::Binary { .. }) {
+                return Err(self.unexpected("the end of the expression"));
+            }
+            self.advance();
+            pending.push(PendingRight::Assignment {
+                start,
+                target: operand,
+                operator,
+            });
         };
-        self.measured(start, kind, height)
+        let mut result = innermost;
+        while let Some(right) = pending.pop() {
+            result = self.reduce_right(right, result)?;
+        }
+        Ok(result)
+    }
+
+    fn reduce_right(&mut self, right: PendingRight, inner: Measured) -> Result<Measured> {
+        match right {
+            PendingRight::Assignment {
+                start,
+                target,
+                operator,
+            } => {
+                let heights = Heights::nested(target.height).linked(Chain::Assignment, &inner);
+                let kind = ExpressionKind::Assignment {
+                    operator,
+                    target: Box::new(target.expression),
+                    value: Box::new(inner.expression),
+                };
+                self.measured(start, kind, heights)
+            }
+            PendingRight::Conditional {
+                start,
+                condition,
+                then_expression,
+            } => {
+                let heights = Heights::nested(condition.height.max(then_expression.height))
+                    .linked(Chain::Conditional, &inner);
+                let kind = ExpressionKind::Conditional {
+                    condition: Box::new(condition.expression),
+                    then_expression: Box::new(then_expression.expression),
+                    else_expression: Box::new(inner.expression),
+                };
+                self.measured(start, kind, heights)
+            }
+        }
     }
 
     fn peek_binary_operator(&self) -> Option<BinaryOperator> {
@@ -1760,30 +1815,47 @@ impl<'a> Parser<'a> {
         else {
             return Err(self.unexpected("an expression"));
         };
-        let height = left.height.max(right.height);
+        let heights = Heights::nested(right.height).linked(Chain::Binary, &left);
         let kind = ExpressionKind::Binary {
             operator,
             left: Box::new(left.expression),
             right: Box::new(right.expression),
         };
-        let reduced = self.measured(start, kind, height)?;
+        let reduced = self.measured(start, kind, heights)?;
         pending.operands.push((start, reduced));
         Ok(())
     }
 
     fn parse_unary(&mut self) -> Result<Measured> {
         self.enter_expression()?;
-        let operator = match self.peek().kind {
-            TokenKind::Punctuator(symbol) => UnaryOperator::from_symbol(symbol),
-            _ => None,
-        };
-        let expression = match operator {
-            Some(operator) => self.parse_unary_operand(operator),
-            None if self.starts_cast() => self.parse_cast(),
-            None => self.parse_postfix(),
-        };
+        let expression = self.parse_unary_chain();
         self.leave_expression();
         expression
+    }
+
+    fn parse_unary_chain(&mut self) -> Result<Measured> {
+        let mut operators = Vec::new();
+        while let TokenKind::Punctuator(symbol) = self.peek().kind {
+            let Some(operator) = UnaryOperator::from_symbol(symbol) else {
+                break;
+            };
+            operators.push((self.start(), operator));
+            self.advance();
+        }
+        let mut result = if self.starts_cast() {
+            self.parse_cast()?
+        } else {
+            self.parse_postfix()?
+        };
+        while let Some((start, operator)) = operators.pop() {
+            let heights = Heights::default().linked(Chain::Unary, &result);
+            let kind = ExpressionKind::Unary {
+                operator,
+                operand: Box::new(result.expression),
+            };
+            result = self.measured(start, kind, heights)?;
+        }
+        Ok(result)
     }
 
     fn starts_cast(&self) -> bool {
@@ -1840,18 +1912,7 @@ impl<'a> Parser<'a> {
             function,
             arguments: alloc::vec![operand.expression],
         }));
-        self.measured(start, kind, height.max(operand.height))
-    }
-
-    fn parse_unary_operand(&mut self, operator: UnaryOperator) -> Result<Measured> {
-        let start = self.start();
-        self.advance();
-        let operand = self.parse_unary()?;
-        let kind = ExpressionKind::Unary {
-            operator,
-            operand: Box::new(operand.expression),
-        };
-        self.measured(start, kind, operand.height)
+        self.measured(start, kind, Heights::nested(height.max(operand.height)))
     }
 
     fn parse_postfix(&mut self) -> Result<Measured> {
@@ -1892,11 +1953,12 @@ impl<'a> Parser<'a> {
         self.expect("[")?;
         let index = self.parse_expression()?;
         self.expect("]")?;
+        let heights = Heights::nested(index.height).linked(Chain::Postfix, &base);
         let kind = ExpressionKind::Subscript {
             base: Box::new(base.expression),
             index: Box::new(index.expression),
         };
-        self.measured(start, kind, base.height.max(index.height))
+        self.measured(start, kind, heights)
     }
 
     fn parse_field_selection(&mut self, start: u32, base: Measured) -> Result<Measured> {
@@ -1910,11 +1972,12 @@ impl<'a> Parser<'a> {
             let function = self.spanned(start, method);
             return self.parse_call(start, function, base.height);
         }
+        let heights = Heights::default().linked(Chain::Postfix, &base);
         let kind = ExpressionKind::FieldSelection {
             base: Box::new(base.expression),
             field,
         };
-        self.measured(start, kind, base.height)
+        self.measured(start, kind, heights)
     }
 
     fn parse_postfix_operator(
@@ -1924,11 +1987,12 @@ impl<'a> Parser<'a> {
         operator: PostfixOperator,
     ) -> Result<Measured> {
         self.advance();
+        let heights = Heights::default().linked(Chain::Postfix, &operand);
         let kind = ExpressionKind::Postfix {
             operand: Box::new(operand.expression),
             operator,
         };
-        self.measured(start, kind, operand.height)
+        self.measured(start, kind, heights)
     }
 
     fn parse_call(
@@ -1958,7 +2022,11 @@ impl<'a> Parser<'a> {
             function,
             arguments,
         };
-        self.measured(start, ExpressionKind::FunctionCall(Box::new(call)), height)
+        self.measured(
+            start,
+            ExpressionKind::FunctionCall(Box::new(call)),
+            Heights::nested(height),
+        )
     }
 
     fn parse_primary(&mut self) -> Result<Measured> {
@@ -1992,7 +2060,7 @@ impl<'a> Parser<'a> {
             TokenKind::Word(word) => ExpressionKind::Bool(word == "true"),
             _ => return Err(self.unexpected("an expression")),
         };
-        self.measured(start, kind, 0)
+        self.measured(start, kind, Heights::default())
     }
 
     fn parse_non_uniform(&mut self, token: Token<'a>) -> Result<Measured> {
@@ -2012,7 +2080,11 @@ impl<'a> Parser<'a> {
             let function = Spanned::new(token.span, FunctionIdentifier::Function(word.to_owned()));
             self.parse_call(start, function, 0)
         } else {
-            self.measured(start, ExpressionKind::Variable(word.to_owned()), 0)
+            self.measured(
+                start,
+                ExpressionKind::Variable(word.to_owned()),
+                Heights::default(),
+            )
         }
     }
 
@@ -2022,7 +2094,7 @@ impl<'a> Parser<'a> {
         let inner = self.parse_expression()?;
         self.expect(")")?;
         let kind = ExpressionKind::Parenthesized(Box::new(inner.expression));
-        self.measured(start, kind, inner.height)
+        self.measured(start, kind, Heights::nested(inner.height))
     }
 
     fn parse_constructor(&mut self) -> Result<Measured> {

@@ -1112,7 +1112,7 @@ impl NumericLiteral {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum ExpressionKind {
     Variable(String),
     Number(NumericLiteral),

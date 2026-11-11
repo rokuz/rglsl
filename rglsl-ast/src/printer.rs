@@ -1,5 +1,6 @@
 use alloc::format;
 use alloc::string::String;
+use alloc::vec::Vec;
 use core::fmt;
 
 use crate::ast::{
@@ -639,12 +640,6 @@ impl Printer {
         }
     }
 
-    fn arguments(&mut self, arguments: &[Expression]) {
-        self.write("(");
-        self.separated(arguments, |printer, argument| printer.expression(argument));
-        self.write(")");
-    }
-
     fn string(&mut self, value: &str) {
         let mut escaped = String::from("\"");
         for character in value.chars() {
@@ -669,93 +664,127 @@ impl Printer {
     }
 
     fn expression(&mut self, expression: &Expression) {
-        match &expression.kind {
-            ExpressionKind::Variable(name) => self.write(name),
-            ExpressionKind::Number(literal) => self.write(&literal.text),
-            ExpressionKind::Bool(value) => self.write(if *value { "true" } else { "false" }),
-            ExpressionKind::String(value) => self.string(value),
-            ExpressionKind::Parenthesized(inner) => {
-                self.write("(");
-                self.expression(inner);
-                self.write(")");
-            }
-            ExpressionKind::Subscript { base, index } => {
-                self.expression(base);
-                self.write("[");
-                self.expression(index);
-                self.write("]");
-            }
-            ExpressionKind::FunctionCall(call) => {
-                match &call.function.node {
-                    FunctionIdentifier::Constructor(specifier)
-                    | FunctionIdentifier::Cast(specifier) => {
-                        self.type_specifier(specifier);
-                    }
-                    FunctionIdentifier::Function(name) => self.write(name),
-                    FunctionIdentifier::Expression(callee) => self.expression(callee),
-                    FunctionIdentifier::Method { object, name } => {
-                        self.expression(object);
-                        self.write(".");
-                        self.write(name);
+        let mut pieces = Vec::from([Piece::Expression(expression)]);
+        while let Some(piece) = pieces.pop() {
+            match piece {
+                Piece::Text(text) => self.write(text),
+                Piece::String(value) => self.string(value),
+                Piece::Type(specifier) => self.type_specifier(specifier),
+                Piece::Expression(expression) => {
+                    let start = pieces.len();
+                    expression_pieces(expression, &mut pieces);
+                    if let Some(added) = pieces.get_mut(start..) {
+                        added.reverse();
                     }
                 }
-                self.arguments(&call.arguments);
-            }
-            ExpressionKind::FieldSelection { base, field } => {
-                self.expression(base);
-                self.write(".");
-                self.write(field);
-            }
-            ExpressionKind::Postfix { operand, operator } => {
-                self.expression(operand);
-                self.write(operator.symbol());
-            }
-            ExpressionKind::Unary { operator, operand } => {
-                self.write(operator.symbol());
-                if is_sign(*operator) && starts_with_sign(operand) {
-                    self.write(" ");
-                }
-                self.expression(operand);
-            }
-            ExpressionKind::Binary {
-                operator,
-                left,
-                right,
-            } => {
-                self.expression(left);
-                self.write(" ");
-                self.write(operator.symbol());
-                self.write(" ");
-                self.expression(right);
-            }
-            ExpressionKind::Conditional {
-                condition,
-                then_expression,
-                else_expression,
-            } => {
-                self.expression(condition);
-                self.write(" ? ");
-                self.expression(then_expression);
-                self.write(" : ");
-                self.expression(else_expression);
-            }
-            ExpressionKind::Assignment {
-                operator,
-                target,
-                value,
-            } => {
-                self.expression(target);
-                self.write(" ");
-                self.write(operator.symbol());
-                self.write(" ");
-                self.expression(value);
-            }
-            ExpressionKind::Sequence(expressions) => {
-                self.separated(expressions, |printer, element| {
-                    printer.expression(element);
-                });
             }
         }
+    }
+}
+
+enum Piece<'a> {
+    Text(&'a str),
+    String(&'a str),
+    Type(&'a TypeSpecifier),
+    Expression(&'a Expression),
+}
+
+fn separated_pieces<'a>(items: &'a [Expression], pieces: &mut Vec<Piece<'a>>) {
+    for (index, item) in items.iter().enumerate() {
+        if index > 0 {
+            pieces.push(Piece::Text(", "));
+        }
+        pieces.push(Piece::Expression(item));
+    }
+}
+
+fn expression_pieces<'a>(expression: &'a Expression, pieces: &mut Vec<Piece<'a>>) {
+    match &expression.kind {
+        ExpressionKind::Variable(name) => pieces.push(Piece::Text(name)),
+        ExpressionKind::Number(literal) => pieces.push(Piece::Text(&literal.text)),
+        ExpressionKind::Bool(value) => {
+            pieces.push(Piece::Text(if *value { "true" } else { "false" }))
+        }
+        ExpressionKind::String(value) => pieces.push(Piece::String(value)),
+        ExpressionKind::Parenthesized(inner) => {
+            pieces.push(Piece::Text("("));
+            pieces.push(Piece::Expression(inner));
+            pieces.push(Piece::Text(")"));
+        }
+        ExpressionKind::Subscript { base, index } => {
+            pieces.push(Piece::Expression(base));
+            pieces.push(Piece::Text("["));
+            pieces.push(Piece::Expression(index));
+            pieces.push(Piece::Text("]"));
+        }
+        ExpressionKind::FunctionCall(call) => {
+            match &call.function.node {
+                FunctionIdentifier::Constructor(specifier)
+                | FunctionIdentifier::Cast(specifier) => {
+                    pieces.push(Piece::Type(specifier));
+                }
+                FunctionIdentifier::Function(name) => pieces.push(Piece::Text(name)),
+                FunctionIdentifier::Expression(callee) => pieces.push(Piece::Expression(callee)),
+                FunctionIdentifier::Method { object, name } => {
+                    pieces.push(Piece::Expression(object));
+                    pieces.push(Piece::Text("."));
+                    pieces.push(Piece::Text(name));
+                }
+            }
+            pieces.push(Piece::Text("("));
+            separated_pieces(&call.arguments, pieces);
+            pieces.push(Piece::Text(")"));
+        }
+        ExpressionKind::FieldSelection { base, field } => {
+            pieces.push(Piece::Expression(base));
+            pieces.push(Piece::Text("."));
+            pieces.push(Piece::Text(field));
+        }
+        ExpressionKind::Postfix { operand, operator } => {
+            pieces.push(Piece::Expression(operand));
+            pieces.push(Piece::Text(operator.symbol()));
+        }
+        ExpressionKind::Unary { operator, operand } => {
+            pieces.push(Piece::Text(operator.symbol()));
+            if is_sign(*operator) && starts_with_sign(operand) {
+                pieces.push(Piece::Text(" "));
+            }
+            pieces.push(Piece::Expression(operand));
+        }
+        ExpressionKind::Binary {
+            operator,
+            left,
+            right,
+        } => {
+            pieces.push(Piece::Expression(left));
+            pieces.push(Piece::Text(" "));
+            pieces.push(Piece::Text(operator.symbol()));
+            pieces.push(Piece::Text(" "));
+            pieces.push(Piece::Expression(right));
+        }
+        ExpressionKind::Conditional {
+            condition,
+            then_expression,
+            else_expression,
+        } => {
+            pieces.push(Piece::Expression(condition));
+            pieces.push(Piece::Text(" ? "));
+            pieces.push(Piece::Expression(then_expression));
+            pieces.push(Piece::Text(" : "));
+            pieces.push(Piece::Expression(else_expression));
+        }
+        ExpressionKind::Assignment {
+            operator,
+            target,
+            value,
+        } => {
+            pieces.push(Piece::Expression(target));
+            pieces.push(Piece::Text(" "));
+            pieces.push(Piece::Text(operator.symbol()));
+            pieces.push(Piece::Text(" "));
+            pieces.push(Piece::Expression(value));
+        }
+        ExpressionKind::Sequence(expressions) => separated_pieces(expressions, pieces),
     }
 }
 
