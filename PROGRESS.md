@@ -47,7 +47,7 @@ Shaders that glslang's own test suite (`gtests/*.FromFile.cpp`) compiles under V
 | skipped: device feature missing on the driver | 128 |
 | skipped: resource or interface the harness cannot bind | 21 |
 | skipped: glslang's module is not valid SPIR-V | 11 |
-| skipped: glslang's module fails on the driver | 1 |
+| skipped: known driver bug (xtask/exec-drivers) | 1 |
 
 `exec remote` in detail:
 
@@ -194,7 +194,9 @@ implementation-defined values, unwritten tessellation levels) is listed in
 `xtask/exec-ub/undefined.toml` with a twin next to it that removes the undefined behaviour by the
 smallest edit; the original is still compiled and validated, but `exec` runs the twin, three
 times for each module: glslang's twin must give the same results on every run (otherwise the
-twin is broken and the shader fails), and ours must match it on every run. A target that is not
+twin is broken and the shader fails), and ours must match it on every run. A shader that a
+driver cannot run because of a proven bug of that driver is listed, with the reason, in
+`xtask/exec-drivers/<driver>.toml` and skipped on that driver only. A target that is not
 run keeps the results of its last run. See
 `docs/PLAN.md` (Testing).
 

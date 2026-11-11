@@ -510,6 +510,13 @@ fn run_exec(executor: &Executor, results: &mut [CaseResult]) {
                 .insert(executor.target, exec::Outcome::Fail(message.clone()));
             continue;
         }
+        if let Some(why) = executor.driver_bugs.get(&result.case.name) {
+            result.exec.insert(
+                executor.target,
+                exec::Outcome::skip(exec::SkipReason::DriverBug, why),
+            );
+            continue;
+        }
         if let Some(message) = &input.invalid_reference {
             result.exec.insert(
                 executor.target,

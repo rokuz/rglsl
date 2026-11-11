@@ -2,6 +2,7 @@ pub mod amber;
 pub mod batch;
 pub mod compare;
 pub mod data;
+pub mod drivers;
 pub mod glsl;
 pub mod harness;
 pub mod known;
@@ -65,17 +66,19 @@ pub enum SkipReason {
     Binding,
     ReferenceInvalid,
     ReferenceFails,
+    DriverBug,
     Nondeterministic,
 }
 
 impl SkipReason {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Stage,
         Self::Capability,
         Self::DeviceFeature,
         Self::Binding,
         Self::ReferenceInvalid,
         Self::ReferenceFails,
+        Self::DriverBug,
         Self::Nondeterministic,
     ];
 
@@ -87,6 +90,7 @@ impl SkipReason {
             Self::Binding => "resource or interface the harness cannot bind",
             Self::ReferenceInvalid => "glslang's module is not valid SPIR-V",
             Self::ReferenceFails => "glslang's module fails on the driver",
+            Self::DriverBug => "known driver bug (xtask/exec-drivers)",
             Self::Nondeterministic => "nondeterministic (glslang's module differs between runs)",
         }
     }
@@ -99,6 +103,7 @@ impl SkipReason {
             Self::Binding => "binding",
             Self::ReferenceInvalid => "reference-invalid",
             Self::ReferenceFails => "reference-fails",
+            Self::DriverBug => "driver-bug",
             Self::Nondeterministic => "nondeterministic",
         }
     }
@@ -204,6 +209,7 @@ pub struct Executor {
     timeout: Duration,
     support: BTreeMap<Need, Option<String>>,
     pub device: Device,
+    pub driver_bugs: drivers::DriverBugs,
 }
 
 #[derive(Debug, Clone)]
@@ -344,6 +350,7 @@ impl Executor {
             dump_shader,
             timeout,
             support: BTreeMap::new(),
+            driver_bugs: drivers::DriverBugs::load(root, &device.driver)?,
             device,
         };
         executor.probe(&requirements::probes())?;
