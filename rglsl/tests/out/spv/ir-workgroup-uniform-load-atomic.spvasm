@@ -115,5 +115,5 @@ OpReturn
 %74 = OpLabel
 OpReturn
 %72 = OpLabel
-OpReturn
+OpUnreachable
 OpFunctionEnd

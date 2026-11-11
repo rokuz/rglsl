@@ -64,5 +64,5 @@ OpReturn
 OpStore %19 %43
 OpReturn
 %34 = OpLabel
-OpReturn
+OpUnreachable
 OpFunctionEnd

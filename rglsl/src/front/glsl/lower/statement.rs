@@ -11,8 +11,8 @@ use super::constant::shape;
 use super::function::{FunctionLowerer, Local};
 use super::{internal, semantic, unsupported, GlobalRef, Result};
 use crate::{
-    Block, Expression, LoopControl, LoopDependency, SelectionControl, Statement as IrStatement,
-    SwitchCase, SwitchValue, UnaryOperator,
+    Block, Expression, Literal, LoopControl, LoopDependency, SelectionControl,
+    Statement as IrStatement, SwitchCase, SwitchValue, UnaryOperator,
 };
 
 fn selection_control(attributes: &[Attribute]) -> SelectionControl {
@@ -285,6 +285,9 @@ impl FunctionLowerer<'_, '_> {
         let mut break_if = None;
         let continuing = self.nested(|this| {
             let value = this.rvalue(condition)?;
+            if this.is_true(value) {
+                return Ok(());
+            }
             break_if = Some(this.add(
                 Expression::Unary {
                     op: UnaryOperator::LogicalNot,
@@ -311,6 +314,9 @@ impl FunctionLowerer<'_, '_> {
         condition: crate::Handle<Expression>,
         at: crate::Span,
     ) -> Result<()> {
+        if self.is_true(condition) {
+            return Ok(());
+        }
         let negated = self.add(
             Expression::Unary {
                 op: UnaryOperator::LogicalNot,
@@ -330,6 +336,13 @@ impl FunctionLowerer<'_, '_> {
             at,
         );
         Ok(())
+    }
+
+    fn is_true(&self, condition: crate::Handle<Expression>) -> bool {
+        matches!(
+            self.expressions[condition],
+            Expression::Literal(Literal::Bool(true))
+        )
     }
 
     fn condition(&mut self, condition: &Condition) -> Result<crate::Handle<Expression>> {
