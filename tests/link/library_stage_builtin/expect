@@ -1,0 +1,2 @@
+reject
+`gl_FragCoord` belongs to a shader stage and cannot be used in a library

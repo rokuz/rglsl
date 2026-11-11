@@ -584,6 +584,7 @@ name = "rglsl-link"
 version = "0.1.0"
 dependencies = [
  "rglsl",
+ "rglsl-pp",
  "ron",
  "serde",
  "thiserror",
@@ -635,6 +636,7 @@ dependencies = [
  "anyhow",
  "rglsl",
  "rglsl-link",
+ "rglsl-pp",
  "rspirv",
  "serde_json",
  "spirv",

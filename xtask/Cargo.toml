@@ -10,6 +10,7 @@ publish = false
 anyhow = { workspace = true, features = ["std"] }
 rglsl = { workspace = true, features = ["glsl-in", "spv-out"] }
 rglsl-link.workspace = true
+rglsl-pp = { workspace = true, features = ["std"] }
 rspirv.workspace = true
 serde_json.workspace = true
 spirv.workspace = true

@@ -63,6 +63,7 @@ pub fn compile_one(
     stage: &str,
     spv_version: &str,
     auto_map: bool,
+    object: bool,
     out: &Path,
 ) -> i32 {
     let source = match std::fs::read(input) {
@@ -96,6 +97,9 @@ pub fn compile_one(
         spirv_version: Some(lang_version),
         ..glsl::Options::from(stage)
     };
+    if object {
+        return compile_object(&mut frontend, &options, &source, out);
+    }
     let module = match frontend.parse(&options, &source) {
         Ok(module) => module,
         Err(errors) => {
@@ -171,7 +175,7 @@ pub struct GroupOptions<'a> {
 
 pub fn compile_group(inputs: &[String], options: &GroupOptions) -> i32 {
     let lang_version = parse_version(options.spv_version);
-    let mut stages: Vec<(ShaderStage, Vec<rglsl::object::ObjectModule>)> = Vec::new();
+    let mut objects: Vec<rglsl::object::ObjectModule> = Vec::new();
     let mut rejected = false;
     for input in inputs {
         let path = Path::new(input);
@@ -182,10 +186,13 @@ pub fn compile_group(inputs: &[String], options: &GroupOptions) -> i32 {
                 return EXIT_REJECTED;
             }
         };
-        let Some(stage) = path
+        let extension = path
             .extension()
             .and_then(|extension| extension.to_str())
-            .and_then(stage_from_extension)
+            .unwrap_or_default();
+        let library = extension == "glsl";
+        let Some(stage) =
+            stage_from_extension(extension).or(library.then_some(ShaderStage::Compute))
         else {
             diagnostic("stage", None, &format!("no shader stage for `{input}`"));
             return EXIT_REJECTED;
@@ -194,9 +201,17 @@ pub fn compile_group(inputs: &[String], options: &GroupOptions) -> i32 {
             auto_map_bindings: options.auto_map_bindings,
             auto_map_locations: options.auto_map_locations,
             spirv_version: Some(lang_version),
+            library,
             ..glsl::Options::from(stage)
         };
-        match glsl::Frontend::default().compile(&frontend_options, &source) {
+        let mut includer = rglsl_pp::FileSystemIncluder::new(Vec::<String>::new());
+        let root = includer.add_root(path);
+        match glsl::Frontend::default().compile_with_includer(
+            &frontend_options,
+            &source,
+            root,
+            &mut includer,
+        ) {
             Ok(object) => {
                 if let Err(errors) = rglsl_link::validate_object(&object) {
                     for error in errors.iter() {
@@ -205,10 +220,7 @@ pub fn compile_group(inputs: &[String], options: &GroupOptions) -> i32 {
                     rejected = true;
                     continue;
                 }
-                match stages.iter_mut().find(|(existing, _)| *existing == stage) {
-                    Some((_, objects)) => objects.push(object),
-                    None => stages.push((stage, vec![object])),
-                }
+                objects.push(object);
             }
             Err(errors) => {
                 for error in &errors.errors {
@@ -225,13 +237,11 @@ pub fn compile_group(inputs: &[String], options: &GroupOptions) -> i32 {
     if rejected {
         return EXIT_REJECTED;
     }
-    let groups: Vec<Vec<rglsl::object::ObjectModule>> =
-        stages.into_iter().map(|(_, objects)| objects).collect();
     let link_options = rglsl_link::Options {
         auto_map_locations: options.auto_map_locations,
         auto_map_bindings: options.auto_map_bindings,
     };
-    let linked = match rglsl_link::link_program(&groups, &link_options) {
+    let linked = match rglsl_link::link_objects(&objects, &link_options) {
         Ok(linked) => linked,
         Err(errors) => {
             for error in errors.iter() {
@@ -279,4 +289,43 @@ pub const fn stage_extension(stage: ShaderStage) -> &'static str {
         ShaderStage::Intersection => "rint",
         ShaderStage::Callable => "rcall",
     }
+}
+
+fn compile_object(
+    frontend: &mut glsl::Frontend,
+    options: &glsl::Options,
+    source: &str,
+    out: &Path,
+) -> i32 {
+    let object = match frontend.compile(options, source) {
+        Ok(object) => object,
+        Err(errors) => {
+            for error in &errors.errors {
+                let line = error
+                    .meta
+                    .is_defined()
+                    .then(|| error.meta.location(source).line_number);
+                diagnostic("parse", line, &full_message(error));
+            }
+            return EXIT_REJECTED;
+        }
+    };
+    if let Err(errors) = rglsl_link::validate_object(&object) {
+        for error in errors.iter() {
+            diagnostic("validate", None, &error.to_string());
+        }
+        return EXIT_REJECTED;
+    }
+    let text = match rglsl_link::encode(&object) {
+        Ok(text) => text,
+        Err(error) => {
+            diagnostic("object", None, &error.to_string());
+            return EXIT_BACKEND_FAILED;
+        }
+    };
+    if let Err(err) = std::fs::write(out, text) {
+        diagnostic("io", None, &err.to_string());
+        return EXIT_BACKEND_FAILED;
+    }
+    EXIT_ACCEPTED
 }

@@ -1,0 +1,2 @@
+reject
+Multiple function bodies in multiple compilation units for the same signature in the same stage: f(float)

@@ -12,6 +12,7 @@ To begin, take a look at the documentation for the [`Frontend`].
 */
 
 pub use error::{Error, ErrorKind, ParseErrors};
+pub use rglsl_pp::{FileId, Includer, NoIncluder};
 
 use alloc::string::String;
 
@@ -116,6 +117,16 @@ impl Frontend {
         options: &Options,
         source: &str,
     ) -> Result<crate::object::ObjectModule, ParseErrors> {
-        lower::compile(options, source)
+        lower::compile(options, source, FileId(0), &mut NoIncluder)
+    }
+
+    pub fn compile_with_includer(
+        &mut self,
+        options: &Options,
+        source: &str,
+        root: FileId,
+        includer: &mut dyn Includer,
+    ) -> Result<crate::object::ObjectModule, ParseErrors> {
+        lower::compile(options, source, root, includer)
     }
 }

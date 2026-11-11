@@ -7,6 +7,7 @@ mod expression;
 mod function;
 mod globals;
 mod heap;
+mod library;
 mod mesh;
 mod message;
 mod object;
@@ -44,14 +45,23 @@ use crate::{
 pub(super) type Result<T> = core::result::Result<T, Error>;
 
 pub(super) fn parse(options: &Options, source: &str) -> core::result::Result<Module, ParseErrors> {
-    lower(options, source, false).map(|object| object.module)
+    lower(
+        options,
+        source,
+        false,
+        rglsl_pp::FileId(0),
+        &mut rglsl_pp::NoIncluder,
+    )
+    .map(|object| object.module)
 }
 
 pub(super) fn compile(
     options: &Options,
     source: &str,
+    root: rglsl_pp::FileId,
+    includer: &mut dyn rglsl_pp::Includer,
 ) -> core::result::Result<crate::object::ObjectModule, ParseErrors> {
-    lower(options, source, true)
+    lower(options, source, true, root, includer)
 }
 
 const fn link_time(kind: &rglsl_sema::DiagnosticKind) -> bool {
@@ -66,7 +76,20 @@ fn lower(
     options: &Options,
     source: &str,
     object: bool,
+    root: rglsl_pp::FileId,
+    includer: &mut dyn rglsl_pp::Includer,
 ) -> core::result::Result<crate::object::ObjectModule, ParseErrors> {
+    let carrier;
+    let options = if options.library {
+        carrier = Options {
+            stage: ShaderStage::Compute,
+            defines: options.defines.clone(),
+            ..*options
+        };
+        &carrier
+    } else {
+        options
+    };
     let defines = options
         .defines
         .iter()
@@ -78,12 +101,7 @@ fn lower(
         stage: Some(preprocessor_stage(options.stage)),
         ..rglsl_pp::Options::default()
     };
-    let preprocessed = rglsl_pp::preprocess(
-        source,
-        rglsl_pp::FileId(0),
-        &preprocessor_options,
-        &mut rglsl_pp::NoIncluder,
-    );
+    let preprocessed = rglsl_pp::preprocess(source, root, &preprocessor_options, includer);
     let map = &preprocessed.source_map;
     if preprocessed.has_errors() {
         let errors = preprocessed
@@ -140,8 +158,13 @@ fn lower(
         .filter(|diagnostic| !(object && link_time(&diagnostic.kind)))
         .map(|diagnostic| {
             let start = diagnostic.offset(text);
+            let message = options
+                .library
+                .then(|| library::library_diagnostic(&diagnostic.kind, analysis.version))
+                .flatten()
+                .unwrap_or_else(|| diagnostic.kind.to_string());
             Error {
-                kind: ErrorKind::SemanticError(Cow::Owned(diagnostic.kind.to_string())),
+                kind: ErrorKind::SemanticError(Cow::Owned(message)),
                 meta: if link_time(&diagnostic.kind) {
                     Span::UNDEFINED
                 } else {
@@ -470,6 +493,9 @@ impl<'a> Lowerer<'a> {
             }
         }
         self.prepass(&definitions);
+        if self.options.library {
+            self.check_library(&definitions);
+        }
         if self.options.auto_map_locations {
             self.reserve_explicit_locations();
         }

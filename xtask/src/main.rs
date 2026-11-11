@@ -9,6 +9,7 @@ mod corpus;
 mod exec;
 mod fuzz;
 mod fuzz_exec;
+mod groups;
 mod oracles;
 mod process;
 mod report;
@@ -124,6 +125,7 @@ fn run(args: Vec<String>) -> Result<i32> {
             let spv = args.value("--spv")?.context("--spv is required")?;
             let out = args.value("--out")?.context("--out is required")?;
             let auto_map = args.flag("--auto-map");
+            let object = args.flag("--object");
             let input = args.next_positional().context("input file is required")?;
             args.finish()?;
             Ok(worker::compile_one(
@@ -131,6 +133,7 @@ fn run(args: Vec<String>) -> Result<i32> {
                 &stage,
                 &spv,
                 auto_map,
+                object,
                 Path::new(&out),
             ))
         }

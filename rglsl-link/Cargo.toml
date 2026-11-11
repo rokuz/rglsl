@@ -22,6 +22,7 @@ rglsl = { workspace = true, features = [
     "serialize",
     "deserialize",
 ] }
+rglsl-pp = { workspace = true, features = ["std"] }
 
 [lints]
 workspace = true

@@ -362,3 +362,34 @@ pub fn link_program(
         Err(errors.into())
     }
 }
+
+pub fn group_by_stage(
+    objects: &[rglsl::object::ObjectModule],
+) -> Vec<Vec<rglsl::object::ObjectModule>> {
+    let mut stages: Vec<ShaderStage> = Vec::new();
+    for stage in objects.iter().filter_map(|object| object.stage) {
+        if !stages.contains(&stage) {
+            stages.push(stage);
+        }
+    }
+    if stages.is_empty() {
+        return vec![objects.to_vec()];
+    }
+    stages
+        .into_iter()
+        .map(|stage| {
+            objects
+                .iter()
+                .filter(|object| object.stage.is_none_or(|own| own == stage))
+                .cloned()
+                .collect()
+        })
+        .collect()
+}
+
+pub fn link_objects(
+    objects: &[rglsl::object::ObjectModule],
+    options: &Options,
+) -> Result<Vec<Linked>, LinkErrors> {
+    link_program(&group_by_stage(objects), options)
+}

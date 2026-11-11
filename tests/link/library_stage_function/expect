@@ -1,0 +1,3 @@
+reject
+`barrier` belongs to a shader stage and cannot be used in a library
+stage layout qualifiers cannot be used in a library
