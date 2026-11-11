@@ -191,6 +191,7 @@ fn count_statements(statement: &Statement) -> usize {
         StatementKind::For(for_statement) => {
             count_statements(&for_statement.init) + count_statements(&for_statement.body)
         }
+        StatementKind::Attributed { statement, .. } => count_statements(statement),
         StatementKind::Declaration(_)
         | StatementKind::Expression(_)
         | StatementKind::CaseLabel(_)

@@ -496,6 +496,25 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   `SPV_KHR_expect_assume` capabilities and extensions, and the ARM cooperative matrix layouts.
   Upstream's `ir-cooperative-matrix*` snapshot inputs and outputs were deleted: they used the
   removed sizes and `row_major`, and the GLSL corpus covers the feature.
+- **QCOM extensions** ([docs/design/qcom.md](docs/design/qcom.md)).
+  `Expression::ImageSample::gather_pattern: ImageGatherPattern` (new; `Quad` is the ordinary
+  gather, the others are the `GL_QCOM_image_processing3` modes written as `OpImageGatherQCOM`).
+  `Expression::ImageProcessing { operation: ImageProcessingOperation, image, sampler,
+  coordinate, reference, reference_sampler, reference_coordinate, size }` (new: weighted
+  sampling, box filter, and block matching with `BlockMatchMetric` and `BlockMatchSearch`); it
+  is a `vec4<f32>`. `Expression::ArrayConversion { conversion: ArrayConversion, expr, index, ty }`
+  (new: the array bitcast, sub-array extraction and the array to cooperative matrix
+  conversions of `GL_QCOM_cooperative_matrix_conversion`). `GlobalVariable::tile_attachment`
+  (new, not serialized when false): a `Handle` global in the `TileAttachmentQCOM` storage class.
+  `BuiltIn::{TileOffset, TileDimension, TileApronSize}` (new). `EntryPoint::tile_shading:
+  TileShading { rate, non_coherent_attachment_read }` (new, not serialized when default); a
+  rate replaces `LocalSize` with `TileShadingRateQCOM`. `Statement::Loop::control: LoopControl`
+  (new, not serialized when default) carries the loop attributes of
+  `GL_EXT_control_flow_attributes(2)` and `GL_QCOM_multiple_wait_queues` to `OpLoopMerge`.
+  The SPIR-V backend keeps the QCOM opcodes, capabilities and loop control bits the `spirv`
+  crate lacks in `back/spv/qcom.rs`, and records the pointer of every binding-array element it
+  loads so that the image processing decorations land on the `OpAccessChain`, as glslang
+  writes them.
 
 ## Cherry-picked upstream commits
 

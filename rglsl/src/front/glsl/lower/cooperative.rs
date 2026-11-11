@@ -2,14 +2,14 @@ use alloc::{format, vec::Vec};
 
 use rglsl_ast::ast::Expression as AstExpression;
 use rglsl_sema::types::{Scalar as GlslScalar, Type as GlslType};
-use rglsl_sema::{Callee, CooperativeCall, MatrixCall, TensorCall};
+use rglsl_sema::{Callee, CooperativeCall, MatrixCall, QcomConversion, TensorCall};
 
 use super::builtins::{derivative, math};
 use super::function::FunctionLowerer;
 use super::types::scalar;
 use super::{internal, unsupported, Result};
 use crate::{
-    BinaryOperator, CooperativeData, CooperativeFamily, CooperativeMatrixFunction,
+    ArrayConversion, BinaryOperator, CooperativeData, CooperativeFamily, CooperativeMatrixFunction,
     CooperativeVectorBias, CooperativeVectorFunction, CooperativeVectorMatMul, Expression, Handle,
     MathFunction, RelationalFunction, Span, Statement, TensorOperation, UnaryOperator,
 };
@@ -286,6 +286,35 @@ impl FunctionLowerer<'_, '_> {
     ) -> Result<Option<Handle<Expression>>> {
         let argument = |index: usize| arguments.get(index).ok_or_else(|| internal(at));
         match kind {
+            CooperativeCall::Qcom(conversion) => {
+                let (conversion, target) = match conversion {
+                    QcomConversion::Bitcast => (ArrayConversion::Bitcast, 1),
+                    QcomConversion::ExtractSubArray => (ArrayConversion::SubArray, 2),
+                    QcomConversion::VectorToMatrix => (ArrayConversion::ToCooperativeMatrix, 1),
+                    QcomConversion::MatrixToVector => (ArrayConversion::FromCooperativeMatrix, 1),
+                };
+                let expr = self.rvalue(argument(0)?)?;
+                let index = if conversion == ArrayConversion::SubArray {
+                    Some(self.rvalue(argument(1)?)?)
+                } else {
+                    None
+                };
+                let destination = argument(target)?;
+                let destination_ty = self.info(destination)?.ty.clone();
+                let ty = self.lw.ir_type(&destination_ty, at)?;
+                let place = self.place(destination)?;
+                let value = self.add(
+                    Expression::ArrayConversion {
+                        conversion,
+                        expr,
+                        index,
+                        ty,
+                    },
+                    at,
+                )?;
+                self.store(&place, value, at)?;
+                Ok(None)
+            }
             CooperativeCall::Load { .. } | CooperativeCall::Store { .. } => {
                 let data = self.cooperative_data(&arguments[1..], at)?;
                 let matrix = argument(0)?;

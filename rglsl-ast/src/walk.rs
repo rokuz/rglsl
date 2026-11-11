@@ -197,6 +197,18 @@ impl<'a> Walker<'a> {
             }
             StatementKind::Jump(JumpStatement::Return(Some(value))) => self.expression(value),
             StatementKind::Jump(_) => {}
+            StatementKind::Attributed {
+                attributes,
+                statement,
+            } => {
+                for argument in attributes
+                    .iter()
+                    .filter_map(|attribute| attribute.argument.as_ref())
+                {
+                    self.expression(argument);
+                }
+                self.statement(statement);
+            }
         }
     }
 

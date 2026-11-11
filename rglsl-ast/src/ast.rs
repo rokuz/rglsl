@@ -863,6 +863,16 @@ pub enum StatementKind {
     },
     For(Box<ForStatement>),
     Jump(JumpStatement),
+    Attributed {
+        attributes: Vec<Attribute>,
+        statement: Box<Statement>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Attribute {
+    pub name: Identifier,
+    pub argument: Option<Expression>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -1,8 +1,8 @@
 use alloc::vec::Vec;
 
 use rglsl_ast::ast::{
-    CaseLabel, Condition, Declaration, DeclarationKind, ForStatement, Initializer, JumpStatement,
-    Statement, StatementKind,
+    Attribute, CaseLabel, Condition, Declaration, DeclarationKind, ForStatement, Initializer,
+    JumpStatement, Statement, StatementKind,
 };
 use rglsl_sema::constant::Value;
 use rglsl_sema::types::{Scalar as GlslScalar, Type as GlslType};
@@ -10,7 +10,10 @@ use rglsl_sema::types::{Scalar as GlslScalar, Type as GlslType};
 use super::constant::shape;
 use super::function::{FunctionLowerer, Local};
 use super::{internal, semantic, unsupported, GlobalRef, Result};
-use crate::{Block, Expression, Statement as IrStatement, SwitchCase, SwitchValue, UnaryOperator};
+use crate::{
+    Block, Expression, LoopControl, LoopDependency, Statement as IrStatement, SwitchCase,
+    SwitchValue, UnaryOperator,
+};
 
 impl FunctionLowerer<'_, '_> {
     pub(super) fn statements(&mut self, statements: &[Statement]) -> Result<()> {
@@ -56,6 +59,107 @@ impl FunctionLowerer<'_, '_> {
                 ref statements,
             } => self.switch(selector, statements, at),
             StatementKind::CaseLabel(_) => Err(semantic("a case label outside a switch", at)),
+            StatementKind::While { .. } | StatementKind::DoWhile { .. } | StatementKind::For(_) => {
+                self.iteration(statement, LoopControl::default())
+            }
+            StatementKind::Attributed {
+                ref attributes,
+                ref statement,
+            } => match statement.kind {
+                StatementKind::While { .. }
+                | StatementKind::DoWhile { .. }
+                | StatementKind::For(_) => {
+                    let control = self.loop_control(attributes);
+                    self.iteration(statement, control)
+                }
+                _ => self.statement(statement),
+            },
+            StatementKind::Jump(ref jump) => {
+                let statement =
+                    match *jump {
+                        JumpStatement::Break => IrStatement::Break,
+                        JumpStatement::Continue => IrStatement::Continue,
+                        JumpStatement::Discard => IrStatement::Kill,
+                        JumpStatement::TerminateRay => IrStatement::RayPipelineFunction(
+                            crate::RayPipelineFunction::TerminateRay { nv: false },
+                        ),
+                        JumpStatement::IgnoreIntersection => IrStatement::RayPipelineFunction(
+                            crate::RayPipelineFunction::IgnoreIntersection { nv: false },
+                        ),
+                        JumpStatement::Return(None) => IrStatement::Return { value: None },
+                        JumpStatement::Return(Some(ref value)) => IrStatement::Return {
+                            value: Some(self.rvalue(value)?),
+                        },
+                    };
+                self.push(statement, at);
+                Ok(())
+            }
+        }
+    }
+
+    fn loop_control(&self, attributes: &[Attribute]) -> LoopControl {
+        let mut control = LoopControl::default();
+        for attribute in attributes {
+            let argument = attribute.argument.as_ref().map(|argument| {
+                self.lw
+                    .analysis
+                    .expression(argument.id)
+                    .filter(|info| {
+                        info.ty == GlslType::INT && info.is_constant && !info.is_specialization
+                    })
+                    .and_then(|info| info.value.as_ref())
+                    .and_then(rglsl_sema::constant::Constant::scalar_i64)
+                    .and_then(|value| i32::try_from(value).ok())
+            });
+            let unsigned = |value: i32| u32::from_ne_bytes(value.to_ne_bytes());
+            match (attribute.name.node.as_str(), argument) {
+                ("unroll", None) => {
+                    control.unroll = true;
+                    control.dont_unroll = false;
+                }
+                ("loop" | "dont_unroll", None) => {
+                    control.unroll = false;
+                    control.dont_unroll = true;
+                    control.peel_count = None;
+                    control.partial_count = None;
+                }
+                ("dependency_infinite", None) => {
+                    control.dependency = Some(LoopDependency::Infinite);
+                }
+                ("dependency_length", Some(Some(value))) if value > 0 => {
+                    control.dependency = Some(LoopDependency::Length(unsigned(value)));
+                }
+                ("min_iterations", Some(Some(value))) => {
+                    control.min_iterations = Some(unsigned(value)).filter(|value| *value > 0);
+                }
+                ("max_iterations", Some(Some(value))) => {
+                    control.max_iterations =
+                        Some(unsigned(value)).filter(|value| *value != u32::MAX);
+                }
+                ("iteration_multiple", Some(Some(value))) if value != 0 => {
+                    control.iteration_multiple = Some(unsigned(value)).filter(|value| *value > 1);
+                }
+                ("peel_count", Some(Some(value))) => {
+                    control.peel_count = Some(unsigned(value)).filter(|value| *value > 0);
+                    control.dont_unroll = false;
+                }
+                ("partial_count", Some(Some(value))) => {
+                    control.partial_count = Some(unsigned(value)).filter(|value| *value > 0);
+                    control.dont_unroll = false;
+                }
+                ("multiple_wait_queuesQCOM", None) => control.multiple_wait_queues = Some(0),
+                ("multiple_wait_queuesQCOM", Some(Some(value))) if value > 0 => {
+                    control.multiple_wait_queues = Some(unsigned(value));
+                }
+                _ => {}
+            }
+        }
+        control
+    }
+
+    fn iteration(&mut self, statement: &Statement, control: LoopControl) -> Result<()> {
+        let at = self.at(statement.span);
+        match statement.kind {
             StatementKind::While {
                 ref condition,
                 ref body,
@@ -70,6 +174,7 @@ impl FunctionLowerer<'_, '_> {
                         body,
                         continuing: Block::new(),
                         break_if: None,
+                        control,
                     },
                     at,
                 );
@@ -97,32 +202,14 @@ impl FunctionLowerer<'_, '_> {
                         body,
                         continuing,
                         break_if,
+                        control,
                     },
                     at,
                 );
                 Ok(())
             }
-            StatementKind::For(ref for_statement) => self.for_loop(for_statement, at),
-            StatementKind::Jump(ref jump) => {
-                let statement =
-                    match *jump {
-                        JumpStatement::Break => IrStatement::Break,
-                        JumpStatement::Continue => IrStatement::Continue,
-                        JumpStatement::Discard => IrStatement::Kill,
-                        JumpStatement::TerminateRay => IrStatement::RayPipelineFunction(
-                            crate::RayPipelineFunction::TerminateRay { nv: false },
-                        ),
-                        JumpStatement::IgnoreIntersection => IrStatement::RayPipelineFunction(
-                            crate::RayPipelineFunction::IgnoreIntersection { nv: false },
-                        ),
-                        JumpStatement::Return(None) => IrStatement::Return { value: None },
-                        JumpStatement::Return(Some(ref value)) => IrStatement::Return {
-                            value: Some(self.rvalue(value)?),
-                        },
-                    };
-                self.push(statement, at);
-                Ok(())
-            }
+            StatementKind::For(ref for_statement) => self.for_loop(for_statement, control, at),
+            _ => Err(internal(at)),
         }
     }
 
@@ -178,7 +265,12 @@ impl FunctionLowerer<'_, '_> {
         }
     }
 
-    fn for_loop(&mut self, statement: &ForStatement, at: crate::Span) -> Result<()> {
+    fn for_loop(
+        &mut self,
+        statement: &ForStatement,
+        control: LoopControl,
+        at: crate::Span,
+    ) -> Result<()> {
         self.statement(&statement.init)?;
         let body = self.nested(|this| {
             if let Some(ref condition) = statement.condition {
@@ -196,6 +288,7 @@ impl FunctionLowerer<'_, '_> {
                 body,
                 continuing,
                 break_if: None,
+                control,
             },
             at,
         );

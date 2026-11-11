@@ -799,6 +799,7 @@ impl<I: Iterator<Item = u32>> super::Frontend<I> {
             image: si_lexp.image,
             sampler: Some(si_lexp.sampler),
             gather,
+            gather_pattern: crate::ImageGatherPattern::Quad,
             coordinate,
             array_index,
             offset,

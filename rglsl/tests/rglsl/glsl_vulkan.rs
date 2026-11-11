@@ -6928,6 +6928,375 @@ fn cooperative_errors() {
     }
 }
 
+struct QcomModule {
+    instructions: Vec<(u32, Vec<u32>)>,
+}
+
+impl QcomModule {
+    fn new(stage: ShaderStage, source: &str, lang_version: (u8, u8), target: &str) -> Self {
+        let words = compile_words_with_names(stage, source, lang_version);
+        crate::stage_io::spirv_val_in(&words, &["--target-env", target]);
+        Self {
+            instructions: raw_instructions(&words),
+        }
+    }
+
+    fn all(&self, op: u32) -> Vec<&[u32]> {
+        self.instructions
+            .iter()
+            .filter(|(found, _)| *found == op)
+            .map(|(_, operands)| operands.as_slice())
+            .collect()
+    }
+
+    fn id(&self, name: &str) -> u32 {
+        self.all(Op::Name as u32)
+            .into_iter()
+            .find(|operands| string_operand(&operands[1..]) == name)
+            .map(|operands| operands[0])
+            .unwrap_or_else(|| panic!("no `{name}`"))
+    }
+
+    fn decorations(&self, id: u32) -> Vec<u32> {
+        let mut found: Vec<u32> = self
+            .all(Op::Decorate as u32)
+            .into_iter()
+            .filter(|operands| operands[0] == id)
+            .map(|operands| operands[1])
+            .collect();
+        found.sort_unstable();
+        found
+    }
+
+    fn capabilities(&self) -> Vec<u32> {
+        let mut found: Vec<u32> = self
+            .all(Op::Capability as u32)
+            .into_iter()
+            .map(|operands| operands[0])
+            .collect();
+        found.sort_unstable();
+        found
+    }
+
+    fn extensions(&self) -> Vec<String> {
+        let mut found: Vec<String> = self
+            .all(Op::Extension as u32)
+            .into_iter()
+            .map(string_operand)
+            .collect();
+        found.sort_unstable();
+        found
+    }
+
+    fn constant(&self, id: u32) -> u32 {
+        self.all(Op::Constant as u32)
+            .into_iter()
+            .find(|operands| operands[1] == id)
+            .map(|operands| operands[2])
+            .unwrap_or_else(|| panic!("%{id} is not a constant"))
+    }
+
+    fn defining_op(&self, id: u32) -> u32 {
+        self.instructions
+            .iter()
+            .find(|(op, operands)| {
+                (*op == Op::AccessChain as u32 || *op == Op::Variable as u32)
+                    && operands.get(1) == Some(&id)
+            })
+            .map(|(op, _)| *op)
+            .unwrap_or_else(|| panic!("%{id} is not defined"))
+    }
+}
+
+#[test]
+fn qcom_image_processing_matches_glslang() {
+    let module = QcomModule::new(
+        ShaderStage::Fragment,
+        "#version 450
+        #extension GL_QCOM_image_processing : require
+        #extension GL_QCOM_image_processing2 : require
+        layout(location = 0) in vec4 coordinate;
+        layout(location = 0) out vec4 color;
+        layout(set = 0, binding = 0) uniform texture2DArray weights;
+        layout(set = 0, binding = 1) uniform texture2D target;
+        layout(set = 0, binding = 2) uniform texture2D reference;
+        layout(set = 0, binding = 3) uniform sampler samp;
+        layout(set = 0, binding = 4) uniform sampler2D combined;
+        layout(set = 0, binding = 5) uniform sampler2D window;
+        void main() {
+            uvec2 at = uvec2(coordinate.zw);
+            color = textureWeightedQCOM(sampler2D(target, samp), coordinate.xy, sampler2DArray(weights, samp));
+            color += textureBoxFilterQCOM(combined, coordinate.xy, vec2(2.5, 4.5));
+            color += textureBlockMatchSSDQCOM(sampler2D(target, samp), at, combined, at, uvec2(4));
+            color += textureBlockMatchWindowSADQCOM(window, at, sampler2D(reference, samp), at, uvec2(4));
+            color += textureBlockMatchGatherSSDQCOM(sampler2D(target, samp), at, sampler2D(reference, samp), at, uvec2(4));
+        }",
+        (1, 4),
+        "vulkan1.1spv1.4",
+    );
+    for (op, count) in [(4480, 1), (4481, 1), (4482, 1), (4501, 1), (4502, 1)] {
+        assert_eq!(module.all(op).len(), count, "opcode {op}");
+    }
+    assert_eq!(module.capabilities(), [1, 4484, 4485, 4486, 4498]);
+    assert_eq!(
+        module.extensions(),
+        ["SPV_QCOM_image_processing", "SPV_QCOM_image_processing2"]
+    );
+    let block_texture = Decoration::BlockMatchTextureQCOM as u32;
+    let block_sampler = Decoration::BlockMatchSamplerQCOM as u32;
+    let weight = Decoration::WeightTextureQCOM as u32;
+    let qcom = |name: &str| {
+        module
+            .decorations(module.id(name))
+            .into_iter()
+            .filter(|decoration| *decoration > 4000)
+            .collect::<Vec<u32>>()
+    };
+    assert_eq!(qcom("weights"), [weight]);
+    assert_eq!(qcom("target"), [block_texture]);
+    assert_eq!(qcom("combined"), [block_texture]);
+    assert_eq!(qcom("window"), [block_texture, block_sampler]);
+    assert_eq!(qcom("reference"), [block_texture]);
+    assert_eq!(qcom("samp"), [block_sampler]);
+}
+
+#[test]
+fn qcom_block_matching_decorates_array_elements() {
+    let module = QcomModule::new(
+        ShaderStage::Fragment,
+        "#version 450
+        #extension GL_QCOM_image_processing : require
+        layout(location = 0) in vec4 coordinate;
+        layout(location = 0) out vec4 color;
+        layout(set = 0, binding = 3) uniform sampler samp;
+        layout(set = 0, binding = 4) uniform texture2D sources[8];
+        layout(set = 0, binding = 5) uniform sampler2D samplers[3];
+        void main() {
+            uvec2 at = uvec2(coordinate.xy);
+            uint index = at.x % 8;
+            color = textureBlockMatchSSDQCOM(samplers[0], at, sampler2D(sources[index], samp), at, uvec2(4));
+        }",
+        (1, 4),
+        "vulkan1.1spv1.4",
+    );
+    let decorated: Vec<u32> = module
+        .all(Op::Decorate as u32)
+        .into_iter()
+        .filter(|operands| operands[1] == Decoration::BlockMatchTextureQCOM as u32)
+        .map(|operands| operands[0])
+        .collect();
+    assert_eq!(decorated.len(), 2);
+    for id in decorated {
+        assert_eq!(module.defining_op(id), Op::AccessChain as u32);
+    }
+}
+
+#[test]
+fn qcom_gather_modes_match_glslang() {
+    let module = QcomModule::new(
+        ShaderStage::Vertex,
+        "#version 460
+        #extension GL_QCOM_image_processing3 : enable
+        layout(location = 0) in vec2 c2D;
+        layout(location = 1) in vec3 c3D;
+        layout(location = 2) in ivec2 offset;
+        layout(binding = 0) uniform usampler2D usamp;
+        layout(binding = 1) uniform sampler2DArray fsamp;
+        void main() {
+            vec4 sum = vec4(textureGather4x1QCOM(usamp, c2D));
+            sum += vec4(textureGatherV2QCOM(usamp, c2D, 1));
+            sum += textureGatherH2QCOM(fsamp, c3D, 2);
+            sum += textureGatherDOffsetQCOM(fsamp, c3D, offset, 3);
+            sum += vec4(textureGather(usamp, c2D, 1));
+            gl_Position = sum;
+        }",
+        (1, 4),
+        "vulkan1.1spv1.4",
+    );
+    let gathers: Vec<(u32, u32, Option<u32>)> = module
+        .all(4545)
+        .into_iter()
+        .map(|operands| {
+            (
+                module.constant(operands[4]),
+                module.constant(operands[5]),
+                operands.get(6).copied(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        gathers,
+        [(0, 0, None), (1, 3, None), (2, 2, None), (3, 1, Some(0x10))]
+    );
+    assert_eq!(module.all(Op::ImageGather as u32).len(), 1);
+    assert_eq!(module.capabilities(), [1, 25, 4543, 4544]);
+    assert_eq!(module.extensions(), ["SPV_QCOM_image_processing3"]);
+}
+
+#[test]
+fn qcom_tile_shading_matches_glslang() {
+    let compute = QcomModule::new(
+        ShaderStage::Compute,
+        "#version 460
+        #extension GL_QCOM_tile_shading : enable
+        layout(local_size_x = 16, local_size_y = 16) in;
+        layout(shading_rate_xQCOM = 2, shading_rate_yQCOM = 2, shading_rate_zQCOM = 3) in;
+        layout(set = 0, binding = 1, tile_attachmentQCOM, rgba32f) uniform highp image2D color;
+        layout(set = 0, binding = 2, tile_attachmentQCOM, rgba32ui) uniform highp uimage2D stencil;
+        void main() {
+            uvec2 at = clamp(gl_GlobalInvocationID.xy, gl_TileOffsetQCOM,
+                gl_TileOffsetQCOM + gl_TileDimensionQCOM.xy + gl_TileApronSizeQCOM);
+            imageStore(color, ivec2(at), imageLoad(color, ivec2(at)) * 2.0);
+            imageStore(stencil, ivec2(at), imageLoad(stencil, ivec2(at)) + 1);
+        }",
+        (1, 0),
+        "vulkan1.0",
+    );
+    let modes: Vec<Vec<u32>> = compute
+        .all(Op::ExecutionMode as u32)
+        .into_iter()
+        .map(|operands| operands[1..].to_vec())
+        .collect();
+    assert_eq!(modes, [vec![4490, 2, 2, 3]]);
+    assert_eq!(compute.capabilities(), [1, 4495]);
+    assert_eq!(compute.extensions(), ["SPV_QCOM_tile_shading"]);
+    for name in ["color", "stencil"] {
+        let id = compute.id(name);
+        let variable = compute
+            .all(Op::Variable as u32)
+            .into_iter()
+            .find(|operands| operands[1] == id)
+            .unwrap();
+        assert_eq!(variable[2], 4491, "{name}");
+    }
+    let built_ins: Vec<u32> = compute
+        .all(Op::Decorate as u32)
+        .into_iter()
+        .filter(|operands| operands[1] == Decoration::BuiltIn as u32)
+        .map(|operands| operands[2])
+        .collect();
+    for built_in in [4492, 4493, 4494] {
+        assert!(built_ins.contains(&built_in), "{built_in}");
+    }
+
+    let fragment = QcomModule::new(
+        ShaderStage::Fragment,
+        "#version 460
+        #extension GL_QCOM_tile_shading : enable
+        layout(non_coherent_attachment_readQCOM) in;
+        layout(set = 0, binding = 0, tile_attachmentQCOM, rgba32f) uniform highp image2D color;
+        layout(location = 0) out vec4 result;
+        void main() {
+            result = imageLoad(color, ivec2(gl_TileOffsetQCOM + gl_TileDimensionQCOM.xy / 2));
+        }",
+        (1, 0),
+        "vulkan1.0",
+    );
+    let modes: Vec<u32> = fragment
+        .all(Op::ExecutionMode as u32)
+        .into_iter()
+        .map(|operands| operands[1])
+        .collect();
+    assert_eq!(
+        modes,
+        [
+            spirv::ExecutionMode::NonCoherentTileAttachmentReadQCOM as u32,
+            spirv::ExecutionMode::OriginUpperLeft as u32
+        ]
+    );
+    for name in ["gl_TileOffsetQCOM", "gl_TileDimensionQCOM"] {
+        let decorations = fragment.decorations(fragment.id(name));
+        assert!(decorations.contains(&(Decoration::Flat as u32)), "{name}");
+    }
+}
+
+#[test]
+fn qcom_cooperative_matrix_conversions_match_glslang() {
+    let module = QcomModule::new(
+        ShaderStage::Compute,
+        "#version 450
+        #pragma use_vulkan_memory_model
+        #extension GL_KHR_cooperative_matrix : enable
+        #extension GL_KHR_memory_scope_semantics : enable
+        #extension GL_EXT_shader_explicit_arithmetic_types_float16 : enable
+        #extension GL_QCOM_cooperative_matrix_conversion : enable
+        layout(constant_id = 3) const uint TILE = 4;
+        layout(set = 0, binding = 0) buffer Output { float x[]; } result;
+        layout(local_size_x = 64) in;
+        void main() {
+            uint packed[8];
+            float values[8];
+            float16_t halves[16];
+            uint wide[64];
+            uint tiled[TILE];
+            bitcastQCOM(packed, values);
+            bitcastQCOM(packed, halves);
+            extractSubArrayQCOM(wide, 8, packed);
+            extractSubArrayQCOM(wide, 4, tiled);
+            coopmat<float, gl_ScopeSubgroup, 64, 8, gl_MatrixUseA> a;
+            vectorToCoopmatQCOM(packed, a);
+            coopmatToVectorQCOM(a, values);
+            coopMatStore(a, result.x, 0, 8, gl_CooperativeMatrixLayoutRowMajor);
+            result.x[1] = values[2] + float(halves[3]) + float(tiled[0]);
+        }",
+        (1, 3),
+        "vulkan1.1",
+    );
+    for (op, count) in [(4497, 2), (4542, 2), (4540, 1), (4541, 1)] {
+        assert_eq!(module.all(op).len(), count, "opcode {op}");
+    }
+    assert!(module.capabilities().contains(&4496));
+    assert!(module
+        .extensions()
+        .contains(&"SPV_QCOM_cooperative_matrix_conversion".to_string()));
+    let indices: Vec<u32> = module
+        .all(4542)
+        .into_iter()
+        .map(|operands| module.constant(operands[3]))
+        .collect();
+    assert_eq!(indices, [8, 4]);
+}
+
+#[test]
+fn loop_attributes_match_glslang() {
+    let source = "#version 450
+        #extension GL_EXT_control_flow_attributes : enable
+        #extension GL_QCOM_multiple_wait_queues : enable
+        layout(local_size_x = 1) in;
+        layout(set = 0, binding = 0) buffer Data { uint value; } data;
+        void main() {
+            [[multiple_wait_queuesQCOM]] for (uint i = 0; i < data.value; ++i) { data.value += 1; }
+            [[multiple_wait_queuesQCOM(2), unroll]] while (data.value < 9) { data.value += 2; }
+            [[dependency_length(4), min_iterations(3), dont_unroll]] do { data.value += 3; } while (data.value < 20);
+            [[unroll, dont_unroll, dependency_infinite]] for (;;) { if (data.value > 40) break; data.value += 4; }
+        }";
+    let controls = |lang_version, target| {
+        QcomModule::new(ShaderStage::Compute, source, lang_version, target)
+            .all(Op::LoopMerge as u32)
+            .into_iter()
+            .map(|operands| operands[2..].to_vec())
+            .collect::<Vec<Vec<u32>>>()
+    };
+    assert_eq!(
+        controls((1, 4), "vulkan1.1spv1.4"),
+        [
+            vec![0x1000_0000, 0],
+            vec![0x1000_0001, 2],
+            vec![0x1a, 4, 3],
+            vec![0x6],
+        ]
+    );
+    assert_eq!(
+        controls((1, 0), "vulkan1.0"),
+        [
+            vec![0x1000_0000, 0],
+            vec![0x1000_0001, 2],
+            vec![0x2],
+            vec![0x2],
+        ]
+    );
+}
+
 #[test]
 fn uncalled_functions_are_not_compiled() {
     let module = compile(

@@ -281,6 +281,7 @@
                     image: 0,
                     sampler: Some(1),
                     gather: None,
+                    gather_pattern: Quad,
                     coordinate: 3,
                     array_index: None,
                     offset: None,

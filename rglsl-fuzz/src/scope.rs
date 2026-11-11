@@ -283,6 +283,7 @@ impl Finder<'_> {
             }
             StatementKind::Jump(JumpStatement::Return(Some(value))) => self.expression(value),
             StatementKind::Jump(_) => {}
+            StatementKind::Attributed { statement, .. } => self.statement(statement),
         }
     }
 

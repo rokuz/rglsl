@@ -12,7 +12,8 @@ use super::prepass::strip;
 use super::types::{scalar, vector_size};
 use super::{internal, unsupported, Result};
 use crate::{
-    BinaryOperator, DerivativeAxis, DerivativeControl, Expression, Handle, ImageQuery, Literal,
+    BinaryOperator, BlockMatchMetric, BlockMatchSearch, DerivativeAxis, DerivativeControl,
+    Expression, Handle, ImageGatherPattern, ImageProcessingOperation, ImageQuery, Literal,
     MathFunction, NonUniform, PredeclaredType, RelationalFunction, SampleLevel, ShaderStage, Span,
     Statement, SwizzleComponent, UnaryOperator,
 };
@@ -83,6 +84,47 @@ pub(super) fn math(name: &str, arguments: usize) -> Option<MathFunction> {
         "unpackSnorm4x8" => Mf::Unpack4x8snorm,
         "packHalf2x16" => Mf::Pack2x16float,
         "unpackHalf2x16" => Mf::Unpack2x16float,
+        _ => return None,
+    })
+}
+
+fn gather_pattern(name: &str) -> Option<(&'static str, ImageGatherPattern)> {
+    let rest = name.strip_prefix("textureGather")?.strip_suffix("QCOM")?;
+    let (mode, base) = match rest.strip_suffix("Offset") {
+        Some(mode) => (mode, "textureGatherOffset"),
+        None => (rest, "textureGather"),
+    };
+    let pattern = match mode {
+        "4x1" => ImageGatherPattern::Linear4x1,
+        "V2" => ImageGatherPattern::Vertical2,
+        "H2" => ImageGatherPattern::Horizontal2,
+        "D" => ImageGatherPattern::Diagonal,
+        _ => return None,
+    };
+    Some((base, pattern))
+}
+
+fn image_processing(name: &str) -> Option<ImageProcessingOperation> {
+    use BlockMatchMetric as Metric;
+    use BlockMatchSearch as Search;
+    let block_match = |metric, search| ImageProcessingOperation::BlockMatch { metric, search };
+    Some(match name {
+        "textureWeightedQCOM" => ImageProcessingOperation::SampleWeighted,
+        "textureBoxFilterQCOM" => ImageProcessingOperation::BoxFilter,
+        "textureBlockMatchSADQCOM" => block_match(Metric::SumOfAbsoluteDifferences, Search::Block),
+        "textureBlockMatchSSDQCOM" => block_match(Metric::SumOfSquaredDifferences, Search::Block),
+        "textureBlockMatchWindowSADQCOM" => {
+            block_match(Metric::SumOfAbsoluteDifferences, Search::Window)
+        }
+        "textureBlockMatchWindowSSDQCOM" => {
+            block_match(Metric::SumOfSquaredDifferences, Search::Window)
+        }
+        "textureBlockMatchGatherSADQCOM" => {
+            block_match(Metric::SumOfAbsoluteDifferences, Search::Gather)
+        }
+        "textureBlockMatchGatherSSDQCOM" => {
+            block_match(Metric::SumOfSquaredDifferences, Search::Gather)
+        }
         _ => return None,
     })
 }
@@ -179,7 +221,18 @@ impl FunctionLowerer<'_, '_> {
             | "textureProjGrad"
             | "textureProjGradOffset"
             | "textureGather"
-            | "textureGatherOffset" => self.sample(name, function, arguments, at).map(Some),
+            | "textureGatherOffset" => self
+                .sample(name, function, arguments, ImageGatherPattern::Quad, at)
+                .map(Some),
+            _ if gather_pattern(name).is_some() => {
+                let (base, pattern) = gather_pattern(name).ok_or_else(|| internal(at))?;
+                self.sample(base, function, arguments, pattern, at)
+                    .map(Some)
+            }
+            _ if image_processing(name).is_some() => {
+                let operation = image_processing(name).ok_or_else(|| internal(at))?;
+                self.image_processing(operation, arguments, at).map(Some)
+            }
             "texelFetch" => self.fetch(arguments, false, at).map(Some),
             "texelFetchOffset" => self.fetch(arguments, true, at).map(Some),
             "textureSize" | "textureQueryLevels" | "textureSamples" | "imageSize" => {
@@ -1060,11 +1113,56 @@ impl FunctionLowerer<'_, '_> {
         Ok((point, array_index))
     }
 
+    fn image_processing(
+        &mut self,
+        operation: ImageProcessingOperation,
+        arguments: &[AstExpression],
+        at: Span,
+    ) -> Result<Handle<Expression>> {
+        let argument = |index: usize| arguments.get(index).ok_or_else(|| internal(at));
+        let source = self.sampled(argument(0)?, at)?;
+        let coordinate = self.rvalue(argument(1)?)?;
+        let (reference, reference_coordinate, size) = match operation {
+            ImageProcessingOperation::SampleWeighted => {
+                (Some(self.sampled(argument(2)?, at)?), None, None)
+            }
+            ImageProcessingOperation::BoxFilter => (None, None, Some(self.rvalue(argument(2)?)?)),
+            ImageProcessingOperation::BlockMatch { .. } => {
+                let reference = self.sampled(argument(2)?, at)?;
+                let reference_coordinate = self.rvalue(argument(3)?)?;
+                let size = self.rvalue(argument(4)?)?;
+                (Some(reference), Some(reference_coordinate), Some(size))
+            }
+        };
+        let non_uniform = source.non_uniform
+            || reference
+                .as_ref()
+                .is_some_and(|reference| reference.non_uniform);
+        let result = self.add(
+            Expression::ImageProcessing {
+                operation,
+                image: source.image,
+                sampler: source.sampler,
+                coordinate,
+                reference: reference.as_ref().map(|reference| reference.image),
+                reference_sampler: reference.as_ref().and_then(|reference| reference.sampler),
+                reference_coordinate,
+                size,
+            },
+            at,
+        )?;
+        if non_uniform {
+            self.mark(result, NonUniform::SAMPLED_IMAGE);
+        }
+        Ok(result)
+    }
+
     fn sample(
         &mut self,
         name: &str,
         function: &Function,
         arguments: &[AstExpression],
+        gather_pattern: ImageGatherPattern,
         at: Span,
     ) -> Result<Handle<Expression>> {
         let first = arguments.first().ok_or_else(|| internal(at))?;
@@ -1160,6 +1258,7 @@ impl FunctionLowerer<'_, '_> {
                 image,
                 sampler,
                 gather: gather_component,
+                gather_pattern,
                 coordinate: point,
                 array_index,
                 offset: sample_offset,

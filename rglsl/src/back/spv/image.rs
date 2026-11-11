@@ -5,6 +5,10 @@ Generating SPIR-V for image operations.
 use spirv::Word;
 
 use super::{
+    qcom::{
+        CAPABILITY_IMAGE_GATHER_EXTENDED_MODES_QCOM, CAPABILITY_IMAGE_GATHER_LINEAR_QCOM,
+        OP_IMAGE_GATHER_QCOM,
+    },
     selection::{MergeTuple, Selection},
     Block, BlockContext, Error, IdGenerator, Instruction, LocalImageType, LocalType, NumericType,
 };
@@ -887,7 +891,7 @@ impl BlockContext<'_> {
         result_type_id: Word,
         image: Handle<crate::Expression>,
         sampler: Option<Handle<crate::Expression>>,
-        gather: Option<crate::SwizzleComponent>,
+        gather: Option<(crate::SwizzleComponent, crate::ImageGatherPattern)>,
         coordinate: Handle<crate::Expression>,
         array_index: Option<Handle<crate::Expression>>,
         offset: Option<Handle<crate::Expression>>,
@@ -1081,7 +1085,7 @@ impl BlockContext<'_> {
         }
 
         let mut main_instruction = match (level, gather) {
-            (_, Some(component)) => {
+            (_, Some((component, crate::ImageGatherPattern::Quad))) => {
                 let component_id = self.get_index_constant(component as u32);
                 let mut inst = Instruction::image_gather(
                     sample_result_type_id,
@@ -1091,6 +1095,40 @@ impl BlockContext<'_> {
                     component_id,
                     depth_id,
                 );
+                if !mask.is_empty() {
+                    inst.add_operand(mask.bits());
+                }
+                inst
+            }
+            (_, Some((component, pattern))) => {
+                let (capability, mode) = match pattern {
+                    crate::ImageGatherPattern::Linear4x1 => {
+                        (CAPABILITY_IMAGE_GATHER_LINEAR_QCOM, 0)
+                    }
+                    crate::ImageGatherPattern::Diagonal => {
+                        (CAPABILITY_IMAGE_GATHER_EXTENDED_MODES_QCOM, 1)
+                    }
+                    crate::ImageGatherPattern::Horizontal2 => {
+                        (CAPABILITY_IMAGE_GATHER_EXTENDED_MODES_QCOM, 2)
+                    }
+                    crate::ImageGatherPattern::Vertical2 | crate::ImageGatherPattern::Quad => {
+                        (CAPABILITY_IMAGE_GATHER_EXTENDED_MODES_QCOM, 3)
+                    }
+                };
+                if depth_id.is_some() {
+                    return Err(Error::Validation("a gather pattern with a depth reference"));
+                }
+                self.writer.raw_capabilities.insert(capability);
+                self.writer.use_extension("SPV_QCOM_image_processing3");
+                let component_id = self.get_index_constant(component as u32);
+                let mode_id = self.get_index_constant(mode);
+                let mut inst = Instruction::raw(OP_IMAGE_GATHER_QCOM);
+                inst.set_type(sample_result_type_id);
+                inst.set_result(id);
+                inst.add_operand(sampled_image_id);
+                inst.add_operand(coordinates_id);
+                inst.add_operand(component_id);
+                inst.add_operand(mode_id);
                 if !mask.is_empty() {
                     inst.add_operand(mask.bits());
                 }

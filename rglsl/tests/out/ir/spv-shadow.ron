@@ -799,6 +799,7 @@
                     image: 5,
                     sampler: Some(3),
                     gather: None,
+                    gather_pattern: Quad,
                     coordinate: 67,
                     array_index: Some(69),
                     offset: None,

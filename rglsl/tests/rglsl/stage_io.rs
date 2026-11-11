@@ -86,6 +86,7 @@ impl Builder {
                 xfb: None,
                 input_attachment_index: None,
                 heap_offset: None,
+                tile_attachment: false,
             },
             Span::UNDEFINED,
         )
@@ -202,6 +203,7 @@ impl Builder {
             geometry: None,
             tessellation: None,
             mesh_shader: None,
+            tile_shading: rglsl::TileShading::default(),
         });
         self.module
     }
@@ -551,6 +553,7 @@ fn invalid_interfaces_are_rejected() {
                 xfb: None,
                 input_attachment_index: None,
                 heap_offset: None,
+                tile_attachment: false,
             },
             Span::UNDEFINED,
         );

@@ -544,6 +544,7 @@ fn adjust_expr(new_pos: &HandleVec<Expression, Handle<Expression>>, expr: &mut E
             ref mut level,
             ref mut depth_ref,
             gather: _,
+            gather_pattern: _,
             clamp_to_edge: _,
         } => {
             adjust(image);
@@ -747,6 +748,41 @@ fn adjust_expr(new_pos: &HandleVec<Expression, Handle<Expression>>, expr: &mut E
             adjust(expected);
         }
         Expression::Convert { ref mut expr, .. } => adjust(expr),
+        Expression::ImageProcessing {
+            operation: _,
+            ref mut image,
+            ref mut sampler,
+            ref mut coordinate,
+            ref mut reference,
+            ref mut reference_sampler,
+            ref mut reference_coordinate,
+            ref mut size,
+        } => {
+            adjust(image);
+            adjust(coordinate);
+            for operand in [
+                sampler,
+                reference,
+                reference_sampler,
+                reference_coordinate,
+                size,
+            ]
+            .into_iter()
+            .flatten()
+            {
+                adjust(operand);
+            }
+        }
+        Expression::ArrayConversion {
+            ref mut expr,
+            ref mut index,
+            ..
+        } => {
+            adjust(expr);
+            if let Some(index) = index.as_mut() {
+                adjust(index);
+            }
+        }
         Expression::CooperativeMatrixResult { .. } | Expression::TensorCreate { .. } => {}
         Expression::TensorSet {
             ref mut base,
@@ -823,6 +859,7 @@ fn adjust_stmt(new_pos: &HandleVec<Expression, Handle<Expression>>, stmt: &mut S
             ref mut body,
             ref mut continuing,
             ref mut break_if,
+            control: _,
         } => {
             adjust_block(new_pos, body);
             adjust_block(new_pos, continuing);
@@ -1151,6 +1188,7 @@ fn filter_emits_in_block(block: &mut Block, expressions: &Arena<Expression>) {
                 mut body,
                 mut continuing,
                 break_if,
+                control,
             } => {
                 filter_emits_in_block(&mut body, expressions);
                 filter_emits_in_block(&mut continuing, expressions);
@@ -1159,6 +1197,7 @@ fn filter_emits_in_block(block: &mut Block, expressions: &Arena<Expression>) {
                         body,
                         continuing,
                         break_if,
+                        control,
                     },
                     span,
                 );

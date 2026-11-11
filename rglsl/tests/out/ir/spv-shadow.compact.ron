@@ -544,6 +544,7 @@
                     image: 1,
                     sampler: Some(0),
                     gather: None,
+                    gather_pattern: Quad,
                     coordinate: 31,
                     array_index: Some(33),
                     offset: None,

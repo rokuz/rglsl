@@ -1,6 +1,6 @@
 use rglsl_ast::ast::{
-    CaseLabel, Condition, DeclarationKind, Expression, ExpressionKind, ForStatement, JumpStatement,
-    Statement, StatementKind,
+    Attribute, CaseLabel, Condition, DeclarationKind, Expression, ExpressionKind, ForStatement,
+    JumpStatement, Statement, StatementKind,
 };
 use rglsl_ast::Span;
 
@@ -66,7 +66,59 @@ impl Analyzer<'_> {
             }
             StatementKind::For(statement) => self.for_statement(statement),
             StatementKind::Jump(jump) => self.jump(statement.span, jump),
+            StatementKind::Attributed {
+                attributes,
+                statement,
+            } => self.attributed(attributes, statement),
         }
+    }
+
+    fn attributed(&mut self, attributes: &[Attribute], statement: &Statement) {
+        let selection = matches!(
+            statement.kind,
+            StatementKind::Selection { .. } | StatementKind::Switch { .. }
+        );
+        let extensions: &'static [&'static str] = if selection {
+            &["GL_EXT_control_flow_attributes"]
+        } else {
+            &[
+                "GL_EXT_control_flow_attributes",
+                "GL_EXT_control_flow_attributes2",
+                "GL_QCOM_multiple_wait_queues",
+            ]
+        };
+        self.require_extensions(statement.span, extensions, "attribute");
+        for attribute in attributes {
+            let Some(argument) = &attribute.argument else {
+                continue;
+            };
+            let operand = self.value_expression(argument);
+            if selection {
+                continue;
+            }
+            let value = operand
+                .value
+                .as_ref()
+                .filter(|_| operand.ty == Type::INT && operand.constant && !operand.specialization)
+                .and_then(Constant::scalar_i64);
+            let reason = match (attribute.name.node.as_str(), value) {
+                ("dependency_length" | "multiple_wait_queuesQCOM", Some(value)) if value <= 0 => {
+                    Some("must be positive")
+                }
+                ("iteration_multiple", Some(0)) => Some("must be greater than or equal to 1"),
+                _ => None,
+            };
+            if let Some(reason) = reason {
+                self.error(
+                    statement.span,
+                    DiagnosticKind::InvalidAttribute {
+                        attribute: attribute.name.node.clone(),
+                        reason,
+                    },
+                );
+            }
+        }
+        self.statement(statement);
     }
 
     fn names_struct(&self, expression: &Expression) -> bool {

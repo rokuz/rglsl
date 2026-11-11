@@ -481,8 +481,20 @@ impl<'a> Lowerer<'a> {
             geometry,
             tessellation,
             mesh_shader: self.mesh_shader_info(),
+            tile_shading: self.tile_shading(),
         });
         Ok(())
+    }
+
+    fn tile_shading(&self) -> crate::TileShading {
+        let rate = self.tile_shading_rate;
+        crate::TileShading {
+            rate: rate
+                .iter()
+                .any(Option::is_some)
+                .then(|| rate.map(|value| value.unwrap_or(1))),
+            non_coherent_attachment_read: self.non_coherent_tile_read,
+        }
     }
 
     pub(super) const fn global_expression(&mut self, global: GlobalRef) -> Expression {

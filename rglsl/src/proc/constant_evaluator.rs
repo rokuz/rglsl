@@ -1386,6 +1386,7 @@ impl<'a> ConstantEvaluator<'a> {
             Expression::FunctionArgument(_) => Err(ConstantEvaluatorError::FunctionArg),
             Expression::GlobalVariable(_) => Err(ConstantEvaluatorError::GlobalVariable),
             Expression::ImageSample { .. }
+            | Expression::ImageProcessing { .. }
             | Expression::ImageLoad { .. }
             | Expression::ImageQuery { .. } => Err(ConstantEvaluatorError::ImageExpression),
             Expression::RayQueryProceedResult
@@ -1405,6 +1406,7 @@ impl<'a> ConstantEvaluator<'a> {
             | Expression::CooperativeVectorLoad { .. }
             | Expression::CooperativeVectorMatMul { .. }
             | Expression::Convert { .. }
+            | Expression::ArrayConversion { .. }
             | Expression::CooperativeMatrixResult { .. }
             | Expression::TensorCreate { .. }
             | Expression::TensorSet { .. } => Err(ConstantEvaluatorError::CooperativeOperation),

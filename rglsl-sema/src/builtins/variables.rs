@@ -192,6 +192,24 @@ in int gl_DrawID
         text: RAY_TRACING_SUBGROUP,
     },
     Group {
+        stages: COMPUTE,
+        since: 460,
+        text: "
+in uvec2 gl_TileOffsetQCOM
+in uvec3 gl_TileDimensionQCOM
+in uvec2 gl_TileApronSizeQCOM
+",
+    },
+    Group {
+        stages: FRAGMENT,
+        since: 460,
+        text: "
+flat in uvec2 gl_TileOffsetQCOM
+flat in uvec3 gl_TileDimensionQCOM
+flat in uvec2 gl_TileApronSizeQCOM
+",
+    },
+    Group {
         stages: COMPUTE | MESH | TASK,
         since: 450,
         text: "
