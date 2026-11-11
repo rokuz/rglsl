@@ -163,11 +163,7 @@ fn layout_stages(name: &str) -> Option<&'static [Stage]> {
         | "full_quads"
         | "non_coherent_attachment_readqcom" => &[Stage::Fragment],
         "tile_attachmentqcom" => &[Stage::Fragment, Stage::Compute],
-        "viewport_relative"
-        | "secondary_view_offset"
-        | "xfb_buffer"
-        | "xfb_offset"
-        | "xfb_stride" => PRE_RASTERIZATION,
+        "viewport_relative" | "secondary_view_offset" => PRE_RASTERIZATION,
         _ if name.starts_with("blend_support_") || name.starts_with("stencil_ref_") => {
             &[Stage::Fragment]
         }

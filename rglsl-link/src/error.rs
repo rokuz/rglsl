@@ -38,6 +38,8 @@ pub enum LinkError {
     Contradictory(&'static str),
     #[error("{0}")]
     MissingLayout(&'static str),
+    #[error("{0}")]
+    Mode(&'static str),
     #[error("{stages}: {what} of `{name}` must match between stages")]
     CrossStage {
         stages: String,

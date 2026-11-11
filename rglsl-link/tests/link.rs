@@ -592,3 +592,60 @@ void main() { color = vec4(a[1]); }
         Err(errors) => assert_eq!(errors.errors, [LinkError::ImplicitSize("a".into())]),
     }
 }
+
+#[test]
+fn library_layouts_are_merged_into_the_program() {
+    let main = object(
+        ShaderStage::Compute,
+        "#version 460
+#extension GL_QCOM_tile_shading : enable
+layout(local_size_x = 16, local_size_y = 16) in;
+float f(float x);
+layout(set = 0, binding = 0) buffer Data { float v[]; } data;
+void main() { data.v[gl_LocalInvocationIndex] = f(1.0); }
+",
+    );
+    let lib = library(
+        "#version 460
+#extension GL_QCOM_tile_shading : enable
+layout(shading_rate_xQCOM = 2, shading_rate_yQCOM = 4) in;
+layout(local_size_z_id = 7) in;
+float f(float x) { return x; }
+",
+    );
+    assert!(lib.supports(ShaderStage::Compute));
+    assert!(!lib.supports(ShaderStage::Fragment));
+    let result = linked(&[main, lib]);
+    let entry = &result.module.entry_points[0];
+    assert_eq!(entry.workgroup_size, [16, 16, 1]);
+    assert_eq!(entry.tile_shading.rate, Some([2, 4, 1]));
+    let overrides = entry.workgroup_size_overrides.unwrap();
+    assert!(overrides[0].is_none() && overrides[1].is_none());
+    let id = match result.module.global_expressions[overrides[2].unwrap()] {
+        rglsl::Expression::Override(handle) => result.module.overrides[handle].id,
+        _ => None,
+    };
+    assert_eq!(id, Some(7));
+    assert!(!spirv(&result).is_empty());
+}
+
+#[test]
+fn contradictory_invocations_use_glslang_wording() {
+    let main = object(
+        ShaderStage::Geometry,
+        "#version 450
+layout(triangles, invocations = 2) in;
+layout(points, max_vertices = 1) out;
+void f();
+void main() { f(); }
+",
+    );
+    let lib = library("#version 450\nlayout(invocations = 3) in;\nvoid f() {}\n");
+    assert_eq!(
+        errors(&[main, lib])
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>(),
+        ["number of invocations must match between compilation units"]
+    );
+}

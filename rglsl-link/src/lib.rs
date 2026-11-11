@@ -164,7 +164,13 @@ pub(crate) fn merge(objects: &[ObjectModule], options: &Options) -> Result<Merge
     builder.add_functions(&table, &order)?;
     let mut entry = builder.add_entry_point(&table, main)?;
     builder.merge_module_flags()?;
-    let layout = layout::apply(stage, objects, main, &mut entry, &mut builder.errors);
+    let layout = layout::apply(
+        stage,
+        objects,
+        &mut builder.module,
+        &mut entry,
+        &mut builder.errors,
+    );
     if let Some(primitive) = layout
         .input_primitive
         .filter(|_| stage == ShaderStage::Geometry)

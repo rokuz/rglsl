@@ -197,4 +197,6 @@ pub struct StageLayout {
     pub point_mode: bool,
     pub mesh_topology: Option<MeshOutputTopology>,
     pub transform_feedback: bool,
+    pub tile_shading_rate: [Option<u32>; 3],
+    pub non_coherent_tile_read: bool,
 }

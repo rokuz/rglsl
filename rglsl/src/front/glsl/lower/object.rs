@@ -276,6 +276,8 @@ impl Lowerer<'_> {
         layout.early_fragment_tests = self.early_fragment_tests;
         layout.xfb_strides = self.xfb.declared_strides();
         layout.transform_feedback = self.xfb.mode;
+        layout.tile_shading_rate = self.tile_shading_rate;
+        layout.non_coherent_tile_read = self.non_coherent_tile_read;
         layout
     }
 

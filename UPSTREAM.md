@@ -545,6 +545,15 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   the declared stage layout), with `object::FORMAT_VERSION`. `compact::KeepUnused::Declarations`
   keeps functions, globals and named overrides but drops unused types; `compact::Remap` exposes
   compaction's handle adjustment (one exhaustive `match` per IR enum) to the linker.
+- **Libraries without a stage** (2026-11-11, format version 2). A library object module keeps
+  one lowering per distinct stage meaning (`ObjectModule::stages`, `variants`), the first error
+  of every stage it cannot be used in (`rejections`, `StageRejection`) and an optional file
+  `name` for link errors; `StageLayout` also records the tile shading rate and non-coherent
+  tile reads. In `ValidationMode::Object` the validator accepts a geometry, tessellation or
+  mesh entry point whose stage layout is missing (`EntryPointError::ExpectedGeometryInfo`,
+  `ExpectedOutputVertices`, `ExpectedTessellationPrimitive`, and a mesh entry point with
+  `MeshShaderInfo::output` unset): the layout may come from another unit. `ShaderStage` gained
+  `ALL` and `name()`.
 
 ## Cherry-picked upstream commits
 

@@ -1,0 +1,10 @@
+#version 450
+layout(local_size_x_id = 1) in;
+layout(set = 0, binding = 0) buffer Data {
+    uint values[];
+} data;
+uint twice(uint x);
+void main()
+{
+    data.values[gl_GlobalInvocationID.x] = twice(gl_GlobalInvocationID.x);
+}
