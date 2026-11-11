@@ -132,6 +132,8 @@ pub enum DiagnosticKind {
     ConflictingFunctionDeclaration(String),
     #[error("function `{0}` already has a body")]
     FunctionRedefinition(String),
+    #[error("function `{0}`: function attributes are incompatible")]
+    IncompatibleFunctionAttributes(String),
     #[error("function `{0}` does not return a value")]
     FunctionWithoutReturn(String),
     #[error("invalid parameter `{name}`: {reason}")]

@@ -207,6 +207,7 @@ impl Builder {
             tile_shading: rglsl::TileShading::default(),
             derivative_group: None,
             spirv_execution_modes: Vec::new(),
+            reconvergence: rglsl::Reconvergence::default(),
         });
         self.module
     }

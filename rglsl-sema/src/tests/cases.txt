@@ -5536,3 +5536,30 @@ void main() {
 void main() {
     bool sphere = gl_HitIsSphereNV;
 }
+### function attributes | frag 450 | ok
+#extension GL_EXT_function_control_attributes : enable
+[[inline]] int a(int i) { return i; }
+int b(int i) [[noinline]] { return i; }
+[[inline]] int c(int i);
+int c(int i) { return i; }
+[[inline, unknown, other(2)]] int d(int i) { return i; }
+void main() {}
+### function attributes need an extension | frag 450 | 2:ExtensionRequired, 2:ExtensionRequired
+[[inline]] int a(int i) { return i; }
+void main() {}
+### incompatible function attributes | frag 450 | 3:IncompatibleFunctionAttributes
+#extension GL_EXT_function_control_attributes : enable
+[[inline, noinline]] int a(int i) { return i; }
+void main() {}
+### incompatible function attributes across declarations | frag 450 | 4:IncompatibleFunctionAttributes
+#extension GL_EXT_function_control_attributes : enable
+[[inline]] int a(int i);
+[[noinline]] int a(int i) { return i; }
+void main() {}
+### reconvergence attributes | vert 460 | ok
+#extension GL_EXT_subgroup_uniform_control_flow : enable
+#extension GL_EXT_maximal_reconvergence : enable
+[[random(4)]] void main() [[subgroup_uniform_control_flow, maximally_reconverges]] {}
+### maximal reconvergence needs its extension | vert 460 | 3:ExtensionRequired
+#extension GL_EXT_subgroup_uniform_control_flow : enable
+void main() [[maximally_reconverges]] {}

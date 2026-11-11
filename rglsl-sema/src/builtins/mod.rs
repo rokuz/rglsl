@@ -468,6 +468,7 @@ impl Builtins {
                 defined: true,
                 span: Span::default(),
                 spirv_instruction: None,
+                control: crate::scope::FunctionControl::default(),
             });
         }
         let mut types = TypeRegistry::new();

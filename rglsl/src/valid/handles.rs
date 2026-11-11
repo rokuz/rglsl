@@ -212,6 +212,7 @@ impl super::Validator {
                 ref body,
                 ref diagnostic_filter_leaf,
                 linkage: _,
+                control: _,
             } = function;
 
             for arg in arguments.iter() {

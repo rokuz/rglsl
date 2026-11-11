@@ -16,8 +16,8 @@ use crate::builtins::Stage;
 use crate::constant::{Constant, Value};
 use crate::diagnostic::DiagnosticKind;
 use crate::scope::{
-    Direction, Function, FunctionId, LayoutEntry, Lookup, Origin, Parameter, Qualifiers, Storage,
-    SymbolId, SymbolKind,
+    Direction, Function, FunctionControl, FunctionId, LayoutEntry, Lookup, Origin, Parameter,
+    Qualifiers, Storage, SymbolId, SymbolKind,
 };
 use crate::types::{
     ArraySize, BlockStorage, BlockType, Member, Opaque, Scalar, SpecializedSize, Type, TypeKind,
@@ -2072,6 +2072,7 @@ impl Analyzer<'_> {
         }
         let return_type = self.type_specifier(&prototype.return_type.specifier);
         let close = Span::new(prototype.span.end.saturating_sub(1), prototype.span.end);
+        let control = self.function_attributes(prototype, close);
         if return_type.array.contains(&ArraySize::Unsized) {
             self.error(
                 prototype.return_type.span,
@@ -2164,6 +2165,7 @@ impl Analyzer<'_> {
                     DiagnosticKind::FunctionRedefinition(name.node.clone()),
                 );
             }
+            let mut incompatible = false;
             if let Some(function) = self
                 .functions
                 .get_mut(usize::try_from(id.index()).unwrap_or(usize::MAX))
@@ -2172,6 +2174,15 @@ impl Analyzer<'_> {
                 if definition {
                     function.parameters = parameters;
                 }
+                let merged = function.control.merge(control);
+                incompatible = merged.is_incompatible() && !control.is_incompatible();
+                function.control = merged;
+            }
+            if incompatible {
+                self.error(
+                    close,
+                    DiagnosticKind::IncompatibleFunctionAttributes(name.node.clone()),
+                );
             }
             self.function_declarations.insert(node, id);
             return Some(id);
@@ -2185,12 +2196,79 @@ impl Analyzer<'_> {
             defined: definition,
             span: prototype.span,
             spirv_instruction,
+            control,
         });
         self.function_declarations.insert(node, id);
         if self.scopes.declare_function(&name.node, id).is_err() {
             self.error(name.span, DiagnosticKind::Redeclaration(name.node.clone()));
         }
         Some(id)
+    }
+
+    fn function_attributes(
+        &mut self,
+        prototype: &FunctionPrototype,
+        close: Span,
+    ) -> FunctionControl {
+        let mut control = FunctionControl::default();
+        for attributes in [&prototype.attributes, &prototype.trailing_attributes] {
+            if attributes.is_empty() {
+                continue;
+            }
+            self.require_extensions(
+                close,
+                &[
+                    "GL_EXT_subgroup_uniform_control_flow",
+                    "GL_EXT_maximal_reconvergence",
+                    "GL_EXT_function_control_attributes",
+                ],
+                "attribute",
+            );
+            for attribute in attributes {
+                if let Some(argument) = &attribute.argument {
+                    self.value_expression(argument);
+                    continue;
+                }
+                match attribute.name.node.as_str() {
+                    "subgroup_uniform_control_flow" => {
+                        self.require_extension(
+                            close,
+                            "GL_EXT_subgroup_uniform_control_flow",
+                            "attribute",
+                        );
+                        self.subgroup_uniform_control_flow = true;
+                    }
+                    "maximally_reconverges" => {
+                        self.require_extension(close, "GL_EXT_maximal_reconvergence", "attribute");
+                        self.maximally_reconverges = true;
+                    }
+                    "inline" => {
+                        self.require_extension(
+                            close,
+                            "GL_EXT_function_control_attributes",
+                            "attribute",
+                        );
+                        control.inline = true;
+                    }
+                    "noinline" => {
+                        self.require_extension(
+                            close,
+                            "GL_EXT_function_control_attributes",
+                            "attribute",
+                        );
+                        control.dont_inline = true;
+                    }
+                    _ => {}
+                }
+            }
+            if control.is_incompatible() {
+                self.error(
+                    close,
+                    DiagnosticKind::IncompatibleFunctionAttributes(prototype.name.node.clone()),
+                );
+            }
+        }
+        control
     }
 
     pub(crate) fn function_definition(&mut self, definition: &Node<FunctionDefinition>) {

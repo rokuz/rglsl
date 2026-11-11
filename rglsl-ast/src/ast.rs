@@ -310,6 +310,8 @@ pub struct FunctionPrototype {
     pub return_type: Spanned<FullySpecifiedType>,
     pub name: Identifier,
     pub parameters: Vec<Node<ParameterDeclaration>>,
+    pub attributes: Vec<Attribute>,
+    pub trailing_attributes: Vec<Attribute>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

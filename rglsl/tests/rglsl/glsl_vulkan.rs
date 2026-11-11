@@ -8148,3 +8148,82 @@ void main() {
         .collect();
     assert_eq!(records, [4, 5]);
 }
+
+#[test]
+fn function_attributes_match_glslang() {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+        #extension GL_EXT_function_control_attributes : enable
+        layout(location = 0) out vec4 color;
+        [[inline]] int inlined(int i) { return i + 1; }
+        [[noinline]] int outlined(int i) { return i + 2; }
+        [[inline]] int declared(int i);
+        int declared(int i) { return i + 4; }
+        void main() { color = vec4(float(inlined(1) + outlined(2) + declared(3))); }",
+    );
+    let mut controls: Vec<(String, spirv::FunctionControl)> = instructions(&module, Op::Function)
+        .iter()
+        .filter_map(|inst| match inst.operands[0] {
+            Operand::FunctionControl(control) => {
+                Some((name_of(&module, inst.result_id.unwrap_or(0)), control))
+            }
+            _ => None,
+        })
+        .collect();
+    controls.sort_by(|left, right| left.0.cmp(&right.0));
+    assert_eq!(
+        controls,
+        [
+            ("declared".to_owned(), spirv::FunctionControl::INLINE),
+            ("inlined".to_owned(), spirv::FunctionControl::INLINE),
+            ("main".to_owned(), spirv::FunctionControl::NONE),
+            ("outlined".to_owned(), spirv::FunctionControl::DONT_INLINE),
+        ]
+    );
+    for (source, expected) in [
+        (
+            "#extension GL_EXT_function_control_attributes : enable\n[[inline, noinline]] int f(int i) { return i; }\nvoid main() {}",
+            "incompatible",
+        ),
+        (
+            "#extension GL_EXT_function_control_attributes : enable\n[[inline]] int f(int i);\n[[noinline]] int f(int i) { return i; }\nvoid main() {}",
+            "incompatible",
+        ),
+        (
+            "[[inline]] int f(int i) { return i; }\nvoid main() {}",
+            "GL_EXT_function_control_attributes",
+        ),
+    ] {
+        let error = parse(ShaderStage::Fragment, &format!("#version 450\n{source}"))
+            .expect_err("attributes accepted");
+        assert!(error.contains(expected), "{error}");
+    }
+}
+
+#[test]
+fn reconvergence_attributes_become_execution_modes() {
+    for (extension, attribute, mode, spv_extension) in [
+        (
+            "GL_EXT_subgroup_uniform_control_flow",
+            "subgroup_uniform_control_flow",
+            spirv::ExecutionMode::SubgroupUniformControlFlowKHR,
+            "SPV_KHR_subgroup_uniform_control_flow",
+        ),
+        (
+            "GL_EXT_maximal_reconvergence",
+            "maximally_reconverges",
+            spirv::ExecutionMode::MaximallyReconvergesKHR,
+            "SPV_KHR_maximal_reconvergence",
+        ),
+    ] {
+        let module = compile_valid(
+            ShaderStage::Vertex,
+            &format!(
+                "#version 460\n#extension {extension} : enable\n[[random(4)]] void main() [[{attribute}]] {{}}"
+            ),
+        );
+        assert!(has_execution_mode(&module, mode));
+        assert_eq!(extensions_of(&module), [spv_extension]);
+    }
+}

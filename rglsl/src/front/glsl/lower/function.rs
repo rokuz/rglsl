@@ -264,6 +264,7 @@ impl<'l, 'a> FunctionLowerer<'l, 'a> {
             body,
             diagnostic_filter_leaf: None,
             linkage: crate::Linkage::Definition,
+            control: crate::FunctionControl::None,
         }
     }
 }
@@ -438,8 +439,15 @@ impl<'a> Lowerer<'a> {
             let pointer = lowerer.add(Expression::GlobalVariable(initialization.global), span)?;
             lowerer.push(Statement::Store { pointer, value }, span);
         }
+        let control = match (function.control.inline, function.control.dont_inline) {
+            (true, false) => crate::FunctionControl::Inline,
+            (false, true) => crate::FunctionControl::DontInline,
+            (true, true) | (false, false) => crate::FunctionControl::None,
+        };
         lowerer.statements(&definition.body.statements)?;
-        Ok(lowerer.finish(result, arguments, name))
+        let mut lowered = lowerer.finish(result, arguments, name);
+        lowered.control = control;
+        Ok(lowered)
     }
 
     pub(super) fn entry_point(&mut self, definition: &'a Node<FunctionDefinition>) -> Result<()> {
@@ -488,6 +496,10 @@ impl<'a> Lowerer<'a> {
             tile_shading: self.tile_shading(),
             derivative_group: self.derivative_group(),
             spirv_execution_modes,
+            reconvergence: crate::Reconvergence {
+                subgroup_uniform_control_flow: self.analysis.subgroup_uniform_control_flow,
+                maximally_reconverges: self.analysis.maximally_reconverges,
+            },
         });
         Ok(())
     }

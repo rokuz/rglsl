@@ -64,6 +64,7 @@ impl<I: Iterator<Item = u32>> super::Frontend<I> {
                 body: crate::Block::new(),
                 diagnostic_filter_leaf: None,
                 linkage: crate::Linkage::Definition,
+                control: crate::FunctionControl::None,
             }
         };
 
@@ -341,6 +342,7 @@ impl<I: Iterator<Item = u32>> super::Frontend<I> {
             body: crate::Block::new(),
             diagnostic_filter_leaf: None,
             linkage: crate::Linkage::Definition,
+            control: crate::FunctionControl::None,
         };
 
         // 1. copy the inputs from arguments to privates
@@ -635,6 +637,7 @@ impl<I: Iterator<Item = u32>> super::Frontend<I> {
             tile_shading: crate::TileShading::default(),
             derivative_group: None,
             spirv_execution_modes: Vec::new(),
+            reconvergence: crate::Reconvergence::default(),
         });
 
         Ok(())

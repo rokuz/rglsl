@@ -596,6 +596,13 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   global expressions); `Module::spirv_requirements` (extensions and capabilities). An `Input` or
   `Output` global with a raw `BuiltIn` decoration (`proc::has_spirv_built_in`) needs no binding.
   The SPIR-V backend writes them in `back/spv/intrinsics.rs`.
+- **Function attributes.** `Function::control` (`FunctionControl::{None, Inline,
+  DontInline}`, serialized only when not `None`) is the `OpFunction` control of
+  `GL_EXT_function_control_attributes`. `EntryPoint::reconvergence` (`Reconvergence {
+  subgroup_uniform_control_flow, maximally_reconverges }`) writes the
+  `SubgroupUniformControlFlowKHR` and `MaximallyReconvergesKHR` execution modes. As in glslang,
+  the two reconvergence attributes apply to the compilation unit, whichever function carries
+  them; the linker keeps the entry unit's.
 
 ## Cherry-picked upstream commits
 

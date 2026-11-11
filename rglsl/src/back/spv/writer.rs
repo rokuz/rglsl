@@ -1661,10 +1661,15 @@ impl Writer {
         }
 
         let function_type = self.get_function_type(lookup_function_type);
+        let function_control = match ir_function.control {
+            crate::FunctionControl::None => spirv::FunctionControl::empty(),
+            crate::FunctionControl::Inline => spirv::FunctionControl::INLINE,
+            crate::FunctionControl::DontInline => spirv::FunctionControl::DONT_INLINE,
+        };
         function.signature = Some(Instruction::function(
             return_type_id,
             function_id,
-            spirv::FunctionControl::empty(),
+            function_control,
             function_type,
         ));
 
@@ -1992,6 +1997,18 @@ impl Writer {
                 self.require_any("quad control", &[spirv::Capability::QuadControlKHR])?;
                 self.write_execution_mode(function_id, mode)?;
             }
+        }
+
+        if entry_point.reconvergence.subgroup_uniform_control_flow {
+            self.use_extension("SPV_KHR_subgroup_uniform_control_flow");
+            self.write_execution_mode(
+                function_id,
+                spirv::ExecutionMode::SubgroupUniformControlFlowKHR,
+            )?;
+        }
+        if entry_point.reconvergence.maximally_reconverges {
+            self.use_extension("SPV_KHR_maximal_reconvergence");
+            self.write_execution_mode(function_id, spirv::ExecutionMode::MaximallyReconvergesKHR)?;
         }
 
         if let Some(group) = entry_point.derivative_group {

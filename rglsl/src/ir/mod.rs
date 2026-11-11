@@ -3637,6 +3637,29 @@ pub struct Function {
         serde(skip_serializing_if = "Linkage::is_definition")
     )]
     pub linkage: Linkage,
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    #[cfg_attr(
+        feature = "serialize",
+        serde(skip_serializing_if = "FunctionControl::is_none")
+    )]
+    pub control: FunctionControl,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub enum FunctionControl {
+    #[default]
+    None,
+    Inline,
+    DontInline,
+}
+
+impl FunctionControl {
+    pub const fn is_none(&self) -> bool {
+        matches!(*self, Self::None)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -3770,6 +3793,27 @@ pub struct EntryPoint {
     #[cfg_attr(feature = "serialize", serde(skip_serializing_if = "Option::is_none"))]
     #[cfg_attr(feature = "deserialize", serde(default))]
     pub derivative_group: Option<DerivativeGroup>,
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    #[cfg_attr(
+        feature = "serialize",
+        serde(skip_serializing_if = "Reconvergence::is_default")
+    )]
+    pub reconvergence: Reconvergence,
+}
+
+#[derive(Clone, Copy, Debug, Default, Hash, Eq, PartialEq)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub struct Reconvergence {
+    pub subgroup_uniform_control_flow: bool,
+    pub maximally_reconverges: bool,
+}
+
+impl Reconvergence {
+    pub const fn is_default(&self) -> bool {
+        !self.subgroup_uniform_control_flow && !self.maximally_reconverges
+    }
 }
 
 #[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
