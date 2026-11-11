@@ -1,5 +1,6 @@
 use super::{
-    Section, ALL_STAGES, ANY_HIT, CALLABLE, CLOSEST_HIT, INTERSECTION, MISS, RAY_GENERATION,
+    Section, ALL_STAGES, ANY_HIT, CALLABLE, CLOSEST_HIT, COMPUTE, INTERSECTION, MESH, MISS,
+    RAY_GENERATION,
 };
 
 const RT_NV: &str = "GL_NV_ray_tracing";
@@ -10,6 +11,11 @@ const CULL_MASK: &str = "GL_EXT_ray_cull_mask";
 const POSITION_FETCH: &str = "GL_EXT_ray_tracing_position_fetch";
 const PRIMITIVE_CULLING: &str = "GL_EXT_ray_flags_primitive_culling";
 const OPACITY_MICROMAP: &str = "GL_EXT_opacity_micromap";
+const REORDER_NV: &str = "GL_NV_shader_invocation_reorder";
+const REORDER_EXT: &str = "GL_EXT_shader_invocation_reorder";
+const CLUSTER: &str = "GL_NV_cluster_acceleration_structure";
+const DISPLACEMENT_MICROMAP: &str = "GL_NV_displacement_micromap";
+const SWEPT_SPHERES: &str = "GL_NV_linear_swept_spheres";
 
 const RAY_QUERY_FUNCTIONS: &str = "
 void rayQueryInitializeEXT(rayQueryEXT, accelerationStructureEXT, uint, uint, vec3, float, vec3, float)
@@ -36,6 +42,105 @@ vec3 rayQueryGetIntersectionObjectRayOriginEXT(rayQueryEXT, bool)
 mat4x3 rayQueryGetIntersectionObjectToWorldEXT(rayQueryEXT, bool)
 mat4x3 rayQueryGetIntersectionWorldToObjectEXT(rayQueryEXT, bool)
 void rayQueryGetIntersectionTriangleVertexPositionsEXT(rayQueryEXT, bool, out vec3[3])
+int rayQueryGetIntersectionClusterIdNV(rayQueryEXT, bool)
+vec3 rayQueryGetIntersectionSpherePositionNV(rayQueryEXT, bool)
+float rayQueryGetIntersectionSphereRadiusNV(rayQueryEXT, bool)
+float rayQueryGetIntersectionLSSHitValueNV(rayQueryEXT, bool)
+void rayQueryGetIntersectionLSSPositionsNV(rayQueryEXT, bool, out vec3[2])
+void rayQueryGetIntersectionLSSRadiiNV(rayQueryEXT, bool, out float[2])
+bool rayQueryIsSphereHitNV(rayQueryEXT, bool)
+bool rayQueryIsLSSHitNV(rayQueryEXT, bool)
+";
+
+const HIT_OBJECT_FUNCTIONS: &str = "
+void hitObjectTraceRayNV(hitObjectNV, accelerationStructureEXT, uint, uint, uint, uint, uint, vec3, float, vec3, float, int)
+void hitObjectTraceRayMotionNV(hitObjectNV, accelerationStructureEXT, uint, uint, uint, uint, uint, vec3, float, vec3, float, float, int)
+void hitObjectRecordHitNV(hitObjectNV, accelerationStructureEXT, int, int, int, uint, uint, uint, vec3, float, vec3, float, int)
+void hitObjectRecordHitMotionNV(hitObjectNV, accelerationStructureEXT, int, int, int, uint, uint, uint, vec3, float, vec3, float, float, int)
+void hitObjectRecordHitWithIndexNV(hitObjectNV, accelerationStructureEXT, int, int, int, uint, uint, vec3, float, vec3, float, int)
+void hitObjectRecordHitWithIndexMotionNV(hitObjectNV, accelerationStructureEXT, int, int, int, uint, uint, vec3, float, vec3, float, float, int)
+void hitObjectRecordMissNV(hitObjectNV, uint, vec3, float, vec3, float)
+void hitObjectRecordMissMotionNV(hitObjectNV, uint, vec3, float, vec3, float, float)
+void hitObjectRecordEmptyNV(hitObjectNV)
+void hitObjectExecuteShaderNV(hitObjectNV, int)
+bool hitObjectIsEmptyNV(hitObjectNV)
+bool hitObjectIsMissNV(hitObjectNV)
+bool hitObjectIsHitNV(hitObjectNV)
+float hitObjectGetRayTMinNV(hitObjectNV)
+float hitObjectGetRayTMaxNV(hitObjectNV)
+vec3 hitObjectGetWorldRayOriginNV(hitObjectNV)
+vec3 hitObjectGetWorldRayDirectionNV(hitObjectNV)
+vec3 hitObjectGetObjectRayOriginNV(hitObjectNV)
+vec3 hitObjectGetObjectRayDirectionNV(hitObjectNV)
+mat4x3 hitObjectGetWorldToObjectNV(hitObjectNV)
+mat4x3 hitObjectGetObjectToWorldNV(hitObjectNV)
+int hitObjectGetInstanceCustomIndexNV(hitObjectNV)
+int hitObjectGetInstanceIdNV(hitObjectNV)
+int hitObjectGetGeometryIndexNV(hitObjectNV)
+int hitObjectGetPrimitiveIndexNV(hitObjectNV)
+uint hitObjectGetHitKindNV(hitObjectNV)
+void hitObjectGetAttributesNV(hitObjectNV, int)
+float hitObjectGetCurrentTimeNV(hitObjectNV)
+uint hitObjectGetShaderBindingTableRecordIndexNV(hitObjectNV)
+uvec2 hitObjectGetShaderRecordBufferHandleNV(hitObjectNV)
+int hitObjectGetClusterIdNV(hitObjectNV)
+vec3 hitObjectGetSpherePositionNV(hitObjectNV)
+float hitObjectGetSphereRadiusNV(hitObjectNV)
+void hitObjectGetLSSPositionsNV(hitObjectNV, out vec3[2])
+void hitObjectGetLSSRadiiNV(hitObjectNV, out float[2])
+bool hitObjectIsSphereHitNV(hitObjectNV)
+bool hitObjectIsLSSHitNV(hitObjectNV)
+void hitObjectTraceRayEXT(hitObjectEXT, accelerationStructureEXT, uint, uint, uint, uint, uint, vec3, float, vec3, float, int)
+void hitObjectTraceRayMotionEXT(hitObjectEXT, accelerationStructureEXT, uint, uint, uint, uint, uint, vec3, float, vec3, float, float, int)
+void hitObjectRecordMissEXT(hitObjectEXT, uint, uint, vec3, float, vec3, float)
+void hitObjectRecordMissMotionEXT(hitObjectEXT, uint, uint, vec3, float, vec3, float, float)
+void hitObjectRecordEmptyEXT(hitObjectEXT)
+void hitObjectExecuteShaderEXT(hitObjectEXT, int)
+bool hitObjectIsEmptyEXT(hitObjectEXT)
+bool hitObjectIsMissEXT(hitObjectEXT)
+bool hitObjectIsHitEXT(hitObjectEXT)
+float hitObjectGetRayTMinEXT(hitObjectEXT)
+float hitObjectGetRayTMaxEXT(hitObjectEXT)
+uint hitObjectGetRayFlagsEXT(hitObjectEXT)
+vec3 hitObjectGetWorldRayOriginEXT(hitObjectEXT)
+vec3 hitObjectGetWorldRayDirectionEXT(hitObjectEXT)
+vec3 hitObjectGetObjectRayOriginEXT(hitObjectEXT)
+vec3 hitObjectGetObjectRayDirectionEXT(hitObjectEXT)
+mat4x3 hitObjectGetWorldToObjectEXT(hitObjectEXT)
+mat4x3 hitObjectGetObjectToWorldEXT(hitObjectEXT)
+int hitObjectGetInstanceCustomIndexEXT(hitObjectEXT)
+int hitObjectGetInstanceIdEXT(hitObjectEXT)
+int hitObjectGetGeometryIndexEXT(hitObjectEXT)
+int hitObjectGetPrimitiveIndexEXT(hitObjectEXT)
+uint hitObjectGetHitKindEXT(hitObjectEXT)
+void hitObjectGetAttributesEXT(hitObjectEXT, int)
+float hitObjectGetCurrentTimeEXT(hitObjectEXT)
+uint hitObjectGetShaderBindingTableRecordIndexEXT(hitObjectEXT)
+uvec2 hitObjectGetShaderRecordBufferHandleEXT(hitObjectEXT)
+void hitObjectSetShaderBindingTableRecordIndexEXT(hitObjectEXT, uint)
+void hitObjectRecordFromQueryEXT(hitObjectEXT, rayQueryEXT, uint, int)
+void hitObjectRecordFromQueryEXT(hitObjectEXT, rayQueryEXT, uint, int, uint)
+void hitObjectGetIntersectionTriangleVertexPositionsEXT(hitObjectEXT, out vec3[3])
+";
+
+const REORDER_FUNCTIONS: &str = "
+void reorderThreadNV(uint, uint)
+void reorderThreadNV(hitObjectNV)
+void reorderThreadNV(hitObjectNV, uint, uint)
+void reorderThreadEXT(uint, uint)
+void reorderThreadEXT(hitObjectEXT)
+void reorderThreadEXT(hitObjectEXT, uint, uint)
+void hitObjectReorderExecuteEXT(hitObjectEXT, int)
+void hitObjectReorderExecuteEXT(hitObjectEXT, uint, uint, int)
+void hitObjectTraceReorderExecuteEXT(hitObjectEXT, accelerationStructureEXT, uint, uint, uint, uint, uint, vec3, float, vec3, float, int)
+void hitObjectTraceReorderExecuteEXT(hitObjectEXT, accelerationStructureEXT, uint, uint, uint, uint, uint, vec3, float, vec3, float, uint, uint, int)
+void hitObjectTraceMotionReorderExecuteEXT(hitObjectEXT, accelerationStructureEXT, uint, uint, uint, uint, uint, vec3, float, vec3, float, float, int)
+void hitObjectTraceMotionReorderExecuteEXT(hitObjectEXT, accelerationStructureEXT, uint, uint, uint, uint, uint, vec3, float, vec3, float, float, uint, uint, int)
+";
+
+const MICROMAP_FUNCTIONS: &str = "
+vec3 fetchMicroTriangleVertexPositionNV(accelerationStructureEXT, int, int, int, ivec2)
+vec2 fetchMicroTriangleVertexBarycentricNV(accelerationStructureEXT, int, int, int, ivec2)
 ";
 
 const TRACE: &str = "
@@ -74,6 +179,15 @@ pub(super) const SECTIONS: &[Section] = &[
         .since(460),
     Section::new(ANY_HIT_FUNCTIONS)
         .in_stages(ANY_HIT)
+        .since(460),
+    Section::new(HIT_OBJECT_FUNCTIONS)
+        .in_stages(RAY_GENERATION | CLOSEST_HIT | MISS)
+        .since(460),
+    Section::new(REORDER_FUNCTIONS)
+        .in_stages(RAY_GENERATION)
+        .since(460),
+    Section::new(MICROMAP_FUNCTIONS)
+        .in_stages(RAY_GENERATION | COMPUTE | MESH)
         .since(460),
 ];
 
@@ -141,9 +255,27 @@ in float gl_HitTEXT
 in uint gl_HitKindNV
 in uint gl_HitKindEXT
 in vec3 gl_HitTriangleVertexPositionsEXT[3]
+in vec3 gl_HitMicroTriangleVertexPositionsNV[3]
+in vec2 gl_HitMicroTriangleVertexBarycentricsNV[3]
+in int gl_ClusterIDNV
+in bool gl_HitIsSphereNV
+in bool gl_HitIsLSSNV
+in vec3 gl_HitSpherePositionNV
+in float gl_HitSphereRadiusNV
+in vec3 gl_HitLSSPositionsNV[2]
+in float gl_HitLSSRadiiNV[2]
+",
+    },
+    RayVariable {
+        stages: ALL_RAY,
+        text: "
+in uint gl_HitKindFrontFacingMicroTriangleNV
+in uint gl_HitKindBackFacingMicroTriangleNV
 ",
     },
 ];
+
+pub(super) const INT_CONSTANTS: [(&str, i32); 1] = [("gl_ClusterIDNoneNV", -1)];
 
 pub(super) const UINT_CONSTANTS: [(&str, u32); 31] = [
     ("gl_RayFlagsNoneNV", 0),
@@ -194,6 +326,19 @@ pub(crate) fn variable_extensions(
         "gl_RayFlagsSkipAABBEXT" | "gl_RayFlagsSkipTrianglesEXT" => &[PRIMITIVE_CULLING],
         "gl_RayFlagsForceOpacityMicromap2StateEXT" => &[OPACITY_MICROMAP],
         "gl_EnableOpacityMicromapEXT" => &["GL_EXT_opacity_micromap_ray_query_mode"],
+        "gl_HitMicroTriangleVertexPositionsNV" | "gl_HitMicroTriangleVertexBarycentricsNV" => {
+            &[DISPLACEMENT_MICROMAP]
+        }
+        "gl_ClusterIDNV" => &[CLUSTER],
+        "gl_HitIsSphereNV"
+        | "gl_HitIsLSSNV"
+        | "gl_HitSpherePositionNV"
+        | "gl_HitSphereRadiusNV"
+        | "gl_HitLSSPositionsNV"
+        | "gl_HitLSSRadiiNV" => &[SWEPT_SPHERES],
+        "gl_HitKindFrontFacingMicroTriangleNV"
+        | "gl_HitKindBackFacingMicroTriangleNV"
+        | "gl_ClusterIDNoneNV" => return None,
         _ if !stage.ray_tracing() || !name.starts_with("gl_") => return None,
         "gl_WarpsPerSMNV" | "gl_SMCountNV" | "gl_WarpIDNV" | "gl_SMIDNV" => return None,
         _ if name.starts_with("gl_RayFlags")
@@ -218,7 +363,47 @@ pub(crate) fn function_extensions(name: &str) -> Option<&'static [&'static str]>
         "traceRayEXT" | "reportIntersectionEXT" | "executeCallableEXT" => &[RT_EXT],
         "traceRayMotionNV" => &[MOTION_BLUR],
         "rayQueryGetIntersectionTriangleVertexPositionsEXT" => &[POSITION_FETCH],
+        "rayQueryGetIntersectionClusterIdNV" | "hitObjectGetClusterIdNV" => &[CLUSTER],
+        "rayQueryGetIntersectionSpherePositionNV"
+        | "rayQueryGetIntersectionSphereRadiusNV"
+        | "rayQueryGetIntersectionLSSHitValueNV"
+        | "rayQueryGetIntersectionLSSPositionsNV"
+        | "rayQueryGetIntersectionLSSRadiiNV"
+        | "rayQueryIsSphereHitNV"
+        | "rayQueryIsLSSHitNV"
+        | "hitObjectGetSpherePositionNV"
+        | "hitObjectGetSphereRadiusNV"
+        | "hitObjectGetLSSPositionsNV"
+        | "hitObjectGetLSSRadiiNV"
+        | "hitObjectIsSphereHitNV"
+        | "hitObjectIsLSSHitNV" => &[SWEPT_SPHERES],
+        "fetchMicroTriangleVertexPositionNV" | "fetchMicroTriangleVertexBarycentricNV" => {
+            &[DISPLACEMENT_MICROMAP]
+        }
         _ if name.starts_with("rayQuery") => &[RAY_QUERY],
+        _ if name.starts_with("hitObject") || name.starts_with("reorderThread") => {
+            if name.ends_with("NV") {
+                &[REORDER_NV]
+            } else {
+                &[REORDER_EXT]
+            }
+        }
+        _ => return None,
+    })
+}
+
+pub(crate) fn interacting_extension(name: &str) -> Option<&'static [&'static str]> {
+    Some(match name {
+        "hitObjectTraceRayMotionNV"
+        | "hitObjectRecordHitMotionNV"
+        | "hitObjectRecordHitWithIndexMotionNV"
+        | "hitObjectRecordMissMotionNV"
+        | "hitObjectGetCurrentTimeNV"
+        | "hitObjectTraceRayMotionEXT"
+        | "hitObjectRecordMissMotionEXT"
+        | "hitObjectGetCurrentTimeEXT"
+        | "hitObjectTraceMotionReorderExecuteEXT" => &[MOTION_BLUR],
+        "hitObjectGetIntersectionTriangleVertexPositionsEXT" => &[POSITION_FETCH],
         _ => return None,
     })
 }

@@ -34,7 +34,8 @@ impl TypeTracer<'_> {
             | Ti::Sampler { .. }
             | Ti::AccelerationStructure { .. }
             | Ti::Tensor { .. }
-            | Ti::RayQuery { .. } => {}
+            | Ti::RayQuery { .. }
+            | Ti::HitObject { .. } => {}
 
             Ti::CooperativeMatrix {
                 columns,
@@ -115,7 +116,8 @@ impl ModuleMap {
             | Ti::Sampler { .. }
             | Ti::AccelerationStructure { .. }
             | Ti::Tensor { .. }
-            | Ti::RayQuery { .. } => {}
+            | Ti::RayQuery { .. }
+            | Ti::HitObject { .. } => {}
 
             Ti::CooperativeMatrix {
                 ref mut columns,

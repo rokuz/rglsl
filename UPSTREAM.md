@@ -359,6 +359,19 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   `Private` globals and pointer parameters, and checks the operand types of every ray instruction.
   Without the Vulkan memory model only `coherent` and `volatile` decorate `Coherent`, as glslang's
   `TranslateMemoryDecoration` (the scoped coherence qualifiers did before).
+- **Hit objects and the NV geometry extensions** ([docs/design/ray-tracing.md](docs/design/ray-tracing.md)).
+  New `TypeInner::HitObject { kind: HitObjectKind }` (`OpTypeHitObjectNV`/`EXT`), only in
+  `Private` globals and pointer parameters like ray queries (`proc::contains_ray_object`, which
+  replaces `contains_ray_query`, keeps both without a null initializer); new
+  `AddressSpace::HitObjectAttribute { kind }`; `Statement::HitObject { object, fun:
+  HitObjectFunction }` (trace, trace-reorder-execute, record hit/miss/empty/from query, execute,
+  reorder-execute, get attributes, set the SBT record index, reorder with the hit object) and
+  `Statement::ReorderThread { kind, hint, bits }`; `Expression::HitObjectGet { object, value:
+  HitObjectValue }` and `Expression::FetchMicroTriangleVertex`. `RayQueryIntersectionValue` gains
+  the cluster id and the sphere and swept-sphere values; `BuiltIn` gains `ClusterId`, the
+  micro-triangle built-ins and the sphere and swept-sphere built-ins. The array results
+  (`vec3[2]`, `float[2]`) are the new `PredeclaredType::F32Array { size, length }`; the validator
+  checks each hit object operation against the hit object kind and its stages.
 - **Geometry and tessellation stages.** `ShaderStage::{TessControl, TessEvaluation, Geometry}`
   (new; `ShaderStage::has_arrayed_io`), the matching `ShaderStages` bits of the validator and
   the `TessellationControl`/`TessellationEvaluation`/`Geometry` execution models.

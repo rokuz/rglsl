@@ -441,6 +441,8 @@ pub enum StorageQualifier {
     CallableDataEXT,
     CallableDataInNV,
     CallableDataInEXT,
+    HitObjectAttributeNV,
+    HitObjectAttributeEXT,
     PerPrimitiveNV,
     PerPrimitiveEXT,
     PerViewNV,
@@ -449,7 +451,7 @@ pub enum StorageQualifier {
 }
 
 impl StorageQualifier {
-    pub const ALL: [Self; 40] = [
+    pub const ALL: [Self; 42] = [
         Self::Const,
         Self::In,
         Self::Out,
@@ -485,6 +487,8 @@ impl StorageQualifier {
         Self::CallableDataEXT,
         Self::CallableDataInNV,
         Self::CallableDataInEXT,
+        Self::HitObjectAttributeNV,
+        Self::HitObjectAttributeEXT,
         Self::PerPrimitiveNV,
         Self::PerPrimitiveEXT,
         Self::PerViewNV,
@@ -529,6 +533,8 @@ impl StorageQualifier {
             Self::CallableDataEXT => "callableDataEXT",
             Self::CallableDataInNV => "callableDataInNV",
             Self::CallableDataInEXT => "callableDataInEXT",
+            Self::HitObjectAttributeNV => "hitObjectAttributeNV",
+            Self::HitObjectAttributeEXT => "hitObjectAttributeEXT",
             Self::PerPrimitiveNV => "perprimitiveNV",
             Self::PerPrimitiveEXT => "perprimitiveEXT",
             Self::PerViewNV => "perviewNV",

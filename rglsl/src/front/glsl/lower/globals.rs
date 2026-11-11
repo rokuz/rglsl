@@ -709,7 +709,9 @@ impl<'a> Lowerer<'a> {
             | Storage::RayPayloadIn
             | Storage::HitAttribute
             | Storage::CallableData
-            | Storage::CallableDataIn => self.ray_variable(symbol, name, at),
+            | Storage::CallableDataIn
+            | Storage::HitObjectAttributeNv
+            | Storage::HitObjectAttributeExt => self.ray_variable(symbol, name, at),
             Storage::None => self.private(symbol, name, declarator, at),
         }
     }
@@ -1188,7 +1190,9 @@ impl<'a> Lowerer<'a> {
             | BlockStorage::RayPayloadIn
             | BlockStorage::HitAttribute
             | BlockStorage::CallableData
-            | BlockStorage::CallableDataIn => {
+            | BlockStorage::CallableDataIn
+            | BlockStorage::HitObjectAttributeNv
+            | BlockStorage::HitObjectAttributeExt => {
                 return self.ray_block(symbol, id, instance_name, at);
             }
         };
@@ -1951,6 +1955,15 @@ impl<'a> Lowerer<'a> {
         if let Some(found) = self.globals.get(&symbol) {
             return Ok(*found);
         }
+        if let Some((name, span)) = self.deferred_private.remove(&symbol) {
+            let variable = self.variable(symbol).ok_or_else(|| internal(at))?;
+            let (ty, qualifiers) = (variable.ty.clone(), variable.qualifiers.clone());
+            let ty = self.variable_ir_type(&ty, &qualifiers, span)?;
+            let global = self.ray_query_global(name, ty, span);
+            let found = GlobalRef::Variable(global);
+            self.globals.insert(symbol, found);
+            return Ok(found);
+        }
         if self.has_local_size_ids() && self.is_work_group_size(symbol) {
             let handle = self.work_group_size_override(at)?;
             self.globals.insert(symbol, GlobalRef::Override(handle));
@@ -2230,7 +2243,20 @@ impl<'a> Lowerer<'a> {
             return;
         }
         unbound.sort_by_key(|&(_, set)| set.is_none());
-        let live = crate::compact::live_global_variables(&self.module);
+        let mut live = crate::compact::live_global_variables(&self.module);
+        let functions = self
+            .module
+            .functions
+            .iter()
+            .map(|(_, function)| function)
+            .chain(self.module.entry_points.iter().map(|entry| &entry.function));
+        for function in functions {
+            for (_, expression) in function.expressions.iter() {
+                if let crate::Expression::GlobalVariable(global) = *expression {
+                    live.insert(global);
+                }
+            }
+        }
         let mut taken: alloc::collections::BTreeMap<u32, alloc::collections::BTreeSet<u32>> =
             alloc::collections::BTreeMap::new();
         for (_, global) in self.module.global_variables.iter() {

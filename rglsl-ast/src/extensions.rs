@@ -268,6 +268,8 @@ pub mod names {
     pub const RAY_TRACING_EXT: &str = "GL_EXT_ray_tracing";
     pub const RAY_QUERY: &str = "GL_EXT_ray_query";
     pub const DISPLACEMENT_MICROMAP: &str = "GL_NV_displacement_micromap";
+    pub const NV_SHADER_INVOCATION_REORDER: &str = "GL_NV_shader_invocation_reorder";
+    pub const EXT_SHADER_INVOCATION_REORDER: &str = "GL_EXT_shader_invocation_reorder";
     pub const KHR_COOPERATIVE_MATRIX: &str = "GL_KHR_cooperative_matrix";
     pub const NV_COOPERATIVE_MATRIX: &str = "GL_NV_cooperative_matrix";
     pub const NV_INTEGER_COOPERATIVE_MATRIX: &str = "GL_NV_integer_cooperative_matrix";
@@ -351,6 +353,8 @@ pub enum Feature {
     AccelerationStructureNv,
     AccelerationStructureExt,
     RayQueryType,
+    HitObjectNvType,
+    HitObjectExtType,
     CooperativeMatrixType,
     CooperativeMatrixNvType,
     IntegerCooperativeMatrixNvType,
@@ -405,6 +409,8 @@ impl Feature {
                 names::DISPLACEMENT_MICROMAP,
             ],
             Self::RayQueryType => &[names::RAY_QUERY],
+            Self::HitObjectNvType => &[names::NV_SHADER_INVOCATION_REORDER],
+            Self::HitObjectExtType => &[names::EXT_SHADER_INVOCATION_REORDER],
             Self::CooperativeMatrixType => &[names::KHR_COOPERATIVE_MATRIX],
             Self::CooperativeMatrixNvType => &[names::NV_COOPERATIVE_MATRIX],
             Self::IntegerCooperativeMatrixNvType => &[names::NV_INTEGER_COOPERATIVE_MATRIX],
@@ -450,6 +456,10 @@ impl Feature {
             Self::AccelerationStructureExt
         } else if word == "rayQueryEXT" {
             Self::RayQueryType
+        } else if word == "hitObjectNV" {
+            Self::HitObjectNvType
+        } else if word == "hitObjectEXT" {
+            Self::HitObjectExtType
         } else if word == "coopmat" {
             Self::CooperativeMatrixType
         } else if word == "fcoopmatNV" {

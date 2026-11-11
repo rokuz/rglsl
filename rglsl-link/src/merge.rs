@@ -35,6 +35,7 @@ pub(crate) const fn space_class(space: AddressSpace) -> SpaceClass {
         | AddressSpace::CallableData
         | AddressSpace::IncomingCallableData
         | AddressSpace::ShaderRecord
+        | AddressSpace::HitObjectAttribute { .. }
         | AddressSpace::PhysicalStorage { .. }
         | AddressSpace::DescriptorHeap(_) => SpaceClass::Other,
     }

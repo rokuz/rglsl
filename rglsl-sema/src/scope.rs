@@ -26,6 +26,8 @@ pub enum Storage {
     HitAttribute,
     CallableData,
     CallableDataIn,
+    HitObjectAttributeNv,
+    HitObjectAttributeExt,
     TaskPayloadShared,
 }
 
@@ -38,6 +40,8 @@ impl Storage {
                 | Self::HitAttribute
                 | Self::CallableData
                 | Self::CallableDataIn
+                | Self::HitObjectAttributeNv
+                | Self::HitObjectAttributeExt
         )
     }
 }

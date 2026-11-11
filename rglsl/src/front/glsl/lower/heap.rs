@@ -215,9 +215,11 @@ impl<'a> Lowerer<'a> {
                     },
                 })
             }
-            OpaqueKind::CombinedSampler | OpaqueKind::SubpassInput | OpaqueKind::RayQuery => {
-                Err(internal(at))
-            }
+            OpaqueKind::CombinedSampler
+            | OpaqueKind::SubpassInput
+            | OpaqueKind::RayQuery
+            | OpaqueKind::HitObjectNv
+            | OpaqueKind::HitObjectExt => Err(internal(at)),
             OpaqueKind::Sampler | OpaqueKind::Texture | OpaqueKind::AccelerationStructure => {
                 self.opaque_inner(opaque, false, false, at)
             }

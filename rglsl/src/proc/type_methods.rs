@@ -332,6 +332,7 @@ impl crate::TypeInner {
             | Self::AccelerationStructure { .. }
             | Self::Tensor { .. }
             | Self::RayQuery { .. }
+            | Self::HitObject { .. }
             | Self::BindingArray { .. }
             | Self::BufferDescriptor { .. } => Some(0),
         }
@@ -490,6 +491,7 @@ impl crate::TypeInner {
             | Ti::Vector { .. }
             | Ti::Matrix { .. }
             | Ti::RayQuery { .. }
+            | Ti::HitObject { .. }
             | Ti::CooperativeMatrix { .. }
             | Ti::LongVector { .. }
             | Ti::TensorLayout { .. }
@@ -551,6 +553,7 @@ impl crate::TypeInner {
             | crate::TypeInner::AccelerationStructure { .. }
             | crate::TypeInner::Tensor { .. }
             | crate::TypeInner::RayQuery { .. }
+            | crate::TypeInner::HitObject { .. }
             | crate::TypeInner::BindingArray { .. }
             | crate::TypeInner::BufferDescriptor { .. }
             | crate::TypeInner::Spirv { .. } => None,
@@ -581,6 +584,7 @@ impl crate::TypeInner {
             | crate::TypeInner::AccelerationStructure { .. }
             | crate::TypeInner::Tensor { .. }
             | crate::TypeInner::RayQuery { .. }
+            | crate::TypeInner::HitObject { .. }
             | crate::TypeInner::BindingArray { .. }
             | crate::TypeInner::BufferDescriptor { .. }
             | crate::TypeInner::Spirv { .. } => false,

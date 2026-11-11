@@ -54,6 +54,8 @@ pub fn ensure_block_returns(block: &mut crate::Block) {
             | S::MemoryBarrier(_)
             | S::CooperativeStore { .. }
             | S::RayPipelineFunction(_)
+            | S::HitObject { .. }
+            | S::ReorderThread { .. }
             | S::DebugPrintf { .. }
             | S::Assume { .. }
             | S::CooperativeVector(_)

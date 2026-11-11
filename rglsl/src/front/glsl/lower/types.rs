@@ -385,6 +385,12 @@ impl Lowerer<'_> {
             OpaqueKind::RayQuery => Ok(TypeInner::RayQuery {
                 vertex_return: false,
             }),
+            OpaqueKind::HitObjectNv => Ok(TypeInner::HitObject {
+                kind: crate::HitObjectKind::Nv,
+            }),
+            OpaqueKind::HitObjectExt => Ok(TypeInner::HitObject {
+                kind: crate::HitObjectKind::Ext,
+            }),
             OpaqueKind::SubpassInput => Ok(TypeInner::Image {
                 dim: ImageDimension::Subpass,
                 arrayed: false,

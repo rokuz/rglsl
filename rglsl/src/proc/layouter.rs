@@ -286,6 +286,7 @@ impl Layouter {
                 | Ti::AccelerationStructure { .. }
                 | Ti::Tensor { .. }
                 | Ti::RayQuery { .. }
+                | Ti::HitObject { .. }
                 | Ti::BindingArray { .. }
                 | Ti::BufferDescriptor { .. } => TypeLayout {
                     size,

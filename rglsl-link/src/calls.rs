@@ -62,6 +62,8 @@ pub(crate) fn callees(block: &Block, found: &mut Vec<Handle<Function>>) {
             | Statement::WorkGroupUniformLoad { .. }
             | Statement::RayQuery { .. }
             | Statement::RayPipelineFunction(_)
+            | Statement::HitObject { .. }
+            | Statement::ReorderThread { .. }
             | Statement::MeshFunction(_)
             | Statement::SubgroupBallot { .. }
             | Statement::SubgroupGather { .. }

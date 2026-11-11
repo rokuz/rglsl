@@ -800,6 +800,16 @@ impl super::Instruction {
         instruction
     }
 
+    pub(super) const fn type_hit_object(id: Word, kind: crate::HitObjectKind) -> Self {
+        let op = match kind {
+            crate::HitObjectKind::Nv => Op::TypeHitObjectNV,
+            crate::HitObjectKind::Ext => Op::TypeHitObjectEXT,
+        };
+        let mut instruction = Self::new(op);
+        instruction.set_result(id);
+        instruction
+    }
+
     pub(super) fn ray(op: Op, result: Option<(Word, Word)>, operands: &[Word]) -> Self {
         let mut instruction = Self::new(op);
         if let Some((result_type_id, id)) = result {

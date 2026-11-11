@@ -716,6 +716,9 @@ pub(super) fn build(
         for (name, value) in super::ray::UINT_CONSTANTS {
             builder.constant(name, Type::UINT, alloc::vec![Value::Uint(value)]);
         }
+        for (name, value) in super::ray::INT_CONSTANTS {
+            builder.constant(name, Type::INT, alloc::vec![Value::Int(value)]);
+        }
         builder.constant(
             "gl_EnableOpacityMicromapEXT",
             Type::BOOL,

@@ -1,3 +1,4 @@
+pub mod hit_object;
 pub mod pipeline;
 pub mod query;
 
@@ -7,6 +8,53 @@ impl Writer {
     pub(super) fn require_ray_queries(&mut self) -> Result<(), Error> {
         self.require_any("ray queries", &[spirv::Capability::RayQueryKHR])?;
         self.use_extension("SPV_KHR_ray_query");
+        Ok(())
+    }
+
+    pub(super) fn require_hit_objects(&mut self, kind: crate::HitObjectKind) -> Result<(), Error> {
+        match kind {
+            crate::HitObjectKind::Nv => {
+                self.require_any(
+                    "hit objects",
+                    &[spirv::Capability::ShaderInvocationReorderNV],
+                )?;
+                self.use_extension("SPV_NV_shader_invocation_reorder");
+            }
+            crate::HitObjectKind::Ext => {
+                self.require_any(
+                    "hit objects",
+                    &[spirv::Capability::ShaderInvocationReorderEXT],
+                )?;
+                self.use_extension("SPV_EXT_shader_invocation_reorder");
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn require_cluster_acceleration_structure(&mut self) -> Result<(), Error> {
+        self.require_any(
+            "cluster acceleration structures",
+            &[spirv::Capability::RayTracingClusterAccelerationStructureNV],
+        )?;
+        self.use_extension("SPV_NV_cluster_acceleration_structure");
+        Ok(())
+    }
+
+    pub(super) fn require_sphere_geometry(&mut self) -> Result<(), Error> {
+        self.require_any(
+            "sphere geometry",
+            &[spirv::Capability::RayTracingSpheresGeometryNV],
+        )?;
+        self.use_extension("SPV_NV_linear_swept_spheres");
+        Ok(())
+    }
+
+    pub(super) fn require_lss_geometry(&mut self) -> Result<(), Error> {
+        self.require_any(
+            "linear swept sphere geometry",
+            &[spirv::Capability::RayTracingLinearSweptSpheresGeometryNV],
+        )?;
+        self.use_extension("SPV_NV_linear_swept_spheres");
         Ok(())
     }
 

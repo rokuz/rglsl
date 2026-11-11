@@ -220,6 +220,7 @@ const fn ptr_space_argument_flag(space: crate::AddressSpace) -> TypeFlags {
         | As::HitAttribute
         | As::CallableData
         | As::IncomingCallableData
+        | As::HitObjectAttribute { .. }
         | As::PhysicalStorage { .. } => TypeFlags::ARGUMENT,
         As::Uniform
         | As::Storage { .. }
@@ -1098,6 +1099,13 @@ impl super::Validator {
                     Alignment::ONE,
                 )
             }
+            Ti::HitObject { .. } => TypeInfo::new(
+                TypeFlags::DATA
+                    | TypeFlags::CONSTRUCTIBLE
+                    | TypeFlags::SIZED
+                    | TypeFlags::CREATION_RESOLVED,
+                Alignment::ONE,
+            ),
             Ti::BindingArray { base, size } => {
                 let type_info_mask = match size {
                     crate::ArraySize::Constant(_) => {
