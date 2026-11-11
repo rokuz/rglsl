@@ -297,12 +297,15 @@ impl crate::TypeInner {
         types: &crate::UniqueArena<crate::Type>,
     ) -> Option<crate::Scalar> {
         use crate::TypeInner as Ti;
-        match *self {
-            Ti::Scalar(scalar) | Ti::Vector { scalar, .. } | Ti::Matrix { scalar, .. } => {
-                Some(scalar)
+        let mut inner = self;
+        loop {
+            match *inner {
+                Ti::Scalar(scalar) | Ti::Vector { scalar, .. } | Ti::Matrix { scalar, .. } => {
+                    return Some(scalar)
+                }
+                Ti::Array { base, .. } => inner = &types[base].inner,
+                _ => return None,
             }
-            Ti::Array { base, .. } => types[base].inner.scalar_for_conversions(types),
-            _ => None,
         }
     }
 
@@ -483,20 +486,23 @@ impl crate::TypeInner {
     /// Returns true if `self` is runtime- or override-sized.
     pub fn is_dynamically_sized(&self, types: &crate::UniqueArena<crate::Type>) -> bool {
         use crate::TypeInner as Ti;
-        match *self {
-            Ti::Array {
-                size: crate::ArraySize::Constant(_),
-                ..
-            } => false,
-            Ti::Array {
-                size: crate::ArraySize::Pending(_) | crate::ArraySize::Dynamic,
-                ..
-            } => true,
-            Ti::Struct { ref members, .. } => members
-                .last()
-                .map(|last| types[last.ty].inner.is_dynamically_sized(types))
-                .unwrap_or(false),
-            _ => false,
+        let mut inner = self;
+        loop {
+            match *inner {
+                Ti::Array {
+                    size: crate::ArraySize::Constant(_),
+                    ..
+                } => return false,
+                Ti::Array {
+                    size: crate::ArraySize::Pending(_) | crate::ArraySize::Dynamic,
+                    ..
+                } => return true,
+                Ti::Struct { ref members, .. } => match members.last() {
+                    Some(last) => inner = &types[last.ty].inner,
+                    None => return false,
+                },
+                _ => return false,
+            }
         }
     }
 
@@ -511,7 +517,11 @@ impl crate::TypeInner {
     /// a trailing struct to look at its members. [`Self::is_dynamically_sized`] does.
     pub fn needs_host_buffer_byte_size(&self, types: &crate::UniqueArena<crate::Type>) -> bool {
         use crate::TypeInner as Ti;
-        match *self {
+        let mut inner = self;
+        while let Ti::BindingArray { base, .. } = *inner {
+            inner = &types[base].inner;
+        }
+        match *inner {
             Ti::Struct { ref members, .. } => members.last().is_some_and(|m| {
                 matches!(
                     types[m.ty].inner,
@@ -525,13 +535,31 @@ impl crate::TypeInner {
                 size: crate::ArraySize::Dynamic,
                 ..
             } => true,
-            Ti::BindingArray { base, .. } => types[base].inner.needs_host_buffer_byte_size(types),
             _ => false,
         }
     }
 
     /// Returns true if `self` is a constructible type.
     pub fn is_constructible(&self, types: &crate::UniqueArena<crate::Type>) -> bool {
+        let mut pending = alloc::vec::Vec::from([self]);
+        let mut seen = crate::FastHashSet::default();
+        while let Some(inner) = pending.pop() {
+            let constructible = inner.is_constructible_shallow(|base| {
+                if seen.insert(base) {
+                    pending.push(&types[base].inner);
+                }
+            });
+            if !constructible {
+                return false;
+            }
+        }
+        true
+    }
+
+    fn is_constructible_shallow(
+        &self,
+        mut children: impl FnMut(crate::Handle<crate::Type>),
+    ) -> bool {
         use crate::TypeInner as Ti;
         match *self {
             Ti::Array { base, size, .. } => {
@@ -539,11 +567,17 @@ impl crate::TypeInner {
                     ir::ArraySize::Constant(_) | ir::ArraySize::Pending(_) => true,
                     ir::ArraySize::Dynamic => false,
                 };
-                fixed_size && types[base].inner.is_constructible(types)
+                if fixed_size {
+                    children(base);
+                }
+                fixed_size
             }
-            Ti::Struct { ref members, .. } => members
-                .iter()
-                .all(|member| types[member.ty].inner.is_constructible(types)),
+            Ti::Struct { ref members, .. } => {
+                for member in members {
+                    children(member.ty);
+                }
+                true
+            }
             Ti::Pointer {
                 space: crate::AddressSpace::PhysicalStorage { .. },
                 ..
@@ -636,12 +670,16 @@ impl crate::TypeInner {
     /// Use `types` to look up type handles. This is necessary to
     /// recognize abstract arrays.
     pub fn is_abstract(&self, types: &crate::UniqueArena<crate::Type>) -> bool {
-        match *self {
+        let mut inner = self;
+        while let crate::TypeInner::Array { base, .. } = *inner {
+            inner = &types[base].inner;
+        }
+        match *inner {
             crate::TypeInner::Scalar(scalar)
             | crate::TypeInner::Vector { scalar, .. }
             | crate::TypeInner::Matrix { scalar, .. }
             | crate::TypeInner::Atomic(scalar) => scalar.is_abstract(),
-            crate::TypeInner::Array { base, .. } => types[base].inner.is_abstract(types),
+            crate::TypeInner::Array { .. } => false,
             crate::TypeInner::CooperativeMatrix { .. }
             | crate::TypeInner::LongVector { .. }
             | crate::TypeInner::TensorLayout { .. }
@@ -703,59 +741,55 @@ impl crate::TypeInner {
         // constructors applied to those scalar types (e.g., never scalar to
         // `vec4`, or `vec2` to `vec3`). So first we check that the type
         // constructors match, extracting the leaf scalar types in the process.
-        let expr_scalar;
-        let goal_scalar;
-        match (self, goal) {
-            (&Ti::Scalar(expr), &Ti::Scalar(goal)) => {
-                expr_scalar = expr;
-                goal_scalar = goal;
+        let mut pair = (self, goal);
+        let (expr_scalar, goal_scalar) = loop {
+            match pair {
+                (&Ti::Scalar(expr), &Ti::Scalar(goal)) => {
+                    break (expr, goal);
+                }
+                (
+                    &Ti::Vector {
+                        size: expr_size,
+                        scalar: expr,
+                    },
+                    &Ti::Vector {
+                        size: goal_size,
+                        scalar: goal,
+                    },
+                ) if expr_size == goal_size => {
+                    break (expr, goal);
+                }
+                (
+                    &Ti::Matrix {
+                        rows: expr_rows,
+                        columns: expr_columns,
+                        scalar: expr,
+                    },
+                    &Ti::Matrix {
+                        rows: goal_rows,
+                        columns: goal_columns,
+                        scalar: goal,
+                    },
+                ) if expr_rows == goal_rows && expr_columns == goal_columns => {
+                    break (expr, goal);
+                }
+                (
+                    &Ti::Array {
+                        base: expr_base,
+                        size: expr_size,
+                        stride: _,
+                    },
+                    &Ti::Array {
+                        base: goal_base,
+                        size: goal_size,
+                        stride: _,
+                    },
+                ) if expr_size == goal_size => {
+                    pair = (&types[expr_base].inner, &types[goal_base].inner);
+                }
+                _ => return None,
             }
-            (
-                &Ti::Vector {
-                    size: expr_size,
-                    scalar: expr,
-                },
-                &Ti::Vector {
-                    size: goal_size,
-                    scalar: goal,
-                },
-            ) if expr_size == goal_size => {
-                expr_scalar = expr;
-                goal_scalar = goal;
-            }
-            (
-                &Ti::Matrix {
-                    rows: expr_rows,
-                    columns: expr_columns,
-                    scalar: expr,
-                },
-                &Ti::Matrix {
-                    rows: goal_rows,
-                    columns: goal_columns,
-                    scalar: goal,
-                },
-            ) if expr_rows == goal_rows && expr_columns == goal_columns => {
-                expr_scalar = expr;
-                goal_scalar = goal;
-            }
-            (
-                &Ti::Array {
-                    base: expr_base,
-                    size: expr_size,
-                    stride: _,
-                },
-                &Ti::Array {
-                    base: goal_base,
-                    size: goal_size,
-                    stride: _,
-                },
-            ) if expr_size == goal_size => {
-                return types[expr_base]
-                    .inner
-                    .automatically_converts_to(&types[goal_base].inner, types);
-            }
-            _ => return None,
-        }
+        };
 
         match (expr_scalar.kind, goal_scalar.kind) {
             (Sk::AbstractFloat, Sk::Float) => {}
