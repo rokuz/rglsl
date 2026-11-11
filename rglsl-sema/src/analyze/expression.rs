@@ -13,6 +13,8 @@ use crate::constant::{fold_binary, fold_unary, Constant, Value};
 use crate::diagnostic::DiagnosticKind;
 use crate::scope::{Lookup, Origin, Qualifiers, Storage, SymbolId, SymbolKind};
 use crate::types::{ArraySize, BlockStorage, NumericFeatures, Scalar, Type, TypeKind};
+
+pub(crate) const SHADER_64BIT_INDEXING: &str = "GL_EXT_shader_64bit_indexing";
 use rglsl_ast::extensions::Feature;
 
 const SWIZZLE_SETS: [&str; 3] = ["xyzw", "rgba", "stpq"];
@@ -685,7 +687,7 @@ impl Analyzer<'_> {
         if index_operand.ty.is_error() {
             return Operand::error();
         }
-        if !index_operand.ty.is_scalar_integer() {
+        if !self.valid_index(&index_operand.ty) {
             self.error(
                 index.span,
                 DiagnosticKind::IndexNotInteger(self.show(&index_operand.ty)),
@@ -957,6 +959,12 @@ impl Analyzer<'_> {
             non_uniform: base_operand.non_uniform,
             through_reference: base_operand.through_reference,
         }
+    }
+
+    pub(crate) fn valid_index(&self, ty: &Type) -> bool {
+        ty.is_scalar_integer()
+            && (ty.scalar_type().is_some_and(|scalar| scalar.bits() != 64)
+                || self.extensions.is_on(SHADER_64BIT_INDEXING))
     }
 
     pub(crate) fn require_lvalue(&mut self, span: Span, operand: &Operand) -> bool {

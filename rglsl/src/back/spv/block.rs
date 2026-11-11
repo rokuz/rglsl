@@ -2277,6 +2277,9 @@ impl BlockContext<'_> {
                 id
             }
             crate::Expression::ArrayLength(expr) => self.write_runtime_array_length(expr, block)?,
+            crate::Expression::WideArrayLength(expr) => {
+                self.write_typed_array_length(expr, result_type_id, block)?
+            }
             crate::Expression::PhysicalPointer { value, ty: _ } => {
                 if matches!(
                     self.ir_function.expressions[value],
@@ -2360,6 +2363,22 @@ impl BlockContext<'_> {
             } => self.write_tensor_set(base, operation, operands, result_type_id, block)?,
             crate::Expression::CooperativeVectorMatMul { ref operation, .. } => self
                 .write_cooperative_vector_mat_mul(expr_handle, operation, result_type_id, block)?,
+            crate::Expression::TensorRead {
+                tensor,
+                coordinates,
+                nontemporal,
+                out_of_bounds,
+                ..
+            } => self.write_tensor_read(
+                tensor,
+                coordinates,
+                (nontemporal, out_of_bounds),
+                result_type_id,
+                block,
+            )?,
+            crate::Expression::TensorQuerySize { tensor, dimension } => {
+                self.write_tensor_query_size(tensor, dimension, result_type_id, block)?
+            }
         };
 
         self.cached.set(expr_handle, id)?;
@@ -4324,6 +4343,14 @@ impl BlockContext<'_> {
                     array_index,
                     value,
                 } => self.write_image_store(image, coordinate, array_index, value, &mut block)?,
+                Statement::TensorWrite {
+                    tensor,
+                    coordinates,
+                    value,
+                    nontemporal,
+                } => {
+                    self.write_tensor_write(tensor, coordinates, value, nontemporal, &mut block)?
+                }
                 Statement::Call {
                     function: local_function,
                     ref arguments,

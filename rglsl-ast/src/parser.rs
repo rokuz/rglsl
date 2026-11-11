@@ -788,7 +788,7 @@ impl<'a> Parser<'a> {
         self.expect("<")?;
         let mut height = 0;
         let element = match self.peek().kind {
-            TokenKind::Word(word) if self.is_type_name(word) => {
+            TokenKind::Word(word) if word == "struct" || self.is_type_name(word) => {
                 let (element, element_height) = self.parse_measured_type_specifier()?;
                 height = element_height;
                 Some(Box::new(element))

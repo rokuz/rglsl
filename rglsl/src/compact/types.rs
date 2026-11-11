@@ -33,6 +33,7 @@ impl TypeTracer<'_> {
             | Ti::SampledImage { .. }
             | Ti::Sampler { .. }
             | Ti::AccelerationStructure { .. }
+            | Ti::Tensor { .. }
             | Ti::RayQuery { .. } => {}
 
             Ti::CooperativeMatrix {
@@ -106,6 +107,7 @@ impl ModuleMap {
             | Ti::SampledImage { .. }
             | Ti::Sampler { .. }
             | Ti::AccelerationStructure { .. }
+            | Ti::Tensor { .. }
             | Ti::RayQuery { .. } => {}
 
             Ti::CooperativeMatrix {

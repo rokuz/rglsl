@@ -417,6 +417,22 @@ pub enum ShaderBallot {
     Mask(SubgroupMask),
 }
 
+#[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub enum ShaderCore {
+    WarpsPerSmNv,
+    SmCountNv,
+    WarpIdNv,
+    SmIdNv,
+    CoreIdArm,
+    CoreCountArm,
+    CoreMaxIdArm,
+    WarpIdArm,
+    WarpMaxIdArm,
+}
+
 /// Built-in inputs and outputs.
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
@@ -508,6 +524,7 @@ pub enum BuiltIn {
     SubgroupInvocationId,
     SubgroupMask(SubgroupMask),
     ShaderBallot(ShaderBallot),
+    ShaderCore(ShaderCore),
 
     /// Written in task shaders
     MeshTaskSize,
@@ -874,7 +891,7 @@ bitflags::bitflags! {
     #[cfg_attr(feature = "deserialize", derive(Deserialize))]
     #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
     #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
-    pub struct MemoryDecorations: u8 {
+    pub struct MemoryDecorations: u16 {
         /// Reads and writes are automatically visible to other invocations
         /// without explicit barriers.
         const COHERENT = 0x1;
@@ -887,6 +904,8 @@ bitflags::bitflags! {
         const SUBGROUP_COHERENT = 0x20;
         const SHADER_CALL_COHERENT = 0x40;
         const NONPRIVATE = 0x80;
+        const NON_WRITABLE = 0x100;
+        const NON_READABLE = 0x200;
     }
 }
 
@@ -1018,7 +1037,10 @@ pub enum TypeInner {
     /// Number of integral or floating-point kind.
     Scalar(Scalar),
     /// Vector of numbers.
-    Vector { size: VectorSize, scalar: Scalar },
+    Vector {
+        size: VectorSize,
+        scalar: Scalar,
+    },
     /// Matrix of numbers.
     Matrix {
         columns: VectorSize,
@@ -1048,6 +1070,10 @@ pub enum TypeInner {
         dimensions: CooperativeSize,
         has_dimensions: bool,
         permutation: Vec<u32>,
+    },
+    Tensor {
+        scalar: Scalar,
+        rank: u32,
     },
     /// Atomic scalar.
     Atomic(Scalar),
@@ -1167,7 +1193,9 @@ pub enum TypeInner {
         class: ImageClass,
     },
     /// Can be used to sample values from images.
-    Sampler { comparison: bool },
+    Sampler {
+        comparison: bool,
+    },
 
     SampledImage {
         dim: ImageDimension,
@@ -1176,10 +1204,14 @@ pub enum TypeInner {
     },
 
     /// Opaque object representing an acceleration structure of geometry.
-    AccelerationStructure { vertex_return: bool },
+    AccelerationStructure {
+        vertex_return: bool,
+    },
 
     /// Locally used handle for ray queries.
-    RayQuery { vertex_return: bool },
+    RayQuery {
+        vertex_return: bool,
+    },
 
     /// Array of bindings.
     ///
@@ -1220,7 +1252,10 @@ pub enum TypeInner {
     /// [`DATA`]: crate::valid::TypeFlags::DATA
     /// [`ARGUMENT`]: crate::valid::TypeFlags::ARGUMENT
     /// [rglsl#1864]: https://github.com/gfx-rs/naga/issues/1864
-    BindingArray { base: Handle<Type>, size: ArraySize },
+    BindingArray {
+        base: Handle<Type>,
+        size: ArraySize,
+    },
     BufferDescriptor {
         base: Handle<Type>,
         space: AddressSpace,
@@ -2619,6 +2654,7 @@ pub enum Expression {
     /// This doesn't match the semantics of spirv's `OpArrayLength`, which must be passed
     /// a pointer to a structure containing a runtime array in its' last field.
     ArrayLength(Handle<Expression>),
+    WideArrayLength(Handle<Expression>),
     PhysicalPointer {
         value: Handle<Expression>,
         ty: Handle<Type>,
@@ -2711,6 +2747,17 @@ pub enum Expression {
         base: Handle<Expression>,
         operation: TensorOperation,
         operands: Vec<Handle<Expression>>,
+    },
+    TensorRead {
+        ty: Handle<Type>,
+        tensor: Handle<Expression>,
+        coordinates: Handle<Expression>,
+        nontemporal: bool,
+        out_of_bounds: Option<Handle<Expression>>,
+    },
+    TensorQuerySize {
+        tensor: Handle<Expression>,
+        dimension: u32,
     },
 }
 
@@ -3216,6 +3263,12 @@ pub enum Statement {
         message: String,
         ty: Handle<Type>,
         arguments: Vec<Handle<Expression>>,
+    },
+    TensorWrite {
+        tensor: Handle<Expression>,
+        coordinates: Handle<Expression>,
+        value: Handle<Expression>,
+        nontemporal: bool,
     },
 }
 
@@ -3963,6 +4016,12 @@ pub struct Module {
     )]
     #[cfg_attr(feature = "deserialize", serde(default))]
     pub descriptor_heap: bool,
+    #[cfg_attr(
+        feature = "serialize",
+        serde(skip_serializing_if = "core::ops::Not::not")
+    )]
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    pub shader_64bit_indexing: bool,
     #[cfg_attr(
         feature = "serialize",
         serde(skip_serializing_if = "RayTracingFeatures::is_empty")

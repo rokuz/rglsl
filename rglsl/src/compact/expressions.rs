@@ -237,6 +237,7 @@ impl ExpressionTracer<'_> {
                 self.expressions_used.insert(expr);
             }
             Ex::ArrayLength(expr)
+            | Ex::WideArrayLength(expr)
             | Ex::PhysicalAddress { pointer: expr, .. }
             | Ex::BufferPointer { descriptor: expr } => {
                 self.expressions_used.insert(expr);
@@ -303,6 +304,23 @@ impl ExpressionTracer<'_> {
             Ex::CooperativeVectorMatMul { ty, ref operation } => {
                 self.types_used.insert(ty);
                 self.expressions_used.insert_iter(operation.operands());
+            }
+            Ex::TensorRead {
+                ty,
+                tensor,
+                coordinates,
+                out_of_bounds,
+                ..
+            } => {
+                self.types_used.insert(ty);
+                self.expressions_used.insert(tensor);
+                self.expressions_used.insert(coordinates);
+                if let Some(value) = out_of_bounds {
+                    self.expressions_used.insert(value);
+                }
+            }
+            Ex::TensorQuerySize { tensor, .. } => {
+                self.expressions_used.insert(tensor);
             }
         }
     }
@@ -460,7 +478,7 @@ impl ModuleMap {
             } => self.types.adjust(ty)?,
             Ex::WorkGroupUniformLoadResult { ref mut ty } => self.types.adjust(ty)?,
             Ex::SubgroupOperationResult { ref mut ty } => self.types.adjust(ty)?,
-            Ex::ArrayLength(ref mut expr) => adjust(expr)?,
+            Ex::ArrayLength(ref mut expr) | Ex::WideArrayLength(ref mut expr) => adjust(expr)?,
             Ex::PhysicalAddress {
                 ref mut pointer,
                 split: _,
@@ -558,6 +576,21 @@ impl ModuleMap {
                     adjust(operand)?;
                 }
             }
+            Ex::TensorRead {
+                ref mut ty,
+                ref mut tensor,
+                ref mut coordinates,
+                ref mut out_of_bounds,
+                ..
+            } => {
+                self.types.adjust(ty)?;
+                adjust(tensor)?;
+                adjust(coordinates)?;
+                if let Some(value) = out_of_bounds.as_mut() {
+                    adjust(value)?;
+                }
+            }
+            Ex::TensorQuerySize { ref mut tensor, .. } => adjust(tensor)?,
         }
         Ok(())
     }

@@ -609,6 +609,7 @@ impl FunctionInfo {
                             crate::TypeInner::AccelerationStructure { .. } => {
                                 super::Capabilities::ACCELERATION_STRUCTURE_BINDING_ARRAY
                             }
+                            crate::TypeInner::Tensor { .. } => super::Capabilities::empty(),
                             // If we're anything but an image or sampler, assume we're a buffer and use the address space.
                             _ => {
                                 if let E::GlobalVariable(global_handle) = expression_arena[base] {
@@ -902,7 +903,7 @@ impl FunctionInfo {
                 // This expression is never emitted, so this requirement should never be used anyway?
                 requirements: UniformityRequirements::empty(),
             },
-            E::ArrayLength(expr) => Uniformity {
+            E::ArrayLength(expr) | E::WideArrayLength(expr) => Uniformity {
                 non_uniform_result: self.add_ref_impl(expr, GlobalUse::QUERY),
                 requirements: UniformityRequirements::empty(),
             },
@@ -976,6 +977,25 @@ impl FunctionInfo {
                     requirements: UniformityRequirements::empty(),
                 }
             }
+            E::TensorRead {
+                tensor,
+                coordinates,
+                out_of_bounds,
+                ..
+            } => {
+                let out_of_bounds_nur = out_of_bounds.and_then(|h| self.add_ref(h));
+                Uniformity {
+                    non_uniform_result: self
+                        .add_ref_impl(tensor, GlobalUse::READ)
+                        .or(self.add_ref(coordinates))
+                        .or(out_of_bounds_nur),
+                    requirements: UniformityRequirements::empty(),
+                }
+            }
+            E::TensorQuerySize { tensor, .. } => Uniformity {
+                non_uniform_result: self.add_ref_impl(tensor, GlobalUse::QUERY),
+                requirements: UniformityRequirements::empty(),
+            },
         };
 
         let ty = resolve_context.resolve(expression, |h| Ok(&self[h].ty))?;
@@ -1195,6 +1215,17 @@ impl FunctionInfo {
                 // so we can ignore their non-uniformity.
                 S::Store { pointer, value } => {
                     let _ = self.add_ref_impl(pointer, GlobalUse::WRITE);
+                    let _ = self.add_ref(value);
+                    FunctionUniformity::new()
+                }
+                S::TensorWrite {
+                    tensor,
+                    coordinates,
+                    value,
+                    ..
+                } => {
+                    let _ = self.add_ref_impl(tensor, GlobalUse::WRITE);
+                    let _ = self.add_ref(coordinates);
                     let _ = self.add_ref(value);
                     FunctionUniformity::new()
                 }

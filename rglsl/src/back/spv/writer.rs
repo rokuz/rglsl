@@ -625,7 +625,8 @@ impl Writer {
             | crate::TypeInner::Struct { .. }
             | crate::TypeInner::BindingArray { .. }
             | crate::TypeInner::TensorLayout { .. }
-            | crate::TypeInner::TensorView { .. } => return Ok(None),
+            | crate::TypeInner::TensorView { .. }
+            | crate::TypeInner::Tensor { .. } => return Ok(None),
         }))
     }
 
@@ -1955,6 +1956,14 @@ impl Writer {
             self.write_execution_mode(function_id, spirv::ExecutionMode::Xfb)?;
         }
         self.write_opacity_micromap_mode(function_id, entry_point)?;
+        if ir_module.shader_64bit_indexing {
+            self.use_extension("SPV_EXT_shader_64bit_indexing");
+            self.require_any(
+                "64-bit indexing",
+                &[spirv::Capability::Shader64BitIndexingEXT],
+            )?;
+            self.write_execution_mode(function_id, spirv::ExecutionMode::Shader64BitIndexingEXT)?;
+        }
 
         for (enabled, mode) in [
             (
@@ -2714,6 +2723,9 @@ impl Writer {
                         instruction.add_operand(index);
                     }
                     instruction
+                }
+                crate::TypeInner::Tensor { scalar, rank } => {
+                    self.write_tensor_type(id, scalar, rank)?
                 }
                 crate::TypeInner::Array { base, size, stride } => {
                     let type_id = self.get_handle_type_id(base)?;
@@ -4090,6 +4102,7 @@ impl Writer {
                     Bi::TaskCountNV => BuiltIn::TaskCountNV,
                     Bi::PrimitiveCountNV => BuiltIn::PrimitiveCountNV,
                     Bi::PrimitiveIndicesNV => BuiltIn::PrimitiveIndicesNV,
+                    Bi::ShaderCore(core) => self.shader_core_builtin(core)?,
                     Bi::MeshViewCountNV => BuiltIn::MeshViewCountNV,
                     Bi::MeshViewIndicesNV => BuiltIn::MeshViewIndicesNV,
                     Bi::ClipDistancePerViewNV | Bi::CullDistancePerViewNV | Bi::LayerPerViewNV => {
@@ -4349,6 +4362,20 @@ impl Writer {
                 _ => None,
             },
         };
+        for (flag, decoration) in [
+            (
+                crate::MemoryDecorations::NON_WRITABLE,
+                Decoration::NonWritable,
+            ),
+            (
+                crate::MemoryDecorations::NON_READABLE,
+                Decoration::NonReadable,
+            ),
+        ] {
+            if global_variable.memory_decorations.contains(flag) {
+                self.decorate(id, decoration, &[]);
+            }
+        }
         if let Some(storage_access) = storage_access {
             if !storage_access.contains(crate::StorageAccess::LOAD) {
                 self.decorate(id, Decoration::NonReadable, &[]);
@@ -5254,6 +5281,38 @@ impl Writer {
                     .push(Instruction::member_decorate(id, index, *decoration, &[]));
             }
         }
+    }
+}
+
+impl Writer {
+    fn shader_core_builtin(&mut self, core: crate::ShaderCore) -> Result<spirv::BuiltIn, Error> {
+        use crate::ShaderCore as Sc;
+        use spirv::BuiltIn as B;
+        let (built_in, nv) = match core {
+            Sc::WarpsPerSmNv => (B::WarpsPerSMNV, true),
+            Sc::SmCountNv => (B::SMCountNV, true),
+            Sc::WarpIdNv => (B::WarpIDNV, true),
+            Sc::SmIdNv => (B::SMIDNV, true),
+            Sc::CoreIdArm => (B::CoreIDARM, false),
+            Sc::CoreCountArm => (B::CoreCountARM, false),
+            Sc::CoreMaxIdArm => (B::CoreMaxIDARM, false),
+            Sc::WarpIdArm => (B::WarpIDARM, false),
+            Sc::WarpMaxIdArm => (B::WarpMaxIDARM, false),
+        };
+        if nv {
+            self.use_extension("SPV_NV_shader_sm_builtins");
+            self.require_any(
+                "shader SM built-ins",
+                &[spirv::Capability::ShaderSMBuiltinsNV],
+            )?;
+        } else {
+            self.use_extension("SPV_ARM_core_builtins");
+            self.require_any(
+                "shader core built-ins",
+                &[spirv::Capability::CoreBuiltinsARM],
+            )?;
+        }
+        Ok(built_in)
     }
 }
 

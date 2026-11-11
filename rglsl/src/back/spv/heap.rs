@@ -47,6 +47,7 @@ fn is_descriptor(module: &Module, ty: Handle<crate::Type>) -> bool {
         TypeInner::Image { .. }
         | TypeInner::Sampler { .. }
         | TypeInner::AccelerationStructure { .. }
+        | TypeInner::Tensor { .. }
         | TypeInner::BufferDescriptor { .. } => true,
         TypeInner::Array { base, .. } => is_descriptor(module, base),
         _ => false,
@@ -58,6 +59,7 @@ pub(super) fn contains_descriptor(module: &Module, ty: Handle<crate::Type>) -> b
         TypeInner::Image { .. }
         | TypeInner::Sampler { .. }
         | TypeInner::AccelerationStructure { .. }
+        | TypeInner::Tensor { .. }
         | TypeInner::BufferDescriptor { .. } => true,
         TypeInner::Array { base, .. } => contains_descriptor(module, base),
         TypeInner::Struct { ref members, .. } => members

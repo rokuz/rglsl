@@ -279,6 +279,10 @@ impl Lowerer<'_> {
                         .collect(),
                 }
             }
+            TypeKind::Tensor { scalar: s, rank } => TypeInner::Tensor {
+                scalar: scalar(s),
+                rank,
+            },
         };
         Ok(self.insert_type(inner))
     }

@@ -835,8 +835,9 @@ impl Analyzer<'_> {
         }
         let invalid = |qualifier, reason| DiagnosticKind::InvalidQualifier { qualifier, reason };
         let is_image = matches!(ty.kind, TypeKind::Opaque(opaque) if opaque.is_image());
+        let is_tensor = matches!(ty.kind, TypeKind::Tensor { .. });
         let misplaced = if qualifiers.has_memory_qualifier() && !qualifiers.only_nonprivate() {
-            !is_image && qualifiers.storage != Storage::Buffer
+            !is_image && !is_tensor && qualifiers.storage != Storage::Buffer
         } else {
             qualifiers.nonprivate
                 && !matches!(ty.kind, TypeKind::Opaque(_))
@@ -1301,7 +1302,7 @@ impl Analyzer<'_> {
 
     fn contains_non_opaque(&self, ty: &Type) -> bool {
         match ty.kind {
-            TypeKind::Opaque(_) | TypeKind::Error => false,
+            TypeKind::Opaque(_) | TypeKind::Tensor { .. } | TypeKind::Error => false,
             TypeKind::Struct(id) => self
                 .types
                 .structure(id)

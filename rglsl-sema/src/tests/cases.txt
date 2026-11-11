@@ -4990,3 +4990,120 @@ void main() {
     int a = expectEXT(1, 1);
     assumeEXT(a == 1);
 }
+### tensor reads, writes and size queries | comp 460 | ok
+#extension GL_ARM_tensors : require
+layout(set = 0, binding = 0) uniform tensorARM<int, 2> t;
+readonly layout(set = 0, binding = 1) uniform tensorARM<float, 1> r;
+layout(local_size_x = 1) in;
+void main() {
+    int value;
+    int values[3];
+    tensorReadARM(t, uint[](0, 1), value, gl_TensorOperandsOutOfBoundsValueARM, 7);
+    tensorReadARM(t, uint[](0, 1), values);
+    tensorWriteARM(t, uint[](1, 0), values, gl_TensorOperandsNonTemporalARM);
+    float x;
+    tensorReadARM(r, uint[](0), x);
+    uint size = tensorSizeARM(t, 1) + tensorSizeARM(r, 0);
+}
+### tensor declarations need a rank and an element type | comp 460 | 3:InvalidTypeParameters, 4:InvalidTypeParameters, 5:InvalidTypeParameters, 6:InvalidTypeParameters
+#extension GL_ARM_tensors : require
+uniform tensorARM noparams;
+uniform tensorARM<int, 0> zero;
+uniform tensorARM<int, 1, 2> two;
+uniform tensorARM<void, 2> bad;
+void main() {}
+### tensors are uniforms or parameters | comp 460 | 3:OpaqueNotAllowed, 5:OpaqueNotAllowed
+#extension GL_ARM_tensors : require
+tensorARM<int, 1> global;
+void main() {
+    tensorARM<int, 1> local;
+}
+### tensor bfloat16 elements need their extension | comp 460 | 4:ExtensionRequired
+#extension GL_ARM_tensors : require
+#extension GL_EXT_bfloat16 : require
+layout(set = 0, binding = 0) uniform tensorARM<bfloat16_t, 1> t;
+void main() {}
+### tensor access checks | comp 460 | 7:InvalidCooperativeCall, 8:InvalidCooperativeCall, 9:InvalidCooperativeCall, 10:InvalidCooperativeCall, 11:InvalidCooperativeCall, 12:InvalidCooperativeCall
+#extension GL_ARM_tensors : require
+layout(set = 0, binding = 0) uniform tensorARM<int, 1> t;
+void main() {
+    int i = 1;
+    float f;
+    tensorReadARM(t, uint[](0, 0), i);
+    tensorReadARM(t, uint[](0), f);
+    tensorWriteARM(t, uint[](0), i, gl_TensorOperandsOutOfBoundsValueARM, 1);
+    tensorReadARM(t, uint[](0), i, gl_TensorOperandsOutOfBoundsValueARM);
+    tensorReadARM(t, uint[](0), i, gl_TensorOperandsOutOfBoundsValueARM, i);
+    tensorReadARM(t, uint[](0), i, gl_TensorOperandsOutOfBoundsValueARM, 1u);
+}
+### tensor operands and dimensions must be constant | comp 460 | 7:InvalidCooperativeCall, 8:InvalidCooperativeCall, 9:InvalidCooperativeCall
+#extension GL_ARM_tensors : require
+layout(set = 0, binding = 0) uniform tensorARM<int, 2> t;
+void main() {
+    int value;
+    uint operands = gl_TensorOperandsNonTemporalARM;
+    tensorReadARM(t, uint[](0, 0), value, operands);
+    uint a = tensorSizeARM(t, operands);
+    uint b = tensorSizeARM(t, 2);
+}
+### tensor accesses keep memory qualifiers | comp 460 | 7:InvalidCooperativeCall, 8:InvalidCooperativeCall
+#extension GL_ARM_tensors : require
+readonly layout(set = 0, binding = 0) uniform tensorARM<int, 1> r;
+writeonly layout(set = 0, binding = 1) uniform tensorARM<int, 1> w;
+void main() {
+    int value = 0;
+    tensorWriteARM(r, uint[](0), value);
+    tensorReadARM(w, uint[](0), value);
+}
+### tensor parameters | comp 460 | ok
+#extension GL_ARM_tensors : require
+layout(set = 0, binding = 0) uniform tensorARM<int, 4> t;
+uint size(readonly tensorARM<int, 4> tensor) {
+    return tensorSizeARM(tensor, 3);
+}
+void main() {
+    uint s = size(t);
+}
+### type parameters cannot be structures | comp 460 | 3:InvalidTypeParameters
+#extension GL_ARM_tensors : require
+layout(set = 0, binding = 0) uniform tensorARM<struct S { float a; }, 1> t;
+void main() {}
+### 64-bit indices need the extension | comp 450 | 7:IndexNotInteger
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+layout(set = 0, binding = 0) buffer B { float x[]; } b;
+layout(local_size_x = 1) in;
+void main() {
+    uint64_t i = 0;
+    float y = b.x[i];
+}
+### 64-bit indices and length64 | comp 450 | ok
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+#extension GL_EXT_shader_64bit_indexing : require
+#pragma shader_64bit_indexing
+#pragma promote_uint32_indices
+layout(set = 0, binding = 0) buffer B { float x[]; } b;
+layout(local_size_x = 1) in;
+void main() {
+    uint64_t i = 0;
+    float y = b.x[i] + b.x[5000000000ul];
+    int64_t n = b.x.length64();
+}
+### length64 needs the extension | comp 450 | 5:ExtensionRequired
+layout(set = 0, binding = 0) buffer B { float x[]; } b;
+layout(local_size_x = 1) in;
+void main() {
+    int n = int(b.x.length64());
+}
+### SM built-ins need their extension | frag 450 | 4:ExtensionRequired
+layout(location = 0) out uvec4 o;
+void main() {
+    o = uvec4(gl_SMIDNV);
+}
+### SM and core built-ins | frag 450 | ok
+#extension GL_NV_shader_sm_builtins : require
+#extension GL_ARM_shader_core_builtins : require
+layout(location = 0) out uvec4 o;
+void main() {
+    o = uvec4(gl_WarpsPerSMNV, gl_SMCountNV, gl_WarpIDNV, gl_SMIDNV)
+        + uvec4(gl_CoreIDARM, gl_CoreCountARM, gl_CoreMaxIDARM, gl_WarpIDARM + gl_WarpMaxIDARM);
+}

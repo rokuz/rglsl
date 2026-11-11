@@ -233,6 +233,16 @@ impl FunctionTracer<'_> {
                             self.expressions_used.insert(argument);
                         }
                     }
+                    St::TensorWrite {
+                        tensor,
+                        coordinates,
+                        value,
+                        ..
+                    } => {
+                        self.expressions_used.insert(tensor);
+                        self.expressions_used.insert(coordinates);
+                        self.expressions_used.insert(value);
+                    }
 
                     // Trivial statements.
                     St::Break
@@ -540,6 +550,16 @@ impl FunctionMap {
                         for argument in arguments.iter_mut() {
                             adjust(argument)?;
                         }
+                    }
+                    St::TensorWrite {
+                        ref mut tensor,
+                        ref mut coordinates,
+                        ref mut value,
+                        ..
+                    } => {
+                        adjust(tensor)?;
+                        adjust(coordinates)?;
+                        adjust(value)?;
                     }
 
                     // Trivial statements.

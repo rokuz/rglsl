@@ -671,7 +671,7 @@ fn adjust_expr(new_pos: &HandleVec<Expression, Handle<Expression>>, expr: &mut E
         } => {
             adjust(expr);
         }
-        Expression::ArrayLength(ref mut expr) => {
+        Expression::ArrayLength(ref mut expr) | Expression::WideArrayLength(ref mut expr) => {
             adjust(expr);
         }
         Expression::PhysicalAddress {
@@ -773,6 +773,19 @@ fn adjust_expr(new_pos: &HandleVec<Expression, Handle<Expression>>, expr: &mut E
                 adjust(operand);
             }
         }
+        Expression::TensorRead {
+            ref mut tensor,
+            ref mut coordinates,
+            ref mut out_of_bounds,
+            ..
+        } => {
+            adjust(tensor);
+            adjust(coordinates);
+            if let Some(value) = out_of_bounds.as_mut() {
+                adjust(value);
+            }
+        }
+        Expression::TensorQuerySize { ref mut tensor, .. } => adjust(tensor),
     }
 }
 
@@ -1051,6 +1064,16 @@ fn adjust_stmt(new_pos: &HandleVec<Expression, Handle<Expression>>, stmt: &mut S
             for argument in arguments.iter_mut() {
                 adjust(argument);
             }
+        }
+        Statement::TensorWrite {
+            ref mut tensor,
+            ref mut coordinates,
+            ref mut value,
+            ..
+        } => {
+            adjust(tensor);
+            adjust(coordinates);
+            adjust(value);
         }
         Statement::Break
         | Statement::Continue

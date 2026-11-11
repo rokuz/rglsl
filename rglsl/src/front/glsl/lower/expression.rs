@@ -448,6 +448,46 @@ impl<'a> FunctionLowerer<'_, 'a> {
         })
     }
 
+    fn wide_index(&self, base_ty: &GlslType, index: &AstExpression) -> Result<bool> {
+        let scalar = self.info(index)?.ty.scalar_type();
+        Ok(!base_ty.is_vector()
+            && (scalar.is_some_and(|scalar| scalar.bits() == 64)
+                || (self.lw.analysis.promote_uint32_indices && scalar == Some(GlslScalar::Uint))))
+    }
+
+    fn index_operand(
+        &mut self,
+        index: &AstExpression,
+        wide: bool,
+        at: Span,
+    ) -> Result<Handle<Expression>> {
+        if !wide {
+            return self.rvalue(index);
+        }
+        let info = self.info(index)?;
+        let narrow = info.ty.scalar_type() == Some(GlslScalar::Uint);
+        let constant = info
+            .value
+            .as_ref()
+            .filter(|_| info.is_constant && !info.is_specialization)
+            .and_then(|value| value.scalar_i64());
+        if let Some(value) = constant {
+            return self.literal(Literal::I64(value), at);
+        }
+        let value = self.rvalue(index)?;
+        if !narrow {
+            return Ok(value);
+        }
+        self.add(
+            Expression::As {
+                expr: value,
+                kind: crate::ScalarKind::Uint,
+                convert: Some(8),
+            },
+            at,
+        )
+    }
+
     pub(super) fn constant_index(&self, expression: &AstExpression) -> Option<u32> {
         let info = self.lw.analysis.expression(expression.id)?;
         if !info.is_constant || info.is_specialization {
@@ -552,7 +592,12 @@ impl<'a> FunctionLowerer<'_, 'a> {
                         at,
                     )?));
                 }
-                let constant = self.constant_index(index);
+                let wide = self.wide_index(&base_ty, index)?;
+                let constant = if wide {
+                    None
+                } else {
+                    self.constant_index(index)
+                };
                 let chain = self.chain(base)?;
                 let binding_array = base_ty.is_array() && base_ty.is_opaque();
                 match chain {
@@ -597,7 +642,7 @@ impl<'a> FunctionLowerer<'_, 'a> {
                                 false,
                             ),
                             None => {
-                                let index = self.rvalue(index)?;
+                                let index = self.index_operand(index, wide, at)?;
                                 (
                                     self.add(
                                         Expression::Access {
@@ -618,7 +663,7 @@ impl<'a> FunctionLowerer<'_, 'a> {
                             self.add(Expression::AccessIndex { base: value, index }, at)?,
                         )),
                         None => {
-                            let index = self.rvalue(index)?;
+                            let index = self.index_operand(index, wide, at)?;
                             if base_ty.is_vector() || binding_array {
                                 let access =
                                     self.add(Expression::Access { base: value, index }, at)?;

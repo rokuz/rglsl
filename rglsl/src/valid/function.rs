@@ -278,6 +278,8 @@ pub enum FunctionError {
     PayloadPointerNotGlobal,
     #[error("The message type {0:?} of an abort does not hold its message and arguments")]
     InvalidAbortMessage(Handle<crate::Type>),
+    #[error("Invalid operand {0:?} of a tensor write")]
+    InvalidTensorWrite(Handle<crate::Expression>),
     #[error("The argument {0:?} of an abort does not match its message type")]
     InvalidAbortArgument(Handle<crate::Expression>),
 }
@@ -1199,6 +1201,7 @@ impl super::Validator {
                             | Ex::Math { .. }
                             | Ex::As { .. }
                             | Ex::ArrayLength(_)
+                            | Ex::WideArrayLength(_)
                             | Ex::PhysicalPointer { .. }
                             | Ex::PhysicalAddress { .. }
                             | Ex::BufferPointer { .. }
@@ -1214,7 +1217,9 @@ impl super::Validator {
                             | Ex::TensorCreate { .. }
                             | Ex::TensorSet { .. }
                             | Ex::CooperativeVectorLoad { .. }
-                            | Ex::CooperativeVectorMatMul { .. } => {
+                            | Ex::CooperativeVectorMatMul { .. }
+                            | Ex::TensorRead { .. }
+                            | Ex::TensorQuerySize { .. } => {
                                 self.emit_expression(handle, context)?
                             }
                             Ex::CallResult(_)
@@ -1522,6 +1527,39 @@ impl super::Validator {
                             return Err(FunctionError::InvalidAbortArgument(argument)
                                 .with_span_handle(argument, context.expressions));
                         }
+                    }
+                }
+                S::TensorWrite {
+                    tensor,
+                    coordinates,
+                    value,
+                    ..
+                } => {
+                    let invalid = |handle: Handle<crate::Expression>| {
+                        FunctionError::InvalidTensorWrite(handle)
+                            .with_span_handle(handle, context.expressions)
+                    };
+                    let (scalar, rank) =
+                        match *context.resolve_type_inner(tensor, &self.valid_expression_set)? {
+                            Ti::Tensor { scalar, rank } => (scalar, rank),
+                            _ => return Err(invalid(tensor)),
+                        };
+                    let coordinates_inner =
+                        context.resolve_type_inner(coordinates, &self.valid_expression_set)?;
+                    match super::expression::tensor_shape(coordinates_inner, context.types) {
+                        Some((index, Some(length)))
+                            if length == rank
+                                && matches!(
+                                    index.kind,
+                                    crate::ScalarKind::Uint | crate::ScalarKind::Sint
+                                ) => {}
+                        _ => return Err(invalid(coordinates)),
+                    }
+                    let value_inner =
+                        context.resolve_type_inner(value, &self.valid_expression_set)?;
+                    match super::expression::tensor_shape(value_inner, context.types) {
+                        Some((element, _)) if element == scalar => {}
+                        _ => return Err(invalid(value)),
                     }
                 }
                 S::ControlBarrier(barrier) | S::MemoryBarrier(barrier) => {

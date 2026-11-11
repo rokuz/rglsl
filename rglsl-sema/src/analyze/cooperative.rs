@@ -122,11 +122,19 @@ impl Analyzer<'_> {
         span: Span,
     ) -> Type {
         let keyword = kind.keyword();
-        if !matches!(kind, ParameterizedType::LongVector) {
+        if !matches!(
+            kind,
+            ParameterizedType::LongVector | ParameterizedType::TensorArm
+        ) {
             self.vulkan_memory_model = true;
         }
         let Some(parameters) = parameters else {
-            return self.parameter_error(span, keyword, "missing type parameters");
+            let reason = if kind == ParameterizedType::TensorArm {
+                "tensor type is missing type parameters"
+            } else {
+                "missing type parameters"
+            };
+            return self.parameter_error(span, keyword, reason);
         };
         let element = match &parameters.element {
             Some(element) => {
@@ -269,6 +277,54 @@ impl Analyzer<'_> {
                     }),
                     _ => self.parameter_error(span, keyword, "invalid type parameters"),
                 }
+            }
+            ParameterizedType::TensorArm => {
+                let [rank] = values.as_slice() else {
+                    return self.parameter_error(
+                        span,
+                        keyword,
+                        "tensor type requires exactly 1 rank specifier",
+                    );
+                };
+                let Some(rank) = rank
+                    .value()
+                    .and_then(|rank| u32::try_from(rank).ok())
+                    .filter(|rank| *rank >= 1)
+                else {
+                    return self.parameter_error(
+                        span,
+                        keyword,
+                        "tensor rank must be greater than or equal to 1",
+                    );
+                };
+                let Some(scalar) = element_scalar else {
+                    return self.parameter_error(
+                        span,
+                        keyword,
+                        "expected bool, integer or floating point type parameter",
+                    );
+                };
+                if rank > 15 {
+                    return self.parameter_error(span, keyword, "tensor rank must be at most 15");
+                }
+                let extension = match scalar {
+                    Scalar::BFloat16 => {
+                        Some(("GL_ARM_tensors_bfloat16", "tensor with bfloat16_t type"))
+                    }
+                    Scalar::FloatE5M2 => {
+                        Some(("GL_ARM_tensors_float_e5m2", "tensor with floate5m2_t type"))
+                    }
+                    Scalar::FloatE4M3 => {
+                        Some(("GL_ARM_tensors_float_e4m3", "tensor with floate4m3_t type"))
+                    }
+                    _ => None,
+                };
+                if let Some((extension, feature)) = extension {
+                    if !self.require_extension(span, extension, feature) {
+                        return Type::ERROR;
+                    }
+                }
+                Type::new(TypeKind::Tensor { scalar, rank })
             }
             ParameterizedType::TensorViewNv => {
                 if element.is_some() || values.is_empty() || values.len() > 7 {

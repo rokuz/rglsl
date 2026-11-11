@@ -525,6 +525,7 @@ impl crate::TypeInner {
             | Self::SampledImage { .. }
             | Self::Sampler { .. }
             | Self::AccelerationStructure { .. }
+            | Self::Tensor { .. }
             | Self::RayQuery { .. }
             | Self::BindingArray { .. }
             | Self::BufferDescriptor { .. } => false,

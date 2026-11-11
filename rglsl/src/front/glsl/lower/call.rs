@@ -54,16 +54,47 @@ impl FunctionLowerer<'_, '_> {
                 self.tensor_call(kind, &result, &call.arguments, at)
                     .map(Some)
             }
+            Some(&Callee::TensorArm(kind)) => self.tensor_arm_call(kind, &call.arguments, at),
             Some(&Callee::Matrix(kind)) => {
                 let result = self.info(expression)?.ty.clone();
                 self.matrix_call(kind, &result, &call.arguments, at)
             }
             Some(&Callee::Length) => match call.function.node {
+                FunctionIdentifier::Method {
+                    ref object,
+                    ref name,
+                } if name.node == "length64" => self.wide_length(object, at).map(Some),
                 FunctionIdentifier::Method { ref object, .. } => self.length(object, at).map(Some),
                 _ => Err(internal(at)),
             },
             None => Err(internal(at)),
         }
+    }
+
+    fn wide_length(&mut self, object: &AstExpression, at: Span) -> Result<Handle<Expression>> {
+        let ty = self.info(object)?.ty.clone();
+        if let Some(length) = ty.length() {
+            return self.literal(Literal::I64(i64::from(length)), at);
+        }
+        let builtin = self
+            .lw
+            .variable_symbol(object)
+            .and_then(|symbol| self.lw.symbol(symbol))
+            .is_some_and(|symbol| self.lw.builtin_sizes.contains_key(symbol.name.as_str()));
+        let runtime = ty.outer_size() == Some(ArraySize::Unsized)
+            && !builtin
+            && ty.as_cooperative_matrix().is_none()
+            && ty.sized_vector_length().is_none();
+        if runtime {
+            let place = self.place(object)?;
+            if place.swizzle.is_some() {
+                return Err(internal(at));
+            }
+            let length = self.add(Expression::WideArrayLength(place.pointer), at)?;
+            return self.as_kind(length, crate::Scalar::I64, at);
+        }
+        let length = self.length(object, at)?;
+        self.as_kind(length, crate::Scalar::I64, at)
     }
 
     fn length(&mut self, object: &AstExpression, at: Span) -> Result<Handle<Expression>> {

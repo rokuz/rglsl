@@ -421,6 +421,11 @@ pub(crate) fn variable_extension(name: &str) -> Option<&'static str> {
         | "gl_SubGroupGtMaskARB"
         | "gl_SubGroupLeMaskARB"
         | "gl_SubGroupLtMaskARB" => ARB_BALLOT,
+        "gl_WarpsPerSMNV" | "gl_SMCountNV" | "gl_WarpIDNV" | "gl_SMIDNV" => {
+            "GL_NV_shader_sm_builtins"
+        }
+        "gl_CoreIDARM" | "gl_CoreCountARM" | "gl_CoreMaxIDARM" | "gl_WarpIDARM"
+        | "gl_WarpMaxIDARM" => "GL_ARM_shader_core_builtins",
         _ => return None,
     })
 }

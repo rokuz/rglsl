@@ -17,6 +17,7 @@ mod specialization;
 mod stage;
 mod statement;
 mod subgroup;
+mod tensor;
 mod types;
 mod xfb;
 
@@ -332,6 +333,7 @@ impl<'a> Lowerer<'a> {
             module: Module {
                 vulkan_memory_model: analysis.vulkan_memory_model,
                 descriptor_heap: analysis.extensions.contains(heap::HEAP_EXTENSION),
+                shader_64bit_indexing: analysis.shader_64bit_indexing,
                 ..Module::default()
             },
             layouter: Layouter::default(),
