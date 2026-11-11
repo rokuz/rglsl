@@ -913,7 +913,7 @@ impl FunctionInfo {
                 non_uniform_result: Some(handle),
                 requirements: UniformityRequirements::empty(),
             },
-            E::SubgroupOperationResult { .. } => Uniformity {
+            E::SubgroupOperationResult { .. } | E::SpirvInstructionResult { .. } => Uniformity {
                 non_uniform_result: Some(handle),
                 requirements: UniformityRequirements::empty(),
             },
@@ -1283,6 +1283,20 @@ impl FunctionInfo {
                     let _ = self.add_ref_impl(tensor, GlobalUse::WRITE);
                     let _ = self.add_ref(coordinates);
                     let _ = self.add_ref(value);
+                    FunctionUniformity::new()
+                }
+                S::SpirvInstruction { ref operands, .. } => {
+                    for operand in operands {
+                        match *operand {
+                            crate::SpirvOperand::Value(value) => {
+                                let _ = self.add_ref(value);
+                            }
+                            crate::SpirvOperand::Pointer(pointer) => {
+                                let _ = self.add_ref_impl(pointer, GlobalUse::READ);
+                            }
+                            crate::SpirvOperand::Literal(_) => {}
+                        }
+                    }
                     FunctionUniformity::new()
                 }
                 S::ImageStore {
@@ -1665,6 +1679,7 @@ fn uniform_control_flow() {
             input_attachment_index: None,
             heap_offset: None,
             tile_attachment: false,
+            spirv_decorations: Default::default(),
         },
         Default::default(),
     );
@@ -1681,6 +1696,7 @@ fn uniform_control_flow() {
             input_attachment_index: None,
             heap_offset: None,
             tile_attachment: false,
+            spirv_decorations: Default::default(),
         },
         Default::default(),
     );

@@ -105,6 +105,7 @@ mod helpers;
 mod image;
 mod index;
 mod instructions;
+mod intrinsics;
 mod layout;
 mod mesh_shader;
 mod message;
@@ -1025,6 +1026,8 @@ pub struct Writer {
     abstract_type_declared: bool,
     debug_printf_strings: crate::FastHashMap<String, Word>,
     raw_capabilities: crate::FastIndexSet<Word>,
+    raw_extensions: crate::FastIndexSet<String>,
+    spirv_ext_imports: crate::FastHashMap<String, Word>,
     utf_encoded: crate::FastHashSet<Word>,
     qcom_decorations: crate::FastHashSet<(Word, spirv::Decoration)>,
     laid_out_copies: crate::FastHashMap<Handle<crate::Type>, Word>,

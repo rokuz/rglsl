@@ -462,6 +462,26 @@ impl Analyzer<'_> {
         }
         let first_argument = arguments.first().map_or(span, |argument| argument.span);
         let mut failed = false;
+        if function.spirv_instruction.is_some() {
+            let literal_failed =
+                operands
+                    .iter()
+                    .zip(&function.parameters)
+                    .any(|(operand, parameter)| {
+                        parameter.qualifiers.spirv_literal
+                            && (!operand.constant || operand.specialization)
+                    });
+            if literal_failed {
+                self.error(
+                    first_argument,
+                    DiagnosticKind::SpirvIntrinsic {
+                        subject: String::from("spirv_literal"),
+                        reason: "Non front-end constant expressions cannot be passed for 'spirv_literal' parameters.",
+                    },
+                );
+                failed = true;
+            }
+        }
         for ((argument, operand), parameter) in
             arguments.iter().zip(&operands).zip(&function.parameters)
         {

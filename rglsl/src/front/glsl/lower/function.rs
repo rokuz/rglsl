@@ -464,6 +464,7 @@ impl<'a> Lowerer<'a> {
                 .map(|conservative| EarlyDepthTest::Allow { conservative })
         };
         let opacity_micromap = self.opacity_micromap(at)?;
+        let spirv_execution_modes = self.spirv_execution_modes(at)?;
         let (geometry, tessellation) = self.stage_info();
         self.module.entry_points.push(EntryPoint {
             name: String::from("main"),
@@ -484,6 +485,7 @@ impl<'a> Lowerer<'a> {
             mesh_shader: self.mesh_shader_info(),
             tile_shading: self.tile_shading(),
             derivative_group: self.derivative_group(),
+            spirv_execution_modes,
         });
         Ok(())
     }

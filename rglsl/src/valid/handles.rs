@@ -46,6 +46,7 @@ impl super::Validator {
             descriptor_heap: _,
             shader_64bit_indexing: _,
             ray_tracing: _,
+            spirv_requirements: _,
         } = module;
 
         // Because types can refer to global expressions and vice versa, to
@@ -176,6 +177,7 @@ impl super::Validator {
                 input_attachment_index: _,
                 heap_offset,
                 tile_attachment: _,
+                ref spirv_decorations,
             } = global_variable;
             validate_type(ty)?;
             if let Some(init_expr) = init {
@@ -183,6 +185,18 @@ impl super::Validator {
             }
             if let Some(offset) = heap_offset {
                 validate_const_expr(offset)?;
+            }
+            for decoration in spirv_decorations {
+                if let crate::SpirvDecorationOperands::Ids(ref ids) = decoration.operands {
+                    for &id in ids {
+                        match id {
+                            crate::SpirvId::Constant(constant) => validate_const_expr(constant)?,
+                            crate::SpirvId::Global(global) => {
+                                Self::validate_global_variable_handle(global, global_variables)?;
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -260,6 +274,13 @@ impl super::Validator {
             }
             if let Some(enable) = entry_point.opacity_micromap {
                 validate_const_expr(enable)?;
+            }
+            for mode in &entry_point.spirv_execution_modes {
+                if let crate::SpirvExecutionModeOperands::Ids(ref ids) = mode.operands {
+                    for &id in ids {
+                        validate_const_expr(id)?;
+                    }
+                }
             }
             for &variable in &entry_point.interface {
                 Self::validate_global_variable_handle(variable, global_variables)?;
@@ -512,6 +533,13 @@ impl super::Validator {
                 span: _,
             } => {
                 handle.check_dep_iter(members.iter().map(|m| m.ty))?;
+                None
+            }
+            crate::TypeInner::Spirv { ref operands, .. } => {
+                handle.check_dep_iter(operands.iter().filter_map(|operand| match *operand {
+                    crate::SpirvTypeOperand::Type(base) => Some(base),
+                    crate::SpirvTypeOperand::Literal(_) => None,
+                }))?;
                 None
             }
         };
@@ -779,6 +807,7 @@ impl super::Validator {
             | crate::Expression::ReportIntersectionResult
             | crate::Expression::SubgroupBallotResult
             | crate::Expression::SubgroupOperationResult { .. }
+            | crate::Expression::SpirvInstructionResult { .. }
             | crate::Expression::WorkGroupUniformLoadResult { .. } => (),
             crate::Expression::ArrayLength(array) | crate::Expression::WideArrayLength(array) => {
                 handle.check_dep(array)?;
@@ -1168,6 +1197,24 @@ impl super::Validator {
                 validate_expr(tensor)?;
                 validate_expr(coordinates)?;
                 validate_expr(value)?;
+                Ok(())
+            }
+            crate::Statement::SpirvInstruction {
+                ref operands,
+                result,
+                ..
+            } => {
+                for operand in operands {
+                    match *operand {
+                        crate::SpirvOperand::Value(value) | crate::SpirvOperand::Pointer(value) => {
+                            validate_expr(value)?;
+                        }
+                        crate::SpirvOperand::Literal(_) => {}
+                    }
+                }
+                if let Some(result) = result {
+                    validate_expr(result)?;
+                }
                 Ok(())
             }
             crate::Statement::Break

@@ -7,6 +7,7 @@ mod expression;
 mod function;
 mod globals;
 mod heap;
+mod intrinsics;
 mod library;
 mod mesh;
 mod message;
@@ -561,6 +562,9 @@ impl<'a> Lowerer<'a> {
             }
         }
         let result = self.declare_per_vertex();
+        self.report(result);
+        self.spirv_requirements();
+        let result = self.spirv_decorations();
         self.report(result);
         if let Some(layer) = self.layer_layout.redeclared {
             let result = self.global_ref(layer, Span::UNDEFINED).map(|_| ());

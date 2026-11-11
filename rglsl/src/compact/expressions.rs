@@ -273,7 +273,8 @@ impl ExpressionTracer<'_> {
             Ex::CallResult(_) => {}
             Ex::AtomicResult { ty, comparison: _ }
             | Ex::WorkGroupUniformLoadResult { ty }
-            | Ex::SubgroupOperationResult { ty } => {
+            | Ex::SubgroupOperationResult { ty }
+            | Ex::SpirvInstructionResult { ty } => {
                 self.types_used.insert(ty);
             }
             Ex::CooperativeLoad { ty, ref data } => {
@@ -533,7 +534,8 @@ impl ModuleMap {
                 comparison: _,
             } => self.types.adjust(ty)?,
             Ex::WorkGroupUniformLoadResult { ref mut ty } => self.types.adjust(ty)?,
-            Ex::SubgroupOperationResult { ref mut ty } => self.types.adjust(ty)?,
+            Ex::SubgroupOperationResult { ref mut ty }
+            | Ex::SpirvInstructionResult { ref mut ty } => self.types.adjust(ty)?,
             Ex::ArrayLength(ref mut expr) | Ex::WideArrayLength(ref mut expr) => adjust(expr)?,
             Ex::PhysicalAddress {
                 ref mut pointer,

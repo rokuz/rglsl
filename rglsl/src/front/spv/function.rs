@@ -634,6 +634,7 @@ impl<I: Iterator<Item = u32>> super::Frontend<I> {
             mesh_shader: None,
             tile_shading: crate::TileShading::default(),
             derivative_group: None,
+            spirv_execution_modes: Vec::new(),
         });
 
         Ok(())

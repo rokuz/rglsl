@@ -248,6 +248,24 @@ impl FunctionTracer<'_> {
                         self.expressions_used.insert(coordinates);
                         self.expressions_used.insert(value);
                     }
+                    St::SpirvInstruction {
+                        ref operands,
+                        result,
+                        ..
+                    } => {
+                        for operand in operands {
+                            match *operand {
+                                crate::SpirvOperand::Value(value)
+                                | crate::SpirvOperand::Pointer(value) => {
+                                    self.expressions_used.insert(value);
+                                }
+                                crate::SpirvOperand::Literal(_) => {}
+                            }
+                        }
+                        if let Some(result) = result {
+                            self.expressions_used.insert(result);
+                        }
+                    }
 
                     // Trivial statements.
                     St::Break
@@ -570,6 +588,22 @@ impl FunctionMap {
                         adjust(tensor)?;
                         adjust(coordinates)?;
                         adjust(value)?;
+                    }
+                    St::SpirvInstruction {
+                        ref mut operands,
+                        ref mut result,
+                        ..
+                    } => {
+                        for operand in operands.iter_mut() {
+                            match *operand {
+                                crate::SpirvOperand::Value(ref mut value)
+                                | crate::SpirvOperand::Pointer(ref mut value) => adjust(value)?,
+                                crate::SpirvOperand::Literal(_) => {}
+                            }
+                        }
+                        if let Some(ref mut result) = *result {
+                            adjust(result)?;
+                        }
                     }
 
                     // Trivial statements.

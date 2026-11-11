@@ -315,6 +315,7 @@ impl Lowerer<'_> {
                 scalar: scalar(s),
                 rank,
             },
+            TypeKind::Spirv(id) => self.spirv_type(id, span)?,
         };
         Ok(self.insert_type(inner))
     }

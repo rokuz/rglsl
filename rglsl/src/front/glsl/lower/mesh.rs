@@ -1,4 +1,5 @@
 use alloc::string::String;
+use alloc::vec::Vec;
 
 use rglsl_ast::ast::Expression as AstExpression;
 use rglsl_sema::scope::{Qualifiers, Storage};
@@ -110,6 +111,7 @@ impl Lowerer<'_> {
                 input_attachment_index: None,
                 heap_offset: None,
                 tile_attachment: false,
+                spirv_decorations: Vec::new(),
             },
             at,
         );
@@ -174,7 +176,7 @@ impl Lowerer<'_> {
                         MeshShaderExtension::Ext
                     },
                     output: None,
-                    task_memory: alloc::vec::Vec::new(),
+                    task_memory: Vec::new(),
                 })
             }
             _ => None,
@@ -189,7 +191,7 @@ impl FunctionLowerer<'_, '_> {
         arguments: &[AstExpression],
         at: Span,
     ) -> Result<()> {
-        let mut values = alloc::vec::Vec::with_capacity(arguments.len());
+        let mut values = Vec::with_capacity(arguments.len());
         for argument in arguments {
             values.push(self.rvalue(argument)?);
         }

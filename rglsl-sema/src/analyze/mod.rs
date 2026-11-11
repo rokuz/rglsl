@@ -12,6 +12,7 @@ mod qcom;
 mod ray;
 mod reference;
 mod reference_expression;
+mod spirv;
 mod stage;
 mod statement;
 mod tensor;
@@ -39,6 +40,7 @@ use crate::scope::{
     Function, FunctionId, Lookup, Origin, Qualifiers, Scopes, Storage, Symbol, SymbolId,
     SymbolKind, Variable,
 };
+use crate::spirv::{SpirvExecutionModes, SpirvRequirements};
 use crate::types::{BlockStorage, Packing, Type, TypeKind, TypeRegistry};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -110,6 +112,8 @@ pub struct Analysis {
     pub promote_uint32_indices: bool,
     pub primitive_culling: bool,
     pub derivative_group: Option<(DerivativeGroup, bool)>,
+    pub spirv_requirements: SpirvRequirements,
+    pub spirv_execution_modes: SpirvExecutionModes,
 }
 
 impl Analysis {
@@ -332,6 +336,8 @@ pub(crate) struct Analyzer<'a> {
     pub ray_locations: [Vec<u32>; 2],
     pub primitive_culling: bool,
     pub stage_layout: stage::StageLayout,
+    pub spirv_requirements: SpirvRequirements,
+    pub spirv_execution_modes: SpirvExecutionModes,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -402,6 +408,8 @@ impl<'a> Analyzer<'a> {
             ray_locations: [Vec::new(), Vec::new()],
             primitive_culling: false,
             stage_layout: stage::StageLayout::default(),
+            spirv_requirements: SpirvRequirements::default(),
+            spirv_execution_modes: SpirvExecutionModes::new(),
         }
     }
 
@@ -439,7 +447,7 @@ impl<'a> Analyzer<'a> {
         let missing: Vec<(Span, String)> = reachable
             .iter()
             .filter_map(|id| self.function(*id))
-            .filter(|function| !function.defined)
+            .filter(|function| !function.defined && function.spirv_instruction.is_none())
             .map(|function| (function.span, function.name.clone()))
             .collect();
         for (span, name) in missing {
@@ -591,6 +599,8 @@ impl<'a> Analyzer<'a> {
             promote_uint32_indices: self.promote_uint32_indices,
             primitive_culling: self.primitive_culling,
             derivative_group: self.derivative_group,
+            spirv_requirements: self.spirv_requirements,
+            spirv_execution_modes: self.spirv_execution_modes,
         }
     }
 

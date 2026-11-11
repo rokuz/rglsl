@@ -1265,6 +1265,99 @@ pub enum TypeInner {
         base: Handle<Type>,
         space: AddressSpace,
     },
+    Spirv {
+        opcode: u32,
+        operands: Vec<SpirvTypeOperand>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub enum SpirvTypeOperand {
+    Literal(u32),
+    Type(Handle<Type>),
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub struct SpirvRequirements {
+    pub extensions: Vec<String>,
+    pub capabilities: Vec<u32>,
+}
+
+impl SpirvRequirements {
+    pub const fn is_empty(&self) -> bool {
+        self.extensions.is_empty() && self.capabilities.is_empty()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub struct SpirvDecoration {
+    pub decoration: u32,
+    pub operands: SpirvDecorationOperands,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub enum SpirvDecorationOperands {
+    Literals(Vec<u32>),
+    Ids(Vec<SpirvId>),
+    Strings(Vec<String>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub enum SpirvId {
+    Constant(Handle<Expression>),
+    Global(Handle<GlobalVariable>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub struct SpirvExecutionMode {
+    pub mode: u32,
+    pub operands: SpirvExecutionModeOperands,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub enum SpirvExecutionModeOperands {
+    Literals(Vec<u32>),
+    Ids(Vec<Handle<Expression>>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub struct SpirvInstruction {
+    pub set: Option<String>,
+    pub opcode: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub enum SpirvOperand {
+    Value(Handle<Expression>),
+    Pointer(Handle<Expression>),
+    Literal(u32),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
@@ -1453,6 +1546,9 @@ pub struct GlobalVariable {
     )]
     #[cfg_attr(feature = "deserialize", serde(default))]
     pub tile_attachment: bool,
+    #[cfg_attr(feature = "serialize", serde(skip_serializing_if = "Vec::is_empty"))]
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    pub spirv_decorations: Vec<SpirvDecoration>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -2782,6 +2878,9 @@ pub enum Expression {
     SubgroupOperationResult {
         ty: Handle<Type>,
     },
+    SpirvInstructionResult {
+        ty: Handle<Type>,
+    },
 
     CooperativeLoad {
         ty: Handle<Type>,
@@ -3380,6 +3479,11 @@ pub enum Statement {
         value: Handle<Expression>,
         nontemporal: bool,
     },
+    SpirvInstruction {
+        instruction: SpirvInstruction,
+        operands: Vec<SpirvOperand>,
+        result: Option<Handle<Expression>>,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -3619,6 +3723,9 @@ pub struct EntryPoint {
         serde(skip_serializing_if = "TileShading::is_default")
     )]
     pub tile_shading: TileShading,
+    #[cfg_attr(feature = "serialize", serde(skip_serializing_if = "Vec::is_empty"))]
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    pub spirv_execution_modes: Vec<SpirvExecutionMode>,
     #[cfg_attr(feature = "serialize", serde(skip_serializing_if = "Option::is_none"))]
     #[cfg_attr(feature = "deserialize", serde(default))]
     pub derivative_group: Option<DerivativeGroup>,
@@ -4234,4 +4341,10 @@ pub struct Module {
     )]
     #[cfg_attr(feature = "deserialize", serde(default))]
     pub ray_tracing: RayTracingFeatures,
+    #[cfg_attr(
+        feature = "serialize",
+        serde(skip_serializing_if = "SpirvRequirements::is_empty")
+    )]
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    pub spirv_requirements: SpirvRequirements,
 }
