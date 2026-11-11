@@ -1413,8 +1413,11 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
             );
             components.push(expr);
         }
-        components[selection as usize] = self.insert_composite(
-            components[selection as usize],
+        let selected = *components
+            .get(selection as usize)
+            .ok_or(Error::InvalidAccessIndex(selection))?;
+        let inserted = self.insert_composite(
+            selected,
             child_type_id,
             object_expr,
             &selections[1..],
@@ -1422,6 +1425,10 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
             expressions,
             span,
         )?;
+        let slot = components
+            .get_mut(selection as usize)
+            .ok_or(Error::InvalidAccessIndex(selection))?;
+        *slot = inserted;
 
         Ok(expressions.append(
             crate::Expression::Compose {
@@ -2062,7 +2069,10 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                 // Ignored because the other option (OriginLowerLeft) is not valid in Vulkan mode.
             }
             ExecutionMode::LocalSize => {
-                ep.workgroup_size = [args[0], args[1], args[2]];
+                let [x, y, z] = *args.as_slice() else {
+                    return Err(Error::InvalidOperandCount(inst.op, inst.wc));
+                };
+                ep.workgroup_size = [x, y, z];
             }
             _ => {
                 return Err(Error::UnsupportedExecutionMode(mode_id));
@@ -3360,5 +3370,89 @@ mod test {
         ];
         super::parse_u8_slice(&bin, &Default::default())?;
         Ok(())
+    }
+
+    fn module_with_function(body: &[(u32, &[u32])]) -> crate::TestResult<vec::Vec<u32>> {
+        let mut words = vec![0x0723_0203, 0x0001_0000, 0, 20, 0];
+        let declarations: [(u32, &[u32]); 9] = [
+            (17, &[1]),
+            (14, &[0, 1]),
+            (19, &[1]),
+            (33, &[2, 1]),
+            (22, &[3, 32]),
+            (23, &[4, 3, 4]),
+            (30, &[5]),
+            (43, &[3, 8, 0x3f80_0000]),
+            (44, &[4, 9, 8, 8, 8, 8]),
+        ];
+        let function: [(u32, &[u32]); 2] = [(54, &[1, 6, 0, 2]), (248, &[7])];
+        let end: [(u32, &[u32]); 2] = [(253, &[]), (56, &[])];
+        for &(op, operands) in declarations
+            .iter()
+            .chain(function.iter())
+            .chain(body.iter())
+            .chain(end.iter())
+        {
+            let count = u32::try_from(operands.len())? + 1;
+            words.push((count << 16) | op);
+            words.extend_from_slice(operands);
+        }
+        Ok(words)
+    }
+
+    #[test]
+    fn composite_construct_may_have_no_constituents() -> crate::TestResult {
+        let options = super::Options::default();
+        let empty_struct = module_with_function(&[(80, &[5, 10])])?;
+        super::Frontend::new(empty_struct.into_iter(), &options).parse()?;
+        let empty_vector = module_with_function(&[(80, &[4, 10])])?;
+        let _result = super::Frontend::new(empty_vector.into_iter(), &options).parse();
+        Ok(())
+    }
+
+    #[test]
+    fn composite_insert_index_is_checked() -> crate::TestResult {
+        let options = super::Options::default();
+        let words = module_with_function(&[(82, &[4, 10, 8, 9, 7])])?;
+        assert!(matches!(
+            super::Frontend::new(words.into_iter(), &options).parse(),
+            Err(super::Error::InvalidAccessIndex(7))
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn local_size_needs_three_operands() {
+        let words = vec![
+            0x0723_0203,
+            0x0001_0000,
+            0,
+            8,
+            0,
+            (2 << 16) | 17,
+            1,
+            (3 << 16) | 14,
+            0,
+            1,
+            (5 << 16) | 15,
+            5,
+            1,
+            0x6e69_616d,
+            0,
+            (5 << 16) | 16,
+            1,
+            17,
+            1,
+            1,
+        ];
+        let options = super::Options::default();
+        let result = super::Frontend::new(words.into_iter(), &options).parse();
+        assert!(matches!(
+            result,
+            Err(super::Error::InvalidOperandCount(
+                spirv::Op::ExecutionMode,
+                5
+            ))
+        ));
     }
 }

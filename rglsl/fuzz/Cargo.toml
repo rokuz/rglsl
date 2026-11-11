@@ -18,6 +18,9 @@ libfuzzer-sys.workspace = true
 workspace = true
 features = ["arbitrary", "spv-in", "glsl-in"]
 
+[target.'cfg(not(any(target_arch = "wasm32", target_os = "ios", target_os = "visionos")))'.dependencies.rglsl-link]
+workspace = true
+
 [build-dependencies]
 cfg_aliases.workspace = true
 
@@ -38,6 +41,13 @@ doc = false
 [[bin]]
 name = "ir"
 path = "fuzz_targets/ir.rs"
+bench = false
+test = false
+doc = false
+
+[[bin]]
+name = "object"
+path = "fuzz_targets/object.rs"
 bench = false
 test = false
 doc = false

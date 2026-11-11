@@ -711,17 +711,19 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                         components.push(handle);
                     }
                     let ty = self.lookup_type.lookup(result_type_id)?.handle;
-                    let first = components[0];
-                    let expr = match ctx.module.types[ty].inner {
+                    let splat = match ctx.module.types[ty].inner {
                         // this is an optimization to detect the splat
                         crate::TypeInner::Vector { size, .. }
-                            if components.len() == size as usize
-                                && components[1..].iter().all(|&c| c == first) =>
+                            if components.len() == size as usize =>
                         {
-                            crate::Expression::Splat { size, value: first }
+                            components
+                                .split_first()
+                                .filter(|&(first, rest)| rest.iter().all(|c| c == first))
+                                .map(|(&value, _)| crate::Expression::Splat { size, value })
                         }
-                        _ => crate::Expression::Compose { ty, components },
+                        _ => None,
                     };
+                    let expr = splat.unwrap_or(crate::Expression::Compose { ty, components });
                     self.lookup_expression.insert(
                         id,
                         LookupExpression {
