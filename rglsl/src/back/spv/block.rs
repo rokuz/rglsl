@@ -3702,71 +3702,88 @@ impl BlockContext<'_> {
     ) -> Result<BlockExitDisposition, Error> {
         let mut block = Block::new(label_id);
         for (statement, span) in rglsl_block.span_iter() {
-            if let (Some(debug_info), false) = (
-                debug_info,
-                matches!(
-                    statement,
-                    &(Statement::Block(..)
-                        | Statement::Break
-                        | Statement::Continue
-                        | Statement::Kill
-                        | Statement::Return { .. }
-                        | Statement::Loop { .. })
-                ),
-            ) {
-                let loc: crate::SourceLocation = span.location(debug_info.source_code);
-                block.body.push(Instruction::line(
-                    debug_info.source_file_id,
-                    loc.line_number,
-                    loc.line_position,
-                ));
-            };
-            let next = match *statement {
-                Statement::Block(ref block_statements) => {
-                    self.write_scope(block, block_statements, loop_context, debug_info)?
-                }
-                Statement::If {
-                    condition,
-                    ref accept,
-                    ref reject,
-                    control,
-                } => self.write_if(
-                    block,
-                    condition,
-                    [accept, reject],
-                    control,
-                    loop_context,
-                    debug_info,
-                )?,
-                Statement::Switch {
-                    selector,
-                    ref cases,
-                    control,
-                } => {
-                    self.write_switch(block, selector, cases, control, loop_context, debug_info)?
-                }
-                Statement::Loop {
-                    ref body,
-                    ref continuing,
-                    break_if,
-                    control,
-                } => self.write_loop(
-                    block,
-                    [body, continuing],
-                    break_if,
-                    control,
-                    span,
-                    debug_info,
-                )?,
-                _ => self.write_statement(block, statement, loop_context)?,
-            };
-            match next {
+            Self::write_line(&mut block, statement, span, debug_info);
+            match self.write_statement_kind(block, statement, span, loop_context, debug_info)? {
                 Some(next) => block = next,
                 None => return Ok(BlockExitDisposition::Discarded),
             }
         }
         self.finish_block(block, exit, loop_context)?;
         Ok(BlockExitDisposition::Used)
+    }
+
+    fn write_line(
+        block: &mut Block,
+        statement: &Statement,
+        span: &crate::Span,
+        debug_info: Option<&DebugInfoInner>,
+    ) {
+        if let (Some(debug_info), false) = (
+            debug_info,
+            matches!(
+                statement,
+                &(Statement::Block(..)
+                    | Statement::Break
+                    | Statement::Continue
+                    | Statement::Kill
+                    | Statement::Return { .. }
+                    | Statement::Loop { .. })
+            ),
+        ) {
+            let loc: crate::SourceLocation = span.location(debug_info.source_code);
+            block.body.push(Instruction::line(
+                debug_info.source_file_id,
+                loc.line_number,
+                loc.line_position,
+            ));
+        }
+    }
+
+    fn write_statement_kind(
+        &mut self,
+        block: Block,
+        statement: &Statement,
+        span: &crate::Span,
+        loop_context: LoopContext,
+        debug_info: Option<&DebugInfoInner>,
+    ) -> Result<Option<Block>, Error> {
+        match *statement {
+            Statement::Block(ref block_statements) => {
+                self.write_scope(block, block_statements, loop_context, debug_info)
+            }
+            Statement::If {
+                condition,
+                ref accept,
+                ref reject,
+                control,
+            } => self.write_if(
+                block,
+                condition,
+                [accept, reject],
+                control,
+                loop_context,
+                debug_info,
+            ),
+            Statement::Switch {
+                selector,
+                ref cases,
+                control,
+            } => self.write_switch(block, selector, cases, control, loop_context, debug_info),
+            Statement::Loop {
+                ref body,
+                ref continuing,
+                break_if,
+                control,
+            } => self.write_loop(
+                block,
+                [body, continuing],
+                break_if,
+                control,
+                span,
+                debug_info,
+            ),
+            _ => self.write_statement(block, statement, loop_context),
+        }
     }
 
     fn finish_block(

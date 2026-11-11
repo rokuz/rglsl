@@ -217,7 +217,6 @@ impl Analyzer<'_> {
         }
     }
 
-    #[inline(never)]
     fn castable(
         &mut self,
         span: Span,

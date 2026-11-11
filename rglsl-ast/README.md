@@ -4,8 +4,9 @@ A syntax tree, parser and pretty printer for Vulkan GLSL (`#version 450` / `460`
 rglsl compiler front end and by `rglsl-fuzz`. `#![no_std]` with `alloc`.
 
 - `rglsl_ast::parse(&str) -> Result<TranslationUnit, ParseError>`: a hand-written lexer and
-  recursive-descent parser. It never panics; nesting deeper than `MAX_NESTING_DEPTH` and
-  expressions taller than `MAX_EXPRESSION_HEIGHT` are parse errors.
+  recursive-descent parser. It never panics; nesting deeper than `MAX_NESTING_DEPTH`, counting
+  the parser's own recursion, and enclosing statements plus expression height, is a parse error
+  (`docs/design/stack.md`).
 - `rglsl_ast::ast`: the tree. Its types are named after the productions of the grammar in
   chapter 9 of the GLSL 4.60 specification (`TranslationUnit`, `ExternalDeclaration`,
   `InitDeclaratorList`, `FullySpecifiedType`, `TypeQualifier`, `LayoutQualifierId`, ...). The set

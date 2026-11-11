@@ -28,7 +28,7 @@ use crate::keywords::{
 use crate::lexer::{tokenize, Token, TokenKind};
 use crate::span::Span;
 
-pub const MAX_NESTING_DEPTH: u32 = 256;
+pub const MAX_NESTING_DEPTH: u32 = 128;
 pub const NON_UNIFORM: &str = "nonuniformEXT";
 const NON_UNIFORM_EXTENSION: &str = "GL_EXT_nonuniform_qualifier";
 const SPIRV_INTRINSICS: &str = "GL_EXT_spirv_intrinsics";
@@ -47,7 +47,6 @@ const SPIRV_DECLARATIONS: [&str; 3] = [
     "spirv_execution_mode",
     "spirv_execution_mode_id",
 ];
-pub const MAX_EXPRESSION_HEIGHT: u32 = 512;
 
 type Result<T> = core::result::Result<T, Box<ParseError>>;
 
@@ -103,6 +102,7 @@ struct Parser<'a> {
     previous_end: u32,
     next_id: u32,
     depth: u32,
+    expression_depth: u32,
     struct_scopes: Vec<BTreeSet<&'a str>>,
     extensions: ExtensionState,
 }
@@ -134,6 +134,7 @@ pub fn parse_prefix(source: &str) -> (TranslationUnit, Option<ParseError>) {
         previous_end: 0,
         next_id: 0,
         depth: 0,
+        expression_depth: 0,
         struct_scopes: Vec::from([BTreeSet::from([
             "gl_TextureFootprint2DNV",
             "gl_TextureFootprint3DNV",
@@ -277,6 +278,17 @@ impl<'a> Parser<'a> {
         self.depth = self.depth.saturating_sub(1);
     }
 
+    fn enter_expression(&mut self) -> Result<()> {
+        self.enter()?;
+        self.expression_depth += 1;
+        Ok(())
+    }
+
+    const fn leave_expression(&mut self) {
+        self.expression_depth = self.expression_depth.saturating_sub(1);
+        self.leave();
+    }
+
     fn nested<T>(&mut self, parse: impl FnOnce(&mut Self) -> Result<T>) -> Result<T> {
         self.enter()?;
         let result = parse(self);
@@ -291,7 +303,8 @@ impl<'a> Parser<'a> {
         child_height: u32,
     ) -> Result<Measured> {
         let height = child_height.saturating_add(1);
-        if height > MAX_EXPRESSION_HEIGHT {
+        let enclosing = self.depth.saturating_sub(self.expression_depth);
+        if enclosing.saturating_add(height) > MAX_NESTING_DEPTH {
             return Err(self.error(ParseErrorKind::NestingTooDeep, self.span_from(start)));
         }
         Ok(Measured {
@@ -1068,67 +1081,90 @@ impl<'a> Parser<'a> {
             let TokenKind::Word(word) = token.kind else {
                 return Err(parser.unexpected("a type"));
             };
-            let non_array = if word == "struct" {
-                TypeSpecifierNonArray::Struct(parser.parse_struct_specifier()?)
-            } else if parser.is_spirv_word(word, &[SPIRV_TYPE]) {
-                TypeSpecifierNonArray::Spirv(Box::new(parser.parse_spirv_type_specifier()?))
-            } else {
-                let non_array = if word == "void" {
-                    TypeSpecifierNonArray::Void
-                } else if let Some(basic) = BasicType::from_keyword(word) {
-                    parser.require_type_extension(word, token.span)?;
-                    TypeSpecifierNonArray::Basic(basic)
-                } else if is_opaque_type_keyword(word) {
-                    parser.require_type_extension(word, token.span)?;
-                    TypeSpecifierNonArray::Opaque(word.to_owned())
-                } else if let Some(kind) = ParameterizedType::from_keyword(word) {
-                    parser.require_type_extension(word, token.span)?;
-                    TypeSpecifierNonArray::Parameterized(kind)
-                } else if parser.is_struct_name(word) {
-                    TypeSpecifierNonArray::TypeName(word.to_owned())
-                } else if is_unavailable_word(word) {
-                    return Err(
-                        parser.error(ParseErrorKind::ReservedWord(word.to_owned()), token.span)
-                    );
-                } else if is_reserved_word(word) {
-                    return Err(parser.unexpected("a type"));
-                } else {
-                    return Err(
-                        parser.error(ParseErrorKind::UnknownType(word.to_owned()), token.span)
-                    );
-                };
-                parser.advance();
-                non_array
-            };
-            let (parameters, parameter_height) = if parser.at("<")
-                && !matches!(
-                    non_array,
-                    TypeSpecifierNonArray::TypeName(_)
-                        | TypeSpecifierNonArray::Struct(_)
-                        | TypeSpecifierNonArray::Spirv(_)
-                ) {
-                if !matches!(non_array, TypeSpecifierNonArray::Parameterized(_)) {
-                    return Err(parser.error(
-                        ParseErrorKind::UnexpectedTypeParameters(word.to_owned()),
-                        token.span,
-                    ));
-                }
-                let (parameters, height) = parser.parse_type_parameters()?;
-                (Some(parameters), height)
-            } else {
-                (None, 0)
-            };
-            let (array, height) = parser.parse_array_specifier()?;
-            let specifier = TypeSpecifier {
-                non_array,
-                parameters,
-                array,
-            };
-            Ok((
-                parser.spanned(token.span.start, specifier),
-                height.max(parameter_height),
-            ))
+            let non_array = parser.parse_type_specifier_non_array(token, word)?;
+            parser.finish_type_specifier(token, word, non_array)
         })
+    }
+
+    fn parse_type_specifier_non_array(
+        &mut self,
+        token: Token<'a>,
+        word: &'a str,
+    ) -> Result<TypeSpecifierNonArray> {
+        if word == "struct" {
+            self.parse_struct_specifier()
+                .map(TypeSpecifierNonArray::Struct)
+        } else if self.is_spirv_word(word, &[SPIRV_TYPE]) {
+            self.parse_spirv_type_specifier()
+                .map(|spirv| TypeSpecifierNonArray::Spirv(Box::new(spirv)))
+        } else {
+            self.parse_simple_type_specifier(token, word)
+        }
+    }
+
+    fn parse_simple_type_specifier(
+        &mut self,
+        token: Token<'a>,
+        word: &'a str,
+    ) -> Result<TypeSpecifierNonArray> {
+        let non_array = if word == "void" {
+            TypeSpecifierNonArray::Void
+        } else if let Some(basic) = BasicType::from_keyword(word) {
+            self.require_type_extension(word, token.span)?;
+            TypeSpecifierNonArray::Basic(basic)
+        } else if is_opaque_type_keyword(word) {
+            self.require_type_extension(word, token.span)?;
+            TypeSpecifierNonArray::Opaque(word.to_owned())
+        } else if let Some(kind) = ParameterizedType::from_keyword(word) {
+            self.require_type_extension(word, token.span)?;
+            TypeSpecifierNonArray::Parameterized(kind)
+        } else if self.is_struct_name(word) {
+            TypeSpecifierNonArray::TypeName(word.to_owned())
+        } else if is_unavailable_word(word) {
+            return Err(self.error(ParseErrorKind::ReservedWord(word.to_owned()), token.span));
+        } else if is_reserved_word(word) {
+            return Err(self.unexpected("a type"));
+        } else {
+            return Err(self.error(ParseErrorKind::UnknownType(word.to_owned()), token.span));
+        };
+        self.advance();
+        Ok(non_array)
+    }
+
+    fn finish_type_specifier(
+        &mut self,
+        token: Token<'a>,
+        word: &'a str,
+        non_array: TypeSpecifierNonArray,
+    ) -> Result<(Spanned<TypeSpecifier>, u32)> {
+        let (parameters, parameter_height) = if self.at("<")
+            && !matches!(
+                non_array,
+                TypeSpecifierNonArray::TypeName(_)
+                    | TypeSpecifierNonArray::Struct(_)
+                    | TypeSpecifierNonArray::Spirv(_)
+            ) {
+            if !matches!(non_array, TypeSpecifierNonArray::Parameterized(_)) {
+                return Err(self.error(
+                    ParseErrorKind::UnexpectedTypeParameters(word.to_owned()),
+                    token.span,
+                ));
+            }
+            let (parameters, height) = self.parse_type_parameters()?;
+            (Some(parameters), height)
+        } else {
+            (None, 0)
+        };
+        let (array, height) = self.parse_array_specifier()?;
+        let specifier = TypeSpecifier {
+            non_array,
+            parameters,
+            array,
+        };
+        Ok((
+            self.spanned(token.span.start, specifier),
+            height.max(parameter_height),
+        ))
     }
 
     fn parse_type_parameters(&mut self) -> Result<(Spanned<TypeParameters>, u32)> {
@@ -1210,45 +1246,62 @@ impl<'a> Parser<'a> {
         self.expect("{")?;
         let mut declarations = Vec::new();
         loop {
-            let start = self.start();
-            let qualifier = self.parse_type_qualifier()?;
-            let specifier = if qualifier.is_some() && self.at("{") {
-                let block_start = self.start();
-                let members = self.nested(Self::parse_struct_declaration_list)?;
-                let non_array = TypeSpecifierNonArray::InlineBlock(members);
-                self.spanned(
-                    block_start,
-                    TypeSpecifier {
-                        non_array,
-                        parameters: None,
-                        array: None,
-                    },
-                )
-            } else {
-                self.parse_type_specifier()?
-            };
-            let ty = self.spanned(
-                start,
-                FullySpecifiedType {
-                    qualifier,
-                    specifier,
-                },
-            );
-            let mut declarators = Vec::new();
-            loop {
-                let name = self.identifier()?;
-                let array = self.parse_array_specifier()?.0;
-                declarators.push(self.spanned(name.span.start, StructDeclarator { name, array }));
-                if !self.eat(",") {
-                    break;
-                }
-            }
-            self.expect(";")?;
-            declarations.push(self.spanned(start, StructDeclaration { ty, declarators }));
+            declarations.push(self.parse_struct_declaration()?);
             if self.eat("}") {
                 return Ok(declarations);
             }
         }
+    }
+
+    fn parse_struct_declaration(&mut self) -> Result<Spanned<StructDeclaration>> {
+        let start = self.start();
+        let qualifier = self.parse_type_qualifier()?;
+        let specifier = if qualifier.is_some() && self.at("{") {
+            self.parse_inline_block()?
+        } else {
+            self.parse_type_specifier()?
+        };
+        self.finish_struct_declaration(start, qualifier, specifier)
+    }
+
+    fn parse_inline_block(&mut self) -> Result<Spanned<TypeSpecifier>> {
+        let block_start = self.start();
+        let members = self.nested(Self::parse_struct_declaration_list)?;
+        let non_array = TypeSpecifierNonArray::InlineBlock(members);
+        Ok(self.spanned(
+            block_start,
+            TypeSpecifier {
+                non_array,
+                parameters: None,
+                array: None,
+            },
+        ))
+    }
+
+    fn finish_struct_declaration(
+        &mut self,
+        start: u32,
+        qualifier: Option<Spanned<TypeQualifier>>,
+        specifier: Spanned<TypeSpecifier>,
+    ) -> Result<Spanned<StructDeclaration>> {
+        let ty = self.spanned(
+            start,
+            FullySpecifiedType {
+                qualifier,
+                specifier,
+            },
+        );
+        let mut declarators = Vec::new();
+        loop {
+            let name = self.identifier()?;
+            let array = self.parse_array_specifier()?.0;
+            declarators.push(self.spanned(name.span.start, StructDeclarator { name, array }));
+            if !self.eat(",") {
+                break;
+            }
+        }
+        self.expect(";")?;
+        Ok(self.spanned(start, StructDeclaration { ty, declarators }))
     }
 
     fn parse_compound_statement(&mut self) -> Result<Spanned<CompoundStatement>> {
@@ -1584,9 +1637,9 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_assignment(&mut self) -> Result<Measured> {
-        self.enter()?;
+        self.enter_expression()?;
         let expression = self.parse_unguarded_assignment();
-        self.leave();
+        self.leave_expression();
         expression
     }
 
@@ -1719,7 +1772,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_unary(&mut self) -> Result<Measured> {
-        self.enter()?;
+        self.enter_expression()?;
         let operator = match self.peek().kind {
             TokenKind::Punctuator(symbol) => UnaryOperator::from_symbol(symbol),
             _ => None,
@@ -1729,7 +1782,7 @@ impl<'a> Parser<'a> {
             None if self.starts_cast() => self.parse_cast(),
             None => self.parse_postfix(),
         };
-        self.leave();
+        self.leave_expression();
         expression
     }
 

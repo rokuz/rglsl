@@ -852,7 +852,7 @@ impl<'a> FunctionLowerer<'_, 'a> {
                         }
                         Ok(Chain::Value(access))
                     } else {
-                        let pointer = self.spill(value, &base_ty, at)?;
+                        let pointer = self.spill(value, base_ty, at)?;
                         let pointer = self.add(
                             Expression::Access {
                                 base: pointer,
@@ -1572,6 +1572,16 @@ impl<'a> FunctionLowerer<'_, 'a> {
         at: Span,
     ) -> Result<Handle<Expression>> {
         let (value, ty) = self.typed(operand)?;
+        self.unary_typed(operator, at, value, ty)
+    }
+
+    fn unary_typed(
+        &mut self,
+        operator: AstUnary,
+        at: Span,
+        value: Handle<Expression>,
+        ty: GlslType,
+    ) -> Result<Handle<Expression>> {
         match operator {
             AstUnary::Plus => Ok(value),
             AstUnary::Minus => {
@@ -1772,38 +1782,46 @@ impl<'a> FunctionLowerer<'_, 'a> {
         value: &AstExpression,
         at: Span,
     ) -> Result<Handle<Expression>> {
-        let target_ty = self.info(target)?.ty.clone();
         let place = self.place(target)?;
         let result = match compound(operator) {
             None => self.rvalue(value)?,
-            Some(operator) if target_ty.is_reference() => {
-                let old = self.load(&place, at)?;
-                let (right, right_ty) = self.typed(value)?;
-                self.reference_offset(
-                    (old, &target_ty),
-                    (right, &right_ty),
-                    operator == AstBinary::Subtract,
-                    at,
-                )?
-            }
-            Some(operator) => {
-                let old = self.load(&place, at)?;
-                self.relax_load(target, old);
-                let value_info = self.info(value)?;
-                let value_non_uniform = value_info.non_uniform
-                    && value_info
-                        .conversion
-                        .as_ref()
-                        .is_none_or(|target| *target == value_info.ty);
-                let (right, right_ty) = self.typed(value)?;
-                let result = self.binary(operator, (old, &target_ty), (right, &right_ty), at)?;
-                if place.non_uniform || value_non_uniform {
-                    self.mark_operation(result);
-                }
-                result
-            }
+            Some(operator) => self.compound_assignment(operator, target, &place, value, at)?,
         };
         self.store(&place, result, at)?;
+        Ok(result)
+    }
+
+    fn compound_assignment(
+        &mut self,
+        operator: AstBinary,
+        target: &AstExpression,
+        place: &Place,
+        value: &AstExpression,
+        at: Span,
+    ) -> Result<Handle<Expression>> {
+        let target_ty = &self.info(target)?.ty;
+        let old = self.load(place, at)?;
+        if target_ty.is_reference() {
+            let (right, right_ty) = self.typed(value)?;
+            return self.reference_offset(
+                (old, target_ty),
+                (right, &right_ty),
+                operator == AstBinary::Subtract,
+                at,
+            );
+        }
+        self.relax_load(target, old);
+        let value_info = self.info(value)?;
+        let value_non_uniform = value_info.non_uniform
+            && value_info
+                .conversion
+                .as_ref()
+                .is_none_or(|target| *target == value_info.ty);
+        let (right, right_ty) = self.typed(value)?;
+        let result = self.binary(operator, (old, target_ty), (right, &right_ty), at)?;
+        if place.non_uniform || value_non_uniform {
+            self.mark_operation(result);
+        }
         Ok(result)
     }
 

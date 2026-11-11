@@ -748,6 +748,17 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   several `Immediate` variables when no two of them have the same bank and member offset (no
   bank is bank 0, offset 0); `EntryPointError::MoreThanOneImmediateUsed` is reported otherwise.
 
+- **Small frames on recursive paths** (`docs/design/stack.md`). The statement recursion of
+  `valid/function.rs` (`validate_block_impl`), `valid/analyzer.rs` (`process_block`),
+  `valid/handles.rs` (`validate_block_handles`) and `back/spv/block.rs` (`write_block`) is a
+  small dispatcher over `Block`, `If`, `Switch` and `Loop`; the other statements are handled by
+  one non-recursive function each (`validate_statement`, `process_statement`,
+  `validate_statement_handles`, `write_statement`). The checks and the emitted code are
+  unchanged.
+- **`Clone` for `Block` is iterative** (`ir/block.rs`): nested blocks are copied with a work
+  list, through `Block::shallow_clone`, `Statement::shell` and `Statement::child_blocks{,_mut}`,
+  so cloning a function uses constant stack.
+
 ## Cherry-picked upstream commits
 
 None yet.
