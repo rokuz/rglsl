@@ -464,6 +464,34 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   capabilities of the members of a mesh output block only when they are accessed. The
   validator accepts `Flat` together with `Centroid` or `Sample` on interface variables, as
   SPIR-V and glslang do. `MeshOutputTopology` derives `Hash`.
+- **Cooperative matrices, cooperative vectors, long vectors and small floats**
+  (`docs/design/cooperative.md`). Upstream's WGSL-shaped cooperative matrix (sizes
+  `CooperativeSize::{Eight, Sixteen}`, `CooperativeData::row_major`, A/B/C roles of `f16`/`f32`
+  only) is replaced: `CooperativeSize` is `Constant(NonZeroU32)` or `Pending(Handle<Override>)`;
+  `TypeInner::CooperativeMatrix` gains `scope` and `class: CooperativeMatrixClass::{Khr, Nv}`
+  and takes any scalar and size; `CooperativeData` is `{ pointer, stride: Option, layout }` with the
+  layout an expression. New types: `TypeInner::LongVector { size, scalar, class:
+  LongVectorClass::{Plain, CooperativeNv} }` (vectors of more than four components or of a
+  specialization size, and `coopvecNV`), `TypeInner::TensorLayout` and `TensorView`. New scalar
+  kinds `ScalarKind::{BFloat, FloatE4M3, FloatE5M2}` with `Literal::{BF16, FE4M3, FE5M2}` (the
+  bits) and `Scalar::{BF16, FE4M3, FE5M2}`; the constant evaluator converts them bit-exactly as
+  glslang (`proc::small_float`). New expressions: `CooperativeMultiplyAdd::saturating`,
+  `CooperativeMatrixLength` (also a global expression, an `OpSpecConstantOp` for NV matrices),
+  `Replicate`, `Expect`, `CooperativeVectorLoad`, `CooperativeVectorMatMul`, `Convert { expr, ty,
+  saturating, family: CooperativeFamily }`, `CooperativeMatrixResult`, `TensorCreate`,
+  `TensorSet`. New statements: `Assume`, `CooperativeVector(CooperativeVectorFunction)` and
+  `CooperativeMatrix { function: CooperativeMatrixFunction, result }`, whose `Reduce`,
+  `PerElement` and `LoadTensor` reference functions by handle (`compact` traces them). Binary,
+  unary, `As`, `Math`, `Relational` and `Access` accept long vectors; `Access` with a constant
+  index behind a pointer to an array is not bounds-checked against an implicitly sized array.
+  `proc::long_math_result` builds the struct results of `modf`/`frexp`/carry/borrow/extended
+  multiplication on long vectors. The SPIR-V backend writes the KHR and NV instructions, the
+  `SPV_NV_cooperative_matrix2`, `SPV_NV_tensor_addressing`, `SPV_EXT_cooperative_matrix_maintenance1`,
+  `SPV_NV_cooperative_matrix_decode_vector`, `SPV_NV_cooperative_vector`, `SPV_EXT_long_vector`,
+  `SPV_EXT_replicated_composites`, `SPV_KHR_bfloat16`, `SPV_EXT_float8` and
+  `SPV_KHR_expect_assume` capabilities and extensions, and the ARM cooperative matrix layouts.
+  Upstream's `ir-cooperative-matrix*` snapshot inputs and outputs were deleted: they used the
+  removed sizes and `row_major`, and the GLSL corpus covers the feature.
 
 ## Cherry-picked upstream commits
 
