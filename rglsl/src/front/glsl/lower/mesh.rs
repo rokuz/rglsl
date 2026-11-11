@@ -109,6 +109,7 @@ impl Lowerer<'_> {
                 xfb: None,
                 input_attachment_index: None,
                 heap_offset: None,
+                tile_attachment: false,
             },
             at,
         );

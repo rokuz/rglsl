@@ -1,5 +1,11 @@
 use crate::{CollectiveOperation, Expression, GatherMode, Handle, QuadControl, SubgroupFunction};
 
+impl crate::TileShading {
+    pub const fn is_default(&self) -> bool {
+        self.rate.is_none() && !self.non_coherent_attachment_read
+    }
+}
+
 impl QuadControl {
     pub const fn is_default(&self) -> bool {
         !self.quad_derivatives && !self.require_full_quads

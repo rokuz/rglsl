@@ -508,6 +508,9 @@ pub enum BuiltIn {
     SubgroupInvocationId,
     SubgroupMask(SubgroupMask),
     ShaderBallot(ShaderBallot),
+    TileOffset,
+    TileDimension,
+    TileApronSize,
 
     /// Written in task shaders
     MeshTaskSize,
@@ -1407,6 +1410,12 @@ pub struct GlobalVariable {
     #[cfg_attr(feature = "serialize", serde(skip_serializing_if = "Option::is_none"))]
     #[cfg_attr(feature = "deserialize", serde(default))]
     pub heap_offset: Option<Handle<Expression>>,
+    #[cfg_attr(
+        feature = "serialize",
+        serde(skip_serializing_if = "core::ops::Not::not")
+    )]
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    pub tile_attachment: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -1943,6 +1952,62 @@ bitflags::bitflags! {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, Hash, Eq, Ord, PartialEq, PartialOrd)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub enum ImageGatherPattern {
+    #[default]
+    Quad,
+    Linear4x1,
+    Diagonal,
+    Horizontal2,
+    Vertical2,
+}
+
+#[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub enum BlockMatchMetric {
+    SumOfAbsoluteDifferences,
+    SumOfSquaredDifferences,
+}
+
+#[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub enum BlockMatchSearch {
+    Block,
+    Window,
+    Gather,
+}
+
+#[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub enum ImageProcessingOperation {
+    SampleWeighted,
+    BoxFilter,
+    BlockMatch {
+        metric: BlockMatchMetric,
+        search: BlockMatchSearch,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub enum ArrayConversion {
+    Bitcast,
+    SubArray,
+    ToCooperativeMatrix,
+    FromCooperativeMatrix,
+}
+
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
@@ -2446,6 +2511,8 @@ pub enum Expression {
         /// If Some(), this operation is a gather operation
         /// on the selected component.
         gather: Option<SwizzleComponent>,
+        #[cfg_attr(feature = "deserialize", serde(default))]
+        gather_pattern: ImageGatherPattern,
         coordinate: Handle<Expression>,
         array_index: Option<Handle<Expression>>,
         offset: Option<Handle<Expression>>,
@@ -2705,6 +2772,22 @@ pub enum Expression {
         ty: Handle<Type>,
     },
     TensorCreate {
+        ty: Handle<Type>,
+    },
+    ImageProcessing {
+        operation: ImageProcessingOperation,
+        image: Handle<Expression>,
+        sampler: Option<Handle<Expression>>,
+        coordinate: Handle<Expression>,
+        reference: Option<Handle<Expression>>,
+        reference_sampler: Option<Handle<Expression>>,
+        reference_coordinate: Option<Handle<Expression>>,
+        size: Option<Handle<Expression>>,
+    },
+    ArrayConversion {
+        conversion: ArrayConversion,
+        expr: Handle<Expression>,
+        index: Option<Handle<Expression>>,
         ty: Handle<Type>,
     },
     TensorSet {
@@ -3424,6 +3507,21 @@ pub struct EntryPoint {
     #[cfg_attr(feature = "serialize", serde(skip_serializing_if = "Option::is_none"))]
     #[cfg_attr(feature = "deserialize", serde(default))]
     pub mesh_shader: Option<MeshShaderInfo>,
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    #[cfg_attr(
+        feature = "serialize",
+        serde(skip_serializing_if = "TileShading::is_default")
+    )]
+    pub tile_shading: TileShading,
+}
+
+#[derive(Clone, Copy, Debug, Default, Hash, Eq, PartialEq)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub struct TileShading {
+    pub rate: Option<[u32; 3]>,
+    pub non_coherent_attachment_read: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

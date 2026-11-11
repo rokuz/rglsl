@@ -1189,6 +1189,8 @@ impl super::Validator {
                             | Ex::LocalVariable(_)
                             | Ex::Load { .. }
                             | Ex::ImageSample { .. }
+                            | Ex::ImageProcessing { .. }
+                            | Ex::ArrayConversion { .. }
                             | Ex::ImageLoad { .. }
                             | Ex::ImageQuery { .. }
                             | Ex::Unary { .. }

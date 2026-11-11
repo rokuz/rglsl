@@ -745,6 +745,7 @@ impl FunctionInfo {
                 image,
                 sampler,
                 gather: _,
+                gather_pattern: _,
                 coordinate,
                 array_index,
                 offset,
@@ -944,6 +945,40 @@ impl FunctionInfo {
                 requirements: UniformityRequirements::empty(),
             },
             E::CooperativeMatrixResult { .. } | E::TensorCreate { .. } => Uniformity::new(),
+            E::ImageProcessing {
+                operation: _,
+                image,
+                sampler,
+                coordinate,
+                reference,
+                reference_sampler,
+                reference_coordinate,
+                size,
+            } => {
+                let mut non_uniform_result = self.add_ref(image).or(self.add_ref(coordinate));
+                for operand in [
+                    sampler,
+                    reference,
+                    reference_sampler,
+                    reference_coordinate,
+                    size,
+                ]
+                .into_iter()
+                .flatten()
+                {
+                    non_uniform_result = non_uniform_result.or(self.add_ref(operand));
+                }
+                Uniformity {
+                    non_uniform_result,
+                    requirements: UniformityRequirements::empty(),
+                }
+            }
+            E::ArrayConversion { expr, index, .. } => Uniformity {
+                non_uniform_result: self
+                    .add_ref(expr)
+                    .or(index.and_then(|index| self.add_ref(index))),
+                requirements: UniformityRequirements::empty(),
+            },
             E::TensorSet {
                 base, ref operands, ..
             } => {
@@ -1576,6 +1611,7 @@ fn uniform_control_flow() {
             xfb: None,
             input_attachment_index: None,
             heap_offset: None,
+            tile_attachment: false,
         },
         Default::default(),
     );
@@ -1591,6 +1627,7 @@ fn uniform_control_flow() {
             xfb: None,
             input_attachment_index: None,
             heap_offset: None,
+            tile_attachment: false,
         },
         Default::default(),
     );

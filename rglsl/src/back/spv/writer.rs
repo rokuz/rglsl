@@ -134,6 +134,7 @@ impl Writer {
             debug_printf_strings: crate::FastHashMap::default(),
             raw_capabilities: crate::FastIndexSet::default(),
             utf_encoded: crate::FastHashSet::default(),
+            qcom_decorations: crate::FastHashSet::default(),
             laid_out_copies: crate::FastHashMap::default(),
             task_dispatch_limits: options.task_dispatch_limits,
             mesh_shader_primitive_indices_clamp: options.mesh_shader_primitive_indices_clamp,
@@ -248,6 +249,7 @@ impl Writer {
             debug_printf_strings: take(&mut self.debug_printf_strings).reclaim(),
             raw_capabilities: take(&mut self.raw_capabilities).reclaim(),
             utf_encoded: take(&mut self.utf_encoded).reclaim(),
+            qcom_decorations: take(&mut self.qcom_decorations).reclaim(),
             laid_out_copies: take(&mut self.laid_out_copies).reclaim(),
             heap: super::heap::HeapState::default(),
             descriptor_heap: false,
@@ -1973,6 +1975,14 @@ impl Writer {
             }
         }
 
+        if entry_point.tile_shading.non_coherent_attachment_read {
+            self.require_tile_shading()?;
+            self.write_execution_mode(
+                function_id,
+                spirv::ExecutionMode::NonCoherentTileAttachmentReadQCOM,
+            )?;
+        }
+
         if let Some(ref geometry) = entry_point.geometry {
             self.write_streams(&geometry.streams)?;
             self.write_passthrough(&geometry.passthrough)?;
@@ -2047,7 +2057,20 @@ impl Writer {
                 spirv::ExecutionModel::Fragment
             }
             crate::ShaderStage::Compute => {
-                self.write_workgroup_size(function_id, entry_point)?;
+                let size_id =
+                    entry_point.workgroup_size_overrides.is_some() && self.lang_version() >= (1, 6);
+                match entry_point.tile_shading.rate {
+                    Some(rate) if !size_id => {
+                        self.require_tile_shading()?;
+                        Instruction::execution_mode(
+                            function_id,
+                            spirv::ExecutionMode::TileShadingRateQCOM,
+                            &rate,
+                        )
+                        .to_words(&mut self.logical_layout.execution_modes);
+                    }
+                    _ => self.write_workgroup_size(function_id, entry_point)?,
+                }
                 spirv::ExecutionModel::GLCompute
             }
             crate::ShaderStage::Task | crate::ShaderStage::Mesh
@@ -4108,6 +4131,14 @@ impl Writer {
                             _ => BuiltIn::LayerPerViewNV,
                         }
                     }
+                    Bi::TileOffset | Bi::TileDimension | Bi::TileApronSize => {
+                        self.require_tile_shading()?;
+                        match built_in {
+                            Bi::TileOffset => BuiltIn::TileOffsetQCOM,
+                            Bi::TileDimension => BuiltIn::TileDimensionQCOM,
+                            _ => BuiltIn::TileApronSizeQCOM,
+                        }
+                    }
                     Bi::PointIndex => BuiltIn::PrimitivePointIndicesEXT,
                     Bi::LineIndices => BuiltIn::PrimitiveLineIndicesEXT,
                     Bi::TriangleIndices => BuiltIn::PrimitiveTriangleIndicesEXT,
@@ -4250,7 +4281,12 @@ impl Writer {
             return self.heap_variable(heap);
         }
         let id = self.id_gen.next();
-        let class = map_storage_class(global_variable.space);
+        let class = if global_variable.tile_attachment {
+            self.require_tile_shading()?;
+            spirv::StorageClass::TileAttachmentQCOM
+        } else {
+            map_storage_class(global_variable.space)
+        };
 
         // A stage input or output is bound to a location or a built-in. The
         // decorations depend on the stage whose interface it belongs to.

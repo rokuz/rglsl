@@ -377,6 +377,84 @@ fn gathers(emitter: &mut Emitter<'_>, opaque: Opaque) {
     }
 }
 
+fn qcom_gathers(emitter: &mut Emitter<'_>, opaque: Opaque) {
+    if opaque.dimension != TextureDimension::D2 || opaque.multisample || opaque.shadow {
+        return;
+    }
+    let coordinate = sized(Scalar::Float, 2 + u8::from(opaque.arrayed));
+    for mode in ["4x1", "V2", "H2", "D"] {
+        for offset in [false, true] {
+            let name = if offset {
+                alloc::format!("textureGather{mode}OffsetQCOM")
+            } else {
+                alloc::format!("textureGather{mode}QCOM")
+            };
+            for component in [false, true] {
+                let mut parameters = alloc::vec![Type::opaque(opaque), coordinate.clone()];
+                if offset {
+                    parameters.push(Type::vector(Scalar::Int, 2));
+                }
+                if component {
+                    parameters.push(Type::INT);
+                }
+                emitter.common(&name, texel(opaque), parameters);
+            }
+        }
+    }
+}
+
+fn image_processing(emitter: &mut Emitter<'_>) {
+    let sampler = |dimension, arrayed| {
+        Type::opaque(Opaque {
+            kind: OpaqueKind::CombinedSampler,
+            sampled: SampledType::Float,
+            dimension,
+            arrayed,
+            shadow: false,
+            multisample: false,
+        })
+    };
+    let source = sampler(TextureDimension::D2, false);
+    let result = Type::vector(Scalar::Float, 4);
+    let coordinate = Type::vector(Scalar::Float, 2);
+    for weights in [
+        sampler(TextureDimension::D2, true),
+        sampler(TextureDimension::D1, true),
+    ] {
+        emitter.common(
+            "textureWeightedQCOM",
+            result.clone(),
+            alloc::vec![source.clone(), coordinate.clone(), weights],
+        );
+    }
+    emitter.common(
+        "textureBoxFilterQCOM",
+        result.clone(),
+        alloc::vec![source.clone(), coordinate.clone(), coordinate],
+    );
+    let texel_coordinate = Type::vector(Scalar::Uint, 2);
+    for name in [
+        "textureBlockMatchSADQCOM",
+        "textureBlockMatchSSDQCOM",
+        "textureBlockMatchWindowSSDQCOM",
+        "textureBlockMatchWindowSADQCOM",
+        "textureBlockMatchGatherSSDQCOM",
+        "textureBlockMatchGatherSADQCOM",
+    ] {
+        emitter.common(
+            name,
+            result.clone(),
+            alloc::vec![
+                source.clone(),
+                texel_coordinate.clone(),
+                source.clone(),
+                texel_coordinate.clone(),
+                texel_coordinate.clone(),
+            ],
+        );
+    }
+}
+
 fn subpasses(emitter: &mut Emitter<'_>) {
     for sampled in SampledType::ALL {
         for multisample in [false, true] {
@@ -402,6 +480,9 @@ pub(super) fn prototypes() -> Vec<Prototype> {
         } else {
             sampling(&mut emitter, opaque);
             gathers(&mut emitter, opaque);
+            if opaque.kind == OpaqueKind::CombinedSampler {
+                qcom_gathers(&mut emitter, opaque);
+            }
         }
     }
     for sampled in SampledType::ALL {
@@ -420,5 +501,6 @@ pub(super) fn prototypes() -> Vec<Prototype> {
         );
     }
     subpasses(&mut emitter);
+    image_processing(&mut emitter);
     prototypes
 }

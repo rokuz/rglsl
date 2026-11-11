@@ -4990,3 +4990,178 @@ void main() {
     int a = expectEXT(1, 1);
     assumeEXT(a == 1);
 }
+### tile shading built-ins need the extension | comp 460 | 4:ExtensionRequired
+layout(local_size_x = 16) in;
+void main() {
+    uvec2 offset = gl_TileOffsetQCOM;
+}
+### tile shading built-ins and qualifiers | comp 460 | ok
+#extension GL_QCOM_tile_shading : enable
+layout(local_size_x = 16, local_size_y = 16) in;
+layout(shading_rate_xQCOM = 2, shading_rate_yQCOM = 4, shading_rate_zQCOM = 3) in;
+layout(set = 0, binding = 0, tile_attachmentQCOM, rgba32f) uniform highp image2D color;
+void main() {
+    uvec2 offset = gl_TileOffsetQCOM + gl_TileApronSizeQCOM;
+    uvec3 size = gl_TileDimensionQCOM;
+    imageStore(color, ivec2(offset + size.xy), vec4(1.0));
+}
+### tile shading rates are powers of two | comp 460 | 4:InvalidQualifier
+#extension GL_QCOM_tile_shading : enable
+layout(local_size_x = 16) in;
+layout(shading_rate_xQCOM = 3) in;
+void main() {}
+### tile attachments need the extension | frag 460 | 2:ExtensionRequired
+layout(set = 0, binding = 0, tile_attachmentQCOM, rgba32f) uniform highp image2D color;
+void main() {}
+### fragment tile shading reads | frag 460 | ok
+#extension GL_QCOM_tile_shading : enable
+layout(non_coherent_attachment_readQCOM) in;
+layout(set = 0, binding = 0, tile_attachmentQCOM, rgba32f) uniform highp image2D color;
+layout(location = 0) out vec4 result;
+void main() {
+    result = imageLoad(color, ivec2(gl_TileOffsetQCOM));
+}
+### image processing functions | frag 450 | ok
+#extension GL_QCOM_image_processing : require
+#extension GL_QCOM_image_processing2 : require
+layout(set = 0, binding = 0) uniform texture2D source;
+layout(set = 0, binding = 1) uniform sampler plain;
+layout(set = 0, binding = 2) uniform sampler2DArray weights;
+layout(location = 0) out vec4 result;
+void main() {
+    uvec2 at = uvec2(1, 2);
+    result = textureWeightedQCOM(sampler2D(source, plain), vec2(0.5), weights);
+    result += textureBoxFilterQCOM(sampler2D(source, plain), vec2(0.5), vec2(2.0));
+    result += textureBlockMatchSADQCOM(sampler2D(source, plain), at, sampler2D(source, plain), at, at);
+    result += textureBlockMatchWindowSSDQCOM(sampler2D(source, plain), at, sampler2D(source, plain), at, at);
+    result += textureBlockMatchGatherSADQCOM(sampler2D(source, plain), at, sampler2D(source, plain), at, at);
+}
+### image processing needs the extension | frag 450 | 6:ExtensionRequired
+layout(set = 0, binding = 0) uniform sampler2D source;
+layout(set = 0, binding = 1) uniform sampler2DArray weights;
+layout(location = 0) out vec4 result;
+void main() {
+    result = textureWeightedQCOM(source, vec2(0.5), weights);
+}
+### window block matching needs the second extension | frag 450 | 7:ExtensionRequired
+#extension GL_QCOM_image_processing : require
+layout(set = 0, binding = 0) uniform sampler2D source;
+layout(location = 0) out vec4 result;
+void main() {
+    uvec2 at = uvec2(1, 2);
+    result = textureBlockMatchWindowSADQCOM(source, at, source, at, at);
+}
+### image processing takes float samplers | frag 450 | 6:NoMatchingFunction
+#extension GL_QCOM_image_processing : require
+layout(set = 0, binding = 0) uniform isampler2D source;
+layout(location = 0) out vec4 result;
+void main() {
+    result = textureBoxFilterQCOM(source, vec2(0.5), vec2(2.0));
+}
+### gather modes | frag 460 | ok
+#extension GL_QCOM_image_processing3 : enable
+layout(set = 0, binding = 0) uniform usampler2D source;
+layout(set = 0, binding = 1) uniform sampler2DArray layers;
+layout(location = 0) flat in ivec2 offset;
+layout(location = 0) out vec4 result;
+void main() {
+    result = vec4(textureGather4x1QCOM(source, vec2(0.5), 2));
+    result += textureGatherDOffsetQCOM(layers, vec3(0.5), offset);
+    result += textureGatherV2QCOM(layers, vec3(0.5), 3);
+}
+### gather mode component is constant | frag 460 | 7:InvalidBuiltinCall
+#extension GL_QCOM_image_processing3 : enable
+layout(set = 0, binding = 0) uniform sampler2D source;
+layout(location = 0) flat in int component;
+layout(location = 0) out vec4 result;
+void main() {
+    result = textureGatherH2QCOM(source, vec2(0.5), component);
+}
+### gather mode component is in range | frag 460 | 6:InvalidBuiltinCall
+#extension GL_QCOM_image_processing3 : enable
+layout(set = 0, binding = 0) uniform sampler2D source;
+layout(location = 0) out vec4 result;
+void main() {
+    result = textureGatherH2QCOM(source, vec2(0.5), 4);
+}
+### gather modes need the extension | frag 460 | 5:ExtensionRequired
+layout(set = 0, binding = 0) uniform sampler2D source;
+layout(location = 0) out vec4 result;
+void main() {
+    result = textureGather4x1QCOM(source, vec2(0.5));
+}
+### cooperative matrix conversions | comp 450 | ok
+#extension GL_KHR_cooperative_matrix : enable
+#extension GL_KHR_memory_scope_semantics : enable
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : enable
+#extension GL_QCOM_cooperative_matrix_conversion : enable
+layout(local_size_x = 64) in;
+void main() {
+    uint packed[8];
+    float values[8];
+    float16_t halves[16];
+    uint wide[64];
+    bitcastQCOM(packed, values);
+    bitcastQCOM(packed, halves);
+    extractSubArrayQCOM(wide, 8, packed);
+    coopmat<float, gl_ScopeSubgroup, 64, 8, gl_MatrixUseA> a;
+    vectorToCoopmatQCOM(packed, a);
+    coopmatToVectorQCOM(a, values);
+}
+### cooperative matrix conversions need the extension | comp 450 | 9:ExtensionRequired, 10:ExtensionRequired
+#extension GL_KHR_cooperative_matrix : enable
+#extension GL_KHR_memory_scope_semantics : enable
+layout(local_size_x = 64) in;
+void main() {
+    uint packed[8];
+    float values[8];
+    coopmat<float, gl_ScopeSubgroup, 64, 8, gl_MatrixUseA> a;
+    coopmatToVectorQCOM(a, values);
+    bitcastQCOM(packed, values);
+}
+### bitcast arrays keep their bit size | comp 450 | 7:InvalidCooperativeCall
+#extension GL_QCOM_cooperative_matrix_conversion : enable
+layout(local_size_x = 64) in;
+void main() {
+    uint packed[8];
+    float values[4];
+    bitcastQCOM(packed, values);
+}
+### vector to matrix element types are compatible | comp 450 | 9:InvalidCooperativeCall
+#extension GL_KHR_cooperative_matrix : enable
+#extension GL_KHR_memory_scope_semantics : enable
+#extension GL_QCOM_cooperative_matrix_conversion : enable
+layout(local_size_x = 64) in;
+void main() {
+    int packed[8];
+    coopmat<float, gl_ScopeSubgroup, 64, 8, gl_MatrixUseA> a;
+    vectorToCoopmatQCOM(packed, a);
+}
+### matrix to vector destination length | comp 450 | 9:InvalidCooperativeCall
+#extension GL_KHR_cooperative_matrix : enable
+#extension GL_KHR_memory_scope_semantics : enable
+#extension GL_QCOM_cooperative_matrix_conversion : enable
+layout(local_size_x = 64) in;
+void main() {
+    float values[4];
+    coopmat<float, gl_ScopeSubgroup, 64, 8, gl_MatrixUseA> a;
+    coopmatToVectorQCOM(a, values);
+}
+### cooperative matrix conversions need workgroup scope rejected | comp 450 | 9:InvalidCooperativeCall
+#extension GL_KHR_cooperative_matrix : enable
+#extension GL_KHR_memory_scope_semantics : enable
+#extension GL_QCOM_cooperative_matrix_conversion : enable
+layout(local_size_x = 64) in;
+void main() {
+    float values[8];
+    coopmat<float, gl_ScopeWorkgroup, 64, 8, gl_MatrixUseA> a;
+    coopmatToVectorQCOM(a, values);
+}
+### conversion destination is an lvalue | comp 450 | 7:NotAnLValue
+#extension GL_QCOM_cooperative_matrix_conversion : enable
+layout(local_size_x = 64) in;
+const float values[1] = float[1](1.0);
+void main() {
+    uint packed[1];
+    bitcastQCOM(packed, values);
+}

@@ -630,6 +630,7 @@ impl<I: Iterator<Item = u32>> super::Frontend<I> {
             geometry: None,
             tessellation: None,
             mesh_shader: None,
+            tile_shading: crate::TileShading::default(),
         });
 
         Ok(())

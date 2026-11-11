@@ -672,6 +672,9 @@ impl Analyzer<'_> {
             self.require_extension(span, "GL_EXT_float_e5m2", name);
         }
         self.mesh_function_extension(span, name);
+        if let Some(extension) = super::qcom::function_extension(name) {
+            self.require_extension(span, extension, name);
+        }
     }
 
     fn subgroup_checks(&mut self, span: Span, name: &str, operands: &[Operand]) -> bool {
@@ -871,7 +874,13 @@ impl Analyzer<'_> {
             }
         }
         if name.starts_with("textureGather") && !shadow {
-            let index = if name == "textureGather" { 2 } else { 3 };
+            let index = if name == "textureGather"
+                || (super::qcom::gather_function(name) && !name.contains("Offset"))
+            {
+                2
+            } else {
+                3
+            };
             if let Some(operand) = operands.get(index) {
                 if !operand.constant || operand.specialization {
                     return invalid(self, span, "the component must be constant");

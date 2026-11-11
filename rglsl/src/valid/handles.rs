@@ -174,6 +174,7 @@ impl super::Validator {
                 xfb: _,
                 input_attachment_index: _,
                 heap_offset,
+                tile_attachment: _,
             } = global_variable;
             validate_type(ty)?;
             if let Some(init_expr) = init {
@@ -645,6 +646,7 @@ impl super::Validator {
                 image,
                 sampler,
                 gather: _,
+                gather_pattern: _,
                 coordinate,
                 array_index,
                 offset,
@@ -803,6 +805,34 @@ impl super::Validator {
             crate::Expression::CooperativeMatrixResult { ty }
             | crate::Expression::TensorCreate { ty } => {
                 validate_type(ty)?;
+            }
+            crate::Expression::ImageProcessing {
+                operation: _,
+                image,
+                sampler,
+                coordinate,
+                reference,
+                reference_sampler,
+                reference_coordinate,
+                size,
+            } => {
+                handle
+                    .check_dep(image)?
+                    .check_dep_opt(sampler)?
+                    .check_dep(coordinate)?
+                    .check_dep_opt(reference)?
+                    .check_dep_opt(reference_sampler)?
+                    .check_dep_opt(reference_coordinate)?
+                    .check_dep_opt(size)?;
+            }
+            crate::Expression::ArrayConversion {
+                conversion: _,
+                expr,
+                index,
+                ty,
+            } => {
+                validate_type(ty)?;
+                handle.check_dep(expr)?.check_dep_opt(index)?;
             }
             crate::Expression::TensorSet {
                 base, ref operands, ..
