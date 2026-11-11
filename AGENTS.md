@@ -73,6 +73,7 @@ goal, the language rules for linkage and `#include`, and the milestones (M0–M9
 ```sh
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
+RUSTFLAGS="--cfg fuzzing" cargo clippy -p rglsl-libfuzzer --all-targets -- -D warnings
 cargo test --workspace --all-features
 cargo deny check
 

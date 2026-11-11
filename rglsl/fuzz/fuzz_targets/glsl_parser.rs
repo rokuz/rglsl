@@ -17,16 +17,19 @@ mod fuzz {
         pub defines: std::collections::HashMap<String, String>,
         pub auto_map_bindings: bool,
         pub auto_map_locations: bool,
+        pub library: bool,
+        pub hlsl_offsets: bool,
     }
 
     impl From<OptionsProxy> for Options {
         fn from(proxy: OptionsProxy) -> Self {
             Options {
-                stage: proxy.stage,
-                // NOTE: This is a workaround needed due to lack of rust-fuzz/arbitrary support for hashbrown.
                 defines: FastHashMap::from_iter(proxy.defines),
                 auto_map_bindings: proxy.auto_map_bindings,
                 auto_map_locations: proxy.auto_map_locations,
+                library: proxy.library,
+                hlsl_offsets: proxy.hlsl_offsets,
+                ..Options::from(proxy.stage)
             }
         }
     }
