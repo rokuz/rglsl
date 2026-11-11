@@ -168,24 +168,6 @@ impl std::fmt::Display for TargetDifference {
     }
 }
 
-pub const NOT_DRAWN: &str = "the draw did not run: every color attachment still holds the clear colour (GPU watchdog or device loss)";
-
-pub fn untouched_draw(plan: &Plan, outputs: &Outputs) -> bool {
-    let mut attachments = plan
-        .targets
-        .iter()
-        .filter(|target| target.name.starts_with("color attachment"))
-        .peekable();
-    if attachments.peek().is_none() {
-        return false;
-    }
-    attachments.all(|target| {
-        outputs
-            .get(&target.dump)
-            .is_none_or(|bytes| bytes.iter().all(|&byte| byte == 0))
-    })
-}
-
 pub fn compare_outputs(
     plan: &Plan,
     expected: &Outputs,
@@ -669,20 +651,11 @@ fn confirm(
     };
     if let Some(first) = expected_first {
         if let Err(difference) = compare_outputs(plan, first, &expected) {
-            if untouched_draw(plan, first) || untouched_draw(plan, &expected) {
-                return Outcome::skip(SkipReason::ReferenceFails, NOT_DRAWN);
-            }
             return Outcome::skip(SkipReason::Nondeterministic, difference.to_string());
         }
     }
     match compare_outputs(plan, &expected, &actual) {
         Ok(tolerated) => Outcome::Pass { tolerated },
-        Err(_) if untouched_draw(plan, &expected) => {
-            Outcome::skip(SkipReason::ReferenceFails, NOT_DRAWN)
-        }
-        Err(_) if untouched_draw(plan, &actual) => {
-            Outcome::Fail(format!("{NOT_DRAWN} (rglsl, confirmed alone)"))
-        }
         Err(difference) => {
             Outcome::Fail(format!("{difference} (glslang vs rglsl, confirmed alone)"))
         }
@@ -860,38 +833,6 @@ mod tests {
         [("dump:0:0".to_string(), value.to_le_bytes().to_vec())]
             .into_iter()
             .collect()
-    }
-
-    fn drawn_plan() -> Plan {
-        let mut plan = plan();
-        if let Some(target) = plan.targets.first_mut() {
-            target.name = "color attachment 0".into();
-        }
-        plan
-    }
-
-    #[test]
-    fn a_draw_that_never_ran_is_not_a_wrong_result() {
-        let plan = drawn_plan();
-        assert!(untouched_draw(&plan, &outputs(0)));
-        assert!(!untouched_draw(&plan, &outputs(7)));
-        assert!(!untouched_draw(&self::plan(), &outputs(0)));
-        assert_eq!(
-            confirm(&plan, Some(&outputs(7)), Ok(outputs(7)), Ok(outputs(0))),
-            Outcome::Fail(format!("{NOT_DRAWN} (rglsl, confirmed alone)"))
-        );
-        assert_eq!(
-            confirm(&plan, Some(&outputs(0)), Ok(outputs(0)), Ok(outputs(7))),
-            Outcome::skip(SkipReason::ReferenceFails, NOT_DRAWN)
-        );
-        assert_eq!(
-            confirm(&plan, Some(&outputs(0)), Ok(outputs(0)), Ok(outputs(0))),
-            Outcome::Pass { tolerated: 0 }
-        );
-        assert!(matches!(
-            confirm(&plan, Some(&outputs(7)), Ok(outputs(7)), Ok(outputs(8))),
-            Outcome::Fail(ref why) if !why.contains(NOT_DRAWN)
-        ));
     }
 
     #[test]
