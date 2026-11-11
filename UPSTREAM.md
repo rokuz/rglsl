@@ -185,6 +185,10 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   (`valid/type.rs`, `valid/mod.rs`, `valid/expression.rs`).
 - **`frexp` exponents are `i32`** for every float width, as SPIR-V's `FrexpStruct` requires
   (`front/type_gen.rs`); upstream used an exponent as wide as the fraction.
+- **Bit-field operands are not clamped.** The SPIR-V backend writes `ExtractBits` and
+  `InsertBits` as `OpBitField[SU]Extract`/`OpBitFieldInsert` on the offset and count as they
+  are, like glslang, instead of upstream's WGSL clamps (`min(offset, w)`, `min(count, w -
+  offset)`); GLSL and SPIR-V leave an out-of-range field undefined (`back/spv/block.rs`).
 - **`FindUMsb`/`FindSMsb` for every integer width** in the SPIR-V backend instead of an
   `unreachable!` for non-32-bit arguments (the GLSL front end widens them first).
 - **Capabilities of 8- and 16-bit types by use.** With

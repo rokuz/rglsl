@@ -7296,3 +7296,94 @@ fn loop_attributes_match_glslang() {
         ]
     );
 }
+
+#[test]
+fn uncalled_functions_are_not_compiled() {
+    let module = compile(
+        ShaderStage::Fragment,
+        "#version 450
+        #extension GL_EXT_shader_explicit_arithmetic_types : require
+        layout(location = 0) out vec4 color;
+        float used(float x) { return x * 2.0; }
+        double unused(int16_t value) { f64vec2 v = f64vec2(value); return v.x; }
+        void main() { color = vec4(used(1.0)); }",
+    );
+    assert_eq!(instructions(&module, Op::Function).len(), 2);
+    assert!(instructions(&module, Op::TypeFloat)
+        .iter()
+        .all(|inst| inst.operands[0] == Operand::LiteralBit32(32)));
+    let capabilities = capabilities(&module);
+    assert!(!capabilities.contains(&spirv::Capability::Float64));
+    assert!(!capabilities.contains(&spirv::Capability::Int16));
+}
+
+#[test]
+fn constant_locals_are_folded_and_not_stored() {
+    let module = compile(
+        ShaderStage::Vertex,
+        "#version 460
+        layout(location = 0) out float o;
+        void main() {
+            const mat2 f = matrixCompMult(mat2(1.0), mat2(3.0));
+            const dmat2 d = matrixCompMult(dmat2(2.0), dmat2(1.5));
+            o = float(f[0][0] + d[1][1]);
+        }",
+    );
+    assert!(!capabilities(&module).contains(&spirv::Capability::Float64));
+    assert!(instructions(&module, Op::TypeFloat)
+        .iter()
+        .all(|inst| inst.operands[0] == Operand::LiteralBit32(32)));
+    assert!(instructions(&module, Op::Variable)
+        .iter()
+        .all(|inst| inst.operands[0] != Operand::StorageClass(spirv::StorageClass::Function)));
+    let stores = instructions(&module, Op::Store);
+    assert_eq!(stores.len(), 1);
+    assert_eq!(constant(&module, &stores[0].operands[1]), 6.0_f32.to_bits());
+}
+
+#[test]
+fn bit_field_operands_are_not_clamped() {
+    let module = compile(
+        ShaderStage::Fragment,
+        "#version 450
+        layout(set = 0, binding = 0) uniform U { int value; int offset; int bits; };
+        layout(location = 0) out ivec2 color;
+        void main() {
+            color = ivec2(bitfieldExtract(value, offset, bits),
+                          bitfieldInsert(value, 7, offset, bits));
+        }",
+    );
+    let extract = instructions(&module, Op::BitFieldSExtract);
+    let insert = instructions(&module, Op::BitFieldInsert);
+    assert_eq!((extract.len(), insert.len()), (1, 1));
+    let loaded_operand = |id: u32| {
+        module
+            .all_inst_iter()
+            .find(|inst| inst.result_id == Some(id))
+            .map(|inst| inst.class.opcode)
+    };
+    for operand in extract[0].operands.iter().chain(&insert[0].operands[2..]) {
+        assert!(matches!(
+            loaded_operand(operand.unwrap_id_ref()),
+            Some(Op::Load | Op::Bitcast)
+        ));
+    }
+    assert!(instructions(&module, Op::ExtInst).is_empty());
+}
+
+#[test]
+fn constant_locals_can_be_indexed_dynamically() {
+    let module = compile(
+        ShaderStage::Fragment,
+        "#version 450
+        layout(location = 0) flat in int i;
+        layout(location = 0) out vec4 color;
+        void main() {
+            const float table[3] = float[3](1.0, 2.0, 3.0);
+            const mat2 m = mat2(1.0, 2.0, 3.0, 4.0);
+            color = vec4(table[i], m[i][i], table[1], m[1][0]);
+        }",
+    );
+    assert!(!instructions(&module, Op::ConstantComposite).is_empty());
+    assert!(!instructions(&module, Op::AccessChain).is_empty());
+}

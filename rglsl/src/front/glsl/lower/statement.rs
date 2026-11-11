@@ -7,6 +7,7 @@ use rglsl_ast::ast::{
 use rglsl_sema::constant::Value;
 use rglsl_sema::types::{Scalar as GlslScalar, Type as GlslType};
 
+use super::constant::shape;
 use super::function::{FunctionLowerer, Local};
 use super::{internal, semantic, unsupported, GlobalRef, Result};
 use crate::{
@@ -318,6 +319,14 @@ impl FunctionLowerer<'_, '_> {
                             self.lw.globals.insert(symbol, GlobalRef::Override(handle));
                             continue;
                         }
+                    }
+                    if variable.qualifiers.constant
+                        && variable.value.as_ref().is_some_and(|value| {
+                            shape(&variable.ty, &value.values, &self.lw.analysis.types).is_some()
+                        })
+                    {
+                        self.variables.insert(symbol, Local::Constant);
+                        continue;
                     }
                     let ty = variable.ty.clone();
                     let ir = self.lw.variable_ir_type(&ty, &variable.qualifiers, at)?;

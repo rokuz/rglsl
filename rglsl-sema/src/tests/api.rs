@@ -747,6 +747,33 @@ fn sized_literals_fold_with_their_width() {
     );
 }
 
+#[test]
+fn matrix_comp_mult_folds() {
+    use crate::constant::Value;
+    let checked = accepted(
+        Stage::Fragment,
+        "void main() {\n    matrixCompMult(mat2(1.0, 2.0, 3.0, 4.0), mat2(2.0));\n    matrixCompMult(dmat2x3(1.5), dmat2x3(3.0));\n}\n",
+    );
+    let values: Vec<Vec<Value>> = statement_expressions(&checked)
+        .iter()
+        .map(|expression| {
+            checked
+                .analysis
+                .expression(expression.id)
+                .and_then(|info| info.value.as_ref())
+                .map(|constant| constant.values.clone())
+                .unwrap_or_default()
+        })
+        .collect();
+    assert_eq!(
+        values,
+        [
+            [2.0, 0.0, 0.0, 8.0].map(Value::Float).to_vec(),
+            [4.5, 0.0, 0.0, 0.0, 4.5, 0.0].map(Value::Double).to_vec(),
+        ]
+    );
+}
+
 fn statement_expressions(checked: &Checked) -> Vec<Expression> {
     use rglsl_ast::ast::{ExternalDeclaration, StatementKind};
     let Some(ExternalDeclaration::FunctionDefinition(definition)) =
