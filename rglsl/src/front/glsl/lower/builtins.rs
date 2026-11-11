@@ -1349,7 +1349,7 @@ impl FunctionLowerer<'_, '_> {
         let derivatives = stage == ShaderStage::Fragment
             || (stage == ShaderStage::Compute && self.lw.analysis.derivative_group.is_some());
         let implicit = match level {
-            SampleLevel::Auto => !self.lw.options.library,
+            SampleLevel::Auto => !self.lw.library,
             SampleLevel::Bias(_) => true,
             SampleLevel::Zero | SampleLevel::Exact(_) | SampleLevel::Gradient { .. } => false,
         };

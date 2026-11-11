@@ -130,11 +130,17 @@ impl Lowerer<'_> {
                 let layout = &self.stage_layout;
                 Some(MeshShaderInfo {
                     extension,
-                    output: Some(MeshOutputLayout {
-                        topology: layout.mesh_topology?,
-                        max_vertices: layout.vertices?,
-                        max_primitives: layout.primitives?,
-                    }),
+                    output: match (layout.mesh_topology, layout.vertices, layout.primitives) {
+                        (Some(topology), Some(max_vertices), Some(max_primitives)) => {
+                            Some(MeshOutputLayout {
+                                topology,
+                                max_vertices,
+                                max_primitives,
+                            })
+                        }
+                        _ if self.object => None,
+                        _ => return None,
+                    },
                     task_memory: self.task_memory.clone(),
                 })
             }

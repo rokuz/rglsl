@@ -38,11 +38,24 @@ pub enum LinkError {
     Contradictory(&'static str),
     #[error("{0}")]
     MissingLayout(&'static str),
+    #[error("{0}")]
+    Mode(&'static str),
     #[error("{stages}: {what} of `{name}` must match between stages")]
     CrossStage {
         stages: String,
         name: String,
         what: &'static str,
+    },
+    #[error(
+        "library {library} cannot be linked into a {stage_name} shader: {message}{at}",
+        stage_name = .stage.name(),
+        at = line_suffix(*.line)
+    )]
+    LibraryStage {
+        library: String,
+        stage: ShaderStage,
+        line: Option<u32>,
+        message: String,
     },
     #[error("not implemented: {0}")]
     Unsupported(String),
@@ -93,4 +106,8 @@ impl std::error::Error for LinkErrors {}
 
 pub(crate) fn internal(error: impl fmt::Display) -> LinkError {
     LinkError::Internal(error.to_string())
+}
+
+fn line_suffix(line: Option<u32>) -> String {
+    line.map_or_else(String::new, |line| format!(" (line {line})"))
 }

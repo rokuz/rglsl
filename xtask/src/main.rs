@@ -30,6 +30,8 @@ commands:
                           (its HEAD must be the pinned commit)
       --no-exec           do not install KosmicKrisp and Amber
       --exec-only         only install KosmicKrisp and Amber
+      --remote            only build Amber on the remote Windows target named by
+                          RGLSL_EXEC_REMOTE (an SSH host alias), from the pins in oracles.toml
   test                run the glslang corpus and write PROGRESS.md
       --glslang-dir DIR   glslang checkout whose Test/ and gtests/ are used
                           (default: target/oracles/src/glslang)
@@ -37,13 +39,17 @@ commands:
       --jobs N            number of parallel jobs (default: number of CPUs)
       --timeout SECS      per-process timeout (default: 30)
       --no-progress-file  do not rewrite PROGRESS.md (for filtered or local runs)
-      --no-exec           do not run shaders on the Vulkan driver; PROGRESS.md keeps the
+      --no-exec           do not run shaders on any Vulkan target; PROGRESS.md keeps the
                           exec results of the last run that had them
+      --no-local-exec     do not run shaders on KosmicKrisp on this Mac
+      --no-remote-exec    do not run shaders on the remote Windows target
   fuzz                compare rglsl with glslang on a directory of shaders
                       (accepted or not, valid SPIR-V, crashes)
       --shaders DIR       the shaders to compare (searched recursively)
-      --exec              also run every shader family of rglsl-fuzz on the Vulkan driver:
-                          a variant whose image differs from its reference is a wrong result
+      --exec              also run every shader family of rglsl-fuzz on the Vulkan targets
+                          (local and remote, as for `test`): a variant whose image differs
+                          from its reference is a wrong result; failures are rerun alone
+      --exec-target T     with --exec, run on one target only: local or remote
       --exec-glslang      with --exec, also run the modules glslang compiles
       --jobs N            number of parallel jobs (default: number of CPUs)
       --timeout SECS      per-process timeout (default: 30)
@@ -51,6 +57,10 @@ commands:
 environment:
   RGLSL_GLSLANG, RGLSL_SPIRV_VAL   override the oracle binaries
   RGLSL_AMBER, RGLSL_VK_ICD        override Amber and the Vulkan driver manifest
+  RGLSL_EXEC_REMOTE                SSH host alias of a Windows machine with Vulkan: the remote
+                                   exec target (unset: the remote target is skipped with a warning)
+  RGLSL_EXEC_REMOTE_DIR            work directory on that machine (default C:/rglsl-exec)
+  RGLSL_EXEC_REMOTE_JOBS           parallel Amber processes there (default 4)
 ";
 
 fn main() {
@@ -76,9 +86,14 @@ fn run(args: Vec<String>) -> Result<i32> {
             let glslang_dir = args.value("--glslang-dir")?.map(PathBuf::from);
             let no_exec = args.flag("--no-exec");
             let exec_only = args.flag("--exec-only");
+            let remote = args.flag("--remote");
             args.finish()?;
             if no_exec && exec_only {
                 bail!("--no-exec and --exec-only exclude each other");
+            }
+            if remote {
+                oracles::build_remote(&workspace_root()?)?;
+                return Ok(0);
             }
             let selection = oracles::Selection {
                 reference: !exec_only,
@@ -94,7 +109,16 @@ fn run(args: Vec<String>) -> Result<i32> {
                 jobs: args.parsed("--jobs")?,
                 timeout_secs: args.parsed("--timeout")?.unwrap_or(30),
                 write_progress: !args.flag("--no-progress-file"),
-                exec: !args.flag("--no-exec"),
+                targets: {
+                    let none = args.flag("--no-exec");
+                    let local = !args.flag("--no-local-exec");
+                    let remote = !args.flag("--no-remote-exec");
+                    if none {
+                        Vec::new()
+                    } else {
+                        exec::select_targets(local, remote)
+                    }
+                },
             };
             args.finish()?;
             runner::run(&workspace_root()?, options)?;
@@ -108,11 +132,21 @@ fn run(args: Vec<String>) -> Result<i32> {
                     .context("--shaders is required")?,
                 jobs: args.parsed("--jobs")?,
                 timeout_secs: args.parsed("--timeout")?.unwrap_or(30),
-                exec: args.flag("--exec"),
+                exec: {
+                    let exec = args.flag("--exec");
+                    let only = args.value("--exec-target")?;
+                    match (exec, only) {
+                        (false, Some(_)) => bail!("--exec-target needs --exec"),
+                        (false, None) => Vec::new(),
+                        (true, None) => exec::select_targets(true, true),
+                        (true, Some(name)) => vec![exec::TargetId::parse(&name)
+                            .with_context(|| format!("unknown exec target `{name}`"))?],
+                    }
+                },
                 exec_glslang: args.flag("--exec-glslang"),
             };
             args.finish()?;
-            if options.exec_glslang && !options.exec {
+            if options.exec_glslang && options.exec.is_empty() {
                 bail!("--exec-glslang needs --exec");
             }
             fuzz::run(&workspace_root()?, options)?;

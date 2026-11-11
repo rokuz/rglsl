@@ -11,33 +11,90 @@ use crate::{
     TessellationVertexOrder,
 };
 
-pub const FORMAT_VERSION: u32 = 1;
+pub const FORMAT_VERSION: u32 = 2;
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
 pub struct ObjectModule {
     pub format_version: u32,
+    pub name: Option<String>,
     pub stage: Option<ShaderStage>,
+    pub stages: Vec<ShaderStage>,
     pub glsl_version: u32,
     pub extensions: Vec<String>,
     pub module: Module,
     pub functions: Vec<FunctionSymbol>,
     pub globals: Vec<GlobalSymbol>,
     pub layout: StageLayout,
+    pub variants: Vec<ObjectModule>,
+    pub rejections: Vec<StageRejection>,
 }
 
 impl ObjectModule {
     pub fn new(stage: Option<ShaderStage>, module: Module) -> Self {
         Self {
             format_version: FORMAT_VERSION,
+            name: None,
             stage,
+            stages: match stage {
+                Some(_) => Vec::new(),
+                None => ShaderStage::ALL.to_vec(),
+            },
             glsl_version: 0,
             extensions: Vec::new(),
             module,
             functions: Vec::new(),
             globals: Vec::new(),
             layout: StageLayout::default(),
+            variants: Vec::new(),
+            rejections: Vec::new(),
+        }
+    }
+
+    pub fn supports(&self, stage: ShaderStage) -> bool {
+        self.stage.map_or_else(
+            || {
+                self.stages.contains(&stage)
+                    || self
+                        .variants
+                        .iter()
+                        .any(|variant| variant.stages.contains(&stage))
+            },
+            |own| own == stage,
+        )
+    }
+
+    pub fn for_stage(&self, stage: ShaderStage) -> Result<ObjectModule, StageRejection> {
+        let found = match self.stage {
+            Some(own) if own == stage => Some(self),
+            Some(_) => None,
+            None if self.stages.contains(&stage) => Some(self),
+            None => self
+                .variants
+                .iter()
+                .find(|variant| variant.stages.contains(&stage)),
+        };
+        match found {
+            Some(object) => Ok(ObjectModule {
+                name: self.name.clone(),
+                variants: Vec::new(),
+                rejections: Vec::new(),
+                ..object.clone()
+            }),
+            None => Err(self
+                .rejections
+                .iter()
+                .find(|rejection| rejection.stage == stage)
+                .cloned()
+                .unwrap_or_else(|| StageRejection {
+                    stage,
+                    line: None,
+                    message: match self.stage {
+                        Some(own) => alloc::format!("the module is a {} shader", own.name()),
+                        None => String::from("the library is not compiled for this stage"),
+                    },
+                })),
         }
     }
 
@@ -58,6 +115,15 @@ impl ObjectModule {
     pub fn global_symbol(&self, global: Handle<GlobalVariable>) -> Option<&GlobalSymbol> {
         self.globals.iter().find(|symbol| symbol.global == global)
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+pub struct StageRejection {
+    pub stage: ShaderStage,
+    pub line: Option<u32>,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -131,4 +197,6 @@ pub struct StageLayout {
     pub point_mode: bool,
     pub mesh_topology: Option<MeshOutputTopology>,
     pub transform_feedback: bool,
+    pub tile_shading_rate: [Option<u32>; 3],
+    pub non_coherent_tile_read: bool,
 }

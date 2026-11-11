@@ -375,12 +375,16 @@ pub fn group_by_stage(
     if stages.is_empty() {
         return vec![objects.to_vec()];
     }
+    let joins = |object: &rglsl::object::ObjectModule, stage: ShaderStage| match object.stage {
+        Some(own) => own == stage,
+        None => object.supports(stage) || stages.iter().all(|&other| !object.supports(other)),
+    };
     stages
-        .into_iter()
-        .map(|stage| {
+        .iter()
+        .map(|&stage| {
             objects
                 .iter()
-                .filter(|object| object.stage.is_none_or(|own| own == stage))
+                .filter(|object| joins(object, stage))
                 .cloned()
                 .collect()
         })

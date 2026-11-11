@@ -78,19 +78,25 @@ fn qualifier(varying: &Varying, scalar: Scalar) -> &'static str {
     }
 }
 
-fn component_expression(scalar: Scalar, location: u32, component: u32) -> String {
+fn component_expression(
+    scalar: Scalar,
+    location: u32,
+    component: u32,
+    position: &str,
+    index: &str,
+) -> String {
     let l = f64::from(location);
     let c = f64::from(component);
     match scalar.kind {
         ScalarKind::Float => format!(
-            "(a_pos.x * {:?} + a_pos.y * {:?} + {:?})",
+            "({position}.x * {:?} + {position}.y * {:?} + {:?})",
             0.25 * (l + c + 1.0),
             0.5 * (c + 1.0) - 0.125 * l,
             0.125 * (l + 1.0)
         ),
-        ScalarKind::Sint => format!("(gl_VertexIndex + {})", location * 4 + component),
+        ScalarKind::Sint => format!("({index} + {})", location * 4 + component),
         ScalarKind::Uint | ScalarKind::Bool => {
-            format!("uint(gl_VertexIndex + {})", location * 4 + component)
+            format!("uint({index} + {})", location * 4 + component)
         }
     }
 }
@@ -126,7 +132,7 @@ pub fn vertex_for_fragment(inputs: &[Varying]) -> Result<String, String> {
         );
         for (location, name) in elements(varying) {
             let components: Vec<String> = (0..count)
-                .map(|c| component_expression(scalar, location, c))
+                .map(|c| component_expression(scalar, location, c, "a_pos", "gl_VertexIndex"))
                 .collect();
             let _ = writeln!(body, "    {name} = {ty}({});", components.join(", "));
         }
@@ -205,6 +211,187 @@ pub fn fragment_for_vertex(outputs: &[Varying]) -> (String, Vec<Attachment>, Vec
     )
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ShaderKind {
+    Vertex,
+    TessControl,
+    TessEval,
+    Geometry,
+    Fragment,
+    Compute,
+    RayGeneration,
+    Miss,
+    ClosestHit,
+}
+
+impl ShaderKind {
+    pub const fn amber(self) -> &'static str {
+        match self {
+            Self::Vertex => "vertex",
+            Self::TessControl => "tessellation_control",
+            Self::TessEval => "tessellation_evaluation",
+            Self::Geometry => "geometry",
+            Self::Fragment => "fragment",
+            Self::Compute => "compute",
+            Self::RayGeneration => "ray_generation",
+            Self::Miss => "miss",
+            Self::ClosestHit => "closest_hit",
+        }
+    }
+
+    pub const fn extension(self) -> &'static str {
+        match self {
+            Self::Vertex => "vert",
+            Self::TessControl => "tesc",
+            Self::TessEval => "tese",
+            Self::Geometry => "geom",
+            Self::Fragment => "frag",
+            Self::Compute => "comp",
+            Self::RayGeneration => "rgen",
+            Self::Miss => "rmiss",
+            Self::ClosestHit => "rchit",
+        }
+    }
+
+    pub const fn target_env(self) -> &'static str {
+        match self {
+            Self::RayGeneration | Self::Miss | Self::ClosestHit => "vulkan1.2",
+            _ => "vulkan1.0",
+        }
+    }
+}
+
+pub const PATCH_VERTICES: u32 = 3;
+const TESS_LEVEL: &str = "3.0";
+
+fn tessellation_varying(varying: &Varying) -> Result<(Scalar, u32), String> {
+    let (scalar, count) = simple_32(varying)?;
+    if varying.array.is_some() {
+        return Err(format!(
+            "location {}: array varying between tessellation stages",
+            varying.location
+        ));
+    }
+    Ok((scalar, count))
+}
+
+pub fn control_for_evaluation(inputs: &[Varying]) -> Result<String, String> {
+    let mut declarations = String::new();
+    let mut body = String::from(
+        "    gl_out[gl_InvocationID].gl_Position = gl_in[gl_InvocationID].gl_Position;\n",
+    );
+    let mut patch_body = String::new();
+    let position = "gl_in[gl_InvocationID].gl_Position";
+    for varying in inputs {
+        let (scalar, count) = tessellation_varying(varying)?;
+        let ty = glsl_type(scalar, count);
+        let location = varying.location;
+        let components: Vec<String> = (0..count)
+            .map(|c| {
+                if varying.patch {
+                    component_expression(scalar, location, c, "vec4(0.25, -0.5, 0.0, 1.0)", "7")
+                } else {
+                    component_expression(scalar, location, c, position, "gl_InvocationID")
+                }
+            })
+            .collect();
+        if varying.patch {
+            let _ = writeln!(
+                declarations,
+                "layout(location = {location}) patch out {ty} p{location};"
+            );
+            let _ = writeln!(
+                patch_body,
+                "        p{location} = {ty}({});",
+                components.join(", ")
+            );
+        } else {
+            let _ = writeln!(
+                declarations,
+                "layout(location = {location}) out {ty} v{location}[];"
+            );
+            let _ = writeln!(
+                body,
+                "    v{location}[gl_InvocationID] = {ty}({});",
+                components.join(", ")
+            );
+        }
+    }
+    Ok(format!(
+        "#version 450\nlayout(vertices = {PATCH_VERTICES}) out;\n{declarations}void main() {{\n{body}    if (gl_InvocationID == 0) {{\n        gl_TessLevelOuter[0] = {TESS_LEVEL};\n        gl_TessLevelOuter[1] = {TESS_LEVEL};\n        gl_TessLevelOuter[2] = {TESS_LEVEL};\n        gl_TessLevelOuter[3] = {TESS_LEVEL};\n        gl_TessLevelInner[0] = {TESS_LEVEL};\n        gl_TessLevelInner[1] = {TESS_LEVEL};\n{patch_body}    }}\n}}\n"
+    ))
+}
+
+pub fn evaluation_for_control(
+    outputs: &[Varying],
+    vertices: u32,
+) -> Result<(String, Vec<Varying>), String> {
+    let vertices = vertices.max(1);
+    let corner = |i: u32| i % vertices;
+    let mut declarations = String::new();
+    let mut body = String::from(
+        "    gl_Position = vec4(gl_TessCoord.x * 1.6 - 0.8, gl_TessCoord.y * 1.6 - 0.8, 0.5, 1.0);\n",
+    );
+    let mut forwarded = Vec::new();
+    for varying in outputs {
+        let (scalar, count) = tessellation_varying(varying)?;
+        let ty = glsl_type(scalar, count);
+        let location = varying.location;
+        let flat = scalar.kind != ScalarKind::Float;
+        let value = if varying.patch {
+            let _ = writeln!(
+                declarations,
+                "layout(location = {location}) patch in {ty} i{location};"
+            );
+            format!("i{location}")
+        } else {
+            let _ = writeln!(
+                declarations,
+                "layout(location = {location}) in {ty} i{location}[];"
+            );
+            if flat {
+                format!("i{location}[0]")
+            } else {
+                format!(
+                    "gl_TessCoord.x * i{location}[{}] + gl_TessCoord.y * i{location}[{}] + gl_TessCoord.z * i{location}[{}]",
+                    corner(0),
+                    corner(1),
+                    corner(2)
+                )
+            }
+        };
+        let qualifier = if flat { "flat " } else { "" };
+        let _ = writeln!(
+            declarations,
+            "layout(location = {location}) {qualifier}out {ty} v{location};"
+        );
+        let _ = writeln!(body, "    v{location} = {ty}({value});");
+        forwarded.push(Varying {
+            location,
+            component: 0,
+            ty: VaryingType::Simple { scalar, count },
+            array: None,
+            interpolation: if flat {
+                Interpolation::Flat
+            } else {
+                Interpolation::Smooth
+            },
+            centroid: false,
+            sample: false,
+            patch: false,
+        });
+    }
+    Ok((
+        format!("#version 450\nlayout(triangles) in;\n{declarations}void main() {{\n{body}}}\n"),
+        forwarded,
+    ))
+}
+
+pub const MISS_SHADER: &str =
+    "#version 460\n#extension GL_EXT_ray_tracing : require\nvoid main() {}\n";
+pub const HIT_SHADER: &str =
+    "#version 460\n#extension GL_EXT_ray_tracing : require\nvoid main() {}\n";
+
 pub const DUMP_SHADER: &str = "#version 450\nlayout(local_size_x = 1) in;\nvoid main() {}\n";
 
 #[cfg(test)]
@@ -223,6 +410,7 @@ mod tests {
             interpolation: Interpolation::Smooth,
             centroid: false,
             sample: false,
+            patch: false,
         }
     }
 
@@ -278,5 +466,27 @@ mod tests {
         assert!(source.contains("o1 = vec4(v3, 0.0, 0.0);"));
         assert!(source.contains("layout(location = 5) flat in uvec3 v5;"));
         assert!(source.contains("o2 = uvec4(v5, 0u);"));
+    }
+
+    #[test]
+    fn tessellation_harnesses_forward_varyings() {
+        let mut patch = varying(4, ScalarKind::Float, 2);
+        patch.patch = true;
+        let source =
+            control_for_evaluation(&[varying(1, ScalarKind::Uint, 1), patch.clone()]).unwrap();
+        assert!(source.contains("layout(vertices = 3) out;"));
+        assert!(source.contains("layout(location = 1) out uint v1[];"));
+        assert!(source.contains("v1[gl_InvocationID] = uint(uint(gl_InvocationID + 4));"));
+        assert!(source.contains("layout(location = 4) patch out vec2 p4;"));
+        assert!(source.contains("gl_TessLevelInner[1] = 3.0;"));
+        let (source, forwarded) =
+            evaluation_for_control(&[varying(0, ScalarKind::Float, 4), patch], 4).unwrap();
+        assert!(source.contains("layout(location = 0) in vec4 i0[];"));
+        assert!(source.contains("gl_TessCoord.z * i0[2]"));
+        assert!(source.contains("layout(location = 4) patch in vec2 i4;"));
+        assert_eq!(forwarded.len(), 2);
+        let mut array = varying(2, ScalarKind::Float, 4);
+        array.array = Some(2);
+        assert!(evaluation_for_control(&[array], 3).is_err());
     }
 }

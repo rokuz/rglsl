@@ -1816,8 +1816,10 @@ impl super::Validator {
     fn validate_stage_info(
         ep: &crate::EntryPoint,
         module: &crate::Module,
+        object: bool,
     ) -> Result<(), WithSpan<EntryPointError>> {
         match (ep.stage, &ep.geometry) {
+            (crate::ShaderStage::Geometry, &None) if object => {}
             (crate::ShaderStage::Geometry, &None) => {
                 return Err(EntryPointError::ExpectedGeometryInfo.with_span());
             }
@@ -1857,6 +1859,9 @@ impl super::Validator {
                     primitive: Some(_), ..
                 }),
             ) => Ok(()),
+            (crate::ShaderStage::TessControl | crate::ShaderStage::TessEvaluation, _) if object => {
+                Ok(())
+            }
             (crate::ShaderStage::TessControl, _) => {
                 Err(EntryPointError::ExpectedOutputVertices.with_span())
             }
@@ -1923,7 +1928,7 @@ impl super::Validator {
             return Err(EntryPointError::UnexpectedWorkgroupSize.with_span());
         }
 
-        Self::validate_stage_info(ep, module)?;
+        Self::validate_stage_info(ep, module, self.mode == super::ValidationMode::Object)?;
 
         let glsl_mesh = ep.mesh_shader.is_some();
         match (ep.stage, &ep.mesh_shader) {
@@ -1938,6 +1943,8 @@ impl super::Validator {
                 &Some(crate::MeshShaderInfo { output: None, .. }),
             )
             | (_, &None) => {}
+            (crate::ShaderStage::Mesh, &Some(crate::MeshShaderInfo { output: None, .. }))
+                if self.mode == super::ValidationMode::Object => {}
             (_, &Some(_)) => {
                 return Err(EntryPointError::UnexpectedMeshShaderAttributes.with_span());
             }

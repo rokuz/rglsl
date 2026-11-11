@@ -1,9 +1,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use rspirv::dr::{Instruction, Module, Operand};
 use spirv::{
-    BuiltIn, Capability, Decoration, Dim, ExecutionMode, ExecutionModel, Op, StorageClass,
+    BuiltIn, Capability, Decoration, Dim, ExecutionMode, ExecutionModel, ImageFormat, Op,
+    StorageClass,
 };
+
+use super::module::{self, Instruction, Module};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ScalarKind {
@@ -196,6 +198,7 @@ pub enum ResourceKind {
     Sampler,
     UniformTexelBuffer(ImageType),
     StorageTexelBuffer(ImageType),
+    AccelerationStructure,
     Unsupported(String),
 }
 
@@ -210,6 +213,7 @@ impl ResourceKind {
             Self::Sampler => "sampler",
             Self::UniformTexelBuffer(_) => "uniform texel buffer",
             Self::StorageTexelBuffer(_) => "storage texel buffer",
+            Self::AccelerationStructure => "acceleration structure",
             Self::Unsupported(_) => "unsupported resource",
         }
     }
@@ -245,6 +249,7 @@ pub struct Varying {
     pub interpolation: Interpolation,
     pub centroid: bool,
     pub sample: bool,
+    pub patch: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -259,8 +264,21 @@ pub struct Reflection {
     pub input_builtins: BTreeSet<BuiltIn>,
     pub output_builtins: BTreeSet<BuiltIn>,
     pub capabilities: BTreeSet<Capability>,
+    pub unknown_capabilities: BTreeSet<u32>,
     pub extensions: BTreeSet<String>,
+    pub modes: BTreeMap<u32, Vec<u32>>,
+    pub ray_storage: BTreeSet<StorageClass>,
     pub problems: Vec<String>,
+}
+
+impl Reflection {
+    pub fn mode(&self, mode: ExecutionMode) -> Option<&[u32]> {
+        self.modes.get(&(mode as u32)).map(Vec::as_slice)
+    }
+
+    pub fn has_mode(&self, mode: ExecutionMode) -> bool {
+        self.modes.contains_key(&(mode as u32))
+    }
 }
 
 type DecorationList = Vec<(Decoration, Vec<u32>)>;
@@ -303,34 +321,6 @@ impl Decorations {
     }
 }
 
-fn literals(operands: &[Operand]) -> Vec<u32> {
-    operands
-        .iter()
-        .filter_map(|operand| match operand {
-            Operand::LiteralBit32(value) => Some(*value),
-            _ => None,
-        })
-        .collect()
-}
-
-fn id_operand(instruction: &Instruction, index: usize) -> Option<u32> {
-    match instruction.operands.get(index) {
-        Some(Operand::IdRef(id)) => Some(*id),
-        _ => None,
-    }
-}
-
-fn literal_operand(instruction: &Instruction, index: usize) -> Option<u32> {
-    match instruction.operands.get(index) {
-        Some(Operand::LiteralBit32(value)) => Some(*value),
-        _ => None,
-    }
-}
-
-fn opcode(instruction: &Instruction) -> Op {
-    instruction.class.opcode
-}
-
 struct Types<'a> {
     defs: BTreeMap<u32, &'a Instruction>,
     decorations: &'a Decorations,
@@ -341,154 +331,159 @@ impl Types<'_> {
         self.defs.get(&id).copied()
     }
 
+    fn opcode(&self, id: u32) -> Option<u32> {
+        self.get(id).map(|i| i.opcode)
+    }
+
     fn constant_u32(&self, id: u32) -> Option<u32> {
         let instruction = self.get(id)?;
-        match opcode(instruction) {
-            Op::Constant | Op::SpecConstant => match instruction.operands.first() {
-                Some(Operand::LiteralBit32(value)) => Some(*value),
-                Some(Operand::LiteralBit64(value)) => u32::try_from(*value).ok(),
-                _ => None,
-            },
+        if !(instruction.is(Op::Constant) || instruction.is(Op::SpecConstant)) {
+            return None;
+        }
+        match instruction.rest(2) {
+            [value] => Some(*value),
+            [low, 0] => Some(*low),
             _ => None,
         }
     }
 
     fn scalar(&self, id: u32) -> Option<Scalar> {
         let instruction = self.get(id)?;
-        match opcode(instruction) {
-            Op::TypeBool => Some(Scalar {
+        if instruction.is(Op::TypeBool) {
+            return Some(Scalar {
                 kind: ScalarKind::Bool,
                 width: 32,
-            }),
-            Op::TypeInt => {
-                let width = literal_operand(instruction, 0)?;
-                let signed = literal_operand(instruction, 1)? != 0;
-                Some(Scalar {
-                    kind: if signed {
-                        ScalarKind::Sint
-                    } else {
-                        ScalarKind::Uint
-                    },
-                    width,
-                })
-            }
-            Op::TypeFloat => {
-                if instruction.operands.len() > 1 {
-                    return None;
-                }
-                Some(Scalar {
-                    kind: ScalarKind::Float,
-                    width: literal_operand(instruction, 0)?,
-                })
-            }
-            _ => None,
+            });
         }
+        if instruction.is(Op::TypeInt) {
+            let width = instruction.word(1)?;
+            let signed = instruction.word(2)? != 0;
+            return Some(Scalar {
+                kind: if signed {
+                    ScalarKind::Sint
+                } else {
+                    ScalarKind::Uint
+                },
+                width,
+            });
+        }
+        if instruction.is(Op::TypeFloat) {
+            if instruction.operands.len() > 2 {
+                return None;
+            }
+            return Some(Scalar {
+                kind: ScalarKind::Float,
+                width: instruction.word(1)?,
+            });
+        }
+        None
     }
 
     fn layout(&self, id: u32, matrix: Option<(u32, bool)>, depth: u32) -> Result<Layout, String> {
         if depth > 32 {
             return Err("type nesting too deep".into());
         }
-        let instruction = self.get(id).ok_or_else(|| format!("unknown type %{id}"))?;
-        match opcode(instruction) {
-            Op::TypeBool | Op::TypeInt | Op::TypeFloat => self
+        let instruction = self
+            .get(id)
+            .ok_or_else(|| format!("unsupported type %{id}"))?;
+        let op = instruction.opcode;
+        if op == Op::TypeBool as u32 || op == Op::TypeInt as u32 || op == Op::TypeFloat as u32 {
+            return self
                 .scalar(id)
                 .map(Layout::Scalar)
-                .ok_or_else(|| "unsupported scalar type".to_string()),
-            Op::TypeVector => {
-                let component = id_operand(instruction, 0).ok_or("bad vector type")?;
-                let count = literal_operand(instruction, 1).ok_or("bad vector type")?;
-                let scalar = self
-                    .scalar(component)
-                    .ok_or_else(|| "unsupported vector component".to_string())?;
-                Ok(Layout::Vector { scalar, count })
-            }
-            Op::TypeMatrix => {
-                let column = id_operand(instruction, 0).ok_or("bad matrix type")?;
-                let columns = literal_operand(instruction, 1).ok_or("bad matrix type")?;
-                let Layout::Vector { scalar, count } = self.layout(column, None, depth + 1)? else {
-                    return Err("bad matrix column type".into());
-                };
-                let (stride, row_major) =
-                    matrix.ok_or_else(|| "matrix without a MatrixStride".to_string())?;
-                Ok(Layout::Matrix {
-                    scalar,
-                    columns,
-                    rows: count,
-                    stride,
-                    row_major,
-                })
-            }
-            Op::TypeArray | Op::TypeRuntimeArray => {
-                let element = id_operand(instruction, 0).ok_or("bad array type")?;
-                let length = if opcode(instruction) == Op::TypeArray {
-                    let length_id = id_operand(instruction, 1).ok_or("bad array type")?;
-                    Some(
-                        self.constant_u32(length_id)
-                            .ok_or_else(|| "array length is not a constant".to_string())?,
-                    )
-                } else {
-                    None
-                };
-                let stride = self
-                    .decorations
-                    .value(id, Decoration::ArrayStride)
-                    .ok_or_else(|| "array without an ArrayStride".to_string())?;
-                Ok(Layout::Array {
-                    element: Box::new(self.layout(element, matrix, depth + 1)?),
-                    length,
-                    stride,
-                })
-            }
-            Op::TypeStruct => {
-                let mut members = Vec::new();
-                for (index, operand) in instruction.operands.iter().enumerate() {
-                    let Operand::IdRef(member) = operand else {
-                        return Err("bad struct type".into());
-                    };
-                    let index = u32::try_from(index).map_err(|_| "struct too large")?;
-                    let offset = self
-                        .decorations
-                        .member_value(id, index, Decoration::Offset)
-                        .ok_or_else(|| "struct member without an Offset".to_string())?;
-                    let matrix = self
-                        .decorations
-                        .member_value(id, index, Decoration::MatrixStride)
-                        .map(|stride| {
-                            (
-                                stride,
-                                self.decorations.member_has(id, index, Decoration::RowMajor),
-                            )
-                        });
-                    members.push((offset, self.layout(*member, matrix, depth + 1)?));
-                }
-                Ok(Layout::Struct { members })
-            }
-            Op::TypePointer | Op::TypeForwardPointer => {
-                Err("pointers in buffers (buffer device address)".into())
-            }
-            other => Err(format!("unsupported type {other:?} in a buffer")),
+                .ok_or_else(|| "unsupported scalar type".to_string());
         }
+        if op == Op::TypeVector as u32 {
+            let component = instruction.word(1).ok_or("bad vector type")?;
+            let count = instruction.word(2).ok_or("bad vector type")?;
+            let scalar = self
+                .scalar(component)
+                .ok_or_else(|| "unsupported vector component".to_string())?;
+            return Ok(Layout::Vector { scalar, count });
+        }
+        if op == Op::TypeMatrix as u32 {
+            let column = instruction.word(1).ok_or("bad matrix type")?;
+            let columns = instruction.word(2).ok_or("bad matrix type")?;
+            let Layout::Vector { scalar, count } = self.layout(column, None, depth + 1)? else {
+                return Err("bad matrix column type".into());
+            };
+            let (stride, row_major) =
+                matrix.ok_or_else(|| "matrix without a MatrixStride".to_string())?;
+            return Ok(Layout::Matrix {
+                scalar,
+                columns,
+                rows: count,
+                stride,
+                row_major,
+            });
+        }
+        if op == Op::TypeArray as u32 || op == Op::TypeRuntimeArray as u32 {
+            let element = instruction.word(1).ok_or("bad array type")?;
+            let length = if op == Op::TypeArray as u32 {
+                let length_id = instruction.word(2).ok_or("bad array type")?;
+                Some(
+                    self.constant_u32(length_id)
+                        .ok_or_else(|| "array length is not a constant".to_string())?,
+                )
+            } else {
+                None
+            };
+            let stride = self
+                .decorations
+                .value(id, Decoration::ArrayStride)
+                .ok_or_else(|| "array without an ArrayStride".to_string())?;
+            return Ok(Layout::Array {
+                element: Box::new(self.layout(element, matrix, depth + 1)?),
+                length,
+                stride,
+            });
+        }
+        if op == Op::TypeStruct as u32 {
+            let mut members = Vec::new();
+            for (index, member) in instruction.rest(1).iter().enumerate() {
+                let index = u32::try_from(index).map_err(|_| "struct too large")?;
+                let offset = self
+                    .decorations
+                    .member_value(id, index, Decoration::Offset)
+                    .ok_or_else(|| "struct member without an Offset".to_string())?;
+                let matrix = self
+                    .decorations
+                    .member_value(id, index, Decoration::MatrixStride)
+                    .map(|stride| {
+                        (
+                            stride,
+                            self.decorations.member_has(id, index, Decoration::RowMajor),
+                        )
+                    });
+                members.push((offset, self.layout(*member, matrix, depth + 1)?));
+            }
+            return Ok(Layout::Struct { members });
+        }
+        if op == Op::TypePointer as u32 || op == Op::TypeForwardPointer as u32 {
+            return Err("pointers in buffers (buffer device address)".into());
+        }
+        Err(format!("unsupported type {} in a buffer", op_name(op)))
     }
 
     fn image(&self, id: u32) -> Result<ImageType, String> {
         let instruction = self.get(id).ok_or("unknown image type")?;
-        if opcode(instruction) != Op::TypeImage {
+        if !instruction.is(Op::TypeImage) {
             return Err("not an image type".into());
         }
-        let sampled_type = id_operand(instruction, 0).ok_or("bad image type")?;
-        let dim = match instruction.operands.get(1) {
-            Some(Operand::Dim(dim)) => *dim,
-            _ => return Err("bad image type".into()),
-        };
-        let depth = literal_operand(instruction, 2).ok_or("bad image type")? == 1;
-        let arrayed = literal_operand(instruction, 3).ok_or("bad image type")? != 0;
-        let multisampled = literal_operand(instruction, 4).ok_or("bad image type")? != 0;
-        let sampled = literal_operand(instruction, 5).ok_or("bad image type")?;
-        let format = match instruction.operands.get(6) {
-            Some(Operand::ImageFormat(format)) => *format,
-            _ => return Err("bad image type".into()),
-        };
+        let bad = || "bad image type".to_string();
+        let sampled_type = instruction.word(1).ok_or_else(bad)?;
+        let dim = instruction
+            .word(2)
+            .and_then(Dim::from_u32)
+            .ok_or_else(bad)?;
+        let depth = instruction.word(3).ok_or_else(bad)? == 1;
+        let arrayed = instruction.word(4).ok_or_else(bad)? != 0;
+        let multisampled = instruction.word(5).ok_or_else(bad)? != 0;
+        let sampled = instruction.word(6).ok_or_else(bad)?;
+        let format = instruction
+            .word(7)
+            .and_then(ImageFormat::from_u32)
+            .ok_or_else(bad)?;
         let scalar = self
             .scalar(sampled_type)
             .ok_or_else(|| "unsupported image sampled type".to_string())?;
@@ -507,150 +502,117 @@ impl Types<'_> {
         let Some(instruction) = self.get(id) else {
             return VaryingType::Unsupported("unknown type".into());
         };
-        match opcode(instruction) {
-            Op::TypeBool | Op::TypeInt | Op::TypeFloat => match self.scalar(id) {
+        let op = instruction.opcode;
+        if op == Op::TypeBool as u32 || op == Op::TypeInt as u32 || op == Op::TypeFloat as u32 {
+            return match self.scalar(id) {
                 Some(scalar) if scalar.kind != ScalarKind::Bool => {
                     VaryingType::Simple { scalar, count: 1 }
                 }
                 _ => VaryingType::Unsupported("boolean varying".into()),
-            },
-            Op::TypeVector => {
-                let component = id_operand(instruction, 0).and_then(|c| self.scalar(c));
-                match (component, literal_operand(instruction, 1)) {
-                    (Some(scalar), Some(count)) if scalar.kind != ScalarKind::Bool => {
-                        VaryingType::Simple { scalar, count }
-                    }
-                    _ => VaryingType::Unsupported("unsupported vector varying".into()),
-                }
-            }
-            Op::TypeMatrix => VaryingType::Unsupported("matrix varying".into()),
-            Op::TypeArray | Op::TypeRuntimeArray => {
-                VaryingType::Unsupported("array varying".into())
-            }
-            Op::TypeStruct => VaryingType::Unsupported("block or struct varying".into()),
-            other => VaryingType::Unsupported(format!("{other:?} varying")),
+            };
         }
+        if op == Op::TypeVector as u32 {
+            let component = instruction.word(1).and_then(|c| self.scalar(c));
+            return match (component, instruction.word(2)) {
+                (Some(scalar), Some(count)) if scalar.kind != ScalarKind::Bool => {
+                    VaryingType::Simple { scalar, count }
+                }
+                _ => VaryingType::Unsupported("unsupported vector varying".into()),
+            };
+        }
+        let what = if op == Op::TypeMatrix as u32 {
+            "matrix varying".to_string()
+        } else if op == Op::TypeArray as u32 || op == Op::TypeRuntimeArray as u32 {
+            "array varying".to_string()
+        } else if op == Op::TypeStruct as u32 {
+            "block or struct varying".to_string()
+        } else {
+            format!("{} varying", op_name(op))
+        };
+        VaryingType::Unsupported(what)
     }
 }
 
-pub fn reflect_words(words: &[u32]) -> Result<Reflection, String> {
-    let module = rspirv::dr::load_words(words).map_err(|error| {
-        let text = error.to_string();
-        let text = match text.find("opname: ") {
-            Some(start) => text
-                .get(start..)
-                .and_then(|rest| rest.split(',').next())
-                .unwrap_or_default()
-                .to_string(),
-            None => text,
-        };
-        format!(
-            "rspirv cannot load the module: {}",
-            text.chars().take(120).collect::<String>()
-        )
-    })?;
-    reflect(&module)
+fn op_name(opcode: u32) -> String {
+    Op::from_u32(opcode).map_or_else(|| format!("opcode {opcode}"), |op| format!("{op:?}"))
 }
 
 pub fn reflect_bytes(bytes: &[u8]) -> Result<Reflection, String> {
-    if !bytes.len().is_multiple_of(4) {
-        return Err("SPIR-V size is not a multiple of 4".into());
-    }
-    let words: Vec<u32> = bytes
-        .chunks_exact(4)
-        .map(|chunk| u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
-        .collect();
-    reflect_words(&words)
+    reflect(&module::parse_bytes(bytes)?)
 }
 
 fn collect_decorations(module: &Module) -> Decorations {
     let mut decorations = Decorations::default();
-    for annotation in &module.annotations {
-        match opcode(annotation) {
-            Op::Decorate | Op::DecorateId => {
-                let Some(target) = id_operand(annotation, 0) else {
-                    continue;
-                };
-                match annotation.operands.get(1) {
-                    Some(Operand::Decoration(Decoration::BuiltIn)) => {
-                        if let Some(Operand::BuiltIn(builtin)) = annotation.operands.get(2) {
-                            decorations.builtins.insert(target, *builtin);
-                        }
-                    }
-                    Some(Operand::Decoration(decoration)) => decorations
-                        .by_id
-                        .entry(target)
-                        .or_default()
-                        .push((*decoration, literals(&annotation.operands[2..]))),
-                    _ => {}
+    for annotation in &module.globals {
+        if annotation.is(Op::Decorate) || annotation.is(Op::DecorateId) {
+            let (Some(target), Some(decoration)) = (
+                annotation.word(0),
+                annotation.word(1).and_then(Decoration::from_u32),
+            ) else {
+                continue;
+            };
+            if decoration == Decoration::BuiltIn {
+                if let Some(builtin) = annotation.word(2).and_then(BuiltIn::from_u32) {
+                    decorations.builtins.insert(target, builtin);
                 }
+                continue;
             }
-            Op::MemberDecorate => {
-                let (Some(target), Some(member)) =
-                    (id_operand(annotation, 0), literal_operand(annotation, 1))
-                else {
-                    continue;
-                };
-                match annotation.operands.get(2) {
-                    Some(Operand::Decoration(Decoration::BuiltIn)) => {
-                        decorations.member_builtins.insert(target);
-                    }
-                    Some(Operand::Decoration(decoration)) => decorations
-                        .member
-                        .entry((target, member))
-                        .or_default()
-                        .push((*decoration, literals(&annotation.operands[3..]))),
-                    _ => {}
-                }
+            decorations
+                .by_id
+                .entry(target)
+                .or_default()
+                .push((decoration, annotation.rest(2).to_vec()));
+        } else if annotation.is(Op::MemberDecorate) {
+            let (Some(target), Some(member), Some(decoration)) = (
+                annotation.word(0),
+                annotation.word(1),
+                annotation.word(2).and_then(Decoration::from_u32),
+            ) else {
+                continue;
+            };
+            if decoration == Decoration::BuiltIn {
+                decorations.member_builtins.insert(target);
+                continue;
             }
-            _ => {}
+            decorations
+                .member
+                .entry((target, member))
+                .or_default()
+                .push((decoration, annotation.rest(3).to_vec()));
         }
     }
     decorations
 }
 
-fn local_size(module: &Module, types: &Types, entry: u32) -> [u32; 3] {
-    for instruction in &module.types_global_values {
-        let Some(id) = instruction.result_id else {
+fn local_size(module: &Module, types: &Types, modes: &BTreeMap<u32, Vec<u32>>) -> [u32; 3] {
+    for instruction in &module.globals {
+        let Some(id) = instruction.result_id() else {
             continue;
         };
         if types.decorations.builtins.get(&id) == Some(&BuiltIn::WorkgroupSize) {
             let components: Vec<u32> = instruction
-                .operands
+                .rest(2)
                 .iter()
-                .filter_map(|operand| match operand {
-                    Operand::IdRef(id) => types.constant_u32(*id),
-                    _ => None,
-                })
+                .filter_map(|id| types.constant_u32(*id))
                 .collect();
             if let [x, y, z] = components.as_slice() {
                 return [*x, *y, *z];
             }
         }
     }
-    for mode in &module.execution_modes {
-        if id_operand(mode, 0) != Some(entry) {
-            continue;
-        }
-        match (opcode(mode), mode.operands.get(1)) {
-            (Op::ExecutionMode, Some(Operand::ExecutionMode(ExecutionMode::LocalSize))) => {
-                if let [x, y, z] = literals(&mode.operands[2..]).as_slice() {
-                    return [*x, *y, *z];
-                }
-            }
-            (Op::ExecutionModeId, Some(Operand::ExecutionMode(ExecutionMode::LocalSizeId))) => {
-                let ids: Vec<u32> = mode.operands[2..]
-                    .iter()
-                    .filter_map(|operand| match operand {
-                        Operand::IdRef(id) => types.constant_u32(*id),
-                        _ => None,
-                    })
-                    .collect();
-                if let [x, y, z] = ids.as_slice() {
-                    return [*x, *y, *z];
-                }
-            }
-            _ => {}
+    if let Some([x, y, z]) = modes
+        .get(&(ExecutionMode::LocalSize as u32))
+        .map(Vec::as_slice)
+    {
+        return [*x, *y, *z];
+    }
+    if let Some(ids) = modes.get(&(ExecutionMode::LocalSizeId as u32)) {
+        let sizes: Vec<u32> = ids
+            .iter()
+            .filter_map(|id| types.constant_u32(*id))
+            .collect();
+        if let [x, y, z] = sizes.as_slice() {
+            return [*x, *y, *z];
         }
     }
     [1, 1, 1]
@@ -671,8 +633,24 @@ fn member_interpolation(
     }
 }
 
-fn varyings(types: &Types, id: u32, pointee: u32) -> Result<Vec<Varying>, String> {
+fn per_vertex_element(types: &Types, pointee: u32) -> Result<u32, String> {
+    let outer = types
+        .get(pointee)
+        .ok_or("interface variable of an unknown type")?;
+    if !(outer.is(Op::TypeArray) || outer.is(Op::TypeRuntimeArray)) {
+        return Err("per-vertex interface variable that is not an array".into());
+    }
+    outer.word(1).ok_or_else(|| "bad array type".to_string())
+}
+
+fn varyings(types: &Types, id: u32, pointee: u32, arrayed: bool) -> Result<Vec<Varying>, String> {
     let decorations = types.decorations;
+    let patch = decorations.has(id, Decoration::Patch);
+    let pointee = if arrayed && !patch {
+        per_vertex_element(types, pointee)?
+    } else {
+        pointee
+    };
     let location = decorations.value(id, Decoration::Location);
     let base = Varying {
         location: location.unwrap_or(0),
@@ -682,76 +660,72 @@ fn varyings(types: &Types, id: u32, pointee: u32) -> Result<Vec<Varying>, String
         interpolation: interpolation(decorations, id),
         centroid: decorations.has(id, Decoration::Centroid),
         sample: decorations.has(id, Decoration::Sample),
+        patch,
     };
     let Some(instruction) = types.get(pointee) else {
         return Err("interface variable of an unknown type".into());
     };
-    match opcode(instruction) {
-        Op::TypeStruct => {
-            let mut next = location;
-            let mut broken: Option<String> = None;
-            let mut result = Vec::new();
-            for (index, operand) in instruction.operands.iter().enumerate() {
-                let Operand::IdRef(member) = operand else {
-                    return Err("bad struct type".into());
-                };
-                let index = u32::try_from(index).map_err(|_| "struct too large")?;
-                let location = decorations
-                    .member_value(pointee, index, Decoration::Location)
-                    .or(next)
-                    .ok_or_else(|| "interface block member without a location".to_string())?;
-                let ty = match &broken {
-                    Some(reason) => VaryingType::Unsupported(reason.clone()),
-                    None => types.varying_type(*member),
-                };
-                if let VaryingType::Unsupported(reason) = &ty {
-                    broken.get_or_insert_with(|| format!("after a member that is a {reason}"));
-                }
-                result.push(Varying {
-                    location,
-                    component: decorations
-                        .member_value(pointee, index, Decoration::Component)
-                        .unwrap_or(0),
-                    ty,
-                    interpolation: member_interpolation(
-                        decorations,
-                        pointee,
-                        index,
-                        base.interpolation,
-                    ),
-                    centroid: base.centroid
-                        || decorations.member_has(pointee, index, Decoration::Centroid),
-                    sample: base.sample
-                        || decorations.member_has(pointee, index, Decoration::Sample),
-                    ..base.clone()
-                });
-                next = Some(location + 1);
-            }
-            Ok(result)
-        }
-        Op::TypeArray => {
-            let location = location.ok_or("interface variable without a location")?;
-            let length = id_operand(instruction, 1).and_then(|l| types.constant_u32(l));
-            let element = id_operand(instruction, 0);
-            let ty = match (element.map(|e| types.varying_type(e)), length) {
-                (Some(VaryingType::Simple { scalar, count }), Some(_)) => {
-                    VaryingType::Simple { scalar, count }
-                }
-                _ => VaryingType::Unsupported("array of non-vector varyings".into()),
+    if instruction.is(Op::TypeStruct) {
+        let mut next = location;
+        let mut broken: Option<String> = None;
+        let mut result = Vec::new();
+        for (index, member) in instruction.rest(1).iter().enumerate() {
+            let index = u32::try_from(index).map_err(|_| "struct too large")?;
+            let location = decorations
+                .member_value(pointee, index, Decoration::Location)
+                .or(next)
+                .ok_or_else(|| "interface block member without a location".to_string())?;
+            let ty = match &broken {
+                Some(reason) => VaryingType::Unsupported(reason.clone()),
+                None => types.varying_type(*member),
             };
-            Ok(vec![Varying {
+            if let VaryingType::Unsupported(reason) = &ty {
+                broken.get_or_insert_with(|| format!("after a member that is a {reason}"));
+            }
+            result.push(Varying {
                 location,
+                component: decorations
+                    .member_value(pointee, index, Decoration::Component)
+                    .unwrap_or(0),
                 ty,
-                array: length,
-                ..base
-            }])
+                interpolation: member_interpolation(
+                    decorations,
+                    pointee,
+                    index,
+                    base.interpolation,
+                ),
+                centroid: base.centroid
+                    || decorations.member_has(pointee, index, Decoration::Centroid),
+                sample: base.sample || decorations.member_has(pointee, index, Decoration::Sample),
+                patch: base.patch || decorations.member_has(pointee, index, Decoration::Patch),
+                ..base.clone()
+            });
+            next = Some(location + 1);
         }
-        _ => Ok(vec![Varying {
-            location: location.ok_or("interface variable without a location")?,
-            ty: types.varying_type(pointee),
-            ..base
-        }]),
+        return Ok(result);
     }
+    if instruction.is(Op::TypeArray) {
+        let location = location.ok_or("interface variable without a location")?;
+        let length = instruction.word(2).and_then(|l| types.constant_u32(l));
+        let element = instruction.word(1);
+        let ty = match (element.map(|e| types.varying_type(e)), length) {
+            (Some(VaryingType::Simple { scalar, count }), Some(_)) => {
+                VaryingType::Simple { scalar, count }
+            }
+            _ => VaryingType::Unsupported("array of non-vector varyings".into()),
+        };
+        return Ok(vec![Varying {
+            location,
+            ty,
+            array: length,
+            ..base
+        }]);
+    }
+    Ok(vec![Varying {
+        location: location.ok_or("interface variable without a location")?,
+        ty: types.varying_type(pointee),
+        ..base
+    }])
 }
 
 fn interpolation(decorations: &Decorations, id: u32) -> Interpolation {
@@ -764,79 +738,128 @@ fn interpolation(decorations: &Decorations, id: u32) -> Interpolation {
     }
 }
 
+const fn arrayed_interface(model: ExecutionModel, output: bool) -> bool {
+    match model {
+        ExecutionModel::Geometry | ExecutionModel::TessellationEvaluation => !output,
+        ExecutionModel::TessellationControl => true,
+        ExecutionModel::MeshEXT | ExecutionModel::MeshNV => output,
+        _ => false,
+    }
+}
+
+pub const fn is_ray_tracing(model: ExecutionModel) -> bool {
+    matches!(
+        model,
+        ExecutionModel::RayGenerationKHR
+            | ExecutionModel::IntersectionKHR
+            | ExecutionModel::AnyHitKHR
+            | ExecutionModel::ClosestHitKHR
+            | ExecutionModel::MissKHR
+            | ExecutionModel::CallableKHR
+    )
+}
+
 pub fn reflect(module: &Module) -> Result<Reflection, String> {
     let decorations = collect_decorations(module);
     let defs: BTreeMap<u32, &Instruction> = module
-        .types_global_values
+        .globals
         .iter()
-        .filter_map(|instruction| instruction.result_id.map(|id| (id, instruction)))
+        .filter_map(|instruction| instruction.result_id().map(|id| (id, instruction)))
         .collect();
     let types = Types {
         defs,
         decorations: &decorations,
     };
 
-    let entry_point = match module.entry_points.as_slice() {
-        [entry] => entry,
+    let entry_points: Vec<&Instruction> = module
+        .globals
+        .iter()
+        .filter(|i| i.is(Op::EntryPoint))
+        .collect();
+    let entry_point = match entry_points.as_slice() {
+        [entry] => *entry,
         [] => return Err("no entry point".into()),
         _ => return Err("several entry points".into()),
     };
-    let model = match entry_point.operands.first() {
-        Some(Operand::ExecutionModel(model)) => *model,
-        _ => return Err("bad OpEntryPoint".into()),
-    };
-    let entry_id = id_operand(entry_point, 1).ok_or("bad OpEntryPoint")?;
-    let entry = match entry_point.operands.get(2) {
-        Some(Operand::LiteralString(name)) => name.clone(),
-        _ => return Err("bad OpEntryPoint".into()),
-    };
+    let model = entry_point
+        .word(0)
+        .and_then(ExecutionModel::from_u32)
+        .ok_or("bad OpEntryPoint")?;
+    let entry_id = entry_point.word(1).ok_or("bad OpEntryPoint")?;
+    let (entry, _) = entry_point.string(2).ok_or("bad OpEntryPoint")?;
+
+    let mut modes = BTreeMap::new();
+    let mut capabilities = BTreeSet::new();
+    let mut unknown_capabilities = BTreeSet::new();
+    let mut extensions = BTreeSet::new();
+    for instruction in &module.globals {
+        if (instruction.is(Op::ExecutionMode) || instruction.is(Op::ExecutionModeId))
+            && instruction.word(0) == Some(entry_id)
+        {
+            if let Some(mode) = instruction.word(1) {
+                modes.insert(mode, instruction.rest(2).to_vec());
+            }
+        } else if instruction.is(Op::Capability) {
+            if let Some(value) = instruction.word(0) {
+                match Capability::from_u32(value) {
+                    Some(capability) => {
+                        capabilities.insert(capability);
+                    }
+                    None => {
+                        unknown_capabilities.insert(value);
+                    }
+                }
+            }
+        } else if instruction.is(Op::Extension) {
+            if let Some((name, _)) = instruction.string(0) {
+                extensions.insert(name);
+            }
+        }
+    }
 
     let mut reflection = Reflection {
         model,
         entry,
-        local_size: local_size(module, &types, entry_id),
+        local_size: local_size(module, &types, &modes),
         resources: Vec::new(),
         push_constants: None,
         inputs: Vec::new(),
         outputs: Vec::new(),
         input_builtins: BTreeSet::new(),
         output_builtins: BTreeSet::new(),
-        capabilities: module
-            .capabilities
-            .iter()
-            .filter_map(|instruction| match instruction.operands.first() {
-                Some(Operand::Capability(capability)) => Some(*capability),
-                _ => None,
-            })
-            .collect(),
-        extensions: module
-            .extensions
-            .iter()
-            .filter_map(|instruction| match instruction.operands.first() {
-                Some(Operand::LiteralString(name)) => Some(name.clone()),
-                _ => None,
-            })
-            .collect(),
+        capabilities,
+        unknown_capabilities,
+        extensions,
+        modes,
+        ray_storage: BTreeSet::new(),
         problems: Vec::new(),
     };
 
-    for instruction in &module.types_global_values {
-        if opcode(instruction) != Op::Variable {
+    for instruction in &module.globals {
+        if !instruction.is(Op::Variable) {
             continue;
         }
-        let (Some(id), Some(pointer)) = (instruction.result_id, instruction.result_type) else {
+        let (Some(pointer), Some(id), Some(raw_class)) = (
+            instruction.word(0),
+            instruction.word(1),
+            instruction.word(2),
+        ) else {
             continue;
         };
-        let Some(Operand::StorageClass(class)) = instruction.operands.first() else {
+        let Some(class) = StorageClass::from_u32(raw_class) else {
+            reflection
+                .problems
+                .push(format!("variables of storage class {raw_class}"));
             continue;
         };
         let pointee = types
             .get(pointer)
-            .and_then(|p| id_operand(p, 1))
+            .filter(|p| p.is(Op::TypePointer))
+            .and_then(|p| p.word(2))
             .ok_or("variable without a pointer type")?;
         match class {
             StorageClass::Input | StorageClass::Output => {
-                let output = *class == StorageClass::Output;
+                let output = class == StorageClass::Output;
                 if let Some(builtin) = decorations.builtins.get(&id) {
                     if output {
                         reflection.output_builtins.insert(*builtin);
@@ -845,10 +868,16 @@ pub fn reflect(module: &Module) -> Result<Reflection, String> {
                     }
                     continue;
                 }
-                if decorations.member_builtins.contains(&pointee) {
+                let arrayed = arrayed_interface(model, output);
+                let block = if arrayed {
+                    per_vertex_element(&types, pointee).unwrap_or(pointee)
+                } else {
+                    pointee
+                };
+                if decorations.member_builtins.contains(&block) {
                     continue;
                 }
-                let varyings = match varyings(&types, id, pointee) {
+                let varyings = match varyings(&types, id, pointee, arrayed) {
                     Ok(varyings) => varyings,
                     Err(problem) => {
                         reflection.problems.push(problem);
@@ -876,17 +905,17 @@ pub fn reflect(module: &Module) -> Result<Reflection, String> {
                     continue;
                 };
                 let (count, element) = match types.get(pointee) {
-                    Some(array) if opcode(array) == Op::TypeArray => {
-                        match id_operand(array, 1).and_then(|length| types.constant_u32(length)) {
-                            Some(length) => (Some(length), id_operand(array, 0)),
+                    Some(array) if array.is(Op::TypeArray) => {
+                        match array.word(2).and_then(|length| types.constant_u32(length)) {
+                            Some(length) => (Some(length), array.word(1)),
                             None => (None, None),
                         }
                     }
-                    Some(array) if opcode(array) == Op::TypeRuntimeArray => (None, None),
+                    Some(array) if array.is(Op::TypeRuntimeArray) => (None, None),
                     _ => (None, Some(pointee)),
                 };
                 let kind = match element {
-                    Some(element) if count != Some(0) => resource_kind(&types, *class, id, element),
+                    Some(element) if count != Some(0) => resource_kind(&types, class, id, element),
                     _ => ResourceKind::Unsupported("runtime arrays of descriptors".into()),
                 };
                 reflection.resources.push(Resource {
@@ -903,6 +932,16 @@ pub fn reflect(module: &Module) -> Result<Reflection, String> {
             | StorageClass::Workgroup
             | StorageClass::Function
             | StorageClass::Image => {}
+            StorageClass::RayPayloadKHR
+            | StorageClass::IncomingRayPayloadKHR
+            | StorageClass::HitAttributeKHR
+            | StorageClass::CallableDataKHR
+            | StorageClass::IncomingCallableDataKHR
+            | StorageClass::ShaderRecordBufferKHR
+                if is_ray_tracing(model) =>
+            {
+                reflection.ray_storage.insert(class);
+            }
             other => reflection.problems.push(format!("{other:?} variables")),
         }
     }
@@ -918,16 +957,13 @@ pub fn reflect(module: &Module) -> Result<Reflection, String> {
 
 fn resource_kind(types: &Types, class: StorageClass, variable: u32, pointee: u32) -> ResourceKind {
     let Some(instruction) = types.get(pointee) else {
-        return ResourceKind::Unsupported("unknown resource type".into());
+        return ResourceKind::Unsupported(format!("resource of an unsupported type %{pointee}"));
     };
-    match opcode(instruction) {
-        Op::TypeArray | Op::TypeRuntimeArray => {
-            return ResourceKind::Unsupported("arrays of arrays of descriptors".into())
-        }
-        Op::TypeAccelerationStructureKHR => {
-            return ResourceKind::Unsupported("acceleration structures".into())
-        }
-        _ => {}
+    if instruction.is(Op::TypeArray) || instruction.is(Op::TypeRuntimeArray) {
+        return ResourceKind::Unsupported("arrays of arrays of descriptors".into());
+    }
+    if instruction.is(Op::TypeAccelerationStructureKHR) {
+        return ResourceKind::AccelerationStructure;
     }
     let decorations = types.decorations;
     match class {
@@ -941,7 +977,7 @@ fn resource_kind(types: &Types, class: StorageClass, variable: u32, pointee: u32
             if !storage {
                 return ResourceKind::UniformBuffer(layout);
             }
-            let member_count = u32::try_from(instruction.operands.len()).unwrap_or(0);
+            let member_count = u32::try_from(instruction.rest(1).len()).unwrap_or(0);
             let read_only = decorations.has(variable, Decoration::NonWritable)
                 || (member_count > 0
                     && (0..member_count)
@@ -951,32 +987,139 @@ fn resource_kind(types: &Types, class: StorageClass, variable: u32, pointee: u32
                 writable: !read_only,
             }
         }
-        StorageClass::UniformConstant => match opcode(instruction) {
-            Op::TypeSampler => ResourceKind::Sampler,
-            Op::TypeSampledImage => {
-                let Some(image_id) = id_operand(instruction, 0) else {
+        StorageClass::UniformConstant => {
+            if instruction.is(Op::TypeSampler) {
+                return ResourceKind::Sampler;
+            }
+            if instruction.is(Op::TypeSampledImage) {
+                let Some(image_id) = instruction.word(1) else {
                     return ResourceKind::Unsupported("bad sampled image type".into());
                 };
-                match types.image(image_id) {
+                return match types.image(image_id) {
                     Ok(image) if image.dim == Dim::DimBuffer => {
                         ResourceKind::UniformTexelBuffer(image)
                     }
                     Ok(image) => ResourceKind::CombinedImageSampler(image),
                     Err(error) => ResourceKind::Unsupported(error),
-                }
+                };
             }
-            Op::TypeImage => match types.image(pointee) {
-                Ok(image) => match (image.dim, image.sampled) {
-                    (Dim::DimBuffer, 2) => ResourceKind::StorageTexelBuffer(image),
-                    (Dim::DimBuffer, _) => ResourceKind::UniformTexelBuffer(image),
-                    (Dim::DimSubpassData, _) => ResourceKind::Unsupported("subpass inputs".into()),
-                    (_, 2) => ResourceKind::StorageImage(image),
-                    _ => ResourceKind::SampledImage(image),
-                },
-                Err(error) => ResourceKind::Unsupported(error),
-            },
-            other => ResourceKind::Unsupported(format!("{other:?} uniform constants")),
-        },
+            if instruction.is(Op::TypeImage) {
+                return match types.image(pointee) {
+                    Ok(image) => match (image.dim, image.sampled) {
+                        (Dim::DimBuffer, 2) => ResourceKind::StorageTexelBuffer(image),
+                        (Dim::DimBuffer, _) => ResourceKind::UniformTexelBuffer(image),
+                        (Dim::DimSubpassData, _) => {
+                            ResourceKind::Unsupported("subpass inputs".into())
+                        }
+                        (_, 2) => ResourceKind::StorageImage(image),
+                        _ => ResourceKind::SampledImage(image),
+                    },
+                    Err(error) => ResourceKind::Unsupported(error),
+                };
+            }
+            ResourceKind::Unsupported(format!(
+                "{} uniform constants",
+                types
+                    .opcode(pointee)
+                    .map_or_else(|| "unknown".to_string(), op_name)
+            ))
+        }
         _ => ResourceKind::Unsupported(format!("{class:?} resources")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::exec::module::tests::{instruction, module, string_words};
+
+    fn op(op: Op, operands: &[u32]) -> Vec<u32> {
+        instruction(op as u32, operands)
+    }
+
+    fn entry(model: ExecutionModel) -> Vec<u32> {
+        let mut words = vec![model as u32, 1];
+        words.extend(string_words("main"));
+        words
+    }
+
+    #[test]
+    fn reflects_a_compute_module_with_unknown_instructions() {
+        let words = module(&[
+            op(Op::Capability, &[Capability::Shader as u32]),
+            op(Op::Capability, &[60_000]),
+            op(
+                Op::Extension,
+                &string_words("SPV_KHR_storage_buffer_storage_class"),
+            ),
+            op(Op::EntryPoint, &entry(ExecutionModel::GLCompute)),
+            op(
+                Op::ExecutionMode,
+                &[1, ExecutionMode::LocalSize as u32, 8, 2, 1],
+            ),
+            op(Op::Decorate, &[10, Decoration::Block as u32]),
+            op(Op::MemberDecorate, &[10, 0, Decoration::Offset as u32, 0]),
+            op(Op::Decorate, &[12, Decoration::DescriptorSet as u32, 1]),
+            op(Op::Decorate, &[12, Decoration::Binding as u32, 3]),
+            op(Op::Decorate, &[9, Decoration::ArrayStride as u32, 4]),
+            op(Op::TypeInt, &[5, 32, 0]),
+            instruction(61_234, &[77, 5]),
+            op(Op::TypeRuntimeArray, &[9, 5]),
+            op(Op::TypeStruct, &[10, 9]),
+            op(
+                Op::TypePointer,
+                &[11, StorageClass::StorageBuffer as u32, 10],
+            ),
+            op(Op::Variable, &[11, 12, StorageClass::StorageBuffer as u32]),
+        ]);
+        let reflection = reflect(&module::parse(&words).unwrap()).unwrap();
+        assert_eq!(reflection.model, ExecutionModel::GLCompute);
+        assert_eq!(reflection.entry, "main");
+        assert_eq!(reflection.local_size, [8, 2, 1]);
+        assert!(reflection.capabilities.contains(&Capability::Shader));
+        assert!(reflection.unknown_capabilities.contains(&60_000));
+        assert!(reflection
+            .extensions
+            .contains("SPV_KHR_storage_buffer_storage_class"));
+        assert_eq!(reflection.resources.len(), 1);
+        let resource = &reflection.resources[0];
+        assert_eq!((resource.set, resource.binding), (1, 3));
+        let ResourceKind::StorageBuffer { layout, writable } = &resource.kind else {
+            panic!("expected a storage buffer, got {:?}", resource.kind);
+        };
+        assert!(*writable);
+        assert_eq!(layout.runtime_stride(), 4);
+    }
+
+    #[test]
+    fn reflects_per_vertex_geometry_inputs() {
+        let words = module(&[
+            op(Op::Capability, &[Capability::Geometry as u32]),
+            op(Op::EntryPoint, &entry(ExecutionModel::Geometry)),
+            op(Op::ExecutionMode, &[1, ExecutionMode::Triangles as u32]),
+            op(Op::Decorate, &[20, Decoration::Location as u32, 2]),
+            op(Op::TypeFloat, &[5, 32]),
+            op(Op::TypeVector, &[6, 5, 4]),
+            op(Op::TypeInt, &[7, 32, 0]),
+            op(Op::Constant, &[7, 8, 3]),
+            op(Op::TypeArray, &[9, 6, 8]),
+            op(Op::TypePointer, &[10, StorageClass::Input as u32, 9]),
+            op(Op::Variable, &[10, 20, StorageClass::Input as u32]),
+        ]);
+        let reflection = reflect(&module::parse(&words).unwrap()).unwrap();
+        assert!(reflection.has_mode(ExecutionMode::Triangles));
+        assert_eq!(reflection.inputs.len(), 1);
+        assert_eq!(reflection.inputs[0].location, 2);
+        assert_eq!(reflection.inputs[0].array, None);
+        assert_eq!(
+            reflection.inputs[0].ty,
+            VaryingType::Simple {
+                scalar: Scalar {
+                    kind: ScalarKind::Float,
+                    width: 32
+                },
+                count: 4
+            }
+        );
     }
 }

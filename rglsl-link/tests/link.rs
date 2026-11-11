@@ -142,7 +142,8 @@ fn object_modules_round_trip_through_the_file_format() {
     let decoded = decode(&text).unwrap();
     assert_eq!(decoded.functions, main.functions);
     linked(&[decoded, library(HELPER)]);
-    let future = text.replacen("format_version:1", "format_version:99", 1);
+    let current = format!("format_version:{}", rglsl::object::FORMAT_VERSION);
+    let future = text.replacen(&current, "format_version:99", 1);
     assert!(matches!(
         decode(&future),
         Err(rglsl_link::FileError::Version { found: 99, .. })
@@ -454,42 +455,57 @@ vec4 incoming() { return value; }
 }
 
 #[test]
-fn libraries_have_no_stage() {
-    let errors = library_errors(
-        "#version 450
-layout(location = 0) in vec4 value;
-shared float cache;
-vec4 f() { barrier(); return gl_FragCoord + value; }
-",
+fn libraries_record_the_stages_they_link_into() {
+    let fragment_only = library("#version 450\nvec4 f() { return gl_FragCoord; }\n");
+    assert!(fragment_only.is_library());
+    assert!(fragment_only.supports(ShaderStage::Fragment));
+    assert!(!fragment_only.supports(ShaderStage::Vertex));
+    let rejection = fragment_only.for_stage(ShaderStage::Vertex).unwrap_err();
+    assert_eq!(rejection.line, Some(2));
+    assert_eq!(
+        rejection.message,
+        "`gl_FragCoord` is not available in vertex shaders"
     );
-    let text = errors.join("\n");
-    assert!(
-        text.contains(
-            "stage inputs, outputs and `shared` variables cannot be declared in a library"
-        ),
-        "{text}"
-    );
-    assert!(library_errors("#version 450\nvoid main() {}\n")
-        .join("\n")
-        .contains("cannot define `main`"));
-    assert!(
-        text.contains("`gl_FragCoord` belongs to a shader stage"),
-        "{text}"
-    );
-    assert!(
-        library_errors("#version 450\nfloat f(float x) { return dFdx(x); }\n")
-            .join("\n")
-            .contains("`dFdx` belongs to a shader stage"),
-    );
-    assert!(library_errors(
+    let neutral = library(
         "#version 450
 layout(set = 0, binding = 0) uniform sampler2D tex;
 layout(set = 0, binding = 1) uniform Block { vec4 v; } block;
 layout(constant_id = 0) const int N = 4;
 vec4 f(vec2 uv) { return texture(tex, uv) * block.v * float(N); }
-"
+",
+    );
+    for stage in [
+        ShaderStage::Vertex,
+        ShaderStage::TessControl,
+        ShaderStage::TessEvaluation,
+        ShaderStage::Geometry,
+        ShaderStage::Fragment,
+        ShaderStage::Compute,
+        ShaderStage::Task,
+        ShaderStage::Mesh,
+    ] {
+        assert!(neutral.supports(stage), "{stage:?}");
+    }
+    assert!(neutral.variants.is_empty());
+    let interface = object(
+        ShaderStage::Vertex,
+        "#version 450\nlayout(location = 0) in vec4 value;\nvec4 f() { return value; }\n",
+    );
+    assert!(interface.is_library());
+    assert!(interface.supports(ShaderStage::Vertex));
+    assert!(interface.supports(ShaderStage::Fragment));
+    assert!(!interface.supports(ShaderStage::Compute));
+    assert!(library_errors("#version 450\nvoid main() {}\n")
+        .join("\n")
+        .contains("cannot define `main`"));
+    let text = library_errors(
+        "#version 450
+shared float cache;
+vec4 f() { return gl_FragCoord + vec4(cache); }
+",
     )
-    .is_empty());
+    .join("\n");
+    assert!(!text.is_empty());
 }
 
 #[test]
@@ -575,4 +591,61 @@ void main() { color = vec4(a[1]); }
         Ok(_) => panic!("linking succeeded"),
         Err(errors) => assert_eq!(errors.errors, [LinkError::ImplicitSize("a".into())]),
     }
+}
+
+#[test]
+fn library_layouts_are_merged_into_the_program() {
+    let main = object(
+        ShaderStage::Compute,
+        "#version 460
+#extension GL_QCOM_tile_shading : enable
+layout(local_size_x = 16, local_size_y = 16) in;
+float f(float x);
+layout(set = 0, binding = 0) buffer Data { float v[]; } data;
+void main() { data.v[gl_LocalInvocationIndex] = f(1.0); }
+",
+    );
+    let lib = library(
+        "#version 460
+#extension GL_QCOM_tile_shading : enable
+layout(shading_rate_xQCOM = 2, shading_rate_yQCOM = 4) in;
+layout(local_size_z_id = 7) in;
+float f(float x) { return x; }
+",
+    );
+    assert!(lib.supports(ShaderStage::Compute));
+    assert!(!lib.supports(ShaderStage::Fragment));
+    let result = linked(&[main, lib]);
+    let entry = &result.module.entry_points[0];
+    assert_eq!(entry.workgroup_size, [16, 16, 1]);
+    assert_eq!(entry.tile_shading.rate, Some([2, 4, 1]));
+    let overrides = entry.workgroup_size_overrides.unwrap();
+    assert!(overrides[0].is_none() && overrides[1].is_none());
+    let id = match result.module.global_expressions[overrides[2].unwrap()] {
+        rglsl::Expression::Override(handle) => result.module.overrides[handle].id,
+        _ => None,
+    };
+    assert_eq!(id, Some(7));
+    assert!(!spirv(&result).is_empty());
+}
+
+#[test]
+fn contradictory_invocations_use_glslang_wording() {
+    let main = object(
+        ShaderStage::Geometry,
+        "#version 450
+layout(triangles, invocations = 2) in;
+layout(points, max_vertices = 1) out;
+void f();
+void main() { f(); }
+",
+    );
+    let lib = library("#version 450\nlayout(invocations = 3) in;\nvoid f() {}\n");
+    assert_eq!(
+        errors(&[main, lib])
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>(),
+        ["number of invocations must match between compilation units"]
+    );
 }
