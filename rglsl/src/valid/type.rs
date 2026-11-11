@@ -1,4 +1,4 @@
-use alloc::string::String;
+use alloc::{string::String, vec::Vec};
 
 use super::Capabilities;
 use crate::{arena::Handle, ir, proc::Alignment};
@@ -818,7 +818,7 @@ impl super::Validator {
                 );
                 ti.uniform_layout = Ok(Alignment::MIN_UNIFORM);
 
-                let mut min_offset = 0;
+                let mut extents = Vec::with_capacity(members.len());
 
                 for (i, member) in members.iter().enumerate() {
                     let base_info = &self.types[member.ty.index()];
@@ -880,23 +880,9 @@ impl super::Validator {
                         _ => {}
                     }
 
-                    if member.offset < min_offset {
-                        // HACK: this could be nicer. We want to allow some structures
-                        // to not bother with offsets/alignments if they are never
-                        // used for host sharing.
-                        if member.offset == 0 {
-                            ti.flags.set(TypeFlags::HOST_SHAREABLE, false);
-                        } else {
-                            return Err(TypeError::MemberOverlap {
-                                index: i as u32,
-                                offset: member.offset,
-                            });
-                        }
-                    }
-
                     let base_size = member_extent(member, &gctx.types[member.ty].inner, gctx);
-                    min_offset = member.offset + base_size;
-                    if min_offset > span {
+                    extents.push((member.offset, base_size, i as u32));
+                    if member.offset.saturating_add(base_size) > span {
                         return Err(TypeError::MemberOutOfBounds {
                             index: i as u32,
                             offset: member.offset,
@@ -925,6 +911,17 @@ impl super::Validator {
                             ti.uniform_layout =
                                 Err((handle, Disalignment::UnsizedMember { index: i as u32 }));
                         }
+                    }
+                }
+
+                if let Some((index, offset)) = first_overlap(&mut extents) {
+                    // HACK: this could be nicer. We want to allow some structures
+                    // to not bother with offsets/alignments if they are never
+                    // used for host sharing.
+                    if members.iter().all(|member| member.offset == 0) {
+                        ti.flags.set(TypeFlags::HOST_SHAREABLE, false);
+                    } else {
+                        return Err(TypeError::MemberOverlap { index, offset });
                     }
                 }
 
@@ -1175,6 +1172,21 @@ impl super::Validator {
             }
         })
     }
+}
+
+fn first_overlap(extents: &mut [(u32, u32, u32)]) -> Option<(u32, u32)> {
+    extents.sort_by_key(|&(offset, _, index)| (offset, index));
+    let mut end = 0;
+    for &(offset, size, index) in extents.iter() {
+        if size == 0 {
+            continue;
+        }
+        if offset < end {
+            return Some((index, offset));
+        }
+        end = end.max(offset.saturating_add(size));
+    }
+    None
 }
 
 fn member_extent(

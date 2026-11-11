@@ -179,6 +179,7 @@ impl super::Validator {
                 tile_attachment: _,
                 ref spirv_decorations,
                 relaxed_precision: _,
+                immediate_bank: _,
             } = global_variable;
             validate_type(ty)?;
             if let Some(init_expr) = init {

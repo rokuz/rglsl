@@ -41,6 +41,7 @@ impl Builder<'_> {
             tile_attachment,
             ref spirv_decorations,
             relaxed_precision: _,
+            immediate_bank,
         } = *candidate.global;
         if current.space != space {
             self.errors.push(mismatch("storage qualifiers"));
@@ -70,6 +71,9 @@ impl Builder<'_> {
         }
         if current.tile_attachment != tile_attachment {
             self.errors.push(mismatch("tile attachment qualifiers"));
+        }
+        if current.immediate_bank != immediate_bank {
+            self.errors.push(mismatch("push constant bank qualifiers"));
         }
         if current.spirv_decorations.len() != spirv_decorations.len() {
             self.errors.push(mismatch("SPIR-V decorate qualifiers"));

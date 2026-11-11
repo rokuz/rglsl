@@ -89,6 +89,7 @@ impl Builder {
                 tile_attachment: false,
                 spirv_decorations: Vec::new(),
                 relaxed_precision: false,
+                immediate_bank: None,
             },
             Span::UNDEFINED,
         )
@@ -562,6 +563,7 @@ fn invalid_interfaces_are_rejected() {
                 tile_attachment: false,
                 spirv_decorations: Vec::new(),
                 relaxed_precision: false,
+                immediate_bank: None,
             },
             Span::UNDEFINED,
         );

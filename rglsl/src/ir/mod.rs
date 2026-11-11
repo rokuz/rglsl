@@ -1589,6 +1589,18 @@ pub struct GlobalVariable {
     )]
     #[cfg_attr(feature = "deserialize", serde(default))]
     pub relaxed_precision: bool,
+    #[cfg_attr(feature = "serialize", serde(skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    pub immediate_bank: Option<ImmediateBank>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub struct ImmediateBank {
+    pub bank: Option<u32>,
+    pub member_offset: Option<u32>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]

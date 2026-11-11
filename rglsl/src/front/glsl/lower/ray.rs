@@ -278,6 +278,7 @@ impl Lowerer<'_> {
                 tile_attachment: false,
                 spirv_decorations: Vec::new(),
                 relaxed_precision: false,
+                immediate_bank: None,
             },
             at,
         );
@@ -311,6 +312,7 @@ impl Lowerer<'_> {
                 tile_attachment: false,
                 spirv_decorations: Vec::new(),
                 relaxed_precision: false,
+                immediate_bank: None,
             },
             at,
         )

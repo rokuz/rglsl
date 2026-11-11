@@ -1128,8 +1128,10 @@ impl Analyzer<'_> {
             || operands
                 .iter()
                 .all(|operand| operand.ty.base_scalar() == ty.base_scalar());
+        let composite_specialization = self.extension_enabled(SPEC_CONSTANT_COMPOSITES)
+            && (matches!(ty.kind, TypeKind::Struct(_)) || operands.len() > 1);
         let constant = operands.iter().all(|operand| operand.constant)
-            && (!any_specialization || keeps_specialization)
+            && (!any_specialization || keeps_specialization || composite_specialization)
             && foldable;
         let count = u32::try_from(operands.len()).unwrap_or(u32::MAX);
         let mut element_types: Vec<Type> = Vec::new();
@@ -1389,3 +1391,4 @@ fn microscaling_conversion(ty: &Type, operands: &[Operand]) -> bool {
             .iter()
             .any(|operand| operand.ty.base_scalar() != ty.base_scalar())
 }
+pub(crate) const SPEC_CONSTANT_COMPOSITES: &str = "GL_EXT_spec_constant_composites";

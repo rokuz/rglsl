@@ -53,14 +53,14 @@ fn variable_names(builtins: &Builtins) -> BTreeSet<String> {
 #[test]
 fn the_tables_have_the_expected_sizes() {
     let expected = [
-        (Stage::Vertex, 6480, 35, 178, 214),
-        (Stage::TessControl, 6481, 35, 174, 207),
-        (Stage::TessEvaluation, 6480, 35, 182, 215),
-        (Stage::Geometry, 6484, 35, 180, 213),
-        (Stage::Fragment, 6982, 35, 179, 215),
-        (Stage::Compute, 6944, 37, 172, 208),
-        (Stage::Mesh, 6696, 37, 186, 220),
-        (Stage::RayGeneration, 6480, 122, 164, 203),
+        (Stage::Vertex, 6487, 35, 178, 214),
+        (Stage::TessControl, 6488, 35, 174, 207),
+        (Stage::TessEvaluation, 6487, 35, 182, 215),
+        (Stage::Geometry, 6491, 35, 180, 213),
+        (Stage::Fragment, 6989, 35, 179, 215),
+        (Stage::Compute, 6951, 37, 172, 208),
+        (Stage::Mesh, 6703, 37, 186, 220),
+        (Stage::RayGeneration, 6487, 122, 164, 203),
     ];
     for (stage, functions, added, variables_450, variables_460) in expected {
         let older = builtins(450, stage);
@@ -185,7 +185,10 @@ fn texture_functions_follow_the_sampler_type() {
     }
     assert!(!texture.iter().any(|signature| signature.contains("Buffer")));
     assert!(!texture.iter().any(|signature| signature.contains("2DMS")));
-    assert!(!texture.contains(&"float texture(sampler2DArrayShadow, vec4, float)".to_string()));
+    assert!(texture.contains(&"float texture(sampler2DArrayShadow, vec4, float)".to_string()));
+    assert!(
+        !texture.contains(&"float texture(sampler2DArrayShadow, vec4, float, float)".to_string())
+    );
     let fetch = signatures(&table, "texelFetch");
     for expected in [
         "vec4 texelFetch(sampler2D, ivec2, int)",

@@ -402,6 +402,17 @@ impl Writer {
                 let id = self.written(value)?;
                 parts.extend(core::iter::repeat_n(id, size as usize));
             }
+            Expression::Replicate { ty, value } => {
+                let id = self.written(value)?;
+                match super::cooperative::replicate_shape(&module.types[ty].inner)? {
+                    super::cooperative::ReplicateShape::Copies(count) => {
+                        parts.extend(core::iter::repeat_n(id, count as usize));
+                    }
+                    super::cooperative::ReplicateShape::Replicated => {
+                        return self.write_spec_constant_replicate(type_id, id);
+                    }
+                }
+            }
             _ => return Err(Error::Validation("not a composite")),
         }
         Ok(self.write_spec_constant_composite(type_id, &parts))

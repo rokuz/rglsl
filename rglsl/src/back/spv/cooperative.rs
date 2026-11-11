@@ -51,6 +51,21 @@ impl Writer {
         Ok(())
     }
 
+    pub(super) fn write_spec_constant_replicate(
+        &mut self,
+        type_id: Word,
+        value_id: Word,
+    ) -> Result<Word, Error> {
+        self.require_replicated_composites()?;
+        let id = self.id_gen.next();
+        let mut instruction = Instruction::new(Op::SpecConstantCompositeReplicateEXT);
+        instruction.set_type(type_id);
+        instruction.set_result(id);
+        instruction.add_operand(value_id);
+        instruction.to_words(&mut self.logical_layout.declarations);
+        Ok(id)
+    }
+
     pub(super) fn write_constant_replicate(
         &mut self,
         ty: Handle<crate::Type>,

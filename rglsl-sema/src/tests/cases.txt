@@ -3049,13 +3049,13 @@ void main() {
   r += texture(a, vec3(0.0), 1.0) + textureProjLod(a, vec4(0.0), 0.0) + textureProjGradOffset(a, vec4(0.0), vec2(0.0), vec2(0.0), ivec2(0));
   r += textureGrad(c, vec4(0.0), vec2(0.0), vec2(0.0)) + textureLod(e, vec3(0.0), 0.0) + textureLod(f, vec3(0.0), 0.0);
 }
-### shadow lod not available | frag | 3:NoMatchingFunction
+### shadow lod not available | frag | 3:ExtensionRequired
 layout(binding=2) uniform sampler2DArrayShadow c;
 void main() { float r = textureLod(c, vec4(0.0), 0.0); }
-### cube shadow lod | frag | 3:NoMatchingFunction
+### cube shadow lod | frag | 3:ExtensionRequired
 layout(binding=1) uniform samplerCubeShadow b;
 void main() { float r = textureLod(b, vec4(0.0), 0.0); }
-### array shadow bias | frag | 3:NoMatchingFunction
+### array shadow bias | frag | 3:ExtensionRequired
 layout(binding=2) uniform sampler2DArrayShadow c;
 void main() { float r = texture(c, vec4(0.0), 1.0); }
 ### texture families misc | frag | 16:InvalidConstructor
@@ -5637,4 +5637,94 @@ void main() {
     precise gl_FragDepth;
     gl_FragDepth = t.a + t.b;
     color = value + vec4(f(uv.x));
+}
+### push constant banks need their extension | vert 460 | 2:ExtensionRequired, 3:ExtensionRequired
+layout(push_constant, bank = 1) uniform A { uint a; } a;
+layout(push_constant, member_offset = 4) uniform B { uint b; } b;
+void main() {}
+### push constant banks | vert 460 | ok
+#extension GL_NV_push_constant_bank : enable
+layout(push_constant) uniform A { uint a; } a;
+layout(push_constant, bank = 1) uniform B { uint b; } b;
+layout(push_constant, bank = 2, member_offset = 64) uniform C { uint c; } c;
+void main() {}
+### push constant bank out of range | vert 460 | 3:InvalidQualifier, 4:LayoutValueNegative
+#extension GL_NV_push_constant_bank : enable
+layout(push_constant, bank = 15) uniform A { uint a; } a;
+layout(push_constant, bank = 1, member_offset = -4) uniform B { uint b; } b;
+void main() {}
+### null initializer needs its extension | comp | 3:ExtensionRequired
+layout(local_size_x=1) in;
+shared float f = {};
+void main() {}
+### null initializers | comp | ok
+#extension GL_EXT_null_initializer : enable
+layout(local_size_x=1) in;
+struct S { vec3 v[4]; int a; };
+shared S s = {};
+shared float f = {};
+const float c = {};
+S g = {};
+void main() { S local = {}; local.a += int(c); }
+### null initializer of an unsized array | comp | 5:InvalidNullInitializer
+#extension GL_EXT_null_initializer : enable
+layout(local_size_x=1) in;
+void main() {
+    float a[] = {};
+}
+### spec constant initializer list needs spec constant composites | comp | 4:NonConstantInitializer
+layout(local_size_x=1) in;
+layout(constant_id = 0) const int five = 5;
+const int a[2] = {five, five};
+void main() {}
+### spec constant struct constructor needs spec constant composites | comp | 5:NonConstantInitializer
+layout(local_size_x=1) in;
+layout(constant_id = 0) const int five = 5;
+struct S { int a; int b; };
+const S s = S(five, five);
+void main() {}
+### spec constant composites | comp | ok
+#extension GL_EXT_spec_constant_composites : enable
+layout(local_size_x=1) in;
+layout(constant_id = 0) const int five = 5;
+layout(constant_id = 1) const float f = 1.0;
+struct S { int a; int b; };
+const S s = S(five, five);
+const int a[2] = {five, five};
+const int b[2][2] = {a, a};
+const vec4 v = vec4(f);
+const mat2 m = mat2(v.xy, v.zw);
+void main() {}
+### local size cannot change | comp | 4:InvalidQualifier
+layout(local_size_x_id = 18, local_size_z_id = 19) in;
+layout(local_size_x = 32, local_size_y = 32) in;
+layout(local_size_z_id = 14) in;
+void main() {}
+### local size of zero | comp | 2:InvalidQualifier
+layout(local_size_x = 0) in;
+void main() {}
+### shared and packed layouts | vert | 2:InvalidQualifier, 3:InvalidQualifier
+layout(shared, binding = 0) uniform A { int a; } a;
+layout(packed, binding = 1) uniform B { int b; } b;
+void main() {}
+### shadow lod functions need their extension | frag | 6:ExtensionRequired, 7:ExtensionRequired, 8:ExtensionRequired
+layout(binding = 0) uniform sampler2DArrayShadow s2da;
+layout(binding = 1) uniform samplerCubeShadow sc;
+layout(location = 0) in vec4 tc;
+void main() {
+    float a = texture(s2da, tc, 0.0);
+    float b = textureLod(sc, tc, 0.0);
+    float c = textureLodOffset(s2da, tc, 0.0, ivec2(0));
+}
+### shadow lod functions | frag | ok
+#extension GL_EXT_texture_shadow_lod : enable
+layout(binding = 0) uniform sampler2DArrayShadow s2da;
+layout(binding = 1) uniform samplerCubeArrayShadow sca;
+layout(binding = 2) uniform samplerCubeShadow sc;
+layout(location = 0) in vec4 tc;
+void main() {
+    float a = texture(s2da, tc, 0.0) + texture(sca, tc, 0.0, 0.0);
+    a += textureOffset(s2da, tc, ivec2(0), 0.0) + textureLod(s2da, tc, 0.0);
+    a += textureLod(sc, tc, 0.0) + textureLod(sca, tc, 0.0, 0.0);
+    a += textureLodOffset(s2da, tc, 0.0, ivec2(0)) + textureOffset(s2da, tc, ivec2(0));
 }

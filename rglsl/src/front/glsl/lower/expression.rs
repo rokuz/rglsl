@@ -1867,6 +1867,10 @@ impl<'a> FunctionLowerer<'_, 'a> {
                 }
                 self.convert(value, &from, ty, at)
             }
+            Initializer::List(ref items) if items.is_empty() => {
+                let ty = self.lw.ir_type(ty, at)?;
+                self.add(Expression::ZeroValue(ty), at)
+            }
             Initializer::List(ref items) => {
                 let elements: Vec<GlslType> =
                     if let Some(element) = ty.element_type().filter(|_| ty.is_array()) {

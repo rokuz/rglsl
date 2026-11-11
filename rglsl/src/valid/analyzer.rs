@@ -1740,6 +1740,7 @@ fn uniform_control_flow() {
             tile_attachment: false,
             spirv_decorations: Default::default(),
             relaxed_precision: false,
+            immediate_bank: None,
         },
         Default::default(),
     );
@@ -1758,6 +1759,7 @@ fn uniform_control_flow() {
             tile_attachment: false,
             spirv_decorations: Default::default(),
             relaxed_precision: false,
+            immediate_bank: None,
         },
         Default::default(),
     );

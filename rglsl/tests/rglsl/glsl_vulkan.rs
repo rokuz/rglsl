@@ -8409,3 +8409,378 @@ fn precision_qualifiers_become_relaxed_precision() {
     }
     assert!(!names.iter().any(|found| found == "exact"));
 }
+
+#[test]
+fn explicit_offsets_may_be_out_of_order() {
+    let source = "#version 450
+layout(set = 0, binding = 0, std140) uniform n1 {
+    layout(offset = 8) int a;
+    layout(offset = 4) int b;
+    layout(offset = 0) int c;
+    layout(offset = 12) int d;
+} i1;
+layout(set = 0, binding = 1, std430) buffer n2 {
+    layout(offset = 32) vec3 e;
+    vec3 f;
+    layout(offset = 16) vec3 g;
+    layout(offset = 0) vec3 h;
+} i2;
+void main() {}
+";
+    compile(ShaderStage::Fragment, source);
+    let module = parse(ShaderStage::Fragment, source).unwrap();
+    let offsets = |name| -> Vec<u32> {
+        block_layout(&module, name)
+            .into_iter()
+            .map(|(offset, _)| offset)
+            .collect()
+    };
+    assert_eq!(offsets("n1"), [8, 4, 0, 12]);
+    assert_eq!(offsets("n2"), [32, 48, 16, 0]);
+}
+
+#[test]
+fn overlapping_explicit_offsets_are_rejected() {
+    let error = parse(
+        ShaderStage::Fragment,
+        "#version 450
+layout(binding = 0, std430) buffer B {
+    layout(offset = 16) vec4 a;
+    layout(offset = 0) vec4 b;
+    layout(offset = 8) float c;
+} b;
+void main() {}
+",
+    )
+    .unwrap_err();
+    assert!(error.contains("MemberOverlap"), "{error}");
+}
+
+const HLSL_OFFSETS: &str = "#version 450
+layout(binding = 0) buffer block {
+    float m0;
+    vec3 m4;
+    float m16;
+    layout(offset = 20) vec3 m20;
+    vec3 m32;
+    vec2 m48;
+    vec2 m56;
+    float m64;
+    vec2 m68;
+    float m76;
+    float m80;
+    layout(offset = 88) vec2 m88;
+    vec2 m96;
+    dvec2 m112;
+};
+void main() {}
+";
+
+#[test]
+fn hlsl_offsets_pack_vectors_like_glslang() {
+    let module = glsl::Frontend::default()
+        .parse(
+            &glsl::Options {
+                hlsl_offsets: true,
+                ..glsl::Options::from(ShaderStage::Vertex)
+            },
+            HLSL_OFFSETS,
+        )
+        .unwrap();
+    Validator::new(ValidationFlags::all(), Capabilities::all())
+        .validate(&module)
+        .unwrap();
+    let offsets: Vec<u32> = block_layout(&module, "block")
+        .into_iter()
+        .map(|(offset, _)| offset)
+        .collect();
+    assert_eq!(
+        offsets,
+        [0, 4, 16, 20, 32, 48, 56, 64, 68, 76, 80, 88, 96, 112]
+    );
+}
+
+#[test]
+fn misaligned_explicit_offsets_are_rounded_up() {
+    let source = "#version 450
+layout(binding = 0) buffer block {
+    float m0;
+    vec3 m4;
+    float m16;
+    layout(offset = 20) vec3 m20;
+    vec3 m32;
+};
+void main() {}
+";
+    let module = parse(ShaderStage::Vertex, source).unwrap();
+    let offsets: Vec<u32> = block_layout(&module, "block")
+        .into_iter()
+        .map(|(offset, _)| offset)
+        .collect();
+    assert_eq!(offsets, [0, 16, 28, 32, 48]);
+    assert!(parse(ShaderStage::Vertex, HLSL_OFFSETS)
+        .unwrap_err()
+        .contains("MemberOverlap"));
+}
+
+#[test]
+fn programs_resolve_includes() {
+    let mut includer = rglsl_pp::MemoryIncluder::new();
+    let root = includer.add_file("dir/main.vert", "");
+    includer.add_file("dir/inc/defs.h", "layout(location = 0) out vec4 color;\n");
+    let module = glsl::Frontend::default()
+        .parse_with_includer(
+            &glsl::Options::from(ShaderStage::Vertex),
+            "#version 450\n#include \"inc\\defs.h\"\nvoid main() { color = vec4(1.0); }\n",
+            root,
+            &mut includer,
+        )
+        .unwrap();
+    assert!(module
+        .global_variables
+        .iter()
+        .any(|(_, global)| global.name.as_deref() == Some("color")));
+}
+
+#[test]
+fn push_constant_banks() {
+    let module = compile(
+        ShaderStage::Vertex,
+        "#version 460
+#extension GL_NV_push_constant_bank : enable
+layout(std430, binding = 0) buffer R { uint bank[3]; } r;
+layout(push_constant) uniform P0 { uint data; } p0;
+layout(push_constant, bank = 1) uniform P1 { uint data; } p1;
+layout(push_constant, bank = 2, member_offset = 64) uniform P2 { uint data; } p2;
+void main() {
+    r.bank[0] = p0.data;
+    r.bank[1] = p1.data;
+    r.bank[2] = p2.data;
+}
+",
+    );
+    assert!(capabilities_of(&module).contains(&spirv::Capability::PushConstantBanksNV));
+    assert!(extensions_of(&module).contains(&"SPV_NV_push_constant_bank".to_string()));
+    let mut variables = variable_decorations(&module, "p2");
+    variables.sort_by_key(|(decoration, _)| *decoration as u32);
+    assert_eq!(
+        variables,
+        [
+            (Decoration::MemberOffsetNV, vec![64]),
+            (Decoration::BankNV, vec![2]),
+        ]
+    );
+    assert_eq!(
+        variable_decorations(&module, "p1"),
+        [(Decoration::BankNV, vec![1])]
+    );
+    assert!(variable_decorations(&module, "p0").is_empty());
+    assert!(variable_decorations(&module, "P1").contains(&(Decoration::BankNV, vec![1])));
+}
+
+#[test]
+fn push_constant_blocks_in_one_bank_are_rejected() {
+    let error = parse(
+        ShaderStage::Vertex,
+        "#version 460
+#extension GL_NV_push_constant_bank : enable
+layout(std430, binding = 0) buffer R { uint bank[2]; } r;
+layout(push_constant, bank = 1) uniform P0 { uint data; } p0;
+layout(push_constant, bank = 1) uniform P1 { uint data; } p1;
+void main() {
+    r.bank[0] = p0.data;
+    r.bank[1] = p1.data;
+}
+",
+    )
+    .unwrap_err();
+    assert!(error.contains("MoreThanOneImmediateUsed"), "{error}");
+}
+
+#[test]
+fn null_initializers_are_null_constants() {
+    let module = compile(
+        ShaderStage::Compute,
+        "#version 460
+#extension GL_EXT_null_initializer : enable
+layout(local_size_x = 1) in;
+struct S { vec3 v[4]; int a; };
+shared float f = {};
+shared S s = {};
+S global = {};
+layout(std430, binding = 0) buffer B { int value; } b;
+void main() {
+    S local = {};
+    ++local.a;
+    b.value = local.a + int(f) + s.a + global.a;
+}
+",
+    );
+    let nulls = instructions(&module, Op::ConstantNull).len();
+    assert!(nulls >= 2, "{nulls}");
+    let workgroup_initialized = instructions(&module, Op::Variable)
+        .into_iter()
+        .filter(|inst| {
+            inst.operands.first() == Some(&Operand::StorageClass(spirv::StorageClass::Workgroup))
+                && inst.operands.len() == 2
+        })
+        .count();
+    assert_eq!(workgroup_initialized, 2);
+}
+
+#[test]
+fn spec_constant_composites_are_spec_constants() {
+    let module = compile(
+        ShaderStage::Compute,
+        "#version 450
+#extension GL_EXT_spec_constant_composites : enable
+layout(local_size_x = 1) in;
+layout(constant_id = 0) const int five = 5;
+struct S { int a; int b; };
+const S s = S(five, five);
+const int a[3] = {five, five, five};
+const int b[2][3] = {a, a};
+layout(std430, binding = 0) buffer B { int value; } buf;
+void main() {
+    buf.value = s.b + a[1] + b[1][2];
+}
+",
+    );
+    let composites = instructions(&module, Op::SpecConstantComposite).len();
+    assert_eq!(composites, 3);
+    assert!(instructions(&module, Op::ConstantComposite).is_empty());
+}
+
+#[test]
+fn spec_constant_initializer_lists_are_not_folded() {
+    let error = parse(
+        ShaderStage::Compute,
+        "#version 450
+layout(local_size_x = 1) in;
+layout(constant_id = 0) const int five = 5;
+const int a[3] = {five, five, five};
+void main() {}
+",
+    )
+    .unwrap_err();
+    assert!(error.contains("must be a constant expression"), "{error}");
+}
+
+fn first_error_line(source: &str, options: &glsl::Options) -> Option<usize> {
+    let errors = glsl::Frontend::default()
+        .parse(options, source)
+        .expect_err("the shader must be rejected");
+    let first = errors.errors.first()?;
+    first
+        .meta
+        .is_defined()
+        .then(|| first.meta.location(source).line_number as usize)
+}
+
+#[test]
+fn missing_bindings_are_reported_in_declaration_order() {
+    let source = "#version 450
+uniform sampler s;
+layout(binding = 1) uniform texture2D t;
+void main() {
+    sampler2D(t);
+}
+";
+    let options = glsl::Options::from(ShaderStage::Fragment);
+    assert_eq!(first_error_line(source, &options), Some(2));
+    let automatic = glsl::Options {
+        auto_map_bindings: true,
+        ..glsl::Options::from(ShaderStage::Fragment)
+    };
+    assert_eq!(first_error_line(source, &automatic), Some(5));
+    let block = "#version 450
+layout(std140) uniform U { vec4 v; } u;
+void main() {}
+";
+    assert_eq!(first_error_line(block, &options), Some(2));
+}
+
+#[test]
+fn semantic_errors_before_a_preprocessor_error_come_first() {
+    let source = "#version 450
+uniform float f;
+#define bad ## float
+bad x;
+void main() {}
+";
+    let options = glsl::Options::from(ShaderStage::Vertex);
+    assert_eq!(first_error_line(source, &options), Some(2));
+    let later = "#version 450
+#define bad ## float
+bad x;
+uniform float f;
+void main() {}
+";
+    assert_eq!(first_error_line(later, &options), Some(3));
+}
+
+#[test]
+fn a_texture_may_be_sampled_with_and_without_a_shadow_sampler() {
+    let module = compile(
+        ShaderStage::Fragment,
+        "#version 450
+layout(binding = 0) uniform texture2D t;
+layout(binding = 1) uniform sampler s;
+layout(binding = 2) uniform samplerShadow c;
+layout(location = 0) in vec3 uv;
+layout(location = 0) out vec4 color;
+void main() {
+    color = texture(sampler2D(t, s), uv.xy);
+    color.x += texture(sampler2DShadow(t, c), uv);
+}
+",
+    );
+    assert_eq!(
+        instructions(&module, Op::ImageSampleDrefImplicitLod).len(),
+        1
+    );
+    assert_eq!(instructions(&module, Op::ImageSampleImplicitLod).len(), 1);
+    let depths: Vec<u32> = instructions(&module, Op::TypeImage)
+        .into_iter()
+        .map(|inst| literal(&inst.operands[2]))
+        .collect();
+    assert!(depths.contains(&0) && depths.contains(&1), "{depths:?}");
+}
+
+#[test]
+fn local_arrays_sized_by_spec_constants_keep_the_spec_length() {
+    let module = compile(
+        ShaderStage::Compute,
+        "#version 450
+layout(local_size_x = 1) in;
+layout(constant_id = 9) const int size = 9;
+const int twice = size * 2;
+layout(std430, binding = 0) buffer B { float o; } b;
+void main() {
+    float a[size];
+    float c[twice];
+    a[1] = 1.0;
+    c[2] = 2.0;
+    b.o = a[1] + c[2] + float(a.length());
+}
+",
+    );
+    let spec: Vec<u32> = module
+        .types_global_values
+        .iter()
+        .filter(|inst| matches!(inst.class.opcode, Op::SpecConstant | Op::SpecConstantOp))
+        .filter_map(|inst| inst.result_id)
+        .collect();
+    let lengths: Vec<u32> = instructions(&module, Op::TypeArray)
+        .into_iter()
+        .map(|inst| match inst.operands[1] {
+            Operand::IdRef(id) => id,
+            ref other => panic!("unexpected length operand {other:?}"),
+        })
+        .collect();
+    assert_eq!(lengths.len(), 2);
+    assert!(
+        lengths.iter().all(|length| spec.contains(length)),
+        "{lengths:?}"
+    );
+}

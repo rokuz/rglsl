@@ -555,6 +555,7 @@ impl Lowerer<'_> {
         let block = analysis.types.block(id).ok_or_else(|| internal(span))?;
         let mut members = Vec::with_capacity(block.members.len());
         let mut offset = 0_u32;
+        let mut extent = 0_u32;
         let mut alignment = Alignment::ONE;
         let last = block.members.len().saturating_sub(1);
         for (position, member) in block.members.iter().enumerate() {
@@ -615,14 +616,20 @@ impl Lowerer<'_> {
                 row_major
             };
             let info = self.layout(ty, packing, member_row_major, span)?;
-            offset = match qualifiers
+            let placement = self.member_placement(&info, packing, member_row_major);
+            if let Some(explicit) = qualifiers
                 .layout_entry("offset")
                 .and_then(|entry| entry.value)
             {
-                Some(explicit) => u32::try_from(explicit).map_err(|_| internal(span))?,
-                None => info.align.round_up(offset),
-            };
-            alignment = info.align.max(alignment);
+                offset = u32::try_from(explicit).map_err(|_| internal(span))?;
+            }
+            offset = placement.align.round_up(offset);
+            if packing != Packing::Scalar
+                && improper_straddle(placement.vector_like, placement.size, offset)
+            {
+                offset = Alignment::MIN_UNIFORM.round_up(offset);
+            }
+            alignment = placement.align.max(alignment);
             members.push(StructMember {
                 name: Some(member.name.clone()),
                 ty: info.ty,
@@ -633,9 +640,10 @@ impl Lowerer<'_> {
                 heap: None,
                 relaxed_precision: super::relaxed(qualifiers),
             });
-            offset = offset.saturating_add(info.span);
+            extent = extent.max(offset.saturating_add(info.span));
+            offset = offset.saturating_add(placement.size);
         }
-        let span_bytes = alignment.round_up(offset);
+        let span_bytes = alignment.round_up(extent);
         let handle = self.module.types.insert(
             Type {
                 name: Some(block.name.clone()),
@@ -647,5 +655,80 @@ impl Lowerer<'_> {
             span,
         );
         Ok((handle, offset))
+    }
+
+    fn member_placement(
+        &self,
+        info: &TypeAlignSpan,
+        packing: Packing,
+        row_major: bool,
+    ) -> MemberPlacement {
+        let types = &self.module.types;
+        let mut element = info.ty;
+        let mut arrayed = false;
+        while let TypeInner::Array { base, .. } = types[element].inner {
+            element = base;
+            arrayed = true;
+        }
+        let inner = &types[element].inner;
+        let vector_like = !arrayed && matches!(*inner, TypeInner::Vector { .. });
+        let placement = MemberPlacement {
+            align: info.align,
+            size: info.span,
+            vector_like,
+        };
+        if !self.options.hlsl_offsets {
+            return placement;
+        }
+        let (component, vector_length) = match *inner {
+            TypeInner::Scalar(scalar) => (u32::from(scalar.width), 1),
+            TypeInner::Vector { size, scalar } => (u32::from(scalar.width), size as u32),
+            TypeInner::Matrix {
+                columns,
+                rows,
+                scalar,
+            } => (
+                u32::from(scalar.width),
+                if row_major {
+                    columns as u32
+                } else {
+                    rows as u32
+                },
+            ),
+            _ => return placement,
+        };
+        let align = match Alignment::from_width(u8::try_from(component).unwrap_or(u8::MAX)) {
+            Some(scalar) if vector_like && component <= 4 => scalar,
+            _ => info.align,
+        };
+        let matrix = matches!(*inner, TypeInner::Matrix { .. });
+        let size = if packing == Packing::Std140 && (matrix || arrayed) {
+            info.span
+                .saturating_sub(component.saturating_mul(4_u32.saturating_sub(vector_length)))
+        } else {
+            info.span
+        };
+        MemberPlacement {
+            align,
+            size,
+            vector_like,
+        }
+    }
+}
+
+struct MemberPlacement {
+    align: Alignment,
+    size: u32,
+    vector_like: bool,
+}
+
+const fn improper_straddle(vector_like: bool, size: u32, offset: u32) -> bool {
+    if !vector_like {
+        return false;
+    }
+    if size <= 16 {
+        offset / 16 != (offset.saturating_add(size).saturating_sub(1)) / 16
+    } else {
+        !offset.is_multiple_of(16)
     }
 }

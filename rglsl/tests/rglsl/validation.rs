@@ -118,6 +118,7 @@ fn populate_atomic_result() {
                 tile_attachment: false,
                 spirv_decorations: Vec::new(),
                 relaxed_precision: false,
+                immediate_bank: None,
             },
             span,
         );
@@ -300,6 +301,7 @@ fn emit_workgroup_uniform_load_result() {
                 tile_attachment: false,
                 spirv_decorations: Vec::new(),
                 relaxed_precision: false,
+                immediate_bank: None,
             },
             span,
         );
@@ -650,6 +652,7 @@ fn local_var_override_sized_array() {
             tile_attachment: false,
             spirv_decorations: Vec::new(),
             relaxed_precision: false,
+            immediate_bank: None,
         },
         span,
     );
@@ -1037,6 +1040,7 @@ fn unexpected_task_payload() {
             tile_attachment: false,
             spirv_decorations: Vec::new(),
             relaxed_precision: false,
+            immediate_bank: None,
         },
         err_span,
     );
