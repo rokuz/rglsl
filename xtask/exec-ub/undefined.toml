@@ -1,0 +1,27 @@
+["spv.noexplicitlayout.comp"]
+undefined = "copies the uninitialized local struct `new_bar` into the buffer member `b`"
+twin = "initializes `new_bar` with `Bar(1u, 2u, uint[2](3u, 4u))`"
+
+["spv.Operations.frag"]
+undefined = "reads the uninitialized local `f` (through `mix(v, v, f)` into the output) and the uninitialized private globals `ub41` and `ub42` (through `mix(v, v, ub41)` and the `b` chain); the uninitialized local `u` is read too, but never reaches the output"
+twin = "initializes `f` to 0.25, `u` to 0u, `ub41` to bvec4(true, false, true, false) and `ub42` to bvec4(true, true, false, false); drops the comments"
+
+["spv.450.noRedecl.tesc"]
+undefined = "never writes `patchOut` or the tessellation levels, so the forwarded patch output and the tessellated primitives are undefined (`gl_out` is not written either, but the generated evaluation shader does not read it)"
+twin = "invocation 0 writes `patchOut = vec4(0.25, 0.5, 0.75, 1.0)` and every outer and inner tessellation level as 2.0"
+
+["spv.atomicInt64.comp"]
+undefined = "256 invocations race: the values the atomics return depend on their execution order, and every invocation stores its sums into `buf.i64` and `buf.u64` with plain stores"
+twin = "runs one invocation (`local_size_x = 1, local_size_y = 1`), so every atomic and store happens in program order; the atomics on the shared `s` still read uninitialized shared memory, but their results never reach a buffer; drops the comments"
+
+["spv.structCopy.comp"]
+undefined = "invocations with `id > count` read shared `s[id - count]`, which no invocation writes unless it is `s[0]`, and `s[0]` is written by every invocation without a barrier"
+twin = "every invocation writes its own `s[gl_LocalInvocationIndex] = MyStruct(1, 2, 3)` and a `barrier()` follows, so every slot the shader reads is written"
+
+["spv.subgroup.tesc"]
+undefined = "stores `gl_SubgroupInvocationID`, which depends on how the driver packs patches into subgroups, and never writes the tessellation levels, so the tessellated primitives are undefined"
+twin = "stores `uint(gl_SubgroupInvocationID < gl_SubgroupSize)` in place of `gl_SubgroupInvocationID` (`gl_SubgroupSize` stays: it is constant on a device) and writes every outer and inner tessellation level as 2.0"
+
+["spv.viewportArray2.perVertex.notRequested.tesc"]
+undefined = "never writes the tessellation levels, so the tessellated primitives and the color attachment are undefined (glslang's own module rendered differently on two runs on the remote target)"
+twin = "invocation 0 writes every outer and inner tessellation level as 2.0; drops the comment"

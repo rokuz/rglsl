@@ -325,7 +325,13 @@ be equal; floats may differ by NaN
 payload, the sign of zero, or 4 ULP. A shader whose results differ is run again alone before it
 is counted as a failure. A shader is skipped, not failed, when the harness cannot bind it, the
 driver lacks a feature, glslang's own module fails on the driver, or glslang's module gives
-different results on two runs. A target that is not run keeps the results of its last run. See
+different results on two runs. A shader whose results are undefined (uninitialized reads, races,
+implementation-defined values, unwritten tessellation levels) is listed in
+`xtask/exec-ub/undefined.toml` with a twin next to it that removes the undefined behaviour by the
+smallest edit; the original is still compiled and validated, but `exec` runs the twin, three
+times for each module: glslang's twin must give the same results on every run (otherwise the
+twin is broken and the shader fails), and ours must match it on every run. A target that is not
+run keeps the results of its last run. See
 `docs/PLAN.md` (Testing).
 
 Only shaders with `#version 450` or `460` are run. Per-shader results are written to
@@ -584,6 +590,26 @@ fn exec_columns(outcome: Option<&Outcome>) -> (String, String) {
     }
 }
 
+fn twin_note(twin: Option<&str>, (cell, note): (String, String)) -> (String, String) {
+    let Some(name) = twin.filter(|_| cell != "-") else {
+        return (cell, note);
+    };
+    let verb = if cell.starts_with("skip") {
+        "skipped"
+    } else {
+        "ran"
+    };
+    let prefix = format!(
+        "{verb} the twin {}/{name} without undefined behaviour",
+        crate::exec::known::DIR
+    );
+    if note.is_empty() {
+        (cell, prefix)
+    } else {
+        (cell, format!("{prefix}; {note}"))
+    }
+}
+
 pub fn details(results: &[CaseResult]) -> String {
     let mut out = String::from(
         "file\tcorpus\tversion\tstage\ttarget\tsuite\tglslang\tours\taccept\tdiag\tvalid\texec_local\texec_remote\tnote\texec_local_note\texec_remote_note\n",
@@ -608,8 +634,13 @@ pub fn details(results: &[CaseResult]) -> String {
             OursResult::BackendFailed => "backend-failed",
             OursResult::Crashed => "crash",
         };
-        let (local, local_note) = exec_columns(r.exec.get(&TargetId::Local));
-        let (remote, remote_note) = exec_columns(r.exec.get(&TargetId::Remote));
+        let twin = r
+            .exec_input
+            .as_ref()
+            .is_some_and(|input| input.twin.is_some())
+            .then_some(r.case.name.as_str());
+        let (local, local_note) = twin_note(twin, exec_columns(r.exec.get(&TargetId::Local)));
+        let (remote, remote_note) = twin_note(twin, exec_columns(r.exec.get(&TargetId::Remote)));
         let _ = writeln!(
             out,
             "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
