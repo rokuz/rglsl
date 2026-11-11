@@ -66,8 +66,9 @@ changelog was dropped; see upstream for the history before the fork.
   dependency. The frontend is now `rglsl-pp` → `rglsl-ast` → `rglsl-sema` →
   `front/glsl/lower` (`docs/design/lowering.md`). Kept from upstream: `Options` (with
   `Options::from(stage)`), `Frontend::parse`, `Error`, `ErrorKind` (`Unsupported`, `Syntax`,
-  `SemanticError`, `InternalError`), `ParseErrors` with its emitters, and the block layout
-  computation of `offset.rs` (now `front/glsl/lower/offset.rs`).
+  `SemanticError`, `InternalError`), `ParseErrors` with its emitters. The block layout
+  computation of upstream's `offset.rs` was kept at first and later replaced by
+  `rglsl-sema`'s (`rglsl-sema/src/layout.rs`), which lowering applies to the IR types.
 - Upstream's GLSL snapshot inputs without a `#version`, or with `#version 440`, now declare
   `#version 450`; `declarations.frag` (a fragment output block, which GLSL rejects) was
   deleted.
@@ -280,7 +281,7 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
 - **Override ids may repeat.** The validator no longer rejects two overrides with the same id
   (`OverrideError::DuplicateID` is gone): glslang gives `local_size_*_id` and `constant_id`
   constants with the same id separate spec constants with one `SpecId`.
-- **Scalar block layout** (`std140`/`std430`/`scalar` packing in `front/glsl/lower/offset.rs`)
+- **Scalar block layout** (`std140`/`std430`/`scalar` packing, computed by `rglsl-sema/src/layout.rs`)
   and array strides smaller than the natural size of a matrix element (the matrix layout of
   the member decides the size).
 - **Debug printf and abort** (`GL_EXT_debug_printf`, `GL_EXT_abort`;

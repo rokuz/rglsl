@@ -6,7 +6,17 @@ use rglsl_sema::types::{
     SampledType, Scalar as GlslScalar, StructId, TextureDimension, Type as GlslType, TypeKind,
 };
 
-use super::offset::{calculate_offset, TypeAlignSpan};
+use alloc::collections::BTreeMap;
+use rglsl_ast::ast::NodeId;
+use rglsl_sema::layout::{
+    member_row_major, type_layout, ArrayLengths, MemberPlacer, Shape, TypeLayout,
+};
+use rglsl_sema::types::SpecializedSize;
+use rglsl_sema::SymbolId;
+
+use super::GlobalRef;
+use crate::front::glsl::{Error, ErrorKind};
+use crate::{MatrixLayout, Override};
 use rglsl_ast::extensions::Feature;
 
 use super::{internal, unsupported, Lowerer, Packing, Result};
@@ -209,7 +219,7 @@ impl Lowerer<'_> {
 
     pub(super) fn unsized_binding_array(
         &mut self,
-        symbol: rglsl_sema::SymbolId,
+        symbol: SymbolId,
         span: Span,
     ) -> Result<ArraySize> {
         if self.variably_indexed.contains(&symbol) {
@@ -467,31 +477,91 @@ impl Lowerer<'_> {
             .collect()
     }
 
-    pub(super) fn layout(
+    pub(super) fn type_layout(
+        &self,
+        ty: &GlslType,
+        packing: Packing,
+        row_major: bool,
+        span: Span,
+    ) -> Result<TypeLayout> {
+        let lengths = self.lowered_lengths();
+        type_layout(&self.analysis.types, ty, packing, row_major, &lengths)
+            .ok_or_else(|| invalid_member(span))
+    }
+
+    pub(super) fn lowered_lengths(&self) -> LoweredLengths<'_> {
+        LoweredLengths {
+            globals: &self.globals,
+            specialized: &self.specialized_sizes,
+            pending: self.pending_lengths(),
+        }
+    }
+
+    pub(super) fn laid_out(
         &mut self,
+        glsl: &GlslType,
         ty: Handle<Type>,
         packing: Packing,
         row_major: bool,
         span: Span,
-    ) -> Result<TypeAlignSpan> {
-        let mut errors = Vec::new();
-        let pending = self.pending_lengths();
-        let info = calculate_offset(
-            ty,
-            span,
-            packing,
-            row_major,
-            &mut self.module.types,
-            &pending,
-            &mut errors,
-        );
-        match errors.into_iter().next() {
-            Some(error) => Err(error),
-            None => {
-                self.record_relayout(info.ty, ty);
-                Ok(info)
+    ) -> Result<(Handle<Type>, TypeLayout)> {
+        let layout = self.type_layout(glsl, packing, row_major, span)?;
+        let laid = self.apply_layout(ty, &layout, span)?;
+        Ok((laid, layout))
+    }
+
+    pub(super) fn apply_layout(
+        &mut self,
+        ty: Handle<Type>,
+        layout: &TypeLayout,
+        span: Span,
+    ) -> Result<Handle<Type>> {
+        let laid = self.apply_layout_inner(ty, layout, span)?;
+        self.record_relayout(laid, ty);
+        Ok(laid)
+    }
+
+    fn apply_layout_inner(
+        &mut self,
+        ty: Handle<Type>,
+        layout: &TypeLayout,
+        span: Span,
+    ) -> Result<Handle<Type>> {
+        let name = self.module.types[ty].name.clone();
+        let ty_span = self.module.types.get_span(ty);
+        let inner = match (&self.module.types[ty].inner, &layout.shape) {
+            (
+                &TypeInner::Array { base, size, .. },
+                &Shape::Array {
+                    stride,
+                    ref element,
+                },
+            ) => {
+                let base = self.apply_layout_inner(base, element, span)?;
+                TypeInner::Array { base, size, stride }
             }
-        }
+            (&TypeInner::Struct { ref members, .. }, &Shape::Struct(ref laid)) => {
+                if members.len() != laid.len() {
+                    return Err(internal(span));
+                }
+                let mut members = members.clone();
+                for (member, laid) in members.iter_mut().zip(laid) {
+                    member.ty = self.apply_layout_inner(member.ty, &laid.layout, span)?;
+                    member.offset = laid.offset;
+                    member.matrix_layout = matrix_layout(&laid.layout);
+                }
+                TypeInner::Struct {
+                    members,
+                    span: layout.size,
+                }
+            }
+            (&TypeInner::Array { .. } | &TypeInner::Struct { .. }, _) => {
+                return Err(internal(span))
+            }
+            (_, &Shape::Plain | &Shape::Matrix { .. }) => return Ok(ty),
+            (_, &Shape::Array { .. } | &Shape::Struct(_)) => return Err(invalid_member(span)),
+        };
+        Ok(self.module.types.insert(Type { name, inner }, ty_span))
     }
 
     fn record_relayout(&mut self, laid: Handle<Type>, plain: Handle<Type>) {
@@ -532,39 +602,21 @@ impl Lowerer<'_> {
         row_major: bool,
         span: Span,
     ) -> Result<Handle<Type>> {
-        self.block_struct_with_end(id, packing, row_major, span)
-            .map(|(handle, _)| handle)
-    }
-
-    pub(super) fn block_struct_with_end(
-        &mut self,
-        id: BlockId,
-        packing: Packing,
-        row_major: bool,
-        span: Span,
-    ) -> Result<(Handle<Type>, u32)> {
         let analysis = self.analysis;
         let block = analysis.types.block(id).ok_or_else(|| internal(span))?;
         let mut members = Vec::with_capacity(block.members.len());
-        let mut offset = 0_u32;
-        let mut alignment = Alignment::ONE;
+        let mut placer = MemberPlacer::new(&block.qualifiers);
         let last = block.members.len().saturating_sub(1);
         for (position, member) in block.members.iter().enumerate() {
             let index = u32::try_from(position).map_err(|_| internal(span))?;
             let runtime = block.storage == BlockStorage::Buffer && position == last;
-            let sized;
-            let member_ty = match member.ty.outer_size() {
-                Some(GlslArraySize::Unsized) if !runtime => {
-                    let size = self.member_sizes.get(&(id, index)).copied().unwrap_or(1);
-                    let mut ty = member.ty.clone();
-                    if let Some(first) = ty.array.first_mut() {
-                        *first = GlslArraySize::Sized(size);
-                    }
-                    sized = ty;
-                    &sized
+            let mut member_ty = member.ty.clone();
+            if !runtime && member_ty.outer_size() == Some(GlslArraySize::Unsized) {
+                let size = self.member_sizes.get(&(id, index)).copied().unwrap_or(1);
+                if let Some(first) = member_ty.array.first_mut() {
+                    *first = GlslArraySize::Sized(size);
                 }
-                _ => &member.ty,
-            };
+            }
             let lowered = match member_ty.kind {
                 TypeKind::Scalar(GlslScalar::Bool) => {
                     Some(GlslType::scalar(GlslScalar::Uint).with_dimensions(&member_ty.array))
@@ -583,7 +635,7 @@ impl Lowerer<'_> {
                     self.ir_type(&lowered, span)?
                 }
                 None => {
-                    if contains_bool(member_ty, &analysis.types) {
+                    if contains_bool(&member_ty, &analysis.types) {
                         return Err(unsupported(
                             "booleans inside arrays or structures in a block",
                             span,
@@ -592,41 +644,27 @@ impl Lowerer<'_> {
                     if member_ty.contains_opaque(&analysis.types) {
                         return Err(unsupported("opaque types in blocks", span));
                     }
-                    self.ir_type(member_ty, span)?
+                    self.ir_type(&member_ty, span)?
                 }
             };
-            let qualifiers = &member.qualifiers;
-            if qualifiers.has_layout("align") {
-                return Err(unsupported("the `align` layout qualifier", span));
-            }
-            let member_row_major = if qualifiers.has_layout("row_major") {
-                true
-            } else if qualifiers.has_layout("column_major") {
-                false
-            } else {
-                row_major
-            };
-            let info = self.layout(ty, packing, member_row_major, span)?;
-            offset = match qualifiers
-                .layout_entry("offset")
-                .and_then(|entry| entry.value)
-            {
-                Some(explicit) => u32::try_from(explicit).map_err(|_| internal(span))?,
-                None => info.align.round_up(offset),
-            };
-            alignment = info.align.max(alignment);
+            let member_row_major = member_row_major(&member.qualifiers, row_major);
+            let layout = self.type_layout(&member_ty, packing, member_row_major, span)?;
+            let offset = placer
+                .place(&member.qualifiers, &layout)
+                .ok_or_else(|| invalid_member(span))?;
+            let ty = self.apply_layout(ty, &layout, span)?;
             members.push(StructMember {
                 name: Some(member.name.clone()),
-                ty: info.ty,
+                ty,
                 binding: None,
                 offset,
-                matrix_layout: info.matrix_layout,
+                matrix_layout: matrix_layout(&layout),
                 xfb_offset: None,
                 heap: None,
             });
-            offset = offset.saturating_add(info.span);
         }
-        let span_bytes = alignment.round_up(offset);
+        let span_bytes = Alignment::new(placer.alignment())
+            .map_or(placer.end(), |alignment| alignment.round_up(placer.end()));
         let handle = self.module.types.insert(
             Type {
                 name: Some(block.name.clone()),
@@ -637,6 +675,51 @@ impl Lowerer<'_> {
             },
             span,
         );
-        Ok((handle, offset))
+        Ok(handle)
+    }
+}
+
+pub(super) struct LoweredLengths<'l> {
+    globals: &'l BTreeMap<SymbolId, GlobalRef>,
+    specialized: &'l BTreeMap<NodeId, Handle<Override>>,
+    pending: Vec<u32>,
+}
+
+impl LoweredLengths<'_> {
+    fn pending(&self, handle: Handle<Override>) -> u32 {
+        self.pending.get(handle.index()).copied().unwrap_or(1)
+    }
+}
+
+impl ArrayLengths for LoweredLengths<'_> {
+    fn length(&self, size: GlslArraySize) -> Option<u32> {
+        Some(match size {
+            GlslArraySize::Sized(size) => size,
+            GlslArraySize::Unsized => 1,
+            GlslArraySize::Specialized(SpecializedSize::Constant { symbol, default }) => {
+                match self.globals.get(&symbol) {
+                    Some(&GlobalRef::Override(handle)) => self.pending(handle),
+                    _ => default,
+                }
+            }
+            GlslArraySize::Specialized(SpecializedSize::Expression(node)) => self
+                .specialized
+                .get(&node)
+                .map_or(1, |&handle| self.pending(handle)),
+        })
+    }
+}
+
+pub(super) fn matrix_layout(layout: &TypeLayout) -> Option<MatrixLayout> {
+    layout.matrix().map(|matrix| MatrixLayout {
+        stride: matrix.stride,
+        row_major: matrix.row_major,
+    })
+}
+
+fn invalid_member(span: Span) -> Error {
+    Error {
+        kind: ErrorKind::SemanticError("Invalid struct member type".into()),
+        meta: span,
     }
 }

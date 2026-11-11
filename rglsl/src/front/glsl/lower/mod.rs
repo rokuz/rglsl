@@ -13,7 +13,6 @@ mod library;
 mod mesh;
 mod message;
 mod object;
-mod offset;
 mod prepass;
 mod ray;
 mod reference;

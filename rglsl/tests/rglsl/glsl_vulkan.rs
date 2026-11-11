@@ -835,6 +835,45 @@ fn block_layouts_match_glslang() {
     );
 }
 
+#[test]
+fn align_qualifier_places_members_as_glslang() {
+    let source = "#version 450
+        layout(local_size_x = 1) in;
+        layout(std430, binding = 0) buffer B {
+            float a;
+            layout(align = 64) vec3 b;
+            layout(offset = 132, align = 8) float c;
+            float d[3];
+            layout(align = 4) mat2 e;
+        } b;
+        layout(std140, binding = 1, align = 32) uniform U {
+            float x;
+            vec2 y;
+            layout(offset = 80, align = 64) float z;
+            layout(align = 16) float w;
+        } u;
+        void main() {
+            b.a = u.x + u.y.x + u.z + u.w + b.c + b.d[1] + b.e[0][0];
+            b.b = vec3(1);
+        }";
+    compile(ShaderStage::Compute, source);
+    let module = parse(ShaderStage::Compute, source).unwrap();
+    assert_eq!(
+        block_layout(&module, "B"),
+        [
+            (0, None),
+            (64, None),
+            (136, None),
+            (140, None),
+            (152, Some((8, false))),
+        ]
+    );
+    assert_eq!(
+        block_layout(&module, "U"),
+        [(0, None), (32, None), (128, None), (144, None)]
+    );
+}
+
 /// A boolean in a block is stored as an unsigned integer and converted where
 /// it is read or written.
 #[test]
