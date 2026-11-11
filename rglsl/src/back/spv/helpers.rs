@@ -84,15 +84,22 @@ pub(super) fn contains_builtin(
     arena: &UniqueArena<crate::Type>,
     built_in: crate::BuiltIn,
 ) -> bool {
-    if let Some(&crate::Binding::BuiltIn(bi)) = binding {
-        bi == built_in
-    } else if let crate::TypeInner::Struct { ref members, .. } = arena[ty].inner {
-        members
-            .iter()
-            .any(|member| contains_builtin(member.binding.as_ref(), member.ty, arena, built_in))
-    } else {
-        false // unreachable
+    let mut pending = Vec::from([(binding, ty)]);
+    while let Some((binding, ty)) = pending.pop() {
+        if let Some(&crate::Binding::BuiltIn(bi)) = binding {
+            if bi == built_in {
+                return true;
+            }
+        } else if let crate::TypeInner::Struct { ref members, .. } = arena[ty].inner {
+            pending.extend(
+                members
+                    .iter()
+                    .rev()
+                    .map(|member| (member.binding.as_ref(), member.ty)),
+            );
+        }
     }
+    false
 }
 
 impl crate::AddressSpace {

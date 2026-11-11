@@ -144,6 +144,7 @@ enum BlockExit {
 /// [`Break`]: Statement::Break
 /// [`Continue`]: Statement::Continue
 #[must_use]
+#[derive(Clone, Copy)]
 enum BlockExitDisposition {
     /// The generated code used the provided `BlockExit` value. If it included a
     /// block label, the caller should be sure to actually emit the block it
@@ -155,6 +156,52 @@ enum BlockExitDisposition {
     /// the block it refers to, unless it knows the block is needed for
     /// something else.
     Discarded,
+}
+
+enum Resume<'a> {
+    Scope {
+        merge_id: Word,
+        statement: &'a Statement,
+    },
+    Merge {
+        merge_id: Word,
+        statement: &'a Statement,
+    },
+}
+
+enum FrameState<'a> {
+    Writing(Block),
+    Waiting(Resume<'a>),
+}
+
+struct BlockFrame<'a> {
+    ir: &'a crate::Block,
+    next: usize,
+    state: FrameState<'a>,
+    exit: BlockExit,
+    loop_context: LoopContext,
+}
+
+enum Work<'a> {
+    Block {
+        label_id: Word,
+        ir: &'a crate::Block,
+        exit: BlockExit,
+        loop_context: LoopContext,
+    },
+    Frame(BlockFrame<'a>),
+    Branch {
+        label_id: Word,
+        target: Word,
+    },
+}
+
+enum Nested<'a> {
+    Done(Option<Block>),
+    Children {
+        resume: Resume<'a>,
+        children: Vec<Work<'a>>,
+    },
 }
 
 #[derive(Clone, Copy, Default)]
@@ -3681,8 +3728,7 @@ impl BlockContext<'_> {
     /// Use `label_id` as the label for the SPIR-V entry point block.
     ///
     /// If control reaches the end of the SPIR-V block, terminate it according
-    /// to `exit`. This function's return value indicates whether it acted on
-    /// this parameter or not; see [`BlockExitDisposition`].
+    /// to `exit`.
     ///
     /// If the block contains [`Break`] or [`Continue`] statements,
     /// `loop_context` supplies the labels of the SPIR-V blocks to jump to. If
@@ -3699,22 +3745,115 @@ impl BlockContext<'_> {
         exit: BlockExit,
         loop_context: LoopContext,
         debug_info: Option<&DebugInfoInner>,
-    ) -> Result<BlockExitDisposition, Error> {
-        let mut block = Block::new(label_id);
-        for (statement, span) in rglsl_block.span_iter() {
+    ) -> Result<(), Error> {
+        let mut work = Vec::from([Work::Block {
+            label_id,
+            ir: rglsl_block,
+            exit,
+            loop_context,
+        }]);
+        let mut finished = BlockExitDisposition::Used;
+        while let Some(item) = work.pop() {
+            match item {
+                Work::Block {
+                    label_id,
+                    ir,
+                    exit,
+                    loop_context,
+                } => work.push(Work::Frame(BlockFrame {
+                    ir,
+                    next: 0,
+                    state: FrameState::Writing(Block::new(label_id)),
+                    exit,
+                    loop_context,
+                })),
+                Work::Branch { label_id, target } => self
+                    .function
+                    .consume(Block::new(label_id), Instruction::branch(target)),
+                Work::Frame(frame) => {
+                    if let Some(disposition) =
+                        self.write_frame(frame, finished, &mut work, debug_info)?
+                    {
+                        finished = disposition;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn resume_frame(
+        &mut self,
+        state: FrameState<'_>,
+        finished: BlockExitDisposition,
+    ) -> Option<Block> {
+        let (merge_id, statement) = match state {
+            FrameState::Writing(block) => return Some(block),
+            FrameState::Waiting(Resume::Scope {
+                merge_id,
+                statement,
+            }) => match finished {
+                BlockExitDisposition::Used => (merge_id, statement),
+                BlockExitDisposition::Discarded => return None,
+            },
+            FrameState::Waiting(Resume::Merge {
+                merge_id,
+                statement,
+            }) => (merge_id, statement),
+        };
+        let next = Block::new(merge_id);
+        if self.reachability.completes(statement) {
+            Some(next)
+        } else {
+            self.function
+                .consume(next, Instruction::new(spirv::Op::Unreachable));
+            None
+        }
+    }
+
+    fn write_frame<'a>(
+        &mut self,
+        frame: BlockFrame<'a>,
+        finished: BlockExitDisposition,
+        work: &mut Vec<Work<'a>>,
+        debug_info: Option<&DebugInfoInner>,
+    ) -> Result<Option<BlockExitDisposition>, Error> {
+        let BlockFrame {
+            ir,
+            mut next,
+            state,
+            exit,
+            loop_context,
+        } = frame;
+        let Some(mut block) = self.resume_frame(state, finished) else {
+            return Ok(Some(BlockExitDisposition::Discarded));
+        };
+        while let Some((statement, span)) = ir.span_at(next) {
+            next += 1;
             Self::write_line(&mut block, statement, span, debug_info);
             match self.write_statement_kind(block, statement, span, loop_context, debug_info)? {
-                Some(next) if !self.reachability.completes(statement) => {
+                Nested::Done(Some(next)) if !self.reachability.completes(statement) => {
                     self.function
                         .consume(next, Instruction::new(spirv::Op::Unreachable));
-                    return Ok(BlockExitDisposition::Discarded);
+                    return Ok(Some(BlockExitDisposition::Discarded));
                 }
-                Some(next) => block = next,
-                None => return Ok(BlockExitDisposition::Discarded),
+                Nested::Done(Some(following)) => block = following,
+                Nested::Done(None) => return Ok(Some(BlockExitDisposition::Discarded)),
+                Nested::Children { resume, children } => {
+                    work.push(Work::Frame(BlockFrame {
+                        ir,
+                        next,
+                        state: FrameState::Waiting(resume),
+                        exit,
+                        loop_context,
+                    }));
+                    work.extend(children.into_iter().rev());
+                    return Ok(None);
+                }
             }
         }
         self.finish_block(block, exit, loop_context)?;
-        Ok(BlockExitDisposition::Used)
+        Ok(Some(BlockExitDisposition::Used))
     }
 
     fn write_line(
@@ -3744,17 +3883,17 @@ impl BlockContext<'_> {
         }
     }
 
-    fn write_statement_kind(
+    fn write_statement_kind<'a>(
         &mut self,
         block: Block,
-        statement: &Statement,
+        statement: &'a Statement,
         span: &crate::Span,
         loop_context: LoopContext,
         debug_info: Option<&DebugInfoInner>,
-    ) -> Result<Option<Block>, Error> {
+    ) -> Result<Nested<'a>, Error> {
         match *statement {
             Statement::Block(ref block_statements) => {
-                self.write_scope(block, block_statements, loop_context, debug_info)
+                Ok(self.write_scope(block, block_statements, loop_context, statement))
             }
             Statement::If {
                 condition,
@@ -3767,19 +3906,19 @@ impl BlockContext<'_> {
                 [accept, reject],
                 control,
                 loop_context,
-                debug_info,
+                statement,
             ),
             Statement::Switch {
                 selector,
                 ref cases,
                 control,
-            } => self.write_switch(block, selector, cases, control, loop_context, debug_info),
+            } => self.write_switch(block, selector, cases, control, loop_context, statement),
             Statement::Loop {
                 ref body,
                 ref continuing,
                 break_if,
                 control,
-            } => self.write_loop(
+            } => Ok(self.write_loop(
                 block,
                 (
                     body,
@@ -3789,10 +3928,14 @@ impl BlockContext<'_> {
                 ),
                 break_if,
                 control,
-                span,
-                debug_info,
-            ),
-            _ => self.write_statement(block, statement, loop_context),
+                (span, debug_info),
+                statement,
+            )),
+            _ => Ok(Nested::Done(self.write_statement(
+                block,
+                statement,
+                loop_context,
+            )?)),
         }
     }
 
@@ -3830,46 +3973,40 @@ impl BlockContext<'_> {
         Ok(())
     }
 
-    fn write_scope(
+    fn write_scope<'a>(
         &mut self,
         block: Block,
-        block_statements: &crate::Block,
+        block_statements: &'a crate::Block,
         loop_context: LoopContext,
-        debug_info: Option<&DebugInfoInner>,
-    ) -> Result<Option<Block>, Error> {
-        let mut block = block;
+        statement: &'a Statement,
+    ) -> Nested<'a> {
         let scope_id = self.gen_id();
         self.function.consume(block, Instruction::branch(scope_id));
 
         let merge_id = self.gen_id();
-        let merge_used = self.write_block(
-            scope_id,
-            block_statements,
-            BlockExit::Branch { target: merge_id },
-            loop_context,
-            debug_info,
-        )?;
-
-        match merge_used {
-            BlockExitDisposition::Used => {
-                block = Block::new(merge_id);
-            }
-            BlockExitDisposition::Discarded => {
-                return Ok(None);
-            }
+        Nested::Children {
+            resume: Resume::Scope {
+                merge_id,
+                statement,
+            },
+            children: Vec::from([Work::Block {
+                label_id: scope_id,
+                ir: block_statements,
+                exit: BlockExit::Branch { target: merge_id },
+                loop_context,
+            }]),
         }
-        Ok(Some(block))
     }
 
-    fn write_if(
+    fn write_if<'a>(
         &mut self,
         block: Block,
         condition: Handle<crate::Expression>,
-        [accept, reject]: [&crate::Block; 2],
+        [accept, reject]: [&'a crate::Block; 2],
         control: crate::SelectionControl,
         loop_context: LoopContext,
-        debug_info: Option<&DebugInfoInner>,
-    ) -> Result<Option<Block>, Error> {
+        statement: &'a Statement,
+    ) -> Result<Nested<'a>, Error> {
         let mut block = block;
         // In spirv 1.6, in a conditional branch the two block ids
         // of the branches can't have the same label. If `accept`
@@ -3877,76 +4014,66 @@ impl BlockContext<'_> {
         // merge id will be both labels. Because both branches are
         // empty, we can skip the if statement.
         let empty = accept.is_empty() && reject.is_empty();
-        if !empty || !control.is_none() {
-            let condition_id = self.cached.get(condition)?;
-
-            let merge_id = self.gen_id();
-            block.body.push(Instruction::selection_merge(
-                merge_id,
-                selection_control(control),
-            ));
-
-            let accept_id = if accept.is_empty() && !empty {
-                None
-            } else {
-                Some(self.gen_id())
-            };
-            let reject_id = if reject.is_empty() {
-                None
-            } else {
-                Some(self.gen_id())
-            };
-
-            self.function.consume(
-                block,
-                Instruction::branch_conditional(
-                    condition_id,
-                    accept_id.unwrap_or(merge_id),
-                    reject_id.unwrap_or(merge_id),
-                ),
-            );
-
-            if let Some(block_id) = accept_id {
-                // We can ignore the `BlockExitDisposition` returned here because,
-                // even if `merge_id` is not actually reachable, it is always
-                // referred to by the `OpSelectionMerge` instruction we emitted
-                // earlier.
-                let _ = self.write_block(
-                    block_id,
-                    accept,
-                    BlockExit::Branch { target: merge_id },
-                    loop_context,
-                    debug_info,
-                )?;
-            }
-            if let Some(block_id) = reject_id {
-                // We can ignore the `BlockExitDisposition` returned here because,
-                // even if `merge_id` is not actually reachable, it is always
-                // referred to by the `OpSelectionMerge` instruction we emitted
-                // earlier.
-                let _ = self.write_block(
-                    block_id,
-                    reject,
-                    BlockExit::Branch { target: merge_id },
-                    loop_context,
-                    debug_info,
-                )?;
-            }
-
-            block = Block::new(merge_id);
+        if empty && control.is_none() {
+            return Ok(Nested::Done(Some(block)));
         }
-        Ok(Some(block))
+        let condition_id = self.cached.get(condition)?;
+
+        let merge_id = self.gen_id();
+        block.body.push(Instruction::selection_merge(
+            merge_id,
+            selection_control(control),
+        ));
+
+        let accept_id = if accept.is_empty() && !empty {
+            None
+        } else {
+            Some(self.gen_id())
+        };
+        let reject_id = if reject.is_empty() {
+            None
+        } else {
+            Some(self.gen_id())
+        };
+
+        self.function.consume(
+            block,
+            Instruction::branch_conditional(
+                condition_id,
+                accept_id.unwrap_or(merge_id),
+                reject_id.unwrap_or(merge_id),
+            ),
+        );
+
+        let children = [(accept_id, accept), (reject_id, reject)]
+            .into_iter()
+            .filter_map(|(label_id, ir)| {
+                label_id.map(|label_id| Work::Block {
+                    label_id,
+                    ir,
+                    exit: BlockExit::Branch { target: merge_id },
+                    loop_context,
+                })
+            })
+            .collect();
+        Ok(Nested::Children {
+            resume: Resume::Merge {
+                merge_id,
+                statement,
+            },
+            children,
+        })
     }
 
-    fn write_switch(
+    fn write_switch<'a>(
         &mut self,
         block: Block,
         selector: Handle<crate::Expression>,
-        cases: &[crate::SwitchCase],
+        cases: &'a [crate::SwitchCase],
         control: crate::SelectionControl,
         loop_context: LoopContext,
-        debug_info: Option<&DebugInfoInner>,
-    ) -> Result<Option<Block>, Error> {
+        statement: &'a Statement,
+    ) -> Result<Nested<'a>, Error> {
         let mut block = block;
         let selector_id = self.cached.get(selector)?;
 
@@ -4002,6 +4129,7 @@ impl BlockContext<'_> {
             ..loop_context
         };
 
+        let mut children = Vec::with_capacity(cases.len());
         for (i, (case, label_id)) in cases
             .iter()
             .zip(case_ids.iter())
@@ -4013,38 +4141,34 @@ impl BlockContext<'_> {
             } else {
                 merge_id
             };
-            // We can ignore the `BlockExitDisposition` returned here because
-            // `case_finish_id` is always referred to by either:
-            //
-            // - the `OpSwitch`, if it's the next case's label for a
-            //   fall-through, or
-            //
-            // - the `OpSelectionMerge`, if it's the switch's overall merge
-            //   block because there's no fall-through.
-            let _ = self.write_block(
-                *label_id,
-                &case.body,
-                BlockExit::Branch {
+            children.push(Work::Block {
+                label_id: *label_id,
+                ir: &case.body,
+                exit: BlockExit::Branch {
                     target: case_finish_id,
                 },
-                inner_context,
-                debug_info,
-            )?;
+                loop_context: inner_context,
+            });
         }
 
-        block = Block::new(merge_id);
-        Ok(Some(block))
+        Ok(Nested::Children {
+            resume: Resume::Merge {
+                merge_id,
+                statement,
+            },
+            children,
+        })
     }
 
-    fn write_loop(
+    fn write_loop<'a>(
         &mut self,
         block: Block,
-        (body, continuing): (&crate::Block, Option<&crate::Block>),
+        (body, continuing): (&'a crate::Block, Option<&'a crate::Block>),
         break_if: Option<Handle<crate::Expression>>,
         control: crate::LoopControl,
-        span: &crate::Span,
-        debug_info: Option<&DebugInfoInner>,
-    ) -> Result<Option<Block>, Error> {
+        (span, debug_info): (&crate::Span, Option<&DebugInfoInner>),
+        statement: &'a Statement,
+    ) -> Nested<'a> {
         let mut block = block;
         let preamble_id = self.gen_id();
         self.function
@@ -4073,54 +4197,49 @@ impl BlockContext<'_> {
 
         self.function.consume(block, Instruction::branch(body_id));
 
-        // We can ignore the `BlockExitDisposition` returned here because,
-        // even if `continuing_id` is not actually reachable, it is always
-        // referred to by the `OpLoopMerge` instruction we emitted earlier.
-        let _ = self.write_block(
-            body_id,
-            body,
-            BlockExit::Branch {
+        let body = Work::Block {
+            label_id: body_id,
+            ir: body,
+            exit: BlockExit::Branch {
                 target: continuing_id,
             },
-            LoopContext {
+            loop_context: LoopContext {
                 continuing_id: Some(continuing_id),
                 break_id: Some(merge_id),
             },
-            debug_info,
-        )?;
-
-        let Some(continuing) = continuing else {
-            self.function
-                .consume(Block::new(continuing_id), Instruction::branch(preamble_id));
-            return Ok(Some(Block::new(merge_id)));
         };
 
-        let exit = match break_if {
-            Some(condition) => BlockExit::BreakIf {
-                condition,
-                preamble_id,
-            },
-            None => BlockExit::Branch {
+        let continuing = match continuing {
+            None => Work::Branch {
+                label_id: continuing_id,
                 target: preamble_id,
             },
+            Some(continuing) => Work::Block {
+                label_id: continuing_id,
+                ir: continuing,
+                exit: match break_if {
+                    Some(condition) => BlockExit::BreakIf {
+                        condition,
+                        preamble_id,
+                    },
+                    None => BlockExit::Branch {
+                        target: preamble_id,
+                    },
+                },
+                loop_context: LoopContext {
+                    continuing_id: None,
+                    break_id: Some(merge_id),
+                },
+            },
         };
 
-        // We can ignore the `BlockExitDisposition` returned here because,
-        // even if `merge_id` is not actually reachable, it is always referred
-        // to by the `OpLoopMerge` instruction we emitted earlier.
-        let _ = self.write_block(
-            continuing_id,
-            continuing,
-            exit,
-            LoopContext {
-                continuing_id: None,
-                break_id: Some(merge_id),
+        Nested::Children {
+            resume: Resume::Merge {
+                merge_id,
+                statement,
             },
-            debug_info,
-        )?;
-
-        block = Block::new(merge_id);
-        Ok(Some(block))
+            children: Vec::from([body, continuing]),
+        }
     }
 
     fn write_statement(
@@ -4799,17 +4918,14 @@ impl BlockContext<'_> {
         entry_id: Word,
         debug_info: Option<&DebugInfoInner>,
     ) -> Result<(), Error> {
-        // We can ignore the `BlockExitDisposition` returned here because
-        // `BlockExit::Return` doesn't refer to a block.
-        let _ = self.write_block(
+        let function = self.ir_function;
+        self.write_block(
             entry_id,
-            &self.ir_function.body,
+            &function.body,
             BlockExit::Return,
             LoopContext::default(),
             debug_info,
-        )?;
-
-        Ok(())
+        )
     }
 }
 
