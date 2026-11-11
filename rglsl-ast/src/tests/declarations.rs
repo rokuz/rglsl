@@ -1,7 +1,7 @@
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
-use super::{declaration, round_trip, unit};
+use super::{declaration, rejected, round_trip, unit, TestResult};
 use crate::ast::{
     ArrayDimension, BasicType, DeclarationKind, Dimension, DirectiveKind, ExtensionBehavior,
     ExternalDeclaration, FullySpecifiedType, Initializer, InterpolationQualifier,
@@ -366,7 +366,7 @@ fn opaque_type_keywords() {
 }
 
 #[test]
-fn reserved_words_cannot_be_names() {
+fn reserved_words_cannot_be_names() -> TestResult {
     for word in [
         "sampler2DRect",
         "image2DRect",
@@ -384,7 +384,7 @@ fn reserved_words_cannot_be_names() {
             alloc::format!("{word} a;"),
             alloc::format!("void f() {{ {word}; }}"),
         ] {
-            let error = crate::parse(&source).expect_err(&source);
+            let error = rejected(crate::parse(&source), &source)?;
             assert_eq!(
                 error.kind,
                 crate::ParseErrorKind::ReservedWord(String::from(word))
@@ -407,6 +407,7 @@ fn reserved_words_cannot_be_names() {
             "{word}"
         );
     }
+    Ok(())
 }
 
 #[test]

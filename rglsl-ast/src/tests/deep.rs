@@ -13,7 +13,7 @@ fn unlimited() -> ParseOptions {
     }
 }
 
-fn exercise(source: String, round_trip: bool) {
+fn exercise(source: String, round_trip: bool) -> super::TestResult {
     std::thread::Builder::new()
         .stack_size(STACK)
         .spawn(move || {
@@ -34,10 +34,10 @@ fn exercise(source: String, round_trip: bool) {
             assert!(!expressions(&copy).is_empty());
             drop(copy);
             drop(parsed);
-        })
-        .unwrap()
+        })?
         .join()
-        .unwrap();
+        .map_err(|_| "the parser thread panicked")?;
+    Ok(())
 }
 
 fn nested(open: &str, core: &str, close: &str, count: usize) -> String {
@@ -49,7 +49,7 @@ fn in_function(body: &str) -> String {
 }
 
 #[test]
-fn deep_expressions_parse_print_clone_and_drop_on_a_small_stack() {
+fn deep_expressions_parse_print_clone_and_drop_on_a_small_stack() -> super::TestResult {
     let cases = [
         ("a = ", "(", "a", ")"),
         ("a = ", "-(", "a", ")"),
@@ -65,21 +65,22 @@ fn deep_expressions_parse_print_clone_and_drop_on_a_small_stack() {
     for depth in DEPTHS {
         for (prefix, open, core, close) in cases {
             let expression = nested(open, core, close, depth);
-            exercise(in_function(&format!("{prefix}{expression};")), true);
+            exercise(in_function(&format!("{prefix}{expression};")), true)?;
         }
         exercise(
             format!("int a = {}1{};", "{".repeat(depth), "}".repeat(depth)),
             true,
-        );
+        )?;
         exercise(
             format!("int a[{}1{}];", "a[".repeat(depth), "]".repeat(depth)),
             true,
-        );
+        )?;
     }
+    Ok(())
 }
 
 #[test]
-fn deep_statements_and_structs_parse_clone_and_drop_on_a_small_stack() {
+fn deep_statements_and_structs_parse_clone_and_drop_on_a_small_stack() -> super::TestResult {
     let cases = [
         ("{ ", " }"),
         ("if (a) ", ""),
@@ -96,7 +97,7 @@ fn deep_statements_and_structs_parse_clone_and_drop_on_a_small_stack() {
             exercise(
                 in_function(&nested(open, "a = 1;", close, depth)),
                 round_trip,
-            );
+            )?;
         }
         exercise(
             format!(
@@ -105,6 +106,7 @@ fn deep_statements_and_structs_parse_clone_and_drop_on_a_small_stack() {
                 "} a; ".repeat(depth)
             ),
             round_trip,
-        );
+        )?;
     }
+    Ok(())
 }
