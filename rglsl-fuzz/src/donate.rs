@@ -394,7 +394,7 @@ fn prepare(
     })
 }
 
-fn in_bounds(unit: &TranslationUnit, analysis: &Analysis) -> TranslationUnit {
+pub fn in_bounds(unit: &TranslationUnit, analysis: &Analysis) -> TranslationUnit {
     let mut result = unit.clone();
     let mut builder = Builder::new(unit.next_id());
     rewrite_expressions(&mut result, &mut |expression| {
@@ -404,6 +404,12 @@ fn in_bounds(unit: &TranslationUnit, analysis: &Analysis) -> TranslationUnit {
         let Some(length) = analysis.type_of(base.id).and_then(rglsl_sema::Type::length) else {
             return;
         };
+        if matches!(
+            crate::macros::macro_name(index),
+            Some(GLF_MAKE_IN_BOUNDS_INT | GLF_MAKE_IN_BOUNDS_UINT)
+        ) {
+            return;
+        }
         if let ExpressionKind::Number(literal) = &index.kind {
             if literal
                 .digits()

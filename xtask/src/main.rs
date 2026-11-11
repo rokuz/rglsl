@@ -61,6 +61,8 @@ commands:
                           differently from rglsl's reference, glslang's does not)
       --preserve-semantics  with --reduce: only undo the generator's transformations
       --max-steps N       with --reduce: interestingness tests to run at most (default 2000)
+      --no-ub-guards      with --reduce and without --preserve-semantics: do not bound loops,
+                          clamp indices and initialise locals in every candidate
       --output DIR        with --reduce: where the reproducer goes
                           (default target/fuzz/reduce/<family>-<variant>/result)
       --jobs N            number of parallel jobs (default: number of CPUs)
@@ -154,6 +156,7 @@ fn run(args: Vec<String>) -> Result<i32> {
                 },
                 preserve_semantics: args.flag("--preserve-semantics"),
                 max_steps: args.parsed("--max-steps")?.unwrap_or(2000),
+                guards: !args.flag("--no-ub-guards"),
                 output: args.value("--output")?.map(PathBuf::from),
                 timeout_secs: args.parsed("--timeout")?.unwrap_or(30),
             };

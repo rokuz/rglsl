@@ -45,6 +45,7 @@ pub struct Options {
     pub target: TargetId,
     pub preserve_semantics: bool,
     pub max_steps: u32,
+    pub guards: bool,
     pub output: Option<PathBuf>,
     pub timeout_secs: u64,
 }
@@ -260,6 +261,7 @@ pub fn run(root: &Path, options: Options) -> Result<()> {
     let reduce_options = ReduceOptions {
         preserve_semantics: options.preserve_semantics,
         max_steps: options.max_steps,
+        guards: options.guards,
     };
     let reduction = reduce(&job, reduce_options, &mut adapter)?;
     let finalised = finalise(&reduction.job);

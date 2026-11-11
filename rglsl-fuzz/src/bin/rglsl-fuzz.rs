@@ -19,7 +19,7 @@ const USAGE: &str = "usage:
                       [--enable-only T,T,...] [--disable T,T,...]
                       <references dir> <output dir>
   rglsl-fuzz prepare-reference [--max-uniforms M] <reference.json> <output.json>
-  rglsl-fuzz reduce [--preserve-semantics] [--max-steps N] [--output DIR]
+  rglsl-fuzz reduce [--preserve-semantics] [--no-ub-guards] [--max-steps N] [--output DIR]
                     <shader job.json> -- <interestingness command> [arguments...]
       the command gets the candidate shader job's .json path as its last argument;
       exit status 0 means interesting";
@@ -294,6 +294,7 @@ fn reduce_command(raw: &[String]) -> Result<()> {
     let options = ReduceOptions {
         preserve_semantics: arguments.flag("--preserve-semantics"),
         max_steps: arguments.parsed("--max-steps", ReduceOptions::default().max_steps)?,
+        guards: !arguments.flag("--no-ub-guards"),
     };
     let candidate = output.join(format!("{stem}_candidate.json"));
     let mut judge = |job: &ShaderJob| -> std::result::Result<bool, rglsl_fuzz::Error> {

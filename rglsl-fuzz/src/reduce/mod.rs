@@ -1,10 +1,12 @@
 pub mod change;
 pub mod finders;
+pub mod guards;
 
 use std::collections::BTreeSet;
 
 use rglsl_ast::TranslationUnit;
 
+use crate::constants::GLOBAL_LOOP_BOUNDS;
 use crate::error::Error;
 use crate::generate::analyze_shader;
 use crate::job::{parse_unit, ShaderJob};
@@ -16,6 +18,7 @@ pub use finders::Pass;
 pub struct ReduceOptions {
     pub preserve_semantics: bool,
     pub max_steps: u32,
+    pub guards: bool,
 }
 
 impl Default for ReduceOptions {
@@ -23,6 +26,7 @@ impl Default for ReduceOptions {
         Self {
             preserve_semantics: false,
             max_steps: 2000,
+            guards: true,
         }
     }
 }
@@ -30,6 +34,7 @@ impl Default for ReduceOptions {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Reduction {
     pub job: ShaderJob,
+    pub loop_bound: Option<u32>,
     pub steps: u32,
     pub successes: u32,
 }
@@ -147,8 +152,28 @@ pub fn reduce(
     if !options.preserve_semantics {
         passes.extend(Pass::EVERYWHERE);
     }
+    let mut bound = None;
+    if !options.preserve_semantics && options.guards {
+        for candidate in GLOBAL_LOOP_BOUNDS {
+            if let Some(guarded) = add_guards_to_job(&current, candidate) {
+                if judge(&guarded)? {
+                    bound = Some(candidate);
+                    break;
+                }
+            }
+        }
+    }
+    let mut guarded_judge = |candidate: &ShaderJob| -> Result<bool, Error> {
+        let Some(bound) = bound else {
+            return judge(candidate);
+        };
+        match add_guards_to_job(candidate, bound) {
+            Some(candidate) => judge(&candidate),
+            None => Ok(false),
+        }
+    };
     let mut reducer = Reducer {
-        judge,
+        judge: &mut guarded_judge,
         options,
         steps: 0,
         successes: 0,
@@ -165,11 +190,27 @@ pub fn reduce(
             break;
         }
     }
+    let steps = reducer.steps;
+    let successes = reducer.successes;
+    let job = match bound {
+        Some(bound) => add_guards_to_job(&current, bound).unwrap_or(current),
+        None => current,
+    };
     Ok(Reduction {
-        job: current,
-        steps: reducer.steps,
-        successes: reducer.successes,
+        job,
+        loop_bound: bound,
+        steps,
+        successes,
     })
+}
+
+pub fn add_guards_to_job(job: &ShaderJob, bound: u32) -> Option<ShaderJob> {
+    let mut result = job.clone();
+    for shader in &mut result.shaders {
+        let stage = shader.stage();
+        shader.unit = guards::add_guards(&shader.unit, stage, bound)?;
+    }
+    Some(result)
 }
 
 pub fn finalise(job: &ShaderJob) -> ShaderJob {

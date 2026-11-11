@@ -130,3 +130,28 @@ fn structification() {
 fn vectorization() {
     run(Transformation::Vectorize, "GLF_merged");
 }
+
+#[test]
+fn merged_vector_names_decode_into_their_components() {
+    let components =
+        rglsl_fuzz::vectorize::component_data("GLF_merged3_0_1_1_1_2_3_3_1_4abcdefgh").unwrap();
+    let decoded: Vec<(u32, u32, &str)> = components
+        .iter()
+        .map(|component| (component.offset, component.width, component.name.as_str()))
+        .collect();
+    assert_eq!(decoded, [(0, 1, "a"), (1, 2, "bcd"), (3, 1, "efgh")]);
+    assert!(rglsl_fuzz::vectorize::component_data("GLF_merged2_0_1_1x").is_none());
+}
+
+#[test]
+fn transformation_names_round_trip() {
+    for transformation in Transformation::ALL {
+        assert_eq!(
+            Transformation::from_name(transformation.name()),
+            Some(transformation)
+        );
+    }
+    let enabled = EnabledTransformations::parse_list("identity,add_jump").unwrap();
+    assert_eq!(enabled, [Transformation::Identity, Transformation::AddJump]);
+    assert!(EnabledTransformations::parse_list("nonsense").is_err());
+}
