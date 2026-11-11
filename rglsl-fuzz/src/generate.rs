@@ -3,58 +3,19 @@ use std::sync::Arc;
 use rglsl_ast::TranslationUnit;
 use rglsl_sema::{analyze, analyze_with_builtins, Analysis, Builtins, Options, Stage};
 
+use crate::donate::Donor;
 use crate::error::Error;
 use crate::fuzzer::GenerationParams;
-use crate::identity;
 use crate::job::{
     add_braces, add_injection_switch_if_not_present, node_count, parse_unit, ShaderJob,
 };
 use crate::macros::{emit, expand_macros};
 use crate::pipeline::{uniform_declarators, UniformType};
 use crate::random::Random;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Probabilities {
-    pub substitute_free_variable: u32,
-    pub donate_dead_code_at_statement: u32,
-    pub donate_live_code_at_statement: u32,
-    pub inject_jump_at_statement: u32,
-    pub wrap_statement_in_conditional: u32,
-    pub mutate_point: u32,
-    pub vectorize_statements: u32,
-    pub split_loops: u32,
-    pub structify: u32,
-    pub outline: u32,
-    pub add_live_frag_color_writes: u32,
-    pub add_dead_frag_color_writes: u32,
-    pub switchify: u32,
-    pub inject_dead_barrier_at_statement: u32,
-}
-
-fn random_probability(random: &mut Random, min: u32, max: u32) -> u32 {
-    random.next_int(max - min) + min
-}
-
-impl Probabilities {
-    pub fn random_multi_pass(random: &mut Random) -> Self {
-        Self {
-            substitute_free_variable: random_probability(random, 0, 100),
-            donate_dead_code_at_statement: random_probability(random, 2, 10),
-            donate_live_code_at_statement: random_probability(random, 2, 10),
-            inject_jump_at_statement: random_probability(random, 2, 15),
-            wrap_statement_in_conditional: random_probability(random, 2, 15),
-            mutate_point: random_probability(random, 2, 8),
-            vectorize_statements: random_probability(random, 2, 30),
-            split_loops: random_probability(random, 2, 15),
-            structify: random_probability(random, 2, 8),
-            outline: random_probability(random, 2, 15),
-            add_live_frag_color_writes: random_probability(random, 2, 10),
-            add_dead_frag_color_writes: random_probability(random, 2, 10),
-            switchify: random_probability(random, 2, 10),
-            inject_dead_barrier_at_statement: random_probability(random, 2, 20),
-        }
-    }
-}
+use crate::strip::strip_unused;
+use crate::transformation::{
+    self, EnabledTransformations, PassInput, Probabilities, Transformation,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GeneratorOptions {
@@ -64,6 +25,7 @@ pub struct GeneratorOptions {
     pub push_constant_probability: f32,
     pub min_nodes: u32,
     pub max_nodes: u32,
+    pub enabled: EnabledTransformations,
 }
 
 impl Default for GeneratorOptions {
@@ -75,13 +37,9 @@ impl Default for GeneratorOptions {
             push_constant_probability: 0.5,
             min_nodes: 5000,
             max_nodes: 22000,
+            enabled: EnabledTransformations::all(),
         }
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Transformation {
-    Identity,
 }
 
 pub fn analyze_shader(
@@ -109,6 +67,7 @@ fn shader_large_enough(
     node_count(unit) > usize::try_from(limit).unwrap_or(usize::MAX)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn apply_transformation(
     transformation: Transformation,
     unit: &mut TranslationUnit,
@@ -116,49 +75,79 @@ fn apply_transformation(
     builtins: &mut Option<Arc<Builtins>>,
     probabilities: &Probabilities,
     params: GenerationParams,
+    donors: &[Donor],
     random: &mut Random,
 ) -> bool {
-    match transformation {
-        Transformation::Identity => {
-            let analysis = analyze_shader(unit, stage, true, builtins.as_ref());
-            if builtins.is_none() {
-                *builtins = Some(Arc::clone(&analysis.builtins));
-            }
-            let Some(transformed) =
-                identity::apply(unit, &analysis, probabilities.mutate_point, params, random)
-            else {
-                return false;
-            };
-            match parse_unit("variant", &emit(&transformed)) {
-                Ok(reparsed) => {
-                    *unit = reparsed;
-                    true
-                }
-                Err(_) => false,
-            }
+    let analysis = analyze_shader(unit, stage, true, builtins.as_ref());
+    if builtins.is_none() {
+        *builtins = Some(Arc::clone(&analysis.builtins));
+    }
+    let input = PassInput {
+        unit,
+        analysis: &analysis,
+        probabilities,
+        params,
+        donors,
+    };
+    let Some(transformed) = transformation::apply(transformation, &input, random) else {
+        return false;
+    };
+    let Ok(mut reparsed) = parse_unit("variant", &emit(&transformed)) else {
+        return false;
+    };
+    if let Some(stripped) = strip_unused(&reparsed) {
+        match parse_unit("variant", &emit(&stripped)) {
+            Ok(stripped) => reparsed = stripped,
+            Err(_) => return false,
         }
     }
+    *unit = reparsed;
+    true
+}
+
+fn available_transformations(
+    stage: Stage,
+    options: &GeneratorOptions,
+    donors: &[Donor],
+) -> Vec<Transformation> {
+    let has_donors = donors.iter().any(|donor| donor.stage() == stage);
+    Transformation::ALL
+        .into_iter()
+        .filter(|transformation| options.enabled.contains(*transformation))
+        .filter(|transformation| match transformation {
+            Transformation::DonateDeadCode | Transformation::DonateLiveCode => has_donors,
+            Transformation::AddDeadOutputWrite => stage == Stage::Fragment,
+            Transformation::AddDeadBarrier => stage == Stage::Compute,
+            _ => true,
+        })
+        .collect()
 }
 
 pub fn transform_shader(
     unit: &mut TranslationUnit,
     stage: Stage,
     options: &GeneratorOptions,
+    donors: &[Donor],
     random: &mut Random,
 ) -> Vec<&'static str> {
-    let fragment = stage == Stage::Fragment;
-    let params = if options.small {
-        GenerationParams::small(fragment)
+    let mut params = if options.small {
+        GenerationParams::small(stage)
     } else {
-        GenerationParams::normal(fragment)
+        GenerationParams::normal(stage)
     };
+    params.injection_switch = options.add_injection_switch;
     let probabilities = Probabilities::random_multi_pass(random);
-    let mut candidates = vec![Transformation::Identity];
+    let mut candidates = available_transformations(stage, options, donors);
     let mut transformations = Vec::new();
     while !candidates.is_empty() {
         let index = random.next_index(candidates.len());
         let candidate = candidates.remove(index);
-        if (candidates.is_empty() && transformations.is_empty()) || random.next_bool() {
+        let keep = if candidate == Transformation::AddSwitch {
+            random.next_int(8) == 0
+        } else {
+            random.next_bool()
+        };
+        if (candidates.is_empty() && transformations.is_empty()) || keep {
             transformations.push(candidate);
         }
     }
@@ -168,9 +157,7 @@ pub fn transform_shader(
     while !transformations.is_empty() && !shader_large_enough(unit, options, random) {
         let index = random.next_index(transformations.len());
         let transformation = transformations.remove(index);
-        applied.push(match transformation {
-            Transformation::Identity => identity::NAME,
-        });
+        applied.push(transformation.name());
         let mut child = random.spawn_child();
         if apply_transformation(
             transformation,
@@ -179,6 +166,7 @@ pub fn transform_shader(
             &mut builtins,
             &probabilities,
             params,
+            donors,
             &mut child,
         ) {
             next_round.push(transformation);
@@ -210,7 +198,24 @@ pub fn generate_variant(
     options: &GeneratorOptions,
     random: &mut Random,
 ) -> Result<ShaderJob, Error> {
+    generate_variant_with_donors(reference, options, &[], random)
+}
+
+pub fn generate_variant_with_donors(
+    reference: &ShaderJob,
+    options: &GeneratorOptions,
+    donors: &[Donor],
+    random: &mut Random,
+) -> Result<ShaderJob, Error> {
     let mut job = reference.clone();
+    let prepared = prepare_reference(reference, options.max_uniforms.saturating_sub(1), true)?;
+    for name in prepared.pipeline.uniform_names() {
+        if let Some(binding) = prepared.pipeline.binding(&name) {
+            if !job.pipeline.has_binding_or_is_push_constant(&name) {
+                job.pipeline.add_uniform_binding(&name, false, binding);
+            }
+        }
+    }
     if options.add_injection_switch {
         for shader in &mut job.shaders {
             add_injection_switch_if_not_present(&mut shader.unit)?;
@@ -224,7 +229,7 @@ pub fn generate_variant(
         };
         job.pipeline.zero_unset_uniforms(&shader.unit)?;
         let stage = shader.stage();
-        transform_shader(&mut shader.unit, stage, options, &mut child);
+        transform_shader(&mut shader.unit, stage, options, donors, &mut child);
         let mut uniforms = child.spawn_child();
         job.pipeline
             .randomise_unset_uniforms(&shader.unit, &mut uniforms)?;
@@ -272,6 +277,7 @@ pub struct FamilyOptions {
     pub variants: u32,
     pub max_bytes: usize,
     pub generator: GeneratorOptions,
+    pub donors: Vec<Donor>,
 }
 
 impl Default for FamilyOptions {
@@ -280,6 +286,7 @@ impl Default for FamilyOptions {
             variants: 10,
             max_bytes: 500_000,
             generator: GeneratorOptions::default(),
+            donors: Vec::new(),
         }
     }
 }
@@ -310,7 +317,12 @@ pub fn generate_family(
     {
         tried += 1;
         let mut child = random.spawn_child();
-        match generate_variant(reference, &options.generator, &mut child) {
+        match generate_variant_with_donors(
+            reference,
+            &options.generator,
+            &options.donors,
+            &mut child,
+        ) {
             Ok(variant) => {
                 let too_large = variant
                     .emit()

@@ -9,7 +9,7 @@ use rglsl_sema::Builtins;
 use crate::basic::{self, BOOL, FLOAT};
 use crate::build::Builder;
 use crate::constants::{
-    GLF_FALSE, GLF_FUZZED, GLF_IDENTITY, GLF_ONE, GLF_TRUE, GLF_ZERO, GL_FRAG_COORD,
+    GLF_DEAD, GLF_FALSE, GLF_FUZZED, GLF_IDENTITY, GLF_ONE, GLF_TRUE, GLF_ZERO, GL_FRAG_COORD,
     INJECTION_SWITCH,
 };
 use crate::fuzzer::{is_too_deep, literal_zero_or_one, random_constant, Fuzzer};
@@ -448,7 +448,7 @@ impl OpaqueGenerator<'_> {
         self.builder.call(GLF_IDENTITY, vec![original, transformed])
     }
 
-    fn fuzzed(&mut self, ty: BasicType, constant_context: bool, depth: u32) -> Expression {
+    pub fn fuzzed(&mut self, ty: BasicType, constant_context: bool, depth: u32) -> Expression {
         let fuzzer = self.fuzzer;
         let expression = fuzzer
             .fuzz_expression(self.random, self.builder, ty, constant_context, depth)
@@ -1051,6 +1051,11 @@ impl OpaqueGenerator<'_> {
             let opaque = self.builder.call(GLF_ONE, vec![one, value]);
             return self.builder.construct(ty, vec![opaque]);
         }
+    }
+
+    pub fn make_dead_condition(&mut self) -> Expression {
+        let condition = self.make_opaque_boolean(false, BOOL, false, 0);
+        self.builder.call(GLF_DEAD, vec![condition])
     }
 
     pub fn make_opaque_boolean(

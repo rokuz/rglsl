@@ -637,6 +637,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "rglsl",
+ "rglsl-fuzz",
  "rglsl-link",
  "rglsl-pp",
  "serde_json",

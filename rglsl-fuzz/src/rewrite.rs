@@ -22,6 +22,82 @@ pub fn rewrite_expressions(unit: &mut TranslationUnit, visit: &mut dyn FnMut(&mu
     }
 }
 
+pub fn visit_statements<'a>(statement: &'a Statement, visit: &mut dyn FnMut(&'a Statement)) {
+    visit(statement);
+    match &statement.kind {
+        StatementKind::Compound(compound) => {
+            for inner in &compound.statements {
+                visit_statements(inner, visit);
+            }
+        }
+        StatementKind::Selection {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            visit_statements(then_branch, visit);
+            if let Some(else_branch) = else_branch {
+                visit_statements(else_branch, visit);
+            }
+        }
+        StatementKind::Switch { statements, .. } => {
+            for inner in statements {
+                visit_statements(inner, visit);
+            }
+        }
+        StatementKind::While { body, .. } | StatementKind::DoWhile { body, .. } => {
+            visit_statements(body, visit);
+        }
+        StatementKind::For(for_statement) => {
+            visit_statements(&for_statement.init, visit);
+            visit_statements(&for_statement.body, visit);
+        }
+        StatementKind::Attributed { statement, .. } => visit_statements(statement, visit),
+        StatementKind::Declaration(_)
+        | StatementKind::Expression(_)
+        | StatementKind::CaseLabel(_)
+        | StatementKind::Jump(_) => {}
+    }
+}
+
+pub fn function_statements(unit: &TranslationUnit) -> Vec<(usize, &Statement)> {
+    let mut result = Vec::new();
+    for (index, external) in unit.external_declarations.iter().enumerate() {
+        if let ExternalDeclaration::FunctionDefinition(definition) = external {
+            for statement in &definition.body.statements {
+                visit_statements(statement, &mut |inner| result.push((index, inner)));
+            }
+        }
+    }
+    result
+}
+
+pub fn statement_expression_ids(statement: &Statement) -> Vec<rglsl_ast::ast::NodeId> {
+    let mut probe = statement.clone();
+    let mut ids = Vec::new();
+    rewrite_statement_expressions(&mut probe, &mut |expression| ids.push(expression.id));
+    ids
+}
+
+pub fn replace_statements(
+    unit: &mut TranslationUnit,
+    replacements: &mut std::collections::BTreeMap<rglsl_ast::ast::NodeId, Statement>,
+) {
+    rewrite_statements(unit, &mut |statement| {
+        if let Some(replacement) = replacements.remove(&statement.id) {
+            *statement = replacement;
+        }
+    });
+}
+
+pub fn rewrite_statement_expressions(
+    statement: &mut Statement,
+    visit: &mut dyn FnMut(&mut Expression),
+) {
+    let mut rewriter = Rewriter { visit };
+    rewriter.statement(statement);
+}
+
 pub fn rewrite_statements(unit: &mut TranslationUnit, visit: &mut dyn FnMut(&mut Statement)) {
     for declaration in &mut unit.external_declarations {
         if let ExternalDeclaration::FunctionDefinition(definition) = declaration {

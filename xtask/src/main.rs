@@ -9,6 +9,7 @@ mod corpus;
 mod exec;
 mod fuzz;
 mod fuzz_exec;
+mod fuzz_reduce;
 mod groups;
 mod oracles;
 mod process;
@@ -51,6 +52,17 @@ commands:
                           from its reference is a wrong result; failures are rerun alone
       --exec-target T     with --exec, run on one target only: local or remote
       --exec-glslang      with --exec, also run the modules glslang compiles
+      --reduce JOB        reduce the variant shader job JOB (a .json next to its shader) with
+                          rglsl-fuzz's reducer instead of comparing a directory
+      --interesting K     with --reduce: crash, reject, invalid-spirv (glslang accepts and
+                          rglsl crashes, rejects or emits invalid SPIR-V), differs-from-glslang
+                          (rglsl's module renders differently from glslang's on the exec
+                          target) or differs-from-reference (rglsl's variant renders
+                          differently from rglsl's reference, glslang's does not)
+      --preserve-semantics  with --reduce: only undo the generator's transformations
+      --max-steps N       with --reduce: interestingness tests to run at most (default 2000)
+      --output DIR        with --reduce: where the reproducer goes
+                          (default target/fuzz/reduce/<family>-<variant>/result)
       --jobs N            number of parallel jobs (default: number of CPUs)
       --timeout SECS      per-process timeout (default: 30)
 
@@ -122,6 +134,31 @@ fn run(args: Vec<String>) -> Result<i32> {
             };
             args.finish()?;
             runner::run(&workspace_root()?, options)?;
+            Ok(0)
+        }
+        "fuzz" if args.has("--reduce") => {
+            let job = args
+                .value("--reduce")?
+                .context("--reduce needs a shader job")?;
+            let interesting = args
+                .value("--interesting")?
+                .context("--reduce needs --interesting")?;
+            let options = fuzz_reduce::Options {
+                job: PathBuf::from(job),
+                interesting: fuzz_reduce::Interesting::parse(&interesting)
+                    .with_context(|| format!("unknown interestingness test `{interesting}`"))?,
+                target: match args.value("--exec-target")? {
+                    Some(name) => exec::TargetId::parse(&name)
+                        .with_context(|| format!("unknown exec target `{name}`"))?,
+                    None => exec::TargetId::Local,
+                },
+                preserve_semantics: args.flag("--preserve-semantics"),
+                max_steps: args.parsed("--max-steps")?.unwrap_or(2000),
+                output: args.value("--output")?.map(PathBuf::from),
+                timeout_secs: args.parsed("--timeout")?.unwrap_or(30),
+            };
+            args.finish()?;
+            fuzz_reduce::run(&workspace_root()?, options)?;
             Ok(0)
         }
         "fuzz" => {
@@ -219,6 +256,13 @@ impl Args {
     fn next_positional(&mut self) -> Option<String> {
         let index = self.args.iter().position(|a| !a.starts_with("--"))?;
         Some(self.args.remove(index))
+    }
+
+    fn has(&self, name: &str) -> bool {
+        let prefix = format!("{name}=");
+        self.args
+            .iter()
+            .any(|arg| arg == name || arg.starts_with(&prefix))
     }
 
     fn flag(&mut self, name: &str) -> bool {

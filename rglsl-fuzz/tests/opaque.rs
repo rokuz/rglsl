@@ -56,7 +56,11 @@ impl Setup {
         let mut generator = OpaqueGenerator {
             random: &mut random,
             builder: &mut builder,
-            fuzzer: Fuzzer::new(&self.templates, scope, GenerationParams::normal(true)),
+            fuzzer: Fuzzer::new(
+                &self.templates,
+                scope,
+                GenerationParams::normal(Stage::Fragment),
+            ),
             builtins: &self.builtins,
             hidden: &self.hidden,
             injection_switch: !constant,
@@ -293,12 +297,7 @@ fn every_identity_preserves_type_and_value() {
                 continue;
             }
             let value = sample_value(*ty);
-            let scope = [Variable {
-                name: String::from("v"),
-                ty: Some(*ty),
-                constant: false,
-                parameter: false,
-            }];
+            let scope = [Variable::new("v", Some(*ty))];
             for seed in 0..6 {
                 let expression = setup.generate(seed, &scope, false, |generator| {
                     let variable = generator.builder.variable("v");
