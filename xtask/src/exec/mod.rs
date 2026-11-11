@@ -739,6 +739,12 @@ fn interface_difference(theirs: &Reflection, mine: &Reflection) -> Option<String
             theirs.shader_record, mine.shader_record
         ));
     }
+    if theirs.record_addresses != mine.record_addresses {
+        return Some(format!(
+            "acceleration structure addresses in the shader record at {:?} vs {:?}",
+            theirs.record_addresses, mine.record_addresses
+        ));
+    }
     if theirs.task_payload != mine.task_payload {
         return Some(format!(
             "task payload {:?} vs {:?}",

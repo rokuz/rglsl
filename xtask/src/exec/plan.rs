@@ -731,7 +731,7 @@ impl Plan {
         &mut self,
         reflection: &Reflection,
         rng: &mut Rng,
-    ) -> Result<Option<String>, Refusal> {
+    ) -> Result<Option<rays::ShaderRecord>, Refusal> {
         let Some(record) = &reflection.shader_record else {
             return Ok(None);
         };
@@ -746,8 +746,20 @@ impl Plan {
         let mut bytes = fill_random(layout, 0, rng);
         let size = round_up(u32::try_from(bytes.len()).unwrap_or(0).max(4), 4);
         bytes.resize(usize::try_from(size).unwrap_or(4), 0);
+        for offset in &reflection.record_addresses {
+            let start = usize::try_from(*offset).unwrap_or(usize::MAX);
+            if let Some(field) = start
+                .checked_add(8)
+                .and_then(|end| bytes.get_mut(start..end))
+            {
+                field.fill(0);
+            }
+        }
         self.add_buffer("rglsl_record", bytes);
-        Ok(Some("rglsl_record".into()))
+        Ok(Some(rays::ShaderRecord {
+            buffer: "rglsl_record".into(),
+            addresses: reflection.record_addresses.clone(),
+        }))
     }
 
     fn start_with_vertex(&mut self, inputs: &[Varying], rng: &mut Rng) -> Result<(), Refusal> {
@@ -1387,6 +1399,37 @@ mod tests {
             data: &data,
         });
         assert!(script.contains("    g_raygen SHADER_RECORD rglsl_record\n"));
+
+        module.shader_record = Some(Ok(Layout::Struct {
+            members: vec![
+                (0, Layout::Scalar(U32)),
+                (
+                    8,
+                    Layout::Vector {
+                        scalar: U32,
+                        count: 2,
+                    },
+                ),
+            ],
+        }));
+        module.record_addresses = vec![8];
+        let plan = Plan::new(&module, &Inputs::default()).unwrap();
+        let record = plan
+            .files
+            .iter()
+            .find(|(name, _)| name == "rglsl_record.bin")
+            .unwrap();
+        assert_eq!(record.1.len(), 16);
+        assert_eq!(record.1[8..16], [0; 8]);
+        let script = plan.script(ScriptPaths {
+            tested: &tested,
+            harness: &harness,
+            dump: &dump,
+            data: &data,
+        });
+        assert!(script.contains(
+            "    g_raygen SHADER_RECORD rglsl_record ACCELERATION_STRUCTURE tlas OFFSET 8\n"
+        ));
     }
 
     #[test]

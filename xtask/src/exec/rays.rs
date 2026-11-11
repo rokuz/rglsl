@@ -74,9 +74,25 @@ pub struct Group {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShaderRecord {
+    pub buffer: String,
+    pub addresses: Vec<u32>,
+}
+
+impl ShaderRecord {
+    fn script(&self) -> String {
+        let mut out = format!(" SHADER_RECORD {}", self.buffer);
+        for offset in &self.addresses {
+            let _ = write!(out, " ACCELERATION_STRUCTURE {SCENE_TLAS} OFFSET {offset}");
+        }
+        out
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RayPipeline {
     pub groups: Vec<Group>,
-    pub record: Option<(Table, String)>,
+    pub record: Option<(Table, ShaderRecord)>,
     pub recursion: u32,
 }
 
@@ -105,7 +121,7 @@ impl RayPipeline {
             let (name, first, rest) = Self::table(table);
             let _ = writeln!(out, "  SHADER_BINDING_TABLE {name}");
             let record = match &self.record {
-                Some((t, buffer)) if *t == table => format!(" SHADER_RECORD {buffer}"),
+                Some((t, record)) if *t == table => record.script(),
                 _ => String::new(),
             };
             let _ = writeln!(out, "    {first}{record}");
@@ -272,7 +288,7 @@ pub fn harness(
     stage: ShaderKind,
     reflection: &Reflection,
     set: u32,
-    record: Option<String>,
+    record: Option<ShaderRecord>,
     rng: &mut Rng,
 ) -> Result<RayHarness, String> {
     let recursion = if stage != ShaderKind::RayGeneration && traces(reflection) {
@@ -425,7 +441,10 @@ mod tests {
             ShaderKind::ClosestHit,
             &module,
             1,
-            Some("rec".into()),
+            Some(ShaderRecord {
+                buffer: "rec".into(),
+                addresses: vec![8, 16],
+            }),
             &mut Rng::new(3),
         )
         .unwrap();
@@ -442,7 +461,7 @@ mod tests {
         assert!(script.contains("  SHADER_GROUP g_raygen harness0\n"));
         assert!(script.contains("  SHADER_GROUP g_hit tested\n"));
         assert!(script.contains(
-            "  SHADER_BINDING_TABLE sbt_hit\n    g_hit SHADER_RECORD rec\n    g_hit_empty\n"
+            "  SHADER_BINDING_TABLE sbt_hit\n    g_hit SHADER_RECORD rec ACCELERATION_STRUCTURE tlas OFFSET 8 ACCELERATION_STRUCTURE tlas OFFSET 16\n    g_hit_empty\n"
         ));
         assert_eq!(script.matches("    g_miss_empty\n").count(), RECORDS - 1);
         assert!(!script.contains("MAX_RAY_RECURSION_DEPTH"));

@@ -297,6 +297,7 @@ pub struct Reflection {
     pub ray_storage: BTreeSet<StorageClass>,
     pub ray_variables: Vec<RayVariable>,
     pub shader_record: Option<Result<Layout, String>>,
+    pub record_addresses: Vec<u32>,
     pub task_payload: Option<Result<DataType, String>>,
     pub body_opcodes: BTreeSet<u32>,
     pub problems: Vec<String>,
@@ -321,6 +322,7 @@ impl Reflection {
             ray_storage: BTreeSet::new(),
             ray_variables: Vec::new(),
             shader_record: None,
+            record_addresses: Vec::new(),
             task_payload: None,
             body_opcodes: BTreeSet::new(),
             problems: Vec::new(),
@@ -966,6 +968,7 @@ pub fn reflect(module: &Module) -> Result<Reflection, String> {
         ..Reflection::new(model)
     };
 
+    let mut record_variable = None;
     for instruction in &module.globals {
         if !instruction.is(Op::Variable) {
             continue;
@@ -1070,6 +1073,7 @@ pub fn reflect(module: &Module) -> Result<Reflection, String> {
             StorageClass::ShaderRecordBufferKHR if is_ray_tracing(model) => {
                 reflection.ray_storage.insert(class);
                 reflection.shader_record = Some(types.layout(pointee, None, 0));
+                record_variable = Some(id);
             }
             StorageClass::RayPayloadKHR
             | StorageClass::IncomingRayPayloadKHR
@@ -1091,6 +1095,16 @@ pub fn reflect(module: &Module) -> Result<Reflection, String> {
             other => reflection.problems.push(format!("{other:?} variables")),
         }
     }
+    if reflection.uses(Op::ConvertUToAccelerationStructureKHR) {
+        let record = match (record_variable, &reflection.shader_record) {
+            (Some(id), Some(Ok(layout))) => Some((id, layout)),
+            _ => None,
+        };
+        match record_addresses(&module.body, &types, record) {
+            Ok(addresses) => reflection.record_addresses = addresses,
+            Err(problem) => reflection.problems.push(problem),
+        }
+    }
     reflection
         .ray_variables
         .sort_by_key(|v| (v.class as u32, v.location));
@@ -1102,6 +1116,109 @@ pub fn reflect(module: &Module) -> Result<Reflection, String> {
         .outputs
         .sort_by_key(|v| (v.location, v.component));
     Ok(reflection)
+}
+
+fn record_addresses(
+    body: &[Instruction],
+    types: &Types,
+    record: Option<(u32, &Layout)>,
+) -> Result<Vec<u32>, String> {
+    let defs: BTreeMap<u32, &Instruction> = body
+        .iter()
+        .filter(|i| {
+            [
+                Op::Load,
+                Op::CopyObject,
+                Op::AccessChain,
+                Op::InBoundsAccessChain,
+            ]
+            .iter()
+            .any(|op| i.is(*op))
+        })
+        .filter_map(|i| i.word(1).map(|id| (id, i)))
+        .collect();
+    let mut addresses = BTreeSet::new();
+    for convert in body
+        .iter()
+        .filter(|i| i.is(Op::ConvertUToAccelerationStructureKHR))
+    {
+        let offset = convert
+            .word(2)
+            .and_then(|value| record_field(&defs, types, record, value))
+            .ok_or("an acceleration structure from an address that is not a shader record field")?;
+        addresses.insert(offset);
+    }
+    Ok(addresses.into_iter().collect())
+}
+
+fn record_field(
+    defs: &BTreeMap<u32, &Instruction>,
+    types: &Types,
+    record: Option<(u32, &Layout)>,
+    value: u32,
+) -> Option<u32> {
+    let mut value = value;
+    for _ in 0..32 {
+        let instruction = defs.get(&value)?;
+        if instruction.is(Op::CopyObject) {
+            value = instruction.word(2)?;
+            continue;
+        }
+        if !instruction.is(Op::Load) {
+            return None;
+        }
+        let (offset, layout) = record_pointer(defs, types, record?, instruction.word(2)?, 0)?;
+        return (layout.size(0) == 8 && !layout.has_runtime_array()).then_some(offset);
+    }
+    None
+}
+
+fn record_pointer<'a>(
+    defs: &BTreeMap<u32, &Instruction>,
+    types: &Types,
+    record: (u32, &'a Layout),
+    pointer: u32,
+    depth: u32,
+) -> Option<(u32, &'a Layout)> {
+    let (variable, layout) = record;
+    if pointer == variable {
+        return Some((0, layout));
+    }
+    if depth > 32 {
+        return None;
+    }
+    let instruction = defs.get(&pointer)?;
+    if instruction.is(Op::CopyObject) {
+        return record_pointer(defs, types, record, instruction.word(2)?, depth + 1);
+    }
+    if !(instruction.is(Op::AccessChain) || instruction.is(Op::InBoundsAccessChain)) {
+        return None;
+    }
+    let (mut offset, mut layout) =
+        record_pointer(defs, types, record, instruction.word(2)?, depth + 1)?;
+    for index in instruction.rest(3) {
+        let index = types.constant_u32(*index)?;
+        let (step, inner) = match layout {
+            Layout::Struct { members } => {
+                let (member, inner) = members.get(usize::try_from(index).ok()?)?;
+                (*member, inner)
+            }
+            Layout::Array {
+                element,
+                length,
+                stride,
+            } => {
+                if length.is_some_and(|length| index >= length) {
+                    return None;
+                }
+                (index.checked_mul(*stride)?, element.as_ref())
+            }
+            Layout::Scalar(_) | Layout::Vector { .. } | Layout::Matrix { .. } => return None,
+        };
+        offset = offset.checked_add(step)?;
+        layout = inner;
+    }
+    Some((offset, layout))
 }
 
 fn resource_kind(types: &Types, class: StorageClass, variable: u32, pointee: u32) -> ResourceKind {
@@ -1238,6 +1355,72 @@ mod tests {
         };
         assert!(*writable);
         assert_eq!(layout.runtime_stride(), 4);
+    }
+
+    fn record_module(load_from: u32) -> Vec<u32> {
+        module(&[
+            op(Op::Capability, &[Capability::RayTracingKHR as u32]),
+            op(Op::EntryPoint, &entry(ExecutionModel::RayGenerationKHR)),
+            op(Op::Decorate, &[10, Decoration::Block as u32]),
+            op(Op::MemberDecorate, &[10, 0, Decoration::Offset as u32, 0]),
+            op(Op::MemberDecorate, &[10, 1, Decoration::Offset as u32, 8]),
+            op(Op::MemberDecorate, &[10, 2, Decoration::Offset as u32, 16]),
+            op(Op::Decorate, &[13, Decoration::ArrayStride as u32, 8]),
+            op(Op::TypeVoid, &[2]),
+            op(Op::TypeFunction, &[3, 2]),
+            op(Op::TypeInt, &[5, 32, 0]),
+            op(Op::TypeInt, &[6, 64, 0]),
+            op(Op::TypeVector, &[7, 5, 2]),
+            op(Op::Constant, &[5, 8, 1]),
+            op(Op::Constant, &[5, 9, 2]),
+            op(Op::TypeArray, &[13, 6, 9]),
+            op(Op::TypeStruct, &[10, 5, 7, 13]),
+            op(
+                Op::TypePointer,
+                &[11, StorageClass::ShaderRecordBufferKHR as u32, 10],
+            ),
+            op(
+                Op::TypePointer,
+                &[14, StorageClass::ShaderRecordBufferKHR as u32, 7],
+            ),
+            op(
+                Op::TypePointer,
+                &[15, StorageClass::ShaderRecordBufferKHR as u32, 6],
+            ),
+            op(Op::TypeAccelerationStructureKHR, &[16]),
+            op(
+                Op::Variable,
+                &[11, 12, StorageClass::ShaderRecordBufferKHR as u32],
+            ),
+            op(Op::Function, &[2, 1, 0, 3]),
+            op(Op::Label, &[20]),
+            op(Op::AccessChain, &[14, 21, 12, 8]),
+            op(Op::Load, &[7, 22, load_from]),
+            op(Op::ConvertUToAccelerationStructureKHR, &[16, 23, 22]),
+            op(Op::AccessChain, &[15, 24, 12, 9, 8]),
+            op(Op::Load, &[6, 25, 24]),
+            op(Op::CopyObject, &[6, 26, 25]),
+            op(Op::ConvertUToAccelerationStructureKHR, &[16, 27, 26]),
+            op(Op::Return, &[]),
+            op(Op::FunctionEnd, &[]),
+        ])
+    }
+
+    #[test]
+    fn finds_acceleration_structure_addresses_in_the_shader_record() {
+        let reflection = reflect(&module::parse(&record_module(21)).unwrap()).unwrap();
+        assert!(reflection.problems.is_empty(), "{:?}", reflection.problems);
+        assert_eq!(reflection.record_addresses, vec![8, 24]);
+
+        let reflection = reflect(&module::parse(&record_module(12)).unwrap()).unwrap();
+        assert!(reflection.record_addresses.is_empty());
+        assert_eq!(
+            reflection.problems,
+            vec![
+                "an acceleration structure from an address that is not a shader record field"
+                    .to_string()
+            ]
+        );
     }
 
     #[test]
