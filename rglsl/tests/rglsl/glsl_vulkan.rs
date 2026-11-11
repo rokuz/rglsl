@@ -8280,3 +8280,58 @@ fn programs_resolve_includes() {
         .iter()
         .any(|(_, global)| global.name.as_deref() == Some("color")));
 }
+
+#[test]
+fn push_constant_banks() {
+    let module = compile(
+        ShaderStage::Vertex,
+        "#version 460
+#extension GL_NV_push_constant_bank : enable
+layout(std430, binding = 0) buffer R { uint bank[3]; } r;
+layout(push_constant) uniform P0 { uint data; } p0;
+layout(push_constant, bank = 1) uniform P1 { uint data; } p1;
+layout(push_constant, bank = 2, member_offset = 64) uniform P2 { uint data; } p2;
+void main() {
+    r.bank[0] = p0.data;
+    r.bank[1] = p1.data;
+    r.bank[2] = p2.data;
+}
+",
+    );
+    assert!(capabilities_of(&module).contains(&spirv::Capability::PushConstantBanksNV));
+    assert!(extensions_of(&module).contains(&"SPV_NV_push_constant_bank".to_string()));
+    let mut variables = variable_decorations(&module, "p2");
+    variables.sort_by_key(|(decoration, _)| *decoration as u32);
+    assert_eq!(
+        variables,
+        [
+            (Decoration::MemberOffsetNV, vec![64]),
+            (Decoration::BankNV, vec![2]),
+        ]
+    );
+    assert_eq!(
+        variable_decorations(&module, "p1"),
+        [(Decoration::BankNV, vec![1])]
+    );
+    assert!(variable_decorations(&module, "p0").is_empty());
+    assert!(variable_decorations(&module, "P1").contains(&(Decoration::BankNV, vec![1])));
+}
+
+#[test]
+fn push_constant_blocks_in_one_bank_are_rejected() {
+    let error = parse(
+        ShaderStage::Vertex,
+        "#version 460
+#extension GL_NV_push_constant_bank : enable
+layout(std430, binding = 0) buffer R { uint bank[2]; } r;
+layout(push_constant, bank = 1) uniform P0 { uint data; } p0;
+layout(push_constant, bank = 1) uniform P1 { uint data; } p1;
+void main() {
+    r.bank[0] = p0.data;
+    r.bank[1] = p1.data;
+}
+",
+    )
+    .unwrap_err();
+    assert!(error.contains("MoreThanOneImmediateUsed"), "{error}");
+}

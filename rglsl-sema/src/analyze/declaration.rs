@@ -510,6 +510,7 @@ impl Analyzer<'_> {
         }
         self.stage_layout_identifiers(&result);
         self.heap_layout_check(&result);
+        self.push_constant_bank_layout_check(&result);
         result
     }
 

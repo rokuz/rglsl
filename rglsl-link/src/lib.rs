@@ -177,13 +177,14 @@ pub(crate) fn merge(objects: &[ObjectModule], options: &Options) -> Result<Merge
     {
         check_geometry_inputs(objects, primitive, &mut builder.errors);
     }
-    let push_constants = builder
+    let push_constants: Vec<_> = builder
         .module
         .global_variables
         .iter()
         .filter(|&(_, global)| global.space == AddressSpace::Immediate)
-        .count();
-    if push_constants > 1 {
+        .map(|(_, global)| global.immediate_bank)
+        .collect();
+    if push_constants.len() > 1 && push_constants.iter().all(Option::is_none) {
         builder.errors.push(LinkError::PushConstants);
     }
     let Builder {

@@ -178,6 +178,7 @@ impl super::Validator {
                 heap_offset,
                 tile_attachment: _,
                 ref spirv_decorations,
+                immediate_bank: _,
             } = global_variable;
             validate_type(ty)?;
             if let Some(init_expr) = init {

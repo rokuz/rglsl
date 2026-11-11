@@ -4550,6 +4550,19 @@ impl Writer {
         if let Some(index) = global_variable.input_attachment_index {
             self.decorate(id, Decoration::InputAttachmentIndex, &[index]);
         }
+        if let Some(bank) = global_variable.immediate_bank {
+            self.require_any(
+                "push constant banks",
+                &[spirv::Capability::PushConstantBanksNV],
+            )?;
+            self.use_extension("SPV_NV_push_constant_bank");
+            if let Some(offset) = bank.member_offset {
+                self.decorate(id, Decoration::MemberOffsetNV, &[offset]);
+            }
+            if let Some(bank) = bank.bank {
+                self.decorate(id, Decoration::BankNV, &[bank]);
+            }
+        }
 
         let init_word = match global_variable.init {
             Some(constant) if !super::plain_types::has_explicit_layout(class) => {
@@ -4636,6 +4649,11 @@ impl Writer {
                     };
                     if self.buffer_blocks.insert(block_id) {
                         self.decorate(block_id, Decoration::Block, &[]);
+                        if let Some(bank) =
+                            global_variable.immediate_bank.and_then(|bank| bank.bank)
+                        {
+                            self.decorate(block_id, Decoration::BankNV, &[bank]);
+                        }
                     }
                 }
             }

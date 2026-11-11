@@ -5536,3 +5536,18 @@ void main() {
 void main() {
     bool sphere = gl_HitIsSphereNV;
 }
+### push constant banks need their extension | vert 460 | 2:ExtensionRequired, 3:ExtensionRequired
+layout(push_constant, bank = 1) uniform A { uint a; } a;
+layout(push_constant, member_offset = 4) uniform B { uint b; } b;
+void main() {}
+### push constant banks | vert 460 | ok
+#extension GL_NV_push_constant_bank : enable
+layout(push_constant) uniform A { uint a; } a;
+layout(push_constant, bank = 1) uniform B { uint b; } b;
+layout(push_constant, bank = 2, member_offset = 64) uniform C { uint c; } c;
+void main() {}
+### push constant bank out of range | vert 460 | 3:InvalidQualifier, 4:LayoutValueNegative
+#extension GL_NV_push_constant_bank : enable
+layout(push_constant, bank = 15) uniform A { uint a; } a;
+layout(push_constant, bank = 1, member_offset = -4) uniform B { uint b; } b;
+void main() {}

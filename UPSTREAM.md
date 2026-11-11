@@ -599,6 +599,12 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   `Output` global with a raw `BuiltIn` decoration (`proc::has_spirv_built_in`) needs no binding.
   The SPIR-V backend writes them in `back/spv/intrinsics.rs`.
 
+- **Push constant banks** (`GL_NV_push_constant_bank`). `GlobalVariable::immediate_bank`
+  (`ImmediateBank { bank, member_offset }`), written as `BankNV` on the variable and its block
+  type and `MemberOffsetNV` on the variable, with `PushConstantBanksNV`. An entry point may use
+  several `Immediate` variables when no two of them have the same bank and member offset (no
+  bank is bank 0, offset 0); `EntryPointError::MoreThanOneImmediateUsed` is reported otherwise.
+
 ## Cherry-picked upstream commits
 
 None yet.

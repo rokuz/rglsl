@@ -696,6 +696,7 @@ impl<'a> Lowerer<'a> {
                         heap_offset: None,
                         tile_attachment: false,
                         spirv_decorations: Vec::new(),
+                        immediate_bank: None,
                     },
                     at,
                 );
@@ -782,6 +783,7 @@ impl<'a> Lowerer<'a> {
                 heap_offset: None,
                 tile_attachment: false,
                 spirv_decorations: Vec::new(),
+                immediate_bank: None,
             },
             at,
         );
@@ -855,6 +857,7 @@ impl<'a> Lowerer<'a> {
                     heap_offset: None,
                     tile_attachment: false,
                     spirv_decorations: Vec::new(),
+                    immediate_bank: None,
                 },
                 at,
             );
@@ -929,6 +932,7 @@ impl<'a> Lowerer<'a> {
                 heap_offset: None,
                 tile_attachment: false,
                 spirv_decorations: Vec::new(),
+                immediate_bank: None,
             },
             at,
         );
@@ -1110,6 +1114,7 @@ impl<'a> Lowerer<'a> {
                     .iter()
                     .any(|entry| entry.name.eq_ignore_ascii_case("tile_attachmentQCOM")),
                 spirv_decorations: Vec::new(),
+                immediate_bank: None,
             },
             at,
         );
@@ -1252,6 +1257,28 @@ impl<'a> Lowerer<'a> {
         } else {
             self.binding(qualifiers, at)?
         };
+        if block
+            .members
+            .iter()
+            .any(|member| member.qualifiers.has_layout("member_offset"))
+        {
+            return Err(unsupported(
+                "the `member_offset` layout qualifier on a block member",
+                at,
+            ));
+        }
+        let layout_value = |name| {
+            qualifiers
+                .layout_entry(name)
+                .and_then(|entry| entry.value)
+                .and_then(|value| u32::try_from(value).ok())
+        };
+        let immediate_bank = push_constant
+            .then(|| crate::ImmediateBank {
+                bank: layout_value("bank"),
+                member_offset: layout_value("member_offset"),
+            })
+            .filter(|bank| *bank != crate::ImmediateBank::default());
         let handle = self.module.global_variables.append(
             GlobalVariable {
                 name: Some(instance_name),
@@ -1266,6 +1293,7 @@ impl<'a> Lowerer<'a> {
                 heap_offset: None,
                 tile_attachment: false,
                 spirv_decorations: Vec::new(),
+                immediate_bank,
             },
             at,
         );
@@ -1585,6 +1613,7 @@ impl<'a> Lowerer<'a> {
                 heap_offset: None,
                 tile_attachment: false,
                 spirv_decorations: Vec::new(),
+                immediate_bank: None,
             },
             at,
         );
@@ -1870,6 +1899,7 @@ impl<'a> Lowerer<'a> {
                 heap_offset: None,
                 tile_attachment: false,
                 spirv_decorations: Vec::new(),
+                immediate_bank: None,
             },
             Span::UNDEFINED,
         );
@@ -2103,6 +2133,7 @@ impl<'a> Lowerer<'a> {
                 heap_offset: None,
                 tile_attachment: false,
                 spirv_decorations: Vec::new(),
+                immediate_bank: None,
             },
             at,
         );
