@@ -708,7 +708,7 @@ fn write_only_buffer_blocks() {
         layout(std430, binding = 0) writeonly buffer B { float d[]; } b;
         void main() { b.d[0] = 1.0; }",
     );
-    assert_eq!(decorated(&module, Decoration::NonReadable), ["b"]);
+    assert_eq!(decorated(&module, Decoration::NonReadable), ["d", "b"]);
 }
 
 /// Integer textures can be sampled, not only fetched.
@@ -8186,4 +8186,127 @@ void main() {
         .map(|(_, operands)| operands.len())
         .collect();
     assert_eq!(records, [4, 5]);
+}
+
+fn memory_decorations_of(module: &dr::Module, name: &str) -> Vec<(u32, Decoration)> {
+    let mut decorations: Vec<_> = member_decorations(module, name)
+        .into_iter()
+        .filter(|&(_, decoration, _)| {
+            matches!(
+                decoration,
+                Decoration::Coherent
+                    | Decoration::Volatile
+                    | Decoration::Restrict
+                    | Decoration::NonWritable
+                    | Decoration::NonReadable
+            )
+        })
+        .map(|(member, decoration, _)| (member, decoration))
+        .collect();
+    decorations.sort_by_key(|&(member, decoration)| (member, decoration as u32));
+    decorations
+}
+
+#[test]
+fn member_memory_qualifiers_decorate_their_member() {
+    let module = compile_valid(
+        ShaderStage::Compute,
+        "#version 450
+        #extension GL_KHR_memory_scope_semantics : require
+        layout(local_size_x = 1) in;
+        layout(std430, binding = 0) buffer B {
+            coherent float a;
+            volatile float b;
+            readonly float c;
+            writeonly float d;
+            float e;
+            restrict float f;
+            workgroupcoherent float g;
+        } b;
+        layout(std430, binding = 1) coherent restrict buffer C { float x; readonly float y; } c;
+        void main() { b.a = b.b + b.c + b.e + b.f + b.g + c.y; b.d = 1.0; c.x = b.a; }",
+    );
+    assert_eq!(
+        memory_decorations_of(&module, "B"),
+        [
+            (0, Decoration::Coherent),
+            (1, Decoration::Volatile),
+            (1, Decoration::Coherent),
+            (2, Decoration::NonWritable),
+            (3, Decoration::NonReadable),
+            (5, Decoration::Restrict),
+            (6, Decoration::Coherent),
+        ]
+    );
+    assert!(variable_decorations(&module, "b")
+        .iter()
+        .all(|&(decoration, _)| !matches!(
+            decoration,
+            Decoration::Coherent | Decoration::Volatile | Decoration::Restrict
+        )));
+    assert_eq!(
+        memory_decorations_of(&module, "C"),
+        [
+            (0, Decoration::Restrict),
+            (0, Decoration::Coherent),
+            (1, Decoration::Restrict),
+            (1, Decoration::Coherent),
+            (1, Decoration::NonWritable),
+        ]
+    );
+    let variable: Vec<_> = variable_decorations(&module, "c")
+        .into_iter()
+        .map(|(decoration, _)| decoration)
+        .filter(|decoration| matches!(decoration, Decoration::Coherent | Decoration::Restrict))
+        .collect();
+    assert_eq!(variable, [Decoration::Coherent, Decoration::Restrict]);
+}
+
+#[test]
+fn member_memory_qualifiers_select_memory_operands() {
+    let module = compile(
+        ShaderStage::Compute,
+        "#version 450
+        #pragma use_vulkan_memory_model
+        layout(local_size_x = 1) in;
+        layout(std430, binding = 0) buffer B { coherent float a; float e; volatile uint n; } b;
+        void main() { b.e = b.a; atomicAdd(b.n, 1u); }",
+    );
+    use spirv::MemoryAccess as Ma;
+    assert_eq!(
+        memory_masks(&module),
+        [(Op::Load, Ma::MAKE_POINTER_VISIBLE | Ma::NON_PRIVATE_POINTER)]
+    );
+    assert!(memory_decorations_of(&module, "B").is_empty());
+    let atomics = instructions(&module, Op::AtomicIAdd);
+    assert_eq!(atomics.len(), 1);
+    assert_eq!(
+        constant(&module, &atomics[0].operands[2]),
+        spirv::MemorySemantics::VOLATILE.bits()
+    );
+}
+
+#[test]
+fn reference_member_access_qualifiers_decorate_their_member() {
+    let module = compile_valid(
+        ShaderStage::Compute,
+        "#version 450
+        #extension GL_EXT_buffer_reference : require
+        layout(local_size_x = 1) in;
+        layout(buffer_reference, std430) buffer R { readonly float x; writeonly float y; float z; };
+        layout(buffer_reference, std430) readonly buffer S { float u; restrict float v; };
+        layout(push_constant) uniform P { R r; S s; } p;
+        void main() { p.r.y = p.r.x + p.r.z + p.s.u + p.s.v; }",
+    );
+    let names = |decoration| {
+        let mut names: Vec<_> = physical_member_decorations(&module, decoration)
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
+        names.sort();
+        names
+    };
+    assert_eq!(names(Decoration::NonWritable), ["u", "v", "x"]);
+    assert_eq!(names(Decoration::NonReadable), ["y"]);
+    assert_eq!(names(Decoration::Restrict), ["v"]);
 }

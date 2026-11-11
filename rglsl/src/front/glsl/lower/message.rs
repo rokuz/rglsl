@@ -104,6 +104,7 @@ impl FunctionLowerer<'_, '_> {
             matrix_layout: None,
             xfb_offset: None,
             heap: None,
+            memory_decorations: crate::MemoryDecorations::empty(),
         });
         let mut offset = length;
         let mut alignment = Alignment::ONE;
@@ -142,6 +143,7 @@ impl FunctionLowerer<'_, '_> {
                 matrix_layout: matrix_layout(&layout),
                 xfb_offset: None,
                 heap: None,
+                memory_decorations: crate::MemoryDecorations::empty(),
             });
             offset = offset
                 .checked_add(layout.size)

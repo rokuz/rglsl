@@ -10,6 +10,7 @@ OpEntryPoint Fragment %12 "main"
 OpExecutionMode %12 OriginUpperLeft
 OpDecorate %4 ArrayStride 4
 OpMemberDecorate %5 0 Offset 0
+OpMemberDecorate %6 0 NonWritable
 OpMemberDecorate %6 0 Offset 0
 OpDecorate %7 DescriptorSet 0
 OpDecorate %7 Binding 0

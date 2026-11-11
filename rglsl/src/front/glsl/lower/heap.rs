@@ -345,6 +345,7 @@ impl<'a> Lowerer<'a> {
                 matrix_layout,
                 xfb_offset: None,
                 heap: Some(HeapMember { offset, size }),
+                memory_decorations: MemoryDecorations::empty(),
             });
         }
         Ok(lowered)
@@ -418,6 +419,7 @@ impl<'a> Lowerer<'a> {
                 matrix_layout: matrix_layout(&layout),
                 xfb_offset: None,
                 heap: None,
+                memory_decorations: MemoryDecorations::empty(),
             });
         }
         let span = alignment.round_up(end);

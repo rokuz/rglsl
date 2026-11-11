@@ -759,23 +759,15 @@ impl Writer {
         let TypeInner::Struct { ref members, .. } = module.types[base].inner else {
             return;
         };
-        for index in 0..members.len() {
+        for (index, member) in members.iter().enumerate() {
             let Ok(index) = u32::try_from(index) else {
                 return;
             };
-            if !access.contains(StorageAccess::STORE) {
+            for decoration in super::writer::access_decorations(access, member.memory_decorations) {
                 self.annotations.push(Instruction::member_decorate(
                     block_id,
                     index,
-                    spirv::Decoration::NonWritable,
-                    &[],
-                ));
-            }
-            if !access.contains(StorageAccess::LOAD) {
-                self.annotations.push(Instruction::member_decorate(
-                    block_id,
-                    index,
-                    spirv::Decoration::NonReadable,
+                    decoration,
                     &[],
                 ));
             }

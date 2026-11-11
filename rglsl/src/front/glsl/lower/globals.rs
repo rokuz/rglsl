@@ -168,6 +168,17 @@ fn tensor_access(qualifiers: &Qualifiers, ty: &GlslType) -> MemoryDecorations {
     decorations
 }
 
+pub(super) fn member_memory(block: &Qualifiers, member: &Qualifiers) -> MemoryDecorations {
+    let mut decorations = memory(block) | memory(member);
+    if block.readonly || member.readonly {
+        decorations |= MemoryDecorations::NON_WRITABLE;
+    }
+    if block.writeonly || member.writeonly {
+        decorations |= MemoryDecorations::NON_READABLE;
+    }
+    decorations
+}
+
 fn memory(qualifiers: &Qualifiers) -> MemoryDecorations {
     let mut decorations = MemoryDecorations::empty();
     if qualifiers.coherent {
@@ -175,6 +186,7 @@ fn memory(qualifiers: &Qualifiers) -> MemoryDecorations {
     }
     for (present, decoration) in [
         (qualifiers.volatile, MemoryDecorations::VOLATILE),
+        (qualifiers.restrict, MemoryDecorations::RESTRICT),
         (
             qualifiers.device_coherent,
             MemoryDecorations::DEVICE_COHERENT,
@@ -1233,8 +1245,8 @@ impl<'a> Lowerer<'a> {
             _ => return Err(unsupported("arrays of arrays of blocks", at)),
         }
         let mut decorations = memory(qualifiers);
-        for member in &block.members {
-            decorations |= memory(&member.qualifiers);
+        if push_constant || shader_record {
+            decorations.remove(MemoryDecorations::RESTRICT);
         }
         let space = if push_constant {
             AddressSpace::Immediate
@@ -1436,6 +1448,7 @@ impl<'a> Lowerer<'a> {
                 matrix_layout: None,
                 xfb_offset: None,
                 heap: None,
+                memory_decorations: MemoryDecorations::empty(),
             });
             offset = offset.saturating_add(layout.size);
         }
@@ -1839,6 +1852,7 @@ impl<'a> Lowerer<'a> {
                 matrix_layout: None,
                 xfb_offset,
                 heap: None,
+                memory_decorations: MemoryDecorations::empty(),
             });
             offset = offset.saturating_add(layout.size);
             names.push(String::from(name));

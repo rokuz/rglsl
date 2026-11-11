@@ -4500,6 +4500,7 @@ impl Writer {
             },
         };
         for (flag, decoration) in [
+            (crate::MemoryDecorations::RESTRICT, Decoration::Restrict),
             (
                 crate::MemoryDecorations::NON_WRITABLE,
                 Decoration::NonWritable,
@@ -4589,6 +4590,7 @@ impl Writer {
                         matrix_layout: None,
                         xfb_offset: None,
                         heap: None,
+                        memory_decorations: crate::MemoryDecorations::empty(),
                     };
                     self.decorate_struct_member(
                         wrapper_type_id,
@@ -4875,6 +4877,16 @@ impl Writer {
             return Ok(());
         }
 
+        for decoration in
+            member_memory_decorations(member.memory_decorations, self.vulkan_memory_model)
+        {
+            self.annotations.push(Instruction::member_decorate(
+                struct_id,
+                index as u32,
+                decoration,
+                &[],
+            ));
+        }
         self.annotations.push(Instruction::member_decorate(
             struct_id,
             index as u32,
@@ -5397,6 +5409,56 @@ impl Writer {
     }
 }
 
+pub(super) fn access_decorations(
+    access: crate::StorageAccess,
+    member: crate::MemoryDecorations,
+) -> Vec<spirv::Decoration> {
+    let mut decorations = Vec::new();
+    if !access.contains(crate::StorageAccess::STORE)
+        && !member.contains(crate::MemoryDecorations::NON_WRITABLE)
+    {
+        decorations.push(spirv::Decoration::NonWritable);
+    }
+    if !access.contains(crate::StorageAccess::LOAD)
+        && !member.contains(crate::MemoryDecorations::NON_READABLE)
+    {
+        decorations.push(spirv::Decoration::NonReadable);
+    }
+    decorations
+}
+
+pub(super) fn member_memory_decorations(
+    decorations: crate::MemoryDecorations,
+    vulkan_memory_model: bool,
+) -> Vec<spirv::Decoration> {
+    use crate::MemoryDecorations as Md;
+    let coherent = Md::COHERENT
+        | Md::DEVICE_COHERENT
+        | Md::QUEUE_FAMILY_COHERENT
+        | Md::WORKGROUP_COHERENT
+        | Md::SUBGROUP_COHERENT
+        | Md::SHADER_CALL_COHERENT;
+    let mut memory = Vec::new();
+    if !vulkan_memory_model {
+        if decorations.contains(Md::VOLATILE) {
+            memory.push(spirv::Decoration::Volatile);
+            memory.push(spirv::Decoration::Coherent);
+        } else if decorations.intersects(coherent) {
+            memory.push(spirv::Decoration::Coherent);
+        }
+    }
+    for (flag, decoration) in [
+        (Md::RESTRICT, spirv::Decoration::Restrict),
+        (Md::NON_WRITABLE, spirv::Decoration::NonWritable),
+        (Md::NON_READABLE, spirv::Decoration::NonReadable),
+    ] {
+        if decorations.contains(flag) {
+            memory.push(decoration);
+        }
+    }
+    memory
+}
+
 #[test]
 fn test_write_physical_layout() {
     let mut writer = Writer::new(&Options::default()).unwrap();
@@ -5419,20 +5481,13 @@ impl Writer {
         if self.buffer_blocks.insert(id) {
             self.decorate(id, spirv::Decoration::Block, &[]);
         }
-        let mut decorations = Vec::new();
-        if !access.contains(crate::StorageAccess::STORE) {
-            decorations.push(spirv::Decoration::NonWritable);
-        }
-        if !access.contains(crate::StorageAccess::LOAD) {
-            decorations.push(spirv::Decoration::NonReadable);
-        }
-        for index in 0..members.len() {
+        for (index, member) in members.iter().enumerate() {
             let Ok(index) = u32::try_from(index) else {
                 break;
             };
-            for decoration in &decorations {
+            for decoration in access_decorations(access, member.memory_decorations) {
                 self.annotations
-                    .push(Instruction::member_decorate(id, index, *decoration, &[]));
+                    .push(Instruction::member_decorate(id, index, decoration, &[]));
             }
         }
     }

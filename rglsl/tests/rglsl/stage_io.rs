@@ -109,6 +109,7 @@ impl Builder {
                 matrix_layout: None,
                 xfb_offset: None,
                 heap: None,
+                memory_decorations: rglsl::MemoryDecorations::empty(),
             })
             .collect::<Vec<_>>();
         let span = 16 * u32::try_from(members.len()).unwrap();

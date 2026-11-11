@@ -2624,6 +2624,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                 matrix_layout: None,
                 xfb_offset: None,
                 heap: None,
+                memory_decorations: crate::MemoryDecorations::empty(),
             });
         }
 

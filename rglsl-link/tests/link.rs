@@ -649,3 +649,79 @@ void main() { f(); }
         ["number of invocations must match between compilation units"]
     );
 }
+
+fn member_memory(linked: &Linked, name: &str) -> Vec<rglsl::MemoryDecorations> {
+    let (_, ty) = linked
+        .module
+        .types
+        .iter()
+        .find(|(_, ty)| ty.name.as_deref() == Some(name))
+        .unwrap();
+    match ty.inner {
+        TypeInner::Struct { ref members, .. } => members
+            .iter()
+            .map(|member| member.memory_decorations)
+            .collect(),
+        _ => panic!("{name} is not a struct"),
+    }
+}
+
+#[test]
+fn member_memory_qualifiers_survive_linking() {
+    use rglsl::MemoryDecorations as Md;
+    let main = object(
+        ShaderStage::Compute,
+        "#version 450
+#extension GL_EXT_buffer_reference : require
+layout(local_size_x = 1) in;
+layout(buffer_reference, std430) buffer R { readonly float x; writeonly float y; float z; };
+layout(std430, binding = 0) buffer B { coherent float a; float b; R r; } b;
+void helper();
+void main() { b.r.y = b.a; helper(); }
+",
+    );
+    let lib = library(
+        "#version 450
+#extension GL_EXT_buffer_reference : require
+layout(buffer_reference, std430) buffer R { readonly float x; writeonly float y; float z; };
+layout(std430, binding = 0) buffer B { coherent float a; float b; R r; } b;
+void helper() { b.b = b.r.x + b.r.z; }
+",
+    );
+    let result = linked(&[main, lib]);
+    assert_eq!(
+        member_memory(&result, "B"),
+        [Md::COHERENT, Md::empty(), Md::empty()]
+    );
+    assert_eq!(
+        member_memory(&result, "R"),
+        [Md::NON_WRITABLE, Md::NON_READABLE, Md::empty()]
+    );
+    assert!(!spirv(&result).is_empty());
+}
+
+#[test]
+fn member_memory_qualifiers_must_match() {
+    let main = object(
+        ShaderStage::Compute,
+        "#version 450
+layout(local_size_x = 1) in;
+layout(std430, binding = 0) buffer B { coherent float a; } b;
+void helper();
+void main() { b.a = 1.0; helper(); }
+",
+    );
+    let lib = library(
+        "#version 450
+layout(std430, binding = 0) buffer B { float a; } b;
+void helper() { b.a += 1.0; }
+",
+    );
+    assert_eq!(
+        errors(&[main, lib]),
+        [LinkError::GlobalMismatch {
+            name: "B".into(),
+            what: "types"
+        }]
+    );
+}

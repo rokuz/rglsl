@@ -508,6 +508,7 @@ impl<I: Iterator<Item = u32>> super::Frontend<I> {
                             matrix_layout: None,
                             xfb_offset: None,
                             heap: None,
+                            memory_decorations: crate::MemoryDecorations::empty(),
                         });
                         struct_alignment = struct_alignment.max(member_alignment);
                         next_member_offset += self.layouter[result.ty].size;

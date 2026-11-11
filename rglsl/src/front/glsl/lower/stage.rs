@@ -320,6 +320,7 @@ impl<'a> Lowerer<'a> {
                     matrix_layout: None,
                     xfb_offset: None,
                     heap: None,
+                    memory_decorations: MemoryDecorations::empty(),
                 });
                 offset = offset.saturating_add(layout.size);
             }
@@ -572,6 +573,7 @@ impl<'a> Lowerer<'a> {
                 matrix_layout: None,
                 xfb_offset: None,
                 heap: None,
+                memory_decorations: MemoryDecorations::empty(),
             });
             offset = offset.saturating_add(layout.size);
         }

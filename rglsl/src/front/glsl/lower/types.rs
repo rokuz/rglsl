@@ -14,9 +14,10 @@ use rglsl_sema::layout::{
 use rglsl_sema::types::SpecializedSize;
 use rglsl_sema::SymbolId;
 
+use super::globals::member_memory;
 use super::GlobalRef;
 use crate::front::glsl::{Error, ErrorKind};
-use crate::{MatrixLayout, Override};
+use crate::{MatrixLayout, MemoryDecorations, Override};
 use rglsl_ast::extensions::Feature;
 
 use super::{internal, unsupported, Lowerer, Packing, Result};
@@ -127,6 +128,7 @@ impl Lowerer<'_> {
                     matrix_layout: None,
                     xfb_offset: None,
                     heap: None,
+                    memory_decorations: MemoryDecorations::empty(),
                 },
                 StructMember {
                     name: None,
@@ -136,6 +138,7 @@ impl Lowerer<'_> {
                     matrix_layout: None,
                     xfb_offset: None,
                     heap: None,
+                    memory_decorations: MemoryDecorations::empty(),
                 },
             ],
             span,
@@ -440,6 +443,7 @@ impl Lowerer<'_> {
                 matrix_layout: None,
                 xfb_offset: None,
                 heap: None,
+                memory_decorations: MemoryDecorations::empty(),
             });
             offset = offset.saturating_add(layout.size);
         }
@@ -653,6 +657,11 @@ impl Lowerer<'_> {
                 .place(&member.qualifiers, &layout)
                 .ok_or_else(|| invalid_member(span))?;
             let ty = self.apply_layout(ty, &layout, span)?;
+            let memory_decorations = if block.storage == BlockStorage::Buffer {
+                member_memory(&block.qualifiers, &member.qualifiers)
+            } else {
+                MemoryDecorations::empty()
+            };
             members.push(StructMember {
                 name: Some(member.name.clone()),
                 ty,
@@ -661,6 +670,7 @@ impl Lowerer<'_> {
                 matrix_layout: matrix_layout(&layout),
                 xfb_offset: None,
                 heap: None,
+                memory_decorations,
             });
         }
         let span_bytes = Alignment::new(placer.alignment())

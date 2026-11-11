@@ -278,6 +278,16 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   decorates a `volatile` variable both `Volatile` and `Coherent`); under the model they give
   loads and stores their availability operands and scope, and storage image reads and writes
   `MakeTexelVisible`/`MakeTexelAvailable`, `NonPrivateTexel` and `VolatileTexel`.
+- **Memory qualifiers of struct members.** `StructMember::memory_decorations` (new, not
+  serialized when empty) holds the memory qualifiers of a member of a buffer block (its own and
+  its block's), and `MemoryDecorations::RESTRICT` (new) is `restrict`. The SPIR-V backend
+  decorates each member of a laid-out struct with `Volatile`/`Coherent` (without the Vulkan
+  memory model), `Restrict`, `NonWritable` and `NonReadable`, as glslang's
+  `TranslateMemoryDecoration` does for the members of storage blocks, and decorates a global
+  with `RESTRICT` `Restrict`. Loads, stores and atomics through a member add the member's
+  qualifiers to those of the variable when choosing the memory operands, scope and `Volatile`
+  semantics (`back/spv/physical.rs`, `root_qualifiers`). A buffer variable's own
+  `memory_decorations` are those of its declaration only (they used to merge the members').
 - **Override ids may repeat.** The validator no longer rejects two overrides with the same id
   (`OverrideError::DuplicateID` is gone): glslang gives `local_size_*_id` and `constant_id`
   constants with the same id separate spec constants with one `SpecId`.

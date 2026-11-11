@@ -822,6 +822,12 @@ pub struct StructMember {
     #[cfg_attr(feature = "serialize", serde(skip_serializing_if = "Option::is_none"))]
     #[cfg_attr(feature = "deserialize", serde(default))]
     pub heap: Option<HeapMember>,
+    #[cfg_attr(
+        feature = "serialize",
+        serde(skip_serializing_if = "MemoryDecorations::is_empty")
+    )]
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    pub memory_decorations: MemoryDecorations,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
@@ -923,6 +929,7 @@ bitflags::bitflags! {
         const NONPRIVATE = 0x80;
         const NON_WRITABLE = 0x100;
         const NON_READABLE = 0x200;
+        const RESTRICT = 0x400;
     }
 }
 
