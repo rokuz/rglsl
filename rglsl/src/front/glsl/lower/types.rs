@@ -132,6 +132,32 @@ impl Lowerer<'_> {
         })
     }
 
+    pub(super) fn footprint_result_type(&mut self, three: bool) -> Handle<Type> {
+        let (size, offsets, span) = if three {
+            (VectorSize::Tri, [0, 16, 32, 48, 56, 60], 64)
+        } else {
+            (VectorSize::Bi, [0, 8, 16, 24, 32, 36], 40)
+        };
+        let boolean = self.insert_type(TypeInner::Scalar(Scalar::BOOL));
+        let vector = self.vector_type(size, Scalar::U32);
+        let mask = self.vector_type(VectorSize::Bi, Scalar::U32);
+        let scalar = self.insert_type(TypeInner::Scalar(Scalar::U32));
+        let members = [boolean, vector, vector, mask, scalar, scalar]
+            .into_iter()
+            .zip(offsets)
+            .map(|(ty, offset)| StructMember {
+                name: None,
+                ty,
+                binding: None,
+                offset,
+                matrix_layout: None,
+                xfb_offset: None,
+                heap: None,
+            })
+            .collect();
+        self.insert_type(TypeInner::Struct { members, span })
+    }
+
     pub(super) fn vector_type(&mut self, size: VectorSize, scalar: Scalar) -> Handle<Type> {
         self.insert_type(TypeInner::Vector { size, scalar })
     }

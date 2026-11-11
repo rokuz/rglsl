@@ -2073,6 +2073,24 @@ impl BlockContext<'_> {
                 ));
                 id
             }
+            crate::Expression::ImageFootprint {
+                image,
+                coordinate,
+                granularity,
+                coarse,
+                level,
+                min_lod,
+                ty: _,
+            } => self.write_image_footprint(
+                result_type_id,
+                image,
+                coordinate,
+                granularity,
+                coarse,
+                level,
+                min_lod,
+                block,
+            )?,
             crate::Expression::FragmentFetch {
                 image,
                 coordinate,

@@ -128,7 +128,10 @@ pub fn parse_prefix(source: &str) -> (TranslationUnit, Option<ParseError>) {
         previous_end: 0,
         next_id: 0,
         depth: 0,
-        struct_scopes: Vec::from([BTreeSet::new()]),
+        struct_scopes: Vec::from([BTreeSet::from([
+            "gl_TextureFootprint2DNV",
+            "gl_TextureFootprint3DNV",
+        ])]),
         extensions: ExtensionState::new(),
     };
     let mut external_declarations = Vec::new();

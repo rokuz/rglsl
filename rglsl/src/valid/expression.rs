@@ -1774,6 +1774,57 @@ impl super::Validator {
                 }
                 ShaderStages::FRAGMENT
             }
+            E::ImageFootprint {
+                image,
+                coordinate,
+                granularity,
+                coarse,
+                level,
+                min_lod,
+                ty,
+            } => {
+                let dim = match resolver[image] {
+                    Ti::SampledImage {
+                        dim,
+                        class: crate::ImageClass::Sampled { multi: false, .. },
+                        arrayed: false,
+                    } => dim,
+                    _ => return Err(ExpressionError::ExpectedGlobalVariable),
+                };
+                if !resolver[coordinate].addresses_image(dim)
+                    && !matches!(
+                        resolver[coordinate],
+                        Ti::Vector {
+                            scalar: Sc::F32,
+                            ..
+                        }
+                    )
+                {
+                    return Err(ExpressionError::InvalidImageCoordinateType(dim, coordinate));
+                }
+                if !matches!(resolver[granularity], Ti::Scalar(Sc::I32)) {
+                    return Err(ExpressionError::InvalidImageOtherIndexType(granularity));
+                }
+                if !matches!(resolver[coarse], Ti::Scalar(Sc::BOOL)) {
+                    return Err(ExpressionError::InvalidImageOtherIndexType(coarse));
+                }
+                if let Some(min_lod) = min_lod {
+                    if !matches!(resolver[min_lod], Ti::Scalar(Sc::F32)) {
+                        return Err(ExpressionError::InvalidImageOtherIndexType(min_lod));
+                    }
+                }
+                if !matches!(module.types[ty].inner, Ti::Struct { .. }) {
+                    return Err(ExpressionError::InvalidSparseResultType(ty));
+                }
+                match level {
+                    crate::SampleLevel::Auto | crate::SampleLevel::Bias(_) => {
+                        ShaderStages::FRAGMENT
+                    }
+                    crate::SampleLevel::Zero
+                    | crate::SampleLevel::Exact(_)
+                    | crate::SampleLevel::Gradient { .. } => ShaderStages::all(),
+                }
+            }
             E::FragmentFetch {
                 image,
                 coordinate,

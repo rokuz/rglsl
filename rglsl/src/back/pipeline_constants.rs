@@ -640,6 +640,37 @@ fn adjust_expr(new_pos: &HandleVec<Expression, Handle<Expression>>, expr: &mut E
                 | crate::InterpolationLocation::Offset(ref mut operand) => adjust(operand),
             }
         }
+        Expression::ImageFootprint {
+            ref mut image,
+            ref mut coordinate,
+            ref mut granularity,
+            ref mut coarse,
+            ref mut level,
+            ref mut min_lod,
+            ty: _,
+        } => {
+            adjust(image);
+            adjust(coordinate);
+            adjust(granularity);
+            adjust(coarse);
+            match *level {
+                crate::SampleLevel::Auto | crate::SampleLevel::Zero => {}
+                crate::SampleLevel::Exact(ref mut expr)
+                | crate::SampleLevel::Bias(ref mut expr) => {
+                    adjust(expr);
+                }
+                crate::SampleLevel::Gradient {
+                    ref mut x,
+                    ref mut y,
+                } => {
+                    adjust(x);
+                    adjust(y);
+                }
+            }
+            if let Some(ref mut min_lod) = *min_lod {
+                adjust(min_lod);
+            }
+        }
         Expression::FragmentFetch {
             ref mut image,
             ref mut coordinate,

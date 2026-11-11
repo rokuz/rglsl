@@ -329,6 +329,11 @@ impl FunctionLowerer<'_, '_> {
                 Ok(None)
             }
             "helperInvocationEXT" => self.add(Expression::IsHelperInvocation, at).map(Some),
+            "textureFootprintNV"
+            | "textureFootprintClampNV"
+            | "textureFootprintLodNV"
+            | "textureFootprintGradNV"
+            | "textureFootprintGradClampNV" => self.footprint(name, arguments, at).map(Some),
             "fragmentMaskFetchAMD" | "fragmentFetchAMD" => {
                 let first = arguments.first().ok_or_else(|| internal(at))?;
                 let subpass = self
@@ -1600,6 +1605,92 @@ impl FunctionLowerer<'_, '_> {
             self.mark(query, NonUniform::SAMPLED_IMAGE);
         }
         Ok(query)
+    }
+
+    fn footprint(
+        &mut self,
+        name: &str,
+        arguments: &[AstExpression],
+        at: Span,
+    ) -> Result<Handle<Expression>> {
+        let mut next = 0;
+        let image = self.next_argument(arguments, &mut next, at)?;
+        let coordinate = self.next_argument(arguments, &mut next, at)?;
+        let mut level = SampleLevel::Auto;
+        let mut min_lod = None;
+        match name {
+            "textureFootprintLodNV" => {
+                level = SampleLevel::Exact(self.next_argument(arguments, &mut next, at)?);
+            }
+            "textureFootprintGradNV" | "textureFootprintGradClampNV" => {
+                let x = self.next_argument(arguments, &mut next, at)?;
+                let y = self.next_argument(arguments, &mut next, at)?;
+                level = SampleLevel::Gradient { x, y };
+                if name == "textureFootprintGradClampNV" {
+                    min_lod = Some(self.next_argument(arguments, &mut next, at)?);
+                }
+            }
+            "textureFootprintClampNV" => {
+                min_lod = Some(self.next_argument(arguments, &mut next, at)?);
+            }
+            _ => {}
+        }
+        let granularity = self.next_argument(arguments, &mut next, at)?;
+        let coarse = self.next_argument(arguments, &mut next, at)?;
+        let output = arguments.get(next).ok_or_else(|| internal(at))?;
+        next += 1;
+        if let Some(bias) = arguments.get(next) {
+            level = SampleLevel::Bias(self.rvalue(bias)?);
+        }
+        let output_ty = self.info(output)?.ty.clone();
+        let footprint = self.lw.ir_type(&output_ty, at)?;
+        let three = matches!(
+            self.lw.module.types[footprint].inner,
+            crate::TypeInner::Struct { ref members, .. }
+                if members.first().is_some_and(|member| matches!(
+                    self.lw.module.types[member.ty].inner,
+                    crate::TypeInner::Vector { size: crate::VectorSize::Tri, .. }
+                ))
+        );
+        let ty = self.lw.footprint_result_type(three);
+        let result = self.add(
+            Expression::ImageFootprint {
+                image,
+                coordinate,
+                granularity,
+                coarse,
+                level,
+                min_lod,
+                ty,
+            },
+            at,
+        )?;
+        let mut components = Vec::with_capacity(5);
+        for index in 1..6 {
+            components.push(self.add(
+                Expression::AccessIndex {
+                    base: result,
+                    index,
+                },
+                at,
+            )?);
+        }
+        let value = self.add(
+            Expression::Compose {
+                ty: footprint,
+                components,
+            },
+            at,
+        )?;
+        let place = self.place(output)?;
+        self.store(&place, value, at)?;
+        self.add(
+            Expression::AccessIndex {
+                base: result,
+                index: 0,
+            },
+            at,
+        )
     }
 
     fn interpolate(

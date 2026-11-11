@@ -1284,7 +1284,8 @@ impl super::Validator {
                             | Ex::IsHelperInvocation
                             | Ex::AttachmentRead { .. }
                             | Ex::InterpolateAt { .. }
-                            | Ex::FragmentFetch { .. } => self.emit_expression(handle, context)?,
+                            | Ex::FragmentFetch { .. }
+                            | Ex::ImageFootprint { .. } => self.emit_expression(handle, context)?,
                             Ex::CallResult(_)
                             | Ex::AtomicResult { .. }
                             | Ex::WorkGroupUniformLoadResult { .. }

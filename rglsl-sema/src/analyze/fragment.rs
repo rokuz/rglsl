@@ -69,6 +69,7 @@ pub(crate) fn function_extension(name: &str) -> Option<&'static str> {
     Some(match name {
         "helperInvocationEXT" => "GL_EXT_demote_to_helper_invocation",
         "fragmentMaskFetchAMD" | "fragmentFetchAMD" => "GL_AMD_shader_fragment_mask",
+        _ if crate::builtins::footprint::is_function(name) => crate::builtins::footprint::EXTENSION,
         "controlBarrierArrive" | "controlBarrierWait" => "GL_EXT_split_barrier",
         "colorAttachmentReadEXT" | "depthAttachmentReadEXT" | "stencilAttachmentReadEXT" => {
             TILE_IMAGE

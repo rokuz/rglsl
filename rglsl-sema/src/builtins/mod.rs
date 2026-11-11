@@ -1,3 +1,4 @@
+pub(crate) mod footprint;
 mod functions;
 mod limits;
 pub(crate) mod ray;
@@ -434,6 +435,9 @@ impl Builtins {
         }
         prototypes.append(&mut textures::prototypes());
         prototypes.append(&mut subgroup::prototypes(version));
+        let mut types = TypeRegistry::new();
+        let footprints = footprint::structs(&mut types);
+        prototypes.append(&mut footprint::prototypes(&footprints));
         let mut seen = BTreeSet::new();
         let mut functions = Vec::new();
         let mut names: BTreeMap<String, Vec<BuiltinFunctionId>> = BTreeMap::new();
@@ -470,8 +474,18 @@ impl Builtins {
                 spirv_instruction: None,
             });
         }
-        let mut types = TypeRegistry::new();
-        let (symbols, scope) = variables::build(version, stage, limits, &mut types);
+        let (mut symbols, mut scope) = variables::build(version, stage, limits, &mut types);
+        for (name, id) in footprints {
+            let Ok(index) = u32::try_from(symbols.len()) else {
+                break;
+            };
+            symbols.push(Symbol {
+                name: String::from(name),
+                span: Span::default(),
+                kind: crate::scope::SymbolKind::Struct(id),
+            });
+            scope.push((String::from(name), SymbolId(index)));
+        }
         Self {
             version,
             stage,

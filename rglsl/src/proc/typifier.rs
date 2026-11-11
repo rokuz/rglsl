@@ -1042,6 +1042,7 @@ impl<'a> ResolveContext<'a> {
                     }
                 }
             }
+            crate::Expression::ImageFootprint { ty, .. } => TypeResolution::Handle(ty),
             crate::Expression::FragmentFetch {
                 image, fragment, ..
             } => match fragment {

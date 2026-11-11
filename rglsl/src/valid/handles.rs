@@ -762,6 +762,32 @@ impl super::Validator {
                     }
                 }
             }
+            crate::Expression::ImageFootprint {
+                image,
+                coordinate,
+                granularity,
+                coarse,
+                level,
+                min_lod,
+                ty,
+            } => {
+                validate_type(ty)?;
+                handle
+                    .check_dep(image)?
+                    .check_dep(coordinate)?
+                    .check_dep(granularity)?
+                    .check_dep(coarse)?
+                    .check_dep_opt(min_lod)?;
+                match level {
+                    crate::SampleLevel::Auto | crate::SampleLevel::Zero => (),
+                    crate::SampleLevel::Exact(expr) | crate::SampleLevel::Bias(expr) => {
+                        handle.check_dep(expr)?;
+                    }
+                    crate::SampleLevel::Gradient { x, y } => {
+                        handle.check_dep(x)?.check_dep(y)?;
+                    }
+                };
+            }
             crate::Expression::FragmentFetch {
                 image,
                 coordinate,

@@ -2993,6 +2993,15 @@ pub enum Expression {
         coordinate: Handle<Expression>,
         fragment: Option<Handle<Expression>>,
     },
+    ImageFootprint {
+        image: Handle<Expression>,
+        coordinate: Handle<Expression>,
+        granularity: Handle<Expression>,
+        coarse: Handle<Expression>,
+        level: SampleLevel,
+        min_lod: Option<Handle<Expression>>,
+        ty: Handle<Type>,
+    },
     AttachmentRead {
         aspect: AttachmentAspect,
         sample: Option<Handle<Expression>>,

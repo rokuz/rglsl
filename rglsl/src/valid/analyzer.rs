@@ -941,6 +941,43 @@ impl FunctionInfo {
                     .or(Some(handle)),
                 requirements: UniformityRequirements::empty(),
             },
+            E::ImageFootprint {
+                image,
+                coordinate,
+                granularity,
+                coarse,
+                level,
+                min_lod,
+                ty: _,
+            } => {
+                let level_result = match level {
+                    crate::SampleLevel::Auto | crate::SampleLevel::Zero => None,
+                    crate::SampleLevel::Exact(expr) | crate::SampleLevel::Bias(expr) => {
+                        self.add_ref(expr)
+                    }
+                    crate::SampleLevel::Gradient { x, y } => {
+                        let x = self.add_ref(x);
+                        self.add_ref(y).or(x)
+                    }
+                };
+                Uniformity {
+                    non_uniform_result: self
+                        .add_ref(image)
+                        .or(self.add_ref(coordinate))
+                        .or(self.add_ref(granularity))
+                        .or(self.add_ref(coarse))
+                        .or(min_lod.and_then(|min_lod| self.add_ref(min_lod)))
+                        .or(level_result),
+                    requirements: if matches!(
+                        level,
+                        crate::SampleLevel::Auto | crate::SampleLevel::Bias(_)
+                    ) {
+                        UniformityRequirements::IMPLICIT_LEVEL
+                    } else {
+                        UniformityRequirements::empty()
+                    },
+                }
+            }
             E::FragmentFetch {
                 image,
                 coordinate,
