@@ -558,6 +558,8 @@ dependencies = [
  "env_logger",
  "log",
  "rglsl",
+ "rglsl-link",
+ "rglsl-pp",
 ]
 
 [[package]]

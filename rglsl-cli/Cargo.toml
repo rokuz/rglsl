@@ -33,6 +33,8 @@ rglsl = { workspace = true, features = [
 ] }
 
 bincode = { workspace = true, features = ["serde"] }
+rglsl-link.workspace = true
+rglsl-pp = { workspace = true, features = ["std"] }
 codespan-reporting = { workspace = true, default-features = false, features = [
     "std",
     "termcolor",
