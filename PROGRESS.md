@@ -12,12 +12,12 @@ Shaders that glslang's own test suite (`gtests/*.FromFile.cpp`) compiles under V
 
 | Stage | Files | accept | diag | valid | interface | exec local | exec remote | link | crashes |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| **all** | 694 | 684 / 694 (98.6 %) | 140 / 143 (97.9 %) | 540 / 540 (100.0 %) | – | 133 / 133 (100.0 %) | 200 / 200 (100.0 %) | 12 / 12 (100.0 %) | 0 |
+| **all** | 694 | 684 / 694 (98.6 %) | 140 / 143 (97.9 %) | 540 / 540 (100.0 %) | – | 138 / 138 (100.0 %) | 200 / 200 (100.0 %) | 12 / 12 (100.0 %) | 0 |
 | vert | 68 | 67 / 68 (98.5 %) | 9 / 9 (100.0 %) | 58 / 58 (100.0 %) | – | 32 / 32 (100.0 %) | 37 / 37 (100.0 %) | 6 / 6 (100.0 %) | 0 |
 | tesc | 7 | 7 / 7 (100.0 %) | 1 / 1 (100.0 %) | 6 / 6 (100.0 %) | – | 1 / 1 (100.0 %) | 2 / 2 (100.0 %) | – | 0 |
 | tese | 4 | 4 / 4 (100.0 %) | – | 4 / 4 (100.0 %) | – | 3 / 3 (100.0 %) | 4 / 4 (100.0 %) | – | 0 |
 | geom | 4 | 4 / 4 (100.0 %) | – | 4 / 4 (100.0 %) | – | – | 3 / 3 (100.0 %) | – | 0 |
-| frag | 207 | 201 / 207 (97.1 %) | 32 / 33 (97.0 %) | 168 / 168 (100.0 %) | – | 57 / 57 (100.0 %) | 73 / 73 (100.0 %) | 4 / 4 (100.0 %) | 0 |
+| frag | 207 | 201 / 207 (97.1 %) | 32 / 33 (97.0 %) | 168 / 168 (100.0 %) | – | 62 / 62 (100.0 %) | 73 / 73 (100.0 %) | 4 / 4 (100.0 %) | 0 |
 | comp | 296 | 293 / 296 (99.0 %) | 73 / 75 (97.3 %) | 217 / 217 (100.0 %) | – | 40 / 40 (100.0 %) | 61 / 61 (100.0 %) | 2 / 2 (100.0 %) | 0 |
 | mesh | 20 | 20 / 20 (100.0 %) | 4 / 4 (100.0 %) | 16 / 16 (100.0 %) | – | – | 6 / 6 (100.0 %) | – | 0 |
 | task | 6 | 6 / 6 (100.0 %) | 1 / 1 (100.0 %) | 5 / 5 (100.0 %) | – | – | – | – | 0 |
@@ -39,12 +39,12 @@ Shaders that glslang's own test suite (`gtests/*.FromFile.cpp`) compiles under V
 
 | | shaders |
 |---|---:|
-| executed | 133 |
-| passed | 133 |
+| executed | 138 |
+| passed | 138 |
 | passed within the float tolerance | 0 |
 | failed | 0 |
 | skipped: capability or extension the harness cannot enable | 237 |
-| skipped: device feature missing on the driver | 133 |
+| skipped: device feature missing on the driver | 128 |
 | skipped: resource or interface the harness cannot bind | 21 |
 | skipped: glslang's module is not valid SPIR-V | 11 |
 | skipped: glslang's module fails on the driver | 2 |
