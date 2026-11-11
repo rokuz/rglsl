@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use rglsl_ast::ast::{BasicType, BinaryOperator, Expression, ScalarType, UnaryOperator};
 use rglsl_sema::scope::Direction;
-use rglsl_sema::Builtins;
+use rglsl_sema::{Builtins, Stage};
 
 use crate::basic::{self, BOOL, FLOAT};
 use crate::build::Builder;
@@ -13,21 +13,53 @@ use crate::scope::Variable;
 pub struct GenerationParams {
     pub max_depth: u32,
     pub fragment: bool,
+    pub stage: Stage,
+    pub max_struct_nesting_depth: u32,
+    pub max_struct_fields: u32,
+    pub max_donors_per_pass: u32,
+    pub max_switch_cases_before: u32,
+    pub max_switch_cases_during: u32,
+    pub max_switch_cases_after: u32,
+    pub injection_switch: bool,
 }
 
 impl GenerationParams {
-    pub const fn normal(fragment: bool) -> Self {
+    pub const fn normal(stage: Stage) -> Self {
         Self {
             max_depth: 3,
-            fragment,
+            fragment: matches!(stage, Stage::Fragment),
+            stage,
+            max_struct_nesting_depth: 2,
+            max_struct_fields: 8,
+            max_donors_per_pass: 4,
+            max_switch_cases_before: 3,
+            max_switch_cases_during: 10,
+            max_switch_cases_after: 3,
+            injection_switch: true,
         }
     }
 
-    pub const fn small(fragment: bool) -> Self {
+    pub const fn small(stage: Stage) -> Self {
         Self {
             max_depth: 2,
-            fragment,
+            fragment: matches!(stage, Stage::Fragment),
+            stage,
+            max_struct_nesting_depth: 1,
+            max_struct_fields: 3,
+            max_donors_per_pass: 2,
+            max_switch_cases_before: 2,
+            max_switch_cases_during: 4,
+            max_switch_cases_after: 2,
+            injection_switch: true,
         }
+    }
+
+    pub const fn compute(&self) -> bool {
+        matches!(self.stage, Stage::Compute)
+    }
+
+    pub const fn vertex(&self) -> bool {
+        matches!(self.stage, Stage::Vertex)
     }
 }
 
@@ -83,7 +115,8 @@ pub struct Templates {
 
 const SCALAR_NUMERIC: [ScalarType; 3] = [ScalarType::Float, ScalarType::Uint, ScalarType::Int];
 const INTEGERS: [ScalarType; 2] = [ScalarType::Uint, ScalarType::Int];
-const EXCLUDED_BUILTIN_PREFIXES: [&str; 24] = [
+const EXCLUDED_BUILTIN_PREFIXES: [&str; 25] = [
+    "sparse",
     "helperInvocationEXT",
     "depthAttachmentReadEXT",
     "stencilAttachmentReadEXT",
@@ -528,6 +561,14 @@ impl<'a> Fuzzer<'a> {
 
     pub const fn params(&self) -> &GenerationParams {
         &self.params
+    }
+
+    pub const fn templates(&self) -> &'a Templates {
+        self.templates
+    }
+
+    pub const fn scope(&self) -> &'a [Variable] {
+        self.scope
     }
 
     pub fn fuzz_expression(

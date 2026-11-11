@@ -3,17 +3,26 @@
 use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::ExitCode;
+use std::process::{Command, ExitCode};
 
+use rglsl_fuzz::amber::amber_script;
+use rglsl_fuzz::reduce::{finalise, reduce, ReduceOptions};
 use rglsl_fuzz::{
-    generate_family, prepare_reference, FamilyOptions, Random, ShaderJob, STAGE_EXTENSIONS,
+    generate_family, prepare_reference, Donor, EnabledTransformations, FamilyOptions, Random,
+    ShaderJob, STAGE_EXTENSIONS,
 };
 use serde_json::{Map, Value};
 
 const USAGE: &str = "usage:
   rglsl-fuzz generate [--seed N] [--variants K] [--max-uniforms M] [--prefix P] [--small]
-                      [--no-injection-switch] [--max-bytes B] <references dir> <output dir>
-  rglsl-fuzz prepare-reference [--max-uniforms M] <reference.json> <output.json>";
+                      [--no-injection-switch] [--max-bytes B] [--donors DIR]
+                      [--enable-only T,T,...] [--disable T,T,...]
+                      <references dir> <output dir>
+  rglsl-fuzz prepare-reference [--max-uniforms M] <reference.json> <output.json>
+  rglsl-fuzz reduce [--preserve-semantics] [--no-ub-guards] [--max-steps N] [--output DIR]
+                    <shader job.json> -- <interestingness command> [arguments...]
+      the command gets the candidate shader job's .json path as its last argument;
+      exit status 0 means interesting";
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
@@ -89,6 +98,34 @@ fn write_job(job: &ShaderJob, json: &Path) -> Result<()> {
     Ok(())
 }
 
+fn read_donors(directory: &Path) -> Result<Vec<Donor>> {
+    let mut paths: Vec<PathBuf> = fs::read_dir(directory)?
+        .collect::<std::result::Result<Vec<_>, _>>()?
+        .into_iter()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| STAGE_EXTENSIONS.contains(&extension))
+        })
+        .collect();
+    paths.sort();
+    let mut donors = Vec::new();
+    for path in paths {
+        let (Some(name), Some(extension)) = (
+            path.file_stem().and_then(|stem| stem.to_str()),
+            path.extension().and_then(|extension| extension.to_str()),
+        ) else {
+            continue;
+        };
+        match Donor::parse(name, extension, &fs::read_to_string(&path)?) {
+            Ok(donor) => donors.push(donor),
+            Err(error) => eprintln!("skipping donor {}: {error}", path.display()),
+        }
+    }
+    Ok(donors)
+}
+
 fn shader_jobs(directory: &Path) -> Result<Vec<PathBuf>> {
     let mut jobs: Vec<PathBuf> = fs::read_dir(directory)?
         .collect::<std::result::Result<Vec<_>, _>>()?
@@ -112,6 +149,9 @@ fn generate(raw: &[String]) -> Result<()> {
             "--max-uniforms",
             "--prefix",
             "--max-bytes",
+            "--donors",
+            "--enable-only",
+            "--disable",
         ],
     )?;
     let [references, output] = arguments.positional.as_slice() else {
@@ -126,6 +166,21 @@ fn generate(raw: &[String]) -> Result<()> {
     options.generator.max_uniforms = arguments.parsed("--max-uniforms", 0)?;
     options.generator.small = arguments.flag("--small");
     options.generator.add_injection_switch = !arguments.flag("--no-injection-switch");
+    if let Some(list) = arguments.value("--enable-only") {
+        let mut enabled = EnabledTransformations::none();
+        for transformation in EnabledTransformations::parse_list(list)? {
+            enabled = enabled.with(transformation);
+        }
+        options.generator.enabled = enabled;
+    }
+    if let Some(list) = arguments.value("--disable") {
+        for transformation in EnabledTransformations::parse_list(list)? {
+            options.generator.enabled = options.generator.enabled.without(transformation);
+        }
+    }
+    if let Some(donors) = arguments.value("--donors") {
+        options.donors = read_donors(Path::new(donors))?;
+    }
     let output = PathBuf::from(output);
     fs::create_dir_all(&output)?;
     let mut random = Random::new(seed);
@@ -213,11 +268,77 @@ fn prepare(raw: &[String]) -> Result<()> {
     write_job(&prepared, &output)
 }
 
+fn reduce_command(raw: &[String]) -> Result<()> {
+    let separator = raw
+        .iter()
+        .position(|argument| argument == "--")
+        .ok_or(USAGE)?;
+    let (own, command) = raw.split_at(separator);
+    let command = command.get(1..).unwrap_or_default();
+    let Some((program, program_arguments)) = command.split_first() else {
+        return Err(USAGE.into());
+    };
+    let arguments = Arguments::parse(own, &["--max-steps", "--output"])?;
+    let [input] = arguments.positional.as_slice() else {
+        return Err(USAGE.into());
+    };
+    let input = PathBuf::from(input);
+    let stem = input
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("shader")
+        .to_owned();
+    let output = PathBuf::from(arguments.value("--output").unwrap_or("reduction"));
+    fs::create_dir_all(&output)?;
+    let job = read_job(&input)?;
+    let options = ReduceOptions {
+        preserve_semantics: arguments.flag("--preserve-semantics"),
+        max_steps: arguments.parsed("--max-steps", ReduceOptions::default().max_steps)?,
+        guards: !arguments.flag("--no-ub-guards"),
+    };
+    let candidate = output.join(format!("{stem}_candidate.json"));
+    let mut judge = |job: &ShaderJob| -> std::result::Result<bool, rglsl_fuzz::Error> {
+        write_job(job, &candidate)
+            .map_err(|error| rglsl_fuzz::Error::Generation(error.to_string()))?;
+        let status = Command::new(program)
+            .args(program_arguments)
+            .arg(&candidate)
+            .status()
+            .map_err(|error| rglsl_fuzz::Error::Generation(error.to_string()))?;
+        Ok(status.success())
+    };
+    let reduction = reduce(&job, options, &mut judge)?;
+    let reduced = finalise(&reduction.job);
+    let reduced = if judge(&reduced)? {
+        reduced
+    } else {
+        reduction.job
+    };
+    let final_json = output.join(format!("{stem}_reduced_final.json"));
+    write_job(&reduced, &final_json)?;
+    match amber_script(&reduced) {
+        Ok(script) => fs::write(output.join(format!("{stem}_reduced_final.amber")), script)?,
+        Err(error) => eprintln!("no Amber script: {error}"),
+    }
+    let _ = fs::remove_file(&candidate);
+    for extension in STAGE_EXTENSIONS {
+        let _ = fs::remove_file(candidate.with_extension(extension));
+    }
+    eprintln!(
+        "{} steps, {} interesting; reduced shader job in {}",
+        reduction.steps,
+        reduction.successes,
+        final_json.display()
+    );
+    Ok(())
+}
+
 fn run() -> Result<()> {
     let raw: Vec<String> = std::env::args().skip(1).collect();
     match raw.split_first() {
         Some((command, rest)) if command == "generate" => generate(rest),
         Some((command, rest)) if command == "prepare-reference" => prepare(rest),
+        Some((command, rest)) if command == "reduce" => reduce_command(rest),
         _ => Err(USAGE.into()),
     }
 }

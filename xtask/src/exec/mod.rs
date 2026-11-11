@@ -2,10 +2,13 @@ pub mod amber;
 pub mod batch;
 pub mod compare;
 pub mod data;
+pub mod glsl;
 pub mod harness;
 pub mod known;
+pub mod mesh;
 pub mod module;
 pub mod plan;
+pub mod rays;
 pub mod reflect;
 pub mod remote;
 pub mod requirements;
@@ -329,6 +332,7 @@ impl Executor {
             &work,
             "dump",
             ShaderKind::Compute,
+            ShaderKind::Compute.target_env(),
             harness::DUMP_SHADER,
             timeout,
         )
@@ -466,7 +470,8 @@ impl Executor {
         let mut harness = Vec::new();
         for (index, (kind, source)) in plan.harness.iter().enumerate() {
             let name = format!("harness{index}");
-            compile_glsl(&self.glslang, dir, &name, *kind, source, self.timeout)?;
+            let env = plan.harness_env.unwrap_or_else(|| kind.target_env());
+            compile_glsl(&self.glslang, dir, &name, *kind, env, source, self.timeout)?;
             harness.push((
                 *kind,
                 PathBuf::from(format!("{name}.{}.spv", kind.extension())),
@@ -508,15 +513,8 @@ impl Executor {
         let theirs = reflect(&case.reference).map_err(|e| Outcome::skip(SkipReason::Binding, e))?;
         let mine = reflect(&case.ours)
             .map_err(|e| Outcome::Fail(format!("reflecting our module: {e}")))?;
-        let stage_feature = match theirs.model {
-            spirv::ExecutionModel::Geometry => Some(Need::Feature("geometryShader")),
-            spirv::ExecutionModel::TessellationControl
-            | spirv::ExecutionModel::TessellationEvaluation => {
-                Some(Need::Feature("tessellationShader"))
-            }
-            _ => None,
-        };
-        if let Some(need) = stage_feature.filter(|n| !self.supports(*n)) {
+        let stage_needs = requirements::stage_needs(theirs.model);
+        if let Some(need) = stage_needs.into_iter().find(|n| !self.supports(*n)) {
             return Err(Outcome::skip(
                 SkipReason::DeviceFeature,
                 self.why_missing(need),
@@ -729,11 +727,37 @@ fn interface_difference(theirs: &Reflection, mine: &Reflection) -> Option<String
             theirs.push_constants, mine.push_constants
         ));
     }
+    if theirs.ray_variables != mine.ray_variables {
+        return Some(format!(
+            "ray tracing variables {:?} vs {:?}",
+            theirs.ray_variables, mine.ray_variables
+        ));
+    }
+    if theirs.shader_record != mine.shader_record {
+        return Some(format!(
+            "shader record buffer {:?} vs {:?}",
+            theirs.shader_record, mine.shader_record
+        ));
+    }
+    if theirs.task_payload != mine.task_payload {
+        return Some(format!(
+            "task payload {:?} vs {:?}",
+            theirs.task_payload, mine.task_payload
+        ));
+    }
     for (what, a, b) in [
         ("input", &theirs.inputs, &mine.inputs),
         ("output", &theirs.outputs, &mine.outputs),
     ] {
-        let shape = |v: &reflect::Varying| (v.location, v.component, v.patch, v.ty.clone());
+        let shape = |v: &reflect::Varying| {
+            (
+                v.location,
+                v.component,
+                v.patch,
+                v.per_primitive,
+                v.ty.clone(),
+            )
+        };
         let a: Vec<_> = a.iter().map(shape).collect();
         let b: Vec<_> = b.iter().map(shape).collect();
         if a == b {
@@ -753,6 +777,7 @@ pub fn compile_glsl(
     dir: &Path,
     name: &str,
     kind: ShaderKind,
+    target_env: &str,
     source: &str,
     timeout: Duration,
 ) -> Result<PathBuf, String> {
@@ -763,7 +788,7 @@ pub fn compile_glsl(
     fs::write(&input, source).map_err(|e| e.to_string())?;
     let mut command = Command::new(glslang);
     command
-        .args(["-V", "--target-env", kind.target_env(), "-o"])
+        .args(["-V", "--target-env", target_env, "-o"])
         .arg(&output)
         .arg(&input);
     let result = process::run(command, timeout).map_err(|e| format!("{e:#}"))?;
@@ -787,23 +812,7 @@ mod tests {
     use crate::exec::reflect::{Scalar, ScalarKind, Slot};
 
     fn plan() -> Plan {
-        let reflection = Reflection {
-            model: spirv::ExecutionModel::GLCompute,
-            entry: "main".into(),
-            local_size: [1, 1, 1],
-            resources: Vec::new(),
-            push_constants: None,
-            inputs: Vec::new(),
-            outputs: Vec::new(),
-            input_builtins: BTreeSet::new(),
-            output_builtins: BTreeSet::new(),
-            capabilities: BTreeSet::new(),
-            unknown_capabilities: BTreeSet::new(),
-            extensions: BTreeSet::new(),
-            modes: BTreeMap::new(),
-            ray_storage: BTreeSet::new(),
-            problems: Vec::new(),
-        };
+        let reflection = Reflection::new(spirv::ExecutionModel::GLCompute);
         let mut plan = Plan::new(&reflection, &Inputs::default()).unwrap();
         plan.targets.push(Target {
             name: "buffer".into(),

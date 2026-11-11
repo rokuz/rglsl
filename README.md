@@ -50,8 +50,10 @@ Per-shader results go to `target/xtask/results.tsv`.
 
 The `exec` column runs our module and glslang's on a Vulkan driver and compares what they
 write. The driver is [KosmicKrisp](https://docs.mesa3d.org/drivers/kosmickrisp.html), Mesa's
-Vulkan driver on Metal, so `exec` needs macOS on Apple silicon. The modules are run by
-[Amber](https://github.com/google/amber). Both are pinned in `oracles.toml` and installed by
+Vulkan driver on Metal, so `exec` needs macOS on Apple silicon. The modules are run by our fork
+of [Amber](https://github.com/google/amber), [rokuz/amber](https://github.com/rokuz/amber)
+(branch `rglsl`), which adds mesh shading pipelines, shader record data and the device features
+the mesh and ray tracing stages need. Both are pinned in `oracles.toml` and installed by
 `cargo xtask oracles`: it downloads the prebuilt KosmicKrisp release, checks its sha256, unpacks
 it into `target/oracles/kosmickrisp/` with an ICD manifest that points at the driver by absolute
 path, builds Amber against that loader, and prints the Vulkan device it finds. Requirements:

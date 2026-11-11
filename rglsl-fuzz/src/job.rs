@@ -316,7 +316,7 @@ impl ShaderJob {
     }
 
     pub fn make_uniform_bindings(&mut self, push_constant: Option<&str>) -> Result<(), Error> {
-        let mut used = BTreeSet::new();
+        let mut used = self.pipeline.bindings();
         for shader in &self.shaders {
             used.extend(binding_values(&shader.unit));
         }
@@ -383,6 +383,9 @@ impl ShaderJob {
                 self.pipeline
                     .add_uniform_binding(&name, false, next_binding);
                 next_binding += 1;
+                while used.contains(&next_binding) {
+                    next_binding += 1;
+                }
             }
         }
         Ok(())

@@ -313,8 +313,14 @@ pseudo-random data for both modules; compute shaders run one workgroup, fragment
 full-screen rectangle behind a generated vertex shader, vertex shaders draw twelve vertices in
 front of a generated fragment shader that writes their outputs to color attachments. Geometry
 and tessellation shaders run between generated vertex, tessellation and fragment stages that
-forward their varyings to color attachments; ray generation shaders trace into a one-triangle
-scene with generated miss and hit shaders. Integers must be equal; floats may differ by NaN
+forward their varyings to color attachments. Mesh shaders run one workgroup before a generated
+fragment shader (and after a generated task shader when they read a task payload); task shaders
+run before a generated mesh shader that marks each workgroup they launch. Ray tracing stages
+trace 4×4 rays into a one-triangle or one-box scene: ray generation shaders with generated miss,
+hit and callable shaders, every other stage behind a generated ray generation shader whose
+payload has the stage's type and is written to a compared buffer; shader record buffers are
+filled like any other buffer. Ray queries run in any stage against the same scene. Integers must
+be equal; floats may differ by NaN
 payload, the sign of zero, or 4 ULP. A shader whose results differ is run again alone before it
 is counted as a failure. A shader is skipped, not failed, when the harness cannot bind it, the
 driver lacks a feature, glslang's own module fails on the driver, or glslang's module gives

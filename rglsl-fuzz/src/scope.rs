@@ -8,7 +8,7 @@ use rglsl_ast::ast::{
     TypeQualifier,
 };
 use rglsl_sema::analyze::Callee;
-use rglsl_sema::scope::{Direction, Origin, SymbolKind};
+use rglsl_sema::scope::{Direction, Origin, Storage, SymbolKind};
 use rglsl_sema::Analysis;
 
 use crate::basic;
@@ -19,6 +19,21 @@ pub struct Variable {
     pub ty: Option<BasicType>,
     pub constant: bool,
     pub parameter: bool,
+    pub output: bool,
+    pub assignable: bool,
+}
+
+impl Variable {
+    pub fn new(name: &str, ty: Option<BasicType>) -> Self {
+        Self {
+            name: name.to_owned(),
+            ty,
+            constant: false,
+            parameter: false,
+            output: false,
+            assignable: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,6 +92,85 @@ pub fn function_names(unit: &TranslationUnit) -> BTreeSet<String> {
     names
 }
 
+pub fn declared_variable(analysis: &Analysis, id: NodeId, name: &str) -> Variable {
+    let mut variable = Variable::new(name, None);
+    let Some(symbol_id) = analysis.declarations.get(&id) else {
+        return variable;
+    };
+    variable.ty = analysis
+        .symbol_type(*symbol_id)
+        .and_then(|ty| basic::from_sema(&ty));
+    if let Some(symbol) = analysis.symbol(*symbol_id) {
+        if let SymbolKind::Variable(details) = &symbol.kind {
+            variable.parameter = details.origin == Origin::Parameter;
+            variable.constant = details.qualifiers.constant
+                && details.value.is_some()
+                && details.origin != Origin::Parameter;
+            variable.output =
+                details.origin == Origin::Global && details.qualifiers.storage == Storage::Out;
+            variable.assignable = !details.qualifiers.constant
+                && details.origin != Origin::BuiltIn
+                && (matches!(
+                    details.qualifiers.storage,
+                    Storage::None | Storage::Out | Storage::Inout
+                ) || (details.origin == Origin::Parameter
+                    && details.qualifiers.storage == Storage::In));
+        }
+    }
+    variable
+}
+
+pub fn output_parameters(analysis: &Analysis, call: NodeId, count: usize) -> Vec<bool> {
+    let directions: Vec<Direction> = match analysis.calls.get(&call) {
+        Some(Callee::Function(id)) => analysis
+            .function(*id)
+            .map(|function| {
+                function
+                    .parameters
+                    .iter()
+                    .map(|parameter| parameter.direction)
+                    .collect()
+            })
+            .unwrap_or_default(),
+        Some(Callee::Builtin(id)) => analysis
+            .builtins
+            .function(*id)
+            .map(|function| {
+                function
+                    .parameters
+                    .iter()
+                    .map(|parameter| parameter.direction)
+                    .collect()
+            })
+            .unwrap_or_default(),
+        Some(Callee::Cooperative(
+            rglsl_sema::CooperativeCall::Load { .. }
+            | rglsl_sema::CooperativeCall::VectorLoad
+            | rglsl_sema::CooperativeCall::SaturatedConvert,
+        )) => {
+            vec![Direction::Out]
+        }
+        Some(Callee::TensorArm(rglsl_sema::TensorArmCall::Read { .. })) => {
+            vec![Direction::In, Direction::In, Direction::Out]
+        }
+        Some(
+            Callee::Constructor(_)
+            | Callee::TensorArm(_)
+            | Callee::Cooperative(_)
+            | Callee::Tensor(_)
+            | Callee::Matrix(_)
+            | Callee::Length
+            | Callee::NonUniform
+            | Callee::DebugPrintf
+            | Callee::Abort,
+        )
+        | None => Vec::new(),
+    };
+    (0..count)
+        .map(|index| directions.get(index).is_some_and(|d| d.is_output()))
+        .collect()
+}
+
 pub fn has_storage(qualifier: Option<&Spanned<TypeQualifier>>, storage: StorageQualifier) -> bool {
     qualifier.is_some_and(|qualifier| {
         qualifier
@@ -128,28 +222,7 @@ impl Finder<'_> {
     }
 
     fn declared(&self, id: NodeId, name: &str) -> Variable {
-        let mut variable = Variable {
-            name: name.to_owned(),
-            ty: None,
-            constant: false,
-            parameter: false,
-        };
-        let Some(symbol_id) = self.analysis.declarations.get(&id) else {
-            return variable;
-        };
-        variable.ty = self
-            .analysis
-            .symbol_type(*symbol_id)
-            .and_then(|ty| basic::from_sema(&ty));
-        if let Some(symbol) = self.analysis.symbol(*symbol_id) {
-            if let SymbolKind::Variable(details) = &symbol.kind {
-                variable.parameter = details.origin == Origin::Parameter;
-                variable.constant = details.qualifiers.constant
-                    && details.value.is_some()
-                    && details.origin != Origin::Parameter;
-            }
-        }
-        variable
+        declared_variable(self.analysis, id, name)
     }
 
     fn initializer(&mut self, initializer: &Initializer) {
@@ -183,22 +256,15 @@ impl Finder<'_> {
                 structure,
                 instance,
             } => match instance {
-                Some(instance) => self.add(Variable {
-                    name: instance.name.node.clone(),
-                    ty: None,
-                    constant: false,
-                    parameter: false,
-                }),
+                Some(instance) => self.add(Variable::new(&instance.name.node, None)),
                 None => {
                     for member in &structure.members {
                         let ty = basic::from_specifier(&member.ty.specifier);
                         for declarator in &member.declarators {
-                            self.add(Variable {
-                                name: declarator.name.node.clone(),
-                                ty: ty.filter(|_| declarator.array.is_none()),
-                                constant: false,
-                                parameter: false,
-                            });
+                            self.add(Variable::new(
+                                &declarator.name.node,
+                                ty.filter(|_| declarator.array.is_none()),
+                            ));
                         }
                     }
                 }
@@ -315,59 +381,6 @@ impl Finder<'_> {
         });
     }
 
-    fn output_parameters(&self, call: NodeId, count: usize) -> Vec<bool> {
-        let directions: Vec<Direction> = match self.analysis.calls.get(&call) {
-            Some(Callee::Function(id)) => self
-                .analysis
-                .function(*id)
-                .map(|function| {
-                    function
-                        .parameters
-                        .iter()
-                        .map(|parameter| parameter.direction)
-                        .collect()
-                })
-                .unwrap_or_default(),
-            Some(Callee::Builtin(id)) => self
-                .analysis
-                .builtins
-                .function(*id)
-                .map(|function| {
-                    function
-                        .parameters
-                        .iter()
-                        .map(|parameter| parameter.direction)
-                        .collect()
-                })
-                .unwrap_or_default(),
-            Some(Callee::Cooperative(
-                rglsl_sema::CooperativeCall::Load { .. }
-                | rglsl_sema::CooperativeCall::VectorLoad
-                | rglsl_sema::CooperativeCall::SaturatedConvert,
-            )) => {
-                vec![Direction::Out]
-            }
-            Some(Callee::TensorArm(rglsl_sema::TensorArmCall::Read { .. })) => {
-                vec![Direction::In, Direction::In, Direction::Out]
-            }
-            Some(
-                Callee::Constructor(_)
-                | Callee::TensorArm(_)
-                | Callee::Cooperative(_)
-                | Callee::Tensor(_)
-                | Callee::Matrix(_)
-                | Callee::Length
-                | Callee::NonUniform
-                | Callee::DebugPrintf
-                | Callee::Abort,
-            )
-            | None => Vec::new(),
-        };
-        (0..count)
-            .map(|index| directions.get(index).is_some_and(|d| d.is_output()))
-            .collect()
-    }
-
     fn expression(&mut self, expression: &Expression) {
         self.point(expression);
         match &expression.kind {
@@ -393,7 +406,7 @@ impl Finder<'_> {
                 if skip_all {
                     return;
                 }
-                let outputs = self.output_parameters(expression.id, call.arguments.len());
+                let outputs = output_parameters(self.analysis, expression.id, call.arguments.len());
                 for (argument, output) in call.arguments.iter().zip(outputs) {
                     if !output {
                         self.expression(argument);

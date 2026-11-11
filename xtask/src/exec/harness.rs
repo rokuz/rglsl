@@ -169,9 +169,14 @@ pub fn fragment_for_vertex(outputs: &[Varying]) -> (String, Vec<Attachment>, Vec
             continue;
         }
         let ty = glsl_type(scalar, count);
+        let primitive = if varying.per_primitive {
+            "perprimitiveEXT "
+        } else {
+            ""
+        };
         let _ = writeln!(
             declarations,
-            "layout(location = {}) {}in {ty} {};",
+            "layout(location = {}) {}{primitive}in {ty} {};",
             varying.location,
             qualifier(varying, scalar),
             declarator(varying)
@@ -202,9 +207,14 @@ pub fn fragment_for_vertex(outputs: &[Varying]) -> (String, Vec<Attachment>, Vec
             });
         }
     }
+    let extension = if outputs.iter().any(|v| v.per_primitive) {
+        "#extension GL_EXT_mesh_shader : require\n"
+    } else {
+        ""
+    };
     (
         format!(
-            "#version 450\n{declarations}layout(location = 0) out vec4 o0;\nvoid main() {{\n{body}}}\n"
+            "#version 450\n{extension}{declarations}layout(location = 0) out vec4 o0;\nvoid main() {{\n{body}}}\n"
         ),
         attachments,
         ignored,
@@ -217,11 +227,16 @@ pub enum ShaderKind {
     TessControl,
     TessEval,
     Geometry,
+    Task,
+    Mesh,
     Fragment,
     Compute,
     RayGeneration,
     Miss,
     ClosestHit,
+    AnyHit,
+    Intersection,
+    Callable,
 }
 
 impl ShaderKind {
@@ -231,11 +246,16 @@ impl ShaderKind {
             Self::TessControl => "tessellation_control",
             Self::TessEval => "tessellation_evaluation",
             Self::Geometry => "geometry",
+            Self::Task => "task",
+            Self::Mesh => "mesh",
             Self::Fragment => "fragment",
             Self::Compute => "compute",
             Self::RayGeneration => "ray_generation",
             Self::Miss => "miss",
             Self::ClosestHit => "closest_hit",
+            Self::AnyHit => "any_hit",
+            Self::Intersection => "intersection",
+            Self::Callable => "callable",
         }
     }
 
@@ -245,19 +265,37 @@ impl ShaderKind {
             Self::TessControl => "tesc",
             Self::TessEval => "tese",
             Self::Geometry => "geom",
+            Self::Task => "task",
+            Self::Mesh => "mesh",
             Self::Fragment => "frag",
             Self::Compute => "comp",
             Self::RayGeneration => "rgen",
             Self::Miss => "rmiss",
             Self::ClosestHit => "rchit",
+            Self::AnyHit => "rahit",
+            Self::Intersection => "rint",
+            Self::Callable => "rcall",
         }
     }
 
     pub const fn target_env(self) -> &'static str {
-        match self {
-            Self::RayGeneration | Self::Miss | Self::ClosestHit => "vulkan1.2",
-            _ => "vulkan1.0",
+        if self.is_ray_tracing() || matches!(self, Self::Task | Self::Mesh) {
+            "vulkan1.2"
+        } else {
+            "vulkan1.0"
         }
+    }
+
+    pub const fn is_ray_tracing(self) -> bool {
+        matches!(
+            self,
+            Self::RayGeneration
+                | Self::Miss
+                | Self::ClosestHit
+                | Self::AnyHit
+                | Self::Intersection
+                | Self::Callable
+        )
     }
 }
 
@@ -379,6 +417,7 @@ pub fn evaluation_for_control(
             centroid: false,
             sample: false,
             patch: false,
+            per_primitive: false,
         });
     }
     Ok((
@@ -386,11 +425,6 @@ pub fn evaluation_for_control(
         forwarded,
     ))
 }
-
-pub const MISS_SHADER: &str =
-    "#version 460\n#extension GL_EXT_ray_tracing : require\nvoid main() {}\n";
-pub const HIT_SHADER: &str =
-    "#version 460\n#extension GL_EXT_ray_tracing : require\nvoid main() {}\n";
 
 pub const DUMP_SHADER: &str = "#version 450\nlayout(local_size_x = 1) in;\nvoid main() {}\n";
 
@@ -411,6 +445,7 @@ mod tests {
             centroid: false,
             sample: false,
             patch: false,
+            per_primitive: false,
         }
     }
 

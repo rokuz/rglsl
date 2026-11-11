@@ -43,6 +43,28 @@ pub const RAY_TRACING: [Need; 3] = [
     F("BufferDeviceAddressFeatures.bufferDeviceAddress"),
 ];
 
+pub const RAY_QUERY: [Need; 3] = [
+    F("RayQueryFeaturesKHR.rayQuery"),
+    F("AccelerationStructureFeaturesKHR.accelerationStructure"),
+    F("BufferDeviceAddressFeatures.bufferDeviceAddress"),
+];
+
+pub const RAY_TRACING_NV: [Need; 4] = [
+    E("VK_NV_ray_tracing"),
+    F("RayTracingPipelineFeaturesKHR.rayTracingPipeline"),
+    F("AccelerationStructureFeaturesKHR.accelerationStructure"),
+    F("BufferDeviceAddressFeatures.bufferDeviceAddress"),
+];
+
+pub const MESH_SHADER: Need = F("MeshShaderFeaturesEXT.meshShader");
+pub const TASK_SHADER: Need = F("MeshShaderFeaturesEXT.taskShader");
+pub const MESH_SHADER_NV: Need = F("MeshShaderFeaturesNV.meshShader");
+pub const TASK_SHADER_NV: Need = F("MeshShaderFeaturesNV.taskShader");
+pub const PRIMITIVE_SHADING_RATE: Need =
+    F("FragmentShadingRateFeaturesKHR.primitiveFragmentShadingRate");
+pub const PRIMITIVE_SHADING_RATE_MESH: Need =
+    F("MeshShaderFeaturesEXT.primitiveFragmentShadingRateMeshShader");
+
 pub fn capability(capability: Capability) -> Requirement {
     use Capability as C;
     match capability {
@@ -60,7 +82,8 @@ pub fn capability(capability: Capability) -> Requirement {
         | C::UniformBufferArrayDynamicIndexing
         | C::StorageBufferArrayDynamicIndexing
         | C::StorageImageExtendedFormats
-        | C::AtomicStorage => NONE,
+        | C::AtomicStorage
+        | C::ShaderNonUniform => NONE,
         C::Float64 => needs![F("shaderFloat64")],
         C::Int64 => needs![F("shaderInt64")],
         C::Int16 => needs![F("shaderInt16")],
@@ -120,28 +143,78 @@ pub fn capability(capability: Capability) -> Requirement {
         C::CooperativeMatrixKHR => needs![F("CooperativeMatrixFeaturesKHR.cooperativeMatrix")],
         C::LongVectorEXT => needs![F("ShaderLongVectorFeaturesEXT.longVector")],
         C::RayTracingKHR => Requirement::Needs(&RAY_TRACING),
-        C::DemoteToHelperInvocation => Requirement::Unsupported(
-            "demote to helper invocation (Amber cannot enable shaderDemoteToHelperInvocation)",
-        ),
+        C::RayTracingNV => Requirement::Needs(&RAY_TRACING_NV),
+        C::RayQueryKHR => Requirement::Needs(&RAY_QUERY),
+        C::RayTraversalPrimitiveCullingKHR => {
+            needs![F(
+                "RayTracingPipelineFeaturesKHR.rayTraversalPrimitiveCulling"
+            )]
+        }
+        C::RayTracingMotionBlurNV => {
+            needs![F("RayTracingMotionBlurFeaturesNV.rayTracingMotionBlur")]
+        }
+        C::RayTracingPositionFetchKHR | C::RayQueryPositionFetchKHR => {
+            needs![F(
+                "RayTracingPositionFetchFeaturesKHR.rayTracingPositionFetch"
+            )]
+        }
+        C::RayCullMaskKHR => {
+            needs![F(
+                "RayTracingMaintenance1FeaturesKHR.rayTracingMaintenance1"
+            )]
+        }
+        C::MeshShadingEXT => needs![MESH_SHADER],
+        C::MeshShadingNV => needs![MESH_SHADER_NV],
+        C::FragmentShadingRateKHR => {
+            needs![F(
+                "FragmentShadingRateFeaturesKHR.pipelineFragmentShadingRate"
+            )]
+        }
+        C::DemoteToHelperInvocation => {
+            needs![F(
+                "ShaderDemoteToHelperInvocationFeatures.shaderDemoteToHelperInvocation"
+            )]
+        }
+        C::Int64Atomics => needs![
+            F("ShaderAtomicInt64Features.shaderBufferInt64Atomics"),
+            F("ShaderAtomicInt64Features.shaderSharedInt64Atomics"),
+        ],
+        C::RuntimeDescriptorArray => needs![F("DescriptorIndexingFeatures.runtimeDescriptorArray")],
+        C::InputAttachmentArrayDynamicIndexing => needs![F(
+            "DescriptorIndexingFeatures.shaderInputAttachmentArrayDynamicIndexing"
+        )],
+        C::UniformTexelBufferArrayDynamicIndexing => needs![F(
+            "DescriptorIndexingFeatures.shaderUniformTexelBufferArrayDynamicIndexing"
+        )],
+        C::StorageTexelBufferArrayDynamicIndexing => needs![F(
+            "DescriptorIndexingFeatures.shaderStorageTexelBufferArrayDynamicIndexing"
+        )],
+        C::UniformBufferArrayNonUniformIndexing => needs![F(
+            "DescriptorIndexingFeatures.shaderUniformBufferArrayNonUniformIndexing"
+        )],
+        C::SampledImageArrayNonUniformIndexing => needs![F(
+            "DescriptorIndexingFeatures.shaderSampledImageArrayNonUniformIndexing"
+        )],
+        C::StorageBufferArrayNonUniformIndexing => needs![F(
+            "DescriptorIndexingFeatures.shaderStorageBufferArrayNonUniformIndexing"
+        )],
+        C::StorageImageArrayNonUniformIndexing => needs![F(
+            "DescriptorIndexingFeatures.shaderStorageImageArrayNonUniformIndexing"
+        )],
+        C::InputAttachmentArrayNonUniformIndexing => needs![F(
+            "DescriptorIndexingFeatures.shaderInputAttachmentArrayNonUniformIndexing"
+        )],
+        C::UniformTexelBufferArrayNonUniformIndexing => needs![F(
+            "DescriptorIndexingFeatures.shaderUniformTexelBufferArrayNonUniformIndexing"
+        )],
+        C::StorageTexelBufferArrayNonUniformIndexing => needs![F(
+            "DescriptorIndexingFeatures.shaderStorageTexelBufferArrayNonUniformIndexing"
+        )],
         C::PhysicalStorageBufferAddresses => Requirement::Unsupported(
             "buffer device address (Amber cannot store a buffer's address in another buffer)",
         ),
-        C::RuntimeDescriptorArray
-        | C::ShaderNonUniform
-        | C::InputAttachmentArrayDynamicIndexing
-        | C::UniformTexelBufferArrayDynamicIndexing
-        | C::StorageTexelBufferArrayDynamicIndexing
-        | C::UniformBufferArrayNonUniformIndexing
-        | C::SampledImageArrayNonUniformIndexing
-        | C::StorageBufferArrayNonUniformIndexing
-        | C::StorageImageArrayNonUniformIndexing
-        | C::InputAttachmentArrayNonUniformIndexing
-        | C::UniformTexelBufferArrayNonUniformIndexing
-        | C::StorageTexelBufferArrayNonUniformIndexing => Requirement::Unsupported(
-            "descriptor indexing (Amber cannot enable the descriptor indexing features)",
-        ),
-        C::Int64Atomics | C::Int64ImageEXT => {
-            Requirement::Unsupported("64-bit atomics (Amber cannot enable them)")
+        C::Int64ImageEXT => {
+            Requirement::Unsupported("64-bit image atomics (Amber cannot enable them)")
         }
         C::AtomicFloat32AddEXT
         | C::AtomicFloat64AddEXT
@@ -151,21 +224,11 @@ pub fn capability(capability: Capability) -> Requirement {
         | C::AtomicFloat16MinMaxEXT => {
             Requirement::Unsupported("floating-point atomics (Amber cannot enable them)")
         }
-        C::SubgroupBallotKHR | C::SubgroupVoteKHR => {
-            Requirement::Unsupported("pre-1.1 subgroup extensions")
-        }
+        C::SubgroupBallotKHR => needs![E("VK_EXT_shader_subgroup_ballot")],
+        C::SubgroupVoteKHR => needs![E("VK_EXT_shader_subgroup_vote")],
         C::MultiView => Requirement::Unsupported("multiview (Amber renders one view)"),
         C::InputAttachment => {
             Requirement::Unsupported("input attachments (Amber cannot bind them)")
-        }
-        C::RayTraversalPrimitiveCullingKHR => Requirement::Unsupported(
-            "ray traversal primitive culling (Amber cannot enable rayTraversalPrimitiveCulling)",
-        ),
-        C::RayQueryKHR => {
-            Requirement::Unsupported("ray queries (Amber cannot enable the rayQuery feature)")
-        }
-        C::MeshShadingEXT | C::MeshShadingNV => {
-            Requirement::Unsupported("mesh shading (Amber has no mesh pipelines)")
         }
         C::CooperativeMatrixNV => {
             Requirement::Unsupported("NV cooperative matrices (Amber cannot enable them)")
@@ -184,7 +247,35 @@ pub fn subgroup_stage(model: ExecutionModel) -> Option<&'static str> {
         ExecutionModel::TessellationEvaluation => {
             Some("SubgroupSupportedStages.tessellationEvaluation")
         }
+        ExecutionModel::TaskEXT | ExecutionModel::TaskNV => Some("SubgroupSupportedStages.task"),
+        ExecutionModel::MeshEXT | ExecutionModel::MeshNV => Some("SubgroupSupportedStages.mesh"),
+        ExecutionModel::RayGenerationKHR => Some("SubgroupSupportedStages.rayGeneration"),
+        ExecutionModel::AnyHitKHR => Some("SubgroupSupportedStages.anyHit"),
+        ExecutionModel::ClosestHitKHR => Some("SubgroupSupportedStages.closestHit"),
+        ExecutionModel::MissKHR => Some("SubgroupSupportedStages.miss"),
+        ExecutionModel::IntersectionKHR => Some("SubgroupSupportedStages.intersection"),
+        ExecutionModel::CallableKHR => Some("SubgroupSupportedStages.callable"),
         _ => None,
+    }
+}
+
+pub fn stage_needs(model: ExecutionModel) -> Vec<Need> {
+    match model {
+        ExecutionModel::Geometry => vec![F("geometryShader")],
+        ExecutionModel::TessellationControl | ExecutionModel::TessellationEvaluation => {
+            vec![F("tessellationShader")]
+        }
+        ExecutionModel::MeshEXT => vec![MESH_SHADER],
+        ExecutionModel::TaskEXT => vec![MESH_SHADER, TASK_SHADER],
+        ExecutionModel::MeshNV => vec![MESH_SHADER_NV],
+        ExecutionModel::TaskNV => vec![MESH_SHADER_NV, TASK_SHADER_NV],
+        ExecutionModel::RayGenerationKHR
+        | ExecutionModel::IntersectionKHR
+        | ExecutionModel::AnyHitKHR
+        | ExecutionModel::ClosestHitKHR
+        | ExecutionModel::MissKHR
+        | ExecutionModel::CallableKHR => RAY_TRACING.to_vec(),
+        _ => Vec::new(),
     }
 }
 
@@ -204,6 +295,17 @@ pub fn extension(name: &str) -> bool {
             | "SPV_KHR_float_controls"
             | "SPV_KHR_no_integer_wrap_decoration"
             | "SPV_KHR_ray_tracing"
+            | "SPV_KHR_ray_query"
+            | "SPV_KHR_ray_cull_mask"
+            | "SPV_KHR_ray_tracing_position_fetch"
+            | "SPV_NV_ray_tracing"
+            | "SPV_NV_ray_tracing_motion_blur"
+            | "SPV_EXT_mesh_shader"
+            | "SPV_NV_mesh_shader"
+            | "SPV_EXT_descriptor_indexing"
+            | "SPV_KHR_fragment_shading_rate"
+            | "SPV_KHR_shader_ballot"
+            | "SPV_KHR_subgroup_vote"
             | "SPV_KHR_cooperative_matrix"
             | "SPV_EXT_long_vector"
             | "SPV_EXT_demote_to_helper_invocation"
@@ -230,14 +332,26 @@ pub fn probes() -> Vec<Need> {
         ExecutionModel::Geometry,
         ExecutionModel::TessellationControl,
         ExecutionModel::TessellationEvaluation,
+        ExecutionModel::TaskEXT,
+        ExecutionModel::MeshEXT,
+        ExecutionModel::TaskNV,
+        ExecutionModel::RayGenerationKHR,
+        ExecutionModel::AnyHitKHR,
+        ExecutionModel::ClosestHitKHR,
+        ExecutionModel::MissKHR,
+        ExecutionModel::IntersectionKHR,
+        ExecutionModel::CallableKHR,
     ] {
         if let Some(stage) = subgroup_stage(model) {
             needs.push(F(stage));
         }
+        needs.extend(stage_needs(model));
     }
     needs.extend([
         F("fragmentStoresAndAtomics"),
         F("vertexPipelineStoresAndAtomics"),
+        PRIMITIVE_SHADING_RATE,
+        PRIMITIVE_SHADING_RATE_MESH,
     ]);
     needs.sort();
     needs.dedup();
@@ -259,8 +373,16 @@ mod tests {
             capability(Capability::DrawParameters),
             Requirement::Needs(&[Need::Extension("VK_KHR_shader_draw_parameters")])
         );
-        assert!(matches!(
+        assert_eq!(
             capability(Capability::RayQueryKHR),
+            Requirement::Needs(&RAY_QUERY)
+        );
+        assert_eq!(
+            capability(Capability::MeshShadingEXT),
+            Requirement::Needs(&[MESH_SHADER])
+        );
+        assert!(matches!(
+            capability(Capability::Int64ImageEXT),
             Requirement::Unsupported(_)
         ));
         assert!(matches!(
@@ -268,7 +390,25 @@ mod tests {
             Requirement::Unsupported(_)
         ));
         assert!(extension("SPV_KHR_16bit_storage"));
+        assert!(extension("SPV_EXT_mesh_shader"));
         assert!(!extension("SPV_EXT_shader_atomic_float_add"));
+    }
+
+    #[test]
+    fn stages_need_their_features() {
+        assert_eq!(
+            stage_needs(ExecutionModel::TaskEXT),
+            [MESH_SHADER, TASK_SHADER]
+        );
+        assert_eq!(
+            stage_needs(ExecutionModel::ClosestHitKHR),
+            RAY_TRACING.to_vec()
+        );
+        assert!(stage_needs(ExecutionModel::GLCompute).is_empty());
+        assert_eq!(
+            subgroup_stage(ExecutionModel::IntersectionKHR),
+            Some("SubgroupSupportedStages.intersection")
+        );
     }
 
     #[test]
@@ -277,6 +417,10 @@ mod tests {
         assert!(probes.contains(&Need::Feature("geometryShader")));
         assert!(probes.contains(&Need::Feature("SubgroupSupportedStages.geometry")));
         assert!(probes.contains(&Need::Extension("VK_KHR_shader_draw_parameters")));
+        assert!(probes.contains(&TASK_SHADER));
+        assert!(probes.contains(&TASK_SHADER_NV));
+        assert!(probes.contains(&Need::Feature("SubgroupSupportedStages.closestHit")));
+        assert!(probes.contains(&Need::Extension("VK_NV_ray_tracing")));
         let mut sorted = probes.clone();
         sorted.dedup();
         assert_eq!(sorted.len(), probes.len());

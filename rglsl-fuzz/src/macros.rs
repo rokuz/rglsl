@@ -1,6 +1,9 @@
-use rglsl_ast::ast::{Expression, ExpressionKind, FunctionIdentifier, TranslationUnit};
+use rglsl_ast::ast::{
+    BinaryOperator, Expression, ExpressionKind, FunctionIdentifier, TranslationUnit,
+};
 use rglsl_ast::{expressions, parse, print, ParseError};
 
+use crate::build::Builder;
 use crate::constants::{
     END_OF_GENERATED_HEADER, GLF_DEAD, GLF_FALSE, GLF_FUZZED, GLF_IDENTITY, GLF_MAKE_IN_BOUNDS_INT,
     GLF_MAKE_IN_BOUNDS_UINT, GLF_ONE, GLF_SWITCH, GLF_TRUE, GLF_WRAPPED_IF_FALSE,
@@ -125,6 +128,7 @@ pub fn parse_shader(source: &str) -> Result<TranslationUnit, ParseError> {
 
 pub fn expand_macros(unit: &TranslationUnit) -> TranslationUnit {
     let mut expanded = unit.clone();
+    let mut builder = Builder::new(expanded.next_id());
     rewrite_expressions(&mut expanded, &mut |expression| {
         let Some(name) = macro_name(expression) else {
             return;
@@ -139,6 +143,8 @@ pub fn expand_macros(unit: &TranslationUnit) -> TranslationUnit {
             None
         };
         let Some((position, parenthesize)) = keep else {
+            let unsigned = name == GLF_MAKE_IN_BOUNDS_UINT;
+            expand_in_bounds(expression, unsigned, &mut builder);
             return;
         };
         let ExpressionKind::FunctionCall(call) = &expression.kind else {
@@ -161,5 +167,26 @@ pub fn expand_macros(unit: &TranslationUnit) -> TranslationUnit {
             argument
         };
     });
-    expanded
+    TranslationUnit::new(expanded.external_declarations, builder.next_id())
+}
+
+fn expand_in_bounds(expression: &mut Expression, unsigned: bool, builder: &mut Builder) {
+    let ExpressionKind::FunctionCall(call) = &mut expression.kind else {
+        return;
+    };
+    if call.arguments.len() != 2 {
+        return;
+    }
+    let mut arguments = core::mem::take(&mut call.arguments).into_iter();
+    let (Some(index), Some(size)) = (arguments.next(), arguments.next()) else {
+        return;
+    };
+    let (zero, one) = if unsigned {
+        (builder.uint(0), builder.uint(1))
+    } else {
+        (builder.int(0), builder.int(1))
+    };
+    let last = builder.binary(BinaryOperator::Subtract, size, one);
+    call.function.node = FunctionIdentifier::Function(String::from("clamp"));
+    call.arguments = vec![index, zero, last];
 }
