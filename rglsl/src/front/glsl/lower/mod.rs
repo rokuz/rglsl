@@ -25,9 +25,6 @@ mod tensor;
 mod types;
 mod xfb;
 
-#[cfg(test)]
-mod tests;
-
 use alloc::{
     borrow::Cow,
     collections::{BTreeMap, BTreeSet},

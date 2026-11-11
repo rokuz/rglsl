@@ -841,3 +841,184 @@ fn the_frontend_handles_deep_preprocessor_nesting_on_a_small_stack() {
         );
     }
 }
+
+fn nested_body(prefix: &str, open: &str, core: &str, close: &str) -> impl Fn(usize) -> String {
+    let (prefix, open, core, close) = (
+        prefix.to_owned(),
+        open.to_owned(),
+        core.to_owned(),
+        close.to_owned(),
+    );
+    move |count| {
+        shader(
+            "int g(out int a) { a = 1; return 2; }",
+            &format!(
+                "{prefix}{}{core}{};",
+                open.repeat(count),
+                close.repeat(count)
+            ),
+        )
+    }
+}
+
+#[test]
+fn the_frontend_handles_deep_expressions_on_a_small_stack() {
+    let cases = [
+        ("parentheses", "b = ", "(", "b", ")"),
+        ("negation", "b = ", "-(", "b", ")"),
+        ("logical not", "t = ", "!(", "t", ")"),
+        ("bitwise not", "b = ", "~(", "b", ")"),
+        ("binary chain", "b = ", "b + (", "b", ")"),
+        ("right operand", "b = ", "b + b * (", "b", ")"),
+        ("comparison", "t = ", "t == (", "t", ")"),
+        ("logical and", "t = ", "t && (", "t", ")"),
+        (
+            "short-circuit with effects",
+            "t = ",
+            "(b++ > 0) || (",
+            "t",
+            ")",
+        ),
+        ("assignment", "", "b = (", "2", ")"),
+        ("compound assignment", "", "b += (", "2", ")"),
+        ("conditional else", "b = ", "t ? b : (", "b", ")"),
+        ("conditional then", "b = ", "t ? ", "b", " : b"),
+        (
+            "conditional with effects",
+            "b = ",
+            "b > 2 ? b++ : (",
+            "b",
+            ")",
+        ),
+        ("user call", "b = ", "f(", "b", ")"),
+        ("out argument", "b = ", "g(b) + (", "b", ")"),
+        ("built-in call", "b = ", "abs(", "b", ")"),
+        ("two-argument built-in", "b = ", "max(b, ", "b", ")"),
+        ("constructor", "b = ", "int(", "b", ")"),
+        ("vector constructor", "v = ", "vec4(", "v", ")"),
+        ("nonuniformEXT", "b = ", "nonuniformEXT(", "b", ")"),
+        ("subscript", "b = ", "c[", "0", "]"),
+        ("swizzle", "v = ", "(", "v", ").wzyx"),
+        ("increment", "b = ", "b++ + (", "b", ")"),
+        ("sequence", "b = ", "(b, ", "b", ")"),
+    ];
+    for (name, prefix, open, core, close) in cases {
+        frontend_case(
+            name,
+            nested_body(prefix, open, core, close),
+            &Lowering::Lowered,
+        );
+    }
+}
+
+#[test]
+fn the_frontend_handles_deep_statements_on_a_small_stack() {
+    let cases = [
+        ("blocks", "{ ", " }"),
+        ("if", "if (t) ", ""),
+        ("if blocks", "if (t) { ", " }"),
+        ("else if", "if (b > 3) b = 4; else ", ""),
+        ("for", "for (int i = 0; i < 2; i++) ", ""),
+        ("while", "while (t) ", ""),
+        ("do while", "do { ", " } while (b > 5);"),
+        ("switch", "switch (b) { case 1: ", " break; }"),
+        (
+            "loop control",
+            "[[unroll]] for (int i = 0; i < 2; i++) { ",
+            " }",
+        ),
+    ];
+    for (name, open, close) in cases {
+        frontend_case(
+            name,
+            nested_body("", open, "b = 2;", close),
+            &Lowering::Lowered,
+        );
+    }
+}
+
+#[test]
+fn the_frontend_handles_deep_declarations_on_a_small_stack() {
+    let initializer_lists = |count: usize| {
+        shader(
+            "",
+            &format!(
+                "int a{} = {}2{}; b = a{};",
+                "[1]".repeat(count),
+                "{".repeat(count),
+                "}".repeat(count),
+                "[0]".repeat(count)
+            ),
+        )
+    };
+    assert_eq!(
+        frontend(initializer_lists(FRONTEND_DEPTHS[0]), None),
+        Lowering::Lowered,
+        "array initializer lists"
+    );
+    frontend_case(
+        "struct chains",
+        |count| {
+            shader(
+                &struct_chain(count),
+                &format!("S{0} s; s.b = 1; S{0} r = s; b = r.b;", count - 1),
+            )
+        },
+        &Lowering::Lowered,
+    );
+    frontend_case(
+        "struct initializers",
+        |count| {
+            let mut initializer = String::from("{2}");
+            for _ in 1..count {
+                initializer = format!("{{{initializer}, 0}}");
+            }
+            shader(
+                &struct_chain(count),
+                &format!("S{} s = {initializer}; b = s.b;", count - 1),
+            )
+        },
+        &Lowering::Lowered,
+    );
+    frontend_case(
+        "struct constructors",
+        |count| {
+            let mut constructor = String::from("S0(2)");
+            for level in 1..count {
+                constructor = format!("S{level}({constructor}, 0)");
+            }
+            shader(
+                &struct_chain(count),
+                &format!("S{} s = {constructor}; b = s.b;", count - 1),
+            )
+        },
+        &Lowering::Lowered,
+    );
+    frontend_case(
+        "array dimensions",
+        |count| {
+            shader(
+                "",
+                &format!(
+                    "int a{0}; int r{0} = a; b = r.length();",
+                    "[1]".repeat(count)
+                ),
+            )
+        },
+        &Lowering::Lowered,
+    );
+    for depth in FRONTEND_DEPTHS {
+        let source = shader(
+            &format!(
+                "{}int a; {}",
+                "struct { ".repeat(depth),
+                "} a; ".repeat(depth)
+            ),
+            "",
+        );
+        assert!(
+            matches!(frontend(source, None), Lowering::Rejected(_)),
+            "inline structs at {depth}"
+        );
+    }
+}
