@@ -1639,6 +1639,10 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                 | S::Continue
                 | S::Return { .. }
                 | S::Kill
+                | S::Demote
+                | S::BeginInvocationInterlock
+                | S::EndInvocationInterlock
+                | S::SplitBarrier { .. }
                 | S::EmitVertex { .. }
                 | S::EndPrimitive { .. }
                 | S::ControlBarrier(_)

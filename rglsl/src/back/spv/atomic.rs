@@ -113,6 +113,28 @@ impl super::Writer {
         }
     }
 
+    pub(super) fn write_split_barrier(
+        &mut self,
+        phase: crate::BarrierPhase,
+        execution: MemoryScope,
+        memory: MemoryScope,
+        semantics: MemorySemantics,
+        block: &mut Block,
+    ) -> Result<(), Error> {
+        self.use_extension("SPV_EXT_split_barrier");
+        self.require_any("split barriers", &[spirv::Capability::SplitBarrierINTEL])?;
+        let execution_id = self.write_memory_scope(execution);
+        let memory_id = self.write_memory_scope(memory);
+        let semantics_id = self.write_memory_semantics(semantics);
+        block.body.push(Instruction::split_barrier(
+            phase,
+            execution_id,
+            memory_id,
+            semantics_id,
+        ));
+        Ok(())
+    }
+
     pub(super) fn write_scoped_barrier(
         &mut self,
         execution: Option<MemoryScope>,

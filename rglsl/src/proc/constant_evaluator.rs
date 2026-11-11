@@ -1405,6 +1405,9 @@ impl<'a> ConstantEvaluator<'a> {
                 Err(ConstantEvaluatorError::RayQueryExpression)
             }
             Expression::SubgroupBallotResult => Err(ConstantEvaluatorError::SubgroupExpression),
+            Expression::IsHelperInvocation => Err(ConstantEvaluatorError::NotImplemented(
+                String::from("helper invocation query"),
+            )),
             Expression::SubgroupOperationResult { .. } => {
                 Err(ConstantEvaluatorError::SubgroupExpression)
             }

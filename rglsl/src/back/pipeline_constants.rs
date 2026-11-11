@@ -760,6 +760,7 @@ fn adjust_expr(new_pos: &HandleVec<Expression, Handle<Expression>>, expr: &mut E
         }
         | Expression::WorkGroupUniformLoadResult { ty: _ }
         | Expression::SubgroupBallotResult
+        | Expression::IsHelperInvocation
         | Expression::SubgroupOperationResult { .. }
         | Expression::SpirvInstructionResult { .. } => {}
         Expression::CooperativeLoad { ref mut data, .. } => {
@@ -1191,6 +1192,10 @@ fn adjust_stmt(new_pos: &HandleVec<Expression, Handle<Expression>>, stmt: &mut S
         Statement::Break
         | Statement::Continue
         | Statement::Kill
+        | Statement::Demote
+        | Statement::BeginInvocationInterlock
+        | Statement::EndInvocationInterlock
+        | Statement::SplitBarrier { .. }
         | Statement::EmitVertex { .. }
         | Statement::EndPrimitive { .. }
         | Statement::ControlBarrier(_)

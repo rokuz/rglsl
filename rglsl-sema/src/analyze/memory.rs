@@ -26,6 +26,8 @@ enum Kind {
     Load,
     Store,
     ControlBarrier,
+    BarrierArrive,
+    BarrierWait,
     MemoryBarrier,
 }
 
@@ -66,6 +68,8 @@ fn shape(name: &str) -> Option<Shape> {
         "atomicAdd" | "atomicMin" | "atomicMax" | "atomicAnd" | "atomicOr" | "atomicXor"
         | "atomicExchange" => (Kind::Modify, 2, 3),
         "controlBarrier" => (Kind::ControlBarrier, 0, 2),
+        "controlBarrierArrive" => (Kind::BarrierArrive, 0, 2),
+        "controlBarrierWait" => (Kind::BarrierWait, 0, 2),
         "memoryBarrier" => (Kind::MemoryBarrier, 0, 1),
         _ => return None,
     };
@@ -135,7 +139,10 @@ impl Analyzer<'_> {
                 return true;
             };
             let scoped = match shape.kind {
-                Kind::ControlBarrier | Kind::MemoryBarrier => !operands.is_empty(),
+                Kind::ControlBarrier
+                | Kind::BarrierArrive
+                | Kind::BarrierWait
+                | Kind::MemoryBarrier => !operands.is_empty(),
                 Kind::Modify | Kind::CompareSwap | Kind::Load | Kind::Store => operands.len() > 3,
             };
             (shape, scoped)
@@ -225,6 +232,20 @@ impl Analyzer<'_> {
                 "Semantics must be gl_SemanticsRelease, gl_SemanticsAcquire, or gl_SemanticsAcquireRelease when used with non-zero storage class semantics",
             );
         }
+        if storage != 0 {
+            if shape.kind == Kind::BarrierArrive && semantics & !MAKE_AVAILABLE != RELEASE {
+                report(
+                    self,
+                    "Semantics must be gl_SemanticsRelease (optionally with gl_SemanticsMakeAvailable) when used with non-zero storage class semantics",
+                );
+            }
+            if shape.kind == Kind::BarrierWait && semantics & !MAKE_VISIBLE != ACQUIRE {
+                report(
+                    self,
+                    "Semantics must be gl_SemanticsAcquire (optionally with gl_SemanticsMakeVisible) when used with non-zero storage class semantics",
+                );
+            }
+        }
         let available = |semantics: i64| {
             semantics & MAKE_AVAILABLE != 0 && semantics & (RELEASE | ACQUIRE_RELEASE) == 0
         };
@@ -273,6 +294,18 @@ impl Analyzer<'_> {
             report(
                 self,
                 "gl_SemanticsVolatile must not be used with memoryBarrier or controlBarrier",
+            );
+        }
+        if shape.kind == Kind::BarrierArrive && semantics & VOLATILE != 0 {
+            report(
+                self,
+                "gl_SemanticsVolatile must not be used with controlBarrierArrive",
+            );
+        }
+        if shape.kind == Kind::BarrierWait && semantics & VOLATILE != 0 {
+            report(
+                self,
+                "gl_SemanticsVolatile must not be used with controlBarrierWait",
             );
         }
         if shape.kind == Kind::CompareSwap {

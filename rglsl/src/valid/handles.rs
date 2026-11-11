@@ -807,6 +807,7 @@ impl super::Validator {
             | crate::Expression::RayQueryProceedResult
             | crate::Expression::ReportIntersectionResult
             | crate::Expression::SubgroupBallotResult
+            | crate::Expression::IsHelperInvocation
             | crate::Expression::SubgroupOperationResult { .. }
             | crate::Expression::SpirvInstructionResult { .. }
             | crate::Expression::WorkGroupUniformLoadResult { .. } => (),
@@ -1255,6 +1256,10 @@ impl super::Validator {
             crate::Statement::Break
             | crate::Statement::Continue
             | crate::Statement::Kill
+            | crate::Statement::Demote
+            | crate::Statement::BeginInvocationInterlock
+            | crate::Statement::EndInvocationInterlock
+            | crate::Statement::SplitBarrier { .. }
             | crate::Statement::EmitVertex { .. }
             | crate::Statement::EndPrimitive { .. }
             | crate::Statement::ControlBarrier(_)

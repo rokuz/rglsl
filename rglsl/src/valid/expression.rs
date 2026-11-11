@@ -1735,6 +1735,7 @@ impl super::Validator {
                 }
             },
             E::SubgroupBallotResult | E::SubgroupOperationResult { .. } => self.subgroup_stages,
+            E::IsHelperInvocation => ShaderStages::FRAGMENT,
             E::SpirvInstructionResult { .. } => ShaderStages::all(),
             E::CooperativeLoad { ref data, .. } => {
                 if resolver[data.pointer]

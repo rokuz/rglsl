@@ -2036,6 +2036,14 @@ impl BlockContext<'_> {
             | crate::Expression::SubgroupBallotResult
             | crate::Expression::SubgroupOperationResult { .. }
             | crate::Expression::SpirvInstructionResult { .. } => self.cached.get(expr_handle)?,
+            crate::Expression::IsHelperInvocation => {
+                self.writer.require_demote()?;
+                let id = self.gen_id();
+                block
+                    .body
+                    .push(Instruction::is_helper_invocation(result_type_id, id));
+                id
+            }
             crate::Expression::As {
                 expr,
                 kind,
@@ -4185,6 +4193,25 @@ impl BlockContext<'_> {
                 Statement::Kill => {
                     self.function.consume(block, Instruction::kill());
                     return Ok(BlockExitDisposition::Discarded);
+                }
+                Statement::Demote => {
+                    self.writer.require_demote()?;
+                    block.body.push(Instruction::demote_to_helper_invocation());
+                }
+                Statement::BeginInvocationInterlock => {
+                    block.body.push(Instruction::invocation_interlock(true));
+                }
+                Statement::EndInvocationInterlock => {
+                    block.body.push(Instruction::invocation_interlock(false));
+                }
+                Statement::SplitBarrier {
+                    phase,
+                    execution,
+                    memory,
+                    semantics,
+                } => {
+                    self.writer
+                        .write_split_barrier(phase, execution, memory, semantics, &mut block)?;
                 }
                 Statement::EmitVertex { stream } => {
                     self.write_primitive_operation(&mut block, true, stream)?;

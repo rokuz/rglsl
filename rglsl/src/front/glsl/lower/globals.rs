@@ -220,6 +220,20 @@ fn builtin_of(name: &str) -> Option<BuiltIn> {
         "gl_PointCoord" => BuiltIn::PointCoord,
         "gl_PrimitiveID" => BuiltIn::PrimitiveIndex,
         "gl_SampleID" => BuiltIn::SampleIndex,
+        "gl_SamplePosition" => BuiltIn::SamplePosition,
+        "gl_HelperInvocation" => BuiltIn::HelperInvocation,
+        "gl_BaseVertexARB" => BuiltIn::BaseVertex,
+        "gl_BaseInstanceARB" => BuiltIn::BaseInstance,
+        "gl_DrawIDARB" => BuiltIn::DrawIndex,
+        "gl_DeviceIndex" => BuiltIn::DeviceIndex,
+        "gl_PrimitiveShadingRateEXT" => BuiltIn::PrimitiveShadingRate,
+        "gl_ShadingRateEXT" => BuiltIn::ShadingRate,
+        "gl_FragSizeEXT" => BuiltIn::FragSize { nv: false },
+        "gl_FragInvocationCountEXT" => BuiltIn::FragInvocationCount { nv: false },
+        "gl_FragmentSizeNV" => BuiltIn::FragSize { nv: true },
+        "gl_InvocationsPerPixelNV" => BuiltIn::FragInvocationCount { nv: true },
+        "gl_FragFullyCoveredNV" => BuiltIn::FullyCovered,
+        "gl_FragStencilRefARB" => BuiltIn::FragStencilRef,
         "gl_NumWorkGroups" => BuiltIn::NumWorkGroups,
         "gl_WorkGroupID" => BuiltIn::WorkGroupId,
         "gl_LocalInvocationID" => BuiltIn::LocalInvocationId,
@@ -538,7 +552,6 @@ impl<'a> Lowerer<'a> {
                         "early_fragment_tests" => self.early_fragment_tests = true,
                         "quad_derivatives" => self.quad_control.quad_derivatives = true,
                         "full_quads" => self.quad_control.require_full_quads = true,
-                        "post_depth_coverage" => self.post_depth_coverage = Some(at),
                         "local_size_x" | "local_size_y" | "local_size_z" => {
                             let value = xfb::ast_layout_value(self, Some(qualifier), name);
                             let index = match name {
@@ -2140,16 +2153,14 @@ impl<'a> Lowerer<'a> {
                 }
             }
         }
-        if let Some(at) = self.post_depth_coverage {
-            let implied = self
-                .analysis
-                .extensions
-                .contains("GL_ARB_post_depth_coverage");
-            self.errors.push(if self.early_fragment_tests || implied {
-                unsupported("the `post_depth_coverage` layout qualifier", at)
-            } else {
-                semantic("post_depth_coverage requires early_fragment_tests", at)
-            });
+        let fragment = self.analysis.fragment;
+        if fragment.post_depth_coverage
+            && !(self.early_fragment_tests || fragment.early_fragment_tests)
+        {
+            self.errors.push(semantic(
+                "post_depth_coverage requires early_fragment_tests",
+                Span::UNDEFINED,
+            ));
         }
         self.check_shared_layouts();
         self.finish_xfb();

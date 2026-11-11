@@ -1025,6 +1025,9 @@ impl<'a> ResolveContext<'a> {
                     vertex_return: false,
                 })
             }
+            crate::Expression::IsHelperInvocation => {
+                TypeResolution::Value(Ti::Scalar(crate::Scalar::BOOL))
+            }
             crate::Expression::SubgroupBallotResult => TypeResolution::Value(Ti::Vector {
                 scalar: crate::Scalar::U32,
                 size: crate::VectorSize::Quad,

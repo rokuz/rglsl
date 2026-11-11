@@ -460,6 +460,9 @@ impl Analyzer<'_> {
         if is_builtin && name == "barrier" {
             self.tessellation_barrier(span);
         }
+        if is_builtin {
+            self.interlock_call(span, name);
+        }
         let first_argument = arguments.first().map_or(span, |argument| argument.span);
         let mut failed = false;
         if function.spirv_instruction.is_some() {
@@ -722,6 +725,9 @@ impl Analyzer<'_> {
         }
         self.mesh_function_extension(span, name);
         if let Some(extension) = super::qcom::function_extension(name) {
+            self.require_extension(span, extension, name);
+        }
+        if let Some(extension) = super::fragment::function_extension(name) {
             self.require_extension(span, extension, name);
         }
         self.texture_extensions(span, name);

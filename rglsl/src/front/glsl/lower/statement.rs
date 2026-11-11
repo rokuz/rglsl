@@ -80,6 +80,7 @@ impl FunctionLowerer<'_, '_> {
                         JumpStatement::Break => IrStatement::Break,
                         JumpStatement::Continue => IrStatement::Continue,
                         JumpStatement::Discard => IrStatement::Kill,
+                        JumpStatement::Demote => IrStatement::Demote,
                         JumpStatement::TerminateRay => IrStatement::RayPipelineFunction(
                             crate::RayPipelineFunction::TerminateRay { nv: false },
                         ),

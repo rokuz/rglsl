@@ -312,10 +312,23 @@ impl FunctionLowerer<'_, '_> {
             | "memoryBarrierShared"
             | "memoryBarrierImage"
             | "groupMemoryBarrier"
-            | "controlBarrier" => {
+            | "controlBarrier"
+            | "controlBarrierArrive"
+            | "controlBarrierWait" => {
                 self.barrier(name, arguments, at)?;
                 Ok(None)
             }
+            "beginInvocationInterlockARB" | "endInvocationInterlockARB" => {
+                self.flush();
+                let statement = if name == "beginInvocationInterlockARB" {
+                    Statement::BeginInvocationInterlock
+                } else {
+                    Statement::EndInvocationInterlock
+                };
+                self.push(statement, at);
+                Ok(None)
+            }
+            "helperInvocationEXT" => self.add(Expression::IsHelperInvocation, at).map(Some),
             "SetMeshOutputsEXT" | "EmitMeshTasksEXT" | "writePackedPrimitiveIndices4x8NV" => {
                 self.mesh_statement(name, arguments, at)?;
                 Ok(None)

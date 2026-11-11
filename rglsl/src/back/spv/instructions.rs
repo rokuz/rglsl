@@ -1105,6 +1105,41 @@ impl super::Instruction {
         Self::new(Op::Kill)
     }
 
+    pub(super) const fn demote_to_helper_invocation() -> Self {
+        Self::new(Op::DemoteToHelperInvocation)
+    }
+
+    pub(super) fn is_helper_invocation(result_type_id: Word, id: Word) -> Self {
+        let mut instruction = Self::new(Op::IsHelperInvocationEXT);
+        instruction.set_type(result_type_id);
+        instruction.set_result(id);
+        instruction
+    }
+
+    pub(super) const fn invocation_interlock(begin: bool) -> Self {
+        Self::new(if begin {
+            Op::BeginInvocationInterlockEXT
+        } else {
+            Op::EndInvocationInterlockEXT
+        })
+    }
+
+    pub(super) fn split_barrier(
+        phase: crate::BarrierPhase,
+        exec_scope_id: Word,
+        mem_scope_id: Word,
+        semantics_id: Word,
+    ) -> Self {
+        let mut instruction = Self::new(match phase {
+            crate::BarrierPhase::Arrive => Op::ControlBarrierArriveINTEL,
+            crate::BarrierPhase::Wait => Op::ControlBarrierWaitINTEL,
+        });
+        instruction.add_operand(exec_scope_id);
+        instruction.add_operand(mem_scope_id);
+        instruction.add_operand(semantics_id);
+        instruction
+    }
+
     pub(super) const fn return_void() -> Self {
         Self::new(Op::Return)
     }

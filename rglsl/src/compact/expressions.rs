@@ -81,6 +81,7 @@ impl ExpressionTracer<'_> {
             | Ex::FunctionArgument(_)
             | Ex::LocalVariable(_)
             | Ex::SubgroupBallotResult
+            | Ex::IsHelperInvocation
             | Ex::RayQueryProceedResult
             | Ex::ReportIntersectionResult => {}
 
@@ -409,6 +410,7 @@ impl ModuleMap {
             | Ex::FunctionArgument(_)
             | Ex::LocalVariable(_)
             | Ex::SubgroupBallotResult
+            | Ex::IsHelperInvocation
             | Ex::RayQueryProceedResult
             | Ex::ReportIntersectionResult => {}
 

@@ -325,6 +325,26 @@ void controlBarrier(int, int, int, int)
 void memoryBarrier(int, int, int)
 ";
 
+const SPLIT_BARRIERS: &str = "
+void controlBarrierArrive(int, int, int, int)
+void controlBarrierWait(int, int, int, int)
+";
+
+const COMPUTE_SPLIT_BARRIERS: &str = "
+void controlBarrierArrive()
+void controlBarrierWait()
+";
+
+const FRAGMENT_ONLY: &str = "
+void beginInvocationInterlockARB()
+void endInvocationInterlockARB()
+bool helperInvocationEXT()
+uint stencilAttachmentReadEXT()
+uint stencilAttachmentReadEXT(int)
+float depthAttachmentReadEXT()
+float depthAttachmentReadEXT(int)
+";
+
 const COMPUTE_MEMORY_BARRIERS: &str = "
 void memoryBarrierShared()
 void groupMemoryBarrier()
@@ -559,6 +579,9 @@ pub(super) const SECTIONS: &[Section] = &[
     Section::new(BARRIER).in_stages(TESS_CONTROL | COMPUTE | MESH | TASK),
     Section::new(MEMORY_BARRIERS).in_stages(ALL_STAGES),
     Section::new(SCOPED_BARRIERS),
+    Section::new(SPLIT_BARRIERS),
+    Section::new(COMPUTE_SPLIT_BARRIERS).in_stages(COMPUTE),
+    Section::new(FRAGMENT_ONLY).in_stages(FRAGMENT),
     Section::new(COMPUTE_MEMORY_BARRIERS).in_stages(COMPUTE | MESH | TASK),
     Section::new(MESH_SHADER).in_stages(MESH),
     Section::new(TASK_SHADER).in_stages(TASK),

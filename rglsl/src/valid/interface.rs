@@ -771,6 +771,35 @@ impl VaryingContext<'_> {
                             )
                         }
                     }
+                    Bi::SamplePosition => (
+                        self.stage == St::Fragment && !self.output,
+                        *ty_inner
+                            == Ti::Vector {
+                                size: Vs::Bi,
+                                scalar: crate::Scalar::F32,
+                            },
+                    ),
+                    Bi::HelperInvocation | Bi::FullyCovered => (
+                        self.stage == St::Fragment && !self.output,
+                        *ty_inner == Ti::Scalar(crate::Scalar::BOOL),
+                    ),
+                    Bi::DeviceIndex => (!self.output, is_index_type(ty_inner)),
+                    Bi::ShadingRate | Bi::FragInvocationCount { .. } => (
+                        self.stage == St::Fragment && !self.output,
+                        *ty_inner == Ti::Scalar(crate::Scalar::I32),
+                    ),
+                    Bi::FragSize { .. } => (
+                        self.stage == St::Fragment && !self.output,
+                        *ty_inner
+                            == Ti::Vector {
+                                size: Vs::Bi,
+                                scalar: crate::Scalar::I32,
+                            },
+                    ),
+                    Bi::FragStencilRef => (
+                        self.stage == St::Fragment && self.output,
+                        *ty_inner == Ti::Scalar(crate::Scalar::I32),
+                    ),
                     Bi::PrimitiveShadingRate => (
                         pre_rasterization_output,
                         *ty_inner == Ti::Scalar(crate::Scalar::I32),

@@ -459,12 +459,13 @@ impl<'a> Lowerer<'a> {
         } else {
             ([0; 3], None)
         };
-        let early_depth_test = if self.early_fragment_tests {
-            Some(EarlyDepthTest::Force)
-        } else {
-            self.conservative_depth
-                .map(|conservative| EarlyDepthTest::Allow { conservative })
-        };
+        let early_depth_test =
+            if self.early_fragment_tests || self.analysis.fragment.early_fragment_tests {
+                Some(EarlyDepthTest::Force)
+            } else {
+                self.conservative_depth
+                    .map(|conservative| EarlyDepthTest::Allow { conservative })
+            };
         let opacity_micromap = self.opacity_micromap(at)?;
         let spirv_execution_modes = self.spirv_execution_modes(at)?;
         let (geometry, tessellation) = self.stage_info();
@@ -482,6 +483,7 @@ impl<'a> Lowerer<'a> {
             transform_feedback: self.xfb.mode,
             opacity_micromap,
             quad_control: self.quad_control,
+            fragment_modes: self.fragment_modes(),
             geometry,
             tessellation,
             mesh_shader: self.mesh_shader_info(),
@@ -490,6 +492,29 @@ impl<'a> Lowerer<'a> {
             spirv_execution_modes,
         });
         Ok(())
+    }
+
+    fn fragment_modes(&self) -> crate::FragmentModes {
+        let layout = self.analysis.fragment;
+        crate::FragmentModes {
+            post_depth_coverage: layout.post_depth_coverage,
+            interlock: layout.interlock.map(|interlock| {
+                use rglsl_sema::Interlock as I;
+                crate::Interlock {
+                    scope: match interlock {
+                        I::PixelOrdered | I::PixelUnordered => crate::InterlockScope::Pixel,
+                        I::SampleOrdered | I::SampleUnordered => crate::InterlockScope::Sample,
+                        I::ShadingRateOrdered | I::ShadingRateUnordered => {
+                            crate::InterlockScope::ShadingRate
+                        }
+                    },
+                    ordered: interlock.is_ordered(),
+                }
+            }),
+            non_coherent_color_attachment_read: layout.non_coherent_color_attachment_read,
+            non_coherent_depth_attachment_read: layout.non_coherent_depth_attachment_read,
+            non_coherent_stencil_attachment_read: layout.non_coherent_stencil_attachment_read,
+        }
     }
 
     fn derivative_group(&self) -> Option<crate::DerivativeGroup> {

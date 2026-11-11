@@ -135,6 +135,7 @@ impl Analyzer<'_> {
         }
         self.record_buffer_defaults(&qualifiers);
         self.standalone_stage_layout(&qualifiers);
+        self.fragment_layouts(&qualifiers);
         self.task_payload_type_only(qualifier.span, &qualifiers);
         if qualifiers.storage == Storage::Out {
             self.resize_mesh_arrays(qualifier.span);

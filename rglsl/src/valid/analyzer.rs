@@ -930,6 +930,10 @@ impl FunctionInfo {
                     .or(self.add_ref(barycentric)),
                 requirements: UniformityRequirements::empty(),
             },
+            E::IsHelperInvocation => Uniformity {
+                non_uniform_result: Some(handle),
+                requirements: UniformityRequirements::empty(),
+            },
             E::SubgroupBallotResult => Uniformity {
                 non_uniform_result: Some(handle),
                 requirements: UniformityRequirements::empty(),
@@ -1155,15 +1159,19 @@ impl FunctionInfo {
                         ExitFlags::empty()
                     },
                 },
-                S::ControlBarrier(_) | S::MemoryBarrier(_) | S::ScopedBarrier { .. } => {
-                    FunctionUniformity {
-                        result: Uniformity {
-                            non_uniform_result: None,
-                            requirements: UniformityRequirements::WORK_GROUP_BARRIER,
-                        },
-                        exit: ExitFlags::empty(),
-                    }
+                S::Demote | S::BeginInvocationInterlock | S::EndInvocationInterlock => {
+                    FunctionUniformity::new()
                 }
+                S::ControlBarrier(_)
+                | S::MemoryBarrier(_)
+                | S::ScopedBarrier { .. }
+                | S::SplitBarrier { .. } => FunctionUniformity {
+                    result: Uniformity {
+                        non_uniform_result: None,
+                        requirements: UniformityRequirements::WORK_GROUP_BARRIER,
+                    },
+                    exit: ExitFlags::empty(),
+                },
                 S::WorkGroupUniformLoad { pointer, .. } => {
                     let _condition_nur = self.add_ref(pointer);
 

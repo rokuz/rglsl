@@ -1230,9 +1230,8 @@ impl super::Validator {
                             | Ex::CooperativeVectorLoad { .. }
                             | Ex::CooperativeVectorMatMul { .. }
                             | Ex::TensorRead { .. }
-                            | Ex::TensorQuerySize { .. } => {
-                                self.emit_expression(handle, context)?
-                            }
+                            | Ex::TensorQuerySize { .. }
+                            | Ex::IsHelperInvocation => self.emit_expression(handle, context)?,
                             Ex::CallResult(_)
                             | Ex::AtomicResult { .. }
                             | Ex::WorkGroupUniformLoadResult { .. }
@@ -1440,9 +1439,10 @@ impl super::Validator {
                         }
                     }
                 }
-                S::Kill => {
+                S::Kill | S::Demote | S::BeginInvocationInterlock | S::EndInvocationInterlock => {
                     stages &= super::ShaderStages::FRAGMENT;
                 }
+                S::SplitBarrier { .. } => {}
                 S::EmitVertex { .. } | S::EndPrimitive { .. } => {
                     stages &= super::ShaderStages::GEOMETRY;
                 }

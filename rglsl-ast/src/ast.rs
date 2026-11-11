@@ -1012,6 +1012,7 @@ pub enum JumpStatement {
     Break,
     Return(Option<Expression>),
     Discard,
+    Demote,
     TerminateRay,
     IgnoreIntersection,
 }

@@ -1255,6 +1255,7 @@ impl<'a> Parser<'a> {
             TokenKind::Word("continue") => self.parse_jump(JumpStatement::Continue),
             TokenKind::Word("break") => self.parse_jump(JumpStatement::Break),
             TokenKind::Word("discard") => self.parse_jump(JumpStatement::Discard),
+            TokenKind::Word("demote") => self.parse_jump(JumpStatement::Demote),
             TokenKind::Word("terminateRayEXT") => self.parse_jump(JumpStatement::TerminateRay),
             TokenKind::Word("ignoreIntersectionEXT") => {
                 self.parse_jump(JumpStatement::IgnoreIntersection)

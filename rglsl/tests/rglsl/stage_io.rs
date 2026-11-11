@@ -201,6 +201,7 @@ impl Builder {
             transform_feedback: false,
             opacity_micromap: None,
             quad_control: rglsl::QuadControl::default(),
+            fragment_modes: rglsl::FragmentModes::default(),
             geometry: None,
             tessellation: None,
             mesh_shader: None,

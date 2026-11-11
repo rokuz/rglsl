@@ -38,6 +38,52 @@ in int gl_DrawID
 ",
     },
     Group {
+        stages: VERTEX,
+        since: 450,
+        text: "
+in int gl_BaseVertexARB
+in int gl_BaseInstanceARB
+in int gl_DrawIDARB
+",
+    },
+    Group {
+        stages: VERTEX
+            | TESS_CONTROL
+            | TESS_EVALUATION
+            | GEOMETRY
+            | COMPUTE
+            | RAY_GENERATION
+            | INTERSECTION
+            | ANY_HIT
+            | CLOSEST_HIT
+            | MISS,
+        since: 450,
+        text: "
+in int gl_DeviceIndex
+",
+    },
+    Group {
+        stages: VERTEX | GEOMETRY,
+        since: 450,
+        text: "
+out int gl_PrimitiveShadingRateEXT
+",
+    },
+    Group {
+        stages: FRAGMENT,
+        since: 450,
+        text: "
+flat in int gl_DeviceIndex
+flat in ivec2 gl_FragSizeEXT
+flat in int gl_FragInvocationCountEXT
+in bool gl_FragFullyCoveredNV
+flat in ivec2 gl_FragmentSizeNV
+flat in int gl_InvocationsPerPixelNV
+flat in int gl_ShadingRateEXT
+out int gl_FragStencilRefARB
+",
+    },
+    Group {
         stages: VERTEX | TESS_CONTROL | TESS_EVALUATION,
         since: 450,
         text: "
@@ -358,6 +404,33 @@ const MESH_BLOCKS: [(&str, &str, &str, bool); 4] = [
     ),
 ];
 
+const SHADING_RATE_CONSTANTS: [(&str, i32); 4] = [
+    ("gl_ShadingRateFlag2VerticalPixelsEXT", 1),
+    ("gl_ShadingRateFlag4VerticalPixelsEXT", 2),
+    ("gl_ShadingRateFlag2HorizontalPixelsEXT", 4),
+    ("gl_ShadingRateFlag4HorizontalPixelsEXT", 8),
+];
+
+pub fn variable_extension(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "gl_BaseVertexARB" | "gl_BaseInstanceARB" | "gl_DrawIDARB" => {
+            "GL_ARB_shader_draw_parameters"
+        }
+        "gl_DeviceIndex" => "GL_EXT_device_group",
+        "gl_PrimitiveShadingRateEXT"
+        | "gl_ShadingRateEXT"
+        | "gl_ShadingRateFlag2VerticalPixelsEXT"
+        | "gl_ShadingRateFlag4VerticalPixelsEXT"
+        | "gl_ShadingRateFlag2HorizontalPixelsEXT"
+        | "gl_ShadingRateFlag4HorizontalPixelsEXT" => "GL_EXT_fragment_shading_rate",
+        "gl_FragSizeEXT" | "gl_FragInvocationCountEXT" => "GL_EXT_fragment_invocation_density",
+        "gl_FragmentSizeNV" | "gl_InvocationsPerPixelNV" => "GL_NV_shading_rate_image",
+        "gl_FragFullyCoveredNV" => "GL_NV_conservative_raster_underestimation",
+        "gl_FragStencilRefARB" => "GL_ARB_shader_stencil_export",
+        _ => return None,
+    })
+}
+
 pub fn view_extension(name: &str) -> Option<&'static str> {
     Some(match name {
         "gl_ViewIndex" => "GL_EXT_multiview",
@@ -669,6 +742,9 @@ pub(super) fn build(
         .into_iter()
         .chain(COOPERATIVE_CONSTANTS)
     {
+        builder.constant(name, Type::INT, alloc::vec![Value::Int(value)]);
+    }
+    for (name, value) in SHADING_RATE_CONSTANTS {
         builder.constant(name, Type::INT, alloc::vec![Value::Int(value)]);
     }
     for (name, value) in TENSOR_OPERAND_CONSTANTS {

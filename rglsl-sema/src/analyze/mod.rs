@@ -5,6 +5,7 @@ mod cooperative_matrix2;
 mod declaration;
 mod expression;
 mod extension;
+mod fragment;
 mod heap;
 mod memory;
 mod mesh;
@@ -112,6 +113,7 @@ pub struct Analysis {
     pub promote_uint32_indices: bool,
     pub primitive_culling: bool,
     pub derivative_group: Option<(DerivativeGroup, bool)>,
+    pub fragment: FragmentLayout,
     pub spirv_requirements: SpirvRequirements,
     pub spirv_execution_modes: SpirvExecutionModes,
 }
@@ -163,6 +165,7 @@ fn symbol_type(symbols: &[Symbol], types: &TypeRegistry, id: SymbolId) -> Option
     }
 }
 
+pub use fragment::{FragmentLayout, Interlock};
 pub use ray::is_shader_record;
 
 pub fn analyze(unit: &TranslationUnit, options: &Options) -> Analysis {
@@ -336,6 +339,7 @@ pub(crate) struct Analyzer<'a> {
     pub ray_locations: [Vec<u32>; 3],
     pub primitive_culling: bool,
     pub stage_layout: stage::StageLayout,
+    pub fragment_layout: FragmentLayout,
     pub spirv_requirements: SpirvRequirements,
     pub spirv_execution_modes: SpirvExecutionModes,
 }
@@ -408,6 +412,7 @@ impl<'a> Analyzer<'a> {
             ray_locations: [Vec::new(), Vec::new(), Vec::new()],
             primitive_culling: false,
             stage_layout: stage::StageLayout::default(),
+            fragment_layout: FragmentLayout::default(),
             spirv_requirements: SpirvRequirements::default(),
             spirv_execution_modes: SpirvExecutionModes::new(),
         }
@@ -599,6 +604,7 @@ impl<'a> Analyzer<'a> {
             promote_uint32_indices: self.promote_uint32_indices,
             primitive_culling: self.primitive_culling,
             derivative_group: self.derivative_group,
+            fragment: self.fragment_layout,
             spirv_requirements: self.spirv_requirements,
             spirv_execution_modes: self.spirv_execution_modes,
         }
