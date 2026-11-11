@@ -384,7 +384,9 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
 - **No panics in the front ends.** The SPIR-V front end returns an error where upstream
   panicked on malformed input or a broken invariant (`front/spv`: the new `Error` variants
   `InvalidImageCoordinateType`, `Layout` and `InternalError`; `atomic_upgrade::Error::
-  StructNotAccessedAtomically`). `ParseErrors::emit_to_writer*`/`emit_to_stderr*` (GLSL) and
+  StructNotAccessedAtomically`). An `OpExecutionMode LocalSize` without three operands, an `OpCompositeInsert` index
+  past the composite's last component (`InvalidAccessIndex`) and an `OpCompositeConstruct`
+  without constituents no longer panic. `ParseErrors::emit_to_writer*`/`emit_to_stderr*` (GLSL) and
   `spv::Error::emit_to_writer*` return the rendering error instead of panicking, and
   `emit_to_string*` falls back to the plain message when the source location cannot be
   rendered. `VertexFormat::min_acceleration_structure_vertex_stride` and
