@@ -164,6 +164,7 @@ fn symbol_type(symbols: &[Symbol], types: &TypeRegistry, id: SymbolId) -> Option
     }
 }
 
+pub use declaration::is_null_initializer;
 pub use ray::is_shader_record;
 
 pub fn analyze(unit: &TranslationUnit, options: &Options) -> Analysis {

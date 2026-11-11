@@ -5551,3 +5551,22 @@ void main() {}
 layout(push_constant, bank = 15) uniform A { uint a; } a;
 layout(push_constant, bank = 1, member_offset = -4) uniform B { uint b; } b;
 void main() {}
+### null initializer needs its extension | comp | 3:ExtensionRequired
+layout(local_size_x=1) in;
+shared float f = {};
+void main() {}
+### null initializers | comp | ok
+#extension GL_EXT_null_initializer : enable
+layout(local_size_x=1) in;
+struct S { vec3 v[4]; int a; };
+shared S s = {};
+shared float f = {};
+const float c = {};
+S g = {};
+void main() { S local = {}; local.a += int(c); }
+### null initializer of an unsized array | comp | 5:InvalidNullInitializer
+#extension GL_EXT_null_initializer : enable
+layout(local_size_x=1) in;
+void main() {
+    float a[] = {};
+}

@@ -599,6 +599,10 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   `Output` global with a raw `BuiltIn` decoration (`proc::has_spirv_built_in`) needs no binding.
   The SPIR-V backend writes them in `back/spv/intrinsics.rs`.
 
+- **Workgroup variables may be null-initialized.** A `WorkGroup` global may have an
+  initializer when it is a `ZeroValue` (`GL_EXT_null_initializer`'s `shared T x = {};`); the
+  SPIR-V backend writes it as `OpConstantNull`, as glslang does.
+
 - **Push constant banks** (`GL_NV_push_constant_bank`). `GlobalVariable::immediate_bank`
   (`ImmediateBank { bank, member_offset }`), written as `BankNV` on the variable and its block
   type and `MemberOffsetNV` on the variable, with `PushConstantBanksNV`. An entry point may use

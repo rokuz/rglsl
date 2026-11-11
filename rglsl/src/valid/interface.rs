@@ -1797,6 +1797,11 @@ impl super::Validator {
         if let Some(init) = var.init {
             match var.space {
                 crate::AddressSpace::Private | crate::AddressSpace::Function => {}
+                crate::AddressSpace::WorkGroup
+                    if matches!(
+                        gctx.global_expressions[init],
+                        crate::Expression::ZeroValue(_)
+                    ) => {}
                 _ => {
                     return Err(GlobalVariableError::InitializerNotAllowed(var.space));
                 }

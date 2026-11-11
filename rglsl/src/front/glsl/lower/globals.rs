@@ -682,13 +682,24 @@ impl<'a> Lowerer<'a> {
             Storage::TaskPayloadShared => self.task_payload_variable(symbol, name, at),
             Storage::Shared => {
                 let ir = self.ir_type(ty, at)?;
+                let init = declarator
+                    .initializer
+                    .as_ref()
+                    .filter(|initializer| {
+                        rglsl_sema::analyze::is_null_initializer(&initializer.node)
+                    })
+                    .map(|_| {
+                        self.module
+                            .global_expressions
+                            .append(crate::Expression::ZeroValue(ir), at)
+                    });
                 let handle = self.module.global_variables.append(
                     GlobalVariable {
                         name: Some(name),
                         space: AddressSpace::WorkGroup,
                         binding: None,
                         ty: ir,
-                        init: None,
+                        init,
                         memory_decorations: memory(qualifiers),
                         io: None,
                         xfb: None,
@@ -745,6 +756,13 @@ impl<'a> Lowerer<'a> {
         let mut init = None;
         let mut runtime = None;
         if let Some(ref initializer) = declarator.initializer {
+            if rglsl_sema::analyze::is_null_initializer(&initializer.node) {
+                init = Some(
+                    self.module
+                        .global_expressions
+                        .append(crate::Expression::ZeroValue(ir), at),
+                );
+            }
             let constant = match initializer.node {
                 Initializer::Expression(ref expression) => analysis
                     .expression(expression.id)
@@ -766,6 +784,7 @@ impl<'a> Lowerer<'a> {
             });
             match converted {
                 Some(values) => init = Some(self.global_constant(ty, &values, at)?),
+                None if init.is_some() => {}
                 None => runtime = Some(initializer),
             }
         }

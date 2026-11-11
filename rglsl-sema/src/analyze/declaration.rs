@@ -1141,10 +1141,16 @@ impl Analyzer<'_> {
             ty = Type::ERROR;
             broken = true;
         }
-        let initializer = declarator
+        let initializer = declarator.initializer.as_ref().map(|initializer| {
+            (
+                name.span,
+                self.declaration_initializer(name.span, initializer, &ty),
+            )
+        });
+        let null_initializer = declarator
             .initializer
             .as_ref()
-            .map(|initializer| (name.span, self.initializer(name.span, initializer, &ty)));
+            .is_some_and(|initializer| is_null_initializer(&initializer.node));
         if broken {
             self.declare_variable(declarator, ty, qualifiers, None);
             return;
@@ -1270,12 +1276,9 @@ impl Analyzer<'_> {
         if let Some((span, operand)) = initializer {
             if matches!(
                 qualifiers.storage,
-                Storage::In
-                    | Storage::Out
-                    | Storage::Buffer
-                    | Storage::Shared
-                    | Storage::TaskPayloadShared
-            ) || (qualifiers.storage == Storage::Uniform && ty.contains_opaque(&self.types))
+                Storage::In | Storage::Out | Storage::Buffer | Storage::TaskPayloadShared
+            ) || (qualifiers.storage == Storage::Shared && !null_initializer)
+                || (qualifiers.storage == Storage::Uniform && ty.contains_opaque(&self.types))
             {
                 self.error(
                     span,
@@ -1466,6 +1469,40 @@ impl Analyzer<'_> {
         } else if self.scopes.declare(&name.node, id).is_err() {
             self.error(name.span, DiagnosticKind::Redeclaration(name.node.clone()));
         }
+    }
+
+    fn declaration_initializer(
+        &mut self,
+        span: Span,
+        initializer: &Spanned<Initializer>,
+        expected: &Type,
+    ) -> Operand {
+        if !is_null_initializer(&initializer.node) {
+            return self.initializer(span, initializer, expected);
+        }
+        self.require_extension(initializer.span, NULL_INITIALIZER, "empty { } initializer");
+        if expected.is_error() {
+            return Operand::error();
+        }
+        let reason = if expected.array.contains(&ArraySize::Unsized) {
+            Some("null initializers can't size unsized arrays")
+        } else if expected.contains_opaque(&self.types) {
+            Some("null initializers can't be used on opaque values")
+        } else {
+            None
+        };
+        if let Some(reason) = reason {
+            self.error(span, DiagnosticKind::InvalidNullInitializer(reason));
+            return Operand::error();
+        }
+        let mut operand = Operand::temporary(expected.clone());
+        operand.value = expected.base_scalar().and_then(|scalar| {
+            let count = expected.flattened_size(&self.types)?;
+            let count = usize::try_from(count).ok()?;
+            Some(Constant::new(alloc::vec![Value::zero(scalar); count]))
+        });
+        operand.constant = operand.value.is_some();
+        operand
     }
 
     pub(crate) fn initializer(
@@ -2261,4 +2298,10 @@ const fn both_derivative_groups() -> DiagnosticKind {
         qualifier: "derivative_group_quads* and derivative_group_linear*",
         reason: "cannot be both specified",
     }
+}
+
+const NULL_INITIALIZER: &str = "GL_EXT_null_initializer";
+
+pub const fn is_null_initializer(initializer: &Initializer) -> bool {
+    matches!(*initializer, Initializer::List(ref items) if items.is_empty())
 }

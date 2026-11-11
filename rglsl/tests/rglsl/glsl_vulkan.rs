@@ -8335,3 +8335,34 @@ void main() {
     .unwrap_err();
     assert!(error.contains("MoreThanOneImmediateUsed"), "{error}");
 }
+
+#[test]
+fn null_initializers_are_null_constants() {
+    let module = compile(
+        ShaderStage::Compute,
+        "#version 460
+#extension GL_EXT_null_initializer : enable
+layout(local_size_x = 1) in;
+struct S { vec3 v[4]; int a; };
+shared float f = {};
+shared S s = {};
+S global = {};
+layout(std430, binding = 0) buffer B { int value; } b;
+void main() {
+    S local = {};
+    ++local.a;
+    b.value = local.a + int(f) + s.a + global.a;
+}
+",
+    );
+    let nulls = instructions(&module, Op::ConstantNull).len();
+    assert!(nulls >= 2, "{nulls}");
+    let workgroup_initialized = instructions(&module, Op::Variable)
+        .into_iter()
+        .filter(|inst| {
+            inst.operands.first() == Some(&Operand::StorageClass(spirv::StorageClass::Workgroup))
+                && inst.operands.len() == 2
+        })
+        .count();
+    assert_eq!(workgroup_initialized, 2);
+}
