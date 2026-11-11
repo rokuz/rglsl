@@ -117,6 +117,7 @@ fn populate_atomic_result() {
                 heap_offset: None,
                 tile_attachment: false,
                 spirv_decorations: Vec::new(),
+                immediate_bank: None,
             },
             span,
         );
@@ -297,6 +298,7 @@ fn emit_workgroup_uniform_load_result() {
                 heap_offset: None,
                 tile_attachment: false,
                 spirv_decorations: Vec::new(),
+                immediate_bank: None,
             },
             span,
         );
@@ -643,6 +645,7 @@ fn local_var_override_sized_array() {
             heap_offset: None,
             tile_attachment: false,
             spirv_decorations: Vec::new(),
+            immediate_bank: None,
         },
         span,
     );
@@ -1025,6 +1028,7 @@ fn unexpected_task_payload() {
             heap_offset: None,
             tile_attachment: false,
             spirv_decorations: Vec::new(),
+            immediate_bank: None,
         },
         err_span,
     );

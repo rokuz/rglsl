@@ -962,8 +962,21 @@ impl BlockContext<'_> {
             result_type_id
         };
 
+        let sampled_class = match (class, sampler, depth_ref) {
+            (
+                crate::ImageClass::Sampled {
+                    kind: crate::ScalarKind::Float,
+                    multi,
+                },
+                Some(_),
+                Some(_),
+            ) => crate::ImageClass::Depth { multi },
+            _ => class,
+        };
         let image_type_id = self.get_localtype_id(LocalType::Image(LocalImageType::from_inner(
-            dim, arrayed, class,
+            dim,
+            arrayed,
+            sampled_class,
         )?));
         let sampled_image_type_id =
             self.get_localtype_id(LocalType::SampledImage { image_type_id });

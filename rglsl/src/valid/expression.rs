@@ -646,7 +646,17 @@ impl super::Validator {
                     crate::ImageClass::Depth { multi: false } => true,
                     _ => return Err(ExpressionError::InvalidImageClass(class)),
                 };
-                if comparison != depth_ref.is_some() || (comparison && !image_depth) {
+                let compared_float = sampler.is_some()
+                    && matches!(
+                        class,
+                        crate::ImageClass::Sampled {
+                            kind: crate::ScalarKind::Float,
+                            multi: false,
+                        }
+                    );
+                if comparison != depth_ref.is_some()
+                    || (comparison && !image_depth && !compared_float)
+                {
                     return Err(ExpressionError::ComparisonSamplingMismatch {
                         image: class,
                         sampler: comparison,

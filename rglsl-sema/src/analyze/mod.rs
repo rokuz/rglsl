@@ -7,6 +7,7 @@ mod expression;
 mod extension;
 mod fragment;
 mod heap;
+mod layout_qualifiers;
 mod memory;
 mod mesh;
 mod qcom;
@@ -51,6 +52,7 @@ pub struct Options {
     pub limits: ResourceLimits,
     pub spirv_version: Option<(u8, u8)>,
     pub end_of_input: Option<u32>,
+    pub require_bindings: bool,
 }
 
 impl Options {
@@ -61,6 +63,7 @@ impl Options {
             limits: ResourceLimits::default(),
             spirv_version: None,
             end_of_input: None,
+            require_bindings: false,
         }
     }
 }
@@ -165,6 +168,7 @@ fn symbol_type(symbols: &[Symbol], types: &TypeRegistry, id: SymbolId) -> Option
     }
 }
 
+pub use declaration::is_null_initializer;
 pub use fragment::{FragmentLayout, Interlock};
 pub use ray::is_shader_record;
 
@@ -331,6 +335,7 @@ pub(crate) struct Analyzer<'a> {
     pub khr_derivative_group: bool,
     pub local_size: [Option<u32>; 3],
     pub local_size_specialized: [bool; 3],
+    pub local_size_ids: [Option<i64>; 3],
     pub buffer_packing: Packing,
     pub buffer_row_major: bool,
     pub vulkan_memory_model: bool,
@@ -405,6 +410,7 @@ impl<'a> Analyzer<'a> {
             khr_derivative_group: false,
             local_size: [None; 3],
             local_size_specialized: [false; 3],
+            local_size_ids: [None; 3],
             buffer_packing: Packing::Std430,
             buffer_row_major: false,
             vulkan_memory_model: false,

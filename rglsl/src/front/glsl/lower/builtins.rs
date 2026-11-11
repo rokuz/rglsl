@@ -1148,14 +1148,6 @@ impl FunctionLowerer<'_, '_> {
                 let &[ref texture, ref sampler] = call.arguments.as_slice() else {
                     return Err(internal(at));
                 };
-                if let Some(symbol) = self.lw.variable_symbol(texture) {
-                    if self.lw.depth.contains(&symbol) && !opaque.shadow {
-                        return Err(unsupported(
-                            "a texture used both with and without a shadow sampler",
-                            at,
-                        ));
-                    }
-                }
                 let image = self.rvalue(texture)?;
                 let sampler = self.rvalue(sampler)?;
                 return Ok(Sampled {

@@ -3088,6 +3088,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                     heap_offset: None,
                     tile_attachment: false,
                     spirv_decorations: Vec::new(),
+                    immediate_bank: None,
                 };
                 (Variable::Global, var)
             }
@@ -3142,6 +3143,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                     heap_offset: None,
                     tile_attachment: false,
                     spirv_decorations: Vec::new(),
+                    immediate_bank: None,
                 };
 
                 let inner = Variable::Input(crate::FunctionArgument {
@@ -3209,6 +3211,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                     heap_offset: None,
                     tile_attachment: false,
                     spirv_decorations: Vec::new(),
+                    immediate_bank: None,
                 };
                 let inner = Variable::Output(crate::FunctionResult { ty, binding });
                 (inner, var)
