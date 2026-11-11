@@ -110,9 +110,13 @@ impl super::Validator {
                 // remain true, we must advance `global_exprs_iter` beyond
                 // `max_expr`.
                 while let Some((eh, e)) = global_exprs_iter.next_if(|&(eh, _)| eh <= max_expr) {
-                    if let Some(max_type) =
-                        Self::validate_const_expression_handles((eh, e), constants, overrides)?
-                    {
+                    if let Some(max_type) = Self::validate_const_expression_handles(
+                        (eh, e),
+                        constants,
+                        overrides,
+                        types,
+                        global_variables,
+                    )? {
                         // Show that `eh` refers only to previously visited types.
                         th.check_dep(max_type)?;
                     }
@@ -138,7 +142,13 @@ impl super::Validator {
         //
         // Validate the remaining expressions normally.
         for handle_and_expr in global_exprs_iter {
-            Self::validate_const_expression_handles(handle_and_expr, constants, overrides)?;
+            Self::validate_const_expression_handles(
+                handle_and_expr,
+                constants,
+                overrides,
+                types,
+                global_variables,
+            )?;
         }
 
         let validate_type = |handle| Self::validate_type_handle(handle, types);
@@ -608,6 +618,8 @@ impl super::Validator {
         (handle, expression): (Handle<crate::Expression>, &crate::Expression),
         constants: &Arena<crate::Constant>,
         overrides: &Arena<crate::Override>,
+        types: &UniqueArena<crate::Type>,
+        global_variables: &Arena<crate::GlobalVariable>,
     ) -> Result<Option<Handle<crate::Type>>, InvalidHandleError> {
         let validate_constant = |handle| Self::validate_constant_handle(handle, constants);
         let validate_override = |handle| Self::validate_override_handle(handle, overrides);
@@ -635,7 +647,19 @@ impl super::Validator {
                 handle.check_dep(value)?;
                 Some(ty)
             }
-            _ => None,
+            _ => {
+                Self::validate_expression_handles(
+                    (handle, expression),
+                    constants,
+                    overrides,
+                    types,
+                    &Arena::new(),
+                    global_variables,
+                    &Arena::new(),
+                    None,
+                )?;
+                None
+            }
         };
         Ok(max_type)
     }
@@ -1531,6 +1555,8 @@ fn constant_deps() {
             handle_and_expr,
             &constants,
             &overrides,
+            &UniqueArena::new(),
+            &Arena::new(),
         )
         .is_err());
     }
@@ -1669,4 +1695,34 @@ fn override_init_deps() {
     // Validation should catch the cycle.
     m.overrides[r#override].init = Some(ex_arr);
     assert!(Validator::validate_module_handles(&m).is_err());
+}
+
+#[test]
+fn global_expressions_cannot_name_locals_or_later_expressions() -> crate::TestResult {
+    use super::{ValidationFlags, Validator};
+    use crate::{Expression, Handle, LocalVariable, Span};
+
+    let nowhere = Span::default();
+    let missing_local: Handle<LocalVariable> =
+        Handle::new(crate::non_max_u32::NonMaxU32::new(95).ok_or("95 is a valid index")?);
+    let mut m = crate::Module::default();
+    m.global_expressions
+        .append(Expression::LocalVariable(missing_local), nowhere);
+    assert!(Validator::validate_module_handles(&m).is_err());
+    let mut validator = Validator::new(ValidationFlags::all(), super::Capabilities::default());
+    assert!(validator.validate(&m).is_err());
+
+    let later: Handle<Expression> =
+        Handle::new(crate::non_max_u32::NonMaxU32::new(1).ok_or("1 is a valid index")?);
+    let mut m = crate::Module::default();
+    m.global_expressions.append(
+        Expression::Unary {
+            op: crate::UnaryOperator::Negate,
+            expr: later,
+        },
+        nowhere,
+    );
+    assert!(Validator::validate_module_handles(&m).is_err());
+    assert!(validator.validate(&m).is_err());
+    Ok(())
 }

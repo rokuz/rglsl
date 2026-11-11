@@ -879,10 +879,19 @@ impl Validator {
             }
         }
 
+        let global_expr_kind = ExpressionKindTracker::from_arena(&module.global_expressions);
+
         {
             let t = crate::Arena::new();
             let resolve_context = crate::proc::ResolveContext::with_locals(module, &t, &[]);
             for (handle, _) in module.global_expressions.iter() {
+                if !global_expr_kind.is_const_or_override(handle) {
+                    return Err(ValidationError::ConstExpression {
+                        handle,
+                        source: ConstExpressionError::NonConstOrOverride,
+                    }
+                    .with_span_handle(handle, &module.global_expressions));
+                }
                 mod_info
                     .process_const_expression(handle, &resolve_context, module.to_ctx())
                     .map_err(|source| {
@@ -891,8 +900,6 @@ impl Validator {
                     })?
             }
         }
-
-        let global_expr_kind = ExpressionKindTracker::from_arena(&module.global_expressions);
 
         if self.flags.contains(ValidationFlags::CONSTANTS) {
             for (handle, _) in module.global_expressions.iter() {
