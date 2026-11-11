@@ -1,7 +1,7 @@
 use alloc::{string::String, vec, vec::Vec};
 
-use rglsl_ast::ast::{Expression as AstExpression, ExpressionKind};
-use rglsl_sema::types::SpecializedSize;
+use rglsl_ast::ast::{Expression as AstExpression, ExpressionKind, Initializer, Spanned};
+use rglsl_sema::types::{SpecializedSize, Type as GlslType};
 
 use super::function::FunctionLowerer;
 use super::{internal, unsupported, GlobalRef, Lowerer, Result};
@@ -31,7 +31,7 @@ fn operands(expression: &Expression) -> Option<Vec<Handle<Expression>>> {
         | Expression::ZeroValue(_)
         | Expression::CooperativeMatrixLength { .. } => Vec::new(),
         Expression::Compose { ref components, .. } => components.clone(),
-        Expression::Splat { value, .. } => vec![value],
+        Expression::Splat { value, .. } | Expression::Replicate { value, .. } => vec![value],
         Expression::Swizzle { vector, .. } => vec![vector],
         Expression::AccessIndex { base, .. } => vec![base],
         Expression::Unary { expr, .. } | Expression::As { expr, .. } => vec![expr],
@@ -66,6 +66,10 @@ fn remap(
         },
         Expression::Splat { size, value } => Expression::Splat {
             size,
+            value: get(value)?,
+        },
+        Expression::Replicate { ty, value } => Expression::Replicate {
+            ty,
             value: get(value)?,
         },
         Expression::Swizzle {
@@ -112,6 +116,12 @@ fn remap(
     })
 }
 
+#[derive(Clone, Copy)]
+enum Specialized<'e> {
+    Expression(&'e AstExpression),
+    Initializer(&'e Spanned<Initializer>, &'e GlslType),
+}
+
 fn not_specializable(span: Span) -> super::Error {
     unsupported(
         "this operation in a specialization-constant expression",
@@ -126,10 +136,39 @@ impl<'a> Lowerer<'a> {
         name: Option<String>,
         span: Span,
     ) -> Result<Handle<Override>> {
+        self.specialization_of(Specialized::Expression(expression), name, span)
+    }
+
+    pub(super) fn specialized_initializer(
+        &mut self,
+        initializer: &Spanned<Initializer>,
+        ty: &GlslType,
+        name: Option<String>,
+        span: Span,
+    ) -> Result<Handle<Override>> {
+        match initializer.node {
+            Initializer::Expression(ref expression) => self.specialization(expression, name, span),
+            Initializer::List(_) => {
+                self.specialization_of(Specialized::Initializer(initializer, ty), name, span)
+            }
+        }
+    }
+
+    fn specialization_of(
+        &mut self,
+        source: Specialized<'_>,
+        name: Option<String>,
+        span: Span,
+    ) -> Result<Handle<Override>> {
         let (value, ty, expressions, statements, has_locals) = {
             let mut scratch = FunctionLowerer::new(self);
             scratch.specializing = true;
-            let (value, ty) = scratch.typed(expression)?;
+            let (value, ty) = match source {
+                Specialized::Expression(expression) => scratch.typed(expression)?,
+                Specialized::Initializer(initializer, ty) => {
+                    (scratch.initializer(initializer, ty)?, ty.clone())
+                }
+            };
             scratch.flush();
             (
                 value,

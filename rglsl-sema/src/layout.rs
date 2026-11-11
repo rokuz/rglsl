@@ -154,37 +154,126 @@ pub fn type_layout(
 #[derive(Debug, Clone)]
 pub struct MemberPlacer {
     block_align: Option<u32>,
+    packing: Packing,
+    hlsl_offsets: bool,
     offset: u32,
+    extent: u32,
     alignment: u32,
 }
 
+struct Placement {
+    alignment: u32,
+    size: u32,
+    vector_like: bool,
+}
+
 impl MemberPlacer {
-    pub fn new(block: &Qualifiers) -> Self {
+    pub fn new(block: &Qualifiers, packing: Packing) -> Self {
         Self {
             block_align: layout_value(block, "align"),
+            packing,
+            hlsl_offsets: false,
             offset: 0,
+            extent: 0,
             alignment: 0,
         }
     }
 
-    pub fn place(&mut self, qualifiers: &Qualifiers, layout: &TypeLayout) -> Option<u32> {
+    pub const fn with_hlsl_offsets(mut self, hlsl_offsets: bool) -> Self {
+        self.hlsl_offsets = hlsl_offsets;
+        self
+    }
+
+    pub fn place(
+        &mut self,
+        qualifiers: &Qualifiers,
+        ty: &Type,
+        layout: &TypeLayout,
+        row_major: bool,
+    ) -> Option<u32> {
+        let placement = self.placement(ty, layout, row_major);
         let mut offset = layout_value(qualifiers, "offset").unwrap_or(self.offset);
         let actual = match layout_value(qualifiers, "align").or(self.block_align) {
-            Some(align) => layout.alignment.max(align),
-            None => layout.alignment,
+            Some(align) => placement.alignment.max(align),
+            None => placement.alignment,
         };
         offset = round_up(offset, actual)?;
-        self.alignment = self.alignment.max(layout.alignment);
-        self.offset = offset.checked_add(layout.size)?;
+        if self.packing != Packing::Scalar
+            && improper_straddle(placement.vector_like, placement.size, offset)
+        {
+            offset = round_up(offset, VEC4_ALIGNMENT)?;
+        }
+        self.alignment = self.alignment.max(placement.alignment);
+        self.extent = self.extent.max(offset.checked_add(layout.size)?);
+        self.offset = offset.checked_add(placement.size)?;
         Some(offset)
+    }
+
+    fn placement(&self, ty: &Type, layout: &TypeLayout, row_major: bool) -> Placement {
+        let arrayed = ty.is_array();
+        let vector_like = !arrayed && matches!(ty.kind, TypeKind::Vector { .. });
+        let natural = Placement {
+            alignment: layout.alignment,
+            size: layout.size,
+            vector_like,
+        };
+        if !self.hlsl_offsets {
+            return natural;
+        }
+        let (component, length, matrix) = match ty.kind {
+            TypeKind::Scalar(scalar) => (scalar_size(scalar), 1, false),
+            TypeKind::Vector { scalar, size } => (scalar_size(scalar), u32::from(size), false),
+            TypeKind::Matrix {
+                scalar,
+                columns,
+                rows,
+            } => (
+                scalar_size(scalar),
+                u32::from(if row_major { columns } else { rows }),
+                true,
+            ),
+            _ => return natural,
+        };
+        let alignment = if vector_like && component <= 4 {
+            component
+        } else {
+            layout.alignment
+        };
+        let size = if self.packing == Packing::Std140 && (matrix || arrayed) {
+            layout
+                .size
+                .saturating_sub(component.saturating_mul(4_u32.saturating_sub(length)))
+        } else {
+            layout.size
+        };
+        Placement {
+            alignment,
+            size,
+            vector_like,
+        }
     }
 
     pub const fn end(&self) -> u32 {
         self.offset
     }
 
+    pub const fn extent(&self) -> u32 {
+        self.extent
+    }
+
     pub const fn alignment(&self) -> u32 {
         self.alignment
+    }
+}
+
+const fn improper_straddle(vector_like: bool, size: u32, offset: u32) -> bool {
+    if !vector_like {
+        return false;
+    }
+    if size <= 16 {
+        offset / 16 != offset.saturating_add(size).saturating_sub(1) / 16
+    } else {
+        !offset.is_multiple_of(16)
     }
 }
 
@@ -201,12 +290,12 @@ pub fn block_layout(
         packing,
         lengths,
     };
-    let mut placer = MemberPlacer::new(qualifiers);
+    let mut placer = MemberPlacer::new(qualifiers, packing);
     let mut laid = Vec::with_capacity(members.len());
     for member in members {
         let row_major = member_row_major(&member.qualifiers, row_major);
         let layout = layouter.ty(&member.ty, row_major, 0)?;
-        let offset = placer.place(&member.qualifiers, &layout)?;
+        let offset = placer.place(&member.qualifiers, &member.ty, &layout, row_major)?;
         laid.push(MemberLayout { offset, layout });
     }
     Some(BlockLayout {

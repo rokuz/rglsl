@@ -6,10 +6,12 @@ use rglsl_ast::Span;
 use super::{Analyzer, Operand};
 use crate::builtins::Stage;
 use crate::diagnostic::DiagnosticKind;
+use crate::types::TextureDimension;
 
 pub const SPARSE_TEXTURE2: &str = "GL_ARB_sparse_texture2";
 pub const SPARSE_TEXTURE_CLAMP: &str = "GL_ARB_sparse_texture_clamp";
 pub const GATHER_BIAS_LOD: &str = "GL_AMD_texture_gather_bias_lod";
+pub const SHADOW_LOD: &str = "GL_EXT_texture_shadow_lod";
 pub const NV_DERIVATIVES: &str = "GL_NV_compute_shader_derivatives";
 pub const KHR_DERIVATIVES: &str = "GL_KHR_compute_shader_derivatives";
 
@@ -86,6 +88,36 @@ fn biased_gather(name: &str, operands: &[Operand], shadow: bool) -> bool {
         }
 }
 
+fn shadow_lod_feature(name: &str, operands: &[Operand]) -> Option<String> {
+    let opaque = operands.first()?.ty.as_opaque()?;
+    let coordinate = operands.get(1)?;
+    let vec4 = coordinate.ty.is_vector()
+        && coordinate.ty.length() == Some(4)
+        && coordinate.ty.base_scalar() == Some(crate::types::Scalar::Float);
+    if !opaque.shadow || !vec4 {
+        return None;
+    }
+    let array = opaque.dimension == TextureDimension::D2 && opaque.arrayed;
+    let cube = opaque.dimension == TextureDimension::Cube;
+    let count = operands.len();
+    match name {
+        "texture" | "textureLod" if count > 2 => {
+            let lod = name == "textureLod";
+            (array || (cube && opaque.arrayed && count > 3) || (cube && lod)).then(|| {
+                if lod {
+                    format!("{name}(..., float lod)")
+                } else {
+                    format!("{name}(..., float bias)")
+                }
+            })
+        }
+        "textureOffset" | "textureLodOffset" if array && count == 4 => {
+            Some(format!("{name} for sampler2DArrayShadow"))
+        }
+        _ => None,
+    }
+}
+
 impl Analyzer<'_> {
     pub(crate) fn texture_extensions(&mut self, span: Span, name: &str) {
         if let Some(extension) = function_extension(name) {
@@ -99,6 +131,9 @@ impl Analyzer<'_> {
             .and_then(|operand| operand.ty.as_opaque())
             .is_some_and(|opaque| opaque.shadow);
         let mut valid = true;
+        if let Some(feature) = shadow_lod_feature(name, operands) {
+            valid &= self.require_extension(span, SHADOW_LOD, &feature);
+        }
         if biased_gather(name, operands, shadow) {
             let feature = format!("{name}with bias argument");
             valid &= self.require_extension(span, GATHER_BIAS_LOD, &feature);

@@ -609,7 +609,8 @@ impl Lowerer<'_> {
         let analysis = self.analysis;
         let block = analysis.types.block(id).ok_or_else(|| internal(span))?;
         let mut members = Vec::with_capacity(block.members.len());
-        let mut placer = MemberPlacer::new(&block.qualifiers);
+        let mut placer = MemberPlacer::new(&block.qualifiers, packing)
+            .with_hlsl_offsets(self.options.hlsl_offsets);
         let last = block.members.len().saturating_sub(1);
         for (position, member) in block.members.iter().enumerate() {
             let index = u32::try_from(position).map_err(|_| internal(span))?;
@@ -654,7 +655,7 @@ impl Lowerer<'_> {
             let member_row_major = member_row_major(&member.qualifiers, row_major);
             let layout = self.type_layout(&member_ty, packing, member_row_major, span)?;
             let offset = placer
-                .place(&member.qualifiers, &layout)
+                .place(&member.qualifiers, &member_ty, &layout, member_row_major)
                 .ok_or_else(|| invalid_member(span))?;
             let ty = self.apply_layout(ty, &layout, span)?;
             let memory_decorations = if block.storage == BlockStorage::Buffer {
@@ -673,8 +674,9 @@ impl Lowerer<'_> {
                 memory_decorations,
             });
         }
-        let span_bytes = Alignment::new(placer.alignment())
-            .map_or(placer.end(), |alignment| alignment.round_up(placer.end()));
+        let span_bytes = Alignment::new(placer.alignment()).map_or(placer.extent(), |alignment| {
+            alignment.round_up(placer.extent())
+        });
         let handle = self.module.types.insert(
             Type {
                 name: Some(block.name.clone()),

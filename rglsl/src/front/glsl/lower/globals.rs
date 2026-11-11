@@ -660,12 +660,8 @@ impl<'a> Lowerer<'a> {
                 return Ok(());
             }
             if qualifiers.specialization {
-                if let Some(&Initializer::Expression(ref expression)) = declarator
-                    .initializer
-                    .as_ref()
-                    .map(|initializer| &initializer.node)
-                {
-                    let handle = self.specialization(expression, Some(name), at)?;
+                if let Some(initializer) = declarator.initializer.as_ref() {
+                    let handle = self.specialized_initializer(initializer, ty, Some(name), at)?;
                     self.globals.insert(symbol, GlobalRef::Override(handle));
                     return Ok(());
                 }
@@ -694,13 +690,24 @@ impl<'a> Lowerer<'a> {
             Storage::TaskPayloadShared => self.task_payload_variable(symbol, name, at),
             Storage::Shared => {
                 let ir = self.ir_type(ty, at)?;
+                let init = declarator
+                    .initializer
+                    .as_ref()
+                    .filter(|initializer| {
+                        rglsl_sema::analyze::is_null_initializer(&initializer.node)
+                    })
+                    .map(|_| {
+                        self.module
+                            .global_expressions
+                            .append(crate::Expression::ZeroValue(ir), at)
+                    });
                 let handle = self.module.global_variables.append(
                     GlobalVariable {
                         name: Some(name),
                         space: AddressSpace::WorkGroup,
                         binding: None,
                         ty: ir,
-                        init: None,
+                        init,
                         memory_decorations: memory(qualifiers),
                         io: None,
                         xfb: None,
@@ -708,6 +715,7 @@ impl<'a> Lowerer<'a> {
                         heap_offset: None,
                         tile_attachment: false,
                         spirv_decorations: Vec::new(),
+                        immediate_bank: None,
                     },
                     at,
                 );
@@ -756,6 +764,13 @@ impl<'a> Lowerer<'a> {
         let mut init = None;
         let mut runtime = None;
         if let Some(ref initializer) = declarator.initializer {
+            if rglsl_sema::analyze::is_null_initializer(&initializer.node) {
+                init = Some(
+                    self.module
+                        .global_expressions
+                        .append(crate::Expression::ZeroValue(ir), at),
+                );
+            }
             let constant = match initializer.node {
                 Initializer::Expression(ref expression) => analysis
                     .expression(expression.id)
@@ -777,6 +792,7 @@ impl<'a> Lowerer<'a> {
             });
             match converted {
                 Some(values) => init = Some(self.global_constant(ty, &values, at)?),
+                None if init.is_some() => {}
                 None => runtime = Some(initializer),
             }
         }
@@ -794,6 +810,7 @@ impl<'a> Lowerer<'a> {
                 heap_offset: None,
                 tile_attachment: false,
                 spirv_decorations: Vec::new(),
+                immediate_bank: None,
             },
             at,
         );
@@ -867,6 +884,7 @@ impl<'a> Lowerer<'a> {
                     heap_offset: None,
                     tile_attachment: false,
                     spirv_decorations: Vec::new(),
+                    immediate_bank: None,
                 },
                 at,
             );
@@ -941,6 +959,7 @@ impl<'a> Lowerer<'a> {
                 heap_offset: None,
                 tile_attachment: false,
                 spirv_decorations: Vec::new(),
+                immediate_bank: None,
             },
             at,
         );
@@ -1025,6 +1044,12 @@ impl<'a> Lowerer<'a> {
             TypeKind::Spirv(id) => {
                 let inner = self.spirv_type(id, at)?;
                 return self.handle_global(symbol, name, inner, None, at);
+            }
+            TypeKind::Struct(_) if ty.contains_opaque(&self.analysis.types) => {
+                return Err(unsupported(
+                    "uniform structures of opaque types, which Vulkan does not allow in SPIR-V (VUID-StandaloneSpirv-None-04667) until they are split into separate resources",
+                    at,
+                ))
             }
             _ => {
                 return Err(semantic(
@@ -1122,6 +1147,7 @@ impl<'a> Lowerer<'a> {
                     .iter()
                     .any(|entry| entry.name.eq_ignore_ascii_case("tile_attachmentQCOM")),
                 spirv_decorations: Vec::new(),
+                immediate_bank: None,
             },
             at,
         );
@@ -1264,6 +1290,28 @@ impl<'a> Lowerer<'a> {
         } else {
             self.binding(qualifiers, at)?
         };
+        if block
+            .members
+            .iter()
+            .any(|member| member.qualifiers.has_layout("member_offset"))
+        {
+            return Err(unsupported(
+                "the `member_offset` layout qualifier on a block member",
+                at,
+            ));
+        }
+        let layout_value = |name| {
+            qualifiers
+                .layout_entry(name)
+                .and_then(|entry| entry.value)
+                .and_then(|value| u32::try_from(value).ok())
+        };
+        let immediate_bank = push_constant
+            .then(|| crate::ImmediateBank {
+                bank: layout_value("bank"),
+                member_offset: layout_value("member_offset"),
+            })
+            .filter(|bank| *bank != crate::ImmediateBank::default());
         let handle = self.module.global_variables.append(
             GlobalVariable {
                 name: Some(instance_name),
@@ -1278,6 +1326,7 @@ impl<'a> Lowerer<'a> {
                 heap_offset: None,
                 tile_attachment: false,
                 spirv_decorations: Vec::new(),
+                immediate_bank,
             },
             at,
         );
@@ -1598,6 +1647,7 @@ impl<'a> Lowerer<'a> {
                 heap_offset: None,
                 tile_attachment: false,
                 spirv_decorations: Vec::new(),
+                immediate_bank: None,
             },
             at,
         );
@@ -1884,6 +1934,7 @@ impl<'a> Lowerer<'a> {
                 heap_offset: None,
                 tile_attachment: false,
                 spirv_decorations: Vec::new(),
+                immediate_bank: None,
             },
             Span::UNDEFINED,
         );
@@ -2117,6 +2168,7 @@ impl<'a> Lowerer<'a> {
                 heap_offset: None,
                 tile_attachment: false,
                 spirv_decorations: Vec::new(),
+                immediate_bank: None,
             },
             at,
         );

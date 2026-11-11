@@ -516,6 +516,9 @@ impl<'a> ResolveContext<'a> {
                     return Err(ResolveError::InvalidImage(image));
                 }
             },
+            crate::Expression::ImageSample {
+                depth_ref: Some(_), ..
+            } => TypeResolution::Value(Ti::Scalar(crate::Scalar::F32)),
             crate::Expression::ImageSample { image, .. }
             | crate::Expression::ImageLoad { image, .. } => match *past(image)?.inner_with(types) {
                 Ti::Image { class, .. } | Ti::SampledImage { class, .. } => {

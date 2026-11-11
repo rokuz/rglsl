@@ -349,6 +349,7 @@ impl<'a> Lowerer<'a> {
                 heap_offset: None,
                 tile_attachment: false,
                 spirv_decorations: Vec::new(),
+                immediate_bank: None,
             },
             at,
         );
@@ -606,6 +607,7 @@ impl<'a> Lowerer<'a> {
                 heap_offset: None,
                 tile_attachment: false,
                 spirv_decorations: Vec::new(),
+                immediate_bank: None,
             },
             at,
         );
