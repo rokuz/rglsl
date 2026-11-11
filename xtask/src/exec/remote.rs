@@ -1,0 +1,400 @@
+use std::fmt::Write as _;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use anyhow::{anyhow, bail, Result};
+
+use super::amber::{first_line, parse_device, Device, VULKAN_VERSION};
+use super::batch::{self, Job, JobResult};
+use crate::oracles::ExecPins;
+use crate::process::{self, Exit};
+
+pub const HOST_VAR: &str = "RGLSL_EXEC_REMOTE";
+pub const DIR_VAR: &str = "RGLSL_EXEC_REMOTE_DIR";
+pub const JOBS_VAR: &str = "RGLSL_EXEC_REMOTE_JOBS";
+const DEFAULT_DIR: &str = "C:/rglsl-exec";
+const DEFAULT_JOBS: usize = 4;
+const BATCH_LIMIT: usize = 400;
+const DRIVER: &str = include_str!("driver.py");
+const CONNECT: Duration = Duration::from_secs(120);
+const BUILD: Duration = Duration::from_secs(3 * 3600);
+
+static BATCHES: AtomicUsize = AtomicUsize::new(0);
+
+#[derive(Debug, Clone)]
+pub struct Remote {
+    pub host: String,
+    pub dir: String,
+    pub jobs: usize,
+    pub timeout: Duration,
+}
+
+impl Remote {
+    pub fn from_env(timeout: Duration) -> Option<Self> {
+        let host = std::env::var(HOST_VAR)
+            .ok()
+            .filter(|h| !h.trim().is_empty())?;
+        Some(Self::new(host.trim(), timeout))
+    }
+
+    pub fn new(host: &str, timeout: Duration) -> Self {
+        let dir = std::env::var(DIR_VAR)
+            .ok()
+            .filter(|d| !d.trim().is_empty())
+            .map_or_else(|| DEFAULT_DIR.to_string(), |d| d.trim().replace('\\', "/"));
+        let jobs = std::env::var(JOBS_VAR)
+            .ok()
+            .and_then(|j| j.trim().parse().ok())
+            .unwrap_or(DEFAULT_JOBS)
+            .max(1);
+        Self {
+            host: host.to_string(),
+            dir: dir.trim_end_matches('/').to_string(),
+            jobs,
+            timeout,
+        }
+    }
+
+    fn path(&self, relative: &str) -> String {
+        format!("{}/{relative}", self.dir)
+    }
+
+    fn windows(&self, relative: &str) -> String {
+        self.path(relative).replace('/', "\\")
+    }
+
+    fn amber(&self) -> String {
+        self.windows("bin/amber.exe")
+    }
+
+    fn ssh_command(&self) -> Command {
+        let mut command = Command::new("ssh");
+        command.args([
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "ConnectTimeout=20",
+            "-o",
+            "ServerAliveInterval=15",
+            "-o",
+            "ServerAliveCountMax=4",
+        ]);
+        command.arg(&self.host);
+        command
+    }
+
+    fn ssh(&self, remote: &str, timeout: Duration) -> Result<process::Output, String> {
+        let mut command = self.ssh_command();
+        command.arg(remote);
+        process::run(command, timeout).map_err(|e| format!("ssh: {e:#}"))
+    }
+
+    fn ssh_ok(&self, remote: &str, timeout: Duration, what: &str) -> Result<String, String> {
+        let output = self.ssh(remote, timeout)?;
+        match output.exit {
+            Exit::Code(0) => Ok(output.stdout),
+            Exit::Code(code) => Err(format!(
+                "{what} on the remote target exited with {code}: {}",
+                first_line(&output.stderr, &output.stdout)
+            )),
+            Exit::Signal => Err(format!("{what}: ssh was killed")),
+            Exit::Timeout => Err(format!("{what} on the remote target timed out")),
+        }
+    }
+
+    fn scp(&self, args: &[String], timeout: Duration, what: &str) -> Result<(), String> {
+        let mut command = Command::new("scp");
+        command.args(["-q", "-o", "BatchMode=yes", "-o", "ConnectTimeout=20"]);
+        command.args(args);
+        let output = process::run(command, timeout).map_err(|e| format!("scp: {e:#}"))?;
+        match output.exit {
+            Exit::Code(0) => Ok(()),
+            Exit::Timeout => Err(format!("{what}: scp timed out")),
+            _ => Err(format!(
+                "{what}: scp failed: {}",
+                first_line(&output.stderr, &output.stdout)
+            )),
+        }
+    }
+
+    fn upload(&self, files: &[&Path], relative_dir: &str, timeout: Duration) -> Result<(), String> {
+        let mut args: Vec<String> = files.iter().map(|f| f.display().to_string()).collect();
+        args.push(format!("{}:{}/", self.host, self.path(relative_dir)));
+        self.scp(&args, timeout, "uploading the batch")
+    }
+
+    fn download(&self, relative: &str, to: &Path, timeout: Duration) -> Result<(), String> {
+        let args = [
+            format!("{}:{}", self.host, self.path(relative)),
+            to.display().to_string(),
+        ];
+        self.scp(&args, timeout, "downloading the results")
+    }
+
+    pub fn device(&self) -> Result<Device, String> {
+        let output = self.ssh(
+            &format!("\"{}\" -d -v {VULKAN_VERSION} -V", self.amber()),
+            CONNECT,
+        )?;
+        if !matches!(output.exit, Exit::Code(0)) {
+            return Err(format!(
+                "amber on the remote target: {}",
+                first_line(&output.stdout, &output.stderr)
+            ));
+        }
+        parse_device(&output.stdout).ok_or_else(|| {
+            format!(
+                "amber on the remote target did not report a Vulkan device: {}",
+                first_line(&output.stdout, &output.stderr)
+            )
+        })
+    }
+
+    pub fn setup(&self, pins: &ExecPins, local: &Path) -> Result<Device> {
+        fs::create_dir_all(local)?;
+        let script = local.join("rglsl-setup.bat");
+        fs::write(&script, setup_script(pins).replace('\n', "\r\n"))?;
+        eprintln!("[xtask] preparing {} on the remote target", self.dir);
+        self.ssh_ok(
+            &format!("if not exist \"{0}\" mkdir \"{0}\"", self.windows("runs")),
+            CONNECT,
+            "creating the work directory",
+        )
+        .map_err(|e| anyhow!(e))?;
+        self.upload(&[script.as_path()], "", CONNECT)
+            .map_err(|e| anyhow!(e))?;
+        eprintln!("[xtask] building Amber on the remote target (MSVC, CMake, Ninja)");
+        let mut command = self.ssh_command();
+        command.arg(format!("\"{}\"", self.windows("rglsl-setup.bat")));
+        let output = process::run(command, BUILD)?;
+        let log = local.join("remote-setup.log");
+        fs::write(&log, format!("{}\n{}", output.stdout, output.stderr))?;
+        if !matches!(output.exit, Exit::Code(0)) {
+            let tail: Vec<&str> = output
+                .stdout
+                .lines()
+                .chain(output.stderr.lines())
+                .filter(|l| !l.trim().is_empty())
+                .collect();
+            let start = tail.len().saturating_sub(15);
+            bail!(
+                "the remote Amber build failed ({:?}); log in {}:\n{}",
+                output.exit,
+                log.display(),
+                tail.get(start..).unwrap_or_default().join("\n")
+            );
+        }
+        self.device()
+            .map_err(|error| anyhow!("remote smoke check failed: {error}"))
+    }
+
+    pub fn run(&self, root: &Path, jobs: &[Job]) -> Vec<JobResult> {
+        let mut results = Vec::with_capacity(jobs.len());
+        for range in batch::chunks(jobs.len(), BATCH_LIMIT) {
+            let slice = jobs.get(range.clone()).unwrap_or_default();
+            match self.run_batch(root, slice) {
+                Ok(batch) => results.extend(batch),
+                Err(error) => {
+                    results.extend(slice.iter().map(|_| Err(format!("remote target: {error}"))));
+                }
+            }
+        }
+        results
+    }
+
+    fn run_batch(&self, root: &Path, jobs: &[Job]) -> Result<Vec<JobResult>, String> {
+        if jobs.is_empty() {
+            return Ok(Vec::new());
+        }
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |d| d.as_millis());
+        let id = format!(
+            "b{}-{stamp}-{}",
+            std::process::id(),
+            BATCHES.fetch_add(1, Ordering::Relaxed)
+        );
+        let local = root.join("batches").join(&id);
+        let _ = fs::remove_dir_all(&local);
+        fs::create_dir_all(&local).map_err(|e| e.to_string())?;
+        let result = self.exchange(root, &local, &id, jobs);
+        let _ = self.ssh(
+            &format!(
+                "del /q \"{0}.py\" \"{0}.tgz\" \"{0}.out.tgz\" 2>nul & if exist \"{0}\" rmdir /s /q \"{0}\"",
+                self.windows(&format!("runs/{id}"))
+            ),
+            CONNECT,
+        );
+        if result.is_ok() {
+            let _ = fs::remove_dir_all(&local);
+        }
+        result
+    }
+
+    fn exchange(
+        &self,
+        root: &Path,
+        local: &Path,
+        id: &str,
+        jobs: &[Job],
+    ) -> Result<Vec<JobResult>, String> {
+        let manifest_name = format!("batches/{id}/manifest.tsv");
+        fs::write(local.join("manifest.tsv"), batch::manifest(root, jobs)?)
+            .map_err(|e| e.to_string())?;
+        let mut list = batch::dirs(root, jobs).join("\n");
+        let _ = write!(list, "\n{manifest_name}\n");
+        fs::write(local.join("files.txt"), list).map_err(|e| e.to_string())?;
+        let archive = local.join(format!("{id}.tgz"));
+        let mut tar = Command::new("tar");
+        tar.env("COPYFILE_DISABLE", "1")
+            .arg("-czf")
+            .arg(&archive)
+            .arg("-C")
+            .arg(root)
+            .arg("-T")
+            .arg(local.join("files.txt"));
+        let packed = process::run(tar, CONNECT).map_err(|e| format!("tar: {e:#}"))?;
+        if !matches!(packed.exit, Exit::Code(0)) {
+            return Err(format!(
+                "packing the batch: {}",
+                first_line(&packed.stderr, &packed.stdout)
+            ));
+        }
+        let driver = local.join(format!("{id}.py"));
+        fs::write(&driver, DRIVER).map_err(|e| e.to_string())?;
+        let transfer = CONNECT + Duration::from_secs(600);
+        self.upload(&[driver.as_path(), archive.as_path()], "runs", transfer)?;
+        let rounds = u32::try_from(jobs.len().div_ceil(self.jobs)).unwrap_or(u32::MAX);
+        let budget = self.timeout.saturating_mul(rounds.saturating_add(1)) + CONNECT;
+        let base = format!("runs/{id}");
+        let command = format!(
+            "python \"{}.py\" \"{}.tgz\" \"{}\" \"{manifest_name}\" \"{}.out.tgz\" \"{}\" {} {} {VULKAN_VERSION}",
+            self.windows(&base),
+            self.windows(&base),
+            self.windows(&base),
+            self.windows(&base),
+            self.amber(),
+            self.jobs,
+            self.timeout.as_secs().max(1)
+        );
+        self.ssh_ok(&command, budget, "the batch driver")?;
+        let out = local.join("out.tgz");
+        self.download(&format!("{base}.out.tgz"), &out, transfer)?;
+        let mut untar = Command::new("tar");
+        untar.arg("-xzf").arg(&out).arg("-C").arg(local);
+        let unpacked = process::run(untar, CONNECT).map_err(|e| format!("tar: {e:#}"))?;
+        if !matches!(unpacked.exit, Exit::Code(0)) {
+            return Err(format!(
+                "unpacking the results: {}",
+                first_line(&unpacked.stderr, &unpacked.stdout)
+            ));
+        }
+        Ok(read_results(&local.join("results"), jobs))
+    }
+}
+
+fn read_results(dir: &Path, jobs: &[Job]) -> Vec<JobResult> {
+    jobs.iter()
+        .enumerate()
+        .map(|(index, job)| {
+            let status =
+                fs::read_to_string(dir.join(format!("{index}.status"))).unwrap_or_default();
+            let dump = fs::read_to_string(dir.join(format!("{index}.dump"))).ok();
+            batch::parse_result(&status, dump.as_deref(), !job.dumps.is_empty())
+        })
+        .collect()
+}
+
+pub fn local_dir(root: &Path) -> PathBuf {
+    root.join("target").join("xtask").join("remote")
+}
+
+pub fn setup_script(pins: &ExecPins) -> String {
+    format!(
+        "@echo off
+setlocal
+set \"ROOT=%~dp0\"
+set \"SRC=%ROOT%src\\amber\"
+set \"HEADERS=%SRC%\\third_party\\vulkan-headers\"
+set \"BUILD=%ROOT%build\\amber\"
+call :checkout \"%SRC%\" {amber_repo} {amber_commit} || exit /b 1
+call :checkout \"%HEADERS%\" {headers_repo} {headers_commit} || exit /b 1
+set \"VSWHERE=%ProgramFiles(x86)%\\Microsoft Visual Studio\\Installer\\vswhere.exe\"
+if not exist \"%VSWHERE%\" (echo vswhere.exe not found & exit /b 1)
+set \"VS=\"
+for /f \"usebackq delims=\" %%i in (`\"%VSWHERE%\" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set \"VS=%%i\"
+if not defined VS (echo no Visual Studio with the C++ tools & exit /b 1)
+call \"%VS%\\VC\\Auxiliary\\Build\\vcvars64.bat\" >nul || exit /b 1
+if not defined VULKAN_SDK (echo VULKAN_SDK is not set & exit /b 1)
+cmake -S \"%SRC%\" -B \"%BUILD%\" -G Ninja -DCMAKE_BUILD_TYPE=Release -DAMBER_SKIP_TESTS=ON -DAMBER_SKIP_SPIRV_TOOLS=ON -DAMBER_SKIP_SHADERC=ON -DAMBER_SKIP_LODEPNG=ON -DAMBER_DISABLE_WERROR=ON \"-DVulkan-Headers_SOURCE_DIR=%HEADERS%\" \"-DVulkan_LIBRARIES=%VULKAN_SDK%\\Lib\\vulkan-1.lib\" || exit /b 1
+cmake --build \"%BUILD%\" --target amber --parallel || exit /b 1
+if not exist \"%ROOT%bin\" mkdir \"%ROOT%bin\"
+copy /y \"%BUILD%\\amber.exe\" \"%ROOT%bin\\amber.exe\" >nul || exit /b 1
+echo amber {amber_commit}> \"%ROOT%bin\\amber.pin\"
+exit /b 0
+:checkout
+if not exist \"%~1\\.git\" (
+  git init -q \"%~1\" || exit /b 1
+  git -C \"%~1\" remote add origin %2 || exit /b 1
+)
+set \"HEAD=\"
+for /f %%h in ('git -C \"%~1\" rev-parse HEAD 2^>nul') do set \"HEAD=%%h\"
+if \"%HEAD%\"==\"%3\" exit /b 0
+git -C \"%~1\" fetch -q --depth 1 origin %3 || exit /b 1
+git -C \"%~1\" checkout -q --detach FETCH_HEAD || exit /b 1
+exit /b 0
+",
+        amber_repo = pins.amber.repo,
+        amber_commit = pins.amber.commit,
+        headers_repo = pins.amber_vulkan_headers.repo,
+        headers_commit = pins.amber_vulkan_headers.commit,
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::oracles::{Pin, Release};
+
+    #[test]
+    fn setup_script_builds_the_pinned_amber() {
+        let pins = ExecPins {
+            kosmickrisp: Release {
+                repo: String::new(),
+                tag: String::new(),
+                asset: String::new(),
+                sha256: String::new(),
+            },
+            amber: Pin {
+                repo: "https://example.com/amber".into(),
+                commit: "abc".into(),
+            },
+            amber_vulkan_headers: Pin {
+                repo: "https://example.com/headers".into(),
+                commit: "def".into(),
+            },
+        };
+        let script = setup_script(&pins);
+        assert!(script.contains("call :checkout \"%SRC%\" https://example.com/amber abc"));
+        assert!(script.contains("https://example.com/headers def"));
+        assert!(script.contains("vcvars64.bat"));
+        assert!(script.contains("%VULKAN_SDK%\\Lib\\vulkan-1.lib"));
+        assert!(!script.contains("rem "));
+    }
+
+    #[test]
+    fn remote_paths_use_the_work_directory() {
+        let remote = Remote {
+            host: "target".into(),
+            dir: "C:/work".into(),
+            jobs: 2,
+            timeout: Duration::from_secs(5),
+        };
+        assert_eq!(remote.windows("runs/b1"), "C:\\work\\runs\\b1");
+        assert_eq!(remote.amber(), "C:\\work\\bin\\amber.exe");
+        assert_eq!(remote.path("runs"), "C:/work/runs");
+    }
+}

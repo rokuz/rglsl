@@ -1,5 +1,6 @@
 //! `cargo xtask test`: runs the glslang corpus against the oracles.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -10,7 +11,7 @@ use std::time::{Duration, Instant};
 use anyhow::{bail, Context, Result};
 
 use crate::corpus::{self, Case};
-use crate::exec::{self, Executor};
+use crate::exec::{self, ExecCase, Executor, TargetId};
 use crate::oracles::{self, Tool};
 use crate::process::{self, Exit};
 use crate::report;
@@ -23,7 +24,7 @@ pub struct Options {
     pub jobs: Option<usize>,
     pub timeout_secs: u64,
     pub write_progress: bool,
-    pub exec: bool,
+    pub targets: Vec<TargetId>,
 }
 
 /// What glslang did with a shader.
@@ -60,7 +61,15 @@ pub struct CaseResult {
     pub spirv_val: Option<bool>,
     /// First diagnostic, for the per-file report.
     pub note: String,
-    pub exec: Option<exec::Outcome>,
+    pub exec_input: Option<ExecInput>,
+    pub exec: BTreeMap<TargetId, exec::Outcome>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ExecInput {
+    pub ours: PathBuf,
+    pub reference: PathBuf,
+    pub invalid_reference: Option<String>,
 }
 
 impl CaseResult {
@@ -109,7 +118,7 @@ pub struct Environment {
     pub glslang: Tool,
     pub spirv_val: Tool,
     pub pins: oracles::Pins,
-    pub executor: Option<Executor>,
+    pub executors: Vec<Executor>,
 }
 
 pub fn run(root: &Path, options: Options) -> Result<()> {
@@ -128,22 +137,24 @@ pub fn run(root: &Path, options: Options) -> Result<()> {
         glslang_commit: oracles::git_head(&glslang_dir).ok(),
         glslang: oracles::find_tool(root, "glslang", "RGLSL_GLSLANG")?,
         spirv_val: oracles::find_tool(root, "spirv-val", "RGLSL_SPIRV_VAL")?,
-        executor: None,
+        executors: Vec::new(),
         glslang_dir,
         pins,
     };
-    if options.exec {
+    for target in &options.targets {
         let executor = Executor::new(
+            *target,
             root,
             &env.glslang.path,
-            root.join("target").join("xtask").join("exec"),
+            &root.join("target").join("xtask").join("exec"),
             Duration::from_secs(options.timeout_secs),
         )?;
         eprintln!(
-            "[xtask] exec on {} (Vulkan {}, {})",
-            executor.device.name, executor.device.api_version, executor.device.driver
+            "[xtask] exec on the {} target: {}",
+            target.label(),
+            executor.describe()
         );
-        env.executor = Some(executor);
+        env.executors.push(executor);
     }
     if env.glslang_commit.as_deref() != Some(env.pins.glslang.commit.as_str()) {
         eprintln!(
@@ -217,28 +228,34 @@ pub fn run(root: &Path, options: Options) -> Result<()> {
     }
     let mut results = results.into_inner().unwrap_or_else(PoisonError::into_inner);
     results.sort_by_key(|&(index, _)| index);
-    let results: Vec<CaseResult> = results.into_iter().map(|(_, result)| result).collect();
+    let mut results: Vec<CaseResult> = results.into_iter().map(|(_, result)| result).collect();
     eprintln!(
-        "[xtask] ran {} shaders in {:.1}s",
+        "[xtask] compiled {} shaders in {:.1}s",
         results.len(),
         started.elapsed().as_secs_f64()
     );
+    for executor in &env.executors {
+        let started = Instant::now();
+        run_exec(executor, &mut results);
+        eprintln!(
+            "[xtask] exec on the {} target took {:.1}s",
+            executor.target.label(),
+            started.elapsed().as_secs_f64()
+        );
+    }
 
     let details = root.join("target").join("xtask").join("results.tsv");
     fs::write(&details, report::details(&results))?;
-    let carried = if env.executor.is_none() {
-        fs::read_to_string(root.join("PROGRESS.md"))
-            .ok()
-            .map(|text| report::Carried::parse(&text))
-    } else {
-        None
-    };
+    let carried = fs::read_to_string(root.join("PROGRESS.md"))
+        .ok()
+        .map(|text| report::Carried::parse(&text));
     let summary = report::progress(&env, &results, carried.as_ref());
     if options.write_progress && options.filter.is_none() {
         fs::write(root.join("PROGRESS.md"), &summary)?;
         eprintln!("[xtask] wrote PROGRESS.md");
     }
-    print!("{}", report::summary(&results, env.executor.is_some()));
+    let ran: Vec<TargetId> = env.executors.iter().map(|e| e.target).collect();
+    print!("{}", report::summary(&results, &ran));
     eprintln!("[xtask] per-shader results: {}", details.display());
     Ok(())
 }
@@ -303,19 +320,19 @@ fn run_case(
     };
 
     let reference = work_dir.join("glslang").join(format!("{}.spv", case.name));
-    let exec = match &env.executor {
-        Some(executor)
-            if matches!(oracle, OracleResult::Accepted)
-                && spirv_val == Some(true)
-                && !case.target.compile_only
-                && reference.is_file() =>
-        {
-            Some(match validate(env, case, &reference, timeout)? {
-                Some(message) => exec::Outcome::skip(exec::SkipReason::ReferenceInvalid, message),
-                None => executor.exec(&case.name, &out, &reference),
-            })
-        }
-        _ => None,
+    let exec_input = if !env.executors.is_empty()
+        && matches!(oracle, OracleResult::Accepted)
+        && spirv_val == Some(true)
+        && !case.target.compile_only
+        && reference.is_file()
+    {
+        Some(ExecInput {
+            invalid_reference: validate(env, case, &reference, timeout)?,
+            ours: out.clone(),
+            reference,
+        })
+    } else {
+        None
     };
 
     Ok(CaseResult {
@@ -324,8 +341,38 @@ fn run_case(
         ours,
         spirv_val,
         note,
-        exec,
+        exec_input,
+        exec: BTreeMap::new(),
     })
+}
+
+fn run_exec(executor: &Executor, results: &mut [CaseResult]) {
+    let mut cases = Vec::new();
+    let mut indices = Vec::new();
+    for (index, result) in results.iter_mut().enumerate() {
+        let Some(input) = &result.exec_input else {
+            continue;
+        };
+        if let Some(message) = &input.invalid_reference {
+            result.exec.insert(
+                executor.target,
+                exec::Outcome::skip(exec::SkipReason::ReferenceInvalid, message.clone()),
+            );
+            continue;
+        }
+        cases.push(ExecCase {
+            name: result.case.name.clone(),
+            ours: input.ours.clone(),
+            reference: input.reference.clone(),
+        });
+        indices.push(index);
+    }
+    let outcomes = executor.exec_all(&cases);
+    for (index, outcome) in indices.into_iter().zip(outcomes) {
+        if let Some(result) = results.get_mut(index) {
+            result.exec.insert(executor.target, outcome);
+        }
+    }
 }
 
 fn validate(

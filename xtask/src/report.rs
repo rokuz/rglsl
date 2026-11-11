@@ -4,15 +4,27 @@ use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
 use crate::corpus::{Corpus, STAGE_EXTENSIONS};
-use crate::exec::{Outcome, SkipReason};
+use crate::exec::{Outcome, SkipReason, TargetId};
 use crate::runner::{CaseResult, Environment, OracleResult, OursResult};
 
 const TABLE_HEADER: &str =
-    "| Stage | Files | accept | diag | valid | interface | exec | link | crashes |\n\
-     |---|---:|---:|---:|---:|---:|---:|---:|---:|\n";
+    "| Stage | Files | accept | diag | valid | interface | exec local | exec remote | link | crashes |\n\
+     |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n";
 
-const EXEC_DETAIL: &str = "`exec` in detail";
-const EXEC_LINE: &str = "Exec: ";
+const LEGACY_DETAIL: &str = "`exec` in detail";
+const LEGACY_LINE: &str = "Exec: ";
+
+fn detail_title(target: TargetId) -> String {
+    format!("`exec {}` in detail", target.label())
+}
+
+fn oracle_prefix(target: TargetId) -> String {
+    format!("Exec {}: ", target.label())
+}
+
+fn column(target: TargetId) -> String {
+    format!("exec {}", target.label())
+}
 
 #[derive(Default, Clone, Copy)]
 struct Score {
@@ -37,13 +49,13 @@ impl Score {
     }
 }
 
-#[derive(Default, Clone, Copy)]
+#[derive(Default, Clone)]
 struct Row {
     files: usize,
     accept: Score,
     diag: Score,
     valid: Score,
-    exec: Score,
+    exec: BTreeMap<TargetId, Score>,
     crashes: usize,
 }
 
@@ -53,18 +65,24 @@ impl Row {
         self.accept.add(result.accept());
         self.diag.add(result.diag());
         self.valid.add(result.valid());
-        self.exec
-            .add(result.exec.as_ref().and_then(Outcome::passed));
+        for (target, outcome) in &result.exec {
+            self.exec.entry(*target).or_default().add(outcome.passed());
+        }
         self.crashes += usize::from(matches!(result.ours, OursResult::Crashed));
     }
 
-    fn line(&self, label: &str, exec: &str) -> String {
+    fn exec_cell(&self, target: TargetId) -> String {
+        self.exec.get(&target).copied().unwrap_or_default().cell()
+    }
+
+    fn line(&self, label: &str, exec: &[String]) -> String {
         format!(
-            "| {label} | {} | {} | {} | {} | – | {exec} | – | {} |\n",
+            "| {label} | {} | {} | {} | {} | – | {} | – | {} |\n",
             self.files,
             self.accept.cell(),
             self.diag.cell(),
             self.valid.cell(),
+            exec.join(" | "),
             self.crashes
         )
     }
@@ -72,62 +90,105 @@ impl Row {
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Carried {
-    oracle_line: Option<String>,
-    cells: BTreeMap<(String, String), String>,
-    details: BTreeMap<String, String>,
+    oracle_lines: BTreeMap<TargetId, String>,
+    cells: BTreeMap<(TargetId, String, String), String>,
+    details: BTreeMap<(String, TargetId), String>,
+}
+
+fn header_target(cell: &str) -> Option<TargetId> {
+    if cell == "exec" {
+        return Some(TargetId::Local);
+    }
+    TargetId::ALL.into_iter().find(|t| cell == column(*t))
+}
+
+fn detail_target(line: &str) -> Option<TargetId> {
+    if line.starts_with(LEGACY_DETAIL) {
+        return Some(TargetId::Local);
+    }
+    TargetId::ALL
+        .into_iter()
+        .find(|t| line.starts_with(&detail_title(*t)))
 }
 
 impl Carried {
     pub fn parse(text: &str) -> Self {
         let mut carried = Self::default();
         let mut section = String::new();
-        let mut detail: Option<String> = None;
+        let mut columns: Vec<(usize, TargetId)> = Vec::new();
+        let mut detail: Option<(TargetId, String)> = None;
         for line in text.lines() {
             if let Some(title) = line.strip_prefix("## ") {
-                if let Some(block) = detail.take() {
-                    carried
-                        .details
-                        .insert(section.clone(), block.trim_end().to_string());
-                }
+                carried.finish(&section, detail.take());
                 section = title.trim().to_string();
                 continue;
             }
-            if line.starts_with(EXEC_LINE) {
-                carried.oracle_line = Some(line.to_string());
+            if let Some(rest) = line.strip_prefix(LEGACY_LINE) {
+                carried.oracle_lines.insert(
+                    TargetId::Local,
+                    format!("{}{rest}", oracle_prefix(TargetId::Local)),
+                );
                 continue;
             }
-            if line.starts_with(EXEC_DETAIL) {
-                detail = Some(String::new());
+            if let Some(target) = TargetId::ALL
+                .into_iter()
+                .find(|t| line.starts_with(&oracle_prefix(*t)))
+            {
+                carried.oracle_lines.insert(target, line.to_string());
+                continue;
             }
-            if let Some(block) = detail.as_mut() {
-                block.push_str(line);
-                block.push('\n');
+            if let Some(target) = detail_target(line) {
+                carried.finish(&section, detail.take());
+                let rest = line.split_once(" in detail").map_or("", |(_, rest)| rest);
+                detail = Some((target, format!("{}{rest}\n", detail_title(target))));
+                continue;
+            }
+            if let Some((_, block)) = detail.as_mut() {
+                if line.starts_with('|') || line.is_empty() {
+                    block.push_str(line);
+                    block.push('\n');
+                    continue;
+                }
+                carried.finish(&section, detail.take());
+            }
+            if !line.starts_with("| ") {
                 continue;
             }
             let cells: Vec<&str> = line.split('|').map(str::trim).collect();
-            if cells.len() == 11 && line.starts_with("| ") {
-                let (Some(label), Some(exec)) = (cells.get(1), cells.get(7)) else {
-                    continue;
-                };
-                if *label == "Stage" {
-                    continue;
+            if cells.get(1) == Some(&"Stage") {
+                columns = cells
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, cell)| header_target(cell).map(|t| (index, t)))
+                    .collect();
+                continue;
+            }
+            let Some(label) = cells.get(1) else {
+                continue;
+            };
+            for (index, target) in &columns {
+                if let Some(cell) = cells.get(*index) {
+                    carried.cells.insert(
+                        (*target, section.clone(), (*label).to_string()),
+                        (*cell).to_string(),
+                    );
                 }
-                carried
-                    .cells
-                    .insert((section.clone(), (*label).to_string()), (*exec).to_string());
             }
         }
-        if let Some(block) = detail {
-            carried
-                .details
-                .insert(section, block.trim_end().to_string());
-        }
+        carried.finish(&section, detail.take());
         carried
     }
 
-    fn cell(&self, section: &str, label: &str) -> String {
+    fn finish(&mut self, section: &str, detail: Option<(TargetId, String)>) {
+        if let Some((target, block)) = detail {
+            self.details
+                .insert((section.to_string(), target), block.trim_end().to_string());
+        }
+    }
+
+    fn cell(&self, target: TargetId, section: &str, label: &str) -> String {
         self.cells
-            .get(&(section.to_string(), label.to_string()))
+            .get(&(target, section.to_string(), label.to_string()))
             .cloned()
             .unwrap_or_else(|| "–".into())
     }
@@ -144,11 +205,19 @@ fn short(commit: &str) -> &str {
 }
 
 pub fn progress(env: &Environment, results: &[CaseResult], carried: Option<&Carried>) -> String {
-    let source = match (&env.executor, carried) {
-        (Some(_), _) => ExecSource::Ran,
-        (None, Some(carried)) => ExecSource::Carried(carried),
-        (None, None) => ExecSource::Absent,
-    };
+    let sources: Vec<(TargetId, ExecSource)> = TargetId::ALL
+        .into_iter()
+        .map(|target| {
+            let source = if env.executors.iter().any(|e| e.target == target) {
+                ExecSource::Ran
+            } else if let Some(carried) = carried {
+                ExecSource::Carried(carried)
+            } else {
+                ExecSource::Absent
+            };
+            (target, source)
+        })
+        .collect();
     let mut out = String::new();
     out.push_str("# Progress\n\n");
     out.push_str("Generated by `cargo xtask test`; do not edit by hand.\n\n");
@@ -158,23 +227,39 @@ pub fn progress(env: &Environment, results: &[CaseResult], carried: Option<&Carr
         short(&env.pins.glslang.commit),
         short(&env.pins.spirv_tools.commit)
     );
-    match (&source, &env.executor) {
-        (ExecSource::Ran, Some(executor)) => {
-            let _ = writeln!(
-                out,
-                "{EXEC_LINE}Amber `{}` with KosmicKrisp `{}` on {} (Vulkan {}).",
-                short(&env.pins.exec.amber.commit),
-                env.pins.exec.kosmickrisp.tag,
-                executor.device.name,
-                executor.device.api_version
-            );
-        }
-        (ExecSource::Carried(carried), _) => {
-            if let Some(line) = &carried.oracle_line {
-                let _ = writeln!(out, "{line}");
+    for (target, source) in &sources {
+        let executor = env.executors.iter().find(|e| e.target == *target);
+        match (source, executor) {
+            (ExecSource::Ran, Some(executor)) => {
+                let device = &executor.device;
+                let _ = match target {
+                    TargetId::Local => writeln!(
+                        out,
+                        "{}Amber `{}` with KosmicKrisp `{}` on {} (Vulkan {}).",
+                        oracle_prefix(*target),
+                        short(&env.pins.exec.amber.commit),
+                        env.pins.exec.kosmickrisp.tag,
+                        device.name,
+                        device.api_version
+                    ),
+                    TargetId::Remote => writeln!(
+                        out,
+                        "{}Amber `{}` on {}, {} (Vulkan {}), Windows over SSH.",
+                        oracle_prefix(*target),
+                        short(&env.pins.exec.amber.commit),
+                        device.name,
+                        device.driver,
+                        device.api_version
+                    ),
+                };
             }
+            (ExecSource::Carried(carried), _) => {
+                if let Some(line) = carried.oracle_lines.get(target) {
+                    let _ = writeln!(out, "{line}");
+                }
+            }
+            _ => {}
         }
-        _ => {}
     }
     let mut caveats = Vec::new();
     if env.glslang_commit.as_deref() != Some(env.pins.glslang.commit.as_str()) {
@@ -193,7 +278,7 @@ pub fn progress(env: &Environment, results: &[CaseResult], carried: Option<&Carr
         let results: Vec<&CaseResult> =
             results.iter().filter(|r| r.case.corpus == corpus).collect();
         if !results.is_empty() {
-            corpus_section(&mut out, corpus, &results, &source);
+            corpus_section(&mut out, corpus, &results, &sources);
         }
     }
 
@@ -207,7 +292,8 @@ pub fn progress(env: &Environment, results: &[CaseResult], carried: Option<&Carr
 | `diag` | we reject it and our first error is on a line glslang reports an error on | shaders glslang rejects |
 | `valid` | we produce SPIR-V and `spirv-val` accepts it | shaders we accept |
 | `interface` | reflection matches glslang | not implemented yet (M9) |
-| `exec` | our module and glslang's, run by Amber on KosmicKrisp with the same inputs, write the same buffers, images and color attachments | shaders both accept and that we could execute; skips are counted apart |
+| `exec local` | our module and glslang's, run by Amber on KosmicKrisp on the Mac with the same inputs, write the same buffers, images and color attachments | shaders both accept and that we could execute; skips are counted apart |
+| `exec remote` | the same on the remote Windows target (a real GPU and its Vulkan driver), driven over SSH | as for `exec local` |
 | `link` | our own linkage and `#include` tests | not implemented yet (M3) |
 
 `crashes` counts panics, aborts and timeouts of our compiler; each one is a bug.
@@ -215,10 +301,14 @@ pub fn progress(env: &Environment, results: &[CaseResult], carried: Option<&Carr
 `exec` binds every resource of the module from its reflection and fills it with the same
 pseudo-random data for both modules; compute shaders run one workgroup, fragment shaders draw a
 full-screen rectangle behind a generated vertex shader, vertex shaders draw twelve vertices in
-front of a generated fragment shader that writes their outputs to color attachments. Integers
-must be equal; floats may differ by NaN payload, the sign of zero, or 4 ULP. A shader is skipped,
-not failed, when the harness cannot bind it, the driver lacks a feature, glslang's own module
-fails on the driver, or glslang's module gives different results on two runs. See
+front of a generated fragment shader that writes their outputs to color attachments. Geometry
+and tessellation shaders run between generated vertex, tessellation and fragment stages that
+forward their varyings to color attachments; ray generation shaders trace into a one-triangle
+scene with generated miss and hit shaders. Integers must be equal; floats may differ by NaN
+payload, the sign of zero, or 4 ULP. A shader whose results differ is run again alone before it
+is counted as a failure. A shader is skipped, not failed, when the harness cannot bind it, the
+driver lacks a feature, glslang's own module fails on the driver, or glslang's module gives
+different results on two runs. A target that is not run keeps the results of its last run. See
 `docs/PLAN.md` (Testing).
 
 Only shaders with `#version 450` or `460` are run. Per-shader results are written to
@@ -263,12 +353,20 @@ fn corpus_rows(results: &[&CaseResult]) -> Vec<(String, Row)> {
     rows
 }
 
-fn exec_cell(source: &ExecSource, title: &str, label: &str, row: &Row) -> String {
-    match source {
-        ExecSource::Ran => row.exec.cell(),
-        ExecSource::Carried(carried) => carried.cell(title, label),
-        ExecSource::Absent => "–".into(),
-    }
+fn exec_cells(
+    sources: &[(TargetId, ExecSource)],
+    title: &str,
+    label: &str,
+    row: &Row,
+) -> Vec<String> {
+    sources
+        .iter()
+        .map(|(target, source)| match source {
+            ExecSource::Ran => row.exec_cell(*target),
+            ExecSource::Carried(carried) => carried.cell(*target, title, label),
+            ExecSource::Absent => "–".into(),
+        })
+        .collect()
 }
 
 #[derive(Default)]
@@ -280,10 +378,10 @@ struct ExecCounts {
 }
 
 impl ExecCounts {
-    fn new(results: &[&CaseResult]) -> Self {
+    fn new(results: &[&CaseResult], target: TargetId) -> Self {
         let mut counts = Self::default();
         for result in results {
-            match &result.exec {
+            match result.exec.get(&target) {
                 Some(Outcome::Pass { tolerated }) => {
                     counts.passed += 1;
                     counts.tolerated += usize::from(*tolerated > 0);
@@ -298,9 +396,10 @@ impl ExecCounts {
         counts
     }
 
-    fn table(&self) -> String {
+    fn table(&self, target: TargetId) -> String {
         let mut out = format!(
-            "{EXEC_DETAIL}:\n\n| | shaders |\n|---|---:|\n| executed | {} |\n| passed | {} |\n| passed within the float tolerance | {} |\n| failed | {} |\n",
+            "{}:\n\n| | shaders |\n|---|---:|\n| executed | {} |\n| passed | {} |\n| passed within the float tolerance | {} |\n| failed | {} |\n",
+            detail_title(target),
             self.passed + self.failed,
             self.passed,
             self.tolerated,
@@ -315,12 +414,17 @@ impl ExecCounts {
     }
 }
 
-fn corpus_section(out: &mut String, corpus: Corpus, results: &[&CaseResult], source: &ExecSource) {
+fn corpus_section(
+    out: &mut String,
+    corpus: Corpus,
+    results: &[&CaseResult],
+    sources: &[(TargetId, ExecSource)],
+) {
     let (title, intro) = corpus_title(corpus);
     let _ = writeln!(out, "\n## {title}\n\n{intro}\n");
     out.push_str(TABLE_HEADER);
     for (label, row) in corpus_rows(results) {
-        out.push_str(&row.line(&label, &exec_cell(source, title, &label, &row)));
+        out.push_str(&row.line(&label, &exec_cells(sources, title, &label, &row)));
     }
 
     let count = |oracle: bool, ours: bool| {
@@ -352,27 +456,38 @@ fn corpus_section(out: &mut String, corpus: Corpus, results: &[&CaseResult], sou
         count(false, true),
         count(false, false)
     );
-    match source {
-        ExecSource::Ran => {
-            let _ = write!(out, "\n{}", ExecCounts::new(results).table());
-        }
-        ExecSource::Carried(carried) => {
-            if let Some(block) = carried.details.get(title) {
-                let _ = writeln!(out, "\n{block}");
+    for (target, source) in sources {
+        match source {
+            ExecSource::Ran => {
+                let _ = write!(
+                    out,
+                    "\n{}",
+                    ExecCounts::new(results, *target).table(*target)
+                );
             }
+            ExecSource::Carried(carried) => {
+                if let Some(block) = carried.details.get(&(title.to_string(), *target)) {
+                    let _ = writeln!(out, "\n{block}");
+                }
+            }
+            ExecSource::Absent => {}
         }
-        ExecSource::Absent => {}
     }
 }
 
 /// A short per-corpus summary for the terminal.
-pub fn summary(results: &[CaseResult], exec: bool) -> String {
+pub fn summary(results: &[CaseResult], ran: &[TargetId]) -> String {
     let mut out = String::new();
-    let source = if exec {
-        ExecSource::Ran
-    } else {
-        ExecSource::Absent
-    };
+    let sources: Vec<(TargetId, ExecSource)> = TargetId::ALL
+        .into_iter()
+        .map(|target| {
+            if ran.contains(&target) {
+                (target, ExecSource::Ran)
+            } else {
+                (target, ExecSource::Absent)
+            }
+        })
+        .collect();
     for corpus in Corpus::ALL {
         let results: Vec<&CaseResult> =
             results.iter().filter(|r| r.case.corpus == corpus).collect();
@@ -383,21 +498,22 @@ pub fn summary(results: &[CaseResult], exec: bool) -> String {
         let _ = writeln!(out, "{title}\n");
         out.push_str(TABLE_HEADER);
         for (label, row) in corpus_rows(&results) {
-            out.push_str(&row.line(&label, &exec_cell(&source, title, &label, &row)));
+            out.push_str(&row.line(&label, &exec_cells(&sources, title, &label, &row)));
         }
         out.push('\n');
-        if exec {
-            out.push_str(&exec_summary(&results));
+        for target in ran {
+            out.push_str(&exec_summary(&results, *target));
             out.push('\n');
         }
     }
     out
 }
 
-fn exec_summary(results: &[&CaseResult]) -> String {
-    let counts = ExecCounts::new(results);
+fn exec_summary(results: &[&CaseResult], target: TargetId) -> String {
+    let counts = ExecCounts::new(results, target);
     let mut out = format!(
-        "exec: {} executed, {} passed ({} within the float tolerance), {} failed, {} skipped\n",
+        "exec {}: {} executed, {} passed ({} within the float tolerance), {} failed, {} skipped\n",
+        target.label(),
         counts.passed + counts.failed,
         counts.passed,
         counts.tolerated,
@@ -410,7 +526,7 @@ fn exec_summary(results: &[&CaseResult]) -> String {
         }
     }
     for result in results {
-        if let Some(Outcome::Fail(why)) = &result.exec {
+        if let Some(Outcome::Fail(why)) = result.exec.get(&target) {
             let _ = writeln!(out, "  FAIL {}: {why}", result.case.name);
         }
     }
@@ -434,7 +550,7 @@ fn exec_columns(outcome: Option<&Outcome>) -> (String, String) {
 
 pub fn details(results: &[CaseResult]) -> String {
     let mut out = String::from(
-        "file\tcorpus\tversion\tstage\ttarget\tsuite\tglslang\tours\taccept\tdiag\tvalid\texec\tnote\texec_note\n",
+        "file\tcorpus\tversion\tstage\ttarget\tsuite\tglslang\tours\taccept\tdiag\tvalid\texec_local\texec_remote\tnote\texec_local_note\texec_remote_note\n",
     );
     let mark = |outcome: Option<bool>| match outcome {
         Some(true) => "pass",
@@ -456,10 +572,11 @@ pub fn details(results: &[CaseResult]) -> String {
             OursResult::BackendFailed => "backend-failed",
             OursResult::Crashed => "crash",
         };
-        let (exec, exec_note) = exec_columns(r.exec.as_ref());
+        let (local, local_note) = exec_columns(r.exec.get(&TargetId::Local));
+        let (remote, remote_note) = exec_columns(r.exec.get(&TargetId::Remote));
         let _ = writeln!(
             out,
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
             r.case.name,
             match r.case.corpus {
                 Corpus::Vulkan => "vulkan",
@@ -474,9 +591,11 @@ pub fn details(results: &[CaseResult]) -> String {
             mark(r.accept()),
             mark(r.diag()),
             mark(r.valid()),
-            exec,
+            local,
+            remote,
             r.note.replace('\t', " "),
-            exec_note.replace(['\t', '\n'], " "),
+            local_note.replace(['\t', '\n'], " "),
+            remote_note.replace(['\t', '\n'], " "),
         );
     }
     out
@@ -486,7 +605,7 @@ pub fn details(results: &[CaseResult]) -> String {
 mod tests {
     use super::*;
 
-    const PROGRESS: &str = "# Progress
+    const LEGACY: &str = "# Progress
 
 Oracles: glslang `b411a8fb`, SPIRV-Tools `ef96ed76` (pinned in `oracles.toml`).
 Exec: Amber `c9f1e287` with KosmicKrisp `mesa-mesa-26.2.1` on Apple M4 Max (Vulkan 1.4.354).
@@ -515,27 +634,76 @@ intro
 ## Modes
 ";
 
+    const CURRENT: &str = "# Progress
+
+Exec local: Amber `c9f1e287` with KosmicKrisp `mesa-mesa-26.2.1` on Apple M4 Max (Vulkan 1.4.354).
+Exec remote: Amber `c9f1e287` on GPU, driver (Vulkan 1.4.349), Windows over SSH.
+
+## glslang Vulkan tests
+
+| Stage | Files | accept | diag | valid | interface | exec local | exec remote | link | crashes |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| **all** | 694 | 1 | 2 | 3 | – | 10 / 10 (100.0 %) | 20 / 21 (95.2 %) | – | 0 |
+
+`exec local` in detail:
+
+| | shaders |
+|---|---:|
+| executed | 10 |
+
+`exec remote` in detail:
+
+| | shaders |
+|---|---:|
+| executed | 21 |
+
+## Modes
+";
+
     #[test]
-    fn carries_exec_results_over() {
-        let carried = Carried::parse(PROGRESS);
+    fn carries_legacy_exec_results_over_as_the_local_target() {
+        let carried = Carried::parse(LEGACY);
         assert_eq!(
-            carried.oracle_line.as_deref(),
-            Some("Exec: Amber `c9f1e287` with KosmicKrisp `mesa-mesa-26.2.1` on Apple M4 Max (Vulkan 1.4.354).")
+            carried.oracle_lines[&TargetId::Local],
+            "Exec local: Amber `c9f1e287` with KosmicKrisp `mesa-mesa-26.2.1` on Apple M4 Max (Vulkan 1.4.354)."
         );
         assert_eq!(
-            carried.cell("glslang Vulkan tests", "**all**"),
+            carried.cell(TargetId::Local, "glslang Vulkan tests", "**all**"),
             "200 / 210 (95.2 %)"
         );
         assert_eq!(
-            carried.cell("glslang Vulkan tests", "comp"),
+            carried.cell(TargetId::Local, "glslang Vulkan tests", "comp"),
             "100 / 101 (99.0 %)"
         );
-        assert_eq!(carried.cell("glslang Vulkan tests", "frag"), "–");
         assert_eq!(
-            carried.details["glslang Vulkan tests"],
-            "`exec` in detail:\n\n| | shaders |\n|---|---:|\n| executed | 210 |"
+            carried.cell(TargetId::Remote, "glslang Vulkan tests", "comp"),
+            "–"
         );
-        assert!(!carried.details.contains_key("Modes"));
+        assert_eq!(
+            carried.details[&("glslang Vulkan tests".to_string(), TargetId::Local)],
+            "`exec local` in detail:\n\n| | shaders |\n|---|---:|\n| executed | 210 |"
+        );
+        assert!(!carried
+            .details
+            .contains_key(&("Modes".to_string(), TargetId::Local)));
+    }
+
+    #[test]
+    fn carries_each_target_on_its_own() {
+        let carried = Carried::parse(CURRENT);
+        assert!(carried.oracle_lines[&TargetId::Remote].starts_with("Exec remote: Amber"));
+        assert_eq!(
+            carried.cell(TargetId::Local, "glslang Vulkan tests", "**all**"),
+            "10 / 10 (100.0 %)"
+        );
+        assert_eq!(
+            carried.cell(TargetId::Remote, "glslang Vulkan tests", "**all**"),
+            "20 / 21 (95.2 %)"
+        );
+        assert_eq!(
+            carried.details[&("glslang Vulkan tests".to_string(), TargetId::Remote)],
+            "`exec remote` in detail:\n\n| | shaders |\n|---|---:|\n| executed | 21 |"
+        );
     }
 
     #[test]

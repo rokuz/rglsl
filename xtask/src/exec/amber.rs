@@ -91,7 +91,7 @@ impl Amber {
     }
 }
 
-fn first_line(primary: &str, secondary: &str) -> String {
+pub fn first_line(primary: &str, secondary: &str) -> String {
     primary
         .lines()
         .chain(secondary.lines())

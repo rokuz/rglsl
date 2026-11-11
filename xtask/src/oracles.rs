@@ -128,6 +128,23 @@ pub fn build(root: &Path, glslang_dir: Option<&Path>, selection: Selection) -> R
     Ok(())
 }
 
+pub fn build_remote(root: &Path) -> Result<()> {
+    let pins = load_pins(root)?;
+    let remote =
+        crate::exec::remote::Remote::from_env(Duration::from_secs(60)).with_context(|| {
+            format!(
+                "set {} to the SSH host alias of a Windows machine with Vulkan",
+                crate::exec::remote::HOST_VAR
+            )
+        })?;
+    let device = remote.setup(&pins.exec, &crate::exec::remote::local_dir(root))?;
+    eprintln!(
+        "[xtask] remote Vulkan device: {} (API {}, {})",
+        device.name, device.api_version, device.driver
+    );
+    Ok(())
+}
+
 fn write_stamp(root: &Path, pins: &Pins) -> Result<()> {
     let dir = oracles_dir(root);
     let mut stamp = format!(

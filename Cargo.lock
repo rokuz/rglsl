@@ -624,7 +624,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "rglsl",
- "rspirv",
  "serde_json",
  "spirv",
  "toml",
