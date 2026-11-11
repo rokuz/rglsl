@@ -18,6 +18,7 @@ pub(super) enum Local {
     Variable(Handle<LocalVariable>),
     Pointer(u32),
     Value(u32),
+    Constant,
 }
 
 pub(super) struct FunctionLowerer<'l, 'a> {
