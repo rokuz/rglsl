@@ -169,12 +169,14 @@ fn run(args: Vec<String>) -> Result<i32> {
             args.finish()?;
             Ok(worker::compile_one(
                 Path::new(&input),
-                &stage,
-                &spv,
-                auto_map,
-                object,
-                hlsl_offsets,
-                &include_dirs,
+                &worker::OneOptions {
+                    stage: &stage,
+                    spv_version: &spv,
+                    auto_map,
+                    object,
+                    hlsl_offsets,
+                    include_dirs: &include_dirs,
+                },
                 Path::new(&out),
             ))
         }

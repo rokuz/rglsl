@@ -58,16 +58,24 @@ fn full_message(err: &dyn std::error::Error) -> String {
     message
 }
 
-pub fn compile_one(
-    input: &Path,
-    stage: &str,
-    spv_version: &str,
-    auto_map: bool,
-    object: bool,
-    hlsl_offsets: bool,
-    include_dirs: &[String],
-    out: &Path,
-) -> i32 {
+pub struct OneOptions<'a> {
+    pub stage: &'a str,
+    pub spv_version: &'a str,
+    pub auto_map: bool,
+    pub object: bool,
+    pub hlsl_offsets: bool,
+    pub include_dirs: &'a [String],
+}
+
+pub fn compile_one(input: &Path, one: &OneOptions<'_>, out: &Path) -> i32 {
+    let OneOptions {
+        stage,
+        spv_version,
+        auto_map,
+        object,
+        hlsl_offsets,
+        include_dirs,
+    } = *one;
     let source = match std::fs::read(input) {
         Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
         Err(err) => {

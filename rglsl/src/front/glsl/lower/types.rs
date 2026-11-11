@@ -720,6 +720,6 @@ const fn improper_straddle(vector_like: bool, size: u32, offset: u32) -> bool {
     if size <= 16 {
         offset / 16 != (offset.saturating_add(size).saturating_sub(1)) / 16
     } else {
-        offset % 16 != 0
+        !offset.is_multiple_of(16)
     }
 }
