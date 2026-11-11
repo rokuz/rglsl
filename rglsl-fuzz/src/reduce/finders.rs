@@ -760,7 +760,6 @@ pub fn is_splice(statement: &Statement) -> bool {
 fn remove_statement(unit: &TranslationUnit) -> Vec<Opportunity> {
     function_statements(unit)
         .into_iter()
-        .filter(|(_, statement)| !matches!(statement.kind, StatementKind::Expression(None)))
         .map(|(_, statement)| Opportunity::single(Change::Statement(statement.id, None)))
         .collect()
 }
