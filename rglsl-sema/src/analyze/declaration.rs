@@ -20,7 +20,8 @@ use crate::scope::{
     SymbolId, SymbolKind,
 };
 use crate::types::{
-    ArraySize, BlockStorage, BlockType, Member, Opaque, Scalar, SpecializedSize, Type, TypeKind,
+    ArraySize, BlockStorage, BlockType, Member, Opaque, OpaqueKind, Scalar, SpecializedSize, Type,
+    TypeKind,
 };
 
 const IMAGE_FORMATS: [&str; 41] = [
@@ -171,11 +172,40 @@ impl Analyzer<'_> {
         for index in 0..3 {
             if let (Some(name), Some(identifier)) = (names.get(index), identifiers.get(index)) {
                 if let Some(entry) = qualifiers.layout_entry(name) {
-                    if let Some(slot) = self.local_size.get_mut(index) {
-                        *slot = entry.value.and_then(|value| u32::try_from(value).ok());
+                    if entry.value == Some(0) {
+                        self.error(
+                            entry.span,
+                            DiagnosticKind::InvalidQualifier {
+                                qualifier: name,
+                                reason: "must be at least 1",
+                            },
+                        );
+                    }
+                    let value = entry.value.and_then(|value| u32::try_from(value).ok());
+                    let changed = self
+                        .local_size
+                        .get(index)
+                        .copied()
+                        .flatten()
+                        .is_some_and(|previous| value.is_some_and(|value| value != previous));
+                    if changed {
+                        self.local_size_changed(entry.span);
+                    } else if let Some(slot) = self.local_size.get_mut(index) {
+                        *slot = value;
                     }
                 }
-                if qualifiers.has_layout(identifier) {
+                if let Some(entry) = qualifiers.layout_entry(identifier) {
+                    let changed = self
+                        .local_size_ids
+                        .get(index)
+                        .copied()
+                        .flatten()
+                        .is_some_and(|previous| entry.value.is_some_and(|value| value != previous));
+                    if changed {
+                        self.local_size_changed(entry.span);
+                    } else if let Some(slot) = self.local_size_ids.get_mut(index) {
+                        *slot = entry.value;
+                    }
                     if let Some(slot) = self.local_size_specialized.get_mut(index) {
                         *slot = true;
                     }
@@ -511,7 +541,61 @@ impl Analyzer<'_> {
         self.stage_layout_identifiers(&result);
         self.heap_layout_check(&result);
         self.push_constant_bank_layout_check(&result);
+        self.removed_packing_check(&result);
         result
+    }
+
+    fn binding_required_check(
+        &mut self,
+        span: Span,
+        ty: &Type,
+        qualifiers: &Qualifiers,
+        block: bool,
+    ) {
+        if !self.options.require_bindings
+            || qualifiers.has_layout("binding")
+            || !matches!(qualifiers.storage, Storage::Uniform | Storage::Buffer)
+            || self.extension_enabled(super::heap::DESCRIPTOR_HEAP)
+        {
+            return;
+        }
+        let message = if block {
+            let exempt = [
+                "push_constant",
+                "buffer_reference",
+                "input_attachment_index",
+            ]
+            .iter()
+            .any(|name| qualifiers.has_layout(name))
+                || super::ray::is_shader_record(qualifiers);
+            (!exempt).then_some("uniform/buffer blocks require layout(binding=X)")
+        } else {
+            matches!(
+                ty.kind,
+                TypeKind::Opaque(Opaque {
+                    kind: OpaqueKind::Sampler
+                        | OpaqueKind::CombinedSampler
+                        | OpaqueKind::Texture
+                        | OpaqueKind::Image
+                        | OpaqueKind::SubpassInput,
+                    ..
+                })
+            )
+            .then_some("sampler/texture/image requires layout(binding=X)")
+        };
+        if let Some(message) = message {
+            self.error(span, DiagnosticKind::BindingRequired(message));
+        }
+    }
+
+    fn local_size_changed(&mut self, span: Span) {
+        self.error(
+            span,
+            DiagnosticKind::InvalidQualifier {
+                qualifier: "local_size",
+                reason: "cannot change previously set size",
+            },
+        );
     }
 
     fn input_attachment_index_value(&mut self, span: Span, value: Option<i64>, specialized: bool) {
@@ -1228,6 +1312,9 @@ impl Analyzer<'_> {
         }
         self.global_storage_checks(&qualifiers, &ty, name.span, false);
         if is_global {
+            self.binding_required_check(name.span, &ty, &qualifiers, false);
+        }
+        if is_global {
             self.heap_object_check(name.span, &qualifiers);
             self.heap_declaration_check(name.span, &ty, &qualifiers, false);
         }
@@ -1656,6 +1743,7 @@ impl Analyzer<'_> {
         self.shader_record_checks(structure.qualifier.span, &qualifiers, true);
         self.ray_variable_checks(structure.qualifier.span, &qualifiers);
         self.heap_object_check(structure.name.span, &qualifiers);
+        self.binding_required_check(structure.name.span, &Type::ERROR, &qualifiers, true);
         let buffer_type = qualifiers.has_layout("buffer_type");
         if buffer_type {
             let invalid =

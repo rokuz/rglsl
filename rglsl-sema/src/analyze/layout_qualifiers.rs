@@ -7,6 +7,26 @@ const PUSH_CONSTANT_BANK: &str = "GL_NV_push_constant_bank";
 const BANK_END: i64 = 0xF;
 
 impl Analyzer<'_> {
+    pub(crate) fn removed_packing_check(&mut self, qualifiers: &Qualifiers) {
+        if self.options.relaxed_uniforms {
+            return;
+        }
+        for entry in &qualifiers.layout {
+            let qualifier = match entry.name.to_ascii_lowercase().as_str() {
+                "shared" => "shared",
+                "packed" => "packed",
+                _ => continue,
+            };
+            self.error(
+                entry.span,
+                DiagnosticKind::InvalidQualifier {
+                    qualifier,
+                    reason: "not allowed when generating SPIR-V",
+                },
+            );
+        }
+    }
+
     pub(crate) fn push_constant_bank_layout_check(&mut self, qualifiers: &Qualifiers) {
         for entry in &qualifiers.layout {
             let (qualifier, valid, reason) = match entry.name.as_str() {

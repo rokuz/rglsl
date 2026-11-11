@@ -3049,13 +3049,13 @@ void main() {
   r += texture(a, vec3(0.0), 1.0) + textureProjLod(a, vec4(0.0), 0.0) + textureProjGradOffset(a, vec4(0.0), vec2(0.0), vec2(0.0), ivec2(0));
   r += textureGrad(c, vec4(0.0), vec2(0.0), vec2(0.0)) + textureLod(e, vec3(0.0), 0.0) + textureLod(f, vec3(0.0), 0.0);
 }
-### shadow lod not available | frag | 3:NoMatchingFunction
+### shadow lod not available | frag | 3:ExtensionRequired
 layout(binding=2) uniform sampler2DArrayShadow c;
 void main() { float r = textureLod(c, vec4(0.0), 0.0); }
-### cube shadow lod | frag | 3:NoMatchingFunction
+### cube shadow lod | frag | 3:ExtensionRequired
 layout(binding=1) uniform samplerCubeShadow b;
 void main() { float r = textureLod(b, vec4(0.0), 0.0); }
-### array shadow bias | frag | 3:NoMatchingFunction
+### array shadow bias | frag | 3:ExtensionRequired
 layout(binding=2) uniform sampler2DArrayShadow c;
 void main() { float r = texture(c, vec4(0.0), 1.0); }
 ### texture families misc | frag | 16:InvalidConstructor
@@ -5593,3 +5593,36 @@ const int b[2][2] = {a, a};
 const vec4 v = vec4(f);
 const mat2 m = mat2(v.xy, v.zw);
 void main() {}
+### local size cannot change | comp | 4:InvalidQualifier
+layout(local_size_x_id = 18, local_size_z_id = 19) in;
+layout(local_size_x = 32, local_size_y = 32) in;
+layout(local_size_z_id = 14) in;
+void main() {}
+### local size of zero | comp | 2:InvalidQualifier
+layout(local_size_x = 0) in;
+void main() {}
+### shared and packed layouts | vert | 2:InvalidQualifier, 3:InvalidQualifier
+layout(shared, binding = 0) uniform A { int a; } a;
+layout(packed, binding = 1) uniform B { int b; } b;
+void main() {}
+### shadow lod functions need their extension | frag | 6:ExtensionRequired, 7:ExtensionRequired, 8:ExtensionRequired
+layout(binding = 0) uniform sampler2DArrayShadow s2da;
+layout(binding = 1) uniform samplerCubeShadow sc;
+layout(location = 0) in vec4 tc;
+void main() {
+    float a = texture(s2da, tc, 0.0);
+    float b = textureLod(sc, tc, 0.0);
+    float c = textureLodOffset(s2da, tc, 0.0, ivec2(0));
+}
+### shadow lod functions | frag | ok
+#extension GL_EXT_texture_shadow_lod : enable
+layout(binding = 0) uniform sampler2DArrayShadow s2da;
+layout(binding = 1) uniform samplerCubeArrayShadow sca;
+layout(binding = 2) uniform samplerCubeShadow sc;
+layout(location = 0) in vec4 tc;
+void main() {
+    float a = texture(s2da, tc, 0.0) + texture(sca, tc, 0.0, 0.0);
+    a += textureOffset(s2da, tc, ivec2(0), 0.0) + textureLod(s2da, tc, 0.0);
+    a += textureLod(sc, tc, 0.0) + textureLod(sca, tc, 0.0, 0.0);
+    a += textureLodOffset(s2da, tc, 0.0, ivec2(0)) + textureOffset(s2da, tc, ivec2(0));
+}

@@ -144,6 +144,8 @@ pub enum DiagnosticKind {
     InitializerNotAllowed(String),
     #[error("invalid null initializer `{{}}`: {0}")]
     InvalidNullInitializer(&'static str),
+    #[error("{0}")]
+    BindingRequired(&'static str),
     #[error("an array size must be a constant integer expression")]
     ArraySizeNotConstant,
     #[error("invalid type parameters of `{ty}`: {reason}")]

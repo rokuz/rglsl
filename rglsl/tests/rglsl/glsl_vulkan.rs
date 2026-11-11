@@ -8404,3 +8404,56 @@ void main() {}
     .unwrap_err();
     assert!(error.contains("must be a constant expression"), "{error}");
 }
+
+fn first_error_line(source: &str, options: &glsl::Options) -> Option<usize> {
+    let errors = glsl::Frontend::default()
+        .parse(options, source)
+        .expect_err("the shader must be rejected");
+    let first = errors.errors.first()?;
+    first
+        .meta
+        .is_defined()
+        .then(|| first.meta.location(source).line_number as usize)
+}
+
+#[test]
+fn missing_bindings_are_reported_in_declaration_order() {
+    let source = "#version 450
+uniform sampler s;
+layout(binding = 1) uniform texture2D t;
+void main() {
+    sampler2D(t);
+}
+";
+    let options = glsl::Options::from(ShaderStage::Fragment);
+    assert_eq!(first_error_line(source, &options), Some(2));
+    let automatic = glsl::Options {
+        auto_map_bindings: true,
+        ..glsl::Options::from(ShaderStage::Fragment)
+    };
+    assert_eq!(first_error_line(source, &automatic), Some(5));
+    let block = "#version 450
+layout(std140) uniform U { vec4 v; } u;
+void main() {}
+";
+    assert_eq!(first_error_line(block, &options), Some(2));
+}
+
+#[test]
+fn semantic_errors_before_a_preprocessor_error_come_first() {
+    let source = "#version 450
+uniform float f;
+#define bad ## float
+bad x;
+void main() {}
+";
+    let options = glsl::Options::from(ShaderStage::Vertex);
+    assert_eq!(first_error_line(source, &options), Some(2));
+    let later = "#version 450
+#define bad ## float
+bad x;
+uniform float f;
+void main() {}
+";
+    assert_eq!(first_error_line(later, &options), Some(3));
+}
