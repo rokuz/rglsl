@@ -3702,969 +3702,96 @@ impl BlockContext<'_> {
     ) -> Result<BlockExitDisposition, Error> {
         let mut block = Block::new(label_id);
         for (statement, span) in rglsl_block.span_iter() {
-            if let (Some(debug_info), false) = (
-                debug_info,
-                matches!(
-                    statement,
-                    &(Statement::Block(..)
-                        | Statement::Break
-                        | Statement::Continue
-                        | Statement::Kill
-                        | Statement::Return { .. }
-                        | Statement::Loop { .. })
-                ),
-            ) {
-                let loc: crate::SourceLocation = span.location(debug_info.source_code);
-                block.body.push(Instruction::line(
-                    debug_info.source_file_id,
-                    loc.line_number,
-                    loc.line_position,
-                ));
-            };
-            match *statement {
-                Statement::Emit(ref range) => {
-                    for handle in range.clone() {
-                        // omit const expressions as we've already cached those
-                        if !self.expression_constness.is_constant_instruction(handle) {
-                            self.cache_expression_value(handle, &mut block)?;
-                        }
-                    }
-                }
-                Statement::Block(ref block_statements) => {
-                    let scope_id = self.gen_id();
-                    self.function.consume(block, Instruction::branch(scope_id));
-
-                    let merge_id = self.gen_id();
-                    let merge_used = self.write_block(
-                        scope_id,
-                        block_statements,
-                        BlockExit::Branch { target: merge_id },
-                        loop_context,
-                        debug_info,
-                    )?;
-
-                    match merge_used {
-                        BlockExitDisposition::Used => {
-                            block = Block::new(merge_id);
-                        }
-                        BlockExitDisposition::Discarded => {
-                            return Ok(BlockExitDisposition::Discarded);
-                        }
-                    }
-                }
-                Statement::If {
-                    condition,
-                    ref accept,
-                    ref reject,
-                    control,
-                } => {
-                    // In spirv 1.6, in a conditional branch the two block ids
-                    // of the branches can't have the same label. If `accept`
-                    // and `reject` are both empty (e.g. in `if (condition) {}`)
-                    // merge id will be both labels. Because both branches are
-                    // empty, we can skip the if statement.
-                    let empty = accept.is_empty() && reject.is_empty();
-                    if !empty || !control.is_none() {
-                        let condition_id = self.cached.get(condition)?;
-
-                        let merge_id = self.gen_id();
-                        block.body.push(Instruction::selection_merge(
-                            merge_id,
-                            selection_control(control),
-                        ));
-
-                        let accept_id = if accept.is_empty() && !empty {
-                            None
-                        } else {
-                            Some(self.gen_id())
-                        };
-                        let reject_id = if reject.is_empty() {
-                            None
-                        } else {
-                            Some(self.gen_id())
-                        };
-
-                        self.function.consume(
-                            block,
-                            Instruction::branch_conditional(
-                                condition_id,
-                                accept_id.unwrap_or(merge_id),
-                                reject_id.unwrap_or(merge_id),
-                            ),
-                        );
-
-                        if let Some(block_id) = accept_id {
-                            // We can ignore the `BlockExitDisposition` returned here because,
-                            // even if `merge_id` is not actually reachable, it is always
-                            // referred to by the `OpSelectionMerge` instruction we emitted
-                            // earlier.
-                            let _ = self.write_block(
-                                block_id,
-                                accept,
-                                BlockExit::Branch { target: merge_id },
-                                loop_context,
-                                debug_info,
-                            )?;
-                        }
-                        if let Some(block_id) = reject_id {
-                            // We can ignore the `BlockExitDisposition` returned here because,
-                            // even if `merge_id` is not actually reachable, it is always
-                            // referred to by the `OpSelectionMerge` instruction we emitted
-                            // earlier.
-                            let _ = self.write_block(
-                                block_id,
-                                reject,
-                                BlockExit::Branch { target: merge_id },
-                                loop_context,
-                                debug_info,
-                            )?;
-                        }
-
-                        block = Block::new(merge_id);
-                    }
-                }
-                Statement::Switch {
-                    selector,
-                    ref cases,
-                    control,
-                } => {
-                    let selector_id = self.cached.get(selector)?;
-
-                    let merge_id = self.gen_id();
-                    block.body.push(Instruction::selection_merge(
-                        merge_id,
-                        selection_control(control),
-                    ));
-
-                    let mut default_id = None;
-                    // id of previous empty fall-through case
-                    let mut last_id = None;
-
-                    let mut raw_cases = Vec::with_capacity(cases.len());
-                    let mut case_ids = Vec::with_capacity(cases.len());
-                    for case in cases.iter() {
-                        // take id of previous empty fall-through case or generate a new one
-                        let label_id = last_id.take().unwrap_or_else(|| self.gen_id());
-
-                        if case.fall_through && case.body.is_empty() {
-                            last_id = Some(label_id);
-                        }
-
-                        case_ids.push(label_id);
-
-                        match case.value {
-                            crate::SwitchValue::I32(value) => {
-                                raw_cases.push(super::instructions::Case {
-                                    value: value as Word,
-                                    label_id,
-                                });
-                            }
-                            crate::SwitchValue::U32(value) => {
-                                raw_cases.push(super::instructions::Case { value, label_id });
-                            }
-                            crate::SwitchValue::Default => {
-                                default_id = Some(label_id);
-                            }
-                        }
-                    }
-
-                    let Some(default_id) = default_id else {
-                        return Err(Error::Validation("switch has no default case"));
-                    };
-
-                    self.function.consume(
-                        block,
-                        Instruction::switch(selector_id, default_id, &raw_cases),
-                    );
-
-                    let inner_context = LoopContext {
-                        break_id: Some(merge_id),
-                        ..loop_context
-                    };
-
-                    for (i, (case, label_id)) in cases
-                        .iter()
-                        .zip(case_ids.iter())
-                        .enumerate()
-                        .filter(|&(_, (case, _))| !(case.fall_through && case.body.is_empty()))
-                    {
-                        let case_finish_id = if case.fall_through {
-                            case_ids[i + 1]
-                        } else {
-                            merge_id
-                        };
-                        // We can ignore the `BlockExitDisposition` returned here because
-                        // `case_finish_id` is always referred to by either:
-                        //
-                        // - the `OpSwitch`, if it's the next case's label for a
-                        //   fall-through, or
-                        //
-                        // - the `OpSelectionMerge`, if it's the switch's overall merge
-                        //   block because there's no fall-through.
-                        let _ = self.write_block(
-                            *label_id,
-                            &case.body,
-                            BlockExit::Branch {
-                                target: case_finish_id,
-                            },
-                            inner_context,
-                            debug_info,
-                        )?;
-                    }
-
-                    block = Block::new(merge_id);
-                }
-                Statement::Loop {
-                    ref body,
-                    ref continuing,
-                    break_if,
-                    control,
-                } => {
-                    let preamble_id = self.gen_id();
-                    self.function
-                        .consume(block, Instruction::branch(preamble_id));
-
-                    let merge_id = self.gen_id();
-                    let body_id = self.gen_id();
-                    let continuing_id = self.gen_id();
-
-                    // SPIR-V requires the continuing to the `OpLoopMerge`,
-                    // so we have to start a new block with it.
-                    block = Block::new(preamble_id);
-                    // HACK the loop statement is begin with branch instruction,
-                    // so we need to put `OpLine` debug info before merge instruction
-                    if let Some(debug_info) = debug_info {
-                        let loc: crate::SourceLocation = span.location(debug_info.source_code);
-                        block.body.push(Instruction::line(
-                            debug_info.source_file_id,
-                            loc.line_number,
-                            loc.line_position,
-                        ))
-                    }
-                    block
-                        .body
-                        .push(self.loop_merge(merge_id, continuing_id, control));
-
-                    self.function.consume(block, Instruction::branch(body_id));
-
-                    // We can ignore the `BlockExitDisposition` returned here because,
-                    // even if `continuing_id` is not actually reachable, it is always
-                    // referred to by the `OpLoopMerge` instruction we emitted earlier.
-                    let _ = self.write_block(
-                        body_id,
-                        body,
-                        BlockExit::Branch {
-                            target: continuing_id,
-                        },
-                        LoopContext {
-                            continuing_id: Some(continuing_id),
-                            break_id: Some(merge_id),
-                        },
-                        debug_info,
-                    )?;
-
-                    let exit = match break_if {
-                        Some(condition) => BlockExit::BreakIf {
-                            condition,
-                            preamble_id,
-                        },
-                        None => BlockExit::Branch {
-                            target: preamble_id,
-                        },
-                    };
-
-                    // We can ignore the `BlockExitDisposition` returned here because,
-                    // even if `merge_id` is not actually reachable, it is always referred
-                    // to by the `OpLoopMerge` instruction we emitted earlier.
-                    let _ = self.write_block(
-                        continuing_id,
-                        continuing,
-                        exit,
-                        LoopContext {
-                            continuing_id: None,
-                            break_id: Some(merge_id),
-                        },
-                        debug_info,
-                    )?;
-
-                    block = Block::new(merge_id);
-                }
-                Statement::Break => {
-                    let Some(break_id) = loop_context.break_id else {
-                        return Err(Error::Validation("break outside of a loop or switch"));
-                    };
-                    self.function.consume(block, Instruction::branch(break_id));
-                    return Ok(BlockExitDisposition::Discarded);
-                }
-                Statement::Continue => {
-                    let Some(continuing_id) = loop_context.continuing_id else {
-                        return Err(Error::Validation("continue outside of a loop"));
-                    };
-                    self.function
-                        .consume(block, Instruction::branch(continuing_id));
-                    return Ok(BlockExitDisposition::Discarded);
-                }
-                Statement::Return { value: Some(value) } => {
-                    let value_id = self.cached.get(value)?;
-                    let instruction = match self.function.entry_point_context {
-                        // If this is an entry point, and we need to return anything,
-                        // let's instead store the output variables and return `void`.
-                        Some(ref context) => {
-                            let Some(ref result) = self.ir_function.result else {
-                                return Err(Error::Validation(
-                                    "entry point returns a value but has no result",
-                                ));
-                            };
-                            self.writer.write_entry_point_return(
-                                value_id,
-                                result,
-                                &context.results,
-                                &mut block.body,
-                            )?
-                        }
-                        None => Instruction::return_value(value_id),
-                    };
-                    self.function.consume(block, instruction);
-                    return Ok(BlockExitDisposition::Discarded);
-                }
-                Statement::Return { value: None } => {
-                    self.function.consume(block, Instruction::return_void());
-                    return Ok(BlockExitDisposition::Discarded);
-                }
-                Statement::Kill => {
-                    self.function.consume(block, Instruction::kill());
-                    return Ok(BlockExitDisposition::Discarded);
-                }
-                Statement::Demote => {
-                    self.writer.require_demote()?;
-                    block.body.push(Instruction::demote_to_helper_invocation());
-                }
-                Statement::BeginInvocationInterlock => {
-                    block.body.push(Instruction::invocation_interlock(true));
-                }
-                Statement::EndInvocationInterlock => {
-                    block.body.push(Instruction::invocation_interlock(false));
-                }
-                Statement::SplitBarrier {
-                    phase,
-                    execution,
-                    memory,
-                    semantics,
-                } => {
-                    self.writer
-                        .write_split_barrier(phase, execution, memory, semantics, &mut block)?;
-                }
-                Statement::EmitVertex { stream } => {
-                    self.write_primitive_operation(&mut block, true, stream)?;
-                }
-                Statement::EndPrimitive { stream } => {
-                    self.write_primitive_operation(&mut block, false, stream)?;
-                }
-                Statement::DebugPrintf {
-                    ref format,
-                    ref arguments,
-                } => self.write_debug_printf_statement(&mut block, format, arguments)?,
-                Statement::Assume { condition } => self.write_assume(condition, &mut block)?,
-                Statement::SpirvInstruction {
-                    ref instruction,
-                    ref operands,
-                    result,
-                } => self.write_spirv_instruction(&mut block, instruction, operands, result)?,
-                Statement::CooperativeMatrix {
-                    ref function,
-                    result,
-                } => {
-                    self.write_cooperative_matrix_function(function, result, &mut block)?;
-                }
-                Statement::CooperativeVector(ref function) => {
-                    self.write_cooperative_vector_function(function, &mut block)?;
-                }
-                Statement::MeshFunction(ref function) => {
-                    match self.write_mesh_function(block, function)? {
-                        Some(next) => block = next,
-                        None => return Ok(BlockExitDisposition::Discarded),
-                    }
-                }
-                Statement::Abort {
-                    ref message,
-                    ty,
-                    ref arguments,
-                } => {
-                    self.write_abort(block, message, ty, arguments)?;
-                    return Ok(BlockExitDisposition::Discarded);
-                }
-                Statement::ControlBarrier(flags) => {
-                    self.writer.write_control_barrier(flags, &mut block.body);
-                }
-                Statement::MemoryBarrier(flags) => {
-                    self.writer.write_memory_barrier(flags, &mut block);
-                }
-                Statement::Store { pointer, value } => {
-                    let mut value_id = self.cached.get(value)?;
-                    if let Some(class) = self.pointer_class(pointer) {
-                        let value_type_id =
-                            self.get_expression_type_id(&self.fun_info[value].ty)?;
-                        if self.writer.needs_layout_conversion(value_type_id, class) {
-                            value_id = self.writer.convert_layout(
-                                &mut block,
-                                value_type_id,
-                                value_id,
-                                true,
-                            )?;
-                        }
-                    }
-                    match self.write_access_chain(
-                        pointer,
-                        &mut block,
-                        AccessTypeAdjustment::None,
-                    )? {
-                        ExpressionPointer::Ready { pointer_id } => {
-                            let atomic_space = match *self.fun_info[pointer]
-                                .ty
-                                .inner_with(&self.ir_module.types)
-                            {
-                                crate::TypeInner::Pointer { base, space } => {
-                                    match self.ir_module.types[base].inner {
-                                        crate::TypeInner::Atomic { .. } => Some(space),
-                                        _ => None,
-                                    }
-                                }
-                                _ => None,
-                            };
-                            let instruction = if let Some(space) = atomic_space {
-                                let (semantics, scope) = space.to_spirv_semantics_and_scope();
-                                let scope_constant_id = self.get_scope_constant(scope as u32);
-                                let semantics_id = self.get_index_constant(semantics.bits());
-                                Instruction::atomic_store(
-                                    pointer_id,
-                                    scope_constant_id,
-                                    semantics_id,
-                                    value_id,
-                                )
-                            } else {
-                                let mut instruction =
-                                    Instruction::store(pointer_id, value_id, None);
-                                let swizzled = matches!(
-                                    self.ir_function.expressions[value],
-                                    crate::Expression::Swizzle { .. }
-                                );
-                                for operand in self.memory_access(pointer, swizzled, true) {
-                                    instruction.add_operand(operand);
-                                }
-                                instruction
-                            };
-                            block.body.push(instruction);
-                        }
-                        ExpressionPointer::Conditional {
-                            condition,
-                            pointer_id,
-                            access,
-                        } => {
-                            let mut selection = Selection::start(&mut block, ());
-                            selection.if_true(self, condition, ());
-
-                            // The in-bounds path. Perform the access and the store.
-                            selection.block().body.push(access);
-                            selection
-                                .block()
-                                .body
-                                .push(Instruction::store(pointer_id, value_id, None));
-
-                            // Finish the in-bounds block and start the merge block. This
-                            // is the block we'll leave current on return.
-                            selection.finish(self, ());
-                        }
-                    };
-                }
-                Statement::ImageStore {
-                    image,
-                    coordinate,
-                    array_index,
-                    sample,
-                    value,
-                } => self.write_image_store(
-                    image,
-                    coordinate,
-                    array_index,
-                    sample,
-                    value,
-                    &mut block,
-                )?,
-                Statement::TensorWrite {
-                    tensor,
-                    coordinates,
-                    value,
-                    nontemporal,
-                } => {
-                    self.write_tensor_write(tensor, coordinates, value, nontemporal, &mut block)?
-                }
-                Statement::Call {
-                    function: local_function,
-                    ref arguments,
-                    result,
-                } => {
-                    let id = self.gen_id();
-                    let mut argument_ids = Vec::with_capacity(arguments.len());
-                    for &argument in arguments {
-                        let argument_id = match self.ir_function.expressions[argument] {
-                            crate::Expression::Access { base, .. }
-                            | crate::Expression::AccessIndex { base, .. }
-                                if matches!(
-                                    *self.fun_info[base].ty.inner_with(&self.ir_module.types),
-                                    crate::TypeInner::BindingArray { .. }
-                                ) =>
-                            {
-                                match self.write_access_chain(
-                                    argument,
-                                    &mut block,
-                                    AccessTypeAdjustment::IntroducePointer(
-                                        spirv::StorageClass::UniformConstant,
-                                    ),
-                                )? {
-                                    ExpressionPointer::Ready { pointer_id } => pointer_id,
-                                    ExpressionPointer::Conditional { .. } => {
-                                        return Err(Error::FeatureNotImplemented(
-                                            "Texture array out-of-bounds handling",
-                                        ));
-                                    }
-                                }
-                            }
-                            _ => self.cached.get(argument)?,
-                        };
-                        argument_ids.push(argument_id);
-                    }
-                    self.temp_list.clear();
-                    self.temp_list.extend(argument_ids);
-
-                    let type_id = match result {
-                        Some(expr) => {
-                            self.cached.set(expr, id)?;
-                            if self.non_uniform(expr).contains(crate::NonUniform::VALUE) {
-                                self.writer.decorate_non_uniform(id)?;
-                            }
-                            if let Some(&precision) = self.ir_function.precision.get(&expr) {
-                                self.writer.decorate_precision(id, precision);
-                            }
-                            self.get_expression_type_id(&self.fun_info[expr].ty)?
-                        }
-                        None => self.writer.void_type,
-                    };
-
-                    block.body.push(Instruction::function_call(
-                        type_id,
-                        id,
-                        self.writer.lookup_function[&local_function],
-                        &self.temp_list,
-                    ));
-                }
-                Statement::Atomic {
-                    pointer,
-                    ref fun,
-                    value,
-                    result,
-                    order,
-                } => {
-                    let id = self.gen_id();
-                    // Compare-and-exchange operations produce a struct result,
-                    // so use `result`'s type if it is available. For no-result
-                    // operations, fall back to `value`'s type.
-                    let result_type_id =
-                        self.get_expression_type_id(&self.fun_info[result.unwrap_or(value)].ty)?;
-
-                    if let Some(result) = result {
-                        self.cached.set(result, id)?;
-                    }
-
-                    let pointer_id = match self.write_access_chain(
-                        pointer,
-                        &mut block,
-                        AccessTypeAdjustment::None,
-                    )? {
-                        ExpressionPointer::Ready { pointer_id } => pointer_id,
-                        ExpressionPointer::Conditional { .. } => {
-                            return Err(Error::FeatureNotImplemented(
-                                "Atomics out-of-bounds handling",
-                            ));
-                        }
-                    };
-
-                    let space = self.fun_info[pointer]
-                        .ty
-                        .inner_with(&self.ir_module.types)
-                        .pointer_space()
-                        .ok_or(Error::Validation("atomic operand is not a pointer"))?;
-                    let default_semantics = self.glsl_atomic_semantics(pointer);
-                    let (scope_constant_id, semantics_id, unequal_semantics_id) = match order {
-                        Some(order) => {
-                            let ids = self.writer.write_memory_order(order);
-                            (ids.scope, ids.semantics, ids.unequal)
-                        }
-                        None => {
-                            let (semantics, scope) = match default_semantics {
-                                Some(found) => found,
-                                None => space.to_spirv_semantics_and_scope(),
-                            };
-                            if scope == spirv::Scope::Device {
-                                self.writer.device_scope_used = true;
-                            }
-                            let semantics_id = self.get_index_constant(semantics.bits());
-                            (
-                                self.get_scope_constant(scope as u32),
-                                semantics_id,
-                                semantics_id,
-                            )
-                        }
-                    };
-                    let value_id = self.cached.get(value)?;
-                    let value_inner = self.fun_info[value].ty.inner_with(&self.ir_module.types);
-
-                    let crate::TypeInner::Scalar(scalar) = *value_inner else {
-                        return Err(Error::FeatureNotImplemented(
-                            "Atomics with non-scalar values",
-                        ));
-                    };
-
-                    let instruction = match *fun {
-                        crate::AtomicFunction::Add => {
-                            let spirv_op = match scalar.kind {
-                                crate::ScalarKind::Sint | crate::ScalarKind::Uint => {
-                                    spirv::Op::AtomicIAdd
-                                }
-                                crate::ScalarKind::Float => {
-                                    self.writer.float_atomic(*fun, scalar)?
-                                }
-                                _ => {
-                                    return Err(Error::Validation(
-                                        "atomic operation on an unsupported scalar type",
-                                    ))
-                                }
-                            };
-                            Instruction::atomic_binary(
-                                spirv_op,
-                                result_type_id,
-                                id,
-                                pointer_id,
-                                scope_constant_id,
-                                semantics_id,
-                                value_id,
-                            )
-                        }
-                        crate::AtomicFunction::Subtract => {
-                            let (spirv_op, value_id) = match scalar.kind {
-                                crate::ScalarKind::Sint | crate::ScalarKind::Uint => {
-                                    (spirv::Op::AtomicISub, value_id)
-                                }
-                                crate::ScalarKind::Float => {
-                                    // HACK: SPIR-V doesn't have a atomic subtraction,
-                                    // so we add the negated value instead.
-                                    let neg_result_id = self.gen_id();
-                                    block.body.push(Instruction::unary(
-                                        spirv::Op::FNegate,
-                                        result_type_id,
-                                        neg_result_id,
-                                        value_id,
-                                    ));
-                                    (spirv::Op::AtomicFAddEXT, neg_result_id)
-                                }
-                                _ => {
-                                    return Err(Error::Validation(
-                                        "atomic operation on an unsupported scalar type",
-                                    ))
-                                }
-                            };
-                            Instruction::atomic_binary(
-                                spirv_op,
-                                result_type_id,
-                                id,
-                                pointer_id,
-                                scope_constant_id,
-                                semantics_id,
-                                value_id,
-                            )
-                        }
-                        crate::AtomicFunction::And => {
-                            let spirv_op = match scalar.kind {
-                                crate::ScalarKind::Sint | crate::ScalarKind::Uint => {
-                                    spirv::Op::AtomicAnd
-                                }
-                                _ => {
-                                    return Err(Error::Validation(
-                                        "atomic operation on an unsupported scalar type",
-                                    ))
-                                }
-                            };
-                            Instruction::atomic_binary(
-                                spirv_op,
-                                result_type_id,
-                                id,
-                                pointer_id,
-                                scope_constant_id,
-                                semantics_id,
-                                value_id,
-                            )
-                        }
-                        crate::AtomicFunction::InclusiveOr => {
-                            let spirv_op = match scalar.kind {
-                                crate::ScalarKind::Sint | crate::ScalarKind::Uint => {
-                                    spirv::Op::AtomicOr
-                                }
-                                _ => {
-                                    return Err(Error::Validation(
-                                        "atomic operation on an unsupported scalar type",
-                                    ))
-                                }
-                            };
-                            Instruction::atomic_binary(
-                                spirv_op,
-                                result_type_id,
-                                id,
-                                pointer_id,
-                                scope_constant_id,
-                                semantics_id,
-                                value_id,
-                            )
-                        }
-                        crate::AtomicFunction::ExclusiveOr => {
-                            let spirv_op = match scalar.kind {
-                                crate::ScalarKind::Sint | crate::ScalarKind::Uint => {
-                                    spirv::Op::AtomicXor
-                                }
-                                _ => {
-                                    return Err(Error::Validation(
-                                        "atomic operation on an unsupported scalar type",
-                                    ))
-                                }
-                            };
-                            Instruction::atomic_binary(
-                                spirv_op,
-                                result_type_id,
-                                id,
-                                pointer_id,
-                                scope_constant_id,
-                                semantics_id,
-                                value_id,
-                            )
-                        }
-                        crate::AtomicFunction::Min => {
-                            let spirv_op = match scalar.kind {
-                                crate::ScalarKind::Sint => spirv::Op::AtomicSMin,
-                                crate::ScalarKind::Uint => spirv::Op::AtomicUMin,
-                                crate::ScalarKind::Float => {
-                                    self.writer.float_atomic(*fun, scalar)?
-                                }
-                                _ => {
-                                    return Err(Error::Validation(
-                                        "atomic operation on an unsupported scalar type",
-                                    ))
-                                }
-                            };
-                            Instruction::atomic_binary(
-                                spirv_op,
-                                result_type_id,
-                                id,
-                                pointer_id,
-                                scope_constant_id,
-                                semantics_id,
-                                value_id,
-                            )
-                        }
-                        crate::AtomicFunction::Max => {
-                            let spirv_op = match scalar.kind {
-                                crate::ScalarKind::Sint => spirv::Op::AtomicSMax,
-                                crate::ScalarKind::Uint => spirv::Op::AtomicUMax,
-                                crate::ScalarKind::Float => {
-                                    self.writer.float_atomic(*fun, scalar)?
-                                }
-                                _ => {
-                                    return Err(Error::Validation(
-                                        "atomic operation on an unsupported scalar type",
-                                    ))
-                                }
-                            };
-                            Instruction::atomic_binary(
-                                spirv_op,
-                                result_type_id,
-                                id,
-                                pointer_id,
-                                scope_constant_id,
-                                semantics_id,
-                                value_id,
-                            )
-                        }
-                        crate::AtomicFunction::Exchange { compare: None } => {
-                            Instruction::atomic_binary(
-                                spirv::Op::AtomicExchange,
-                                result_type_id,
-                                id,
-                                pointer_id,
-                                scope_constant_id,
-                                semantics_id,
-                                value_id,
-                            )
-                        }
-                        crate::AtomicFunction::Exchange { compare: Some(cmp) } => {
-                            let scalar_type_id =
-                                self.get_numeric_type_id(NumericType::Scalar(scalar));
-                            let bool_type_id =
-                                self.get_numeric_type_id(NumericType::Scalar(crate::Scalar::BOOL));
-
-                            let cas_result_id = self.gen_id();
-                            let equality_result_id = self.gen_id();
-                            let equality_operator = match scalar.kind {
-                                crate::ScalarKind::Sint | crate::ScalarKind::Uint => {
-                                    spirv::Op::IEqual
-                                }
-                                _ => {
-                                    return Err(Error::Validation(
-                                        "atomic operation on an unsupported scalar type",
-                                    ))
-                                }
-                            };
-
-                            let mut cas_instr = Instruction::new(spirv::Op::AtomicCompareExchange);
-                            cas_instr.set_type(scalar_type_id);
-                            cas_instr.set_result(cas_result_id);
-                            cas_instr.add_operand(pointer_id);
-                            cas_instr.add_operand(scope_constant_id);
-                            cas_instr.add_operand(semantics_id); // semantics if equal
-                            cas_instr.add_operand(unequal_semantics_id);
-                            cas_instr.add_operand(value_id);
-                            cas_instr.add_operand(self.cached.get(cmp)?);
-                            block.body.push(cas_instr);
-                            block.body.push(Instruction::binary(
-                                equality_operator,
-                                bool_type_id,
-                                equality_result_id,
-                                cas_result_id,
-                                self.cached.get(cmp)?,
-                            ));
-                            Instruction::composite_construct(
-                                result_type_id,
-                                id,
-                                &[cas_result_id, equality_result_id],
-                            )
-                        }
-                    };
-
-                    block.body.push(instruction);
-                }
-                Statement::ImageAtomic {
-                    image,
-                    coordinate,
-                    array_index,
-                    fun,
-                    value,
-                    sample,
-                    result,
-                    order,
-                } => match order {
-                    Some(order) => {
-                        let texel = crate::Texel {
-                            image,
-                            coordinate,
-                            array_index,
-                            sample,
-                        };
-                        self.write_ordered_image_atomic(
-                            &texel, fun, value, result, order, &mut block,
-                        )?;
-                    }
-                    None => {
-                        self.write_image_atomic(
-                            image,
-                            coordinate,
-                            array_index,
-                            fun,
-                            value,
-                            &mut block,
-                        )?;
-                    }
-                },
-                Statement::AtomicLoad {
-                    ref location,
-                    order,
-                    result,
-                } => {
-                    self.write_atomic_load(location, order, result, &mut block)?;
-                }
-                Statement::AtomicStore {
-                    ref location,
-                    value,
-                    order,
-                } => {
-                    self.write_atomic_store(location, value, order, &mut block)?;
-                }
-                Statement::ScopedBarrier {
-                    execution,
-                    memory,
-                    semantics,
-                } => {
-                    self.writer
-                        .write_scoped_barrier(execution, memory, semantics, &mut block);
-                }
-                Statement::WorkGroupUniformLoad { pointer, result } => {
-                    self.writer
-                        .write_control_barrier(crate::Barrier::WORK_GROUP, &mut block.body);
-                    let result_type_id = self.get_expression_type_id(&self.fun_info[result].ty)?;
-                    // Match `Expression::Load` behavior, including `OpAtomicLoad` when
-                    // loading from a pointer to `atomic<T>`.
-                    let id = self.write_checked_load(
-                        pointer,
-                        &mut block,
-                        AccessTypeAdjustment::None,
-                        result_type_id,
-                    )?;
-                    self.cached.set(result, id)?;
-                    self.writer
-                        .write_control_barrier(crate::Barrier::WORK_GROUP, &mut block.body);
-                }
-                Statement::RayQuery { query, ref fun } => {
-                    self.write_ray_query_function(query, fun, &mut block)?;
-                }
-                Statement::HitObject { object, ref fun } => {
-                    self.write_hit_object_function(object, fun, &mut block)?;
-                }
-                Statement::ReorderThread { kind, hint, bits } => {
-                    self.write_reorder_thread(kind, hint, bits, &mut block)?;
-                }
-                Statement::SubgroupBallot {
-                    result,
-                    ref predicate,
-                } => {
-                    self.write_subgroup_ballot(predicate, result, &mut block)?;
-                }
-                Statement::SubgroupCollectiveOperation {
-                    ref op,
-                    ref collective_op,
-                    argument,
-                    result,
-                } => {
-                    self.write_subgroup_operation(op, collective_op, argument, result, &mut block)?;
-                }
-                Statement::SubgroupGather {
-                    ref mode,
-                    argument,
-                    result,
-                } => {
-                    self.write_subgroup_gather(mode, argument, result, &mut block)?;
-                }
-                Statement::SubgroupFunction { ref fun, result } => {
-                    self.write_subgroup_function(fun, result, &mut block)?;
-                }
-                Statement::CooperativeStore { target, ref data } => {
-                    self.write_cooperative_store(target, data, &mut block)?;
-                }
-                Statement::RayPipelineFunction(ref fun) => {
-                    if let Some(terminator) =
-                        self.write_ray_tracing_pipeline_function(fun, &mut block)?
-                    {
-                        self.function.consume(block, terminator);
-                        return Ok(BlockExitDisposition::Discarded);
-                    }
-                }
+            Self::write_line(&mut block, statement, span, debug_info);
+            match self.write_statement_kind(block, statement, span, loop_context, debug_info)? {
+                Some(next) => block = next,
+                None => return Ok(BlockExitDisposition::Discarded),
             }
         }
+        self.finish_block(block, exit, loop_context)?;
+        Ok(BlockExitDisposition::Used)
+    }
 
+    fn write_line(
+        block: &mut Block,
+        statement: &Statement,
+        span: &crate::Span,
+        debug_info: Option<&DebugInfoInner>,
+    ) {
+        if let (Some(debug_info), false) = (
+            debug_info,
+            matches!(
+                statement,
+                &(Statement::Block(..)
+                    | Statement::Break
+                    | Statement::Continue
+                    | Statement::Kill
+                    | Statement::Return { .. }
+                    | Statement::Loop { .. })
+            ),
+        ) {
+            let loc: crate::SourceLocation = span.location(debug_info.source_code);
+            block.body.push(Instruction::line(
+                debug_info.source_file_id,
+                loc.line_number,
+                loc.line_position,
+            ));
+        }
+    }
+
+    fn write_statement_kind(
+        &mut self,
+        block: Block,
+        statement: &Statement,
+        span: &crate::Span,
+        loop_context: LoopContext,
+        debug_info: Option<&DebugInfoInner>,
+    ) -> Result<Option<Block>, Error> {
+        match *statement {
+            Statement::Block(ref block_statements) => {
+                self.write_scope(block, block_statements, loop_context, debug_info)
+            }
+            Statement::If {
+                condition,
+                ref accept,
+                ref reject,
+                control,
+            } => self.write_if(
+                block,
+                condition,
+                [accept, reject],
+                control,
+                loop_context,
+                debug_info,
+            ),
+            Statement::Switch {
+                selector,
+                ref cases,
+                control,
+            } => self.write_switch(block, selector, cases, control, loop_context, debug_info),
+            Statement::Loop {
+                ref body,
+                ref continuing,
+                break_if,
+                control,
+            } => self.write_loop(
+                block,
+                [body, continuing],
+                break_if,
+                control,
+                span,
+                debug_info,
+            ),
+            _ => self.write_statement(block, statement, loop_context),
+        }
+    }
+
+    fn finish_block(
+        &mut self,
+        block: Block,
+        exit: BlockExit,
+        loop_context: LoopContext,
+    ) -> Result<(), Error> {
         let termination = match exit {
             // We're generating code for the top-level Block of the function, so we
             // need to end it with some kind of return instruction.
@@ -4690,7 +3817,965 @@ impl BlockContext<'_> {
         };
 
         self.function.consume(block, termination);
-        Ok(BlockExitDisposition::Used)
+        Ok(())
+    }
+
+    fn write_scope(
+        &mut self,
+        block: Block,
+        block_statements: &crate::Block,
+        loop_context: LoopContext,
+        debug_info: Option<&DebugInfoInner>,
+    ) -> Result<Option<Block>, Error> {
+        let mut block = block;
+        let scope_id = self.gen_id();
+        self.function.consume(block, Instruction::branch(scope_id));
+
+        let merge_id = self.gen_id();
+        let merge_used = self.write_block(
+            scope_id,
+            block_statements,
+            BlockExit::Branch { target: merge_id },
+            loop_context,
+            debug_info,
+        )?;
+
+        match merge_used {
+            BlockExitDisposition::Used => {
+                block = Block::new(merge_id);
+            }
+            BlockExitDisposition::Discarded => {
+                return Ok(None);
+            }
+        }
+        Ok(Some(block))
+    }
+
+    fn write_if(
+        &mut self,
+        block: Block,
+        condition: Handle<crate::Expression>,
+        [accept, reject]: [&crate::Block; 2],
+        control: crate::SelectionControl,
+        loop_context: LoopContext,
+        debug_info: Option<&DebugInfoInner>,
+    ) -> Result<Option<Block>, Error> {
+        let mut block = block;
+        // In spirv 1.6, in a conditional branch the two block ids
+        // of the branches can't have the same label. If `accept`
+        // and `reject` are both empty (e.g. in `if (condition) {}`)
+        // merge id will be both labels. Because both branches are
+        // empty, we can skip the if statement.
+        let empty = accept.is_empty() && reject.is_empty();
+        if !empty || !control.is_none() {
+            let condition_id = self.cached.get(condition)?;
+
+            let merge_id = self.gen_id();
+            block.body.push(Instruction::selection_merge(
+                merge_id,
+                selection_control(control),
+            ));
+
+            let accept_id = if accept.is_empty() && !empty {
+                None
+            } else {
+                Some(self.gen_id())
+            };
+            let reject_id = if reject.is_empty() {
+                None
+            } else {
+                Some(self.gen_id())
+            };
+
+            self.function.consume(
+                block,
+                Instruction::branch_conditional(
+                    condition_id,
+                    accept_id.unwrap_or(merge_id),
+                    reject_id.unwrap_or(merge_id),
+                ),
+            );
+
+            if let Some(block_id) = accept_id {
+                // We can ignore the `BlockExitDisposition` returned here because,
+                // even if `merge_id` is not actually reachable, it is always
+                // referred to by the `OpSelectionMerge` instruction we emitted
+                // earlier.
+                let _ = self.write_block(
+                    block_id,
+                    accept,
+                    BlockExit::Branch { target: merge_id },
+                    loop_context,
+                    debug_info,
+                )?;
+            }
+            if let Some(block_id) = reject_id {
+                // We can ignore the `BlockExitDisposition` returned here because,
+                // even if `merge_id` is not actually reachable, it is always
+                // referred to by the `OpSelectionMerge` instruction we emitted
+                // earlier.
+                let _ = self.write_block(
+                    block_id,
+                    reject,
+                    BlockExit::Branch { target: merge_id },
+                    loop_context,
+                    debug_info,
+                )?;
+            }
+
+            block = Block::new(merge_id);
+        }
+        Ok(Some(block))
+    }
+
+    fn write_switch(
+        &mut self,
+        block: Block,
+        selector: Handle<crate::Expression>,
+        cases: &[crate::SwitchCase],
+        control: crate::SelectionControl,
+        loop_context: LoopContext,
+        debug_info: Option<&DebugInfoInner>,
+    ) -> Result<Option<Block>, Error> {
+        let mut block = block;
+        let selector_id = self.cached.get(selector)?;
+
+        let merge_id = self.gen_id();
+        block.body.push(Instruction::selection_merge(
+            merge_id,
+            selection_control(control),
+        ));
+
+        let mut default_id = None;
+        // id of previous empty fall-through case
+        let mut last_id = None;
+
+        let mut raw_cases = Vec::with_capacity(cases.len());
+        let mut case_ids = Vec::with_capacity(cases.len());
+        for case in cases.iter() {
+            // take id of previous empty fall-through case or generate a new one
+            let label_id = last_id.take().unwrap_or_else(|| self.gen_id());
+
+            if case.fall_through && case.body.is_empty() {
+                last_id = Some(label_id);
+            }
+
+            case_ids.push(label_id);
+
+            match case.value {
+                crate::SwitchValue::I32(value) => {
+                    raw_cases.push(super::instructions::Case {
+                        value: value as Word,
+                        label_id,
+                    });
+                }
+                crate::SwitchValue::U32(value) => {
+                    raw_cases.push(super::instructions::Case { value, label_id });
+                }
+                crate::SwitchValue::Default => {
+                    default_id = Some(label_id);
+                }
+            }
+        }
+
+        let Some(default_id) = default_id else {
+            return Err(Error::Validation("switch has no default case"));
+        };
+
+        self.function.consume(
+            block,
+            Instruction::switch(selector_id, default_id, &raw_cases),
+        );
+
+        let inner_context = LoopContext {
+            break_id: Some(merge_id),
+            ..loop_context
+        };
+
+        for (i, (case, label_id)) in cases
+            .iter()
+            .zip(case_ids.iter())
+            .enumerate()
+            .filter(|&(_, (case, _))| !(case.fall_through && case.body.is_empty()))
+        {
+            let case_finish_id = if case.fall_through {
+                case_ids[i + 1]
+            } else {
+                merge_id
+            };
+            // We can ignore the `BlockExitDisposition` returned here because
+            // `case_finish_id` is always referred to by either:
+            //
+            // - the `OpSwitch`, if it's the next case's label for a
+            //   fall-through, or
+            //
+            // - the `OpSelectionMerge`, if it's the switch's overall merge
+            //   block because there's no fall-through.
+            let _ = self.write_block(
+                *label_id,
+                &case.body,
+                BlockExit::Branch {
+                    target: case_finish_id,
+                },
+                inner_context,
+                debug_info,
+            )?;
+        }
+
+        block = Block::new(merge_id);
+        Ok(Some(block))
+    }
+
+    fn write_loop(
+        &mut self,
+        block: Block,
+        [body, continuing]: [&crate::Block; 2],
+        break_if: Option<Handle<crate::Expression>>,
+        control: crate::LoopControl,
+        span: &crate::Span,
+        debug_info: Option<&DebugInfoInner>,
+    ) -> Result<Option<Block>, Error> {
+        let mut block = block;
+        let preamble_id = self.gen_id();
+        self.function
+            .consume(block, Instruction::branch(preamble_id));
+
+        let merge_id = self.gen_id();
+        let body_id = self.gen_id();
+        let continuing_id = self.gen_id();
+
+        // SPIR-V requires the continuing to the `OpLoopMerge`,
+        // so we have to start a new block with it.
+        block = Block::new(preamble_id);
+        // HACK the loop statement is begin with branch instruction,
+        // so we need to put `OpLine` debug info before merge instruction
+        if let Some(debug_info) = debug_info {
+            let loc: crate::SourceLocation = span.location(debug_info.source_code);
+            block.body.push(Instruction::line(
+                debug_info.source_file_id,
+                loc.line_number,
+                loc.line_position,
+            ))
+        }
+        block
+            .body
+            .push(self.loop_merge(merge_id, continuing_id, control));
+
+        self.function.consume(block, Instruction::branch(body_id));
+
+        // We can ignore the `BlockExitDisposition` returned here because,
+        // even if `continuing_id` is not actually reachable, it is always
+        // referred to by the `OpLoopMerge` instruction we emitted earlier.
+        let _ = self.write_block(
+            body_id,
+            body,
+            BlockExit::Branch {
+                target: continuing_id,
+            },
+            LoopContext {
+                continuing_id: Some(continuing_id),
+                break_id: Some(merge_id),
+            },
+            debug_info,
+        )?;
+
+        let exit = match break_if {
+            Some(condition) => BlockExit::BreakIf {
+                condition,
+                preamble_id,
+            },
+            None => BlockExit::Branch {
+                target: preamble_id,
+            },
+        };
+
+        // We can ignore the `BlockExitDisposition` returned here because,
+        // even if `merge_id` is not actually reachable, it is always referred
+        // to by the `OpLoopMerge` instruction we emitted earlier.
+        let _ = self.write_block(
+            continuing_id,
+            continuing,
+            exit,
+            LoopContext {
+                continuing_id: None,
+                break_id: Some(merge_id),
+            },
+            debug_info,
+        )?;
+
+        block = Block::new(merge_id);
+        Ok(Some(block))
+    }
+
+    fn write_statement(
+        &mut self,
+        block: Block,
+        statement: &Statement,
+        loop_context: LoopContext,
+    ) -> Result<Option<Block>, Error> {
+        let mut block = block;
+        match *statement {
+            Statement::Emit(ref range) => {
+                for handle in range.clone() {
+                    // omit const expressions as we've already cached those
+                    if !self.expression_constness.is_constant_instruction(handle) {
+                        self.cache_expression_value(handle, &mut block)?;
+                    }
+                }
+            }
+            Statement::Break => {
+                let Some(break_id) = loop_context.break_id else {
+                    return Err(Error::Validation("break outside of a loop or switch"));
+                };
+                self.function.consume(block, Instruction::branch(break_id));
+                return Ok(None);
+            }
+            Statement::Continue => {
+                let Some(continuing_id) = loop_context.continuing_id else {
+                    return Err(Error::Validation("continue outside of a loop"));
+                };
+                self.function
+                    .consume(block, Instruction::branch(continuing_id));
+                return Ok(None);
+            }
+            Statement::Return { value: Some(value) } => {
+                let value_id = self.cached.get(value)?;
+                let instruction = match self.function.entry_point_context {
+                    // If this is an entry point, and we need to return anything,
+                    // let's instead store the output variables and return `void`.
+                    Some(ref context) => {
+                        let Some(ref result) = self.ir_function.result else {
+                            return Err(Error::Validation(
+                                "entry point returns a value but has no result",
+                            ));
+                        };
+                        self.writer.write_entry_point_return(
+                            value_id,
+                            result,
+                            &context.results,
+                            &mut block.body,
+                        )?
+                    }
+                    None => Instruction::return_value(value_id),
+                };
+                self.function.consume(block, instruction);
+                return Ok(None);
+            }
+            Statement::Return { value: None } => {
+                self.function.consume(block, Instruction::return_void());
+                return Ok(None);
+            }
+            Statement::Kill => {
+                self.function.consume(block, Instruction::kill());
+                return Ok(None);
+            }
+            Statement::Demote => {
+                self.writer.require_demote()?;
+                block.body.push(Instruction::demote_to_helper_invocation());
+            }
+            Statement::BeginInvocationInterlock => {
+                block.body.push(Instruction::invocation_interlock(true));
+            }
+            Statement::EndInvocationInterlock => {
+                block.body.push(Instruction::invocation_interlock(false));
+            }
+            Statement::SplitBarrier {
+                phase,
+                execution,
+                memory,
+                semantics,
+            } => {
+                self.writer
+                    .write_split_barrier(phase, execution, memory, semantics, &mut block)?;
+            }
+            Statement::EmitVertex { stream } => {
+                self.write_primitive_operation(&mut block, true, stream)?;
+            }
+            Statement::EndPrimitive { stream } => {
+                self.write_primitive_operation(&mut block, false, stream)?;
+            }
+            Statement::DebugPrintf {
+                ref format,
+                ref arguments,
+            } => self.write_debug_printf_statement(&mut block, format, arguments)?,
+            Statement::Assume { condition } => self.write_assume(condition, &mut block)?,
+            Statement::SpirvInstruction {
+                ref instruction,
+                ref operands,
+                result,
+            } => self.write_spirv_instruction(&mut block, instruction, operands, result)?,
+            Statement::CooperativeMatrix {
+                ref function,
+                result,
+            } => {
+                self.write_cooperative_matrix_function(function, result, &mut block)?;
+            }
+            Statement::CooperativeVector(ref function) => {
+                self.write_cooperative_vector_function(function, &mut block)?;
+            }
+            Statement::MeshFunction(ref function) => {
+                match self.write_mesh_function(block, function)? {
+                    Some(next) => block = next,
+                    None => return Ok(None),
+                }
+            }
+            Statement::Abort {
+                ref message,
+                ty,
+                ref arguments,
+            } => {
+                self.write_abort(block, message, ty, arguments)?;
+                return Ok(None);
+            }
+            Statement::ControlBarrier(flags) => {
+                self.writer.write_control_barrier(flags, &mut block.body);
+            }
+            Statement::MemoryBarrier(flags) => {
+                self.writer.write_memory_barrier(flags, &mut block);
+            }
+            Statement::Store { pointer, value } => {
+                let mut value_id = self.cached.get(value)?;
+                if let Some(class) = self.pointer_class(pointer) {
+                    let value_type_id = self.get_expression_type_id(&self.fun_info[value].ty)?;
+                    if self.writer.needs_layout_conversion(value_type_id, class) {
+                        value_id = self.writer.convert_layout(
+                            &mut block,
+                            value_type_id,
+                            value_id,
+                            true,
+                        )?;
+                    }
+                }
+                match self.write_access_chain(pointer, &mut block, AccessTypeAdjustment::None)? {
+                    ExpressionPointer::Ready { pointer_id } => {
+                        let atomic_space =
+                            match *self.fun_info[pointer].ty.inner_with(&self.ir_module.types) {
+                                crate::TypeInner::Pointer { base, space } => {
+                                    match self.ir_module.types[base].inner {
+                                        crate::TypeInner::Atomic { .. } => Some(space),
+                                        _ => None,
+                                    }
+                                }
+                                _ => None,
+                            };
+                        let instruction = if let Some(space) = atomic_space {
+                            let (semantics, scope) = space.to_spirv_semantics_and_scope();
+                            let scope_constant_id = self.get_scope_constant(scope as u32);
+                            let semantics_id = self.get_index_constant(semantics.bits());
+                            Instruction::atomic_store(
+                                pointer_id,
+                                scope_constant_id,
+                                semantics_id,
+                                value_id,
+                            )
+                        } else {
+                            let mut instruction = Instruction::store(pointer_id, value_id, None);
+                            let swizzled = matches!(
+                                self.ir_function.expressions[value],
+                                crate::Expression::Swizzle { .. }
+                            );
+                            for operand in self.memory_access(pointer, swizzled, true) {
+                                instruction.add_operand(operand);
+                            }
+                            instruction
+                        };
+                        block.body.push(instruction);
+                    }
+                    ExpressionPointer::Conditional {
+                        condition,
+                        pointer_id,
+                        access,
+                    } => {
+                        let mut selection = Selection::start(&mut block, ());
+                        selection.if_true(self, condition, ());
+
+                        // The in-bounds path. Perform the access and the store.
+                        selection.block().body.push(access);
+                        selection
+                            .block()
+                            .body
+                            .push(Instruction::store(pointer_id, value_id, None));
+
+                        // Finish the in-bounds block and start the merge block. This
+                        // is the block we'll leave current on return.
+                        selection.finish(self, ());
+                    }
+                };
+            }
+            Statement::ImageStore {
+                image,
+                coordinate,
+                array_index,
+                sample,
+                value,
+            } => {
+                self.write_image_store(image, coordinate, array_index, sample, value, &mut block)?
+            }
+            Statement::TensorWrite {
+                tensor,
+                coordinates,
+                value,
+                nontemporal,
+            } => self.write_tensor_write(tensor, coordinates, value, nontemporal, &mut block)?,
+            Statement::Call {
+                function: local_function,
+                ref arguments,
+                result,
+            } => {
+                let id = self.gen_id();
+                let mut argument_ids = Vec::with_capacity(arguments.len());
+                for &argument in arguments {
+                    let argument_id = match self.ir_function.expressions[argument] {
+                        crate::Expression::Access { base, .. }
+                        | crate::Expression::AccessIndex { base, .. }
+                            if matches!(
+                                *self.fun_info[base].ty.inner_with(&self.ir_module.types),
+                                crate::TypeInner::BindingArray { .. }
+                            ) =>
+                        {
+                            match self.write_access_chain(
+                                argument,
+                                &mut block,
+                                AccessTypeAdjustment::IntroducePointer(
+                                    spirv::StorageClass::UniformConstant,
+                                ),
+                            )? {
+                                ExpressionPointer::Ready { pointer_id } => pointer_id,
+                                ExpressionPointer::Conditional { .. } => {
+                                    return Err(Error::FeatureNotImplemented(
+                                        "Texture array out-of-bounds handling",
+                                    ));
+                                }
+                            }
+                        }
+                        _ => self.cached.get(argument)?,
+                    };
+                    argument_ids.push(argument_id);
+                }
+                self.temp_list.clear();
+                self.temp_list.extend(argument_ids);
+
+                let type_id = match result {
+                    Some(expr) => {
+                        self.cached.set(expr, id)?;
+                        if self.non_uniform(expr).contains(crate::NonUniform::VALUE) {
+                            self.writer.decorate_non_uniform(id)?;
+                        }
+                        if let Some(&precision) = self.ir_function.precision.get(&expr) {
+                            self.writer.decorate_precision(id, precision);
+                        }
+                        self.get_expression_type_id(&self.fun_info[expr].ty)?
+                    }
+                    None => self.writer.void_type,
+                };
+
+                block.body.push(Instruction::function_call(
+                    type_id,
+                    id,
+                    self.writer.lookup_function[&local_function],
+                    &self.temp_list,
+                ));
+            }
+            Statement::Atomic {
+                pointer,
+                ref fun,
+                value,
+                result,
+                order,
+            } => {
+                let id = self.gen_id();
+                // Compare-and-exchange operations produce a struct result,
+                // so use `result`'s type if it is available. For no-result
+                // operations, fall back to `value`'s type.
+                let result_type_id =
+                    self.get_expression_type_id(&self.fun_info[result.unwrap_or(value)].ty)?;
+
+                if let Some(result) = result {
+                    self.cached.set(result, id)?;
+                }
+
+                let pointer_id = match self.write_access_chain(
+                    pointer,
+                    &mut block,
+                    AccessTypeAdjustment::None,
+                )? {
+                    ExpressionPointer::Ready { pointer_id } => pointer_id,
+                    ExpressionPointer::Conditional { .. } => {
+                        return Err(Error::FeatureNotImplemented(
+                            "Atomics out-of-bounds handling",
+                        ));
+                    }
+                };
+
+                let space = self.fun_info[pointer]
+                    .ty
+                    .inner_with(&self.ir_module.types)
+                    .pointer_space()
+                    .ok_or(Error::Validation("atomic operand is not a pointer"))?;
+                let default_semantics = self.glsl_atomic_semantics(pointer);
+                let (scope_constant_id, semantics_id, unequal_semantics_id) = match order {
+                    Some(order) => {
+                        let ids = self.writer.write_memory_order(order);
+                        (ids.scope, ids.semantics, ids.unequal)
+                    }
+                    None => {
+                        let (semantics, scope) = match default_semantics {
+                            Some(found) => found,
+                            None => space.to_spirv_semantics_and_scope(),
+                        };
+                        if scope == spirv::Scope::Device {
+                            self.writer.device_scope_used = true;
+                        }
+                        let semantics_id = self.get_index_constant(semantics.bits());
+                        (
+                            self.get_scope_constant(scope as u32),
+                            semantics_id,
+                            semantics_id,
+                        )
+                    }
+                };
+                let value_id = self.cached.get(value)?;
+                let value_inner = self.fun_info[value].ty.inner_with(&self.ir_module.types);
+
+                let crate::TypeInner::Scalar(scalar) = *value_inner else {
+                    return Err(Error::FeatureNotImplemented(
+                        "Atomics with non-scalar values",
+                    ));
+                };
+
+                let instruction = match *fun {
+                    crate::AtomicFunction::Add => {
+                        let spirv_op = match scalar.kind {
+                            crate::ScalarKind::Sint | crate::ScalarKind::Uint => {
+                                spirv::Op::AtomicIAdd
+                            }
+                            crate::ScalarKind::Float => self.writer.float_atomic(*fun, scalar)?,
+                            _ => {
+                                return Err(Error::Validation(
+                                    "atomic operation on an unsupported scalar type",
+                                ))
+                            }
+                        };
+                        Instruction::atomic_binary(
+                            spirv_op,
+                            result_type_id,
+                            id,
+                            pointer_id,
+                            scope_constant_id,
+                            semantics_id,
+                            value_id,
+                        )
+                    }
+                    crate::AtomicFunction::Subtract => {
+                        let (spirv_op, value_id) = match scalar.kind {
+                            crate::ScalarKind::Sint | crate::ScalarKind::Uint => {
+                                (spirv::Op::AtomicISub, value_id)
+                            }
+                            crate::ScalarKind::Float => {
+                                // HACK: SPIR-V doesn't have a atomic subtraction,
+                                // so we add the negated value instead.
+                                let neg_result_id = self.gen_id();
+                                block.body.push(Instruction::unary(
+                                    spirv::Op::FNegate,
+                                    result_type_id,
+                                    neg_result_id,
+                                    value_id,
+                                ));
+                                (spirv::Op::AtomicFAddEXT, neg_result_id)
+                            }
+                            _ => {
+                                return Err(Error::Validation(
+                                    "atomic operation on an unsupported scalar type",
+                                ))
+                            }
+                        };
+                        Instruction::atomic_binary(
+                            spirv_op,
+                            result_type_id,
+                            id,
+                            pointer_id,
+                            scope_constant_id,
+                            semantics_id,
+                            value_id,
+                        )
+                    }
+                    crate::AtomicFunction::And => {
+                        let spirv_op = match scalar.kind {
+                            crate::ScalarKind::Sint | crate::ScalarKind::Uint => {
+                                spirv::Op::AtomicAnd
+                            }
+                            _ => {
+                                return Err(Error::Validation(
+                                    "atomic operation on an unsupported scalar type",
+                                ))
+                            }
+                        };
+                        Instruction::atomic_binary(
+                            spirv_op,
+                            result_type_id,
+                            id,
+                            pointer_id,
+                            scope_constant_id,
+                            semantics_id,
+                            value_id,
+                        )
+                    }
+                    crate::AtomicFunction::InclusiveOr => {
+                        let spirv_op = match scalar.kind {
+                            crate::ScalarKind::Sint | crate::ScalarKind::Uint => {
+                                spirv::Op::AtomicOr
+                            }
+                            _ => {
+                                return Err(Error::Validation(
+                                    "atomic operation on an unsupported scalar type",
+                                ))
+                            }
+                        };
+                        Instruction::atomic_binary(
+                            spirv_op,
+                            result_type_id,
+                            id,
+                            pointer_id,
+                            scope_constant_id,
+                            semantics_id,
+                            value_id,
+                        )
+                    }
+                    crate::AtomicFunction::ExclusiveOr => {
+                        let spirv_op = match scalar.kind {
+                            crate::ScalarKind::Sint | crate::ScalarKind::Uint => {
+                                spirv::Op::AtomicXor
+                            }
+                            _ => {
+                                return Err(Error::Validation(
+                                    "atomic operation on an unsupported scalar type",
+                                ))
+                            }
+                        };
+                        Instruction::atomic_binary(
+                            spirv_op,
+                            result_type_id,
+                            id,
+                            pointer_id,
+                            scope_constant_id,
+                            semantics_id,
+                            value_id,
+                        )
+                    }
+                    crate::AtomicFunction::Min => {
+                        let spirv_op = match scalar.kind {
+                            crate::ScalarKind::Sint => spirv::Op::AtomicSMin,
+                            crate::ScalarKind::Uint => spirv::Op::AtomicUMin,
+                            crate::ScalarKind::Float => self.writer.float_atomic(*fun, scalar)?,
+                            _ => {
+                                return Err(Error::Validation(
+                                    "atomic operation on an unsupported scalar type",
+                                ))
+                            }
+                        };
+                        Instruction::atomic_binary(
+                            spirv_op,
+                            result_type_id,
+                            id,
+                            pointer_id,
+                            scope_constant_id,
+                            semantics_id,
+                            value_id,
+                        )
+                    }
+                    crate::AtomicFunction::Max => {
+                        let spirv_op = match scalar.kind {
+                            crate::ScalarKind::Sint => spirv::Op::AtomicSMax,
+                            crate::ScalarKind::Uint => spirv::Op::AtomicUMax,
+                            crate::ScalarKind::Float => self.writer.float_atomic(*fun, scalar)?,
+                            _ => {
+                                return Err(Error::Validation(
+                                    "atomic operation on an unsupported scalar type",
+                                ))
+                            }
+                        };
+                        Instruction::atomic_binary(
+                            spirv_op,
+                            result_type_id,
+                            id,
+                            pointer_id,
+                            scope_constant_id,
+                            semantics_id,
+                            value_id,
+                        )
+                    }
+                    crate::AtomicFunction::Exchange { compare: None } => {
+                        Instruction::atomic_binary(
+                            spirv::Op::AtomicExchange,
+                            result_type_id,
+                            id,
+                            pointer_id,
+                            scope_constant_id,
+                            semantics_id,
+                            value_id,
+                        )
+                    }
+                    crate::AtomicFunction::Exchange { compare: Some(cmp) } => {
+                        let scalar_type_id = self.get_numeric_type_id(NumericType::Scalar(scalar));
+                        let bool_type_id =
+                            self.get_numeric_type_id(NumericType::Scalar(crate::Scalar::BOOL));
+
+                        let cas_result_id = self.gen_id();
+                        let equality_result_id = self.gen_id();
+                        let equality_operator = match scalar.kind {
+                            crate::ScalarKind::Sint | crate::ScalarKind::Uint => spirv::Op::IEqual,
+                            _ => {
+                                return Err(Error::Validation(
+                                    "atomic operation on an unsupported scalar type",
+                                ))
+                            }
+                        };
+
+                        let mut cas_instr = Instruction::new(spirv::Op::AtomicCompareExchange);
+                        cas_instr.set_type(scalar_type_id);
+                        cas_instr.set_result(cas_result_id);
+                        cas_instr.add_operand(pointer_id);
+                        cas_instr.add_operand(scope_constant_id);
+                        cas_instr.add_operand(semantics_id); // semantics if equal
+                        cas_instr.add_operand(unequal_semantics_id);
+                        cas_instr.add_operand(value_id);
+                        cas_instr.add_operand(self.cached.get(cmp)?);
+                        block.body.push(cas_instr);
+                        block.body.push(Instruction::binary(
+                            equality_operator,
+                            bool_type_id,
+                            equality_result_id,
+                            cas_result_id,
+                            self.cached.get(cmp)?,
+                        ));
+                        Instruction::composite_construct(
+                            result_type_id,
+                            id,
+                            &[cas_result_id, equality_result_id],
+                        )
+                    }
+                };
+
+                block.body.push(instruction);
+            }
+            Statement::ImageAtomic {
+                image,
+                coordinate,
+                array_index,
+                fun,
+                value,
+                sample,
+                result,
+                order,
+            } => match order {
+                Some(order) => {
+                    let texel = crate::Texel {
+                        image,
+                        coordinate,
+                        array_index,
+                        sample,
+                    };
+                    self.write_ordered_image_atomic(&texel, fun, value, result, order, &mut block)?;
+                }
+                None => {
+                    self.write_image_atomic(
+                        image,
+                        coordinate,
+                        array_index,
+                        fun,
+                        value,
+                        &mut block,
+                    )?;
+                }
+            },
+            Statement::AtomicLoad {
+                ref location,
+                order,
+                result,
+            } => {
+                self.write_atomic_load(location, order, result, &mut block)?;
+            }
+            Statement::AtomicStore {
+                ref location,
+                value,
+                order,
+            } => {
+                self.write_atomic_store(location, value, order, &mut block)?;
+            }
+            Statement::ScopedBarrier {
+                execution,
+                memory,
+                semantics,
+            } => {
+                self.writer
+                    .write_scoped_barrier(execution, memory, semantics, &mut block);
+            }
+            Statement::WorkGroupUniformLoad { pointer, result } => {
+                self.writer
+                    .write_control_barrier(crate::Barrier::WORK_GROUP, &mut block.body);
+                let result_type_id = self.get_expression_type_id(&self.fun_info[result].ty)?;
+                // Match `Expression::Load` behavior, including `OpAtomicLoad` when
+                // loading from a pointer to `atomic<T>`.
+                let id = self.write_checked_load(
+                    pointer,
+                    &mut block,
+                    AccessTypeAdjustment::None,
+                    result_type_id,
+                )?;
+                self.cached.set(result, id)?;
+                self.writer
+                    .write_control_barrier(crate::Barrier::WORK_GROUP, &mut block.body);
+            }
+            Statement::RayQuery { query, ref fun } => {
+                self.write_ray_query_function(query, fun, &mut block)?;
+            }
+            Statement::HitObject { object, ref fun } => {
+                self.write_hit_object_function(object, fun, &mut block)?;
+            }
+            Statement::ReorderThread { kind, hint, bits } => {
+                self.write_reorder_thread(kind, hint, bits, &mut block)?;
+            }
+            Statement::SubgroupBallot {
+                result,
+                ref predicate,
+            } => {
+                self.write_subgroup_ballot(predicate, result, &mut block)?;
+            }
+            Statement::SubgroupCollectiveOperation {
+                ref op,
+                ref collective_op,
+                argument,
+                result,
+            } => {
+                self.write_subgroup_operation(op, collective_op, argument, result, &mut block)?;
+            }
+            Statement::SubgroupGather {
+                ref mode,
+                argument,
+                result,
+            } => {
+                self.write_subgroup_gather(mode, argument, result, &mut block)?;
+            }
+            Statement::SubgroupFunction { ref fun, result } => {
+                self.write_subgroup_function(fun, result, &mut block)?;
+            }
+            Statement::CooperativeStore { target, ref data } => {
+                self.write_cooperative_store(target, data, &mut block)?;
+            }
+            Statement::RayPipelineFunction(ref fun) => {
+                if let Some(terminator) =
+                    self.write_ray_tracing_pipeline_function(fun, &mut block)?
+                {
+                    self.function.consume(block, terminator);
+                    return Ok(None);
+                }
+            }
+            Statement::Block(_)
+            | Statement::If { .. }
+            | Statement::Switch { .. }
+            | Statement::Loop { .. } => {}
+        }
+        Ok(Some(block))
     }
 
     pub(super) fn write_function_body(

@@ -1029,8 +1029,83 @@ impl super::Validator {
         functions: &Arena<crate::Function>,
         types: &UniqueArena<crate::Type>,
     ) -> Result<(), InvalidHandleError> {
-        let validate_block =
-            |block| Self::validate_block_handles(block, expressions, functions, types);
+        for statement in block.iter() {
+            Self::validate_statement_kind_handles(statement, expressions, functions, types)?;
+        }
+        Ok(())
+    }
+
+    fn validate_statement_kind_handles(
+        statement: &crate::Statement,
+        expressions: &Arena<crate::Expression>,
+        functions: &Arena<crate::Function>,
+        types: &UniqueArena<crate::Type>,
+    ) -> Result<(), InvalidHandleError> {
+        match *statement {
+            crate::Statement::Block(ref block) => {
+                Self::validate_block_handles(block, expressions, functions, types)
+            }
+            crate::Statement::If {
+                condition,
+                ref accept,
+                ref reject,
+                control: _,
+            } => Self::validate_nested_handles(
+                Some(condition),
+                [accept, reject].into_iter(),
+                expressions,
+                functions,
+                types,
+            ),
+            crate::Statement::Switch {
+                selector,
+                ref cases,
+                control: _,
+            } => Self::validate_nested_handles(
+                Some(selector),
+                cases.iter().map(|case| &case.body),
+                expressions,
+                functions,
+                types,
+            ),
+            crate::Statement::Loop {
+                ref body,
+                ref continuing,
+                break_if,
+                control: _,
+            } => Self::validate_nested_handles(
+                break_if,
+                [body, continuing].into_iter(),
+                expressions,
+                functions,
+                types,
+            ),
+            _ => Self::validate_statement_handles(statement, expressions, functions, types),
+        }
+    }
+
+    fn validate_nested_handles<'b>(
+        condition: Option<Handle<crate::Expression>>,
+        blocks: impl Iterator<Item = &'b crate::Block>,
+        expressions: &Arena<crate::Expression>,
+        functions: &Arena<crate::Function>,
+        types: &UniqueArena<crate::Type>,
+    ) -> Result<(), InvalidHandleError> {
+        if let Some(condition) = condition {
+            Self::validate_expression_handle(condition, expressions)?;
+        }
+        for block in blocks {
+            Self::validate_block_handles(block, expressions, functions, types)?;
+        }
+        Ok(())
+    }
+
+    fn validate_statement_handles(
+        statement: &crate::Statement,
+        expressions: &Arena<crate::Expression>,
+        functions: &Arena<crate::Function>,
+        types: &UniqueArena<crate::Type>,
+    ) -> Result<(), InvalidHandleError> {
         let validate_expr = |handle| Self::validate_expression_handle(handle, expressions);
         let validate_expr_opt = |handle_opt| {
             if let Some(handle) = handle_opt {
@@ -1039,53 +1114,15 @@ impl super::Validator {
             Ok(())
         };
 
-        block.iter().try_for_each(|stmt| match *stmt {
+        match *statement {
             crate::Statement::Emit(ref expr_range) => {
                 expr_range.check_valid_for(expressions)?;
                 Ok(())
             }
-            crate::Statement::Block(ref block) => {
-                validate_block(block)?;
-                Ok(())
-            }
-            crate::Statement::If {
-                condition,
-                ref accept,
-                ref reject,
-                control: _,
-            } => {
-                validate_expr(condition)?;
-                validate_block(accept)?;
-                validate_block(reject)?;
-                Ok(())
-            }
-            crate::Statement::Switch {
-                selector,
-                ref cases,
-                control: _,
-            } => {
-                validate_expr(selector)?;
-                for &crate::SwitchCase {
-                    value: _,
-                    ref body,
-                    fall_through: _,
-                } in cases
-                {
-                    validate_block(body)?;
-                }
-                Ok(())
-            }
-            crate::Statement::Loop {
-                ref body,
-                ref continuing,
-                break_if,
-                control: _,
-            } => {
-                validate_block(body)?;
-                validate_block(continuing)?;
-                validate_expr_opt(break_if)?;
-                Ok(())
-            }
+            crate::Statement::Block(_)
+            | crate::Statement::If { .. }
+            | crate::Statement::Switch { .. }
+            | crate::Statement::Loop { .. } => Ok(()),
             crate::Statement::Return { value } => validate_expr_opt(value),
             crate::Statement::Store { pointer, value } => {
                 validate_expr(pointer)?;
@@ -1341,7 +1378,7 @@ impl super::Validator {
             | crate::Statement::EndPrimitive { .. }
             | crate::Statement::ControlBarrier(_)
             | crate::Statement::MemoryBarrier(_) => Ok(()),
-        })
+        }
     }
 }
 

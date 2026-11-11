@@ -68,6 +68,13 @@ pub(crate) const IMAGE_FORMATS: [&str; 41] = [
     "r64ui",
 ];
 
+#[derive(Debug, Clone, Copy)]
+struct MemberPlace<'q> {
+    in_block: Option<&'q Qualifiers>,
+    in_heap: bool,
+    last: bool,
+}
+
 impl Analyzer<'_> {
     pub(crate) fn declaration(&mut self, declaration: &Declaration) {
         match &declaration.kind {
@@ -797,7 +804,7 @@ impl Analyzer<'_> {
             TypeSpecifierNonArray::Parameterized(kind) => {
                 self.parameterized_type(*kind, specifier.parameters.as_ref(), span)
             }
-            TypeSpecifierNonArray::Struct(structure) => self.struct_specifier(structure),
+            TypeSpecifierNonArray::Struct(structure) => self.struct_specifier(structure, span),
             TypeSpecifierNonArray::TypeName(name) => match self.lookup(name) {
                 Some(Lookup::Symbol(id)) => match self.symbol(id).map(|symbol| &symbol.kind) {
                     Some(SymbolKind::Struct(structure)) => Type::structure(*structure),
@@ -826,7 +833,15 @@ impl Analyzer<'_> {
             TypeSpecifierNonArray::Spirv(spirv) => self.spirv_type_specifier(spirv),
         };
         let dimensions = self.array_sizes(specifier.array.as_ref());
-        base.with_dimensions(&dimensions)
+        self.bounded_type(base.with_dimensions(&dimensions), span)
+    }
+
+    pub(crate) fn bounded_type(&mut self, ty: Type, span: Span) -> Type {
+        if ty.depth(&self.types) > crate::types::MAX_TYPE_DEPTH {
+            self.error(span, DiagnosticKind::TypeTooDeep);
+            return Type::ERROR;
+        }
+        ty
     }
 
     pub(crate) fn struct_members(
@@ -838,130 +853,191 @@ impl Analyzer<'_> {
         let mut members: Vec<Member> = Vec::new();
         let count = declarations.len();
         for (position, declaration) in declarations.iter().enumerate() {
+            let place = MemberPlace {
+                in_block,
+                in_heap,
+                last: position + 1 == count,
+            };
             if let TypeSpecifierNonArray::InlineBlock(ref inner) =
                 declaration.ty.specifier.node.non_array
             {
-                let qualifiers = self.optional_qualifiers(&declaration.ty.node);
-                let base = self.inline_reference(declaration.ty.span, &qualifiers, inner, in_heap);
-                let mut member_qualifiers = Qualifiers::default();
-                if let Some(block) = in_block {
-                    member_qualifiers.storage = block.storage;
-                }
-                for declarator in &declaration.declarators {
-                    let dimensions = self.array_sizes(declarator.array.as_ref());
-                    members.push(Member {
-                        name: declarator.name.node.clone(),
-                        ty: base.clone().with_dimensions(&dimensions),
-                        qualifiers: member_qualifiers.clone(),
-                    });
-                }
-                continue;
-            }
-            let mut qualifiers = self.optional_qualifiers(&declaration.ty.node);
-            if let Some(qualifier) = &declaration.ty.node.qualifier {
-                self.heap_member_checks(qualifier.span, &qualifiers, in_heap);
-            }
-            if qualifiers.nonuniform {
-                self.non_uniform_error(
-                    declaration.ty.qualifier.as_ref(),
-                    "not allowed on block or structure members",
-                );
-                qualifiers.nonuniform = false;
-            }
-            if matches!(
-                declaration.ty.specifier.non_array,
-                TypeSpecifierNonArray::Struct(_)
-            ) {
-                self.error(
-                    declaration.ty.specifier.span,
-                    DiagnosticKind::NestedStructDefinition,
-                );
-            }
-            let base = self.type_specifier(&declaration.ty.specifier);
-            let last = position + 1 == count;
-            if let Some(block) = in_block {
-                if qualifiers.storage == Storage::None && !qualifiers.constant {
-                    qualifiers.storage = block.storage;
-                } else if qualifiers.storage != block.storage || qualifiers.constant {
-                    for declarator in &declaration.declarators {
-                        self.error(
-                            declarator.name.span,
-                            DiagnosticKind::InvalidStructMember {
-                                name: declarator.name.node.clone(),
-                                reason: "the storage qualifier contradicts the block's",
-                            },
-                        );
-                    }
-                }
-                qualifiers.readonly |= block.readonly;
-                qualifiers.coherent |= block.coherent;
-                qualifiers.volatile |= block.volatile;
-                qualifiers.restrict |= block.restrict;
-                qualifiers.device_coherent |= block.device_coherent;
-                qualifiers.queue_family_coherent |= block.queue_family_coherent;
-                qualifiers.workgroup_coherent |= block.workgroup_coherent;
-                qualifiers.subgroup_coherent |= block.subgroup_coherent;
-                qualifiers.shader_call_coherent |= block.shader_call_coherent;
-                qualifiers.nonprivate |= block.nonprivate;
-                qualifiers.nontemporal |= block.nontemporal;
-                qualifiers.writeonly |= block.writeonly;
-                qualifiers.per_primitive |= block.per_primitive;
-                qualifiers.per_view |= block.per_view;
-                qualifiers.per_task |= block.per_task;
-            }
-            for declarator in &declaration.declarators {
-                let name = &declarator.name;
-                let dimensions = self.array_sizes(declarator.array.as_ref());
-                let mut ty = base.clone().with_dimensions(&dimensions);
-                if in_block.is_some() {
-                    self.per_view_dimension(name.span, &qualifiers, &mut ty, true);
-                }
-                let reason = if ty.is_void() {
-                    Some("a member cannot be `void`")
-                } else if members.iter().any(|member| member.name == name.node) {
-                    Some("the name is already used by another member")
-                } else if in_block.is_none() && ty.array.contains(&ArraySize::Unsized) {
-                    Some("an array size is required")
-                } else if in_block.is_some()
-                    && ty.contains_opaque(&self.types)
-                    && !(in_heap && self.extension_enabled(super::heap::STRUCTURED_DESCRIPTOR_HEAP))
-                {
-                    Some("a block member cannot have an opaque type")
-                } else if in_heap && !last && ty.array.first() == Some(&ArraySize::Unsized) {
-                    Some("an array size is required")
-                } else if ty
-                    .array
-                    .iter()
-                    .skip(1)
-                    .any(|size| *size == ArraySize::Unsized)
-                {
-                    Some("only the outermost array dimension can be unsized")
-                } else {
-                    None
-                };
-                if let Some(reason) = reason {
-                    self.error(
-                        name.span,
-                        DiagnosticKind::InvalidStructMember {
-                            name: name.node.clone(),
-                            reason,
-                        },
-                    );
-                } else if in_block.is_some() {
-                    self.input_attachment_check(&qualifiers, &ty, name.span);
-                }
-                members.push(Member {
-                    name: name.node.clone(),
-                    ty,
-                    qualifiers: qualifiers.clone(),
-                });
+                self.inline_block_members(declaration, inner, place, &mut members);
+            } else {
+                self.plain_members(declaration, place, &mut members);
             }
         }
         members
     }
 
-    fn struct_specifier(&mut self, specifier: &StructSpecifier) -> Type {
+    fn inline_block_members(
+        &mut self,
+        declaration: &Spanned<StructDeclaration>,
+        inner: &[Spanned<StructDeclaration>],
+        place: MemberPlace<'_>,
+        members: &mut Vec<Member>,
+    ) {
+        let MemberPlace {
+            in_block, in_heap, ..
+        } = place;
+        let qualifiers = self.optional_qualifiers(&declaration.ty.node);
+        let base = self.inline_reference(declaration.ty.span, &qualifiers, inner, in_heap);
+        let mut member_qualifiers = Qualifiers::default();
+        if let Some(block) = in_block {
+            member_qualifiers.storage = block.storage;
+        }
+        for declarator in &declaration.declarators {
+            let dimensions = self.array_sizes(declarator.array.as_ref());
+            let ty = base.clone().with_dimensions(&dimensions);
+            members.push(Member {
+                name: declarator.name.node.clone(),
+                ty: self.bounded_type(ty, declarator.name.span),
+                qualifiers: member_qualifiers.clone(),
+            });
+        }
+    }
+
+    fn plain_members(
+        &mut self,
+        declaration: &Spanned<StructDeclaration>,
+        place: MemberPlace<'_>,
+        members: &mut Vec<Member>,
+    ) {
+        let qualifiers = self.member_qualifiers(declaration, place.in_heap);
+        if matches!(
+            declaration.ty.specifier.non_array,
+            TypeSpecifierNonArray::Struct(_)
+        ) {
+            self.error(
+                declaration.ty.specifier.span,
+                DiagnosticKind::NestedStructDefinition,
+            );
+        }
+        let base = self.type_specifier(&declaration.ty.specifier);
+        self.typed_members(declaration, qualifiers, &base, place, members);
+    }
+
+    fn member_qualifiers(
+        &mut self,
+        declaration: &Spanned<StructDeclaration>,
+        in_heap: bool,
+    ) -> Qualifiers {
+        let mut qualifiers = self.optional_qualifiers(&declaration.ty.node);
+        if let Some(qualifier) = &declaration.ty.node.qualifier {
+            self.heap_member_checks(qualifier.span, &qualifiers, in_heap);
+        }
+        if qualifiers.nonuniform {
+            self.non_uniform_error(
+                declaration.ty.qualifier.as_ref(),
+                "not allowed on block or structure members",
+            );
+            qualifiers.nonuniform = false;
+        }
+        qualifiers
+    }
+
+    fn typed_members(
+        &mut self,
+        declaration: &Spanned<StructDeclaration>,
+        qualifiers: Qualifiers,
+        base: &Type,
+        place: MemberPlace<'_>,
+        members: &mut Vec<Member>,
+    ) {
+        let MemberPlace {
+            in_block,
+            in_heap,
+            last,
+        } = place;
+        let mut qualifiers = qualifiers;
+        if let Some(block) = in_block {
+            if qualifiers.storage == Storage::None && !qualifiers.constant {
+                qualifiers.storage = block.storage;
+            } else if qualifiers.storage != block.storage || qualifiers.constant {
+                for declarator in &declaration.declarators {
+                    self.error(
+                        declarator.name.span,
+                        DiagnosticKind::InvalidStructMember {
+                            name: declarator.name.node.clone(),
+                            reason: "the storage qualifier contradicts the block's",
+                        },
+                    );
+                }
+            }
+            qualifiers.readonly |= block.readonly;
+            qualifiers.coherent |= block.coherent;
+            qualifiers.volatile |= block.volatile;
+            qualifiers.restrict |= block.restrict;
+            qualifiers.device_coherent |= block.device_coherent;
+            qualifiers.queue_family_coherent |= block.queue_family_coherent;
+            qualifiers.workgroup_coherent |= block.workgroup_coherent;
+            qualifiers.subgroup_coherent |= block.subgroup_coherent;
+            qualifiers.shader_call_coherent |= block.shader_call_coherent;
+            qualifiers.nonprivate |= block.nonprivate;
+            qualifiers.nontemporal |= block.nontemporal;
+            qualifiers.writeonly |= block.writeonly;
+            qualifiers.per_primitive |= block.per_primitive;
+            qualifiers.per_view |= block.per_view;
+            qualifiers.per_task |= block.per_task;
+        }
+        for declarator in &declaration.declarators {
+            let name = &declarator.name;
+            let dimensions = self.array_sizes(declarator.array.as_ref());
+            let ty = base.clone().with_dimensions(&dimensions);
+            let mut ty = self.bounded_type(ty, name.span);
+            if in_block.is_some() {
+                self.per_view_dimension(name.span, &qualifiers, &mut ty, true);
+            }
+            let reason = if ty.is_void() {
+                Some("a member cannot be `void`")
+            } else if members.iter().any(|member| member.name == name.node) {
+                Some("the name is already used by another member")
+            } else if in_block.is_none() && ty.array.contains(&ArraySize::Unsized) {
+                Some("an array size is required")
+            } else if in_block.is_some()
+                && ty.contains_opaque(&self.types)
+                && !(in_heap && self.extension_enabled(super::heap::STRUCTURED_DESCRIPTOR_HEAP))
+            {
+                Some("a block member cannot have an opaque type")
+            } else if in_heap && !last && ty.array.first() == Some(&ArraySize::Unsized) {
+                Some("an array size is required")
+            } else if ty
+                .array
+                .iter()
+                .skip(1)
+                .any(|size| *size == ArraySize::Unsized)
+            {
+                Some("only the outermost array dimension can be unsized")
+            } else {
+                None
+            };
+            if let Some(reason) = reason {
+                self.error(
+                    name.span,
+                    DiagnosticKind::InvalidStructMember {
+                        name: name.node.clone(),
+                        reason,
+                    },
+                );
+            } else if in_block.is_some() {
+                self.input_attachment_check(&qualifiers, &ty, name.span);
+            }
+            members.push(Member {
+                name: name.node.clone(),
+                ty,
+                qualifiers: qualifiers.clone(),
+            });
+        }
+    }
+
+    fn struct_specifier(&mut self, specifier: &StructSpecifier, span: Span) -> Type {
         let members = self.struct_members(&specifier.declarations, None);
+        if members
+            .iter()
+            .any(|member| member.ty.depth(&self.types) >= crate::types::MAX_TYPE_DEPTH)
+        {
+            self.error(span, DiagnosticKind::TypeTooDeep);
+            return Type::ERROR;
+        }
         let name = specifier.name.as_ref().map(|name| name.node.clone());
         let Some(id) = self.types.add_struct(name, members) else {
             return Type::ERROR;
@@ -1290,7 +1366,8 @@ impl Analyzer<'_> {
     ) {
         let name = &declarator.name;
         let dimensions = self.array_sizes(declarator.array.as_ref());
-        let mut ty = base.clone().with_dimensions(&dimensions);
+        let ty = base.clone().with_dimensions(&dimensions);
+        let mut ty = self.bounded_type(ty, name.span);
         let is_global = self.scopes.is_global();
         let mut qualifiers = qualifiers.clone();
         let mut broken = ty.is_error();
@@ -2217,7 +2294,7 @@ impl Analyzer<'_> {
         let qualifiers = self.optional_qualifiers(&parameter.ty.node);
         let base = self.type_specifier(&parameter.ty.specifier);
         let dimensions = self.array_sizes(parameter.array.as_ref());
-        let ty = base.with_dimensions(&dimensions);
+        let ty = self.bounded_type(base.with_dimensions(&dimensions), parameter.span);
         let name = parameter.name.as_ref().map(|name| name.node.clone());
         if ty.is_void() && name.is_none() && parameter.ty.qualifier.is_none() {
             return None;

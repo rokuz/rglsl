@@ -1219,1201 +1219,1245 @@ impl super::Validator {
         }
     }
 
-    #[allow(clippy::large_stack_frames)] // TODO(https://github.com/gfx-rs/wgpu/issues/9456)
     fn validate_block_impl(
         &mut self,
         statements: &crate::Block,
         context: &BlockContext,
     ) -> Result<BlockInfo, WithSpan<FunctionError>> {
-        use crate::{AddressSpace, Statement as S, TypeInner as Ti};
         let mut stages = super::ShaderStages::all();
         for (statement, &span) in statements.span_iter() {
-            match *statement {
-                S::Emit(ref range) => {
-                    for handle in range.clone() {
-                        use crate::Expression as Ex;
-                        match context.expressions[handle] {
-                            Ex::Literal(_)
-                            | Ex::Constant(_)
-                            | Ex::Override(_)
-                            | Ex::ZeroValue(_)
-                            | Ex::Compose { .. }
-                            | Ex::Access { .. }
-                            | Ex::AccessIndex { .. }
-                            | Ex::Splat { .. }
-                            | Ex::Swizzle { .. }
-                            | Ex::FunctionArgument(_)
-                            | Ex::GlobalVariable(_)
-                            | Ex::LocalVariable(_)
-                            | Ex::Load { .. }
-                            | Ex::ImageSample { .. }
-                            | Ex::ImageProcessing { .. }
-                            | Ex::ArrayConversion { .. }
-                            | Ex::Bitcast { .. }
-                            | Ex::ImageLoad { .. }
-                            | Ex::ImageQuery { .. }
-                            | Ex::ImageSparseResident { .. }
-                            | Ex::Unary { .. }
-                            | Ex::Binary { .. }
-                            | Ex::Select { .. }
-                            | Ex::Derivative { .. }
-                            | Ex::Relational { .. }
-                            | Ex::Math { .. }
-                            | Ex::As { .. }
-                            | Ex::ArrayLength(_)
-                            | Ex::WideArrayLength(_)
-                            | Ex::PhysicalPointer { .. }
-                            | Ex::PhysicalAddress { .. }
-                            | Ex::BufferPointer { .. }
-                            | Ex::HeapOffset { .. }
-                            | Ex::RayQueryGet { .. }
-                            | Ex::AccelerationStructureFromAddress { .. }
-                            | Ex::HitObjectGet { .. }
-                            | Ex::FetchMicroTriangleVertex { .. }
-                            | Ex::CooperativeLoad { .. }
-                            | Ex::CooperativeMultiplyAdd { .. }
-                            | Ex::CooperativeMatrixLength { .. }
-                            | Ex::Replicate { .. }
-                            | Ex::Expect { .. }
-                            | Ex::Convert { .. }
-                            | Ex::TensorCreate { .. }
-                            | Ex::TensorSet { .. }
-                            | Ex::CooperativeVectorLoad { .. }
-                            | Ex::CooperativeVectorMatMul { .. }
-                            | Ex::TensorRead { .. }
-                            | Ex::TensorQuerySize { .. }
-                            | Ex::IsHelperInvocation
-                            | Ex::AttachmentRead { .. }
-                            | Ex::InterpolateAt { .. }
-                            | Ex::FragmentFetch { .. }
-                            | Ex::ImageFootprint { .. } => self.emit_expression(handle, context)?,
-                            Ex::CallResult(_)
-                            | Ex::AtomicResult { .. }
-                            | Ex::WorkGroupUniformLoadResult { .. }
-                            | Ex::RayQueryProceedResult
-                            | Ex::ReportIntersectionResult
-                            | Ex::SubgroupBallotResult
-                            | Ex::SubgroupOperationResult { .. }
-                            | Ex::SpirvInstructionResult { .. }
-                            | Ex::CooperativeMatrixResult { .. } => {
-                                return Err(FunctionError::EmitResult(handle)
-                                    .with_span_handle(handle, context.expressions));
-                            }
-                        }
-                    }
-                }
-                S::Block(ref block) => {
-                    let info = self.validate_block(block, context)?;
-                    stages &= info.stages;
-                }
-                S::If {
-                    condition,
-                    ref accept,
-                    ref reject,
-                    control: _,
-                } => {
-                    match *context.resolve_type_inner(condition, &self.valid_expression_set)? {
-                        Ti::Scalar(crate::Scalar {
-                            kind: crate::ScalarKind::Bool,
-                            width: _,
-                        }) => {}
-                        _ => {
-                            return Err(FunctionError::InvalidIfType(condition)
-                                .with_span_handle(condition, context.expressions))
-                        }
-                    }
-                    stages &= self.validate_block(accept, context)?.stages;
-                    stages &= self.validate_block(reject, context)?.stages;
-                }
-                S::Switch {
-                    selector,
-                    ref cases,
-                    control: _,
-                } => {
-                    let uint = match context
-                        .resolve_type_inner(selector, &self.valid_expression_set)?
-                        .scalar_kind()
-                    {
-                        Some(crate::ScalarKind::Uint) => true,
-                        Some(crate::ScalarKind::Sint) => false,
-                        _ => {
-                            return Err(FunctionError::InvalidSwitchType(selector)
-                                .with_span_handle(selector, context.expressions))
-                        }
-                    };
-                    self.switch_values.clear();
-                    for case in cases {
-                        match case.value {
-                            crate::SwitchValue::I32(_) if !uint => {}
-                            crate::SwitchValue::U32(_) if uint => {}
-                            crate::SwitchValue::Default => {}
-                            _ => {
-                                return Err(FunctionError::ConflictingCaseType.with_span_static(
-                                    case.body
-                                        .span_iter()
-                                        .next()
-                                        .map_or(Default::default(), |(_, s)| *s),
-                                    "conflicting switch arm here",
-                                ));
-                            }
-                        };
-                        if !self.switch_values.insert(case.value) {
-                            return Err(match case.value {
-                                crate::SwitchValue::Default => FunctionError::MultipleDefaultCases
-                                    .with_span_static(
-                                        case.body
-                                            .span_iter()
-                                            .next()
-                                            .map_or(Default::default(), |(_, s)| *s),
-                                        "duplicated switch arm here",
-                                    ),
-                                _ => FunctionError::ConflictingSwitchCase(case.value)
-                                    .with_span_static(
-                                        case.body
-                                            .span_iter()
-                                            .next()
-                                            .map_or(Default::default(), |(_, s)| *s),
-                                        "conflicting switch arm here",
-                                    ),
-                            });
-                        }
-                    }
-                    if !self.switch_values.contains(&crate::SwitchValue::Default) {
-                        return Err(FunctionError::MissingDefaultCase
-                            .with_span_static(span, "missing default case"));
-                    }
-                    if let Some(case) = cases.last() {
-                        if case.fall_through {
-                            return Err(FunctionError::LastCaseFallTrough.with_span_static(
-                                case.body
-                                    .span_iter()
-                                    .next()
-                                    .map_or(Default::default(), |(_, s)| *s),
-                                "bad switch arm here",
-                            ));
-                        }
-                    }
-                    let pass_through_abilities = context.abilities
-                        & (ControlFlowAbility::RETURN | ControlFlowAbility::CONTINUE);
-                    let sub_context =
-                        context.with_abilities(pass_through_abilities | ControlFlowAbility::BREAK);
-                    for case in cases {
-                        stages &= self.validate_block(&case.body, &sub_context)?.stages;
-                    }
-                }
-                S::Loop {
-                    ref body,
-                    ref continuing,
-                    break_if,
-                    control: _,
-                } => {
-                    // special handling for block scoping is needed here,
-                    // because the continuing{} block inherits the scope
-                    let base_expression_count = self.valid_expression_list.len();
-                    let pass_through_abilities = context.abilities & ControlFlowAbility::RETURN;
-                    stages &= self
-                        .validate_block_impl(
-                            body,
-                            &context.with_abilities(
-                                pass_through_abilities
-                                    | ControlFlowAbility::BREAK
-                                    | ControlFlowAbility::CONTINUE,
-                            ),
-                        )?
-                        .stages;
-                    stages &= self
-                        .validate_block_impl(
-                            continuing,
-                            &context.with_abilities(ControlFlowAbility::empty()),
-                        )?
-                        .stages;
+            stages &= self.validate_statement_kind(statement, span, context)?;
+        }
+        Ok(BlockInfo { stages })
+    }
 
-                    if let Some(condition) = break_if {
-                        match *context.resolve_type_inner(condition, &self.valid_expression_set)? {
-                            Ti::Scalar(crate::Scalar {
-                                kind: crate::ScalarKind::Bool,
-                                width: _,
-                            }) => {}
-                            _ => {
-                                return Err(FunctionError::InvalidIfType(condition)
-                                    .with_span_handle(condition, context.expressions))
-                            }
-                        }
-                    }
+    fn validate_statement_kind(
+        &mut self,
+        statement: &crate::Statement,
+        span: crate::Span,
+        context: &BlockContext,
+    ) -> Result<super::ShaderStages, WithSpan<FunctionError>> {
+        use crate::Statement as S;
+        match *statement {
+            S::Block(ref block) => self.validate_block(block, context).map(|info| info.stages),
+            S::If {
+                condition,
+                ref accept,
+                ref reject,
+                control: _,
+            } => self.validate_if(condition, accept, reject, context),
+            S::Switch {
+                selector,
+                ref cases,
+                control: _,
+            } => self.validate_switch(selector, cases, span, context),
+            S::Loop {
+                ref body,
+                ref continuing,
+                break_if,
+                control: _,
+            } => self.validate_loop(body, continuing, break_if, context),
+            _ => self.validate_statement(statement, span, context),
+        }
+    }
 
-                    for handle in self.valid_expression_list.drain(base_expression_count..) {
-                        self.valid_expression_set.remove(handle);
-                    }
-                }
-                S::Break => {
-                    if !context.abilities.contains(ControlFlowAbility::BREAK) {
-                        return Err(FunctionError::BreakOutsideOfLoopOrSwitch
-                            .with_span_static(span, "invalid break"));
-                    }
-                }
-                S::Continue => {
-                    if !context.abilities.contains(ControlFlowAbility::CONTINUE) {
-                        return Err(FunctionError::ContinueOutsideOfLoop
-                            .with_span_static(span, "invalid continue"));
-                    }
-                }
-                S::Return { value } => {
-                    if !context.abilities.contains(ControlFlowAbility::RETURN) {
-                        return Err(FunctionError::InvalidReturnSpot
-                            .with_span_static(span, "invalid return"));
-                    }
-                    let value_ty = value
-                        .map(|expr| context.resolve_type(expr, &self.valid_expression_set))
-                        .transpose()?;
-                    // We can't return pointers, but it seems best not to embed that
-                    // assumption here, so use `TypeInner::equivalent` for comparison.
-                    let okay = match (value_ty, context.return_type) {
-                        (None, None) => true,
-                        (Some(value_inner), Some(expected_ty)) => {
-                            context.compare_types(value_inner, &TypeResolution::Handle(expected_ty))
-                        }
-                        (_, _) => false,
-                    };
+    fn validate_condition(
+        &self,
+        condition: Handle<crate::Expression>,
+        context: &BlockContext,
+    ) -> Result<(), WithSpan<FunctionError>> {
+        match *context.resolve_type_inner(condition, &self.valid_expression_set)? {
+            crate::TypeInner::Scalar(crate::Scalar {
+                kind: crate::ScalarKind::Bool,
+                width: _,
+            }) => Ok(()),
+            _ => Err(FunctionError::InvalidIfType(condition)
+                .with_span_handle(condition, context.expressions)),
+        }
+    }
 
-                    if !okay {
-                        log::error!(
-                            "Returning {:?} where {:?} is expected",
-                            value_ty,
-                            context.return_type,
-                        );
-                        if let Some(handle) = value {
-                            return Err(FunctionError::InvalidReturnType {
-                                expression: value,
-                                expected_ty: context.return_type,
-                            }
-                            .with_span_handle(handle, context.expressions));
-                        } else {
-                            return Err(FunctionError::InvalidReturnType {
-                                expression: value,
-                                expected_ty: context.return_type,
-                            }
-                            .with_span_static(span, "invalid return"));
+    fn validate_if(
+        &mut self,
+        condition: Handle<crate::Expression>,
+        accept: &crate::Block,
+        reject: &crate::Block,
+        context: &BlockContext,
+    ) -> Result<super::ShaderStages, WithSpan<FunctionError>> {
+        self.validate_condition(condition, context)?;
+        let mut stages = super::ShaderStages::all();
+        for block in [accept, reject] {
+            stages &= self.validate_block(block, context)?.stages;
+        }
+        Ok(stages)
+    }
+
+    fn validate_switch(
+        &mut self,
+        selector: Handle<crate::Expression>,
+        cases: &[crate::SwitchCase],
+        span: crate::Span,
+        context: &BlockContext,
+    ) -> Result<super::ShaderStages, WithSpan<FunctionError>> {
+        self.validate_switch_cases(selector, cases, span, context)?;
+        let pass_through_abilities =
+            context.abilities & (ControlFlowAbility::RETURN | ControlFlowAbility::CONTINUE);
+        let sub_context =
+            context.with_abilities(pass_through_abilities | ControlFlowAbility::BREAK);
+        let mut stages = super::ShaderStages::all();
+        for case in cases {
+            stages &= self.validate_block(&case.body, &sub_context)?.stages;
+        }
+        Ok(stages)
+    }
+
+    fn validate_loop(
+        &mut self,
+        body: &crate::Block,
+        continuing: &crate::Block,
+        break_if: Option<Handle<crate::Expression>>,
+        context: &BlockContext,
+    ) -> Result<super::ShaderStages, WithSpan<FunctionError>> {
+        let base_expression_count = self.valid_expression_list.len();
+        let pass_through_abilities = context.abilities & ControlFlowAbility::RETURN;
+        let mut stages = self
+            .validate_block_impl(
+                body,
+                &context.with_abilities(
+                    pass_through_abilities
+                        | ControlFlowAbility::BREAK
+                        | ControlFlowAbility::CONTINUE,
+                ),
+            )?
+            .stages;
+        stages &= self
+            .validate_block_impl(
+                continuing,
+                &context.with_abilities(ControlFlowAbility::empty()),
+            )?
+            .stages;
+        if let Some(condition) = break_if {
+            self.validate_condition(condition, context)?;
+        }
+        for handle in self.valid_expression_list.drain(base_expression_count..) {
+            self.valid_expression_set.remove(handle);
+        }
+        Ok(stages)
+    }
+
+    fn validate_switch_cases(
+        &mut self,
+        selector: Handle<crate::Expression>,
+        cases: &[crate::SwitchCase],
+        span: crate::Span,
+        context: &BlockContext,
+    ) -> Result<(), WithSpan<FunctionError>> {
+        let uint = match context
+            .resolve_type_inner(selector, &self.valid_expression_set)?
+            .scalar_kind()
+        {
+            Some(crate::ScalarKind::Uint) => true,
+            Some(crate::ScalarKind::Sint) => false,
+            _ => {
+                return Err(FunctionError::InvalidSwitchType(selector)
+                    .with_span_handle(selector, context.expressions))
+            }
+        };
+        self.switch_values.clear();
+        for case in cases {
+            match case.value {
+                crate::SwitchValue::I32(_) if !uint => {}
+                crate::SwitchValue::U32(_) if uint => {}
+                crate::SwitchValue::Default => {}
+                _ => {
+                    return Err(FunctionError::ConflictingCaseType.with_span_static(
+                        case.body
+                            .span_iter()
+                            .next()
+                            .map_or(Default::default(), |(_, s)| *s),
+                        "conflicting switch arm here",
+                    ));
+                }
+            };
+            if !self.switch_values.insert(case.value) {
+                return Err(match case.value {
+                    crate::SwitchValue::Default => FunctionError::MultipleDefaultCases
+                        .with_span_static(
+                            case.body
+                                .span_iter()
+                                .next()
+                                .map_or(Default::default(), |(_, s)| *s),
+                            "duplicated switch arm here",
+                        ),
+                    _ => FunctionError::ConflictingSwitchCase(case.value).with_span_static(
+                        case.body
+                            .span_iter()
+                            .next()
+                            .map_or(Default::default(), |(_, s)| *s),
+                        "conflicting switch arm here",
+                    ),
+                });
+            }
+        }
+        if !self.switch_values.contains(&crate::SwitchValue::Default) {
+            return Err(
+                FunctionError::MissingDefaultCase.with_span_static(span, "missing default case")
+            );
+        }
+        if let Some(case) = cases.last() {
+            if case.fall_through {
+                return Err(FunctionError::LastCaseFallTrough.with_span_static(
+                    case.body
+                        .span_iter()
+                        .next()
+                        .map_or(Default::default(), |(_, s)| *s),
+                    "bad switch arm here",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::large_stack_frames)] // TODO(https://github.com/gfx-rs/wgpu/issues/9456)
+    fn validate_statement(
+        &mut self,
+        statement: &crate::Statement,
+        span: crate::Span,
+        context: &BlockContext,
+    ) -> Result<super::ShaderStages, WithSpan<FunctionError>> {
+        use crate::{AddressSpace, Statement as S, TypeInner as Ti};
+        let mut stages = super::ShaderStages::all();
+        match *statement {
+            S::Emit(ref range) => {
+                for handle in range.clone() {
+                    use crate::Expression as Ex;
+                    match context.expressions[handle] {
+                        Ex::Literal(_)
+                        | Ex::Constant(_)
+                        | Ex::Override(_)
+                        | Ex::ZeroValue(_)
+                        | Ex::Compose { .. }
+                        | Ex::Access { .. }
+                        | Ex::AccessIndex { .. }
+                        | Ex::Splat { .. }
+                        | Ex::Swizzle { .. }
+                        | Ex::FunctionArgument(_)
+                        | Ex::GlobalVariable(_)
+                        | Ex::LocalVariable(_)
+                        | Ex::Load { .. }
+                        | Ex::ImageSample { .. }
+                        | Ex::ImageProcessing { .. }
+                        | Ex::ArrayConversion { .. }
+                        | Ex::Bitcast { .. }
+                        | Ex::ImageLoad { .. }
+                        | Ex::ImageQuery { .. }
+                        | Ex::ImageSparseResident { .. }
+                        | Ex::Unary { .. }
+                        | Ex::Binary { .. }
+                        | Ex::Select { .. }
+                        | Ex::Derivative { .. }
+                        | Ex::Relational { .. }
+                        | Ex::Math { .. }
+                        | Ex::As { .. }
+                        | Ex::ArrayLength(_)
+                        | Ex::WideArrayLength(_)
+                        | Ex::PhysicalPointer { .. }
+                        | Ex::PhysicalAddress { .. }
+                        | Ex::BufferPointer { .. }
+                        | Ex::HeapOffset { .. }
+                        | Ex::RayQueryGet { .. }
+                        | Ex::AccelerationStructureFromAddress { .. }
+                        | Ex::HitObjectGet { .. }
+                        | Ex::FetchMicroTriangleVertex { .. }
+                        | Ex::CooperativeLoad { .. }
+                        | Ex::CooperativeMultiplyAdd { .. }
+                        | Ex::CooperativeMatrixLength { .. }
+                        | Ex::Replicate { .. }
+                        | Ex::Expect { .. }
+                        | Ex::Convert { .. }
+                        | Ex::TensorCreate { .. }
+                        | Ex::TensorSet { .. }
+                        | Ex::CooperativeVectorLoad { .. }
+                        | Ex::CooperativeVectorMatMul { .. }
+                        | Ex::TensorRead { .. }
+                        | Ex::TensorQuerySize { .. }
+                        | Ex::IsHelperInvocation
+                        | Ex::AttachmentRead { .. }
+                        | Ex::InterpolateAt { .. }
+                        | Ex::FragmentFetch { .. }
+                        | Ex::ImageFootprint { .. } => self.emit_expression(handle, context)?,
+                        Ex::CallResult(_)
+                        | Ex::AtomicResult { .. }
+                        | Ex::WorkGroupUniformLoadResult { .. }
+                        | Ex::RayQueryProceedResult
+                        | Ex::ReportIntersectionResult
+                        | Ex::SubgroupBallotResult
+                        | Ex::SubgroupOperationResult { .. }
+                        | Ex::SpirvInstructionResult { .. }
+                        | Ex::CooperativeMatrixResult { .. } => {
+                            return Err(FunctionError::EmitResult(handle)
+                                .with_span_handle(handle, context.expressions));
                         }
                     }
                 }
-                S::Kill | S::Demote | S::BeginInvocationInterlock | S::EndInvocationInterlock => {
-                    stages &= super::ShaderStages::FRAGMENT;
+            }
+            S::Block(_) | S::If { .. } | S::Switch { .. } | S::Loop { .. } => {}
+            S::Break => {
+                if !context.abilities.contains(ControlFlowAbility::BREAK) {
+                    return Err(FunctionError::BreakOutsideOfLoopOrSwitch
+                        .with_span_static(span, "invalid break"));
                 }
-                S::SplitBarrier { .. } => {}
-                S::EmitVertex { .. } | S::EndPrimitive { .. } => {
-                    stages &= super::ShaderStages::GEOMETRY;
+            }
+            S::Continue => {
+                if !context.abilities.contains(ControlFlowAbility::CONTINUE) {
+                    return Err(FunctionError::ContinueOutsideOfLoop
+                        .with_span_static(span, "invalid continue"));
                 }
-                S::CooperativeMatrix {
-                    ref function,
-                    result,
-                } => {
-                    for operand in function.operands() {
-                        context.resolve_type_inner(operand, &self.valid_expression_set)?;
+            }
+            S::Return { value } => {
+                if !context.abilities.contains(ControlFlowAbility::RETURN) {
+                    return Err(
+                        FunctionError::InvalidReturnSpot.with_span_static(span, "invalid return")
+                    );
+                }
+                let value_ty = value
+                    .map(|expr| context.resolve_type(expr, &self.valid_expression_set))
+                    .transpose()?;
+                // We can't return pointers, but it seems best not to embed that
+                // assumption here, so use `TypeInner::equivalent` for comparison.
+                let okay = match (value_ty, context.return_type) {
+                    (None, None) => true,
+                    (Some(value_inner), Some(expected_ty)) => {
+                        context.compare_types(value_inner, &TypeResolution::Handle(expected_ty))
                     }
-                    if let Some(result) = result {
-                        self.emit_expression(result, context)?;
-                    }
-                }
-                S::CooperativeVector(ref function) => {
-                    for operand in function.operands() {
-                        context.resolve_type_inner(operand, &self.valid_expression_set)?;
-                    }
-                }
-                S::SpirvInstruction {
-                    ref operands,
-                    result,
-                    ..
-                } => {
-                    for operand in operands {
-                        match *operand {
-                            crate::SpirvOperand::Value(value) => {
-                                context.resolve_type_inner(value, &self.valid_expression_set)?;
-                            }
-                            crate::SpirvOperand::Pointer(pointer) => {
-                                let inner = context
-                                    .resolve_type_inner(pointer, &self.valid_expression_set)?;
-                                if !matches!(*inner, Ti::Pointer { .. } | Ti::ValuePointer { .. }) {
-                                    return Err(FunctionError::InvalidSpirvOperand(pointer)
-                                        .with_span_handle(pointer, context.expressions));
-                                }
-                            }
-                            crate::SpirvOperand::Literal(_) => {}
+                    (_, _) => false,
+                };
+
+                if !okay {
+                    log::error!(
+                        "Returning {:?} where {:?} is expected",
+                        value_ty,
+                        context.return_type,
+                    );
+                    if let Some(handle) = value {
+                        return Err(FunctionError::InvalidReturnType {
+                            expression: value,
+                            expected_ty: context.return_type,
                         }
-                    }
-                    if let Some(result) = result {
-                        if !matches!(
-                            context.expressions[result],
-                            crate::Expression::SpirvInstructionResult { .. }
-                        ) {
-                            return Err(FunctionError::InvalidSpirvOperand(result)
-                                .with_span_handle(result, context.expressions));
+                        .with_span_handle(handle, context.expressions));
+                    } else {
+                        return Err(FunctionError::InvalidReturnType {
+                            expression: value,
+                            expected_ty: context.return_type,
                         }
-                        self.emit_expression(result, context)?;
+                        .with_span_static(span, "invalid return"));
                     }
                 }
-                S::Assume { condition } => {
-                    let ty = context.resolve_type_inner(condition, &self.valid_expression_set)?;
-                    if *ty != Ti::Scalar(crate::Scalar::BOOL) {
-                        return Err(FunctionError::InvalidIfType(condition)
-                            .with_span_handle(condition, context.expressions));
-                    }
+            }
+            S::Kill | S::Demote | S::BeginInvocationInterlock | S::EndInvocationInterlock => {
+                stages &= super::ShaderStages::FRAGMENT;
+            }
+            S::SplitBarrier { .. } => {}
+            S::EmitVertex { .. } | S::EndPrimitive { .. } => {
+                stages &= super::ShaderStages::GEOMETRY;
+            }
+            S::CooperativeMatrix {
+                ref function,
+                result,
+            } => {
+                for operand in function.operands() {
+                    context.resolve_type_inner(operand, &self.valid_expression_set)?;
                 }
-                S::MeshFunction(ref function) => {
-                    stages &= match *function {
-                        crate::MeshFunction::EmitMeshTasks { .. } => super::ShaderStages::TASK,
-                        crate::MeshFunction::SetMeshOutputs { .. }
-                        | crate::MeshFunction::WritePackedPrimitiveIndices { .. } => {
-                            super::ShaderStages::MESH
-                        }
-                    };
-                    for operand in function.operands() {
-                        let inner =
-                            context.resolve_type_inner(operand, &self.valid_expression_set)?;
-                        if *inner != Ti::Scalar(crate::Scalar::U32) {
-                            return Err(FunctionError::InvalidMeshFunctionCall(operand)
-                                .with_span_handle(operand, context.expressions));
-                        }
-                    }
+                if let Some(result) = result {
+                    self.emit_expression(result, context)?;
                 }
-                S::DebugPrintf { ref arguments, .. } => {
-                    for argument in arguments {
-                        if let crate::DebugPrintfArgument::Value(value) = *argument {
+            }
+            S::CooperativeVector(ref function) => {
+                for operand in function.operands() {
+                    context.resolve_type_inner(operand, &self.valid_expression_set)?;
+                }
+            }
+            S::SpirvInstruction {
+                ref operands,
+                result,
+                ..
+            } => {
+                for operand in operands {
+                    match *operand {
+                        crate::SpirvOperand::Value(value) => {
                             context.resolve_type_inner(value, &self.valid_expression_set)?;
                         }
-                    }
-                }
-                S::Abort {
-                    ref message,
-                    ty,
-                    ref arguments,
-                } => {
-                    let invalid_message = || {
-                        FunctionError::InvalidAbortMessage(ty)
-                            .with_span_static(span, "invalid abort message")
-                    };
-                    let Ti::Struct { ref members, .. } = context.types[ty].inner else {
-                        return Err(invalid_message());
-                    };
-                    let Some((text, values)) = members.split_first() else {
-                        return Err(invalid_message());
-                    };
-                    let text_ok = match context.types[text.ty].inner {
-                        Ti::Array {
-                            base,
-                            size: crate::ArraySize::Constant(length),
-                            ..
-                        } => {
-                            context.types[base].inner
-                                == Ti::Scalar(crate::Scalar {
-                                    kind: crate::ScalarKind::Sint,
-                                    width: 1,
-                                })
-                                && length.get() == abort_message_length(message)
-                        }
-                        _ => false,
-                    };
-                    if !text_ok || message.contains('\0') || values.len() != arguments.len() {
-                        return Err(invalid_message());
-                    }
-                    for (&argument, member) in arguments.iter().zip(values) {
-                        let matches =
-                            match *context.resolve_type(argument, &self.valid_expression_set)? {
-                                TypeResolution::Handle(handle) => {
-                                    logically_matches(context.types, handle, member.ty)
-                                }
-                                TypeResolution::Value(ref inner) => {
-                                    *inner == context.types[member.ty].inner
-                                }
-                            };
-                        if !matches {
-                            return Err(FunctionError::InvalidAbortArgument(argument)
-                                .with_span_handle(argument, context.expressions));
-                        }
-                    }
-                }
-                S::TensorWrite {
-                    tensor,
-                    coordinates,
-                    value,
-                    ..
-                } => {
-                    let invalid = |handle: Handle<crate::Expression>| {
-                        FunctionError::InvalidTensorWrite(handle)
-                            .with_span_handle(handle, context.expressions)
-                    };
-                    let (scalar, rank) =
-                        match *context.resolve_type_inner(tensor, &self.valid_expression_set)? {
-                            Ti::Tensor { scalar, rank } => (scalar, rank),
-                            _ => return Err(invalid(tensor)),
-                        };
-                    let coordinates_inner =
-                        context.resolve_type_inner(coordinates, &self.valid_expression_set)?;
-                    match super::expression::tensor_shape(coordinates_inner, context.types) {
-                        Some((index, Some(length)))
-                            if length == rank
-                                && matches!(
-                                    index.kind,
-                                    crate::ScalarKind::Uint | crate::ScalarKind::Sint
-                                ) => {}
-                        _ => return Err(invalid(coordinates)),
-                    }
-                    let value_inner =
-                        context.resolve_type_inner(value, &self.valid_expression_set)?;
-                    match super::expression::tensor_shape(value_inner, context.types) {
-                        Some((element, _)) if element == scalar => {}
-                        _ => return Err(invalid(value)),
-                    }
-                }
-                S::ControlBarrier(barrier) | S::MemoryBarrier(barrier) => {
-                    stages &= super::ShaderStages::COMPUTE_LIKE;
-                    if barrier.contains(crate::Barrier::SUB_GROUP) {
-                        if !self.capabilities.contains(
-                            super::Capabilities::SUBGROUP | super::Capabilities::SUBGROUP_BARRIER,
-                        ) {
-                            return Err(FunctionError::MissingCapability(
-                                super::Capabilities::SUBGROUP
-                                    | super::Capabilities::SUBGROUP_BARRIER,
-                            )
-                            .with_span_static(span, "missing capability for this operation"));
-                        }
-                        if !self
-                            .subgroup_operations
-                            .contains(super::SubgroupOperationSet::BASIC)
-                        {
-                            return Err(FunctionError::InvalidSubgroup(
-                                SubgroupError::UnsupportedOperation(
-                                    super::SubgroupOperationSet::BASIC,
-                                ),
-                            )
-                            .with_span_static(span, "support for this operation is not present"));
-                        }
-                    }
-                }
-                S::Store { pointer, value } => {
-                    let mut current = pointer;
-                    loop {
-                        match context.expressions[current] {
-                            crate::Expression::Access { base, .. }
-                            | crate::Expression::AccessIndex { base, .. } => current = base,
-                            crate::Expression::LocalVariable(_)
-                            | crate::Expression::GlobalVariable(_)
-                            | crate::Expression::FunctionArgument(_)
-                            | crate::Expression::BufferPointer { .. } => break,
-                            _ if matches!(
-                                context.resolve_pointer_type(current).pointer_space(),
-                                Some(AddressSpace::PhysicalStorage { .. })
-                            ) =>
-                            {
-                                break
-                            }
-                            _ => {
-                                return Err(FunctionError::InvalidStorePointer(current)
-                                    .with_span_handle(pointer, context.expressions))
+                        crate::SpirvOperand::Pointer(pointer) => {
+                            let inner =
+                                context.resolve_type_inner(pointer, &self.valid_expression_set)?;
+                            if !matches!(*inner, Ti::Pointer { .. } | Ti::ValuePointer { .. }) {
+                                return Err(FunctionError::InvalidSpirvOperand(pointer)
+                                    .with_span_handle(pointer, context.expressions));
                             }
                         }
-                    }
-
-                    let value_tr = context.resolve_type(value, &self.valid_expression_set)?;
-                    let value_ty = value_tr.inner_with(context.types);
-                    match *value_ty {
-                        Ti::Image { .. } | Ti::SampledImage { .. } | Ti::Sampler { .. } => {
-                            return Err(FunctionError::InvalidStoreTexture {
-                                actual: value,
-                                actual_ty: value_ty.clone(),
-                            }
-                            .with_span_context((
-                                context.expressions.get_span(value),
-                                format!("this value is of type {value_ty:?}"),
-                            ))
-                            .with_span(span, "expects a texture argument"));
-                        }
-                        _ => {}
-                    }
-
-                    let pointer_ty = context.resolve_pointer_type(pointer);
-                    let pointer_base_tr = pointer_ty.pointer_base_type();
-                    let pointer_base_ty = pointer_base_tr
-                        .as_ref()
-                        .map(|ty| ty.inner_with(context.types));
-                    let good = if let Some(&Ti::Atomic(ref scalar)) = pointer_base_ty {
-                        // The rglsl IR allows storing a scalar to an atomic.
-                        *value_ty == Ti::Scalar(*scalar)
-                    } else if let Some(tr) = pointer_base_tr {
-                        context.compare_types(value_tr, &tr)
-                    } else {
-                        false
-                    };
-
-                    if !good {
-                        return Err(FunctionError::InvalidStoreTypes { pointer, value }
-                            .with_span()
-                            .with_handle(pointer, context.expressions)
-                            .with_handle(value, context.expressions));
-                    }
-
-                    if let Some(space) = pointer_ty.pointer_space() {
-                        if !space.access().contains(crate::StorageAccess::STORE) {
-                            return Err(FunctionError::InvalidStorePointer(pointer)
-                                .with_span_static(
-                                    context.expressions.get_span(pointer),
-                                    "writing to this location is not permitted",
-                                ));
-                        }
+                        crate::SpirvOperand::Literal(_) => {}
                     }
                 }
-                S::ImageStore {
-                    image,
-                    coordinate,
-                    array_index,
-                    sample,
-                    value,
-                } => {
-                    //Note: this code uses a lot of `FunctionError::InvalidImageStore`,
-                    // and could probably be refactored.
-                    let global_ty;
-                    let image_ty;
-                    match *context.get_expression(image) {
-                        crate::Expression::GlobalVariable(var_handle) => {
-                            global_ty = context.global_vars[var_handle].ty;
-                            image_ty = global_ty;
-                        }
-                        crate::Expression::FunctionArgument(_) => {
-                            let Some(ty) = context.info[image].ty.handle() else {
-                                return Err(FunctionError::InvalidImageStore(
-                                    ExpressionError::ExpectedGlobalVariable,
-                                )
-                                .with_span_handle(image, context.expressions));
-                            };
-                            global_ty = ty;
-                            image_ty = ty;
-                        }
-                        // The `image` operand is indexing into a binding array,
-                        // so punch through the `Access`* expression and look at
-                        // the global behind it.
-                        crate::Expression::Access { base, .. }
-                        | crate::Expression::AccessIndex { base, .. } => {
-                            let crate::Expression::GlobalVariable(var_handle) =
-                                *context.get_expression(base)
-                            else {
-                                return Err(FunctionError::InvalidImageStore(
-                                    ExpressionError::ExpectedGlobalVariable,
-                                )
-                                .with_span_handle(image, context.expressions));
-                            };
-                            global_ty = context.global_vars[var_handle].ty;
-
-                            // The global variable must be a binding array.
-                            let Ti::BindingArray { base, .. } = context.types[global_ty].inner
-                            else {
-                                return Err(FunctionError::InvalidImageStore(
-                                    ExpressionError::ExpectedBindingArrayType(global_ty),
-                                )
-                                .with_span_handle(global_ty, context.types));
-                            };
-
-                            image_ty = base;
-                        }
-                        _ => {
-                            let Some((global, ty)) = context.heap_image(image) else {
-                                return Err(FunctionError::InvalidImageStore(
-                                    ExpressionError::ExpectedGlobalVariable,
-                                )
-                                .with_span_handle(image, context.expressions));
-                            };
-                            global_ty = context.global_vars[global].ty;
-                            image_ty = ty;
-                        }
-                    };
-
-                    // The `image` operand must be an `Image`.
-                    let Ti::Image {
-                        class,
-                        arrayed,
-                        dim,
-                    } = context.types[image_ty].inner
-                    else {
-                        return Err(FunctionError::InvalidImageStore(
-                            ExpressionError::ExpectedImageType(global_ty),
-                        )
-                        .with_span()
-                        .with_handle(global_ty, context.types)
-                        .with_handle(image, context.expressions));
-                    };
-
-                    // It had better be a storage image, since we're writing to it.
-                    let crate::ImageClass::Storage { format, .. } = class else {
-                        return Err(FunctionError::InvalidImageStore(
-                            ExpressionError::InvalidImageClass(class),
-                        )
-                        .with_span_handle(image, context.expressions));
-                    };
-
-                    // The `coordinate` operand must be a vector of the appropriate size.
-                    if !context
-                        .resolve_type_inner(coordinate, &self.valid_expression_set)?
-                        .addresses_image(dim)
-                    {
-                        return Err(FunctionError::InvalidImageStore(
-                            ExpressionError::InvalidImageCoordinateType(dim, coordinate),
-                        )
-                        .with_span_handle(coordinate, context.expressions));
-                    }
-
-                    // The `array_index` operand should be present if and only if
-                    // the image itself is arrayed.
-                    if super::image_array_index_expected(dim, arrayed, class)
-                        != array_index.is_some()
-                    {
-                        return Err(FunctionError::InvalidImageStore(
-                            ExpressionError::InvalidImageArrayIndex,
-                        )
-                        .with_span_handle(coordinate, context.expressions));
-                    }
-
-                    match (sample, class.is_multisampled()) {
-                        (None, false) => {}
-                        (Some(sample), true) => {
-                            if !matches!(
-                                *context.resolve_type_inner(sample, &self.valid_expression_set)?,
-                                Ti::Scalar(crate::Scalar::I32 | crate::Scalar::U32)
-                            ) {
-                                return Err(FunctionError::InvalidImageStore(
-                                    ExpressionError::InvalidImageOtherIndexType(sample),
-                                )
-                                .with_span_handle(sample, context.expressions));
-                            }
-                        }
-                        (Some(_), false) => {
-                            return Err(FunctionError::InvalidImageStore(
-                                ExpressionError::InvalidImageSampleSelector,
-                            )
-                            .with_span_handle(image, context.expressions));
-                        }
-                        (None, true) => {
-                            return Err(FunctionError::InvalidImageStore(
-                                ExpressionError::MissingImageSampleSelector,
-                            )
-                            .with_span_handle(image, context.expressions));
-                        }
-                    }
-
-                    // If present, `array_index` must be a scalar integer type.
-                    if let Some(expr) = array_index {
-                        if !matches!(
-                            *context.resolve_type_inner(expr, &self.valid_expression_set)?,
-                            Ti::Scalar(crate::Scalar {
-                                kind: crate::ScalarKind::Sint | crate::ScalarKind::Uint,
-                                width: _,
-                            })
-                        ) {
-                            return Err(FunctionError::InvalidImageStore(
-                                ExpressionError::InvalidImageArrayIndexType(expr),
-                            )
-                            .with_span_handle(expr, context.expressions));
-                        }
-                    }
-
-                    let value_ty = crate::TypeInner::Vector {
-                        size: crate::VectorSize::Quad,
-                        scalar: format.into(),
-                    };
-
-                    // The value we're writing had better match the scalar type
-                    // for `image`'s format.
-                    let actual_value_ty =
-                        context.resolve_type_inner(value, &self.valid_expression_set)?;
-                    if actual_value_ty != &value_ty {
-                        return Err(FunctionError::InvalidStoreValue {
-                            actual: value,
-                            actual_ty: actual_value_ty.clone(),
-                            expected_ty: value_ty.clone(),
-                        }
-                        .with_span_context((
-                            context.expressions.get_span(value),
-                            format!("this value is of type {actual_value_ty:?}"),
-                        ))
-                        .with_span(
-                            span,
-                            format!("expects a value argument of type {value_ty:?}"),
-                        ));
-                    }
-                }
-                S::Call {
-                    function,
-                    ref arguments,
-                    result,
-                } => match self.validate_call(function, arguments, result, context) {
-                    Ok(callee_stages) => stages &= callee_stages,
-                    Err(error) => {
-                        return Err(error.and_then(|error| {
-                            FunctionError::InvalidCall { function, error }
-                                .with_span_static(span, "invalid function call")
-                        }))
-                    }
-                },
-                S::Atomic {
-                    pointer,
-                    ref fun,
-                    value,
-                    result,
-                    order: _,
-                } => {
-                    self.validate_atomic(pointer, fun, value, result, span, context)?;
-                }
-                S::ImageAtomic {
-                    image,
-                    coordinate,
-                    array_index,
-                    fun,
-                    value,
-                    sample,
-                    result,
-                    order: _,
-                } => {
-                    let texel = crate::Texel {
-                        image,
-                        coordinate,
-                        array_index,
-                        sample,
-                    };
-                    let (format, access) = self.validate_texel(&texel, context)?;
-                    if !access.contains(crate::StorageAccess::ATOMIC) {
-                        return Err(FunctionError::InvalidImageAtomic(
-                            ExpressionError::InvalidImageStorageAccess(access),
-                        )
-                        .with_span_handle(image, context.expressions));
-                    }
-                    let supported = match format {
-                        crate::StorageFormat::R64Uint | crate::StorageFormat::R64Sint => {
-                            if !self
-                                .capabilities
-                                .intersects(super::Capabilities::TEXTURE_INT64_ATOMIC)
-                            {
-                                return Err(FunctionError::MissingCapability(
-                                    super::Capabilities::TEXTURE_INT64_ATOMIC,
-                                )
-                                .with_span_static(span, "missing capability for this operation"));
-                            }
-                            !matches!(fun, crate::AtomicFunction::Subtract)
-                        }
-                        crate::StorageFormat::R32Sint | crate::StorageFormat::R32Uint => {
-                            if !self
-                                .capabilities
-                                .intersects(super::Capabilities::TEXTURE_ATOMIC)
-                            {
-                                return Err(FunctionError::MissingCapability(
-                                    super::Capabilities::TEXTURE_ATOMIC,
-                                )
-                                .with_span_static(span, "missing capability for this operation"));
-                            }
-                            !matches!(fun, crate::AtomicFunction::Subtract)
-                        }
-                        crate::StorageFormat::R32Float => matches!(
-                            fun,
-                            crate::AtomicFunction::Exchange { compare: None }
-                                | crate::AtomicFunction::Add
-                                | crate::AtomicFunction::Min
-                                | crate::AtomicFunction::Max
-                        ),
-                        _ => {
-                            return Err(FunctionError::InvalidImageAtomic(
-                                ExpressionError::InvalidImageFormat(format),
-                            )
-                            .with_span_handle(image, context.expressions));
-                        }
-                    };
-                    if !supported {
-                        return Err(FunctionError::InvalidImageAtomicFunction(fun)
-                            .with_span_handle(image, context.expressions));
-                    }
-                    let value_ty = Ti::Scalar(format.into());
-                    if *context.resolve_type_inner(value, &self.valid_expression_set)? != value_ty {
-                        return Err(FunctionError::InvalidImageAtomicValue(value)
-                            .with_span_handle(value, context.expressions));
-                    }
-                    if let crate::AtomicFunction::Exchange {
-                        compare: Some(compare),
-                    } = fun
-                    {
-                        if *context.resolve_type_inner(compare, &self.valid_expression_set)?
-                            != value_ty
-                        {
-                            return Err(FunctionError::InvalidImageAtomicValue(compare)
-                                .with_span_handle(compare, context.expressions));
-                        }
-                    }
-                    if let Some(result) = result {
-                        self.validate_atomic_result(result, format.into(), context)?;
-                    }
-                }
-                S::AtomicLoad {
-                    ref location,
-                    order: _,
-                    result,
-                } => {
-                    let scalar = self.validate_atomic_location(location, context)?;
-                    self.validate_atomic_result(result, scalar, context)?;
-                }
-                S::AtomicStore {
-                    ref location,
-                    value,
-                    order: _,
-                } => {
-                    let scalar = self.validate_atomic_location(location, context)?;
-                    if *context.resolve_type_inner(value, &self.valid_expression_set)?
-                        != Ti::Scalar(scalar)
-                    {
-                        return Err(AtomicError::InvalidOperand(value)
-                            .with_span_handle(value, context.expressions)
-                            .into_other());
-                    }
-                }
-                S::ScopedBarrier { .. } => {}
-                S::WorkGroupUniformLoad { pointer, result } => {
-                    stages &= super::ShaderStages::COMPUTE_LIKE;
-                    let pointer_inner =
-                        context.resolve_type_inner(pointer, &self.valid_expression_set)?;
-                    match *pointer_inner {
-                        Ti::Pointer {
-                            space: AddressSpace::WorkGroup,
-                            ..
-                        } => {}
-                        Ti::ValuePointer {
-                            space: AddressSpace::WorkGroup,
-                            ..
-                        } => {}
-                        _ => {
-                            return Err(FunctionError::WorkgroupUniformLoadInvalidPointer(pointer)
-                                .with_span_static(span, "WorkGroupUniformLoad"))
-                        }
+                if let Some(result) = result {
+                    if !matches!(
+                        context.expressions[result],
+                        crate::Expression::SpirvInstructionResult { .. }
+                    ) {
+                        return Err(FunctionError::InvalidSpirvOperand(result)
+                            .with_span_handle(result, context.expressions));
                     }
                     self.emit_expression(result, context)?;
-                    let ty = match &context.expressions[result] {
-                        &crate::Expression::WorkGroupUniformLoadResult { ty } => ty,
-                        _ => {
-                            return Err(FunctionError::WorkgroupUniformLoadExpressionMismatch(
-                                result,
-                            )
-                            .with_span_static(span, "WorkGroupUniformLoad"));
-                        }
-                    };
-                    let expected_pointer_inner = Ti::Pointer {
-                        base: ty,
-                        space: AddressSpace::WorkGroup,
-                    };
-                    // workgroupUniformLoad on atomic<T> returns T, not atomic<T>.
-                    // Verify the pointer's atomic scalar matches the result scalar.
-                    let atomic_specialization_ok = match *pointer_inner {
-                        Ti::Pointer {
-                            base: pointer_base,
-                            space: AddressSpace::WorkGroup,
-                        } => match (&context.types[pointer_base].inner, &context.types[ty].inner) {
-                            (&Ti::Atomic(pointer_scalar), &Ti::Scalar(result_scalar)) => {
-                                pointer_scalar == result_scalar
-                            }
-                            _ => false,
-                        },
-                        _ => false,
-                    };
-                    if !expected_pointer_inner.non_struct_equivalent(pointer_inner, context.types)
-                        && !atomic_specialization_ok
-                    {
-                        return Err(FunctionError::WorkgroupUniformLoadInvalidPointer(pointer)
-                            .with_span_static(span, "WorkGroupUniformLoad"));
+                }
+            }
+            S::Assume { condition } => {
+                let ty = context.resolve_type_inner(condition, &self.valid_expression_set)?;
+                if *ty != Ti::Scalar(crate::Scalar::BOOL) {
+                    return Err(FunctionError::InvalidIfType(condition)
+                        .with_span_handle(condition, context.expressions));
+                }
+            }
+            S::MeshFunction(ref function) => {
+                stages &= match *function {
+                    crate::MeshFunction::EmitMeshTasks { .. } => super::ShaderStages::TASK,
+                    crate::MeshFunction::SetMeshOutputs { .. }
+                    | crate::MeshFunction::WritePackedPrimitiveIndices { .. } => {
+                        super::ShaderStages::MESH
+                    }
+                };
+                for operand in function.operands() {
+                    let inner = context.resolve_type_inner(operand, &self.valid_expression_set)?;
+                    if *inner != Ti::Scalar(crate::Scalar::U32) {
+                        return Err(FunctionError::InvalidMeshFunctionCall(operand)
+                            .with_span_handle(operand, context.expressions));
                     }
                 }
-                S::RayQuery { query, ref fun } => {
-                    let is_query =
-                        match *context.resolve_type_inner(query, &self.valid_expression_set)? {
-                            Ti::Pointer { base, .. } => {
-                                matches!(context.types[base].inner, Ti::RayQuery { .. })
+            }
+            S::DebugPrintf { ref arguments, .. } => {
+                for argument in arguments {
+                    if let crate::DebugPrintfArgument::Value(value) = *argument {
+                        context.resolve_type_inner(value, &self.valid_expression_set)?;
+                    }
+                }
+            }
+            S::Abort {
+                ref message,
+                ty,
+                ref arguments,
+            } => {
+                let invalid_message = || {
+                    FunctionError::InvalidAbortMessage(ty)
+                        .with_span_static(span, "invalid abort message")
+                };
+                let Ti::Struct { ref members, .. } = context.types[ty].inner else {
+                    return Err(invalid_message());
+                };
+                let Some((text, values)) = members.split_first() else {
+                    return Err(invalid_message());
+                };
+                let text_ok = match context.types[text.ty].inner {
+                    Ti::Array {
+                        base,
+                        size: crate::ArraySize::Constant(length),
+                        ..
+                    } => {
+                        context.types[base].inner
+                            == Ti::Scalar(crate::Scalar {
+                                kind: crate::ScalarKind::Sint,
+                                width: 1,
+                            })
+                            && length.get() == abort_message_length(message)
+                    }
+                    _ => false,
+                };
+                if !text_ok || message.contains('\0') || values.len() != arguments.len() {
+                    return Err(invalid_message());
+                }
+                for (&argument, member) in arguments.iter().zip(values) {
+                    let matches =
+                        match *context.resolve_type(argument, &self.valid_expression_set)? {
+                            TypeResolution::Handle(handle) => {
+                                logically_matches(context.types, handle, member.ty)
                             }
-                            _ => false,
+                            TypeResolution::Value(ref inner) => {
+                                *inner == context.types[member.ty].inner
+                            }
                         };
-                    if !is_query {
-                        return Err(FunctionError::InvalidRayQueryExpression(query)
-                            .with_span_static(span, "invalid query expression"));
-                    }
-                    match *fun {
-                        crate::RayQueryFunction::Initialize {
-                            acceleration_structure,
-                            flags,
-                            cull_mask,
-                            origin,
-                            tmin,
-                            direction,
-                            tmax,
-                        } => {
-                            self.validate_acceleration_structure(acceleration_structure, context)?;
-                            for (operand, kind) in [
-                                (flags, RayOperand::Uint),
-                                (cull_mask, RayOperand::Uint),
-                                (origin, RayOperand::Vector),
-                                (tmin, RayOperand::Float),
-                                (direction, RayOperand::Vector),
-                                (tmax, RayOperand::Float),
-                            ] {
-                                self.validate_ray_operand(operand, kind, context)?;
-                            }
-                        }
-                        crate::RayQueryFunction::Proceed { result } => {
-                            self.emit_expression(result, context)?;
-                        }
-                        crate::RayQueryFunction::GenerateIntersection { hit_t } => {
-                            match *context.resolve_type_inner(hit_t, &self.valid_expression_set)? {
-                                Ti::Scalar(crate::Scalar {
-                                    kind: crate::ScalarKind::Float,
-                                    width: _,
-                                }) => {}
-                                _ => {
-                                    return Err(FunctionError::InvalidHitDistanceType(hit_t)
-                                        .with_span_static(span, "invalid hit_t"))
-                                }
-                            }
-                        }
-                        crate::RayQueryFunction::ConfirmIntersection => {}
-                        crate::RayQueryFunction::Terminate => {}
+                    if !matches {
+                        return Err(FunctionError::InvalidAbortArgument(argument)
+                            .with_span_handle(argument, context.expressions));
                     }
                 }
-                S::SubgroupBallot { result, predicate } => {
-                    stages &= self.subgroup_stages;
-                    if !self.capabilities.contains(super::Capabilities::SUBGROUP) {
+            }
+            S::TensorWrite {
+                tensor,
+                coordinates,
+                value,
+                ..
+            } => {
+                let invalid = |handle: Handle<crate::Expression>| {
+                    FunctionError::InvalidTensorWrite(handle)
+                        .with_span_handle(handle, context.expressions)
+                };
+                let (scalar, rank) =
+                    match *context.resolve_type_inner(tensor, &self.valid_expression_set)? {
+                        Ti::Tensor { scalar, rank } => (scalar, rank),
+                        _ => return Err(invalid(tensor)),
+                    };
+                let coordinates_inner =
+                    context.resolve_type_inner(coordinates, &self.valid_expression_set)?;
+                match super::expression::tensor_shape(coordinates_inner, context.types) {
+                    Some((index, Some(length)))
+                        if length == rank
+                            && matches!(
+                                index.kind,
+                                crate::ScalarKind::Uint | crate::ScalarKind::Sint
+                            ) => {}
+                    _ => return Err(invalid(coordinates)),
+                }
+                let value_inner = context.resolve_type_inner(value, &self.valid_expression_set)?;
+                match super::expression::tensor_shape(value_inner, context.types) {
+                    Some((element, _)) if element == scalar => {}
+                    _ => return Err(invalid(value)),
+                }
+            }
+            S::ControlBarrier(barrier) | S::MemoryBarrier(barrier) => {
+                stages &= super::ShaderStages::COMPUTE_LIKE;
+                if barrier.contains(crate::Barrier::SUB_GROUP) {
+                    if !self.capabilities.contains(
+                        super::Capabilities::SUBGROUP | super::Capabilities::SUBGROUP_BARRIER,
+                    ) {
                         return Err(FunctionError::MissingCapability(
-                            super::Capabilities::SUBGROUP,
+                            super::Capabilities::SUBGROUP | super::Capabilities::SUBGROUP_BARRIER,
                         )
                         .with_span_static(span, "missing capability for this operation"));
                     }
                     if !self
                         .subgroup_operations
-                        .contains(super::SubgroupOperationSet::BALLOT)
+                        .contains(super::SubgroupOperationSet::BASIC)
                     {
                         return Err(FunctionError::InvalidSubgroup(
-                            SubgroupError::UnsupportedOperation(
-                                super::SubgroupOperationSet::BALLOT,
-                            ),
+                            SubgroupError::UnsupportedOperation(super::SubgroupOperationSet::BASIC),
                         )
                         .with_span_static(span, "support for this operation is not present"));
                     }
-                    if let Some(predicate) = predicate {
-                        let predicate_inner =
-                            context.resolve_type_inner(predicate, &self.valid_expression_set)?;
-                        if !matches!(
-                            *predicate_inner,
-                            crate::TypeInner::Scalar(crate::Scalar::BOOL,)
-                        ) {
-                            log::error!(
-                                "Subgroup ballot predicate type {predicate_inner:?} expected bool"
-                            );
-                            return Err(SubgroupError::InvalidOperand(predicate)
-                                .with_span_handle(predicate, context.expressions)
-                                .into_other());
+                }
+            }
+            S::Store { pointer, value } => {
+                let mut current = pointer;
+                loop {
+                    match context.expressions[current] {
+                        crate::Expression::Access { base, .. }
+                        | crate::Expression::AccessIndex { base, .. } => current = base,
+                        crate::Expression::LocalVariable(_)
+                        | crate::Expression::GlobalVariable(_)
+                        | crate::Expression::FunctionArgument(_)
+                        | crate::Expression::BufferPointer { .. } => break,
+                        _ if matches!(
+                            context.resolve_pointer_type(current).pointer_space(),
+                            Some(AddressSpace::PhysicalStorage { .. })
+                        ) =>
+                        {
+                            break
+                        }
+                        _ => {
+                            return Err(FunctionError::InvalidStorePointer(current)
+                                .with_span_handle(pointer, context.expressions))
                         }
                     }
-                    self.emit_expression(result, context)?;
                 }
-                S::SubgroupCollectiveOperation {
-                    ref op,
-                    ref collective_op,
-                    argument,
-                    result,
-                } => {
-                    stages &= self.subgroup_stages;
-                    if !self.capabilities.contains(super::Capabilities::SUBGROUP) {
-                        return Err(FunctionError::MissingCapability(
-                            super::Capabilities::SUBGROUP,
-                        )
-                        .with_span_static(span, "missing capability for this operation"));
-                    }
-                    let operation = op.required_operations() | collective_op.required_operations();
-                    if !self.subgroup_operations.contains(operation) {
-                        return Err(FunctionError::InvalidSubgroup(
-                            SubgroupError::UnsupportedOperation(operation),
-                        )
-                        .with_span_static(span, "support for this operation is not present"));
-                    }
-                    self.validate_subgroup_operation(op, collective_op, argument, result, context)?;
-                }
-                S::SubgroupGather {
-                    ref mode,
-                    argument,
-                    result,
-                } => {
-                    stages &= self.subgroup_stages;
-                    if !self.capabilities.contains(super::Capabilities::SUBGROUP) {
-                        return Err(FunctionError::MissingCapability(
-                            super::Capabilities::SUBGROUP,
-                        )
-                        .with_span_static(span, "missing capability for this operation"));
-                    }
-                    let operation = mode.required_operations();
-                    if !self.subgroup_operations.contains(operation) {
-                        return Err(FunctionError::InvalidSubgroup(
-                            SubgroupError::UnsupportedOperation(operation),
-                        )
-                        .with_span_static(span, "support for this operation is not present"));
-                    }
-                    self.validate_subgroup_gather(mode, argument, result, context)?;
-                }
-                S::SubgroupFunction { ref fun, result } => {
-                    stages &= self.subgroup_stages;
-                    if !self.capabilities.contains(super::Capabilities::SUBGROUP) {
-                        return Err(FunctionError::MissingCapability(
-                            super::Capabilities::SUBGROUP,
-                        )
-                        .with_span_static(span, "missing capability for this operation"));
-                    }
-                    let operation = fun.required_operations();
-                    if !self.subgroup_operations.contains(operation) {
-                        return Err(FunctionError::InvalidSubgroup(
-                            SubgroupError::UnsupportedOperation(operation),
-                        )
-                        .with_span_static(span, "support for this operation is not present"));
-                    }
-                    self.validate_subgroup_function(fun, result, context)?;
-                }
-                S::CooperativeStore { target, ref data } => {
-                    match *context.resolve_type_inner(target, &self.valid_expression_set)? {
-                        Ti::CooperativeMatrix { .. } => {}
-                        ref other => {
-                            log::error!("Target operand type: {other:?}");
-                            return Err(FunctionError::InvalidCooperativeStoreTarget(target)
-                                .with_span_handle(target, context.expressions));
+
+                let value_tr = context.resolve_type(value, &self.valid_expression_set)?;
+                let value_ty = value_tr.inner_with(context.types);
+                match *value_ty {
+                    Ti::Image { .. } | Ti::SampledImage { .. } | Ti::Sampler { .. } => {
+                        return Err(FunctionError::InvalidStoreTexture {
+                            actual: value,
+                            actual_ty: value_ty.clone(),
                         }
-                    };
-
-                    let ptr_ty = context.resolve_pointer_type(data.pointer);
-                    let ptr_scalar = ptr_ty
-                        .pointer_base_type()
-                        .and_then(|tr| tr.inner_with(context.types).scalar());
-                    if ptr_scalar.is_none() {
-                        return Err(FunctionError::InvalidCooperativeDataPointer(data.pointer)
-                            .with_span_handle(data.pointer, context.expressions));
+                        .with_span_context((
+                            context.expressions.get_span(value),
+                            format!("this value is of type {value_ty:?}"),
+                        ))
+                        .with_span(span, "expects a texture argument"));
                     }
+                    _ => {}
+                }
 
-                    let ptr_space = ptr_ty.pointer_space().unwrap_or(AddressSpace::Handle);
-                    if !ptr_space.access().contains(crate::StorageAccess::STORE) {
-                        return Err(FunctionError::InvalidStorePointer(data.pointer)
-                            .with_span_static(
-                                context.expressions.get_span(data.pointer),
+                let pointer_ty = context.resolve_pointer_type(pointer);
+                let pointer_base_tr = pointer_ty.pointer_base_type();
+                let pointer_base_ty = pointer_base_tr
+                    .as_ref()
+                    .map(|ty| ty.inner_with(context.types));
+                let good = if let Some(&Ti::Atomic(ref scalar)) = pointer_base_ty {
+                    // The rglsl IR allows storing a scalar to an atomic.
+                    *value_ty == Ti::Scalar(*scalar)
+                } else if let Some(tr) = pointer_base_tr {
+                    context.compare_types(value_tr, &tr)
+                } else {
+                    false
+                };
+
+                if !good {
+                    return Err(FunctionError::InvalidStoreTypes { pointer, value }
+                        .with_span()
+                        .with_handle(pointer, context.expressions)
+                        .with_handle(value, context.expressions));
+                }
+
+                if let Some(space) = pointer_ty.pointer_space() {
+                    if !space.access().contains(crate::StorageAccess::STORE) {
+                        return Err(
+                            FunctionError::InvalidStorePointer(pointer).with_span_static(
+                                context.expressions.get_span(pointer),
                                 "writing to this location is not permitted",
-                            ));
+                            ),
+                        );
                     }
                 }
-                S::HitObject { object, ref fun } => {
-                    stages &= super::ShaderStages::RAY_GENERATION
-                        | super::ShaderStages::CLOSEST_HIT
-                        | super::ShaderStages::MISS;
-                    let kind =
-                        match *context.resolve_type_inner(object, &self.valid_expression_set)? {
-                            Ti::Pointer { base, .. } => match context.types[base].inner {
-                                Ti::HitObject { kind } => Some(kind),
-                                _ => None,
-                            },
-                            _ => None,
+            }
+            S::ImageStore {
+                image,
+                coordinate,
+                array_index,
+                sample,
+                value,
+            } => {
+                //Note: this code uses a lot of `FunctionError::InvalidImageStore`,
+                // and could probably be refactored.
+                let global_ty;
+                let image_ty;
+                match *context.get_expression(image) {
+                    crate::Expression::GlobalVariable(var_handle) => {
+                        global_ty = context.global_vars[var_handle].ty;
+                        image_ty = global_ty;
+                    }
+                    crate::Expression::FunctionArgument(_) => {
+                        let Some(ty) = context.info[image].ty.handle() else {
+                            return Err(FunctionError::InvalidImageStore(
+                                ExpressionError::ExpectedGlobalVariable,
+                            )
+                            .with_span_handle(image, context.expressions));
                         };
-                    let Some(kind) = kind else {
-                        return Err(FunctionError::InvalidHitObjectExpression(object)
-                            .with_span_static(span, "invalid hit object expression"));
-                    };
-                    self.validate_hit_object_function(kind, fun, span, context)?;
-                    if matches!(
-                        *fun,
-                        crate::HitObjectFunction::ReorderThread { .. }
-                            | crate::HitObjectFunction::ReorderExecute { .. }
-                            | crate::HitObjectFunction::TraceReorderExecute { .. }
-                    ) {
-                        stages &= super::ShaderStages::RAY_GENERATION;
+                        global_ty = ty;
+                        image_ty = ty;
+                    }
+                    // The `image` operand is indexing into a binding array,
+                    // so punch through the `Access`* expression and look at
+                    // the global behind it.
+                    crate::Expression::Access { base, .. }
+                    | crate::Expression::AccessIndex { base, .. } => {
+                        let crate::Expression::GlobalVariable(var_handle) =
+                            *context.get_expression(base)
+                        else {
+                            return Err(FunctionError::InvalidImageStore(
+                                ExpressionError::ExpectedGlobalVariable,
+                            )
+                            .with_span_handle(image, context.expressions));
+                        };
+                        global_ty = context.global_vars[var_handle].ty;
+
+                        // The global variable must be a binding array.
+                        let Ti::BindingArray { base, .. } = context.types[global_ty].inner else {
+                            return Err(FunctionError::InvalidImageStore(
+                                ExpressionError::ExpectedBindingArrayType(global_ty),
+                            )
+                            .with_span_handle(global_ty, context.types));
+                        };
+
+                        image_ty = base;
+                    }
+                    _ => {
+                        let Some((global, ty)) = context.heap_image(image) else {
+                            return Err(FunctionError::InvalidImageStore(
+                                ExpressionError::ExpectedGlobalVariable,
+                            )
+                            .with_span_handle(image, context.expressions));
+                        };
+                        global_ty = context.global_vars[global].ty;
+                        image_ty = ty;
+                    }
+                };
+
+                // The `image` operand must be an `Image`.
+                let Ti::Image {
+                    class,
+                    arrayed,
+                    dim,
+                } = context.types[image_ty].inner
+                else {
+                    return Err(FunctionError::InvalidImageStore(
+                        ExpressionError::ExpectedImageType(global_ty),
+                    )
+                    .with_span()
+                    .with_handle(global_ty, context.types)
+                    .with_handle(image, context.expressions));
+                };
+
+                // It had better be a storage image, since we're writing to it.
+                let crate::ImageClass::Storage { format, .. } = class else {
+                    return Err(FunctionError::InvalidImageStore(
+                        ExpressionError::InvalidImageClass(class),
+                    )
+                    .with_span_handle(image, context.expressions));
+                };
+
+                // The `coordinate` operand must be a vector of the appropriate size.
+                if !context
+                    .resolve_type_inner(coordinate, &self.valid_expression_set)?
+                    .addresses_image(dim)
+                {
+                    return Err(FunctionError::InvalidImageStore(
+                        ExpressionError::InvalidImageCoordinateType(dim, coordinate),
+                    )
+                    .with_span_handle(coordinate, context.expressions));
+                }
+
+                // The `array_index` operand should be present if and only if
+                // the image itself is arrayed.
+                if super::image_array_index_expected(dim, arrayed, class) != array_index.is_some() {
+                    return Err(FunctionError::InvalidImageStore(
+                        ExpressionError::InvalidImageArrayIndex,
+                    )
+                    .with_span_handle(coordinate, context.expressions));
+                }
+
+                match (sample, class.is_multisampled()) {
+                    (None, false) => {}
+                    (Some(sample), true) => {
+                        if !matches!(
+                            *context.resolve_type_inner(sample, &self.valid_expression_set)?,
+                            Ti::Scalar(crate::Scalar::I32 | crate::Scalar::U32)
+                        ) {
+                            return Err(FunctionError::InvalidImageStore(
+                                ExpressionError::InvalidImageOtherIndexType(sample),
+                            )
+                            .with_span_handle(sample, context.expressions));
+                        }
+                    }
+                    (Some(_), false) => {
+                        return Err(FunctionError::InvalidImageStore(
+                            ExpressionError::InvalidImageSampleSelector,
+                        )
+                        .with_span_handle(image, context.expressions));
+                    }
+                    (None, true) => {
+                        return Err(FunctionError::InvalidImageStore(
+                            ExpressionError::MissingImageSampleSelector,
+                        )
+                        .with_span_handle(image, context.expressions));
                     }
                 }
-                S::ReorderThread {
-                    kind: _,
-                    hint,
-                    bits,
-                } => {
-                    stages &= super::ShaderStages::RAY_GENERATION;
-                    self.validate_ray_operand(hint, RayOperand::Uint, context)?;
-                    self.validate_ray_operand(bits, RayOperand::Uint, context)?;
+
+                // If present, `array_index` must be a scalar integer type.
+                if let Some(expr) = array_index {
+                    if !matches!(
+                        *context.resolve_type_inner(expr, &self.valid_expression_set)?,
+                        Ti::Scalar(crate::Scalar {
+                            kind: crate::ScalarKind::Sint | crate::ScalarKind::Uint,
+                            width: _,
+                        })
+                    ) {
+                        return Err(FunctionError::InvalidImageStore(
+                            ExpressionError::InvalidImageArrayIndexType(expr),
+                        )
+                        .with_span_handle(expr, context.expressions));
+                    }
                 }
-                S::RayPipelineFunction(ref fun) => match *fun {
-                    crate::RayPipelineFunction::TraceRay {
+
+                let value_ty = crate::TypeInner::Vector {
+                    size: crate::VectorSize::Quad,
+                    scalar: format.into(),
+                };
+
+                // The value we're writing had better match the scalar type
+                // for `image`'s format.
+                let actual_value_ty =
+                    context.resolve_type_inner(value, &self.valid_expression_set)?;
+                if actual_value_ty != &value_ty {
+                    return Err(FunctionError::InvalidStoreValue {
+                        actual: value,
+                        actual_ty: actual_value_ty.clone(),
+                        expected_ty: value_ty.clone(),
+                    }
+                    .with_span_context((
+                        context.expressions.get_span(value),
+                        format!("this value is of type {actual_value_ty:?}"),
+                    ))
+                    .with_span(
+                        span,
+                        format!("expects a value argument of type {value_ty:?}"),
+                    ));
+                }
+            }
+            S::Call {
+                function,
+                ref arguments,
+                result,
+            } => match self.validate_call(function, arguments, result, context) {
+                Ok(callee_stages) => stages &= callee_stages,
+                Err(error) => {
+                    return Err(error.and_then(|error| {
+                        FunctionError::InvalidCall { function, error }
+                            .with_span_static(span, "invalid function call")
+                    }))
+                }
+            },
+            S::Atomic {
+                pointer,
+                ref fun,
+                value,
+                result,
+                order: _,
+            } => {
+                self.validate_atomic(pointer, fun, value, result, span, context)?;
+            }
+            S::ImageAtomic {
+                image,
+                coordinate,
+                array_index,
+                fun,
+                value,
+                sample,
+                result,
+                order: _,
+            } => {
+                let texel = crate::Texel {
+                    image,
+                    coordinate,
+                    array_index,
+                    sample,
+                };
+                let (format, access) = self.validate_texel(&texel, context)?;
+                if !access.contains(crate::StorageAccess::ATOMIC) {
+                    return Err(FunctionError::InvalidImageAtomic(
+                        ExpressionError::InvalidImageStorageAccess(access),
+                    )
+                    .with_span_handle(image, context.expressions));
+                }
+                let supported = match format {
+                    crate::StorageFormat::R64Uint | crate::StorageFormat::R64Sint => {
+                        if !self
+                            .capabilities
+                            .intersects(super::Capabilities::TEXTURE_INT64_ATOMIC)
+                        {
+                            return Err(FunctionError::MissingCapability(
+                                super::Capabilities::TEXTURE_INT64_ATOMIC,
+                            )
+                            .with_span_static(span, "missing capability for this operation"));
+                        }
+                        !matches!(fun, crate::AtomicFunction::Subtract)
+                    }
+                    crate::StorageFormat::R32Sint | crate::StorageFormat::R32Uint => {
+                        if !self
+                            .capabilities
+                            .intersects(super::Capabilities::TEXTURE_ATOMIC)
+                        {
+                            return Err(FunctionError::MissingCapability(
+                                super::Capabilities::TEXTURE_ATOMIC,
+                            )
+                            .with_span_static(span, "missing capability for this operation"));
+                        }
+                        !matches!(fun, crate::AtomicFunction::Subtract)
+                    }
+                    crate::StorageFormat::R32Float => matches!(
+                        fun,
+                        crate::AtomicFunction::Exchange { compare: None }
+                            | crate::AtomicFunction::Add
+                            | crate::AtomicFunction::Min
+                            | crate::AtomicFunction::Max
+                    ),
+                    _ => {
+                        return Err(FunctionError::InvalidImageAtomic(
+                            ExpressionError::InvalidImageFormat(format),
+                        )
+                        .with_span_handle(image, context.expressions));
+                    }
+                };
+                if !supported {
+                    return Err(FunctionError::InvalidImageAtomicFunction(fun)
+                        .with_span_handle(image, context.expressions));
+                }
+                let value_ty = Ti::Scalar(format.into());
+                if *context.resolve_type_inner(value, &self.valid_expression_set)? != value_ty {
+                    return Err(FunctionError::InvalidImageAtomicValue(value)
+                        .with_span_handle(value, context.expressions));
+                }
+                if let crate::AtomicFunction::Exchange {
+                    compare: Some(compare),
+                } = fun
+                {
+                    if *context.resolve_type_inner(compare, &self.valid_expression_set)? != value_ty
+                    {
+                        return Err(FunctionError::InvalidImageAtomicValue(compare)
+                            .with_span_handle(compare, context.expressions));
+                    }
+                }
+                if let Some(result) = result {
+                    self.validate_atomic_result(result, format.into(), context)?;
+                }
+            }
+            S::AtomicLoad {
+                ref location,
+                order: _,
+                result,
+            } => {
+                let scalar = self.validate_atomic_location(location, context)?;
+                self.validate_atomic_result(result, scalar, context)?;
+            }
+            S::AtomicStore {
+                ref location,
+                value,
+                order: _,
+            } => {
+                let scalar = self.validate_atomic_location(location, context)?;
+                if *context.resolve_type_inner(value, &self.valid_expression_set)?
+                    != Ti::Scalar(scalar)
+                {
+                    return Err(AtomicError::InvalidOperand(value)
+                        .with_span_handle(value, context.expressions)
+                        .into_other());
+                }
+            }
+            S::ScopedBarrier { .. } => {}
+            S::WorkGroupUniformLoad { pointer, result } => {
+                stages &= super::ShaderStages::COMPUTE_LIKE;
+                let pointer_inner =
+                    context.resolve_type_inner(pointer, &self.valid_expression_set)?;
+                match *pointer_inner {
+                    Ti::Pointer {
+                        space: AddressSpace::WorkGroup,
+                        ..
+                    } => {}
+                    Ti::ValuePointer {
+                        space: AddressSpace::WorkGroup,
+                        ..
+                    } => {}
+                    _ => {
+                        return Err(FunctionError::WorkgroupUniformLoadInvalidPointer(pointer)
+                            .with_span_static(span, "WorkGroupUniformLoad"))
+                    }
+                }
+                self.emit_expression(result, context)?;
+                let ty = match &context.expressions[result] {
+                    &crate::Expression::WorkGroupUniformLoadResult { ty } => ty,
+                    _ => {
+                        return Err(
+                            FunctionError::WorkgroupUniformLoadExpressionMismatch(result)
+                                .with_span_static(span, "WorkGroupUniformLoad"),
+                        );
+                    }
+                };
+                let expected_pointer_inner = Ti::Pointer {
+                    base: ty,
+                    space: AddressSpace::WorkGroup,
+                };
+                // workgroupUniformLoad on atomic<T> returns T, not atomic<T>.
+                // Verify the pointer's atomic scalar matches the result scalar.
+                let atomic_specialization_ok = match *pointer_inner {
+                    Ti::Pointer {
+                        base: pointer_base,
+                        space: AddressSpace::WorkGroup,
+                    } => match (&context.types[pointer_base].inner, &context.types[ty].inner) {
+                        (&Ti::Atomic(pointer_scalar), &Ti::Scalar(result_scalar)) => {
+                            pointer_scalar == result_scalar
+                        }
+                        _ => false,
+                    },
+                    _ => false,
+                };
+                if !expected_pointer_inner.non_struct_equivalent(pointer_inner, context.types)
+                    && !atomic_specialization_ok
+                {
+                    return Err(FunctionError::WorkgroupUniformLoadInvalidPointer(pointer)
+                        .with_span_static(span, "WorkGroupUniformLoad"));
+                }
+            }
+            S::RayQuery { query, ref fun } => {
+                let is_query =
+                    match *context.resolve_type_inner(query, &self.valid_expression_set)? {
+                        Ti::Pointer { base, .. } => {
+                            matches!(context.types[base].inner, Ti::RayQuery { .. })
+                        }
+                        _ => false,
+                    };
+                if !is_query {
+                    return Err(FunctionError::InvalidRayQueryExpression(query)
+                        .with_span_static(span, "invalid query expression"));
+                }
+                match *fun {
+                    crate::RayQueryFunction::Initialize {
                         acceleration_structure,
                         flags,
                         cull_mask,
-                        sbt_offset,
-                        sbt_stride,
-                        miss_index,
                         origin,
                         tmin,
                         direction,
                         tmax,
-                        time,
-                        payload,
                     } => {
-                        stages &= super::ShaderStages::RAY_GENERATION
-                            | super::ShaderStages::CLOSEST_HIT
-                            | super::ShaderStages::MISS;
                         self.validate_acceleration_structure(acceleration_structure, context)?;
                         for (operand, kind) in [
                             (flags, RayOperand::Uint),
                             (cull_mask, RayOperand::Uint),
-                            (sbt_offset, RayOperand::Uint),
-                            (sbt_stride, RayOperand::Uint),
-                            (miss_index, RayOperand::Uint),
                             (origin, RayOperand::Vector),
                             (tmin, RayOperand::Float),
                             (direction, RayOperand::Vector),
                             (tmax, RayOperand::Float),
-                        ]
-                        .into_iter()
-                        .chain(time.map(|time| (time, RayOperand::Float)))
-                        {
+                        ] {
                             self.validate_ray_operand(operand, kind, context)?;
                         }
-                        if time.is_some() && payload.pointer().is_none() {
-                            return Err(FunctionError::InvalidPayloadType.with_span_static(
-                                span,
-                                "a motion trace needs a payload variable",
-                            ));
-                        }
-                        self.validate_ray_data(
-                            payload,
-                            &[AddressSpace::RayPayload, AddressSpace::IncomingRayPayload],
-                            context,
-                        )?;
                     }
-                    crate::RayPipelineFunction::ExecuteCallable { sbt_index, data } => {
-                        stages &= super::ShaderStages::RAY_GENERATION
-                            | super::ShaderStages::CLOSEST_HIT
-                            | super::ShaderStages::MISS
-                            | super::ShaderStages::CALLABLE;
-                        self.validate_ray_operand(sbt_index, RayOperand::Uint, context)?;
-                        self.validate_ray_data(
-                            data,
-                            &[
-                                AddressSpace::CallableData,
-                                AddressSpace::IncomingCallableData,
-                            ],
-                            context,
-                        )?;
-                    }
-                    crate::RayPipelineFunction::ReportIntersection {
-                        hit_t,
-                        hit_kind,
-                        result,
-                    } => {
-                        stages &= super::ShaderStages::INTERSECTION;
-                        self.validate_ray_operand(hit_t, RayOperand::Float, context)?;
-                        self.validate_ray_operand(hit_kind, RayOperand::Uint, context)?;
+                    crate::RayQueryFunction::Proceed { result } => {
                         self.emit_expression(result, context)?;
                     }
-                    crate::RayPipelineFunction::IgnoreIntersection { .. }
-                    | crate::RayPipelineFunction::TerminateRay { .. } => {
-                        stages &= super::ShaderStages::ANY_HIT;
+                    crate::RayQueryFunction::GenerateIntersection { hit_t } => {
+                        match *context.resolve_type_inner(hit_t, &self.valid_expression_set)? {
+                            Ti::Scalar(crate::Scalar {
+                                kind: crate::ScalarKind::Float,
+                                width: _,
+                            }) => {}
+                            _ => {
+                                return Err(FunctionError::InvalidHitDistanceType(hit_t)
+                                    .with_span_static(span, "invalid hit_t"))
+                            }
+                        }
                     }
-                },
+                    crate::RayQueryFunction::ConfirmIntersection => {}
+                    crate::RayQueryFunction::Terminate => {}
+                }
             }
+            S::SubgroupBallot { result, predicate } => {
+                stages &= self.subgroup_stages;
+                if !self.capabilities.contains(super::Capabilities::SUBGROUP) {
+                    return Err(
+                        FunctionError::MissingCapability(super::Capabilities::SUBGROUP)
+                            .with_span_static(span, "missing capability for this operation"),
+                    );
+                }
+                if !self
+                    .subgroup_operations
+                    .contains(super::SubgroupOperationSet::BALLOT)
+                {
+                    return Err(FunctionError::InvalidSubgroup(
+                        SubgroupError::UnsupportedOperation(super::SubgroupOperationSet::BALLOT),
+                    )
+                    .with_span_static(span, "support for this operation is not present"));
+                }
+                if let Some(predicate) = predicate {
+                    let predicate_inner =
+                        context.resolve_type_inner(predicate, &self.valid_expression_set)?;
+                    if !matches!(
+                        *predicate_inner,
+                        crate::TypeInner::Scalar(crate::Scalar::BOOL,)
+                    ) {
+                        log::error!(
+                            "Subgroup ballot predicate type {predicate_inner:?} expected bool"
+                        );
+                        return Err(SubgroupError::InvalidOperand(predicate)
+                            .with_span_handle(predicate, context.expressions)
+                            .into_other());
+                    }
+                }
+                self.emit_expression(result, context)?;
+            }
+            S::SubgroupCollectiveOperation {
+                ref op,
+                ref collective_op,
+                argument,
+                result,
+            } => {
+                stages &= self.subgroup_stages;
+                if !self.capabilities.contains(super::Capabilities::SUBGROUP) {
+                    return Err(
+                        FunctionError::MissingCapability(super::Capabilities::SUBGROUP)
+                            .with_span_static(span, "missing capability for this operation"),
+                    );
+                }
+                let operation = op.required_operations() | collective_op.required_operations();
+                if !self.subgroup_operations.contains(operation) {
+                    return Err(FunctionError::InvalidSubgroup(
+                        SubgroupError::UnsupportedOperation(operation),
+                    )
+                    .with_span_static(span, "support for this operation is not present"));
+                }
+                self.validate_subgroup_operation(op, collective_op, argument, result, context)?;
+            }
+            S::SubgroupGather {
+                ref mode,
+                argument,
+                result,
+            } => {
+                stages &= self.subgroup_stages;
+                if !self.capabilities.contains(super::Capabilities::SUBGROUP) {
+                    return Err(
+                        FunctionError::MissingCapability(super::Capabilities::SUBGROUP)
+                            .with_span_static(span, "missing capability for this operation"),
+                    );
+                }
+                let operation = mode.required_operations();
+                if !self.subgroup_operations.contains(operation) {
+                    return Err(FunctionError::InvalidSubgroup(
+                        SubgroupError::UnsupportedOperation(operation),
+                    )
+                    .with_span_static(span, "support for this operation is not present"));
+                }
+                self.validate_subgroup_gather(mode, argument, result, context)?;
+            }
+            S::SubgroupFunction { ref fun, result } => {
+                stages &= self.subgroup_stages;
+                if !self.capabilities.contains(super::Capabilities::SUBGROUP) {
+                    return Err(
+                        FunctionError::MissingCapability(super::Capabilities::SUBGROUP)
+                            .with_span_static(span, "missing capability for this operation"),
+                    );
+                }
+                let operation = fun.required_operations();
+                if !self.subgroup_operations.contains(operation) {
+                    return Err(FunctionError::InvalidSubgroup(
+                        SubgroupError::UnsupportedOperation(operation),
+                    )
+                    .with_span_static(span, "support for this operation is not present"));
+                }
+                self.validate_subgroup_function(fun, result, context)?;
+            }
+            S::CooperativeStore { target, ref data } => {
+                match *context.resolve_type_inner(target, &self.valid_expression_set)? {
+                    Ti::CooperativeMatrix { .. } => {}
+                    ref other => {
+                        log::error!("Target operand type: {other:?}");
+                        return Err(FunctionError::InvalidCooperativeStoreTarget(target)
+                            .with_span_handle(target, context.expressions));
+                    }
+                };
+
+                let ptr_ty = context.resolve_pointer_type(data.pointer);
+                let ptr_scalar = ptr_ty
+                    .pointer_base_type()
+                    .and_then(|tr| tr.inner_with(context.types).scalar());
+                if ptr_scalar.is_none() {
+                    return Err(FunctionError::InvalidCooperativeDataPointer(data.pointer)
+                        .with_span_handle(data.pointer, context.expressions));
+                }
+
+                let ptr_space = ptr_ty.pointer_space().unwrap_or(AddressSpace::Handle);
+                if !ptr_space.access().contains(crate::StorageAccess::STORE) {
+                    return Err(
+                        FunctionError::InvalidStorePointer(data.pointer).with_span_static(
+                            context.expressions.get_span(data.pointer),
+                            "writing to this location is not permitted",
+                        ),
+                    );
+                }
+            }
+            S::HitObject { object, ref fun } => {
+                stages &= super::ShaderStages::RAY_GENERATION
+                    | super::ShaderStages::CLOSEST_HIT
+                    | super::ShaderStages::MISS;
+                let kind = match *context.resolve_type_inner(object, &self.valid_expression_set)? {
+                    Ti::Pointer { base, .. } => match context.types[base].inner {
+                        Ti::HitObject { kind } => Some(kind),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                let Some(kind) = kind else {
+                    return Err(FunctionError::InvalidHitObjectExpression(object)
+                        .with_span_static(span, "invalid hit object expression"));
+                };
+                self.validate_hit_object_function(kind, fun, span, context)?;
+                if matches!(
+                    *fun,
+                    crate::HitObjectFunction::ReorderThread { .. }
+                        | crate::HitObjectFunction::ReorderExecute { .. }
+                        | crate::HitObjectFunction::TraceReorderExecute { .. }
+                ) {
+                    stages &= super::ShaderStages::RAY_GENERATION;
+                }
+            }
+            S::ReorderThread {
+                kind: _,
+                hint,
+                bits,
+            } => {
+                stages &= super::ShaderStages::RAY_GENERATION;
+                self.validate_ray_operand(hint, RayOperand::Uint, context)?;
+                self.validate_ray_operand(bits, RayOperand::Uint, context)?;
+            }
+            S::RayPipelineFunction(ref fun) => match *fun {
+                crate::RayPipelineFunction::TraceRay {
+                    acceleration_structure,
+                    flags,
+                    cull_mask,
+                    sbt_offset,
+                    sbt_stride,
+                    miss_index,
+                    origin,
+                    tmin,
+                    direction,
+                    tmax,
+                    time,
+                    payload,
+                } => {
+                    stages &= super::ShaderStages::RAY_GENERATION
+                        | super::ShaderStages::CLOSEST_HIT
+                        | super::ShaderStages::MISS;
+                    self.validate_acceleration_structure(acceleration_structure, context)?;
+                    for (operand, kind) in [
+                        (flags, RayOperand::Uint),
+                        (cull_mask, RayOperand::Uint),
+                        (sbt_offset, RayOperand::Uint),
+                        (sbt_stride, RayOperand::Uint),
+                        (miss_index, RayOperand::Uint),
+                        (origin, RayOperand::Vector),
+                        (tmin, RayOperand::Float),
+                        (direction, RayOperand::Vector),
+                        (tmax, RayOperand::Float),
+                    ]
+                    .into_iter()
+                    .chain(time.map(|time| (time, RayOperand::Float)))
+                    {
+                        self.validate_ray_operand(operand, kind, context)?;
+                    }
+                    if time.is_some() && payload.pointer().is_none() {
+                        return Err(FunctionError::InvalidPayloadType
+                            .with_span_static(span, "a motion trace needs a payload variable"));
+                    }
+                    self.validate_ray_data(
+                        payload,
+                        &[AddressSpace::RayPayload, AddressSpace::IncomingRayPayload],
+                        context,
+                    )?;
+                }
+                crate::RayPipelineFunction::ExecuteCallable { sbt_index, data } => {
+                    stages &= super::ShaderStages::RAY_GENERATION
+                        | super::ShaderStages::CLOSEST_HIT
+                        | super::ShaderStages::MISS
+                        | super::ShaderStages::CALLABLE;
+                    self.validate_ray_operand(sbt_index, RayOperand::Uint, context)?;
+                    self.validate_ray_data(
+                        data,
+                        &[
+                            AddressSpace::CallableData,
+                            AddressSpace::IncomingCallableData,
+                        ],
+                        context,
+                    )?;
+                }
+                crate::RayPipelineFunction::ReportIntersection {
+                    hit_t,
+                    hit_kind,
+                    result,
+                } => {
+                    stages &= super::ShaderStages::INTERSECTION;
+                    self.validate_ray_operand(hit_t, RayOperand::Float, context)?;
+                    self.validate_ray_operand(hit_kind, RayOperand::Uint, context)?;
+                    self.emit_expression(result, context)?;
+                }
+                crate::RayPipelineFunction::IgnoreIntersection { .. }
+                | crate::RayPipelineFunction::TerminateRay { .. } => {
+                    stages &= super::ShaderStages::ANY_HIT;
+                }
+            },
         }
-        Ok(BlockInfo { stages })
+        Ok(stages)
     }
 
     fn validate_block(
