@@ -2752,6 +2752,22 @@ impl BlockContext<'_> {
             // * Otherwise, the result is the value in T closest to
             //   truncate(X) and also exactly representable in the original
             //   floating point type.
+            (Sk::Float, Sk::Sint | Sk::Uint, Some(width))
+                if crate::proc::min_max_float_representable_by(
+                    src_scalar,
+                    crate::Scalar { kind, width },
+                )
+                .is_none() =>
+            {
+                Cast::Unary(
+                    if kind == Sk::Sint {
+                        spirv::Op::ConvertFToS
+                    } else {
+                        spirv::Op::ConvertFToU
+                    },
+                    expr_id,
+                )
+            }
             (Sk::Float, Sk::Sint | Sk::Uint, Some(width)) => {
                 let dst_scalar = crate::Scalar { kind, width };
                 let (min, max) =

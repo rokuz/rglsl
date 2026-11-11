@@ -673,7 +673,10 @@ impl Printer {
             }
             ExpressionKind::FunctionCall(call) => {
                 match &call.function.node {
-                    FunctionIdentifier::Constructor(specifier) => self.type_specifier(specifier),
+                    FunctionIdentifier::Constructor(specifier)
+                    | FunctionIdentifier::Cast(specifier) => {
+                        self.type_specifier(specifier);
+                    }
                     FunctionIdentifier::Function(name) => self.write(name),
                     FunctionIdentifier::Expression(callee) => self.expression(callee),
                     FunctionIdentifier::Method { object, name } => {

@@ -1111,6 +1111,7 @@ pub struct FunctionCall {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FunctionIdentifier {
     Constructor(Box<TypeSpecifier>),
+    Cast(Box<TypeSpecifier>),
     Function(String),
     Expression(Box<Expression>),
     Method {

@@ -188,6 +188,31 @@ impl Analyzer<'_> {
             FunctionIdentifier::Constructor(specifier) => {
                 self.constructor(expression, close, specifier, &call.arguments)
             }
+            FunctionIdentifier::Cast(specifier) => {
+                let ty = self.bare_type_specifier(specifier, close);
+                let castable = !ty.is_array()
+                    && matches!(
+                        ty.kind,
+                        TypeKind::Scalar(_)
+                            | TypeKind::Vector { .. }
+                            | TypeKind::Matrix { .. }
+                            | TypeKind::Reference(_)
+                    );
+                if !ty.is_error() && !castable {
+                    for argument in &call.arguments {
+                        self.expression(argument);
+                    }
+                    self.error(
+                        close,
+                        DiagnosticKind::InvalidConstructor {
+                            ty: self.show(&ty),
+                            reason: "type cast has to be either scalar, vector, matrix or buffer reference",
+                        },
+                    );
+                    return Operand::error();
+                }
+                self.constructor(expression, close, specifier, &call.arguments)
+            }
             FunctionIdentifier::Method { object, name } => {
                 self.method(expression, object, name, &call.arguments)
             }
