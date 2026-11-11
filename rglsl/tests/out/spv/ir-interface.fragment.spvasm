@@ -13,7 +13,6 @@ OpDecorate %16 BuiltIn FragCoord
 OpDecorate %16 Invariant
 OpDecorate %19 Location 1
 OpDecorate %22 BuiltIn FrontFacing
-OpDecorate %22 Flat
 OpDecorate %25 BuiltIn SampleId
 OpDecorate %25 Flat
 OpDecorate %28 BuiltIn SampleMask

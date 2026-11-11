@@ -189,29 +189,11 @@ impl Analyzer<'_> {
                 self.constructor(expression, close, specifier, &call.arguments)
             }
             FunctionIdentifier::Cast(specifier) => {
-                let ty = self.bare_type_specifier(specifier, close);
-                let castable = !ty.is_array()
-                    && matches!(
-                        ty.kind,
-                        TypeKind::Scalar(_)
-                            | TypeKind::Vector { .. }
-                            | TypeKind::Matrix { .. }
-                            | TypeKind::Reference(_)
-                    );
-                if !ty.is_error() && !castable {
-                    for argument in &call.arguments {
-                        self.expression(argument);
-                    }
-                    self.error(
-                        close,
-                        DiagnosticKind::InvalidConstructor {
-                            ty: self.show(&ty),
-                            reason: "type cast has to be either scalar, vector, matrix or buffer reference",
-                        },
-                    );
-                    return Operand::error();
+                if self.castable(close, specifier, &call.arguments) {
+                    self.constructor(expression, close, specifier, &call.arguments)
+                } else {
+                    Operand::error()
                 }
-                self.constructor(expression, close, specifier, &call.arguments)
             }
             FunctionIdentifier::Method { object, name } => {
                 self.method(expression, object, name, &call.arguments)
@@ -225,6 +207,38 @@ impl Analyzer<'_> {
                 Operand::error()
             }
         }
+    }
+
+    #[inline(never)]
+    fn castable(
+        &mut self,
+        span: Span,
+        specifier: &TypeSpecifier,
+        arguments: &[Expression],
+    ) -> bool {
+        let ty = self.bare_type_specifier(specifier, span);
+        let castable = !ty.is_array()
+            && matches!(
+                ty.kind,
+                TypeKind::Scalar(_)
+                    | TypeKind::Vector { .. }
+                    | TypeKind::Matrix { .. }
+                    | TypeKind::Reference(_)
+            );
+        if ty.is_error() || castable {
+            return true;
+        }
+        for argument in arguments {
+            self.expression(argument);
+        }
+        self.error(
+            span,
+            DiagnosticKind::InvalidConstructor {
+                ty: self.show(&ty),
+                reason: "type cast has to be either scalar, vector, matrix or buffer reference",
+            },
+        );
+        false
     }
 
     fn method(

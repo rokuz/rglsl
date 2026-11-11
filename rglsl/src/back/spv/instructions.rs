@@ -1109,7 +1109,7 @@ impl super::Instruction {
         Self::new(Op::DemoteToHelperInvocation)
     }
 
-    pub(super) fn is_helper_invocation(result_type_id: Word, id: Word) -> Self {
+    pub(super) const fn is_helper_invocation(result_type_id: Word, id: Word) -> Self {
         let mut instruction = Self::new(Op::IsHelperInvocationEXT);
         instruction.set_type(result_type_id);
         instruction.set_result(id);

@@ -4564,10 +4564,10 @@ impl Writer {
         } else {
             map_storage_class(global_variable.space)
         };
-        if let (crate::AddressSpace::Handle, Some(crate::Binding::Location { location, .. })) =
+        if let (crate::AddressSpace::Handle, Some(&crate::Binding::Location { location, .. })) =
             (global_variable.space, global_variable.io.as_ref())
         {
-            self.decorate(id, Decoration::Location, &[*location]);
+            self.decorate(id, Decoration::Location, &[location]);
         }
 
         // A stage input or output is bound to a location or a built-in. The
