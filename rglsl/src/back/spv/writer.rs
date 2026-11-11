@@ -620,6 +620,7 @@ impl Writer {
             crate::TypeInner::Sampler { comparison: _ } => LocalType::Sampler,
             crate::TypeInner::AccelerationStructure { .. } => LocalType::AccelerationStructure,
             crate::TypeInner::RayQuery { .. } => LocalType::RayQuery,
+            crate::TypeInner::HitObject { kind } => LocalType::HitObject(kind),
             crate::TypeInner::BufferDescriptor { space, .. } => LocalType::BufferDescriptor {
                 class: map_storage_class(space),
             },
@@ -1803,6 +1804,7 @@ impl Writer {
                 spirv::StorageClass::Function,
                 init_word.or_else(|| match ir_module.types[variable.ty].inner {
                     crate::TypeInner::RayQuery { .. }
+                    | crate::TypeInner::HitObject { .. }
                     | crate::TypeInner::TensorLayout { .. }
                     | crate::TypeInner::TensorView { .. } => None,
                     _ => {
@@ -2359,6 +2361,9 @@ impl Writer {
             crate::TypeInner::RayQuery { .. } => {
                 self.require_ray_queries()?;
             }
+            crate::TypeInner::HitObject { kind } => {
+                self.require_hit_objects(kind)?;
+            }
             crate::TypeInner::Atomic(crate::Scalar { width: 8, kind: _ }) => {
                 self.require_any("64 bit integer atomics", &[spirv::Capability::Int64Atomics])?;
             }
@@ -2594,6 +2599,7 @@ impl Writer {
             }
             LocalType::AccelerationStructure => Instruction::type_acceleration_structure(id),
             LocalType::RayQuery => Instruction::type_ray_query(id),
+            LocalType::HitObject(kind) => Instruction::type_hit_object(id, kind),
             LocalType::UntypedPointer { .. } | LocalType::BufferDescriptor { .. } => {
                 self.write_heap_type_local(id, local_ty);
                 return;
@@ -2849,6 +2855,7 @@ impl Writer {
                 | crate::TypeInner::Sampler { .. }
                 | crate::TypeInner::AccelerationStructure { .. }
                 | crate::TypeInner::RayQuery { .. }
+                | crate::TypeInner::HitObject { .. }
                 | crate::TypeInner::BufferDescriptor { .. } => {
                     return Err(Error::Validation("a non-aggregate type has no local type"))
                 }
@@ -4200,6 +4207,48 @@ impl Writer {
                         self.use_extension("SPV_NV_ray_tracing_motion_blur");
                         BuiltIn::CurrentRayTimeNV
                     }
+                    Bi::ClusterId => {
+                        self.require_cluster_acceleration_structure()?;
+                        BuiltIn::ClusterIDNV
+                    }
+                    Bi::HitMicroTriangleVertexPositions
+                    | Bi::HitMicroTriangleVertexBarycentrics
+                    | Bi::HitKindFrontFacingMicroTriangle
+                    | Bi::HitKindBackFacingMicroTriangle => {
+                        self.require_any(
+                            "displacement micromaps",
+                            &[spirv::Capability::RayTracingDisplacementMicromapNV],
+                        )?;
+                        self.use_extension("SPV_NV_displacement_micromap");
+                        match built_in {
+                            Bi::HitMicroTriangleVertexPositions => {
+                                BuiltIn::HitMicroTriangleVertexPositionsNV
+                            }
+                            Bi::HitMicroTriangleVertexBarycentrics => {
+                                BuiltIn::HitMicroTriangleVertexBarycentricsNV
+                            }
+                            Bi::HitKindFrontFacingMicroTriangle => {
+                                BuiltIn::HitKindFrontFacingMicroTriangleNV
+                            }
+                            _ => BuiltIn::HitKindBackFacingMicroTriangleNV,
+                        }
+                    }
+                    Bi::HitIsSphere | Bi::HitSpherePosition | Bi::HitSphereRadius => {
+                        self.require_sphere_geometry()?;
+                        match built_in {
+                            Bi::HitIsSphere => BuiltIn::HitIsSphereNV,
+                            Bi::HitSpherePosition => BuiltIn::HitSpherePositionNV,
+                            _ => BuiltIn::HitSphereRadiusNV,
+                        }
+                    }
+                    Bi::HitIsLss | Bi::HitLssPositions | Bi::HitLssRadii => {
+                        self.require_lss_geometry()?;
+                        match built_in {
+                            Bi::HitIsLss => BuiltIn::HitIsLSSNV,
+                            Bi::HitLssPositions => BuiltIn::HitLSSPositionsNV,
+                            _ => BuiltIn::HitLSSRadiiNV,
+                        }
+                    }
                 };
 
                 use crate::ScalarKind as Sk;
@@ -4359,6 +4408,11 @@ impl Writer {
                     self.decorate(id, Decoration::Location, &[location]);
                 }
             }
+        }
+
+        if let crate::AddressSpace::HitObjectAttribute { kind } = global_variable.space {
+            self.require_ray_tracing()?;
+            self.require_hit_objects(kind)?;
         }
 
         //self.check(class.required_capabilities())?;
@@ -4550,7 +4604,7 @@ impl Writer {
         let init_word = match (global_variable.space, self.zero_initialize_workgroup_memory) {
             _ if self.contains_physical_type(inner_type_id) => init_word,
             (crate::AddressSpace::Private, _)
-                if crate::proc::contains_ray_query(&ir_module.types, global_variable.ty) =>
+                if crate::proc::contains_ray_object(&ir_module.types, global_variable.ty) =>
             {
                 init_word
             }

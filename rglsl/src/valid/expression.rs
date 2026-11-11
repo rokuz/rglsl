@@ -31,6 +31,10 @@ pub enum ExpressionError {
     InvalidHeapPointer(Handle<crate::Expression>),
     #[error("Get intersection of {0:?} can't be done")]
     InvalidRayQueryType(Handle<crate::Expression>),
+    #[error("Expression {0:?} is not a hit object of the kind the operation needs")]
+    InvalidHitObjectType(Handle<crate::Expression>),
+    #[error("Operand {0:?} of a micro-triangle fetch has the wrong type")]
+    InvalidMicroTriangleOperand(Handle<crate::Expression>),
     #[error("Splatting {0:?} can't be done")]
     InvalidSplatType(Handle<crate::Expression>),
     #[error("Swizzling {0:?} can't be done")]
@@ -1512,6 +1516,83 @@ impl super::Validator {
                 ShaderStages::all()
             }
             E::ReportIntersectionResult => ShaderStages::INTERSECTION,
+            E::HitObjectGet { object, value } => {
+                use crate::HitObjectValue as Hv;
+                let kind = match resolver[object] {
+                    Ti::Pointer { base, .. } => match resolver.types[base].inner {
+                        Ti::HitObject { kind } => Some(kind),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                let Some(kind) = kind else {
+                    return Err(ExpressionError::InvalidHitObjectType(object));
+                };
+                let required = match value {
+                    Hv::ClusterId
+                    | Hv::SpherePosition
+                    | Hv::SphereRadius
+                    | Hv::LssPositions
+                    | Hv::LssRadii
+                    | Hv::IsSphereHit
+                    | Hv::IsLssHit => Some(crate::HitObjectKind::Nv),
+                    Hv::RayFlags | Hv::TriangleVertexPositions => Some(crate::HitObjectKind::Ext),
+                    Hv::IsEmpty
+                    | Hv::IsHit
+                    | Hv::IsMiss
+                    | Hv::RayTMin
+                    | Hv::RayTMax
+                    | Hv::WorldRayOrigin
+                    | Hv::WorldRayDirection
+                    | Hv::ObjectRayOrigin
+                    | Hv::ObjectRayDirection
+                    | Hv::ObjectToWorld
+                    | Hv::WorldToObject
+                    | Hv::InstanceCustomIndex
+                    | Hv::InstanceId
+                    | Hv::GeometryIndex
+                    | Hv::PrimitiveIndex
+                    | Hv::HitKind
+                    | Hv::CurrentTime
+                    | Hv::ShaderBindingTableRecordIndex
+                    | Hv::ShaderRecordBufferHandle => None,
+                };
+                if required.is_some_and(|required| required != kind) {
+                    return Err(ExpressionError::InvalidHitObjectType(object));
+                }
+                ShaderStages::RAY_GENERATION | ShaderStages::CLOSEST_HIT | ShaderStages::MISS
+            }
+            E::FetchMicroTriangleVertex {
+                acceleration_structure,
+                instance_id,
+                geometry_index,
+                primitive_index,
+                barycentric,
+                value: _,
+            } => {
+                if !matches!(
+                    resolver[acceleration_structure],
+                    Ti::AccelerationStructure { .. }
+                ) {
+                    return Err(ExpressionError::InvalidMicroTriangleOperand(
+                        acceleration_structure,
+                    ));
+                }
+                for index in [instance_id, geometry_index, primitive_index] {
+                    if resolver[index] != Ti::Scalar(Sc::I32) {
+                        return Err(ExpressionError::InvalidMicroTriangleOperand(index));
+                    }
+                }
+                if resolver[barycentric]
+                    != (Ti::Vector {
+                        size: crate::VectorSize::Bi,
+                        scalar: Sc::I32,
+                    })
+                {
+                    return Err(ExpressionError::InvalidMicroTriangleOperand(barycentric));
+                }
+                ShaderStages::RAY_GENERATION | ShaderStages::COMPUTE | ShaderStages::MESH
+            }
             E::AccelerationStructureFromAddress { address } => match resolver[address] {
                 Ti::Scalar(crate::Scalar::U64)
                 | Ti::Vector {

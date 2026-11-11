@@ -714,6 +714,29 @@ impl crate::Module {
                     },
                 }
             }
+            crate::PredeclaredType::F32Array { size, length } => {
+                let scalar = crate::Scalar::F32;
+                let inner = match size {
+                    Some(size) => crate::TypeInner::Vector { size, scalar },
+                    None => crate::TypeInner::Scalar(scalar),
+                };
+                let stride = match size {
+                    Some(crate::VectorSize::Bi) => 8,
+                    Some(crate::VectorSize::Tri | crate::VectorSize::Quad) => 16,
+                    None => 4,
+                };
+                let base = self
+                    .types
+                    .insert(crate::Type { name: None, inner }, Span::UNDEFINED);
+                crate::Type {
+                    name: None,
+                    inner: crate::TypeInner::Array {
+                        base,
+                        size: crate::ArraySize::Constant(length),
+                        stride,
+                    },
+                }
+            }
             crate::PredeclaredType::WideResult { size, scalar } => {
                 let inner = match size {
                     Some(size) => crate::TypeInner::Vector { size, scalar },

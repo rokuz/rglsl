@@ -497,6 +497,9 @@ impl Analyzer<'_> {
             if let Some(extensions) = crate::builtins::ray::function_extensions(name) {
                 failed = !self.require_extensions(span, extensions, name);
             }
+            if let Some(extensions) = crate::builtins::ray::interacting_extension(name) {
+                failed = failed || !self.require_extensions(span, extensions, name);
+            }
         }
         if is_builtin && !failed {
             failed = !self.ray_builtin_checks(span, name, &operands);

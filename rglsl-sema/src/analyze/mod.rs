@@ -325,7 +325,7 @@ pub(crate) struct Analyzer<'a> {
     pub vulkan_memory_model: bool,
     pub shader_64bit_indexing: bool,
     pub promote_uint32_indices: bool,
-    pub ray_locations: [Vec<u32>; 2],
+    pub ray_locations: [Vec<u32>; 3],
     pub primitive_culling: bool,
     pub stage_layout: stage::StageLayout,
 }
@@ -395,7 +395,7 @@ impl<'a> Analyzer<'a> {
             vulkan_memory_model: false,
             shader_64bit_indexing: false,
             promote_uint32_indices: false,
-            ray_locations: [Vec::new(), Vec::new()],
+            ray_locations: [Vec::new(), Vec::new(), Vec::new()],
             primitive_culling: false,
             stage_layout: stage::StageLayout::default(),
         }

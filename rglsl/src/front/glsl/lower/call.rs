@@ -206,7 +206,7 @@ impl FunctionLowerer<'_, '_> {
                 && parameter
                     .ty
                     .as_opaque()
-                    .is_some_and(rglsl_sema::types::Opaque::is_ray_query)
+                    .is_some_and(rglsl_sema::types::Opaque::is_private_object)
             {
                 values.push(self.ray_query_pointer(argument)?);
                 continue;

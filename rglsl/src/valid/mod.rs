@@ -545,6 +545,7 @@ impl crate::TypeInner {
             | Self::AccelerationStructure { .. }
             | Self::Tensor { .. }
             | Self::RayQuery { .. }
+            | Self::HitObject { .. }
             | Self::BindingArray { .. }
             | Self::BufferDescriptor { .. } => false,
         }

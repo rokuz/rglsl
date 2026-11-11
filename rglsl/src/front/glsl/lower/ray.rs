@@ -9,9 +9,10 @@ use super::expression::Chain;
 use super::function::FunctionLowerer;
 use super::{internal, semantic, GlobalRef, Lowerer, Packing, Result};
 use crate::{
-    AddressSpace, Binding, BuiltIn, Expression, GlobalVariable, Handle, MathFunction,
-    MemoryDecorations, RayPipelineFunction, RayQueryFunction, RayQueryIntersectionValue,
-    RayQueryValue, RayTracingData, RayTracingFeatures, ShaderStage, Span, Statement,
+    AddressSpace, Binding, BuiltIn, Expression, GlobalVariable, Handle, HitObjectKind,
+    MathFunction, MemoryDecorations, RayPipelineFunction, RayQueryFunction,
+    RayQueryIntersectionValue, RayQueryValue, RayTracingData, RayTracingFeatures, ShaderStage,
+    Span, Statement,
 };
 
 const RAY_TRACING_NV: &str = "GL_NV_ray_tracing";
@@ -58,6 +59,29 @@ pub(super) fn ray_builtin(name: &str) -> Option<(BuiltIn, &'static str)> {
             "gl_HitTriangleVertexPositionsEXT",
         ),
         "gl_CurrentRayTimeNV" => (BuiltIn::CurrentRayTime, "gl_CurrentRayTimeNV"),
+        "gl_ClusterIDNV" => (BuiltIn::ClusterId, "gl_ClusterIDNV"),
+        "gl_HitMicroTriangleVertexPositionsNV" => (
+            BuiltIn::HitMicroTriangleVertexPositions,
+            "gl_HitMicroTriangleVertexPositionsNV",
+        ),
+        "gl_HitMicroTriangleVertexBarycentricsNV" => (
+            BuiltIn::HitMicroTriangleVertexBarycentrics,
+            "gl_HitMicroTriangleVertexBarycentricsNV",
+        ),
+        "gl_HitKindFrontFacingMicroTriangleNV" => (
+            BuiltIn::HitKindFrontFacingMicroTriangle,
+            "gl_HitKindFrontFacingMicroTriangleNV",
+        ),
+        "gl_HitKindBackFacingMicroTriangleNV" => (
+            BuiltIn::HitKindBackFacingMicroTriangle,
+            "gl_HitKindBackFacingMicroTriangleNV",
+        ),
+        "gl_HitIsSphereNV" => (BuiltIn::HitIsSphere, "gl_HitIsSphereNV"),
+        "gl_HitIsLSSNV" => (BuiltIn::HitIsLss, "gl_HitIsLSSNV"),
+        "gl_HitSpherePositionNV" => (BuiltIn::HitSpherePosition, "gl_HitSpherePositionNV"),
+        "gl_HitSphereRadiusNV" => (BuiltIn::HitSphereRadius, "gl_HitSphereRadiusNV"),
+        "gl_HitLSSPositionsNV" => (BuiltIn::HitLssPositions, "gl_HitLSSPositionsNV"),
+        "gl_HitLSSRadiiNV" => (BuiltIn::HitLssRadii, "gl_HitLSSRadiiNV"),
         _ => return None,
     })
 }
@@ -76,6 +100,18 @@ const fn ray_block_space(storage: BlockStorage) -> Option<(AddressSpace, Option<
         BlockStorage::HitAttribute => (AddressSpace::HitAttribute, None),
         BlockStorage::CallableData => (AddressSpace::CallableData, Some(1)),
         BlockStorage::CallableDataIn => (AddressSpace::IncomingCallableData, Some(1)),
+        BlockStorage::HitObjectAttributeNv => (
+            AddressSpace::HitObjectAttribute {
+                kind: HitObjectKind::Nv,
+            },
+            Some(2),
+        ),
+        BlockStorage::HitObjectAttributeExt => (
+            AddressSpace::HitObjectAttribute {
+                kind: HitObjectKind::Ext,
+            },
+            Some(2),
+        ),
         _ => return None,
     })
 }
@@ -87,6 +123,18 @@ const fn ray_space(storage: Storage) -> Option<(AddressSpace, Option<usize>)> {
         Storage::HitAttribute => (AddressSpace::HitAttribute, None),
         Storage::CallableData => (AddressSpace::CallableData, Some(1)),
         Storage::CallableDataIn => (AddressSpace::IncomingCallableData, Some(1)),
+        Storage::HitObjectAttributeNv => (
+            AddressSpace::HitObjectAttribute {
+                kind: HitObjectKind::Nv,
+            },
+            Some(2),
+        ),
+        Storage::HitObjectAttributeExt => (
+            AddressSpace::HitObjectAttribute {
+                kind: HitObjectKind::Ext,
+            },
+            Some(2),
+        ),
         _ => return None,
     })
 }
@@ -100,7 +148,14 @@ impl Lowerer<'_> {
             if extensions.contains(RAY_TRACING_NV) {
                 features |= RayTracingFeatures::NV;
             }
-            if !extensions.contains(RAY_TRACING_EXT) {
+            if ![
+                RAY_TRACING_EXT,
+                "GL_NV_shader_invocation_reorder",
+                "GL_EXT_shader_invocation_reorder",
+            ]
+            .into_iter()
+            .any(|extension| extensions.contains(extension))
+            {
                 features |= RayTracingFeatures::PAYLOAD_LOCATIONS;
             }
             if !matches!(stage, ShaderStage::RayGeneration | ShaderStage::Callable) {
@@ -306,7 +361,7 @@ impl FunctionLowerer<'_, '_> {
             .ok_or_else(|| semantic("the location must be a compile-time constant", at))
     }
 
-    fn ray_data(
+    pub(super) fn ray_data(
         &mut self,
         expression: &AstExpression,
         set: usize,
@@ -319,10 +374,10 @@ impl FunctionLowerer<'_, '_> {
         }
         let global = *self.lw.ray_data.get(&(set, location)).ok_or_else(|| {
             semantic(
-                if set == 0 {
-                    "no rayPayloadEXT/rayPayloadInEXT is declared with this location"
-                } else {
-                    "no callableDataEXT/callableDataInEXT is declared with this location"
+                match set {
+                    0 => "no rayPayloadEXT/rayPayloadInEXT is declared with this location",
+                    1 => "no callableDataEXT/callableDataInEXT is declared with this location",
+                    _ => "no hitObjectAttributeNV/hitObjectAttributeEXT is declared with this location",
                 },
                 at,
             )
@@ -331,7 +386,10 @@ impl FunctionLowerer<'_, '_> {
         Ok(RayTracingData::Pointer(pointer))
     }
 
-    fn ray_operands(&mut self, arguments: &[AstExpression]) -> Result<Vec<Handle<Expression>>> {
+    pub(super) fn ray_operands(
+        &mut self,
+        arguments: &[AstExpression],
+    ) -> Result<Vec<Handle<Expression>>> {
         arguments
             .iter()
             .map(|argument| self.rvalue(argument))
@@ -371,6 +429,14 @@ impl FunctionLowerer<'_, '_> {
             "rayQueryGetIntersectionTriangleVertexPositionsEXT" => {
                 Some(Iv::TriangleVertexPositions)
             }
+            "rayQueryGetIntersectionClusterIdNV" => Some(Iv::ClusterId),
+            "rayQueryGetIntersectionSpherePositionNV" => Some(Iv::SpherePosition),
+            "rayQueryGetIntersectionSphereRadiusNV" => Some(Iv::SphereRadius),
+            "rayQueryGetIntersectionLSSHitValueNV" => Some(Iv::LssHitValue),
+            "rayQueryGetIntersectionLSSPositionsNV" => Some(Iv::LssPositions),
+            "rayQueryGetIntersectionLSSRadiiNV" => Some(Iv::LssRadii),
+            "rayQueryIsSphereHitNV" => Some(Iv::IsSphereHit),
+            "rayQueryIsLSSHitNV" => Some(Iv::IsLssHit),
             _ => None,
         };
         if let Some(value) = intersection {
@@ -379,8 +445,13 @@ impl FunctionLowerer<'_, '_> {
             };
             let committed = self.constant_bool(committed, at)?;
             let query = self.ray_query_pointer(query)?;
-            if value == Iv::TriangleVertexPositions {
-                self.lw.module.generate_vertex_return_type();
+            match value {
+                Iv::TriangleVertexPositions => {
+                    self.lw.module.generate_vertex_return_type();
+                }
+                Iv::LssPositions => self.generate_lss_array(Some(crate::VectorSize::Tri)),
+                Iv::LssRadii => self.generate_lss_array(None),
+                _ => {}
             }
             let result = self.add(
                 Expression::RayQueryGet {
@@ -565,7 +636,7 @@ impl FunctionLowerer<'_, '_> {
                 );
                 Ok(Some(None))
             }
-            _ => Ok(None),
+            _ => self.hit_object_call(name, arguments, at),
         }
     }
 

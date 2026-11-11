@@ -13,19 +13,30 @@ use crate::types::{BlockStorage, OpaqueKind, Scalar, Type, TypeKind};
 const RT_NV: &str = "GL_NV_ray_tracing";
 const RT_EXT: &str = "GL_EXT_ray_tracing";
 const RAY_QUERY: &str = "GL_EXT_ray_query";
+const SHADER_INVOCATION_REORDER_NV: &str = "GL_NV_shader_invocation_reorder";
+const SHADER_INVOCATION_REORDER_EXT: &str = "GL_EXT_shader_invocation_reorder";
 
-pub(crate) const fn ray_storage(qualifier: StorageQualifier) -> Option<(Storage, bool)> {
+const RT_NV_ONLY: &[&str] = &[RT_NV];
+const RT_EXT_OR_QUERY: &[&str] = &[RT_EXT, RAY_QUERY];
+const SIR_NV: &[&str] = &[SHADER_INVOCATION_REORDER_NV];
+const SIR_EXT: &[&str] = &[SHADER_INVOCATION_REORDER_EXT];
+
+pub(crate) const fn ray_storage(
+    qualifier: StorageQualifier,
+) -> Option<(Storage, &'static [&'static str])> {
     Some(match qualifier {
-        StorageQualifier::RayPayloadNV => (Storage::RayPayload, true),
-        StorageQualifier::RayPayloadEXT => (Storage::RayPayload, false),
-        StorageQualifier::RayPayloadInNV => (Storage::RayPayloadIn, true),
-        StorageQualifier::RayPayloadInEXT => (Storage::RayPayloadIn, false),
-        StorageQualifier::HitAttributeNV => (Storage::HitAttribute, true),
-        StorageQualifier::HitAttributeEXT => (Storage::HitAttribute, false),
-        StorageQualifier::CallableDataNV => (Storage::CallableData, true),
-        StorageQualifier::CallableDataEXT => (Storage::CallableData, false),
-        StorageQualifier::CallableDataInNV => (Storage::CallableDataIn, true),
-        StorageQualifier::CallableDataInEXT => (Storage::CallableDataIn, false),
+        StorageQualifier::RayPayloadNV => (Storage::RayPayload, RT_NV_ONLY),
+        StorageQualifier::RayPayloadEXT => (Storage::RayPayload, RT_EXT_OR_QUERY),
+        StorageQualifier::RayPayloadInNV => (Storage::RayPayloadIn, RT_NV_ONLY),
+        StorageQualifier::RayPayloadInEXT => (Storage::RayPayloadIn, RT_EXT_OR_QUERY),
+        StorageQualifier::HitAttributeNV => (Storage::HitAttribute, RT_NV_ONLY),
+        StorageQualifier::HitAttributeEXT => (Storage::HitAttribute, RT_EXT_OR_QUERY),
+        StorageQualifier::CallableDataNV => (Storage::CallableData, RT_NV_ONLY),
+        StorageQualifier::CallableDataEXT => (Storage::CallableData, RT_EXT_OR_QUERY),
+        StorageQualifier::CallableDataInNV => (Storage::CallableDataIn, RT_NV_ONLY),
+        StorageQualifier::CallableDataInEXT => (Storage::CallableDataIn, RT_EXT_OR_QUERY),
+        StorageQualifier::HitObjectAttributeNV => (Storage::HitObjectAttributeNv, SIR_NV),
+        StorageQualifier::HitObjectAttributeEXT => (Storage::HitObjectAttributeExt, SIR_EXT),
         _ => return None,
     })
 }
@@ -47,6 +58,9 @@ const fn storage_stages(storage: Storage) -> &'static [Stage] {
             Stage::Callable,
         ],
         Storage::CallableDataIn => &[Stage::Callable],
+        Storage::HitObjectAttributeNv | Storage::HitObjectAttributeExt => {
+            &[Stage::RayGeneration, Stage::ClosestHit, Stage::Miss]
+        }
         _ => &[],
     }
 }
@@ -58,6 +72,8 @@ pub(crate) const fn block_storage(storage: Storage) -> Option<BlockStorage> {
         Storage::HitAttribute => BlockStorage::HitAttribute,
         Storage::CallableData => BlockStorage::CallableData,
         Storage::CallableDataIn => BlockStorage::CallableDataIn,
+        Storage::HitObjectAttributeNv => BlockStorage::HitObjectAttributeNv,
+        Storage::HitObjectAttributeExt => BlockStorage::HitObjectAttributeExt,
         _ => return None,
     })
 }
@@ -69,6 +85,25 @@ pub(crate) const fn storage_of_block(storage: BlockStorage) -> Option<Storage> {
         BlockStorage::HitAttribute => Storage::HitAttribute,
         BlockStorage::CallableData => Storage::CallableData,
         BlockStorage::CallableDataIn => Storage::CallableDataIn,
+        BlockStorage::HitObjectAttributeNv => Storage::HitObjectAttributeNv,
+        BlockStorage::HitObjectAttributeExt => Storage::HitObjectAttributeExt,
+        _ => return None,
+    })
+}
+
+fn hit_object_location(name: &str, count: usize) -> Option<(usize, usize)> {
+    Some(match name {
+        "hitObjectExecuteShaderNV" | "hitObjectExecuteShaderEXT" => (1, 0),
+        "hitObjectTraceRayNV" | "hitObjectTraceRayEXT" => (11, 0),
+        "hitObjectTraceRayMotionNV" | "hitObjectTraceRayMotionEXT" => (12, 0),
+        "hitObjectReorderExecuteEXT"
+        | "hitObjectTraceReorderExecuteEXT"
+        | "hitObjectTraceMotionReorderExecuteEXT" => (count.checked_sub(1)?, 0),
+        "hitObjectGetAttributesNV" | "hitObjectGetAttributesEXT" => (1, 2),
+        "hitObjectRecordFromQueryEXT" => (3, 2),
+        "hitObjectRecordHitNV" | "hitObjectRecordHitWithIndexMotionNV" => (12, 2),
+        "hitObjectRecordHitMotionNV" => (13, 2),
+        "hitObjectRecordHitWithIndexNV" => (11, 2),
         _ => return None,
     })
 }
@@ -84,6 +119,7 @@ pub(crate) const fn location_set(storage: Storage) -> Option<usize> {
     match storage {
         Storage::RayPayload | Storage::RayPayloadIn => Some(0),
         Storage::CallableData | Storage::CallableDataIn => Some(1),
+        Storage::HitObjectAttributeNv | Storage::HitObjectAttributeExt => Some(2),
         _ => None,
     }
 }
@@ -140,11 +176,10 @@ impl Analyzer<'_> {
         span: Span,
         qualifier: StorageQualifier,
     ) -> Storage {
-        let Some((storage, nv)) = ray_storage(qualifier) else {
+        let Some((storage, extensions)) = ray_storage(qualifier) else {
             return Storage::None;
         };
         let keyword = qualifier.keyword();
-        let extensions: &'static [&'static str] = if nv { &[RT_NV] } else { &[RT_EXT, RAY_QUERY] };
         if self.require_extensions(span, extensions, keyword) {
             self.require_stage(span, storage_stages(storage), keyword);
         }
@@ -229,7 +264,71 @@ impl Analyzer<'_> {
     }
 
     pub(crate) fn opaque_outside_uniform(&self, ty: &Type) -> bool {
-        ty.contains_opaque(&self.types) && !self.is_ray_query(ty)
+        ty.contains_opaque(&self.types)
+            && !matches!(ty.kind, TypeKind::Opaque(opaque) if opaque.is_private_object())
+    }
+
+    fn contained_hit_object(&self, ty: &Type) -> Option<OpaqueKind> {
+        match ty.kind {
+            TypeKind::Opaque(opaque) if opaque.is_hit_object() => Some(opaque.kind),
+            TypeKind::Struct(id) => self.types.structure(id).and_then(|structure| {
+                structure
+                    .members
+                    .iter()
+                    .find_map(|member| self.contained_hit_object(&member.ty))
+            }),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn hit_object_checks(
+        &mut self,
+        span: Span,
+        name: &str,
+        qualifiers: &Qualifiers,
+        ty: &Type,
+        initialized: bool,
+    ) -> bool {
+        let Some(kind) = self.contained_hit_object(ty) else {
+            return false;
+        };
+        let keyword = if kind == OpaqueKind::HitObjectNv {
+            "hitObjectNV"
+        } else {
+            "hitObjectEXT"
+        };
+        if let TypeKind::Struct(id) = ty.kind {
+            let structure = self
+                .types
+                .structure(id)
+                .and_then(|structure| structure.name.clone())
+                .unwrap_or_default();
+            self.error(
+                span,
+                DiagnosticKind::StructContainsHitObject {
+                    structure,
+                    keyword,
+                    name: String::from(name),
+                },
+            );
+            return true;
+        }
+        if qualifiers.storage != Storage::None || qualifiers.constant {
+            self.error(
+                span,
+                DiagnosticKind::HitObjectStorage {
+                    keyword,
+                    name: String::from(name),
+                },
+            );
+        }
+        if initialized {
+            self.error(
+                span,
+                DiagnosticKind::HitObjectInitializer(String::from(name)),
+            );
+        }
+        true
     }
 
     pub(crate) fn is_ray_query(&self, ty: &Type) -> bool {
@@ -272,28 +371,46 @@ impl Analyzer<'_> {
                     .and_then(|value| u32::try_from(value).ok()),
             )
         };
-        let (index, description, missing, set) = match name {
-            "traceNV" => (10, "payload number", None, 0),
-            "traceRayEXT" => (
+        let hit_object = hit_object_location(name, operands.len());
+        let (index, description, missing, set) = match (name, hit_object) {
+            ("traceNV", _) => (10, "payload number", None, 0),
+            ("traceRayEXT", _) => (
                 10,
                 "payload number",
                 Some("no rayPayloadEXT/rayPayloadInEXT declared"),
                 0,
             ),
-            "traceRayMotionNV" => (
+            ("traceRayMotionNV", _) => (
                 11,
                 "payload number",
                 Some("no rayPayloadEXT/rayPayloadInEXT declared"),
                 0,
             ),
-            "executeCallableNV" => (1, "callable data number", None, 1),
-            "executeCallableEXT" => (
+            ("executeCallableNV", _) => (1, "callable data number", None, 1),
+            ("executeCallableEXT", _) => (
                 1,
                 "callable data number",
                 Some("no callableDataEXT/callableDataInEXT declared"),
                 1,
             ),
-            _ if name.starts_with("rayQueryGetIntersection")
+            (_, Some((index, 0))) => (
+                index,
+                "payload number",
+                Some("no rayPayloadEXT/rayPayloadInEXT declared"),
+                0,
+            ),
+            (_, Some((index, _))) => (
+                index,
+                "hitobjectattribute number",
+                Some(if name.ends_with("NV") {
+                    "no hitObjectAttributeNV declared"
+                } else {
+                    "no hitObjectAttributeEXT declared"
+                }),
+                2,
+            ),
+            _ if (name.starts_with("rayQueryGetIntersection")
+                || name.starts_with("rayQueryIs"))
                 && name != "rayQueryGetIntersectionCandidateAABBOpaqueEXT" =>
             {
                 let constant = operands
@@ -319,10 +436,14 @@ impl Analyzer<'_> {
                     span,
                     DiagnosticKind::InvalidBuiltinCall {
                         name: String::from(name),
-                        reason: if description == "payload number" {
-                            "the payload number must be a compile-time constant"
-                        } else {
-                            "the callable data number must be a compile-time constant"
+                        reason: match description {
+                            "payload number" => {
+                                "the payload number must be a compile-time constant"
+                            }
+                            "hitobjectattribute number" => {
+                                "the hit object attribute number must be a compile-time constant"
+                            }
+                            _ => "the callable data number must be a compile-time constant",
                         },
                     },
                 );

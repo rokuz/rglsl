@@ -2206,6 +2206,26 @@ impl BlockContext<'_> {
             crate::Expression::RayQueryGet { query, value } => {
                 self.write_ray_query_get(query, value, result_type_id, block)?
             }
+            crate::Expression::HitObjectGet { object, value } => {
+                self.write_hit_object_get(object, value, result_type_id, block)?
+            }
+            crate::Expression::FetchMicroTriangleVertex {
+                acceleration_structure,
+                instance_id,
+                geometry_index,
+                primitive_index,
+                barycentric,
+                value,
+            } => self.write_fetch_micro_triangle_vertex(
+                acceleration_structure,
+                instance_id,
+                geometry_index,
+                primitive_index,
+                barycentric,
+                value,
+                result_type_id,
+                block,
+            )?,
             crate::Expression::AccelerationStructureFromAddress { address } => {
                 let address_id = self.cached.get(address)?;
                 let id = self.gen_id();
@@ -4688,6 +4708,12 @@ impl BlockContext<'_> {
                 }
                 Statement::RayQuery { query, ref fun } => {
                     self.write_ray_query_function(query, fun, &mut block)?;
+                }
+                Statement::HitObject { object, ref fun } => {
+                    self.write_hit_object_function(object, fun, &mut block)?;
+                }
+                Statement::ReorderThread { kind, hint, bits } => {
+                    self.write_reorder_thread(kind, hint, bits, &mut block)?;
                 }
                 Statement::SubgroupBallot {
                     result,

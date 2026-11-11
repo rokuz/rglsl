@@ -701,7 +701,8 @@ impl FunctionInfo {
                     | As::IncomingRayPayload
                     | As::HitAttribute
                     | As::CallableData
-                    | As::IncomingCallableData => false,
+                    | As::IncomingCallableData
+                    | As::HitObjectAttribute { .. } => false,
                     As::ShaderRecord => true,
                     // stage inputs and outputs differ between invocations
                     As::Input | As::Output => false,
@@ -887,6 +888,26 @@ impl FunctionInfo {
             },
             E::RayQueryGet { query, value: _ } => Uniformity {
                 non_uniform_result: self.add_ref(query),
+                requirements: UniformityRequirements::empty(),
+            },
+            E::HitObjectGet { object, value: _ } => Uniformity {
+                non_uniform_result: self.add_ref(object),
+                requirements: UniformityRequirements::empty(),
+            },
+            E::FetchMicroTriangleVertex {
+                acceleration_structure,
+                instance_id,
+                geometry_index,
+                primitive_index,
+                barycentric,
+                value: _,
+            } => Uniformity {
+                non_uniform_result: self
+                    .add_ref(acceleration_structure)
+                    .or(self.add_ref(instance_id))
+                    .or(self.add_ref(geometry_index))
+                    .or(self.add_ref(primitive_index))
+                    .or(self.add_ref(barycentric)),
                 requirements: UniformityRequirements::empty(),
             },
             E::SubgroupBallotResult => Uniformity {
@@ -1402,6 +1423,38 @@ impl FunctionInfo {
                     },
                     exit: ExitFlags::empty(),
                 },
+                S::HitObject { object, ref fun } => {
+                    let _ = self.add_ref_impl(object, GlobalUse::READ | GlobalUse::WRITE);
+                    let written = match *fun {
+                        crate::HitObjectFunction::TraceRay(ref trace)
+                        | crate::HitObjectFunction::TraceReorderExecute { ref trace, .. } => {
+                            Some(trace.payload)
+                        }
+                        crate::HitObjectFunction::ExecuteShader { payload }
+                        | crate::HitObjectFunction::ReorderExecute { payload, .. } => Some(payload),
+                        crate::HitObjectFunction::GetAttributes { attributes } => Some(attributes),
+                        crate::HitObjectFunction::RecordHit { .. }
+                        | crate::HitObjectFunction::RecordMiss { .. }
+                        | crate::HitObjectFunction::RecordEmpty
+                        | crate::HitObjectFunction::RecordFromQuery { .. }
+                        | crate::HitObjectFunction::SetShaderBindingTableRecordIndex { .. }
+                        | crate::HitObjectFunction::ReorderThread { .. } => None,
+                    };
+                    for operand in fun.operands() {
+                        let usage = if Some(operand) == written {
+                            GlobalUse::READ | GlobalUse::WRITE
+                        } else {
+                            GlobalUse::READ
+                        };
+                        let _ = self.add_ref_impl(operand, usage);
+                    }
+                    FunctionUniformity::new()
+                }
+                S::ReorderThread { hint, bits, .. } => {
+                    let _ = self.add_ref(hint);
+                    let _ = self.add_ref(bits);
+                    FunctionUniformity::new()
+                }
                 S::RayPipelineFunction(ref fun) => {
                     let data = match *fun {
                         crate::RayPipelineFunction::TraceRay { payload, .. } => payload.pointer(),

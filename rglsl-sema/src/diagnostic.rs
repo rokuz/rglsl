@@ -244,6 +244,18 @@ pub enum DiagnosticKind {
         "ray queries can only be initialized by using the rayQueryInitializeEXT intrinsic: `{0}`"
     )]
     RayQueryInitializer(String),
+    #[error("hit objects cannot be initialized using initializers: `{0}`")]
+    HitObjectInitializer(String),
+    #[error(
+        "{keyword} can only be declared in global or function scope with no storage qualifier: `{name}`"
+    )]
+    HitObjectStorage { keyword: &'static str, name: String },
+    #[error("struct `{structure}` is not allowed to contain {keyword}: `{name}`")]
+    StructContainsHitObject {
+        structure: String,
+        keyword: &'static str,
+        name: String,
+    },
     #[error("{0}")]
     Warning(String),
 }

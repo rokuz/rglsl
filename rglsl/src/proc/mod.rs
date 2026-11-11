@@ -25,7 +25,7 @@ use thiserror::Error;
 pub use type_methods::{
     concrete_int_scalars, min_max_float_representable_by, vector_size_str, vector_sizes,
 };
-pub use typifier::{compare_types, ResolveContext, ResolveError, TypeResolution};
+pub use typifier::{compare_types, ResolveContext, ResolveError, TypeResolution, LSS_ARRAY_LENGTH};
 
 use crate::non_max_u32::NonMaxU32;
 
@@ -259,7 +259,8 @@ impl super::AddressSpace {
             | crate::AddressSpace::IncomingRayPayload
             | crate::AddressSpace::HitAttribute
             | crate::AddressSpace::CallableData
-            | crate::AddressSpace::IncomingCallableData => Sa::LOAD | Sa::STORE,
+            | crate::AddressSpace::IncomingCallableData
+            | crate::AddressSpace::HitObjectAttribute { .. } => Sa::LOAD | Sa::STORE,
             crate::AddressSpace::ShaderRecord => Sa::LOAD,
             crate::AddressSpace::Input => Sa::LOAD,
             crate::AddressSpace::Output => Sa::LOAD | Sa::STORE,
@@ -1243,6 +1244,223 @@ impl crate::RayPipelineFunction {
     }
 }
 
+impl crate::ReorderHint {
+    pub const fn operands(&self) -> [crate::Handle<crate::Expression>; 2] {
+        [self.hint, self.bits]
+    }
+
+    pub const fn operands_mut(&mut self) -> [&mut crate::Handle<crate::Expression>; 2] {
+        [&mut self.hint, &mut self.bits]
+    }
+}
+
+impl crate::HitObjectTrace {
+    pub fn operands(&self) -> alloc::vec::Vec<crate::Handle<crate::Expression>> {
+        [
+            self.acceleration_structure,
+            self.flags,
+            self.cull_mask,
+            self.sbt_offset,
+            self.sbt_stride,
+            self.miss_index,
+            self.origin,
+            self.tmin,
+            self.direction,
+            self.tmax,
+        ]
+        .into_iter()
+        .chain(self.time)
+        .chain(core::iter::once(self.payload))
+        .collect()
+    }
+
+    pub fn operands_mut(&mut self) -> alloc::vec::Vec<&mut crate::Handle<crate::Expression>> {
+        [
+            &mut self.acceleration_structure,
+            &mut self.flags,
+            &mut self.cull_mask,
+            &mut self.sbt_offset,
+            &mut self.sbt_stride,
+            &mut self.miss_index,
+            &mut self.origin,
+            &mut self.tmin,
+            &mut self.direction,
+            &mut self.tmax,
+        ]
+        .into_iter()
+        .chain(self.time.as_mut())
+        .chain(core::iter::once(&mut self.payload))
+        .collect()
+    }
+}
+
+impl crate::HitObjectSbtRecord {
+    pub fn operands(&self) -> alloc::vec::Vec<crate::Handle<crate::Expression>> {
+        match *self {
+            Self::OffsetStride { offset, stride } => alloc::vec![offset, stride],
+            Self::Index(index) => alloc::vec![index],
+        }
+    }
+
+    pub fn operands_mut(&mut self) -> alloc::vec::Vec<&mut crate::Handle<crate::Expression>> {
+        match *self {
+            Self::OffsetStride {
+                ref mut offset,
+                ref mut stride,
+            } => alloc::vec![offset, stride],
+            Self::Index(ref mut index) => alloc::vec![index],
+        }
+    }
+}
+
+impl crate::HitObjectFunction {
+    pub fn operands(&self) -> alloc::vec::Vec<crate::Handle<crate::Expression>> {
+        match *self {
+            Self::TraceRay(ref trace) => trace.operands(),
+            Self::TraceReorderExecute { ref trace, hint } => trace
+                .operands()
+                .into_iter()
+                .chain(hint.into_iter().flat_map(|hint| hint.operands()))
+                .collect(),
+            Self::RecordHit {
+                acceleration_structure,
+                instance_id,
+                primitive_id,
+                geometry_index,
+                hit_kind,
+                ref sbt_record,
+                origin,
+                tmin,
+                direction,
+                tmax,
+                time,
+                attributes,
+            } => [
+                acceleration_structure,
+                instance_id,
+                primitive_id,
+                geometry_index,
+                hit_kind,
+            ]
+            .into_iter()
+            .chain(sbt_record.operands())
+            .chain([origin, tmin, direction, tmax])
+            .chain(time)
+            .chain(core::iter::once(attributes))
+            .collect(),
+            Self::RecordMiss {
+                flags,
+                miss_index,
+                origin,
+                tmin,
+                direction,
+                tmax,
+                time,
+            } => flags
+                .into_iter()
+                .chain([miss_index, origin, tmin, direction, tmax])
+                .chain(time)
+                .collect(),
+            Self::RecordEmpty => alloc::vec::Vec::new(),
+            Self::RecordFromQuery {
+                query,
+                sbt_record_index,
+                attributes,
+                hit_kind,
+            } => [query, sbt_record_index, attributes]
+                .into_iter()
+                .chain(hit_kind)
+                .collect(),
+            Self::ExecuteShader { payload } => alloc::vec![payload],
+            Self::ReorderExecute { payload, hint } => core::iter::once(payload)
+                .chain(hint.into_iter().flat_map(|hint| hint.operands()))
+                .collect(),
+            Self::GetAttributes { attributes } => alloc::vec![attributes],
+            Self::SetShaderBindingTableRecordIndex { index } => alloc::vec![index],
+            Self::ReorderThread { hint } => {
+                hint.into_iter().flat_map(|hint| hint.operands()).collect()
+            }
+        }
+    }
+
+    pub fn operands_mut(&mut self) -> alloc::vec::Vec<&mut crate::Handle<crate::Expression>> {
+        match *self {
+            Self::TraceRay(ref mut trace) => trace.operands_mut(),
+            Self::TraceReorderExecute {
+                ref mut trace,
+                ref mut hint,
+            } => trace
+                .operands_mut()
+                .into_iter()
+                .chain(hint.iter_mut().flat_map(|hint| hint.operands_mut()))
+                .collect(),
+            Self::RecordHit {
+                ref mut acceleration_structure,
+                ref mut instance_id,
+                ref mut primitive_id,
+                ref mut geometry_index,
+                ref mut hit_kind,
+                ref mut sbt_record,
+                ref mut origin,
+                ref mut tmin,
+                ref mut direction,
+                ref mut tmax,
+                ref mut time,
+                ref mut attributes,
+            } => [
+                acceleration_structure,
+                instance_id,
+                primitive_id,
+                geometry_index,
+                hit_kind,
+            ]
+            .into_iter()
+            .chain(sbt_record.operands_mut())
+            .chain([origin, tmin, direction, tmax])
+            .chain(time.as_mut())
+            .chain(core::iter::once(attributes))
+            .collect(),
+            Self::RecordMiss {
+                ref mut flags,
+                ref mut miss_index,
+                ref mut origin,
+                ref mut tmin,
+                ref mut direction,
+                ref mut tmax,
+                ref mut time,
+            } => flags
+                .as_mut()
+                .into_iter()
+                .chain([miss_index, origin, tmin, direction, tmax])
+                .chain(time.as_mut())
+                .collect(),
+            Self::RecordEmpty => alloc::vec::Vec::new(),
+            Self::RecordFromQuery {
+                ref mut query,
+                ref mut sbt_record_index,
+                ref mut attributes,
+                ref mut hit_kind,
+            } => [query, sbt_record_index, attributes]
+                .into_iter()
+                .chain(hit_kind.as_mut())
+                .collect(),
+            Self::ExecuteShader { ref mut payload } => alloc::vec![payload],
+            Self::ReorderExecute {
+                ref mut payload,
+                ref mut hint,
+            } => core::iter::once(payload)
+                .chain(hint.iter_mut().flat_map(|hint| hint.operands_mut()))
+                .collect(),
+            Self::GetAttributes { ref mut attributes } => alloc::vec![attributes],
+            Self::SetShaderBindingTableRecordIndex { ref mut index } => alloc::vec![index],
+            Self::ReorderThread { ref mut hint } => hint
+                .iter_mut()
+                .flat_map(|hint| hint.operands_mut())
+                .collect(),
+        }
+    }
+}
+
 impl crate::RayQueryFunction {
     pub fn operands(&self) -> alloc::vec::Vec<crate::Handle<crate::Expression>> {
         match *self {
@@ -1306,13 +1524,13 @@ impl crate::RayQueryFunction {
     }
 }
 
-pub fn contains_ray_query(
+pub fn contains_ray_object(
     types: &crate::UniqueArena<crate::Type>,
     ty: crate::Handle<crate::Type>,
 ) -> bool {
     match types[ty].inner {
-        crate::TypeInner::RayQuery { .. } => true,
-        crate::TypeInner::Array { base, .. } => contains_ray_query(types, base),
+        crate::TypeInner::RayQuery { .. } | crate::TypeInner::HitObject { .. } => true,
+        crate::TypeInner::Array { base, .. } => contains_ray_object(types, base),
         _ => false,
     }
 }

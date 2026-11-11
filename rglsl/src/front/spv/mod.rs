@@ -1656,6 +1656,8 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                 | S::SubgroupGather { .. }
                 | S::SubgroupFunction { .. }
                 | S::RayPipelineFunction(..)
+                | S::HitObject { .. }
+                | S::ReorderThread { .. }
                 | S::MeshFunction(..)
                 | S::DebugPrintf { .. }
                 | S::Abort { .. }

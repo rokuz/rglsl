@@ -311,7 +311,7 @@ impl<'a> Lowerer<'a> {
             let ray_query = parameter
                 .ty
                 .as_opaque()
-                .is_some_and(rglsl_sema::types::Opaque::is_ray_query);
+                .is_some_and(rglsl_sema::types::Opaque::is_private_object);
             let local = if ray_query {
                 ty = self.insert_type(TypeInner::Pointer {
                     base: ty,
