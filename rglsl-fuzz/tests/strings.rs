@@ -1,6 +1,4 @@
 #![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
     clippy::panic,
     clippy::unreachable,
     reason = "test support code fails by panicking"
@@ -8,6 +6,8 @@
 
 use rglsl_fuzz::{analyze_shader, generate_family, parse_shader, FamilyOptions, Random, ShaderJob};
 use rglsl_sema::Stage;
+
+type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 const JSON: &str = r#"{
     "injectionSwitch": { "func": "glUniform2f", "args": [0.0, 1.0] },
@@ -32,28 +32,27 @@ void main() {
 }
 "#;
 
-fn assert_valid(name: &str, text: &str) {
-    let unit = parse_shader(text).unwrap_or_else(|error| panic!("{name}: {error}"));
+fn assert_valid(name: &str, text: &str) -> TestResult {
+    let unit = parse_shader(text).map_err(|error| format!("{name}: {error}"))?;
     let analysis = analyze_shader(&unit, Stage::Fragment, false, None);
     assert!(
         analysis.diagnostics.is_empty(),
         "{name}: {:?}\n{text}",
         analysis.diagnostics
     );
+    Ok(())
 }
 
 #[test]
-fn variants_keep_debug_printf_formats_literal() {
-    let job = ShaderJob::parse(JSON, &[(String::from("frag"), String::from(SHADER))])
-        .expect("a valid job");
+fn variants_keep_debug_printf_formats_literal() -> TestResult {
+    let job = ShaderJob::parse(JSON, &[(String::from("frag"), String::from(SHADER))])?;
     let mut options = FamilyOptions {
         variants: 4,
         ..FamilyOptions::default()
     };
     options.generator.max_uniforms = 4;
     for seed in 0..4 {
-        let family =
-            generate_family(&job, &options, &mut Random::new(seed)).expect("a shader family");
+        let family = generate_family(&job, &options, &mut Random::new(seed))?;
         assert_eq!(family.variants.len(), 4, "{:?}", family.failures);
         for (number, variant) in family.variants.iter().enumerate() {
             let text = &variant.emit().shaders[0].1;
@@ -62,7 +61,8 @@ fn variants_keep_debug_printf_formats_literal() {
                 "{text}"
             );
             assert!(text.contains(r#"debugPrintfEXT("%s %d", "word""#), "{text}");
-            assert_valid(&format!("seed {seed} variant {number}"), text);
+            assert_valid(&format!("seed {seed} variant {number}"), text)?;
         }
     }
+    Ok(())
 }

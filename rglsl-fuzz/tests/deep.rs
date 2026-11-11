@@ -1,9 +1,4 @@
-#![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::panic,
-    reason = "tests fail by panicking"
-)]
+#![allow(clippy::panic, reason = "tests fail by panicking")]
 
 use std::collections::BTreeMap;
 
@@ -19,17 +14,21 @@ use rglsl_fuzz::rewrite::{
 use rglsl_fuzz::scope::find_points;
 use rglsl_sema::{analyze, Options, Stage};
 
+type TestResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
+
 const SMALL_STACK: usize = 256 << 10;
 const SEMA_STACK: usize = 1 << 30;
 const DEPTH: usize = 10_000;
 
-fn on_stack<T: Send + 'static>(size: usize, run: impl FnOnce() -> T + Send + 'static) -> T {
+fn on_stack<T: Send + 'static>(
+    size: usize,
+    run: impl FnOnce() -> T + Send + 'static,
+) -> TestResult<T> {
     std::thread::Builder::new()
         .stack_size(size)
-        .spawn(run)
-        .unwrap()
+        .spawn(run)?
         .join()
-        .unwrap()
+        .map_err(|_| "the thread on the given stack panicked".into())
 }
 
 fn shader() -> String {
@@ -58,21 +57,20 @@ fn shader() -> String {
     )
 }
 
-fn parse(source: &str) -> TranslationUnit {
-    parse_with(
+fn parse(source: &str) -> TestResult<TranslationUnit> {
+    Ok(parse_with(
         source,
         &ParseOptions {
             nesting_limit: None,
         },
-    )
-    .unwrap()
+    )?)
 }
 
 #[test]
-fn walkers_handle_deep_nesting_on_a_small_stack() {
+fn walkers_handle_deep_nesting_on_a_small_stack() -> TestResult {
     let source = shader();
-    on_stack(SMALL_STACK, move || {
-        let mut unit = parse(&source);
+    on_stack(SMALL_STACK, move || -> TestResult {
+        let mut unit = parse(&source)?;
         let statements = function_statements(&unit).len();
         assert!(statements > DEPTH);
         assert!(node_count(&unit) > 2 * DEPTH);
@@ -108,17 +106,18 @@ fn walkers_handle_deep_nesting_on_a_small_stack() {
         apply_edits(&mut unit, Vec::new(), &mut builder);
         assert!(function_statements(&unit).len() > statements);
         drop(unit);
-    });
+        Ok(())
+    })?
 }
 
 #[test]
-fn scope_walks_handle_deep_nesting_on_a_small_stack() {
+fn scope_walks_handle_deep_nesting_on_a_small_stack() -> TestResult {
     let source = shader();
-    let (unit, analysis) = on_stack(SEMA_STACK, move || {
-        let unit = parse(&source);
+    let (unit, analysis) = on_stack(SEMA_STACK, move || -> TestResult<_> {
+        let unit = parse(&source)?;
         let analysis = analyze(&unit, &Options::new(Stage::Fragment));
-        (unit, analysis)
-    });
+        Ok((unit, analysis))
+    })??;
     on_stack(SMALL_STACK, move || {
         assert!(find_points(&unit, &analysis).len() > DEPTH);
         let points = injection_points(&unit, &analysis);
@@ -131,5 +130,5 @@ fn scope_walks_handle_deep_nesting_on_a_small_stack() {
         drop(points);
         drop(unit);
         drop(analysis);
-    });
+    })
 }

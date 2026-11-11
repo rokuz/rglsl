@@ -1,6 +1,4 @@
 #![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
     clippy::panic,
     clippy::unreachable,
     reason = "test support code fails by panicking"
@@ -21,6 +19,7 @@ use rglsl_fuzz::{analyze_shader, parse_shader, Random};
 use rglsl_sema::{Builtins, ResourceLimits, Stage};
 
 use support::eval::{Evaluator, Value};
+use support::TestResult;
 
 struct Setup {
     builtins: Arc<Builtins>,
@@ -117,7 +116,7 @@ fn check_in_shader(
     expression: &Expression,
     variable: Option<(BasicType, &Value)>,
     global_constant: bool,
-) -> Checked {
+) -> TestResult<Checked> {
     let declaration = variable
         .map(|(ty, value)| format!("    {ty} v = {};\n", literal_text(value, ty)))
         .unwrap_or_default();
@@ -130,7 +129,7 @@ fn check_in_shader(
             "#version 450\nlayout(set = 0, binding = 0) uniform buf0 {{ vec2 injectionSwitch; }};\nlayout(location = 0) out vec4 _GLF_color;\nvoid main() {{\n{declaration}    {expression};\n}}\n"
         )
     };
-    let unit = parse_shader(&source).unwrap_or_else(|error| panic!("{error}\n{source}"));
+    let unit = parse_shader(&source).map_err(|error| format!("{error}\n{source}"))?;
     let analysis = analyze_shader(&unit, Stage::Fragment, false, None);
     assert!(
         analysis.diagnostics.is_empty(),
@@ -144,29 +143,35 @@ fn check_in_shader(
             ExternalDeclaration::FunctionDefinition(definition) => Some(definition),
             _ => None,
         })
-        .expect("main");
-    let last = main.body.statements.last().expect("a statement");
+        .ok_or("no main")?;
+    let last = main
+        .body
+        .statements
+        .last()
+        .ok_or("main has no statements")?;
     let StatementKind::Expression(Some(probe)) = &last.kind else {
         panic!("not an expression statement");
     };
-    let info = analysis.expression(probe.id).expect("a typed expression");
-    Checked {
-        ty: basic::from_sema(&info.ty).expect("a basic type"),
+    let info = analysis
+        .expression(probe.id)
+        .ok_or("the probe has no type")?;
+    Ok(Checked {
+        ty: basic::from_sema(&info.ty).ok_or("the probe type is not a basic type")?,
         constant: info.is_constant,
-    }
+    })
 }
 
-fn evaluate(expression: &Expression, variable: Option<&Value>) -> (Value, usize) {
+fn evaluate(expression: &Expression, variable: Option<&Value>) -> TestResult<(Value, usize)> {
     let mut evaluator = Evaluator::with_injection_switch();
     if let Some(value) = variable {
         evaluator.variables.insert(String::from("v"), value.clone());
     }
-    let value = evaluator.eval(expression);
-    (value, evaluator.checked_identities)
+    let value = evaluator.eval(expression)?;
+    Ok((value, evaluator.checked_identities))
 }
 
 #[test]
-fn random_numbers_are_fixed_for_a_seed() {
+fn random_numbers_are_fixed_for_a_seed() -> TestResult {
     let mut random = Random::new(42);
     let first: Vec<u64> = (0..4).map(|_| random.next_u64()).collect();
     let mut again = Random::new(42);
@@ -192,10 +197,11 @@ fn random_numbers_are_fixed_for_a_seed() {
     let mut child_again = parent_again.spawn_child();
     assert_eq!(child.next_u64(), child_again.next_u64());
     assert_eq!(Random::new(0).next_int(1), 0);
+    Ok(())
 }
 
 #[test]
-fn opaque_zeros_and_ones_have_the_requested_type_and_value() {
+fn opaque_zeros_and_ones_have_the_requested_type_and_value() -> TestResult {
     let setup = Setup::new();
     let mut identities = 0;
     for ty in numeric_types() {
@@ -207,9 +213,9 @@ fn opaque_zeros_and_ones_have_the_requested_type_and_value() {
                 let expression = setup.generate(seed, &[], false, |generator| {
                     generator.make_opaque_zero_or_one(zero, ty, false, 0)
                 });
-                let checked = check_in_shader(&expression, None, false);
+                let checked = check_in_shader(&expression, None, false)?;
                 assert_eq!(checked.ty, ty, "{expression}");
-                let (value, checked_identities) = evaluate(&expression, None);
+                let (value, checked_identities) = evaluate(&expression, None)?;
                 identities += checked_identities;
                 let expected = if zero { 0.0 } else { 1.0 };
                 assert!(
@@ -220,18 +226,19 @@ fn opaque_zeros_and_ones_have_the_requested_type_and_value() {
         }
     }
     assert!(identities > 100, "{identities}");
+    Ok(())
 }
 
 #[test]
-fn opaque_identity_matrices_are_identities() {
+fn opaque_identity_matrices_are_identities() -> TestResult {
     let setup = Setup::new();
     for ty in basic::all_square_matrix_types() {
         for seed in 0..12 {
             let expression = setup.generate(seed, &[], false, |generator| {
                 generator.make_opaque_identity_matrix(ty, false, 0)
             });
-            assert_eq!(check_in_shader(&expression, None, false).ty, ty);
-            let (value, _) = evaluate(&expression, None);
+            assert_eq!(check_in_shader(&expression, None, false)?.ty, ty);
+            let (value, _) = evaluate(&expression, None)?;
             let size = basic::columns(ty) as usize;
             for column in 0..size {
                 for row in 0..size {
@@ -241,10 +248,11 @@ fn opaque_identity_matrices_are_identities() {
             }
         }
     }
+    Ok(())
 }
 
 #[test]
-fn opaque_booleans_have_the_requested_type_and_value() {
+fn opaque_booleans_have_the_requested_type_and_value() -> TestResult {
     let setup = Setup::new();
     for ty in basic::all_vectors_of(ScalarType::Bool) {
         for seed in 0..16 {
@@ -252,17 +260,18 @@ fn opaque_booleans_have_the_requested_type_and_value() {
                 let expression = setup.generate(seed, &[], false, |generator| {
                     generator.make_opaque_boolean(value, ty, false, 0)
                 });
-                assert_eq!(check_in_shader(&expression, None, false).ty, ty);
-                let (result, _) = evaluate(&expression, None);
+                assert_eq!(check_in_shader(&expression, None, false)?.ty, ty);
+                let (result, _) = evaluate(&expression, None)?;
                 let expected = f64::from(u8::from(value));
                 assert!(result.data.iter().all(|x| *x == expected), "{expression}");
             }
         }
     }
+    Ok(())
 }
 
 #[test]
-fn opaque_values_in_constant_contexts_are_constant() {
+fn opaque_values_in_constant_contexts_are_constant() -> TestResult {
     let setup = Setup::new();
     for ty in [basic::FLOAT, basic::INT, basic::UINT, basic::VEC2, BOOL] {
         for seed in 0..12 {
@@ -276,17 +285,18 @@ fn opaque_values_in_constant_contexts_are_constant() {
             let text = expression.to_string();
             assert!(!text.contains("injectionSwitch"), "{text}");
             assert!(!text.contains("gl_FragCoord"), "{text}");
-            let checked = check_in_shader(&expression, None, true);
+            let checked = check_in_shader(&expression, None, true)?;
             assert_eq!(checked.ty, ty);
             assert!(checked.constant, "{text}");
-            let (value, _) = evaluate(&expression, None);
+            let (value, _) = evaluate(&expression, None)?;
             assert!(value.data.iter().all(|x| (x - 1.0).abs() < 1e-4), "{text}");
         }
     }
+    Ok(())
 }
 
 #[test]
-fn every_identity_preserves_type_and_value() {
+fn every_identity_preserves_type_and_value() -> TestResult {
     let setup = Setup::new();
     let mut applied = BTreeSet::new();
     let mut all_types = basic::all_basic_types();
@@ -303,9 +313,9 @@ fn every_identity_preserves_type_and_value() {
                     let variable = generator.builder.variable("v");
                     generator.apply(identity, variable, *ty, false, 1)
                 });
-                let checked = check_in_shader(&expression, Some((*ty, &value)), false);
+                let checked = check_in_shader(&expression, Some((*ty, &value)), false)?;
                 assert_eq!(checked.ty, *ty, "{identity:?}: {expression}");
-                let (result, _) = evaluate(&expression, Some(&value));
+                let (result, _) = evaluate(&expression, Some(&value))?;
                 assert!(
                     result.approx_eq(&value),
                     "{identity:?} on {ty}: {result:?} from {expression}"
@@ -315,4 +325,5 @@ fn every_identity_preserves_type_and_value() {
         }
     }
     assert_eq!(applied.len(), Identity::ALL.len());
+    Ok(())
 }
