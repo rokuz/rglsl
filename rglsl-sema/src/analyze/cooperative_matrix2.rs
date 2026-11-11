@@ -212,10 +212,7 @@ impl Analyzer<'_> {
                 })
             }
             _ => {
-                let operands: Vec<Operand> = arguments
-                    .iter()
-                    .map(|argument| self.expression(argument))
-                    .collect();
+                let operands = self.operands(arguments);
                 let Some(base) = operands.first() else {
                     self.error(span, DiagnosticKind::NoMatchingFunction(String::from(name)));
                     return Operand::error();

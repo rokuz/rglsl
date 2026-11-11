@@ -162,6 +162,8 @@ pub enum DiagnosticKind {
     },
     #[error("an array size must be greater than zero")]
     ArraySizeNotPositive,
+    #[error("the type is nested too deeply")]
+    TypeTooDeep,
     #[error("an array size is required here")]
     UnsizedArrayNotAllowed,
     #[error("opaque type `{0}` can only be used for uniforms and `in` parameters")]

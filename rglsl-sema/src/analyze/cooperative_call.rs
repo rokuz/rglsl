@@ -91,10 +91,18 @@ impl Analyzer<'_> {
         name: &str,
         arguments: &[Expression],
     ) -> Operand {
-        let operands: Vec<Operand> = arguments
-            .iter()
-            .map(|argument| self.expression(argument))
-            .collect();
+        let operands = self.operands(arguments);
+        self.cooperative_call_with(expression, span, name, arguments, operands)
+    }
+
+    fn cooperative_call_with(
+        &mut self,
+        expression: &Expression,
+        span: Span,
+        name: &str,
+        arguments: &[Expression],
+        operands: Vec<Operand>,
+    ) -> Operand {
         if operands.iter().any(|operand| operand.ty.is_error()) {
             return Operand::error();
         }

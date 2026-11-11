@@ -46,6 +46,14 @@ fn atom_name(token: &Token) -> String {
     }
 }
 
+#[derive(Debug)]
+struct FoundMacro {
+    name: Rc<str>,
+    params: Rc<[Rc<str>]>,
+    body: Rc<[Token]>,
+    function_like: bool,
+}
+
 impl Preprocessor<'_> {
     pub(crate) fn scan_macro(&mut self, index: usize, current: At) -> Scanned {
         let Some(Input::Macro(input)) = self.inputs.get_mut(index) else {
@@ -241,6 +249,16 @@ impl Preprocessor<'_> {
         if token.fully_expanded {
             return Expand::NotStarted;
         }
+        if let Some(expand) = self.builtin_macro(token) {
+            return expand;
+        }
+        match self.lookup_macro(token, expand_undef) {
+            Ok(found) => self.start_macro(token.at, found, newline_ok),
+            Err(expand) => expand,
+        }
+    }
+
+    fn builtin_macro(&mut self, token: &Token) -> Option<Expand> {
         match &*token.text {
             "__LINE__" => {
                 let line = if token.value == 0 {
@@ -249,7 +267,7 @@ impl Preprocessor<'_> {
                     token.value
                 };
                 self.unget_number(token, &format!("{line}"), line);
-                return Expand::Started;
+                Some(Expand::Started)
             }
             "__FILE__" => {
                 let current = self.current_at();
@@ -271,58 +289,68 @@ impl Preprocessor<'_> {
                     None => format!("{}", self.source_number(token.at.source)),
                 };
                 self.unget_number(token, &text, number);
-                return Expand::Started;
+                Some(Expand::Started)
             }
             "__VERSION__" => {
                 let number = self.version.number;
                 self.unget_number(token, &format!("{number}"), i64::from(number));
-                return Expand::Started;
+                Some(Expand::Started)
             }
-            _ => {}
+            _ => None,
         }
+    }
+
+    fn lookup_macro(
+        &mut self,
+        token: &mut Token,
+        expand_undef: bool,
+    ) -> Result<FoundMacro, Expand> {
         let name: Rc<str> = token.text.clone();
         let definition = match self.macros.get_mut(&*name) {
             Some(definition) if definition.busy => {
                 token.fully_expanded = true;
-                return Expand::NotStarted;
+                return Err(Expand::NotStarted);
             }
             Some(definition) if !definition.undef => definition,
             _ => {
                 if !expand_undef {
-                    return Expand::NotStarted;
+                    return Err(Expand::NotStarted);
                 }
                 self.inputs.push(Input::Zero(false));
-                return Expand::Undef;
+                return Err(Expand::Undef);
             }
         };
         let params = definition.params.clone();
         let body = definition.body.clone();
         let function_like = definition.function_like;
-        let at = token.at;
+        Ok(FoundMacro {
+            name,
+            params,
+            body,
+            function_like,
+        })
+    }
+
+    fn start_macro(&mut self, at: At, found: FoundMacro, newline_ok: bool) -> Expand {
+        let FoundMacro {
+            name,
+            params,
+            body,
+            function_like,
+        } = found;
         let mut args: Vec<Rc<[Token]>> = Vec::new();
         let mut expanded: Vec<Option<Rc<[Token]>>> = Vec::new();
         if function_like {
-            let mut paren = self.scan();
-            if newline_ok {
-                while paren.kind == Kind::Newline {
-                    paren = self.scan();
-                }
+            match self.macro_arguments(&name, params.len(), at, newline_ok) {
+                Ok(collected) => args = collected,
+                Err(expand) => return expand,
             }
-            if !paren.kind.is_op("(") {
-                self.inputs.push(Input::Ungot(Some(paren)));
-                return Expand::NotStarted;
-            }
-            let collected = match self.collect_arguments(&name, params.len(), at, newline_ok) {
-                Some(collected) => collected,
-                None => return Expand::Error,
-            };
-            args = collected.into_iter().map(Rc::from).collect();
             for arg in &args {
                 expanded.push(self.prescan(arg.clone(), newline_ok));
             }
         }
-        self.inputs.push(Input::Macro(MacroInput {
-            name: name.clone(),
+        self.push_macro(MacroInput {
+            name,
             body,
             pos: 0,
             params,
@@ -331,11 +359,39 @@ impl Preprocessor<'_> {
             prepaste: false,
             postpaste: false,
             origin: (at.file, at.offset),
-        }));
+        });
+        Expand::Started
+    }
+
+    fn macro_arguments(
+        &mut self,
+        name: &str,
+        count: usize,
+        at: At,
+        newline_ok: bool,
+    ) -> Result<Vec<Rc<[Token]>>, Expand> {
+        let mut paren = self.scan();
+        if newline_ok {
+            while paren.kind == Kind::Newline {
+                paren = self.scan();
+            }
+        }
+        if !paren.kind.is_op("(") {
+            self.inputs.push(Input::Ungot(Some(paren)));
+            return Err(Expand::NotStarted);
+        }
+        match self.collect_arguments(name, count, at, newline_ok) {
+            Some(collected) => Ok(collected.into_iter().map(Rc::from).collect()),
+            None => Err(Expand::Error),
+        }
+    }
+
+    fn push_macro(&mut self, input: MacroInput) {
+        let name = input.name.clone();
+        self.inputs.push(Input::Macro(input));
         if let Some(definition) = self.macros.get_mut(&*name) {
             definition.busy = true;
         }
-        Expand::Started
     }
 
     fn collect_arguments(

@@ -287,7 +287,12 @@ impl Analyzer<'_> {
 
     pub(crate) fn expression(&mut self, expression: &Expression) -> Operand {
         let uses = self.specialization_uses;
-        let mut operand = self.expression_kind(expression);
+        let operand = self.expression_kind(expression);
+        self.recorded(expression, uses, operand)
+    }
+
+    fn recorded(&mut self, expression: &Expression, uses: u32, operand: Operand) -> Operand {
+        let mut operand = operand;
         let direct = matches!(
             expression.kind,
             ExpressionKind::Variable(_) | ExpressionKind::Parenthesized(_)
@@ -316,15 +321,7 @@ impl Analyzer<'_> {
         let span = expression.span;
         match &expression.kind {
             ExpressionKind::Variable(name) => self.variable(expression, name),
-            ExpressionKind::Number(number) => {
-                if let Some((feature, what)) = literal_feature(number.kind) {
-                    self.require_feature(span, feature, what);
-                }
-                literal(number).unwrap_or_else(|| {
-                    self.error(span, DiagnosticKind::LiteralTooBig(number.text.clone()));
-                    Operand::error()
-                })
-            }
+            ExpressionKind::Number(number) => self.number(span, number),
             ExpressionKind::Bool(value) => {
                 Operand::constant(Type::BOOL, Some(Constant::single(Value::Bool(*value))))
             }
@@ -333,13 +330,7 @@ impl Analyzer<'_> {
             ExpressionKind::Subscript { base, index } => self.subscript(base, index),
             ExpressionKind::FunctionCall(call) => self.call(expression, call),
             ExpressionKind::FieldSelection { base, field } => self.field(base, field),
-            ExpressionKind::Postfix { operand, operator } => {
-                let symbol = match operator {
-                    PostfixOperator::Increment => "++",
-                    PostfixOperator::Decrement => "--",
-                };
-                self.increment(Span::new(operand.span.end, span.end), operand, symbol)
-            }
+            ExpressionKind::Postfix { operand, operator } => self.postfix(span, operand, *operator),
             ExpressionKind::Unary { operator, operand } => self.unary(span, *operator, operand),
             ExpressionKind::Binary {
                 operator,
@@ -356,14 +347,34 @@ impl Analyzer<'_> {
                 target,
                 value,
             } => self.assignment(*operator, target, value),
-            ExpressionKind::Sequence(expressions) => {
-                let mut last = Operand::error();
-                for expression in expressions {
-                    last = self.expression(expression);
-                }
-                Operand::temporary(last.ty)
-            }
+            ExpressionKind::Sequence(expressions) => self.sequence(expressions),
         }
+    }
+
+    fn number(&mut self, span: Span, number: &rglsl_ast::ast::NumericLiteral) -> Operand {
+        if let Some((feature, what)) = literal_feature(number.kind) {
+            self.require_feature(span, feature, what);
+        }
+        literal(number).unwrap_or_else(|| {
+            self.error(span, DiagnosticKind::LiteralTooBig(number.text.clone()));
+            Operand::error()
+        })
+    }
+
+    fn postfix(&mut self, span: Span, operand: &Expression, operator: PostfixOperator) -> Operand {
+        let symbol = match operator {
+            PostfixOperator::Increment => "++",
+            PostfixOperator::Decrement => "--",
+        };
+        self.increment(Span::new(operand.span.end, span.end), operand, symbol)
+    }
+
+    fn sequence(&mut self, expressions: &[Expression]) -> Operand {
+        let mut last = Operand::error();
+        for expression in expressions {
+            last = self.expression(expression);
+        }
+        Operand::temporary(last.ty)
     }
 
     fn variable_place(&self, id: SymbolId) -> (Place, Storage) {
@@ -687,6 +698,17 @@ impl Analyzer<'_> {
         let span = Span::new(base.span.end, index.span.start);
         let base_operand = self.expression(base);
         let index_operand = self.value_expression(index);
+        self.subscript_checked(base, index, span, base_operand, index_operand)
+    }
+
+    fn subscript_checked(
+        &mut self,
+        base: &Expression,
+        index: &Expression,
+        span: Span,
+        base_operand: Operand,
+        index_operand: Operand,
+    ) -> Operand {
         if base_operand.ty.is_error() {
             return Operand::error();
         }
@@ -864,6 +886,10 @@ impl Analyzer<'_> {
 
     fn field(&mut self, base: &Expression, field: &Identifier) -> Operand {
         let base_operand = self.expression(base);
+        self.field_checked(field, base_operand)
+    }
+
+    fn field_checked(&mut self, field: &Identifier, base_operand: Operand) -> Operand {
         if base_operand.ty.is_error() {
             return Operand::error();
         }
@@ -999,6 +1025,16 @@ impl Analyzer<'_> {
 
     fn increment(&mut self, span: Span, operand: &Expression, symbol: &'static str) -> Operand {
         let value = self.expression(operand);
+        self.increment_checked(span, operand, symbol, value)
+    }
+
+    fn increment_checked(
+        &mut self,
+        span: Span,
+        operand: &Expression,
+        symbol: &'static str,
+        value: Operand,
+    ) -> Operand {
         if value.ty.is_error() {
             return Operand::error();
         }
@@ -1030,6 +1066,10 @@ impl Analyzer<'_> {
             return self.increment(span, operand, operator.symbol());
         }
         let value = self.value_expression(operand);
+        self.unary_checked(span, operator, value)
+    }
+
+    fn unary_checked(&mut self, span: Span, operator: UnaryOperator, value: Operand) -> Operand {
         if value.ty.is_error() || !self.readable(span, &value) {
             return Operand::error();
         }
@@ -1115,6 +1155,18 @@ impl Analyzer<'_> {
         let span = Span::new(left.span.end, right.span.start);
         let left_operand = self.value_expression(left);
         let right_operand = self.value_expression(right);
+        self.binary_checked(operator, left, right, span, left_operand, right_operand)
+    }
+
+    fn binary_checked(
+        &mut self,
+        operator: BinaryOperator,
+        left: &Expression,
+        right: &Expression,
+        span: Span,
+        left_operand: Operand,
+        right_operand: Operand,
+    ) -> Operand {
         if left_operand.ty.is_error() || right_operand.ty.is_error() {
             return Operand::error();
         }
@@ -1201,6 +1253,25 @@ impl Analyzer<'_> {
         let condition_operand = self.value_expression(condition);
         let then_operand = self.expression(then_expression);
         let else_operand = self.expression(else_expression);
+        self.conditional_checked(
+            then_expression,
+            else_expression,
+            span,
+            condition_operand,
+            then_operand,
+            else_operand,
+        )
+    }
+
+    fn conditional_checked(
+        &mut self,
+        then_expression: &Expression,
+        else_expression: &Expression,
+        span: Span,
+        condition_operand: Operand,
+        then_operand: Operand,
+        else_operand: Operand,
+    ) -> Operand {
         if !condition_operand.ty.is_error() && !condition_operand.ty.is_bool() {
             self.error(
                 span,
@@ -1271,6 +1342,18 @@ impl Analyzer<'_> {
         let span = Span::new(target.span.end, value.span.start);
         let target_operand = self.expression(target);
         let value_operand = self.value_expression(value);
+        self.assignment_checked(operator, target, value, span, target_operand, value_operand)
+    }
+
+    fn assignment_checked(
+        &mut self,
+        operator: AssignmentOperator,
+        target: &Expression,
+        value: &Expression,
+        span: Span,
+        target_operand: Operand,
+        value_operand: Operand,
+    ) -> Operand {
         if target_operand.ty.is_error() {
             return Operand::error();
         }

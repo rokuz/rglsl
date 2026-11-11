@@ -77,57 +77,63 @@ impl FunctionLowerer<'_, '_> {
             StatementKind::Attributed {
                 ref attributes,
                 ref statement,
-            } => match statement.kind {
-                StatementKind::While { .. }
-                | StatementKind::DoWhile { .. }
-                | StatementKind::For(_) => {
-                    let control = self.loop_control(attributes);
-                    self.iteration(statement, control)
-                }
-                StatementKind::Selection {
-                    ref condition,
-                    ref then_branch,
-                    ref else_branch,
-                } => self.selection(
-                    condition,
-                    then_branch,
-                    else_branch.as_deref(),
-                    selection_control(attributes),
-                    self.at(statement.span),
-                ),
-                StatementKind::Switch {
-                    ref selector,
-                    ref statements,
-                } => self.switch(
-                    selector,
-                    statements,
-                    selection_control(attributes),
-                    self.at(statement.span),
-                ),
-                _ => self.statement(statement),
-            },
-            StatementKind::Jump(ref jump) => {
-                let statement =
-                    match *jump {
-                        JumpStatement::Break => IrStatement::Break,
-                        JumpStatement::Continue => IrStatement::Continue,
-                        JumpStatement::Discard => IrStatement::Kill,
-                        JumpStatement::Demote => IrStatement::Demote,
-                        JumpStatement::TerminateRay => IrStatement::RayPipelineFunction(
-                            crate::RayPipelineFunction::TerminateRay { nv: false },
-                        ),
-                        JumpStatement::IgnoreIntersection => IrStatement::RayPipelineFunction(
-                            crate::RayPipelineFunction::IgnoreIntersection { nv: false },
-                        ),
-                        JumpStatement::Return(None) => IrStatement::Return { value: None },
-                        JumpStatement::Return(Some(ref value)) => IrStatement::Return {
-                            value: Some(self.rvalue(value)?),
-                        },
-                    };
-                self.push(statement, at);
-                Ok(())
-            }
+            } => self.attributed(attributes, statement),
+            StatementKind::Jump(ref jump) => self.jump(jump, at),
         }
+    }
+
+    fn attributed(&mut self, attributes: &[Attribute], statement: &Statement) -> Result<()> {
+        match statement.kind {
+            StatementKind::While { .. } | StatementKind::DoWhile { .. } | StatementKind::For(_) => {
+                let control = self.loop_control(attributes);
+                self.iteration(statement, control)
+            }
+            StatementKind::Selection {
+                ref condition,
+                ref then_branch,
+                ref else_branch,
+            } => self.selection(
+                condition,
+                then_branch,
+                else_branch.as_deref(),
+                selection_control(attributes),
+                self.at(statement.span),
+            ),
+            StatementKind::Switch {
+                ref selector,
+                ref statements,
+            } => self.switch(
+                selector,
+                statements,
+                selection_control(attributes),
+                self.at(statement.span),
+            ),
+            _ => self.statement(statement),
+        }
+    }
+
+    fn jump(&mut self, jump: &JumpStatement, at: crate::Span) -> Result<()> {
+        let statement =
+            match *jump {
+                JumpStatement::Break => IrStatement::Break,
+                JumpStatement::Continue => IrStatement::Continue,
+                JumpStatement::Discard => IrStatement::Kill,
+                JumpStatement::Demote => IrStatement::Demote,
+                JumpStatement::TerminateRay => {
+                    IrStatement::RayPipelineFunction(crate::RayPipelineFunction::TerminateRay {
+                        nv: false,
+                    })
+                }
+                JumpStatement::IgnoreIntersection => IrStatement::RayPipelineFunction(
+                    crate::RayPipelineFunction::IgnoreIntersection { nv: false },
+                ),
+                JumpStatement::Return(None) => IrStatement::Return { value: None },
+                JumpStatement::Return(Some(ref value)) => IrStatement::Return {
+                    value: Some(self.rvalue(value)?),
+                },
+            };
+        self.push(statement, at);
+        Ok(())
     }
 
     fn selection(
@@ -222,54 +228,70 @@ impl FunctionLowerer<'_, '_> {
             StatementKind::While {
                 ref condition,
                 ref body,
-            } => {
-                let body = self.nested(|this| {
-                    let condition = this.condition(condition)?;
-                    this.break_unless(condition, at)?;
-                    this.statement(body)
-                })?;
-                self.push(
-                    IrStatement::Loop {
-                        body,
-                        continuing: Block::new(),
-                        break_if: None,
-                        control,
-                    },
-                    at,
-                );
-                Ok(())
-            }
+            } => self.while_loop(condition, body, control, at),
             StatementKind::DoWhile {
                 ref body,
                 ref condition,
-            } => {
-                let body = self.nested(|this| this.statement(body))?;
-                let mut break_if = None;
-                let continuing = self.nested(|this| {
-                    let value = this.rvalue(condition)?;
-                    break_if = Some(this.add(
-                        Expression::Unary {
-                            op: UnaryOperator::LogicalNot,
-                            expr: value,
-                        },
-                        at,
-                    )?);
-                    Ok(())
-                })?;
-                self.push(
-                    IrStatement::Loop {
-                        body,
-                        continuing,
-                        break_if,
-                        control,
-                    },
-                    at,
-                );
-                Ok(())
-            }
+            } => self.do_while_loop(body, condition, control, at),
             StatementKind::For(ref for_statement) => self.for_loop(for_statement, control, at),
             _ => Err(internal(at)),
         }
+    }
+
+    fn while_loop(
+        &mut self,
+        condition: &Condition,
+        body: &Statement,
+        control: LoopControl,
+        at: crate::Span,
+    ) -> Result<()> {
+        let body = self.nested(|this| {
+            let condition = this.condition(condition)?;
+            this.break_unless(condition, at)?;
+            this.statement(body)
+        })?;
+        self.push(
+            IrStatement::Loop {
+                body,
+                continuing: Block::new(),
+                break_if: None,
+                control,
+            },
+            at,
+        );
+        Ok(())
+    }
+
+    fn do_while_loop(
+        &mut self,
+        body: &Statement,
+        condition: &rglsl_ast::ast::Expression,
+        control: LoopControl,
+        at: crate::Span,
+    ) -> Result<()> {
+        let body = self.nested(|this| this.statement(body))?;
+        let mut break_if = None;
+        let continuing = self.nested(|this| {
+            let value = this.rvalue(condition)?;
+            break_if = Some(this.add(
+                Expression::Unary {
+                    op: UnaryOperator::LogicalNot,
+                    expr: value,
+                },
+                at,
+            )?);
+            Ok(())
+        })?;
+        self.push(
+            IrStatement::Loop {
+                body,
+                continuing,
+                break_if,
+                control,
+            },
+            at,
+        );
+        Ok(())
     }
 
     fn break_unless(

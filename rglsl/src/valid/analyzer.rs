@@ -1182,526 +1182,614 @@ impl FunctionInfo {
         expression_arena: &Arena<crate::Expression>,
         diagnostic_filter_arena: &Arena<DiagnosticFilterNode>,
     ) -> Result<FunctionUniformity, WithSpan<FunctionError>> {
-        use crate::Statement as S;
-
         let mut combined_uniformity = FunctionUniformity::new();
         for statement in statements {
-            let uniformity = match *statement {
-                S::Emit(ref range) => {
-                    let mut requirements = UniformityRequirements::empty();
-                    for expr in range.clone() {
-                        let req = self.expressions[expr.index()].uniformity.requirements;
-                        if self
-                            .flags
-                            .contains(ValidationFlags::CONTROL_FLOW_UNIFORMITY)
-                            && !req.is_empty()
-                        {
-                            if let Some(cause) = disruptor {
-                                let severity = DiagnosticFilterNode::search(
-                                    self.diagnostic_filter_leaf,
-                                    diagnostic_filter_arena,
-                                    StandardFilterableTriggeringRule::DerivativeUniformity,
-                                );
-                                severity.report_diag(
-                                    FunctionError::NonUniformControlFlow(req, expr, cause)
-                                        .with_span_handle(expr, expression_arena),
-                                    // TODO: Yes, this isn't contextualized with source, because
-                                    // the user is supposed to render what would normally be an
-                                    // error here. Once we actually support warning-level
-                                    // diagnostic items, then we won't need this non-compliant hack:
-                                    // <https://github.com/gfx-rs/wgpu/issues/6458>
-                                    |e, level| log::log!(level, "{e}"),
-                                )?;
-                            }
-                        }
-                        requirements |= req;
-                    }
-                    FunctionUniformity {
-                        result: Uniformity {
-                            non_uniform_result: None,
-                            requirements,
-                        },
-                        exit: ExitFlags::empty(),
-                    }
-                }
-                S::Break | S::Continue | S::EmitVertex { .. } | S::EndPrimitive { .. } => {
-                    FunctionUniformity::new()
-                }
-                S::Kill => FunctionUniformity {
-                    result: Uniformity::new(),
-                    exit: if disruptor.is_some() {
-                        ExitFlags::MAY_KILL
-                    } else {
-                        ExitFlags::empty()
-                    },
-                },
-                S::Demote | S::BeginInvocationInterlock | S::EndInvocationInterlock => {
-                    FunctionUniformity::new()
-                }
-                S::ControlBarrier(_)
-                | S::MemoryBarrier(_)
-                | S::ScopedBarrier { .. }
-                | S::SplitBarrier { .. } => FunctionUniformity {
-                    result: Uniformity {
-                        non_uniform_result: None,
-                        requirements: UniformityRequirements::WORK_GROUP_BARRIER,
-                    },
-                    exit: ExitFlags::empty(),
-                },
-                S::WorkGroupUniformLoad { pointer, .. } => {
-                    let _condition_nur = self.add_ref(pointer);
-
-                    // Don't check that this call occurs in uniform control flow until rglsl implements WGSL's standard
-                    // uniformity analysis (https://github.com/gfx-rs/naga/issues/1744).
-                    // The uniformity analysis rglsl uses now is less accurate than the one in the WGSL standard,
-                    // causing rglsl to reject correct uses of `workgroupUniformLoad` in some interesting programs.
-
-                    /*
-                    if self
-                        .flags
-                        .contains(super::ValidationFlags::CONTROL_FLOW_UNIFORMITY)
-                    {
-                        let condition_nur = self.add_ref(pointer);
-                        let this_disruptor =
-                            disruptor.or(condition_nur.map(UniformityDisruptor::Expression));
-                        if let Some(cause) = this_disruptor {
-                            return Err(FunctionError::NonUniformWorkgroupUniformLoad(cause)
-                                .with_span_static(*span, "WorkGroupUniformLoad"));
-                        }
-                    } */
-                    FunctionUniformity {
-                        result: Uniformity {
-                            non_uniform_result: None,
-                            requirements: UniformityRequirements::WORK_GROUP_BARRIER,
-                        },
-                        exit: ExitFlags::empty(),
-                    }
-                }
-                S::Block(ref b) => self.process_block(
-                    b,
-                    other_functions,
-                    disruptor,
-                    expression_arena,
-                    diagnostic_filter_arena,
-                )?,
-                S::If {
-                    condition,
-                    ref accept,
-                    ref reject,
-                    control: _,
-                } => {
-                    let condition_nur = self.add_ref(condition);
-                    let branch_disruptor =
-                        disruptor.or(condition_nur.map(UniformityDisruptor::Expression));
-                    let accept_uniformity = self.process_block(
-                        accept,
-                        other_functions,
-                        branch_disruptor,
-                        expression_arena,
-                        diagnostic_filter_arena,
-                    )?;
-                    let reject_uniformity = self.process_block(
-                        reject,
-                        other_functions,
-                        branch_disruptor,
-                        expression_arena,
-                        diagnostic_filter_arena,
-                    )?;
-                    accept_uniformity | reject_uniformity
-                }
-                S::Switch {
-                    selector,
-                    ref cases,
-                    control: _,
-                } => {
-                    let selector_nur = self.add_ref(selector);
-                    let branch_disruptor =
-                        disruptor.or(selector_nur.map(UniformityDisruptor::Expression));
-                    let mut uniformity = FunctionUniformity::new();
-                    let mut case_disruptor = branch_disruptor;
-                    for case in cases.iter() {
-                        let case_uniformity = self.process_block(
-                            &case.body,
-                            other_functions,
-                            case_disruptor,
-                            expression_arena,
-                            diagnostic_filter_arena,
-                        )?;
-                        case_disruptor = if case.fall_through {
-                            case_disruptor.or(case_uniformity.exit_disruptor())
-                        } else {
-                            branch_disruptor
-                        };
-                        uniformity = uniformity | case_uniformity;
-                    }
-                    uniformity
-                }
-                S::Loop {
-                    ref body,
-                    ref continuing,
-                    break_if,
-                    control: _,
-                } => {
-                    let body_uniformity = self.process_block(
-                        body,
-                        other_functions,
-                        disruptor,
-                        expression_arena,
-                        diagnostic_filter_arena,
-                    )?;
-                    let continuing_disruptor = disruptor.or(body_uniformity.exit_disruptor());
-                    let continuing_uniformity = self.process_block(
-                        continuing,
-                        other_functions,
-                        continuing_disruptor,
-                        expression_arena,
-                        diagnostic_filter_arena,
-                    )?;
-                    if let Some(expr) = break_if {
-                        let _ = self.add_ref(expr);
-                    }
-                    body_uniformity | continuing_uniformity
-                }
-                S::Return { value } => FunctionUniformity {
-                    result: Uniformity {
-                        non_uniform_result: value.and_then(|expr| self.add_ref(expr)),
-                        requirements: UniformityRequirements::empty(),
-                    },
-                    exit: if disruptor.is_some() {
-                        ExitFlags::MAY_RETURN
-                    } else {
-                        ExitFlags::empty()
-                    },
-                },
-                // Here and below, the used expressions are already emitted,
-                // and their results do not affect the function return value,
-                // so we can ignore their non-uniformity.
-                S::Store { pointer, value } => {
-                    let _ = self.add_ref_impl(pointer, GlobalUse::WRITE);
-                    let _ = self.add_ref(value);
-                    FunctionUniformity::new()
-                }
-                S::TensorWrite {
-                    tensor,
-                    coordinates,
-                    value,
-                    ..
-                } => {
-                    let _ = self.add_ref_impl(tensor, GlobalUse::WRITE);
-                    let _ = self.add_ref(coordinates);
-                    let _ = self.add_ref(value);
-                    FunctionUniformity::new()
-                }
-                S::SpirvInstruction { ref operands, .. } => {
-                    for operand in operands {
-                        match *operand {
-                            crate::SpirvOperand::Value(value) => {
-                                let _ = self.add_ref(value);
-                            }
-                            crate::SpirvOperand::Pointer(pointer) => {
-                                let _ = self.add_ref_impl(pointer, GlobalUse::READ);
-                            }
-                            crate::SpirvOperand::Literal(_) => {}
-                        }
-                    }
-                    FunctionUniformity::new()
-                }
-                S::ImageStore {
-                    image,
-                    coordinate,
-                    array_index,
-                    sample,
-                    value,
-                } => {
-                    let _ = self.add_ref_impl(image, GlobalUse::WRITE);
-                    for expr in array_index.into_iter().chain(sample) {
-                        let _ = self.add_ref(expr);
-                    }
-                    let _ = self.add_ref(coordinate);
-                    let _ = self.add_ref(value);
-                    FunctionUniformity::new()
-                }
-                S::Call {
-                    function,
-                    ref arguments,
-                    result: _,
-                } => {
-                    for &argument in arguments {
-                        let usage = match expression_arena[argument] {
-                            crate::Expression::GlobalVariable(_) => GlobalUse::QUERY,
-                            _ => GlobalUse::READ,
-                        };
-                        let _ = self.add_ref_impl(argument, usage);
-                    }
-                    let info = &other_functions[function.index()];
-                    //Note: the result is validated by the Validator, not here
-                    self.process_call(info, arguments, expression_arena)?
-                }
-                S::Atomic {
-                    pointer,
-                    ref fun,
-                    value,
-                    result: _,
-                    order: _,
-                } => {
-                    let _ = self.add_ref_impl(pointer, GlobalUse::READ | GlobalUse::WRITE);
-                    let _ = self.add_ref(value);
-                    if let crate::AtomicFunction::Exchange { compare: Some(cmp) } = *fun {
-                        let _ = self.add_ref(cmp);
-                    }
-                    FunctionUniformity::new()
-                }
-                S::ImageAtomic {
-                    image,
-                    coordinate,
-                    array_index,
-                    ref fun,
-                    value,
-                    sample,
-                    result: _,
-                    order: _,
-                } => {
-                    let _ = self.add_ref_impl(image, GlobalUse::ATOMIC);
-                    let _ = self.add_ref(coordinate);
-                    if let Some(expr) = array_index {
-                        let _ = self.add_ref(expr);
-                    }
-                    if let crate::AtomicFunction::Exchange { compare: Some(cmp) } = *fun {
-                        let _ = self.add_ref(cmp);
-                    }
-                    let _ = self.add_ref(value);
-                    if let Some(expr) = sample {
-                        let _ = self.add_ref(expr);
-                    }
-                    FunctionUniformity::new()
-                }
-                S::AtomicLoad {
-                    ref location,
-                    order: _,
-                    result: _,
-                } => {
-                    self.add_location_ref(location, GlobalUse::READ);
-                    FunctionUniformity::new()
-                }
-                S::AtomicStore {
-                    ref location,
-                    value,
-                    order: _,
-                } => {
-                    self.add_location_ref(location, GlobalUse::WRITE);
-                    let _ = self.add_ref(value);
-                    FunctionUniformity::new()
-                }
-                S::RayQuery { query, ref fun } => {
-                    let _ = self.add_ref(query);
-                    for operand in fun.operands() {
-                        let _ = self.add_ref(operand);
-                    }
-                    FunctionUniformity::new()
-                }
-                S::SubgroupBallot {
-                    result: _,
-                    predicate,
-                } => {
-                    if let Some(predicate) = predicate {
-                        let _ = self.add_ref(predicate);
-                    }
-                    FunctionUniformity::new()
-                }
-                S::SubgroupCollectiveOperation {
-                    op: _,
-                    ref collective_op,
-                    argument,
-                    result: _,
-                } => {
-                    if let Some(ballot) = collective_op.partition() {
-                        let _ = self.add_ref(ballot);
-                    }
-                    let _ = self.add_ref(argument);
-                    FunctionUniformity::new()
-                }
-                S::SubgroupGather {
-                    ref mode,
-                    argument,
-                    result: _,
-                } => {
-                    let _ = self.add_ref(argument);
-                    if let Some(index) = mode.index() {
-                        let _ = self.add_ref(index);
-                    }
-                    FunctionUniformity::new()
-                }
-                S::SubgroupFunction { ref fun, result: _ } => {
-                    for operand in fun.operands().into_iter().flatten() {
-                        let _ = self.add_ref(operand);
-                    }
-                    FunctionUniformity::new()
-                }
-                S::CooperativeStore { target, ref data } => FunctionUniformity {
-                    result: Uniformity {
-                        non_uniform_result: self
-                            .add_ref(target)
-                            .or(self.add_ref_impl(data.pointer, GlobalUse::WRITE))
-                            .or(data.stride.and_then(|stride| self.add_ref(stride)))
-                            .or(self.add_ref(data.layout)),
-                        requirements: UniformityRequirements::COOP_OPS,
-                    },
-                    exit: ExitFlags::empty(),
-                },
-                S::HitObject { object, ref fun } => {
-                    let _ = self.add_ref_impl(object, GlobalUse::READ | GlobalUse::WRITE);
-                    let written = match *fun {
-                        crate::HitObjectFunction::TraceRay(ref trace)
-                        | crate::HitObjectFunction::TraceReorderExecute { ref trace, .. } => {
-                            Some(trace.payload)
-                        }
-                        crate::HitObjectFunction::ExecuteShader { payload }
-                        | crate::HitObjectFunction::ReorderExecute { payload, .. } => Some(payload),
-                        crate::HitObjectFunction::GetAttributes { attributes } => Some(attributes),
-                        crate::HitObjectFunction::RecordHit { .. }
-                        | crate::HitObjectFunction::RecordMiss { .. }
-                        | crate::HitObjectFunction::RecordEmpty
-                        | crate::HitObjectFunction::RecordFromQuery { .. }
-                        | crate::HitObjectFunction::SetShaderBindingTableRecordIndex { .. }
-                        | crate::HitObjectFunction::ReorderThread { .. } => None,
-                    };
-                    for operand in fun.operands() {
-                        let usage = if Some(operand) == written {
-                            GlobalUse::READ | GlobalUse::WRITE
-                        } else {
-                            GlobalUse::READ
-                        };
-                        let _ = self.add_ref_impl(operand, usage);
-                    }
-                    FunctionUniformity::new()
-                }
-                S::ReorderThread { hint, bits, .. } => {
-                    let _ = self.add_ref(hint);
-                    let _ = self.add_ref(bits);
-                    FunctionUniformity::new()
-                }
-                S::RayPipelineFunction(ref fun) => {
-                    let data = match *fun {
-                        crate::RayPipelineFunction::TraceRay { payload, .. } => payload.pointer(),
-                        crate::RayPipelineFunction::ExecuteCallable { data, .. } => data.pointer(),
-                        crate::RayPipelineFunction::ReportIntersection { .. }
-                        | crate::RayPipelineFunction::IgnoreIntersection { .. }
-                        | crate::RayPipelineFunction::TerminateRay { .. } => None,
-                    };
-                    for operand in fun.operands() {
-                        let usage = if Some(operand) == data {
-                            GlobalUse::READ | GlobalUse::WRITE
-                        } else {
-                            GlobalUse::READ
-                        };
-                        let _ = self.add_ref_impl(operand, usage);
-                    }
-                    if fun.is_terminator() {
-                        FunctionUniformity {
-                            result: Uniformity::new(),
-                            exit: ExitFlags::MAY_KILL,
-                        }
-                    } else {
-                        FunctionUniformity::new()
-                    }
-                }
-                S::CooperativeMatrix {
-                    ref function,
-                    result: _,
-                } => {
-                    let mut non_uniform_result = None;
-                    for operand in function.operands() {
-                        non_uniform_result = non_uniform_result.or(self.add_ref(operand));
-                    }
-                    FunctionUniformity {
-                        result: Uniformity {
-                            non_uniform_result,
-                            requirements: UniformityRequirements::empty(),
-                        },
-                        exit: ExitFlags::empty(),
-                    }
-                }
-                S::CooperativeVector(ref function) => {
-                    let mut non_uniform_result = None;
-                    let written = function.writes();
-                    for operand in function.operands() {
-                        let reference = if operand == written {
-                            self.add_ref_impl(operand, GlobalUse::WRITE)
-                        } else {
-                            self.add_ref(operand)
-                        };
-                        non_uniform_result = non_uniform_result.or(reference);
-                    }
-                    FunctionUniformity {
-                        result: Uniformity {
-                            non_uniform_result,
-                            requirements: UniformityRequirements::empty(),
-                        },
-                        exit: ExitFlags::empty(),
-                    }
-                }
-                S::Assume { condition } => FunctionUniformity {
-                    result: Uniformity {
-                        non_uniform_result: self.add_ref(condition),
-                        requirements: UniformityRequirements::empty(),
-                    },
-                    exit: ExitFlags::empty(),
-                },
-                S::MeshFunction(ref function) => {
-                    let mut non_uniform_result = None;
-                    for operand in function.operands() {
-                        non_uniform_result = non_uniform_result.or(self.add_ref(operand));
-                    }
-                    FunctionUniformity {
-                        result: Uniformity {
-                            non_uniform_result,
-                            requirements: UniformityRequirements::empty(),
-                        },
-                        exit: if function.is_terminator() {
-                            ExitFlags::MAY_KILL
-                        } else {
-                            ExitFlags::empty()
-                        },
-                    }
-                }
-                S::DebugPrintf { ref arguments, .. } => {
-                    let mut non_uniform_result = None;
-                    for argument in arguments {
-                        if let crate::DebugPrintfArgument::Value(value) = *argument {
-                            non_uniform_result = non_uniform_result.or(self.add_ref(value));
-                        }
-                    }
-                    FunctionUniformity {
-                        result: Uniformity {
-                            non_uniform_result,
-                            requirements: UniformityRequirements::empty(),
-                        },
-                        exit: ExitFlags::empty(),
-                    }
-                }
-                S::Abort { ref arguments, .. } => {
-                    let mut non_uniform_result = None;
-                    for &argument in arguments {
-                        non_uniform_result = non_uniform_result.or(self.add_ref(argument));
-                    }
-                    FunctionUniformity {
-                        result: Uniformity {
-                            non_uniform_result,
-                            requirements: UniformityRequirements::empty(),
-                        },
-                        exit: if disruptor.is_some() {
-                            ExitFlags::MAY_KILL
-                        } else {
-                            ExitFlags::empty()
-                        },
-                    }
-                }
-            };
+            let uniformity = self.process_statement_kind(
+                statement,
+                other_functions,
+                disruptor,
+                expression_arena,
+                diagnostic_filter_arena,
+            )?;
 
             disruptor = disruptor.or(uniformity.exit_disruptor());
             combined_uniformity = combined_uniformity | uniformity;
         }
         Ok(combined_uniformity)
+    }
+
+    fn process_statement_kind(
+        &mut self,
+        statement: &crate::Statement,
+        other_functions: &[FunctionInfo],
+        disruptor: Option<UniformityDisruptor>,
+        expression_arena: &Arena<crate::Expression>,
+        diagnostic_filter_arena: &Arena<DiagnosticFilterNode>,
+    ) -> Result<FunctionUniformity, WithSpan<FunctionError>> {
+        use crate::Statement as S;
+        match *statement {
+            S::Block(ref b) => self.process_block(
+                b,
+                other_functions,
+                disruptor,
+                expression_arena,
+                diagnostic_filter_arena,
+            ),
+            S::If {
+                condition,
+                ref accept,
+                ref reject,
+                control: _,
+            } => self.process_if(
+                condition,
+                [accept, reject],
+                other_functions,
+                disruptor,
+                expression_arena,
+                diagnostic_filter_arena,
+            ),
+            S::Switch {
+                selector,
+                ref cases,
+                control: _,
+            } => self.process_switch(
+                selector,
+                cases,
+                other_functions,
+                disruptor,
+                expression_arena,
+                diagnostic_filter_arena,
+            ),
+            S::Loop {
+                ref body,
+                ref continuing,
+                break_if,
+                control: _,
+            } => self.process_loop(
+                [body, continuing],
+                break_if,
+                other_functions,
+                disruptor,
+                expression_arena,
+                diagnostic_filter_arena,
+            ),
+            _ => self.process_statement(
+                statement,
+                other_functions,
+                disruptor,
+                expression_arena,
+                diagnostic_filter_arena,
+            ),
+        }
+    }
+
+    fn process_if(
+        &mut self,
+        condition: Handle<crate::Expression>,
+        [accept, reject]: [&crate::Block; 2],
+        other_functions: &[FunctionInfo],
+        disruptor: Option<UniformityDisruptor>,
+        expression_arena: &Arena<crate::Expression>,
+        diagnostic_filter_arena: &Arena<DiagnosticFilterNode>,
+    ) -> Result<FunctionUniformity, WithSpan<FunctionError>> {
+        let condition_nur = self.add_ref(condition);
+        let branch_disruptor = disruptor.or(condition_nur.map(UniformityDisruptor::Expression));
+        let accept_uniformity = self.process_block(
+            accept,
+            other_functions,
+            branch_disruptor,
+            expression_arena,
+            diagnostic_filter_arena,
+        )?;
+        let reject_uniformity = self.process_block(
+            reject,
+            other_functions,
+            branch_disruptor,
+            expression_arena,
+            diagnostic_filter_arena,
+        )?;
+        Ok(accept_uniformity | reject_uniformity)
+    }
+
+    fn process_switch(
+        &mut self,
+        selector: Handle<crate::Expression>,
+        cases: &[crate::SwitchCase],
+        other_functions: &[FunctionInfo],
+        disruptor: Option<UniformityDisruptor>,
+        expression_arena: &Arena<crate::Expression>,
+        diagnostic_filter_arena: &Arena<DiagnosticFilterNode>,
+    ) -> Result<FunctionUniformity, WithSpan<FunctionError>> {
+        let selector_nur = self.add_ref(selector);
+        let branch_disruptor = disruptor.or(selector_nur.map(UniformityDisruptor::Expression));
+        let mut uniformity = FunctionUniformity::new();
+        let mut case_disruptor = branch_disruptor;
+        for case in cases.iter() {
+            let case_uniformity = self.process_block(
+                &case.body,
+                other_functions,
+                case_disruptor,
+                expression_arena,
+                diagnostic_filter_arena,
+            )?;
+            case_disruptor = if case.fall_through {
+                case_disruptor.or(case_uniformity.exit_disruptor())
+            } else {
+                branch_disruptor
+            };
+            uniformity = uniformity | case_uniformity;
+        }
+        Ok(uniformity)
+    }
+
+    fn process_loop(
+        &mut self,
+        [body, continuing]: [&crate::Block; 2],
+        break_if: Option<Handle<crate::Expression>>,
+        other_functions: &[FunctionInfo],
+        disruptor: Option<UniformityDisruptor>,
+        expression_arena: &Arena<crate::Expression>,
+        diagnostic_filter_arena: &Arena<DiagnosticFilterNode>,
+    ) -> Result<FunctionUniformity, WithSpan<FunctionError>> {
+        let body_uniformity = self.process_block(
+            body,
+            other_functions,
+            disruptor,
+            expression_arena,
+            diagnostic_filter_arena,
+        )?;
+        let continuing_disruptor = disruptor.or(body_uniformity.exit_disruptor());
+        let continuing_uniformity = self.process_block(
+            continuing,
+            other_functions,
+            continuing_disruptor,
+            expression_arena,
+            diagnostic_filter_arena,
+        )?;
+        if let Some(expr) = break_if {
+            let _ = self.add_ref(expr);
+        }
+        Ok(body_uniformity | continuing_uniformity)
+    }
+
+    fn process_statement(
+        &mut self,
+        statement: &crate::Statement,
+        other_functions: &[FunctionInfo],
+        disruptor: Option<UniformityDisruptor>,
+        expression_arena: &Arena<crate::Expression>,
+        diagnostic_filter_arena: &Arena<DiagnosticFilterNode>,
+    ) -> Result<FunctionUniformity, WithSpan<FunctionError>> {
+        use crate::Statement as S;
+        Ok(match *statement {
+            S::Emit(ref range) => {
+                let mut requirements = UniformityRequirements::empty();
+                for expr in range.clone() {
+                    let req = self.expressions[expr.index()].uniformity.requirements;
+                    if self
+                        .flags
+                        .contains(ValidationFlags::CONTROL_FLOW_UNIFORMITY)
+                        && !req.is_empty()
+                    {
+                        if let Some(cause) = disruptor {
+                            let severity = DiagnosticFilterNode::search(
+                                self.diagnostic_filter_leaf,
+                                diagnostic_filter_arena,
+                                StandardFilterableTriggeringRule::DerivativeUniformity,
+                            );
+                            severity.report_diag(
+                                FunctionError::NonUniformControlFlow(req, expr, cause)
+                                    .with_span_handle(expr, expression_arena),
+                                // TODO: Yes, this isn't contextualized with source, because
+                                // the user is supposed to render what would normally be an
+                                // error here. Once we actually support warning-level
+                                // diagnostic items, then we won't need this non-compliant hack:
+                                // <https://github.com/gfx-rs/wgpu/issues/6458>
+                                |e, level| log::log!(level, "{e}"),
+                            )?;
+                        }
+                    }
+                    requirements |= req;
+                }
+                FunctionUniformity {
+                    result: Uniformity {
+                        non_uniform_result: None,
+                        requirements,
+                    },
+                    exit: ExitFlags::empty(),
+                }
+            }
+            S::Break | S::Continue | S::EmitVertex { .. } | S::EndPrimitive { .. } => {
+                FunctionUniformity::new()
+            }
+            S::Kill => FunctionUniformity {
+                result: Uniformity::new(),
+                exit: if disruptor.is_some() {
+                    ExitFlags::MAY_KILL
+                } else {
+                    ExitFlags::empty()
+                },
+            },
+            S::Demote | S::BeginInvocationInterlock | S::EndInvocationInterlock => {
+                FunctionUniformity::new()
+            }
+            S::ControlBarrier(_)
+            | S::MemoryBarrier(_)
+            | S::ScopedBarrier { .. }
+            | S::SplitBarrier { .. } => FunctionUniformity {
+                result: Uniformity {
+                    non_uniform_result: None,
+                    requirements: UniformityRequirements::WORK_GROUP_BARRIER,
+                },
+                exit: ExitFlags::empty(),
+            },
+            S::WorkGroupUniformLoad { pointer, .. } => {
+                let _condition_nur = self.add_ref(pointer);
+
+                // Don't check that this call occurs in uniform control flow until rglsl implements WGSL's standard
+                // uniformity analysis (https://github.com/gfx-rs/naga/issues/1744).
+                // The uniformity analysis rglsl uses now is less accurate than the one in the WGSL standard,
+                // causing rglsl to reject correct uses of `workgroupUniformLoad` in some interesting programs.
+
+                /*
+                if self
+                    .flags
+                    .contains(super::ValidationFlags::CONTROL_FLOW_UNIFORMITY)
+                {
+                    let condition_nur = self.add_ref(pointer);
+                    let this_disruptor =
+                        disruptor.or(condition_nur.map(UniformityDisruptor::Expression));
+                    if let Some(cause) = this_disruptor {
+                        return Err(FunctionError::NonUniformWorkgroupUniformLoad(cause)
+                            .with_span_static(*span, "WorkGroupUniformLoad"));
+                    }
+                } */
+                FunctionUniformity {
+                    result: Uniformity {
+                        non_uniform_result: None,
+                        requirements: UniformityRequirements::WORK_GROUP_BARRIER,
+                    },
+                    exit: ExitFlags::empty(),
+                }
+            }
+            S::Return { value } => FunctionUniformity {
+                result: Uniformity {
+                    non_uniform_result: value.and_then(|expr| self.add_ref(expr)),
+                    requirements: UniformityRequirements::empty(),
+                },
+                exit: if disruptor.is_some() {
+                    ExitFlags::MAY_RETURN
+                } else {
+                    ExitFlags::empty()
+                },
+            },
+            // Here and below, the used expressions are already emitted,
+            // and their results do not affect the function return value,
+            // so we can ignore their non-uniformity.
+            S::Store { pointer, value } => {
+                let _ = self.add_ref_impl(pointer, GlobalUse::WRITE);
+                let _ = self.add_ref(value);
+                FunctionUniformity::new()
+            }
+            S::TensorWrite {
+                tensor,
+                coordinates,
+                value,
+                ..
+            } => {
+                let _ = self.add_ref_impl(tensor, GlobalUse::WRITE);
+                let _ = self.add_ref(coordinates);
+                let _ = self.add_ref(value);
+                FunctionUniformity::new()
+            }
+            S::SpirvInstruction { ref operands, .. } => {
+                for operand in operands {
+                    match *operand {
+                        crate::SpirvOperand::Value(value) => {
+                            let _ = self.add_ref(value);
+                        }
+                        crate::SpirvOperand::Pointer(pointer) => {
+                            let _ = self.add_ref_impl(pointer, GlobalUse::READ);
+                        }
+                        crate::SpirvOperand::Literal(_) => {}
+                    }
+                }
+                FunctionUniformity::new()
+            }
+            S::ImageStore {
+                image,
+                coordinate,
+                array_index,
+                sample,
+                value,
+            } => {
+                let _ = self.add_ref_impl(image, GlobalUse::WRITE);
+                for expr in array_index.into_iter().chain(sample) {
+                    let _ = self.add_ref(expr);
+                }
+                let _ = self.add_ref(coordinate);
+                let _ = self.add_ref(value);
+                FunctionUniformity::new()
+            }
+            S::Call {
+                function,
+                ref arguments,
+                result: _,
+            } => {
+                for &argument in arguments {
+                    let usage = match expression_arena[argument] {
+                        crate::Expression::GlobalVariable(_) => GlobalUse::QUERY,
+                        _ => GlobalUse::READ,
+                    };
+                    let _ = self.add_ref_impl(argument, usage);
+                }
+                let info = &other_functions[function.index()];
+                //Note: the result is validated by the Validator, not here
+                self.process_call(info, arguments, expression_arena)?
+            }
+            S::Atomic {
+                pointer,
+                ref fun,
+                value,
+                result: _,
+                order: _,
+            } => {
+                let _ = self.add_ref_impl(pointer, GlobalUse::READ | GlobalUse::WRITE);
+                let _ = self.add_ref(value);
+                if let crate::AtomicFunction::Exchange { compare: Some(cmp) } = *fun {
+                    let _ = self.add_ref(cmp);
+                }
+                FunctionUniformity::new()
+            }
+            S::ImageAtomic {
+                image,
+                coordinate,
+                array_index,
+                ref fun,
+                value,
+                sample,
+                result: _,
+                order: _,
+            } => {
+                let _ = self.add_ref_impl(image, GlobalUse::ATOMIC);
+                let _ = self.add_ref(coordinate);
+                if let Some(expr) = array_index {
+                    let _ = self.add_ref(expr);
+                }
+                if let crate::AtomicFunction::Exchange { compare: Some(cmp) } = *fun {
+                    let _ = self.add_ref(cmp);
+                }
+                let _ = self.add_ref(value);
+                if let Some(expr) = sample {
+                    let _ = self.add_ref(expr);
+                }
+                FunctionUniformity::new()
+            }
+            S::AtomicLoad {
+                ref location,
+                order: _,
+                result: _,
+            } => {
+                self.add_location_ref(location, GlobalUse::READ);
+                FunctionUniformity::new()
+            }
+            S::AtomicStore {
+                ref location,
+                value,
+                order: _,
+            } => {
+                self.add_location_ref(location, GlobalUse::WRITE);
+                let _ = self.add_ref(value);
+                FunctionUniformity::new()
+            }
+            S::RayQuery { query, ref fun } => {
+                let _ = self.add_ref(query);
+                for operand in fun.operands() {
+                    let _ = self.add_ref(operand);
+                }
+                FunctionUniformity::new()
+            }
+            S::SubgroupBallot {
+                result: _,
+                predicate,
+            } => {
+                if let Some(predicate) = predicate {
+                    let _ = self.add_ref(predicate);
+                }
+                FunctionUniformity::new()
+            }
+            S::SubgroupCollectiveOperation {
+                op: _,
+                ref collective_op,
+                argument,
+                result: _,
+            } => {
+                if let Some(ballot) = collective_op.partition() {
+                    let _ = self.add_ref(ballot);
+                }
+                let _ = self.add_ref(argument);
+                FunctionUniformity::new()
+            }
+            S::SubgroupGather {
+                ref mode,
+                argument,
+                result: _,
+            } => {
+                let _ = self.add_ref(argument);
+                if let Some(index) = mode.index() {
+                    let _ = self.add_ref(index);
+                }
+                FunctionUniformity::new()
+            }
+            S::SubgroupFunction { ref fun, result: _ } => {
+                for operand in fun.operands().into_iter().flatten() {
+                    let _ = self.add_ref(operand);
+                }
+                FunctionUniformity::new()
+            }
+            S::CooperativeStore { target, ref data } => FunctionUniformity {
+                result: Uniformity {
+                    non_uniform_result: self
+                        .add_ref(target)
+                        .or(self.add_ref_impl(data.pointer, GlobalUse::WRITE))
+                        .or(data.stride.and_then(|stride| self.add_ref(stride)))
+                        .or(self.add_ref(data.layout)),
+                    requirements: UniformityRequirements::COOP_OPS,
+                },
+                exit: ExitFlags::empty(),
+            },
+            S::HitObject { object, ref fun } => {
+                let _ = self.add_ref_impl(object, GlobalUse::READ | GlobalUse::WRITE);
+                let written = match *fun {
+                    crate::HitObjectFunction::TraceRay(ref trace)
+                    | crate::HitObjectFunction::TraceReorderExecute { ref trace, .. } => {
+                        Some(trace.payload)
+                    }
+                    crate::HitObjectFunction::ExecuteShader { payload }
+                    | crate::HitObjectFunction::ReorderExecute { payload, .. } => Some(payload),
+                    crate::HitObjectFunction::GetAttributes { attributes } => Some(attributes),
+                    crate::HitObjectFunction::RecordHit { .. }
+                    | crate::HitObjectFunction::RecordMiss { .. }
+                    | crate::HitObjectFunction::RecordEmpty
+                    | crate::HitObjectFunction::RecordFromQuery { .. }
+                    | crate::HitObjectFunction::SetShaderBindingTableRecordIndex { .. }
+                    | crate::HitObjectFunction::ReorderThread { .. } => None,
+                };
+                for operand in fun.operands() {
+                    let usage = if Some(operand) == written {
+                        GlobalUse::READ | GlobalUse::WRITE
+                    } else {
+                        GlobalUse::READ
+                    };
+                    let _ = self.add_ref_impl(operand, usage);
+                }
+                FunctionUniformity::new()
+            }
+            S::ReorderThread { hint, bits, .. } => {
+                let _ = self.add_ref(hint);
+                let _ = self.add_ref(bits);
+                FunctionUniformity::new()
+            }
+            S::RayPipelineFunction(ref fun) => {
+                let data = match *fun {
+                    crate::RayPipelineFunction::TraceRay { payload, .. } => payload.pointer(),
+                    crate::RayPipelineFunction::ExecuteCallable { data, .. } => data.pointer(),
+                    crate::RayPipelineFunction::ReportIntersection { .. }
+                    | crate::RayPipelineFunction::IgnoreIntersection { .. }
+                    | crate::RayPipelineFunction::TerminateRay { .. } => None,
+                };
+                for operand in fun.operands() {
+                    let usage = if Some(operand) == data {
+                        GlobalUse::READ | GlobalUse::WRITE
+                    } else {
+                        GlobalUse::READ
+                    };
+                    let _ = self.add_ref_impl(operand, usage);
+                }
+                if fun.is_terminator() {
+                    FunctionUniformity {
+                        result: Uniformity::new(),
+                        exit: ExitFlags::MAY_KILL,
+                    }
+                } else {
+                    FunctionUniformity::new()
+                }
+            }
+            S::CooperativeMatrix {
+                ref function,
+                result: _,
+            } => {
+                let mut non_uniform_result = None;
+                for operand in function.operands() {
+                    non_uniform_result = non_uniform_result.or(self.add_ref(operand));
+                }
+                FunctionUniformity {
+                    result: Uniformity {
+                        non_uniform_result,
+                        requirements: UniformityRequirements::empty(),
+                    },
+                    exit: ExitFlags::empty(),
+                }
+            }
+            S::CooperativeVector(ref function) => {
+                let mut non_uniform_result = None;
+                let written = function.writes();
+                for operand in function.operands() {
+                    let reference = if operand == written {
+                        self.add_ref_impl(operand, GlobalUse::WRITE)
+                    } else {
+                        self.add_ref(operand)
+                    };
+                    non_uniform_result = non_uniform_result.or(reference);
+                }
+                FunctionUniformity {
+                    result: Uniformity {
+                        non_uniform_result,
+                        requirements: UniformityRequirements::empty(),
+                    },
+                    exit: ExitFlags::empty(),
+                }
+            }
+            S::Assume { condition } => FunctionUniformity {
+                result: Uniformity {
+                    non_uniform_result: self.add_ref(condition),
+                    requirements: UniformityRequirements::empty(),
+                },
+                exit: ExitFlags::empty(),
+            },
+            S::MeshFunction(ref function) => {
+                let mut non_uniform_result = None;
+                for operand in function.operands() {
+                    non_uniform_result = non_uniform_result.or(self.add_ref(operand));
+                }
+                FunctionUniformity {
+                    result: Uniformity {
+                        non_uniform_result,
+                        requirements: UniformityRequirements::empty(),
+                    },
+                    exit: if function.is_terminator() {
+                        ExitFlags::MAY_KILL
+                    } else {
+                        ExitFlags::empty()
+                    },
+                }
+            }
+            S::DebugPrintf { ref arguments, .. } => {
+                let mut non_uniform_result = None;
+                for argument in arguments {
+                    if let crate::DebugPrintfArgument::Value(value) = *argument {
+                        non_uniform_result = non_uniform_result.or(self.add_ref(value));
+                    }
+                }
+                FunctionUniformity {
+                    result: Uniformity {
+                        non_uniform_result,
+                        requirements: UniformityRequirements::empty(),
+                    },
+                    exit: ExitFlags::empty(),
+                }
+            }
+            S::Abort { ref arguments, .. } => {
+                let mut non_uniform_result = None;
+                for &argument in arguments {
+                    non_uniform_result = non_uniform_result.or(self.add_ref(argument));
+                }
+                FunctionUniformity {
+                    result: Uniformity {
+                        non_uniform_result,
+                        requirements: UniformityRequirements::empty(),
+                    },
+                    exit: if disruptor.is_some() {
+                        ExitFlags::MAY_KILL
+                    } else {
+                        ExitFlags::empty()
+                    },
+                }
+            }
+            S::Block(_) | S::If { .. } | S::Switch { .. } | S::Loop { .. } => {
+                FunctionUniformity::new()
+            }
+        })
     }
 }
 
