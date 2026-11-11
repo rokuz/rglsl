@@ -833,6 +833,8 @@ struct BlockContext<'w> {
     /// Hash from an expression whose type is a ray query / pointer to a ray query to its tracker.
     /// Note: this is sparse, so can't be a handle vec
     physical_component_load: bool,
+
+    reachability: crate::proc::Reachability,
 }
 
 impl BlockContext<'_> {

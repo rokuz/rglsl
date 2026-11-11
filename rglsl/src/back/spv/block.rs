@@ -3704,6 +3704,11 @@ impl BlockContext<'_> {
         for (statement, span) in rglsl_block.span_iter() {
             Self::write_line(&mut block, statement, span, debug_info);
             match self.write_statement_kind(block, statement, span, loop_context, debug_info)? {
+                Some(next) if !self.reachability.completes(statement) => {
+                    self.function
+                        .consume(next, Instruction::new(spirv::Op::Unreachable));
+                    return Ok(BlockExitDisposition::Discarded);
+                }
                 Some(next) => block = next,
                 None => return Ok(BlockExitDisposition::Discarded),
             }
@@ -3776,7 +3781,12 @@ impl BlockContext<'_> {
                 control,
             } => self.write_loop(
                 block,
-                [body, continuing],
+                (
+                    body,
+                    self.reachability
+                        .continuing_reachable(statement)
+                        .then_some(continuing),
+                ),
                 break_if,
                 control,
                 span,
@@ -4029,7 +4039,7 @@ impl BlockContext<'_> {
     fn write_loop(
         &mut self,
         block: Block,
-        [body, continuing]: [&crate::Block; 2],
+        (body, continuing): (&crate::Block, Option<&crate::Block>),
         break_if: Option<Handle<crate::Expression>>,
         control: crate::LoopControl,
         span: &crate::Span,
@@ -4078,6 +4088,12 @@ impl BlockContext<'_> {
             },
             debug_info,
         )?;
+
+        let Some(continuing) = continuing else {
+            self.function
+                .consume(Block::new(continuing_id), Instruction::branch(preamble_id));
+            return Ok(Some(Block::new(merge_id)));
+        };
 
         let exit = match break_if {
             Some(condition) => BlockExit::BreakIf {

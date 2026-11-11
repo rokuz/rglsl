@@ -556,7 +556,7 @@ OpReturn
 %349 = OpLabel
 OpReturn
 %347 = OpLabel
-OpReturn
+OpUnreachable
 OpFunctionEnd
 %361 = OpFunction  %2  None %52
 %362 = OpLabel

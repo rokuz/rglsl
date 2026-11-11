@@ -9798,3 +9798,291 @@ void main() {
         .iter()
         .all(|store| store.operands[0].unwrap_id_ref() != named(&module, "b")));
 }
+
+fn function_blocks(module: &dr::Module, name: &str) -> Vec<Vec<Op>> {
+    let id = named(module, name);
+    let function = module
+        .functions
+        .iter()
+        .find(|function| function.def_id() == Some(id))
+        .unwrap_or_else(|| panic!("no function {name}"));
+    function
+        .blocks
+        .iter()
+        .map(|block| {
+            block
+                .instructions
+                .iter()
+                .map(|inst| inst.class.opcode)
+                .filter(|&op| !matches!(op, Op::Line | Op::NoLine))
+                .collect()
+        })
+        .collect()
+}
+
+fn count_in(blocks: &[Vec<Op>], op: Op) -> usize {
+    blocks
+        .iter()
+        .flatten()
+        .filter(|&&found| found == op)
+        .count()
+}
+
+fn ends_unreachable(blocks: &[Vec<Op>]) -> bool {
+    blocks.last().map(Vec::as_slice) == Some(&[Op::Unreachable][..])
+}
+
+fn compile_valid_at(
+    stage: ShaderStage,
+    source: &str,
+    lang_version: (u8, u8),
+    env: &str,
+) -> dr::Module {
+    let words = compile_words_with_names(stage, source, lang_version);
+    crate::stage_io::spirv_val_in(&words, &["--target-env", env]);
+    dr::load_words(words).expect("produced SPIR-V does not parse")
+}
+
+#[test]
+fn code_after_jumps_is_not_emitted() {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+layout(location = 0) out vec4 o;
+layout(set = 0, binding = 0) uniform U { int s; };
+void main() {
+    for (int i = 0; i < s; i++) {
+        if (i == 2) { continue; o = vec4(1.0); }
+        if (i == 5) { break; o = vec4(2.0); }
+    }
+    if (s == 7) { discard; o = vec4(3.0); }
+    if (s == 8) { return; o = vec4(4.0); }
+    o = vec4(5.0);
+}
+",
+    );
+    let output = named(&module, "o");
+    let stores = instructions(&module, Op::Store)
+        .into_iter()
+        .filter(|store| store.operands[0].unwrap_id_ref() == output)
+        .count();
+    assert_eq!(stores, 1);
+}
+
+#[test]
+fn unreachable_merge_blocks_are_unreachable() {
+    let source = "#version 450
+layout(location = 0) out vec4 o;
+layout(set = 0, binding = 0) uniform U { int s; };
+int branches(int x) {
+    if (x > 0) { return 1; } else { discard; }
+    o = vec4(7.0);
+    return 2;
+}
+int cases(int x) {
+    switch (x) {
+    case 0: return 1;
+    case 1: x++;
+    default: return x;
+    }
+    o = vec4(8.0);
+}
+int broken(int x) {
+    switch (x) {
+    case 0: return 1;
+    case 1: break;
+    default: return 3;
+    }
+    return 4;
+}
+void main() {
+    o = vec4(float(branches(s) + cases(s) + broken(s)));
+}
+";
+    let module = compile_valid(ShaderStage::Fragment, source);
+    let branches = function_blocks(&module, "branches");
+    assert!(ends_unreachable(&branches), "{branches:?}");
+    assert_eq!(count_in(&branches, Op::ReturnValue), 1);
+    assert_eq!(count_in(&branches, Op::Kill), 1);
+    assert_eq!(count_in(&branches, Op::Store), 1);
+    let cases = function_blocks(&module, "cases");
+    assert!(ends_unreachable(&cases), "{cases:?}");
+    assert_eq!(count_in(&cases, Op::ReturnValue), 2);
+    let broken = function_blocks(&module, "broken");
+    assert!(!ends_unreachable(&broken), "{broken:?}");
+    assert_eq!(count_in(&broken, Op::ReturnValue), 3);
+    assert!(instructions(&module, Op::Undef).is_empty());
+    compile_valid_at(ShaderStage::Fragment, source, (1, 6), "vulkan1.3");
+}
+
+#[test]
+fn loops_that_never_exit_end_the_function() {
+    let source = "#version 450
+layout(location = 0) out vec4 o;
+layout(set = 0, binding = 0) uniform U { int s; };
+int forever(int x) {
+    for (;;) {
+        if (x > 3) { return x; }
+        x++;
+    }
+}
+int spin(int x) {
+    while (true) {
+        if (x > 3) { return x; }
+        x += 2;
+    }
+    return 7;
+}
+int nested(int x) {
+    for (;;) {
+        switch (x) {
+        case 0: x++; break;
+        case 1: continue;
+        default: return x;
+        }
+        x += 3;
+    }
+    o = vec4(9.0);
+}
+int once(int x) {
+    for (int i = x; i < 4; i++) {
+        return i;
+    }
+    return 0;
+}
+int body(int x) {
+    do {
+        return x;
+    } while (x > 2);
+}
+void main() {
+    o = vec4(float(forever(s) + spin(s) + nested(s) + once(s) + body(s)));
+}
+";
+    let module = compile_valid(ShaderStage::Fragment, source);
+    for name in ["forever", "spin", "nested", "body"] {
+        let blocks = function_blocks(&module, name);
+        assert!(ends_unreachable(&blocks), "{name}: {blocks:?}");
+    }
+    let spin = function_blocks(&module, "spin");
+    assert_eq!(count_in(&spin, Op::BranchConditional), 1, "{spin:?}");
+    assert_eq!(count_in(&spin, Op::ReturnValue), 1, "{spin:?}");
+    let nested = function_blocks(&module, "nested");
+    assert_eq!(count_in(&nested, Op::Store), 3, "{nested:?}");
+    let once = function_blocks(&module, "once");
+    assert!(!ends_unreachable(&once), "{once:?}");
+    assert_eq!(count_in(&once, Op::IAdd), 0, "{once:?}");
+    let body = function_blocks(&module, "body");
+    assert_eq!(count_in(&body, Op::SGreaterThan), 0, "{body:?}");
+    assert!(body.contains(&vec![Op::Branch]), "{body:?}");
+    assert!(instructions(&module, Op::Undef).is_empty());
+    compile_valid_at(ShaderStage::Fragment, source, (1, 6), "vulkan1.3");
+}
+
+#[test]
+fn falling_off_after_a_loop_with_a_break_still_returns_undef() {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+layout(location = 0) out vec4 o;
+layout(set = 0, binding = 0) uniform U { int s; };
+int find(int x) {
+    for (;;) {
+        if (x > 3) { break; }
+        if (x < -3) { return x; }
+        x++;
+    }
+}
+void main() {
+    o = vec4(float(find(s)));
+}
+",
+    );
+    let blocks = function_blocks(&module, "find");
+    assert!(!ends_unreachable(&blocks), "{blocks:?}");
+    assert_eq!(instructions(&module, Op::Undef).len(), 1);
+}
+
+#[test]
+fn emit_mesh_tasks_ends_the_block() {
+    let module = compile_mesh(
+        ShaderStage::Task,
+        "#version 450
+        #extension GL_EXT_mesh_shader : require
+        layout(local_size_x = 1) in;
+        taskPayloadSharedEXT uint payload;
+        void main() {
+            if (gl_WorkGroupID.x == 0u) {
+                EmitMeshTasksEXT(1u, 1u, 1u);
+            } else {
+                EmitMeshTasksEXT(2u, 1u, 1u);
+            }
+            payload = 3u;
+        }",
+        (1, 4),
+    );
+    let blocks = function_blocks(&module, "main");
+    assert!(ends_unreachable(&blocks), "{blocks:?}");
+    assert_eq!(count_in(&blocks, Op::EmitMeshTasksEXT), 2);
+    assert_eq!(count_in(&blocks, Op::Store), 0);
+    assert_eq!(count_in(&blocks, Op::Return), 0);
+}
+
+#[test]
+fn ray_tracing_terminators_end_the_block() {
+    let module = compile_valid_at(
+        ShaderStage::AnyHit,
+        r#"#version 460
+#extension GL_EXT_ray_tracing : enable
+layout(location = 0) rayPayloadInEXT vec4 payload;
+void main() {
+    if (gl_PrimitiveID == 1) {
+        ignoreIntersectionEXT;
+    } else {
+        terminateRayEXT;
+    }
+    payload = vec4(1.0);
+}
+"#,
+        (1, 4),
+        "vulkan1.2",
+    );
+    let blocks = function_blocks(&module, "main");
+    assert!(ends_unreachable(&blocks), "{blocks:?}");
+    assert_eq!(count_in(&blocks, Op::Store), 0);
+    assert_eq!(count_in(&blocks, Op::Return), 0);
+}
+
+#[test]
+fn globals_used_only_in_dead_code_keep_their_bindings() {
+    let source = "#version 450
+layout(location = 0) out vec4 o;
+layout(set = 0, binding = 0) uniform U { int s; };
+uniform sampler2D dead;
+uniform sampler2D live;
+void main() {
+    for (;;) {
+        if (s > 0) { o = texture(live, vec2(0.5)); return; }
+    }
+    o = texture(dead, vec2(0.5));
+}
+";
+    let options = glsl::Options {
+        auto_map_bindings: true,
+        ..glsl::Options::from(ShaderStage::Fragment)
+    };
+    let module = glsl::Frontend::default().parse(&options, source).unwrap();
+    let info = Validator::new(ValidationFlags::all(), Capabilities::all())
+        .validate(&module)
+        .unwrap();
+    let options = spv::Options {
+        flags: spv::WriterFlags::DEBUG,
+        ..spv::Options::default()
+    };
+    let words = spv::write_vec(&module, &info, &options, None).unwrap();
+    crate::stage_io::spirv_val(&words);
+    let module = dr::load_words(words).unwrap();
+    assert!(variable_decorations(&module, "dead").contains(&(Decoration::Binding, vec![1])));
+    assert!(variable_decorations(&module, "live").contains(&(Decoration::Binding, vec![2])));
+    assert_eq!(instructions(&module, Op::ImageSampleImplicitLod).len(), 1);
+}

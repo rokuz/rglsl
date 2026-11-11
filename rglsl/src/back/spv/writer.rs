@@ -1481,6 +1481,7 @@ impl Writer {
                 &ir_function.expressions,
             ),
             physical_component_load: false,
+            reachability: crate::proc::Reachability::new(&ir_function.body),
         };
 
         // fill up the pre-emitted and const expressions
