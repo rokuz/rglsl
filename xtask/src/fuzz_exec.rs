@@ -192,14 +192,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn reads_uniform_values_from_shader_jobs() {
+    fn reads_uniform_values_from_shader_jobs() -> anyhow::Result<()> {
         let json = r#"{
             "injectionSwitch": {"func": "glUniform2f", "args": [0.0, 1.0], "binding": 0},
             "count": {"func": "glUniform1i", "args": [3], "binding": 2},
             "tex": {"func": "sampler2D", "texture": "DEFAULT", "binding": 1},
             "unbound": {"func": "glUniform1f", "args": [1.0]}
         }"#;
-        let values = uniform_values(json).unwrap();
+        let values = uniform_values(json).map_err(anyhow::Error::msg)?;
         assert_eq!(values.len(), 2);
         assert_eq!(values[&(0, 0)], [Value::Float(0.0), Value::Float(1.0)]);
         assert_eq!(values[&(0, 2)], [Value::Int(3)]);
@@ -208,6 +208,7 @@ mod tests {
             uniform_values(r#"{"a": {"func": "glUniform1i", "args": ["x"], "binding": 0}}"#)
                 .is_err()
         );
+        Ok(())
     }
 
     #[test]
@@ -234,16 +235,17 @@ mod tests {
     }
 
     #[test]
-    fn finds_the_family_reference() {
+    fn finds_the_family_reference() -> anyhow::Result<()> {
         let dir = std::env::temp_dir().join(format!("rglsl-family-{}", std::process::id()));
-        fs::create_dir_all(&dir).unwrap();
-        fs::write(dir.join("reference.frag"), "").unwrap();
-        fs::write(dir.join("variant_000.frag"), "").unwrap();
+        fs::create_dir_all(&dir)?;
+        fs::write(dir.join("reference.frag"), "")?;
+        fs::write(dir.join("variant_000.frag"), "")?;
         assert_eq!(
             family_of(&dir.join("variant_000.frag")),
             Some(dir.join("reference.frag"))
         );
         assert_eq!(family_of(&dir.join("variant_000.vert")), None);
-        fs::remove_dir_all(&dir).unwrap();
+        fs::remove_dir_all(&dir)?;
+        Ok(())
     }
 }

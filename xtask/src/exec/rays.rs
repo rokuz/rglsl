@@ -411,7 +411,7 @@ mod tests {
     }
 
     #[test]
-    fn closest_hit_gets_a_typed_ray_generation() {
+    fn closest_hit_gets_a_typed_ray_generation() -> anyhow::Result<()> {
         let mut module = Reflection::new(ExecutionModel::ClosestHitKHR);
         module.ray_variables.push(RayVariable {
             class: StorageClass::IncomingRayPayloadKHR,
@@ -428,7 +428,7 @@ mod tests {
             Some("rec".into()),
             &mut Rng::new(3),
         )
-        .unwrap();
+        .map_err(anyhow::Error::msg)?;
         assert_eq!(harness.geometry, Geometry::Triangles);
         let (kind, rgen) = &harness.shaders[0];
         assert_eq!(*kind, ShaderKind::RayGeneration);
@@ -446,10 +446,11 @@ mod tests {
         ));
         assert_eq!(script.matches("    g_miss_empty\n").count(), RECORDS - 1);
         assert!(!script.contains("MAX_RAY_RECURSION_DEPTH"));
+        Ok(())
     }
 
     #[test]
-    fn intersection_reports_into_a_generated_closest_hit() {
+    fn intersection_reports_into_a_generated_closest_hit() -> anyhow::Result<()> {
         let mut module = Reflection::new(ExecutionModel::IntersectionKHR);
         module.ray_variables.push(RayVariable {
             class: StorageClass::HitAttributeKHR,
@@ -459,8 +460,8 @@ mod tests {
                 count: 4,
             }),
         });
-        let harness =
-            harness(ShaderKind::Intersection, &module, 0, None, &mut Rng::new(3)).unwrap();
+        let harness = harness(ShaderKind::Intersection, &module, 0, None, &mut Rng::new(3))
+            .map_err(anyhow::Error::msg)?;
         assert_eq!(harness.geometry, Geometry::Boxes);
         assert_eq!(harness.shaders.len(), 5);
         let (kind, hit) = &harness.shaders[4];
@@ -470,10 +471,11 @@ mod tests {
         let script = harness.pipeline.script(&names);
         assert!(script.contains("  SHADER_GROUP g_hit harness4 tested\n"));
         assert!(harness.geometry.declarations().contains("GEOMETRY AABBS"));
+        Ok(())
     }
 
     #[test]
-    fn hit_shaders_with_custom_attributes_get_an_intersection_shader() {
+    fn hit_shaders_with_custom_attributes_get_an_intersection_shader() -> anyhow::Result<()> {
         let mut module = Reflection::new(ExecutionModel::AnyHitKHR);
         module.ray_variables.push(RayVariable {
             class: StorageClass::HitAttributeKHR,
@@ -484,7 +486,8 @@ mod tests {
             }),
         });
         module.body_opcodes.insert(Op::TraceRayKHR as u32);
-        let harness = harness(ShaderKind::AnyHit, &module, 0, None, &mut Rng::new(3)).unwrap();
+        let harness = harness(ShaderKind::AnyHit, &module, 0, None, &mut Rng::new(3))
+            .map_err(anyhow::Error::msg)?;
         assert_eq!(harness.geometry, Geometry::Boxes);
         let (kind, rint) = &harness.shaders[4];
         assert_eq!(*kind, ShaderKind::Intersection);
@@ -492,17 +495,20 @@ mod tests {
         let script = harness.pipeline.script(&names);
         assert!(script.contains("  SHADER_GROUP g_hit tested harness4\n"));
         assert!(script.contains("  MAX_RAY_RECURSION_DEPTH 2\n"));
+        Ok(())
     }
 
     #[test]
-    fn callable_data_flows_through_execute_callable() {
+    fn callable_data_flows_through_execute_callable() -> anyhow::Result<()> {
         let module = Reflection::new(ExecutionModel::CallableKHR);
-        let harness = harness(ShaderKind::Callable, &module, 0, None, &mut Rng::new(3)).unwrap();
+        let harness = harness(ShaderKind::Callable, &module, 0, None, &mut Rng::new(3))
+            .map_err(anyhow::Error::msg)?;
         assert!(harness.shaders[0]
             .1
             .contains("callableDataEXT uint rglsl_payload;"));
         assert!(harness.shaders[0].1.contains("executeCallableEXT(0, 0);"));
         assert_eq!(harness.output, Some(DataType::Scalar(U32)));
         assert!(harness.pipeline.run().contains("CALL sbt_call 4 4 1"));
+        Ok(())
     }
 }

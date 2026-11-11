@@ -322,7 +322,7 @@ mod tests {
     }
 
     #[test]
-    fn declares_nested_types_once() {
+    fn declares_nested_types_once() -> anyhow::Result<()> {
         let inner = DataType::Struct(vec![DataType::Scalar(U32), vec(3)]);
         let outer = DataType::Struct(vec![
             DataType::Array {
@@ -337,7 +337,7 @@ mod tests {
             },
         ]);
         let mut types = Types::default();
-        let declarator = types.declarator(&outer).unwrap();
+        let declarator = types.declarator(&outer).map_err(anyhow::Error::msg)?;
         assert_eq!(declarator.declare("p"), "RglslStruct1 p");
         assert_eq!(
             types.definitions(),
@@ -354,13 +354,14 @@ mod tests {
             }),
             length: 3,
         };
-        let declarator = types.declarator(&half).unwrap();
+        let declarator = types.declarator(&half).map_err(anyhow::Error::msg)?;
         assert_eq!(declarator.declare("h"), "f16vec2 h[3]");
         assert!(types.extensions().contains("explicit_arithmetic_types"));
+        Ok(())
     }
 
     #[test]
-    fn assigns_every_scalar() {
+    fn assigns_every_scalar() -> anyhow::Result<()> {
         let ty = DataType::Struct(vec![
             DataType::Scalar(Scalar {
                 kind: ScalarKind::Bool,
@@ -377,12 +378,13 @@ mod tests {
             },
         ]);
         let mut out = String::new();
-        assign_literals("p", &ty, &mut Rng::new(1), &mut out).unwrap();
+        assign_literals("p", &ty, &mut Rng::new(1), &mut out).map_err(anyhow::Error::msg)?;
         let lines: Vec<&str> = out.lines().collect();
         assert_eq!(lines.len(), 5);
         assert!(lines[0].starts_with("    p.m0 = "));
         assert!(lines[1].starts_with("    p.m1[0] = ") && lines[1].ends_with("u;"));
         assert!(lines[4].starts_with("    p.m2[1] = vec2("));
+        Ok(())
     }
 
     #[test]

@@ -1382,8 +1382,13 @@ mod tests {
     use super::*;
     use crate::exec::module::tests::{instruction, module, string_words};
 
-    fn op(op: Op, operands: &[u32]) -> Vec<u32> {
+    fn op(op: Op, operands: &[u32]) -> anyhow::Result<Vec<u32>> {
         instruction(op as u32, operands)
+    }
+
+    fn reflected(words: &[u32]) -> anyhow::Result<Reflection> {
+        let module = module::parse(words).map_err(anyhow::Error::msg)?;
+        reflect(&module).map_err(anyhow::Error::msg)
     }
 
     fn entry(model: ExecutionModel) -> Vec<u32> {
@@ -1393,35 +1398,35 @@ mod tests {
     }
 
     #[test]
-    fn reflects_a_compute_module_with_unknown_instructions() {
+    fn reflects_a_compute_module_with_unknown_instructions() -> anyhow::Result<()> {
         let words = module(&[
-            op(Op::Capability, &[Capability::Shader as u32]),
-            op(Op::Capability, &[60_000]),
+            op(Op::Capability, &[Capability::Shader as u32])?,
+            op(Op::Capability, &[60_000])?,
             op(
                 Op::Extension,
                 &string_words("SPV_KHR_storage_buffer_storage_class"),
-            ),
-            op(Op::EntryPoint, &entry(ExecutionModel::GLCompute)),
+            )?,
+            op(Op::EntryPoint, &entry(ExecutionModel::GLCompute))?,
             op(
                 Op::ExecutionMode,
                 &[1, ExecutionMode::LocalSize as u32, 8, 2, 1],
-            ),
-            op(Op::Decorate, &[10, Decoration::Block as u32]),
-            op(Op::MemberDecorate, &[10, 0, Decoration::Offset as u32, 0]),
-            op(Op::Decorate, &[12, Decoration::DescriptorSet as u32, 1]),
-            op(Op::Decorate, &[12, Decoration::Binding as u32, 3]),
-            op(Op::Decorate, &[9, Decoration::ArrayStride as u32, 4]),
-            op(Op::TypeInt, &[5, 32, 0]),
-            instruction(61_234, &[77, 5]),
-            op(Op::TypeRuntimeArray, &[9, 5]),
-            op(Op::TypeStruct, &[10, 9]),
+            )?,
+            op(Op::Decorate, &[10, Decoration::Block as u32])?,
+            op(Op::MemberDecorate, &[10, 0, Decoration::Offset as u32, 0])?,
+            op(Op::Decorate, &[12, Decoration::DescriptorSet as u32, 1])?,
+            op(Op::Decorate, &[12, Decoration::Binding as u32, 3])?,
+            op(Op::Decorate, &[9, Decoration::ArrayStride as u32, 4])?,
+            op(Op::TypeInt, &[5, 32, 0])?,
+            instruction(61_234, &[77, 5])?,
+            op(Op::TypeRuntimeArray, &[9, 5])?,
+            op(Op::TypeStruct, &[10, 9])?,
             op(
                 Op::TypePointer,
                 &[11, StorageClass::StorageBuffer as u32, 10],
-            ),
-            op(Op::Variable, &[11, 12, StorageClass::StorageBuffer as u32]),
+            )?,
+            op(Op::Variable, &[11, 12, StorageClass::StorageBuffer as u32])?,
         ]);
-        let reflection = reflect(&module::parse(&words).unwrap()).unwrap();
+        let reflection = reflected(&words)?;
         assert_eq!(reflection.model, ExecutionModel::GLCompute);
         assert_eq!(reflection.entry, "main");
         assert_eq!(reflection.local_size, [8, 2, 1]);
@@ -1438,60 +1443,61 @@ mod tests {
         };
         assert!(*writable);
         assert_eq!(layout.runtime_stride(), 4);
+        Ok(())
     }
 
-    fn record_module(load_from: u32) -> Vec<u32> {
-        module(&[
-            op(Op::Capability, &[Capability::RayTracingKHR as u32]),
-            op(Op::EntryPoint, &entry(ExecutionModel::RayGenerationKHR)),
-            op(Op::Decorate, &[10, Decoration::Block as u32]),
-            op(Op::MemberDecorate, &[10, 0, Decoration::Offset as u32, 0]),
-            op(Op::MemberDecorate, &[10, 1, Decoration::Offset as u32, 8]),
-            op(Op::MemberDecorate, &[10, 2, Decoration::Offset as u32, 16]),
-            op(Op::Decorate, &[13, Decoration::ArrayStride as u32, 8]),
-            op(Op::TypeVoid, &[2]),
-            op(Op::TypeFunction, &[3, 2]),
-            op(Op::TypeInt, &[5, 32, 0]),
-            op(Op::TypeInt, &[6, 64, 0]),
-            op(Op::TypeVector, &[7, 5, 2]),
-            op(Op::Constant, &[5, 8, 1]),
-            op(Op::Constant, &[5, 9, 2]),
-            op(Op::TypeArray, &[13, 6, 9]),
-            op(Op::TypeStruct, &[10, 5, 7, 13]),
+    fn record_module(load_from: u32) -> anyhow::Result<Vec<u32>> {
+        Ok(module(&[
+            op(Op::Capability, &[Capability::RayTracingKHR as u32])?,
+            op(Op::EntryPoint, &entry(ExecutionModel::RayGenerationKHR))?,
+            op(Op::Decorate, &[10, Decoration::Block as u32])?,
+            op(Op::MemberDecorate, &[10, 0, Decoration::Offset as u32, 0])?,
+            op(Op::MemberDecorate, &[10, 1, Decoration::Offset as u32, 8])?,
+            op(Op::MemberDecorate, &[10, 2, Decoration::Offset as u32, 16])?,
+            op(Op::Decorate, &[13, Decoration::ArrayStride as u32, 8])?,
+            op(Op::TypeVoid, &[2])?,
+            op(Op::TypeFunction, &[3, 2])?,
+            op(Op::TypeInt, &[5, 32, 0])?,
+            op(Op::TypeInt, &[6, 64, 0])?,
+            op(Op::TypeVector, &[7, 5, 2])?,
+            op(Op::Constant, &[5, 8, 1])?,
+            op(Op::Constant, &[5, 9, 2])?,
+            op(Op::TypeArray, &[13, 6, 9])?,
+            op(Op::TypeStruct, &[10, 5, 7, 13])?,
             op(
                 Op::TypePointer,
                 &[11, StorageClass::ShaderRecordBufferKHR as u32, 10],
-            ),
+            )?,
             op(
                 Op::TypePointer,
                 &[14, StorageClass::ShaderRecordBufferKHR as u32, 7],
-            ),
+            )?,
             op(
                 Op::TypePointer,
                 &[15, StorageClass::ShaderRecordBufferKHR as u32, 6],
-            ),
-            op(Op::TypeAccelerationStructureKHR, &[16]),
+            )?,
+            op(Op::TypeAccelerationStructureKHR, &[16])?,
             op(
                 Op::Variable,
                 &[11, 12, StorageClass::ShaderRecordBufferKHR as u32],
-            ),
-            op(Op::Function, &[2, 1, 0, 3]),
-            op(Op::Label, &[20]),
-            op(Op::AccessChain, &[14, 21, 12, 8]),
-            op(Op::Load, &[7, 22, load_from]),
-            op(Op::ConvertUToAccelerationStructureKHR, &[16, 23, 22]),
-            op(Op::AccessChain, &[15, 24, 12, 9, 8]),
-            op(Op::Load, &[6, 25, 24]),
-            op(Op::CopyObject, &[6, 26, 25]),
-            op(Op::ConvertUToAccelerationStructureKHR, &[16, 27, 26]),
-            op(Op::Return, &[]),
-            op(Op::FunctionEnd, &[]),
-        ])
+            )?,
+            op(Op::Function, &[2, 1, 0, 3])?,
+            op(Op::Label, &[20])?,
+            op(Op::AccessChain, &[14, 21, 12, 8])?,
+            op(Op::Load, &[7, 22, load_from])?,
+            op(Op::ConvertUToAccelerationStructureKHR, &[16, 23, 22])?,
+            op(Op::AccessChain, &[15, 24, 12, 9, 8])?,
+            op(Op::Load, &[6, 25, 24])?,
+            op(Op::CopyObject, &[6, 26, 25])?,
+            op(Op::ConvertUToAccelerationStructureKHR, &[16, 27, 26])?,
+            op(Op::Return, &[])?,
+            op(Op::FunctionEnd, &[])?,
+        ]))
     }
 
     #[test]
-    fn finds_acceleration_structure_addresses_in_the_shader_record() {
-        let reflection = reflect(&module::parse(&record_module(21)).unwrap()).unwrap();
+    fn finds_acceleration_structure_addresses_in_the_shader_record() -> anyhow::Result<()> {
+        let reflection = reflected(&record_module(21)?)?;
         assert!(reflection.problems.is_empty(), "{:?}", reflection.problems);
         let record = |offset| AddressField {
             buffer: AddressBuffer::ShaderRecord,
@@ -1499,73 +1505,75 @@ mod tests {
         };
         assert_eq!(reflection.addresses, vec![record(8), record(24)]);
 
-        let reflection = reflect(&module::parse(&record_module(12)).unwrap()).unwrap();
+        let reflection = reflected(&record_module(12)?)?;
         assert!(reflection.addresses.is_empty());
         assert_eq!(reflection.problems, vec![NOT_A_FIELD.to_string()]);
+        Ok(())
     }
 
     const NOT_A_FIELD: &str = "an acceleration structure from an address that is not a push \
                                constant, uniform, storage or shader record block field";
 
-    fn query_module(element: u32, member_type: u32) -> Vec<u32> {
-        module(&[
-            op(Op::Capability, &[Capability::RayQueryKHR as u32]),
-            op(Op::EntryPoint, &entry(ExecutionModel::GLCompute)),
-            op(Op::Decorate, &[10, Decoration::Block as u32]),
-            op(Op::MemberDecorate, &[10, 0, Decoration::Offset as u32, 0]),
-            op(Op::MemberDecorate, &[10, 1, Decoration::Offset as u32, 8]),
-            op(Op::Decorate, &[30, Decoration::Block as u32]),
-            op(Op::MemberDecorate, &[30, 0, Decoration::Offset as u32, 0]),
-            op(Op::MemberDecorate, &[30, 1, Decoration::Offset as u32, 16]),
-            op(Op::Decorate, &[33, Decoration::DescriptorSet as u32, 0]),
-            op(Op::Decorate, &[33, Decoration::Binding as u32, 1]),
-            op(Op::TypeVoid, &[2]),
-            op(Op::TypeFunction, &[3, 2]),
-            op(Op::TypeInt, &[5, 32, 0]),
-            op(Op::TypeInt, &[6, 64, 0]),
-            op(Op::TypeVector, &[7, 5, 2]),
-            op(Op::TypeVector, &[4, 5, 4]),
-            op(Op::Constant, &[5, 8, 0]),
-            op(Op::Constant, &[5, 9, 1]),
-            op(Op::Constant, &[5, 17, 2]),
-            op(Op::Constant, &[5, 18, 3]),
-            op(Op::TypeStruct, &[10, 5, 7]),
+    fn query_module(element: u32, member_type: u32) -> anyhow::Result<Vec<u32>> {
+        Ok(module(&[
+            op(Op::Capability, &[Capability::RayQueryKHR as u32])?,
+            op(Op::EntryPoint, &entry(ExecutionModel::GLCompute))?,
+            op(Op::Decorate, &[10, Decoration::Block as u32])?,
+            op(Op::MemberDecorate, &[10, 0, Decoration::Offset as u32, 0])?,
+            op(Op::MemberDecorate, &[10, 1, Decoration::Offset as u32, 8])?,
+            op(Op::Decorate, &[30, Decoration::Block as u32])?,
+            op(Op::MemberDecorate, &[30, 0, Decoration::Offset as u32, 0])?,
+            op(Op::MemberDecorate, &[30, 1, Decoration::Offset as u32, 16])?,
+            op(Op::Decorate, &[33, Decoration::DescriptorSet as u32, 0])?,
+            op(Op::Decorate, &[33, Decoration::Binding as u32, 1])?,
+            op(Op::TypeVoid, &[2])?,
+            op(Op::TypeFunction, &[3, 2])?,
+            op(Op::TypeInt, &[5, 32, 0])?,
+            op(Op::TypeInt, &[6, 64, 0])?,
+            op(Op::TypeVector, &[7, 5, 2])?,
+            op(Op::TypeVector, &[4, 5, 4])?,
+            op(Op::Constant, &[5, 8, 0])?,
+            op(Op::Constant, &[5, 9, 1])?,
+            op(Op::Constant, &[5, 17, 2])?,
+            op(Op::Constant, &[5, 18, 3])?,
+            op(Op::TypeStruct, &[10, 5, 7])?,
             op(
                 Op::TypePointer,
                 &[11, StorageClass::PushConstant as u32, 10],
-            ),
-            op(Op::TypePointer, &[14, StorageClass::PushConstant as u32, 7]),
-            op(Op::TypeStruct, &[30, 4, member_type]),
-            op(Op::TypeArray, &[31, 30, 17]),
+            )?,
+            op(Op::TypePointer, &[14, StorageClass::PushConstant as u32, 7])?,
+            op(Op::TypeStruct, &[30, 4, member_type])?,
+            op(Op::TypeArray, &[31, 30, 17])?,
             op(
                 Op::TypePointer,
                 &[32, StorageClass::StorageBuffer as u32, 31],
-            ),
+            )?,
             op(
                 Op::TypePointer,
                 &[34, StorageClass::StorageBuffer as u32, member_type],
-            ),
-            op(Op::TypeAccelerationStructureKHR, &[16]),
-            op(Op::Variable, &[11, 12, StorageClass::PushConstant as u32]),
-            op(Op::Variable, &[32, 33, StorageClass::StorageBuffer as u32]),
-            op(Op::Function, &[2, 1, 0, 3]),
-            op(Op::Label, &[20]),
-            op(Op::AccessChain, &[14, 21, 12, 9]),
-            op(Op::Load, &[7, 22, 21]),
-            op(Op::ConvertUToAccelerationStructureKHR, &[16, 23, 22]),
-            op(Op::AccessChain, &[34, 24, 33, element]),
-            op(Op::CopyObject, &[34, 25, 24]),
-            op(Op::AccessChain, &[34, 26, 25, 9]),
-            op(Op::Load, &[member_type, 27, 26]),
-            op(Op::ConvertUToAccelerationStructureKHR, &[16, 28, 27]),
-            op(Op::Return, &[]),
-            op(Op::FunctionEnd, &[]),
-        ])
+            )?,
+            op(Op::TypeAccelerationStructureKHR, &[16])?,
+            op(Op::Variable, &[11, 12, StorageClass::PushConstant as u32])?,
+            op(Op::Variable, &[32, 33, StorageClass::StorageBuffer as u32])?,
+            op(Op::Function, &[2, 1, 0, 3])?,
+            op(Op::Label, &[20])?,
+            op(Op::AccessChain, &[14, 21, 12, 9])?,
+            op(Op::Load, &[7, 22, 21])?,
+            op(Op::ConvertUToAccelerationStructureKHR, &[16, 23, 22])?,
+            op(Op::AccessChain, &[34, 24, 33, element])?,
+            op(Op::CopyObject, &[34, 25, 24])?,
+            op(Op::AccessChain, &[34, 26, 25, 9])?,
+            op(Op::Load, &[member_type, 27, 26])?,
+            op(Op::ConvertUToAccelerationStructureKHR, &[16, 28, 27])?,
+            op(Op::Return, &[])?,
+            op(Op::FunctionEnd, &[])?,
+        ]))
     }
 
     #[test]
-    fn finds_acceleration_structure_addresses_in_push_constants_and_buffers() {
-        let reflection = reflect(&module::parse(&query_module(9, 6)).unwrap()).unwrap();
+    fn finds_acceleration_structure_addresses_in_push_constants_and_buffers() -> anyhow::Result<()>
+    {
+        let reflection = reflected(&query_module(9, 6)?)?;
         assert!(reflection.problems.is_empty(), "{:?}", reflection.problems);
         assert_eq!(
             reflection.addresses,
@@ -1585,29 +1593,30 @@ mod tests {
             ]
         );
 
-        let reflection = reflect(&module::parse(&query_module(18, 6)).unwrap()).unwrap();
+        let reflection = reflected(&query_module(18, 6)?)?;
         assert_eq!(reflection.problems, vec![NOT_A_FIELD.to_string()]);
 
-        let reflection = reflect(&module::parse(&query_module(9, 4)).unwrap()).unwrap();
+        let reflection = reflected(&query_module(9, 4)?)?;
         assert_eq!(reflection.problems, vec![NOT_A_FIELD.to_string()]);
+        Ok(())
     }
 
     #[test]
-    fn reflects_per_vertex_geometry_inputs() {
+    fn reflects_per_vertex_geometry_inputs() -> anyhow::Result<()> {
         let words = module(&[
-            op(Op::Capability, &[Capability::Geometry as u32]),
-            op(Op::EntryPoint, &entry(ExecutionModel::Geometry)),
-            op(Op::ExecutionMode, &[1, ExecutionMode::Triangles as u32]),
-            op(Op::Decorate, &[20, Decoration::Location as u32, 2]),
-            op(Op::TypeFloat, &[5, 32]),
-            op(Op::TypeVector, &[6, 5, 4]),
-            op(Op::TypeInt, &[7, 32, 0]),
-            op(Op::Constant, &[7, 8, 3]),
-            op(Op::TypeArray, &[9, 6, 8]),
-            op(Op::TypePointer, &[10, StorageClass::Input as u32, 9]),
-            op(Op::Variable, &[10, 20, StorageClass::Input as u32]),
+            op(Op::Capability, &[Capability::Geometry as u32])?,
+            op(Op::EntryPoint, &entry(ExecutionModel::Geometry))?,
+            op(Op::ExecutionMode, &[1, ExecutionMode::Triangles as u32])?,
+            op(Op::Decorate, &[20, Decoration::Location as u32, 2])?,
+            op(Op::TypeFloat, &[5, 32])?,
+            op(Op::TypeVector, &[6, 5, 4])?,
+            op(Op::TypeInt, &[7, 32, 0])?,
+            op(Op::Constant, &[7, 8, 3])?,
+            op(Op::TypeArray, &[9, 6, 8])?,
+            op(Op::TypePointer, &[10, StorageClass::Input as u32, 9])?,
+            op(Op::Variable, &[10, 20, StorageClass::Input as u32])?,
         ]);
-        let reflection = reflect(&module::parse(&words).unwrap()).unwrap();
+        let reflection = reflected(&words)?;
         assert!(reflection.has_mode(ExecutionMode::Triangles));
         assert_eq!(reflection.inputs.len(), 1);
         assert_eq!(reflection.inputs[0].location, 2);
@@ -1622,5 +1631,6 @@ mod tests {
                 count: 4
             }
         );
+        Ok(())
     }
 }

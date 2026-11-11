@@ -159,11 +159,11 @@ pub mod tests {
             .collect()
     }
 
-    pub fn instruction(op: u32, operands: &[u32]) -> Vec<u32> {
-        let count = u32::try_from(operands.len() + 1).unwrap();
+    pub fn instruction(op: u32, operands: &[u32]) -> anyhow::Result<Vec<u32>> {
+        let count = u32::try_from(operands.len() + 1)?;
         let mut words = vec![(count << 16) | op];
         words.extend_from_slice(operands);
-        words
+        Ok(words)
     }
 
     pub fn module(instructions: &[Vec<u32>]) -> Vec<u32> {
@@ -185,19 +185,19 @@ pub mod tests {
     }
 
     #[test]
-    fn reads_the_global_section_and_skips_unknown_opcodes() {
+    fn reads_the_global_section_and_skips_unknown_opcodes() -> anyhow::Result<()> {
         let mut name = vec![1];
         name.extend(string_words("main"));
         let words = module(&[
-            instruction(Op::Capability as u32, &[1]),
-            instruction(Op::TypeVoid as u32, &[2]),
-            instruction(65_000, &[7, 8, 9]),
-            instruction(Op::TypeInt as u32, &[3, 32, 1]),
-            instruction(Op::Constant as u32, &[3, 4, 9]),
-            instruction(Op::Function as u32, &[2, 1, 0, 5]),
-            instruction(Op::Return as u32, &[]),
+            instruction(Op::Capability as u32, &[1])?,
+            instruction(Op::TypeVoid as u32, &[2])?,
+            instruction(65_000, &[7, 8, 9])?,
+            instruction(Op::TypeInt as u32, &[3, 32, 1])?,
+            instruction(Op::Constant as u32, &[3, 4, 9])?,
+            instruction(Op::Function as u32, &[2, 1, 0, 5])?,
+            instruction(Op::Return as u32, &[])?,
         ]);
-        let module = parse(&words).unwrap();
+        let module = parse(&words).map_err(anyhow::Error::msg)?;
         assert_eq!(module.globals.len(), 5);
         assert!(module.globals[0].is(Op::Capability));
         assert_eq!(module.globals[1].result_id(), Some(2));
@@ -207,20 +207,25 @@ pub mod tests {
         assert_eq!(module.globals[4].rest(2), [9]);
         assert!(module.body_opcodes.contains(&(Op::Return as u32)));
         assert!(!module.body_opcodes.contains(&(Op::Capability as u32)));
+        Ok(())
     }
 
     #[test]
-    fn rejects_broken_modules() {
+    fn rejects_broken_modules() -> anyhow::Result<()> {
         assert!(parse(&[]).is_err());
         assert!(parse(&[1, 2, 3, 4, 5]).is_err());
         assert!(parse(&[MAGIC, 0, 0]).is_err());
         assert!(parse(&module(&[vec![0]])).is_err());
         assert!(parse(&module(&[vec![(3 << 16) | 17, 1]])).is_err());
         assert!(parse_bytes(&[0; 7]).is_err());
-        let swapped: Vec<u32> = module(&[instruction(Op::Capability as u32, &[1])])
+        let swapped: Vec<u32> = module(&[instruction(Op::Capability as u32, &[1])?])
             .iter()
             .map(|w| w.swap_bytes())
             .collect();
-        assert_eq!(parse(&swapped).unwrap().globals.len(), 1);
+        assert_eq!(
+            parse(&swapped).map_err(anyhow::Error::msg)?.globals.len(),
+            1
+        );
+        Ok(())
     }
 }

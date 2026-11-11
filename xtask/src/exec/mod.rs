@@ -869,9 +869,10 @@ mod tests {
     use crate::exec::plan::Target;
     use crate::exec::reflect::{Scalar, ScalarKind, Slot};
 
-    fn plan() -> Plan {
+    fn plan() -> anyhow::Result<Plan> {
         let reflection = Reflection::new(spirv::ExecutionModel::GLCompute);
-        let mut plan = Plan::new(&reflection, &Inputs::default()).unwrap();
+        let mut plan = Plan::new(&reflection, &Inputs::default())
+            .map_err(|refusal| anyhow::anyhow!("{refusal:?}"))?;
         plan.targets.push(Target {
             name: "buffer".into(),
             buffer: "b".into(),
@@ -884,7 +885,7 @@ mod tests {
                 },
             }],
         });
-        plan
+        Ok(plan)
     }
 
     fn outputs(value: u32) -> Outputs {
@@ -894,8 +895,8 @@ mod tests {
     }
 
     #[test]
-    fn confirmation_decides_the_verdict() {
-        let plan = plan();
+    fn confirmation_decides_the_verdict() -> anyhow::Result<()> {
+        let plan = plan()?;
         assert_eq!(
             confirm(&plan, Some(&outputs(1)), Ok(outputs(1)), Ok(outputs(1))),
             Outcome::Pass { tolerated: 0 }
@@ -922,6 +923,7 @@ mod tests {
             confirm(&plan, None, Ok(outputs(2)), Err("lost".into())),
             Outcome::Fail(_)
         ));
+        Ok(())
     }
 
     #[test]

@@ -77,9 +77,10 @@ mod tests {
     use crate::exec::plan::{Inputs, Target};
     use crate::exec::reflect::{Reflection, Scalar, ScalarKind, Slot};
 
-    fn plan() -> Plan {
+    fn plan() -> anyhow::Result<Plan> {
         let reflection = Reflection::new(spirv::ExecutionModel::GLCompute);
-        let mut plan = Plan::new(&reflection, &Inputs::default()).unwrap();
+        let mut plan = Plan::new(&reflection, &Inputs::default())
+            .map_err(|refusal| anyhow::anyhow!("{refusal:?}"))?;
         plan.targets.push(Target {
             name: "buffer".into(),
             buffer: "b".into(),
@@ -92,7 +93,7 @@ mod tests {
                 },
             }],
         });
-        plan
+        Ok(plan)
     }
 
     fn outputs(value: u32) -> JobResult {
@@ -107,42 +108,45 @@ mod tests {
     }
 
     #[test]
-    fn stable_equal_runs_pass() {
+    fn stable_equal_runs_pass() -> anyhow::Result<()> {
         let runs = vec![(outputs(1), outputs(1)); RUNS];
-        assert_eq!(judge(&plan(), runs), Outcome::Pass { tolerated: 0 });
+        assert_eq!(judge(&plan()?, runs), Outcome::Pass { tolerated: 0 });
+        Ok(())
     }
 
     #[test]
-    fn an_unstable_reference_is_a_broken_twin() {
+    fn an_unstable_reference_is_a_broken_twin() -> anyhow::Result<()> {
         let runs = vec![
             (outputs(1), outputs(1)),
             (outputs(1), outputs(1)),
             (outputs(2), outputs(2)),
         ];
         assert!(fails_with(
-            &judge(&plan(), runs),
+            &judge(&plan()?, runs),
             "still has undefined behaviour"
         ));
+        Ok(())
     }
 
     #[test]
-    fn our_difference_on_any_run_fails() {
+    fn our_difference_on_any_run_fails() -> anyhow::Result<()> {
         let runs = vec![
             (outputs(1), outputs(1)),
             (outputs(1), outputs(3)),
             (outputs(1), outputs(1)),
         ];
         assert!(fails_with(
-            &judge(&plan(), runs),
+            &judge(&plan()?, runs),
             "glslang vs rglsl, twin, run 2"
         ));
         let runs = vec![(outputs(1), Err("lost".into())), (outputs(1), outputs(1))];
         assert!(fails_with(
-            &judge(&plan(), runs),
+            &judge(&plan()?, runs),
             "our module of the twin fails"
         ));
         let runs = vec![(Err("lost".into()), outputs(1))];
-        assert!(fails_with(&judge(&plan(), runs), "fix the twin"));
+        assert!(fails_with(&judge(&plan()?, runs), "fix the twin"));
+        Ok(())
     }
 
     #[test]

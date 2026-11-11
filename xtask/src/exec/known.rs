@@ -78,8 +78,8 @@ mod tests {
     }
 
     #[test]
-    fn every_listed_shader_has_a_twin() {
-        let known = Known::load(&root()).unwrap();
+    fn every_listed_shader_has_a_twin() -> Result<()> {
+        let known = Known::load(&root())?;
         for name in [
             "spv.noexplicitlayout.comp",
             "spv.Operations.frag",
@@ -89,33 +89,36 @@ mod tests {
             "spv.subgroup.tesc",
             "spv.viewportArray2.perVertex.notRequested.tesc",
         ] {
-            let entry = known.get(name).unwrap();
+            let entry = known
+                .get(name)
+                .with_context(|| format!("{name} is not listed"))?;
             assert!(entry.twin.is_file(), "{name}");
             assert!(!entry.undefined.is_empty() && !entry.change.is_empty());
         }
         assert!(known.get("spv.atomic.comp").is_none());
         for (name, entry) in &known.shaders {
-            let twin = fs::read_to_string(&entry.twin).unwrap();
+            let twin = fs::read_to_string(&entry.twin)?;
             assert!(twin.starts_with("#version"), "{name}");
             assert!(!twin.contains("//") && !twin.contains("/*"), "{name}");
         }
+        Ok(())
     }
 
     #[test]
-    fn a_listed_shader_without_a_twin_is_an_error() {
+    fn a_listed_shader_without_a_twin_is_an_error() -> Result<()> {
         let dir = std::env::temp_dir().join(format!("rglsl-exec-ub-{}", std::process::id()));
         let listed = dir.join(DIR);
-        fs::create_dir_all(&listed).unwrap();
+        fs::create_dir_all(&listed)?;
         fs::write(
             listed.join(LIST),
             "[\"a.comp\"]\nundefined = \"x\"\ntwin = \"y\"\n",
-        )
-        .unwrap();
+        )?;
         assert!(Known::load(&dir).is_err());
-        fs::write(listed.join("a.comp"), "#version 450\n").unwrap();
+        fs::write(listed.join("a.comp"), "#version 450\n")?;
         assert!(Known::load(&dir).is_ok());
-        fs::write(listed.join("b.comp"), "#version 450\n").unwrap();
+        fs::write(listed.join("b.comp"), "#version 450\n")?;
         assert!(Known::load(&dir).is_err());
-        fs::remove_dir_all(&dir).unwrap();
+        fs::remove_dir_all(&dir)?;
+        Ok(())
     }
 }
