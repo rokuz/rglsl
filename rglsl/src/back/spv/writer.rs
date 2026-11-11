@@ -3425,7 +3425,9 @@ impl Writer {
                 let type_id = self.get_handle_type_id(ty)?;
                 self.get_constant_null(type_id)
             }
-            crate::Expression::Compose { .. } | crate::Expression::Splat { .. }
+            crate::Expression::Compose { .. }
+            | crate::Expression::Splat { .. }
+            | crate::Expression::Replicate { .. }
                 if self.is_override_dependent(handle) =>
             {
                 self.write_spec_composite(handle, ir_module, mod_info)?

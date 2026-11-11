@@ -1552,6 +1552,7 @@ impl Analyzer<'_> {
         let mut constant = true;
         let mut values = Some(Vec::new());
         let mut failed = expected.is_error();
+        let uses = self.specialization_uses;
         if element_types.is_empty() && !failed {
             self.error(
                 span,
@@ -1609,9 +1610,16 @@ impl Analyzer<'_> {
         if failed {
             return Operand::error();
         }
+        let specialization = self.specialization_uses != uses;
+        if specialization && !self.extension_enabled(super::call::SPEC_CONSTANT_COMPOSITES) {
+            constant = false;
+        }
         let mut operand = Operand::temporary(result);
         operand.constant = constant;
-        operand.value = values.filter(|_| constant).map(Constant::new);
+        operand.specialization = constant && specialization;
+        operand.value = values
+            .filter(|_| constant && !specialization)
+            .map(Constant::new);
         operand
     }
 

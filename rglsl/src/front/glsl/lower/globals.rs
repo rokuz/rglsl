@@ -648,12 +648,8 @@ impl<'a> Lowerer<'a> {
                 return Ok(());
             }
             if qualifiers.specialization {
-                if let Some(&Initializer::Expression(ref expression)) = declarator
-                    .initializer
-                    .as_ref()
-                    .map(|initializer| &initializer.node)
-                {
-                    let handle = self.specialization(expression, Some(name), at)?;
+                if let Some(initializer) = declarator.initializer.as_ref() {
+                    let handle = self.specialized_initializer(initializer, ty, Some(name), at)?;
                     self.globals.insert(symbol, GlobalRef::Override(handle));
                     return Ok(());
                 }

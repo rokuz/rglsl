@@ -603,6 +603,11 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   initializer when it is a `ZeroValue` (`GL_EXT_null_initializer`'s `shared T x = {};`); the
   SPIR-V backend writes it as `OpConstantNull`, as glslang does.
 
+- **Composite overrides.** An `Override` without an id may have a matrix, cooperative matrix,
+  array or struct type (`GL_EXT_spec_constant_composites`); its initializer is a `Compose` or
+  `Replicate` of override expressions, written as `OpSpecConstantComposite` (or
+  `OpSpecConstantCompositeReplicateEXT`).
+
 - **Push constant banks** (`GL_NV_push_constant_bank`). `GlobalVariable::immediate_bank`
   (`ImmediateBank { bank, member_offset }`), written as `BankNV` on the variable and its block
   type and `MemberOffsetNV` on the variable, with `PushConstantBanksNV`. An entry point may use

@@ -8366,3 +8366,41 @@ void main() {
         .count();
     assert_eq!(workgroup_initialized, 2);
 }
+
+#[test]
+fn spec_constant_composites_are_spec_constants() {
+    let module = compile(
+        ShaderStage::Compute,
+        "#version 450
+#extension GL_EXT_spec_constant_composites : enable
+layout(local_size_x = 1) in;
+layout(constant_id = 0) const int five = 5;
+struct S { int a; int b; };
+const S s = S(five, five);
+const int a[3] = {five, five, five};
+const int b[2][3] = {a, a};
+layout(std430, binding = 0) buffer B { int value; } buf;
+void main() {
+    buf.value = s.b + a[1] + b[1][2];
+}
+",
+    );
+    let composites = instructions(&module, Op::SpecConstantComposite).len();
+    assert_eq!(composites, 3);
+    assert!(instructions(&module, Op::ConstantComposite).is_empty());
+}
+
+#[test]
+fn spec_constant_initializer_lists_are_not_folded() {
+    let error = parse(
+        ShaderStage::Compute,
+        "#version 450
+layout(local_size_x = 1) in;
+layout(constant_id = 0) const int five = 5;
+const int a[3] = {five, five, five};
+void main() {}
+",
+    )
+    .unwrap_err();
+    assert!(error.contains("must be a constant expression"), "{error}");
+}

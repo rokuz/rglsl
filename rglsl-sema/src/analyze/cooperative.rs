@@ -411,9 +411,10 @@ impl Analyzer<'_> {
             );
             Operand::error()
         };
+        let composites = self.extension_enabled(super::call::SPEC_CONSTANT_COMPOSITES);
         let constant = operands
             .iter()
-            .all(|operand| operand.constant && !operand.specialization);
+            .all(|operand| operand.constant && (composites || !operand.specialization));
         if let Some(matrix) = ty.as_cooperative_matrix() {
             let [operand] = operands else {
                 return fail(self, "wrong number of arguments");

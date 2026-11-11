@@ -5570,3 +5570,26 @@ layout(local_size_x=1) in;
 void main() {
     float a[] = {};
 }
+### spec constant initializer list needs spec constant composites | comp | 4:NonConstantInitializer
+layout(local_size_x=1) in;
+layout(constant_id = 0) const int five = 5;
+const int a[2] = {five, five};
+void main() {}
+### spec constant struct constructor needs spec constant composites | comp | 5:NonConstantInitializer
+layout(local_size_x=1) in;
+layout(constant_id = 0) const int five = 5;
+struct S { int a; int b; };
+const S s = S(five, five);
+void main() {}
+### spec constant composites | comp | ok
+#extension GL_EXT_spec_constant_composites : enable
+layout(local_size_x=1) in;
+layout(constant_id = 0) const int five = 5;
+layout(constant_id = 1) const float f = 1.0;
+struct S { int a; int b; };
+const S s = S(five, five);
+const int a[2] = {five, five};
+const int b[2][2] = {a, a};
+const vec4 v = vec4(f);
+const mat2 m = mat2(v.xy, v.zw);
+void main() {}
