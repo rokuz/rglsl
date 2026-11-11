@@ -11,6 +11,18 @@ const UNDEFINED: &[(&str, &str)] = &[
         "spv.450.noRedecl.tesc",
         "never writes `patchOut` or `gl_out`, so every output is undefined",
     ),
+    (
+        "spv.atomicInt64.comp",
+        "256 invocations store sums of atomic results that depend on their execution order",
+    ),
+    (
+        "spv.structCopy.comp",
+        "reads shared `s[id - count]` that only `s[0]` is written to, without a barrier",
+    ),
+    (
+        "spv.subgroup.tesc",
+        "stores `gl_SubgroupSize` and `gl_SubgroupInvocationID`, which are implementation-defined",
+    ),
 ];
 
 pub fn undefined(name: &str) -> Option<&'static str> {
