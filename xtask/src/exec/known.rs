@@ -7,6 +7,10 @@ const UNDEFINED: &[(&str, &str)] = &[
         "spv.Operations.frag",
         "reads the uninitialized locals `f` and `u` and the private bools `ub41` and `ub42`",
     ),
+    (
+        "spv.450.noRedecl.tesc",
+        "never writes `patchOut` or `gl_out`, so every output is undefined",
+    ),
 ];
 
 pub fn undefined(name: &str) -> Option<&'static str> {

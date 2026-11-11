@@ -12,9 +12,9 @@ Shaders that glslang's own test suite (`gtests/*.FromFile.cpp`) compiles under V
 
 | Stage | Files | accept | diag | valid | interface | exec local | exec remote | link | crashes |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| **all** | 694 | 572 / 694 (82.4 %) | 124 / 143 (86.7 %) | 428 / 428 (100.0 %) | – | 109 / 110 (99.1 %) | 139 / 140 (99.3 %) | 12 / 12 (100.0 %) | 0 |
+| **all** | 694 | 572 / 694 (82.4 %) | 124 / 143 (86.7 %) | 428 / 428 (100.0 %) | – | 108 / 109 (99.1 %) | 139 / 140 (99.3 %) | 12 / 12 (100.0 %) | 0 |
 | vert | 68 | 54 / 68 (79.4 %) | 8 / 9 (88.9 %) | 45 / 45 (100.0 %) | – | 25 / 26 (96.2 %) | 28 / 29 (96.6 %) | 6 / 6 (100.0 %) | 0 |
-| tesc | 7 | 7 / 7 (100.0 %) | 1 / 1 (100.0 %) | 6 / 6 (100.0 %) | – | 2 / 2 (100.0 %) | 2 / 2 (100.0 %) | – | 0 |
+| tesc | 7 | 7 / 7 (100.0 %) | 1 / 1 (100.0 %) | 6 / 6 (100.0 %) | – | 1 / 1 (100.0 %) | 2 / 2 (100.0 %) | – | 0 |
 | tese | 4 | 4 / 4 (100.0 %) | – | 4 / 4 (100.0 %) | – | 3 / 3 (100.0 %) | 4 / 4 (100.0 %) | – | 0 |
 | geom | 4 | 4 / 4 (100.0 %) | – | 4 / 4 (100.0 %) | – | – | 3 / 3 (100.0 %) | – | 0 |
 | frag | 207 | 161 / 207 (77.8 %) | 28 / 33 (84.8 %) | 128 / 128 (100.0 %) | – | 46 / 46 (100.0 %) | 53 / 53 (100.0 %) | 4 / 4 (100.0 %) | 0 |
@@ -39,8 +39,8 @@ Shaders that glslang's own test suite (`gtests/*.FromFile.cpp`) compiles under V
 
 | | shaders |
 |---|---:|
-| executed | 110 |
-| passed | 109 |
+| executed | 109 |
+| passed | 108 |
 | passed within the float tolerance | 0 |
 | failed | 1 |
 | skipped: stage not executed by the harness | 31 |
@@ -49,7 +49,7 @@ Shaders that glslang's own test suite (`gtests/*.FromFile.cpp`) compiles under V
 | skipped: resource or interface the harness cannot bind | 14 |
 | skipped: glslang's module is not valid SPIR-V | 11 |
 | skipped: glslang's module fails on the driver | 2 |
-| skipped: the shader reads undefined values | 2 |
+| skipped: the shader reads undefined values | 3 |
 
 `exec remote` in detail:
 
@@ -64,8 +64,8 @@ Shaders that glslang's own test suite (`gtests/*.FromFile.cpp`) compiles under V
 | skipped: resource or interface the harness cannot bind | 15 |
 | skipped: glslang's module is not valid SPIR-V | 11 |
 | skipped: glslang's module fails on the driver | 2 |
-| skipped: nondeterministic (glslang's module differs between runs) | 2 |
-| skipped: the shader reads undefined values | 2 |
+| skipped: nondeterministic (glslang's module differs between runs) | 1 |
+| skipped: the shader reads undefined values | 3 |
 
 ## glslang OpenGL tests, compiled for Vulkan
 
@@ -73,9 +73,9 @@ Shaders that glslang's own test suite compiles under OpenGL semantics. Here glsl
 
 | Stage | Files | accept | diag | valid | interface | exec local | exec remote | link | crashes |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| **all** | 218 | 214 / 218 (98.2 %) | 137 / 145 (94.5 %) | 69 / 69 (100.0 %) | – | 34 / 34 (100.0 %) | 41 / 41 (100.0 %) | 15 / 15 (100.0 %) | 0 |
+| **all** | 218 | 214 / 218 (98.2 %) | 137 / 145 (94.5 %) | 69 / 69 (100.0 %) | – | 34 / 34 (100.0 %) | 40 / 40 (100.0 %) | 15 / 15 (100.0 %) | 0 |
 | vert | 73 | 70 / 73 (95.9 %) | 32 / 35 (91.4 %) | 35 / 35 (100.0 %) | – | 20 / 20 (100.0 %) | 22 / 22 (100.0 %) | 10 / 10 (100.0 %) | 0 |
-| tesc | 6 | 6 / 6 (100.0 %) | 5 / 5 (100.0 %) | 1 / 1 (100.0 %) | – | 1 / 1 (100.0 %) | 1 / 1 (100.0 %) | – | 0 |
+| tesc | 6 | 6 / 6 (100.0 %) | 5 / 5 (100.0 %) | 1 / 1 (100.0 %) | – | 1 / 1 (100.0 %) | – | – | 0 |
 | tese | 2 | 2 / 2 (100.0 %) | 2 / 2 (100.0 %) | – | – | – | – | – | 0 |
 | geom | 11 | 11 / 11 (100.0 %) | 6 / 6 (100.0 %) | 5 / 5 (100.0 %) | – | – | 3 / 3 (100.0 %) | 1 / 1 (100.0 %) | 0 |
 | frag | 88 | 87 / 88 (98.9 %) | 58 / 62 (93.5 %) | 25 / 25 (100.0 %) | – | 12 / 12 (100.0 %) | 13 / 13 (100.0 %) | 2 / 2 (100.0 %) | 0 |
@@ -114,13 +114,14 @@ Shaders that glslang's own test suite compiles under OpenGL semantics. Here glsl
 
 | | shaders |
 |---|---:|
-| executed | 41 |
-| passed | 41 |
+| executed | 40 |
+| passed | 40 |
 | passed within the float tolerance | 0 |
 | failed | 0 |
 | skipped: capability or extension the harness cannot enable | 8 |
 | skipped: resource or interface the harness cannot bind | 7 |
 | skipped: glslang's module is not valid SPIR-V | 13 |
+| skipped: nondeterministic (glslang's module differs between runs) | 1 |
 
 ## rglsl link tests
 
