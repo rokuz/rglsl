@@ -8518,5 +8518,8 @@ void main() {
         })
         .collect();
     assert_eq!(lengths.len(), 2);
-    assert!(lengths.iter().all(|length| spec.contains(length)), "{lengths:?}");
+    assert!(
+        lengths.iter().all(|length| spec.contains(length)),
+        "{lengths:?}"
+    );
 }

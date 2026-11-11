@@ -1033,6 +1033,12 @@ impl<'a> Lowerer<'a> {
                 let inner = self.spirv_type(id, at)?;
                 return self.handle_global(symbol, name, inner, None, at);
             }
+            TypeKind::Struct(_) if ty.contains_opaque(&self.analysis.types) => {
+                return Err(unsupported(
+                    "uniform structures of opaque types, which Vulkan does not allow in SPIR-V (VUID-StandaloneSpirv-None-04667) until they are split into separate resources",
+                    at,
+                ))
+            }
             _ => {
                 return Err(semantic(
                     "non-opaque uniforms outside a block are not allowed when targeting Vulkan",
