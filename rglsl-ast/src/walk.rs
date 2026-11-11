@@ -249,57 +249,17 @@ impl<'a> Walker<'a> {
     }
 
     fn expression(&mut self, expression: &'a Expression) {
-        self.found.push(expression);
-        match &expression.kind {
-            ExpressionKind::Variable(_)
-            | ExpressionKind::Number(_)
-            | ExpressionKind::Bool(_)
-            | ExpressionKind::String(_) => {}
-            ExpressionKind::Parenthesized(inner) => self.expression(inner),
-            ExpressionKind::Subscript { base, index } => {
-                self.expression(base);
-                self.expression(index);
-            }
-            ExpressionKind::FunctionCall(call) => {
-                match &call.function.node {
-                    FunctionIdentifier::Constructor(specifier)
-                    | FunctionIdentifier::Cast(specifier) => {
-                        self.specifier(specifier);
-                    }
-                    FunctionIdentifier::Function(_) => {}
-                    FunctionIdentifier::Expression(callee) => self.expression(callee),
-                    FunctionIdentifier::Method { object, .. } => self.expression(object),
-                }
-                for argument in &call.arguments {
-                    self.expression(argument);
+        let mut pending = Vec::from([expression]);
+        while let Some(expression) = pending.pop() {
+            self.found.push(expression);
+            if let ExpressionKind::FunctionCall(call) = &expression.kind {
+                if let FunctionIdentifier::Constructor(specifier)
+                | FunctionIdentifier::Cast(specifier) = &call.function.node
+                {
+                    self.specifier(specifier);
                 }
             }
-            ExpressionKind::FieldSelection { base, .. } => self.expression(base),
-            ExpressionKind::Postfix { operand, .. } | ExpressionKind::Unary { operand, .. } => {
-                self.expression(operand);
-            }
-            ExpressionKind::Binary { left, right, .. } => {
-                self.expression(left);
-                self.expression(right);
-            }
-            ExpressionKind::Conditional {
-                condition,
-                then_expression,
-                else_expression,
-            } => {
-                self.expression(condition);
-                self.expression(then_expression);
-                self.expression(else_expression);
-            }
-            ExpressionKind::Assignment { target, value, .. } => {
-                self.expression(target);
-                self.expression(value);
-            }
-            ExpressionKind::Sequence(expressions) => {
-                for expression in expressions {
-                    self.expression(expression);
-                }
-            }
+            pending.extend(expression.kind.children().into_iter().rev());
         }
     }
 }

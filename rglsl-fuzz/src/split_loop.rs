@@ -30,12 +30,15 @@ struct LoopSplitInfo {
 }
 
 fn root_variable(expression: &Expression) -> Option<&Expression> {
-    match &expression.kind {
-        ExpressionKind::Variable(_) => Some(expression),
-        ExpressionKind::Parenthesized(inner)
-        | ExpressionKind::Subscript { base: inner, .. }
-        | ExpressionKind::FieldSelection { base: inner, .. } => root_variable(inner),
-        _ => None,
+    let mut current = expression;
+    loop {
+        match &current.kind {
+            ExpressionKind::Variable(_) => return Some(current),
+            ExpressionKind::Parenthesized(inner)
+            | ExpressionKind::Subscript { base: inner, .. }
+            | ExpressionKind::FieldSelection { base: inner, .. } => current = inner,
+            _ => return None,
+        }
     }
 }
 

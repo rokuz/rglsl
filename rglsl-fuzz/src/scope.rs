@@ -382,66 +382,71 @@ impl Finder<'_> {
     }
 
     fn expression(&mut self, expression: &Expression) {
-        self.point(expression);
-        match &expression.kind {
-            ExpressionKind::Variable(_)
-            | ExpressionKind::Number(_)
-            | ExpressionKind::Bool(_)
-            | ExpressionKind::String(_) => {}
-            ExpressionKind::Parenthesized(inner) => self.expression(inner),
-            ExpressionKind::Subscript { base, index } => {
-                self.expression(base);
-                self.expression(index);
-            }
-            ExpressionKind::FunctionCall(call) => {
-                let skip_all = match &call.function.node {
-                    FunctionIdentifier::Function(name) => {
-                        name.contains("Offset")
-                            || name.starts_with("textureGather")
-                            || name.starts_with("interpolateAt")
+        let mut pending = Vec::from([expression]);
+        while let Some(expression) = pending.pop() {
+            self.point(expression);
+            let start = pending.len();
+            match &expression.kind {
+                ExpressionKind::Variable(_)
+                | ExpressionKind::Number(_)
+                | ExpressionKind::Bool(_)
+                | ExpressionKind::String(_)
+                | ExpressionKind::Postfix { .. } => {}
+                ExpressionKind::Parenthesized(inner)
+                | ExpressionKind::FieldSelection { base: inner, .. }
+                | ExpressionKind::Assignment { value: inner, .. } => pending.push(inner),
+                ExpressionKind::Subscript { base, index } => {
+                    pending.push(base);
+                    pending.push(index);
+                }
+                ExpressionKind::FunctionCall(call) => {
+                    let skip_all = match &call.function.node {
+                        FunctionIdentifier::Function(name) => {
+                            name.contains("Offset")
+                                || name.starts_with("textureGather")
+                                || name.starts_with("interpolateAt")
+                        }
+                        FunctionIdentifier::Constructor(_) | FunctionIdentifier::Cast(_) => false,
+                        FunctionIdentifier::Expression(_) | FunctionIdentifier::Method { .. } => {
+                            true
+                        }
+                    };
+                    if !skip_all {
+                        let outputs =
+                            output_parameters(self.analysis, expression.id, call.arguments.len());
+                        for (argument, output) in call.arguments.iter().zip(outputs) {
+                            if !output {
+                                pending.push(argument);
+                            }
+                        }
                     }
-                    FunctionIdentifier::Constructor(_) | FunctionIdentifier::Cast(_) => false,
-                    FunctionIdentifier::Expression(_) | FunctionIdentifier::Method { .. } => true,
-                };
-                if skip_all {
-                    return;
                 }
-                let outputs = output_parameters(self.analysis, expression.id, call.arguments.len());
-                for (argument, output) in call.arguments.iter().zip(outputs) {
-                    if !output {
-                        self.expression(argument);
+                ExpressionKind::Unary { operator, operand } => {
+                    if !matches!(
+                        operator,
+                        rglsl_ast::ast::UnaryOperator::Increment
+                            | rglsl_ast::ast::UnaryOperator::Decrement
+                    ) {
+                        pending.push(operand);
                     }
                 }
-            }
-            ExpressionKind::FieldSelection { base, .. } => self.expression(base),
-            ExpressionKind::Postfix { .. } => {}
-            ExpressionKind::Unary { operator, operand } => {
-                if !matches!(
-                    operator,
-                    rglsl_ast::ast::UnaryOperator::Increment
-                        | rglsl_ast::ast::UnaryOperator::Decrement
-                ) {
-                    self.expression(operand);
+                ExpressionKind::Binary { left, right, .. } => {
+                    pending.push(left);
+                    pending.push(right);
                 }
-            }
-            ExpressionKind::Binary { left, right, .. } => {
-                self.expression(left);
-                self.expression(right);
-            }
-            ExpressionKind::Conditional {
-                condition,
-                then_expression,
-                else_expression,
-            } => {
-                self.expression(condition);
-                self.expression(then_expression);
-                self.expression(else_expression);
-            }
-            ExpressionKind::Assignment { value, .. } => self.expression(value),
-            ExpressionKind::Sequence(expressions) => {
-                for expression in expressions {
-                    self.expression(expression);
+                ExpressionKind::Conditional {
+                    condition,
+                    then_expression,
+                    else_expression,
+                } => {
+                    pending.push(condition);
+                    pending.push(then_expression);
+                    pending.push(else_expression);
                 }
+                ExpressionKind::Sequence(expressions) => pending.extend(expressions.iter()),
+            }
+            if let Some(added) = pending.get_mut(start..) {
+                added.reverse();
             }
         }
     }

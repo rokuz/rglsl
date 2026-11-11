@@ -180,18 +180,19 @@ fn assert_deep(name: &str, source: impl Fn(usize) -> String, minimum: usize) {
 
 #[test]
 fn expressions_at_the_nesting_limit_compile_on_a_small_stack() {
-    let cases: [(&str, &str, &str, &str, &str, usize); 22] = [
+    let cases: [(&str, &str, &str, &str, &str, usize); 24] = [
         ("parentheses", "b = ", "(", "b", ")", 2),
-        ("negation", "b = ", "- ", "b", "", 1),
-        ("logical not", "t = ", "!", "t", "", 1),
-        ("bitwise not", "b = ", "~", "b", "", 1),
-        ("binary chain", "b = b", " + b", "", "", 1),
-        ("mixed precedence", "b = b", " * b + b", "", "", 1),
-        ("comparison chain", "t = t", " == t", "", "", 1),
-        ("logical chain", "t = t", " && t", "", "", 1),
-        ("assignment chain", "", "b = ", "2", "", 1),
-        ("compound assignment", "", "b += ", "2", "", 1),
-        ("conditional else", "b = ", "t ? b : ", "b", "", 1),
+        ("negation", "b = ", "-(", "b", ")", 2),
+        ("logical not", "t = ", "!(", "t", ")", 2),
+        ("bitwise not", "b = ", "~(", "b", ")", 2),
+        ("binary chain", "b = ", "b + (", "b", ")", 2),
+        ("mixed precedence", "b = ", "b * b + (", "b", ")", 2),
+        ("right operand", "b = ", "b + b * (", "b", ")", 3),
+        ("comparison chain", "t = ", "t == (", "t", ")", 2),
+        ("logical chain", "t = ", "t && (", "t", ")", 2),
+        ("assignment chain", "", "b = (", "2", ")", 2),
+        ("compound assignment", "", "b += (", "2", ")", 2),
+        ("conditional else", "b = ", "t ? b : (", "b", ")", 2),
         ("conditional then", "b = ", "t ? ", "b", " : b", 1),
         ("user call", "b = ", "f(", "b", ")", 2),
         ("built-in call", "b = ", "abs(", "b", ")", 2),
@@ -208,8 +209,9 @@ fn expressions_at_the_nesting_limit_compile_on_a_small_stack() {
             ", 0).length() - 2]",
             4,
         ),
-        ("swizzle", "v = v", ".wzyx", "", "", 1),
-        ("increment", "b = b", "++ + b", "", "", 1),
+        ("swizzle", "v = ", "(", "v", ").wzyx", 2),
+        ("increment", "b = ", "b++ + (", "b", ")", 2),
+        ("sequence", "b = ", "(b, ", "b", ")", 2),
     ];
     for (name, prefix, open, core, close, units) in cases {
         let source = move |count: usize| {
@@ -414,11 +416,184 @@ fn preprocessor_nesting_is_bounded_on_a_small_stack() {
     assert_eq!(check(include, true), Outcome::TooDeep);
 }
 
+fn repeated(open: &str, core: &str, close: &str) -> String {
+    format!("{}{core}{}", open.repeat(HUGE), close.repeat(HUGE))
+}
+
+#[test]
+fn flat_chains_compile_on_a_small_stack() {
+    let cases = [
+        (
+            "binary chain",
+            "",
+            format!("b = {};", repeated("b + ", "b", "")),
+        ),
+        (
+            "every binary operator",
+            "",
+            format!(
+                "b = b{};",
+                " + b - b * b / 3 % 5 << 1 >> 1 & b | b ^ b".repeat(HUGE / 10)
+            ),
+        ),
+        (
+            "mixed precedence",
+            "",
+            format!("b = b * b{};", " + b * b".repeat(HUGE)),
+        ),
+        (
+            "implicit conversions",
+            "",
+            format!("v.x = v.x{};", " + b * 2u + 1.0".repeat(HUGE / 3)),
+        ),
+        (
+            "comparison chain",
+            "",
+            format!("t = t{};", " == t != t".repeat(HUGE / 2)),
+        ),
+        ("logical and", "", format!("t = t{};", " && t".repeat(HUGE))),
+        ("logical or", "", format!("t = t{};", " || t".repeat(HUGE))),
+        (
+            "short-circuit with effects",
+            "",
+            format!("t = t{};", " && (b++ > 0) || f(b) > 1".repeat(HUGE / 2)),
+        ),
+        ("logical xor", "", format!("t = t{};", " ^^ t".repeat(HUGE))),
+        (
+            "constant chain",
+            "",
+            format!("const int k = 1{}; b = k;", " + 2 * 3".repeat(HUGE)),
+        ),
+        (
+            "global constant chain",
+            &format!("const int k = 1{};", " + 2 * 3".repeat(HUGE)),
+            String::from("b = k;"),
+        ),
+        (
+            "specialization constant chain",
+            &format!(
+                "layout(constant_id = 0) const int s = 1; const int k = s{};",
+                " + s * 2".repeat(HUGE)
+            ),
+            String::from("b = k + c[k & 1];"),
+        ),
+        ("sequence", "", format!("b = (b{});", ", b".repeat(HUGE))),
+        (
+            "sequence statement",
+            "",
+            format!("b++{};", ", b++".repeat(HUGE)),
+        ),
+        ("assignment chain", "", format!("{}2;", "b = ".repeat(HUGE))),
+        (
+            "compound assignment chain",
+            "",
+            format!("{}2;", "b += b -= ".repeat(HUGE / 2)),
+        ),
+        (
+            "converting assignment chain",
+            "",
+            format!("v.x = {}b;", "b = ".repeat(HUGE)),
+        ),
+        (
+            "conditional chain",
+            "",
+            format!("b = {}b;", "t ? b : ".repeat(HUGE)),
+        ),
+        (
+            "conditional chain with effects",
+            "",
+            format!("b = {}b;", "b > 2 ? b++ : ".repeat(HUGE)),
+        ),
+        (
+            "constant conditional chain",
+            "",
+            format!("b = {}3;", "false ? 1 : ".repeat(HUGE)),
+        ),
+        ("negation chain", "", format!("b = {}b;", "- ".repeat(HUGE))),
+        (
+            "logical not chain",
+            "",
+            format!("t = {}t;", "!".repeat(HUGE)),
+        ),
+        (
+            "unary chain",
+            "",
+            format!("b = {}b;", "-~+".repeat(HUGE / 3)),
+        ),
+        (
+            "swizzle chain",
+            "",
+            format!("v = v{};", ".wzyx".repeat(HUGE)),
+        ),
+        (
+            "swizzle store chain",
+            "",
+            format!("v{} = vec4(2.0);", ".wzyx".repeat(HUGE)),
+        ),
+        (
+            "scalar swizzle chain",
+            "",
+            format!("v.x = v.x{};", ".x".repeat(HUGE)),
+        ),
+        (
+            "member and subscript chain",
+            "struct S { vec4 m[2]; };",
+            format!(
+                "S s = S(vec4[2](v, v)); s.m[1]{0}[2] = 2.0; v.x = s.m[1]{1}[0]; v.y = s.m[1].x;",
+                ".wzyx.yxwz".repeat(HUGE / 2),
+                ".wzyx[1].xxxx".repeat(HUGE / 2)
+            ),
+        ),
+        (
+            "nonuniform chain",
+            "",
+            format!("b = nonuniformEXT(b){}; b = c[b & 1];", " + b".repeat(HUGE)),
+        ),
+        (
+            "precise chain",
+            "",
+            format!(
+                "precise float p; float q = v.y; p = q{}; v.x = p;",
+                " * q + 1.0".repeat(HUGE)
+            ),
+        ),
+        (
+            "precision chain",
+            "",
+            format!(
+                "mediump float m = v.y; highp float h = m{}; v.x = h;",
+                " * m + 1.0".repeat(HUGE)
+            ),
+        ),
+        (
+            "chain in a loop condition",
+            "",
+            format!(
+                "for (int i = 0; i{} < 4; i++) {{ b++; }}",
+                " + 0".repeat(HUGE)
+            ),
+        ),
+        (
+            "chain in a user call",
+            "",
+            format!("b = f(b{});", " + b".repeat(HUGE)),
+        ),
+        (
+            "chain in a function",
+            &format!("int g(int a) {{ return a{}; }}", " * a - 1".repeat(HUGE)),
+            String::from("b = g(b);"),
+        ),
+    ];
+    for (name, globals, body) in cases {
+        let outcome = check(shader(globals, &body), false);
+        assert_eq!(outcome, Outcome::Compiled, "{name}");
+    }
+}
+
 #[test]
 fn long_flat_inputs_compile_on_a_small_stack() {
     let long = [
         shader("", &"b = b + 1;\n".repeat(LONG)),
-        shader("", &format!("b = (b{});", ", b".repeat(LONG))),
         shader(
             "",
             &format!("if (t) b = 2;{}", " else b = 3; if (t) b = 2;".repeat(LONG)),

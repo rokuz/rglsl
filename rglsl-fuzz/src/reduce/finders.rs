@@ -133,10 +133,11 @@ fn call_name(expression: &Expression) -> Option<&str> {
 }
 
 fn strip_parentheses(expression: &Expression) -> &Expression {
-    match &expression.kind {
-        ExpressionKind::Parenthesized(inner) => strip_parentheses(inner),
-        _ => expression,
+    let mut current = expression;
+    while let ExpressionKind::Parenthesized(inner) = &current.kind {
+        current = inner;
     }
+    current
 }
 
 fn is_call_to(expression: &Expression, name: &str) -> bool {
@@ -181,12 +182,15 @@ fn declares_name(statement: &Statement, predicate: &dyn Fn(&str) -> bool) -> boo
 }
 
 fn root_name(expression: &Expression) -> Option<&str> {
-    match &expression.kind {
-        ExpressionKind::Variable(name) => Some(name),
-        ExpressionKind::Parenthesized(inner)
-        | ExpressionKind::Subscript { base: inner, .. }
-        | ExpressionKind::FieldSelection { base: inner, .. } => root_name(inner),
-        _ => None,
+    let mut current = expression;
+    loop {
+        match &current.kind {
+            ExpressionKind::Variable(name) => return Some(name),
+            ExpressionKind::Parenthesized(inner)
+            | ExpressionKind::Subscript { base: inner, .. }
+            | ExpressionKind::FieldSelection { base: inner, .. } => current = inner,
+            _ => return None,
+        }
     }
 }
 
@@ -590,15 +594,19 @@ fn field_names(
 }
 
 fn chain_matches(expression: &Expression, variable: &str, names: &[String]) -> bool {
-    let Some((last, rest)) = names.split_last() else {
-        return matches!(&expression.kind, ExpressionKind::Variable(name) if name == variable);
-    };
-    match &expression.kind {
-        ExpressionKind::FieldSelection { base, field } => {
-            field.node == *last && chain_matches(strip_parentheses(base), variable, rest)
+    let mut current = expression;
+    let mut names = names;
+    while let Some((last, rest)) = names.split_last() {
+        let ExpressionKind::FieldSelection { base, field } = &current.kind else {
+            return false;
+        };
+        if field.node != *last {
+            return false;
         }
-        _ => false,
+        current = strip_parentheses(base);
+        names = rest;
     }
+    matches!(&current.kind, ExpressionKind::Variable(name) if name == variable)
 }
 
 fn destructify(unit: &TranslationUnit, builder: &mut Builder) -> Vec<Opportunity> {
@@ -830,12 +838,15 @@ fn compound_to_body(unit: &TranslationUnit, builder: &mut Builder) -> Vec<Opport
 
 fn lvalue_ids(unit: &TranslationUnit, analysis: &Analysis) -> BTreeSet<NodeId> {
     fn mark(expression: &Expression, ids: &mut BTreeSet<NodeId>) {
-        ids.insert(expression.id);
-        match &expression.kind {
-            ExpressionKind::Parenthesized(inner)
-            | ExpressionKind::FieldSelection { base: inner, .. } => mark(inner, ids),
-            ExpressionKind::Subscript { base, .. } => mark(base, ids),
-            _ => {}
+        let mut current = expression;
+        loop {
+            ids.insert(current.id);
+            match &current.kind {
+                ExpressionKind::Parenthesized(inner)
+                | ExpressionKind::FieldSelection { base: inner, .. }
+                | ExpressionKind::Subscript { base: inner, .. } => current = inner,
+                _ => return,
+            }
         }
     }
     let mut ids = BTreeSet::new();

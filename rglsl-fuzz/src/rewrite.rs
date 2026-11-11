@@ -336,55 +336,50 @@ impl Rewriter<'_> {
     }
 
     fn expression(&mut self, expression: &mut Expression) {
-        match &mut expression.kind {
-            ExpressionKind::Variable(_)
-            | ExpressionKind::Number(_)
-            | ExpressionKind::Bool(_)
-            | ExpressionKind::String(_) => {}
-            ExpressionKind::Parenthesized(inner) => self.expression(inner),
-            ExpressionKind::Subscript { base, index } => {
-                self.expression(base);
-                self.expression(index);
-            }
-            ExpressionKind::FunctionCall(call) => {
-                match &mut call.function.node {
-                    FunctionIdentifier::Constructor(specifier)
-                    | FunctionIdentifier::Cast(specifier) => self.specifier(specifier),
-                    FunctionIdentifier::Function(_) => {}
-                    FunctionIdentifier::Expression(callee) => self.expression(callee),
-                    FunctionIdentifier::Method { object, .. } => self.expression(object),
+        let mut tasks = Vec::from([Rewrite::Visit(take_expression(expression))]);
+        let mut done: Vec<Expression> = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                Rewrite::Visit(mut node) => {
+                    if let ExpressionKind::FunctionCall(call) = &mut node.kind {
+                        if let FunctionIdentifier::Constructor(specifier)
+                        | FunctionIdentifier::Cast(specifier) = &mut call.function.node
+                        {
+                            self.specifier(specifier);
+                        }
+                    }
+                    let children: Vec<Expression> = node
+                        .kind
+                        .children_mut()
+                        .into_iter()
+                        .map(take_expression)
+                        .collect();
+                    let count = children.len();
+                    tasks.push(Rewrite::Build(node, count));
+                    tasks.extend(children.into_iter().rev().map(Rewrite::Visit));
                 }
-                for argument in &mut call.arguments {
-                    self.expression(argument);
-                }
-            }
-            ExpressionKind::FieldSelection { base, .. } => self.expression(base),
-            ExpressionKind::Postfix { operand, .. } | ExpressionKind::Unary { operand, .. } => {
-                self.expression(operand);
-            }
-            ExpressionKind::Binary { left, right, .. } => {
-                self.expression(left);
-                self.expression(right);
-            }
-            ExpressionKind::Conditional {
-                condition,
-                then_expression,
-                else_expression,
-            } => {
-                self.expression(condition);
-                self.expression(then_expression);
-                self.expression(else_expression);
-            }
-            ExpressionKind::Assignment { target, value, .. } => {
-                self.expression(target);
-                self.expression(value);
-            }
-            ExpressionKind::Sequence(expressions) => {
-                for expression in expressions {
-                    self.expression(expression);
+                Rewrite::Build(mut node, count) => {
+                    let start = done.len().saturating_sub(count);
+                    for (slot, child) in node
+                        .kind
+                        .children_mut()
+                        .into_iter()
+                        .zip(done.drain(start..))
+                    {
+                        *slot = child;
+                    }
+                    (self.visit)(&mut node);
+                    done.push(node);
                 }
             }
         }
-        (self.visit)(expression);
+        if let Some(result) = done.pop() {
+            *expression = result;
+        }
     }
+}
+
+enum Rewrite {
+    Visit(Expression),
+    Build(Expression, usize),
 }

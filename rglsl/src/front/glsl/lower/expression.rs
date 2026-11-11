@@ -80,7 +80,7 @@ pub(super) fn pattern(indices: &[u32]) -> [SwizzleComponent; 4] {
     pattern
 }
 
-const fn compound(operator: AssignmentOperator) -> Option<AstBinary> {
+pub(super) const fn compound(operator: AssignmentOperator) -> Option<AstBinary> {
     Some(match operator {
         AssignmentOperator::Assign => return None,
         AssignmentOperator::Multiply => AstBinary::Multiply,
@@ -112,7 +112,7 @@ impl<'a> FunctionLowerer<'_, 'a> {
         self.typed_value(expression, value)
     }
 
-    fn typed_value(
+    pub(super) fn typed_value(
         &mut self,
         expression: &AstExpression,
         value: Option<Handle<Expression>>,
@@ -178,6 +178,14 @@ impl<'a> FunctionLowerer<'_, 'a> {
     ) -> Result<Option<Handle<Expression>>> {
         self.stepped = None;
         let value = self.unmarked_value(expression)?;
+        self.flagged(expression, value)
+    }
+
+    pub(super) fn flagged(
+        &mut self,
+        expression: &AstExpression,
+        value: Option<Handle<Expression>>,
+    ) -> Result<Option<Handle<Expression>>> {
         let analysis = self.lw.analysis;
         let mut flags = crate::Precision::empty();
         if analysis.no_contraction.contains(&expression.id) {
@@ -225,7 +233,10 @@ impl<'a> FunctionLowerer<'_, 'a> {
         }
     }
 
-    fn folded_value(&mut self, expression: &AstExpression) -> Result<Option<Handle<Expression>>> {
+    pub(super) fn folded_value(
+        &mut self,
+        expression: &AstExpression,
+    ) -> Result<Option<Handle<Expression>>> {
         let at = self.at(expression.span);
         let info = self.info(expression)?;
         if info.is_specialization {
@@ -257,42 +268,10 @@ impl<'a> FunctionLowerer<'_, 'a> {
             } => self
                 .increment(operand, operator == PostfixOperator::Increment, true, at)
                 .map(Some),
-            ExpressionKind::Unary {
-                operator: AstUnary::Increment,
-                ref operand,
-            } => self.increment(operand, true, false, at).map(Some),
-            ExpressionKind::Unary {
-                operator: AstUnary::Decrement,
-                ref operand,
-            } => self.increment(operand, false, false, at).map(Some),
-            ExpressionKind::Unary {
-                operator,
-                ref operand,
-            } => self
-                .unary_value(expression, operator, operand, at)
-                .map(Some),
-            ExpressionKind::Binary {
-                operator,
-                ref left,
-                ref right,
-            } => self
-                .binary_value(expression, operator, [left, right], at)
-                .map(Some),
-            ExpressionKind::Conditional {
-                ref condition,
-                ref then_expression,
-                ref else_expression,
-            } => self.conditional(
-                expression,
-                condition,
-                [then_expression, else_expression],
-                at,
-            ),
-            ExpressionKind::Assignment {
-                operator,
-                ref target,
-                ref value,
-            } => self.assignment(operator, target, value, at).map(Some),
+            ExpressionKind::Unary { .. } => self.unary_chain(expression).map(Some),
+            ExpressionKind::Binary { .. } => self.binary_chain(expression).map(Some),
+            ExpressionKind::Conditional { .. } => self.conditional_chain(expression),
+            ExpressionKind::Assignment { .. } => self.assignment_chain(expression).map(Some),
             ExpressionKind::Sequence(ref expressions) => self.sequence(expressions, at),
         }
     }
@@ -317,34 +296,6 @@ impl<'a> FunctionLowerer<'_, 'a> {
         } else {
             Ok(value)
         }
-    }
-
-    fn unary_value(
-        &mut self,
-        expression: &AstExpression,
-        operator: AstUnary,
-        operand: &AstExpression,
-        at: Span,
-    ) -> Result<Handle<Expression>> {
-        let value = self.unary(operator, operand, at)?;
-        if self.info(expression)?.non_uniform {
-            self.mark_value(value);
-        }
-        Ok(value)
-    }
-
-    fn binary_value(
-        &mut self,
-        expression: &AstExpression,
-        operator: AstBinary,
-        [left, right]: [&AstExpression; 2],
-        at: Span,
-    ) -> Result<Handle<Expression>> {
-        let value = self.binary_expression(operator, left, right, at)?;
-        if self.info(expression)?.non_uniform {
-            self.mark_operation(value);
-        }
-        Ok(value)
     }
 
     fn sequence(
@@ -386,7 +337,7 @@ impl<'a> FunctionLowerer<'_, 'a> {
         }
     }
 
-    fn mark_operation(&mut self, value: Handle<Expression>) {
+    pub(super) fn mark_operation(&mut self, value: Handle<Expression>) {
         match self.expressions[value] {
             Expression::Binary { .. }
             | Expression::Unary { .. }
@@ -709,7 +660,14 @@ impl<'a> FunctionLowerer<'_, 'a> {
     }
 
     pub(super) fn chain(&mut self, expression: &AstExpression) -> Result<Chain> {
-        let chain = self.chain_parts(expression)?;
+        self.access_chain(expression)
+    }
+
+    pub(super) fn chain_marked(
+        &mut self,
+        expression: &AstExpression,
+        chain: Chain,
+    ) -> Result<Chain> {
         let non_uniform = self.info(expression)?.non_uniform;
         Ok(match chain {
             Chain::Place(mut place) => {
@@ -767,32 +725,24 @@ impl<'a> FunctionLowerer<'_, 'a> {
         self.mark(pointer, flags);
     }
 
-    fn chain_parts(&mut self, expression: &AstExpression) -> Result<Chain> {
-        let at = self.at(expression.span);
+    pub(super) fn chain_head(&mut self, expression: &AstExpression) -> Result<Chain> {
         match expression.kind {
             ExpressionKind::Parenthesized(ref inner) => self.chain(inner),
             ExpressionKind::Variable(_) => self.variable_chain(expression),
-            ExpressionKind::Subscript {
-                ref base,
-                ref index,
-            } => self.subscript_chain(base, index, at),
-            ExpressionKind::FieldSelection {
-                ref base,
-                ref field,
-            } => self.field_chain(base, field, at),
             _ => self.rvalue(expression).map(Chain::Value),
         }
     }
 
-    fn subscript_chain(
+    pub(super) fn subscript_chain(
         &mut self,
+        chain: Chain,
         base: &AstExpression,
         index: &AstExpression,
         at: Span,
     ) -> Result<Chain> {
         let base_ty = &self.info(base)?.ty;
         if base_ty.is_reference() {
-            return self.reference_subscript_chain(base, index, at);
+            return self.reference_subscript_chain(chain, base, index, at);
         }
         let wide = self.wide_index(base_ty, index)?;
         let constant = if wide {
@@ -800,7 +750,6 @@ impl<'a> FunctionLowerer<'_, 'a> {
         } else {
             self.constant_index(index)
         };
-        let chain = self.chain(base)?;
         let index_value = self.subscript_index(&chain, index, wide, constant, at)?;
         self.subscript_access(chain, base, index, index_value, constant, at)
     }
@@ -832,12 +781,13 @@ impl<'a> FunctionLowerer<'_, 'a> {
 
     fn reference_subscript_chain(
         &mut self,
+        chain: Chain,
         base: &AstExpression,
         index: &AstExpression,
         at: Span,
     ) -> Result<Chain> {
         let base_ty = &self.info(base)?.ty;
-        let reference = match self.chain(base)? {
+        let reference = match chain {
             Chain::Place(place) => self.load(&place, at)?,
             Chain::Value(value) => value,
         };
@@ -947,8 +897,9 @@ impl<'a> FunctionLowerer<'_, 'a> {
         }
     }
 
-    fn field_chain(
+    pub(super) fn field_chain(
         &mut self,
+        chain: Chain,
         base: &AstExpression,
         field: &rglsl_ast::ast::Identifier,
         at: Span,
@@ -956,7 +907,6 @@ impl<'a> FunctionLowerer<'_, 'a> {
         let base_ty = &self.info(base)?.ty;
         match base_ty.kind {
             TypeKind::Scalar(_) | TypeKind::Vector { .. } if !base_ty.is_array() => {
-                let chain = self.chain(base)?;
                 self.swizzle_chain(chain, base_ty.is_scalar(), field, at)
             }
             TypeKind::Reference(block) if !base_ty.is_array() => {
@@ -968,10 +918,11 @@ impl<'a> FunctionLowerer<'_, 'a> {
                     .and_then(|b| b.member(&field.node))
                     .and_then(|(index, _)| u32::try_from(index).ok())
                     .ok_or_else(|| internal(at))?;
-                self.reference_member(base, block, index, at)
+                self.reference_member(chain, block, index, at)
             }
             TypeKind::Struct(_) | TypeKind::Block(_) if !base_ty.is_array() => {
-                self.member_chain(base, base_ty, field, at)
+                let (block, index, flags) = self.member_info(base_ty, field, at)?;
+                self.member_access(chain, block, index, flags, at)
             }
             _ => Err(internal(at)),
         }
@@ -1025,18 +976,6 @@ impl<'a> FunctionLowerer<'_, 'a> {
             }
             Chain::Value(value) => self.swizzle_value(value, &indices, scalar_base, at),
         }
-    }
-
-    fn member_chain(
-        &mut self,
-        base: &AstExpression,
-        base_ty: &GlslType,
-        field: &rglsl_ast::ast::Identifier,
-        at: Span,
-    ) -> Result<Chain> {
-        let (block, index, flags) = self.member_info(base_ty, field, at)?;
-        let chain = self.chain(base)?;
-        self.member_access(chain, block, index, flags, at)
     }
 
     fn member_info(
@@ -1607,7 +1546,7 @@ impl<'a> FunctionLowerer<'_, 'a> {
         }
     }
 
-    fn increment(
+    pub(super) fn increment(
         &mut self,
         operand: &AstExpression,
         increment: bool,
@@ -1642,17 +1581,7 @@ impl<'a> FunctionLowerer<'_, 'a> {
         Ok(if postfix { old } else { new })
     }
 
-    fn unary(
-        &mut self,
-        operator: AstUnary,
-        operand: &AstExpression,
-        at: Span,
-    ) -> Result<Handle<Expression>> {
-        let (value, ty) = self.typed(operand)?;
-        self.unary_typed(operator, at, value, ty)
-    }
-
-    fn unary_typed(
+    pub(super) fn unary_typed(
         &mut self,
         operator: AstUnary,
         at: Span,
@@ -1716,69 +1645,69 @@ impl<'a> FunctionLowerer<'_, 'a> {
     }
 
     pub(super) fn pure(&self, expression: &AstExpression) -> bool {
-        match expression.kind {
-            ExpressionKind::Variable(_)
-            | ExpressionKind::Number(_)
-            | ExpressionKind::Bool(_)
-            | ExpressionKind::String(_) => true,
-            ExpressionKind::Parenthesized(ref inner) => self.pure(inner),
-            ExpressionKind::Subscript {
-                ref base,
-                ref index,
-            } => self.constant_index(index).is_some() && self.pure(base),
-            ExpressionKind::FieldSelection { ref base, .. } => self.pure(base),
-            ExpressionKind::FunctionCall(ref call) => {
-                match self.lw.analysis.calls.get(&expression.id) {
-                    Some(&Callee::Constructor(_)) => call.arguments.iter().all(|a| self.pure(a)),
-                    Some(&Callee::Length) => match call.function.node {
-                        rglsl_ast::ast::FunctionIdentifier::Method { ref object, .. } => {
-                            self.pure(object)
-                        }
-                        _ => false,
-                    },
-                    _ => false,
+        let mut pending = Vec::from([expression]);
+        while let Some(expression) = pending.pop() {
+            match expression.kind {
+                ExpressionKind::Variable(_)
+                | ExpressionKind::Number(_)
+                | ExpressionKind::Bool(_)
+                | ExpressionKind::String(_) => {}
+                ExpressionKind::Parenthesized(ref inner)
+                | ExpressionKind::FieldSelection {
+                    base: ref inner, ..
+                } => pending.push(inner),
+                ExpressionKind::Subscript {
+                    ref base,
+                    ref index,
+                } => {
+                    if self.constant_index(index).is_none() {
+                        return false;
+                    }
+                    pending.push(base);
                 }
+                ExpressionKind::FunctionCall(ref call) => {
+                    match self.lw.analysis.calls.get(&expression.id) {
+                        Some(&Callee::Constructor(_)) => pending.extend(call.arguments.iter()),
+                        Some(&Callee::Length) => match call.function.node {
+                            rglsl_ast::ast::FunctionIdentifier::Method { ref object, .. } => {
+                                pending.push(object);
+                            }
+                            _ => return false,
+                        },
+                        _ => return false,
+                    }
+                }
+                ExpressionKind::Unary {
+                    operator: AstUnary::Increment | AstUnary::Decrement,
+                    ..
+                }
+                | ExpressionKind::Postfix { .. }
+                | ExpressionKind::Assignment { .. } => return false,
+                ExpressionKind::Unary { ref operand, .. } => pending.push(operand),
+                ExpressionKind::Binary {
+                    ref left,
+                    ref right,
+                    ..
+                } => {
+                    pending.push(right);
+                    pending.push(left);
+                }
+                ExpressionKind::Conditional {
+                    ref condition,
+                    ref then_expression,
+                    ref else_expression,
+                } => {
+                    pending.push(else_expression);
+                    pending.push(then_expression);
+                    pending.push(condition);
+                }
+                ExpressionKind::Sequence(ref list) => pending.extend(list.iter()),
             }
-            ExpressionKind::Unary {
-                operator,
-                ref operand,
-            } => {
-                !matches!(operator, AstUnary::Increment | AstUnary::Decrement) && self.pure(operand)
-            }
-            ExpressionKind::Binary {
-                ref left,
-                ref right,
-                ..
-            } => self.pure(left) && self.pure(right),
-            ExpressionKind::Conditional {
-                ref condition,
-                ref then_expression,
-                ref else_expression,
-            } => self.pure(condition) && self.pure(then_expression) && self.pure(else_expression),
-            ExpressionKind::Postfix { .. } | ExpressionKind::Assignment { .. } => false,
-            ExpressionKind::Sequence(ref list) => list.iter().all(|e| self.pure(e)),
         }
+        true
     }
 
-    fn conditional(
-        &mut self,
-        expression: &AstExpression,
-        condition: &AstExpression,
-        [accept, reject]: [&AstExpression; 2],
-        at: Span,
-    ) -> Result<Option<Handle<Expression>>> {
-        let condition = self.rvalue(condition)?;
-        let ty = &self.info(expression)?.ty;
-        if ty.is_void() {
-            return self.conditional_effect(condition, [accept, reject], at);
-        }
-        if (ty.is_scalar() || ty.is_vector()) && self.pure(accept) && self.pure(reject) {
-            return self.conditional_select(condition, [accept, reject], at);
-        }
-        self.conditional_local(ty, condition, [accept, reject], at)
-    }
-
-    fn conditional_effect(
+    pub(super) fn conditional_effect(
         &mut self,
         condition: Handle<Expression>,
         [accept, reject]: [&AstExpression; 2],
@@ -1798,26 +1727,7 @@ impl<'a> FunctionLowerer<'_, 'a> {
         Ok(None)
     }
 
-    fn conditional_select(
-        &mut self,
-        condition: Handle<Expression>,
-        [accept, reject]: [&AstExpression; 2],
-        at: Span,
-    ) -> Result<Option<Handle<Expression>>> {
-        let accept = self.rvalue(accept)?;
-        let reject = self.rvalue(reject)?;
-        self.add(
-            Expression::Select {
-                condition,
-                accept,
-                reject,
-            },
-            at,
-        )
-        .map(Some)
-    }
-
-    fn conditional_local(
+    pub(super) fn conditional_local(
         &mut self,
         ty: &GlslType,
         condition: Handle<Expression>,
@@ -1840,7 +1750,7 @@ impl<'a> FunctionLowerer<'_, 'a> {
         self.add(Expression::Load { pointer }, at).map(Some)
     }
 
-    fn stored(
+    pub(super) fn stored(
         &mut self,
         expression: &AstExpression,
         local: Handle<crate::LocalVariable>,
@@ -1852,34 +1762,29 @@ impl<'a> FunctionLowerer<'_, 'a> {
         Ok(())
     }
 
-    fn assignment(
+    pub(super) fn compound_old(
         &mut self,
-        operator: AssignmentOperator,
-        target: &AstExpression,
-        value: &AstExpression,
-        at: Span,
-    ) -> Result<Handle<Expression>> {
-        let place = self.place(target)?;
-        let result = match compound(operator) {
-            None => self.rvalue(value)?,
-            Some(operator) => self.compound_assignment(operator, target, &place, value, at)?,
-        };
-        self.store(&place, result, at)?;
-        Ok(result)
-    }
-
-    fn compound_assignment(
-        &mut self,
-        operator: AstBinary,
         target: &AstExpression,
         place: &Place,
+        at: Span,
+    ) -> Result<Handle<Expression>> {
+        let old = self.load(place, at)?;
+        if !self.info(target)?.ty.is_reference() {
+            self.relax_load(target, old);
+        }
+        Ok(old)
+    }
+
+    pub(super) fn compound_assignment(
+        &mut self,
+        operator: AstBinary,
+        (target, place, old): (&AstExpression, &Place, Handle<Expression>),
         value: &AstExpression,
+        (right, right_ty): (Handle<Expression>, GlslType),
         at: Span,
     ) -> Result<Handle<Expression>> {
         let target_ty = &self.info(target)?.ty;
-        let old = self.load(place, at)?;
         if target_ty.is_reference() {
-            let (right, right_ty) = self.typed(value)?;
             return self.reference_offset(
                 (old, target_ty),
                 (right, &right_ty),
@@ -1887,14 +1792,12 @@ impl<'a> FunctionLowerer<'_, 'a> {
                 at,
             );
         }
-        self.relax_load(target, old);
         let value_info = self.info(value)?;
         let value_non_uniform = value_info.non_uniform
             && value_info
                 .conversion
                 .as_ref()
                 .is_none_or(|target| *target == value_info.ty);
-        let (right, right_ty) = self.typed(value)?;
         let result = self.binary(operator, (old, target_ty), (right, &right_ty), at)?;
         if place.non_uniform || value_non_uniform {
             self.mark_operation(result);
@@ -1902,29 +1805,13 @@ impl<'a> FunctionLowerer<'_, 'a> {
         Ok(result)
     }
 
-    fn binary_expression(
+    pub(super) fn short_circuit(
         &mut self,
         operator: AstBinary,
-        left: &AstExpression,
+        left: Handle<Expression>,
         right: &AstExpression,
         at: Span,
     ) -> Result<Handle<Expression>> {
-        if matches!(operator, AstBinary::LogicalAnd | AstBinary::LogicalOr) && !self.pure(right) {
-            return self.short_circuit(operator, left, right, at);
-        }
-        let left = self.typed(left)?;
-        let right = self.typed(right)?;
-        self.binary_typed(operator, left, right, at)
-    }
-
-    fn short_circuit(
-        &mut self,
-        operator: AstBinary,
-        left: &AstExpression,
-        right: &AstExpression,
-        at: Span,
-    ) -> Result<Handle<Expression>> {
-        let left = self.rvalue(left)?;
         let local = self.local(&GlslType::BOOL, None, at)?;
         let pointer = self.local_pointer(local, at)?;
         self.push(
@@ -1953,7 +1840,7 @@ impl<'a> FunctionLowerer<'_, 'a> {
         self.add(Expression::Load { pointer }, at)
     }
 
-    fn binary_typed(
+    pub(super) fn binary_typed(
         &mut self,
         operator: AstBinary,
         (left, left_ty): (Handle<Expression>, GlslType),

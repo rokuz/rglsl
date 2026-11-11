@@ -209,25 +209,17 @@ impl Lowerer<'_> {
 }
 
 impl FunctionLowerer<'_, '_> {
-    fn reference_value(
-        &mut self,
-        expression: &AstExpression,
-        at: Span,
-    ) -> Result<Handle<Expression>> {
-        match self.chain(expression)? {
-            Chain::Place(place) => self.load(&place, at),
-            Chain::Value(value) => Ok(value),
-        }
-    }
-
     pub(super) fn reference_member(
         &mut self,
-        base: &AstExpression,
+        chain: Chain,
         block: BlockId,
         index: u32,
         at: Span,
     ) -> Result<Chain> {
-        let value = self.reference_value(base, at)?;
+        let value = match chain {
+            Chain::Place(place) => self.load(&place, at)?,
+            Chain::Value(value) => value,
+        };
         let mut pointer = self.add(Expression::AccessIndex { base: value, index }, at)?;
         let boolean = self.lw.block_bools.contains(&(block, index));
         let reference = self.lw.reference_type(block, at)?;

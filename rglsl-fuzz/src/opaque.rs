@@ -154,65 +154,45 @@ const ZERO_OR_ONE_FACTORIES: [Factory; 8] = [
 ];
 
 pub fn side_effect_free(expression: &Expression, builtins: &Builtins) -> bool {
-    match &expression.kind {
-        ExpressionKind::Variable(_)
-        | ExpressionKind::Number(_)
-        | ExpressionKind::Bool(_)
-        | ExpressionKind::String(_) => true,
-        ExpressionKind::Parenthesized(inner)
-        | ExpressionKind::FieldSelection { base: inner, .. } => side_effect_free(inner, builtins),
-        ExpressionKind::Subscript { base, index } => {
-            side_effect_free(base, builtins) && side_effect_free(index, builtins)
-        }
-        ExpressionKind::FunctionCall(call) => {
-            let callee_pure = match &call.function.node {
-                FunctionIdentifier::Constructor(_) | FunctionIdentifier::Cast(_) => true,
-                FunctionIdentifier::Function(name) => {
-                    is_macro(name) || {
-                        let overloads = builtins.overloads(name);
-                        !overloads.is_empty()
-                            && overloads.iter().all(|id| {
-                                builtins.function(*id).is_some_and(|function| {
-                                    function
-                                        .parameters
-                                        .iter()
-                                        .all(|parameter| !parameter.direction.is_output())
+    let mut pending = Vec::from([expression]);
+    while let Some(expression) = pending.pop() {
+        match &expression.kind {
+            ExpressionKind::FunctionCall(call) => {
+                let callee_pure = match &call.function.node {
+                    FunctionIdentifier::Constructor(_)
+                    | FunctionIdentifier::Cast(_)
+                    | FunctionIdentifier::Method { .. } => true,
+                    FunctionIdentifier::Function(name) => {
+                        is_macro(name) || {
+                            let overloads = builtins.overloads(name);
+                            !overloads.is_empty()
+                                && overloads.iter().all(|id| {
+                                    builtins.function(*id).is_some_and(|function| {
+                                        function
+                                            .parameters
+                                            .iter()
+                                            .all(|parameter| !parameter.direction.is_output())
+                                    })
                                 })
-                            })
+                        }
                     }
+                    FunctionIdentifier::Expression(_) => false,
+                };
+                if !callee_pure {
+                    return false;
                 }
-                FunctionIdentifier::Method { object, .. } => side_effect_free(object, builtins),
-                FunctionIdentifier::Expression(_) => false,
-            };
-            callee_pure
-                && call
-                    .arguments
-                    .iter()
-                    .all(|argument| side_effect_free(argument, builtins))
+            }
+            ExpressionKind::Postfix { .. }
+            | ExpressionKind::Assignment { .. }
+            | ExpressionKind::Unary {
+                operator: UnaryOperator::Increment | UnaryOperator::Decrement,
+                ..
+            } => return false,
+            _ => {}
         }
-        ExpressionKind::Postfix { .. } | ExpressionKind::Assignment { .. } => false,
-        ExpressionKind::Unary { operator, operand } => {
-            !matches!(
-                operator,
-                UnaryOperator::Increment | UnaryOperator::Decrement
-            ) && side_effect_free(operand, builtins)
-        }
-        ExpressionKind::Binary { left, right, .. } => {
-            side_effect_free(left, builtins) && side_effect_free(right, builtins)
-        }
-        ExpressionKind::Conditional {
-            condition,
-            then_expression,
-            else_expression,
-        } => {
-            side_effect_free(condition, builtins)
-                && side_effect_free(then_expression, builtins)
-                && side_effect_free(else_expression, builtins)
-        }
-        ExpressionKind::Sequence(expressions) => expressions
-            .iter()
-            .all(|expression| side_effect_free(expression, builtins)),
+        pending.extend(expression.kind.children());
     }
+    true
 }
 
 #[derive(Debug)]
