@@ -110,6 +110,7 @@ mod mesh_shader;
 mod message;
 mod physical;
 mod plain_types;
+mod qcom;
 mod ray;
 mod reclaimable;
 mod selection;
@@ -291,6 +292,8 @@ struct Function {
     spilled_accesses: crate::arena::HandleSet<crate::Expression>,
 
     texel_images: crate::arena::HandleSet<crate::Expression>,
+
+    handle_pointers: crate::FastHashMap<Handle<crate::Expression>, Word>,
 
     /// A map taking each expression to the number of [`Access`] and
     /// [`AccessIndex`] expressions that uses it as a base value. If an
@@ -1022,6 +1025,7 @@ pub struct Writer {
     debug_printf_strings: crate::FastHashMap<String, Word>,
     raw_capabilities: crate::FastIndexSet<Word>,
     utf_encoded: crate::FastHashSet<Word>,
+    qcom_decorations: crate::FastHashSet<(Word, spirv::Decoration)>,
     laid_out_copies: crate::FastHashMap<Handle<crate::Type>, Word>,
 
     /// See docs in [`Options`]

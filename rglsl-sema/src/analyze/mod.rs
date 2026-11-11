@@ -8,6 +8,7 @@ mod extension;
 mod heap;
 mod memory;
 mod mesh;
+mod qcom;
 mod ray;
 mod reference;
 mod reference_expression;
@@ -26,6 +27,7 @@ use rglsl_ast::{Span, TranslationUnit};
 
 pub use cooperative_call::CooperativeCall;
 pub use cooperative_matrix2::{MatrixCall, TensorCall};
+pub use qcom::QcomConversion;
 
 use crate::builtins::{BuiltinFunctionId, Builtins, ResourceLimits, Stage};
 use crate::constant::Constant;

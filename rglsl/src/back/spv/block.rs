@@ -917,9 +917,7 @@ impl BlockContext<'_> {
                         let result_id = match self.write_access_chain(
                             expr_handle,
                             block,
-                            AccessTypeAdjustment::IntroducePointer(
-                                spirv::StorageClass::UniformConstant,
-                            ),
+                            AccessTypeAdjustment::IntroducePointer(self.handle_class(base)),
                         )? {
                             ExpressionPointer::Ready { pointer_id } => pointer_id,
                             ExpressionPointer::Conditional { .. } => {
@@ -930,6 +928,7 @@ impl BlockContext<'_> {
                         };
 
                         let binding_type_id = self.get_handle_type_id(binding_type)?;
+                        self.function.handle_pointers.insert(expr_handle, result_id);
 
                         let load_id = self.gen_id();
                         block.body.push(Instruction::load(
@@ -1007,9 +1006,7 @@ impl BlockContext<'_> {
                         let result_id = match self.write_access_chain(
                             expr_handle,
                             block,
-                            AccessTypeAdjustment::IntroducePointer(
-                                spirv::StorageClass::UniformConstant,
-                            ),
+                            AccessTypeAdjustment::IntroducePointer(self.handle_class(base)),
                         )? {
                             ExpressionPointer::Ready { pointer_id } => pointer_id,
                             ExpressionPointer::Conditional { .. } => {
@@ -1020,6 +1017,7 @@ impl BlockContext<'_> {
                         };
 
                         let binding_type_id = self.get_handle_type_id(binding_type)?;
+                        self.function.handle_pointers.insert(expr_handle, result_id);
 
                         let load_id = self.gen_id();
                         block.body.push(Instruction::load(
@@ -2061,6 +2059,7 @@ impl BlockContext<'_> {
                 image,
                 sampler,
                 gather,
+                gather_pattern,
                 coordinate,
                 array_index,
                 offset,
@@ -2072,7 +2071,7 @@ impl BlockContext<'_> {
                 result_type_id,
                 image,
                 sampler,
-                gather,
+                gather.map(|component| (component, gather_pattern)),
                 coordinate,
                 array_index,
                 offset,
@@ -2249,6 +2248,35 @@ impl BlockContext<'_> {
                 family,
             } => self.write_convert(expr, ty, (saturating, family), result_type_id, block)?,
             crate::Expression::CooperativeMatrixResult { .. } => self.cached.get(expr_handle)?,
+            crate::Expression::ImageProcessing {
+                operation,
+                image,
+                sampler,
+                coordinate,
+                reference,
+                reference_sampler,
+                reference_coordinate,
+                size,
+            } => self.write_image_processing(
+                result_type_id,
+                super::qcom::ImageProcessingOperands {
+                    operation,
+                    image,
+                    sampler,
+                    coordinate,
+                    reference,
+                    reference_sampler,
+                    reference_coordinate,
+                    size,
+                },
+                block,
+            )?,
+            crate::Expression::ArrayConversion {
+                conversion,
+                expr,
+                index,
+                ty: _,
+            } => self.write_array_conversion(result_type_id, conversion, expr, index, block)?,
             crate::Expression::TensorCreate { ty } => {
                 self.write_tensor_create(ty, result_type_id, block)?
             }
@@ -3979,6 +4007,7 @@ impl BlockContext<'_> {
                     ref body,
                     ref continuing,
                     break_if,
+                    control,
                 } => {
                     let preamble_id = self.gen_id();
                     self.function
@@ -4001,11 +4030,9 @@ impl BlockContext<'_> {
                             loc.line_position,
                         ))
                     }
-                    block.body.push(Instruction::loop_merge(
-                        merge_id,
-                        continuing_id,
-                        spirv::SelectionControl::NONE,
-                    ));
+                    block
+                        .body
+                        .push(self.loop_merge(merge_id, continuing_id, control));
 
                     if self.force_loop_bounding {
                         block = self.write_force_bounded_loop_instructions(block, merge_id);

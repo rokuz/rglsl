@@ -32,6 +32,16 @@ fn layout_names(qualifier: Option<&Spanned<TypeQualifier>>) -> Vec<&str> {
     names
 }
 
+fn tile_shading_rate_index(name: &str) -> Option<usize> {
+    [
+        "shading_rate_xqcom",
+        "shading_rate_yqcom",
+        "shading_rate_zqcom",
+    ]
+    .iter()
+    .position(|rate| name.eq_ignore_ascii_case(rate))
+}
+
 fn has_qualifier(
     qualifier: Option<&Spanned<TypeQualifier>>,
     test: impl Fn(&SingleTypeQualifier) -> bool,
@@ -220,6 +230,9 @@ fn builtin_of(name: &str) -> Option<BuiltIn> {
         "gl_SubgroupID" => BuiltIn::SubgroupId,
         "gl_SubGroupSizeARB" => BuiltIn::ShaderBallot(ShaderBallot::Size),
         "gl_SubGroupInvocationARB" => BuiltIn::ShaderBallot(ShaderBallot::InvocationId),
+        "gl_TileOffsetQCOM" => BuiltIn::TileOffset,
+        "gl_TileDimensionQCOM" => BuiltIn::TileDimension,
+        "gl_TileApronSizeQCOM" => BuiltIn::TileApronSize,
         _ if super::mesh::mesh_builtin(name).is_some() => super::mesh::mesh_builtin(name)?,
         _ => {
             if let Some(mask) = name
@@ -501,6 +514,19 @@ impl<'a> Lowerer<'a> {
                                 *slot = value;
                             }
                         }
+                        _ if name.eq_ignore_ascii_case("non_coherent_attachment_readQCOM") => {
+                            self.non_coherent_tile_read = true;
+                        }
+                        _ if tile_shading_rate_index(name).is_some() => {
+                            let index = tile_shading_rate_index(name).unwrap_or(0);
+                            let value = xfb::ast_layout_value(self, Some(qualifier), name)
+                                .filter(|value| *value > 0);
+                            if let (Some(slot), Some(value)) =
+                                (self.tile_shading_rate.get_mut(index), value)
+                            {
+                                *slot = Some(value);
+                            }
+                        }
                         "local_size_x_id" | "local_size_y_id" | "local_size_z_id" => {
                             let id = xfb::ast_layout_value(self, Some(qualifier), name)
                                 .filter(|value| *value != u32::MAX)
@@ -632,6 +658,7 @@ impl<'a> Lowerer<'a> {
                         xfb: None,
                         input_attachment_index: None,
                         heap_offset: None,
+                        tile_attachment: false,
                     },
                     at,
                 );
@@ -714,6 +741,7 @@ impl<'a> Lowerer<'a> {
                 xfb: None,
                 input_attachment_index: None,
                 heap_offset: None,
+                tile_attachment: false,
             },
             at,
         );
@@ -824,6 +852,7 @@ impl<'a> Lowerer<'a> {
                 xfb: None,
                 input_attachment_index: None,
                 heap_offset: None,
+                tile_attachment: false,
             },
             at,
         );
@@ -970,6 +999,10 @@ impl<'a> Lowerer<'a> {
                 xfb: None,
                 input_attachment_index,
                 heap_offset: None,
+                tile_attachment: qualifiers
+                    .layout
+                    .iter()
+                    .any(|entry| entry.name.eq_ignore_ascii_case("tile_attachmentQCOM")),
             },
             at,
         );
@@ -1122,6 +1155,7 @@ impl<'a> Lowerer<'a> {
                 xfb: None,
                 input_attachment_index: None,
                 heap_offset: None,
+                tile_attachment: false,
             },
             at,
         );
@@ -1439,6 +1473,7 @@ impl<'a> Lowerer<'a> {
                 xfb: None,
                 input_attachment_index: None,
                 heap_offset: None,
+                tile_attachment: false,
             },
             at,
         );
@@ -1722,6 +1757,7 @@ impl<'a> Lowerer<'a> {
                 xfb: None,
                 input_attachment_index: None,
                 heap_offset: None,
+                tile_attachment: false,
             },
             Span::UNDEFINED,
         );
@@ -1944,6 +1980,7 @@ impl<'a> Lowerer<'a> {
                 xfb: None,
                 input_attachment_index: None,
                 heap_offset: None,
+                tile_attachment: false,
             },
             at,
         );

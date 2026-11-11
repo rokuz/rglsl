@@ -38,6 +38,7 @@ impl Builder<'_> {
             xfb,
             input_attachment_index,
             heap_offset,
+            tile_attachment,
         } = *candidate.global;
         if current.space != space {
             self.errors.push(mismatch("storage qualifiers"));
@@ -64,6 +65,9 @@ impl Builder<'_> {
         }
         if current.input_attachment_index != input_attachment_index {
             self.errors.push(mismatch("input attachment indices"));
+        }
+        if current.tile_attachment != tile_attachment {
+            self.errors.push(mismatch("tile attachment qualifiers"));
         }
         if !same_optional(&self.module, current.init, init) {
             self.errors.push(mismatch("initializers"));
@@ -191,6 +195,7 @@ impl Builder<'_> {
             geometry,
             tessellation,
             mesh_shader,
+            tile_shading,
         } = entry;
         function.diagnostic_filter_leaf = None;
         remap.adjust_function(&mut function).map_err(internal)?;
@@ -262,6 +267,7 @@ impl Builder<'_> {
             geometry,
             tessellation,
             mesh_shader,
+            tile_shading,
         })
     }
 

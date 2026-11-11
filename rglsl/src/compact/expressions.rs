@@ -146,6 +146,7 @@ impl ExpressionTracer<'_> {
                 image,
                 sampler,
                 gather: _,
+                gather_pattern: _,
                 coordinate,
                 array_index,
                 offset,
@@ -294,6 +295,33 @@ impl ExpressionTracer<'_> {
             Ex::CooperativeMatrixResult { ty } | Ex::TensorCreate { ty } => {
                 self.types_used.insert(ty);
             }
+            Ex::ImageProcessing {
+                operation: _,
+                image,
+                sampler,
+                coordinate,
+                reference,
+                reference_sampler,
+                reference_coordinate,
+                size,
+            } => {
+                self.expressions_used.insert_iter([image, coordinate]);
+                self.expressions_used.insert_iter(sampler);
+                self.expressions_used.insert_iter(reference);
+                self.expressions_used.insert_iter(reference_sampler);
+                self.expressions_used.insert_iter(reference_coordinate);
+                self.expressions_used.insert_iter(size);
+            }
+            Ex::ArrayConversion {
+                conversion: _,
+                expr,
+                index,
+                ty,
+            } => {
+                self.types_used.insert(ty);
+                self.expressions_used.insert(expr);
+                self.expressions_used.insert_iter(index);
+            }
             Ex::TensorSet {
                 base, ref operands, ..
             } => {
@@ -369,6 +397,7 @@ impl ModuleMap {
                 ref mut image,
                 ref mut sampler,
                 gather: _,
+                gather_pattern: _,
                 ref mut coordinate,
                 ref mut array_index,
                 ref mut offset,
@@ -538,6 +567,34 @@ impl ModuleMap {
             }
             Ex::CooperativeMatrixResult { ref mut ty } | Ex::TensorCreate { ref mut ty } => {
                 self.types.adjust(ty)?;
+            }
+            Ex::ImageProcessing {
+                operation: _,
+                ref mut image,
+                ref mut sampler,
+                ref mut coordinate,
+                ref mut reference,
+                ref mut reference_sampler,
+                ref mut reference_coordinate,
+                ref mut size,
+            } => {
+                adjust(image)?;
+                operand_map.adjust_option(sampler)?;
+                adjust(coordinate)?;
+                operand_map.adjust_option(reference)?;
+                operand_map.adjust_option(reference_sampler)?;
+                operand_map.adjust_option(reference_coordinate)?;
+                operand_map.adjust_option(size)?;
+            }
+            Ex::ArrayConversion {
+                conversion: _,
+                ref mut expr,
+                ref mut index,
+                ref mut ty,
+            } => {
+                self.types.adjust(ty)?;
+                adjust(expr)?;
+                operand_map.adjust_option(index)?;
             }
             Ex::TensorSet {
                 ref mut base,

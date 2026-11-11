@@ -166,6 +166,11 @@ pub enum DiagnosticKind {
     InvalidStructMember { name: String, reason: &'static str },
     #[error("non-opaque uniforms outside a block are not allowed when targeting Vulkan")]
     UniformOutsideBlock,
+    #[error("invalid attribute `{attribute}`: {reason}")]
+    InvalidAttribute {
+        attribute: String,
+        reason: &'static str,
+    },
     #[error("invalid use of qualifier `{qualifier}`: {reason}")]
     InvalidQualifier {
         qualifier: &'static str,

@@ -1189,6 +1189,8 @@ impl super::Validator {
                             | Ex::LocalVariable(_)
                             | Ex::Load { .. }
                             | Ex::ImageSample { .. }
+                            | Ex::ImageProcessing { .. }
+                            | Ex::ArrayConversion { .. }
                             | Ex::ImageLoad { .. }
                             | Ex::ImageQuery { .. }
                             | Ex::Unary { .. }
@@ -1332,6 +1334,7 @@ impl super::Validator {
                     ref body,
                     ref continuing,
                     break_if,
+                    control: _,
                 } => {
                     // special handling for block scoping is needed here,
                     // because the continuing{} block inherits the scope

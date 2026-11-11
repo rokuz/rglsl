@@ -110,6 +110,7 @@ impl Analyzer<'_> {
     fn global_qualifier(&mut self, qualifier: &Spanned<TypeQualifier>) {
         let qualifiers = self.qualifiers(qualifier);
         self.primitive_culling(qualifier.span, &qualifiers, true);
+        self.qcom_layout(qualifier.span, &qualifiers);
         self.shader_record_default(qualifier.span, &qualifiers);
         if self.buffer_reference_layout(&qualifiers) {
             if qualifiers.storage != Storage::Buffer {
@@ -805,6 +806,7 @@ impl Analyzer<'_> {
         let qualifiers = self.optional_qualifiers(&list.ty.node);
         if let Some(qualifier) = list.ty.qualifier.as_ref() {
             self.primitive_culling(qualifier.span, &qualifiers, false);
+            self.qcom_layout(qualifier.span, &qualifiers);
         }
         if qualifiers.nonuniform {
             self.non_uniform_storage_check(list.ty.qualifier.as_ref(), &qualifiers);
@@ -1540,6 +1542,7 @@ impl Analyzer<'_> {
             _ => self.ray_block_storage(structure.name.span, qualifiers.storage),
         };
         self.primitive_culling(structure.qualifier.span, &qualifiers, false);
+        self.qcom_layout(structure.qualifier.span, &qualifiers);
         self.shader_record_checks(structure.qualifier.span, &qualifiers, true);
         self.ray_variable_checks(structure.qualifier.span, &qualifiers);
         self.heap_object_check(structure.name.span, &qualifiers);

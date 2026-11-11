@@ -936,9 +936,14 @@ impl<'a> ResolveContext<'a> {
             crate::Expression::CooperativeVectorLoad { ty, .. }
             | crate::Expression::CooperativeVectorMatMul { ty, .. }
             | crate::Expression::Convert { ty, .. }
+            | crate::Expression::ArrayConversion { ty, .. }
             | crate::Expression::CooperativeMatrixResult { ty }
             | crate::Expression::TensorCreate { ty } => TypeResolution::Handle(ty),
             crate::Expression::TensorSet { base, .. } => past(base)?.clone(),
+            crate::Expression::ImageProcessing { .. } => TypeResolution::Value(Ti::Vector {
+                scalar: crate::Scalar::F32,
+                size: crate::VectorSize::Quad,
+            }),
             crate::Expression::CooperativeMatrixLength { .. } => {
                 TypeResolution::Value(Ti::Scalar(crate::Scalar::U32))
             }

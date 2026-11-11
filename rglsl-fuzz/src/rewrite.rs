@@ -61,6 +61,7 @@ fn statement_post_order(statement: &mut Statement, visit: &mut dyn FnMut(&mut St
             statement_post_order(&mut for_statement.init, visit);
             statement_post_order(&mut for_statement.body, visit);
         }
+        StatementKind::Attributed { statement, .. } => statement_post_order(statement, visit),
         StatementKind::Declaration(_)
         | StatementKind::Expression(_)
         | StatementKind::CaseLabel(_)
@@ -241,6 +242,18 @@ impl Rewriter<'_> {
             }
             StatementKind::Jump(JumpStatement::Return(Some(value))) => self.expression(value),
             StatementKind::Jump(_) => {}
+            StatementKind::Attributed {
+                attributes,
+                statement,
+            } => {
+                for argument in attributes
+                    .iter_mut()
+                    .filter_map(|attribute| attribute.argument.as_mut())
+                {
+                    self.expression(argument);
+                }
+                self.statement(statement);
+            }
         }
     }
 
