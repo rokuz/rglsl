@@ -276,6 +276,8 @@ impl Lowerer<'_> {
         layout.early_fragment_tests = self.early_fragment_tests;
         layout.xfb_strides = self.xfb.declared_strides();
         layout.transform_feedback = self.xfb.mode;
+        layout.tile_shading_rate = self.tile_shading_rate;
+        layout.non_coherent_tile_read = self.non_coherent_tile_read;
         layout
     }
 
@@ -285,7 +287,7 @@ impl Lowerer<'_> {
         let layout = self.layout_record();
         let mut extensions: Vec<String> = self.analysis.extensions.iter().cloned().collect();
         extensions.sort();
-        let stage = (!self.options.library).then_some(self.options.stage);
+        let stage = (!self.library).then_some(self.options.stage);
         let module = core::mem::take(&mut self.module);
         ObjectModule {
             stage,
@@ -294,6 +296,11 @@ impl Lowerer<'_> {
             functions,
             globals,
             layout,
+            stages: if self.library {
+                alloc::vec![self.options.stage]
+            } else {
+                Vec::new()
+            },
             ..ObjectModule::new(stage, module)
         }
     }

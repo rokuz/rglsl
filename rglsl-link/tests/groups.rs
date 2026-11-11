@@ -20,7 +20,17 @@ fn stage(extension: &str) -> Option<ShaderStage> {
     })
 }
 
+fn spirv_version(test: &Path) -> Option<(u8, u8)> {
+    let text = fs::read_to_string(test.join("target")).ok()?;
+    let version = text
+        .split_whitespace()
+        .find_map(|word| word.strip_prefix("spirv"))?;
+    let (major, minor) = version.split_once('.')?;
+    Some((major.parse().ok()?, minor.parse().ok()?))
+}
+
 fn run(test: &Path) -> (bool, Vec<String>) {
+    let spirv = spirv_version(test);
     let mut names: Vec<String> = fs::read_dir(test)
         .unwrap()
         .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
@@ -40,13 +50,17 @@ fn run(test: &Path) -> (bool, Vec<String>) {
         let options = Options {
             auto_map_locations: true,
             auto_map_bindings: true,
+            spirv_version: spirv,
             library: extension == "glsl",
             ..Options::from(stage(extension).unwrap_or(ShaderStage::Compute))
         };
         let mut includer = rglsl_pp::FileSystemIncluder::new(Vec::<String>::new());
         let root = includer.add_root(&path);
         match Frontend::default().compile_with_includer(&options, &source, root, &mut includer) {
-            Ok(object) => objects.push(object),
+            Ok(mut object) => {
+                object.name = Some(name.clone());
+                objects.push(object);
+            }
             Err(errors) => messages.extend(errors.errors.iter().map(ToString::to_string)),
         }
     }
@@ -63,7 +77,10 @@ fn run(test: &Path) -> (bool, Vec<String>) {
                 rglsl::back::spv::write_vec(
                     &linked.module,
                     &linked.info,
-                    &rglsl::back::spv::Options::default(),
+                    &rglsl::back::spv::Options {
+                        lang_version: spirv.unwrap_or((1, 0)),
+                        ..rglsl::back::spv::Options::default()
+                    },
                     None,
                 )
                 .unwrap();

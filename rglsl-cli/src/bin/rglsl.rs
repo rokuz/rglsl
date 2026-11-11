@@ -940,7 +940,10 @@ fn compile_object_file(
         root,
         &mut includer,
     ) {
-        Ok(object) => {
+        Ok(mut object) => {
+            object.name = path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned());
             rglsl_link::validate_object(&object)?;
             Ok(object)
         }

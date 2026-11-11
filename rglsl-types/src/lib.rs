@@ -152,6 +152,42 @@ pub enum ShaderStage {
 }
 
 impl ShaderStage {
+    pub const ALL: [Self; 14] = [
+        Self::Vertex,
+        Self::TessControl,
+        Self::TessEvaluation,
+        Self::Geometry,
+        Self::Fragment,
+        Self::Compute,
+        Self::Task,
+        Self::Mesh,
+        Self::RayGeneration,
+        Self::Intersection,
+        Self::AnyHit,
+        Self::ClosestHit,
+        Self::Miss,
+        Self::Callable,
+    ];
+
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Vertex => "vertex",
+            Self::TessControl => "tessellation control",
+            Self::TessEvaluation => "tessellation evaluation",
+            Self::Geometry => "geometry",
+            Self::Task => "task",
+            Self::Mesh => "mesh",
+            Self::Fragment => "fragment",
+            Self::Compute => "compute",
+            Self::RayGeneration => "ray generation",
+            Self::Miss => "miss",
+            Self::AnyHit => "any-hit",
+            Self::ClosestHit => "closest-hit",
+            Self::Intersection => "intersection",
+            Self::Callable => "callable",
+        }
+    }
+
     pub const fn compute_like(self) -> bool {
         match self {
             Self::Vertex | Self::Fragment => false,

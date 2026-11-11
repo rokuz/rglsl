@@ -1,0 +1,2 @@
+reject
+library `1.lib.glsl` cannot be linked into a vertex shader: `gl_FragCoord` is not available in vertex shaders (line 4)

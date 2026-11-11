@@ -1,0 +1,3 @@
+reject
+At least one shader must specify an output layout primitive
+At least one shader must specify a layout(max_vertices = value)

@@ -1,0 +1,2 @@
+reject
+library `1.lib.glsl` cannot be linked into a fragment shader: `barrier` is not available in fragment shaders (line 4)
