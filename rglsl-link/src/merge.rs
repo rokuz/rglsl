@@ -201,8 +201,38 @@ impl<'a> Builder<'a> {
             if let Some(ref mut offset) = global.heap_offset {
                 *offset = remap.global_expression(*offset).map_err(internal)?;
             }
+            global.spirv_decorations = Vec::new();
             let new = self.add_global(index, handle, global);
             remap.map_global(handle, new);
+        }
+        for (handle, global) in source.global_variables.iter() {
+            if global.spirv_decorations.is_empty() {
+                continue;
+            }
+            let mut decorations = global.spirv_decorations.clone();
+            for decoration in &mut decorations {
+                if let rglsl::SpirvDecorationOperands::Ids(ref mut ids) = decoration.operands {
+                    for id in ids.iter_mut() {
+                        *id = match *id {
+                            rglsl::SpirvId::Constant(constant) => rglsl::SpirvId::Constant(
+                                remap.global_expression(constant).map_err(internal)?,
+                            ),
+                            rglsl::SpirvId::Global(target) => {
+                                rglsl::SpirvId::Global(remap.global(target).map_err(internal)?)
+                            }
+                        };
+                    }
+                }
+            }
+            let merged = remap.global(handle).map_err(internal)?;
+            let slot = &mut self
+                .module
+                .global_variables
+                .get_mut(merged)
+                .spirv_decorations;
+            if slot.is_empty() {
+                *slot = decorations;
+            }
         }
         Ok(remap)
     }

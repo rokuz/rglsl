@@ -537,7 +537,8 @@ impl crate::TypeInner {
             | Self::Atomic { .. }
             | Self::Pointer { .. }
             | Self::ValuePointer { .. }
-            | Self::Struct { .. } => true,
+            | Self::Struct { .. }
+            | Self::Spirv { .. } => true,
             Self::Array { .. }
             | Self::Image { .. }
             | Self::SampledImage { .. }

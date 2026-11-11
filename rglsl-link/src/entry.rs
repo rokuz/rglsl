@@ -39,6 +39,7 @@ impl Builder<'_> {
             input_attachment_index,
             heap_offset,
             tile_attachment,
+            ref spirv_decorations,
         } = *candidate.global;
         if current.space != space {
             self.errors.push(mismatch("storage qualifiers"));
@@ -68,6 +69,9 @@ impl Builder<'_> {
         }
         if current.tile_attachment != tile_attachment {
             self.errors.push(mismatch("tile attachment qualifiers"));
+        }
+        if current.spirv_decorations.len() != spirv_decorations.len() {
+            self.errors.push(mismatch("SPIR-V decorate qualifiers"));
         }
         if !same_optional(&self.module, current.init, init) {
             self.errors.push(mismatch("initializers"));
@@ -196,6 +200,7 @@ impl Builder<'_> {
             tessellation,
             mesh_shader,
             tile_shading,
+            spirv_execution_modes,
         } = entry;
         function.diagnostic_filter_leaf = None;
         remap.adjust_function(&mut function).map_err(internal)?;
@@ -250,6 +255,25 @@ impl Builder<'_> {
             }),
             None => None,
         };
+        let spirv_execution_modes = spirv_execution_modes
+            .into_iter()
+            .map(|mode| {
+                let operands = match mode.operands {
+                    rglsl::SpirvExecutionModeOperands::Ids(ids) => {
+                        rglsl::SpirvExecutionModeOperands::Ids(
+                            ids.into_iter()
+                                .map(expression)
+                                .collect::<Result<_, LinkError>>()?,
+                        )
+                    }
+                    literals @ rglsl::SpirvExecutionModeOperands::Literals(_) => literals,
+                };
+                Ok(rglsl::SpirvExecutionMode {
+                    mode: mode.mode,
+                    operands,
+                })
+            })
+            .collect::<Result<Vec<_>, LinkError>>()?;
         Ok(EntryPoint {
             name,
             stage,
@@ -268,6 +292,7 @@ impl Builder<'_> {
             tessellation,
             mesh_shader,
             tile_shading,
+            spirv_execution_modes,
         })
     }
 
@@ -333,6 +358,18 @@ impl Builder<'_> {
             self.module.vulkan_memory_model |= vulkan_memory_model;
             self.module.descriptor_heap |= descriptor_heap;
             self.module.ray_tracing |= ray_tracing;
+            let requirements = source.spirv_requirements.clone();
+            let merged = &mut self.module.spirv_requirements;
+            for extension in requirements.extensions {
+                if !merged.extensions.contains(&extension) {
+                    merged.extensions.push(extension);
+                }
+            }
+            for capability in requirements.capabilities {
+                if !merged.capabilities.contains(&capability) {
+                    merged.capabilities.push(capability);
+                }
+            }
         }
         Ok(())
     }

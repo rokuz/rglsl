@@ -722,7 +722,8 @@ fn adjust_expr(new_pos: &HandleVec<Expression, Handle<Expression>>, expr: &mut E
         }
         | Expression::WorkGroupUniformLoadResult { ty: _ }
         | Expression::SubgroupBallotResult
-        | Expression::SubgroupOperationResult { .. } => {}
+        | Expression::SubgroupOperationResult { .. }
+        | Expression::SpirvInstructionResult { .. } => {}
         Expression::CooperativeLoad { ref mut data, .. } => {
             for operand in data.operands_mut() {
                 adjust(operand);
@@ -1111,6 +1112,22 @@ fn adjust_stmt(new_pos: &HandleVec<Expression, Handle<Expression>>, stmt: &mut S
             adjust(tensor);
             adjust(coordinates);
             adjust(value);
+        }
+        Statement::SpirvInstruction {
+            ref mut operands,
+            ref mut result,
+            ..
+        } => {
+            for operand in operands.iter_mut() {
+                match *operand {
+                    crate::SpirvOperand::Value(ref mut value)
+                    | crate::SpirvOperand::Pointer(ref mut value) => adjust(value),
+                    crate::SpirvOperand::Literal(_) => {}
+                }
+            }
+            if let Some(ref mut result) = *result {
+                adjust(result);
+            }
         }
         Statement::Break
         | Statement::Continue

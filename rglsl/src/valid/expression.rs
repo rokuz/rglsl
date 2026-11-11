@@ -1525,6 +1525,7 @@ impl super::Validator {
                 }
             },
             E::SubgroupBallotResult | E::SubgroupOperationResult { .. } => self.subgroup_stages,
+            E::SpirvInstructionResult { .. } => ShaderStages::all(),
             E::CooperativeLoad { ref data, .. } => {
                 if resolver[data.pointer]
                     .pointer_base_type()

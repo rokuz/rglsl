@@ -5,6 +5,7 @@ use core::fmt;
 use rglsl_ast::ast::NodeId;
 
 use crate::scope::{Qualifiers, SymbolId};
+use crate::spirv::{SpirvType, SpirvTypeId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Scalar {
@@ -609,6 +610,7 @@ pub enum TypeKind {
         scalar: Scalar,
         rank: u32,
     },
+    Spirv(SpirvTypeId),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -645,6 +647,7 @@ pub struct CooperativeMatrix {
     pub rows: ArraySize,
     pub columns: ArraySize,
     pub usage: CooperativeUse,
+    pub spirv_element: bool,
 }
 
 impl CooperativeMatrix {
@@ -1258,6 +1261,7 @@ impl fmt::Display for TypeDisplay<'_> {
             TypeKind::Tensor { scalar, rank } => {
                 write!(formatter, "tensorARM<{}, {rank}>", scalar.keyword())?;
             }
+            TypeKind::Spirv(_) => formatter.write_str("spirv_type")?,
         }
         for dimension in &self.ty.array {
             match dimension {
@@ -1385,6 +1389,7 @@ impl BlockType {
 pub struct TypeRegistry {
     structs: Vec<StructType>,
     blocks: Vec<BlockType>,
+    spirv: Vec<SpirvType>,
 }
 
 impl TypeRegistry {
@@ -1392,7 +1397,21 @@ impl TypeRegistry {
         Self {
             structs: Vec::new(),
             blocks: Vec::new(),
+            spirv: Vec::new(),
         }
+    }
+
+    pub fn add_spirv(&mut self, ty: SpirvType) -> Option<SpirvTypeId> {
+        if let Some(index) = self.spirv.iter().position(|known| *known == ty) {
+            return Some(SpirvTypeId(u32::try_from(index).ok()?));
+        }
+        let id = SpirvTypeId(u32::try_from(self.spirv.len()).ok()?);
+        self.spirv.push(ty);
+        Some(id)
+    }
+
+    pub fn spirv(&self, id: SpirvTypeId) -> Option<&SpirvType> {
+        self.spirv.get(usize::try_from(id.0).ok()?)
     }
 
     pub fn add_struct(&mut self, name: Option<String>, members: Vec<Member>) -> Option<StructId> {

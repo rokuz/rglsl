@@ -43,6 +43,7 @@ pub(crate) fn callees(block: &Block, found: &mut Vec<Handle<Function>>) {
                 }
             }
             Statement::Emit(_)
+            | Statement::SpirvInstruction { .. }
             | Statement::Break
             | Statement::Continue
             | Statement::Return { .. }

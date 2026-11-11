@@ -177,6 +177,7 @@ impl Analyzer<'_> {
                 structure.scalars.iter().any(|scalar| kind.matches(*scalar))
             }),
             TypeKind::Block(_) => false,
+            TypeKind::CooperativeMatrix(matrix) if matrix.spirv_element => false,
             _ => ty.base_scalar().is_some_and(|scalar| kind.matches(scalar)),
         }
     }

@@ -1420,3 +1420,11 @@ impl crate::MeshFunction {
         matches!(*self, Self::EmitMeshTasks { .. })
     }
 }
+
+pub const SPIRV_DECORATION_BUILT_IN: u32 = 11;
+
+pub fn has_spirv_built_in(var: &crate::GlobalVariable) -> bool {
+    var.spirv_decorations
+        .iter()
+        .any(|decoration| decoration.decoration == SPIRV_DECORATION_BUILT_IN)
+}

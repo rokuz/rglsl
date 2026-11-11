@@ -7603,3 +7603,109 @@ fn shader_core_builtins() {
         );
     }
 }
+
+#[test]
+fn spirv_instruction_passes_literals_and_pointers() {
+    let source = "#version 450
+#extension GL_EXT_spirv_intrinsics : enable
+spirv_instruction(id = 61)
+vec4 load(spirv_by_reference vec4 pointer, spirv_literal int memoryOperands);
+spirv_instruction(id = 62)
+void store(spirv_by_reference vec4 pointer, vec4 object, spirv_literal int memoryOperands);
+spirv_instruction(extensions = [\"SPV_KHR_non_semantic_info\"], set = \"NonSemantic.DebugBreak\", id = 1)
+void debugBreak();
+layout(location = 0) in vec4 vec4In;
+layout(location = 1) out vec4 vec4Out;
+void main() {
+    store(vec4Out, load(vec4In, 0x0), 0x1);
+    debugBreak();
+}
+";
+    let words = message_words(ShaderStage::Vertex, source, (1, 0));
+    let instructions = raw_instructions(&words);
+    assert!(instructions
+        .iter()
+        .any(|(op, operands)| *op == Op::Load as u32 && operands.len() == 4 && operands[3] == 0));
+    assert!(instructions
+        .iter()
+        .any(|(op, operands)| *op == Op::Store as u32 && operands.len() == 3 && operands[2] == 1));
+    let imports: Vec<String> = instructions
+        .iter()
+        .filter(|(op, _)| *op == Op::ExtInstImport as u32)
+        .map(|(_, operands)| literal_string(&operands[1..]))
+        .collect();
+    assert!(imports.contains(&"NonSemantic.DebugBreak".to_string()));
+    let extensions: Vec<String> = instructions
+        .iter()
+        .filter(|(op, _)| *op == Op::Extension as u32)
+        .map(|(_, operands)| literal_string(operands))
+        .collect();
+    assert!(extensions.contains(&"SPV_KHR_non_semantic_info".to_string()));
+}
+
+#[test]
+fn spirv_execution_modes_and_decorations() {
+    let source = "#version 460
+#extension GL_EXT_spirv_intrinsics : require
+layout(constant_id = 0) const int sx = 2;
+spirv_execution_mode_id(extensions = [\"SPV_AMDX_shader_enqueue\"], capabilities = [5067], 5077, sx + 1, sx, 1);
+spirv_decorate(0)
+spirv_decorate_string(extensions = [\"SPV_GOOGLE_hlsl_functionality1\"], 5635, \"foobar\")
+float y = 1.0;
+layout(local_size_x = 1) in;
+void main() {
+}
+";
+    let words = message_words(ShaderStage::Compute, source, (1, 4));
+    let instructions = raw_instructions(&words);
+    let modes: Vec<&Vec<u32>> = instructions
+        .iter()
+        .filter(|(op, _)| *op == Op::ExecutionModeId as u32)
+        .map(|(_, operands)| operands)
+        .collect();
+    assert_eq!(modes.len(), 1);
+    assert_eq!(modes[0][1], 5077);
+    assert_eq!(modes[0].len(), 5);
+    assert!(instructions
+        .iter()
+        .any(|(op, operands)| *op == Op::Capability as u32 && operands[0] == 5067));
+    assert!(instructions
+        .iter()
+        .any(|(op, operands)| *op == Op::Decorate as u32 && operands[1] == 0));
+    assert!(instructions
+        .iter()
+        .any(|(op, operands)| *op == Op::DecorateString as u32
+            && operands[1] == 5635
+            && literal_string(&operands[2..]) == "foobar"));
+}
+
+#[test]
+fn spirv_type_declares_a_raw_type() {
+    let source = "#version 460
+#extension GL_EXT_spirv_intrinsics : enable
+#define EmptyStruct spirv_type(id = 30)
+void func(EmptyStruct emptyStruct) {}
+void main() {
+    EmptyStruct dummy[2];
+    func(dummy[1]);
+}
+";
+    let words = message_words(ShaderStage::Vertex, source, (1, 0));
+    let instructions = raw_instructions(&words);
+    assert!(instructions
+        .iter()
+        .any(|(op, operands)| *op == Op::TypeStruct as u32 && operands.len() == 1));
+    let rejected = parse(
+        ShaderStage::Vertex,
+        "#version 450
+#extension GL_EXT_spirv_intrinsics : enable
+spirv_instruction(set = \"OpenCL.std\", id = 171)
+vec2 vloadn(uint offset, spirv_by_reference float p, spirv_literal int n);
+float data[4];
+void main() { vec2 v = vloadn(0u, data[0], 2); }
+",
+    )
+    .map(|_| ())
+    .unwrap_err();
+    assert!(rejected.contains("physical addressing"), "{rejected}");
+}

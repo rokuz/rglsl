@@ -5315,3 +5315,39 @@ void main() {
     o = uvec4(gl_WarpsPerSMNV, gl_SMCountNV, gl_WarpIDNV, gl_SMIDNV)
         + uvec4(gl_CoreIDARM, gl_CoreCountARM, gl_CoreMaxIDARM, gl_WarpIDARM + gl_WarpMaxIDARM);
 }
+### spirv requirement with the wrong list | frag 450 | 3:SpirvIntrinsic
+#extension GL_EXT_spirv_intrinsics : enable
+spirv_execution_mode(capabilities = ["SPV_bad"], 5027);
+void main() {}
+### spirv_type with a specialization constant | comp 450 | 5:SpirvIntrinsic
+#extension GL_EXT_spirv_intrinsics : enable
+layout(constant_id = 0) const int sc = 3;
+layout(local_size_x = 1) in;
+spirv_type(id = 28, sc) T;
+void main() {}
+### spirv_literal needs a constant argument | vert 450 | 7:SpirvIntrinsic
+#extension GL_EXT_spirv_intrinsics : enable
+spirv_instruction(id = 61)
+vec4 load(spirv_by_reference vec4 pointer, spirv_literal int memoryOperands);
+layout(location = 0) in vec4 v;
+void main() {
+    int k = 1; vec4 x = load(v, k);
+}
+### spirv_literal only on spirv_instruction functions | vert 450 | 3:SpirvIntrinsic
+#extension GL_EXT_spirv_intrinsics : enable
+void f(spirv_literal int k) {}
+void main() {}
+### spirv_by_reference only on parameters | vert 450 | 3:InvalidQualifier
+#extension GL_EXT_spirv_intrinsics : enable
+spirv_by_reference float x;
+void main() {}
+### spirv intrinsics declarations | vert 460 | ok
+#extension GL_EXT_spirv_intrinsics : enable
+spirv_instruction(extensions = ["SPV_KHR_shader_clock"], capabilities = [5055], id = 5056)
+uvec2 clockRealtime2x32EXT(int);
+spirv_execution_mode(5027);
+spirv_decorate(0) float g = 1.0;
+layout(location = 0) out uvec2 o;
+void main() {
+    o = clockRealtime2x32EXT(1);
+}

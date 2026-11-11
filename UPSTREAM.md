@@ -546,6 +546,17 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   keeps functions, globals and named overrides but drops unused types; `compact::Remap` exposes
   compaction's handle adjustment (one exhaustive `match` per IR enum) to the linker.
 
+- **SPIR-V intrinsics** (`GL_EXT_spirv_intrinsics`, `docs/design/spirv-intrinsics.md`).
+  `TypeInner::Spirv { opcode, operands }` (`SpirvTypeOperand::{Literal, Type}`), a raw type
+  instruction; `Statement::SpirvInstruction { instruction, operands, result }` with
+  `SpirvInstruction { set, opcode }`, `SpirvOperand::{Value, Pointer, Literal}` and the result
+  expression `Expression::SpirvInstructionResult { ty }`; `GlobalVariable::spirv_decorations`
+  (`SpirvDecoration`, `SpirvDecorationOperands::{Literals, Ids, Strings}`, `SpirvId::{Constant,
+  Global}`); `EntryPoint::spirv_execution_modes` (`SpirvExecutionMode`, operands literal words or
+  global expressions); `Module::spirv_requirements` (extensions and capabilities). An `Input` or
+  `Output` global with a raw `BuiltIn` decoration (`proc::has_spirv_built_in`) needs no binding.
+  The SPIR-V backend writes them in `back/spv/intrinsics.rs`.
+
 ## Cherry-picked upstream commits
 
 None yet.

@@ -2034,7 +2034,8 @@ impl BlockContext<'_> {
             | crate::Expression::RayQueryProceedResult
             | crate::Expression::ReportIntersectionResult
             | crate::Expression::SubgroupBallotResult
-            | crate::Expression::SubgroupOperationResult { .. } => self.cached.get(expr_handle)?,
+            | crate::Expression::SubgroupOperationResult { .. }
+            | crate::Expression::SpirvInstructionResult { .. } => self.cached.get(expr_handle)?,
             crate::Expression::As {
                 expr,
                 kind,
@@ -4157,6 +4158,11 @@ impl BlockContext<'_> {
                     ref arguments,
                 } => self.write_debug_printf_statement(&mut block, format, arguments)?,
                 Statement::Assume { condition } => self.write_assume(condition, &mut block)?,
+                Statement::SpirvInstruction {
+                    ref instruction,
+                    ref operands,
+                    result,
+                } => self.write_spirv_instruction(&mut block, instruction, operands, result)?,
                 Statement::CooperativeMatrix {
                     ref function,
                     result,

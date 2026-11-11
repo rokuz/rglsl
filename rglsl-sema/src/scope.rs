@@ -6,6 +6,7 @@ use rglsl_ast::ast::{InterpolationQualifier, NodeId, PrecisionQualifier};
 use rglsl_ast::Span;
 
 use crate::constant::Constant;
+use crate::spirv::{SpirvDecoration, SpirvInstruction};
 use crate::types::{BlockId, StructId, Type};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
@@ -77,6 +78,10 @@ pub struct Qualifiers {
     pub interpolation: Option<InterpolationQualifier>,
     pub precision: Option<PrecisionQualifier>,
     pub layout: Vec<LayoutEntry>,
+    pub spirv_storage_class: Option<u32>,
+    pub spirv_decorations: Vec<SpirvDecoration>,
+    pub spirv_by_reference: bool,
+    pub spirv_literal: bool,
 }
 
 impl Qualifiers {
@@ -228,6 +233,7 @@ pub struct Function {
     pub parameters: Vec<Parameter>,
     pub defined: bool,
     pub span: Span,
+    pub spirv_instruction: Option<SpirvInstruction>,
 }
 
 impl Function {

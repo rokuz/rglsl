@@ -71,8 +71,17 @@ impl Analyzer<'_> {
     pub(crate) fn declaration(&mut self, declaration: &Declaration) {
         match &declaration.kind {
             DeclarationKind::FunctionPrototype(prototype) => {
-                self.function_prototype(declaration.id, prototype, false);
+                self.function_prototype(declaration.id, prototype, false, None);
             }
+            DeclarationKind::SpirvInstruction {
+                instruction,
+                prototype,
+            } => {
+                self.spirv_requirements(&instruction.requirements);
+                let spirv = self.spirv_instruction(&instruction.qualifiers);
+                self.function_prototype(declaration.id, prototype, false, Some(spirv));
+            }
+            DeclarationKind::SpirvExecutionMode(mode) => self.spirv_execution_mode(mode),
             DeclarationKind::InitDeclaratorList(list) => self.init_declarator_list(list),
             DeclarationKind::Precision { .. } => {}
             DeclarationKind::Block {
@@ -471,6 +480,19 @@ impl Analyzer<'_> {
                 SingleTypeQualifier::Invariant => result.invariant = true,
                 SingleTypeQualifier::Precise => result.precise = true,
                 SingleTypeQualifier::NonUniform => result.nonuniform = true,
+                SingleTypeQualifier::SpirvStorageClass(class) => {
+                    if let Some(class) = self.spirv_storage_class(single.span, class) {
+                        result.spirv_storage_class = Some(class);
+                        result.storage = super::spirv::spirv_storage(class);
+                    }
+                }
+                SingleTypeQualifier::SpirvDecorate(decorate) => {
+                    if let Some(decoration) = self.spirv_decorate(decorate) {
+                        result.spirv_decorations.push(decoration);
+                    }
+                }
+                SingleTypeQualifier::SpirvByReference => result.spirv_by_reference = true,
+                SingleTypeQualifier::SpirvLiteral => result.spirv_literal = true,
             }
         }
         self.heap_layout_check(&result);
@@ -652,6 +674,7 @@ impl Analyzer<'_> {
                 );
                 Type::ERROR
             }
+            TypeSpecifierNonArray::Spirv(spirv) => self.spirv_type_specifier(spirv),
         };
         let dimensions = self.array_sizes(specifier.array.as_ref());
         base.with_dimensions(&dimensions)
@@ -810,6 +833,20 @@ impl Analyzer<'_> {
         }
         if qualifiers.nonuniform {
             self.non_uniform_storage_check(list.ty.qualifier.as_ref(), &qualifiers);
+        }
+        if qualifiers.spirv_by_reference || qualifiers.spirv_literal {
+            let qualifier = if qualifiers.spirv_by_reference {
+                "spirv_by_reference"
+            } else {
+                "spirv_literal"
+            };
+            self.error(
+                list.ty.span,
+                DiagnosticKind::InvalidQualifier {
+                    qualifier,
+                    reason: "can only apply to parameter",
+                },
+            );
         }
         let base = self.type_specifier(&list.ty.specifier);
         if list.declarators.is_empty() {
@@ -1304,7 +1341,10 @@ impl Analyzer<'_> {
 
     fn contains_non_opaque(&self, ty: &Type) -> bool {
         match ty.kind {
-            TypeKind::Opaque(_) | TypeKind::Tensor { .. } | TypeKind::Error => false,
+            TypeKind::Opaque(_)
+            | TypeKind::Tensor { .. }
+            | TypeKind::Spirv(_)
+            | TypeKind::Error => false,
             TypeKind::Struct(id) => self
                 .types
                 .structure(id)
@@ -1940,7 +1980,19 @@ impl Analyzer<'_> {
             self.reserved_check(identifier);
         }
         let shown = name.clone().unwrap_or_default();
-        let reason = if ty.is_void() {
+        let literal_type = ty.is_scalar()
+            && matches!(
+                ty.scalar_type(),
+                Some(
+                    crate::types::Scalar::Float
+                        | crate::types::Scalar::Int
+                        | crate::types::Scalar::Uint
+                        | crate::types::Scalar::Bool
+                )
+            );
+        let reason = if qualifiers.spirv_literal && !literal_type {
+            Some("cannot use spirv_literal qualifier")
+        } else if ty.is_void() {
             Some("a parameter cannot be `void`")
         } else if ty.array.contains(&ArraySize::Unsized) {
             Some("an array size is required")
@@ -1985,6 +2037,7 @@ impl Analyzer<'_> {
         node: rglsl_ast::ast::NodeId,
         prototype: &Spanned<FunctionPrototype>,
         definition: bool,
+        spirv_instruction: Option<crate::spirv::SpirvInstruction>,
     ) -> Option<FunctionId> {
         let name = &prototype.name;
         let return_qualifiers = self.optional_qualifiers(&prototype.return_type.node);
@@ -2016,6 +2069,19 @@ impl Analyzer<'_> {
         if name.node == "main" && (!parameters.is_empty() || !return_type.is_void()) {
             self.error(close, DiagnosticKind::InvalidMain);
         }
+        if spirv_instruction.is_none()
+            && parameters
+                .iter()
+                .any(|parameter| parameter.qualifiers.spirv_literal)
+        {
+            self.error(
+                close,
+                DiagnosticKind::SpirvIntrinsic {
+                    subject: name.node.clone(),
+                    reason: "'spirv_literal' can only be used on functions defined with 'spirv_instruction'",
+                },
+            );
+        }
         let types: Vec<Type> = parameters
             .iter()
             .map(|parameter| parameter.ty.clone())
@@ -2028,7 +2094,7 @@ impl Analyzer<'_> {
             .any(|function| {
                 function.same_parameter_types(&types) && function.return_type != return_type
             });
-        if builtin_conflict && self.scopes.is_global() {
+        if builtin_conflict && self.scopes.is_global() && spirv_instruction.is_none() {
             self.error(
                 close,
                 DiagnosticKind::ConflictingFunctionDeclaration(name.node.clone()),
@@ -2042,6 +2108,18 @@ impl Analyzer<'_> {
             _ => None,
         };
         if let Some(id) = existing {
+            let different_instruction = self
+                .function(id)
+                .is_some_and(|previous| previous.spirv_instruction != spirv_instruction);
+            if different_instruction {
+                self.error(
+                    close,
+                    DiagnosticKind::SpirvIntrinsic {
+                        subject: name.node.clone(),
+                        reason: "overloaded functions must have the same qualifiers",
+                    },
+                );
+            }
             let (conflict, redefined) = self.function(id).map_or((false, false), |previous| {
                 let conflict = previous.return_type != return_type
                     || previous
@@ -2083,6 +2161,7 @@ impl Analyzer<'_> {
             parameters,
             defined: definition,
             span: prototype.span,
+            spirv_instruction,
         });
         self.function_declarations.insert(node, id);
         if self.scopes.declare_function(&name.node, id).is_err() {
@@ -2093,7 +2172,7 @@ impl Analyzer<'_> {
 
     pub(crate) fn function_definition(&mut self, definition: &Node<FunctionDefinition>) {
         let prototype = &definition.prototype;
-        let id = self.function_prototype(definition.id, prototype, true);
+        let id = self.function_prototype(definition.id, prototype, true, None);
         if prototype.name.node == "main" {
             self.main_defined = true;
             self.main = self.main.or(id);

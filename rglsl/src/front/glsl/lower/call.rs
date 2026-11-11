@@ -20,6 +20,13 @@ impl FunctionLowerer<'_, '_> {
         let at = self.at(expression.span);
         let analysis = self.lw.analysis;
         match analysis.calls.get(&expression.id) {
+            Some(&Callee::Function(id))
+                if analysis
+                    .function(id)
+                    .is_some_and(|function| function.spirv_instruction.is_some()) =>
+            {
+                self.spirv_call(id, &call.arguments, at)
+            }
             Some(&Callee::Function(id)) => {
                 let non_uniform = self.info(expression)?.non_uniform;
                 self.user_call(id, &call.arguments, non_uniform, at)

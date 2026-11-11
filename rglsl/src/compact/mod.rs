@@ -170,6 +170,13 @@ pub fn compact(module: &mut crate::Module, keep_unused: KeepUnused) -> Result<()
             if let Some(enable) = e.opacity_micromap {
                 module_tracer.global_expressions_used.insert(enable);
             }
+            for mode in &e.spirv_execution_modes {
+                if let crate::SpirvExecutionModeOperands::Ids(ref ids) = mode.operands {
+                    for &id in ids {
+                        module_tracer.global_expressions_used.insert(id);
+                    }
+                }
+            }
 
             if let Some(task_payload) = e.task_payload {
                 module_tracer.global_variables_used.insert(task_payload);
@@ -258,8 +265,25 @@ pub fn compact(module: &mut crate::Module, keep_unused: KeepUnused) -> Result<()
     if keep_unused.into() {
         module_tracer.global_variables_used.add_all();
     }
+    let decorated: Vec<crate::Handle<crate::GlobalVariable>> = module_tracer
+        .global_variables_used
+        .iter()
+        .flat_map(|global| spirv_decoration_ids(&module.global_variables[global]))
+        .filter_map(|id| match id {
+            crate::SpirvId::Global(global) => Some(global),
+            crate::SpirvId::Constant(_) => None,
+        })
+        .collect();
+    for global in decorated {
+        module_tracer.global_variables_used.insert(global);
+    }
     for global in module_tracer.global_variables_used.iter() {
         log::trace!("tracing global {:?}", module.global_variables[global].name);
+        for id in spirv_decoration_ids(&module.global_variables[global]) {
+            if let crate::SpirvId::Constant(constant) = id {
+                module_tracer.global_expressions_used.insert(constant);
+            }
+        }
         module_tracer
             .types_used
             .insert(module.global_variables[global].ty);
@@ -390,6 +414,13 @@ pub fn compact(module: &mut crate::Module, keep_unused: KeepUnused) -> Result<()
         if let Some(enable) = e.opacity_micromap.as_mut() {
             module_map.global_expressions.adjust(enable)?;
         }
+        for mode in e.spirv_execution_modes.iter_mut() {
+            if let crate::SpirvExecutionModeOperands::Ids(ref mut ids) = mode.operands {
+                for id in ids.iter_mut() {
+                    module_map.global_expressions.adjust(id)?;
+                }
+            }
+        }
     }
 
     // Drop unused global variables, reusing existing storage.
@@ -401,6 +432,20 @@ pub fn compact(module: &mut crate::Module, keep_unused: KeepUnused) -> Result<()
             module_map.types.adjust(&mut global.ty)?;
             if let Some(ref mut offset) = global.heap_offset {
                 module_map.global_expressions.adjust(offset)?;
+            }
+            for decoration in global.spirv_decorations.iter_mut() {
+                if let crate::SpirvDecorationOperands::Ids(ref mut ids) = decoration.operands {
+                    for id in ids.iter_mut() {
+                        match *id {
+                            crate::SpirvId::Constant(ref mut constant) => {
+                                module_map.global_expressions.adjust(constant)?;
+                            }
+                            crate::SpirvId::Global(ref mut target) => {
+                                module_map.globals.adjust(target)?;
+                            }
+                        }
+                    }
+                }
             }
             if let Some(ref mut init) = global.init {
                 module_map.global_expressions.adjust(init)?;
@@ -1394,4 +1439,18 @@ fn unnamed_override_type() {
     assert!(validator.validate(&module).is_ok());
     compact(&mut module, KeepUnused::Yes).unwrap();
     assert!(validator.validate(&module).is_ok());
+}
+
+fn spirv_decoration_ids(
+    global: &crate::GlobalVariable,
+) -> impl Iterator<Item = crate::SpirvId> + '_ {
+    global
+        .spirv_decorations
+        .iter()
+        .flat_map(|decoration| match decoration.operands {
+            crate::SpirvDecorationOperands::Ids(ref ids) => ids.as_slice(),
+            crate::SpirvDecorationOperands::Literals(_)
+            | crate::SpirvDecorationOperands::Strings(_) => &[],
+        })
+        .copied()
 }

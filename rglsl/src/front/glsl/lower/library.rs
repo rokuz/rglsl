@@ -164,7 +164,10 @@ impl<'a> Lowerer<'a> {
                         ));
                     }
                 }
-                DeclarationKind::FunctionPrototype(_) | DeclarationKind::Precision { .. } => {}
+                DeclarationKind::FunctionPrototype(_)
+                | DeclarationKind::Precision { .. }
+                | DeclarationKind::SpirvInstruction { .. }
+                | DeclarationKind::SpirvExecutionMode(_) => {}
             }
         }
     }
@@ -177,6 +180,8 @@ fn declares_stage_layout(declaration: &rglsl_ast::ast::Declaration) -> bool {
         DeclarationKind::FunctionPrototype(_)
         | DeclarationKind::InitDeclaratorList(_)
         | DeclarationKind::Precision { .. }
+        | DeclarationKind::SpirvInstruction { .. }
+        | DeclarationKind::SpirvExecutionMode(_)
         | DeclarationKind::Block { .. } => return false,
     };
     qualifier.qualifiers.iter().any(|single| {

@@ -206,6 +206,8 @@ impl Finder<'_> {
             DeclarationKind::QualifiedIdentifiers { .. }
             | DeclarationKind::FunctionPrototype(_)
             | DeclarationKind::Precision { .. }
+            | DeclarationKind::SpirvInstruction { .. }
+            | DeclarationKind::SpirvExecutionMode(_)
             | DeclarationKind::Qualifier(_) => {}
         }
     }

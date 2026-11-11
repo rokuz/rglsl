@@ -280,6 +280,8 @@ pub enum FunctionError {
     InvalidAbortMessage(Handle<crate::Type>),
     #[error("Invalid operand {0:?} of a tensor write")]
     InvalidTensorWrite(Handle<crate::Expression>),
+    #[error("Operand {0:?} of a SPIR-V instruction is invalid")]
+    InvalidSpirvOperand(Handle<crate::Expression>),
     #[error("The argument {0:?} of an abort does not match its message type")]
     InvalidAbortArgument(Handle<crate::Expression>),
 }
@@ -1231,6 +1233,7 @@ impl super::Validator {
                             | Ex::ReportIntersectionResult
                             | Ex::SubgroupBallotResult
                             | Ex::SubgroupOperationResult { .. }
+                            | Ex::SpirvInstructionResult { .. }
                             | Ex::CooperativeMatrixResult { .. } => {
                                 return Err(FunctionError::EmitResult(handle)
                                     .with_span_handle(handle, context.expressions));
@@ -1450,6 +1453,38 @@ impl super::Validator {
                 S::CooperativeVector(ref function) => {
                     for operand in function.operands() {
                         context.resolve_type_inner(operand, &self.valid_expression_set)?;
+                    }
+                }
+                S::SpirvInstruction {
+                    ref operands,
+                    result,
+                    ..
+                } => {
+                    for operand in operands {
+                        match *operand {
+                            crate::SpirvOperand::Value(value) => {
+                                context.resolve_type_inner(value, &self.valid_expression_set)?;
+                            }
+                            crate::SpirvOperand::Pointer(pointer) => {
+                                let inner = context
+                                    .resolve_type_inner(pointer, &self.valid_expression_set)?;
+                                if !matches!(*inner, Ti::Pointer { .. } | Ti::ValuePointer { .. }) {
+                                    return Err(FunctionError::InvalidSpirvOperand(pointer)
+                                        .with_span_handle(pointer, context.expressions));
+                                }
+                            }
+                            crate::SpirvOperand::Literal(_) => {}
+                        }
+                    }
+                    if let Some(result) = result {
+                        if !matches!(
+                            context.expressions[result],
+                            crate::Expression::SpirvInstructionResult { .. }
+                        ) {
+                            return Err(FunctionError::InvalidSpirvOperand(result)
+                                .with_span_handle(result, context.expressions));
+                        }
+                        self.emit_expression(result, context)?;
                     }
                 }
                 S::Assume { condition } => {

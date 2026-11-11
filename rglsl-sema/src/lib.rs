@@ -31,6 +31,7 @@ pub mod constant;
 pub mod diagnostic;
 pub mod layout;
 pub mod scope;
+pub mod spirv;
 pub mod types;
 
 #[cfg(test)]

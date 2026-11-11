@@ -3,8 +3,9 @@ use alloc::vec::Vec;
 use crate::ast::{
     ArrayDimension, ArraySpecifier, CaseLabel, Condition, Declaration, DeclarationKind, Expression,
     ExpressionKind, ExternalDeclaration, FullySpecifiedType, FunctionIdentifier, FunctionPrototype,
-    Initializer, JumpStatement, SingleTypeQualifier, Spanned, Statement, StatementKind,
-    StructDeclaration, TranslationUnit, TypeQualifier, TypeSpecifier, TypeSpecifierNonArray,
+    Initializer, JumpStatement, SingleTypeQualifier, Spanned, SpirvDecorateKind,
+    SpirvExecutionModeKind, SpirvTypeParameter, Statement, StatementKind, StructDeclaration,
+    TranslationUnit, TypeQualifier, TypeSpecifier, TypeSpecifierNonArray,
 };
 
 pub fn expressions(unit: &TranslationUnit) -> Vec<&Expression> {
@@ -31,12 +32,22 @@ struct Walker<'a> {
 impl<'a> Walker<'a> {
     fn qualifier(&mut self, qualifier: &'a Spanned<TypeQualifier>) {
         for single in &qualifier.qualifiers {
-            if let SingleTypeQualifier::Layout(layout) = &single.node {
-                for id in &layout.ids {
-                    if let Some(value) = &id.value {
-                        self.expression(value);
+            match &single.node {
+                SingleTypeQualifier::Layout(layout) => {
+                    for id in &layout.ids {
+                        if let Some(value) = &id.value {
+                            self.expression(value);
+                        }
                     }
                 }
+                SingleTypeQualifier::SpirvDecorate(decorate)
+                    if decorate.kind == SpirvDecorateKind::Id =>
+                {
+                    for operand in &decorate.operands {
+                        self.expression(operand);
+                    }
+                }
+                _ => {}
             }
         }
     }
@@ -65,6 +76,14 @@ impl<'a> Walker<'a> {
         match &specifier.non_array {
             TypeSpecifierNonArray::Struct(structure) => self.members(&structure.declarations),
             TypeSpecifierNonArray::InlineBlock(declarations) => self.members(declarations),
+            TypeSpecifierNonArray::Spirv(spirv) => {
+                for parameter in &spirv.parameters {
+                    match parameter {
+                        SpirvTypeParameter::Constant(value) => self.expression(value),
+                        SpirvTypeParameter::Type(ty) => self.specifier(ty),
+                    }
+                }
+            }
             _ => {}
         }
         if let Some(parameters) = &specifier.parameters {
@@ -129,6 +148,14 @@ impl<'a> Walker<'a> {
             }
             DeclarationKind::Qualifier(qualifier)
             | DeclarationKind::QualifiedIdentifiers { qualifier, .. } => self.qualifier(qualifier),
+            DeclarationKind::SpirvInstruction { prototype, .. } => self.prototype(prototype),
+            DeclarationKind::SpirvExecutionMode(mode) => {
+                if mode.kind == SpirvExecutionModeKind::Id {
+                    for operand in &mode.operands {
+                        self.expression(operand);
+                    }
+                }
+            }
         }
     }
 

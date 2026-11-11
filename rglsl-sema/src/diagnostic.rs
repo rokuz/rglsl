@@ -171,6 +171,11 @@ pub enum DiagnosticKind {
         attribute: String,
         reason: &'static str,
     },
+    #[error("`{subject}`: {reason}")]
+    SpirvIntrinsic {
+        subject: String,
+        reason: &'static str,
+    },
     #[error("invalid use of qualifier `{qualifier}`: {reason}")]
     InvalidQualifier {
         qualifier: &'static str,
