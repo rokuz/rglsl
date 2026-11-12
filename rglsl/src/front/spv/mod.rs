@@ -3212,6 +3212,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                     ty: unsigned_ty,
                     binding: Some(binding),
                     relaxed_precision: false,
+                    memory_decorations: crate::MemoryDecorations::empty(),
                 });
                 (inner, var)
             }

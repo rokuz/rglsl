@@ -635,12 +635,28 @@ impl Analyzer<'_> {
                 );
                 failed = true;
             }
+            if !is_builtin
+                && matches!(operand.ty.kind, TypeKind::Tensor { .. })
+                && operand.root.is_none()
+            {
+                self.error(argument.span, DiagnosticKind::TensorArgumentNotAVariable);
+                failed = true;
+            }
             if !is_builtin && !self.image_formats_match(operand, parameter) {
                 self.error(
                     first_argument,
                     DiagnosticKind::InvalidQualifier {
                         qualifier: "format",
                         reason: "image formats must match",
+                    },
+                );
+                failed = true;
+            } else if !is_builtin && self.image_format_dropped(operand, parameter) {
+                self.error(
+                    first_argument,
+                    DiagnosticKind::InvalidQualifier {
+                        qualifier: "format",
+                        reason: "an image with a format cannot be passed to a parameter without one: their SPIR-V image types differ",
                     },
                 );
                 failed = true;
@@ -962,6 +978,39 @@ impl Analyzer<'_> {
             }),
             _ => false,
         }
+    }
+
+    fn image_format_dropped(&self, operand: &Operand, parameter: &Parameter) -> bool {
+        let (argument, formal) = self.image_formats(operand, parameter);
+        argument.is_some() && formal.is_none()
+    }
+
+    fn image_formats(
+        &self,
+        operand: &Operand,
+        parameter: &Parameter,
+    ) -> (Option<String>, Option<String>) {
+        if !operand
+            .ty
+            .as_opaque()
+            .is_some_and(crate::types::Opaque::is_image)
+        {
+            return (None, None);
+        }
+        let format = |qualifiers: &crate::scope::Qualifiers| {
+            qualifiers
+                .layout
+                .iter()
+                .rev()
+                .find(|entry| super::declaration::IMAGE_FORMATS.contains(&entry.name.as_str()))
+                .map(|entry| entry.name.clone())
+        };
+        let argument = operand
+            .root
+            .and_then(|id| self.symbol(id))
+            .and_then(|symbol| symbol.variable())
+            .and_then(|variable| format(&variable.qualifiers));
+        (argument, format(&parameter.qualifiers))
     }
 
     fn image_formats_match(&self, operand: &Operand, parameter: &Parameter) -> bool {

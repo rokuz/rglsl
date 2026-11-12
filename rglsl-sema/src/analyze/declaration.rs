@@ -2364,7 +2364,8 @@ impl Analyzer<'_> {
                 DiagnosticKind::UnsizedArrayNotAllowed,
             );
         }
-        if return_type.contains_opaque(&self.types) {
+        let tensor = matches!(return_type.kind, TypeKind::Tensor { .. });
+        if return_type.contains_opaque(&self.types) && !tensor {
             self.error(
                 prototype.return_type.span,
                 DiagnosticKind::OpaqueNotAllowed(self.show(&return_type)),

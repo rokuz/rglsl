@@ -5417,6 +5417,28 @@ void main() {
     tensorReadARM(t, uint[](0), b.value);
     s = tensorSizeARM(t, 2);
 }
+### functions return tensors and arrays of tensors | comp 460 | ok
+#extension GL_ARM_tensors : require
+layout(set = 0, binding = 0) uniform tensorARM<float, 2> t;
+layout(set = 0, binding = 1) uniform tensorARM<float, 2> ta[2];
+tensorARM<float, 2> same() { return t; }
+tensorARM<float, 2>[2] all() { return ta; }
+uint size(tensorARM<float, 2> x[2]) { return tensorSizeARM(x[1], 0); }
+void main() {
+    uint s = tensorSizeARM(same(), 0) + tensorSizeARM(all()[1], 1) + size(ta);
+}
+### returned tensors are not parameters | comp 460 | 10:TensorArgumentNotAVariable, 11:TensorArgumentNotAVariable
+#extension GL_ARM_tensors : require
+layout(set = 0, binding = 0) uniform tensorARM<float, 2> t;
+layout(set = 0, binding = 1) uniform tensorARM<float, 2> ta[2];
+tensorARM<float, 2> same() { return t; }
+uint one(tensorARM<float, 2> x) { return tensorSizeARM(x, 0); }
+uint two(tensorARM<float, 2> x[2]) { return tensorSizeARM(x[1], 0); }
+tensorARM<float, 2>[2] pair() { return ta; }
+void main() {
+    uint s = one(same());
+    s = two(pair());
+}
 ### tensor element types are scalars | comp 460 | 3:InvalidTypeParameters, 4:InvalidTypeParameters
 #extension GL_ARM_tensors : require
 layout(set = 0, binding = 0) uniform tensorARM<vec2, 1> v;

@@ -642,6 +642,46 @@ impl BlockContext<'_> {
         Ok(())
     }
 
+    #[inline(never)]
+    fn returned_array_element(
+        &mut self,
+        expr_handle: Handle<crate::Expression>,
+        block: &mut Block,
+    ) -> Result<Option<Word>, Error> {
+        let (base, index) = match self.ir_function.expressions[expr_handle] {
+            crate::Expression::Access { base, .. } => (base, None),
+            crate::Expression::AccessIndex { base, index } => (base, Some(index)),
+            _ => return Ok(None),
+        };
+        let returned = matches!(
+            self.ir_function.expressions[base],
+            crate::Expression::CallResult(_)
+        ) && matches!(
+            *self.fun_info[base].ty.inner_with(&self.ir_module.types),
+            crate::TypeInner::BindingArray { .. }
+        );
+        if !returned {
+            return Ok(None);
+        }
+        let result_type_id = self.get_expression_type_id(&self.fun_info[expr_handle].ty)?;
+        let Some(index) = index else {
+            self.spill_to_internal_variable(base, block)?;
+            self.function.spilled_accesses.insert(expr_handle);
+            return self
+                .maybe_access_spilled_composite(expr_handle, block, result_type_id)
+                .map(Some);
+        };
+        let id = self.gen_id();
+        let base_id = self.cached.get(base)?;
+        block.body.push(Instruction::composite_extract(
+            result_type_id,
+            id,
+            base_id,
+            &[index],
+        ));
+        Ok(Some(id))
+    }
+
     /// Cache an expression for a value.
     fn write_expression_value(
         &mut self,
@@ -657,6 +697,9 @@ impl BlockContext<'_> {
             return Ok(());
         }
 
+        if let Some(id) = self.returned_array_element(expr_handle, block)? {
+            return self.cached.set(expr_handle, id);
+        }
         let result_type_id = self.get_expression_type_id(&self.fun_info[expr_handle].ty)?;
         let id = match self.ir_function.expressions[expr_handle] {
             crate::Expression::Literal(literal) => self.writer.get_constant_scalar(literal),
@@ -4343,7 +4386,26 @@ impl BlockContext<'_> {
                 return Ok(None);
             }
             Statement::Return { value: Some(value) } => {
-                let value_id = self.cached.get(value)?;
+                let value_id = match *self.fun_info[value].ty.inner_with(&self.ir_module.types) {
+                    crate::TypeInner::Tensor { .. } => self.get_handle_id(value)?,
+                    crate::TypeInner::BindingArray { .. }
+                        if matches!(
+                            self.ir_function.expressions[value],
+                            crate::Expression::GlobalVariable(_)
+                                | crate::Expression::FunctionArgument(_)
+                        ) =>
+                    {
+                        let ty = self.fun_info[value].ty.clone();
+                        let type_id = self.writer.get_expression_type_id(&ty)?;
+                        let pointer_id = self.cached.get(value)?;
+                        let id = self.gen_id();
+                        block
+                            .body
+                            .push(Instruction::load(type_id, id, pointer_id, None));
+                        id
+                    }
+                    _ => self.cached.get(value)?,
+                };
                 let instruction = match self.function.entry_point_context {
                     // If this is an entry point, and we need to return anything,
                     // let's instead store the output variables and return `void`.

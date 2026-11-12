@@ -112,6 +112,7 @@ impl<I: Iterator<Item = u32>> super::Frontend<I> {
                         ty,
                         binding: None,
                         relaxed_precision: false,
+                        memory_decorations: crate::MemoryDecorations::empty(),
                     });
                 }
                 Instruction { op, .. } => return Err(Error::InvalidParameter(op)),

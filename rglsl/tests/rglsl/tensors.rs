@@ -212,6 +212,8 @@ struct Shape {
     writes: Vec<String>,
     sizes: Vec<String>,
     calls: usize,
+    parameters: Vec<(String, Vec<Vec<u32>>)>,
+    results: Vec<String>,
 }
 
 struct Module {
@@ -236,6 +238,7 @@ impl Module {
                 || is(*op, Op::TypeArray)
                 || is(*op, Op::TypeRuntimeArray)
                 || is(*op, Op::TypeTensorARM)
+                || is(*op, Op::TypeImage)
                 || is(*op, Op::TypePointer)
             {
                 operands.first()
@@ -339,6 +342,8 @@ impl Module {
             writes: Vec::new(),
             sizes: Vec::new(),
             calls: 0,
+            parameters: Vec::new(),
+            results: Vec::new(),
         };
         for (op, operands) in &self.instructions {
             let op = *op;
@@ -388,12 +393,31 @@ impl Module {
             }
         }
         for (op, operands) in &self.instructions {
+            if is(*op, Op::Function) {
+                if let Some(&ty) = operands.first() {
+                    shape.results.push(self.describe(ty));
+                }
+            }
+            if is(*op, Op::FunctionParameter) {
+                if let [ty, id, ..] = operands.as_slice() {
+                    let description = self.describe(*ty);
+                    let image = format!("op{}", Op::TypeImage as u32);
+                    if description.contains("tensor") || description.ends_with(&image) {
+                        let mut decorated = decorations.get(id).cloned().unwrap_or_default();
+                        decorated.sort();
+                        shape.parameters.push((description, decorated));
+                    }
+                }
+            }
             if !is(*op, Op::Variable) {
                 continue;
             }
-            let [ty, id, ..] = operands.as_slice() else {
+            let [ty, id, class, ..] = operands.as_slice() else {
                 continue;
             };
+            if *class == spirv::StorageClass::Function as u32 {
+                continue;
+            }
             let description = self.describe(*ty);
             if !description.contains("tensor") {
                 continue;
@@ -407,6 +431,8 @@ impl Module {
         shape.reads.sort();
         shape.writes.sort();
         shape.sizes.sort();
+        shape.parameters.sort();
+        shape.results.sort();
         shape
     }
 }
@@ -1142,4 +1168,174 @@ void main() {{}}
         rejected_like_glslang(&source, 4, tensor_extension)?;
     }
     Ok(())
+}
+
+#[test]
+fn functions_return_tensors() -> TestResult {
+    let source = "#version 460
+#extension GL_ARM_tensors : require
+layout(local_size_x = 1) in;
+layout(set = 0, binding = 0) uniform tensorARM<float, 2> ta[2];
+layout(set = 0, binding = 1) uniform tensorARM<float, 2> t;
+readonly layout(set = 0, binding = 2) uniform tensorARM<int, 1> r;
+layout(set = 0, binding = 3) buffer B { float f; uint i; uint s; int n; } b;
+tensorARM<float, 2> pick(uint i) { return ta[i]; }
+tensorARM<float, 2> same() { return t; }
+tensorARM<float, 2> pass(tensorARM<float, 2> x) { return x; }
+tensorARM<float, 2> choose(bool c) { if (c) { return ta[0]; } return t; }
+tensorARM<int, 1> readable() { return r; }
+void main() {
+    float v;
+    tensorReadARM(pick(b.i), uint[](0u, 0u), v);
+    b.f = v;
+    tensorWriteARM(same(), uint[](0u, 1u), v, gl_TensorOperandsNonTemporalARM);
+    b.s = tensorSizeARM(pass(t), 1) + tensorSizeARM(choose(b.i == 0u), 0);
+    tensorReadARM(readable(), uint[](0u), b.n, gl_TensorOperandsOutOfBoundsValueARM, -1);
+    same();
+}
+";
+    let shape = matches_glslang(ShaderStage::Compute, source)?;
+    let tensors = shape
+        .results
+        .iter()
+        .filter(|result| result.contains("tensor"))
+        .count();
+    assert_eq!(tensors, 5);
+    let fragment = "#version 450
+#extension GL_ARM_tensors : require
+layout(set = 0, binding = 0) uniform tensorARM<float, 2> image;
+layout(location = 0) out vec4 color;
+tensorARM<float, 2> source() { return image; }
+void main() {
+    float value;
+    tensorReadARM(source(), uint[](uint(gl_FragCoord.x), 0u), value);
+    color = vec4(value);
+}
+";
+    matches_glslang(ShaderStage::Fragment, fragment)?;
+    Ok(())
+}
+
+#[test]
+fn returned_tensors_are_not_parameters() -> TestResult {
+    let source = "#version 460
+#extension GL_ARM_tensors : require
+layout(set = 0, binding = 0) uniform tensorARM<float, 2> t;
+tensorARM<float, 2> same() { return t; }
+uint size(tensorARM<float, 2> x) { return tensorSizeARM(x, 0); }
+void main() {
+    uint s = size(same());
+}
+";
+    rejected_by_rglsl(source, 7, "a tensor returned by a function")
+}
+
+#[test]
+fn parameters_carry_memory_decorations() -> TestResult {
+    let source = "#version 460
+#extension GL_ARM_tensors : require
+#extension GL_EXT_shader_image_load_formatted : require
+layout(local_size_x = 1) in;
+layout(set = 0, binding = 0) uniform coherent volatile restrict image2D img;
+layout(set = 1, binding = 0) uniform image2D img2;
+layout(set = 0, binding = 1) uniform coherent volatile restrict tensorARM<float, 1> t;
+layout(set = 1, binding = 1) uniform tensorARM<float, 1> t2;
+layout(set = 0, binding = 2) buffer B { float f; } b;
+layout(set = 0, binding = 3) uniform sampler2D s;
+float a(readonly image2D i) { return imageLoad(i, ivec2(0)).x; }
+void w(writeonly image2D i) { imageStore(i, ivec2(0), vec4(1.0)); }
+float c(coherent volatile restrict image2D i) { return imageLoad(i, ivec2(0)).x; }
+float co(coherent image2D i) { return imageLoad(i, ivec2(0)).x; }
+float r(readonly tensorARM<float, 1> x) { float v; tensorReadARM(x, uint[](0u), v); return v; }
+void q(writeonly tensorARM<float, 1> x) { tensorWriteARM(x, uint[](0u), 1.0); }
+uint zz(readonly writeonly tensorARM<float, 1> x) { return tensorSizeARM(x, 0); }
+uint y(coherent volatile restrict tensorARM<float, 1> x) { return 0u; }
+float e(sampler2D x) { return texture(x, vec2(0.0)).x; }
+void main() {
+    b.f = c(img) + float(y(t)) + e(s) + co(img2);
+    b.f += a(img2) + float(zz(t2)) + r(t2);
+    q(t2);
+    w(img2);
+}
+";
+    let shape = matches_glslang(ShaderStage::Compute, source)?;
+    use spirv::Decoration as D;
+    let decorated = |decorations: &[D]| -> Vec<Vec<u32>> {
+        let mut list: Vec<Vec<u32>> = decorations.iter().map(|&d| vec![d as u32]).collect();
+        list.sort();
+        list
+    };
+    let mut expected = vec![
+        decorated(&[D::NonWritable]),
+        decorated(&[D::NonReadable]),
+        decorated(&[D::Restrict, D::Volatile, D::Coherent]),
+        decorated(&[D::Coherent]),
+        decorated(&[D::NonWritable]),
+        decorated(&[D::NonReadable]),
+        decorated(&[D::NonWritable, D::NonReadable]),
+        decorated(&[D::Restrict, D::Volatile, D::Coherent]),
+    ];
+    expected.sort();
+    let mut found: Vec<Vec<Vec<u32>>> = shape
+        .parameters
+        .iter()
+        .map(|(_, decorations)| decorations.clone())
+        .collect();
+    found.sort();
+    assert_eq!(found, expected);
+    let formatted = "#version 460
+layout(set = 0, binding = 0, r32f) uniform image2D img;
+void store(writeonly image2D i) { imageStore(i, ivec2(0), vec4(1.0)); }
+void main() {
+    store(img);
+}
+";
+    rejected_by_rglsl(formatted, 5, "their SPIR-V image types differ")
+}
+
+#[test]
+fn arrays_of_tensors_as_parameters_and_results() -> TestResult {
+    let source = "#version 460
+#extension GL_ARM_tensors : require
+layout(local_size_x = 1) in;
+layout(set = 0, binding = 0) uniform tensorARM<float, 2> ta[2];
+layout(set = 0, binding = 1) readonly uniform tensorARM<int, 1> tr[3];
+layout(set = 0, binding = 2) buffer B { uint s; uint i; int n; float f; } b;
+tensorARM<float, 2>[2] all() { return ta; }
+tensorARM<float, 2>[2] forward(tensorARM<float, 2> x[2]) { return x; }
+tensorARM<float, 2>[2] again() { return all(); }
+tensorARM<float, 2> second(tensorARM<float, 2> x[2]) { return x[1]; }
+tensorARM<int, 1>[3] reads() { return tr; }
+float first(readonly tensorARM<float, 2> x) { float v; tensorReadARM(x, uint[](0u, 0u), v); return v; }
+uint total(readonly writeonly tensorARM<float, 2> x[2]) {
+    return tensorSizeARM(x[0], 0) + tensorSizeARM(x[1], 1);
+}
+float pass(tensorARM<float, 2> x[2], uint k) { return first(x[k]); }
+void main() {
+    b.s = tensorSizeARM(all()[1], 0) + tensorSizeARM(forward(ta)[b.i], 1)
+        + tensorSizeARM(again()[0], 0);
+    b.s += tensorSizeARM(second(ta), 0) + total(ta);
+    tensorReadARM(reads()[b.i], uint[](0u), b.n);
+    b.f = pass(ta, b.i) + first(ta[1]);
+}
+";
+    let shape = matches_glslang(ShaderStage::Compute, source)?;
+    assert_eq!(
+        shape
+            .results
+            .iter()
+            .filter(|result| result.contains("tensor"))
+            .count(),
+        5
+    );
+    let rejected = "#version 460
+#extension GL_ARM_tensors : require
+layout(set = 0, binding = 0) uniform tensorARM<float, 2> ta[2];
+tensorARM<float, 2>[2] all() { return ta; }
+uint total(tensorARM<float, 2> x[2]) { return tensorSizeARM(x[0], 0); }
+void main() {
+    uint s = total(all());
+}
+";
+    rejected_by_rglsl(rejected, 7, "a tensor returned by a function")
 }
