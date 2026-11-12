@@ -72,6 +72,11 @@ mod tests {
         let nvidia = DriverBugs::load(&root(), "NVIDIA 617.14")?;
         assert!(nvidia.get("spv.subgroupArithmetic.comp").is_none());
         assert!(nvidia.get(shader).is_none());
+        let barycentric = "exec/barycentric_pervertex_block_noperspective";
+        assert!(nvidia
+            .get(barycentric)
+            .is_some_and(|why| why.starts_with("nvidia: ")));
+        assert!(amd.get(barycentric).is_none());
         Ok(())
     }
 }
