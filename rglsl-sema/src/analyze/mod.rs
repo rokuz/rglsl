@@ -57,7 +57,6 @@ pub struct Options {
     pub spirv_version: Option<(u8, u8)>,
     pub end_of_input: Option<u32>,
     pub require_bindings: bool,
-    pub type_depth_limit: Option<usize>,
 }
 
 impl Options {
@@ -69,7 +68,6 @@ impl Options {
             spirv_version: None,
             end_of_input: None,
             require_bindings: false,
-            type_depth_limit: Some(crate::types::MAX_TYPE_DEPTH),
         }
     }
 }

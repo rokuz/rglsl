@@ -1,29 +1,23 @@
 use alloc::format;
 use alloc::string::String;
 
-use crate::{expressions, parse_with, print, ParseOptions};
+use crate::{expressions, parse, print};
 
 const STACK: usize = 256 << 10;
 const DEPTHS: [usize; 2] = [10_000, 100_000];
 const PRINTED_DEPTH: usize = 1_000;
 
-fn unlimited() -> ParseOptions {
-    ParseOptions {
-        nesting_limit: None,
-    }
-}
-
 fn exercise(source: String, round_trip: bool) -> super::TestResult {
     std::thread::Builder::new()
         .stack_size(STACK)
         .spawn(move || {
-            let parsed = match parse_with(&source, &unlimited()) {
+            let parsed = match parse(&source) {
                 Ok(parsed) => parsed,
                 Err(error) => panic!("{error}"),
             };
             if round_trip {
                 let printed = print(&parsed);
-                let reparsed = match parse_with(&printed, &unlimited()) {
+                let reparsed = match parse(&printed) {
                     Ok(reparsed) => reparsed,
                     Err(error) => panic!("{error}"),
                 };

@@ -799,8 +799,6 @@ impl ArraySize {
     }
 }
 
-pub const MAX_TYPE_DEPTH: usize = 64;
-
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Type {
     pub kind: TypeKind,
@@ -879,25 +877,6 @@ impl Type {
                 .is_some_and(|structure| structure.contains_reference),
             _ => false,
         }
-    }
-
-    pub fn depth(&self, registry: &TypeRegistry) -> usize {
-        let inner = match self.kind {
-            TypeKind::Struct(id) => registry
-                .structure(id)
-                .map_or(0, |structure| structure.depth),
-            TypeKind::Block(id) => registry.block(id).map_or(0, |block| {
-                block
-                    .members
-                    .iter()
-                    .map(|member| member.ty.depth(registry))
-                    .max()
-                    .unwrap_or(0)
-                    .saturating_add(1)
-            }),
-            _ => 0,
-        };
-        inner.saturating_add(self.array.len())
     }
 
     pub fn array_of(mut self, size: ArraySize) -> Self {
@@ -1435,7 +1414,6 @@ pub struct StructType {
     pub contains_reference: bool,
     pub scalars: Vec<Scalar>,
     pub flattened_size: Option<u32>,
-    pub depth: usize,
 }
 
 impl StructType {
@@ -1578,9 +1556,7 @@ impl TypeRegistry {
         let mut contains_reference = false;
         let mut scalars = Vec::new();
         let mut flattened_size = Some(0_u32);
-        let mut depth = 0;
         for member in &members {
-            depth = depth.max(member.ty.depth(self));
             contains_opaque |= member.ty.contains_opaque(self);
             contains_unsized_array |= member.ty.contains_unsized_array(self);
             contains_reference |= member.ty.contains_reference(self);
@@ -1602,7 +1578,6 @@ impl TypeRegistry {
             contains_reference,
             scalars,
             flattened_size,
-            depth: depth.saturating_add(1),
         });
         Some(id)
     }
