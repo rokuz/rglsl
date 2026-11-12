@@ -134,6 +134,14 @@ twin = "binds `ui2D` at binding 14 and `ui2DMS` at binding 15, and only the frag
 undefined = "every fragment of a primitive loads, stores and runs atomics on the same texels without synchronization; the coordinates come from flat inputs that may leave the images (the layer of `ic3D` and `ic2D`, which the harness fills with values up to 11); `imageStore(i2DMSArray, ic3D, 4, v)` writes sample 4 of a 4-sample image"
 twin = "only the fragment at (3, 5) loads, stores and runs atomics, with coordinates masked into every image (`ic1D & 3`, `ic2D & ivec2(3, 1)`, `ic3D & ivec3(3, 3, 1)`), sample 3 in place of 4, and `wo2D` (which shares binding 1 with `i2D`) written four texels further along x, so its store does not overwrite the texel of `i2D`"
 
+["spv.imageAtomic64.frag"]
+undefined = "every fragment updates the same buffer members `i64`, `u64`, `i64v4` and `u64v4` and the same texels without synchronization (glslang's own module stored different values on two runs on the NVIDIA target); the coordinates and sample indices come from `i32v4`, which may leave the images"
+twin = "only the fragment at (3, 5) runs the body, with coordinates `i32v4 & ivec4(3, 1, 1, 3)`"
+
+["spv.atomicFloat.comp"]
+undefined = "the storage buffer `buf` and the storage image `fimage1D` share binding 0 and both are used, so the descriptor cannot have the type of both; 256 invocations update `buf.dataf` and `buf.datad` with plain read-modify-writes, so the result depends on their order; the shared `atomf` and `atomd` are read uninitialized"
+twin = "binds `fimage1D` at binding 10, runs one invocation and sets `atomf` and `atomd` to 0 first; drops the comments"
+
 ["spv.memoryQualifier.frag"]
 undefined = "`i3D` (image3D) and `iCube` (imageCube) share binding 3 and both are used, so one descriptor cannot have the view type of both (VUID-vkCmdDraw-viewType-07752); `texel[i1]` indexes a vec4 with a buffer value that may be 4 or more"
 twin = "binds `iCube` at binding 2 and writes `texel[i1 & 3]`"
