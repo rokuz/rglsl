@@ -2412,7 +2412,7 @@ impl Writer {
         }
     }
 
-    fn cooperative_size_id(&mut self, size: crate::CooperativeSize) -> Word {
+    pub(super) fn cooperative_size_id(&mut self, size: crate::CooperativeSize) -> Word {
         match size {
             crate::CooperativeSize::Constant(size) => self.get_index_constant(size.get()),
             crate::CooperativeSize::Pending(handle) => self
@@ -2546,7 +2546,8 @@ impl Writer {
                 scope,
                 ..
             } => [Some(columns), Some(rows), Some(scope)],
-            crate::TypeInner::LongVector { size, .. } => [Some(size), None, None],
+            crate::TypeInner::LongVector { size, .. }
+            | crate::TypeInner::Tensor { rank: size, .. } => [Some(size), None, None],
             _ => [None, None, None],
         };
         for size in pending.into_iter().flatten() {

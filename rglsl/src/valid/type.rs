@@ -93,7 +93,7 @@ pub enum Disalignment {
 #[derive(Clone, Debug, thiserror::Error)]
 #[cfg_attr(test, derive(PartialEq))]
 pub enum TypeError {
-    #[error("A tensor must have a rank of at least 1")]
+    #[error("A tensor rank must be from 1 to 15")]
     InvalidTensorRank,
     #[error("Capability {0:?} is required")]
     MissingCapability(Capabilities),
@@ -1066,7 +1066,7 @@ impl super::Validator {
             ),
             Ti::Tensor { scalar, rank } => {
                 let _ = self.check_width(scalar)?;
-                if rank == 0 {
+                if rank.known().is_some_and(|rank| rank > 15) {
                     return Err(TypeError::InvalidTensorRank);
                 }
                 TypeInfo::new(

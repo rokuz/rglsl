@@ -177,20 +177,39 @@ pub enum ExpressionError {
     InvalidTensorOperand(Handle<crate::Expression>),
 }
 
+#[derive(Clone, Copy)]
+pub(super) enum TensorData {
+    Scalar,
+    Array(Option<u32>),
+}
+
+impl TensorData {
+    pub(super) fn coordinates_of(self, rank: crate::CooperativeSize) -> bool {
+        match self {
+            Self::Scalar => false,
+            Self::Array(Some(length)) => rank.known().is_none_or(|rank| rank == length),
+            Self::Array(None) => true,
+        }
+    }
+}
+
 pub(super) fn tensor_shape(
     inner: &crate::TypeInner,
     types: &UniqueArena<crate::Type>,
-) -> Option<(crate::Scalar, Option<u32>)> {
+) -> Option<(crate::Scalar, TensorData)> {
     match *inner {
-        crate::TypeInner::Scalar(scalar) => Some((scalar, None)),
-        crate::TypeInner::Array {
-            base,
-            size: crate::ArraySize::Constant(length),
-            ..
-        } => match types[base].inner {
-            crate::TypeInner::Scalar(scalar) => Some((scalar, Some(length.get()))),
-            _ => None,
-        },
+        crate::TypeInner::Scalar(scalar) => Some((scalar, TensorData::Scalar)),
+        crate::TypeInner::Array { base, size, .. } => {
+            let length = match size {
+                crate::ArraySize::Constant(length) => Some(length.get()),
+                crate::ArraySize::Pending(_) => None,
+                crate::ArraySize::Dynamic => return None,
+            };
+            match types[base].inner {
+                crate::TypeInner::Scalar(scalar) => Some((scalar, TensorData::Array(length))),
+                _ => None,
+            }
+        }
         _ => None,
     }
 }
@@ -2192,8 +2211,8 @@ impl super::Validator {
                     _ => return Err(ExpressionError::InvalidTensorOperand(tensor)),
                 };
                 match tensor_shape(&resolver[coordinates], &module.types) {
-                    Some((index, Some(length)))
-                        if length == rank
+                    Some((index, shape))
+                        if shape.coordinates_of(rank)
                             && matches!(
                                 index.kind,
                                 crate::ScalarKind::Uint | crate::ScalarKind::Sint
@@ -2212,7 +2231,9 @@ impl super::Validator {
                 ShaderStages::all()
             }
             E::TensorQuerySize { tensor, dimension } => match resolver[tensor] {
-                Ti::Tensor { rank, .. } if dimension < rank => ShaderStages::all(),
+                Ti::Tensor { rank, .. } if rank.known().is_none_or(|rank| dimension < rank) => {
+                    ShaderStages::all()
+                }
                 _ => return Err(ExpressionError::InvalidTensorOperand(tensor)),
             },
             E::Expect { value, expected } => {

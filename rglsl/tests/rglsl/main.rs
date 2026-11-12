@@ -9,6 +9,7 @@ mod glsl_vulkan;
 mod snapshots;
 mod spirv_roundtrip;
 mod stage_io;
+mod tensors;
 mod validation;
 
 type TestResult<T = ()> = Result<T, Box<dyn core::error::Error>>;

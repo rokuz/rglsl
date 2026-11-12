@@ -485,6 +485,39 @@ fn buffer_bytes(
     bytes
 }
 
+pub fn tensor_refusal(reflection: &Reflection) -> String {
+    let tensors: Vec<String> = reflection
+        .resources
+        .iter()
+        .filter_map(|resource| match &resource.kind {
+            ResourceKind::Tensor(tensor) => Some(match resource.count {
+                Some(count) => format!(
+                    "set {} binding {} {}[{count}]",
+                    resource.set,
+                    resource.binding,
+                    tensor.glsl()
+                ),
+                None => format!(
+                    "set {} binding {} {}",
+                    resource.set,
+                    resource.binding,
+                    tensor.glsl()
+                ),
+            }),
+            _ => None,
+        })
+        .collect();
+    let resources = if tensors.is_empty() {
+        "tensors outside descriptor bindings".to_string()
+    } else {
+        tensors.join(", ")
+    };
+    format!(
+        "TensorsARM ({resources}): no exec target exposes VK_ARM_tensors and Amber cannot \
+         create, bind, upload or read back tensors (docs/design/tensors.md)"
+    )
+}
+
 pub fn requirements(reflection: &Reflection) -> Result<BTreeSet<Need>, Refusal> {
     if let Some(unknown) = reflection.unknown_capabilities.first() {
         let name = match unknown {
@@ -496,6 +529,9 @@ pub fn requirements(reflection: &Reflection) -> Result<BTreeSet<Need>, Refusal> 
         return Err(Refusal::Capability(format!(
             "{name} (newer than the harness's SPIR-V tables; Amber cannot enable it)"
         )));
+    }
+    if reflection.capabilities.contains(&Capability::TensorsARM) {
+        return Err(Refusal::Capability(tensor_refusal(reflection)));
     }
     let mut needs = BTreeSet::new();
     for capability in &reflection.capabilities {
@@ -907,6 +943,9 @@ impl Plan {
                         "  BIND {bind} {} AS input_attachment INPUT_ATTACHMENT_INDEX {index} {location}",
                         images.join(" ")
                     );
+                }
+                ResourceKind::Tensor(_) => {
+                    return Err(Refusal::Capability(tensor_refusal(reflection)));
                 }
                 ResourceKind::Unsupported(reason) => return Err(Refusal::Binding(reason.clone())),
             }

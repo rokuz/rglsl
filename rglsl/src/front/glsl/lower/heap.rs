@@ -215,7 +215,7 @@ impl<'a> Lowerer<'a> {
             TypeKind::Tensor { scalar, rank } => {
                 return Ok(TypeInner::Tensor {
                     scalar: super::types::scalar(scalar),
-                    rank,
+                    rank: self.tensor_rank(rank, at)?,
                 })
             }
             _ => return Err(internal(at)),

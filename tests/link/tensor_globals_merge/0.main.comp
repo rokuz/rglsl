@@ -1,0 +1,21 @@
+#version 460
+#extension GL_ARM_tensors : require
+
+layout(local_size_x = 1) in;
+
+layout(set = 0, binding = 0) uniform tensorARM<uint, 3> table;
+
+layout(set = 0, binding = 1) buffer Result {
+    uint value;
+    uint size;
+} result;
+
+uint lookup(uint x);
+
+void main()
+{
+    uint value;
+    tensorReadARM(table, uint[](0u, 0u, 0u), value);
+    result.value = value + lookup(1u);
+    result.size = tensorSizeARM(table, 2);
+}

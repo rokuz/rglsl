@@ -109,6 +109,29 @@ impl Qualifiers {
             || self.needs_vulkan_memory_model()
     }
 
+    pub fn dropped_memory_qualifiers(&self, formal: &Self) -> impl Iterator<Item = &'static str> {
+        let device = formal.device_coherent || formal.coherent;
+        let queue_family = device || formal.queue_family_coherent;
+        let workgroup = queue_family || formal.workgroup_coherent;
+        let subgroup = workgroup || formal.subgroup_coherent;
+        [
+            (self.volatile && !formal.volatile, "volatile"),
+            (self.coherent && !device, "coherent"),
+            (self.device_coherent && !device, "devicecoherent"),
+            (
+                self.queue_family_coherent && !queue_family,
+                "queuefamilycoherent",
+            ),
+            (self.workgroup_coherent && !workgroup, "workgroupcoherent"),
+            (self.subgroup_coherent && !subgroup, "subgroupcoherent"),
+            (self.readonly && !formal.readonly, "readonly"),
+            (self.writeonly && !formal.writeonly, "writeonly"),
+            (self.nontemporal && !formal.nontemporal, "nontemporal"),
+        ]
+        .into_iter()
+        .filter_map(|(dropped, name)| dropped.then_some(name))
+    }
+
     pub const fn only_nonprivate(&self) -> bool {
         self.nonprivate
             && !(self.readonly

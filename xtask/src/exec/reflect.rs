@@ -268,6 +268,67 @@ pub struct ImageType {
     pub scalar: Scalar,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TensorRank {
+    Constant(u32),
+    Specialized { spec_id: Option<u32>, default: u32 },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TensorElement {
+    pub kind: ScalarKind,
+    pub width: u32,
+    pub encoding: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TensorType {
+    pub element: TensorElement,
+    pub rank: TensorRank,
+    pub readable: bool,
+    pub writable: bool,
+}
+
+impl TensorElement {
+    pub fn glsl(self) -> String {
+        match (self.kind, self.width, self.encoding) {
+            (ScalarKind::Bool, _, _) => "bool".into(),
+            (ScalarKind::Sint, width, _) => format!("int{width}_t"),
+            (ScalarKind::Uint, width, _) => format!("uint{width}_t"),
+            (ScalarKind::Float, 16, Some(0)) => "bfloat16_t".into(),
+            (ScalarKind::Float, 8, Some(4214)) => "floate4m3_t".into(),
+            (ScalarKind::Float, 8, Some(4215)) => "floate5m2_t".into(),
+            (ScalarKind::Float, width, Some(encoding)) => {
+                format!("float{width}_t (encoding {encoding})")
+            }
+            (ScalarKind::Float, width, None) => format!("float{width}_t"),
+        }
+    }
+}
+
+impl TensorType {
+    pub fn glsl(self) -> String {
+        let rank = match self.rank {
+            TensorRank::Constant(rank) => rank.to_string(),
+            TensorRank::Specialized {
+                spec_id: Some(spec_id),
+                default,
+            } => format!("specialization constant {spec_id} = {default}"),
+            TensorRank::Specialized {
+                spec_id: None,
+                default,
+            } => format!("specialization constant expression = {default}"),
+        };
+        let access = match (self.readable, self.writable) {
+            (true, true) => "read/write",
+            (true, false) => "readonly",
+            (false, true) => "writeonly",
+            (false, false) => "size queries only",
+        };
+        format!("tensorARM<{}, {rank}> {access}", self.element.glsl())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResourceKind {
     UniformBuffer(Layout),
@@ -282,6 +343,7 @@ pub enum ResourceKind {
     UniformTexelBuffer(ImageType),
     StorageTexelBuffer(ImageType),
     AccelerationStructure,
+    Tensor(TensorType),
     InputAttachment {
         image: ImageType,
         index: Option<u32>,
@@ -301,6 +363,7 @@ impl ResourceKind {
             Self::UniformTexelBuffer(_) => "uniform texel buffer",
             Self::StorageTexelBuffer(_) => "storage texel buffer",
             Self::AccelerationStructure => "acceleration structure",
+            Self::Tensor(_) => "tensor",
             Self::InputAttachment { .. } => "input attachment",
             Self::Unsupported(_) => "unsupported resource",
         }
@@ -560,6 +623,46 @@ impl Types<'_> {
             [low, 0] => Some(*low),
             _ => None,
         }
+    }
+
+    fn tensor(&self, id: u32) -> Option<(TensorElement, TensorRank)> {
+        let tensor = self.get(id)?;
+        let element = self.get(tensor.word(1)?)?;
+        let element = if element.is(Op::TypeFloat) {
+            TensorElement {
+                kind: ScalarKind::Float,
+                width: element.word(1)?,
+                encoding: element.word(2),
+            }
+        } else {
+            let scalar = self.scalar(tensor.word(1)?)?;
+            TensorElement {
+                kind: scalar.kind,
+                width: if scalar.kind == ScalarKind::Bool {
+                    1
+                } else {
+                    scalar.width
+                },
+                encoding: None,
+            }
+        };
+        let rank_id = tensor.word(2)?;
+        let rank = self.get(rank_id)?;
+        let value = self.constant_u32(rank_id);
+        let rank = if rank.is(Op::Constant) {
+            TensorRank::Constant(value?)
+        } else if rank.is(Op::SpecConstant) {
+            TensorRank::Specialized {
+                spec_id: self.decorations.value(rank_id, Decoration::SpecId),
+                default: value?,
+            }
+        } else {
+            TensorRank::Specialized {
+                spec_id: None,
+                default: 0,
+            }
+        };
+        Some((element, rank))
     }
 
     fn scalar(&self, id: u32) -> Option<Scalar> {
@@ -1939,6 +2042,17 @@ fn resource_kind(types: &Types, class: StorageClass, variable: u32, pointee: u32
         return ResourceKind::AccelerationStructure;
     }
     let decorations = types.decorations;
+    if instruction.is(Op::TypeTensorARM) && class == StorageClass::UniformConstant {
+        return match types.tensor(pointee) {
+            Some((element, rank)) => ResourceKind::Tensor(TensorType {
+                element,
+                rank,
+                readable: !decorations.has(variable, Decoration::NonReadable),
+                writable: !decorations.has(variable, Decoration::NonWritable),
+            }),
+            None => ResourceKind::Unsupported("tensor of an unknown element or rank".into()),
+        };
+    }
     match class {
         StorageClass::Uniform | StorageClass::StorageBuffer => {
             let layout = match types.layout(pointee, None, 0) {
@@ -2070,6 +2184,103 @@ mod tests {
         };
         assert!(*writable);
         assert_eq!(layout.runtime_stride(), 4);
+        Ok(())
+    }
+
+    #[test]
+    fn reflects_tensors_and_refuses_them_precisely() -> anyhow::Result<()> {
+        let constant = StorageClass::UniformConstant as u32;
+        let words = module(&[
+            op(Op::Capability, &[Capability::Shader as u32])?,
+            op(Op::Capability, &[Capability::TensorsARM as u32])?,
+            op(Op::Extension, &string_words("SPV_ARM_tensors"))?,
+            op(Op::EntryPoint, &entry(ExecutionModel::GLCompute))?,
+            op(Op::Decorate, &[20, Decoration::DescriptorSet as u32, 0])?,
+            op(Op::Decorate, &[20, Decoration::Binding as u32, 1])?,
+            op(Op::Decorate, &[20, Decoration::NonWritable as u32])?,
+            op(Op::Decorate, &[30, Decoration::DescriptorSet as u32, 2])?,
+            op(Op::Decorate, &[30, Decoration::Binding as u32, 0])?,
+            op(Op::Decorate, &[30, Decoration::NonReadable as u32])?,
+            op(Op::Decorate, &[7, Decoration::SpecId as u32, 4])?,
+            op(Op::TypeInt, &[5, 32, 0])?,
+            op(Op::TypeInt, &[6, 32, 1])?,
+            op(Op::TypeFloat, &[8, 16, 0])?,
+            op(Op::Constant, &[5, 9, 2])?,
+            op(Op::Constant, &[5, 10, 3])?,
+            op(Op::SpecConstant, &[6, 7, 5])?,
+            op(Op::TypeTensorARM, &[11, 8, 9])?,
+            op(Op::TypeArray, &[12, 11, 10])?,
+            op(Op::TypePointer, &[13, constant, 12])?,
+            op(Op::Variable, &[13, 20, constant])?,
+            op(Op::TypeTensorARM, &[21, 6, 7])?,
+            op(Op::TypePointer, &[22, constant, 21])?,
+            op(Op::Variable, &[22, 30, constant])?,
+        ]);
+        let reflection = reflected(&words)?;
+        let tensors: Vec<(u32, u32, Option<u32>, TensorType)> = reflection
+            .resources
+            .iter()
+            .filter_map(|resource| match resource.kind {
+                ResourceKind::Tensor(tensor) => {
+                    Some((resource.set, resource.binding, resource.count, tensor))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            tensors,
+            [
+                (
+                    0,
+                    1,
+                    Some(3),
+                    TensorType {
+                        element: TensorElement {
+                            kind: ScalarKind::Float,
+                            width: 16,
+                            encoding: Some(0),
+                        },
+                        rank: TensorRank::Constant(2),
+                        readable: true,
+                        writable: false,
+                    }
+                ),
+                (
+                    2,
+                    0,
+                    None,
+                    TensorType {
+                        element: TensorElement {
+                            kind: ScalarKind::Sint,
+                            width: 32,
+                            encoding: None,
+                        },
+                        rank: TensorRank::Specialized {
+                            spec_id: Some(4),
+                            default: 5,
+                        },
+                        readable: false,
+                        writable: true,
+                    }
+                ),
+            ]
+        );
+        let Err(crate::exec::plan::Refusal::Capability(reason)) =
+            crate::exec::plan::requirements(&reflection)
+        else {
+            panic!("tensors must be refused as a capability");
+        };
+        assert!(
+            reason.contains("set 0 binding 1 tensorARM<bfloat16_t, 2> readonly[3]"),
+            "{reason}"
+        );
+        assert!(
+            reason.contains(
+                "set 2 binding 0 tensorARM<int32_t, specialization constant 4 = 5> writeonly"
+            ),
+            "{reason}"
+        );
+        assert!(reason.contains("VK_ARM_tensors"), "{reason}");
         Ok(())
     }
 

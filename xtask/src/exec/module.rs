@@ -72,8 +72,9 @@ fn result_id_index(opcode: u32) -> Option<usize> {
         Op::Variable,
         Op::Undef,
     ];
-    const UNTYPED: [Op; 6] = [
+    const UNTYPED: [Op; 7] = [
         Op::TypeRayQueryKHR,
+        Op::TypeTensorARM,
         Op::TypeAccelerationStructureKHR,
         Op::TypeCooperativeMatrixKHR,
         Op::TypeCooperativeMatrixNV,

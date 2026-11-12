@@ -766,7 +766,11 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
             }
             TypeKind::Tensor { scalar: s, rank } => TypeInner::Tensor {
                 scalar: scalar(s),
-                rank,
+                rank: {
+                    let frame = self.clone().cooperative_size(rank, span);
+                    let result = self.nest(frame).await;
+                    result
+                }?,
             },
             TypeKind::Spirv(id) => {
                 let frame = self.clone().spirv_type(id, span);
