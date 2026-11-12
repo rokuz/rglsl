@@ -1057,7 +1057,16 @@ impl<'a> Lowerer<'a> {
         }
         self.outputs.insert(name, handle);
         self.output_stream(handle, qualifiers);
-        let buffer = xfb::layout_value(qualifiers, "xfb_buffer").or(self.xfb_default_buffer());
+        let explicit = xfb::layout_value(qualifiers, "xfb_buffer");
+        if explicit.is_none()
+            && self.xfb.default_buffer.is_none()
+            && xfb::layout_value(qualifiers, "xfb_offset").is_none()
+            && xfb::layout_value(qualifiers, "xfb_stride").is_none()
+        {
+            self.xfb.pending.push(handle);
+            return Ok(());
+        }
+        let buffer = explicit.or(self.xfb_default_buffer());
         if let Some(buffer) = buffer {
             let offset = xfb::layout_value(qualifiers, "xfb_offset");
             if let Some(stride) = xfb::layout_value(qualifiers, "xfb_stride") {
@@ -1770,16 +1779,6 @@ impl<'a> Lowerer<'a> {
         else {
             return false;
         };
-        if !self.stage_map(|stage| {
-            matches!(
-                stage,
-                crate::ShaderStage::Vertex
-                    | crate::ShaderStage::TessEvaluation
-                    | crate::ShaderStage::Geometry
-            )
-        }) {
-            return false;
-        }
         let Some(variable) = self.variable(instance) else {
             return false;
         };
@@ -1790,6 +1789,14 @@ impl<'a> Lowerer<'a> {
             && !variable.ty.is_array()
             && self.analysis.types.block(id).is_some_and(|block| {
                 block.name == "gl_PerVertex" && block.storage == BlockStorage::Out
+            })
+            && self.stage_map(|stage| {
+                matches!(
+                    stage,
+                    crate::ShaderStage::Vertex
+                        | crate::ShaderStage::TessEvaluation
+                        | crate::ShaderStage::Geometry
+                )
             })
     }
 
@@ -1807,7 +1814,7 @@ impl<'a> Lowerer<'a> {
     }
 
     fn builtin_per_vertex(&self) -> Option<&'a rglsl_sema::types::BlockType> {
-        self.stage();
+        self.builtin_name("gl_Position");
         let analysis = self.analysis;
         analysis
             .symbols
@@ -1922,7 +1929,7 @@ impl<'a> Lowerer<'a> {
         {
             return Ok(());
         }
-        self.stage();
+        self.builtin_name("gl_Position");
         let block = self
             .builtin_per_vertex()
             .ok_or_else(|| internal(Span::UNDEFINED))?;

@@ -153,6 +153,11 @@ impl Frontend {
     }
 
     #[doc(hidden)]
+    pub fn library_lowerings(&mut self, options: &Options, source: &str) -> usize {
+        lower::library_lowerings(options, source, FileId(0), &mut NoIncluder)
+    }
+
+    #[doc(hidden)]
     pub fn compile_library_per_stage(
         &mut self,
         options: &Options,

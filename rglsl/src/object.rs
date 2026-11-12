@@ -7,11 +7,11 @@ use serde::Serialize;
 
 use crate::{
     ConservativeDepth, Function, GeometryInputPrimitive, GeometryOutputPrimitive, GlobalVariable,
-    Handle, MeshOutputTopology, Module, Override, ShaderStage, TessellationPrimitive,
-    TessellationSpacing, TessellationVertexOrder,
+    Handle, MeshOutputTopology, Module, Override, RayTracingFeatures, ShaderStage,
+    TessellationPrimitive, TessellationSpacing, TessellationVertexOrder,
 };
 
-pub const FORMAT_VERSION: u32 = 9;
+pub const FORMAT_VERSION: u32 = 10;
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
@@ -32,6 +32,12 @@ pub struct ObjectModule {
     pub work_group_size_constant: bool,
     pub work_group_size_placeholders: [Option<Handle<Override>>; 3],
     pub specialized: Option<Box<ObjectModule>>,
+    #[cfg_attr(
+        feature = "serialize",
+        serde(skip_serializing_if = "core::ops::Not::not")
+    )]
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    pub deferred_bias: bool,
 }
 
 impl ObjectModule {
@@ -55,6 +61,7 @@ impl ObjectModule {
             work_group_size_constant: false,
             work_group_size_placeholders: [None; 3],
             specialized: None,
+            deferred_bias: false,
         }
     }
 
@@ -82,12 +89,34 @@ impl ObjectModule {
                 .find(|variant| variant.stages.contains(&stage)),
         };
         match found {
-            Some(object) => Ok(ObjectModule {
-                name: self.name.clone(),
-                variants: Vec::new(),
-                rejections: Vec::new(),
-                ..object.clone()
-            }),
+            Some(object) => {
+                let mut object = ObjectModule {
+                    name: self.name.clone(),
+                    variants: Vec::new(),
+                    rejections: Vec::new(),
+                    ..object.clone()
+                };
+                if self.stage.is_none() {
+                    if stage != ShaderStage::Geometry {
+                        object.layout.streams.clear();
+                        object.layout.multi_stream = false;
+                    }
+                    object.module.ray_tracing = ray_tracing_for(stage, object.module.ray_tracing);
+                    if object.deferred_bias && stage != ShaderStage::Fragment {
+                        drop_bias(&mut object.module);
+                    }
+                    object.deferred_bias = false;
+                    if let Some(ref mut specialized) = object.specialized {
+                        specialized.module.ray_tracing =
+                            ray_tracing_for(stage, specialized.module.ray_tracing);
+                        if specialized.deferred_bias && stage != ShaderStage::Fragment {
+                            drop_bias(&mut specialized.module);
+                        }
+                        specialized.deferred_bias = false;
+                    }
+                }
+                Ok(object)
+            }
             None => Err(self
                 .rejections
                 .iter()
@@ -121,6 +150,36 @@ impl ObjectModule {
 
     pub fn global_symbol(&self, global: Handle<GlobalVariable>) -> Option<&GlobalSymbol> {
         self.globals.iter().find(|symbol| symbol.global == global)
+    }
+}
+
+fn drop_bias(module: &mut Module) {
+    for (_, function) in module.functions.iter_mut() {
+        for (_, expression) in function.expressions.iter_mut() {
+            if let crate::Expression::ImageSample { ref mut level, .. } = *expression {
+                if matches!(*level, crate::SampleLevel::Bias(_)) {
+                    *level = crate::SampleLevel::Zero;
+                }
+            }
+        }
+    }
+}
+
+pub const fn ray_tracing_for(
+    stage: ShaderStage,
+    features: RayTracingFeatures,
+) -> RayTracingFeatures {
+    let pipeline = RayTracingFeatures::CULL_MASK.union(RayTracingFeatures::POSITION_FETCH);
+    if !stage.ray_tracing() {
+        features.difference(
+            pipeline
+                .union(RayTracingFeatures::NV)
+                .union(RayTracingFeatures::PAYLOAD_LOCATIONS),
+        )
+    } else if matches!(stage, ShaderStage::RayGeneration | ShaderStage::Callable) {
+        features.difference(pipeline)
+    } else {
+        features
     }
 }
 

@@ -253,6 +253,9 @@ impl Lowerer<'_> {
                 ));
             }
         }
+        if self.library {
+            symbols.sort_by_key(|symbol| symbol.global.index());
+        }
         symbols
     }
 
@@ -313,6 +316,7 @@ impl Lowerer<'_> {
             stage,
             work_group_size_constant,
             work_group_size_placeholders: self.work_group_size_placeholders,
+            deferred_bias: self.deferred_bias,
             glsl_version: self.analysis.version.unwrap_or(0),
             extensions,
             functions,

@@ -486,6 +486,7 @@ impl Analyzer<'_> {
         arguments: &[Expression],
         operands: &[Operand],
     ) -> Operand {
+        self.builtin_name(name);
         let ambiguous = |analyzer: &mut Self| {
             analyzer.error(
                 span,

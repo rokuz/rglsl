@@ -74,7 +74,25 @@ pub(super) fn compile(
     root: rglsl_pp::FileId,
     includer: &mut dyn rglsl_pp::Includer,
 ) -> core::result::Result<crate::object::ObjectModule, ParseErrors> {
-    compile_sharing(options, source, root, includer, true)
+    compile_sharing(
+        options,
+        source,
+        root,
+        includer,
+        true,
+        &mut library::StageNames::default(),
+    )
+}
+
+pub(super) fn library_lowerings(
+    options: &Options,
+    source: &str,
+    root: rglsl_pp::FileId,
+    includer: &mut dyn rglsl_pp::Includer,
+) -> usize {
+    let mut names = library::StageNames::default();
+    let _ = compile_sharing(options, source, root, includer, true, &mut names);
+    names.lowerings
 }
 
 fn compile_sharing(
@@ -83,6 +101,7 @@ fn compile_sharing(
     root: rglsl_pp::FileId,
     includer: &mut dyn rglsl_pp::Includer,
     share: bool,
+    names: &mut library::StageNames,
 ) -> core::result::Result<crate::object::ObjectModule, ParseErrors> {
     let hint = (!options.library).then_some(options.stage);
     match defines_main(options, hint, source, root, includer) {
@@ -97,10 +116,10 @@ fn compile_sharing(
             Mode::Object,
             root,
             includer,
-            &mut library::StageNames::default(),
+            names,
             &StageClass::new(options.stage),
         ),
-        Some(false) | None => library::compile(options, hint, source, root, includer, share),
+        Some(false) | None => library::compile(options, hint, source, root, includer, share, names),
     }
 }
 
@@ -110,7 +129,14 @@ pub(super) fn compile_library_per_stage(
     root: rglsl_pp::FileId,
     includer: &mut dyn rglsl_pp::Includer,
 ) -> core::result::Result<crate::object::ObjectModule, ParseErrors> {
-    compile_sharing(options, source, root, includer, false)
+    compile_sharing(
+        options,
+        source,
+        root,
+        includer,
+        false,
+        &mut library::StageNames::default(),
+    )
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -140,6 +166,20 @@ fn link_message(kind: &rglsl_sema::DiagnosticKind) -> Option<String> {
     }
 }
 
+fn preprocessor_options(options: &Options, stage: Option<ShaderStage>) -> rglsl_pp::Options {
+    let defines = options
+        .defines
+        .iter()
+        .map(|(name, value)| rglsl_pp::Define::new(name.clone(), Some(value.as_str())))
+        .collect();
+    rglsl_pp::Options {
+        defines,
+        vulkan_client_version: Some(100),
+        stage: stage.map(preprocessor_stage),
+        ..rglsl_pp::Options::default()
+    }
+}
+
 fn preprocess(
     options: &Options,
     stage: Option<ShaderStage>,
@@ -147,18 +187,12 @@ fn preprocess(
     root: rglsl_pp::FileId,
     includer: &mut dyn rglsl_pp::Includer,
 ) -> rglsl_pp::Preprocessed {
-    let defines = options
-        .defines
-        .iter()
-        .map(|(name, value)| rglsl_pp::Define::new(name.clone(), Some(value.as_str())))
-        .collect();
-    let preprocessor_options = rglsl_pp::Options {
-        defines,
-        vulkan_client_version: Some(100),
-        stage: stage.map(preprocessor_stage),
-        ..rglsl_pp::Options::default()
-    };
-    rglsl_pp::preprocess(source, root, &preprocessor_options, includer)
+    rglsl_pp::preprocess(
+        source,
+        root,
+        &preprocessor_options(options, stage),
+        includer,
+    )
 }
 
 fn defines_main(
@@ -367,51 +401,80 @@ fn lower(
         .filter(|diagnostic| !(object && link_time(&diagnostic.kind)))
         .enumerate()
         .map(|(index, diagnostic)| {
-            let start = diagnostic.offset(text);
             let reworded = (mode == Mode::Library && index == 0)
                 .then(|| names.stage_diagnostic(&diagnostic.kind, analysis.version, options.stage))
                 .flatten();
             if reworded.is_some() {
                 class.probe.exact();
             }
-            let message = reworded.unwrap_or_else(|| diagnostic.kind.to_string());
-            let past_end = usize::try_from(start).is_ok_and(|start| start >= text.len());
-            let error = Error {
-                kind: match link_message(&diagnostic.kind) {
-                    Some(message) => ErrorKind::Link(message),
-                    None => ErrorKind::SemanticError(Cow::Owned(message)),
-                },
-                meta: if link_time(&diagnostic.kind) {
-                    Span::UNDEFINED
-                } else if past_end {
-                    let end = u32::try_from(source.len()).unwrap_or(u32::MAX);
-                    Span::new(end, end)
-                } else {
-                    original(
-                        map,
-                        rglsl_ast::Span::new(start, diagnostic.span.end.max(start)),
-                    )
-                },
-            };
-            let location = (!link_time(&diagnostic.kind) && !past_end)
-                .then(|| included(map, start))
-                .flatten();
-            (error, location)
+            sema_error(map, text, source, diagnostic, reworded)
         })
         .collect::<Vec<_>>();
     if !errors.is_empty() {
         return Err(errors.into());
     }
-    let debug = options.debug_info;
-    let mut lowerer = Lowerer::new(
+    names.lowerings += 1;
+    run_lowerer(
+        options,
+        source,
+        &preprocessed,
         &unit,
         &analysis,
-        options,
-        map,
         mode,
         &class.probe,
         &class.names,
-    );
+        specialize,
+    )
+}
+
+fn sema_error(
+    map: &rglsl_pp::SourceMap,
+    text: &str,
+    source: &str,
+    diagnostic: &rglsl_sema::Diagnostic,
+    reworded: Option<String>,
+) -> (Error, Option<IncludeLocation>) {
+    let start = diagnostic.offset(text);
+    let message = reworded.unwrap_or_else(|| diagnostic.kind.to_string());
+    let past_end = usize::try_from(start).is_ok_and(|start| start >= text.len());
+    let error = Error {
+        kind: match link_message(&diagnostic.kind) {
+            Some(message) => ErrorKind::Link(message),
+            None => ErrorKind::SemanticError(Cow::Owned(message)),
+        },
+        meta: if link_time(&diagnostic.kind) {
+            Span::UNDEFINED
+        } else if past_end {
+            let end = u32::try_from(source.len()).unwrap_or(u32::MAX);
+            Span::new(end, end)
+        } else {
+            original(
+                map,
+                rglsl_ast::Span::new(start, diagnostic.span.end.max(start)),
+            )
+        },
+    };
+    let location = (!link_time(&diagnostic.kind) && !past_end)
+        .then(|| included(map, start))
+        .flatten();
+    (error, location)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_lowerer(
+    options: &Options,
+    source: &str,
+    preprocessed: &rglsl_pp::Preprocessed,
+    unit: &TranslationUnit,
+    analysis: &Analysis,
+    mode: Mode,
+    probe: &StageProbe<ShaderStage>,
+    names: &RefCell<BTreeSet<String>>,
+    specialize: bool,
+) -> core::result::Result<crate::object::ObjectModule, ParseErrors> {
+    let map = &preprocessed.source_map;
+    let debug = options.debug_info;
+    let mut lowerer = Lowerer::new(unit, analysis, options, map, mode, probe, names);
     lowerer.specialize_work_group_size = specialize;
     lowerer
         .run()
@@ -436,11 +499,11 @@ fn lower(
                 let mut info = debug_info(
                     options,
                     source,
-                    &preprocessed,
+                    preprocessed,
                     &object.debug,
                     analysis.version.unwrap_or(0),
                 );
-                info.anchors = debug_anchors(&unit, &preprocessed.text);
+                info.anchors = debug_anchors(unit, &preprocessed.text);
                 object.object.module.debug_info = Some(alloc::boxed::Box::new(info));
             }
             object.object
@@ -900,6 +963,7 @@ pub(super) struct Lowerer<'a> {
     stage_layout: stage::StageLayout,
     pub object: bool,
     pub library: bool,
+    pub deferred_bias: bool,
     pub automatic_locations: Vec<Handle<GlobalVariable>>,
     pub automatic_bindings: Vec<(Handle<GlobalVariable>, Option<u32>)>,
     pub declared_local_size: [Option<u32>; 3],
@@ -993,6 +1057,7 @@ impl<'a> Lowerer<'a> {
             stage_names,
             object: mode != Mode::Program,
             library: mode == Mode::Library,
+            deferred_bias: false,
             automatic_locations: Vec::new(),
             automatic_bindings: Vec::new(),
             declared_local_size: [None; 3],
@@ -1147,7 +1212,14 @@ impl<'a> Lowerer<'a> {
     }
 
     pub(super) fn builtin_name(&self, name: &str) {
-        self.stage_names.borrow_mut().insert(String::from(name));
+        match self.analysis.stage_tables {
+            Some(ref tables) => self
+                .probe
+                .narrow(tables.same_stages(stage(self.probe.own()), name)),
+            None => {
+                self.stage_names.borrow_mut().insert(String::from(name));
+            }
+        }
     }
 
     fn run(mut self) -> core::result::Result<Lowered, ParseErrors> {

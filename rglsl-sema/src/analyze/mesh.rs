@@ -112,13 +112,12 @@ impl Analyzer<'_> {
         if variable_extension(name).is_none() && !indices {
             return;
         }
-        if !self.stage_in(&[Stage::Mesh, Stage::Task]) {
-            return;
-        }
         if let Some(extensions) = variable_extension(name) {
-            self.require_extensions(span, extensions, name);
+            self.require_stage_extensions(span, name, |stage| {
+                matches!(stage, Stage::Mesh | Stage::Task).then_some(extensions)
+            });
         }
-        if !self.stage_is(Stage::Mesh) {
+        if !indices || !self.stage_is(Stage::Mesh) {
             return;
         }
         let required = match name {
@@ -190,20 +189,21 @@ impl Analyzer<'_> {
         qualifiers: &Qualifiers,
         ty: &mut Type,
     ) {
-        if qualifiers.storage != Storage::Out || qualifiers.per_task || !self.stage_is(Stage::Mesh)
-        {
+        if qualifiers.storage != Storage::Out || qualifiers.per_task {
             return;
         }
         if !ty.is_array() {
             if !name.node.starts_with("gl_") {
-                self.error(
-                    name.span,
-                    DiagnosticKind::InvalidInterfaceArray {
+                self.stage_check(name.span, |stage| {
+                    (stage == Stage::Mesh).then(|| DiagnosticKind::InvalidInterfaceArray {
                         name: name.node.clone(),
                         reason: "the type must be an array",
-                    },
-                );
+                    })
+                });
             }
+            return;
+        }
+        if !self.stage_is(Stage::Mesh) {
             return;
         }
         let Some(size) = self.mesh_array_size(qualifiers, &name.node) else {
@@ -223,7 +223,16 @@ impl Analyzer<'_> {
     }
 
     pub(crate) fn resize_mesh_arrays(&mut self, span: Span) {
-        if !self.stage_is(Stage::Mesh) {
+        let candidates = self.symbols.iter().any(|symbol| {
+            symbol.variable().is_some_and(|variable| {
+                variable.origin != Origin::Parameter
+                    && variable.origin != Origin::Local
+                    && variable.ty.is_array()
+                    && (variable.qualifiers.storage == Storage::Out
+                        || matches!(variable.ty.kind, TypeKind::Block(_)))
+            })
+        });
+        if !candidates || !self.stage_is(Stage::Mesh) {
             return;
         }
         let mut updates = Vec::new();
@@ -336,21 +345,23 @@ impl Analyzer<'_> {
     }
 
     pub(crate) fn mesh_block_storage(&mut self, span: Span, qualifiers: &Qualifiers) {
-        match qualifiers.storage {
-            Storage::In if !qualifiers.per_task && self.stage_is(Stage::Mesh) => self.error(
-                span,
-                invalid("in", "input blocks cannot be used in a mesh shader"),
-            ),
-            Storage::Out if qualifiers.per_task && self.stage_is(Stage::Mesh) => self.error(
-                span,
-                invalid("taskNV", "can only use on input blocks in mesh shader"),
-            ),
-            Storage::Out if !qualifiers.per_task && self.stage_is(Stage::Task) => self.error(
-                span,
-                invalid("out", "output blocks cannot be used in a task shader"),
-            ),
-            _ => {}
-        }
+        let storage = qualifiers.storage;
+        let per_task = qualifiers.per_task;
+        self.stage_check(span, |stage| match (storage, stage) {
+            (Storage::In, Stage::Mesh) if !per_task => Some(invalid(
+                "in",
+                "input blocks cannot be used in a mesh shader",
+            )),
+            (Storage::Out, Stage::Mesh) if per_task => Some(invalid(
+                "taskNV",
+                "can only use on input blocks in mesh shader",
+            )),
+            (Storage::Out, Stage::Task) if !per_task => Some(invalid(
+                "out",
+                "output blocks cannot be used in a task shader",
+            )),
+            _ => None,
+        });
     }
 
     pub(crate) fn mesh_output_reads(&mut self, unit: &TranslationUnit) {

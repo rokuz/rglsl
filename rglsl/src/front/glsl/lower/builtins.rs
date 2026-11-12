@@ -1885,10 +1885,21 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             SampleLevel::Zero | SampleLevel::Exact(_) | SampleLevel::Gradient { .. } => false,
         };
         let derivatives = implicit && !gather && {
-            let stage = self.with(|this| this.lw.stage())?;
-            stage == ShaderStage::Fragment
-                || (stage == ShaderStage::Compute
-                    && self.with(|this| this.lw.analysis.derivative_group.is_some())?)
+            let group = self.with(|this| this.lw.analysis.derivative_group.is_some())?;
+            let deferred = self.with(|this| this.lw.library)?
+                && !group
+                && min_lod.is_none()
+                && matches!(level, SampleLevel::Bias(_));
+            if deferred {
+                self.with(|this| this.lw.deferred_bias = true)?;
+                true
+            } else {
+                self.with(|this| {
+                    this.lw.stage_map(|stage| {
+                        stage == ShaderStage::Fragment || (stage == ShaderStage::Compute && group)
+                    })
+                })?
+            }
         };
         if implicit && !gather && !derivatives {
             level = SampleLevel::Zero;

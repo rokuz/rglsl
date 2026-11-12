@@ -675,14 +675,16 @@ impl Analyzer<'_> {
                 Some(SymbolKind::BlockName)
             )
         };
-        let id = match self.lookup(name) {
+        let id = match self.lookup_quiet(name) {
             Some(Lookup::Symbol(id)) if !block_name(self, id) => id,
             found => {
                 let unknown = found.is_none();
-                self.error(
-                    expression.span,
-                    DiagnosticKind::UndeclaredIdentifier(String::from(name)),
-                );
+                if !self.builtin_variable_stages(expression.span, name, false) {
+                    self.error(
+                        expression.span,
+                        DiagnosticKind::UndeclaredIdentifier(String::from(name)),
+                    );
+                }
                 if unknown {
                     let recovery = self.add_variable(
                         name,
@@ -699,19 +701,20 @@ impl Analyzer<'_> {
                 return Operand::error();
             }
         };
+        if self.is_library() && self.is_builtin_symbol(id) {
+            self.builtin_variable_stages(expression.span, name, true);
+        }
         self.references.insert(expression.id, id);
         let builtin = self
             .symbol(id)
             .and_then(|symbol| symbol.variable())
             .is_some_and(|variable| variable.origin == Origin::BuiltIn);
-        if builtin {
-            if let Some(extensions) =
-                self.stage_map(|stage| crate::builtins::ray::variable_extensions(name, stage))
-            {
-                if !self.require_extensions(expression.span, extensions, name) {
-                    return Operand::error();
-                }
-            }
+        if builtin
+            && !self.require_stage_extensions(expression.span, name, |stage| {
+                crate::builtins::ray::variable_extensions(name, stage)
+            })
+        {
+            return Operand::error();
         }
         if crate::builtins::needs_memory_scope_semantics(name)
             && self
@@ -839,7 +842,8 @@ impl Analyzer<'_> {
                 ExpressionKind::FieldSelection { base, .. } => current = base,
                 ExpressionKind::Subscript { base, index } => {
                     if let ExpressionKind::Variable(name) = &base.kind {
-                        let per_vertex = match self.lookup(name) {
+                        self.narrow_present(name);
+                        let per_vertex = match self.lookup_quiet(name) {
                             Some(Lookup::Symbol(id)) => self
                                 .symbol(id)
                                 .and_then(|symbol| symbol.variable())

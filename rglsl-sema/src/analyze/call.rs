@@ -20,6 +20,29 @@ enum Candidate {
     Builtin(crate::builtins::BuiltinFunctionId),
 }
 
+#[derive(Clone, PartialEq)]
+enum CallOutcome {
+    LongVector,
+    Missing,
+    ErrorOperands,
+    User(crate::scope::FunctionId),
+    Builtin(alloc::boxed::Box<Function>),
+    NoMatch,
+    Ambiguous,
+}
+
+impl CallOutcome {
+    fn error(&self, name: &str) -> Option<DiagnosticKind> {
+        match *self {
+            Self::Missing | Self::NoMatch => {
+                Some(DiagnosticKind::NoMatchingFunction(String::from(name)))
+            }
+            Self::Ambiguous => Some(DiagnosticKind::AmbiguousCall(String::from(name))),
+            Self::LongVector | Self::ErrorOperands | Self::User(_) | Self::Builtin(_) => None,
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 struct Rules {
     features: NumericFeatures,
@@ -425,17 +448,24 @@ impl Analyzer<'_> {
                 Operand::constant(result, value)
             }
             None if operand.ty.is_array() => {
-                let resizable = matches!(
-                    (operand.storage, self.stage()),
-                    (Storage::In, Stage::Geometry) | (Storage::Out, Stage::TessControl)
-                ) && operand.ty.outer_size() == Some(ArraySize::Unsized);
-                let runtime = (operand.storage == Storage::Buffer && !operand.through_reference)
-                    || matches!(operand.storage, Storage::In | Storage::Out);
-                if !runtime || resizable {
-                    self.error(
-                        name.span,
-                        DiagnosticKind::InvalidLength(self.show(&operand.ty)),
-                    );
+                let unsized_outer = operand.ty.outer_size() == Some(ArraySize::Unsized);
+                let storage = operand.storage;
+                let runtime = (storage == Storage::Buffer && !operand.through_reference)
+                    || matches!(storage, Storage::In | Storage::Out);
+                let shown = self.show(&operand.ty);
+                if !runtime {
+                    self.error(name.span, DiagnosticKind::InvalidLength(shown));
+                    return Operand::error();
+                }
+                let failed = unsized_outer
+                    && self.stage_check(name.span, |stage| {
+                        matches!(
+                            (storage, stage),
+                            (Storage::In, Stage::Geometry) | (Storage::Out, Stage::TessControl)
+                        )
+                        .then(|| DiagnosticKind::InvalidLength(shown.clone()))
+                    });
+                if failed {
                     return Operand::error();
                 }
                 Operand::temporary(result)
@@ -487,6 +517,175 @@ impl Analyzer<'_> {
         Some((incumbent, tie))
     }
 
+    fn select_functions(
+        &self,
+        functions: &[&Function],
+        arguments: &[Type],
+    ) -> Option<(usize, bool)> {
+        let rules = Rules {
+            features: self.numeric_features(),
+            explicit: self.explicit_types(),
+        };
+        let viable: Vec<usize> = functions
+            .iter()
+            .enumerate()
+            .filter(|&(_, function)| viable(rules, function, arguments))
+            .map(|(index, _)| index)
+            .collect();
+        let mut incumbent = *viable.first()?;
+        for &candidate in viable.iter().skip(1) {
+            let (Some(current), Some(challenger)) =
+                (functions.get(incumbent), functions.get(candidate))
+            else {
+                continue;
+            };
+            if has_better_parameter(rules, arguments, current, challenger)
+                && !has_better_parameter(rules, arguments, challenger, current)
+            {
+                incumbent = candidate;
+            }
+        }
+        let best = functions.get(incumbent)?;
+        let tie = viable.iter().any(|&candidate| {
+            candidate != incumbent
+                && functions.get(candidate).is_some_and(|other| {
+                    has_better_parameter(rules, arguments, best, other)
+                        || equivalent(rules, arguments, best, other)
+                })
+        });
+        Some((incumbent, tie))
+    }
+
+    fn call_outcome(&self, name: &str, types: &[Type], builtins: &[&Function]) -> CallOutcome {
+        let levels = self.scopes.function_levels(name);
+        if types
+            .iter()
+            .any(|ty| ty.sized_vector_length().is_some() && !ty.is_array())
+            && levels.is_empty()
+            && !builtins.is_empty()
+            && !builtins
+                .iter()
+                .any(|function| function.same_parameter_types(types))
+        {
+            return CallOutcome::LongVector;
+        }
+        if levels.is_empty() && builtins.is_empty() {
+            return CallOutcome::Missing;
+        }
+        if types.iter().any(Type::is_error) {
+            return CallOutcome::ErrorOperands;
+        }
+        for &id in levels.iter().copied().flatten() {
+            if self
+                .function(id)
+                .is_some_and(|function| function.same_parameter_types(types))
+            {
+                return CallOutcome::User(id);
+            }
+        }
+        if let Some(function) = builtins
+            .iter()
+            .find(|function| function.same_parameter_types(types))
+        {
+            return CallOutcome::Builtin(alloc::boxed::Box::new((*function).clone()));
+        }
+        let selected = match levels.first() {
+            Some(level) => {
+                let users: Vec<&Function> =
+                    level.iter().filter_map(|&id| self.function(id)).collect();
+                self.select_functions(&users, types).map(|(index, tie)| {
+                    (
+                        level
+                            .get(index)
+                            .map_or(CallOutcome::Missing, |&id| CallOutcome::User(id)),
+                        tie,
+                    )
+                })
+            }
+            None => self.select_functions(builtins, types).map(|(index, tie)| {
+                (
+                    builtins
+                        .get(index)
+                        .map_or(CallOutcome::Missing, |&function| {
+                            CallOutcome::Builtin(alloc::boxed::Box::new(function.clone()))
+                        }),
+                    tie,
+                )
+            }),
+        };
+        match selected {
+            None => CallOutcome::NoMatch,
+            Some((_, true)) => CallOutcome::Ambiguous,
+            Some((outcome, false)) => outcome,
+        }
+    }
+
+    fn call_stages(&mut self, span: Span, name: &str, types: &[Type]) -> bool {
+        let Some(tables) = self.tables() else {
+            return false;
+        };
+        let mut groups: Vec<(Vec<usize>, u16)> = Vec::new();
+        for stage in Stage::ALL {
+            let key = tables.overload_indices(stage, name);
+            match groups.iter_mut().find(|&&mut (ref known, _)| *known == key) {
+                Some(&mut (_, ref mut stages)) => *stages |= stage.bit(),
+                None => groups.push((key, stage.bit())),
+            }
+        }
+        if groups.len() < 2 {
+            return false;
+        }
+        let own = self.options.stage;
+        let own_bit = own.bit();
+        let outcome = |analyzer: &Self, stages: u16| {
+            let stage = Stage::ALL
+                .into_iter()
+                .find(|&stage| stage.bit() & stages != 0)
+                .unwrap_or(own);
+            analyzer.call_outcome(name, types, &tables.overloads(stage, name))
+        };
+        let own_stages = groups
+            .iter()
+            .find(|&&(_, stages)| stages & own_bit != 0)
+            .map_or(own_bit, |&(_, stages)| stages);
+        let own_outcome = outcome(self, own_stages);
+        let mut keep = crate::builtins::ALL_STAGE_BITS;
+        let mut differs = false;
+        for &(_, stages) in &groups {
+            if stages == own_stages {
+                continue;
+            }
+            let other = outcome(self, stages);
+            if other == own_outcome && other != CallOutcome::LongVector {
+                continue;
+            }
+            differs = true;
+            match other.error(name) {
+                Some(kind) => {
+                    for stage in Stage::ALL {
+                        if stage.bit() & stages != 0 {
+                            self.stage_error(stage, span, kind.clone());
+                        }
+                    }
+                }
+                None => keep &= !stages,
+            }
+        }
+        let suppressed = match own_outcome.error(name) {
+            Some(kind) if differs => {
+                for stage in Stage::ALL {
+                    if stage.bit() & own_stages != 0 {
+                        self.stage_error(stage, span, kind.clone());
+                    }
+                }
+                true
+            }
+            _ => false,
+        };
+        self.narrow(keep);
+        suppressed
+    }
+
     fn function_call_with(
         &mut self,
         expression: &Expression,
@@ -495,7 +694,7 @@ impl Analyzer<'_> {
         arguments: &[Expression],
         operands: Vec<Operand>,
     ) -> Operand {
-        if let Some(Lookup::Symbol(id)) = self.lookup(name) {
+        if let Some(Lookup::Symbol(id)) = self.lookup_quiet(name) {
             let is_struct = matches!(
                 self.symbol(id).map(|symbol| &symbol.kind),
                 Some(SymbolKind::Struct(_) | SymbolKind::Reference(_))
@@ -506,6 +705,9 @@ impl Analyzer<'_> {
             }
         }
         let types: Vec<Type> = operands.iter().map(|operand| operand.ty.clone()).collect();
+        if self.is_library() && self.call_stages(span, name, &types) {
+            return Operand::error();
+        }
         if types
             .iter()
             .any(|ty| ty.sized_vector_length().is_some() && !ty.is_array())

@@ -839,7 +839,9 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   `OpFUnordNotEqual` (upstream `OpFOrdNotEqual`). `Normalize`, `FaceForward` and `Reflect`
   accept scalars. An `As` conversion between integers of different width and signedness is
   `OpSConvert`/`OpUConvert` by the source's signedness, then `OpBitcast` (upstream extended by
-  the target's signedness). The object `FORMAT_VERSION` is 9.
+  the target's signedness). The object `FORMAT_VERSION` is 10 (a library records ray tracing
+  features for every stage, geometry streams for every output and `deferred_bias`, resolved by
+  `ObjectModule::for_stage`).
 
 - **Storage buffers before SPIR-V 1.3** (`back/spv`). With `Module::legacy_buffer_blocks` (set by
   the GLSL frontend unless the shader asks for the `StorageBuffer` class as glslang's

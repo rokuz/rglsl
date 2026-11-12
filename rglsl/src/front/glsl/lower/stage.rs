@@ -120,23 +120,37 @@ fn per_vertex_builtin(name: &str, invariant: bool) -> Option<BuiltIn> {
 
 impl<'a> Lowerer<'a> {
     pub(super) fn stage_input_layout(&mut self, names: &[String]) {
-        let stage = self.stage();
-        for name in names {
-            let name = name.to_ascii_lowercase();
+        let names: Vec<String> = names.iter().map(|name| name.to_ascii_lowercase()).collect();
+        let relevant = |stage: ShaderStage| {
+            names.iter().any(|name| match stage {
+                ShaderStage::Geometry => input_primitive(name).is_some(),
+                ShaderStage::TessEvaluation => {
+                    tessellation_primitive(name).is_some()
+                        || spacing(name).is_some()
+                        || vertex_order(name).is_some()
+                        || name == "point_mode"
+                }
+                _ => false,
+            })
+        };
+        let Some(stage) = self.stage_map(|stage| relevant(stage).then_some(stage)) else {
+            return;
+        };
+        for name in &names {
             match stage {
                 ShaderStage::Geometry => {
-                    if let Some(primitive) = input_primitive(&name) {
+                    if let Some(primitive) = input_primitive(name) {
                         self.stage_layout.input_primitive.get_or_insert(primitive);
                     }
                 }
                 ShaderStage::TessEvaluation => {
-                    if let Some(primitive) = tessellation_primitive(&name) {
+                    if let Some(primitive) = tessellation_primitive(name) {
                         self.stage_layout.primitive.get_or_insert(primitive);
                     }
-                    if let Some(spacing) = spacing(&name) {
+                    if let Some(spacing) = spacing(name) {
                         self.stage_layout.spacing.get_or_insert(spacing);
                     }
-                    if let Some(order) = vertex_order(&name) {
+                    if let Some(order) = vertex_order(name) {
                         self.stage_layout.vertex_order.get_or_insert(order);
                     }
                     if name == "point_mode" {
@@ -161,6 +175,18 @@ impl<'a> Lowerer<'a> {
         names: &[String],
         qualifier: &'a Spanned<TypeQualifier>,
     ) {
+        let relevant = names.iter().any(|name| {
+            let name = name.to_ascii_lowercase();
+            output_primitive(&name).is_some()
+                || super::mesh::mesh_topology(&name).is_some()
+                || matches!(
+                    name.as_str(),
+                    "max_vertices" | "stream" | "vertices" | "max_primitives"
+                )
+        });
+        if !relevant {
+            return;
+        }
         match self.stage() {
             ShaderStage::Geometry => {
                 for name in names {
@@ -209,7 +235,7 @@ impl<'a> Lowerer<'a> {
         handle: Handle<GlobalVariable>,
         qualifiers: &Qualifiers,
     ) {
-        if !self.stage_is(ShaderStage::Geometry) {
+        if !self.library && !self.stage_is(ShaderStage::Geometry) {
             return;
         }
         let stream = xfb::layout_value(qualifiers, "stream");
@@ -221,18 +247,19 @@ impl<'a> Lowerer<'a> {
     }
 
     pub(super) fn is_per_vertex_io(&self, qualifiers: &Qualifiers) -> bool {
-        let stage = self.stage();
         if qualifiers.patch {
             return false;
         }
-        match qualifiers.storage {
+        let storage = qualifiers.storage;
+        let per_task = qualifiers.per_task;
+        self.stage_map(|stage| match storage {
             Storage::In => stage.has_arrayed_io(),
             Storage::Out => {
                 matches!(stage, ShaderStage::TessControl)
-                    || (matches!(stage, ShaderStage::Mesh) && !qualifiers.per_task)
+                    || (matches!(stage, ShaderStage::Mesh) && !per_task)
             }
             _ => false,
-        }
+        })
     }
 
     pub(super) fn passthrough_defaults(&mut self) {

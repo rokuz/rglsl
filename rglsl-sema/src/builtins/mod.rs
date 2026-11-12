@@ -2,6 +2,7 @@ pub(crate) mod footprint;
 mod functions;
 mod limits;
 pub(crate) mod ray;
+mod stages;
 pub(crate) mod subgroup;
 mod textures;
 mod variables;
@@ -17,6 +18,7 @@ use rglsl_ast::ast::BasicType;
 use rglsl_ast::Span;
 
 pub use limits::ResourceLimits;
+pub use stages::{StageTables, ALL_STAGE_BITS};
 
 use crate::scope::{Direction, Function, Parameter, Qualifiers, Symbol, SymbolId};
 use crate::types::{ArraySize, Opaque, Type, TypeRegistry};
@@ -195,6 +197,42 @@ struct Prototype {
     result: Type,
     parameters: Vec<(Type, Direction)>,
     stages: u16,
+}
+
+impl Prototype {
+    fn function(self) -> Function {
+        Function {
+            name: self.name,
+            return_type: self.result,
+            return_qualifiers: Qualifiers::default(),
+            parameters: self
+                .parameters
+                .into_iter()
+                .map(|(ty, direction)| Parameter::new(ty, direction))
+                .collect(),
+            defined: true,
+            span: Span::default(),
+            spirv_instruction: None,
+            control: crate::scope::FunctionControl::default(),
+        }
+    }
+}
+
+pub(crate) type Footprints = Vec<(&'static str, crate::types::StructId)>;
+
+fn expand_prototypes(version: u32) -> (Vec<Prototype>, TypeRegistry, Footprints) {
+    let mut prototypes = Vec::new();
+    for section in functions::SECTIONS.iter().chain(ray::SECTIONS) {
+        if version >= section.since {
+            expand_section(section, &mut prototypes);
+        }
+    }
+    prototypes.append(&mut textures::prototypes());
+    prototypes.append(&mut subgroup::prototypes(version));
+    let mut types = TypeRegistry::new();
+    let footprints = footprint::structs(&mut types);
+    prototypes.append(&mut footprint::prototypes(&footprints));
+    (prototypes, types, footprints)
 }
 
 pub(crate) fn parse_type(word: &str) -> Option<Type> {
@@ -466,17 +504,7 @@ pub struct Builtins {
 
 impl Builtins {
     pub fn new(version: u32, stage: Stage, limits: &ResourceLimits) -> Self {
-        let mut prototypes = Vec::new();
-        for section in functions::SECTIONS.iter().chain(ray::SECTIONS) {
-            if version >= section.since {
-                expand_section(section, &mut prototypes);
-            }
-        }
-        prototypes.append(&mut textures::prototypes());
-        prototypes.append(&mut subgroup::prototypes(version));
-        let mut types = TypeRegistry::new();
-        let footprints = footprint::structs(&mut types);
-        prototypes.append(&mut footprint::prototypes(&footprints));
+        let (prototypes, mut types, footprints) = expand_prototypes(version);
         let mut seen = BTreeSet::new();
         let mut functions = Vec::new();
         let mut names: BTreeMap<String, Vec<BuiltinFunctionId>> = BTreeMap::new();
@@ -499,22 +527,26 @@ impl Builtins {
                 .entry(prototype.name.clone())
                 .or_default()
                 .push(BuiltinFunctionId(index));
-            functions.push(Function {
-                name: prototype.name,
-                return_type: prototype.result,
-                return_qualifiers: Qualifiers::default(),
-                parameters: prototype
-                    .parameters
-                    .into_iter()
-                    .map(|(ty, direction)| Parameter::new(ty, direction))
-                    .collect(),
-                defined: true,
-                span: Span::default(),
-                spirv_instruction: None,
-                control: crate::scope::FunctionControl::default(),
-            });
+            functions.push(prototype.function());
         }
-        let (mut symbols, mut scope) = variables::build(version, stage, limits, &mut types);
+        let table = variables::build(version, stage, limits, &mut types);
+        Self::assemble(
+            version, stage, limits, functions, names, types, table, footprints,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn assemble(
+        version: u32,
+        stage: Stage,
+        limits: &ResourceLimits,
+        functions: Vec<Function>,
+        names: BTreeMap<String, Vec<BuiltinFunctionId>>,
+        types: TypeRegistry,
+        table: (Vec<Symbol>, Vec<(String, SymbolId)>),
+        footprints: Footprints,
+    ) -> Self {
+        let (mut symbols, mut scope) = table;
         for (name, id) in footprints {
             let Ok(index) = u32::try_from(symbols.len()) else {
                 break;

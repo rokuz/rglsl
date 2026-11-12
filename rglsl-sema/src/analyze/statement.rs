@@ -80,7 +80,7 @@ impl Analyzer<'_> {
         let ExpressionKind::Variable(name) = &expression.kind else {
             return false;
         };
-        let Some(Lookup::Symbol(id)) = self.lookup(name) else {
+        let Some(Lookup::Symbol(id)) = self.lookup_quiet(name) else {
             return false;
         };
         matches!(
@@ -190,9 +190,9 @@ impl Analyzer<'_> {
                 }
             }
             JumpStatement::Discard => {
-                if !self.stage_is(Stage::Fragment) {
-                    self.error(span, DiagnosticKind::DiscardOutsideFragment);
-                }
+                self.stage_check(span, |stage| {
+                    (stage != Stage::Fragment).then_some(DiagnosticKind::DiscardOutsideFragment)
+                });
             }
             JumpStatement::Return(value) => self.return_statement(span, value.as_ref()),
             JumpStatement::Demote => self.demote(span),
