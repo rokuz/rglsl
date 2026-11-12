@@ -13,8 +13,8 @@ Shaders that glslang's own test suite (`gtests/*.FromFile.cpp`) compiles under V
 
 | Stage | Files | accept | diag | valid | interface | exec local | exec amd | exec nvidia | link | crashes |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| **all** | 694 | 691 / 694 (99.6 %) | 143 / 143 (100.0 %) | 548 / 548 (100.0 %) | 547 / 547 (100.0 %) | 207 / 207 (100.0 %) | 317 / 317 (100.0 %) | 362 / 362 (100.0 %) | 12 / 12 (100.0 %) | 0 |
-| vert | 68 | 67 / 68 (98.5 %) | 9 / 9 (100.0 %) | 58 / 58 (100.0 %) | 58 / 58 (100.0 %) | 35 / 35 (100.0 %) | 48 / 48 (100.0 %) | 49 / 49 (100.0 %) | 6 / 6 (100.0 %) | 0 |
+| **all** | 694 | 689 / 694 (99.3 %) | 143 / 143 (100.0 %) | 546 / 546 (100.0 %) | 545 / 545 (100.0 %) | 207 / 207 (100.0 %) | 315 / 315 (100.0 %) | 361 / 361 (100.0 %) | 12 / 12 (100.0 %) | 0 |
+| vert | 68 | 65 / 68 (95.6 %) | 9 / 9 (100.0 %) | 56 / 56 (100.0 %) | 56 / 56 (100.0 %) | 35 / 35 (100.0 %) | 46 / 46 (100.0 %) | 48 / 48 (100.0 %) | 6 / 6 (100.0 %) | 0 |
 | tesc | 7 | 7 / 7 (100.0 %) | 1 / 1 (100.0 %) | 6 / 6 (100.0 %) | 6 / 6 (100.0 %) | 2 / 2 (100.0 %) | 3 / 3 (100.0 %) | 4 / 4 (100.0 %) | – | 0 |
 | tese | 4 | 4 / 4 (100.0 %) | – | 4 / 4 (100.0 %) | 4 / 4 (100.0 %) | 3 / 3 (100.0 %) | 4 / 4 (100.0 %) | 4 / 4 (100.0 %) | – | 0 |
 | geom | 4 | 4 / 4 (100.0 %) | – | 4 / 4 (100.0 %) | 4 / 4 (100.0 %) | – | 3 / 3 (100.0 %) | 4 / 4 (100.0 %) | – | 0 |
@@ -33,7 +33,7 @@ Shaders that glslang's own test suite (`gtests/*.FromFile.cpp`) compiles under V
 
 | | we accept | we reject |
 |---|---:|---:|
-| glslang accepts | 548 | 3 |
+| glslang accepts | 546 | 5 |
 | glslang rejects | 0 | 143 |
 
 `exec local` in detail:
@@ -45,7 +45,7 @@ Shaders that glslang's own test suite (`gtests/*.FromFile.cpp`) compiles under V
 | passed within the float tolerance | 0 |
 | failed | 0 |
 | skipped: capability or extension the harness cannot enable | 116 |
-| skipped: device feature missing on the driver | 209 |
+| skipped: device feature missing on the driver | 207 |
 | skipped: resource or interface the harness cannot bind | 2 |
 | skipped: glslang's module is not valid SPIR-V | 11 |
 | skipped: glslang's module fails on the driver | 1 |
@@ -55,8 +55,8 @@ Shaders that glslang's own test suite (`gtests/*.FromFile.cpp`) compiles under V
 
 | | shaders |
 |---|---:|
-| executed | 317 |
-| passed | 317 |
+| executed | 315 |
+| passed | 315 |
 | passed within the float tolerance | 0 |
 | failed | 0 |
 | skipped: capability or extension the harness cannot enable | 143 |
@@ -70,12 +70,12 @@ Shaders that glslang's own test suite (`gtests/*.FromFile.cpp`) compiles under V
 
 | | shaders |
 |---|---:|
-| executed | 362 |
-| passed | 362 |
+| executed | 361 |
+| passed | 361 |
 | passed within the float tolerance | 0 |
 | failed | 0 |
 | skipped: capability or extension the harness cannot enable | 144 |
-| skipped: device feature missing on the driver | 26 |
+| skipped: device feature missing on the driver | 25 |
 | skipped: resource or interface the harness cannot bind | 2 |
 | skipped: glslang's module is not valid SPIR-V | 11 |
 | skipped: glslang's module fails on the driver | 2 |
@@ -150,8 +150,8 @@ Our own tests of the rglsl-specific linking rules (`tests/link`): imports, libra
 
 | Stage | Files | accept | diag | valid | interface | exec local | exec amd | exec nvidia | link | crashes |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| **all** | 71 | 71 / 71 (100.0 %) | 28 / 28 (100.0 %) | 43 / 43 (100.0 %) | 23 / 23 (100.0 %) | 23 / 23 (100.0 %) | 23 / 23 (100.0 %) | 23 / 23 (100.0 %) | 71 / 71 (100.0 %) | 0 |
-| vert | 15 | 15 / 15 (100.0 %) | 6 / 6 (100.0 %) | 9 / 9 (100.0 %) | 5 / 5 (100.0 %) | 5 / 5 (100.0 %) | 5 / 5 (100.0 %) | 5 / 5 (100.0 %) | 15 / 15 (100.0 %) | 0 |
+| **all** | 72 | 72 / 72 (100.0 %) | 29 / 29 (100.0 %) | 43 / 43 (100.0 %) | 23 / 23 (100.0 %) | 23 / 23 (100.0 %) | 23 / 23 (100.0 %) | 23 / 23 (100.0 %) | 72 / 72 (100.0 %) | 0 |
+| vert | 16 | 16 / 16 (100.0 %) | 7 / 7 (100.0 %) | 9 / 9 (100.0 %) | 5 / 5 (100.0 %) | 5 / 5 (100.0 %) | 5 / 5 (100.0 %) | 5 / 5 (100.0 %) | 16 / 16 (100.0 %) | 0 |
 | tesc | 1 | 1 / 1 (100.0 %) | – | 1 / 1 (100.0 %) | – | – | – | – | 1 / 1 (100.0 %) | 0 |
 | tese | 1 | 1 / 1 (100.0 %) | – | 1 / 1 (100.0 %) | – | – | – | – | 1 / 1 (100.0 %) | 0 |
 | geom | 3 | 3 / 3 (100.0 %) | 1 / 1 (100.0 %) | 2 / 2 (100.0 %) | – | – | – | – | 3 / 3 (100.0 %) | 0 |
