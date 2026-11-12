@@ -34,6 +34,8 @@ pub struct Options {
     pub auto_map_locations: bool,
     pub auto_map_bindings: bool,
     pub binding_shifts: Vec<(ShaderStage, rglsl::proc::BindingShifts)>,
+    pub keep_uncalled: bool,
+    pub limits: rglsl_sema::ResourceLimits,
 }
 
 impl Options {
@@ -173,7 +175,7 @@ pub(crate) fn merge(objects: &[ObjectModule], options: &Options) -> Result<Merge
     };
     let table = SymbolTable::build(objects, &mut errors);
     let order = match main {
-        Some(main) => calls::order(objects, main, &table, &mut errors),
+        Some(main) => calls::order(objects, main, &table, options.keep_uncalled, &mut errors),
         None => Vec::new(),
     };
     let (Some(main), Some(stage), true) = (main, stage, errors.is_empty()) else {
@@ -189,6 +191,7 @@ pub(crate) fn merge(objects: &[ObjectModule], options: &Options) -> Result<Merge
         objects,
         &mut builder.module,
         &mut entry,
+        options.limits.max_transform_feedback_interleaved_components,
         &mut builder.errors,
     );
     geometry_interface(&builder, &layout, &mut entry)?;

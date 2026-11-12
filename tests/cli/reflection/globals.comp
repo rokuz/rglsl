@@ -1,0 +1,9 @@
+#version 460
+layout(local_size_x = 4, local_size_y = 2) in;
+layout(binding = 0) uniform U { float x; float y; float z; float w; } u;
+layout(binding = 1) buffer B { float o[]; } b;
+float f() { return u.w; }
+float g = u.x;
+float h = u.y, k = 1.0;
+float m, n = u.z;
+void main() { b.o[0] = g + h + n + f(); }

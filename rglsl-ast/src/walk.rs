@@ -29,6 +29,23 @@ pub fn expressions(unit: &TranslationUnit) -> Vec<&Expression> {
     }
 }
 
+pub fn statement_expressions(statement: &Statement) -> Vec<&Expression> {
+    let walker = Walker {
+        found: RefCell::new(Vec::new()),
+    };
+    let finished = run(|stack| {
+        Cx {
+            walker: &walker,
+            stack,
+        }
+        .statement(statement)
+    });
+    match finished {
+        Some(()) => walker.found.into_inner(),
+        None => Vec::new(),
+    }
+}
+
 struct Walker<'a> {
     found: RefCell<Vec<&'a Expression>>,
 }

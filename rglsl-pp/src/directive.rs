@@ -7,7 +7,7 @@ use crate::diagnostic::{DiagnosticKind, Redefinition};
 use crate::include::{IncludeKind, IncludedFile};
 use crate::lexer::{FileInput, Role};
 use crate::preprocessor::{
-    Input, Macro, Preprocessor, CPP_STYLE_LINE, SPIRV_INTRINSICS, TRACKED_EXTENSIONS,
+    Input, LineMarker, Macro, Preprocessor, CPP_STYLE_LINE, SPIRV_INTRINSICS, TRACKED_EXTENSIONS,
 };
 use crate::source_map::SourceInfo;
 use crate::token::{At, Kind, Token};
@@ -434,6 +434,7 @@ impl Preprocessor<'_> {
             self.report(DiagnosticKind::LineWithoutNumber, token.at);
             return token;
         }
+        let directive_source = self.current_at().source;
         self.disable_escapes = true;
         let (line_value, line_error, next) = self.evaluate(token);
         token = next;
@@ -470,6 +471,25 @@ impl Preprocessor<'_> {
                         self.set_current_source(Some(i64::from(number)), None);
                     }
                 }
+            }
+            if self.options.listing {
+                let source = self.current_at().source;
+                let mut text = format!("#line {line_value}");
+                if source != directive_source {
+                    match self.source_name(source) {
+                        Some(name) => text.push_str(&format!(" \"{name}\"")),
+                        None => text.push_str(&format!(" {}", self.source_number(source))),
+                    }
+                }
+                let next = (
+                    directive_at.cur_file,
+                    directive_at.physical.saturating_add(1),
+                );
+                self.output.line_directive(
+                    &text,
+                    (directive_at.cur_file, directive_at.physical),
+                    next,
+                );
             }
         }
         self.extra_token_check("#line", token)
@@ -567,10 +587,33 @@ impl Preprocessor<'_> {
             .or_insert_with(|| included.source.clone());
         self.sources.push(SourceInfo {
             number,
-            name: Some(included.name),
+            name: Some(included.name.clone()),
             file: Some(included.file),
         });
         self.enter_include_stack(included.file);
+        if self.options.listing {
+            let next_line = i64::from(self.should_set_next_line());
+            let includer = match self.source_name(at.source) {
+                Some(name) => format!("\"{name}\""),
+                None => format!("{}", self.source_number(at.source)),
+            };
+            let newlines = included.source.matches('\n').count();
+            let end = if included.source.ends_with('\n') {
+                newlines + 1
+            } else {
+                newlines + 2
+            };
+            self.output.line_directive(
+                &format!("#line {next_line} \"{}\"", included.name),
+                (at.cur_file, at.physical),
+                (included.file, 1),
+            );
+            self.line_markers.push(LineMarker {
+                epilogue: format!("#line {} {includer}", at.line.saturating_add(next_line)),
+                end: (included.file, u32::try_from(end).unwrap_or(u32::MAX)),
+                resume: (at.cur_file, at.physical.saturating_add(1)),
+            });
+        }
         self.push_file(FileInput::new(
             included.file,
             Rc::from(included.source.as_str()),
@@ -600,8 +643,13 @@ impl Preprocessor<'_> {
             }
         }
         let mut text = String::from("#pragma");
-        for word in &words {
+        if self.options.listing {
             text.push(' ');
+        }
+        for word in &words {
+            if !self.options.listing {
+                text.push(' ');
+            }
             text.push_str(word);
         }
         if !self.in_preamble() {

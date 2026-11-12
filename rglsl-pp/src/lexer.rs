@@ -9,6 +9,7 @@ use crate::token::{operator, At, Kind, Token, MAX_TOKEN_LENGTH};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Role {
     Preamble,
+    UserPreamble,
     Root,
     Included,
 }
@@ -130,6 +131,7 @@ impl FileInput {
             column: offset_u32(self.pos.saturating_sub(self.line_start)),
             line: self.line,
             source: self.source,
+            expanded: false,
         }
     }
 

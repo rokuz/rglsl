@@ -11,6 +11,11 @@ license.workspace = true
 rust-version.workspace = true
 publish = false
 
+[lib]
+name = "rglsl_cli"
+path = "src/lib.rs"
+doc = false
+
 [[bin]]
 name = "rglsl"
 path = "src/main.rs"
@@ -19,12 +24,15 @@ test = false
 
 [dependencies]
 rglsl = { workspace = true, features = ["glsl-in", "spv-out"] }
+rglsl-ast.workspace = true
 rglsl-link.workspace = true
 rglsl-pp = { workspace = true, features = ["std"] }
-rspirv.workspace = true
+rglsl-sema.workspace = true
+rglsl-types.workspace = true
 
 [lints]
 workspace = true
 
 [dev-dependencies]
+rspirv.workspace = true
 spirv.workspace = true

@@ -763,22 +763,22 @@ pub(super) fn build(
     builder.constant(
         "gl_MaxComputeWorkGroupCount",
         Type::vector(Scalar::Int, 3),
-        triple(limits.max_compute_work_group_count),
+        triple(limits.max_compute_work_group_count()),
     );
     builder.constant(
         "gl_MaxComputeWorkGroupSize",
         Type::vector(Scalar::Int, 3),
-        triple(limits.max_compute_work_group_size),
+        triple(limits.max_compute_work_group_size()),
     );
     builder.constant(
         "gl_MaxMeshWorkGroupSizeNV",
         Type::vector(Scalar::Int, 3),
-        triple(limits.max_mesh_work_group_size_nv),
+        triple(limits.max_mesh_work_group_size_nv()),
     );
     builder.constant(
         "gl_MaxTaskWorkGroupSizeNV",
         Type::vector(Scalar::Int, 3),
-        triple(limits.max_task_work_group_size_nv),
+        triple(limits.max_task_work_group_size_nv()),
     );
     if matches!(stage, Stage::Compute | Stage::Mesh | Stage::Task) {
         builder.constant(

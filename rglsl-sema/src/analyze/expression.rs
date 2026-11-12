@@ -1022,6 +1022,7 @@ impl Analyzer<'_> {
                 "does not operate on types containing {}",
             );
         }
+        self.index_limitation(base, &base_operand, index);
         let constant = base_operand.constant && index_operand.constant;
         let value = if constant {
             let size = element

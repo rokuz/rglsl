@@ -7,6 +7,10 @@ use core::fmt;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct FileId(pub u32);
 
+impl FileId {
+    pub const PREAMBLE: Self = Self(u32::MAX);
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IncludeKind {
     Local,

@@ -25,6 +25,7 @@ fn stage_options(options: &Options, stage: ShaderStage) -> Options {
         library: false,
         source_name: options.source_name.clone(),
         binding_shifts: options.binding_shifts.clone(),
+        preamble: options.preamble.clone(),
         ..*options
     }
 }
@@ -634,13 +635,22 @@ fn identifiers(text: &str) -> BTreeSet<String> {
     names
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(super) struct StageNames {
     tables: Vec<Arc<StageTables>>,
+    limits: ResourceLimits,
     pub lowerings: usize,
 }
 
 impl StageNames {
+    pub(super) const fn new(limits: ResourceLimits) -> Self {
+        Self {
+            tables: Vec::new(),
+            limits,
+            lowerings: 0,
+        }
+    }
+
     pub(super) fn tables(&mut self, version: u32) -> Arc<StageTables> {
         if let Some(found) = self
             .tables
@@ -649,7 +659,7 @@ impl StageNames {
         {
             return Arc::clone(found);
         }
-        let tables = Arc::new(StageTables::new(version, &ResourceLimits::default()));
+        let tables = Arc::new(StageTables::new(version, &self.limits));
         self.tables.push(Arc::clone(&tables));
         tables
     }

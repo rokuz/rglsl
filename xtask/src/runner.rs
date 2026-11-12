@@ -352,7 +352,6 @@ fn run_case(
     };
 
     let spirv_val = match ours {
-        OursResult::Accepted if case.target.compile_only => None,
         OursResult::Accepted => {
             let failure = validate(env, case, &out, timeout)?;
             if let Some(message) = &failure {
@@ -467,6 +466,9 @@ fn ours_command(
     for directory in runtests.include_dirs {
         command.arg("--include-dir").arg(test_dir.join(directory));
     }
+    for line in runtests.preamble {
+        command.args(["--preamble", line]);
+    }
     if runtests.hlsl_offsets {
         command.arg("--hlsl-offsets");
     }
@@ -506,8 +508,8 @@ fn twin_input(
     for directory in runtests.include_dirs {
         command.arg(format!("-I{directory}"));
     }
-    if let Some(preamble) = runtests.glslang_preamble {
-        command.args(["--preamble-text", preamble]);
+    for line in runtests.preamble {
+        command.args(["--preamble-text", line]);
     }
     if runtests.hlsl_offsets {
         command.arg("--hlsl-offsets");
@@ -598,7 +600,12 @@ fn validate(
     timeout: Duration,
 ) -> Result<Option<String>> {
     let mut command = Command::new(&env.spirv_val.path);
-    command.args(["--target-env", &case.target.spirv_val_env()]);
+    let environment = if case.target.compile_only {
+        format!("spv{}.{}", case.target.spirv.0, case.target.spirv.1)
+    } else {
+        case.target.spirv_val_env()
+    };
+    command.args(["--target-env", &environment]);
     if enables_extension(&case.path, "GL_EXT_texture_offset_non_const") {
         command.arg("--allow-offset-texture-operand");
     }
@@ -672,8 +679,8 @@ fn run_glslang(
     for directory in runtests.include_dirs {
         command.arg(format!("-I{directory}"));
     }
-    if let Some(preamble) = runtests.glslang_preamble {
-        command.args(["--preamble-text", preamble]);
+    for line in runtests.preamble {
+        command.args(["--preamble-text", line]);
     }
     if runtests.hlsl_offsets {
         command.arg("--hlsl-offsets");

@@ -1,8 +1,8 @@
 use rglsl::object::{ObjectModule, StageLayout};
 use rglsl::{
-    EarlyDepthTest, EntryPoint, Expression, GeometryInfo, Handle, Literal, MeshOutputLayout,
-    Module, Override, Scalar, ShaderStage, Span, TessellationInfo, TessellationSpacing,
-    TessellationVertexOrder, Type, TypeInner,
+    AddressSpace, EarlyDepthTest, EntryPoint, Expression, GeometryInfo, Handle, Literal,
+    MeshOutputLayout, Module, Override, Scalar, ShaderStage, Span, TessellationInfo,
+    TessellationSpacing, TessellationVertexOrder, Type, TypeInner, XfbBinding,
 };
 
 use crate::error::LinkError;
@@ -361,7 +361,30 @@ fn widest_scalar(module: &Module, ty: Handle<Type>) -> u32 {
     widest
 }
 
-fn xfb_strides(module: &mut Module, strides: &[(u32, u32)], errors: &mut Vec<LinkError>) {
+fn default_xfb_buffer(stage: ShaderStage, module: &mut Module) {
+    if !matches!(
+        stage,
+        ShaderStage::Vertex | ShaderStage::TessEvaluation | ShaderStage::Geometry
+    ) {
+        return;
+    }
+    for (_, global) in module.global_variables.iter_mut() {
+        if global.space == AddressSpace::Output && global.xfb.is_none() {
+            global.xfb = Some(XfbBinding {
+                buffer: 0,
+                stride: 0,
+                offset: None,
+            });
+        }
+    }
+}
+
+fn xfb_strides(
+    module: &mut Module,
+    strides: &[(u32, u32)],
+    interleaved_components: i32,
+    errors: &mut Vec<LinkError>,
+) {
     let mut implicit: Vec<(u32, u32, u32)> = Vec::new();
     for (_, global) in module.global_variables.iter() {
         let Some(ref xfb) = global.xfb else {
@@ -400,6 +423,24 @@ fn xfb_strides(module: &mut Module, strides: &[(u32, u32)], errors: &mut Vec<Lin
             xfb.stride = stride.div_ceil(alignment).saturating_mul(alignment);
         }
     }
+    let mut buffers: Vec<(u32, u32)> = module
+        .global_variables
+        .iter()
+        .filter_map(|(_, global)| global.xfb.as_ref())
+        .map(|xfb| (xfb.buffer, xfb.stride))
+        .chain(strides.iter().copied())
+        .collect();
+    buffers.sort_unstable();
+    buffers.dedup_by_key(|&mut (buffer, _)| buffer);
+    for (buffer, stride) in buffers {
+        if i64::from(stride) > 4 * i64::from(interleaved_components) {
+            errors.push(LinkError::XfbStride {
+                buffer,
+                components: stride / 4,
+                limit: interleaved_components,
+            });
+        }
+    }
 }
 
 fn fragment(layout: &StageLayout, entry: &mut EntryPoint, errors: &mut Vec<LinkError>) {
@@ -428,6 +469,7 @@ pub(crate) fn apply(
     objects: &[ObjectModule],
     module: &mut Module,
     entry: &mut EntryPoint,
+    interleaved_components: i32,
     errors: &mut Vec<LinkError>,
 ) -> StageLayout {
     let layout = merged(stage, objects, errors);
@@ -459,7 +501,10 @@ pub(crate) fn apply(
         entry.early_depth_test = Some(EarlyDepthTest::Allow { conservative });
     }
     entry.transform_feedback |= layout.transform_feedback;
-    xfb_strides(module, &layout.xfb_strides, errors);
+    if layout.transform_feedback {
+        default_xfb_buffer(stage, module);
+    }
+    xfb_strides(module, &layout.xfb_strides, interleaved_components, errors);
     match stage {
         ShaderStage::Geometry => geometry(&layout, entry),
         ShaderStage::TessControl | ShaderStage::TessEvaluation => {

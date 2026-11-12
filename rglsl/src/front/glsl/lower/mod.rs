@@ -61,7 +61,7 @@ pub(super) fn parse(
         Mode::Program,
         root,
         includer,
-        &mut library::StageNames::default(),
+        &mut library::StageNames::new(options.limits),
         false,
         &StageClass::new(options.stage),
     )
@@ -80,8 +80,27 @@ pub(super) fn compile(
         root,
         includer,
         true,
-        &mut library::StageNames::default(),
+        &mut library::StageNames::new(options.limits),
     )
+}
+
+pub(super) fn analyze(
+    options: &Options,
+    source: &str,
+    root: rglsl_pp::FileId,
+    includer: &mut dyn rglsl_pp::Includer,
+) -> Option<super::Analyzed> {
+    let preprocessed = preprocess(options, Some(options.stage), source, root, includer);
+    if preprocessed.has_errors() {
+        return None;
+    }
+    let text = preprocessed.text.as_str();
+    let (unit, failure) = rglsl_ast::parse_prefix(text);
+    if failure.is_some() {
+        return None;
+    }
+    let analysis = rglsl_sema::analyze(&unit, &sema_options(options, text));
+    Some(super::Analyzed { unit, analysis })
 }
 
 pub(super) fn library_lowerings(
@@ -90,7 +109,7 @@ pub(super) fn library_lowerings(
     root: rglsl_pp::FileId,
     includer: &mut dyn rglsl_pp::Includer,
 ) -> usize {
-    let mut names = library::StageNames::default();
+    let mut names = library::StageNames::new(options.limits);
     let _ = compile_sharing(options, source, root, includer, true, &mut names);
     names.lowerings
 }
@@ -145,7 +164,7 @@ pub(super) fn compile_library_per_stage(
         root,
         includer,
         false,
-        &mut library::StageNames::default(),
+        &mut library::StageNames::new(options.limits),
     )
 }
 
@@ -186,6 +205,7 @@ fn preprocessor_options(options: &Options, stage: Option<ShaderStage>) -> rglsl_
         defines,
         vulkan_client_version: Some(100),
         stage: stage.map(preprocessor_stage),
+        preamble: options.preamble.clone(),
         ..rglsl_pp::Options::default()
     }
 }
@@ -448,6 +468,10 @@ fn lower(
             sema_error(map, text, source, diagnostic, reworded)
         })
         .collect::<Vec<_>>();
+    let mut errors = errors;
+    if options.export_functions {
+        errors.extend(exported_main(map, &unit));
+    }
     if !errors.is_empty() {
         return Err(errors.into());
     }
@@ -463,6 +487,31 @@ fn lower(
         &class.names,
         specialize,
     )
+}
+
+fn exported_main(
+    map: &rglsl_pp::SourceMap,
+    unit: &TranslationUnit,
+) -> Option<(Error, Option<IncludeLocation>)> {
+    unit.external_declarations
+        .iter()
+        .find_map(|declaration| match *declaration {
+            ExternalDeclaration::FunctionDefinition(ref definition)
+                if definition.prototype.node.name.node == "main" =>
+            {
+                let end = definition.prototype.span.end.saturating_sub(1);
+                Some((
+                    Error {
+                        kind: ErrorKind::SemanticError(Cow::Borrowed(
+                            "main function cannot be exported",
+                        )),
+                        meta: original(map, rglsl_ast::Span::new(end, end)),
+                    },
+                    included(map, end),
+                ))
+            }
+            _ => None,
+        })
 }
 
 fn sema_error(
@@ -748,6 +797,7 @@ fn sema_options(options: &Options, text: &str) -> rglsl_sema::Options {
         spirv_version: options.spirv_version,
         end_of_input: u32::try_from(text.len()).ok(),
         require_bindings: !options.auto_map_bindings,
+        limits: options.limits,
         ..rglsl_sema::Options::new(stage(options.stage))
     }
 }

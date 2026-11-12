@@ -194,7 +194,7 @@ impl Corpus {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct RuntestsOptions {
     pub include_dirs: &'static [&'static str],
-    pub glslang_preamble: Option<&'static str>,
+    pub preamble: &'static [&'static str],
     pub hlsl_offsets: bool,
 }
 
@@ -206,7 +206,15 @@ pub fn runtests_options(name: &str) -> RuntestsOptions {
         },
         "glsl.-P.include.frag" => RuntestsOptions {
             include_dirs: &["."],
-            glslang_preamble: Some("#extension GL_GOOGLE_include_directive : require"),
+            preamble: &["#extension GL_GOOGLE_include_directive : require"],
+            ..RuntestsOptions::default()
+        },
+        "glsl.-P.frag" => RuntestsOptions {
+            preamble: &["#define TEST1", "#define TEST2", "#define TEST3"],
+            ..RuntestsOptions::default()
+        },
+        "glsl.-P.function.frag" => RuntestsOptions {
+            preamble: &["vec4 getColor() { return vec4(1.0); }"],
             ..RuntestsOptions::default()
         },
         "spv.hlslOffsets.vert" => RuntestsOptions {

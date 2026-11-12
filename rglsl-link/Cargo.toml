@@ -11,6 +11,7 @@ rust-version.workspace = true
 
 [dependencies]
 rglsl = { workspace = true, features = ["serialize", "deserialize"] }
+rglsl-sema.workspace = true
 ron.workspace = true
 serde = { workspace = true, features = ["derive"] }
 thiserror.workspace = true

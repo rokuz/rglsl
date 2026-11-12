@@ -1,6 +1,9 @@
+use rglsl_ast::Span;
+
 use super::Analyzer;
+use crate::builtins::Stage;
 use crate::diagnostic::DiagnosticKind;
-use crate::scope::Qualifiers;
+use crate::scope::{Qualifiers, Storage};
 
 const PUSH_CONSTANT_BANK: &str = "GL_NV_push_constant_bank";
 
@@ -54,5 +57,60 @@ impl Analyzer<'_> {
                 );
             }
         }
+    }
+
+    pub(crate) fn xfb_limit_check(&mut self, qualifiers: &Qualifiers) {
+        let limits = self.options.limits;
+        for entry in &qualifiers.layout {
+            let Some(value) = entry.value else {
+                continue;
+            };
+            let error = match entry.name.as_str() {
+                "xfb_buffer" if value >= i64::from(limits.max_transform_feedback_buffers) => {
+                    DiagnosticKind::ResourceLimit {
+                        qualifier: "xfb_buffer",
+                        reason: "buffer is too large",
+                        limit: "gl_MaxTransformFeedbackBuffers",
+                        value: limits.max_transform_feedback_buffers,
+                    }
+                }
+                "xfb_stride"
+                    if value
+                        > 4 * i64::from(limits.max_transform_feedback_interleaved_components) =>
+                {
+                    DiagnosticKind::ResourceLimit {
+                        qualifier: "xfb_stride",
+                        reason: "1/4 stride is too large",
+                        limit: "gl_MaxTransformFeedbackInterleavedComponents",
+                        value: limits.max_transform_feedback_interleaved_components,
+                    }
+                }
+                _ => continue,
+            };
+            self.error(entry.span, error);
+        }
+    }
+
+    pub(crate) fn fragment_location_limit_check(&mut self, span: Span, qualifiers: &Qualifiers) {
+        if qualifiers.storage != Storage::Out {
+            return;
+        }
+        let Some(location) = qualifiers
+            .layout_entry("location")
+            .and_then(|entry| entry.value)
+            .and_then(|value| u32::try_from(value).ok())
+        else {
+            return;
+        };
+        let max = self.options.limits.max_draw_buffers.cast_unsigned();
+        if location < max {
+            return;
+        }
+        self.stage_check(span, |stage| {
+            (stage == Stage::Fragment).then_some(DiagnosticKind::InvalidQualifier {
+                qualifier: "location",
+                reason: "too large for fragment output",
+            })
+        });
     }
 }

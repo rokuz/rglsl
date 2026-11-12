@@ -24,6 +24,28 @@ pub enum VersionDump {
 pub enum Macro {
     Define(String),
     Undefine(String),
+    Text(String),
+}
+
+impl Macro {
+    pub fn preamble(macros: &[Self]) -> String {
+        let mut text = String::new();
+        for edit in macros {
+            match *edit {
+                Self::Define(ref definition) => {
+                    text.push_str("#define ");
+                    text.push_str(&definition.replacen('=', " ", 1));
+                }
+                Self::Undefine(ref name) => {
+                    text.push_str("#undef ");
+                    text.push_str(name);
+                }
+                Self::Text(ref line) => text.push_str(line),
+            }
+            text.push('\n');
+        }
+        text
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,9 +66,11 @@ pub struct ResourceSet {
 pub struct Options {
     pub spirv: bool,
     pub link: bool,
+    pub no_link: bool,
     pub object: bool,
     pub preprocess: bool,
     pub disassemble: bool,
+    pub spirv_tools_disassembler: bool,
     pub hex: bool,
     pub variable_name: Option<String>,
     pub output: Option<String>,
@@ -74,6 +98,10 @@ pub struct Options {
     pub stdin: bool,
     pub depfile: Option<String>,
     pub version: Option<VersionDump>,
+    pub dump_config: bool,
+    pub config_file: Option<String>,
+    pub reflect: bool,
+    pub reflect_options: crate::reflect::Options,
     pub files: Vec<String>,
     pub command_line: String,
 }
@@ -350,7 +378,7 @@ fn long_option(cursor: &mut Cursor, options: &mut Options) -> Result<(), Exit> {
             let set = resource_set_binding(cursor)?;
             options.resource_sets.push(set);
         }
-        "spirv-dis" => options.disassemble = true,
+        "spirv-dis" => options.spirv_tools_disassembler = true,
         "spirv-val" => {}
         "stdin" => options.stdin = true,
         "suppress-warnings" => options.suppress_warnings = true,
@@ -412,13 +440,11 @@ fn long_option(cursor: &mut Cursor, options: &mut Options) -> Result<(), Exit> {
         | "sacb"
         | "set-default-uniform-block"
         | "sdub" => return Err(Exit::out_of_scope(&argument)),
-        "preamble-text" | "p" => return Err(Exit::unsupported(&argument, "preamble text")),
-        "no-link" => {
-            return Err(Exit::unsupported(
-                &argument,
-                "SPIR-V with linkage (use `--object` for rglsl object modules)",
-            ))
-        }
+        "preamble-text" | "p" => match cursor.take_next() {
+            Some(text) => options.macros.push(Macro::Text(first_line(&text))),
+            None => return Err(Exit::detailed("expects <text>", argument)),
+        },
+        "no-link" => options.no_link = true,
         "lto" => return Err(Exit::unsupported(&argument, "link time optimization")),
         "validate-io" => return Err(Exit::unsupported(&argument, "cross stage IO validation")),
         "bindings-per-resource-type" => {
@@ -451,9 +477,15 @@ fn long_option(cursor: &mut Cursor, options: &mut Options) -> Result<(), Exit> {
                 "dumping the built-in symbol table",
             ))
         }
-        reflection if reflection.starts_with("reflect-") => {
-            return Err(Exit::unsupported(&argument, "reflection"))
-        }
+        "reflect-strict-array-suffix" => options.reflect_options.strict_array_suffix = true,
+        "reflect-basic-array-suffix" => options.reflect_options.basic_array_suffix = true,
+        "reflect-intermediate-io" => options.reflect_options.intermediate_io = true,
+        "reflect-separate-buffers" => options.reflect_options.separate_buffers = true,
+        "reflect-all-block-variables" => options.reflect_options.all_block_variables = true,
+        "reflect-unwrap-io-blocks" => options.reflect_options.unwrap_io_blocks = true,
+        "reflect-all-io-variables" => options.reflect_options.all_io_variables = true,
+        "reflect-shared-std140-ubo" => options.reflect_options.shared_std140_ubo = true,
+        "reflect-shared-std140-ssbo" => options.reflect_options.shared_std140_ssbo = true,
         _ => return Err(Exit::detailed("unrecognized command-line option", argument)),
     }
     Ok(())
@@ -505,7 +537,10 @@ fn short_option(cursor: &mut Cursor, options: &mut Options) -> Result<(), Exit> 
             Some('d' | 's') | None => {}
             Some(_) => return Err(Exit::error("unknown -O option")),
         },
-        'P' => return Err(Exit::unsupported(&argument, "preamble text")),
+        'P' => {
+            let text = attached(&argument, "-P<text>")?;
+            options.macros.push(Macro::Text(first_line(text)));
+        }
         'S' => match cursor.take_next() {
             Some(stage) => options.stage = Some(stage),
             None => return Err(Exit::error("no <stage> specified for -S")),
@@ -524,12 +559,7 @@ fn short_option(cursor: &mut Cursor, options: &mut Options) -> Result<(), Exit> 
                 }
             }
         }
-        'c' => {
-            return Err(Exit::unsupported(
-                &argument,
-                "dumping the resource configuration",
-            ))
-        }
+        'c' => options.dump_config = true,
         'e' => match cursor.take_next() {
             Some(name) => options.entry_point = Some(name),
             None => return Err(Exit::error("no <name> provided for -e")),
@@ -556,12 +586,7 @@ fn short_option(cursor: &mut Cursor, options: &mut Options) -> Result<(), Exit> 
             Some(output) => options.output = Some(output),
             None => return Err(Exit::error("no <file> provided for -o")),
         },
-        'q' => {
-            return Err(Exit::unsupported(
-                &argument,
-                "the reflection query database",
-            ))
-        }
+        'q' => options.reflect = true,
         'r' => options.relaxed_errors = true,
         's' => options.suppress_info = true,
         'v' => options.version = Some(VersionDump::Full),
@@ -588,10 +613,7 @@ pub fn parse(arguments: Vec<String>) -> Result<Options, Exit> {
         } else if argument.starts_with('-') {
             short_option(&mut cursor, &mut options)?;
         } else if argument.len() >= 5 && argument.ends_with(".conf") {
-            return Err(Exit::unsupported(
-                &argument,
-                "a resource limits configuration file",
-            ));
+            options.config_file = Some(argument);
         } else {
             options.files.push(argument);
         }
@@ -602,6 +624,14 @@ pub fn parse(arguments: Vec<String>) -> Result<Options, Exit> {
     }
     if options.preprocess && options.link {
         return Err(Exit::error("can't use -E when linking is selected"));
+    }
+    if options.preprocess && options.reflect {
+        return Err(Exit::error(
+            "reflection requires linking, which can't be used when -E when is selected",
+        ));
+    }
+    if options.reflect && !options.link {
+        return Err(Exit::error("reflection requires -l for linking"));
     }
     if options.output.is_some() && !options.spirv && !options.object {
         return Err(Exit::error("no binary generation requested (e.g., -V)"));

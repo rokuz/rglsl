@@ -7,9 +7,14 @@ use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 
+mod limits;
+
 use crate::interface;
 use crate::oracles::{self, Tool};
 use crate::process::{self, Exit};
+
+mod disassembly;
+mod reflection;
 
 pub struct Options {
     pub glslang_dir: Option<PathBuf>,
@@ -33,6 +38,7 @@ struct Case {
     stdin: Option<&'static str>,
     ignore_stdout: Option<&'static str>,
     ignore_stderr: bool,
+    exact_stdout: bool,
     spirv_val: Vec<&'static str>,
     expect: Expect,
 }
@@ -47,6 +53,7 @@ impl Case {
             stdin: None,
             ignore_stdout: None,
             ignore_stderr: false,
+            exact_stdout: false,
             spirv_val: Vec::new(),
             expect: Expect::Same,
         }
@@ -75,6 +82,11 @@ impl Case {
     fn ignore_messages(mut self, why: &'static str) -> Self {
         self.ignore_stdout = Some(why);
         self.ignore_stderr = true;
+        self
+    }
+
+    fn exact_stdout(mut self) -> Self {
+        self.exact_stdout = true;
         self
     }
 
@@ -238,8 +250,12 @@ fn cases() -> Vec<Case> {
             "spirv-dis",
             &["-V", "--spirv-dis", TARGET_SHADER],
             &[TARGET_SHADER],
-        )
-        .ignore_stdout("rglsl prints rspirv's disassembly, this glslang prints none"),
+        ),
+        Case::new(
+            "H-spirv-dis",
+            &["-H", "--spirv-dis", TARGET_SHADER],
+            &[TARGET_SHADER],
+        ),
         Case::new(
             "entry-point-rename",
             &[
@@ -368,14 +384,45 @@ fn cases() -> Vec<Case> {
             "E",
             &["-E", "-DUNDEFED", "-DFOO=200", "glsl.-D-U.frag"],
             &["glsl.-D-U.frag"],
-        ),
+        )
+        .exact_stdout(),
         Case::new(
             "E-include",
             &["-E", "-Iinc2", "include.system.vert"],
             &["include.system.vert", "bar.h"],
         )
         .dir("inc2")
-        .ignore_stdout("rglsl's -E output has no #line directives around included text"),
+        .exact_stdout(),
+        Case::new(
+            "E-include-nested",
+            &["-E", "include.vert"],
+            &["include.vert"],
+        )
+        .dir("inc1")
+        .dir("inc2")
+        .file_as("bar.h", "bar.h")
+        .file_as("foo.h", "foo.h")
+        .exact_stdout(),
+        Case::new(
+            "E-line",
+            &["-E", "vk.relaxed.stagelink.0.0.vert"],
+            &["vk.relaxed.stagelink.0.0.vert"],
+        )
+        .exact_stdout(),
+        Case::new(
+            "E-macros-pragmas",
+            &[
+                "-E",
+                "preprocessor.paste_stringify.vert",
+                "spv.pragma.stdgl.oob.vert",
+            ],
+            &[
+                "preprocessor.paste_stringify.vert",
+                "spv.pragma.stdgl.oob.vert",
+                "parent.h",
+            ],
+        )
+        .exact_stdout(),
         Case::new(
             "include-system",
             &["-V", "--aml", "-Iinc2", "include.system.vert"],
@@ -745,22 +792,119 @@ fn cases() -> Vec<Case> {
             "preamble",
             &["-V", "-P#define X 1", TARGET_SHADER],
             &[TARGET_SHADER],
-        )
-        .rejected("preamble text is not supported"),
-        Case::new("reflection", &["-l", "-q", TARGET_SHADER], &[TARGET_SHADER])
-            .rejected("the reflection query database is not supported"),
+        ),
         Case::new(
-            "no-link",
+            "P-runtests",
+            &[
+                "-P#define TEST1",
+                "-i",
+                "-l",
+                "--preamble-text",
+                "#define TEST2",
+                "--p",
+                "#define TEST3",
+                "glsl.-P.frag",
+            ],
+            &["glsl.-P.frag"],
+        )
+        .ignore_messages("rglsl prints no AST"),
+        Case::new(
+            "P-V",
+            &[
+                "-V",
+                "-P#define TEST1",
+                "--preamble-text",
+                "#define TEST2",
+                "--P",
+                "#define TEST3",
+                "glsl.-P.frag",
+            ],
+            &["glsl.-P.frag"],
+        ),
+        Case::new(
+            "P-function",
+            &[
+                "-V",
+                "--preamble-text",
+                "vec4 getColor() { return vec4(1.0); }",
+                "glsl.-P.function.frag",
+            ],
+            &["glsl.-P.function.frag"],
+        ),
+        Case::new(
+            "P-include",
+            &[
+                "-V",
+                "--preamble-text",
+                "#extension GL_GOOGLE_include_directive : require",
+                "-I.",
+                "glsl.-P.include.frag",
+            ],
+            &["glsl.-P.include.frag", "glsl.-P.included.glsl"],
+        ),
+        Case::new(
+            "P-error",
+            &["-V", "-DX", "-P#error stop", "glsl.-P.function.frag"],
+            &["glsl.-P.function.frag"],
+        ),
+        Case::new(
+            "P-missing",
+            &["-V", "glsl.-P.function.frag", "--preamble-text"],
+            &["glsl.-P.function.frag"],
+        ),
+        Case::new(
+            "P-not-attached",
+            &["-V", "-P", "glsl.-P.function.frag"],
+            &["glsl.-P.function.frag"],
+        ),
+        Case::new(
+            "E-preamble",
+            &[
+                "-E",
+                "-P#extension GL_EXT_debug_printf : enable",
+                "-Pint y;",
+                "-DTEST1",
+                "glsl.-P.frag",
+            ],
+            &["glsl.-P.frag"],
+        )
+        .exact_stdout(),
+        Case::new(
+            "no-link-main",
             &["-V", "--no-link", TARGET_SHADER],
             &[TARGET_SHADER],
-        )
-        .rejected("SPIR-V with linkage is not supported; --object writes rglsl object modules"),
+        ),
         Case::new(
-            "config-file",
-            &["-V", TARGET_SHADER, "limits.conf"],
-            &[TARGET_SHADER],
-        )
-        .rejected("resource limit files are not supported"),
+            "no-link",
+            &["-V", "--no-link", "spv.exportFunctions.comp"],
+            &["spv.exportFunctions.comp"],
+        ),
+        Case::new(
+            "no-link-H",
+            &["-H", "--no-link", "spv.exportFunctions.comp"],
+            &["spv.exportFunctions.comp"],
+        ),
+        Case::new(
+            "no-link-o",
+            &[
+                "-V",
+                "--no-link",
+                "-o",
+                "out.spv",
+                "spv.exportFunctions.comp",
+            ],
+            &["spv.exportFunctions.comp"],
+        ),
+        Case::new(
+            "no-link-l",
+            &["-l", "--no-link", "spv.exportFunctions.comp"],
+            &["spv.exportFunctions.comp"],
+        ),
+        Case::new(
+            "no-link-validate",
+            &["--no-link", "spv.exportFunctions.comp"],
+            &["spv.exportFunctions.comp"],
+        ),
         Case::new(
             "hlsl-iomap",
             &["-V", "--hlsl-iomap", TARGET_SHADER],
@@ -774,6 +918,7 @@ fn cases() -> Vec<Case> {
 struct Run {
     exit: Exit,
     stdout: String,
+    raw_stdout: String,
     stderr: String,
     files: Vec<String>,
 }
@@ -855,6 +1000,7 @@ fn run_tool(
         exit: output.exit,
         stdout: clean(&output.stdout),
         stderr: clean(&output.stderr),
+        raw_stdout: output.stdout,
         files: after.difference(&before).cloned().collect(),
     })
 }
@@ -990,6 +1136,7 @@ fn hex_skeleton(text: &str) -> Vec<String> {
         .collect()
 }
 
+#[derive(Clone)]
 struct Environment {
     glslang: Tool,
     spirv_val: Tool,
@@ -1198,6 +1345,14 @@ fn check(env: &Environment, case: &Case) -> Result<Verdict> {
             first_difference(&reference_stderr, &ours_stderr)
         ));
     }
+    if case.exact_stdout && glslang.stdout != ours.stdout {
+        let reference: Vec<String> = glslang.stdout.lines().map(str::to_owned).collect();
+        let mine: Vec<String> = ours.stdout.lines().map(str::to_owned).collect();
+        problems.push(format!(
+            "stdout differs byte for byte: {}",
+            first_difference(&reference, &mine)
+        ));
+    }
     if case.ignore_stdout.is_none() {
         let reference_stdout = normalize(&glslang.stdout);
         let ours_stdout = normalize(&ours.stdout);
@@ -1208,7 +1363,13 @@ fn check(env: &Environment, case: &Case) -> Result<Verdict> {
             ));
         }
     }
+    if let Some(problem) = reflection::compare(&glslang.stdout, &ours.stdout) {
+        problems.push(problem);
+    }
     compare_files(env, case, &glslang, &ours, &mut problems)?;
+    if disassembly::prints_disassembly(case) {
+        disassembly::check_case(env, case, &glslang, &mut problems)?;
+    }
     Ok(if problems.is_empty() {
         match case.ignore_stdout {
             Some(why) => Verdict::Expected(format!("stdout not compared: {why}")),
@@ -1257,15 +1418,25 @@ pub fn run(root: &Path, options: &Options) -> Result<i32> {
         work: root.join("target").join("xtask").join("cli"),
         timeout: Duration::from_secs(options.timeout_secs),
     };
+    let own = Environment {
+        test_dir: root.join(reflection::OWN_DIR),
+        ..env.clone()
+    };
     let mut report = String::from("case\tverdict\tcommand\tnote\n");
     let (mut passed, mut expected, mut failed) = (0, 0, 0);
-    for case in cases() {
+    let all = cases()
+        .into_iter()
+        .chain(limits::cases())
+        .chain(reflection::glslang_cases())
+        .map(|case| (case, &env))
+        .chain(reflection::own_cases().into_iter().map(|case| (case, &own)));
+    for (case, env) in all {
         if let Some(ref filter) = options.filter {
             if !case.name.contains(filter.as_str()) {
                 continue;
             }
         }
-        let verdict = check(&env, &case)?;
+        let verdict = check(env, &case)?;
         let command = case.args.join(" ");
         let (label, note) = match verdict {
             Verdict::Pass => {
@@ -1284,6 +1455,12 @@ pub fn run(root: &Path, options: &Options) -> Result<i32> {
         println!("{label:8} {:36} {note}", case.name);
         let _ = writeln!(report, "{}\t{label}\t{command}\t{note}", case.name);
     }
+    failed += disassembly::sweep(&env, options.filter.as_deref(), &mut report)?;
+    let sweep = reflection::sweep(&env, &glslang_dir, options.filter.as_deref())?;
+    passed += sweep.passed;
+    expected += sweep.expected;
+    failed += sweep.failed;
+    report.push_str(&sweep.report);
     fs::create_dir_all(&env.work)?;
     let report_path = env.work.join("report.tsv");
     fs::write(&report_path, report)?;

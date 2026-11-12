@@ -469,8 +469,11 @@ name = "rglsl-cli"
 version = "0.1.0"
 dependencies = [
  "rglsl",
+ "rglsl-ast",
  "rglsl-link",
  "rglsl-pp",
+ "rglsl-sema",
+ "rglsl-types",
  "rspirv",
  "spirv",
 ]
@@ -503,6 +506,7 @@ version = "0.1.0"
 dependencies = [
  "rglsl",
  "rglsl-pp",
+ "rglsl-sema",
  "ron",
  "serde",
  "thiserror",
@@ -555,6 +559,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "rglsl",
+ "rglsl-cli",
  "rglsl-fuzz",
  "rglsl-link",
  "rglsl-pp",

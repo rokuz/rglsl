@@ -15,6 +15,9 @@ pub(crate) struct Output {
     line_start: bool,
     last_kind: Option<Kind>,
     last_keyword: bool,
+    previous: Option<(Kind, bool)>,
+    after_line: bool,
+    listing: bool,
     limit: usize,
 }
 
@@ -36,7 +39,7 @@ fn starts_with_digit(token: &Token) -> bool {
 }
 
 impl Output {
-    pub(crate) const fn new(root: FileId, limit: usize) -> Self {
+    pub(crate) const fn new(root: FileId, limit: usize, listing: bool) -> Self {
         Self {
             text: String::new(),
             segments: Vec::new(),
@@ -44,6 +47,9 @@ impl Output {
             line_start: true,
             last_kind: None,
             last_keyword: false,
+            previous: None,
+            after_line: false,
+            listing,
             limit,
         }
     }
@@ -56,6 +62,7 @@ impl Output {
         self.text.push('\n');
         self.line_start = true;
         self.last_kind = None;
+        self.after_line = false;
     }
 
     fn sync(&mut self, file: FileId, physical: u32) {
@@ -75,7 +82,12 @@ impl Output {
             if !self.line_start {
                 self.newline();
             }
-            self.anchor = (file, physical);
+            if self.listing {
+                self.anchor = (file, 1);
+                self.sync(file, physical);
+            } else {
+                self.anchor = (file, physical);
+            }
         }
     }
 
@@ -105,8 +117,19 @@ impl Output {
             return;
         }
         self.sync(token.at.cur_file, token.at.physical);
+        if self.line_start && self.after_line {
+            self.after_line = false;
+            self.line_start = false;
+            self.last_kind = self.previous.map(|(kind, _)| kind);
+            self.last_keyword = self.previous.is_some_and(|(_, keyword)| keyword);
+        }
         if self.line_start {
-            for _ in 0..token.at.column.min(MAX_INDENT) {
+            let column = if self.listing && token.at.expanded {
+                token.at.column.saturating_sub(1)
+            } else {
+                token.at.column
+            };
+            for _ in 0..column.min(MAX_INDENT) {
                 self.text.push(' ');
             }
         } else if let Some(last) = self.last_kind {
@@ -127,6 +150,22 @@ impl Output {
         self.last_kind = Some(token.kind);
         self.last_keyword = token.kind == Kind::Identifier
             && matches!(&*token.text, "if" | "for" | "while" | "switch");
+        self.previous = Some((token.kind, self.last_keyword));
+    }
+
+    pub(crate) fn line_directive(&mut self, text: &str, at: (FileId, u32), next: (FileId, u32)) {
+        if self.overflowed() {
+            return;
+        }
+        let (file, physical) = at;
+        self.sync(file, physical);
+        if !self.line_start {
+            self.newline();
+        }
+        self.text.push_str(text);
+        self.newline();
+        self.after_line = true;
+        self.anchor = next;
     }
 
     pub(crate) fn directive(&mut self, text: &str, at: At) {

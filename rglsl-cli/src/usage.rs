@@ -23,6 +23,8 @@ subset of glslangValidator's options that applies to Vulkan GLSL.
 2) .<stage>.glsl compound suffix, where stage options are described above
 3) .glsl without a stage: a library, linked into the programs of the other files
 4) .rglo: an rglsl object module (see --object)
+5) .conf: a configuration file of resource limits that replaces the default
+   configuration (see -c below for generating a template)
 
 Options:
   -C          accepted for compatibility (all errors are reported)
@@ -30,7 +32,7 @@ Options:
               define a pre-processor macro
   -E          print pre-processed GLSL; cannot be used with -l; errors will
               appear on stderr
-  -H          print human readable form of SPIR-V (rspirv's disassembly); turns
+  -H          print human readable form of SPIR-V (glslang's disassembly); turns
               on -V
   -I<dir>     add <dir> to the include search path; includer's directory is
               searched first, followed by left-to-right order of -I
@@ -41,6 +43,8 @@ Options:
               undefine a pre-processor macro
   -V[100]     create SPIR-V binary under Vulkan semantics; turns on -l; default
               file name is <stage>.spv (-o overrides this)
+  -c          configuration dump; creates the default configuration file
+              (redirect to a .conf file)
   -e <name> | --entry-point <name>
               specify <name> as the entry-point function name
   -g          generate debug information
@@ -51,6 +55,7 @@ Options:
   -i          accepted for compatibility; no AST is printed
   -l          link all input files together to form a single module
   -o <file>   save binary to <file>; requires a binary option (e.g., -V)
+  -q          dump reflection query database; requires -l for linking
   -r | --relaxed-errors
               accepted for compatibility; errors are not relaxed
   -s          silence syntax and semantic error reporting
@@ -74,6 +79,23 @@ Options:
   --hlsl-offsets                    allow block offsets to follow HLSL rules
   --keep-uncalled | --ku            don't eliminate uncalled functions
   --quiet                           do not print the names of the compiled files
+  --reflect-all-block-variables     reflect all variables in blocks, whether
+                                    inactive or active
+  --reflect-all-io-variables        reflect all input and output variables,
+                                    whether used or not
+  --reflect-basic-array-suffix      arrays of basic types will have trailing [0]
+  --reflect-intermediate-io         reflection includes inputs/outputs of linked
+                                    shaders rather than just vertex/fragment
+  --reflect-separate-buffers        reflect buffer variables and blocks
+                                    separately to uniforms
+  --reflect-shared-std140-ssbo      reflect std140 and shared buffer blocks
+                                    whether used or not
+  --reflect-shared-std140-ubo       reflect std140 and shared uniform blocks
+                                    whether used or not
+  --reflect-strict-array-suffix     use strict array suffix rules when
+                                    reflecting
+  --reflect-unwrap-io-blocks        unwrap input/output blocks the same as
+                                    uniform blocks
   --relax-set-binding-limits        accepted for compatibility
   --resource-set-binding [stage] <set>
                                     set descriptor set for all resources
@@ -101,7 +123,10 @@ Options:
   --shift-as-binding [stage] <num> [<set>]...
   --shift-as-bindings | --sab       base binding number for acceleration
                                     structures
-  --spirv-dis                       same as -H
+  --spirv-dis                       accepted for compatibility; rglsl has no
+                                    standard-form disassembler (as glslang
+                                    without SPIRV-Tools), so nothing is printed
+                                    and -H prints nothing either
   --spirv-val                       accepted for compatibility; rglsl validates
                                     every module it writes
   --source-entrypoint <name> | --sep <name>

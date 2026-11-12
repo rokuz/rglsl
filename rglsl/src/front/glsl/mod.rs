@@ -13,6 +13,7 @@ To begin, take a look at the documentation for the [`Frontend`].
 
 pub use error::{Error, ErrorKind, IncludeLocation, ParseErrors};
 pub use rglsl_pp::{FileId, Includer, NoIncluder};
+pub use rglsl_sema::ResourceLimits;
 
 use alloc::string::String;
 
@@ -66,6 +67,9 @@ pub struct Options {
     pub keep_uncalled: bool,
     pub resource_set: Option<u32>,
     pub binding_shifts: crate::proc::BindingShifts,
+    pub preamble: Option<String>,
+    pub export_functions: bool,
+    pub limits: ResourceLimits,
 }
 
 impl From<ShaderStage> for Options {
@@ -83,6 +87,9 @@ impl From<ShaderStage> for Options {
             keep_uncalled: false,
             resource_set: None,
             binding_shifts: crate::proc::BindingShifts::default(),
+            preamble: None,
+            export_functions: false,
+            limits: ResourceLimits::default(),
         }
     }
 }
@@ -114,6 +121,12 @@ impl From<ShaderStage> for Options {
 #[derive(Debug, Default)]
 #[non_exhaustive]
 pub struct Frontend;
+
+#[derive(Debug)]
+pub struct Analyzed {
+    pub unit: rglsl_ast::TranslationUnit,
+    pub analysis: rglsl_sema::Analysis,
+}
 
 impl Frontend {
     /// Parses a shader either outputting a shader [`Module`] or a list of
@@ -150,6 +163,16 @@ impl Frontend {
         includer: &mut dyn Includer,
     ) -> Result<crate::object::ObjectModule, ParseErrors> {
         lower::compile(options, source, root, includer)
+    }
+
+    pub fn analyze_with_includer(
+        &mut self,
+        options: &Options,
+        source: &str,
+        root: FileId,
+        includer: &mut dyn Includer,
+    ) -> Option<Analyzed> {
+        lower::analyze(options, source, root, includer)
     }
 
     #[doc(hidden)]

@@ -275,6 +275,11 @@ fn run(args: Vec<String>) -> Result<i32> {
             while let Some(directory) = args.value("--include-dir")? {
                 include_dirs.push(directory);
             }
+            let mut preamble = String::new();
+            while let Some(line) = args.value("--preamble")? {
+                preamble.push_str(&line);
+                preamble.push('\n');
+            }
             let input = args.next_positional().context("input file is required")?;
             args.finish()?;
             Ok(worker::compile_one(
@@ -286,6 +291,7 @@ fn run(args: Vec<String>) -> Result<i32> {
                     object,
                     hlsl_offsets,
                     include_dirs: &include_dirs,
+                    preamble: (!preamble.is_empty()).then_some(preamble),
                     debug: debug.as_deref(),
                 },
                 Path::new(&out),

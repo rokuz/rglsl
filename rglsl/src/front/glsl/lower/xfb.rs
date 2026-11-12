@@ -6,8 +6,6 @@ use rglsl_sema::scope::Qualifiers;
 use super::{internal, semantic, Lowerer, Result};
 use crate::{GlobalVariable, Handle, Span, Type, TypeInner, UniqueArena, XfbBinding};
 
-const MAX_STRIDE: u32 = 4 * 64;
-
 #[derive(Debug, Default)]
 pub(super) struct Xfb {
     pub mode: bool,
@@ -407,11 +405,18 @@ impl Lowerer<'_> {
                     Span::UNDEFINED,
                 ));
             }
-            if stride > MAX_STRIDE {
-                self.errors.push(semantic(
-                    format!("xfb_stride is too large: xfb_buffer {buffer}"),
-                    Span::UNDEFINED,
-                ));
+            let components = self
+                .options
+                .limits
+                .max_transform_feedback_interleaved_components;
+            if !self.object && i64::from(stride) > 4 * i64::from(components) {
+                self.errors.push(super::Error {
+                    kind: super::ErrorKind::Link(format!(
+                        "xfb_stride is too large:\n    xfb_buffer {buffer}, components (1/4 stride) needed are {}, gl_MaxTransformFeedbackInterleavedComponents is {components}",
+                        stride / 4
+                    )),
+                    meta: Span::UNDEFINED,
+                });
             }
             strides.insert(buffer, stride);
         }
