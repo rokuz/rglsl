@@ -1,0 +1,56 @@
+#version 460
+#extension GL_ARM_tensors : require
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+layout(local_size_x = 8) in;
+layout(set = 0, binding = 0) uniform readonly tensorARM<int, 1> in0;
+layout(set = 0, binding = 1) uniform writeonly tensorARM<int, 1> out0;
+layout(set = 0, binding = 2) uniform tensorARM<int, 2> pairs0;
+layout(set = 0, binding = 3) uniform readonly tensorARM<uint, 1> in1;
+layout(set = 0, binding = 4) uniform writeonly tensorARM<uint, 1> out1;
+layout(set = 0, binding = 5) uniform tensorARM<uint, 2> pairs1;
+layout(set = 0, binding = 6) uniform readonly tensorARM<int64_t, 1> in2;
+layout(set = 0, binding = 7) uniform writeonly tensorARM<int64_t, 1> out2;
+layout(set = 0, binding = 8) uniform tensorARM<int64_t, 2> pairs2;
+layout(set = 0, binding = 9) uniform readonly tensorARM<uint64_t, 1> in3;
+layout(set = 0, binding = 10) uniform writeonly tensorARM<uint64_t, 1> out3;
+layout(set = 0, binding = 11) uniform tensorARM<uint64_t, 2> pairs3;
+
+void main() {
+  uint i = gl_LocalInvocationID.x;
+  int v0;
+  tensorReadARM(in0, uint[](i), v0);
+  tensorWriteARM(out0, uint[](i), v0 * int(3) + int(5));
+  if (i < 4u) {
+    int pair0[2];
+    tensorReadARM(pairs0, uint[](i, 0u), pair0);
+    int swapped0[2] = int[2](pair0[1], pair0[0]);
+    tensorWriteARM(pairs0, uint[](i, 0u), swapped0);
+  }
+  uint v1;
+  tensorReadARM(in1, uint[](i), v1);
+  tensorWriteARM(out1, uint[](i), v1 * uint(3) + uint(5));
+  if (i < 4u) {
+    uint pair1[2];
+    tensorReadARM(pairs1, uint[](i, 0u), pair1);
+    uint swapped1[2] = uint[2](pair1[1], pair1[0]);
+    tensorWriteARM(pairs1, uint[](i, 0u), swapped1);
+  }
+  int64_t v2;
+  tensorReadARM(in2, uint[](i), v2);
+  tensorWriteARM(out2, uint[](i), v2 * int64_t(3) + int64_t(5));
+  if (i < 4u) {
+    int64_t pair2[2];
+    tensorReadARM(pairs2, uint[](i, 0u), pair2);
+    int64_t swapped2[2] = int64_t[2](pair2[1], pair2[0]);
+    tensorWriteARM(pairs2, uint[](i, 0u), swapped2);
+  }
+  uint64_t v3;
+  tensorReadARM(in3, uint[](i), v3);
+  tensorWriteARM(out3, uint[](i), v3 * uint64_t(3) + uint64_t(5));
+  if (i < 4u) {
+    uint64_t pair3[2];
+    tensorReadARM(pairs3, uint[](i, 0u), pair3);
+    uint64_t swapped3[2] = uint64_t[2](pair3[1], pair3[0]);
+    tensorWriteARM(pairs3, uint[](i, 0u), swapped3);
+  }
+}

@@ -1,0 +1,1 @@
+glslang rejects a runtime array of tensors (checkRuntimeSizable covers samplers, images, acceleration structures and blocks only); rglsl accepts it with GL_EXT_nonuniform_qualifier as a runtime array of images (docs/design/tensors.md)

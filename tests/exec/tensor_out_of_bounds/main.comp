@@ -1,0 +1,48 @@
+#version 460
+#extension GL_ARM_tensors : require
+layout(local_size_x = 1) in;
+
+layout(set = 0, binding = 0) uniform readonly tensorARM<int, 2> t;
+layout(set = 0, binding = 1) uniform writeonly tensorARM<int, 1> w;
+layout(set = 0, binding = 2) buffer Out { int r[20]; };
+
+void main() {
+  int v;
+  tensorReadARM(t, uint[](2, 3), v);
+  r[0] = v;
+  tensorReadARM(t, uint[](3, 0), v);
+  r[1] = v;
+  tensorReadARM(t, uint[](0, 4), v);
+  r[2] = v;
+  tensorReadARM(t, uint[](9, 9), v, gl_TensorOperandsOutOfBoundsValueARM, -7);
+  r[3] = v;
+  tensorReadARM(t, uint[](1, 1), v, gl_TensorOperandsOutOfBoundsValueARM, -7);
+  r[4] = v;
+
+  int a[3];
+  tensorReadARM(t, uint[](1, 2), a, gl_TensorOperandsOutOfBoundsValueARM, 99);
+  r[5] = a[0];
+  r[6] = a[1];
+  r[7] = a[2];
+  tensorReadARM(t, uint[](0, 2), a);
+  r[8] = a[0];
+  r[9] = a[1];
+  r[10] = a[2];
+  tensorReadARM(t, uint[](0, 0), a, gl_TensorOperandsNonTemporalARM);
+  r[11] = a[0];
+  r[12] = a[1];
+  r[13] = a[2];
+  tensorReadARM(t, uint[](5, 0), a,
+                gl_TensorOperandsNonTemporalARM | gl_TensorOperandsOutOfBoundsValueARM, 5);
+  r[14] = a[0];
+  r[15] = a[1];
+  r[16] = a[2];
+
+  tensorWriteARM(w, uint[](1), 11);
+  tensorWriteARM(w, uint[](5), 12);
+  tensorWriteARM(w, uint[](3), int[3](21, 22, 23));
+  tensorWriteARM(w, uint[](0), 31, gl_TensorOperandsNonTemporalARM);
+  r[17] = int(tensorSizeARM(t, 0));
+  r[18] = int(tensorSizeARM(t, 1));
+  r[19] = int(tensorSizeARM(w, 0));
+}

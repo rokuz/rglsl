@@ -30,13 +30,15 @@ usage: cargo xtask <command> [options]
 
 commands:
   oracles             fetch and build the pinned oracles into target/oracles: glslang and
-                      spirv-val, and on macOS arm64 the exec oracles (KosmicKrisp, Amber)
+                      spirv-val, and on macOS arm64 the exec oracles (KosmicKrisp, Amber,
+                      the ML emulation layer's tensor library)
       --glslang-dir DIR   use an existing glslang checkout instead of cloning it
                           (its HEAD must be the pinned commit)
-      --no-exec           do not install KosmicKrisp and Amber
-      --exec-only         only install KosmicKrisp and Amber
-      --remote            only build Amber on every remote Windows target listed in
-                          RGLSL_EXEC_REMOTE, from the pins in oracles.toml, and smoke check them
+      --no-exec           do not install the exec oracles
+      --exec-only         only install the exec oracles
+      --remote            only build Amber and the tensor layer on every remote Windows target
+                          listed in RGLSL_EXEC_REMOTE, from the pins in oracles.toml, and smoke
+                          check them (RGLSL_AMBER_SRC: build Amber from a local working copy)
   test                run the glslang corpus and write PROGRESS.md
       --glslang-dir DIR   glslang checkout whose Test/ and gtests/ are used
                           (default: target/oracles/src/glslang)

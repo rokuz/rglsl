@@ -164,6 +164,7 @@ pub enum Kind {
         dir: PathBuf,
         files: Vec<String>,
         script: String,
+        beyond_glslang: Option<String>,
     },
 }
 

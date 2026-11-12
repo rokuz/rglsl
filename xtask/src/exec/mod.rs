@@ -32,7 +32,7 @@ pub use self::batch::Outputs;
 use self::batch::{Job, JobResult};
 use self::compare::{compare, Comparison};
 use self::harness::ShaderKind;
-use self::plan::{Inputs, Plan, Refusal, ScriptPaths};
+use self::plan::{Inputs, Plan, PlannedTensor, Refusal, ScriptPaths};
 use self::reflect::Reflection;
 use self::remote::{Remote, RemoteSpec};
 use self::requirements::Need;
@@ -439,6 +439,7 @@ impl Executor {
                 Backend::Local(Amber {
                     binary,
                     icd,
+                    layer: oracles::tensor_layer(root),
                     timeout,
                 })
             }
@@ -511,6 +512,7 @@ impl Executor {
                 dir: job_dir,
                 script: "probe.amber".into(),
                 dumps: Vec::new(),
+                tensor_layer: need.tensor_layer(),
             });
         }
         let results = self.confirm_jobs(&jobs);
@@ -543,6 +545,44 @@ impl Executor {
             self.support.len(),
             if missing.is_empty() { "none".to_string() } else { missing.join(", ") }
         );
+        Ok(())
+    }
+
+    fn tensor_limits(
+        &self,
+        model: spirv::ExecutionModel,
+        tensors: &[PlannedTensor],
+    ) -> Result<(), Outcome> {
+        let Some(first) = tensors.first() else {
+            return Ok(());
+        };
+        let Some(support) = self.device.tensors else {
+            return Err(Outcome::skip(
+                SkipReason::DeviceFeature,
+                format!(
+                    "{}: VK_ARM_tensors is not available on this target (the ML emulation layer is not built: run `cargo xtask oracles`)",
+                    first.description
+                ),
+            ));
+        };
+        if model != spirv::ExecutionModel::GLCompute && support.compute_only() {
+            return Err(Outcome::skip(
+                SkipReason::DeviceFeature,
+                format!(
+                    "{}: tensors in {model:?} shaders (shaderTensorSupportedStages is compute only: the ML emulation layer lowers tensors in compute shaders only)",
+                    first.description
+                ),
+            ));
+        }
+        if let Some(tensor) = tensors.iter().find(|tensor| tensor.rank > support.max_rank) {
+            return Err(Outcome::skip(
+                SkipReason::DeviceFeature,
+                format!(
+                    "{}: rank {} exceeds maxTensorDimensionCount {}",
+                    tensor.description, tensor.rank, support.max_rank
+                ),
+            ));
+        }
         Ok(())
     }
 
@@ -637,6 +677,7 @@ impl Executor {
             dir: dir.to_path_buf(),
             script: name,
             dumps: plan.dumps().into_iter().map(str::to_string).collect(),
+            tensor_layer: requirements::tensor_layer(&plan.needs),
         })
     }
 
@@ -660,6 +701,7 @@ impl Executor {
             ..Inputs::default()
         };
         let mut plan = Plan::new(&theirs, &inputs).map_err(refusal)?;
+        self.tensor_limits(theirs.model, &plan.tensors)?;
         if let Some(need) = self.missing(&plan.needs) {
             return Err(Outcome::skip(
                 SkipReason::DeviceFeature,
@@ -779,6 +821,23 @@ impl Executor {
                 .map_err(|e| Outcome::Fail(format!("reflecting our module: {e}")))?;
             needs.extend(plan::requirements(&reflection).map_err(refusal)?);
             needs.extend(requirements::stage_needs(reflection.model));
+            let tensors: Vec<PlannedTensor> = reflection
+                .resources
+                .iter()
+                .filter_map(|resource| match &resource.kind {
+                    reflect::ResourceKind::Tensor(tensor) => Some(PlannedTensor {
+                        description: format!(
+                            "set {} binding {} {}",
+                            resource.set,
+                            resource.binding,
+                            tensor.glsl()
+                        ),
+                        rank: plan::tensor_rank(tensor),
+                    }),
+                    _ => None,
+                })
+                .collect();
+            self.tensor_limits(reflection.model, &tensors)?;
             let limits = cooperative::Limits {
                 invocations: reflection.local_size.iter().product(),
                 max_dimension: self.device.cooperative.max_dimension,
@@ -844,6 +903,7 @@ impl Executor {
                 dir,
                 script: script_name.clone(),
                 dumps: Vec::new(),
+                tensor_layer: requirements::tensor_layer(&needs),
             })
         };
         Ok((stage("rglsl", &ours)?, stage("glslang", &theirs)?))
@@ -1268,6 +1328,7 @@ mod tests {
             api_version: "1.4".into(),
             driver: driver.into(),
             cooperative: cooperative::Support::default(),
+            tensors: None,
         };
         let remote = || TargetId::Remote(String::new());
         let labels = target_labels(&[

@@ -1,0 +1,20 @@
+#version 460
+#extension GL_ARM_tensors : require
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+layout(local_size_x = 8) in;
+layout(set = 0, binding = 0) uniform readonly tensorARM<double, 1> in0;
+layout(set = 0, binding = 1) uniform writeonly tensorARM<double, 1> out0;
+layout(set = 0, binding = 2) uniform tensorARM<double, 2> pairs0;
+
+void main() {
+  uint i = gl_LocalInvocationID.x;
+  double v0;
+  tensorReadARM(in0, uint[](i), v0);
+  tensorWriteARM(out0, uint[](i), v0 * double(2.0) - double(1.0));
+  if (i < 4u) {
+    double pair0[2];
+    tensorReadARM(pairs0, uint[](i, 0u), pair0);
+    double swapped0[2] = double[2](pair0[1], pair0[0]);
+    tensorWriteARM(pairs0, uint[](i, 0u), swapped0);
+  }
+}

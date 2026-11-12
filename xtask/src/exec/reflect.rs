@@ -2358,7 +2358,7 @@ mod tests {
     }
 
     #[test]
-    fn reflects_tensors_and_refuses_them_precisely() -> anyhow::Result<()> {
+    fn reflects_and_plans_tensors() -> anyhow::Result<()> {
         let constant = StorageClass::UniformConstant as u32;
         let words = module(&[
             op(Op::Capability, &[Capability::Shader as u32])?,
@@ -2461,28 +2461,56 @@ mod tests {
                 ),
             ]
         );
-        let Err(crate::exec::plan::Refusal::Capability(reason)) =
-            crate::exec::plan::requirements(&reflection)
-        else {
-            panic!("tensors must be refused as a capability");
-        };
+        let needs = crate::exec::plan::requirements(&reflection)
+            .map_err(|refusal| anyhow::anyhow!("{refusal:?}"))?;
+        assert!(needs.contains(&crate::exec::requirements::Need::Feature(
+            "TensorFeaturesARM.tensors"
+        )));
+        assert!(crate::exec::requirements::tensor_layer(&needs));
+        let plan = crate::exec::plan::Plan::new(&reflection, &crate::exec::plan::Inputs::default())
+            .map_err(|refusal| anyhow::anyhow!("{refusal:?}"))?;
+        let text = &plan.declarations;
         assert!(
-            reason.contains("set 0 binding 1 tensorARM<bfloat16_t, 2> readonly[3]"),
-            "{reason}"
+            text.contains("TENSOR r0_1_0 DATA_TYPE uint16 ENCODING BFLOAT16 DIMS 4 5 FILE BINARY"),
+            "{text}"
         );
         assert!(
-            reason.contains(
-                "set 2 binding 0 tensorARM<int32_t, specialization constant 4 = 5> writeonly"
-            ),
-            "{reason}"
+            text.contains("TENSOR r0_1_1 DATA_TYPE uint16 ENCODING BFLOAT16 DIMS 5 6 FILE BINARY"),
+            "{text}"
         );
-        assert!(reason.contains("VK_ARM_tensors"), "{reason}");
         assert!(
-            reason.contains(
-                "set 3 binding 0 tensorARM<int32_t, specialization constant 4 = 5> read/write[] (runtime array)"
-            ),
-            "{reason}"
+            text.contains("TENSOR r2_0 DATA_TYPE int32 DIMS 4 5 6 7 8 FILE BINARY"),
+            "{text}"
         );
+        assert!(plan.bindings.contains(
+            "BIND BUFFER_ARRAY r0_1_0 r0_1_1 r0_1_2 AS tensor DESCRIPTOR_SET 0 BINDING 1"
+        ));
+        assert!(plan
+            .bindings
+            .contains("BIND BUFFER r2_0 AS tensor DESCRIPTOR_SET 2 BINDING 0"));
+        let ranks: Vec<u32> = plan.tensors.iter().map(|tensor| tensor.rank).collect();
+        assert_eq!(ranks, [2, 5, 5]);
+        assert!(plan.tensors.first().is_some_and(
+            |tensor| tensor.description == "set 0 binding 1 tensorARM<bfloat16_t, 2> readonly"
+        ));
+        let targets: Vec<&str> = plan
+            .targets
+            .iter()
+            .map(|target| target.buffer.as_str())
+            .collect();
+        assert_eq!(targets.first(), Some(&"r2_0"));
+        assert!(!targets.contains(&"r0_1_0"));
+        let target = plan
+            .targets
+            .first()
+            .ok_or_else(|| anyhow::anyhow!("no tensor target"))?;
+        assert_eq!(target.slots.len(), 4 * 5 * 6 * 7 * 8);
+        let data = plan
+            .files
+            .iter()
+            .find(|(name, _)| name == "r0_1_0.bin")
+            .ok_or_else(|| anyhow::anyhow!("no tensor data"))?;
+        assert_eq!(data.1.len(), 4 * 5 * 2);
         Ok(())
     }
 

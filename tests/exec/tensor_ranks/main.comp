@@ -1,0 +1,151 @@
+#version 460
+#extension GL_ARM_tensors : require
+layout(local_size_x = 64) in;
+layout(set = 0, binding = 0) uniform readonly tensorARM<int, 1> i1;
+layout(set = 0, binding = 1) uniform readonly tensorARM<int, 2> i2;
+layout(set = 0, binding = 2) uniform readonly tensorARM<int, 3> i3;
+layout(set = 0, binding = 3) uniform readonly tensorARM<int, 4> i4;
+layout(set = 0, binding = 4) uniform readonly tensorARM<int, 5> i5;
+layout(set = 0, binding = 5) uniform readonly tensorARM<int, 6> i6;
+layout(set = 0, binding = 6) uniform writeonly tensorARM<int, 1> o1;
+layout(set = 0, binding = 7) uniform writeonly tensorARM<int, 2> o2;
+layout(set = 0, binding = 8) uniform writeonly tensorARM<int, 3> o3;
+layout(set = 0, binding = 9) uniform writeonly tensorARM<int, 4> o4;
+layout(set = 0, binding = 10) uniform writeonly tensorARM<int, 5> o5;
+layout(set = 0, binding = 11) uniform writeonly tensorARM<int, 6> o6;
+layout(set = 0, binding = 12) buffer Sizes { uint sizes[21]; };
+
+void copy1(uint index) {
+  uint rest = index;
+  uint c[1];
+  c[0] = rest % tensorSizeARM(i1, 0);
+  rest /= tensorSizeARM(i1, 0);
+  if (rest == 0u) {
+    int v;
+    tensorReadARM(i1, c, v);
+    tensorWriteARM(o1, c, v * 3 + 1);
+  }
+}
+
+void copy2(uint index) {
+  uint rest = index;
+  uint c[2];
+  c[1] = rest % tensorSizeARM(i2, 1);
+  rest /= tensorSizeARM(i2, 1);
+  c[0] = rest % tensorSizeARM(i2, 0);
+  rest /= tensorSizeARM(i2, 0);
+  if (rest == 0u) {
+    int v;
+    tensorReadARM(i2, c, v);
+    tensorWriteARM(o2, c, v * 3 + 2);
+  }
+}
+
+void copy3(uint index) {
+  uint rest = index;
+  uint c[3];
+  c[2] = rest % tensorSizeARM(i3, 2);
+  rest /= tensorSizeARM(i3, 2);
+  c[1] = rest % tensorSizeARM(i3, 1);
+  rest /= tensorSizeARM(i3, 1);
+  c[0] = rest % tensorSizeARM(i3, 0);
+  rest /= tensorSizeARM(i3, 0);
+  if (rest == 0u) {
+    int v;
+    tensorReadARM(i3, c, v);
+    tensorWriteARM(o3, c, v * 3 + 3);
+  }
+}
+
+void copy4(uint index) {
+  uint rest = index;
+  uint c[4];
+  c[3] = rest % tensorSizeARM(i4, 3);
+  rest /= tensorSizeARM(i4, 3);
+  c[2] = rest % tensorSizeARM(i4, 2);
+  rest /= tensorSizeARM(i4, 2);
+  c[1] = rest % tensorSizeARM(i4, 1);
+  rest /= tensorSizeARM(i4, 1);
+  c[0] = rest % tensorSizeARM(i4, 0);
+  rest /= tensorSizeARM(i4, 0);
+  if (rest == 0u) {
+    int v;
+    tensorReadARM(i4, c, v);
+    tensorWriteARM(o4, c, v * 3 + 4);
+  }
+}
+
+void copy5(uint index) {
+  uint rest = index;
+  uint c[5];
+  c[4] = rest % tensorSizeARM(i5, 4);
+  rest /= tensorSizeARM(i5, 4);
+  c[3] = rest % tensorSizeARM(i5, 3);
+  rest /= tensorSizeARM(i5, 3);
+  c[2] = rest % tensorSizeARM(i5, 2);
+  rest /= tensorSizeARM(i5, 2);
+  c[1] = rest % tensorSizeARM(i5, 1);
+  rest /= tensorSizeARM(i5, 1);
+  c[0] = rest % tensorSizeARM(i5, 0);
+  rest /= tensorSizeARM(i5, 0);
+  if (rest == 0u) {
+    int v;
+    tensorReadARM(i5, c, v);
+    tensorWriteARM(o5, c, v * 3 + 5);
+  }
+}
+
+void copy6(uint index) {
+  uint rest = index;
+  uint c[6];
+  c[5] = rest % tensorSizeARM(i6, 5);
+  rest /= tensorSizeARM(i6, 5);
+  c[4] = rest % tensorSizeARM(i6, 4);
+  rest /= tensorSizeARM(i6, 4);
+  c[3] = rest % tensorSizeARM(i6, 3);
+  rest /= tensorSizeARM(i6, 3);
+  c[2] = rest % tensorSizeARM(i6, 2);
+  rest /= tensorSizeARM(i6, 2);
+  c[1] = rest % tensorSizeARM(i6, 1);
+  rest /= tensorSizeARM(i6, 1);
+  c[0] = rest % tensorSizeARM(i6, 0);
+  rest /= tensorSizeARM(i6, 0);
+  if (rest == 0u) {
+    int v;
+    tensorReadARM(i6, c, v);
+    tensorWriteARM(o6, c, v * 3 + 6);
+  }
+}
+
+void main() {
+  uint i = gl_LocalInvocationID.x;
+  copy1(i);
+  copy2(i);
+  copy3(i);
+  copy4(i);
+  copy5(i);
+  copy6(i);
+  if (i == 0u) {
+    sizes[0] = tensorSizeARM(i1, 0);
+    sizes[1] = tensorSizeARM(i2, 0);
+    sizes[2] = tensorSizeARM(i2, 1);
+    sizes[3] = tensorSizeARM(i3, 0);
+    sizes[4] = tensorSizeARM(i3, 1);
+    sizes[5] = tensorSizeARM(i3, 2);
+    sizes[6] = tensorSizeARM(i4, 0);
+    sizes[7] = tensorSizeARM(i4, 1);
+    sizes[8] = tensorSizeARM(i4, 2);
+    sizes[9] = tensorSizeARM(i4, 3);
+    sizes[10] = tensorSizeARM(i5, 0);
+    sizes[11] = tensorSizeARM(i5, 1);
+    sizes[12] = tensorSizeARM(i5, 2);
+    sizes[13] = tensorSizeARM(i5, 3);
+    sizes[14] = tensorSizeARM(i5, 4);
+    sizes[15] = tensorSizeARM(i6, 0);
+    sizes[16] = tensorSizeARM(i6, 1);
+    sizes[17] = tensorSizeARM(i6, 2);
+    sizes[18] = tensorSizeARM(i6, 3);
+    sizes[19] = tensorSizeARM(i6, 4);
+    sizes[20] = tensorSizeARM(i6, 5);
+  }
+}

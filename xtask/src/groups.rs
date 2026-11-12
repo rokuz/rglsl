@@ -206,6 +206,7 @@ pub fn load_own(root: &Path) -> Result<Vec<Case>> {
 }
 
 pub const EXEC_SCRIPT: &str = "test.amber";
+pub const BEYOND_GLSLANG: &str = "beyond-glslang";
 
 pub fn load_exec(root: &Path) -> Result<Vec<Case>> {
     let dir = root.join("tests").join("exec");
@@ -252,6 +253,19 @@ pub fn load_exec(root: &Path) -> Result<Vec<Case>> {
             })?,
             Err(_) => Target::VULKAN_DEFAULT,
         };
+        let beyond_glslang = match fs::read_to_string(test.join(BEYOND_GLSLANG)) {
+            Ok(text) => {
+                let reason = text.trim().to_string();
+                if reason.is_empty() {
+                    anyhow::bail!(
+                        "{}: `{BEYOND_GLSLANG}` must say why glslang rejects the test",
+                        test.display()
+                    );
+                }
+                Some(reason)
+            }
+            Err(_) => None,
+        };
         cases.push(Case {
             name: format!("exec/{test_name}"),
             path: test.join(first),
@@ -264,6 +278,7 @@ pub fn load_exec(root: &Path) -> Result<Vec<Case>> {
                 dir: test.clone(),
                 files,
                 script: EXEC_SCRIPT.to_string(),
+                beyond_glslang,
             },
         });
     }

@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use spirv::{BuiltIn, Capability, Dim, ExecutionMode, ExecutionModel, ImageFormat, Op};
 
-use super::data::{fill_random, fill_values, Rng, Value};
+use super::data::{fill_random, fill_values, write_scalar, Rng, Value};
 use super::glsl;
 use super::harness::{self, Attachment, ShaderKind, MAX_ATTACHMENTS, PATCH_VERTICES};
 use super::mesh;
@@ -12,7 +12,7 @@ use super::rays::{self, Geometry, RayPipeline, ShaderRef};
 use super::references::{self, Root, Table};
 use super::reflect::{
     AddressBuffer, ImageType, Layout, Reflection, Resource, ResourceKind, Scalar, ScalarKind, Slot,
-    Varying, Xfb, XfbField,
+    TensorElement, TensorRank, TensorType, Varying, Xfb, XfbField,
 };
 use super::requirements::{self, Need, Requirement};
 
@@ -83,6 +83,99 @@ pub struct Plan {
     pub addresses: Vec<(String, u32)>,
     pub roots: Vec<Root>,
     pub reference_table: Option<Table>,
+    pub tensors: Vec<PlannedTensor>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlannedTensor {
+    pub description: String,
+    pub rank: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TensorFormat {
+    data_type: &'static str,
+    encoding: Option<&'static str>,
+    slot: Scalar,
+}
+
+const MAX_TENSOR_ELEMENTS: u64 = 1 << 18;
+const TENSOR_BASE_DIMENSION: u64 = 4;
+
+fn tensor_format(element: TensorElement) -> Result<TensorFormat, Refusal> {
+    let plain = |data_type, kind, width| TensorFormat {
+        data_type,
+        encoding: None,
+        slot: scalar(kind, width),
+    };
+    let encoded = |data_type, encoding, width| TensorFormat {
+        data_type,
+        encoding: Some(encoding),
+        slot: scalar(ScalarKind::Uint, width),
+    };
+    Ok(match (element.kind, element.width, element.encoding) {
+        (ScalarKind::Bool, _, _) => encoded("uint8", "BOOL", 8),
+        (ScalarKind::Sint, 8, _) => plain("int8", ScalarKind::Sint, 8),
+        (ScalarKind::Sint, 16, _) => plain("int16", ScalarKind::Sint, 16),
+        (ScalarKind::Sint, 32, _) => plain("int32", ScalarKind::Sint, 32),
+        (ScalarKind::Sint, 64, _) => plain("int64", ScalarKind::Sint, 64),
+        (ScalarKind::Uint, 8, _) => plain("uint8", ScalarKind::Uint, 8),
+        (ScalarKind::Uint, 16, _) => plain("uint16", ScalarKind::Uint, 16),
+        (ScalarKind::Uint, 32, _) => plain("uint32", ScalarKind::Uint, 32),
+        (ScalarKind::Uint, 64, _) => plain("uint64", ScalarKind::Uint, 64),
+        (ScalarKind::Float, 16, None) => plain("float16", ScalarKind::Float, 16),
+        (ScalarKind::Float, 32, None) => plain("float", ScalarKind::Float, 32),
+        (ScalarKind::Float, 64, None) => plain("double", ScalarKind::Float, 64),
+        (ScalarKind::Float, 16, Some(0)) => encoded("uint16", "BFLOAT16", 16),
+        (ScalarKind::Float, 8, Some(4214)) => encoded("uint8", "FLOAT8_E4M3", 8),
+        (ScalarKind::Float, 8, Some(4215)) => encoded("uint8", "FLOAT8_E5M2", 8),
+        _ => return Err(Refusal::Binding(format!("tensors of {}", element.glsl()))),
+    })
+}
+
+pub const fn tensor_rank(tensor: &TensorType) -> u32 {
+    match tensor.rank {
+        TensorRank::Constant(rank) | TensorRank::Specialized { default: rank, .. } => rank,
+    }
+}
+
+pub fn tensor_dimensions(rank: u32, element: usize) -> Vec<u64> {
+    let shift = u64::try_from(element % 3).unwrap_or(0);
+    let dims: Vec<u64> = (0..u64::from(rank))
+        .map(|axis| TENSOR_BASE_DIMENSION + axis + shift)
+        .collect();
+    let mut total: u64 = 1;
+    for dim in &dims {
+        total = total.saturating_mul(*dim);
+    }
+    if total <= MAX_TENSOR_ELEMENTS {
+        dims
+    } else {
+        (0..rank).map(|_| 2).collect()
+    }
+}
+
+fn tensor_values(format: &TensorFormat, count: u64, rng: &mut Rng) -> Vec<u8> {
+    let bytes = format.slot.width / 8;
+    let size = usize::try_from(count.saturating_mul(u64::from(bytes))).unwrap_or(0);
+    let mut data = vec![0u8; size];
+    let float = scalar(ScalarKind::Float, 32);
+    for index in 0..count {
+        let offset = u32::try_from(index * u64::from(bytes)).unwrap_or(u32::MAX);
+        let value = match format.encoding {
+            Some("BOOL") => Value::Int(i64::try_from(rng.below(2)).unwrap_or(0)),
+            Some("BFLOAT16") => {
+                let value = Value::random(float, rng).as_f64() as f32;
+                Value::Int(i64::from(value.to_bits() >> 16))
+            }
+            Some(_) => {
+                Value::Int(i64::try_from(rng.below(0x70) | (rng.below(2) << 7)).unwrap_or(0))
+            }
+            None => Value::random(format.slot, rng),
+        };
+        write_scalar(&mut data, offset, format.slot, value);
+    }
+    data
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -485,44 +578,6 @@ fn buffer_bytes(
     bytes
 }
 
-pub fn tensor_refusal(reflection: &Reflection) -> String {
-    let tensors: Vec<String> = reflection
-        .resources
-        .iter()
-        .filter_map(|resource| match &resource.kind {
-            ResourceKind::Tensor(tensor) => Some(match resource.count {
-                Some(_) if tensor.runtime_array => format!(
-                    "set {} binding {} {}[] (runtime array)",
-                    resource.set,
-                    resource.binding,
-                    tensor.glsl()
-                ),
-                Some(count) => format!(
-                    "set {} binding {} {}[{count}]",
-                    resource.set,
-                    resource.binding,
-                    tensor.glsl()
-                ),
-                None => format!(
-                    "set {} binding {} {}",
-                    resource.set,
-                    resource.binding,
-                    tensor.glsl()
-                ),
-            }),
-            _ => None,
-        })
-        .collect();
-    let resources = if tensors.is_empty() {
-        "tensors outside descriptor bindings".to_string()
-    } else {
-        tensors.join(", ")
-    };
-    format!(
-        "TensorsARM ({resources}): no exec target exposes VK_ARM_tensors and Amber cannot \
-         create, bind, upload or read back tensors (docs/design/tensors.md)"
-    )
-}
 const UNSIZED_ACCESSES: [Op; 4] = [
     Op::CooperativeMatrixLoadTensorNV,
     Op::CooperativeMatrixStoreTensorNV,
@@ -541,9 +596,6 @@ pub fn requirements(reflection: &Reflection) -> Result<BTreeSet<Need>, Refusal> 
         return Err(Refusal::Capability(format!(
             "{name} (newer than the harness's SPIR-V tables; Amber cannot enable it)"
         )));
-    }
-    if reflection.capabilities.contains(&Capability::TensorsARM) {
-        return Err(Refusal::Capability(tensor_refusal(reflection)));
     }
     let mut needs = BTreeSet::new();
     for capability in &reflection.capabilities {
@@ -684,6 +736,7 @@ impl Plan {
             addresses: Vec::new(),
             roots: Vec::new(),
             reference_table: None,
+            tensors: Vec::new(),
         };
         let mut rng = Rng::from_text(&inputs.seed);
         let invocations = reflection
@@ -961,8 +1014,52 @@ impl Plan {
                         images.join(" ")
                     );
                 }
-                ResourceKind::Tensor(_) => {
-                    return Err(Refusal::Capability(tensor_refusal(reflection)));
+                ResourceKind::Tensor(tensor) => {
+                    let format = tensor_format(tensor.element)?;
+                    let rank = tensor_rank(tensor);
+                    if rank == 0 {
+                        return Err(Refusal::Binding("a tensor of rank 0".into()));
+                    }
+                    plan.tensors.push(PlannedTensor {
+                        description: format!(
+                            "set {} binding {} {}",
+                            resource.set,
+                            resource.binding,
+                            tensor.glsl()
+                        ),
+                        rank,
+                    });
+                    for (index, name) in names.iter().enumerate() {
+                        let dims = tensor_dimensions(rank, index);
+                        let count = dims.iter().product::<u64>();
+                        let bytes = tensor_values(&format, count, &mut rng);
+                        let file = format!("{name}.bin");
+                        let encoding = format
+                            .encoding
+                            .map_or_else(String::new, |encoding| format!(" ENCODING {encoding}"));
+                        let dims_text: Vec<String> = dims.iter().map(u64::to_string).collect();
+                        let _ = writeln!(
+                            plan.declarations,
+                            "TENSOR {name} DATA_TYPE {}{encoding} DIMS {} FILE BINARY {DATA_DIR}/{file}",
+                            format.data_type,
+                            dims_text.join(" ")
+                        );
+                        plan.files.push((file, bytes));
+                        if tensor.writable {
+                            let step = format.slot.width / 8;
+                            let slots = (0..u32::try_from(count).unwrap_or(0))
+                                .map(|element| Slot {
+                                    offset: element * step,
+                                    scalar: format.slot,
+                                })
+                                .collect();
+                            plan.add_target(label("tensor", index), name, slots);
+                        }
+                    }
+                    if tensor.writable {
+                        writes = true;
+                    }
+                    let _ = writeln!(plan.bindings, "  BIND {bind} {list} AS tensor {location}");
                 }
                 ResourceKind::Unsupported(reason) => return Err(Refusal::Binding(reason.clone())),
             }

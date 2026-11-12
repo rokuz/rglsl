@@ -21,6 +21,14 @@ impl Need {
             Self::Extension(name) => format!("DEVICE_EXTENSION {name}"),
         }
     }
+
+    pub fn tensor_layer(self) -> bool {
+        matches!(self, Self::Feature(name) if name.starts_with("TensorFeaturesARM."))
+    }
+}
+
+pub fn tensor_layer<'a>(needs: impl IntoIterator<Item = &'a Need>) -> bool {
+    needs.into_iter().any(|need| need.tensor_layer())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,6 +72,10 @@ pub const COOPERATIVE_MATRIX_WORKGROUP_SCOPE: Need =
 pub const COOPERATIVE_MATRIX_FLEXIBLE_DIMENSIONS: Need =
     F("CooperativeMatrix2FeaturesNV.cooperativeMatrixFlexibleDimensions");
 pub const MULTIVIEW: Need = F("MultiviewFeatures.multiview");
+pub const TENSORS: [Need; 2] = [
+    F("TensorFeaturesARM.tensors"),
+    F("TensorFeaturesARM.shaderTensorAccess"),
+];
 pub const MULTIVIEW_MESH: Need = F("MeshShaderFeaturesEXT.multiviewMeshShader");
 pub const MESH_SHADER: Need = F("MeshShaderFeaturesEXT.meshShader");
 pub const TASK_SHADER: Need = F("MeshShaderFeaturesEXT.taskShader");
@@ -318,6 +330,13 @@ pub fn capability(capability: Capability) -> Requirement {
             "ShaderBfloat16FeaturesKHR.shaderBFloat16CooperativeMatrix"
         )],
         C::Float8EXT => needs![F("ShaderFloat8FeaturesEXT.shaderFloat8")],
+        C::TensorsARM => Requirement::Needs(&TENSORS),
+        C::StorageTensorArrayDynamicIndexingARM => needs![F(
+            "TensorFeaturesARM.shaderStorageTensorArrayDynamicIndexing"
+        )],
+        C::StorageTensorArrayNonUniformIndexingARM => needs![F(
+            "TensorFeaturesARM.shaderStorageTensorArrayNonUniformIndexing"
+        )],
         C::Float8CooperativeMatrixEXT => {
             needs![F("ShaderFloat8FeaturesEXT.shaderFloat8CooperativeMatrix")]
         }
@@ -480,6 +499,7 @@ pub fn extension(name: &str) -> bool {
             | "SPV_KHR_relaxed_extended_instruction"
             | "SPV_EXT_fragment_invocation_density"
             | "SPV_NV_shading_rate"
+            | "SPV_ARM_tensors"
     )
 }
 
