@@ -148,39 +148,57 @@ fn sampled_format(image: &ImageType) -> ImageFormatInfo {
     }
 }
 
+const IMAGE_LAYERS: u32 = 3;
+const CUBE_ARRAY_LAYERS: u32 = 12;
+
 fn image_extent(image: &ImageType) -> Result<(String, u32), Refusal> {
-    if image.arrayed {
-        return Err(Refusal::Binding(
-            "arrayed images (Amber images have a single layer)".into(),
-        ));
-    }
     if image.multisampled {
         return Err(Refusal::Binding(
             "multisampled images (Amber cannot fill them with data)".into(),
         ));
     }
-    if image.depth && image.sampled != 2 {
-        return Err(Refusal::Binding(
-            "depth-comparison images (Amber has no comparison samplers for them)".into(),
-        ));
-    }
-    match image.dim {
-        Dim::Dim1D => Ok(("DIM_1D WIDTH 8".into(), 8)),
-        Dim::Dim2D => Ok(("DIM_2D WIDTH 8 HEIGHT 8".into(), 64)),
-        Dim::Dim3D => Ok(("DIM_3D WIDTH 4 HEIGHT 4 DEPTH 4".into(), 64)),
-        Dim::DimCube => Err(Refusal::Binding(
-            "cube images (Amber has no cube image views)".into(),
+    match (image.dim, image.arrayed) {
+        (Dim::Dim1D, false) => Ok(("DIM_1D WIDTH 8".into(), 8)),
+        (Dim::Dim1D, true) => Ok((
+            format!("DIM_1D_ARRAY WIDTH 8 LAYERS {IMAGE_LAYERS}"),
+            8 * IMAGE_LAYERS,
         )),
-        Dim::DimRect => Err(Refusal::Binding("rectangle images".into())),
-        other => Err(Refusal::Binding(format!("{other:?} images"))),
+        (Dim::Dim2D, false) => Ok(("DIM_2D WIDTH 8 HEIGHT 8".into(), 64)),
+        (Dim::Dim2D, true) => Ok((
+            format!("DIM_2D_ARRAY WIDTH 8 HEIGHT 8 LAYERS {IMAGE_LAYERS}"),
+            64 * IMAGE_LAYERS,
+        )),
+        (Dim::Dim3D, false) => Ok(("DIM_3D WIDTH 4 HEIGHT 4 DEPTH 4".into(), 64)),
+        (Dim::DimCube, false) => Ok(("DIM_CUBE WIDTH 4 HEIGHT 4".into(), 96)),
+        (Dim::DimCube, true) => Ok((
+            format!("DIM_CUBE_ARRAY WIDTH 4 HEIGHT 4 LAYERS {CUBE_ARRAY_LAYERS}"),
+            16 * CUBE_ARRAY_LAYERS,
+        )),
+        (Dim::DimRect, _) => Err(Refusal::Binding("rectangle images".into())),
+        (other, _) => Err(Refusal::Binding(format!(
+            "{other:?} images{}",
+            if image.arrayed { " (arrayed)" } else { "" }
+        ))),
     }
 }
+
+const fn compares_depth(image: &ImageType) -> bool {
+    image.depth && image.sampled != 2
+}
+
+const DEPTH_FORMAT: ImageFormatInfo = ImageFormatInfo {
+    name: "D32_SFLOAT",
+    scalar: scalar(ScalarKind::Float, 32),
+    components: 1,
+};
 
 fn image_values(info: &ImageFormatInfo, texels: u32, rng: &mut Rng) -> String {
     let mut out = String::new();
     for texel in 0..texels {
         for _ in 0..info.components {
-            let value = if info.scalar.width == 8 && info.name.ends_with("UNORM") {
+            let value = if info.name == DEPTH_FORMAT.name {
+                Value::Float(f64::from(u32::try_from(rng.below(1025)).unwrap_or(0)) / 1024.0)
+            } else if info.scalar.width == 8 && info.name.ends_with("UNORM") {
                 Value::Int(i64::try_from(rng.below(256)).unwrap_or(0))
             } else {
                 Value::random(info.scalar, rng)
@@ -538,6 +556,7 @@ impl Plan {
             .fold(1u32, |acc, size| acc.saturating_mul(*size))
             .min(4096);
         let mut sampler_declared = false;
+        let mut comparison_declared = false;
         let mut writes = false;
         let mut scene: Option<Geometry> = None;
 
@@ -650,7 +669,18 @@ impl Plan {
                     if image.scalar.width != 32 {
                         return Err(Refusal::Binding("images with non-32-bit texels".into()));
                     }
-                    let info = sampled_format(image);
+                    let comparison = compares_depth(image);
+                    if comparison && matches!(resource.kind, ResourceKind::SampledImage(_)) {
+                        return Err(Refusal::Binding(
+                            "depth-comparison images with a separate sampler (which sampler compares is not known)"
+                                .into(),
+                        ));
+                    }
+                    let info = if comparison {
+                        DEPTH_FORMAT
+                    } else {
+                        sampled_format(image)
+                    };
                     let (extent, texels) = image_extent(image)?;
                     for name in &names {
                         let data = image_values(&info, texels, &mut rng);
@@ -666,15 +696,19 @@ impl Plan {
                             "  BIND {bind} {list} AS sampled_image {location}"
                         );
                     } else {
-                        plan.declare_sampler(&mut sampler_declared);
+                        let sampler = if comparison {
+                            plan.declare_comparison_sampler(&mut comparison_declared)
+                        } else {
+                            plan.declare_sampler(&mut sampler_declared)
+                        };
                         let _ = writeln!(
                             plan.bindings,
-                            "  BIND {bind} {list} AS combined_image_sampler SAMPLER smp {location}"
+                            "  BIND {bind} {list} AS combined_image_sampler SAMPLER {sampler} {location}"
                         );
                     }
                 }
                 ResourceKind::Sampler => {
-                    plan.declare_sampler(&mut sampler_declared);
+                    let _ = plan.declare_sampler(&mut sampler_declared);
                     match resource.count {
                         None | Some(1) => {
                             let _ = writeln!(plan.bindings, "  BIND SAMPLER smp {location}");
@@ -1128,11 +1162,21 @@ impl Plan {
         self.files.push((file, bytes));
     }
 
-    fn declare_sampler(&mut self, declared: &mut bool) {
+    fn declare_sampler(&mut self, declared: &mut bool) -> &'static str {
         if !*declared {
             self.declarations.push_str("SAMPLER smp\n");
             *declared = true;
         }
+        "smp"
+    }
+
+    fn declare_comparison_sampler(&mut self, declared: &mut bool) -> &'static str {
+        if !*declared {
+            self.declarations
+                .push_str("SAMPLER smpc COMPARE on COMPARE_OP less_or_equal\n");
+            *declared = true;
+        }
+        "smpc"
     }
 
     fn add_vertex_input(&mut self, location: u32, scalar: Scalar, count: u32, rng: &mut Rng) {
@@ -2210,15 +2254,96 @@ mod tests {
             binding: 0,
             count: None,
             kind: ResourceKind::SampledImage(ImageType {
-                dim: Dim::DimCube,
+                dim: Dim::Dim2D,
+                multisampled: true,
                 sampled: 1,
                 ..image
             }),
         });
         let Err(Refusal::Binding(reason)) = Plan::new(&module, &Inputs::default()) else {
-            panic!("cube images are refused");
+            panic!("multisampled images are refused");
         };
-        assert!(reason.contains("Amber"));
+        assert!(reason.contains("multisampled"));
+        Ok(())
+    }
+
+    #[test]
+    fn layered_cube_and_comparison_images_are_declared() -> anyhow::Result<()> {
+        let image = ImageType {
+            dim: Dim::DimCube,
+            depth: false,
+            arrayed: false,
+            multisampled: false,
+            sampled: 1,
+            format: ImageFormat::Unknown,
+            scalar: F32,
+        };
+        let mut module = reflection(ExecutionModel::GLCompute);
+        module.resources = vec![
+            Resource {
+                set: 0,
+                binding: 0,
+                count: None,
+                kind: ResourceKind::CombinedImageSampler(image),
+            },
+            Resource {
+                set: 0,
+                binding: 1,
+                count: None,
+                kind: ResourceKind::CombinedImageSampler(ImageType {
+                    dim: Dim::Dim2D,
+                    arrayed: true,
+                    depth: true,
+                    ..image
+                }),
+            },
+            Resource {
+                set: 0,
+                binding: 2,
+                count: None,
+                kind: ResourceKind::StorageImage(ImageType {
+                    dim: Dim::DimCube,
+                    arrayed: true,
+                    sampled: 2,
+                    format: ImageFormat::R32f,
+                    ..image
+                }),
+            },
+        ];
+        let plan = planned(&module, &Inputs::default())?;
+        assert!(plan
+            .declarations
+            .contains("IMAGE r0_0 FORMAT R32G32B32A32_SFLOAT DIM_CUBE WIDTH 4 HEIGHT 4 DATA\n"));
+        assert!(plan.declarations.contains(
+            "IMAGE r0_1 FORMAT D32_SFLOAT DIM_2D_ARRAY WIDTH 8 HEIGHT 8 LAYERS 3 DATA\n"
+        ));
+        assert!(plan.declarations.contains(
+            "IMAGE r0_2 FORMAT R32_SFLOAT DIM_CUBE_ARRAY WIDTH 4 HEIGHT 4 LAYERS 12 DATA\n"
+        ));
+        assert!(plan
+            .declarations
+            .contains("SAMPLER smpc COMPARE on COMPARE_OP less_or_equal\n"));
+        assert!(plan.bindings.contains(
+            "  BIND BUFFER r0_1 AS combined_image_sampler SAMPLER smpc DESCRIPTOR_SET 0 BINDING 1\n"
+        ));
+        assert!(plan.bindings.contains(
+            "  BIND BUFFER r0_0 AS combined_image_sampler SAMPLER smp DESCRIPTOR_SET 0 BINDING 0\n"
+        ));
+        assert_eq!(plan.targets.len(), 1);
+        assert_eq!(plan.targets[0].slots.len(), 16 * 12);
+        let depth = plan
+            .declarations
+            .split("IMAGE r0_1 FORMAT D32_SFLOAT")
+            .nth(1)
+            .and_then(|rest| rest.split("DATA\n").nth(1))
+            .and_then(|rest| rest.split("END").next())
+            .ok_or_else(|| anyhow::anyhow!("no depth image data"))?;
+        let values = depth
+            .split_whitespace()
+            .filter_map(|word| word.parse::<f64>().ok())
+            .collect::<Vec<_>>();
+        assert_eq!(values.len(), 192);
+        assert!(values.iter().all(|v| (0.0..=1.0).contains(v)));
         Ok(())
     }
 }
