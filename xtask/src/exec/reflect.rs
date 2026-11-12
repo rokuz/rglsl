@@ -296,6 +296,22 @@ pub struct AddressField {
     pub offset: u32,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RayIndices {
+    pub hit_offsets: BTreeSet<u32>,
+    pub misses: BTreeSet<u32>,
+    pub callables: BTreeSet<u32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CooperativeMatrixType {
+    pub component: Option<Scalar>,
+    pub scope: Option<u32>,
+    pub rows: Option<u32>,
+    pub columns: Option<u32>,
+    pub usage: Option<u32>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Reflection {
     pub model: ExecutionModel,
@@ -317,6 +333,8 @@ pub struct Reflection {
     pub addresses: Vec<AddressField>,
     pub task_payload: Option<Result<DataType, String>>,
     pub body_opcodes: BTreeSet<u32>,
+    pub ray_indices: RayIndices,
+    pub cooperative_matrices: Vec<CooperativeMatrixType>,
     pub problems: Vec<String>,
 }
 
@@ -342,6 +360,8 @@ impl Reflection {
             addresses: Vec::new(),
             task_payload: None,
             body_opcodes: BTreeSet::new(),
+            ray_indices: RayIndices::default(),
+            cooperative_matrices: Vec::new(),
             problems: Vec::new(),
         }
     }
@@ -916,6 +936,42 @@ pub const fn is_ray_tracing(model: ExecutionModel) -> bool {
     )
 }
 
+fn ray_indices(body: &[Instruction], types: &Types) -> RayIndices {
+    let mut indices = RayIndices::default();
+    let constant = |instruction: &Instruction, index: usize| {
+        instruction
+            .word(index)
+            .and_then(|id| types.constant_u32(id))
+    };
+    for instruction in body {
+        if instruction.is(Op::TraceRayKHR)
+            || instruction.is(Op::TraceNV)
+            || instruction.is(Op::TraceRayMotionNV)
+        {
+            indices.hit_offsets.extend(constant(instruction, 3));
+            indices.misses.extend(constant(instruction, 5));
+        } else if instruction.is(Op::ExecuteCallableKHR) || instruction.is(Op::ExecuteCallableNV) {
+            indices.callables.extend(constant(instruction, 0));
+        }
+    }
+    indices
+}
+
+fn cooperative_matrix_type(instruction: &Instruction, types: &Types) -> CooperativeMatrixType {
+    let constant = |index: usize| {
+        instruction
+            .word(index)
+            .and_then(|id| types.constant_u32(id))
+    };
+    CooperativeMatrixType {
+        component: instruction.word(1).and_then(|id| types.scalar(id)),
+        scope: constant(2),
+        rows: constant(3),
+        columns: constant(4),
+        usage: constant(5),
+    }
+}
+
 pub fn reflect(module: &Module) -> Result<Reflection, String> {
     let decorations = collect_decorations(module);
     let defs: BTreeMap<u32, &Instruction> = module
@@ -1148,6 +1204,13 @@ pub fn reflect(module: &Module) -> Result<Reflection, String> {
             other => reflection.problems.push(format!("{other:?} variables")),
         }
     }
+    reflection.ray_indices = ray_indices(&module.body, &types);
+    reflection.cooperative_matrices = module
+        .globals
+        .iter()
+        .filter(|i| i.is(Op::TypeCooperativeMatrixKHR))
+        .map(|i| cooperative_matrix_type(i, &types))
+        .collect();
     if reflection.uses(Op::ConvertUToAccelerationStructureKHR) {
         match address_fields(&module.body, &types, &roots) {
             Ok(addresses) => reflection.addresses = addresses,

@@ -1,6 +1,7 @@
 pub mod amber;
 pub mod batch;
 pub mod compare;
+pub mod cooperative;
 pub mod data;
 pub mod drivers;
 pub mod glsl;
@@ -655,6 +656,11 @@ impl Executor {
                 self.why_missing(need),
             ));
         }
+        if let Some(shape) =
+            cooperative::unsupported(&theirs.cooperative_matrices, &self.device.cooperative)
+        {
+            return Err(Outcome::skip(SkipReason::DeviceFeature, shape));
+        }
         if let Some(shared) = shared_binding(&theirs) {
             return Err(Outcome::skip(SkipReason::Binding, shared));
         }
@@ -1061,6 +1067,7 @@ mod tests {
             name: name.into(),
             api_version: "1.4".into(),
             driver: driver.into(),
+            cooperative: Vec::new(),
         };
         let remote = || TargetId::Remote(String::new());
         let labels = target_labels(&[

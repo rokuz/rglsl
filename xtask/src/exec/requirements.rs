@@ -165,6 +165,7 @@ pub fn capability(capability: Capability) -> Requirement {
         }
         C::MeshShadingEXT => needs![MESH_SHADER],
         C::MeshShadingNV => needs![MESH_SHADER_NV],
+        C::ShaderViewportMaskNV => needs![E("VK_NV_viewport_array2")],
         C::FragmentShadingRateKHR => {
             needs![F(
                 "FragmentShadingRateFeaturesKHR.pipelineFragmentShadingRate"
@@ -227,6 +228,9 @@ pub fn capability(capability: Capability) -> Requirement {
         C::SubgroupBallotKHR => needs![E("VK_EXT_shader_subgroup_ballot")],
         C::SubgroupVoteKHR => needs![E("VK_EXT_shader_subgroup_vote")],
         C::MultiView => Requirement::Unsupported("multiview (Amber renders one view)"),
+        C::PerViewAttributesNV => Requirement::Unsupported(
+            "per-view attributes (VK_NVX_multiview_per_view_attributes needs multiview; Amber renders one view)",
+        ),
         C::InputAttachment => {
             Requirement::Unsupported("input attachments (Amber cannot bind them)")
         }
@@ -302,6 +306,7 @@ pub fn extension(name: &str) -> bool {
             | "SPV_NV_ray_tracing_motion_blur"
             | "SPV_EXT_mesh_shader"
             | "SPV_NV_mesh_shader"
+            | "SPV_NV_viewport_array2"
             | "SPV_EXT_descriptor_indexing"
             | "SPV_KHR_fragment_shading_rate"
             | "SPV_KHR_shader_ballot"

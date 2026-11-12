@@ -142,7 +142,7 @@ pub fn vertex_for_fragment(inputs: &[Varying]) -> Result<String, String> {
     ))
 }
 
-pub fn fragment_for_vertex(outputs: &[Varying]) -> (String, Vec<Attachment>, Vec<String>) {
+pub fn fragment_for(outputs: &[Varying], mesh_nv: bool) -> (String, Vec<Attachment>, Vec<String>) {
     let mut declarations = String::new();
     let mut body =
         String::from("    o0 = vec4(gl_FragCoord.z, gl_FrontFacing ? 1.0 : 0.0, 1.0, 1.0);\n");
@@ -169,10 +169,10 @@ pub fn fragment_for_vertex(outputs: &[Varying]) -> (String, Vec<Attachment>, Vec
             continue;
         }
         let ty = glsl_type(scalar, count);
-        let primitive = if varying.per_primitive {
-            "perprimitiveEXT "
-        } else {
-            ""
+        let primitive = match (varying.per_primitive, mesh_nv) {
+            (false, _) => "",
+            (true, false) => "perprimitiveEXT ",
+            (true, true) => "perprimitiveNV ",
         };
         let _ = writeln!(
             declarations,
@@ -207,10 +207,10 @@ pub fn fragment_for_vertex(outputs: &[Varying]) -> (String, Vec<Attachment>, Vec
             });
         }
     }
-    let extension = if outputs.iter().any(|v| v.per_primitive) {
-        "#extension GL_EXT_mesh_shader : require\n"
-    } else {
-        ""
+    let extension = match (outputs.iter().any(|v| v.per_primitive), mesh_nv) {
+        (false, _) => "",
+        (true, false) => "#extension GL_EXT_mesh_shader : require\n",
+        (true, true) => "#extension GL_NV_mesh_shader : require\n",
     };
     (
         format!(
@@ -471,7 +471,7 @@ mod tests {
             vertex_for_fragment(std::slice::from_ref(&array)).map_err(anyhow::Error::msg)?;
         assert!(source.contains("layout(location = 2) out vec4 v2[2];"));
         assert!(source.contains("v2[1] = vec4("));
-        let (source, attachments, ignored) = fragment_for_vertex(&[array]);
+        let (source, attachments, ignored) = fragment_for(&[array], false);
         assert!(ignored.is_empty());
         assert_eq!(attachments.len(), 3);
         assert!(source.contains("layout(location = 2) in vec4 v2[2];"));
@@ -496,7 +496,7 @@ mod tests {
             ty: VaryingType::Unsupported("array varying".into()),
             ..varying(7, ScalarKind::Float, 1)
         });
-        let (source, attachments, ignored) = fragment_for_vertex(&outputs);
+        let (source, attachments, ignored) = fragment_for(&outputs, false);
         assert_eq!(attachments.len(), 3);
         assert_eq!(attachments[2].format(), "R32G32B32A32_UINT");
         assert_eq!(ignored.len(), 1);
@@ -504,6 +504,18 @@ mod tests {
         assert!(source.contains("o1 = vec4(v3, 0.0, 0.0);"));
         assert!(source.contains("layout(location = 5) flat in uvec3 v5;"));
         assert!(source.contains("o2 = uvec4(v5, 0u);"));
+    }
+
+    #[test]
+    fn nv_mesh_fragments_read_per_primitive_inputs_with_the_nv_qualifier() {
+        let mut primitive = varying(1, ScalarKind::Uint, 1);
+        primitive.per_primitive = true;
+        let (nv, _, _) = fragment_for(&[primitive.clone()], true);
+        assert!(nv.contains("#extension GL_NV_mesh_shader : require\n"));
+        assert!(nv.contains("perprimitiveNV in uint v1;"));
+        let (ext, _, _) = fragment_for(&[primitive], false);
+        assert!(ext.contains("#extension GL_EXT_mesh_shader : require\n"));
+        assert!(ext.contains("perprimitiveEXT in uint v1;"));
     }
 
     #[test]

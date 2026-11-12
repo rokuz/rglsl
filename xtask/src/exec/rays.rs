@@ -1,6 +1,7 @@
+use std::collections::BTreeSet;
 use std::fmt::Write as _;
 
-use spirv::{Op, StorageClass};
+use spirv::{Capability, Op, StorageClass};
 
 use super::data::Rng;
 use super::glsl::{self, Types};
@@ -24,14 +25,54 @@ const I32: Scalar = Scalar {
     width: 32,
 };
 
-const PREAMBLE: &str = "#version 460\n#extension GL_EXT_ray_tracing : require\n";
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Api {
+    Khr,
+    Nv,
+}
 
-pub const MISS_SHADER: &str =
-    "#version 460\n#extension GL_EXT_ray_tracing : require\nvoid main() {}\n";
-pub const HIT_SHADER: &str =
-    "#version 460\n#extension GL_EXT_ray_tracing : require\nvoid main() {}\n";
-pub const CALLABLE_SHADER: &str =
-    "#version 460\n#extension GL_EXT_ray_tracing : require\nvoid main() {}\n";
+impl Api {
+    pub fn of(reflection: &Reflection) -> Self {
+        if reflection.capabilities.contains(&Capability::RayTracingNV) {
+            Self::Nv
+        } else {
+            Self::Khr
+        }
+    }
+
+    const fn preamble(self) -> &'static str {
+        match self {
+            Self::Khr => "#version 460\n#extension GL_EXT_ray_tracing : require\n",
+            Self::Nv => "#version 460\n#extension GL_NV_ray_tracing : require\n",
+        }
+    }
+
+    const fn suffix(self) -> &'static str {
+        match self {
+            Self::Khr => "EXT",
+            Self::Nv => "NV",
+        }
+    }
+
+    pub fn empty_shader(self) -> String {
+        format!("{}void main() {{}}\n", self.preamble())
+    }
+
+    fn trace(self, hit: usize, miss: usize) -> String {
+        let call = match self {
+            Self::Khr => "traceRayEXT",
+            Self::Nv => "traceNV",
+        };
+        format!(
+            "    {call}(rglsl_tlas, gl_RayFlagsNone{}, 0xff, {hit}, 0, {miss}, vec3(xy, 0.0), 0.0, vec3(0.0, 0.0, 1.0), 10.0, 0);\n",
+            self.suffix()
+        )
+    }
+
+    fn execute(self, call: usize) -> String {
+        format!("    executeCallable{}({call}, 0);\n", self.suffix())
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Geometry {
@@ -40,17 +81,30 @@ pub enum Geometry {
 }
 
 impl Geometry {
-    pub fn declarations(self) -> String {
+    pub fn declarations(self, api: Api, motion: bool) -> String {
         let geometry = match self {
             Self::Triangles => {
                 "  GEOMETRY TRIANGLES\n    -1.0 -1.0 0.5\n    1.0 -1.0 0.5\n    0.0 1.0 0.5\n  END\n"
             }
             Self::Boxes => "  GEOMETRY AABBS\n    -0.5 -0.5 0.4 0.5 0.5 0.6\n  END\n",
         };
+        let mut options = String::new();
+        if api == Api::Nv {
+            options.push_str("  API NV\n");
+        }
+        if motion {
+            options.push_str("  MOTION\n");
+        }
         format!(
-            "ACCELERATION_STRUCTURE BOTTOM_LEVEL blas\n{geometry}END\nACCELERATION_STRUCTURE TOP_LEVEL {SCENE_TLAS}\n  BOTTOM_LEVEL_INSTANCE blas\n  END\nEND\n"
+            "ACCELERATION_STRUCTURE BOTTOM_LEVEL blas\n{geometry}END\nACCELERATION_STRUCTURE TOP_LEVEL {SCENE_TLAS}\n{options}  BOTTOM_LEVEL_INSTANCE blas\n  END\nEND\n"
         )
     }
+}
+
+pub fn motion(reflection: &Reflection) -> bool {
+    reflection
+        .capabilities
+        .contains(&Capability::RayTracingMotionBlurNV)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -73,11 +127,51 @@ pub struct Group {
     pub shaders: Vec<ShaderRef>,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Slots {
+    pub miss: usize,
+    pub hit: usize,
+    pub call: usize,
+}
+
+impl Slots {
+    fn of(stage: ShaderKind, reflection: &Reflection) -> Self {
+        let free = |used: &BTreeSet<u32>| {
+            (0..RECORDS)
+                .find(|slot| u32::try_from(*slot).is_ok_and(|slot| !used.contains(&slot)))
+                .unwrap_or(0)
+        };
+        let indices = &reflection.ray_indices;
+        let mut slots = Self::default();
+        match stage {
+            ShaderKind::Miss => slots.miss = free(&indices.misses),
+            ShaderKind::ClosestHit | ShaderKind::AnyHit | ShaderKind::Intersection => {
+                slots.hit = free(&indices.hit_offsets);
+            }
+            ShaderKind::Callable => slots.call = free(&indices.callables),
+            _ => {}
+        }
+        slots
+    }
+
+    const fn get(self, table: Table) -> usize {
+        match table {
+            Table::RayGeneration => 0,
+            Table::Miss => self.miss,
+            Table::Hit => self.hit,
+            Table::Callable => self.call,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RayPipeline {
     pub groups: Vec<Group>,
     pub record: Option<(Table, String)>,
     pub recursion: u32,
+    pub slots: Slots,
+    pub api: Api,
+    pub motion: bool,
 }
 
 impl RayPipeline {
@@ -92,6 +186,12 @@ impl RayPipeline {
 
     pub fn script(&self, names: &dyn Fn(ShaderRef) -> String) -> String {
         let mut out = String::new();
+        if self.api == Api::Nv {
+            out.push_str("  API NV\n");
+        }
+        if self.motion {
+            out.push_str("  FLAGS ALLOW_MOTION\n");
+        }
         for group in &self.groups {
             let shaders: Vec<String> = group.shaders.iter().map(|s| names(*s)).collect();
             let _ = writeln!(out, "  SHADER_GROUP {} {}", group.name, shaders.join(" "));
@@ -108,9 +208,15 @@ impl RayPipeline {
                 Some((t, buffer)) if *t == table => format!(" SHADER_RECORD {buffer}"),
                 _ => String::new(),
             };
-            let _ = writeln!(out, "    {first}{record}");
-            if table != Table::RayGeneration {
-                for _ in 1..RECORDS {
+            let count = if table == Table::RayGeneration {
+                1
+            } else {
+                RECORDS
+            };
+            for slot in 0..count {
+                if slot == self.slots.get(table) {
+                    let _ = writeln!(out, "    {first}{record}");
+                } else {
                     let _ = writeln!(out, "    {rest}");
                 }
             }
@@ -177,26 +283,26 @@ pub fn ray_generation(
     payload: &DataType,
     callable: bool,
     set: u32,
+    api: Api,
+    slots: Slots,
     rng: &mut Rng,
 ) -> Result<String, String> {
     let mut types = Types::default();
     let declarator = types.declarator(payload)?;
     let mut init = String::new();
     glsl::assign_literals("rglsl_payload", payload, rng, &mut init)?;
+    let suffix = api.suffix();
     let (storage, call) = if callable {
-        (
-            "callableDataEXT",
-            "    executeCallableEXT(0, 0);\n".to_string(),
-        )
+        (format!("callableData{suffix}"), api.execute(slots.call))
     } else {
         (
-            "rayPayloadEXT",
-            "    traceRayEXT(rglsl_tlas, gl_RayFlagsNoneEXT, 0xff, 0, 0, 0, vec3(xy, 0.0), 0.0, vec3(0.0, 0.0, 1.0), 10.0, 0);\n"
-                .to_string(),
+            format!("rayPayload{suffix}"),
+            api.trace(slots.hit, slots.miss),
         )
     };
     Ok(format!(
-        "{PREAMBLE}{}{}layout(set = {set}, binding = 0) uniform accelerationStructureEXT rglsl_tlas;\nlayout(set = {set}, binding = 1, std430) buffer RglslOut {{\n    {};\n}};\nlayout(location = 0) {storage} {};\nvoid main() {{\n    uint index = gl_LaunchIDEXT.x + gl_LaunchIDEXT.y * gl_LaunchSizeEXT.x;\n    vec2 xy = (vec2(gl_LaunchIDEXT.xy) + 0.5) / vec2(gl_LaunchSizeEXT.xy) * 2.0 - 1.0;\n{init}{call}    rglsl_out[index] = rglsl_payload;\n}}\n",
+        "{}{}{}layout(set = {set}, binding = 0) uniform accelerationStructure{suffix} rglsl_tlas;\nlayout(set = {set}, binding = 1, std430) buffer RglslOut {{\n    {};\n}};\nlayout(location = 0) {storage} {};\nvoid main() {{\n    uint index = gl_LaunchID{suffix}.x + gl_LaunchID{suffix}.y * gl_LaunchSize{suffix}.x;\n    vec2 xy = (vec2(gl_LaunchID{suffix}.xy) + 0.5) / vec2(gl_LaunchSize{suffix}.xy) * 2.0 - 1.0;\n{init}{call}    rglsl_out[index] = rglsl_payload;\n}}\n",
+        api.preamble(),
         types.extensions(),
         types.definitions(),
         declarator.declare("rglsl_out[]"),
@@ -204,39 +310,50 @@ pub fn ray_generation(
     ))
 }
 
-pub fn closest_hit_for_intersection(attributes: Option<&DataType>) -> Result<String, String> {
+pub fn closest_hit_for_intersection(
+    attributes: Option<&DataType>,
+    api: Api,
+) -> Result<String, String> {
     let mut types = Types::default();
     let attribute = attributes.map(|a| types.declarator(a)).transpose()?;
     let payload = types.declarator(&hit_info(attributes))?;
-    let mut body = String::from(
-        "    rglsl_payload.m0 = gl_HitTEXT;\n    rglsl_payload.m1 = gl_HitKindEXT;\n    rglsl_payload.m2 = gl_PrimitiveID;\n",
+    let suffix = api.suffix();
+    let mut body = format!(
+        "    rglsl_payload.m0 = gl_HitT{suffix};\n    rglsl_payload.m1 = gl_HitKind{suffix};\n    rglsl_payload.m2 = gl_PrimitiveID;\n"
     );
     let mut declarations = format!(
-        "layout(location = 0) rayPayloadInEXT {};\n",
+        "layout(location = 0) rayPayloadIn{suffix} {};\n",
         payload.declare("rglsl_payload")
     );
     if let Some(attribute) = attribute {
         let _ = writeln!(
             declarations,
-            "hitAttributeEXT {};",
+            "hitAttribute{suffix} {};",
             attribute.declare("rglsl_attributes")
         );
         body.push_str("    rglsl_payload.m3 = rglsl_attributes;\n");
     }
     Ok(format!(
-        "{PREAMBLE}{}{}{declarations}void main() {{\n{body}}}\n",
+        "{}{}{}{declarations}void main() {{\n{body}}}\n",
+        api.preamble(),
         types.extensions(),
         types.definitions()
     ))
 }
 
-pub fn intersection_for_hit(attributes: &DataType, rng: &mut Rng) -> Result<String, String> {
+pub fn intersection_for_hit(
+    attributes: &DataType,
+    api: Api,
+    rng: &mut Rng,
+) -> Result<String, String> {
     let mut types = Types::default();
     let declarator = types.declarator(attributes)?;
     let mut init = String::new();
     glsl::assign_literals("rglsl_attributes", attributes, rng, &mut init)?;
+    let suffix = api.suffix();
     Ok(format!(
-        "{PREAMBLE}{}{}hitAttributeEXT {};\nvoid main() {{\n{init}    reportIntersectionEXT(0.5, 0u);\n}}\n",
+        "{}{}{}hitAttribute{suffix} {};\nvoid main() {{\n{init}    reportIntersection{suffix}(0.5, 0u);\n}}\n",
+        api.preamble(),
         types.extensions(),
         types.definitions(),
         declarator.declare("rglsl_attributes")
@@ -260,11 +377,11 @@ fn empty_groups(miss: usize, hit: usize, call: usize) -> Vec<Group> {
     ]
 }
 
-fn empty_shaders() -> Vec<(ShaderKind, String)> {
+fn empty_shaders(api: Api) -> Vec<(ShaderKind, String)> {
     vec![
-        (ShaderKind::Miss, MISS_SHADER.to_string()),
-        (ShaderKind::ClosestHit, HIT_SHADER.to_string()),
-        (ShaderKind::Callable, CALLABLE_SHADER.to_string()),
+        (ShaderKind::Miss, api.empty_shader()),
+        (ShaderKind::ClosestHit, api.empty_shader()),
+        (ShaderKind::Callable, api.empty_shader()),
     ]
 }
 
@@ -275,6 +392,8 @@ pub fn harness(
     record: Option<String>,
     rng: &mut Rng,
 ) -> Result<RayHarness, String> {
+    let api = Api::of(reflection);
+    let motion = motion(reflection);
     let recursion = if stage != ShaderKind::RayGeneration && traces(reflection) {
         2
     } else {
@@ -305,12 +424,16 @@ pub fn harness(
                 groups,
                 record: record.map(|r| (Table::RayGeneration, r)),
                 recursion,
+                slots: Slots::default(),
+                api,
+                motion,
             },
-            shaders: empty_shaders(),
+            shaders: empty_shaders(api),
             geometry: Geometry::Triangles,
             output: None,
         });
     }
+    let slots = Slots::of(stage, reflection);
     let attributes = reflection
         .ray_variable(StorageClass::HitAttributeKHR)
         .map(|v| v.ty.clone())
@@ -328,9 +451,9 @@ pub fn harness(
     };
     let mut shaders = vec![(
         ShaderKind::RayGeneration,
-        ray_generation(&payload, callable, set, rng)?,
+        ray_generation(&payload, callable, set, api, slots, rng)?,
     )];
-    shaders.extend(empty_shaders());
+    shaders.extend(empty_shaders(api));
     let (miss, hit, call) = (1, 2, 3);
     let mut geometry = Geometry::Triangles;
     let mut tested_group = vec![ShaderRef::Tested];
@@ -339,7 +462,7 @@ pub fn harness(
             geometry = Geometry::Boxes;
             shaders.push((
                 ShaderKind::ClosestHit,
-                closest_hit_for_intersection(attributes.as_ref())?,
+                closest_hit_for_intersection(attributes.as_ref(), api)?,
             ));
             tested_group.insert(0, ShaderRef::Harness(shaders.len() - 1));
         }
@@ -348,7 +471,7 @@ pub fn harness(
                 geometry = Geometry::Boxes;
                 shaders.push((
                     ShaderKind::Intersection,
-                    intersection_for_hit(attributes, rng)?,
+                    intersection_for_hit(attributes, api, rng)?,
                 ));
                 tested_group.push(ShaderRef::Harness(shaders.len() - 1));
             }
@@ -390,6 +513,9 @@ pub fn harness(
             groups,
             record: record.map(|r| (table, r)),
             recursion,
+            slots,
+            api,
+            motion,
         },
         shaders,
         geometry,
@@ -470,7 +596,10 @@ mod tests {
         assert!(hit.contains("rglsl_payload.m3 = rglsl_attributes;"));
         let script = harness.pipeline.script(&names);
         assert!(script.contains("  SHADER_GROUP g_hit harness4 tested\n"));
-        assert!(harness.geometry.declarations().contains("GEOMETRY AABBS"));
+        assert!(harness
+            .geometry
+            .declarations(Api::Khr, false)
+            .contains("GEOMETRY AABBS"));
         Ok(())
     }
 
@@ -510,5 +639,97 @@ mod tests {
         assert_eq!(harness.output, Some(DataType::Scalar(U32)));
         assert!(harness.pipeline.run().contains("CALL sbt_call 4 4 1"));
         Ok(())
+    }
+    #[test]
+    fn nv_modules_get_an_nv_pipeline_and_nv_harness_shaders() -> anyhow::Result<()> {
+        let mut module = Reflection::new(ExecutionModel::MissKHR);
+        module.capabilities.insert(Capability::RayTracingNV);
+        module.ray_variables.push(RayVariable {
+            class: StorageClass::IncomingRayPayloadKHR,
+            location: 1,
+            ty: Ok(DataType::Vector {
+                scalar: F32,
+                count: 4,
+            }),
+        });
+        let harness = harness(ShaderKind::Miss, &module, 1, None, &mut Rng::new(3))
+            .map_err(anyhow::Error::msg)?;
+        assert_eq!(harness.pipeline.api, Api::Nv);
+        let (_, rgen) = &harness.shaders[0];
+        assert!(rgen.contains("#extension GL_NV_ray_tracing : require\n"));
+        assert!(rgen.contains("uniform accelerationStructureNV rglsl_tlas;"));
+        assert!(rgen.contains("layout(location = 0) rayPayloadNV vec4 rglsl_payload;"));
+        assert!(rgen.contains("gl_LaunchIDNV.x + gl_LaunchIDNV.y * gl_LaunchSizeNV.x"));
+        assert!(rgen.contains("traceNV(rglsl_tlas, gl_RayFlagsNoneNV, 0xff, 0, 0, 0,"));
+        assert!(harness
+            .shaders
+            .iter()
+            .skip(1)
+            .all(|(_, source)| source.contains("GL_NV_ray_tracing")));
+        assert!(harness.pipeline.script(&names).starts_with("  API NV\n"));
+        let scene = harness.geometry.declarations(Api::Nv, false);
+        assert!(scene
+            .contains("ACCELERATION_STRUCTURE TOP_LEVEL tlas\n  API NV\n  BOTTOM_LEVEL_INSTANCE"));
+        Ok(())
+    }
+
+    #[test]
+    fn motion_modules_allow_motion_on_a_motion_scene() -> anyhow::Result<()> {
+        let mut module = Reflection::new(ExecutionModel::RayGenerationKHR);
+        module.capabilities.insert(Capability::RayTracingKHR);
+        module
+            .capabilities
+            .insert(Capability::RayTracingMotionBlurNV);
+        let harness = harness(
+            ShaderKind::RayGeneration,
+            &module,
+            0,
+            None,
+            &mut Rng::new(3),
+        )
+        .map_err(anyhow::Error::msg)?;
+        assert_eq!(harness.pipeline.api, Api::Khr);
+        assert!(motion(&module));
+        assert!(harness
+            .pipeline
+            .script(&names)
+            .starts_with("  FLAGS ALLOW_MOTION\n  SHADER_GROUP g_raygen tested\n"));
+        let scene = harness.geometry.declarations(Api::Khr, true);
+        assert!(scene.contains("TOP_LEVEL tlas\n  MOTION\n  BOTTOM_LEVEL_INSTANCE blas\n"));
+        Ok(())
+    }
+
+    #[test]
+    fn tested_groups_avoid_the_records_their_own_traces_use() -> anyhow::Result<()> {
+        let mut module = Reflection::new(ExecutionModel::MissKHR);
+        module.capabilities.insert(Capability::RayTracingKHR);
+        module.body_opcodes.insert(Op::TraceRayKHR as u32);
+        module.ray_indices.misses.extend([0, 1]);
+        let harness = harness(ShaderKind::Miss, &module, 0, None, &mut Rng::new(3))
+            .map_err(anyhow::Error::msg)?;
+        assert_eq!(harness.pipeline.slots.miss, 2);
+        assert!(harness.shaders[0]
+            .1
+            .contains("traceRayEXT(rglsl_tlas, gl_RayFlagsNoneEXT, 0xff, 0, 0, 2,"));
+        let script = harness.pipeline.script(&names);
+        assert!(script.contains(
+            "  SHADER_BINDING_TABLE sbt_miss\n    g_miss_empty\n    g_miss_empty\n    g_miss\n    g_miss_empty\n"
+        ));
+
+        let mut hit = Reflection::new(ExecutionModel::ClosestHitKHR);
+        hit.ray_indices.hit_offsets.insert(0);
+        let harness = harness_for(ShaderKind::ClosestHit, &hit)?;
+        assert_eq!(harness.pipeline.slots.hit, 1);
+        assert!(harness.shaders[0].1.contains("0xff, 1, 0, 0,"));
+
+        let mut callable = Reflection::new(ExecutionModel::CallableKHR);
+        callable.ray_indices.callables.insert(0);
+        let harness = harness_for(ShaderKind::Callable, &callable)?;
+        assert!(harness.shaders[0].1.contains("executeCallableEXT(1, 0);"));
+        Ok(())
+    }
+
+    fn harness_for(stage: ShaderKind, module: &Reflection) -> anyhow::Result<RayHarness> {
+        harness(stage, module, 0, None, &mut Rng::new(3)).map_err(anyhow::Error::msg)
     }
 }

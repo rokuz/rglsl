@@ -71,6 +71,7 @@ pub struct Plan {
     pub draw: Draw,
     pub rays: Option<RayPipeline>,
     pub harness_env: Option<&'static str>,
+    pub mesh_nv: bool,
     pub notes: Vec<String>,
     pub addresses: Vec<(String, u32)>,
 }
@@ -295,13 +296,8 @@ fn stage_of(model: ExecutionModel) -> Result<ShaderKind, Refusal> {
         ExecutionModel::AnyHitKHR => ShaderKind::AnyHit,
         ExecutionModel::IntersectionKHR => ShaderKind::Intersection,
         ExecutionModel::CallableKHR => ShaderKind::Callable,
-        ExecutionModel::MeshEXT => ShaderKind::Mesh,
-        ExecutionModel::TaskEXT => ShaderKind::Task,
-        ExecutionModel::MeshNV | ExecutionModel::TaskNV => {
-            return Err(Refusal::Stage(format!(
-                "{model:?} (the harness generates EXT task, mesh and fragment stages)"
-            )))
-        }
+        ExecutionModel::MeshEXT | ExecutionModel::MeshNV => ShaderKind::Mesh,
+        ExecutionModel::TaskEXT | ExecutionModel::TaskNV => ShaderKind::Task,
         other => return Err(Refusal::Stage(format!("{other:?}"))),
     })
 }
@@ -368,6 +364,7 @@ impl Plan {
             draw: Draw::Dispatch,
             rays: None,
             harness_env: None,
+            mesh_nv: false,
             notes: Vec::new(),
             addresses: Vec::new(),
         };
@@ -627,6 +624,20 @@ impl Plan {
                     plan.add_target("ray payloads".into(), "rglsl_out", slots);
                 }
             }
+            ShaderKind::Mesh if reflection.model == ExecutionModel::MeshNV => {
+                plan.draw = Draw::Mesh;
+                plan.harness_env = Some(ShaderKind::Mesh.target_env());
+                plan.mesh_nv = true;
+                plan.finish_with_fragment(&reflection.outputs);
+            }
+            ShaderKind::Task if reflection.model == ExecutionModel::TaskNV => {
+                plan.draw = Draw::Mesh;
+                plan.harness_env = Some(ShaderKind::Task.target_env());
+                plan.mesh_nv = true;
+                plan.harness
+                    .push((ShaderKind::Mesh, mesh::MESH_FOR_TASK_NV.to_string()));
+                plan.finish_with_fragment(&mesh::mesh_for_task_outputs());
+            }
             ShaderKind::Mesh => {
                 plan.draw = Draw::Mesh;
                 plan.harness_env = Some(ShaderKind::Mesh.target_env());
@@ -762,7 +773,9 @@ impl Plan {
             scene = Some(Geometry::Triangles);
         }
         if let Some(geometry) = scene {
-            plan.declarations.push_str(&geometry.declarations());
+            plan.declarations.push_str(
+                &geometry.declarations(rays::Api::of(reflection), rays::motion(reflection)),
+            );
         }
         for (name, offset) in &plan.addresses {
             let _ = writeln!(
@@ -841,7 +854,7 @@ impl Plan {
     }
 
     fn finish_with_fragment(&mut self, outputs: &[Varying]) {
-        let (source, attachments, ignored) = harness::fragment_for_vertex(outputs);
+        let (source, attachments, ignored) = harness::fragment_for(outputs, self.mesh_nv);
         self.harness.push((ShaderKind::Fragment, source));
         self.attachments = attachments;
         self.notes.extend(ignored);
@@ -1273,7 +1286,7 @@ mod tests {
             Some(Refusal::Binding("arrays of descriptors".into()))
         );
         assert!(matches!(
-            Plan::new(&reflection(ExecutionModel::MeshNV), &Inputs::default()),
+            Plan::new(&reflection(ExecutionModel::Kernel), &Inputs::default()),
             Err(Refusal::Stage(_))
         ));
         assert!(matches!(
@@ -1712,6 +1725,43 @@ mod tests {
         assert_eq!(shaders(&plan), [ShaderKind::Mesh, ShaderKind::Fragment]);
         assert_eq!(plan.attachments.len(), 2);
         assert_eq!(plan.draw, Draw::Mesh);
+        Ok(())
+    }
+
+    #[test]
+    fn nv_mesh_and_task_shaders_get_nv_partner_stages() -> anyhow::Result<()> {
+        let mut module = reflection(ExecutionModel::MeshNV);
+        module.capabilities.insert(spirv::Capability::MeshShadingNV);
+        module.outputs = vec![Varying {
+            location: 2,
+            component: 0,
+            ty: VaryingType::Simple {
+                scalar: U32,
+                count: 1,
+            },
+            array: None,
+            interpolation: Interpolation::Flat,
+            centroid: false,
+            sample: false,
+            patch: false,
+            per_primitive: true,
+        }];
+        let plan = planned(&module, &Inputs::default())?;
+        assert_eq!(shaders(&plan), [ShaderKind::Fragment]);
+        assert!(plan.harness[0]
+            .1
+            .contains("layout(location = 2) flat perprimitiveNV in uint v2;"));
+        assert!(plan.needs.contains(&requirements::MESH_SHADER_NV));
+        assert!(!plan.needs.contains(&requirements::MESH_SHADER));
+        assert_eq!(plan.draw, Draw::Mesh);
+
+        let mut module = reflection(ExecutionModel::TaskNV);
+        module.capabilities.insert(spirv::Capability::MeshShadingNV);
+        let plan = planned(&module, &Inputs::default())?;
+        assert_eq!(shaders(&plan), [ShaderKind::Mesh, ShaderKind::Fragment]);
+        assert!(plan.harness[0].1.contains("GL_NV_mesh_shader"));
+        assert!(plan.harness[0].1.contains("gl_PrimitiveCountNV = 1u;"));
+        assert!(!plan.needs.contains(&requirements::TASK_SHADER));
         Ok(())
     }
 
