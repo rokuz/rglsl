@@ -28,3 +28,8 @@ shaders = [
 why = "for an invariant output of a struct type glslang declares a copy of the struct and repeats Invariant on every member; rglsl decorates the variable only, which already makes the whole output invariant, and keeps one struct type (docs/design/stage-io.md)"
 keys = ["Output location 10"]
 shaders = ["spv.layoutNested.vert"]
+
+[half-float-images]
+why = "GL_AMD_gpu_shader_half_float_fetch: glslang declares f16sampler*/f16image* as OpTypeImage of a 16-bit float, which Vulkan does not allow (spirv-val VUID-StandaloneSpirv-OpTypeImage-04656), so rglsl declares them as 32-bit float images and converts coordinates, references and texels to and from float16_t at each use; the values are the same"
+keys = ["resource set "]
+shaders = ["spv.float16Fetch.frag"]
