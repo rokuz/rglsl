@@ -556,6 +556,15 @@ impl crate::TypeInner {
         true
     }
 
+    pub(crate) fn is_constructible_with(
+        &self,
+        mut constructible: impl FnMut(crate::Handle<crate::Type>) -> bool,
+    ) -> bool {
+        let mut components = true;
+        self.is_constructible_shallow(|component| components &= constructible(component))
+            && components
+    }
+
     fn is_constructible_shallow(
         &self,
         mut children: impl FnMut(crate::Handle<crate::Type>),

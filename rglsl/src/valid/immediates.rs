@@ -36,21 +36,26 @@ impl ImmediateSlots {
         types: &crate::UniqueArena<crate::Type>,
         gctx: crate::proc::GlobalCtx,
     ) -> Self {
-        match *ty {
-            crate::TypeInner::Struct { ref members, .. } => {
-                let mut slots = Self::default();
-                for member in members {
-                    let member_ty = &types[member.ty].inner;
-                    slots |= Self::from_type(member_ty, offset + member.offset, types, gctx);
+        let mut slots = Self::default();
+        let mut pending = alloc::vec::Vec::from([(ty, offset)]);
+        while let Some((ty, offset)) = pending.pop() {
+            match *ty {
+                crate::TypeInner::Struct { ref members, .. } => {
+                    pending.extend(members.iter().rev().map(|member| {
+                        (&types[member.ty].inner, offset.wrapping_add(member.offset))
+                    }));
                 }
-                slots
+                crate::TypeInner::Array {
+                    size: crate::ArraySize::Pending(_),
+                    ..
+                } => slots |= Self::from_range(offset, u32::MAX - offset),
+                _ => {
+                    slots |=
+                        Self::from_range(offset, ty.try_size(gctx).unwrap_or(u32::MAX - offset))
+                }
             }
-            crate::TypeInner::Array {
-                size: crate::ArraySize::Pending(_),
-                ..
-            } => Self::from_range(offset, u32::MAX - offset),
-            _ => Self::from_range(offset, ty.try_size(gctx).unwrap_or(u32::MAX - offset)),
         }
+        slots
     }
 
     /// Returns true if `self` contains all bits in `other`.
