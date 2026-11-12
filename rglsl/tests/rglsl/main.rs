@@ -5,6 +5,7 @@
 )]
 
 mod arithmetic;
+mod cooperative;
 mod glsl_vulkan;
 mod snapshots;
 mod spirv_roundtrip;
