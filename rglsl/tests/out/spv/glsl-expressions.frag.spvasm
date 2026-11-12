@@ -451,16 +451,16 @@ OpStore %250 %308
 %310 = OpLoad  %14  %248
 %311 = OpCompositeExtract  %15  %309 0
 %312 = OpCompositeExtract  %15  %310 0
-%313 = OpFOrdNotEqual  %296  %311 %312
+%313 = OpFUnordNotEqual  %296  %311 %312
 %314 = OpAny  %17  %313
 %315 = OpCompositeExtract  %15  %309 1
 %316 = OpCompositeExtract  %15  %310 1
-%317 = OpFOrdNotEqual  %296  %315 %316
+%317 = OpFUnordNotEqual  %296  %315 %316
 %318 = OpAny  %17  %317
 %319 = OpLogicalOr  %17  %314 %318
 %320 = OpCompositeExtract  %15  %309 2
 %321 = OpCompositeExtract  %15  %310 2
-%322 = OpFOrdNotEqual  %296  %320 %321
+%322 = OpFUnordNotEqual  %296  %320 %321
 %323 = OpAny  %17  %322
 %324 = OpLogicalOr  %17  %319 %323
 OpStore %250 %324

@@ -1132,7 +1132,7 @@ impl BlockContext<'_> {
                             Some(crate::ScalarKind::Sint | crate::ScalarKind::Uint) => {
                                 spirv::Op::INotEqual
                             }
-                            Some(crate::ScalarKind::Float) => spirv::Op::FOrdNotEqual,
+                            Some(crate::ScalarKind::Float) => spirv::Op::FUnordNotEqual,
                             Some(crate::ScalarKind::Bool) => spirv::Op::LogicalNotEqual,
                             _ => {
                                 return Err(Error::Validation(
