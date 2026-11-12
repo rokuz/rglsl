@@ -32,6 +32,7 @@ pub use analyzer::{ExpressionInfo, FunctionInfo, GlobalUse, Uniformity, Uniformi
 pub use compose::ComposeError;
 pub use expression::{check_literal_value, LiteralError};
 pub use expression::{ConstExpressionError, ExpressionError};
+#[cfg(feature = "glsl-in")]
 pub(crate) use function::abort_message_length;
 pub use function::{CallError, FunctionError, LocalVariableError, SubgroupError};
 pub use immediates::ImmediateSlots;

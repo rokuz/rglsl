@@ -199,50 +199,6 @@ fn convert_snapshots_ir() -> TestResult {
     Ok(())
 }
 
-// miri doesn't allow us to shell out to `spirv-as`
-#[cfg_attr(miri, ignore)]
-#[test]
-fn convert_snapshots_spv() -> TestResult {
-    use std::process::Command;
-
-    let _ = env_logger::try_init();
-
-    for input in Input::files_in_dir("spv", &["spvasm"], DIR_IN)? {
-        println!("Assembling '{}'", input.file_name.display());
-
-        let command = Command::new("spirv-as")
-            .arg(input.input_path(DIR_IN))
-            .arg("-o")
-            .arg("-")
-            .output()
-            .map_err(|err| {
-                format!(
-                    "Failed to execute spirv-as: {err}. It can be installed \
-                by installing the Vulkan SDK and adding it to your path."
-                )
-            })?;
-
-        println!("Processing '{}'", input.file_name.display());
-
-        if !command.status.success() {
-            return Err(format!(
-                "spirv-as failed: {}\n{}",
-                String::from_utf8_lossy(&command.stdout),
-                String::from_utf8_lossy(&command.stderr)
-            )
-            .into());
-        }
-
-        let params = input.read_parameters(DIR_IN)?;
-
-        let mut module =
-            rglsl::front::spv::parse_u8_slice(&command.stdout, &(&params.spv_in).into())?;
-
-        check_targets(&input, &mut module, None)?;
-    }
-    Ok(())
-}
-
 // While we _can_ run this test under miri, it is extremely slow (>5 minutes),
 // and rglsl isn't the primary target for miri testing, so we disable it.
 #[cfg_attr(miri, ignore)]

@@ -85,7 +85,7 @@ commands:
       --output DIR        with --reduce: where the reproducer goes
                           (default target/xtask/fuzz/reduce/<family>-<variant>/result)
       --libfuzzer T       run the cargo-fuzz target T of rglsl-fuzz/fuzz (glsl_parser,
-                          spv_parser, ir, object, glsl_variant) with cargo +nightly fuzz;
+                          ir, object, glsl_variant) with cargo +nightly fuzz;
                           corpus, artifacts, log and report.tsv in target/xtask/fuzz/T/
       --time SECS         with --libfuzzer: how long to fuzz (default 600)
       --rss-limit-mb MB   with --libfuzzer: memory limit per input (default 4096)

@@ -7,12 +7,7 @@ exclude-dev = true
 [bans]
 multiple-versions = "deny"
 skip-tree = [{ name = "rustc-hash", version = "1.1.0" }]
-skip = [
-    # rglsl -> petgraph (spv-in) uses an older hashbrown
-    { name = "hashbrown", version = "0.15.5" },
-    # used by hashbrown 0.15.5
-    { name = "foldhash", version = "0.1.5" },
-]
+skip = []
 wildcards = "deny"
 allow-wildcard-paths = true
 

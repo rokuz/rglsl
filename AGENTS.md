@@ -18,7 +18,7 @@ goal, the language rules for linkage and `#include`, and the milestones (M0–M9
 | `rglsl-link/` | the linker: merges object modules (`rglsl::object::ObjectModule`) into programs, object file format (`docs/design/linking.md`) |
 | `tests/link/` | our own link tests: modules, `expect`, optional single-file `reference.*` for exec |
 | `rglsl-fuzz/` | port of GraphicsFuzz's variant generator and reducer (Apache-2.0; see `docs/design/fuzzer.md`) |
-| `rglsl-fuzz/fuzz/` | the cargo-fuzz targets (crate `rglsl-libfuzzer`): `glsl_parser`, `spv_parser`, `ir`, `object`, `glsl_variant` |
+| `rglsl-fuzz/fuzz/` | the cargo-fuzz targets (crate `rglsl-libfuzzer`): `glsl_parser`, `ir`, `object`, `glsl_variant` |
 | `rglsl-types/` | types shared by the rglsl crates (`ShaderStage`, ...) |
 | `rglsl-cli/` | the `rglsl` command-line tool, `glslangValidator`-compatible for Vulkan GLSL (`docs/design/cli.md`) |
 | `rglsl-test/`, `rglsl/tests/` | upstream snapshot tests |
@@ -36,8 +36,7 @@ goal, the language rules for linkage and `#include`, and the milestones (M0–M9
   the `rglsl` crate's own `[lints]`). Do not add `allow(unsafe_code)`.
 - **No panics on user input.** A crash in the corpus run is always a bug.
 - **No recursion over input structure.** A stack overflow aborts the process. Every pass —
-  preprocessor, AST, sema, lowering, fuzzer, SPIR-V frontend, IR (`Block` drop and clone), `proc`,
-  compaction,
+  preprocessor, AST, sema, lowering, fuzzer, IR (`Block` drop and clone), `proc`, compaction,
   validator, uniformity analysis, SPIR-V backend, linker, object files — walks nesting with
   loops, work lists, or `async` functions driven by `rglsl_types::stack` (every recursive call
   through `Stack::call`), so its stack use is constant. Recursion is fine only over structure
