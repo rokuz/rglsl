@@ -9,6 +9,7 @@ use crate::token::{operator, At, Kind, Token, MAX_TOKEN_LENGTH};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Role {
     Preamble,
+    UserPreamble,
     Root,
     Included,
 }

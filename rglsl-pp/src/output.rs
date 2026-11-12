@@ -82,7 +82,12 @@ impl Output {
             if !self.line_start {
                 self.newline();
             }
-            self.anchor = (file, physical);
+            if self.listing {
+                self.anchor = (file, 1);
+                self.sync(file, physical);
+            } else {
+                self.anchor = (file, physical);
+            }
         }
     }
 

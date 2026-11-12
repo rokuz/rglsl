@@ -24,6 +24,28 @@ pub enum VersionDump {
 pub enum Macro {
     Define(String),
     Undefine(String),
+    Text(String),
+}
+
+impl Macro {
+    pub fn preamble(macros: &[Self]) -> String {
+        let mut text = String::new();
+        for edit in macros {
+            match *edit {
+                Self::Define(ref definition) => {
+                    text.push_str("#define ");
+                    text.push_str(&definition.replacen('=', " ", 1));
+                }
+                Self::Undefine(ref name) => {
+                    text.push_str("#undef ");
+                    text.push_str(name);
+                }
+                Self::Text(ref line) => text.push_str(line),
+            }
+            text.push('\n');
+        }
+        text
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -412,7 +434,10 @@ fn long_option(cursor: &mut Cursor, options: &mut Options) -> Result<(), Exit> {
         | "sacb"
         | "set-default-uniform-block"
         | "sdub" => return Err(Exit::out_of_scope(&argument)),
-        "preamble-text" | "p" => return Err(Exit::unsupported(&argument, "preamble text")),
+        "preamble-text" | "p" => match cursor.take_next() {
+            Some(text) => options.macros.push(Macro::Text(first_line(&text))),
+            None => return Err(Exit::detailed("expects <text>", argument)),
+        },
         "no-link" => {
             return Err(Exit::unsupported(
                 &argument,
@@ -505,7 +530,10 @@ fn short_option(cursor: &mut Cursor, options: &mut Options) -> Result<(), Exit> 
             Some('d' | 's') | None => {}
             Some(_) => return Err(Exit::error("unknown -O option")),
         },
-        'P' => return Err(Exit::unsupported(&argument, "preamble text")),
+        'P' => {
+            let text = attached(&argument, "-P<text>")?;
+            options.macros.push(Macro::Text(first_line(text)));
+        }
         'S' => match cursor.take_next() {
             Some(stage) => options.stage = Some(stage),
             None => return Err(Exit::error("no <stage> specified for -S")),

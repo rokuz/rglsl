@@ -66,6 +66,7 @@ pub struct Options {
     pub keep_uncalled: bool,
     pub resource_set: Option<u32>,
     pub binding_shifts: crate::proc::BindingShifts,
+    pub preamble: Option<String>,
 }
 
 impl From<ShaderStage> for Options {
@@ -83,6 +84,7 @@ impl From<ShaderStage> for Options {
             keep_uncalled: false,
             resource_set: None,
             binding_shifts: crate::proc::BindingShifts::default(),
+            preamble: None,
         }
     }
 }

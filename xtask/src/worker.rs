@@ -65,6 +65,7 @@ pub struct OneOptions<'a> {
     pub object: bool,
     pub hlsl_offsets: bool,
     pub include_dirs: &'a [String],
+    pub preamble: Option<String>,
     pub debug: Option<&'a str>,
 }
 
@@ -94,6 +95,7 @@ pub fn compile_one(input: &Path, one: &OneOptions<'_>, out: &Path) -> i32 {
         object,
         hlsl_offsets,
         include_dirs,
+        ref preamble,
         debug,
     } = *one;
     let source = match std::fs::read(input) {
@@ -128,6 +130,7 @@ pub fn compile_one(input: &Path, one: &OneOptions<'_>, out: &Path) -> i32 {
         hlsl_offsets,
         debug_info: debug.is_some(),
         source_name: Some(input.to_string_lossy().into_owned()),
+        preamble: preamble.clone(),
         ..glsl::Options::from(stage)
     };
     let mut includer = rglsl_pp::FileSystemIncluder::new(include_dirs);

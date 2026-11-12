@@ -8,7 +8,7 @@ use rglsl::front::glsl;
 use rglsl::object::ObjectModule;
 use rglsl::proc::{BindingShifts, ResourceClass};
 use rglsl::valid::{Capabilities, ModuleInfo, ValidationFlags, Validator};
-use rglsl::{FastHashMap, Module, ShaderStage};
+use rglsl::{Module, ShaderStage};
 
 use crate::args::{
     self, Debug, Exit, Macro, Options, VersionDump, EXIT_COMPILE, EXIT_LINK, EXIT_SUCCESS,
@@ -122,7 +122,7 @@ struct Compiled {
 
 pub struct Session<'a> {
     options: &'a Options,
-    defines: FastHashMap<String, String>,
+    preamble: String,
     directory: Option<String>,
     included: BTreeSet<String>,
     outputs: Vec<String>,
@@ -177,23 +177,9 @@ pub fn run(options: &Options) -> Result<i32, Exit> {
 
 impl<'a> Session<'a> {
     fn new(options: &'a Options) -> Self {
-        let mut defines = FastHashMap::default();
-        for edit in &options.macros {
-            match *edit {
-                Macro::Define(ref definition) => {
-                    let (name, value) = definition
-                        .split_once('=')
-                        .unwrap_or((definition.as_str(), ""));
-                    defines.insert(name.to_owned(), value.to_owned());
-                }
-                Macro::Undefine(ref name) => {
-                    defines.remove(name);
-                }
-            }
-        }
         Self {
             options,
-            defines,
+            preamble: Macro::preamble(&options.macros),
             directory: std::env::current_dir()
                 .ok()
                 .map(|directory| directory.to_string_lossy().into_owned()),
@@ -311,7 +297,7 @@ impl<'a> Session<'a> {
     fn frontend_options(&self, unit: &Unit) -> glsl::Options {
         let stage = unit.stage();
         glsl::Options {
-            defines: self.defines.clone(),
+            preamble: Some(self.preamble.clone()),
             auto_map_bindings: self.options.auto_map_bindings,
             auto_map_locations: self.options.auto_map_locations,
             spirv_version: Some(self.options.target_spirv()),
@@ -336,6 +322,7 @@ impl<'a> Session<'a> {
             processes.push(match *edit {
                 Macro::Define(ref definition) => format!("define-macro {definition}"),
                 Macro::Undefine(ref name) => format!("undef-macro {name}"),
+                Macro::Text(ref text) => format!("preamble-text{text}"),
             });
         }
         let shifts = self.shifts(Some(stage));
@@ -664,15 +651,10 @@ impl<'a> Session<'a> {
     }
 
     fn preprocess(&mut self, units: &[Unit]) -> i32 {
-        let defines: Vec<rglsl_pp::Define> = self
-            .defines
-            .iter()
-            .map(|(name, value)| rglsl_pp::Define::new(name.clone(), Some(value.as_str())))
-            .collect();
         let mut failed = false;
         for unit in units {
             let options = rglsl_pp::Options {
-                defines: defines.clone(),
+                preamble: Some(self.preamble.clone()),
                 vulkan_client_version: Some(100),
                 stage: unit
                     .stage()

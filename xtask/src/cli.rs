@@ -783,8 +783,83 @@ fn cases() -> Vec<Case> {
             "preamble",
             &["-V", "-P#define X 1", TARGET_SHADER],
             &[TARGET_SHADER],
+        ),
+        Case::new(
+            "P-runtests",
+            &[
+                "-P#define TEST1",
+                "-i",
+                "-l",
+                "--preamble-text",
+                "#define TEST2",
+                "--p",
+                "#define TEST3",
+                "glsl.-P.frag",
+            ],
+            &["glsl.-P.frag"],
         )
-        .rejected("preamble text is not supported"),
+        .ignore_messages("rglsl prints no AST"),
+        Case::new(
+            "P-V",
+            &[
+                "-V",
+                "-P#define TEST1",
+                "--preamble-text",
+                "#define TEST2",
+                "--P",
+                "#define TEST3",
+                "glsl.-P.frag",
+            ],
+            &["glsl.-P.frag"],
+        ),
+        Case::new(
+            "P-function",
+            &[
+                "-V",
+                "--preamble-text",
+                "vec4 getColor() { return vec4(1.0); }",
+                "glsl.-P.function.frag",
+            ],
+            &["glsl.-P.function.frag"],
+        ),
+        Case::new(
+            "P-include",
+            &[
+                "-V",
+                "--preamble-text",
+                "#extension GL_GOOGLE_include_directive : require",
+                "-I.",
+                "glsl.-P.include.frag",
+            ],
+            &["glsl.-P.include.frag", "glsl.-P.included.glsl"],
+        ),
+        Case::new(
+            "P-error",
+            &["-V", "-DX", "-P#error stop", "glsl.-P.function.frag"],
+            &["glsl.-P.function.frag"],
+        ),
+        Case::new(
+            "P-missing",
+            &["-V", "glsl.-P.function.frag", "--preamble-text"],
+            &["glsl.-P.function.frag"],
+        ),
+        Case::new(
+            "P-not-attached",
+            &["-V", "-P", "glsl.-P.function.frag"],
+            &["glsl.-P.function.frag"],
+        ),
+        Case::new(
+            "E-preamble",
+            &[
+                "-E",
+                "-P#extension GL_EXT_debug_printf : enable",
+                "-Pint y;",
+                "-DTEST1",
+                "glsl.-P.frag",
+            ],
+            &["glsl.-P.frag"],
+        )
+        .exact_stdout(),
         Case::new("reflection", &["-l", "-q", TARGET_SHADER], &[TARGET_SHADER])
             .rejected("the reflection query database is not supported"),
         Case::new(

@@ -246,7 +246,7 @@ pub fn preprocess(
     if let Some(name) = &options.source_name {
         files.insert(file, name.clone());
     }
-    let sources = vec![
+    let mut sources = vec![
         SourceInfo {
             number: -1,
             name: None,
@@ -258,6 +258,34 @@ pub fn preprocess(
             file: Some(file),
         },
     ];
+    let mut inputs = vec![Input::File(FileInput::new(
+        file,
+        Rc::from(source),
+        Role::Root,
+        1,
+    ))];
+    if let Some(text) = options.preamble.as_deref().filter(|text| !text.is_empty()) {
+        let index = u32::try_from(sources.len()).unwrap_or(u32::MAX);
+        sources.push(SourceInfo {
+            number: -1,
+            name: None,
+            file: Some(FileId::PREAMBLE),
+        });
+        files.insert(FileId::PREAMBLE, String::from("-1"));
+        inputs.push(Input::File(FileInput::new(
+            FileId::PREAMBLE,
+            Rc::from(text),
+            Role::UserPreamble,
+            index,
+        )));
+    }
+    inputs.push(Input::File(FileInput::new(
+        file,
+        Rc::from(preamble.as_str()),
+        Role::Preamble,
+        0,
+    )));
+    let file_inputs = (0..inputs.len()).collect();
     let root_at = At {
         file,
         cur_file: file,
@@ -269,16 +297,8 @@ pub fn preprocess(
     let mut preprocessor = Preprocessor {
         options,
         includer,
-        inputs: vec![
-            Input::File(FileInput::new(file, Rc::from(source), Role::Root, 1)),
-            Input::File(FileInput::new(
-                file,
-                Rc::from(preamble.as_str()),
-                Role::Preamble,
-                0,
-            )),
-        ],
-        file_inputs: vec![0, 1],
+        inputs,
+        file_inputs,
         macros: MacroTable::default(),
         version_stages,
         diagnostics: Vec::new(),
@@ -383,7 +403,7 @@ impl Preprocessor<'_> {
         let mut preamble = false;
         if let Some(file) = self.innermost_file_mut() {
             file.ended = true;
-            preamble = file.role == Role::Preamble;
+            preamble = matches!(file.role, Role::Preamble | Role::UserPreamble);
         }
         if preamble {
             for input in &mut self.inputs {

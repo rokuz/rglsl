@@ -186,6 +186,7 @@ fn preprocessor_options(options: &Options, stage: Option<ShaderStage>) -> rglsl_
         defines,
         vulkan_client_version: Some(100),
         stage: stage.map(preprocessor_stage),
+        preamble: options.preamble.clone(),
         ..rglsl_pp::Options::default()
     }
 }
