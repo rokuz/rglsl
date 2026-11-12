@@ -1083,7 +1083,7 @@ impl<'a> Lowerer<'a> {
             }
         };
         let binding = value("binding")?;
-        let set = value("set")?;
+        let set = value("set")?.or(self.options.resource_set);
         match binding {
             Some(binding) => Ok((
                 Some(ResourceBinding {
@@ -2250,6 +2250,11 @@ impl<'a> Lowerer<'a> {
     fn assign_bindings(&mut self) {
         self.automatic_bindings.clone_from(&self.unbound);
         let mut unbound = core::mem::take(&mut self.unbound);
+        let shifts = &self.options.binding_shifts;
+        shifts.shift_explicit(
+            &mut self.module,
+            &unbound.iter().map(|&(handle, _)| handle).collect(),
+        );
         if unbound.is_empty() {
             return;
         }
@@ -2281,10 +2286,10 @@ impl<'a> Lowerer<'a> {
         for (handle, set) in unbound {
             let group = set.unwrap_or(0);
             let binding = if live.contains(handle) {
+                let base =
+                    shifts.base_of(&self.module, &self.module.global_variables[handle], group);
                 let used = taken.entry(group).or_default();
-                let free = (0..=u32::MAX)
-                    .find(|binding| !used.contains(binding))
-                    .unwrap_or(u32::MAX);
+                let free = crate::proc::free_binding(used, base);
                 used.insert(free);
                 free
             } else {

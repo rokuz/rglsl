@@ -20,16 +20,29 @@ use rglsl::{
 
 pub use error::{LinkError, LinkErrors};
 pub use file::{decode, encode, FileError};
-pub use program::{group_by_stage, link_objects, link_program};
+pub use program::{
+    group_by_stage, link_objects, link_objects_staged, link_program, link_program_staged,
+    StagedErrors,
+};
 pub use rglsl::object::ObjectModule;
 
 use calls::SymbolTable;
 use merge::{Builder, MergedGlobal};
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Options {
     pub auto_map_locations: bool,
     pub auto_map_bindings: bool,
+    pub binding_shifts: Vec<(ShaderStage, rglsl::proc::BindingShifts)>,
+}
+
+impl Options {
+    fn binding_shifts(&self, stage: ShaderStage) -> Option<&rglsl::proc::BindingShifts> {
+        self.binding_shifts
+            .iter()
+            .find(|&&(candidate, _)| candidate == stage)
+            .map(|(_, shifts)| shifts)
+    }
 }
 
 #[derive(Debug)]
@@ -214,7 +227,7 @@ pub(crate) fn merge(objects: &[ObjectModule], options: &Options) -> Result<Merge
             interface::assign_locations(&mut module, &globals, stage);
         }
         if options.auto_map_bindings {
-            interface::assign_bindings(&mut module, &globals);
+            interface::assign_bindings(&mut module, &globals, options.binding_shifts(stage));
         }
     }
     fix_up_library_functions(&mut module, &library_functions, stage);

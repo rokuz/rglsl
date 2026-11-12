@@ -8,6 +8,7 @@ pub mod index;
 mod layouter;
 mod overloads;
 mod reachability;
+mod resource;
 pub use rglsl_types::small_float;
 mod subgroup;
 mod terminator;
@@ -23,6 +24,7 @@ pub use index::{BoundsCheckPolicies, BoundsCheckPolicy, IndexableLength, Indexab
 pub use layouter::{Alignment, LayoutError, LayoutErrorInner, Layouter, TypeLayout};
 pub use overloads::{Conclusion, MissingSpecialType, OverloadSet, Rule};
 pub use reachability::Reachability;
+pub use resource::{free_binding, BindingShifts, ResourceClass};
 pub use terminator::ensure_block_returns;
 use thiserror::Error;
 pub use type_methods::{

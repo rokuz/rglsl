@@ -390,16 +390,32 @@ pub fn link_program(
     stages: &[Vec<rglsl::object::ObjectModule>],
     options: &Options,
 ) -> Result<Vec<Linked>, LinkErrors> {
-    let mut errors = Vec::new();
+    link_program_staged(stages, options).map_err(|errors| {
+        errors
+            .into_iter()
+            .map(|(_, error)| error)
+            .collect::<Vec<_>>()
+            .into()
+    })
+}
+
+pub type StagedErrors = Vec<(Option<ShaderStage>, LinkError)>;
+
+pub fn link_program_staged(
+    stages: &[Vec<rglsl::object::ObjectModule>],
+    options: &Options,
+) -> Result<Vec<Linked>, StagedErrors> {
+    let mut errors: StagedErrors = Vec::new();
     let mut merged = Vec::new();
     for objects in stages {
+        let stage = objects.iter().find_map(|object| object.stage);
         match merge(objects, options) {
             Ok(result) => merged.push(result),
-            Err(failure) => errors.extend(failure.errors),
+            Err(failure) => errors.extend(failure.errors.into_iter().map(|error| (stage, error))),
         }
     }
     if !errors.is_empty() {
-        return Err(errors.into());
+        return Err(errors);
     }
     for (index, first) in merged.iter().enumerate() {
         if merged
@@ -407,13 +423,14 @@ pub fn link_program(
             .skip(index + 1)
             .any(|second| second.stage == first.stage)
         {
-            errors.push(LinkError::MultipleEntryPoints);
+            errors.push((Some(first.stage), LinkError::MultipleEntryPoints));
         }
     }
     if options.auto_map_locations {
         match_pipeline_locations(&mut merged);
     }
-    check_resources(&merged, &mut errors);
+    let mut unstaged = Vec::new();
+    check_resources(&merged, &mut unstaged);
     let mut pipeline: Vec<&Merged> = merged
         .iter()
         .filter(|stage| pipeline_position(stage.stage).is_some())
@@ -421,23 +438,27 @@ pub fn link_program(
     pipeline.sort_by_key(|stage| pipeline_position(stage.stage));
     for pair in pipeline.windows(2) {
         if let [from, to] = *pair {
-            check_interface(from, to, &mut errors);
+            check_interface(from, to, &mut unstaged);
         }
     }
+    errors.extend(unstaged.into_iter().map(|error| (None, error)));
     if !errors.is_empty() {
-        return Err(errors.into());
+        return Err(errors);
     }
     let mut linked = Vec::with_capacity(merged.len());
     for stage in merged {
+        let name = stage.stage;
         match finish(stage) {
             Ok(result) => linked.push(result),
-            Err(failure) => errors.extend(failure.errors),
+            Err(failure) => {
+                errors.extend(failure.errors.into_iter().map(|error| (Some(name), error)))
+            }
         }
     }
     if errors.is_empty() {
         Ok(linked)
     } else {
-        Err(errors.into())
+        Err(errors)
     }
 }
 
@@ -474,4 +495,11 @@ pub fn link_objects(
     options: &Options,
 ) -> Result<Vec<Linked>, LinkErrors> {
     link_program(&group_by_stage(objects), options)
+}
+
+pub fn link_objects_staged(
+    objects: &[rglsl::object::ObjectModule],
+    options: &Options,
+) -> Result<Vec<Linked>, StagedErrors> {
+    link_program_staged(&group_by_stage(objects), options)
 }
