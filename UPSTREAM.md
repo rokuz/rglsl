@@ -839,7 +839,7 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   `OpFUnordNotEqual` (upstream `OpFOrdNotEqual`). `Normalize`, `FaceForward` and `Reflect`
   accept scalars. An `As` conversion between integers of different width and signedness is
   `OpSConvert`/`OpUConvert` by the source's signedness, then `OpBitcast` (upstream extended by
-  the target's signedness). The object `FORMAT_VERSION` is 11 (a library records ray tracing
+  the target's signedness). The object `FORMAT_VERSION` is 12 (a library records ray tracing
   features for every stage, geometry streams for every output and `deferred_bias`, resolved by
   `ObjectModule::for_stage`).
 
