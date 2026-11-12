@@ -1,0 +1,7 @@
+#version 450
+layout(local_size_x = 2048, local_size_y = 4, local_size_z = 128) in;
+layout(binding = 0) buffer Data { uint values[]; };
+void main()
+{
+    values[gl_LocalInvocationIndex] = gl_WorkGroupSize.x + uint(gl_MaxComputeWorkGroupSize.z);
+}

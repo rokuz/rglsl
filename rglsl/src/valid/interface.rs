@@ -613,10 +613,7 @@ impl VaryingContext<'_> {
                         match *ty_inner {
                             Ti::Array { base, size, .. } => {
                                 self.types[base].inner == Ti::Scalar(crate::Scalar::F32)
-                                    && match size {
-                                        crate::ArraySize::Constant(non_zero) => non_zero.get() <= 8,
-                                        _ => false,
-                                    }
+                                    && matches!(size, crate::ArraySize::Constant(_))
                             }
                             _ => false,
                         },

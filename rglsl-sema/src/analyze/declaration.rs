@@ -277,6 +277,9 @@ impl Analyzer<'_> {
                         self.local_size_changed(entry.span);
                     } else if let Some(slot) = self.local_size.get_mut(index) {
                         *slot = value;
+                        if let Some(value) = value {
+                            self.local_size_limit(qualifier.span, index, value);
+                        }
                     }
                 }
                 if let Some(entry) = qualifiers.layout_entry(identifier) {
@@ -669,6 +672,7 @@ impl Analyzer<'_> {
         self.heap_layout_check(result);
         self.push_constant_bank_layout_check(result);
         self.removed_packing_check(result);
+        self.xfb_limit_check(result);
     }
 
     fn binding_required_check(
@@ -712,6 +716,85 @@ impl Analyzer<'_> {
         if let Some(message) = message {
             self.error(span, DiagnosticKind::BindingRequired(message));
         }
+    }
+
+    fn builtin_array_limit_check(&mut self, span: Span, name: &str, ty: &Type) {
+        let limits = self.options.limits;
+        let (feature, limit, value, dimension) = match name {
+            "gl_ClipDistance" => (
+                "gl_ClipDistance array size",
+                "gl_MaxClipDistances",
+                limits.max_clip_distances,
+                0,
+            ),
+            "gl_CullDistance" => (
+                "gl_CullDistance array size",
+                "gl_MaxCullDistances",
+                limits.max_cull_distances,
+                0,
+            ),
+            "gl_ClipDistancePerViewNV" => (
+                "gl_ClipDistancePerViewNV array size",
+                "gl_MaxClipDistances",
+                limits.max_clip_distances,
+                1,
+            ),
+            "gl_CullDistancePerViewNV" => (
+                "gl_CullDistancePerViewNV array size",
+                "gl_MaxCullDistances",
+                limits.max_cull_distances,
+                1,
+            ),
+            _ => return,
+        };
+        let Some(&ArraySize::Sized(size)) = ty.dimensions().get(dimension) else {
+            return;
+        };
+        if i64::from(size) > i64::from(value) {
+            self.error(
+                span,
+                DiagnosticKind::ArrayLimit {
+                    feature,
+                    limit,
+                    value,
+                },
+            );
+        }
+    }
+
+    fn local_size_limit(&mut self, span: Span, index: usize, value: u32) {
+        let limits = self.options.limits;
+        let ext = self.mesh_ext();
+        self.stage_check(span, |stage| {
+            let (sizes, reason) = match stage {
+                Stage::Compute => (
+                    limits.max_compute_work_group_size(),
+                    "too large; see gl_MaxComputeWorkGroupSize",
+                ),
+                Stage::Mesh if ext => (
+                    limits.max_mesh_work_group_size_ext(),
+                    "too large, see gl_MaxMeshWorkGroupSizeEXT",
+                ),
+                Stage::Mesh => (
+                    limits.max_mesh_work_group_size_nv(),
+                    "too large, see gl_MaxMeshWorkGroupSizeNV",
+                ),
+                Stage::Task if ext => (
+                    limits.max_task_work_group_size_ext(),
+                    "too large, see gl_MaxTaskWorkGroupSizeEXT",
+                ),
+                Stage::Task => (
+                    limits.max_task_work_group_size_nv(),
+                    "too large, see gl_MaxTaskWorkGroupSizeNV",
+                ),
+                _ => return None,
+            };
+            let max = sizes.get(index).copied()?.cast_unsigned();
+            (value > max).then_some(DiagnosticKind::InvalidQualifier {
+                qualifier: "local_size",
+                reason,
+            })
+        });
     }
 
     fn local_size_changed(&mut self, span: Span) {
@@ -1523,6 +1606,9 @@ impl Analyzer<'_> {
         }
         self.global_storage_checks(&qualifiers, &ty, name.span, false);
         if is_global {
+            self.fragment_location_limit_check(name.span, &qualifiers);
+        }
+        if is_global {
             self.binding_required_check(name.span, &ty, &qualifiers, false);
         }
         if is_global {
@@ -1776,6 +1862,7 @@ impl Analyzer<'_> {
         }
         let name = &declarator.name;
         if let Some(builtin) = self.redeclared_builtin(&name.node) {
+            self.builtin_array_limit_check(name.span, &name.node, &ty);
             self.declarations.insert(declarator.id, builtin);
             if let Some(SymbolKind::Variable(variable)) =
                 self.symbol_mut(builtin).map(|symbol| &mut symbol.kind)
@@ -2123,6 +2210,15 @@ impl Analyzer<'_> {
         let dimensions = instance
             .map(|instance| self.array_sizes(instance.array.as_ref()))
             .unwrap_or_default();
+        if structure.name.node.starts_with("gl_") {
+            let declarators = structure
+                .members
+                .iter()
+                .flat_map(|declaration| &declaration.declarators);
+            for (declarator, member) in declarators.zip(&members) {
+                self.builtin_array_limit_check(declarator.name.span, &member.name, &member.ty);
+            }
+        }
         if self.redeclare_mesh_block(
             declaration,
             structure,

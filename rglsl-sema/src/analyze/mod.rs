@@ -9,6 +9,7 @@ mod fragment;
 mod frames;
 mod heap;
 mod layout_qualifiers;
+mod limitations;
 mod memory;
 mod mesh;
 mod opencl;
@@ -416,6 +417,8 @@ pub(crate) struct Analyzer<'a> {
     pub tile_image_locations: Vec<(u32, u32)>,
     pub spirv_requirements: SpirvRequirements,
     pub spirv_execution_modes: SpirvExecutionModes,
+    pub inductive_loops: BTreeSet<SymbolId>,
+    pub index_limitations: Vec<limitations::IndexLimitation>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -499,10 +502,13 @@ impl<'a> Analyzer<'a> {
             tile_image_locations: Vec::new(),
             spirv_requirements: SpirvRequirements::default(),
             spirv_execution_modes: SpirvExecutionModes::new(),
+            inductive_loops: BTreeSet::new(),
+            index_limitations: Vec::new(),
         }
     }
 
     fn unit(&mut self, unit: &TranslationUnit) {
+        self.patch_vertices_limit();
         for declaration in &unit.external_declarations {
             match declaration {
                 ExternalDeclaration::Directive(directive) => match &directive.kind {
@@ -817,6 +823,7 @@ impl<'a> Analyzer<'a> {
     }
 
     fn finish(mut self) -> Analysis {
+        self.finish_index_limitations();
         if self.diagnostics.is_empty() {
             for (diagnostic, trusted) in core::mem::take(&mut self.target_limits) {
                 self.diagnostics.push(diagnostic);

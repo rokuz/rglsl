@@ -512,3 +512,68 @@ fn keeps_uncalled_functions_of_every_linked_file() -> TestResult {
     assert_eq!(module(&directory.join("frag.spv"))?.functions.len(), 4);
     Ok(())
 }
+
+const WIDE_COMPUTE: &str = "#version 450\nlayout(local_size_x = 2048) in;\nvoid main() {}\n";
+
+#[test]
+fn dumps_the_default_configuration() -> TestResult {
+    let directory = work_dir("dump_config")?;
+    let run = rglsl(&directory, &["-c"])?;
+    assert_eq!(run.code, Some(0));
+    assert_eq!(run.stderr, "");
+    assert_eq!(run.stdout.lines().count(), 111);
+    assert!(run.stdout.starts_with("MaxLights 32\nMaxClipPlanes 6\n"));
+    assert!(run
+        .stdout
+        .ends_with("generalConstantMatrixVectorIndexing 1\n"));
+    fs::write(directory.join("defaults.conf"), &run.stdout)?;
+    fs::write(directory.join("wide.comp"), WIDE_COMPUTE)?;
+    let run = rglsl(&directory, &["-V", "wide.comp", "defaults.conf"])?;
+    assert_eq!(run.code, Some(2));
+    assert!(run.stderr.contains("ERROR: wide.comp:2: "));
+    let run = rglsl(&directory, &["-c", "missing.conf"])?;
+    assert_eq!(run.code, Some(0));
+    Ok(())
+}
+
+#[test]
+fn configuration_files_set_the_limits() -> TestResult {
+    let directory = work_dir("config_file")?;
+    fs::write(directory.join("wide.comp"), WIDE_COMPUTE)?;
+    fs::write(
+        directory.join("wide.conf"),
+        "MaxComputeWorkGroupSizeX 2048\nMaxWidgets 3\n",
+    )?;
+    let run = rglsl(&directory, &["-V", "wide.comp", "wide.conf"])?;
+    assert_eq!(run.code, Some(0), "{}", run.stderr);
+    assert_eq!(
+        run.stdout,
+        "Warning: unrecognized limit (MaxWidgets) in configuration file.\n"
+    );
+    assert!(directory.join("comp.spv").is_file());
+    fs::write(
+        directory.join("bad.conf"),
+        "MaxComputeWorkGroupSizeX lots\n",
+    )?;
+    let run = rglsl(&directory, &["-V", "wide.comp", "bad.conf"])?;
+    assert_eq!(run.code, Some(2));
+    assert!(run
+        .stdout
+        .starts_with("Error: 'lots' bad .conf file.  Each name must be followed by one number.\n"));
+    let run = rglsl(&directory, &["-V", "wide.comp", "absent.conf"])?;
+    assert_eq!(run.code, Some(1));
+    assert!(run
+        .stderr
+        .ends_with(": Error: unable to open input file (use -h for usage)\n"));
+    fs::write(
+        directory.join("library.glsl"),
+        "#version 450\nfloat clip[gl_MaxClipDistances - 9];\nfloat first() { return clip[0]; }\n",
+    )?;
+    fs::write(directory.join("clip.conf"), "MaxClipDistances 10\n")?;
+    let run = rglsl(&directory, &["--object", "library.glsl"])?;
+    assert_eq!(run.code, Some(2));
+    let run = rglsl(&directory, &["--object", "library.glsl", "clip.conf"])?;
+    assert_eq!(run.code, Some(0), "{}", run.stderr);
+    assert!(directory.join("library.rglo").is_file());
+    Ok(())
+}

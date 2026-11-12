@@ -142,6 +142,10 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   outputs need no interpolation qualifier (`valid/interface.rs`).
 - **Write-only storage buffers are valid** (`StorageAddressSpaceWriteOnlyNotSupported` is
   removed), **integer textures can be sampled**, and **clip distances may be fragment inputs**.
+- **Clip and cull distance arrays of any constant size.** The validator no longer limits
+  `ClipDistances` and `CullDistance` arrays to 8 elements (`valid/interface.rs`); the GLSL
+  front end checks their size against the configured `gl_MaxClipDistances` and
+  `gl_MaxCullDistances` (`ResourceLimits`), as glslang does.
 - **Block layout is the front end's.** `StructMember::matrix_layout` (new) carries the
   stride and majorness of a matrix member; the SPIR-V backend emits it as `MatrixStride` and
   `RowMajor`/`ColMajor` and does not apply its std140 compatibility rewriting of two-row
