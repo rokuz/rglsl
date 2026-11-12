@@ -14,6 +14,7 @@ use crate::args::{
     self, Debug, Exit, Macro, Options, VersionDump, EXIT_COMPILE, EXIT_LINK, EXIT_SUCCESS,
 };
 use crate::output;
+use crate::reflect;
 
 pub const OBJECT_EXTENSION: &str = "rglo";
 
@@ -777,6 +778,7 @@ impl<'a> Session<'a> {
                     })
                     .collect();
                 self.report_link(&link);
+                self.reflect(&[(unit, log.compile.is_empty())], &[]);
                 self.not_generated();
                 return Ok(if log.compile.is_empty() {
                     EXIT_LINK
@@ -792,6 +794,7 @@ impl<'a> Session<'a> {
                     let mut log = self.validation_log(unit, &error);
                     log.notes = notes;
                     self.report_unit(unit, &log);
+                    self.reflect(&[(unit, true)], &[(stage, &module)]);
                     self.not_generated();
                     return Ok(EXIT_COMPILE);
                 }
@@ -804,10 +807,74 @@ impl<'a> Session<'a> {
             },
         );
         self.rename_entry_point(&mut module);
+        self.reflect(&[(unit, true)], &[(stage, &module)]);
         if self.options.spirv {
             return self.emit(stage, &module, &info, &unit.name);
         }
         Ok(EXIT_SUCCESS)
+    }
+
+    fn analyze(&self, unit: &Unit, stage: ShaderStage) -> Option<glsl::Analyzed> {
+        let mut options = self.frontend_options(unit);
+        options.stage = stage;
+        options.library = false;
+        let mut includer = self.includer();
+        let root = includer.add_root(&unit.name);
+        glsl::Frontend::default().analyze_with_includer(&options, &unit.text, root, &mut includer)
+    }
+
+    fn reflect(&self, units: &[(&Unit, bool)], modules: &[(ShaderStage, &Module)]) {
+        if !self.options.reflect {
+            return;
+        }
+        let mut analyzed: Vec<(ShaderStage, Vec<(glsl::Analyzed, bool)>)> = Vec::new();
+        for stage in STAGE_ORDER {
+            if !units
+                .iter()
+                .any(|(unit, _)| unit.class == Class::Stage(stage))
+            {
+                continue;
+            }
+            let mut stage_units = Vec::new();
+            for &(unit, compiled) in units {
+                let wanted = match unit.class {
+                    Class::Stage(own) => own == stage,
+                    Class::Library => true,
+                    Class::Object => false,
+                };
+                if !wanted {
+                    continue;
+                }
+                if let Some(result) = self.analyze(unit, stage) {
+                    stage_units.push((result, compiled));
+                }
+            }
+            analyzed.push((stage, stage_units));
+        }
+        let inputs: Vec<reflect::StageInput> = analyzed
+            .iter()
+            .map(|(stage, units)| reflect::StageInput {
+                stage: *stage,
+                units: units
+                    .iter()
+                    .map(|(analyzed, compiled)| reflect::Unit {
+                        analyzed,
+                        compiled: *compiled,
+                    })
+                    .collect(),
+                module: modules
+                    .iter()
+                    .find(|(candidate, _)| candidate == stage)
+                    .map(|&(_, module)| module),
+            })
+            .collect();
+        let settings = reflect::Settings {
+            options: self.options.reflect_options,
+            spirv: self.options.spirv,
+            keep_uncalled: self.options.keep_uncalled,
+            auto_map_bindings: self.options.auto_map_bindings,
+        };
+        output::stdout(&reflect::reflect(settings, &inputs));
     }
 
     fn rename_entry_point(&self, module: &mut Module) {
@@ -835,15 +902,18 @@ impl<'a> Session<'a> {
     fn link(&mut self, units: &[Unit]) -> Result<i32, Exit> {
         let mut objects = Vec::with_capacity(units.len());
         let mut failed = false;
+        let mut outcomes = Vec::with_capacity(units.len());
         for unit in units {
             let compiled = self.compile_object(unit);
             self.report_unit(unit, &compiled.log);
+            outcomes.push((unit, compiled.object.is_some()));
             match compiled.object {
                 Some(object) => objects.push(object),
                 None => failed = true,
             }
         }
         if failed {
+            self.reflect(&outcomes, &[]);
             self.not_generated();
             return Ok(EXIT_COMPILE);
         }
@@ -855,6 +925,7 @@ impl<'a> Session<'a> {
                     .map(|&(stage, ref error)| link_line(stage, error))
                     .collect();
                 self.report_link(&lines);
+                self.reflect(&outcomes, &[]);
                 self.not_generated();
                 return Ok(EXIT_LINK);
             }
@@ -885,6 +956,11 @@ impl<'a> Session<'a> {
         for stage in &mut linked {
             self.rename_entry_point(&mut stage.module);
         }
+        let modules: Vec<(ShaderStage, &Module)> = linked
+            .iter()
+            .map(|stage| (stage.stage, &stage.module))
+            .collect();
+        self.reflect(&outcomes, &modules);
         if self.options.spirv {
             for stage in &linked {
                 let code = self.emit(stage.stage, &stage.module, &stage.info, &name)?;

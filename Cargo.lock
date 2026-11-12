@@ -502,8 +502,11 @@ name = "rglsl-cli"
 version = "0.1.0"
 dependencies = [
  "rglsl",
+ "rglsl-ast",
  "rglsl-link",
  "rglsl-pp",
+ "rglsl-sema",
+ "rglsl-types",
  "rspirv",
  "spirv",
 ]

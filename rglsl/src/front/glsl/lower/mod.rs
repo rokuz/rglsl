@@ -84,6 +84,25 @@ pub(super) fn compile(
     )
 }
 
+pub(super) fn analyze(
+    options: &Options,
+    source: &str,
+    root: rglsl_pp::FileId,
+    includer: &mut dyn rglsl_pp::Includer,
+) -> Option<super::Analyzed> {
+    let preprocessed = preprocess(options, Some(options.stage), source, root, includer);
+    if preprocessed.has_errors() {
+        return None;
+    }
+    let text = preprocessed.text.as_str();
+    let (unit, failure) = rglsl_ast::parse_prefix(text);
+    if failure.is_some() {
+        return None;
+    }
+    let analysis = rglsl_sema::analyze(&unit, &sema_options(options, text));
+    Some(super::Analyzed { unit, analysis })
+}
+
 pub(super) fn library_lowerings(
     options: &Options,
     source: &str,

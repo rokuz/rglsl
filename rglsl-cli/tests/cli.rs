@@ -334,3 +334,121 @@ fn disassembles_with_h() -> TestResult {
     assert!(directory.join("frag.spv").is_file());
     Ok(())
 }
+
+const REFLECTION_VERTEX: &str = "#version 450
+layout(binding = 1) uniform Block { vec4 tint; };
+layout(location = 0) in vec4 position;
+void main() { gl_Position = position * tint; }
+";
+
+const STORAGE_COMPUTE: &str = "#version 450
+layout(binding = 0) buffer Data { uint count; float values[]; } data;
+layout(local_size_x = 64) in;
+void main() { data.values[gl_GlobalInvocationID.x] = float(data.count); }
+";
+
+#[test]
+fn reflects_the_program_as_glslang() -> TestResult {
+    let directory = work_dir("reflection")?;
+    fs::write(directory.join("shader.frag"), FRAGMENT)?;
+    let run = rglsl(&directory, &["-V", "-q", "shader.frag"])?;
+    assert_eq!(run.code, Some(0), "{}", run.stderr);
+    assert_eq!(
+        run.stdout,
+        "Uniform reflection:
+tint: offset 0, type 8b52, size 1, index 0, binding -1, stages 16
+image: offset -1, type 8b5e, size 1, index -1, binding 2, stages 16
+
+Uniform block reflection:
+Block: offset -1, type ffffffff, size 16, index 0, binding 1, stages 16, numMembers 1
+
+Buffer variable reflection:
+
+Buffer block reflection:
+
+Pipeline input reflection:
+
+Pipeline output reflection:
+color: offset 0, type 8b52, size 1, index 0, binding -1, stages 16
+
+"
+    );
+    assert!(directory.join("frag.spv").is_file());
+    Ok(())
+}
+
+#[test]
+fn reflects_linked_stages_and_options() -> TestResult {
+    let directory = work_dir("reflection_linked")?;
+    fs::write(directory.join("shader.vert"), REFLECTION_VERTEX)?;
+    fs::write(directory.join("shader.frag"), FRAGMENT)?;
+    let run = rglsl(&directory, &["-l", "-q", "shader.vert", "shader.frag"])?;
+    assert_eq!(run.code, Some(0), "{}", run.stderr);
+    assert!(run
+        .stdout
+        .contains("tint: offset 0, type 8b52, size 1, index 0, binding -1, stages 17\n"));
+    assert!(run.stdout.contains(
+        "Block: offset -1, type ffffffff, size 16, index 0, binding 1, stages 17, numMembers 1\n"
+    ));
+    assert!(run.stdout.contains(
+        "Pipeline input reflection:\nposition: offset 0, type 8b52, size 1, index 0, binding -1, stages 1\n"
+    ));
+    assert!(!directory.join("vert.spv").exists());
+    fs::write(directory.join("shader.comp"), STORAGE_COMPUTE)?;
+    let run = rglsl(
+        &directory,
+        &["-V", "-q", "--reflect-separate-buffers", "shader.comp"],
+    )?;
+    assert_eq!(run.code, Some(0), "{}", run.stderr);
+    assert!(run.stdout.starts_with(
+        "Uniform reflection:\n\nUniform block reflection:\n\nBuffer variable reflection:\nData.values: offset 4, type 1406, size 0, index 0, binding -1, stages 32, arrayStride 4, topLevelArrayStride 4\nData.count: offset 0, type 1405, size 1, index 0, binding -1, stages 32\n"
+    ));
+    assert!(run.stdout.ends_with("Local size X: 64\n\n"));
+    Ok(())
+}
+
+#[test]
+fn reflects_deeply_nested_code() -> TestResult {
+    let directory = work_dir("reflection_nested")?;
+    let depth = 10_000;
+    let mut source = String::from(
+        "#version 450\nlayout(location = 0) out vec4 color;\nlayout(binding = 1) uniform Block { vec4 tint; };\nvoid main() {\n",
+    );
+    source.push_str(&"{".repeat(depth));
+    source.push_str("color = ");
+    source.push_str(&"(tint + ".repeat(depth));
+    source.push_str("tint");
+    source.push_str(&")".repeat(depth));
+    source.push(';');
+    source.push_str(&"}".repeat(depth));
+    source.push_str("\n}\n");
+    fs::write(directory.join("deep.frag"), source)?;
+    let run = rglsl(&directory, &["-l", "-q", "deep.frag"])?;
+    assert_eq!(run.code, Some(0), "{}", run.stderr);
+    assert!(run
+        .stdout
+        .contains("tint: offset 0, type 8b52, size 1, index 0, binding -1, stages 16\n"));
+    Ok(())
+}
+
+#[test]
+fn reflection_needs_linking_and_survives_errors() -> TestResult {
+    let directory = work_dir("reflection_errors")?;
+    fs::write(directory.join("shader.frag"), FRAGMENT)?;
+    let run = rglsl(&directory, &["-q", "shader.frag"])?;
+    assert_eq!(run.code, Some(1));
+    assert!(run
+        .stderr
+        .ends_with("Error: reflection requires -l for linking (use -h for usage)\n"));
+    fs::write(
+        directory.join("bad.frag"),
+        "#version 450\nlayout(location = 0) out vec4 c;\nvoid main() { c = x; }\n",
+    )?;
+    let run = rglsl(&directory, &["-V", "-q", "bad.frag"])?;
+    assert_eq!(run.code, Some(2));
+    assert_eq!(
+        run.stdout,
+        "Uniform reflection:\n\nUniform block reflection:\n\nBuffer variable reflection:\n\nBuffer block reflection:\n\nPipeline input reflection:\n\nPipeline output reflection:\n\nSPIR-V is not generated for failed compile or link\n"
+    );
+    Ok(())
+}

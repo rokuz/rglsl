@@ -24,8 +24,11 @@ test = false
 
 [dependencies]
 rglsl = { workspace = true, features = ["glsl-in", "spv-out"] }
+rglsl-ast.workspace = true
 rglsl-link.workspace = true
 rglsl-pp = { workspace = true, features = ["std"] }
+rglsl-sema.workspace = true
+rglsl-types.workspace = true
 rspirv.workspace = true
 
 [lints]

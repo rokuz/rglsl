@@ -51,6 +51,7 @@ Options:
   -i          accepted for compatibility; no AST is printed
   -l          link all input files together to form a single module
   -o <file>   save binary to <file>; requires a binary option (e.g., -V)
+  -q          dump reflection query database; requires -l for linking
   -r | --relaxed-errors
               accepted for compatibility; errors are not relaxed
   -s          silence syntax and semantic error reporting
@@ -74,6 +75,23 @@ Options:
   --hlsl-offsets                    allow block offsets to follow HLSL rules
   --keep-uncalled | --ku            don't eliminate uncalled functions
   --quiet                           do not print the names of the compiled files
+  --reflect-all-block-variables     reflect all variables in blocks, whether
+                                    inactive or active
+  --reflect-all-io-variables        reflect all input and output variables,
+                                    whether used or not
+  --reflect-basic-array-suffix      arrays of basic types will have trailing [0]
+  --reflect-intermediate-io         reflection includes inputs/outputs of linked
+                                    shaders rather than just vertex/fragment
+  --reflect-separate-buffers        reflect buffer variables and blocks
+                                    separately to uniforms
+  --reflect-shared-std140-ssbo      reflect std140 and shared buffer blocks
+                                    whether used or not
+  --reflect-shared-std140-ubo       reflect std140 and shared uniform blocks
+                                    whether used or not
+  --reflect-strict-array-suffix     use strict array suffix rules when
+                                    reflecting
+  --reflect-unwrap-io-blocks        unwrap input/output blocks the same as
+                                    uniform blocks
   --relax-set-binding-limits        accepted for compatibility
   --resource-set-binding [stage] <set>
                                     set descriptor set for all resources
