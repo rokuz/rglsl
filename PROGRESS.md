@@ -150,13 +150,13 @@ Our own tests of the rglsl-specific linking rules (`tests/link`): imports, libra
 
 | Stage | Files | accept | diag | valid | interface | exec local | exec amd | exec nvidia | link | crashes |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| **all** | 51 | 51 / 51 (100.0 %) | 21 / 21 (100.0 %) | 30 / 30 (100.0 %) | – | 17 / 17 (100.0 %) | 17 / 17 (100.0 %) | 17 / 17 (100.0 %) | 51 / 51 (100.0 %) | 0 |
+| **all** | 52 | 52 / 52 (100.0 %) | 21 / 21 (100.0 %) | 31 / 31 (100.0 %) | – | 18 / 18 (100.0 %) | 18 / 18 (100.0 %) | 18 / 18 (100.0 %) | 52 / 52 (100.0 %) | 0 |
 | vert | 9 | 9 / 9 (100.0 %) | 3 / 3 (100.0 %) | 6 / 6 (100.0 %) | – | 3 / 3 (100.0 %) | 3 / 3 (100.0 %) | 3 / 3 (100.0 %) | 9 / 9 (100.0 %) | 0 |
 | tesc | 1 | 1 / 1 (100.0 %) | – | 1 / 1 (100.0 %) | – | – | – | – | 1 / 1 (100.0 %) | 0 |
 | tese | 1 | 1 / 1 (100.0 %) | – | 1 / 1 (100.0 %) | – | – | – | – | 1 / 1 (100.0 %) | 0 |
 | geom | 2 | 2 / 2 (100.0 %) | 1 / 1 (100.0 %) | 1 / 1 (100.0 %) | – | – | – | – | 2 / 2 (100.0 %) | 0 |
 | frag | 25 | 25 / 25 (100.0 %) | 13 / 13 (100.0 %) | 12 / 12 (100.0 %) | – | 8 / 8 (100.0 %) | 8 / 8 (100.0 %) | 8 / 8 (100.0 %) | 25 / 25 (100.0 %) | 0 |
-| comp | 12 | 12 / 12 (100.0 %) | 4 / 4 (100.0 %) | 8 / 8 (100.0 %) | – | 6 / 6 (100.0 %) | 6 / 6 (100.0 %) | 6 / 6 (100.0 %) | 12 / 12 (100.0 %) | 0 |
+| comp | 13 | 13 / 13 (100.0 %) | 4 / 4 (100.0 %) | 9 / 9 (100.0 %) | – | 7 / 7 (100.0 %) | 7 / 7 (100.0 %) | 7 / 7 (100.0 %) | 13 / 13 (100.0 %) | 0 |
 | mesh | 1 | 1 / 1 (100.0 %) | – | 1 / 1 (100.0 %) | – | – | – | – | 1 / 1 (100.0 %) | 0 |
 
 `accept` in detail:
@@ -170,8 +170,8 @@ Our own tests of the rglsl-specific linking rules (`tests/link`): imports, libra
 
 | | shaders |
 |---|---:|
-| executed | 17 |
-| passed | 17 |
+| executed | 18 |
+| passed | 18 |
 | passed within the float tolerance | 0 |
 | failed | 0 |
 
@@ -179,8 +179,8 @@ Our own tests of the rglsl-specific linking rules (`tests/link`): imports, libra
 
 | | shaders |
 |---|---:|
-| executed | 17 |
-| passed | 17 |
+| executed | 18 |
+| passed | 18 |
 | passed within the float tolerance | 0 |
 | failed | 0 |
 
@@ -188,8 +188,8 @@ Our own tests of the rglsl-specific linking rules (`tests/link`): imports, libra
 
 | | shaders |
 |---|---:|
-| executed | 17 |
-| passed | 17 |
+| executed | 18 |
+| passed | 18 |
 | passed within the float tolerance | 0 |
 | failed | 0 |
 
