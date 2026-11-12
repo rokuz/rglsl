@@ -1,0 +1,22 @@
+#version 460
+#extension GL_ARM_tensors : require
+
+layout(local_size_x = 1) in;
+
+layout(set = 0, binding = 2) buffer Result {
+    uint index;
+    float value;
+    uint size;
+} result;
+
+tensorARM<float, 2> select(uint index);
+tensorARM<float, 2>[2] everything();
+uint count(readonly writeonly tensorARM<float, 2> tensors[2]);
+
+void main()
+{
+    float value;
+    tensorReadARM(select(result.index), uint[](0u, 0u), value);
+    result.value = value;
+    result.size = tensorSizeARM(everything()[result.index], 1) + tensorSizeARM(everything()[0], 0);
+}
