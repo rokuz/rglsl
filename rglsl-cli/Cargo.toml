@@ -11,6 +11,11 @@ license.workspace = true
 rust-version.workspace = true
 publish = false
 
+[lib]
+name = "rglsl_cli"
+path = "src/lib.rs"
+doc = false
+
 [[bin]]
 name = "rglsl"
 path = "src/main.rs"

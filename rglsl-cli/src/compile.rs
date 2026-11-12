@@ -963,7 +963,7 @@ impl<'a> Session<'a> {
         }
         self.outputs.push(path);
         if self.options.disassemble {
-            output::out!("{}", output::disassemble(&words));
+            output::out!("{}", rglsl_cli::disassemble::disassemble(&words));
         }
         Ok(EXIT_SUCCESS)
     }

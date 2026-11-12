@@ -2,8 +2,6 @@ use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
 
-use rspirv::binary::Disassemble as _;
-
 pub fn words_to_bytes(words: &[u32]) -> Vec<u8> {
     words.iter().flat_map(|word| word.to_le_bytes()).collect()
 }
@@ -38,13 +36,6 @@ pub fn write(path: &str, words: &[u32], hex: bool, variable: Option<&str>) -> bo
         words_to_bytes(words)
     };
     fs::write(Path::new(path), contents).is_ok()
-}
-
-pub fn disassemble(words: &[u32]) -> String {
-    match rspirv::dr::load_words(words) {
-        Ok(module) => module.disassemble(),
-        Err(error) => format!("; cannot disassemble the module: {error}"),
-    }
 }
 
 fn escape_dependency(text: &str) -> String {

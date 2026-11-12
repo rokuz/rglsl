@@ -588,6 +588,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "rglsl",
+ "rglsl-cli",
  "rglsl-fuzz",
  "rglsl-link",
  "rglsl-pp",
