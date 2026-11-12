@@ -664,7 +664,13 @@ impl Executor {
         tag: &str,
     ) -> Result<Job, String> {
         let tested = PathBuf::from(format!("{tag}.spv"));
-        fs::copy(spirv, dir.join(&tested)).map_err(|e| e.to_string())?;
+        if plan.output_shift == 0 {
+            fs::copy(spirv, dir.join(&tested)).map_err(|e| e.to_string())?;
+        } else {
+            let bytes = fs::read(spirv).map_err(|e| e.to_string())?;
+            let shifted = module::shift_output_locations(&bytes, plan.output_shift)?;
+            fs::write(dir.join(&tested), shifted).map_err(|e| e.to_string())?;
+        }
         let script = plan.script(ScriptPaths {
             tested: &tested,
             harness,
