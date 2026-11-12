@@ -152,7 +152,7 @@ impl Lowerer<'_> {
     pub(super) fn ray_tracing_features(&self) -> RayTracingFeatures {
         let extensions = &self.analysis.extensions;
         let mut features = RayTracingFeatures::empty();
-        if self.stage_map(ShaderStage::ray_tracing) {
+        if self.library || self.stage_map(ShaderStage::ray_tracing) {
             if extensions.contains(RAY_TRACING_NV) {
                 features |= RayTracingFeatures::NV;
             }
@@ -166,9 +166,11 @@ impl Lowerer<'_> {
             {
                 features |= RayTracingFeatures::PAYLOAD_LOCATIONS;
             }
-            if !self.stage_map(|stage| {
-                matches!(stage, ShaderStage::RayGeneration | ShaderStage::Callable)
-            }) {
+            if self.library
+                || !self.stage_map(|stage| {
+                    matches!(stage, ShaderStage::RayGeneration | ShaderStage::Callable)
+                })
+            {
                 if extensions.contains("GL_EXT_ray_cull_mask") {
                     features |= RayTracingFeatures::CULL_MASK;
                 }

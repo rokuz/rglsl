@@ -186,27 +186,27 @@ impl Analyzer<'_> {
         if !derivative && !implicit_lod(name, operands) {
             return valid;
         }
-        if !self.stage_in(&[Stage::Compute, Stage::Task, Stage::Mesh]) {
-            return valid;
+        let gated = |stage: Stage| matches!(stage, Stage::Compute | Stage::Task | Stage::Mesh);
+        if derivative
+            && !self.require_stage_extensions(span, name, |stage| {
+                gated(stage).then_some(if stage == Stage::Compute {
+                    &COMPUTE_DERIVATIVES[..]
+                } else {
+                    &KHR_ONLY[..]
+                })
+            })
+        {
+            return false;
         }
-        if derivative {
-            let extensions: &'static [&'static str] = if self.stage_is(Stage::Compute) {
-                &COMPUTE_DERIVATIVES
-            } else {
-                &KHR_ONLY
-            };
-            if !self.require_extensions(span, extensions, name) {
-                return false;
-            }
-        }
-        if self.extensions.is_on(KHR_DERIVATIVES) && self.derivative_group.is_none() {
-            self.error(
-                span,
-                DiagnosticKind::InvalidBuiltinCall {
+        if self.extensions.is_on(KHR_DERIVATIVES)
+            && self.derivative_group.is_none()
+            && self.stage_check(span, |stage| {
+                gated(stage).then(|| DiagnosticKind::InvalidBuiltinCall {
                     name: String::from(name),
                     reason: "requires a derivative_group_quads* or derivative_group_linear* layout qualifier",
-                },
-            );
+                })
+            })
+        {
             valid = false;
         }
         valid

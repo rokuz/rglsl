@@ -157,18 +157,12 @@ impl Analyzer<'_> {
     }
 
     pub(crate) fn require_stage(&mut self, span: Span, stages: &[Stage], what: &str) -> bool {
-        let stage = self.stage();
-        if stages.contains(&stage) {
-            return true;
-        }
-        self.error(
-            span,
-            DiagnosticKind::NotSupportedInStage {
+        !self.stage_check(span, |stage| {
+            (!stages.contains(&stage)).then(|| DiagnosticKind::NotSupportedInStage {
                 feature: String::from(what),
                 stage: stage.name(),
-            },
-        );
-        false
+            })
+        })
     }
 
     pub(crate) fn ray_storage_qualifier(
@@ -589,6 +583,7 @@ impl Analyzer<'_> {
         if !self.scopes.is_global() {
             return None;
         }
+        self.builtin_name(ENABLE_OPACITY_MICROMAP);
         match self.scopes.lookup_level(ENABLE_OPACITY_MICROMAP) {
             Some((0, crate::scope::Lookup::Symbol(id))) => Some(id),
             _ => None,

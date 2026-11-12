@@ -229,6 +229,13 @@ pub fn find_version(source: &str) -> Option<VersionDirective> {
     scan_version(source).directive
 }
 
+pub fn version_check(source: &str, options: &Options) -> (Version, Vec<&'static str>) {
+    let scanned = scan_version(source.strip_prefix('\u{feff}').unwrap_or(source));
+    let mut errors = Vec::new();
+    let version = deduce(&scanned, options, &mut errors);
+    (version, errors)
+}
+
 pub(crate) fn deduce(
     scanned: &ScannedVersion,
     options: &Options,

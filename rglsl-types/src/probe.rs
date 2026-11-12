@@ -47,6 +47,10 @@ impl<S: Copy + PartialEq + 'static> StageProbe<S> {
         self.own
     }
 
+    pub const fn own(&self) -> S {
+        self.own
+    }
+
     pub fn compatible(&self) -> u16 {
         self.compatible.get()
     }

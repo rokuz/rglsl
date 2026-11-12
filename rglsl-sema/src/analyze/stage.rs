@@ -116,7 +116,7 @@ const PRE_RASTERIZATION: &[Stage] = &[
 
 const COMPUTE_LIKE: &[Stage] = &[Stage::Compute, Stage::Task, Stage::Mesh];
 
-fn layout_stages(name: &str) -> Option<&'static [Stage]> {
+pub fn layout_stages(name: &str) -> Option<&'static [Stage]> {
     Some(match name {
         "local_size_x" | "local_size_y" | "local_size_z" | "local_size_x_id"
         | "local_size_y_id" | "local_size_z_id" | "shading_rate_xqcom" | "shading_rate_yqcom"
@@ -179,15 +179,13 @@ impl Analyzer<'_> {
     pub(crate) fn stage_layout_identifiers(&mut self, qualifiers: &Qualifiers) {
         for entry in &qualifiers.layout {
             let name = entry.name.to_ascii_lowercase();
-            if layout_stages(&name).is_some_and(|stages| !self.stage_in(stages)) {
-                let stage = self.stage();
-                self.error(
-                    entry.span,
-                    DiagnosticKind::NotSupportedInStage {
+            if let Some(stages) = layout_stages(&name) {
+                self.stage_check(entry.span, |stage| {
+                    (!stages.contains(&stage)).then(|| DiagnosticKind::NotSupportedInStage {
                         feature: alloc::format!("layout({name})"),
                         stage: stage.name(),
-                    },
-                );
+                    })
+                });
             }
         }
     }
@@ -208,42 +206,41 @@ impl Analyzer<'_> {
     }
 
     pub(crate) fn view_layout_extensions(&mut self, qualifiers: &Qualifiers) {
-        let named = |wanted: &[&str]| {
+        let required: alloc::vec::Vec<(Span, &'static [&'static str], &'static str, bool)> =
             qualifiers
                 .layout
                 .iter()
-                .any(|entry| wanted.contains(&entry.name.to_ascii_lowercase().as_str()))
-        };
-        let pre_rasterization = named(&["viewport_relative", "secondary_view_offset"])
-            && self.stage_in(&[
-                Stage::Vertex,
-                Stage::TessControl,
-                Stage::TessEvaluation,
-                Stage::Geometry,
-            ]);
-        let fragment = named(&["override_coverage"]) && self.stage_is(Stage::Fragment);
-        let required: alloc::vec::Vec<(Span, &'static str, &'static str)> = qualifiers
-            .layout
-            .iter()
-            .filter_map(|entry| {
-                let name = entry.name.to_ascii_lowercase();
-                let (extension, what) = match name.as_str() {
-                    "viewport_relative" if pre_rasterization => {
-                        ("GL_NV_viewport_array2", "viewport_relative")
-                    }
-                    "secondary_view_offset" if pre_rasterization => {
-                        ("GL_NV_stereo_view_rendering", "secondary_view_offset")
-                    }
-                    "override_coverage" if fragment => {
-                        ("GL_NV_sample_mask_override_coverage", "override_coverage")
-                    }
-                    _ => return None,
+                .filter_map(|entry| {
+                    let name = entry.name.to_ascii_lowercase();
+                    let (extension, what, fragment): (&'static [&'static str], _, _) =
+                        match name.as_str() {
+                            "viewport_relative" => {
+                                (&["GL_NV_viewport_array2"], "viewport_relative", false)
+                            }
+                            "secondary_view_offset" => (
+                                &["GL_NV_stereo_view_rendering"],
+                                "secondary_view_offset",
+                                false,
+                            ),
+                            "override_coverage" => (
+                                &["GL_NV_sample_mask_override_coverage"],
+                                "override_coverage",
+                                true,
+                            ),
+                            _ => return None,
+                        };
+                    Some((entry.span, extension, what, fragment))
+                })
+                .collect();
+        for (span, extension, what, fragment) in required {
+            self.require_stage_extensions(span, what, |stage| {
+                let applies = if fragment {
+                    stage == Stage::Fragment
+                } else {
+                    PRE_RASTERIZATION.contains(&stage)
                 };
-                Some((entry.span, extension, what))
-            })
-            .collect();
-        for (span, extension, what) in required {
-            self.require_extension(span, extension, what);
+                applies.then_some(extension)
+            });
         }
     }
 
@@ -284,6 +281,9 @@ impl Analyzer<'_> {
     }
 
     pub(crate) fn standalone_stage_layout(&mut self, qualifiers: &Qualifiers) {
+        if self.stage_map(|stage| shader_layouts(stage, qualifiers).next().is_none()) {
+            return;
+        }
         let stage = self.stage();
         let found: alloc::vec::Vec<(&'static str, Kind, Span, Option<i64>)> =
             shader_layouts(stage, qualifiers)

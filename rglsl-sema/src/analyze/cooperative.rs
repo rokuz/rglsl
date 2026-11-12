@@ -515,6 +515,7 @@ impl Analyzer<'_> {
         arguments: &[Expression],
         operands: &[Operand],
     ) -> Operand {
+        self.builtin_name(name);
         let cooperative_operands = operands
             .iter()
             .any(|operand| operand.ty.is_cooperative_vector());

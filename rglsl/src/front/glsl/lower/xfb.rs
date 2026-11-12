@@ -15,6 +15,7 @@ pub(super) struct Xfb {
     strides: BTreeMap<u32, u32>,
     buffers: BTreeMap<u32, Capture>,
     globals: Vec<(Handle<GlobalVariable>, u32, Option<u32>)>,
+    pub pending: Vec<Handle<GlobalVariable>>,
     pub per_vertex: Option<PerVertexXfb>,
 }
 
@@ -338,6 +339,22 @@ impl Lowerer<'_> {
     pub(super) fn finish_xfb(&mut self) {
         if !self.xfb.mode {
             return;
+        }
+        let pending = core::mem::take(&mut self.xfb.pending);
+        if !pending.is_empty() {
+            let stage_default = self.stage_map(|stage| {
+                matches!(
+                    stage,
+                    crate::ShaderStage::Vertex
+                        | crate::ShaderStage::TessEvaluation
+                        | crate::ShaderStage::Geometry
+                )
+            });
+            if stage_default {
+                for handle in pending {
+                    self.xfb.globals.push((handle, 0, None));
+                }
+            }
         }
         let mut strides = BTreeMap::new();
         let buffers: Vec<u32> = self

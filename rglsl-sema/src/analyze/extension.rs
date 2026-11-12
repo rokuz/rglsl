@@ -121,16 +121,14 @@ impl Analyzer<'_> {
             names::MESH_SHADER_EXT => names::MESH_SHADER_NV,
             _ => return,
         };
-        if !self.stage_in(&[Stage::Task, Stage::Mesh, Stage::Fragment]) {
-            let stage = self.stage();
-            self.error(
-                span,
+        self.stage_check(span, |stage| {
+            (!matches!(stage, Stage::Task | Stage::Mesh | Stage::Fragment)).then(|| {
                 DiagnosticKind::ExtensionStage {
                     extension: String::from(name),
                     stage: stage.name(),
-                },
-            );
-        }
+                }
+            })
+        });
         if self.extensions.is_on(other) {
             self.error(
                 span,

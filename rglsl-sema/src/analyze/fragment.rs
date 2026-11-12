@@ -85,7 +85,20 @@ const fn invalid(qualifier: &'static str, reason: &'static str) -> DiagnosticKin
 
 impl Analyzer<'_> {
     pub(crate) fn fragment_layouts(&mut self, qualifiers: &Qualifiers) {
-        if !self.stage_is(Stage::Fragment) {
+        let relevant = qualifiers.layout.iter().any(|entry| {
+            let name = entry.name.to_ascii_lowercase();
+            Interlock::from_layout(&name).is_some()
+                || matches!(
+                    name.as_str(),
+                    "post_depth_coverage"
+                        | "early_fragment_tests"
+                        | "early_and_late_fragment_tests_amd"
+                        | "non_coherent_color_attachment_readext"
+                        | "non_coherent_depth_attachment_readext"
+                        | "non_coherent_stencil_attachment_readext"
+                )
+        });
+        if !relevant || !self.stage_is(Stage::Fragment) {
             return;
         }
         let input = qualifiers.storage == Storage::In;
@@ -279,15 +292,12 @@ impl Analyzer<'_> {
             );
             return;
         }
-        if !self.stage_is(Stage::Fragment) {
-            self.error(
-                span,
-                DiagnosticKind::NotSupportedInStage {
-                    feature: String::from("tileImageEXT"),
-                    stage: self.stage().name(),
-                },
-            );
-        }
+        self.stage_check(span, |stage| {
+            (stage != Stage::Fragment).then(|| DiagnosticKind::NotSupportedInStage {
+                feature: String::from("tileImageEXT"),
+                stage: stage.name(),
+            })
+        });
         if !self.scopes.is_global() {
             self.error(span, invalid("tileImageEXT", "not allowed in nested scope"));
         }
@@ -322,15 +332,12 @@ impl Analyzer<'_> {
     }
 
     pub(crate) fn demote(&mut self, span: Span) {
-        if !self.stage_is(Stage::Fragment) {
-            self.error(
-                span,
-                DiagnosticKind::NotSupportedInStage {
-                    feature: String::from("demote"),
-                    stage: self.stage().name(),
-                },
-            );
-        }
+        self.stage_check(span, |stage| {
+            (stage != Stage::Fragment).then(|| DiagnosticKind::NotSupportedInStage {
+                feature: String::from("demote"),
+                stage: stage.name(),
+            })
+        });
         self.require_extension(span, "GL_EXT_demote_to_helper_invocation", "demote");
     }
 }

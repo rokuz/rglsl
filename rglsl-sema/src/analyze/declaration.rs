@@ -147,12 +147,31 @@ impl Analyzer<'_> {
                     ) {
                         continue;
                     }
-                    match self.lookup(&identifier.node) {
+                    let found = self
+                        .lookup_quiet(&identifier.node)
+                        .map(|found| match found {
+                            Lookup::Symbol(id) => Some(id),
+                            Lookup::Function(_) => None,
+                        });
+                    if self.is_library() {
+                        let builtin = found.flatten().is_some_and(|id| self.is_builtin_symbol(id));
+                        if found.is_none() || builtin {
+                            let suppressed = self.builtin_variable_stages(
+                                identifier.span,
+                                &identifier.node,
+                                found.is_some(),
+                            );
+                            if suppressed {
+                                continue;
+                            }
+                        }
+                    }
+                    match found {
                         None => self.error(
                             identifier.span,
                             DiagnosticKind::UndeclaredIdentifier(identifier.node.clone()),
                         ),
-                        Some(Lookup::Symbol(id)) if qualifiers.precise => self.make_precise(id),
+                        Some(Some(id)) if qualifiers.precise => self.make_precise(id),
                         Some(_) => {}
                     }
                 }
@@ -278,17 +297,18 @@ impl Analyzer<'_> {
                 }
             }
         }
-        self.builtin_name("gl_WorkGroupSize");
-        let Some(id) = self.work_group_size else {
-            return;
-        };
-        if names
+        if !names
             .iter()
             .chain(&identifiers)
             .any(|name| qualifiers.has_layout(name))
         {
-            self.local_size_declared = true;
+            return;
         }
+        self.builtin_name("gl_WorkGroupSize");
+        let Some(id) = self.work_group_size else {
+            return;
+        };
+        self.local_size_declared = true;
         for (index, name) in names.iter().enumerate() {
             let Some(value) = qualifiers
                 .layout_entry(name)
@@ -313,7 +333,15 @@ impl Analyzer<'_> {
     }
 
     fn derivative_layout(&mut self, span: Span, qualifiers: &Qualifiers) {
-        if !matches!(self.stage(), Stage::Compute | Stage::Task | Stage::Mesh) {
+        let relevant = qualifiers.layout.iter().any(|entry| {
+            entry
+                .name
+                .to_ascii_lowercase()
+                .starts_with("derivative_group_")
+        });
+        if !relevant
+            || !self.stage_map(|stage| matches!(stage, Stage::Compute | Stage::Task | Stage::Mesh))
+        {
             return;
         }
         let mut quads = false;
@@ -406,9 +434,6 @@ impl Analyzer<'_> {
     }
 
     fn input_layout(&mut self, span: Span, qualifiers: &Qualifiers) {
-        if !self.stage_is(Stage::Geometry) {
-            return;
-        }
         let primitives = [
             ("points", 1),
             ("lines", 2),
@@ -416,6 +441,13 @@ impl Analyzer<'_> {
             ("triangles", 3),
             ("triangles_adjacency", 6),
         ];
+        if !primitives
+            .iter()
+            .any(|&(name, _)| qualifiers.has_layout(name))
+            || !self.stage_is(Stage::Geometry)
+        {
+            return;
+        }
         for (name, size) in primitives {
             if qualifiers.has_layout(name) && self.input_array_size.is_none() {
                 self.input_array_size = Some(size);
@@ -804,16 +836,13 @@ impl Analyzer<'_> {
             TypeSpecifierNonArray::Basic(basic) => Type::from(*basic),
             TypeSpecifierNonArray::Opaque(name) => match Opaque::from_keyword(name) {
                 Some(opaque) => {
-                    if opaque.kind == crate::types::OpaqueKind::SubpassInput
-                        && !self.stage_is(Stage::Fragment)
-                    {
-                        self.error(
-                            span,
-                            DiagnosticKind::InvalidQualifier {
+                    if opaque.kind == crate::types::OpaqueKind::SubpassInput {
+                        self.stage_check(span, |stage| {
+                            (stage != Stage::Fragment).then_some(DiagnosticKind::InvalidQualifier {
                                 qualifier: "subpass input",
                                 reason: "not supported in this stage",
-                            },
-                        );
+                            })
+                        });
                     }
                     Type::opaque(opaque)
                 }
@@ -1147,13 +1176,19 @@ impl Analyzer<'_> {
             return;
         }
         if qualifiers.storage == Storage::Shared
-            && !self.stage_in(&[Stage::Compute, Stage::Mesh, Stage::Task])
+            && self.stage_check(span, |stage| {
+                (!matches!(stage, Stage::Compute | Stage::Mesh | Stage::Task))
+                    .then(|| invalid("shared", "not supported in this stage"))
+            })
         {
-            self.error(span, invalid("shared", "not supported in this stage"));
             return;
         }
-        if qualifiers.patch && !self.stage_in(&[Stage::TessControl, Stage::TessEvaluation]) {
-            self.error(span, invalid("patch", "not supported in this stage"));
+        if qualifiers.patch
+            && self.stage_check(span, |stage| {
+                (!matches!(stage, Stage::TessControl | Stage::TessEvaluation))
+                    .then(|| invalid("patch", "not supported in this stage"))
+            })
+        {
             return;
         }
         if is_image
@@ -1174,104 +1209,84 @@ impl Analyzer<'_> {
         let needs_flat = [Scalar::Int, Scalar::Uint, Scalar::Double]
             .into_iter()
             .any(|scalar| ty.contains_scalar(&self.types, scalar));
+        let structure = matches!(ty.kind, TypeKind::Struct(_));
+        let matrix = matches!(ty.kind, TypeKind::Matrix { .. });
+        let scalar = ty.base_scalar();
+        let flat = qualifiers.interpolation == Some(InterpolationQualifier::Flat);
+        let further = qualifiers.centroid
+            || qualifiers.sample
+            || qualifiers.patch
+            || qualifiers.interpolation.is_some();
+        let invariant = qualifiers.invariant;
+        let patch = qualifiers.patch;
         match qualifiers.storage {
             Storage::In => {
                 if qualifiers.patch && qualifiers.interpolation.is_some() {
                     self.error(span, invalid("patch", "cannot be interpolated"));
                 }
-                match self.stage() {
-                    Stage::Fragment => {
-                        let flat = qualifiers.interpolation == Some(InterpolationQualifier::Flat);
-                        if !flat && needs_flat {
-                            self.error(
-                                span,
-                                invalid("in", "integer and double inputs must be `flat`"),
-                            );
-                        }
-                    }
+                self.stage_check(span, |stage| match stage {
+                    Stage::Fragment => (!flat && needs_flat)
+                        .then(|| invalid("in", "integer and double inputs must be `flat`")),
                     Stage::Vertex => {
-                        if matches!(ty.kind, TypeKind::Struct(_)) {
-                            self.error(span, invalid("in", "a vertex input cannot be a structure"));
-                        } else if qualifiers.centroid
-                            || qualifiers.sample
-                            || qualifiers.patch
-                            || qualifiers.interpolation.is_some()
-                            || qualifiers.invariant
-                        {
-                            self.error(
-                                span,
-                                invalid("in", "a vertex input cannot be further qualified"),
-                            );
+                        if structure {
+                            Some(invalid("in", "a vertex input cannot be a structure"))
+                        } else if further || invariant {
+                            Some(invalid("in", "a vertex input cannot be further qualified"))
+                        } else {
+                            None
                         }
                     }
                     Stage::Compute => {
-                        self.error(
-                            span,
-                            invalid("in", "a compute shader has no user-defined inputs"),
-                        );
+                        Some(invalid("in", "a compute shader has no user-defined inputs"))
                     }
-                    Stage::TessControl if qualifiers.patch => {
-                        self.error(
-                            span,
-                            invalid("patch", "only outputs can be `patch` in this stage"),
-                        );
-                    }
-                    _ => {}
-                }
+                    Stage::TessControl if patch => Some(invalid(
+                        "patch",
+                        "only outputs can be `patch` in this stage",
+                    )),
+                    _ => None,
+                });
             }
             Storage::Out => {
                 if qualifiers.patch && qualifiers.interpolation.is_some() {
                     self.error(span, invalid("patch", "cannot be interpolated"));
                 }
-                match self.stage() {
-                    Stage::Compute => {
-                        self.error(
-                            span,
-                            invalid("out", "a compute shader has no user-defined outputs"),
-                        );
-                    }
-                    Stage::TessEvaluation if qualifiers.patch => {
-                        self.error(
-                            span,
-                            invalid("patch", "only inputs can be `patch` in this stage"),
-                        );
+                self.stage_check(span, |stage| match stage {
+                    Stage::Compute => Some(invalid(
+                        "out",
+                        "a compute shader has no user-defined outputs",
+                    )),
+                    Stage::TessEvaluation if patch => {
+                        Some(invalid("patch", "only inputs can be `patch` in this stage"))
                     }
                     Stage::Fragment => {
-                        if qualifiers.centroid
-                            || qualifiers.sample
-                            || qualifiers.patch
-                            || qualifiers.interpolation.is_some()
-                        {
-                            self.error(
-                                span,
-                                invalid("out", "a fragment output cannot be further qualified"),
-                            );
-                        } else if matches!(ty.kind, TypeKind::Struct(_)) {
-                            self.error(
-                                span,
-                                invalid("out", "a fragment output cannot be a structure"),
-                            );
-                        } else if ty.base_scalar() == Some(Scalar::Bool) {
-                            self.error(span, invalid("out", "a fragment output cannot be boolean"));
-                        } else if ty.base_scalar() == Some(Scalar::Double) {
-                            self.error(span, invalid("out", "a fragment output cannot be double"));
-                        } else if matches!(ty.kind, TypeKind::Matrix { .. }) {
-                            self.error(
-                                span,
-                                invalid("out", "a fragment output cannot be a matrix"),
-                            );
+                        if further {
+                            Some(invalid(
+                                "out",
+                                "a fragment output cannot be further qualified",
+                            ))
+                        } else if structure {
+                            Some(invalid("out", "a fragment output cannot be a structure"))
+                        } else if scalar == Some(Scalar::Bool) {
+                            Some(invalid("out", "a fragment output cannot be boolean"))
+                        } else if scalar == Some(Scalar::Double) {
+                            Some(invalid("out", "a fragment output cannot be double"))
+                        } else if matrix {
+                            Some(invalid("out", "a fragment output cannot be a matrix"))
+                        } else {
+                            None
                         }
                     }
-                    _ => {}
-                }
+                    _ => None,
+                });
             }
             _ => {}
         }
-        if matches!(qualifiers.storage, Storage::In | Storage::Out)
-            && ty.base_scalar() == Some(Scalar::Bool)
-            && !(qualifiers.storage == Storage::Out && self.stage_is(Stage::Fragment))
-        {
-            self.error(span, invalid("in", "an input or output cannot be boolean"));
+        let storage = qualifiers.storage;
+        if matches!(storage, Storage::In | Storage::Out) && scalar == Some(Scalar::Bool) {
+            self.stage_check(span, |stage| {
+                (!(storage == Storage::Out && stage == Stage::Fragment))
+                    .then(|| invalid("in", "an input or output cannot be boolean"))
+            });
         }
         if matches!(qualifiers.storage, Storage::In | Storage::Out)
             && ty.contains_opaque(&self.types)
@@ -1302,6 +1317,7 @@ impl Analyzer<'_> {
         if !self.scopes.is_global() || !name.starts_with("gl_") {
             return None;
         }
+        self.builtin_name(name);
         match self.scopes.lookup_level(name) {
             Some((0, Lookup::Symbol(id))) => Some(id),
             _ => None,
@@ -1591,31 +1607,69 @@ impl Analyzer<'_> {
         if !matches!(qualifiers.storage, Storage::In | Storage::Out) {
             return;
         }
-        let stage = self.stage();
-        let size = match (qualifiers.storage, stage) {
-            (Storage::In, Stage::Geometry) => self.input_array_size,
-            (Storage::In, Stage::TessControl | Stage::TessEvaluation) => self
-                .input_array_size
-                .or_else(|| u32::try_from(self.options.limits.max_patch_vertices).ok()),
-            (Storage::Out, Stage::TessControl) => self.output_array_size,
-            _ => return,
-        };
-        let invalid = |reason| DiagnosticKind::InvalidInterfaceArray {
-            name: name.node.clone(),
-            reason,
-        };
-        match (ty.outer_size(), size) {
-            (None, _) => self.error(name.span, invalid("the type must be an array")),
-            (Some(ArraySize::Unsized), Some(size)) => ty.set_outer_size(ArraySize::Sized(size)),
-            (Some(ArraySize::Sized(declared)), Some(size)) if declared != size => {
-                let reason = match (stage, qualifiers.storage) {
-                    (Stage::Geometry, _) => "its size does not match the input primitive",
-                    (_, Storage::In) => "its size must be gl_MaxPatchVertices",
-                    _ => "its size does not match the number of output vertices",
-                };
-                self.error(name.span, invalid(reason));
+        let storage = qualifiers.storage;
+        let input_size = self.input_array_size;
+        let output_size = self.output_array_size;
+        let patch_vertices = u32::try_from(self.options.limits.max_patch_vertices).ok();
+        let outer = ty.outer_size();
+        let outcome = |stage: Stage| -> InterfaceArray {
+            let size = match (storage, stage) {
+                (Storage::In, Stage::Geometry) => input_size,
+                (Storage::In, Stage::TessControl | Stage::TessEvaluation) => {
+                    input_size.or(patch_vertices)
+                }
+                (Storage::Out, Stage::TessControl) => output_size,
+                _ => return InterfaceArray::Unchanged,
+            };
+            let invalid = |reason| DiagnosticKind::InvalidInterfaceArray {
+                name: name.node.clone(),
+                reason,
+            };
+            match (outer, size) {
+                (None, _) => InterfaceArray::Invalid(invalid("the type must be an array")),
+                (Some(ArraySize::Unsized), Some(size)) => InterfaceArray::Sized(size),
+                (Some(ArraySize::Sized(declared)), Some(size)) if declared != size => {
+                    let reason = match (stage, storage) {
+                        (Stage::Geometry, _) => "its size does not match the input primitive",
+                        (_, Storage::In) => "its size must be gl_MaxPatchVertices",
+                        _ => "its size does not match the number of output vertices",
+                    };
+                    InterfaceArray::Invalid(invalid(reason))
+                }
+                _ => InterfaceArray::Unchanged,
             }
-            _ => {}
+        };
+        let followed = if self.is_library() {
+            let own = outcome(self.options.stage);
+            let followed = match own {
+                InterfaceArray::Invalid(_) => InterfaceArray::Unchanged,
+                ref other => other.clone(),
+            };
+            let outcomes: Vec<(Stage, InterfaceArray)> = Stage::ALL
+                .into_iter()
+                .map(|stage| (stage, outcome(stage)))
+                .collect();
+            if outcomes.iter().all(|(_, found)| *found == own) {
+                own
+            } else {
+                let mut keep = crate::builtins::ALL_STAGE_BITS;
+                for (stage, found) in outcomes {
+                    match found {
+                        InterfaceArray::Invalid(kind) => self.stage_error(stage, name.span, kind),
+                        other if other != followed => keep &= !stage.bit(),
+                        _ => {}
+                    }
+                }
+                self.narrow(keep);
+                followed
+            }
+        } else {
+            self.stage_map(outcome)
+        };
+        match followed {
+            InterfaceArray::Invalid(kind) => self.error(name.span, kind),
+            InterfaceArray::Sized(size) => ty.set_outer_size(ArraySize::Sized(size)),
+            InterfaceArray::Unchanged => {}
         }
     }
 
@@ -2096,28 +2150,27 @@ impl Analyzer<'_> {
         }
         if let Some(instance) = instance {
             self.reserved_check(&instance.name);
-        } else if storage == BlockStorage::In
-            && !qualifiers.has_layout("passthrough")
-            && self.stage_in(&[Stage::Geometry, Stage::TessControl, Stage::TessEvaluation])
-        {
-            self.error(
-                block_name.span,
-                DiagnosticKind::InvalidInterfaceArray {
-                    name: block_name.node.clone(),
+        } else if storage == BlockStorage::In && !qualifiers.has_layout("passthrough") {
+            let name = block_name.node.clone();
+            self.stage_check(block_name.span, |stage| {
+                matches!(
+                    stage,
+                    Stage::Geometry | Stage::TessControl | Stage::TessEvaluation
+                )
+                .then(|| DiagnosticKind::InvalidInterfaceArray {
+                    name: name.clone(),
                     reason: "the type must be an array",
-                },
-            );
+                })
+            });
         }
-        let unsupported = match storage {
-            BlockStorage::In => self.stage_in(&[Stage::Compute, Stage::Vertex]),
-            BlockStorage::Out => self.stage_in(&[Stage::Compute, Stage::Fragment]),
-            _ => false,
-        };
-        if unsupported {
-            self.error(
-                block_name.span,
-                invalid("this kind of block is not supported in this stage"),
-            );
+        if matches!(storage, BlockStorage::In | BlockStorage::Out) {
+            self.stage_check(block_name.span, |stage| {
+                let unsupported = match storage {
+                    BlockStorage::In => matches!(stage, Stage::Compute | Stage::Vertex),
+                    _ => matches!(stage, Stage::Compute | Stage::Fragment),
+                };
+                unsupported.then(|| invalid("this kind of block is not supported in this stage"))
+            });
         }
         if buffer_type {
             self.buffer_type_block(structure, storage, &qualifiers, members);
@@ -2293,6 +2346,19 @@ impl Analyzer<'_> {
         storage: BlockStorage,
         instance: &str,
     ) -> Option<(crate::types::BlockId, SymbolId)> {
+        let names: &[&str] = match storage {
+            BlockStorage::In => &["gl_in"],
+            _ => &[
+                "gl_Position",
+                "gl_PointSize",
+                "gl_ClipDistance",
+                "gl_CullDistance",
+                "gl_out",
+            ],
+        };
+        for name in names {
+            self.builtin_name(name);
+        }
         self.symbols.iter().enumerate().find_map(|(index, symbol)| {
             let variable = symbol.variable()?;
             let TypeKind::Block(id) = variable.ty.kind else {
@@ -2332,6 +2398,7 @@ impl Analyzer<'_> {
                 .unwrap_or(previous.len())
         });
         for name in &previous {
+            self.builtin_name(name);
             let Some((0, Lookup::Symbol(symbol))) = self.scopes.lookup_level(name) else {
                 continue;
             };
@@ -2528,6 +2595,7 @@ impl Analyzer<'_> {
             .iter()
             .map(|parameter| parameter.ty.clone())
             .collect();
+        self.builtin_name(&name.node);
         let builtin_conflict = self
             .builtins
             .overloads(&name.node)
@@ -3052,4 +3120,11 @@ impl<'b> Cx<'b, Analyzer<'_>> {
         }
         self.with(|analyzer| analyzer.finish_list(span, &expected, list))
     }
+}
+
+#[derive(Clone, PartialEq)]
+enum InterfaceArray {
+    Unchanged,
+    Sized(u32),
+    Invalid(DiagnosticKind),
 }

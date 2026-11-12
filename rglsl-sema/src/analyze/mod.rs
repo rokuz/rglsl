@@ -42,7 +42,9 @@ pub use precision::RelaxedPrecision;
 pub use qcom::QcomConversion;
 pub use tensor::TensorArmCall;
 
-use crate::builtins::{BuiltinFunctionId, Builtins, ResourceLimits, Stage};
+use crate::builtins::{
+    BuiltinFunctionId, Builtins, ResourceLimits, Stage, StageTables, ALL_STAGE_BITS,
+};
 use crate::constant::Constant;
 use crate::diagnostic::{Diagnostic, DiagnosticKind};
 use crate::scope::{
@@ -139,6 +141,17 @@ pub struct Analysis {
     pub work_group_size_read: bool,
     pub stages: u16,
     pub stage_names: BTreeSet<String>,
+    pub stage_diagnostics: Vec<StageDiagnostic>,
+    pub diagnostic_trust: Vec<u16>,
+    pub stage_tables: Option<Arc<StageTables>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StageDiagnostic {
+    pub index: usize,
+    pub stage: Stage,
+    pub diagnostic: Diagnostic,
+    pub trusted: u16,
 }
 
 impl Analysis {
@@ -191,9 +204,28 @@ fn symbol_type(symbols: &[Symbol], types: &TypeRegistry, id: SymbolId) -> Option
 pub use declaration::is_null_initializer;
 pub use fragment::{FragmentLayout, Interlock};
 pub use ray::is_shader_record;
+pub use stage::layout_stages;
 
 pub fn analyze(unit: &TranslationUnit, options: &Options) -> Analysis {
     run(unit, options, None)
+}
+
+pub fn analyze_library(
+    unit: &TranslationUnit,
+    options: &Options,
+    tables: &Arc<StageTables>,
+) -> Analysis {
+    let mut diagnostics = Vec::new();
+    let version = version_of(unit, &mut diagnostics);
+    let builtins = Arc::new(tables.builtins(options.stage));
+    let mut analyzer = Analyzer::new(options, builtins, diagnostics);
+    analyzer.library = Some(Arc::clone(tables));
+    analyzer.version = version;
+    analyzer.unit(unit);
+    let mut analysis = analyzer.finish();
+    analysis.no_contraction = precise::no_contraction(unit, &analysis);
+    analysis.relaxed_precision = precision::relaxed_precision(unit, &analysis);
+    analysis
 }
 
 pub fn analyze_with_builtins(
@@ -325,6 +357,9 @@ pub(crate) struct SwitchContext {
 pub(crate) struct Analyzer<'a> {
     probe: StageProbe<Stage>,
     stage_names: RefCell<BTreeSet<String>>,
+    pub library: Option<Arc<StageTables>>,
+    pub stage_diagnostics: Vec<StageDiagnostic>,
+    pub trust: Vec<u16>,
     pub options: &'a Options,
     pub version: Option<u32>,
     pub builtins: Arc<Builtins>,
@@ -400,9 +435,13 @@ impl<'a> Analyzer<'a> {
         }
         scopes.push();
         let probe = StageProbe::new(options.stage, &Stage::ALL);
+        let trust = alloc::vec![ALL_STAGE_BITS; diagnostics.len()];
         Self {
             probe,
             stage_names: RefCell::new(BTreeSet::new()),
+            library: None,
+            stage_diagnostics: Vec::new(),
+            trust,
             options,
             version: None,
             types: builtins.types().clone(),
@@ -645,22 +684,142 @@ impl<'a> Analyzer<'a> {
         self.probe.is(stage)
     }
 
-    pub(crate) fn stage_in(&self, stages: &[Stage]) -> bool {
-        self.probe.any(stages)
-    }
-
     pub(crate) fn stage_map<T: PartialEq>(&self, answer: impl Fn(Stage) -> T) -> T {
         self.probe.map(answer)
     }
 
     pub(crate) fn builtin_name(&self, name: &str) {
-        self.stage_names.borrow_mut().insert(String::from(name));
+        match self.library {
+            Some(ref tables) => self
+                .probe
+                .narrow(tables.same_stages(self.options.stage, name)),
+            None => {
+                self.stage_names.borrow_mut().insert(String::from(name));
+            }
+        }
+    }
+
+    pub(crate) const fn is_library(&self) -> bool {
+        self.library.is_some()
+    }
+
+    pub(crate) fn stage_check(
+        &mut self,
+        span: Span,
+        check: impl Fn(Stage) -> Option<DiagnosticKind>,
+    ) -> bool {
+        if self.library.is_none() {
+            return match self.probe.map(&check) {
+                Some(kind) => {
+                    self.error(span, kind);
+                    true
+                }
+                None => false,
+            };
+        }
+        let results: Vec<(Stage, Option<DiagnosticKind>)> = Stage::ALL
+            .into_iter()
+            .map(|stage| (stage, check(stage)))
+            .collect();
+        let failing = results.iter().filter(|&(_, kind)| kind.is_some()).count();
+        if failing == 0 {
+            return false;
+        }
+        let first = results.iter().find_map(|(_, kind)| kind.clone());
+        if failing == results.len()
+            && results
+                .iter()
+                .all(|(_, kind)| kind.as_ref() == first.as_ref())
+        {
+            if let Some(kind) = first {
+                self.error(span, kind);
+            }
+            return true;
+        }
+        for (stage, kind) in results {
+            if let Some(kind) = kind {
+                self.stage_error(stage, span, kind);
+            }
+        }
+        failing == Stage::ALL.len()
+    }
+
+    pub(crate) fn require_stage_extensions(
+        &mut self,
+        span: Span,
+        what: &str,
+        required: impl Fn(Stage) -> Option<&'static [&'static str]>,
+    ) -> bool {
+        if !self.is_library() {
+            return match self.probe.map(&required) {
+                Some(names) => self.require_extensions(span, names, what),
+                None => true,
+            };
+        }
+        let missing: Vec<(Stage, Option<&'static [&'static str]>)> = Stage::ALL
+            .into_iter()
+            .map(|stage| {
+                (
+                    stage,
+                    required(stage).filter(|names| {
+                        matches!(
+                            self.extensions.request(names),
+                            rglsl_ast::extensions::Request::Missing
+                        )
+                    }),
+                )
+            })
+            .collect();
+        let failed = self.stage_check(span, |stage| {
+            missing
+                .iter()
+                .find(|&&(known, _)| known == stage)
+                .and_then(|&(_, names)| names)
+                .map(|names| DiagnosticKind::ExtensionRequired {
+                    feature: String::from(what),
+                    extensions: names.join(", "),
+                })
+        });
+        if let Some(names) = required(self.options.stage) {
+            if let rglsl_ast::extensions::Request::Warned(extension) =
+                self.extensions.request(names)
+            {
+                self.warnings.push(Diagnostic {
+                    span,
+                    kind: DiagnosticKind::ExtensionWarned {
+                        extension,
+                        feature: String::from(what),
+                    },
+                });
+            }
+        }
+        !failed
+    }
+
+    pub(crate) fn stage_error(&mut self, stage: Stage, span: Span, kind: DiagnosticKind) {
+        self.stage_diagnostics.push(StageDiagnostic {
+            index: self.diagnostics.len(),
+            stage,
+            diagnostic: Diagnostic { span, kind },
+            trusted: self.probe.compatible(),
+        });
+    }
+
+    pub(crate) fn narrow(&self, stages: u16) {
+        self.probe.narrow(stages);
+    }
+
+    pub(crate) fn tables(&self) -> Option<Arc<StageTables>> {
+        self.library.clone()
     }
 
     fn finish(self) -> Analysis {
         Analysis {
             stages: self.probe.compatible(),
             stage_names: self.stage_names.into_inner(),
+            stage_diagnostics: self.stage_diagnostics,
+            diagnostic_trust: self.trust,
+            stage_tables: self.library,
             version: self.version,
             stage: self.options.stage,
             builtins: self.builtins,
@@ -697,6 +856,7 @@ impl<'a> Analyzer<'a> {
 
     pub(crate) fn error(&mut self, span: Span, kind: DiagnosticKind) {
         self.diagnostics.push(Diagnostic { span, kind });
+        self.trust.push(self.probe.compatible());
     }
 
     pub(crate) fn show(&self, ty: &Type) -> String {
@@ -752,7 +912,64 @@ impl<'a> Analyzer<'a> {
     }
 
     pub(crate) fn lookup(&self, name: &str) -> Option<Lookup<'_>> {
+        if self.library.is_some() {
+            self.builtin_name(name);
+        }
         self.scopes.lookup(name)
+    }
+
+    pub(crate) fn lookup_quiet(&self, name: &str) -> Option<Lookup<'_>> {
+        self.scopes.lookup(name)
+    }
+
+    pub(crate) fn narrow_present(&self, name: &str) {
+        if let Some(ref tables) = self.library {
+            let own = self.options.stage;
+            let stages = Stage::ALL
+                .into_iter()
+                .filter(|&stage| tables.same(own, stage, name) || !tables.declares(stage, name))
+                .fold(0, |bits, stage| bits | stage.bit());
+            self.probe.narrow(stages);
+        }
+    }
+
+    pub(crate) fn builtin_variable_stages(&mut self, span: Span, name: &str, found: bool) -> bool {
+        let Some(tables) = self.tables() else {
+            return false;
+        };
+        let own = self.options.stage;
+        let undeclared = || DiagnosticKind::UndeclaredIdentifier(String::from(name));
+        if found {
+            let described = tables.variable(own, name);
+            let mut keep = ALL_STAGE_BITS;
+            for stage in Stage::ALL {
+                match tables.variable(stage, name) {
+                    None => self.stage_error(stage, span, undeclared()),
+                    Some(description) if Some(description) != described => keep &= !stage.bit(),
+                    Some(_) => {}
+                }
+            }
+            self.probe.narrow(keep);
+            return false;
+        }
+        let having = Stage::ALL
+            .into_iter()
+            .filter(|&stage| tables.variable(stage, name).is_some())
+            .fold(0, |bits, stage| bits | stage.bit());
+        if having == 0 {
+            return false;
+        }
+        for stage in Stage::ALL {
+            if having & stage.bit() == 0 {
+                self.stage_error(stage, span, undeclared());
+            }
+        }
+        self.probe.narrow(!having);
+        true
+    }
+
+    pub(crate) fn is_builtin_symbol(&self, id: SymbolId) -> bool {
+        usize::try_from(id.index()).is_ok_and(|index| index < self.builtins.symbols().len())
     }
 
     pub(crate) fn extension_enabled(&self, name: &str) -> bool {
