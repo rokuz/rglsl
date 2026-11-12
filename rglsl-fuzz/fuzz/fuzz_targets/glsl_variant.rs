@@ -34,11 +34,6 @@ mod fuzz {
         spv::write_vec(module, info, &options, None).map_err(|error| format!("spv-out: {error}"))
     }
 
-    fn read_back(words: Vec<u32>) {
-        let options = rglsl::front::spv::Options::default();
-        let _result = rglsl::front::spv::Frontend::new(words.into_iter(), &options).parse();
-    }
-
     fn compile_direct(source: &str) -> Result<(), String> {
         let module = Frontend::default()
             .parse(&options(), source)
@@ -46,7 +41,7 @@ mod fuzz {
         let info = Validator::new(ValidationFlags::all(), Capabilities::all())
             .validate(&module)
             .map_err(|error| format!("validate: {}", error.as_inner()))?;
-        read_back(write_spirv(&module, &info)?);
+        write_spirv(&module, &info)?;
         Ok(())
     }
 

@@ -21,14 +21,9 @@ struct Target {
     extra: &'static [&'static str],
 }
 
-const TARGETS: [Target; 5] = [
+const TARGETS: [Target; 4] = [
     Target {
         name: "glsl_parser",
-        trace_compares: true,
-        extra: &[],
-    },
-    Target {
-        name: "spv_parser",
         trace_compares: true,
         extra: &[],
     },

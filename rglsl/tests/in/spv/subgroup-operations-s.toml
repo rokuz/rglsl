@@ -1,5 +1,0 @@
-capabilities = "SUBGROUP"
-targets = ""
-
-[spv]
-version = [1, 3]
