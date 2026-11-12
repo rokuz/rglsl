@@ -1,8 +1,8 @@
 use rglsl::object::{ObjectModule, StageLayout};
 use rglsl::{
-    EarlyDepthTest, EntryPoint, Expression, GeometryInfo, Handle, Literal, MeshOutputLayout,
-    Module, Override, Scalar, ShaderStage, Span, TessellationInfo, TessellationSpacing,
-    TessellationVertexOrder, Type, TypeInner,
+    AddressSpace, EarlyDepthTest, EntryPoint, Expression, GeometryInfo, Handle, Literal,
+    MeshOutputLayout, Module, Override, Scalar, ShaderStage, Span, TessellationInfo,
+    TessellationSpacing, TessellationVertexOrder, Type, TypeInner, XfbBinding,
 };
 
 use crate::error::LinkError;
@@ -361,6 +361,24 @@ fn widest_scalar(module: &Module, ty: Handle<Type>) -> u32 {
     widest
 }
 
+fn default_xfb_buffer(stage: ShaderStage, module: &mut Module) {
+    if !matches!(
+        stage,
+        ShaderStage::Vertex | ShaderStage::TessEvaluation | ShaderStage::Geometry
+    ) {
+        return;
+    }
+    for (_, global) in module.global_variables.iter_mut() {
+        if global.space == AddressSpace::Output && global.xfb.is_none() {
+            global.xfb = Some(XfbBinding {
+                buffer: 0,
+                stride: 0,
+                offset: None,
+            });
+        }
+    }
+}
+
 fn xfb_strides(
     module: &mut Module,
     strides: &[(u32, u32)],
@@ -483,6 +501,9 @@ pub(crate) fn apply(
         entry.early_depth_test = Some(EarlyDepthTest::Allow { conservative });
     }
     entry.transform_feedback |= layout.transform_feedback;
+    if layout.transform_feedback {
+        default_xfb_buffer(stage, module);
+    }
     xfb_strides(module, &layout.xfb_strides, interleaved_components, errors);
     match stage {
         ShaderStage::Geometry => geometry(&layout, entry),

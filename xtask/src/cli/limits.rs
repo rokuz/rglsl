@@ -132,10 +132,6 @@ pub(super) fn cases() -> Vec<Case> {
             "limits-xfb-link-large",
             ["-V", "xfb-main.vert", "xfb-capture.vert", "large.conf"],
             ["xfb-main.vert", "xfb-capture.vert", "large.conf"]
-        )
-        .exits(
-            0,
-            "glslang also gives the gl_PerVertex block of a linked program XfbBuffer and XfbStride, rglsl's linker does not",
         ),
         case!("limits-geometry-default", ["-V", "geometry.geom"], ["geometry.geom"]),
         case!(

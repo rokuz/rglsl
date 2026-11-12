@@ -134,3 +134,33 @@ fn clip_distances_follow_the_limits() -> TestResult {
     Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&module)?;
     Ok(())
 }
+
+#[test]
+fn outputs_of_a_unit_without_transform_feedback_join_buffer_zero() -> TestResult {
+    let main =
+        "#version 450\nvoid capture();\nvoid main() { capture(); gl_Position = vec4(0.0); }\n";
+    let capture = "#version 450\nlayout(location = 0, xfb_buffer = 1, xfb_offset = 16) out vec4 captured;\nvoid capture() { captured = vec4(1.0); }\n";
+    let limits = ResourceLimits::default();
+    let objects = vec![
+        object(main, &options(ShaderStage::Vertex, limits))?,
+        object(capture, &options(ShaderStage::Vertex, limits))?,
+    ];
+    let linked = rglsl_link::link_objects(&objects, &rglsl_link::Options::default())
+        .map_err(|errors| format!("{errors:?}"))?;
+    let stage = linked.first().ok_or("no linked stage")?;
+    let mut buffers: Vec<(u32, u32)> = stage
+        .module
+        .global_variables
+        .iter()
+        .filter(|(_, global)| global.space == rglsl::AddressSpace::Output)
+        .map(|(_, global)| {
+            global
+                .xfb
+                .as_ref()
+                .map_or((u32::MAX, 0), |xfb| (xfb.buffer, xfb.stride))
+        })
+        .collect();
+    buffers.sort_unstable();
+    assert_eq!(buffers, [(0, 0), (1, 32)]);
+    Ok(())
+}
