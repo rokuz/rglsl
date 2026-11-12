@@ -197,31 +197,119 @@ pub fn vertex_for_fragment(inputs: &[Varying]) -> Result<String, String> {
     let mut body = String::new();
     let mut scalars = Vec::new();
     for varying in inputs {
-        let (scalar, count) = simple(varying)?;
+        let first = varying.component;
+        let (scalar, count) = simple(&Varying {
+            component: 0,
+            ..varying.clone()
+        })?;
         scalars.push(scalar);
         let ty = glsl_type(scalar, count);
+        let base = format!("v{}", varying.location);
+        let renamed = if first == 0 {
+            base.clone()
+        } else {
+            format!("{base}c{first}")
+        };
+        let component = if first == 0 {
+            String::new()
+        } else {
+            format!(", component = {first}")
+        };
         let _ = writeln!(
             declarations,
-            "layout(location = {}) {}out {ty} {};",
+            "layout(location = {}{component}) {}out {ty} {};",
             varying.location,
             qualifier(varying, scalar),
-            declarator(varying)
+            declarator(varying).replacen(&base, &renamed, 1)
         );
         for (location, name) in elements(varying) {
             let components: Vec<String> = (0..count)
                 .map(|c| {
                     sized(
                         scalar,
-                        component_expression(scalar, location, c, "a_pos", "gl_VertexIndex"),
+                        component_expression(
+                            scalar,
+                            location,
+                            c + first,
+                            "a_pos",
+                            "gl_VertexIndex",
+                        ),
                     )
                 })
                 .collect();
+            let name = name.replacen(&base, &renamed, 1);
             let _ = writeln!(body, "    {name} = {ty}({});", components.join(", "));
         }
     }
     let extension = explicit_types(&scalars);
     Ok(format!(
         "#version 450\n{extension}layout(location = 0) in vec4 a_pos;\n{declarations}void main() {{\n    gl_Position = a_pos;\n{body}}}\n"
+    ))
+}
+
+pub fn mesh_for_fragment(inputs: &[Varying], nv: bool) -> Result<String, String> {
+    let mut declarations = String::new();
+    let mut vertices = String::new();
+    let mut primitives = String::new();
+    let mut scalars = Vec::new();
+    for varying in inputs {
+        let (scalar, count) = simple(varying)?;
+        scalars.push(scalar);
+        let ty = glsl_type(scalar, count);
+        let base = format!("v{}", varying.location);
+        let (qualifiers, index, body) = if varying.per_primitive {
+            let primitive = if nv {
+                "perprimitiveNV "
+            } else {
+                "perprimitiveEXT "
+            };
+            (primitive, "p", &mut primitives)
+        } else {
+            (qualifier(varying, scalar), "i", &mut vertices)
+        };
+        let dimensions = varying
+            .array
+            .map_or_else(String::new, |length| format!("[{length}]"));
+        let _ = writeln!(
+            declarations,
+            "layout(location = {}) {qualifiers}out {ty} {base}[]{dimensions};",
+            varying.location,
+        );
+        for (location, name) in elements(varying) {
+            let element = name.replacen(&base, &format!("{base}[{index}]"), 1);
+            let components: Vec<String> = (0..count)
+                .map(|c| {
+                    sized(
+                        scalar,
+                        component_expression(
+                            scalar,
+                            location,
+                            c,
+                            "a_pos",
+                            &format!("int({index})"),
+                        ),
+                    )
+                })
+                .collect();
+            let _ = writeln!(body, "        {element} = {ty}({});", components.join(", "));
+        }
+    }
+    let (extension, vertex, count) = if nv {
+        (
+            "GL_NV_mesh_shader",
+            "gl_MeshVerticesNV",
+            "    gl_PrimitiveCountNV = 2u;\n    gl_PrimitiveIndicesNV[0] = 0u;\n    gl_PrimitiveIndicesNV[1] = 1u;\n    gl_PrimitiveIndicesNV[2] = 2u;\n    gl_PrimitiveIndicesNV[3] = 2u;\n    gl_PrimitiveIndicesNV[4] = 1u;\n    gl_PrimitiveIndicesNV[5] = 3u;\n",
+        )
+    } else {
+        (
+            "GL_EXT_mesh_shader",
+            "gl_MeshVerticesEXT",
+            "    SetMeshOutputsEXT(4u, 2u);\n    gl_PrimitiveTriangleIndicesEXT[0] = uvec3(0u, 1u, 2u);\n    gl_PrimitiveTriangleIndicesEXT[1] = uvec3(2u, 1u, 3u);\n",
+        )
+    };
+    let types = explicit_types(&scalars);
+    Ok(format!(
+        "#version 460\n#extension {extension} : require\n{types}layout(local_size_x = 1) in;\nlayout(triangles, max_vertices = 4, max_primitives = 2) out;\n{declarations}void main() {{\n{count}    for (uint i = 0u; i < 4u; i++) {{\n        vec4 a_pos = vec4(float(i % 2u) * 2.0 - 1.0, float(i / 2u) * 2.0 - 1.0, 0.5, 1.0);\n        {vertex}[i].gl_Position = a_pos;\n{vertices}    }}\n    for (uint p = 0u; p < 2u; p++) {{\n        vec4 a_pos = vec4(float(p) * 0.5 - 0.25, 0.25 - float(p) * 0.5, 0.5, 1.0);\n{primitives}    }}\n}}\n"
     ))
 }
 

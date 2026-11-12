@@ -43,7 +43,8 @@ commands:
   test                run the glslang corpus and write PROGRESS.md
       --glslang-dir DIR   glslang checkout whose Test/ and gtests/ are used
                           (default: target/oracles/src/glslang)
-      --filter TEXT       only run shaders whose file name contains TEXT
+      --filter TEXT       only run shaders whose file name contains TEXT (or one of the
+                          comma-separated TEXTs)
       --jobs N            number of parallel jobs (default: number of CPUs)
       --timeout SECS      per-process timeout (default: 30)
       --no-progress-file  do not rewrite PROGRESS.md (for filtered or local runs)

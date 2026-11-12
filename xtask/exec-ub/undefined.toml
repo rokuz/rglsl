@@ -157,3 +157,31 @@ twin = "binds `myblock` at binding 15"
 ["spv.nonuniform.frag"]
 undefined = "reads the uninitialized private global `nu_gf` and the uninitialized locals `dyn_i`, `nu_li`, `v`, `m`, `s`, `arr`, `uv`, `um`, `us` and `uarr`, some of them as descriptor indices; indexes `uniformTexArr[8]`, `uv` and `um` with the flat input `nu_ii`, which may be out of range; every fragment of a primitive stores its own `b` into the same `storageBuffer[nu_ii].b` (glslang's own module stored different values on two runs on the NVIDIA target)"
 twin = "initializes every one of them, indexes with `nu_ii & 7` (`& 3` for `uv` and `um`) and stores `b` from the fragment at (3, 5) only"
+
+["spv.coopmat2_tensor.comp"]
+undefined = "stores the uninitialized matrix `A`; loads through a five-dimensional tensor view on a two-dimensional tensor layout; the 64-row matrix overruns the 32-row slice of a layout with the undefined clamp mode; with the 4×8 block size every element of a block stores to the same address; the stores and the loads that follow them touch the same memory from every invocation without a barrier"
+twin = "initializes `A` to 1.0; slices 64 rows; the block size moves to a separate layout `tb` that only the decoding loads use; `v` is a two-dimensional view with the same clip; every load comes first and the two stores (to `Buf.x` and `Buf.arr[16]`, which do not overlap; the store through `v` is dropped since it writes the same bytes as the one without) follow `memoryBarrierBuffer()` and `barrier()`"
+
+["spv.coopvecTraining.comp"]
+undefined = "accumulates the uninitialized vectors `v0` and `v1`; `matrixBuf` and `matrixBuf2` share binding 0 with different element types; the outer products use the inferencing-optimal layout, which outer products do not accept (they require the training-optimal layout), at offset 100, which is not 64-byte aligned, and the reductions add into the same bytes as the matrices"
+twin = "`v0` is all 1.0 and `v1` all 2.0 (every addend is equal, so the accumulation order does not change the result); `matrixBuf2` is at binding 1; both outer products use the training-optimal layout at offset 128 and the reductions add at offset 16384"
+
+["spv.coopmat2_decode_vector_b.comp"]
+undefined = "the tensor layouts `t` and `t3` never get dimensions, so every element the loads address is outside them, with the undefined clamp mode"
+twin = "sets the dimensions of `t` to 256×512 (as spv.coopmat2_decode_vector.comp does) and of `t3` to 2×64×64; drops the comments"
+
+["spv.longVectorStorage.comp"]
+undefined = "the specialization constant `c0` defaults to 0, so `s5` and `vc` are vectors of no components (Amber crashed on the NVIDIA target with glslang's module); loads through the uninitialized buffer reference `ref`"
+twin = "`c0` defaults to 4; drops the three loads through `ref`"
+
+["spv.longVectorSpecConst.comp"]
+undefined = "the specialization constant `c0` defaults to 0, so every `vector<..., c0>` has no components (Amber crashed on both remote targets with glslang's module); `v6[4]` and `(v += v)[4]` index past such vectors"
+twin = "`c0` defaults to 8 (`(v += v)[len]` still reads one past the end, but the value never reaches memory)"
+
+["spv.longVectorBuiltinsSpecConst.comp"]
+undefined = "the specialization constant `c0` defaults to 0, so every `vector<..., c0>` has no components (Amber timed out or crashed on the remote targets with glslang's module)"
+twin = "`c0` defaults to 4; drops the comments"
+
+["spv.longVectorBuiltinsSpecConstint32.comp"]
+undefined = "the specialization constant `c0` defaults to 0, so every `vector<..., c0>` has no components (Amber crashed on both remote targets with glslang's module)"
+twin = "`c0` defaults to 4; drops the comments"

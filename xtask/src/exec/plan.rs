@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
-use spirv::{BuiltIn, Capability, Dim, ExecutionMode, ExecutionModel, ImageFormat, Op};
+use spirv::{BuiltIn, Capability, Dim, ExecutionMode, ExecutionModel, ImageFormat};
 
 use super::data::{fill_random, fill_values, write_scalar, Rng, Value};
 use super::glsl;
@@ -84,6 +84,7 @@ pub struct Plan {
     pub roots: Vec<Root>,
     pub reference_table: Option<Table>,
     pub tensors: Vec<PlannedTensor>,
+    pub output_shift: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -550,6 +551,26 @@ fn outside_addresses(slot: &Slot, offsets: &[u32]) -> bool {
         .all(|offset| end <= *offset || slot.offset >= offset.saturating_add(8))
 }
 
+fn output_shift(outputs: &[Varying]) -> Result<u32, Refusal> {
+    let Some(first) = outputs.iter().map(|output| output.location).min() else {
+        return Ok(0);
+    };
+    let last = outputs
+        .iter()
+        .map(|output| output.location + output.array.unwrap_or(1).max(1) - 1)
+        .max()
+        .unwrap_or(first);
+    if last < MAX_ATTACHMENTS {
+        return Ok(0);
+    }
+    if last - first >= MAX_ATTACHMENTS {
+        return Err(Refusal::Binding(format!(
+            "output locations {first} to {last} span more than {MAX_ATTACHMENTS} color attachments"
+        )));
+    }
+    Ok(first)
+}
+
 fn round_up(value: u32, multiple: u32) -> u32 {
     value.div_ceil(multiple) * multiple
 }
@@ -561,6 +582,43 @@ fn runtime_length(layout: &Layout, invocations: u32) -> u32 {
         length /= 2;
     }
     length
+}
+
+fn extent_length(
+    reflection: &Reflection,
+    resource: &Resource,
+    layout: &Layout,
+    length: u32,
+) -> Result<u32, Refusal> {
+    let Some(end) = reflection
+        .memory_extents
+        .iter()
+        .filter(|extent| {
+            matches!(extent.buffer, AddressBuffer::Resource { set, binding, .. }
+                if set == resource.set && binding == resource.binding)
+        })
+        .map(|extent| extent.end)
+        .max()
+    else {
+        return Ok(length);
+    };
+    let fits = |length: u32| u64::from(layout.size(length)) >= end;
+    if fits(length) {
+        return Ok(length);
+    }
+    let stride = u64::from(layout.runtime_stride());
+    let fixed = u64::from(layout.size(0));
+    let needed = if stride == 0 {
+        None
+    } else {
+        u32::try_from(end.saturating_sub(fixed).div_ceil(stride).saturating_add(1)).ok()
+    };
+    needed.filter(|needed| fits(*needed)).ok_or_else(|| {
+        Refusal::Binding(format!(
+            "set {} binding {}: cooperative accesses reach byte {end}, beyond the buffer",
+            resource.set, resource.binding
+        ))
+    })
 }
 
 fn buffer_bytes(
@@ -578,28 +636,36 @@ fn buffer_bytes(
     bytes
 }
 
-const UNSIZED_ACCESSES: [Op; 4] = [
-    Op::CooperativeMatrixLoadTensorNV,
-    Op::CooperativeMatrixStoreTensorNV,
-    Op::CooperativeVectorOuterProductAccumulateNV,
-    Op::CooperativeVectorReduceSumAccumulateNV,
-];
-
 pub fn requirements(reflection: &Reflection) -> Result<BTreeSet<Need>, Refusal> {
-    if let Some(unknown) = reflection.unknown_capabilities.first() {
-        let name = match unknown {
-            5120 => "AbortKHR".to_string(),
-            5447 => "CooperativeMatrixDecodeVectorNV".to_string(),
-            6032 => "RayTracingOpacityMicromapExecutionModeKHR".to_string(),
-            other => format!("capability {other}"),
-        };
-        return Err(Refusal::Capability(format!(
-            "{name} (newer than the harness's SPIR-V tables; Amber cannot enable it)"
-        )));
-    }
     let mut needs = BTreeSet::new();
+    for unknown in &reflection.unknown_capabilities {
+        match requirements::newer_capability(*unknown) {
+            (_, Requirement::Needs(list)) => needs.extend(list.iter().copied()),
+            ("", Requirement::Unsupported(reason)) => {
+                return Err(Refusal::Capability(format!(
+                    "capability {unknown} ({reason})"
+                )));
+            }
+            (name, Requirement::Unsupported(reason)) => {
+                return Err(Refusal::Capability(format!("{name} ({reason})")));
+            }
+        }
+    }
+    let maintenance1 = reflection
+        .extensions
+        .contains("SPV_EXT_cooperative_matrix_maintenance1")
+        && !reflection.extensions.contains("SPV_NV_cooperative_matrix2");
     for capability in &reflection.capabilities {
-        match requirements::capability(*capability) {
+        let requirement = match capability {
+            Capability::CooperativeMatrixReductionsNV if maintenance1 => {
+                Requirement::Needs(&[requirements::MAINTENANCE1_REDUCTIONS])
+            }
+            Capability::CooperativeMatrixPerElementOperationsNV if maintenance1 => {
+                Requirement::Needs(&[requirements::MAINTENANCE1_PER_ELEMENT])
+            }
+            other => requirements::capability(*other),
+        };
+        match requirement {
             Requirement::Needs(list) => needs.extend(list.iter().copied()),
             Requirement::Unsupported(reason) => {
                 return Err(Refusal::Capability(format!("{capability:?} ({reason})")));
@@ -697,11 +763,6 @@ impl Plan {
     pub fn new(reflection: &Reflection, inputs: &Inputs) -> Result<Self, Refusal> {
         let stage = stage_of(reflection.model)?;
         let mut needs = requirements(reflection)?;
-        if let Some(op) = UNSIZED_ACCESSES.iter().find(|op| reflection.uses(**op)) {
-            return Err(Refusal::Binding(format!(
-                "{op:?} addresses memory through sizes and layouts the harness cannot bind safely"
-            )));
-        }
         if let Some(problem) = reflection.problems.first() {
             return Err(Refusal::Binding(problem.clone()));
         }
@@ -737,6 +798,7 @@ impl Plan {
             roots: Vec::new(),
             reference_table: None,
             tensors: Vec::new(),
+            output_shift: 0,
         };
         let mut rng = Rng::from_text(&inputs.seed);
         let invocations = reflection
@@ -808,7 +870,12 @@ impl Plan {
                     let _ = writeln!(plan.bindings, "  BIND {bind} {list} AS uniform {location}");
                 }
                 ResourceKind::StorageBuffer { layout, writable } => {
-                    let length = runtime_length(layout, invocations);
+                    let length = extent_length(
+                        reflection,
+                        resource,
+                        layout,
+                        runtime_length(layout, invocations),
+                    )?;
                     for (index, name) in names.iter().enumerate() {
                         let mut bytes = buffer_bytes(layout, length, values, &mut rng);
                         let offsets = addresses(index);
@@ -1182,14 +1249,29 @@ impl Plan {
                         return Err(Refusal::Binding(format!("{builtin:?} fragment input")));
                     }
                 }
-                plan.draw = Draw::Rect;
-                plan.harness = vec![(
-                    ShaderKind::Vertex,
-                    harness::vertex_for_fragment(&reflection.inputs).map_err(Refusal::Binding)?,
-                )];
+                if reflection.inputs.iter().any(|input| input.per_primitive) {
+                    let nv = reflection.capabilities.contains(&Capability::MeshShadingNV);
+                    plan.draw = Draw::Mesh;
+                    plan.mesh_nv = nv;
+                    plan.harness_env = Some(ShaderKind::Mesh.target_env());
+                    plan.harness = vec![(
+                        ShaderKind::Mesh,
+                        harness::mesh_for_fragment(&reflection.inputs, nv)
+                            .map_err(Refusal::Binding)?,
+                    )];
+                } else {
+                    plan.draw = Draw::Rect;
+                    plan.harness = vec![(
+                        ShaderKind::Vertex,
+                        harness::vertex_for_fragment(&reflection.inputs)
+                            .map_err(Refusal::Binding)?,
+                    )];
+                }
+                plan.output_shift = output_shift(&reflection.outputs)?;
                 for output in &reflection.outputs {
                     let (scalar, count) = harness::simple_32(output).map_err(Refusal::Binding)?;
-                    for location in output.location..output.location + output.array.unwrap_or(1) {
+                    let first = output.location - plan.output_shift;
+                    for location in first..first + output.array.unwrap_or(1) {
                         if location >= MAX_ATTACHMENTS {
                             return Err(Refusal::Binding(format!("output location {location}")));
                         }
@@ -1972,6 +2054,49 @@ mod tests {
         assert!(script.contains("  BIND BUFFER fb0 AS color LOCATION 0\n"));
         assert!(script.contains("  BIND BUFFER fb0 AS storage DESCRIPTOR_SET 0 BINDING 0\n"));
         assert!(script.ends_with("RUN main DRAW_RECT POS 0 0 SIZE 32 32\n"));
+        Ok(())
+    }
+
+    #[test]
+    fn per_primitive_inputs_come_from_a_mesh_shader_and_outputs_shift_down() -> anyhow::Result<()> {
+        let varying = |location: u32, per_primitive: bool| Varying {
+            location,
+            component: 0,
+            ty: VaryingType::Simple {
+                scalar: F32,
+                count: 1,
+            },
+            array: None,
+            interpolation: Interpolation::Flat,
+            centroid: false,
+            sample: false,
+            patch: false,
+            per_primitive,
+        };
+        let mut module = reflection(ExecutionModel::Fragment);
+        module.capabilities.insert(Capability::MeshShadingNV);
+        module.inputs = vec![varying(0, true), varying(4, false)];
+        module.outputs = vec![varying(8, false), varying(10, false)];
+        let plan = planned(&module, &Inputs::default())?;
+        assert_eq!(plan.draw, Draw::Mesh);
+        assert!(plan.mesh_nv);
+        assert_eq!(plan.output_shift, 8);
+        let locations: Vec<u32> = plan.attachments.iter().map(|a| a.location).collect();
+        assert_eq!(locations, [0, 1, 2]);
+        assert_eq!(plan.unwritten_attachments, BTreeSet::from([1]));
+        let [(ShaderKind::Mesh, mesh)] = plan.harness.as_slice() else {
+            panic!("expected one mesh shader, got {:?}", plan.harness);
+        };
+        assert!(mesh.contains("#extension GL_NV_mesh_shader : require"));
+        assert!(mesh.contains("layout(location = 0) perprimitiveNV out float v0[];"));
+        assert!(mesh.contains("layout(location = 4) flat out float v4[];"));
+        assert!(mesh.contains("        v0[p] = "));
+        assert!(mesh.contains("        v4[i] = "));
+        module.outputs = vec![varying(1, false), varying(9, false)];
+        assert!(matches!(
+            Plan::new(&module, &Inputs::default()),
+            Err(Refusal::Binding(_))
+        ));
         Ok(())
     }
 

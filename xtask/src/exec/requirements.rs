@@ -343,9 +343,66 @@ pub fn capability(capability: Capability) -> Requirement {
         C::Float8CooperativeMatrixEXT => {
             needs![F("ShaderFloat8FeaturesEXT.shaderFloat8CooperativeMatrix")]
         }
+        C::Shader64BitIndexingEXT => {
+            needs![F("Shader64BitIndexingFeaturesEXT.shader64BitIndexing")]
+        }
+        C::DotProductInputAll
+        | C::DotProductInput4x8Bit
+        | C::DotProductInput4x8BitPacked
+        | C::DotProduct => needs![INTEGER_DOT_PRODUCT],
+        C::ShaderClockKHR | C::ShaderSMBuiltinsNV => {
+            Requirement::Unsupported("results differ between runs by design")
+        }
+        C::Groups => needs![E("VK_AMD_shader_ballot")],
+        C::ImageReadWriteLodAMD => needs![E("VK_AMD_shader_image_load_store_lod")],
+        C::SampleMaskOverrideCoverageNV => needs![E("VK_NV_sample_mask_override_coverage")],
+        C::FragmentFullyCoveredEXT => needs![
+            E("VK_EXT_conservative_rasterization"),
+            F("ConservativeRasterizationPropertiesEXT.fullyCoveredFragmentShaderInputVariable"),
+        ],
         _ => Requirement::Unsupported("a capability the harness does not enable"),
     }
 }
+
+pub const INTEGER_DOT_PRODUCT: Need = F("ShaderIntegerDotProductFeatures.shaderIntegerDotProduct");
+pub const MAINTENANCE1_REDUCTIONS: Need =
+    F("CooperativeMatrixMaintenance1FeaturesEXT.cooperativeMatrixReductions");
+pub const MAINTENANCE1_PER_ELEMENT: Need =
+    F("CooperativeMatrixMaintenance1FeaturesEXT.cooperativeMatrixPerElementOperations");
+
+pub fn newer_capability(value: u32) -> (&'static str, Requirement) {
+    match value {
+        5429 => (
+            "CooperativeMatrixConversionsEXT",
+            needs![F(
+                "CooperativeMatrixMaintenance1FeaturesEXT.cooperativeMatrixConversions"
+            )],
+        ),
+        5438 => (
+            "CooperativeMatrixGetCoordinateEXT",
+            needs![F(
+                "CooperativeMatrixMaintenance1FeaturesEXT.cooperativeMatrixGetCoordinate"
+            )],
+        ),
+        5447 => (
+            "CooperativeMatrixDecodeVectorNV",
+            needs![F(
+                "CooperativeMatrixDecodeVectorFeaturesNV.cooperativeMatrixDecodeVector"
+            )],
+        ),
+        4228 => ("Float6EXT", NEWER),
+        4229 => ("Float4EXT", NEWER),
+        4230 => ("Float8UnsignedE8M0EXT", NEWER),
+        4231 => ("MXInt8EXT", NEWER),
+        4543 => ("ImageGatherLinearQCOM", NEWER),
+        5120 => ("AbortKHR", NEWER),
+        6032 => ("RayTracingOpacityMicromapExecutionModeKHR", NEWER),
+        _ => ("", NEWER),
+    }
+}
+
+const NEWER: Requirement =
+    Requirement::Unsupported("newer than the harness's SPIR-V tables; Amber cannot enable it");
 
 pub fn float_atomic(atomic: FloatAtomic) -> Need {
     use AtomicPlace as P;
@@ -505,6 +562,21 @@ pub fn extension(name: &str) -> bool {
             | "SPV_KHR_fragment_shader_barycentric"
             | "SPV_NV_fragment_shader_barycentric"
             | "SPV_ARM_tensors"
+            | "SPV_EXT_cooperative_matrix_maintenance1"
+            | "SPV_NV_cooperative_matrix_decode_vector"
+            | "SPV_EXT_shader_64bit_indexing"
+            | "SPV_KHR_integer_dot_product"
+            | "SPV_KHR_maximal_reconvergence"
+            | "SPV_KHR_subgroup_uniform_control_flow"
+            | "SPV_AMD_shader_ballot"
+            | "SPV_AMD_gpu_shader_half_float"
+            | "SPV_AMD_gpu_shader_int16"
+            | "SPV_AMD_shader_trinary_minmax"
+            | "SPV_AMD_shader_image_load_store_lod"
+            | "SPV_AMD_shader_explicit_vertex_parameter"
+            | "SPV_AMD_shader_early_and_late_fragment_tests"
+            | "SPV_NV_sample_mask_override_coverage"
+            | "SPV_EXT_fragment_fully_covered"
     )
 }
 
@@ -526,8 +598,29 @@ pub const SHADING_RATE_IMAGE: [Need; 2] = [
 pub const FRAGMENT_BARYCENTRIC_NV: [Need; 2] =
     [E("VK_NV_fragment_shader_barycentric"), FRAGMENT_BARYCENTRIC];
 
+pub const MAXIMAL_RECONVERGENCE: [Need; 1] = [F(
+    "ShaderMaximalReconvergenceFeaturesKHR.shaderMaximalReconvergence",
+)];
+
+pub const SUBGROUP_UNIFORM_CONTROL_FLOW: [Need; 1] = [F(
+    "ShaderSubgroupUniformControlFlowFeaturesKHR.shaderSubgroupUniformControlFlow",
+)];
+
+pub const EARLY_AND_LATE_FRAGMENT_TESTS: [Need; 1] = [F(
+    "ShaderEarlyAndLateFragmentTestsFeaturesAMD.shaderEarlyAndLateFragmentTests",
+)];
+
 pub fn extension_needs(name: &str) -> &'static [Need] {
     match name {
+        "SPV_KHR_maximal_reconvergence" => &MAXIMAL_RECONVERGENCE,
+        "SPV_KHR_subgroup_uniform_control_flow" => &SUBGROUP_UNIFORM_CONTROL_FLOW,
+        "SPV_AMD_shader_early_and_late_fragment_tests" => &EARLY_AND_LATE_FRAGMENT_TESTS,
+        "SPV_AMD_gpu_shader_half_float" => &[E("VK_AMD_gpu_shader_half_float")],
+        "SPV_AMD_gpu_shader_int16" => &[E("VK_AMD_gpu_shader_int16")],
+        "SPV_AMD_shader_trinary_minmax" => &[E("VK_AMD_shader_trinary_minmax")],
+        "SPV_AMD_shader_explicit_vertex_parameter" => {
+            &[E("VK_AMD_shader_explicit_vertex_parameter")]
+        }
         "SPV_KHR_relaxed_extended_instruction" => &RELAXED_EXTENDED_INSTRUCTION,
         "SPV_EXT_fragment_invocation_density" => &FRAGMENT_DENSITY,
         "SPV_NV_shading_rate" => &SHADING_RATE_IMAGE,
@@ -589,6 +682,22 @@ pub fn probes() -> Vec<Need> {
     needs.extend(FRAGMENT_DENSITY);
     needs.extend(SHADING_RATE_IMAGE);
     needs.extend(FRAGMENT_BARYCENTRIC_NV);
+    needs.extend(MAXIMAL_RECONVERGENCE);
+    needs.extend(SUBGROUP_UNIFORM_CONTROL_FLOW);
+    needs.extend(EARLY_AND_LATE_FRAGMENT_TESTS);
+    needs.extend([
+        E("VK_AMD_gpu_shader_half_float"),
+        E("VK_AMD_gpu_shader_int16"),
+        E("VK_AMD_shader_trinary_minmax"),
+        E("VK_AMD_shader_explicit_vertex_parameter"),
+        MAINTENANCE1_REDUCTIONS,
+        MAINTENANCE1_PER_ELEMENT,
+    ]);
+    for value in [5429, 5438, 5447] {
+        if let (_, Requirement::Needs(list)) = newer_capability(value) {
+            needs.extend_from_slice(list);
+        }
+    }
     needs.push(MESH_DERIVATIVES);
     needs.push(MULTIVIEW_MESH);
     needs.extend([
@@ -673,6 +782,30 @@ mod tests {
             Requirement::Needs(&[FRAGMENT_BARYCENTRIC])
         );
         assert!(probes().contains(&E("VK_NV_fragment_shader_barycentric")));
+        assert_eq!(
+            newer_capability(5447),
+            (
+                "CooperativeMatrixDecodeVectorNV",
+                Requirement::Needs(&[F(
+                    "CooperativeMatrixDecodeVectorFeaturesNV.cooperativeMatrixDecodeVector"
+                )])
+            )
+        );
+        assert!(matches!(
+            newer_capability(5120),
+            ("AbortKHR", Requirement::Unsupported(_))
+        ));
+        assert!(matches!(
+            newer_capability(70_000),
+            ("", Requirement::Unsupported(_))
+        ));
+        assert!(probes().contains(&F(
+            "CooperativeMatrixMaintenance1FeaturesEXT.cooperativeMatrixGetCoordinate"
+        )));
+        assert_eq!(
+            extension_needs("SPV_KHR_maximal_reconvergence"),
+            &MAXIMAL_RECONVERGENCE
+        );
     }
 
     #[test]

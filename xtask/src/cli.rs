@@ -1202,7 +1202,7 @@ fn compare_module(
         .any(|arg| arg.starts_with("-g") && *arg != "-g0")
     {
         let comparison = crate::debuginfo::compare(ours, reference)?;
-        if !comparison.matches() {
+        if !comparison.matches() && crate::debuginfo::expected_difference(shader).is_none() {
             problems.push(format!("{name}: {}", comparison.note()));
         }
     }
