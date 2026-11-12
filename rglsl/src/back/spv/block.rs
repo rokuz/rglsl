@@ -1107,7 +1107,7 @@ impl BlockContext<'_> {
                             }
                         },
                         crate::BinaryOperator::Modulo => match left_ty_inner.scalar_kind() {
-                            Some(crate::ScalarKind::Float) => spirv::Op::FRem,
+                            Some(crate::ScalarKind::Float) => spirv::Op::FMod,
                             Some(crate::ScalarKind::Sint) => spirv::Op::SMod,
                             Some(crate::ScalarKind::Uint) => spirv::Op::UMod,
                             _ => {

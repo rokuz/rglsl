@@ -1,7 +1,7 @@
 ; SPIR-V
 ; Version: 1.1
 ; Generator: rspirv
-; Bound: 212
+; Bound: 209
 OpCapability Shader
 %1 = OpExtInstImport "GLSL.std.450"
 OpMemoryModel Logical GLSL450
@@ -209,62 +209,59 @@ OpStore %58 %165
 %167 = OpLoad  %4  %166
 %168 = OpAccessChain  %53  %24 %155
 %169 = OpLoad  %4  %168
-%170 = OpFDiv  %4  %167 %169
-%171 = OpExtInst  %4  %1 Floor %170
-%172 = OpFMul  %4  %171 %169
-%173 = OpFSub  %4  %167 %172
-OpStore %59 %173
+%170 = OpFMod  %4  %167 %169
+OpStore %59 %170
+%171 = OpLoad  %3  %22
+%172 = OpLoad  %3  %24
+%173 = OpExtInst  %3  %1 Pow %171 %172
+OpStore %60 %173
 %174 = OpLoad  %3  %22
 %175 = OpLoad  %3  %24
-%176 = OpExtInst  %3  %1 Pow %174 %175
-OpStore %60 %176
+%176 = OpDot  %4  %174 %175
+OpStore %61 %176
 %177 = OpLoad  %3  %22
 %178 = OpLoad  %3  %24
-%179 = OpDot  %4  %177 %178
-OpStore %61 %179
+%179 = OpExtInst  %3  %1 FMax %177 %178
+OpStore %62 %179
 %180 = OpLoad  %3  %22
 %181 = OpLoad  %3  %24
-%182 = OpExtInst  %3  %1 FMax %180 %181
-OpStore %62 %182
+%182 = OpExtInst  %3  %1 FMin %180 %181
+OpStore %63 %182
 %183 = OpLoad  %3  %22
 %184 = OpLoad  %3  %24
-%185 = OpExtInst  %3  %1 FMin %183 %184
-OpStore %63 %185
+%185 = OpExtInst  %3  %1 Reflect %183 %184
+OpStore %64 %185
 %186 = OpLoad  %3  %22
-%187 = OpLoad  %3  %24
-%188 = OpExtInst  %3  %1 Reflect %186 %187
-OpStore %64 %188
-%189 = OpLoad  %3  %22
-%190 = OpVectorShuffle  %7  %189 %189 0 1 2
-%191 = OpLoad  %3  %24
-%192 = OpVectorShuffle  %7  %191 %191 0 1 2
-%193 = OpExtInst  %7  %1 Cross %190 %192
-OpStore %65 %193
+%187 = OpVectorShuffle  %7  %186 %186 0 1 2
+%188 = OpLoad  %3  %24
+%189 = OpVectorShuffle  %7  %188 %188 0 1 2
+%190 = OpExtInst  %7  %1 Cross %187 %189
+OpStore %65 %190
+%191 = OpLoad  %3  %22
+%192 = OpLoad  %3  %24
+%193 = OpExtInst  %4  %1 Distance %191 %192
+OpStore %67 %193
 %194 = OpLoad  %3  %22
 %195 = OpLoad  %3  %24
-%196 = OpExtInst  %4  %1 Distance %194 %195
-OpStore %67 %196
-%197 = OpLoad  %3  %22
-%198 = OpLoad  %3  %24
-%199 = OpExtInst  %3  %1 Step %197 %198
-OpStore %68 %199
-%200 = OpAccessChain  %53  %22 %155
-%201 = OpLoad  %4  %200
-%202 = OpLoad  %6  %27
-%203 = OpExtInst  %4  %1 Ldexp %201 %202
-OpStore %69 %203
-%204 = OpLoad  %3  %22
-%205 = OpExtInst  %3  %1 Radians %204
-OpStore %70 %205
-%206 = OpAccessChain  %53  %22 %155
-%207 = OpLoad  %4  %206
-%208 = OpExtInst  %4  %1 Degrees %207
-OpStore %71 %208
-%209 = OpExtInst  %4  %1 SmoothStep %16 %11 %17
-OpStore %72 %209
-%210 = OpExtInst  %3  %1 SmoothStep %18 %12 %19
-OpStore %73 %210
-%211 = OpExtInst  %3  %1 SmoothStep %20 %21 %19
-OpStore %74 %211
+%196 = OpExtInst  %3  %1 Step %194 %195
+OpStore %68 %196
+%197 = OpAccessChain  %53  %22 %155
+%198 = OpLoad  %4  %197
+%199 = OpLoad  %6  %27
+%200 = OpExtInst  %4  %1 Ldexp %198 %199
+OpStore %69 %200
+%201 = OpLoad  %3  %22
+%202 = OpExtInst  %3  %1 Radians %201
+OpStore %70 %202
+%203 = OpAccessChain  %53  %22 %155
+%204 = OpLoad  %4  %203
+%205 = OpExtInst  %4  %1 Degrees %204
+OpStore %71 %205
+%206 = OpExtInst  %4  %1 SmoothStep %16 %11 %17
+OpStore %72 %206
+%207 = OpExtInst  %3  %1 SmoothStep %18 %12 %19
+OpStore %73 %207
+%208 = OpExtInst  %3  %1 SmoothStep %20 %21 %19
+OpStore %74 %208
 OpReturn
 OpFunctionEnd

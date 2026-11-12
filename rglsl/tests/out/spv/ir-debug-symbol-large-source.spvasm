@@ -338,7 +338,7 @@ OpBranch %55
 %56 = OpVectorTimesScalar  %4  %47 %50
 %57 = OpFAdd  %4  %56 %52
 %58 = OpFMul  %4  %57 %47
-%59 = OpFRem  %4  %58 %54
+%59 = OpFMod  %4  %58 %54
 OpReturnValue %59
 OpFunctionEnd
 %62 = OpFunction  %3  None %63
@@ -377,7 +377,7 @@ OpStore %83 %105
 %113 = OpFSub  %6  %110 %112
 OpStore %84 %113
 %114 = OpLoad  %5  %81
-%115 = OpFRem  %5  %114 %72
+%115 = OpFMod  %5  %114 %72
 OpStore %81 %115
 %118 = OpAccessChain  %116  %81 %117
 %119 = OpLoad  %3  %118
@@ -573,7 +573,7 @@ OpBranch %294
 %296 = OpCompositeExtract  %7  %290 0
 %297 = OpIAdd  %7  %296 %117
 %298 = OpConvertUToF  %3  %297
-%299 = OpFRem  %3  %295 %298
+%299 = OpFMod  %3  %295 %298
 %300 = OpCompositeExtract  %7  %290 0
 %301 = OpIAdd  %7  %300 %117
 %302 = OpUDiv  %7  %289 %301

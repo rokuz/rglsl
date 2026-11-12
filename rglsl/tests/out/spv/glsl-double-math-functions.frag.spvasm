@@ -1,7 +1,7 @@
 ; SPIR-V
 ; Version: 1.1
 ; Generator: rspirv
-; Bound: 153
+; Bound: 150
 OpCapability Shader
 OpCapability Float64
 %1 = OpExtInstImport "GLSL.std.450"
@@ -142,52 +142,49 @@ OpStore %46 %111
 %115 = OpLoad  %4  %114
 %116 = OpAccessChain  %45  %28 %112
 %117 = OpLoad  %4  %116
-%118 = OpFDiv  %4  %115 %117
-%119 = OpExtInst  %4  %1 Floor %118
-%120 = OpFMul  %4  %119 %117
-%121 = OpFSub  %4  %115 %120
-OpStore %47 %121
+%118 = OpFMod  %4  %115 %117
+OpStore %47 %118
+%119 = OpLoad  %3  %26
+%120 = OpLoad  %3  %28
+%121 = OpDot  %4  %119 %120
+OpStore %48 %121
 %122 = OpLoad  %3  %26
 %123 = OpLoad  %3  %28
-%124 = OpDot  %4  %122 %123
-OpStore %48 %124
+%124 = OpExtInst  %3  %1 FMax %122 %123
+OpStore %49 %124
 %125 = OpLoad  %3  %26
 %126 = OpLoad  %3  %28
-%127 = OpExtInst  %3  %1 FMax %125 %126
-OpStore %49 %127
+%127 = OpExtInst  %3  %1 FMin %125 %126
+OpStore %50 %127
 %128 = OpLoad  %3  %26
 %129 = OpLoad  %3  %28
-%130 = OpExtInst  %3  %1 FMin %128 %129
-OpStore %50 %130
+%130 = OpExtInst  %3  %1 Reflect %128 %129
+OpStore %51 %130
 %131 = OpLoad  %3  %26
-%132 = OpLoad  %3  %28
-%133 = OpExtInst  %3  %1 Reflect %131 %132
-OpStore %51 %133
-%134 = OpLoad  %3  %26
-%135 = OpVectorShuffle  %7  %134 %134 0 1 2
-%136 = OpLoad  %3  %28
-%137 = OpVectorShuffle  %7  %136 %136 0 1 2
-%138 = OpExtInst  %7  %1 Cross %135 %137
-OpStore %52 %138
+%132 = OpVectorShuffle  %7  %131 %131 0 1 2
+%133 = OpLoad  %3  %28
+%134 = OpVectorShuffle  %7  %133 %133 0 1 2
+%135 = OpExtInst  %7  %1 Cross %132 %134
+OpStore %52 %135
+%136 = OpLoad  %3  %26
+%137 = OpLoad  %3  %28
+%138 = OpExtInst  %4  %1 Distance %136 %137
+OpStore %54 %138
 %139 = OpLoad  %3  %26
 %140 = OpLoad  %3  %28
-%141 = OpExtInst  %4  %1 Distance %139 %140
-OpStore %54 %141
-%142 = OpLoad  %3  %26
-%143 = OpLoad  %3  %28
-%144 = OpExtInst  %3  %1 Step %142 %143
-OpStore %55 %144
-%145 = OpAccessChain  %45  %26 %112
-%146 = OpLoad  %4  %145
-%147 = OpLoad  %6  %31
-%148 = OpExtInst  %4  %1 Ldexp %146 %147
-OpStore %56 %148
-%149 = OpExtInst  %16  %1 SmoothStep %17 %18 %19
-%150 = OpFConvert  %4  %149
-OpStore %57 %150
-%151 = OpExtInst  %3  %1 SmoothStep %21 %12 %23
-OpStore %58 %151
-%152 = OpExtInst  %3  %1 SmoothStep %24 %25 %23
-OpStore %59 %152
+%141 = OpExtInst  %3  %1 Step %139 %140
+OpStore %55 %141
+%142 = OpAccessChain  %45  %26 %112
+%143 = OpLoad  %4  %142
+%144 = OpLoad  %6  %31
+%145 = OpExtInst  %4  %1 Ldexp %143 %144
+OpStore %56 %145
+%146 = OpExtInst  %16  %1 SmoothStep %17 %18 %19
+%147 = OpFConvert  %4  %146
+OpStore %57 %147
+%148 = OpExtInst  %3  %1 SmoothStep %21 %12 %23
+OpStore %58 %148
+%149 = OpExtInst  %3  %1 SmoothStep %24 %25 %23
+OpStore %59 %149
 OpReturn
 OpFunctionEnd

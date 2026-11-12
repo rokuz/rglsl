@@ -857,7 +857,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                     inst.expect(5)?;
                     parse_expr_op!(crate::BinaryOperator::Divide, BINARY)?;
                 }
-                Op::UMod | Op::FRem => {
+                Op::UMod | Op::FMod => {
                     inst.expect(5)?;
                     parse_expr_op!(crate::BinaryOperator::Modulo, BINARY)?;
                 }
@@ -966,10 +966,10 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                         },
                     );
                 }
-                Op::FMod => {
+                Op::FRem => {
                     inst.expect(5)?;
 
-                    // x - y * floor(x / y)
+                    // x - y * trunc(x / y)
 
                     let start = self.data_offset;
                     let span = self.span_from_with_op(start);
@@ -1008,7 +1008,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                     );
                     let floor = ctx.expressions.append(
                         crate::Expression::Math {
-                            fun: crate::MathFunction::Floor,
+                            fun: crate::MathFunction::Trunc,
                             arg: div,
                             arg1: None,
                             arg2: None,
