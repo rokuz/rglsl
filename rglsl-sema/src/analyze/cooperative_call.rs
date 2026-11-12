@@ -382,12 +382,22 @@ impl Analyzer<'_> {
             self.cooperative_error(span, name, "cooperative matrix scopes must match");
             return None;
         }
-        if nv && (a.scalar != b.scalar || a.scalar.is_floating() != c.scalar.is_floating()) {
+        let class = |scalar: Scalar| (scalar.is_floating(), scalar.is_signed());
+        if nv && (a.scalar != b.scalar || class(a.scalar) != class(c.scalar)) {
             self.cooperative_error(span, name, "cooperative matrix component types must match");
             return None;
         }
         let saturating = match operand_flags {
             Some(flags) => {
+                let int_argument = flags.ty.is_scalar_integer()
+                    && flags
+                        .ty
+                        .scalar_type()
+                        .is_some_and(|scalar| scalar.bits() <= 32 && scalar != Scalar::Uint);
+                if !int_argument {
+                    self.error(span, DiagnosticKind::NoMatchingFunction(String::from(name)));
+                    return None;
+                }
                 let Some(value) = Self::constant_argument(flags) else {
                     self.cooperative_error(
                         span,

@@ -4,7 +4,7 @@ use spirv::{Op, Word};
 
 use crate::FastHashMap;
 
-fn replicated(op: Op) -> Option<Op> {
+const fn replicated(op: Op) -> Option<Op> {
     match op {
         Op::ConstantComposite => Some(Op::ConstantCompositeReplicateEXT),
         Op::SpecConstantComposite => Some(Op::SpecConstantCompositeReplicateEXT),
@@ -19,6 +19,8 @@ const fn keeps_memory(op: Op) -> bool {
         Op::Load
             | Op::CompositeExtract
             | Op::CompositeConstruct
+            | Op::CopyLogical
+            | Op::CopyObject
             | Op::AccessChain
             | Op::InBoundsAccessChain
             | Op::Line
@@ -57,6 +59,9 @@ impl Values {
             (Op::Load, &[ty, result, pointer]) => {
                 let value = *self.loads.entry((ty, pointer)).or_insert(result);
                 self.representative.insert(result, value);
+            }
+            (Op::CopyLogical | Op::CopyObject, &[ty, result, operand]) => {
+                self.number(alloc::vec![op as Word, ty, self.of(operand)], result);
             }
             (Op::CompositeExtract, &[ty, result, composite, ref indices @ ..]) => {
                 let mut key = Vec::with_capacity(indices.len() + 3);

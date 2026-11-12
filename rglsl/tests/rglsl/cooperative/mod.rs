@@ -1,7 +1,7 @@
-use std::collections::{BTreeMap, BTreeSet};
+use alloc::collections::{BTreeMap, BTreeSet};
+use core::sync::atomic::{AtomicUsize, Ordering};
 use std::path::PathBuf;
 use std::process::Command;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 use rglsl::{
     back::spv,
@@ -15,6 +15,10 @@ use spirv::Op;
 
 use crate::TestResult;
 
+mod debug;
+mod khr;
+mod nv;
+mod replicate;
 mod smoke;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -36,6 +40,11 @@ pub const VULKAN_1_3: Target = Target {
 pub const VULKAN_1_4: Target = Target {
     vulkan: (1, 4),
     spirv: (1, 6),
+};
+
+pub const VULKAN_1_0: Target = Target {
+    vulkan: (1, 0),
+    spirv: (1, 0),
 };
 
 impl Target {
@@ -100,6 +109,8 @@ pub enum Glslang {
 pub struct Compiled {
     pub module: dr::Module,
     pub glslang: Option<dr::Module>,
+    pub words: Vec<u32>,
+    pub glslang_words: Option<Vec<u32>>,
 }
 
 impl Compiled {
@@ -131,6 +142,53 @@ impl Compiled {
     pub fn disassemble(&self) -> String {
         self.module.disassemble()
     }
+}
+
+fn loadable(words: &[u32]) -> Vec<u32> {
+    let mut output = words.get(..5).unwrap_or(words).to_vec();
+    let mut rest = words.get(5..).unwrap_or(&[]);
+    let mut in_functions = false;
+    while let Some((&first, _)) = rest.split_first() {
+        let length = usize::try_from(first >> 16)
+            .unwrap_or(1)
+            .clamp(1, rest.len());
+        let (instruction, tail) = rest.split_at(length);
+        rest = tail;
+        let opcode = first & 0xffff;
+        in_functions |= opcode == Op::Function as u32;
+        if in_functions || opcode != Op::ExtInst as u32 {
+            output.extend_from_slice(instruction);
+        }
+    }
+    output
+}
+
+fn literal_operands(module: &dr::Module, op: Op) -> Vec<Vec<String>> {
+    module
+        .all_inst_iter()
+        .filter(|inst| inst.class.opcode == op)
+        .map(|inst| {
+            inst.operands
+                .iter()
+                .filter(|operand| !matches!(operand, dr::Operand::IdRef(_)))
+                .map(|operand| format!("{operand:?}"))
+                .collect()
+        })
+        .collect()
+}
+
+pub fn same_literal_operands(compiled: &Compiled, op: Op) -> TestResult<usize> {
+    let mine = literal_operands(&compiled.module, op);
+    if let Some(reference) = &compiled.glslang {
+        let theirs = literal_operands(reference, op);
+        if theirs != mine {
+            return Err(format!(
+                "literal operands of {op:?} differ from glslang's: glslang {theirs:?}, rglsl {mine:?}"
+            )
+            .into());
+        }
+    }
+    Ok(mine.len())
 }
 
 fn count(module: &dr::Module, op: Op) -> usize {
@@ -226,7 +284,7 @@ fn line_of(source: &str, span: rglsl::Span) -> u32 {
     span.location(source).line_number
 }
 
-fn message(error: &dyn std::error::Error) -> String {
+fn message(error: &dyn core::error::Error) -> String {
     let mut text = error.to_string();
     let mut source = error.source();
     while let Some(inner) = source {
@@ -293,7 +351,7 @@ fn spirv_val(words: &[u32], target: Target) -> TestResult {
 }
 
 enum GlslangResult {
-    Accepted(dr::Module),
+    Accepted(Vec<u32>),
     Rejected(Vec<(u32, String)>),
 }
 
@@ -320,10 +378,18 @@ fn glslang(source: &str, target: Target, debug: Debug) -> TestResult<Option<Glsl
         String::from_utf8_lossy(&result.stderr)
     );
     if result.status.success() {
-        let words = std::fs::read(&output)?;
+        let bytes = std::fs::read(&output)?;
         let _ = std::fs::remove_file(&output);
-        let module = dr::load_bytes(words)?;
-        return Ok(Some(GlslangResult::Accepted(module)));
+        let words = bytes
+            .chunks_exact(4)
+            .map(|chunk| {
+                chunk
+                    .iter()
+                    .rev()
+                    .fold(0, |word, byte| (word << 8) | u32::from(*byte))
+            })
+            .collect();
+        return Ok(Some(GlslangResult::Accepted(words)));
     }
     let _ = std::fs::remove_file(&output);
     let errors = text
@@ -361,13 +427,18 @@ pub fn compile_with(
         )
     })?;
     spirv_val(&words, target)?;
-    let module = dr::load_words(&words)?;
-    let reference = match glslang(source, target, debug)? {
+    let module = dr::load_words(loadable(&words))?;
+    let glslang_words = match glslang(source, target, debug)? {
         None => None,
         Some(GlslangResult::Rejected(errors)) => {
             return Err(format!("glslang rejects the shader: {errors:?}").into())
         }
-        Some(GlslangResult::Accepted(reference)) => Some(reference),
+        Some(GlslangResult::Accepted(words)) => Some(words),
+    };
+    let reference = match (&glslang_words, expectation) {
+        (None, _) => None,
+        (Some(words), Glslang::SameStructure) => Some(dr::load_words(loadable(words))?),
+        (Some(words), Glslang::Accepts) => dr::load_words(loadable(words)).ok(),
     };
     if let (Some(reference), Glslang::SameStructure) = (&reference, expectation) {
         let theirs = structure(reference);
@@ -395,6 +466,8 @@ pub fn compile_with(
     Ok(Compiled {
         module,
         glslang: reference,
+        words,
+        glslang_words,
     })
 }
 

@@ -5891,3 +5891,55 @@ int f(int x) {
 void main() {
     f(1);
 }
+### type parameters on a plain type | comp 450 | 4:UnexpectedTypeParameters, 6:UnexpectedTypeParameters
+#extension GL_KHR_cooperative_matrix : require
+layout(local_size_x = 1) in;
+float<16> f;
+void main() {
+    vec4<2> v;
+}
+### cooperative matrices are not shared or block members | comp 450 | 6:InvalidQualifier, 7:InvalidStructMember
+#extension GL_KHR_cooperative_matrix : require
+#extension GL_KHR_memory_scope_semantics : require
+layout(local_size_x = 1) in;
+struct S { coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseA> m; };
+shared S s;
+layout(binding = 0) buffer B { S b; };
+void main() {
+}
+### cooperative load needs buffer or shared storage | comp 450 | 9:InvalidCooperativeCall
+#extension GL_KHR_cooperative_matrix : require
+#extension GL_KHR_memory_scope_semantics : require
+layout(local_size_x = 1) in;
+void main() {
+    float local[256];
+    coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseA> m;
+    m = coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseA>(1.0);
+    coopMatStore(m, local, 0u, 16u, 0);
+}
+### cooperative matrix scalar operands are not converted | comp 450 | 8:InvalidOperands
+#extension GL_KHR_cooperative_matrix : require
+#extension GL_KHR_memory_scope_semantics : require
+layout(local_size_x = 1) in;
+void main() {
+    coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseA> m;
+    m = coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseA>(1.0);
+    m = m * 2;
+}
+### constant_id needs a const scalar | comp 450 | 3:InvalidQualifier, 4:InvalidQualifier
+layout(local_size_x = 1) in;
+layout(constant_id = 0) int a = 1;
+layout(constant_id = 1) const vec2 b = vec2(1.0);
+void main() {
+}
+### function returns take no storage qualifier | comp 450 | 3:InvalidQualifier
+layout(local_size_x = 1) in;
+const float f() { return 1.0; }
+void main() {
+}
+### use_variable_pointers is a known pragma | comp 450 | ok
+#pragma use_variable_pointers
+#pragma use_replicated_composites
+layout(local_size_x = 1) in;
+void main() {
+}
