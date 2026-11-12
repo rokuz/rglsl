@@ -1718,11 +1718,7 @@ pub fn reflect(module: &Module) -> Result<Reflection, String> {
 }
 
 const fn xfb_alignment(scalar: Scalar) -> u32 {
-    if scalar.width == 64 {
-        8
-    } else {
-        4
-    }
+    scalar.bytes()
 }
 
 enum XfbStep {
@@ -3172,6 +3168,61 @@ mod tests {
                 },
                 count: 4
             }
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn packs_16_bit_transform_feedback_components_tightly() -> anyhow::Result<()> {
+        let words = module(&[
+            op(Op::Capability, &[Capability::Shader as u32])?,
+            op(Op::Capability, &[Capability::TransformFeedback as u32])?,
+            op(Op::EntryPoint, &entry(ExecutionModel::Vertex))?,
+            op(Op::ExecutionMode, &[1, ExecutionMode::Xfb as u32])?,
+            op(Op::Decorate, &[20, Decoration::Location as u32, 0])?,
+            op(Op::Decorate, &[20, Decoration::XfbBuffer as u32, 0])?,
+            op(Op::Decorate, &[20, Decoration::XfbStride as u32, 6])?,
+            op(Op::Decorate, &[20, Decoration::Offset as u32, 0])?,
+            op(Op::Decorate, &[21, Decoration::Location as u32, 1])?,
+            op(Op::Decorate, &[21, Decoration::XfbBuffer as u32, 1])?,
+            op(Op::Decorate, &[21, Decoration::XfbStride as u32, 6])?,
+            op(Op::Decorate, &[8, Decoration::Block as u32])?,
+            op(Op::MemberDecorate, &[8, 0, Decoration::Offset as u32, 0])?,
+            op(Op::MemberDecorate, &[8, 1, Decoration::Offset as u32, 2])?,
+            op(Op::TypeFloat, &[5, 16])?,
+            op(Op::TypeVector, &[6, 5, 3])?,
+            op(Op::TypeVector, &[7, 5, 2])?,
+            op(Op::TypeStruct, &[8, 5, 7])?,
+            op(Op::TypePointer, &[10, StorageClass::Output as u32, 6])?,
+            op(Op::TypePointer, &[11, StorageClass::Output as u32, 8])?,
+            op(Op::Variable, &[10, 20, StorageClass::Output as u32])?,
+            op(Op::Variable, &[11, 21, StorageClass::Output as u32])?,
+        ]);
+        let reflection = reflected(&words)?;
+        let xfb = reflection
+            .xfb
+            .ok_or_else(|| anyhow::anyhow!("no transform feedback"))?
+            .map_err(anyhow::Error::msg)?;
+        assert_eq!(xfb.strides, BTreeMap::from([(0, 6), (1, 6)]));
+        let half = Scalar {
+            kind: ScalarKind::Float,
+            width: 16,
+        };
+        let layout: Vec<(u32, u32, Scalar)> = xfb
+            .fields
+            .iter()
+            .map(|field| (field.buffer, field.offset, field.scalar))
+            .collect();
+        assert_eq!(
+            layout,
+            [
+                (0, 0, half),
+                (0, 2, half),
+                (0, 4, half),
+                (1, 0, half),
+                (1, 2, half),
+                (1, 4, half)
+            ]
         );
         Ok(())
     }
