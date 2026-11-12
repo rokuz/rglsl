@@ -8,3 +8,5 @@
 .claude/settings.local.json
 /.claude/worktrees/
 /docs/
+/PROGRESS.md
+/UPSTREAM.md

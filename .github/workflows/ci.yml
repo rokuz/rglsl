@@ -45,8 +45,8 @@ jobs:
         with:
           command: check
 
-  # Runs the glslang corpus against the pinned oracles and checks that the
-  # committed PROGRESS.md is what the current code produces.
+  # Runs the glslang corpus against the pinned oracles and compares the command
+  # line with glslangValidator's.
   corpus:
     name: glslang corpus
     runs-on: ubuntu-latest
@@ -64,8 +64,7 @@ jobs:
           key: oracles-${{ runner.os }}-${{ hashFiles('oracles.toml', 'xtask/src/oracles.rs') }}
       - run: cargo xtask oracles --no-exec
       - run: cargo xtask test --no-exec
-      - name: PROGRESS.md is up to date
-        run: git diff --exit-code PROGRESS.md
+      - run: cargo xtask cli
       - uses: actions/upload-artifact@v4
         if: always()
         with:

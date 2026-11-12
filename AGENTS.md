@@ -5,7 +5,7 @@
 
 Read [docs/PLAN.md](docs/PLAN.md) before changing anything substantial: it defines the
 goal, the language rules for linkage and `#include`, and the milestones (M0–M9).
-[PROGRESS.md](PROGRESS.md) has the current numbers against glslang's corpus.
+`PROGRESS.md` (local, not committed) has the current numbers against glslang's corpus.
 
 ## Layout
 
@@ -61,10 +61,9 @@ goal, the language rules for linkage and `#include`, and the milestones (M0–M9
 - SPIR-V is the only output for now. Do not add other backends yet; a Metal (MSL) backend may
   come later. IR features must be expressible in SPIR-V; keep SPIR-V encodings (opcodes,
   decorations, capabilities, raw words) in `back/spv`, not in the IR, when that costs nothing.
-- When changing code that came from upstream, record non-trivial deviations in
-  [UPSTREAM.md](UPSTREAM.md).
-- A change that moves corpus numbers must commit the regenerated `PROGRESS.md`
-  (CI checks it is up to date).
+- When changing code that came from upstream, record non-trivial deviations in `UPSTREAM.md`
+  (local, not committed).
+- `docs/`, `PROGRESS.md` and `UPSTREAM.md` are local files: never commit them.
 - **Exec on every target.** The final gate of every change is a full `cargo xtask test` that
   runs `exec` on every target: KosmicKrisp on the Mac and each remote Windows target listed in
   `RGLSL_EXEC_REMOTE` (comma-separated SSH host aliases, each with an optional `@device` filter;

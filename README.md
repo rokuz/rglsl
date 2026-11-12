@@ -2,11 +2,11 @@
 
 A Vulkan GLSL (`#version 450`/`460`) → SPIR-V compiler in safe Rust, a drop-in replacement for
 `glslangValidator` in Vulkan projects. Hard fork of [naga](https://github.com/gfx-rs/wgpu/tree/trunk/naga)
-30.0.0 ([UPSTREAM.md](UPSTREAM.md)).
+30.0.0.
 
 On glslang's own test corpus rglsl accepts what glslang accepts, reports errors on the same
 lines, and produces SPIR-V that passes `spirv-val`, has the same interface and gives the same
-results on real GPUs (KosmicKrisp on Apple, AMD, NVIDIA). Numbers: [PROGRESS.md](PROGRESS.md).
+results on real GPUs (KosmicKrisp on Apple, AMD, NVIDIA).
 
 ## Differences from glslang
 
@@ -36,7 +36,7 @@ Options, exit codes and messages are `glslangValidator`'s.
 ```sh
 cargo test --workspace --all-features
 cargo xtask oracles --glslang-dir ../glslang          # pinned glslang, spirv-val, Amber
-cargo xtask test --glslang-dir ../glslang             # glslang's corpus, rewrites PROGRESS.md
+cargo xtask test --glslang-dir ../glslang             # glslang's corpus
 ```
 
 Rules for contributors: [AGENTS.md](AGENTS.md).

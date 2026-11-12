@@ -1,0 +1,9 @@
+rglsl/tests/in/** linguist-vendored
+rglsl/tests/out/** linguist-generated
+tests/** linguist-vendored
+xtask/exec-ub/** linguist-vendored
+xtask/exec-regressions/** linguist-vendored
+xtask/corpus-renamed/** linguist-vendored
+rglsl-fuzz/tests/** linguist-vendored
+*.spvasm linguist-generated
+*.ron linguist-generated
