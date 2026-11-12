@@ -202,7 +202,7 @@ fn is(op: u32, expected: Op) -> bool {
     op == expected as u32
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct Shape {
     capabilities: BTreeSet<u32>,
     extensions: BTreeSet<String>,
@@ -446,10 +446,21 @@ fn matches_glslang_in(stage: ShaderStage, source: &str, target: Target) -> TestR
         }
         Glslang::Accepted(words) => {
             let theirs = Module::new(&words)?.shape();
-            assert_eq!(ours, theirs, "{source}");
+            assert_eq!(without_tensor_indexing(&ours), theirs, "{source}");
         }
     }
     Ok(ours)
+}
+
+fn without_tensor_indexing(shape: &Shape) -> Shape {
+    let mut shape = shape.clone();
+    for capability in [
+        spirv::Capability::StorageTensorArrayDynamicIndexingARM,
+        spirv::Capability::StorageTensorArrayNonUniformIndexingARM,
+    ] {
+        shape.capabilities.remove(&(capability as u32));
+    }
+    shape
 }
 
 fn matches_glslang(stage: ShaderStage, source: &str) -> TestResult<Shape> {
@@ -1127,14 +1138,116 @@ void main() { use(t); }
 fn unsized_tensor_arrays_need_constant_indices() -> TestResult {
     let source = "#version 460
 #extension GL_ARM_tensors : require
-#extension GL_EXT_nonuniform_qualifier : require
 layout(set = 0, binding = 0) uniform tensorARM<float, 1> t[];
 layout(set = 0, binding = 1) buffer B { uint index; float value; } b;
 void main() {
-    tensorReadARM(t[nonuniformEXT(b.index)], uint[](0u), b.value);
+    tensorReadARM(t[b.index], uint[](0u), b.value);
 }
 ";
-    rejected_like_glslang(source, 7, "unsized array")
+    rejected_like_glslang(source, 6, "unsized array")
+}
+
+fn capability_words(words: &[u32]) -> TestResult<BTreeSet<u32>> {
+    Ok(instructions(words)?
+        .into_iter()
+        .filter(|(op, _)| is(*op, Op::Capability))
+        .filter_map(|(_, operands)| operands.first().copied())
+        .collect())
+}
+
+fn tensor_array_variables(words: &[u32]) -> TestResult<Vec<String>> {
+    let module = Module::new(words)?;
+    let mut found: Vec<String> = module
+        .shape()
+        .variables
+        .into_values()
+        .map(|(ty, _)| ty)
+        .collect();
+    found.sort();
+    Ok(found)
+}
+
+#[test]
+fn runtime_arrays_of_tensors() -> TestResult {
+    use spirv::Capability as C;
+    let source = "#version 460
+#extension GL_ARM_tensors : require
+#extension GL_EXT_nonuniform_qualifier : require
+layout(local_size_x = 1) in;
+layout(set = 0, binding = 0) uniform tensorARM<float, 1> tr[];
+layout(set = 0, binding = 1) readonly uniform tensorARM<int, 2> tn[];
+layout(set = 0, binding = 2) uniform tensorARM<int, 1> tc[];
+layout(set = 0, binding = 3) buffer B { uint i; float f; int n; uint s; } b;
+void main() {
+    tensorReadARM(tr[b.i], uint[](0u), b.f);
+    tensorWriteARM(tr[b.i + 1u], uint[](0u), b.f);
+    tensorReadARM(tn[nonuniformEXT(b.i)], uint[](0u, 1u), b.n);
+    b.s = tensorSizeARM(tc[2], 0) + tensorSizeARM(tn[0], 1);
+}
+";
+    for target in [VULKAN_1_0, VULKAN_1_3] {
+        let words = compile(ShaderStage::Compute, source, target)?;
+        let capabilities = capability_words(&words)?;
+        for capability in [
+            C::TensorsARM,
+            C::RuntimeDescriptorArray,
+            C::StorageTensorArrayDynamicIndexingARM,
+            C::StorageTensorArrayNonUniformIndexingARM,
+            C::ShaderNonUniform,
+        ] {
+            assert!(
+                capabilities.contains(&(capability as u32)),
+                "{capability:?}"
+            );
+        }
+        assert_eq!(
+            tensor_array_variables(&words)?,
+            [
+                "pointer(0) [3] tensor(rank 1) i32",
+                "pointer(0) [] tensor(rank 1) f32",
+                "pointer(0) [] tensor(rank 2) i32",
+            ]
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn dynamically_indexed_tensor_arrays_declare_their_capabilities() -> TestResult {
+    use spirv::Capability as C;
+    let dynamic = C::StorageTensorArrayDynamicIndexingARM as u32;
+    let non_uniform = C::StorageTensorArrayNonUniformIndexingARM as u32;
+    let constant = "#version 460
+#extension GL_ARM_tensors : require
+layout(local_size_x = 1) in;
+layout(set = 0, binding = 0) uniform tensorARM<float, 1> ta[4];
+layout(set = 0, binding = 1) buffer B { uint i; float f; } b;
+const uint two = 2u;
+void main() {
+    tensorReadARM(ta[1], uint[](0u), b.f);
+    tensorReadARM(ta[two + 1u], uint[](0u), b.f);
+}
+";
+    let capabilities = capability_words(&compile(ShaderStage::Compute, constant, VULKAN_1_0)?)?;
+    assert!(!capabilities.contains(&dynamic) && !capabilities.contains(&non_uniform));
+    let uniform = constant.replace("ta[1]", "ta[b.i]");
+    let capabilities = capability_words(&compile(ShaderStage::Compute, &uniform, VULKAN_1_0)?)?;
+    assert!(capabilities.contains(&dynamic) && !capabilities.contains(&non_uniform));
+    let varying = "#version 460
+#extension GL_ARM_tensors : require
+#extension GL_EXT_nonuniform_qualifier : require
+layout(local_size_x = 1) in;
+layout(set = 0, binding = 0) uniform tensorARM<float, 1> ta[4];
+layout(set = 0, binding = 1) buffer B { uint i; float f; } b;
+uint pick(tensorARM<float, 1> x[4], uint k) { return tensorSizeARM(x[k], 0); }
+void main() {
+    tensorReadARM(ta[nonuniformEXT(b.i)], uint[](0u), b.f);
+    b.i = pick(ta, b.i);
+}
+";
+    let capabilities = capability_words(&compile(ShaderStage::Compute, varying, VULKAN_1_0)?)?;
+    assert!(capabilities.contains(&dynamic) && capabilities.contains(&non_uniform));
+    Ok(())
 }
 
 #[test]

@@ -2424,6 +2424,37 @@ impl BlockContext<'_> {
             && !self.expression_constness.is_specialized(expr_handle)
     }
 
+    fn tensor_array_capability(
+        &mut self,
+        base: Handle<crate::Expression>,
+        index: Handle<crate::Expression>,
+        non_uniform: bool,
+    ) -> Result<(), Error> {
+        use spirv::Capability as Cap;
+        let mut ty = self.fun_info[base].ty.inner_with(&self.ir_module.types);
+        if let crate::TypeInner::Pointer { base, .. } = *ty {
+            ty = &self.ir_module.types[base].inner;
+        }
+        let element = match *ty {
+            crate::TypeInner::BindingArray { base, .. } => base,
+            _ => return Ok(()),
+        };
+        if !matches!(
+            self.ir_module.types[element].inner,
+            crate::TypeInner::Tensor { .. }
+        ) || self.expression_constness.is_const(index)
+        {
+            return Ok(());
+        }
+        let capability = if non_uniform {
+            Cap::StorageTensorArrayNonUniformIndexingARM
+        } else {
+            Cap::StorageTensorArrayDynamicIndexingARM
+        };
+        self.writer
+            .require_any("dynamic indexing of tensor arrays", &[capability])
+    }
+
     fn binding_array_capability(
         &mut self,
         base: Handle<crate::Expression>,
@@ -2874,6 +2905,7 @@ impl BlockContext<'_> {
                         .contains(crate::NonUniform::ACCESS)
                         && !self.non_uniform(base).contains(crate::NonUniform::ACCESS);
                     self.binding_array_capability(base, non_uniform_index)?;
+                    self.tensor_array_capability(base, index, non_uniform_index)?;
                     let index = GuardedIndex::Expression(index);
                     let index_id =
                         self.write_access_chain_index(base, index, &mut accumulated_checks, block)?;
