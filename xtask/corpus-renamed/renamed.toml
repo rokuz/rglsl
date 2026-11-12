@@ -1,0 +1,15 @@
+["spv.longVectorNotReserved.comp"]
+why = "declares a local named `vector`, the keyword of GL_EXT_long_vector, which rglsl always reserves; the test checks that glslang leaves `vector` a name when the extension is off, which rglsl deliberately does not do, so the twin keeps the rest of the shader"
+renames = { vector = "vector_" }
+
+["spv.structuredDescriptorHeap.ReadOnly.comp"]
+why = "names a buffer member `vector`, the keyword of GL_EXT_long_vector, which rglsl always reserves"
+renames = { vector = "vector_" }
+
+["spv.structuredDescriptorHeap.ReadOnly.error.comp"]
+why = "names a structure member `vector`, the keyword of GL_EXT_long_vector, which rglsl always reserves; glslang rejects the twin on the same line 54 as the original (the descriptor heap is read-only)"
+renames = { vector = "vector_" }
+
+["spv.demoteDisabled.frag"]
+why = "uses `demote`, the keyword of GL_EXT_demote_to_helper_invocation, which rglsl always reserves, as a local name; the test checks that glslang leaves `demote` a name when the extension is off, which rglsl deliberately does not do; glslang rejects the twin on the same line 9 as the original (`demote_` is out of scope there)"
+renames = { demote = "demote_" }

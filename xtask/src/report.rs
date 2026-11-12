@@ -401,6 +401,14 @@ driver cannot run because of a proven bug of that driver is listed, with the rea
 run keeps the results of its last run. See
 `docs/PLAN.md` (Testing).
 
+rglsl always reserves the keywords of extensions, also when the extension is not enabled. A
+glslang test that uses such a word as a name is listed in `xtask/corpus-renamed/renamed.toml`
+with the words and the reason, and its twin `xtask/corpus-renamed/<name>` renames only those
+identifiers, on the same lines; glslang and rglsl both compile the twin, with the original's
+options, in every column. The twin must be the original with the renames applied, and glslang
+must give it the original's verdict and error lines. Its row in `results.tsv` notes
+`renamed twin: <word> → <new name>`.
+
 Only shaders with `#version 450` or `460` are run. Per-shader results are written to
 `target/xtask/results.tsv`.
 "
