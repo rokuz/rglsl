@@ -18,7 +18,6 @@ rglsl = { workspace = true, features = [
     "serialize",
     "deserialize",
     "glsl-in",
-    "spv-in",
     "spv-out",
 ] }
 spirv = { workspace = true, features = ["deserialize"] }

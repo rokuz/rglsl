@@ -7,10 +7,10 @@
 extern crate alloc;
 
 mod arithmetic;
+mod atomic_compare_exchange;
 mod cooperative;
 mod glsl_vulkan;
 mod snapshots;
-mod spirv_roundtrip;
 mod stage_io;
 mod tensors;
 mod validation;
