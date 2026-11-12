@@ -791,7 +791,7 @@ pub enum Interpolation {
     Flat,
     /// Indicates the fragment input binding holds an array of per-vertex values.
     /// This is typically used with barycentrics.
-    PerVertex { nv: bool },
+    PerVertex { nv: bool, flat: bool, linear: bool },
 }
 
 /// The sampling qualifiers of a binding or struct field.

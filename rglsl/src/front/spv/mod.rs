@@ -855,7 +855,11 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                 dec.interpolation = Some(crate::Interpolation::Flat);
             }
             spirv::Decoration::PerVertexKHR => {
-                dec.interpolation = Some(crate::Interpolation::PerVertex { nv: false });
+                dec.interpolation = Some(crate::Interpolation::PerVertex {
+                    nv: false,
+                    flat: false,
+                    linear: false,
+                });
             }
             spirv::Decoration::Centroid => {
                 dec.sampling = Some(crate::Sampling::Centroid);

@@ -893,7 +893,8 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   `docs/design/cooperative.md`.
 
 - **Fragment shader barycentrics of both extensions.** `BuiltIn::Barycentric { perspective, nv }`
-  and `Interpolation::PerVertex { nv }` (upstream: no `nv`) choose
+  and `Interpolation::PerVertex { nv, flat, linear }` (upstream: no fields; `flat` and `linear`
+  add `Flat` and `NoPerspective` beside `PerVertexKHR`, as glslang writes them) choose
   `SPV_NV_fragment_shader_barycentric` or `SPV_KHR_fragment_shader_barycentric`, as glslang
   does for `GL_NV_`/`GL_EXT_fragment_shader_barycentric`; the duplicate check of built-ins
   keeps the perspective and no-perspective coordinates apart (upstream: one built-in). The

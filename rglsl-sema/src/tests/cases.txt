@@ -4990,6 +4990,20 @@ layout(location = 0) pervertexEXT in float a[];
 layout(location = 1) pervertexNV in block { vec2 c; } b[];
 layout(location = 0) out vec4 o;
 void main() { o = vec4(a[2] * gl_BaryCoordEXT.x, b[1].c * gl_BaryCoordNoPerspNV.yz, a.length()); }
+### per-vertex inputs need no flat and take interpolation qualifiers | frag | ok
+#extension GL_EXT_fragment_shader_barycentric : require
+layout(location = 0) pervertexEXT in int a[];
+layout(location = 1) flat pervertexEXT in int b[3];
+layout(location = 2) noperspective pervertexEXT in vec2 c[3];
+layout(location = 3) pervertexEXT in B { flat int z; centroid float w; } d[];
+layout(location = 0) out vec4 o;
+void main() { o = vec4(float(a[0] + b[1] + d[2].z), c[1], d[0].w); }
+### one auxiliary qualifier | frag | 3:InvalidQualifier, 4:InvalidQualifier
+#extension GL_EXT_fragment_shader_barycentric : require
+layout(location = 0) centroid pervertexEXT in float a[3];
+layout(location = 1) centroid sample in float b;
+layout(location = 0) out vec4 o;
+void main() { o = vec4(a[0], b, 0.0, 0.0); }
 ### per-vertex inputs need the extension | frag | 2:ExtensionRequired
 layout(location = 0) pervertexEXT in float a[];
 layout(location = 0) out vec4 o;
