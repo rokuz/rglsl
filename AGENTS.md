@@ -68,7 +68,7 @@ goal, the language rules for linkage and `#include`, and the milestones (M0–M9
 - **Exec on every target.** The final gate of every change is a full `cargo xtask test` that
   runs `exec` on every target: KosmicKrisp on the Mac and each remote Windows target listed in
   `RGLSL_EXEC_REMOTE` (comma-separated SSH host aliases, each with an optional `@device` filter;
-  see README). Today that is two Windows machines, one with an AMD GPU and one with an NVIDIA GPU
+  see docs/testing.md). Today that is two Windows machines, one with an AMD GPU and one with an NVIDIA GPU
   (`exec amd` and `exec nvidia` in `PROGRESS.md`). A run that warns that the remote targets were
   skipped, or that reaches fewer targets than `PROGRESS.md` has columns, is not a final gate.
   Never write host names, addresses or user names of the remote machines into the repository;
