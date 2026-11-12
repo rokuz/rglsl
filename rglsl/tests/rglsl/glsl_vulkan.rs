@@ -11089,6 +11089,7 @@ void main() {
     while (F) { o.x = 41.0; }
     for (float f = 42.0; F; f += 1.0) { o.x = f; }
     do { o.y = 43.0; } while (false);
+    do { o.y = 48.0; break; } while (false);
     do {
         if (x > 0.5) { break; }
         o.z = 44.0;
@@ -11105,7 +11106,7 @@ void main() {
     assert_eq!(instructions(&module, Op::LoopMerge).len(), 2);
     assert_eq!(
         float_constants(&module, Op::Store),
-        [0.0, 42.0, 43.0, 44.0, 45.0]
+        [0.0, 42.0, 43.0, 44.0, 45.0, 48.0]
     );
     Ok(())
 }

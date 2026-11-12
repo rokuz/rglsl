@@ -646,8 +646,11 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 .await;
             result
         }?;
-        let target = self.with(|this| this.leave_jump_target(at))??;
+        let mut target = self.with(|this| this.leave_jump_target(at))??;
         if constant == Some(false) && target.continues == 0 {
+            if self.with(|this| this.strip_trailing_break(&mut body))? {
+                target.breaks = target.breaks.saturating_sub(1);
+            }
             if target.breaks == 0 {
                 self.with(|this| this.splice(body))?;
                 return Ok(());
