@@ -2489,6 +2489,7 @@ impl BlockContext<'_> {
             Unary(spirv::Op, Word),
             Binary(spirv::Op, Word, Word),
             Ternary(spirv::Op, Word, Word, Word),
+            Resized(spirv::Op, Word, Word),
         }
         let cast = match (src_scalar.kind, kind, convert) {
             // Filter out identity casts. Some Adreno drivers are
@@ -2586,11 +2587,23 @@ impl BlockContext<'_> {
             (Sk::Uint, Sk::Uint, Some(dst_width)) if src_scalar.width != dst_width => {
                 Cast::Unary(spirv::Op::UConvert, expr_id)
             }
-            (Sk::Uint, Sk::Sint, Some(dst_width)) if src_scalar.width != dst_width => {
-                Cast::Unary(spirv::Op::SConvert, expr_id)
-            }
-            (Sk::Sint, Sk::Uint, Some(dst_width)) if src_scalar.width != dst_width => {
-                Cast::Unary(spirv::Op::UConvert, expr_id)
+            (Sk::Uint, Sk::Sint, Some(dst_width)) | (Sk::Sint, Sk::Uint, Some(dst_width))
+                if src_scalar.width != dst_width =>
+            {
+                let op = if src_scalar.kind == Sk::Sint {
+                    spirv::Op::SConvert
+                } else {
+                    spirv::Op::UConvert
+                };
+                let scalar = crate::Scalar {
+                    kind: src_scalar.kind,
+                    width: dst_width,
+                };
+                let resized = match src_size {
+                    Some(size) => NumericType::Vector { size, scalar },
+                    None => NumericType::Scalar(scalar),
+                };
+                Cast::Resized(op, self.writer.get_numeric_type_id(resized), expr_id)
             }
             // We assume it's either an identity cast, or int-uint.
             _ => Cast::Unary(spirv::Op::Bitcast, expr_id),
@@ -2616,6 +2629,20 @@ impl BlockContext<'_> {
                 block
                     .body
                     .push(Instruction::ternary(op, result_type_id, id, op1, op2, op3));
+                id
+            }
+            Cast::Resized(op, resized_type_id, op1) => {
+                let resized_id = self.gen_id();
+                block
+                    .body
+                    .push(Instruction::unary(op, resized_type_id, resized_id, op1));
+                let id = self.gen_id();
+                block.body.push(Instruction::unary(
+                    spirv::Op::Bitcast,
+                    result_type_id,
+                    id,
+                    resized_id,
+                ));
                 id
             }
         })
