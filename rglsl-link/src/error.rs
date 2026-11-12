@@ -34,6 +34,8 @@ pub enum LinkError {
     SpecializationConstant(u32),
     #[error("structure `{0}` is defined differently in two modules")]
     StructMismatch(String),
+    #[error("`gl_WorkGroupSize` is read as a constant in {0}, but another unit declares local_size_x_id, local_size_y_id or local_size_z_id for a component it does not specialize")]
+    WorkGroupSize(String),
     #[error("Contradictory {0}")]
     Contradictory(&'static str),
     #[error("{0}")]

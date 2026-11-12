@@ -118,6 +118,24 @@ fn validate(object: &ObjectModule) -> Result<(), FileError> {
                 "a global symbol names a missing global variable",
             )));
         }
+        if object
+            .work_group_size_placeholders
+            .iter()
+            .flatten()
+            .any(|&handle| module.overrides.try_get(handle).is_err())
+        {
+            return Err(FileError::Invalid(String::from(
+                "a work group size placeholder names a missing specialization constant",
+            )));
+        }
+        if let Some(ref specialized) = object.specialized {
+            if specialized.specialized.is_some() || !specialized.variants.is_empty() {
+                return Err(FileError::Invalid(String::from(
+                    "a specialized object module has its own variants",
+                )));
+            }
+            pending.push(specialized);
+        }
         pending.extend(&object.variants);
     }
     Ok(())
@@ -144,7 +162,13 @@ fn body_slots(object: &mut ObjectModule) -> Vec<&mut Block> {
                 .iter_mut()
                 .map(|entry| &mut entry.function.body),
         );
-        objects.extend(object.variants.iter_mut().rev());
+        let ObjectModule {
+            ref mut variants,
+            ref mut specialized,
+            ..
+        } = *object;
+        objects.extend(variants.iter_mut().rev());
+        objects.extend(specialized.as_deref_mut());
     }
     slots
 }

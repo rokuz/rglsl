@@ -57,6 +57,7 @@ pub struct Options {
     pub spirv_version: Option<(u8, u8)>,
     pub end_of_input: Option<u32>,
     pub require_bindings: bool,
+    pub specialize_work_group_size: bool,
 }
 
 impl Options {
@@ -68,6 +69,7 @@ impl Options {
             spirv_version: None,
             end_of_input: None,
             require_bindings: false,
+            specialize_work_group_size: false,
         }
     }
 }
@@ -127,6 +129,7 @@ pub struct Analysis {
     pub spirv_execution_modes: SpirvExecutionModes,
     pub no_contraction: BTreeSet<NodeId>,
     pub relaxed_precision: precision::RelaxedPrecision,
+    pub work_group_size_read: bool,
 }
 
 impl Analysis {
@@ -332,6 +335,7 @@ pub(crate) struct Analyzer<'a> {
     pub nesting: u32,
     pub main_defined: bool,
     pub work_group_size: Option<SymbolId>,
+    pub work_group_size_read: bool,
     pub local_size_declared: bool,
     pub specialization_uses: u32,
     pub block_names: BTreeMap<String, Vec<BlockStorage>>,
@@ -409,6 +413,7 @@ impl<'a> Analyzer<'a> {
             nesting: 0,
             main_defined: false,
             work_group_size,
+            work_group_size_read: false,
             local_size_declared: false,
             specialization_uses: 0,
             block_names: BTreeMap::new(),
@@ -634,6 +639,7 @@ impl<'a> Analyzer<'a> {
             spirv_execution_modes: self.spirv_execution_modes,
             no_contraction: BTreeSet::new(),
             relaxed_precision: precision::RelaxedPrecision::default(),
+            work_group_size_read: self.work_group_size_read,
         }
     }
 

@@ -1089,3 +1089,60 @@ void fill() { blk.a = vec4(1.0); }
     assert!(!spirv(&result)?.is_empty());
     Ok(())
 }
+
+const WORK_GROUP_MAIN: &str = "#version 450
+layout(local_size_x = 4) in;
+layout(set = 0, binding = 0) buffer Data { uint values[]; } data;
+uint twice(uint x);
+void main() { data.values[0] = twice(gl_WorkGroupSize.x); }
+";
+
+const WORK_GROUP_LIBRARY: &str = "#version 450
+layout(local_size_x_id = 3) in;
+uint twice(uint x) { return x * 2u; }
+";
+
+fn work_group_size_override(linked: &Linked) -> TestResult<rglsl::Override> {
+    let module = &linked.module;
+    module
+        .overrides
+        .iter()
+        .find(|&(_, value)| value.name.as_deref() == Some("gl_WorkGroupSize"))
+        .map(|(_, value)| value.clone())
+        .ok_or_else(|| "gl_WorkGroupSize is not a specialization constant".into())
+}
+
+#[test]
+fn work_group_size_is_specialized_by_a_library() -> TestResult {
+    let main = object(ShaderStage::Compute, WORK_GROUP_MAIN)?;
+    assert!(main.work_group_size_constant);
+    assert!(main.specialized.is_some());
+    let lib = library(WORK_GROUP_LIBRARY)?;
+    let result = linked(&[main.clone(), lib.clone()])?;
+    work_group_size_override(&result)?;
+    let module = &result.module;
+    let spec = module
+        .overrides
+        .iter()
+        .find(|&(_, value)| value.id == Some(3))
+        .map(|(_, value)| value)
+        .ok_or("no override with id 3")?;
+    let init = spec.init.ok_or("no default")?;
+    assert_eq!(
+        module.global_expressions[init],
+        rglsl::Expression::Literal(rglsl::Literal::U32(4))
+    );
+    let entry = &module.entry_points[0];
+    assert_eq!(entry.workgroup_size, [4, 1, 1]);
+    assert!(entry
+        .workgroup_size_overrides
+        .is_some_and(|slots| slots[0].is_some() && slots[1].is_none() && slots[2].is_none()));
+    assert!(!spirv(&result)?.is_empty());
+    let round_trip = decode(&encode(&main)?)?;
+    let result = linked(&[round_trip, lib])?;
+    work_group_size_override(&result)?;
+    let plain = library("#version 450\nuint twice(uint x) { return x * 2u; }\n")?;
+    let alone = linked(&[main, plain])?;
+    assert!(alone.module.overrides.is_empty());
+    Ok(())
+}

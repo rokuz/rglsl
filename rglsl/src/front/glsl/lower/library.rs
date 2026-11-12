@@ -6,7 +6,7 @@ use alloc::{
 
 use rglsl_sema::{Builtins, ResourceLimits};
 
-use super::{lower, stage, Mode};
+use super::{lower_object, stage, Mode};
 use crate::front::glsl::{Options, ParseErrors};
 use crate::object::{ObjectModule, StageRejection};
 use crate::ShaderStage;
@@ -22,8 +22,8 @@ fn stage_options(options: &Options, stage: ShaderStage) -> Options {
 
 fn fingerprint(object: &ObjectModule) -> String {
     format!(
-        "{:?}{:?}{:?}{:?}",
-        object.module, object.functions, object.globals, object.layout
+        "{:?}{:?}{:?}{:?}{:?}",
+        object.module, object.functions, object.globals, object.layout, object.specialized
     )
 }
 
@@ -71,7 +71,7 @@ pub(super) fn compile(
     let mut names = StageNames::default();
     for stage in order {
         let options = stage_options(options, stage);
-        match lower(&options, source, Mode::Library, root, includer, &mut names) {
+        match lower_object(&options, source, Mode::Library, root, includer, &mut names) {
             Ok(object) => {
                 let key = fingerprint(&object);
                 match variants

@@ -60,6 +60,7 @@ pub(super) fn parse(
         root,
         includer,
         &mut library::StageNames::default(),
+        false,
     )
     .map(|object| object.module)
 }
@@ -77,7 +78,7 @@ pub(super) fn compile(
             Span::UNDEFINED,
         )]
         .into()),
-        Some(true) => lower(
+        Some(true) => lower_object(
             options,
             source,
             Mode::Object,
@@ -146,6 +147,23 @@ fn defines_main(
     }))
 }
 
+fn lower_object(
+    options: &Options,
+    source: &str,
+    mode: Mode,
+    root: rglsl_pp::FileId,
+    includer: &mut dyn rglsl_pp::Includer,
+    names: &mut library::StageNames,
+) -> core::result::Result<crate::object::ObjectModule, ParseErrors> {
+    let mut object = lower(options, source, mode, root, includer, names, false)?;
+    if object.work_group_size_constant {
+        object.specialized = lower(options, source, mode, root, includer, names, true)
+            .ok()
+            .map(alloc::boxed::Box::new);
+    }
+    Ok(object)
+}
+
 fn lower(
     options: &Options,
     source: &str,
@@ -153,6 +171,7 @@ fn lower(
     root: rglsl_pp::FileId,
     includer: &mut dyn rglsl_pp::Includer,
     names: &mut library::StageNames,
+    specialize: bool,
 ) -> core::result::Result<crate::object::ObjectModule, ParseErrors> {
     let object = mode != Mode::Program;
     let preprocessed = preprocess(options, Some(options.stage), source, root, includer);
@@ -196,7 +215,13 @@ fn lower(
     }
     let text = preprocessed.text.as_str();
     let (unit, failure) = rglsl_ast::parse_prefix(text);
-    let analysis = rglsl_sema::analyze(&unit, &sema_options(options, text));
+    let analysis = rglsl_sema::analyze(
+        &unit,
+        &rglsl_sema::Options {
+            specialize_work_group_size: specialize,
+            ..sema_options(options, text)
+        },
+    );
     if let Some(error) = failure {
         let earlier = analysis.diagnostics.iter().filter(|diagnostic| {
             diagnostic.offset(text) < error.span.start
@@ -263,7 +288,9 @@ fn lower(
     if !errors.is_empty() {
         return Err(errors.into());
     }
-    Lowerer::new(&unit, &analysis, options, map, mode).run()
+    let mut lowerer = Lowerer::new(&unit, &analysis, options, map, mode);
+    lowerer.specialize_work_group_size = specialize;
+    lowerer.run()
 }
 
 fn sema_options(options: &Options, text: &str) -> rglsl_sema::Options {
@@ -501,6 +528,8 @@ pub(super) struct Lowerer<'a> {
     pub size_expressions: BTreeMap<rglsl_ast::ast::NodeId, &'a rglsl_ast::ast::Expression>,
     pub local_size_ids: [Option<u32>; 3],
     pub local_size_overrides: [Option<Handle<crate::Override>>; 3],
+    pub specialize_work_group_size: bool,
+    pub work_group_size_placeholders: [Option<Handle<crate::Override>>; 3],
     pub work_group_size: Option<Handle<crate::Override>>,
     pub heap_structs: BTreeMap<StructId, Handle<Type>>,
     pub heap_runtime_offsets: BTreeMap<Handle<GlobalVariable>, &'a rglsl_ast::ast::Expression>,
@@ -584,6 +613,8 @@ impl<'a> Lowerer<'a> {
             size_expressions: BTreeMap::new(),
             local_size_ids: [None; 3],
             local_size_overrides: [None; 3],
+            specialize_work_group_size: false,
+            work_group_size_placeholders: [None; 3],
             work_group_size: None,
             heap_structs: BTreeMap::new(),
             heap_runtime_offsets: BTreeMap::new(),

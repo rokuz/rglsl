@@ -768,11 +768,15 @@ impl Analyzer<'_> {
             self.error(expression.span, DiagnosticKind::WorkGroupSizeNotDeclared);
             return Operand::error();
         }
+        if self.work_group_size == Some(id) {
+            self.work_group_size_read = true;
+        }
         let work_group_size = self.work_group_size == Some(id)
-            && self
-                .local_size_specialized
-                .iter()
-                .any(|specialized| *specialized);
+            && (self.options.specialize_work_group_size
+                || self
+                    .local_size_specialized
+                    .iter()
+                    .any(|specialized| *specialized));
         let specialization = constant
             && (work_group_size
                 || self

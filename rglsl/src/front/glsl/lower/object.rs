@@ -305,8 +305,14 @@ impl Lowerer<'_> {
         extensions.sort();
         let stage = (!self.library).then_some(self.options.stage);
         let module = core::mem::take(&mut self.module);
+        let work_group_size_constant = !self.specialize_work_group_size
+            && self.options.stage.compute_like()
+            && self.analysis.work_group_size_read
+            && self.local_size_ids.iter().any(Option::is_none);
         ObjectModule {
             stage,
+            work_group_size_constant,
+            work_group_size_placeholders: self.work_group_size_placeholders,
             glsl_version: self.analysis.version.unwrap_or(0),
             extensions,
             functions,

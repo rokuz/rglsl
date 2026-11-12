@@ -9,6 +9,7 @@ mod layout;
 mod merge;
 mod program;
 mod unify;
+mod workgroup;
 
 use rglsl::compact::{compact, KeepUnused};
 use rglsl::valid::{Capabilities, ModuleInfo, ValidationFlags, ValidationMode, Validator};
@@ -132,6 +133,10 @@ pub(crate) fn merge(objects: &[ObjectModule], options: &Options) -> Result<Merge
         .iter()
         .any(|error| matches!(*error, LinkError::LibraryStage { .. }))
     {
+        return Err(errors.into());
+    }
+    let specialized = workgroup::specialize(specialized, &mut errors);
+    if !errors.is_empty() {
         return Err(errors.into());
     }
     let objects = specialized.as_slice();

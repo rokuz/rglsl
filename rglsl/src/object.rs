@@ -1,4 +1,4 @@
-use alloc::{string::String, vec::Vec};
+use alloc::{boxed::Box, string::String, vec::Vec};
 
 #[cfg(feature = "deserialize")]
 use serde::Deserialize;
@@ -7,8 +7,8 @@ use serde::Serialize;
 
 use crate::{
     ConservativeDepth, Function, GeometryInputPrimitive, GeometryOutputPrimitive, GlobalVariable,
-    Handle, MeshOutputTopology, Module, ShaderStage, TessellationPrimitive, TessellationSpacing,
-    TessellationVertexOrder,
+    Handle, MeshOutputTopology, Module, Override, ShaderStage, TessellationPrimitive,
+    TessellationSpacing, TessellationVertexOrder,
 };
 
 pub const FORMAT_VERSION: u32 = 5;
@@ -29,6 +29,9 @@ pub struct ObjectModule {
     pub layout: StageLayout,
     pub variants: Vec<ObjectModule>,
     pub rejections: Vec<StageRejection>,
+    pub work_group_size_constant: bool,
+    pub work_group_size_placeholders: [Option<Handle<Override>>; 3],
+    pub specialized: Option<Box<ObjectModule>>,
 }
 
 impl ObjectModule {
@@ -49,6 +52,9 @@ impl ObjectModule {
             layout: StageLayout::default(),
             variants: Vec::new(),
             rejections: Vec::new(),
+            work_group_size_constant: false,
+            work_group_size_placeholders: [None; 3],
+            specialized: None,
         }
     }
 

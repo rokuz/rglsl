@@ -215,9 +215,10 @@ impl<'a> Lowerer<'a> {
         index: usize,
         span: Span,
     ) -> Result<Option<Handle<Override>>> {
-        let Some(id) = self.local_size_ids.get(index).copied().flatten() else {
+        let id = self.local_size_ids.get(index).copied().flatten();
+        if id.is_none() && !self.specialize_work_group_size {
             return Ok(None);
-        };
+        }
         if let Some(handle) = self.local_size_overrides.get(index).copied().flatten() {
             return Ok(Some(handle));
         }
@@ -234,7 +235,7 @@ impl<'a> Lowerer<'a> {
         let handle = self.module.overrides.append(
             Override {
                 name: None,
-                id: Some(id),
+                id,
                 ty,
                 init: Some(init),
             },
@@ -242,6 +243,11 @@ impl<'a> Lowerer<'a> {
         );
         if let Some(slot) = self.local_size_overrides.get_mut(index) {
             *slot = Some(handle);
+        }
+        if id.is_none() {
+            if let Some(slot) = self.work_group_size_placeholders.get_mut(index) {
+                *slot = Some(handle);
+            }
         }
         Ok(Some(handle))
     }
@@ -273,7 +279,7 @@ impl<'a> Lowerer<'a> {
     }
 
     pub(super) fn has_local_size_ids(&self) -> bool {
-        self.local_size_ids.iter().any(Option::is_some)
+        self.specialize_work_group_size || self.local_size_ids.iter().any(Option::is_some)
     }
 
     pub(super) fn workgroup_size_overrides(
