@@ -834,7 +834,17 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   `OpFUnordNotEqual` (upstream `OpFOrdNotEqual`). `Normalize`, `FaceForward` and `Reflect`
   accept scalars. An `As` conversion between integers of different width and signedness is
   `OpSConvert`/`OpUConvert` by the source's signedness, then `OpBitcast` (upstream extended by
-  the target's signedness). The object `FORMAT_VERSION` is 4.
+  the target's signedness). The object `FORMAT_VERSION` is 5.
+- **Integer dot products.** `MathFunction::{IntegerDot, IntegerDotAccSat, PackedIntegerDot4x8,
+  PackedIntegerDot4x8AccSat}` (new) are `GL_EXT_integer_dot_product`: integer vectors of any
+  width (or packed 32-bit integers) of either signedness; the result has the operands' width
+  but at least 32 bits and is unsigned only when both operands are; the accumulating forms take
+  the result type as a third operand. The SPIR-V backend writes `OpSDot`/`OpUDot`/`OpSUDot` (and `AccSat`) with
+  the signed operand first, as glslang, and the evaluator does not fold them.
+- **Storage image levels.** `ImageLoad::level` may be given on a storage image (it stays
+  required on mipmapped sampled images) and `Statement::ImageStore` has an optional `level`
+  (`SPV_AMD_shader_image_load_store_lod`): the backend writes the `Lod` image operand and
+  requires `ImageReadWriteLodAMD`.
 
 ## Cherry-picked upstream commits
 
