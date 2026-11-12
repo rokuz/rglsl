@@ -866,6 +866,8 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   `helpers::string_to_byte_chunks` are gone. With debug information the IR spans are offsets
   into the preprocessed text; `Span::location` clamps instead of slicing out of range.
   `docs/design/debug-info.md`.
+- **Source extensions.** `Module::source_extensions` (new) lists the GLSL extensions the
+  source requested; the backend writes them as `OpSourceExtension` with the names.
 
 ## Cherry-picked upstream commits
 

@@ -4864,6 +4864,9 @@ pub struct Module {
     )]
     #[cfg_attr(feature = "deserialize", serde(default))]
     pub spirv_requirements: SpirvRequirements,
+    #[cfg_attr(feature = "serialize", serde(skip_serializing_if = "Vec::is_empty"))]
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    pub source_extensions: Vec<String>,
     #[cfg_attr(feature = "serialize", serde(skip_serializing_if = "Option::is_none"))]
     #[cfg_attr(feature = "deserialize", serde(default))]
     pub debug_info: Option<Box<DebugInfo>>,

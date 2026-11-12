@@ -984,6 +984,9 @@ impl BlockContext<'_> {
         )?));
         let sampled_image_type_id =
             self.get_localtype_id(LocalType::SampledImage { image_type_id });
+        if sampler.is_some() {
+            self.writer.debug_sampled_image(dim, arrayed, sampled_class);
+        }
         let image_id = match sampler {
             Some(_) => handle_id,
             None if clamp_to_edge => {
@@ -1602,6 +1605,7 @@ impl BlockContext<'_> {
                 ));
                 let sampled_image_type_id =
                     self.get_localtype_id(LocalType::SampledImage { image_type_id });
+                self.writer.debug_sampled_image(dim, arrayed, class);
                 let sampler_id = self.get_non_uniform_handle_id(sampler, block)?;
                 let id = self.gen_id();
                 block.body.push(Instruction::sampled_image(

@@ -9,6 +9,7 @@ const MARKER: u32 = u32::MAX;
 const MARK_LOCATION: Word = 0;
 const MARK_DECLARE: Word = 1;
 const MARK_END: Word = 2;
+const MARK_SCOPE: Word = 3;
 
 const NON_SEMANTIC_SET: &str = "NonSemantic.Shader.DebugInfo.100";
 const NON_SEMANTIC_SET_102: &str = "NonSemantic.Shader.DebugInfo.102";
@@ -112,6 +113,8 @@ pub(super) struct DebugState {
 
 struct FunctionState {
     scope: Word,
+    unit: Word,
+    range: (u32, u32),
     position: Location,
     end: Option<Location>,
     declares: Vec<Declare>,
@@ -212,6 +215,20 @@ fn image_name(dim: crate::ImageDimension, arrayed: bool, class: crate::ImageClas
         if multi { "MS" } else { "" },
         if arrayed { "Array" } else { "" }
     )
+}
+
+fn sampled_image_name(
+    dim: crate::ImageDimension,
+    arrayed: bool,
+    class: crate::ImageClass,
+) -> String {
+    let name = image_name(dim, arrayed, class)
+        .replacen("texture", "sampler", 1)
+        .replacen("image", "sampler", 1);
+    match class {
+        crate::ImageClass::Depth { .. } => format!("{name}Shadow"),
+        _ => name,
+    }
 }
 
 const fn kind_prefix(kind: crate::ScalarKind) -> &'static str {
@@ -807,14 +824,7 @@ impl Writer {
                     class,
                 } => {
                     self.debug_opaque(&image_name(dim, arrayed, class));
-                    let name = image_name(dim, arrayed, class)
-                        .replacen("texture", "sampler", 1)
-                        .replacen("image", "sampler", 1);
-                    let name = match class {
-                        crate::ImageClass::Depth { .. } => format!("{name}Shadow"),
-                        _ => name,
-                    };
-                    self.debug_opaque(&name)
+                    self.debug_opaque(&sampled_image_name(dim, arrayed, class))
                 }
                 crate::TypeInner::Sampler { comparison } => self.debug_opaque(if comparison {
                     "samplerShadow"
@@ -993,7 +1003,7 @@ impl Writer {
                 .and_then(|start| info.unit_of(start))
                 .and_then(|unit| u32::try_from(unit).ok())
                 .unwrap_or(0);
-            let name = self.debug_info_string(variable.name.as_deref().unwrap_or(""));
+            let variable_name = variable.name.as_deref().unwrap_or("");
             let ty = self.debug_type(variable.ty);
             let source_index = position.map_or(0, |position| position.source);
             let source = self.debug_file(source_index);
@@ -1001,10 +1011,14 @@ impl Writer {
             let column = self.debug_uint(0);
             let scope = self.debug_unit(unit);
             let flags = self.debug_uint(FLAG_IS_DEFINITION);
-            self.debug_ext(
-                DEBUG_GLOBAL_VARIABLE,
-                &[name, ty, source, line, column, scope, name, id, flags],
-            );
+            let aliases = builtin_aliases(ir_module, variable);
+            for name in core::iter::once(variable_name).chain(aliases.iter().copied()) {
+                let name = self.debug_info_string(name);
+                self.debug_ext(
+                    DEBUG_GLOBAL_VARIABLE,
+                    &[name, ty, source, line, column, scope, name, id, flags],
+                );
+            }
         }
     }
 
@@ -1052,6 +1066,17 @@ impl Writer {
                 DEBUG_GLOBAL_VARIABLE,
                 &[name, ty, source, line, column, scope, name, target, flags],
             );
+        }
+    }
+
+    pub(super) fn debug_sampled_image(
+        &mut self,
+        dim: crate::ImageDimension,
+        arrayed: bool,
+        class: crate::ImageClass,
+    ) {
+        if self.debug.active && self.debug.level == DebugLevel::NonSemantic {
+            self.debug_opaque(&sampled_image_name(dim, arrayed, class));
         }
     }
 
@@ -1109,21 +1134,29 @@ impl Writer {
     }
 
     fn debug_location(&self, info: &crate::DebugInfo, offset: u32) -> Option<Location> {
-        let state = self.debug.function.as_ref()?;
         let line = info.line(offset)?;
-        let scope = self
-            .debug
-            .scope_index
-            .at(offset)
-            .and_then(|index| self.debug.scopes.get(index))
-            .copied()
-            .filter(|&id| id != 0)
-            .unwrap_or(state.scope);
         Some(Location {
-            scope,
+            scope: self.debug_scope_at(offset)?,
             source: line.source,
             line: line.line,
         })
+    }
+
+    fn debug_scope_at(&self, offset: u32) -> Option<Word> {
+        let state = self.debug.function.as_ref()?;
+        let (start, stop) = state.range;
+        if (offset < start || offset > stop) && state.unit != 0 {
+            return Some(state.unit);
+        }
+        Some(
+            self.debug
+                .scope_index
+                .at(offset)
+                .and_then(|index| self.debug.scopes.get(index))
+                .copied()
+                .filter(|&id| id != 0)
+                .unwrap_or(state.scope),
+        )
     }
 
     pub(super) fn debug_function_begin(
@@ -1160,6 +1193,8 @@ impl Writer {
         });
         let mut state = FunctionState {
             scope: 0,
+            unit: 0,
+            range: (record.start, record.stop),
             position,
             end,
             declares: Vec::new(),
@@ -1224,6 +1259,7 @@ impl Writer {
                 self.debug_ext(DEBUG_ENTRY_POINT, &operands);
             }
             state.scope = scope;
+            state.unit = unit_id;
             state.position.scope = scope;
             if let Some(ref mut end) = state.end {
                 end.scope = scope;
@@ -1479,6 +1515,15 @@ impl Writer {
         block.body.push(marker(MARK_LOCATION, offset));
     }
 
+    pub(super) fn debug_mark_scope(&mut self, block: &mut Block, span: crate::Span) {
+        if !self.debug.tracking() {
+            return;
+        }
+        if let Some(offset) = self.debug.anchors.anchor(span) {
+            block.body.push(marker(MARK_SCOPE, offset));
+        }
+    }
+
     pub(super) fn debug_mark_end(&self, block: &mut Block) {
         if self.debug.tracking() {
             block.body.push(marker(MARK_END, 0));
@@ -1532,6 +1577,12 @@ impl Writer {
                         MARK_LOCATION => {
                             if let Some(location) = self.debug_location(info, payload) {
                                 current = location;
+                            }
+                            continue;
+                        }
+                        MARK_SCOPE => {
+                            if let Some(scope) = self.debug_scope_at(payload) {
+                                current.scope = scope;
                             }
                             continue;
                         }
@@ -1696,6 +1747,26 @@ fn line_lengths(text: &str) -> Vec<u32> {
     lengths
 }
 
+fn builtin_aliases(
+    ir_module: &crate::Module,
+    variable: &crate::GlobalVariable,
+) -> &'static [&'static str] {
+    let hit = ir_module.entry_points.iter().any(|entry| {
+        matches!(
+            entry.stage,
+            crate::ShaderStage::AnyHit | crate::ShaderStage::ClosestHit
+        )
+    });
+    if !hit || variable.io != Some(crate::Binding::BuiltIn(crate::BuiltIn::RayTCurrentMax)) {
+        return &[];
+    }
+    match variable.name.as_deref() {
+        Some("gl_RayTmaxNV") => &["gl_HitTNV"],
+        Some("gl_RayTmaxEXT") => &["gl_HitTEXT"],
+        _ => &[],
+    }
+}
+
 fn in_function(info: &crate::DebugInfo, span: crate::Span) -> bool {
     let Some(offset) = span
         .to_range()
@@ -1717,6 +1788,12 @@ fn marker(kind: Word, payload: Word) -> Instruction {
     instruction.add_operand(kind);
     instruction.add_operand(payload);
     instruction
+}
+
+pub(super) fn ends_at_location(block: &Block) -> bool {
+    block.body.last().is_some_and(|instruction| {
+        instruction.op == MARKER && instruction.operands.first() == Some(&MARK_LOCATION)
+    })
 }
 
 pub(super) const fn is_marker(instruction: &Instruction) -> bool {

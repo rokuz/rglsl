@@ -850,7 +850,7 @@ impl<'a> Lowerer<'a> {
                 );
             }
             let constant = match initializer.node {
-                Initializer::Expression(ref expression) => analysis
+                Initializer::Expression(ref expression) if self.object => analysis
                     .expression(expression.id)
                     .filter(|info| {
                         info.is_constant
@@ -858,7 +858,7 @@ impl<'a> Lowerer<'a> {
                             && !info.ty.contains_reference(&analysis.types)
                     })
                     .and_then(|info| Some((info.ty.clone(), info.value.clone()?))),
-                Initializer::List(_) => None,
+                Initializer::Expression(_) | Initializer::List(_) => None,
             };
             let converted = constant.and_then(|(from, value)| {
                 if from == *ty {
@@ -2494,7 +2494,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
         let handle = self.with(|this| {
             this.module.global_variables.append(
                 GlobalVariable {
-                    name: Some(String::from(key)),
+                    name: Some(String::from(super::ray::ray_builtin_name(name, key))),
                     space: if output {
                         AddressSpace::Output
                     } else {

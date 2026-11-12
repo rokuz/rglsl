@@ -5,6 +5,7 @@ use rglsl::valid::{Capabilities, ValidationFlags, Validator};
 use rglsl::ShaderStage;
 use rglsl_link::{decode, encode, link_objects, Options as LinkOptions};
 use rglsl_pp::MemoryIncluder;
+use std::collections::BTreeMap;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
@@ -65,8 +66,17 @@ fn with_header() -> TestResult<rglsl::Module> {
 }
 
 fn spirv(module: &rglsl::Module, level: spv::DebugLevel) -> TestResult<Vec<u32>> {
+    spirv_version(module, level, (1, 0))
+}
+
+fn spirv_version(
+    module: &rglsl::Module,
+    level: spv::DebugLevel,
+    lang_version: (u8, u8),
+) -> TestResult<Vec<u32>> {
     let info = Validator::new(ValidationFlags::all(), Capabilities::all()).validate(module)?;
     let options = spv::Options {
+        lang_version,
         debug_info: Some(spv::DebugInfo {
             level,
             source_text: true,
@@ -75,6 +85,44 @@ fn spirv(module: &rglsl::Module, level: spv::DebugLevel) -> TestResult<Vec<u32>>
         ..spv::Options::default()
     };
     Ok(spv::write_vec(module, &info, &options, None)?)
+}
+
+fn single(stage: ShaderStage, name: &str, source: &str) -> TestResult<rglsl::Module> {
+    Frontend::default()
+        .parse(&options(stage, name), source)
+        .map_err(|errors| format!("{errors:?}").into())
+}
+
+fn string_ids(words: &[u32]) -> BTreeMap<u32, String> {
+    opcodes(words)
+        .into_iter()
+        .filter(|&(opcode, _)| opcode == 7)
+        .filter_map(|(_, operands)| {
+            let (&id, text) = operands.split_first()?;
+            let bytes: Vec<u8> = text
+                .iter()
+                .flat_map(|word| word.to_le_bytes())
+                .take_while(|&byte| byte != 0)
+                .collect();
+            Some((id, String::from_utf8_lossy(&bytes).into_owned()))
+        })
+        .collect()
+}
+
+fn constant_values(words: &[u32]) -> BTreeMap<u32, u32> {
+    opcodes(words)
+        .into_iter()
+        .filter(|&(opcode, _)| opcode == 43)
+        .filter_map(|(_, operands)| Some((*operands.get(1)?, *operands.get(2)?)))
+        .collect()
+}
+
+fn debug_operands(words: &[u32], instruction: u32) -> Vec<Vec<u32>> {
+    opcodes(words)
+        .into_iter()
+        .filter(|(opcode, operands)| *opcode == 12 && operands.get(3) == Some(&instruction))
+        .map(|(_, operands)| operands)
+        .collect()
 }
 
 fn opcodes(words: &[u32]) -> Vec<(u32, Vec<u32>)> {
@@ -294,5 +342,155 @@ fn object_files_and_linking_keep_debug_information_per_unit() -> TestResult {
     let strings = strings(&words);
     assert!(strings.iter().any(|string| string == "halve"));
     assert!(strings.iter().any(|string| string == "library.glsl"));
+    Ok(())
+}
+
+const INITIALIZERS: &str = "#version 450
+layout(location = 0) out vec4 color;
+float scale = 0.5;
+void main() {
+    if (false) {
+        scale = 2.0;
+    }
+    color = vec4(scale);
+}
+";
+
+#[test]
+fn global_initializers_are_stored_in_main_under_the_unit_scope() -> TestResult {
+    let module = single(ShaderStage::Fragment, "init.frag", INITIALIZERS)?;
+    let words = spirv(&module, spv::DebugLevel::NonSemantic)?;
+    let instructions = opcodes(&words);
+    let privates: Vec<&Vec<u32>> = instructions
+        .iter()
+        .filter(|(opcode, operands)| *opcode == 59 && operands.get(2) == Some(&6))
+        .map(|(_, operands)| operands)
+        .collect();
+    assert_eq!(privates.len(), 1);
+    assert!(privates.iter().all(|operands| operands.len() == 3));
+    let scale = privates
+        .first()
+        .and_then(|operands| operands.get(1).copied())
+        .ok_or("no private variable")?;
+    assert!(instructions
+        .iter()
+        .any(|(opcode, operands)| *opcode == 62 && operands.first() == Some(&scale)));
+    let units: Vec<u32> = debug_operands(&words, 1)
+        .iter()
+        .filter_map(|operands| operands.get(1).copied())
+        .collect();
+    assert_eq!(units.len(), 1);
+    assert!(debug_operands(&words, 23)
+        .iter()
+        .any(|operands| operands.get(4).is_some_and(|scope| units.contains(scope))));
+    let constants = constant_values(&words);
+    let lines: Vec<u32> = debug_operands(&words, 103)
+        .iter()
+        .filter_map(|operands| constants.get(operands.get(5)?).copied())
+        .collect();
+    assert!(lines.contains(&3), "{lines:?}");
+    assert!(!lines.contains(&5), "{lines:?}");
+    Ok(())
+}
+
+const RAY_NV: &str = "#version 460
+#extension GL_NV_ray_tracing : require
+layout(location = 0) rayPayloadInNV vec4 payload;
+void main() {
+    payload = vec4(gl_HitTNV, gl_RayTmaxNV, float(gl_LaunchIDNV.x), 0.0);
+}
+";
+
+#[test]
+fn ray_tracing_built_ins_keep_their_spelling_and_alias() -> TestResult {
+    let module = single(ShaderStage::AnyHit, "ray.rahit", RAY_NV)?;
+    let words = spirv_version(&module, spv::DebugLevel::NonSemantic, (1, 4))?;
+    let names = string_ids(&words);
+    let globals: Vec<(String, u32)> = debug_operands(&words, 18)
+        .iter()
+        .filter_map(|operands| {
+            let name = names.get(operands.get(4)?)?.clone();
+            Some((name, *operands.get(11)?))
+        })
+        .collect();
+    let variable = |wanted: &str| {
+        globals
+            .iter()
+            .find(|(name, _)| name == wanted)
+            .map(|&(_, id)| id)
+    };
+    let maximum = variable("gl_RayTmaxNV").ok_or("no gl_RayTmaxNV")?;
+    assert_eq!(variable("gl_HitTNV"), Some(maximum));
+    assert!(variable("gl_LaunchIDNV").is_some(), "{globals:?}");
+    assert!(
+        globals.iter().all(|(name, _)| !name.ends_with("EXT")),
+        "{globals:?}"
+    );
+    Ok(())
+}
+
+const SAMPLER_CONSTRUCTOR: &str = "#version 450
+layout(set = 0, binding = 0) uniform texture2D image;
+layout(set = 0, binding = 1) uniform sampler linear;
+layout(location = 0) out vec4 color;
+void main() {
+    color = texture(sampler2D(image, linear), vec2(0.5));
+}
+";
+
+#[test]
+fn a_sampler_constructor_declares_its_debug_type() -> TestResult {
+    let module = single(ShaderStage::Fragment, "sampler.frag", SAMPLER_CONSTRUCTOR)?;
+    let words = spirv(&module, spv::DebugLevel::NonSemantic)?;
+    let strings = strings(&words);
+    assert!(
+        strings.iter().any(|string| string == "sampler2D"),
+        "{strings:?}"
+    );
+    assert!(
+        strings.iter().any(|string| string == "@sampler2D"),
+        "{strings:?}"
+    );
+    Ok(())
+}
+
+const REQUESTED: &str = "#version 450
+#extension GL_EXT_buffer_reference2 : enable
+#extension GL_EXT_scalar_block_layout : enable
+#extension GL_EXT_scalar_block_layout : disable
+#extension GL_EXT_unknown_extension : enable
+layout(location = 0) out vec4 color;
+void main() {
+    color = vec4(1.0);
+}
+";
+
+#[test]
+fn source_extensions_list_every_requested_extension() -> TestResult {
+    let module = single(ShaderStage::Fragment, "requested.frag", REQUESTED)?;
+    let info = Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&module)?;
+    let mut options = spv::Options::default();
+    options.flags |= spv::WriterFlags::DEBUG;
+    let words = spv::write_vec(&module, &info, &options, None)?;
+    let extensions: Vec<String> = opcodes(&words)
+        .into_iter()
+        .filter(|&(opcode, _)| opcode == 4)
+        .map(|(_, operands)| {
+            let bytes: Vec<u8> = operands
+                .iter()
+                .flat_map(|word| word.to_le_bytes())
+                .take_while(|&byte| byte != 0)
+                .collect();
+            String::from_utf8_lossy(&bytes).into_owned()
+        })
+        .collect();
+    assert_eq!(
+        extensions,
+        [
+            "GL_EXT_buffer_reference",
+            "GL_EXT_buffer_reference2",
+            "GL_EXT_scalar_block_layout"
+        ]
+    );
     Ok(())
 }

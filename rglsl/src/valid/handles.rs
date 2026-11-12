@@ -48,6 +48,7 @@ impl super::Validator {
             legacy_buffer_blocks: _,
             ray_tracing: _,
             spirv_requirements: _,
+            source_extensions: _,
             debug_info: _,
         } = module;
 
