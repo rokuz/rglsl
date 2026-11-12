@@ -3766,7 +3766,13 @@ impl Writer {
                         Some(crate::Interpolation::Linear) => {
                             others.push(Decoration::NoPerspective);
                         }
-                        Some(crate::Interpolation::PerVertex { nv }) => {
+                        Some(crate::Interpolation::PerVertex { nv, flat, linear }) => {
+                            if flat {
+                                others.push(Decoration::Flat);
+                            }
+                            if linear {
+                                others.push(Decoration::NoPerspective);
+                            }
                             others.push(Decoration::PerVertexKHR);
                             self.require_barycentrics(nv)?;
                         }

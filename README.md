@@ -89,7 +89,8 @@ images filled and read per sample, multiview rendering (`MULTIVIEW`), and the de
 the mesh and ray tracing stages, float and 64-bit image atomics, multiview, transform feedback,
 expect/assume, replicated composites, compute derivatives (also in mesh and task shaders),
 subgroup rotate and partitioned operations, quad control, fragment shader interlock, image
-footprints, fragment density maps, shading rate images and relaxed extended instructions need,
+footprints, fragment density maps, shading rate images, fragment shader barycentrics and relaxed
+extended instructions need,
 and tensors (`TENSOR`, `AS tensor`, `VK_ARM_tensors`). Tensor shaders run through Arm's
 [ML Emulation Layer for Vulkan](https://github.com/arm/ai-ml-emulation-layer-for-vulkan), which
 implements `VK_ARM_tensors` on any Vulkan 1.3 driver; Amber loads its library directly

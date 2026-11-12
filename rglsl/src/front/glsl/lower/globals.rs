@@ -74,9 +74,14 @@ const PER_VERTEX: [&str; 4] = [
     "gl_CullDistance",
 ];
 
-const fn per_vertex_interpolation(per_vertex: PerVertex) -> Interpolation {
+const fn per_vertex_interpolation(
+    per_vertex: PerVertex,
+    interpolation: Option<InterpolationQualifier>,
+) -> Interpolation {
     Interpolation::PerVertex {
         nv: matches!(per_vertex, PerVertex::Nv),
+        flat: matches!(interpolation, Some(InterpolationQualifier::Flat)),
+        linear: matches!(interpolation, Some(InterpolationQualifier::Noperspective)),
     }
 }
 
@@ -1024,7 +1029,10 @@ impl<'a> Lowerer<'a> {
             }
         };
         let mut interpolation = match qualifiers.per_vertex {
-            Some(per_vertex) => Some(per_vertex_interpolation(per_vertex)),
+            Some(per_vertex) => Some(per_vertex_interpolation(
+                per_vertex,
+                qualifiers.interpolation,
+            )),
             None => qualifiers.interpolation.map(interpolation_of),
         };
         let mut sampling = if qualifiers.sample {
@@ -1739,7 +1747,9 @@ impl<'a> Lowerer<'a> {
             }
             Some(Binding::Location {
                 location: start,
-                interpolation: outer.per_vertex.map(per_vertex_interpolation),
+                interpolation: outer
+                    .per_vertex
+                    .map(|per_vertex| per_vertex_interpolation(per_vertex, outer.interpolation)),
                 sampling: None,
                 blend_src: None,
                 per_primitive: false,

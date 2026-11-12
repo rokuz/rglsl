@@ -464,6 +464,18 @@ impl Analyzer<'_> {
         finished.unwrap_or_else(|| self.stalled(Qualifiers::default()))
     }
 
+    fn auxiliary_qualifier(&mut self, span: Span, storage: StorageQualifier, result: &Qualifiers) {
+        if result.centroid || result.patch || result.sample || result.per_vertex.is_some() {
+            self.error(
+                span,
+                DiagnosticKind::InvalidQualifier {
+                    qualifier: storage.keyword(),
+                    reason: "only one auxiliary qualifier (centroid, patch, sample, pervertex) is allowed",
+                },
+            );
+        }
+    }
+
     fn single_qualifier(&mut self, single: &Spanned<SingleTypeQualifier>, result: &mut Qualifiers) {
         match &single.node {
             SingleTypeQualifier::Storage(storage) => match storage {
@@ -488,9 +500,18 @@ impl Analyzer<'_> {
                 StorageQualifier::Shared => result.storage = Storage::Shared,
                 StorageQualifier::ResourceHeap => result.storage = Storage::ResourceHeap,
                 StorageQualifier::SamplerHeap => result.storage = Storage::SamplerHeap,
-                StorageQualifier::Centroid => result.centroid = true,
-                StorageQualifier::Patch => result.patch = true,
-                StorageQualifier::Sample => result.sample = true,
+                StorageQualifier::Centroid => {
+                    self.auxiliary_qualifier(single.span, *storage, result);
+                    result.centroid = true;
+                }
+                StorageQualifier::Patch => {
+                    self.auxiliary_qualifier(single.span, *storage, result);
+                    result.patch = true;
+                }
+                StorageQualifier::Sample => {
+                    self.auxiliary_qualifier(single.span, *storage, result);
+                    result.sample = true;
+                }
                 StorageQualifier::Coherent => result.coherent = true,
                 StorageQualifier::DeviceCoherent => {
                     self.require_scope_extension(single.span, storage.keyword());
@@ -533,6 +554,7 @@ impl Analyzer<'_> {
                     result.per_view = true;
                 }
                 StorageQualifier::PerVertexNV | StorageQualifier::PerVertexEXT => {
+                    self.auxiliary_qualifier(single.span, *storage, result);
                     result.per_vertex = self.per_vertex_qualifier(single.span, *storage);
                 }
                 StorageQualifier::TaskNV => {
@@ -1223,13 +1245,14 @@ impl Analyzer<'_> {
             || qualifiers.interpolation.is_some();
         let invariant = qualifiers.invariant;
         let patch = qualifiers.patch;
+        let per_vertex = qualifiers.per_vertex.is_some();
         match qualifiers.storage {
             Storage::In => {
                 if qualifiers.patch && qualifiers.interpolation.is_some() {
                     self.error(span, invalid("patch", "cannot be interpolated"));
                 }
                 self.stage_check(span, |stage| match stage {
-                    Stage::Fragment => (!flat && needs_flat)
+                    Stage::Fragment => (!flat && needs_flat && !per_vertex)
                         .then(|| invalid("in", "integer and double inputs must be `flat`")),
                     Stage::Vertex => {
                         if structure {

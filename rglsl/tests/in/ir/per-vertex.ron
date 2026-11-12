@@ -56,6 +56,8 @@
                             location: 0,
                             interpolation: Some(PerVertex(
                                 nv: false,
+                                flat: false,
+                                linear: false,
                             )),
                             sampling: None,
                             blend_src: None,
