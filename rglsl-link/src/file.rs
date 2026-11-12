@@ -105,10 +105,14 @@ fn validate(object: &ObjectModule) -> Result<(), FileError> {
                 "a function symbol names a missing function",
             )));
         }
+        let layout = &object.layout;
         if object
             .globals
             .iter()
-            .any(|symbol| module.global_variables.try_get(symbol.global).is_err())
+            .map(|symbol| symbol.global)
+            .chain(layout.streams.iter().map(|&(global, _)| global))
+            .chain(layout.passthrough.iter().copied())
+            .any(|global| module.global_variables.try_get(global).is_err())
         {
             return Err(FileError::Invalid(String::from(
                 "a global symbol names a missing global variable",

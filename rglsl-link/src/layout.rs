@@ -132,6 +132,11 @@ fn merged(
             *slot = slot.or(value);
         }
         merged.non_coherent_tile_read |= layout.non_coherent_tile_read;
+        merged.post_depth_coverage |= layout.post_depth_coverage;
+        merged.non_coherent_color_attachment_read |= layout.non_coherent_color_attachment_read;
+        merged.non_coherent_depth_attachment_read |= layout.non_coherent_depth_attachment_read;
+        merged.non_coherent_stencil_attachment_read |= layout.non_coherent_stencil_attachment_read;
+        merged.multi_stream |= layout.multi_stream;
         merge_value(
             &mut merged.mesh_topology,
             layout.mesh_topology,
@@ -322,6 +327,19 @@ fn xfb_strides(module: &mut Module, strides: &[(u32, u32)]) {
     }
 }
 
+fn fragment(layout: &StageLayout, entry: &mut EntryPoint, errors: &mut Vec<LinkError>) {
+    let modes = &mut entry.fragment_modes;
+    modes.post_depth_coverage |= layout.post_depth_coverage;
+    modes.non_coherent_color_attachment_read |= layout.non_coherent_color_attachment_read;
+    modes.non_coherent_depth_attachment_read |= layout.non_coherent_depth_attachment_read;
+    modes.non_coherent_stencil_attachment_read |= layout.non_coherent_stencil_attachment_read;
+    if layout.post_depth_coverage && !layout.early_fragment_tests {
+        errors.push(LinkError::Mode(
+            "post_depth_coverage requires early_fragment_tests",
+        ));
+    }
+}
+
 fn tile_shading(layout: &StageLayout, entry: &mut EntryPoint) {
     let rate = layout.tile_shading_rate;
     if rate.iter().any(Option::is_some) {
@@ -355,6 +373,9 @@ pub(crate) fn apply(
             }
         }
         workgroup_size_overrides(module, layout.local_size_ids, entry);
+    }
+    if stage == ShaderStage::Fragment {
+        fragment(&layout, entry, errors);
     }
     if layout.early_fragment_tests {
         entry.early_depth_test = Some(EarlyDepthTest::Force);

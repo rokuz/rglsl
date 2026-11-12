@@ -171,6 +171,7 @@ pub(crate) fn merge(objects: &[ObjectModule], options: &Options) -> Result<Merge
         &mut entry,
         &mut builder.errors,
     );
+    geometry_interface(&builder, &layout, &mut entry)?;
     if let Some(primitive) = layout
         .input_primitive
         .filter(|_| stage == ShaderStage::Geometry)
@@ -215,6 +216,53 @@ pub(crate) fn merge(objects: &[ObjectModule], options: &Options) -> Result<Merge
         globals,
         warnings,
     })
+}
+
+fn geometry_interface(
+    builder: &Builder,
+    layout: &rglsl::object::StageLayout,
+    entry: &mut rglsl::EntryPoint,
+) -> Result<(), LinkError> {
+    let Some(ref mut info) = entry.geometry else {
+        return Ok(());
+    };
+    let mut streams: Vec<(Handle<rglsl::GlobalVariable>, u32)> = Vec::new();
+    let mut passthrough: Vec<Handle<rglsl::GlobalVariable>> = Vec::new();
+    for (index, object) in builder.objects.iter().enumerate() {
+        let remap = builder.remap(index)?;
+        for &(handle, stream) in &object.layout.streams {
+            let mapped = remap.global(handle).map_err(error::internal)?;
+            if !streams.iter().any(|&(known, _)| known == mapped) {
+                streams.push((mapped, stream));
+            }
+        }
+        for &handle in &object.layout.passthrough {
+            let mapped = remap.global(handle).map_err(error::internal)?;
+            if !passthrough.contains(&mapped) {
+                passthrough.push(mapped);
+            }
+        }
+    }
+    info.streams = if layout.multi_stream {
+        entry
+            .interface
+            .iter()
+            .filter(|&&handle| {
+                builder.module.global_variables[handle].space == AddressSpace::Output
+            })
+            .map(|&handle| {
+                let stream = streams
+                    .iter()
+                    .find(|&&(known, _)| known == handle)
+                    .map_or(0, |&(_, stream)| stream);
+                (handle, stream)
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    info.passthrough = passthrough;
+    Ok(())
 }
 
 const fn primitive_vertices(primitive: GeometryInputPrimitive) -> u32 {

@@ -2055,6 +2055,13 @@ impl<'a> Lowerer<'a> {
                     self.override_coverage = true;
                     continue;
                 }
+                ("origin_upper_left", "gl_FragCoord") => continue,
+                ("pixel_center_integer", "gl_FragCoord") => {
+                    return Err(semantic(
+                        "`pixel_center_integer` is not allowed in Vulkan: the PixelCenterInteger execution mode must not be used",
+                        at,
+                    ))
+                }
                 _ => {}
             }
             let depth = match layout {
@@ -2110,7 +2117,8 @@ impl<'a> Lowerer<'a> {
             }
         }
         let fragment = self.analysis.fragment;
-        if fragment.post_depth_coverage
+        if !self.object
+            && fragment.post_depth_coverage
             && !(self.early_fragment_tests || fragment.early_fragment_tests)
         {
             self.errors.push(semantic(

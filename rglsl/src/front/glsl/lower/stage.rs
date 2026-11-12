@@ -47,6 +47,9 @@ impl StageLayout {
             vertex_order: self.vertex_order,
             point_mode: self.point_mode,
             mesh_topology: self.mesh_topology,
+            multi_stream: self.multi_stream,
+            streams: self.streams.clone(),
+            passthrough: self.passthrough.clone(),
             ..crate::object::StageLayout::default()
         }
     }

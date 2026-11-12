@@ -284,7 +284,12 @@ impl Lowerer<'_> {
         layout.local_size = self.declared_local_size;
         layout.local_size_ids = self.local_size_ids;
         layout.depth = self.conservative_depth;
-        layout.early_fragment_tests = self.early_fragment_tests;
+        let fragment = self.analysis.fragment;
+        layout.early_fragment_tests = self.early_fragment_tests || fragment.early_fragment_tests;
+        layout.post_depth_coverage = fragment.post_depth_coverage;
+        layout.non_coherent_color_attachment_read = fragment.non_coherent_color_attachment_read;
+        layout.non_coherent_depth_attachment_read = fragment.non_coherent_depth_attachment_read;
+        layout.non_coherent_stencil_attachment_read = fragment.non_coherent_stencil_attachment_read;
         layout.xfb_strides = self.xfb.declared_strides();
         layout.transform_feedback = self.xfb.mode;
         layout.tile_shading_rate = self.tile_shading_rate;

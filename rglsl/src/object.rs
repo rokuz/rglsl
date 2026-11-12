@@ -11,7 +11,7 @@ use crate::{
     TessellationVertexOrder,
 };
 
-pub const FORMAT_VERSION: u32 = 4;
+pub const FORMAT_VERSION: u32 = 5;
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
@@ -199,4 +199,11 @@ pub struct StageLayout {
     pub transform_feedback: bool,
     pub tile_shading_rate: [Option<u32>; 3],
     pub non_coherent_tile_read: bool,
+    pub post_depth_coverage: bool,
+    pub non_coherent_color_attachment_read: bool,
+    pub non_coherent_depth_attachment_read: bool,
+    pub non_coherent_stencil_attachment_read: bool,
+    pub multi_stream: bool,
+    pub streams: Vec<(Handle<GlobalVariable>, u32)>,
+    pub passthrough: Vec<Handle<GlobalVariable>>,
 }

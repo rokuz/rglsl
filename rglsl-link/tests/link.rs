@@ -841,3 +841,177 @@ float helper(float x) {
     assert!(!spirv(&result)?.is_empty());
     Ok(())
 }
+
+const FRAGMENT_MAIN: &str = "#version 450
+layout(location = 0) out vec4 color;
+vec4 shade();
+void main() { color = shade(); }
+";
+
+#[test]
+fn fragment_modes_of_a_library_reach_the_entry_point() -> TestResult {
+    let main = object(
+        ShaderStage::Fragment,
+        "#version 450
+layout(early_fragment_tests) in;
+layout(location = 0) out vec4 color;
+vec4 shade();
+void main() { color = shade(); }
+",
+    )?;
+    let lib = library(
+        "#version 450
+#extension GL_EXT_post_depth_coverage : require
+#extension GL_EXT_shader_tile_image : require
+layout(post_depth_coverage) in;
+layout(non_coherent_color_attachment_readEXT) in;
+vec4 shade() { return vec4(1.0); }
+",
+    )?;
+    let result = linked(&[main, lib])?;
+    let entry = &result.module.entry_points[0];
+    assert!(entry.fragment_modes.post_depth_coverage);
+    assert!(entry.fragment_modes.non_coherent_color_attachment_read);
+    assert!(!entry.fragment_modes.non_coherent_depth_attachment_read);
+    assert_eq!(entry.early_depth_test, Some(rglsl::EarlyDepthTest::Force));
+    Ok(())
+}
+
+#[test]
+fn post_depth_coverage_needs_early_fragment_tests_in_some_unit() -> TestResult {
+    let lib = library(
+        "#version 450
+#extension GL_EXT_post_depth_coverage : require
+layout(post_depth_coverage) in;
+vec4 shade() { return vec4(1.0); }
+",
+    )?;
+    let found = errors(&[object(ShaderStage::Fragment, FRAGMENT_MAIN)?, lib.clone()])?;
+    assert!(found.contains(&LinkError::Mode(
+        "post_depth_coverage requires early_fragment_tests"
+    )));
+    let early = object(
+        ShaderStage::Fragment,
+        "#version 450\nlayout(early_fragment_tests) in;\nvoid unused() {}\n",
+    )?;
+    let result = linked(&[object(ShaderStage::Fragment, FRAGMENT_MAIN)?, lib, early])?;
+    assert!(
+        result.module.entry_points[0]
+            .fragment_modes
+            .post_depth_coverage
+    );
+    Ok(())
+}
+
+#[test]
+fn arb_post_depth_coverage_implies_early_fragment_tests() -> TestResult {
+    let lib = library(
+        "#version 450
+#extension GL_ARB_post_depth_coverage : require
+layout(post_depth_coverage) in;
+vec4 shade() { return vec4(1.0); }
+",
+    )?;
+    let result = linked(&[object(ShaderStage::Fragment, FRAGMENT_MAIN)?, lib])?;
+    let entry = &result.module.entry_points[0];
+    assert!(entry.fragment_modes.post_depth_coverage);
+    assert_eq!(entry.early_depth_test, Some(rglsl::EarlyDepthTest::Force));
+    Ok(())
+}
+
+#[test]
+fn geometry_streams_of_every_unit_are_kept() -> TestResult {
+    let main = object(
+        ShaderStage::Geometry,
+        "#version 450
+layout(points) in;
+layout(points, max_vertices = 2) out;
+layout(location = 0) out vec4 first;
+void emit_second();
+void main() {
+    first = vec4(1.0);
+    EmitStreamVertex(0);
+    emit_second();
+}
+",
+    )?;
+    let lib = library(
+        "#version 450
+layout(stream = 1) out;
+layout(location = 1) out vec4 second;
+void emit_second() {
+    second = vec4(2.0);
+    EmitStreamVertex(1);
+}
+",
+    )?;
+    let result = linked(&[main, lib])?;
+    let module = &result.module;
+    let info = module.entry_points[0]
+        .geometry
+        .as_ref()
+        .ok_or("no geometry info")?;
+    let streams: Vec<(Option<&str>, u32)> = info
+        .streams
+        .iter()
+        .map(|&(handle, stream)| (module.global_variables[handle].name.as_deref(), stream))
+        .collect();
+    assert!(streams.contains(&(Some("first"), 0)));
+    assert!(streams.contains(&(Some("second"), 1)));
+    assert!(!spirv(&result)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn geometry_passthrough_inputs_of_a_library_are_kept() -> TestResult {
+    let main = object(
+        ShaderStage::Geometry,
+        "#version 450
+#extension GL_NV_geometry_shader_passthrough : require
+layout(triangles) in;
+layout(passthrough) in gl_PerVertex { vec4 gl_Position; } gl_in[];
+void forward();
+void main() { forward(); }
+",
+    )?;
+    let lib = library(
+        "#version 450
+#extension GL_NV_geometry_shader_passthrough : require
+layout(location = 0, passthrough) in vec4 color[3];
+void forward() {}
+",
+    )?;
+    let result = linked(&[main, lib])?;
+    let module = &result.module;
+    let info = module.entry_points[0]
+        .geometry
+        .as_ref()
+        .ok_or("no geometry info")?;
+    assert_eq!(info.passthrough.len(), 2);
+    assert!(info
+        .passthrough
+        .iter()
+        .any(|&handle| module.global_variables[handle].name.as_deref() == Some("color")));
+    Ok(())
+}
+
+#[test]
+fn gl_frag_coord_redeclarations() -> TestResult {
+    let lib = library(
+        "#version 450
+layout(origin_upper_left) in vec4 gl_FragCoord;
+vec4 shade() { return gl_FragCoord; }
+",
+    )?;
+    linked(&[object(ShaderStage::Fragment, FRAGMENT_MAIN)?, lib])?;
+    let rejected = library_errors(
+        "#version 450
+layout(pixel_center_integer) in vec4 gl_FragCoord;
+vec4 shade() { return gl_FragCoord; }
+",
+    );
+    assert!(rejected
+        .iter()
+        .any(|error| error.contains("`pixel_center_integer` is not allowed in Vulkan")));
+    Ok(())
+}
