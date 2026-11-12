@@ -1180,3 +1180,59 @@ void more() { b = vec4(2.0); d = 2.0lf; }
     assert_eq!(strides, [(0, 32), (0, 32), (1, 16), (1, 16)]);
     Ok(())
 }
+
+fn io_location(linked: &Linked, name: &str) -> TestResult<u32> {
+    linked
+        .module
+        .global_variables
+        .iter()
+        .find(|&(_, global)| global.name.as_deref() == Some(name))
+        .and_then(|(_, global)| match global.io {
+            Some(rglsl::Binding::Location { location, .. }) => Some(location),
+            _ => None,
+        })
+        .ok_or_else(|| format!("no location for {name}").into())
+}
+
+#[test]
+fn automatic_locations_match_between_stages() -> TestResult {
+    let vertex = auto_located(
+        ShaderStage::Vertex,
+        "#version 450
+layout(location = 0) out vec4 first;
+out vec4 shared_value;
+out Block { vec4 a; } blk;
+out vec4 vertex_only;
+void main() { first = vec4(0.0); shared_value = vec4(1.0); blk.a = vec4(2.0); vertex_only = vec4(3.0); }
+",
+    )?;
+    let fragment = auto_located(
+        ShaderStage::Fragment,
+        "#version 450
+layout(location = 1) in vec4 explicit_input;
+in vec4 fragment_only;
+in Block { vec4 a; } blk;
+in vec4 shared_value;
+layout(location = 0) out vec4 color;
+void main() { color = explicit_input + fragment_only + blk.a + shared_value; }
+",
+    )?;
+    let options = LinkOptions {
+        auto_map_locations: true,
+        auto_map_bindings: false,
+    };
+    let stages = link_objects(&[vertex, fragment], &options)?;
+    let [ref vertex, ref fragment] = *stages.as_slice() else {
+        return Err("two stages expected".into());
+    };
+    for name in ["shared_value", "blk"] {
+        assert_eq!(io_location(vertex, name)?, io_location(fragment, name)?);
+    }
+    assert_ne!(io_location(fragment, "shared_value")?, 1);
+    assert_ne!(io_location(fragment, "blk")?, 1);
+    assert_ne!(
+        io_location(fragment, "fragment_only")?,
+        io_location(fragment, "shared_value")?
+    );
+    Ok(())
+}
