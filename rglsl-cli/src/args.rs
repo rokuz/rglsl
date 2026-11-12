@@ -47,6 +47,7 @@ pub struct Options {
     pub object: bool,
     pub preprocess: bool,
     pub disassemble: bool,
+    pub spirv_tools_disassembler: bool,
     pub hex: bool,
     pub variable_name: Option<String>,
     pub output: Option<String>,
@@ -350,7 +351,7 @@ fn long_option(cursor: &mut Cursor, options: &mut Options) -> Result<(), Exit> {
             let set = resource_set_binding(cursor)?;
             options.resource_sets.push(set);
         }
-        "spirv-dis" => options.disassemble = true,
+        "spirv-dis" => options.spirv_tools_disassembler = true,
         "spirv-val" => {}
         "stdin" => options.stdin = true,
         "suppress-warnings" => options.suppress_warnings = true,

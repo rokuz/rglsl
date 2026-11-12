@@ -11,6 +11,8 @@ use crate::interface;
 use crate::oracles::{self, Tool};
 use crate::process::{self, Exit};
 
+mod disassembly;
+
 pub struct Options {
     pub glslang_dir: Option<PathBuf>,
     pub filter: Option<String>,
@@ -238,8 +240,12 @@ fn cases() -> Vec<Case> {
             "spirv-dis",
             &["-V", "--spirv-dis", TARGET_SHADER],
             &[TARGET_SHADER],
-        )
-        .ignore_stdout("rglsl prints rspirv's disassembly, this glslang prints none"),
+        ),
+        Case::new(
+            "H-spirv-dis",
+            &["-H", "--spirv-dis", TARGET_SHADER],
+            &[TARGET_SHADER],
+        ),
         Case::new(
             "entry-point-rename",
             &[
@@ -774,6 +780,7 @@ fn cases() -> Vec<Case> {
 struct Run {
     exit: Exit,
     stdout: String,
+    raw_stdout: String,
     stderr: String,
     files: Vec<String>,
 }
@@ -855,6 +862,7 @@ fn run_tool(
         exit: output.exit,
         stdout: clean(&output.stdout),
         stderr: clean(&output.stderr),
+        raw_stdout: output.stdout,
         files: after.difference(&before).cloned().collect(),
     })
 }
@@ -1209,6 +1217,9 @@ fn check(env: &Environment, case: &Case) -> Result<Verdict> {
         }
     }
     compare_files(env, case, &glslang, &ours, &mut problems)?;
+    if disassembly::prints_disassembly(case) {
+        disassembly::check_case(env, case, &glslang, &mut problems)?;
+    }
     Ok(if problems.is_empty() {
         match case.ignore_stdout {
             Some(why) => Verdict::Expected(format!("stdout not compared: {why}")),
@@ -1284,6 +1295,7 @@ pub fn run(root: &Path, options: &Options) -> Result<i32> {
         println!("{label:8} {:36} {note}", case.name);
         let _ = writeln!(report, "{}\t{label}\t{command}\t{note}", case.name);
     }
+    failed += disassembly::sweep(&env, options.filter.as_deref(), &mut report)?;
     fs::create_dir_all(&env.work)?;
     let report_path = env.work.join("report.tsv");
     fs::write(&report_path, report)?;

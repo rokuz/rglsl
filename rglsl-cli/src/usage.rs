@@ -30,7 +30,7 @@ Options:
               define a pre-processor macro
   -E          print pre-processed GLSL; cannot be used with -l; errors will
               appear on stderr
-  -H          print human readable form of SPIR-V (rspirv's disassembly); turns
+  -H          print human readable form of SPIR-V (glslang's disassembly); turns
               on -V
   -I<dir>     add <dir> to the include search path; includer's directory is
               searched first, followed by left-to-right order of -I
@@ -101,7 +101,10 @@ Options:
   --shift-as-binding [stage] <num> [<set>]...
   --shift-as-bindings | --sab       base binding number for acceleration
                                     structures
-  --spirv-dis                       same as -H
+  --spirv-dis                       accepted for compatibility; rglsl has no
+                                    standard-form disassembler (as glslang
+                                    without SPIRV-Tools), so nothing is printed
+                                    and -H prints nothing either
   --spirv-val                       accepted for compatibility; rglsl validates
                                     every module it writes
   --source-entrypoint <name> | --sep <name>
