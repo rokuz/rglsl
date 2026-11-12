@@ -1374,6 +1374,12 @@ impl Plan {
             let xfb = xfb
                 .as_ref()
                 .map_err(|e| Refusal::Binding(format!("transform feedback: {e}")))?;
+            if let Some(field) = xfb.fields.iter().find(|field| field.scalar.width < 32) {
+                return Err(Refusal::Binding(format!(
+                    "transform feedback captures a {}-bit component at offset {} of buffer {}; Vulkan requires at least 32 bits",
+                    field.scalar.width, field.offset, field.buffer
+                )));
+            }
             plan.add_transform_feedback(xfb);
         }
         plan.add_references(invocations, &mut rng)?;
@@ -1897,6 +1903,39 @@ mod tests {
             PathBuf::from("/w/dump.spv"),
             PathBuf::from("/w/data"),
         )
+    }
+
+    #[test]
+    fn refuses_transform_feedback_components_narrower_than_32_bits() -> anyhow::Result<()> {
+        let field = |offset, scalar| XfbField {
+            buffer: 0,
+            offset,
+            scalar,
+            written: true,
+        };
+        let half = Scalar {
+            kind: ScalarKind::Float,
+            width: 16,
+        };
+        let mut module = reflection(ExecutionModel::Vertex);
+        module.xfb = Some(Ok(Xfb {
+            strides: BTreeMap::from([(0, 8)]),
+            fields: vec![field(0, F32), field(4, half)],
+        }));
+        match Plan::new(&module, &Inputs::default()) {
+            Err(Refusal::Binding(why)) => assert!(
+                why.contains("16-bit component at offset 4 of buffer 0"),
+                "{why}"
+            ),
+            other => panic!("{:?}", other.map(|_| ())),
+        }
+        module.xfb = Some(Ok(Xfb {
+            strides: BTreeMap::from([(0, 8)]),
+            fields: vec![field(0, F32), field(4, F32)],
+        }));
+        let plan = planned(&module, &Inputs::default())?;
+        assert!(plan.bindings.contains("AS transform_feedback XFB_BUFFER 0"));
+        Ok(())
     }
 
     #[test]
