@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use rglsl_ast::TranslationUnit;
 use rglsl_sema::{analyze, analyze_with_builtins, Analysis, Builtins, Options, Stage};
@@ -42,6 +42,44 @@ impl Default for GeneratorOptions {
     }
 }
 
+static BUILTINS: Mutex<Vec<Arc<Builtins>>> = Mutex::new(Vec::new());
+const CACHED_BUILTINS: usize = 16;
+
+fn effective_version(unit: &TranslationUnit) -> u32 {
+    let version = unit
+        .external_declarations
+        .iter()
+        .find_map(|external| match external {
+            rglsl_ast::ast::ExternalDeclaration::Directive(directive) => match &directive.kind {
+                rglsl_ast::ast::DirectiveKind::Version { number, .. } => Some(*number),
+                _ => None,
+            },
+            _ => None,
+        });
+    if version == Some(460) {
+        460
+    } else {
+        450
+    }
+}
+
+fn cached_builtins(unit: &TranslationUnit, stage: Stage) -> Option<Arc<Builtins>> {
+    let version = effective_version(unit);
+    BUILTINS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .iter()
+        .find(|builtins| builtins.stage() == stage && builtins.version() == version)
+        .cloned()
+}
+
+fn remember_builtins(builtins: &Arc<Builtins>) {
+    let mut cache = BUILTINS.lock().unwrap_or_else(PoisonError::into_inner);
+    if cache.len() < CACHED_BUILTINS && !cache.iter().any(|cached| Arc::ptr_eq(cached, builtins)) {
+        cache.push(Arc::clone(builtins));
+    }
+}
+
 pub fn analyze_shader(
     unit: &TranslationUnit,
     stage: Stage,
@@ -51,9 +89,16 @@ pub fn analyze_shader(
     let expanded = expand_macros(unit);
     let mut options = Options::new(stage);
     options.relaxed_uniforms = relaxed_uniforms;
-    match builtins {
-        Some(builtins) => analyze_with_builtins(&expanded, &options, builtins),
-        None => analyze(&expanded, &options),
+    if let Some(builtins) = builtins {
+        return analyze_with_builtins(&expanded, &options, builtins);
+    }
+    match cached_builtins(&expanded, stage) {
+        Some(builtins) => analyze_with_builtins(&expanded, &options, &builtins),
+        None => {
+            let analysis = analyze(&expanded, &options);
+            remember_builtins(&analysis.builtins);
+            analysis
+        }
     }
 }
 

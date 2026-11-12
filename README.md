@@ -64,6 +64,7 @@ path, builds Amber against that loader, and prints the Vulkan device it finds. R
 cargo xtask oracles --exec-only          # install only KosmicKrisp and Amber
 cargo xtask test --no-exec               # skip exec; PROGRESS.md keeps the last exec results
 cargo xtask fuzz --shaders DIR --exec    # metamorphic check of rglsl-fuzz shader families
+cargo xtask fuzz --libfuzzer glsl_variant --time 1800   # coverage-guided variants (cargo-fuzz)
 ```
 
 On other platforms `cargo xtask oracles` skips the exec oracles and `cargo xtask test` needs

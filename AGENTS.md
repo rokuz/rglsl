@@ -17,12 +17,13 @@ goal, the language rules for linkage and `#include`, and the milestones (M0–M9
 | `rglsl-sema/` | semantic analysis over the AST: scopes, types, built-ins, expression typing, diagnostics |
 | `rglsl-link/` | the linker: merges object modules (`rglsl::object::ObjectModule`) into programs, object file format (`docs/design/linking.md`) |
 | `tests/link/` | our own link tests: modules, `expect`, optional single-file `reference.*` for exec |
-| `rglsl-fuzz/` | port of GraphicsFuzz's variant generator (Apache-2.0; see `docs/design/fuzzer.md`) |
+| `rglsl-fuzz/` | port of GraphicsFuzz's variant generator and reducer (Apache-2.0; see `docs/design/fuzzer.md`) |
+| `rglsl-fuzz/fuzz/` | the cargo-fuzz targets (crate `rglsl-libfuzzer`): `glsl_parser`, `spv_parser`, `ir`, `object`, `glsl_variant` |
 | `rglsl-types/` | types shared by the rglsl crates (`ShaderStage`, ...) |
 | `rglsl-cli/` | the `rglsl` command-line tool (to become `glslangValidator`-compatible in M9) |
 | `rglsl-test/`, `rglsl/tests/` | upstream snapshot tests |
 | `rglsl/xtask/` | snapshot validation (`cd rglsl && cargo xtask validate spv`) |
-| `xtask/` | project automation: `cargo xtask oracles`, `cargo xtask test` |
+| `xtask/` | project automation: `cargo xtask oracles`, `cargo xtask test`, `cargo xtask fuzz` |
 | `oracles.toml` | pinned glslang / SPIRV-Tools / SPIRV-Headers commits, KosmicKrisp release and Amber commit (exec) |
 
 ## Rules
@@ -88,6 +89,12 @@ RGLSL_EXEC_REMOTE=<alias>,<alias>@<gpu> cargo xtask test [--glslang-dir ../glsla
                                                    # every remote Windows target, rewrites PROGRESS.md
 cargo xtask test --filter NAME --no-progress-file  # quick local check
 cargo xtask test --no-remote-exec | --no-local-exec | --no-exec   # per-target opt-outs (CI: --no-exec)
+
+cargo xtask fuzz --shaders DIR [--exec]            # differential fuzzing against glslang (+ exec)
+cargo xtask fuzz --libfuzzer TARGET [--time SECS] [--jobs N]   # cargo +nightly fuzz run
+cargo xtask fuzz --decode INPUT                    # glsl_variant input -> shader family
+cargo xtask fuzz --reduce JOB.json --interesting K # GraphicsFuzz reducer
 ```
 
-Per-shader results of the last corpus run: `target/xtask/results.tsv`.
+Per-shader results of the last corpus run: `target/xtask/results.tsv`. Fuzzer findings of every
+mode: `target/xtask/fuzz/` (`docs/design/fuzzer.md`).
