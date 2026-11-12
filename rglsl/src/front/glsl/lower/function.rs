@@ -650,7 +650,7 @@ impl<'a> Lowerer<'a> {
             .ok_or_else(|| internal(at))?;
         self.debug_function(definition, true);
         let function = self.lower_body(id, definition, true)?;
-        let stage = self.options.stage;
+        let stage = self.stage();
         let (workgroup_size, workgroup_size_overrides) = if stage.compute_like() {
             (
                 self.work_group_size_defaults(),

@@ -80,7 +80,7 @@ impl Analyzer<'_> {
         if !self.scopes.is_global() {
             self.error(span, invalid(keyword, "not allowed in nested scope"));
         }
-        let stage = self.options.stage;
+        let stage = self.stage();
         let allowed = match storage {
             StorageQualifier::PerPrimitiveNV | StorageQualifier::PerPrimitiveEXT => {
                 matches!(stage, Stage::Fragment | Stage::Mesh)
@@ -103,13 +103,22 @@ impl Analyzer<'_> {
     }
 
     pub(crate) fn mesh_variable_extension(&mut self, span: Span, name: &str) {
-        if !matches!(self.options.stage, Stage::Mesh | Stage::Task) {
+        let indices = matches!(
+            name,
+            "gl_PrimitivePointIndicesEXT"
+                | "gl_PrimitiveLineIndicesEXT"
+                | "gl_PrimitiveTriangleIndicesEXT"
+        );
+        if variable_extension(name).is_none() && !indices {
+            return;
+        }
+        if !self.stage_in(&[Stage::Mesh, Stage::Task]) {
             return;
         }
         if let Some(extensions) = variable_extension(name) {
             self.require_extensions(span, extensions, name);
         }
-        if self.options.stage != Stage::Mesh {
+        if !self.stage_is(Stage::Mesh) {
             return;
         }
         let required = match name {
@@ -130,7 +139,7 @@ impl Analyzer<'_> {
     }
 
     pub(crate) fn mesh_member_extension(&mut self, span: Span, base: &Type, field: &str) {
-        if field != "gl_PrimitiveShadingRateEXT" || self.options.stage != Stage::Mesh {
+        if field != "gl_PrimitiveShadingRateEXT" || !self.stage_is(Stage::Mesh) {
             return;
         }
         let builtin = match base.kind {
@@ -181,9 +190,7 @@ impl Analyzer<'_> {
         qualifiers: &Qualifiers,
         ty: &mut Type,
     ) {
-        if self.options.stage != Stage::Mesh
-            || qualifiers.storage != Storage::Out
-            || qualifiers.per_task
+        if qualifiers.storage != Storage::Out || qualifiers.per_task || !self.stage_is(Stage::Mesh)
         {
             return;
         }
@@ -216,7 +223,7 @@ impl Analyzer<'_> {
     }
 
     pub(crate) fn resize_mesh_arrays(&mut self, span: Span) {
-        if self.options.stage != Stage::Mesh {
+        if !self.stage_is(Stage::Mesh) {
             return;
         }
         let mut updates = Vec::new();
@@ -279,7 +286,7 @@ impl Analyzer<'_> {
         ty: &mut Type,
         member: bool,
     ) {
-        if !qualifiers.per_view || self.options.stage != Stage::Mesh {
+        if !qualifiers.per_view || !self.stage_is(Stage::Mesh) {
             return;
         }
         let dimension = usize::from(!member);
@@ -329,17 +336,16 @@ impl Analyzer<'_> {
     }
 
     pub(crate) fn mesh_block_storage(&mut self, span: Span, qualifiers: &Qualifiers) {
-        let stage = self.options.stage;
         match qualifiers.storage {
-            Storage::In if stage == Stage::Mesh && !qualifiers.per_task => self.error(
+            Storage::In if !qualifiers.per_task && self.stage_is(Stage::Mesh) => self.error(
                 span,
                 invalid("in", "input blocks cannot be used in a mesh shader"),
             ),
-            Storage::Out if stage == Stage::Mesh && qualifiers.per_task => self.error(
+            Storage::Out if qualifiers.per_task && self.stage_is(Stage::Mesh) => self.error(
                 span,
                 invalid("taskNV", "can only use on input blocks in mesh shader"),
             ),
-            Storage::Out if stage == Stage::Task && !qualifiers.per_task => self.error(
+            Storage::Out if !qualifiers.per_task && self.stage_is(Stage::Task) => self.error(
                 span,
                 invalid("out", "output blocks cannot be used in a task shader"),
             ),
@@ -348,7 +354,7 @@ impl Analyzer<'_> {
     }
 
     pub(crate) fn mesh_output_reads(&mut self, unit: &TranslationUnit) {
-        if self.options.stage != Stage::Mesh || !self.mesh_ext() {
+        if !self.mesh_ext() || !self.stage_is(Stage::Mesh) {
             return;
         }
         let expressions = rglsl_ast::expressions(unit);

@@ -1,7 +1,7 @@
 use rglsl::object::{ObjectModule, StageLayout};
 use rglsl::{
-    EarlyDepthTest, EntryPoint, Expression, GeometryInfo, Literal, MeshOutputLayout, Module,
-    Override, Scalar, ShaderStage, Span, TessellationInfo, TessellationSpacing,
+    EarlyDepthTest, EntryPoint, Expression, GeometryInfo, Handle, Literal, MeshOutputLayout,
+    Module, Override, Scalar, ShaderStage, Span, TessellationInfo, TessellationSpacing,
     TessellationVertexOrder, Type, TypeInner,
 };
 
@@ -132,6 +132,11 @@ fn merged(
             *slot = slot.or(value);
         }
         merged.non_coherent_tile_read |= layout.non_coherent_tile_read;
+        merged.post_depth_coverage |= layout.post_depth_coverage;
+        merged.non_coherent_color_attachment_read |= layout.non_coherent_color_attachment_read;
+        merged.non_coherent_depth_attachment_read |= layout.non_coherent_depth_attachment_read;
+        merged.non_coherent_stencil_attachment_read |= layout.non_coherent_stencil_attachment_read;
+        merged.multi_stream |= layout.multi_stream;
         merge_value(
             &mut merged.mesh_topology,
             layout.mesh_topology,
@@ -242,6 +247,29 @@ fn workgroup_size_overrides(module: &mut Module, ids: [Option<u32>; 3], entry: &
     entry.workgroup_size_overrides = Some(overrides);
 }
 
+fn workgroup_size_defaults(module: &mut Module, layout: &StageLayout) {
+    for (&id, &size) in layout.local_size_ids.iter().zip(&layout.local_size) {
+        let (Some(id), Some(size)) = (id, size) else {
+            continue;
+        };
+        let Some(handle) = module
+            .overrides
+            .iter()
+            .find(|&(_, candidate)| candidate.id == Some(id))
+            .map(|(handle, _)| handle)
+        else {
+            continue;
+        };
+        let Some(init) = module.overrides[handle].init else {
+            continue;
+        };
+        let expression = module.global_expressions.get_mut(init);
+        if matches!(*expression, Expression::Literal(Literal::U32(_))) {
+            *expression = Expression::Literal(Literal::U32(size));
+        }
+    }
+}
+
 fn geometry(layout: &StageLayout, entry: &mut EntryPoint) {
     match entry.geometry {
         Some(ref mut info) => {
@@ -311,14 +339,79 @@ fn mesh(layout: &StageLayout, entry: &mut EntryPoint) {
     }
 }
 
-fn xfb_strides(module: &mut Module, strides: &[(u32, u32)]) {
+fn widest_scalar(module: &Module, ty: Handle<Type>) -> u32 {
+    let mut widest = 0;
+    let mut pending = vec![ty];
+    let mut seen = std::collections::BTreeSet::new();
+    while let Some(ty) = pending.pop() {
+        if !seen.insert(ty) {
+            continue;
+        }
+        match module.types[ty].inner {
+            TypeInner::Scalar(scalar)
+            | TypeInner::Vector { scalar, .. }
+            | TypeInner::Matrix { scalar, .. } => widest = widest.max(u32::from(scalar.width)),
+            TypeInner::Array { base, .. } => pending.push(base),
+            TypeInner::Struct { ref members, .. } => {
+                pending.extend(members.iter().map(|member| member.ty));
+            }
+            _ => {}
+        }
+    }
+    widest
+}
+
+fn xfb_strides(module: &mut Module, strides: &[(u32, u32)], errors: &mut Vec<LinkError>) {
+    let mut implicit: Vec<(u32, u32, u32)> = Vec::new();
+    for (_, global) in module.global_variables.iter() {
+        let Some(ref xfb) = global.xfb else {
+            continue;
+        };
+        if strides.iter().any(|&(buffer, _)| buffer == xfb.buffer) {
+            continue;
+        }
+        let width = widest_scalar(module, global.ty);
+        match implicit
+            .iter_mut()
+            .find(|&&mut (buffer, _, _)| buffer == xfb.buffer)
+        {
+            Some(&mut (_, ref mut stride, ref mut widest)) => {
+                *stride = (*stride).max(xfb.stride);
+                *widest = (*widest).max(width);
+            }
+            None => implicit.push((xfb.buffer, xfb.stride, width)),
+        }
+    }
     for (_, global) in module.global_variables.iter_mut() {
         let Some(ref mut xfb) = global.xfb else {
             continue;
         };
         if let Some(&(_, stride)) = strides.iter().find(|&&(buffer, _)| buffer == xfb.buffer) {
+            let error = LinkError::Mode("xfb_stride is too small to hold all buffer entries");
+            if xfb.stride > stride && !errors.contains(&error) {
+                errors.push(error);
+            }
             xfb.stride = stride;
+        } else if let Some(&(_, stride, widest)) = implicit
+            .iter()
+            .find(|&&(buffer, _, _)| buffer == xfb.buffer)
+        {
+            let alignment = widest.clamp(2, 8);
+            xfb.stride = stride.div_ceil(alignment).saturating_mul(alignment);
         }
+    }
+}
+
+fn fragment(layout: &StageLayout, entry: &mut EntryPoint, errors: &mut Vec<LinkError>) {
+    let modes = &mut entry.fragment_modes;
+    modes.post_depth_coverage |= layout.post_depth_coverage;
+    modes.non_coherent_color_attachment_read |= layout.non_coherent_color_attachment_read;
+    modes.non_coherent_depth_attachment_read |= layout.non_coherent_depth_attachment_read;
+    modes.non_coherent_stencil_attachment_read |= layout.non_coherent_stencil_attachment_read;
+    if layout.post_depth_coverage && !layout.early_fragment_tests {
+        errors.push(LinkError::Mode(
+            "post_depth_coverage requires early_fragment_tests",
+        ));
     }
 }
 
@@ -355,6 +448,10 @@ pub(crate) fn apply(
             }
         }
         workgroup_size_overrides(module, layout.local_size_ids, entry);
+        workgroup_size_defaults(module, &layout);
+    }
+    if stage == ShaderStage::Fragment {
+        fragment(&layout, entry, errors);
     }
     if layout.early_fragment_tests {
         entry.early_depth_test = Some(EarlyDepthTest::Force);
@@ -362,7 +459,7 @@ pub(crate) fn apply(
         entry.early_depth_test = Some(EarlyDepthTest::Allow { conservative });
     }
     entry.transform_feedback |= layout.transform_feedback;
-    xfb_strides(module, &layout.xfb_strides);
+    xfb_strides(module, &layout.xfb_strides, errors);
     match stage {
         ShaderStage::Geometry => geometry(&layout, entry),
         ShaderStage::TessControl | ShaderStage::TessEvaluation => {

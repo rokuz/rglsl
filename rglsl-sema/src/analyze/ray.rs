@@ -157,7 +157,7 @@ impl Analyzer<'_> {
     }
 
     pub(crate) fn require_stage(&mut self, span: Span, stages: &[Stage], what: &str) -> bool {
-        let stage = self.options.stage;
+        let stage = self.stage();
         if stages.contains(&stage) {
             return true;
         }

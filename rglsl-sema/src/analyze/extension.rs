@@ -110,8 +110,8 @@ impl Analyzer<'_> {
             names::MESH_SHADER_EXT => names::MESH_SHADER_NV,
             _ => return,
         };
-        let stage = self.options.stage;
-        if !matches!(stage, Stage::Task | Stage::Mesh | Stage::Fragment) {
+        if !self.stage_in(&[Stage::Task, Stage::Mesh, Stage::Fragment]) {
+            let stage = self.stage();
             self.error(
                 span,
                 DiagnosticKind::ExtensionStage {

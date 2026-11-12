@@ -58,14 +58,25 @@ impl Error {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IncludeLocation {
+    pub file: String,
+    pub line: u32,
+}
+
 /// A collection of errors returned during shader parsing.
 #[derive(Clone, Debug)]
 #[cfg_attr(test, derive(PartialEq))]
 pub struct ParseErrors {
     pub errors: Vec<Error>,
+    pub included: Vec<Option<IncludeLocation>>,
 }
 
 impl ParseErrors {
+    pub fn include_location(&self, index: usize) -> Option<&IncludeLocation> {
+        self.included.get(index).and_then(Option::as_ref)
+    }
+
     #[cfg(feature = "stderr")]
     pub fn emit_to_writer(
         &self,
@@ -163,6 +174,16 @@ impl core::error::Error for ParseErrors {}
 
 impl From<Vec<Error>> for ParseErrors {
     fn from(errors: Vec<Error>) -> Self {
-        Self { errors }
+        Self {
+            errors,
+            included: Vec::new(),
+        }
+    }
+}
+
+impl From<Vec<(Error, Option<IncludeLocation>)>> for ParseErrors {
+    fn from(located: Vec<(Error, Option<IncludeLocation>)>) -> Self {
+        let (errors, included) = located.into_iter().unzip();
+        Self { errors, included }
     }
 }

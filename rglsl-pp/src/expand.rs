@@ -95,7 +95,7 @@ impl Preprocessor<'_> {
         };
         let Some(mut token) = input.body.get(input.pos).cloned() else {
             let name = input.name.clone();
-            if let Some(definition) = self.macros.get_mut(&*name) {
+            if let Some(definition) = self.macros.get_mut(&name) {
                 definition.busy = false;
             }
             return Scanned::Token(Token::new(Kind::End, current));
@@ -384,7 +384,7 @@ impl Preprocessor<'_> {
         expand_undef: bool,
     ) -> Result<FoundMacro, Expand> {
         let name: Rc<str> = token.text.clone();
-        let definition = match self.macros.get_mut(&*name) {
+        let definition = match self.macros.get_mut(&name) {
             Some(definition) if definition.busy => {
                 token.fully_expanded = true;
                 return Err(Expand::NotStarted);
@@ -471,7 +471,7 @@ impl Preprocessor<'_> {
     fn push_macro(&mut self, input: MacroInput) {
         let name = input.name.clone();
         self.inputs.push(Input::Macro(input));
-        if let Some(definition) = self.macros.get_mut(&*name) {
+        if let Some(definition) = self.macros.get_mut(&name) {
             definition.busy = true;
         }
     }

@@ -426,7 +426,7 @@ impl Analyzer<'_> {
             }
             None if operand.ty.is_array() => {
                 let resizable = matches!(
-                    (operand.storage, self.options.stage),
+                    (operand.storage, self.stage()),
                     (Storage::In, Stage::Geometry) | (Storage::Out, Stage::TessControl)
                 ) && operand.ty.outer_size() == Some(ArraySize::Unsized);
                 let runtime = (operand.storage == Storage::Buffer && !operand.through_reference)

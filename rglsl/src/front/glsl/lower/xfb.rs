@@ -11,7 +11,7 @@ const MAX_STRIDE: u32 = 4 * 64;
 #[derive(Debug, Default)]
 pub(super) struct Xfb {
     pub mode: bool,
-    pub default_buffer: Option<u32>,
+    pub default_buffer: Option<Option<u32>>,
     strides: BTreeMap<u32, u32>,
     buffers: BTreeMap<u32, Capture>,
     globals: Vec<(Handle<GlobalVariable>, u32, Option<u32>)>,
@@ -46,10 +46,25 @@ impl Xfb {
             .collect()
     }
 
-    pub(super) fn new(default_buffer: Option<u32>) -> Self {
-        Self {
-            default_buffer,
-            ..Self::default()
+    pub(super) fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl Lowerer<'_> {
+    pub(super) fn xfb_default_buffer(&self) -> Option<u32> {
+        match self.xfb.default_buffer {
+            Some(buffer) => buffer,
+            None => self
+                .stage_map(|stage| {
+                    matches!(
+                        stage,
+                        crate::ShaderStage::Vertex
+                            | crate::ShaderStage::TessEvaluation
+                            | crate::ShaderStage::Geometry
+                    )
+                })
+                .then_some(0),
         }
     }
 }

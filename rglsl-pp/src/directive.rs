@@ -183,16 +183,17 @@ impl Preprocessor<'_> {
             busy: false,
             undef: false,
         };
+        let watched = !self.in_preamble();
         if let Some(how) = self
             .macros
-            .get(&name)
+            .lookup(&name, watched)
             .and_then(|existing| redefinition(existing, &definition))
         {
             let name = name.clone();
             self.report(DiagnosticKind::MacroRedefined { name, how }, define_at);
         }
         self.record_macro(&name);
-        self.macros.insert(name, definition);
+        self.macros.insert(name, definition, watched);
         Token::new(Kind::Newline, token.at)
     }
 
@@ -209,7 +210,7 @@ impl Preprocessor<'_> {
         }
         self.reserved_check(&token.text, "#undef", token.at);
         self.record_macro(&token.text);
-        if let Some(definition) = self.macros.get_mut(&*token.text) {
+        if let Some(definition) = self.macros.get_mut(&token.text) {
             definition.undef = true;
         }
         let token = self.scan();
@@ -328,7 +329,7 @@ impl Preprocessor<'_> {
         }
         let is_defined = self
             .macros
-            .get(&*token.text)
+            .get(&token.text)
             .is_some_and(|definition| !definition.undef);
         token = self.scan();
         if token.kind != Kind::Newline {

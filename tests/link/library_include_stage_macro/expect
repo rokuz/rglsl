@@ -1,0 +1,3 @@
+reject
+library `1.lib.glsl` cannot be linked into a vertex shader: `undefined_in_vertex` is not declared
+position.h`, line 8)
