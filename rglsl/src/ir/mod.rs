@@ -3396,7 +3396,8 @@ pub enum Statement {
     /// The `image`, `coordinate`, and `array_index` fields have the same
     /// meanings as the corresponding operands of an [`ImageLoad`] expression;
     /// see that documentation for details. Storing into images with mipmaps is
-    /// not supported, so there is no `level` operand; `sample` is required for
+    /// only supported on storage images (`level` is the mip level, as
+    /// `SPV_AMD_shader_image_load_store_lod` allows); `sample` is required for
     /// multisampled images and forbidden otherwise.
     ///
     /// This statement is a barrier for any operations on the corresponding
@@ -3410,6 +3411,9 @@ pub enum Statement {
         #[cfg_attr(feature = "serialize", serde(skip_serializing_if = "Option::is_none"))]
         #[cfg_attr(feature = "deserialize", serde(default))]
         sample: Option<Handle<Expression>>,
+        #[cfg_attr(feature = "serialize", serde(skip_serializing_if = "Option::is_none"))]
+        #[cfg_attr(feature = "deserialize", serde(default))]
+        level: Option<Handle<Expression>>,
         value: Handle<Expression>,
     },
     /// Atomic function.

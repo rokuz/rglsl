@@ -947,7 +947,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 result
             }
             .map(Some),
-            "sparseImageLoadARB" => {
+            "sparseImageLoadARB" | "sparseImageLoadLodAMD" => {
                 let frame = self.clone().image(name, function, arguments, at);
                 let result = self.nest(frame).await;
                 result
@@ -987,7 +987,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 result
             }
             .map(Some),
-            "imageLoad" | "imageStore" => {
+            "imageLoad" | "imageStore" | "imageLoadLodAMD" | "imageStoreLodAMD" => {
                 let frame = self.clone().image(name, function, arguments, at);
                 let result = self.nest(frame).await;
                 result
@@ -2473,7 +2473,19 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         } else {
             None
         };
-        if name == "sparseImageLoadARB" {
+        let lod = name.ends_with("LodAMD");
+        let level = if lod {
+            let level = arguments.get(2).ok_or_else(|| internal(at))?;
+            Some({
+                let frame = self.clone().rvalue(level);
+                let result = self.nest(frame).await;
+                result
+            }?)
+        } else {
+            None
+        };
+        let operands = 2 + usize::from(opaque.multisample) + usize::from(lod);
+        if name.starts_with("sparseImageLoad") {
             let texel = crate::TypeInner::Vector {
                 size: crate::VectorSize::Quad,
                 scalar: super::types::sampled_scalar(opaque.sampled),
@@ -2486,23 +2498,22 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                         coordinate: point,
                         array_index,
                         sample,
-                        level: None,
+                        level,
                         sparse,
                     },
                     at,
                 )
             })??;
-            let index = 2 + usize::from(opaque.multisample);
             return {
                 let frame = self
                     .clone()
-                    .sparse_result(result, function, arguments, index, at);
+                    .sparse_result(result, function, arguments, operands, at);
                 let result = self.nest(frame).await;
                 result
             }
             .map(Some);
         }
-        if name == "imageLoad" {
+        if name.starts_with("imageLoad") {
             return self.with(|this| {
                 this.add(
                     Expression::ImageLoad {
@@ -2510,7 +2521,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                         coordinate: point,
                         array_index,
                         sample,
-                        level: None,
+                        level,
                         sparse: None,
                     },
                     at,
@@ -2518,9 +2529,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 .map(Some)
             })?;
         }
-        let value = arguments
-            .get(2 + usize::from(opaque.multisample))
-            .ok_or_else(|| internal(at))?;
+        let value = arguments.get(operands).ok_or_else(|| internal(at))?;
         let value = {
             let frame = self.clone().rvalue(value);
             let result = self.nest(frame).await;
@@ -2533,6 +2542,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     coordinate: point,
                     array_index,
                     sample,
+                    level,
                     value,
                 },
                 at,

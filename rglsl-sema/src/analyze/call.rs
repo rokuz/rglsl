@@ -95,6 +95,17 @@ fn equivalent(rules: Rules, arguments: &[Type], first: &Function, second: &Funct
         && !has_better_parameter(rules, arguments, second, first)
 }
 
+fn image_load(name: &str) -> bool {
+    matches!(
+        name,
+        "imageLoad" | "imageLoadLodAMD" | "sparseImageLoadLodAMD"
+    )
+}
+
+fn image_store(name: &str) -> bool {
+    matches!(name, "imageStore" | "imageStoreLodAMD")
+}
+
 const DEBUG_PRINTF: &str = "debugPrintfEXT";
 const ABORT: &str = "abortEXT";
 
@@ -1031,7 +1042,7 @@ impl Analyzer<'_> {
                     "the first argument must be a buffer or shared variable",
                 );
             }
-        } else if name.starts_with("imageAtomic") || name == "imageStore" || name == "imageLoad" {
+        } else if name.starts_with("imageAtomic") || image_load(name) || image_store(name) {
             let qualifiers = first
                 .and_then(|operand| operand.root)
                 .and_then(|id| self.symbol(id))
@@ -1079,10 +1090,10 @@ impl Analyzer<'_> {
                 }
             }
             if let Some((readonly, writeonly)) = qualifiers {
-                if readonly && name != "imageLoad" {
+                if readonly && !image_load(name) {
                     return invalid(self, span, "the image is `readonly`");
                 }
-                if writeonly && name != "imageStore" {
+                if writeonly && !image_store(name) {
                     return invalid(self, span, "the image is `writeonly`");
                 }
             }

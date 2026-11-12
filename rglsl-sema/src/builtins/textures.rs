@@ -163,6 +163,16 @@ fn images(emitter: &mut Emitter<'_>, opaque: Opaque) {
         emitter.sparse("sparseImageLoadARB", base.clone(), texel(opaque), &[], 0);
     }
     emitter.common("imageStore", Type::VOID, with(&[texel(opaque)]));
+    if !opaque.multisample && !opaque.is_buffer() {
+        let lod = with(&[Type::INT]);
+        emitter.common("imageLoadLodAMD", texel(opaque), lod.clone());
+        let mut store = lod.clone();
+        store.push(texel(opaque));
+        emitter.common("imageStoreLodAMD", Type::VOID, store);
+        if opaque.dimension != TextureDimension::D1 {
+            emitter.sparse("sparseImageLoadLodAMD", lod, texel(opaque), &[], 0);
+        }
+    }
     let data = Type::scalar(opaque.sampled.scalar());
     let scope = [Type::INT, Type::INT, Type::INT];
     let scoped = |extra: &[Type]| {

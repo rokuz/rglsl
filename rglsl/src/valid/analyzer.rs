@@ -1560,10 +1560,11 @@ impl FunctionInfo {
                 coordinate,
                 array_index,
                 sample,
+                level,
                 value,
             } => {
                 let _ = self.add_ref_impl(image, GlobalUse::WRITE);
-                for expr in array_index.into_iter().chain(sample) {
+                for expr in array_index.into_iter().chain(sample).chain(level) {
                     let _ = self.add_ref(expr);
                 }
                 let _ = self.add_ref(coordinate);

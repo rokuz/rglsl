@@ -14,6 +14,7 @@ pub const GATHER_BIAS_LOD: &str = "GL_AMD_texture_gather_bias_lod";
 pub const SHADOW_LOD: &str = "GL_EXT_texture_shadow_lod";
 pub const NV_DERIVATIVES: &str = "GL_NV_compute_shader_derivatives";
 pub const KHR_DERIVATIVES: &str = "GL_KHR_compute_shader_derivatives";
+pub const IMAGE_LOAD_STORE_LOD: &str = "GL_AMD_shader_image_load_store_lod";
 pub const SAMPLERLESS: &str = "GL_EXT_samplerless_texture_functions";
 
 const COMPUTE_DERIVATIVES: [&str; 2] = [NV_DERIVATIVES, KHR_DERIVATIVES];
@@ -59,6 +60,7 @@ pub(crate) fn function_extension(name: &str) -> Option<&'static str> {
         | "sparseTextureGatherLodAMD"
         | "sparseTextureGatherLodOffsetAMD"
         | "sparseTextureGatherLodOffsetsAMD" => GATHER_BIAS_LOD,
+        "imageLoadLodAMD" | "imageStoreLodAMD" | "sparseImageLoadLodAMD" => IMAGE_LOAD_STORE_LOD,
         _ => return None,
     })
 }

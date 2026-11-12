@@ -4535,10 +4535,17 @@ impl BlockContext<'_> {
                 coordinate,
                 array_index,
                 sample,
+                level,
                 value,
-            } => {
-                self.write_image_store(image, coordinate, array_index, sample, value, &mut block)?
-            }
+            } => self.write_image_store(
+                image,
+                coordinate,
+                array_index,
+                sample,
+                level,
+                value,
+                &mut block,
+            )?,
             Statement::TensorWrite {
                 tensor,
                 coordinates,

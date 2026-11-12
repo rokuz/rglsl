@@ -1013,6 +1013,7 @@ fn adjust_stmt(new_pos: &HandleVec<Expression, Handle<Expression>>, stmt: &mut S
             ref mut coordinate,
             ref mut array_index,
             ref mut sample,
+            ref mut level,
             ref mut value,
         } => {
             adjust(image);
@@ -1021,6 +1022,9 @@ fn adjust_stmt(new_pos: &HandleVec<Expression, Handle<Expression>>, stmt: &mut S
                 adjust(e);
             }
             if let Some(e) = sample.as_mut() {
+                adjust(e);
+            }
+            if let Some(e) = level.as_mut() {
                 adjust(e);
             }
             adjust(value);

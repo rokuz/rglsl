@@ -909,6 +909,18 @@ void main() { int a = dotPacked4x8EXT(1u, 2) + dotEXT(ivec3(1), uvec3(2u)) + dot
 ### integer dot product has no scalar form | frag | 3:NoMatchingFunction
 #extension GL_EXT_integer_dot_product : enable
 void main() { int a = dotEXT(1, 2); }
+### image lod access needs its extension | frag | 3:ExtensionRequired
+layout(rgba8, binding = 0) uniform image2D i;
+void main() { vec4 a = imageLoadLodAMD(i, ivec2(0), 1); }
+### image lod store on a readonly image | frag | 4:InvalidBuiltinCall
+#extension GL_AMD_shader_image_load_store_lod : enable
+layout(rgba8, binding = 0) readonly uniform image2D i;
+void main() { imageStoreLodAMD(i, ivec2(0), 1, vec4(0.0)); }
+### image lod access has no multisample or buffer form | frag | 5:NoMatchingFunction
+#extension GL_AMD_shader_image_load_store_lod : enable
+layout(rgba8, binding = 0) uniform image2DMS i;
+layout(rgba8, binding = 1) uniform imageBuffer b;
+void main() { vec4 a = imageLoadLodAMD(b, 0, 1); }
 ### texel fetch on a texture buffer | frag | ok
 layout(binding = 0) uniform textureBuffer t;
 void main() {

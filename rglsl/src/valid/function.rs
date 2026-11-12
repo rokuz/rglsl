@@ -1740,6 +1740,7 @@ impl super::Validator {
                 coordinate,
                 array_index,
                 sample,
+                level,
                 value,
             } => {
                 //Note: this code uses a lot of `FunctionError::InvalidImageStore`,
@@ -1865,6 +1866,22 @@ impl super::Validator {
                             ExpressionError::MissingImageSampleSelector,
                         )
                         .with_span_handle(image, context.expressions));
+                    }
+                }
+
+                if let Some(expr) = level {
+                    let integer = matches!(
+                        *context.resolve_type_inner(expr, &self.valid_expression_set)?,
+                        Ti::Scalar(crate::Scalar {
+                            kind: crate::ScalarKind::Sint | crate::ScalarKind::Uint,
+                            width: _,
+                        })
+                    );
+                    if !integer || !class.has_optional_level(dim) {
+                        return Err(FunctionError::InvalidImageStore(
+                            ExpressionError::InvalidImageLevelSelector,
+                        )
+                        .with_span_handle(expr, context.expressions));
                     }
                 }
 

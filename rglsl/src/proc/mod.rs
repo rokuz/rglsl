@@ -565,6 +565,16 @@ impl super::ImageClass {
         matches!(self, crate::ImageClass::Depth { .. })
     }
 
+    pub const fn has_optional_level(self, dim: crate::ImageDimension) -> bool {
+        matches!(self, crate::ImageClass::Storage { .. })
+            && !matches!(
+                dim,
+                crate::ImageDimension::Buffer
+                    | crate::ImageDimension::Subpass
+                    | crate::ImageDimension::TileImageData
+            )
+    }
+
     pub const fn has_levels(self, dim: crate::ImageDimension) -> bool {
         self.is_mipmapped()
             && !matches!(

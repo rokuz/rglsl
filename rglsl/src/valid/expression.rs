@@ -986,19 +986,19 @@ impl super::Validator {
                     }
                 }
 
-                match (level, class.has_levels(dim)) {
-                    (None, false) => {}
-                    (Some(level), true) => match resolver[level] {
+                match (level, class.has_levels(dim), class.has_optional_level(dim)) {
+                    (None, false, _) => {}
+                    (Some(level), true, _) | (Some(level), false, true) => match resolver[level] {
                         Ti::Scalar(Sc {
                             kind: Sk::Sint | Sk::Uint,
                             width: _,
                         }) => {}
                         _ => return Err(ExpressionError::InvalidImageArrayIndexType(level)),
                     },
-                    (Some(_), false) => {
+                    (Some(_), false, false) => {
                         return Err(ExpressionError::InvalidImageLevelSelector);
                     }
-                    (None, true) => {
+                    (None, true, _) => {
                         return Err(ExpressionError::MissingImageLevelSelector);
                     }
                 }

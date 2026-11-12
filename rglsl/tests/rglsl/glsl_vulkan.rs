@@ -10585,3 +10585,33 @@ void main() {
     }
     Ok(())
 }
+
+#[test]
+fn storage_image_lod_access_uses_the_lod_operand() -> crate::TestResult {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+#extension GL_AMD_shader_image_load_store_lod : enable
+layout(rgba32f, binding = 0) uniform image2D color;
+layout(rgba32ui, binding = 1) uniform uimageCubeArray cubes;
+layout(location = 0) out vec4 o;
+void main() {
+    vec4 texel = imageLoadLodAMD(color, ivec2(1, 2), 3);
+    imageStoreLodAMD(color, ivec2(0), 1, texel);
+    uvec4 sparse;
+    int code = sparseImageLoadLodAMD(cubes, ivec3(4), 2, sparse);
+    o = texel + vec4(sparse) + float(code);
+}
+",
+    )?;
+    let lod = Operand::ImageOperands(spirv::ImageOperands::LOD);
+    for op in [Op::ImageRead, Op::ImageWrite, Op::ImageSparseRead] {
+        let found = instructions(&module, op);
+        assert_eq!(found.len(), 1, "{op:?}");
+        assert!(found[0].operands.contains(&lod), "{op:?}");
+    }
+    assert!(module.capabilities.iter().any(
+        |inst| inst.operands[0] == Operand::Capability(spirv::Capability::ImageReadWriteLodAMD)
+    ));
+    Ok(())
+}
