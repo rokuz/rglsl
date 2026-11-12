@@ -691,6 +691,46 @@ impl Behavior<'_> {
     }
 }
 
+enum LowerTask {
+    Enter(Handle<Expression>),
+    Compose { ty: Handle<Type>, count: usize },
+}
+
+enum ZeroTask {
+    Enter(Handle<Type>),
+    Repeat { ty: Handle<Type>, count: usize },
+    Members { ty: Handle<Type>, count: usize },
+}
+
+enum CastTask {
+    Enter(Handle<Expression>),
+    Array { size: ArraySize, count: usize },
+}
+
+enum CopyTask {
+    Enter(Handle<Expression>),
+    Compose {
+        ty: Handle<Type>,
+        count: usize,
+        span: Span,
+    },
+    Splat {
+        size: crate::VectorSize,
+        span: Span,
+    },
+}
+
+fn split_results(
+    results: &mut Vec<Handle<Expression>>,
+    count: usize,
+) -> Result<Vec<Handle<Expression>>, ConstantEvaluatorError> {
+    let start = results
+        .len()
+        .checked_sub(count)
+        .ok_or(ConstantEvaluatorError::Unfinished)?;
+    Ok(results.split_off(start))
+}
+
 /// A context for evaluating constant expressions.
 ///
 /// A `ConstantEvaluator` points at an expression arena to which it can append
@@ -884,6 +924,8 @@ impl ExpressionKindTracker {
 #[derive(Clone, Debug, thiserror::Error)]
 #[cfg_attr(test, derive(PartialEq))]
 pub enum ConstantEvaluatorError {
+    #[error("internal error: a constant evaluation did not finish")]
+    Unfinished,
     #[error("Constants cannot access function arguments")]
     FunctionArg,
     #[error("Constants cannot access global variables")]
@@ -1834,7 +1876,7 @@ impl<'a> ConstantEvaluator<'a> {
             crate::MathFunction::Floor => {
                 component_wise_float!(self, span, [arg], |e| { Ok([e.floor()]) })
             }
-            crate::MathFunction::Round => {
+            crate::MathFunction::RoundEven => {
                 component_wise_float(self, span, [arg], |e| match e {
                     Float::Abstract([e]) => Ok(Float::Abstract([libm::rint(e)])),
                     Float::F32([e]) => Ok(Float::F32([libm::rintf(e)])),
@@ -2162,7 +2204,8 @@ impl<'a> ConstantEvaluator<'a> {
             }
 
             // unimplemented
-            crate::MathFunction::Modf
+            crate::MathFunction::Round
+            | crate::MathFunction::Modf
             | crate::MathFunction::Frexp
             | crate::MathFunction::AddCarry
             | crate::MathFunction::SubBorrow
@@ -2451,20 +2494,47 @@ impl<'a> ConstantEvaluator<'a> {
     /// [`Compose`]: Expression::Compose
     fn eval_zero_value_and_splat(
         &mut self,
+        expr: Handle<Expression>,
+        span: Span,
+    ) -> Result<Handle<Expression>, ConstantEvaluatorError> {
+        let mut tasks = vec![LowerTask::Enter(expr)];
+        let mut results = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                LowerTask::Enter(expr) => {
+                    // If expr is a Compose expression, eliminate ZeroValue and Splat expressions for
+                    // each of its components.
+                    if let Expression::Compose { ty, ref components } = self.expressions[expr] {
+                        tasks.push(LowerTask::Compose {
+                            ty,
+                            count: components.len(),
+                        });
+                        tasks.extend(
+                            components
+                                .iter()
+                                .rev()
+                                .map(|&component| LowerTask::Enter(component)),
+                        );
+                        continue;
+                    }
+                    results.push(self.eval_splat_and_zero_value(expr, span)?);
+                }
+                LowerTask::Compose { ty, count } => {
+                    let components = split_results(&mut results, count)?;
+                    let expr =
+                        self.register_evaluated_expr(Expression::Compose { ty, components }, span)?;
+                    results.push(self.eval_splat_and_zero_value(expr, span)?);
+                }
+            }
+        }
+        results.pop().ok_or(ConstantEvaluatorError::Unfinished)
+    }
+
+    fn eval_splat_and_zero_value(
+        &mut self,
         mut expr: Handle<Expression>,
         span: Span,
     ) -> Result<Handle<Expression>, ConstantEvaluatorError> {
-        // If expr is a Compose expression, eliminate ZeroValue and Splat expressions for
-        // each of its components.
-        if let Expression::Compose { ty, ref components } = self.expressions[expr] {
-            let components = components
-                .clone()
-                .iter()
-                .map(|component| self.eval_zero_value_and_splat(*component, span))
-                .collect::<Result<_, _>>()?;
-            expr = self.register_evaluated_expr(Expression::Compose { ty, components }, span)?;
-        }
-
         // The result of the splat() for a Splat of a scalar ZeroValue is a
         // vector ZeroValue, so we must call eval_zero_value_impl() after
         // splat() in order to ensure we have no ZeroValues remaining.
@@ -2503,70 +2573,91 @@ impl<'a> ConstantEvaluator<'a> {
         ty: Handle<Type>,
         span: Span,
     ) -> Result<Handle<Expression>, ConstantEvaluatorError> {
-        match self.types[ty].inner {
-            TypeInner::Scalar(scalar) => {
-                let expr = Expression::Literal(
-                    Literal::zero(scalar).ok_or(ConstantEvaluatorError::TypeNotConstructible)?,
-                );
-                self.register_evaluated_expr(expr, span)
-            }
-            TypeInner::Vector { size, scalar } => {
-                let scalar_ty = self.types.insert(
-                    Type {
-                        name: None,
-                        inner: TypeInner::Scalar(scalar),
-                    },
-                    span,
-                );
-                let el = self.eval_zero_value_impl(scalar_ty, span)?;
-                let expr = Expression::Compose {
-                    ty,
-                    components: vec![el; size as usize],
-                };
-                self.register_evaluated_expr(expr, span)
-            }
-            TypeInner::Matrix {
-                columns,
-                rows,
-                scalar,
-            } => {
-                let vec_ty = self.types.insert(
-                    Type {
-                        name: None,
-                        inner: TypeInner::Vector { size: rows, scalar },
-                    },
-                    span,
-                );
-                let el = self.eval_zero_value_impl(vec_ty, span)?;
-                let expr = Expression::Compose {
-                    ty,
-                    components: vec![el; columns as usize],
-                };
-                self.register_evaluated_expr(expr, span)
-            }
-            TypeInner::Array {
-                base,
-                size: ArraySize::Constant(size),
-                ..
-            } => {
-                let el = self.eval_zero_value_impl(base, span)?;
-                let expr = Expression::Compose {
-                    ty,
-                    components: vec![el; size.get() as usize],
-                };
-                self.register_evaluated_expr(expr, span)
-            }
-            TypeInner::Struct { ref members, .. } => {
-                let types: Vec<_> = members.iter().map(|m| m.ty).collect();
-                let mut components = Vec::with_capacity(members.len());
-                for ty in types {
-                    components.push(self.eval_zero_value_impl(ty, span)?);
+        let mut tasks = vec![ZeroTask::Enter(ty)];
+        let mut results = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                ZeroTask::Enter(ty) => match self.types[ty].inner {
+                    TypeInner::Scalar(scalar) => {
+                        let expr = Expression::Literal(
+                            Literal::zero(scalar)
+                                .ok_or(ConstantEvaluatorError::TypeNotConstructible)?,
+                        );
+                        results.push(self.register_evaluated_expr(expr, span)?);
+                    }
+                    TypeInner::Vector { size, scalar } => {
+                        let scalar_ty = self.types.insert(
+                            Type {
+                                name: None,
+                                inner: TypeInner::Scalar(scalar),
+                            },
+                            span,
+                        );
+                        tasks.push(ZeroTask::Repeat {
+                            ty,
+                            count: size as usize,
+                        });
+                        tasks.push(ZeroTask::Enter(scalar_ty));
+                    }
+                    TypeInner::Matrix {
+                        columns,
+                        rows,
+                        scalar,
+                    } => {
+                        let vec_ty = self.types.insert(
+                            Type {
+                                name: None,
+                                inner: TypeInner::Vector { size: rows, scalar },
+                            },
+                            span,
+                        );
+                        tasks.push(ZeroTask::Repeat {
+                            ty,
+                            count: columns as usize,
+                        });
+                        tasks.push(ZeroTask::Enter(vec_ty));
+                    }
+                    TypeInner::Array {
+                        base,
+                        size: ArraySize::Constant(size),
+                        ..
+                    } => {
+                        tasks.push(ZeroTask::Repeat {
+                            ty,
+                            count: size.get() as usize,
+                        });
+                        tasks.push(ZeroTask::Enter(base));
+                    }
+                    TypeInner::Struct { ref members, .. } => {
+                        tasks.push(ZeroTask::Members {
+                            ty,
+                            count: members.len(),
+                        });
+                        tasks.extend(
+                            members
+                                .iter()
+                                .rev()
+                                .map(|member| ZeroTask::Enter(member.ty)),
+                        );
+                    }
+                    _ => return Err(ConstantEvaluatorError::TypeNotConstructible),
+                },
+                ZeroTask::Repeat { ty, count } => {
+                    let el = results.pop().ok_or(ConstantEvaluatorError::Unfinished)?;
+                    let expr = Expression::Compose {
+                        ty,
+                        components: vec![el; count],
+                    };
+                    results.push(self.register_evaluated_expr(expr, span)?);
                 }
-                let expr = Expression::Compose { ty, components };
-                self.register_evaluated_expr(expr, span)
+                ZeroTask::Members { ty, count } => {
+                    let components = split_results(&mut results, count)?;
+                    let expr = Expression::Compose { ty, components };
+                    results.push(self.register_evaluated_expr(expr, span)?);
+                }
             }
-            _ => Err(ConstantEvaluatorError::TypeNotConstructible),
         }
+        results.pop().ok_or(ConstantEvaluatorError::Unfinished)
     }
 
     /// Convert the scalar components of `expr` to `target`.
@@ -3062,26 +3153,54 @@ impl<'a> ConstantEvaluator<'a> {
         target: crate::Scalar,
         span: Span,
     ) -> Result<Handle<Expression>, ConstantEvaluatorError> {
-        let expr = self.check_and_get(expr)?;
+        let mut tasks = vec![CastTask::Enter(expr)];
+        let mut results = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                CastTask::Enter(expr) => {
+                    let expr = self.check_and_get(expr)?;
 
-        let Expression::Compose { ty, ref components } = self.expressions[expr] else {
-            return self.cast(expr, target, span);
-        };
+                    let Expression::Compose { ty, ref components } = self.expressions[expr] else {
+                        results.push(self.cast(expr, target, span)?);
+                        continue;
+                    };
 
-        let TypeInner::Array {
-            base: _,
-            size,
-            stride: _,
-        } = self.types[ty].inner
-        else {
-            return self.cast(expr, target, span);
-        };
+                    let TypeInner::Array {
+                        base: _,
+                        size,
+                        stride: _,
+                    } = self.types[ty].inner
+                    else {
+                        results.push(self.cast(expr, target, span)?);
+                        continue;
+                    };
 
-        let mut components = components.clone();
-        for component in &mut components {
-            *component = self.cast_array(*component, target, span)?;
+                    tasks.push(CastTask::Array {
+                        size,
+                        count: components.len(),
+                    });
+                    tasks.extend(
+                        components
+                            .iter()
+                            .rev()
+                            .map(|&component| CastTask::Enter(component)),
+                    );
+                }
+                CastTask::Array { size, count } => {
+                    let components = split_results(&mut results, count)?;
+                    results.push(self.cast_array_of(components, size, span)?);
+                }
+            }
         }
+        results.pop().ok_or(ConstantEvaluatorError::Unfinished)
+    }
 
+    fn cast_array_of(
+        &mut self,
+        components: Vec<Handle<Expression>>,
+        size: ArraySize,
+        span: Span,
+    ) -> Result<Handle<Expression>, ConstantEvaluatorError> {
         let first = *components
             .first()
             .ok_or(ConstantEvaluatorError::EmptyCompose)?;
@@ -3441,7 +3560,9 @@ impl<'a> ConstantEvaluator<'a> {
                             BinaryOperator::Subtract => a - b,
                             BinaryOperator::Multiply => a * b,
                             BinaryOperator::Divide => a / b,
-                            BinaryOperator::Modulo => a % b,
+                            BinaryOperator::Modulo => {
+                                floored_modulo(f64::from(a), f64::from(b)) as f32
+                            }
                             _ => return Err(ConstantEvaluatorError::InvalidBinaryOpArgs),
                         }),
                         (Literal::AbstractInt(a), Literal::U32(b)) => {
@@ -3464,7 +3585,9 @@ impl<'a> ConstantEvaluator<'a> {
                                 BinaryOperator::Subtract => a - b,
                                 BinaryOperator::Multiply => a * b,
                                 BinaryOperator::Divide => a / b,
-                                BinaryOperator::Modulo => a % b,
+                                BinaryOperator::Modulo => {
+                                    f16::from_f64(floored_modulo(a.to_f64(), b.to_f64()))
+                                }
                                 _ => return Err(ConstantEvaluatorError::InvalidBinaryOpArgs),
                             };
                             if !result.is_finite() {
@@ -3981,27 +4104,56 @@ impl<'a> ConstantEvaluator<'a> {
         expr: Handle<Expression>,
         expressions: &Arena<Expression>,
     ) -> Result<Handle<Expression>, ConstantEvaluatorError> {
-        let span = expressions.get_span(expr);
-        match expressions[expr] {
-            ref expr @ (Expression::Literal(_)
-            | Expression::Constant(_)
-            | Expression::ZeroValue(_)) => self.register_evaluated_expr(expr.clone(), span),
-            Expression::Compose { ty, ref components } => {
-                let mut components = components.clone();
-                for component in &mut components {
-                    *component = self.copy_from(*component, expressions)?;
+        let mut tasks = vec![CopyTask::Enter(expr)];
+        let mut results = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                CopyTask::Enter(expr) => {
+                    let span = expressions.get_span(expr);
+                    match expressions[expr] {
+                        ref expr @ (Expression::Literal(_)
+                        | Expression::Constant(_)
+                        | Expression::ZeroValue(_)) => {
+                            results.push(self.register_evaluated_expr(expr.clone(), span)?)
+                        }
+                        Expression::Compose { ty, ref components } => {
+                            tasks.push(CopyTask::Compose {
+                                ty,
+                                count: components.len(),
+                                span,
+                            });
+                            tasks.extend(
+                                components
+                                    .iter()
+                                    .rev()
+                                    .map(|&component| CopyTask::Enter(component)),
+                            );
+                        }
+                        Expression::Splat { size, value } => {
+                            tasks.push(CopyTask::Splat { size, span });
+                            tasks.push(CopyTask::Enter(value));
+                        }
+                        _ => {
+                            log::debug!("copy_from: SubexpressionsAreNotConstant");
+                            return Err(ConstantEvaluatorError::SubexpressionsAreNotConstant);
+                        }
+                    }
                 }
-                self.register_evaluated_expr(Expression::Compose { ty, components }, span)
-            }
-            Expression::Splat { size, value } => {
-                let value = self.copy_from(value, expressions)?;
-                self.register_evaluated_expr(Expression::Splat { size, value }, span)
-            }
-            _ => {
-                log::debug!("copy_from: SubexpressionsAreNotConstant");
-                Err(ConstantEvaluatorError::SubexpressionsAreNotConstant)
+                CopyTask::Compose { ty, count, span } => {
+                    let components = split_results(&mut results, count)?;
+                    results.push(
+                        self.register_evaluated_expr(Expression::Compose { ty, components }, span)?,
+                    );
+                }
+                CopyTask::Splat { size, span } => {
+                    let value = results.pop().ok_or(ConstantEvaluatorError::Unfinished)?;
+                    results.push(
+                        self.register_evaluated_expr(Expression::Splat { size, value }, span)?,
+                    );
+                }
             }
         }
+        results.pop().ok_or(ConstantEvaluatorError::Unfinished)
     }
 
     /// Returns the total number of components, after flattening, of a vector compose expression.
@@ -4575,6 +4727,10 @@ where
         a[2] * b[0] - a[0] * b[2],
         a[0] * b[1] - a[1] * b[0],
     ]
+}
+
+fn floored_modulo(left: f64, right: f64) -> f64 {
+    left - right * Real::floor(left / right)
 }
 
 #[cfg(test)]

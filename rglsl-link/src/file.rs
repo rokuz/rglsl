@@ -2,8 +2,6 @@ use rglsl::object::{ObjectModule, FORMAT_VERSION};
 use rglsl::valid::{Capabilities, ValidationFlags, ValidationMode, Validator};
 use rglsl::{Block, Span, Statement};
 
-pub const MAX_BLOCK_DEPTH: usize = 160;
-
 #[derive(Debug, thiserror::Error)]
 pub enum FileError {
     #[error("cannot write the object module: {0}")]
@@ -60,6 +58,7 @@ pub fn encode(object: &ObjectModule) -> Result<String, FileError> {
 }
 
 pub fn decode(text: &str) -> Result<ObjectModule, FileError> {
+    check_structure_depth(text)?;
     let header: Header =
         ron::de::from_str(text).map_err(|error| FileError::Decode(error.to_string()))?;
     if header.format_version != FORMAT_VERSION {
@@ -175,7 +174,6 @@ fn flatten(root: &Block) -> Result<Vec<Flat>, FileError> {
 
 fn unflatten(flat: Vec<Flat>) -> Result<Block, FileError> {
     let mut open: Vec<Open> = Vec::new();
-    let mut depth = 0;
     let mut root = None;
     for entry in flat {
         if root.is_some() {
@@ -183,10 +181,6 @@ fn unflatten(flat: Vec<Flat>) -> Result<Block, FileError> {
         }
         match entry {
             Flat::Block(length) => {
-                depth += 1;
-                if depth > MAX_BLOCK_DEPTH {
-                    return Err(decode_error("a function body is nested too deeply"));
-                }
                 let remaining =
                     usize::try_from(length).map_err(|_| decode_error("a block is too long"))?;
                 open.push(Open::Block {
@@ -205,7 +199,7 @@ fn unflatten(flat: Vec<Flat>) -> Result<Block, FileError> {
                 }
             }
         }
-        root = settle(&mut open, &mut depth)?;
+        root = settle(&mut open)?;
     }
     root.ok_or_else(|| decode_error("a function body is incomplete"))
 }
@@ -224,7 +218,7 @@ fn add_statement(open: &mut [Open], statement: Statement) -> Result<(), FileErro
     }
 }
 
-fn settle(open: &mut Vec<Open>, depth: &mut usize) -> Result<Option<Block>, FileError> {
+fn settle(open: &mut Vec<Open>) -> Result<Option<Block>, FileError> {
     loop {
         let finished = match open.last() {
             Some(&Open::Block { remaining: 0, .. }) => open.pop(),
@@ -233,7 +227,6 @@ fn settle(open: &mut Vec<Open>, depth: &mut usize) -> Result<Option<Block>, File
         let Some(Open::Block { block, .. }) = finished else {
             return Err(decode_error("a block is malformed"));
         };
-        *depth = depth.saturating_sub(1);
         let complete = match open.last_mut() {
             None => return Ok(Some(block)),
             Some(&mut Open::Statement {
@@ -259,6 +252,83 @@ fn settle(open: &mut Vec<Open>, depth: &mut usize) -> Result<Option<Block>, File
                 *slot = child;
             }
             add_statement(open, statement)?;
+        }
+    }
+}
+
+const MAX_STRUCTURE_DEPTH: usize = 32;
+
+fn check_structure_depth(text: &str) -> Result<(), FileError> {
+    let bytes = text.as_bytes();
+    let mut depth = 0_usize;
+    let mut index = 0;
+    while let Some(&byte) = bytes.get(index) {
+        index += 1;
+        match byte {
+            b'(' | b'[' | b'{' => {
+                depth += 1;
+                if depth > MAX_STRUCTURE_DEPTH {
+                    return Err(decode_error(
+                        "the object file is nested deeper than its format allows",
+                    ));
+                }
+            }
+            b')' | b']' | b'}' => {
+                depth = depth
+                    .checked_sub(1)
+                    .ok_or_else(|| decode_error("the object file has unbalanced brackets"))?;
+            }
+            b'"' => index = skip_string(bytes, index, 0)?,
+            b'r' if matches!(bytes.get(index), Some(b'"' | b'#')) => {
+                let hashes = bytes.get(index..).map_or(0, |rest| {
+                    rest.iter().take_while(|&&byte| byte == b'#').count()
+                });
+                if bytes.get(index + hashes) == Some(&b'"') {
+                    index = skip_string(bytes, index + hashes + 1, hashes)?;
+                }
+            }
+            b'/' if bytes.get(index) == Some(&b'/') => {
+                while bytes.get(index).is_some_and(|&byte| byte != b'\n') {
+                    index += 1;
+                }
+            }
+            b'/' if bytes.get(index) == Some(&b'*') => {
+                let mut open = 1_usize;
+                index += 1;
+                while open > 0 {
+                    match (bytes.get(index), bytes.get(index + 1)) {
+                        (Some(b'/'), Some(b'*')) => {
+                            open += 1;
+                            index += 2;
+                        }
+                        (Some(b'*'), Some(b'/')) => {
+                            open -= 1;
+                            index += 2;
+                        }
+                        (Some(_), _) => index += 1,
+                        (None, _) => return Err(decode_error("an unterminated comment")),
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn skip_string(bytes: &[u8], mut index: usize, hashes: usize) -> Result<usize, FileError> {
+    loop {
+        match bytes.get(index) {
+            None => return Err(decode_error("an unterminated string")),
+            Some(b'\\') if hashes == 0 => index += 2,
+            Some(b'"')
+                if bytes
+                    .get(index + 1..index + 1 + hashes)
+                    .is_some_and(|rest| rest.iter().all(|&byte| byte == b'#')) =>
+            {
+                return Ok(index + 1 + hashes);
+            }
+            Some(_) => index += 1,
         }
     }
 }

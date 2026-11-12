@@ -9,6 +9,7 @@ mod corpus;
 mod exec;
 mod fuzz;
 mod fuzz_exec;
+mod fuzz_libfuzzer;
 mod fuzz_reduce;
 mod groups;
 mod oracles;
@@ -45,7 +46,8 @@ commands:
       --no-local-exec     do not run shaders on KosmicKrisp on this Mac
       --no-remote-exec    do not run shaders on the remote Windows targets
   fuzz                compare rglsl with glslang on a directory of shaders
-                      (accepted or not, valid SPIR-V, crashes)
+                      (accepted or not, valid SPIR-V, crashes); findings go to
+                      target/xtask/fuzz/differential/report.tsv
       --shaders DIR       the shaders to compare (searched recursively)
       --exec              also run every shader family of rglsl-fuzz on the Vulkan targets
                           (local and remote, as for `test`): a variant whose image differs
@@ -57,7 +59,9 @@ commands:
       --reduce JOB        reduce the variant shader job JOB (a .json next to its shader) with
                           rglsl-fuzz's reducer instead of comparing a directory
       --interesting K     with --reduce: crash, reject, invalid-spirv (glslang accepts and
-                          rglsl crashes, rejects or emits invalid SPIR-V), differs-from-glslang
+                          rglsl crashes, rejects or emits invalid SPIR-V), rglsl-fails
+                          (glslang accepts and rglsl crashes or rejects the shader, compiled
+                          alone or as an object linked alone), differs-from-glslang
                           (rglsl's module renders differently from glslang's on the exec
                           target), differs-from-reference (rglsl's variant renders
                           differently from rglsl's reference, glslang's does not) or
@@ -67,8 +71,18 @@ commands:
       --no-ub-guards      with --reduce and without --preserve-semantics: do not bound loops,
                           clamp indices and initialise locals in every candidate
       --output DIR        with --reduce: where the reproducer goes
-                          (default target/fuzz/reduce/<family>-<variant>/result)
-      --jobs N            number of parallel jobs (default: number of CPUs)
+                          (default target/xtask/fuzz/reduce/<family>-<variant>/result)
+      --libfuzzer T       run the cargo-fuzz target T of rglsl-fuzz/fuzz (glsl_parser,
+                          spv_parser, ir, object, glsl_variant) with cargo +nightly fuzz;
+                          corpus, artifacts, log and report.tsv in target/xtask/fuzz/T/
+      --time SECS         with --libfuzzer: how long to fuzz (default 600)
+      --rss-limit-mb MB   with --libfuzzer: memory limit per input (default 4096)
+      --decode INPUT      turn a glsl_variant input into its shader family (reference and
+                          variant_000 shader jobs) for --reduce
+      --output DIR        with --decode: where the family goes
+                          (default target/xtask/fuzz/glsl_variant/findings/<input>)
+      --jobs N            number of parallel jobs (default: number of CPUs; for
+                          --libfuzzer, libFuzzer's -fork, default half the CPUs)
       --timeout SECS      per-process timeout (default: 30)
 
 environment:
@@ -142,6 +156,29 @@ fn run(args: Vec<String>) -> Result<i32> {
             };
             args.finish()?;
             runner::run(&workspace_root()?, options)?;
+            Ok(0)
+        }
+        "fuzz" if args.has("--libfuzzer") => {
+            let options = fuzz_libfuzzer::Options {
+                target: args
+                    .value("--libfuzzer")?
+                    .context("--libfuzzer needs a target")?,
+                time_secs: args.parsed("--time")?.unwrap_or(600),
+                jobs: args.parsed("--jobs")?,
+                timeout_secs: args.parsed("--timeout")?.unwrap_or(30),
+                rss_limit_mb: args.parsed("--rss-limit-mb")?.unwrap_or(4096),
+            };
+            args.finish()?;
+            fuzz_libfuzzer::run(&workspace_root()?, &options)?;
+            Ok(0)
+        }
+        "fuzz" if args.has("--decode") => {
+            let input = args
+                .value("--decode")?
+                .context("--decode needs a glsl_variant input")?;
+            let output = args.value("--output")?.map(PathBuf::from);
+            args.finish()?;
+            fuzz_libfuzzer::decode_artifact(&workspace_root()?, Path::new(&input), output)?;
             Ok(0)
         }
         "fuzz" if args.has("--reduce") => {

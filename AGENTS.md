@@ -17,12 +17,13 @@ goal, the language rules for linkage and `#include`, and the milestones (M0–M9
 | `rglsl-sema/` | semantic analysis over the AST: scopes, types, built-ins, expression typing, diagnostics |
 | `rglsl-link/` | the linker: merges object modules (`rglsl::object::ObjectModule`) into programs, object file format (`docs/design/linking.md`) |
 | `tests/link/` | our own link tests: modules, `expect`, optional single-file `reference.*` for exec |
-| `rglsl-fuzz/` | port of GraphicsFuzz's variant generator (Apache-2.0; see `docs/design/fuzzer.md`) |
+| `rglsl-fuzz/` | port of GraphicsFuzz's variant generator and reducer (Apache-2.0; see `docs/design/fuzzer.md`) |
+| `rglsl-fuzz/fuzz/` | the cargo-fuzz targets (crate `rglsl-libfuzzer`): `glsl_parser`, `spv_parser`, `ir`, `object`, `glsl_variant` |
 | `rglsl-types/` | types shared by the rglsl crates (`ShaderStage`, ...) |
 | `rglsl-cli/` | the `rglsl` command-line tool (to become `glslangValidator`-compatible in M9) |
 | `rglsl-test/`, `rglsl/tests/` | upstream snapshot tests |
 | `rglsl/xtask/` | snapshot validation (`cd rglsl && cargo xtask validate spv`) |
-| `xtask/` | project automation: `cargo xtask oracles`, `cargo xtask test` |
+| `xtask/` | project automation: `cargo xtask oracles`, `cargo xtask test`, `cargo xtask fuzz` |
 | `oracles.toml` | pinned glslang / SPIRV-Tools / SPIRV-Headers commits, KosmicKrisp release and Amber commit (exec) |
 
 ## Rules
@@ -34,16 +35,19 @@ goal, the language rules for linkage and `#include`, and the milestones (M0–M9
 - **Safe Rust only.** `unsafe_code` is forbidden in every crate (workspace lints, and
   the `rglsl` crate's own `[lints]`). Do not add `allow(unsafe_code)`.
 - **No panics on user input.** A crash in the corpus run is always a bug.
-- **No recursion over input structure in the frontend.** A stack overflow aborts the process.
-  The preprocessor, AST, sema, lowering and the fuzzer walk nesting with loops, work lists, or
-  `async` functions driven by `rglsl_types::stack` (every recursive call through
-  `Stack::call`), so their stack use is constant; `rglsl-link/tests/nesting.rs` runs the
-  frontend at 10,000 and 100,000 levels on a 256 KiB debug stack, add a case for new kinds of
-  nesting. The IR half (validator, uniformity, SPIR-V backend, compaction, linker, object files)
-  still recurses at most once per level bounded by a limit (`MAX_NESTING_DEPTH`,
-  `MAX_TYPE_DEPTH`, the preprocessor limits, `MAX_BLOCK_DEPTH`), with small frames, and the
-  same test runs the whole pipeline at every limit on a 1 MiB debug stack; fix an overflow
-  there by shrinking frames, never by raising the stack size (`docs/design/stack.md`).
+- **No recursion over input structure.** A stack overflow aborts the process. Every pass —
+  preprocessor, AST, sema, lowering, fuzzer, SPIR-V frontend, IR (`Block` drop and clone), `proc`,
+  compaction,
+  validator, uniformity analysis, SPIR-V backend, linker, object files — walks nesting with
+  loops, work lists, or `async` functions driven by `rglsl_types::stack` (every recursive call
+  through `Stack::call`), so its stack use is constant. Recursion is fine only over structure
+  bounded by a small constant (vector sizes, matrix columns). There are no artificial nesting
+  limits; only glslang's preprocessor limits (macro expansion depth 200, `#if` nesting 65) are
+  kept for parity. `rglsl-link/tests/nesting.rs` runs the whole pipeline (GLSL and SPIR-V
+  input) at 10,000 levels on a 256 KiB debug stack in `cargo test`, and at 100,000 levels in
+  release behind `--ignored` (CI and the final gate run it): add a case for every new kind of
+  nesting, and replace a scan per level (quadratic at depth) with an index or a memo
+  (`docs/design/stack.md`).
 - **No `unwrap` or `expect` anywhere, no other panics in non-test code.** `unwrap`, `expect`,
   `panic!`, `unreachable!`, `unimplemented!` and `todo!` are denied by clippy in every crate;
   return a `Result` instead, and never a silent default that hides a broken invariant.
@@ -78,6 +82,7 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 RUSTFLAGS="--cfg fuzzing" cargo clippy -p rglsl-libfuzzer --all-targets -- -D warnings
 cargo test --workspace --all-features
+cargo test --release -p rglsl-link --test nesting -- --ignored   # 100,000-level nesting (CI, final gate)
 cargo deny check
 
 cargo xtask oracles [--glslang-dir ../glslang]     # build pinned glslang + spirv-val
@@ -88,6 +93,12 @@ RGLSL_EXEC_REMOTE=<alias>,<alias>@<gpu> cargo xtask test [--glslang-dir ../glsla
                                                    # every remote Windows target, rewrites PROGRESS.md
 cargo xtask test --filter NAME --no-progress-file  # quick local check
 cargo xtask test --no-remote-exec | --no-local-exec | --no-exec   # per-target opt-outs (CI: --no-exec)
+
+cargo xtask fuzz --shaders DIR [--exec]            # differential fuzzing against glslang (+ exec)
+cargo xtask fuzz --libfuzzer TARGET [--time SECS] [--jobs N]   # cargo +nightly fuzz run
+cargo xtask fuzz --decode INPUT                    # glsl_variant input -> shader family
+cargo xtask fuzz --reduce JOB.json --interesting K # GraphicsFuzz reducer
 ```
 
-Per-shader results of the last corpus run: `target/xtask/results.tsv`.
+Per-shader results of the last corpus run: `target/xtask/results.tsv`. Fuzzer findings of every
+mode: `target/xtask/fuzz/` (`docs/design/fuzzer.md`).

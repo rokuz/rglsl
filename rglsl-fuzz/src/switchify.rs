@@ -74,8 +74,8 @@ fn statements_of(statement: &Statement) -> &[Statement] {
 fn next_switch_id(unit: &TranslationUnit) -> u32 {
     let prefix = format!("{GLF_SWITCH}_");
     let mut next = 0;
-    for expression in rglsl_ast::expressions(unit) {
-        if let rglsl_ast::ast::ExpressionKind::Variable(name) = &expression.kind {
+    for external in &unit.external_declarations {
+        for name in crate::strip::referenced_names(external) {
             if let Some(rest) = name.strip_prefix(&prefix) {
                 let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
                 if let Ok(id) = digits.parse::<u32>() {
@@ -327,4 +327,20 @@ fn switchify(statement: Statement, content: Content) -> Statement {
     body.extend(content.after);
     compound.statements = vec![builder.switch(content.selector, body)];
     statement
+}
+
+#[cfg(test)]
+mod tests {
+    use super::next_switch_id;
+    use crate::job::parse_unit;
+
+    #[test]
+    fn switch_ids_skip_names_that_are_only_declared() -> Result<(), crate::Error> {
+        let unit = parse_unit(
+            "frag",
+            "#version 450\nvoid main() { uint _GLF_SWITCH_0_0v[91]; int _GLF_SWITCH_2_1v; }\n",
+        )?;
+        assert_eq!(next_switch_id(&unit), 3);
+        Ok(())
+    }
 }

@@ -311,10 +311,10 @@ OpBranch %197
 %224 = OpFDiv  %4  %183 %184
 %225 = OpSMod  %5  %61 %21
 %226 = OpUMod  %11  %177 %176
-%227 = OpFRem  %3  %55 %15
+%227 = OpFMod  %3  %55 %15
 %228 = OpSMod  %178  %180 %179
 %229 = OpUMod  %10  %181 %182
-%230 = OpFRem  %4  %183 %184
+%230 = OpFMod  %4  %183 %184
 OpBranch %231
 %231 = OpLabel
 %233 = OpIAdd  %178  %180 %179
@@ -349,8 +349,8 @@ OpBranch %231
 %262 = OpSMod  %178  %180 %179
 %263 = OpUMod  %185  %186 %187
 %264 = OpUMod  %185  %186 %187
-%265 = OpFRem  %8  %56 %76
-%266 = OpFRem  %8  %56 %76
+%265 = OpFMod  %8  %56 %76
+%266 = OpFMod  %8  %56 %76
 OpBranch %232
 %232 = OpLabel
 %267 = OpMatrixTimesScalar  %12  %190 %15
@@ -404,10 +404,10 @@ OpBranch %302
 %308 = OpFOrdEqual  %34  %183 %184
 %309 = OpINotEqual  %7  %61 %21
 %310 = OpINotEqual  %7  %177 %176
-%311 = OpFOrdNotEqual  %7  %55 %15
+%311 = OpFUnordNotEqual  %7  %55 %15
 %312 = OpINotEqual  %115  %180 %179
 %313 = OpINotEqual  %94  %181 %182
-%314 = OpFOrdNotEqual  %34  %183 %184
+%314 = OpFUnordNotEqual  %34  %183 %184
 %315 = OpSLessThan  %7  %61 %21
 %316 = OpULessThan  %7  %177 %176
 %317 = OpFOrdLessThan  %7  %55 %15

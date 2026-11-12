@@ -10,14 +10,14 @@ pub struct Layout {
     pub size: u32,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct TypeLayout {
     pub alignment: u32,
     pub size: u32,
     pub shape: Shape,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum Shape {
     Plain,
     Matrix {
@@ -31,13 +31,13 @@ pub enum Shape {
     Struct(Vec<MemberLayout>),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct MemberLayout {
     pub offset: u32,
     pub layout: TypeLayout,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct BlockLayout {
     pub members: Vec<MemberLayout>,
     pub alignment: u32,
@@ -72,16 +72,38 @@ impl TypeLayout {
     }
 
     pub fn matrix(&self) -> Option<MatrixLayout> {
-        match self.shape {
-            Shape::Matrix { stride, row_major } => Some(MatrixLayout { stride, row_major }),
-            Shape::Array { ref element, .. } => element.matrix(),
-            Shape::Plain | Shape::Struct(_) => None,
+        let mut layout = self;
+        loop {
+            match layout.shape {
+                Shape::Matrix { stride, row_major } => {
+                    return Some(MatrixLayout { stride, row_major })
+                }
+                Shape::Array { ref element, .. } => layout = element,
+                Shape::Plain | Shape::Struct(_) => return None,
+            }
         }
     }
 }
 
+impl Drop for TypeLayout {
+    fn drop(&mut self) {
+        let mut pending = Vec::new();
+        take_nested(&mut self.shape, &mut pending);
+        while let Some(mut layout) = pending.pop() {
+            take_nested(&mut layout.shape, &mut pending);
+        }
+    }
+}
+
+fn take_nested(shape: &mut Shape, into: &mut Vec<TypeLayout>) {
+    match core::mem::replace(shape, Shape::Plain) {
+        Shape::Array { element, .. } => into.push(*element),
+        Shape::Struct(members) => into.extend(members.into_iter().map(|member| member.layout)),
+        Shape::Plain | Shape::Matrix { .. } => {}
+    }
+}
+
 const VEC4_ALIGNMENT: u32 = 16;
-const MAX_DEPTH: u32 = 64;
 
 const fn round_up(value: u32, alignment: u32) -> Option<u32> {
     if alignment <= 1 {
@@ -156,7 +178,7 @@ pub fn type_layout(
         packing,
         lengths,
     }
-    .ty(ty, row_major, 0)
+    .ty(ty, row_major)
 }
 
 #[derive(Debug, Clone)]
@@ -302,7 +324,7 @@ pub fn block_layout(
     let mut laid = Vec::with_capacity(members.len());
     for member in members {
         let row_major = member_row_major(&member.qualifiers, row_major);
-        let layout = layouter.ty(&member.ty, row_major, 0)?;
+        let layout = layouter.ty(&member.ty, row_major)?;
         let offset = placer.place(&member.qualifiers, &member.ty, &layout, row_major)?;
         laid.push(MemberLayout { offset, layout });
     }
@@ -337,16 +359,58 @@ struct Layouter<'a> {
 }
 
 impl Layouter<'_> {
-    fn ty(&self, ty: &Type, row_major: bool, depth: u32) -> Option<TypeLayout> {
-        if depth > MAX_DEPTH {
-            return None;
+    fn ty(&self, ty: &Type, row_major: bool) -> Option<TypeLayout> {
+        let mut tasks = Vec::from([LayoutTask::Visit {
+            kind: ty.kind,
+            dims: ty.dimensions(),
+            row_major,
+        }]);
+        let mut results: Vec<TypeLayout> = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                LayoutTask::Visit {
+                    kind,
+                    dims,
+                    row_major,
+                } => {
+                    if let Some((&outer, inner)) = dims.split_first() {
+                        tasks.push(LayoutTask::Array(outer));
+                        tasks.push(LayoutTask::Visit {
+                            kind,
+                            dims: inner,
+                            row_major,
+                        });
+                        continue;
+                    }
+                    match self.leaf(kind, row_major)? {
+                        Ok(layout) => results.push(layout),
+                        Err(members) => {
+                            tasks.push(LayoutTask::Members(members));
+                            tasks.extend(members.iter().rev().map(|member| LayoutTask::Visit {
+                                kind: member.ty.kind,
+                                dims: member.ty.dimensions(),
+                                row_major: member_row_major(&member.qualifiers, row_major),
+                            }));
+                        }
+                    }
+                }
+                LayoutTask::Array(size) => {
+                    let inner = results.pop()?;
+                    let count = self.lengths.length(size)?;
+                    results.push(self.array(inner, count)?);
+                }
+                LayoutTask::Members(members) => {
+                    let start = results.len().checked_sub(members.len())?;
+                    let laid = results.split_off(start);
+                    results.push(self.members(laid)?);
+                }
+            }
         }
-        if let Some(element) = ty.element_type().filter(|_| ty.is_array()) {
-            let inner = self.ty(&element, row_major, depth + 1)?;
-            let count = self.lengths.length(ty.outer_size()?)?;
-            return self.array(inner, count);
-        }
-        match ty.kind {
+        results.pop()
+    }
+
+    fn leaf(&self, kind: TypeKind, row_major: bool) -> Option<Result<TypeLayout, &[Member]>> {
+        Some(Ok(match kind {
             TypeKind::Scalar(scalar) => {
                 let size = scalar_size(scalar);
                 Some(plain(size, size))
@@ -381,11 +445,11 @@ impl Layouter<'_> {
             }
             TypeKind::Struct(id) => {
                 let structure = self.registry.structure(id)?;
-                self.members(&structure.members, row_major, depth + 1)
+                return Some(Err(&structure.members));
             }
             TypeKind::Block(id) => {
                 let block = self.registry.block(id).filter(|block| block.buffer_type)?;
-                self.members(&block.members, row_major, depth + 1)
+                return Some(Err(&block.members));
             }
             TypeKind::Opaque(_) => Some(plain(4, 4)),
             TypeKind::LongVector { scalar, size } => {
@@ -408,7 +472,7 @@ impl Layouter<'_> {
             | TypeKind::TensorView { .. }
             | TypeKind::Tensor { .. }
             | TypeKind::Spirv(_) => None,
-        }
+        }?))
     }
 
     fn vector(&self, scalar: Scalar, size: u8) -> Option<TypeLayout> {
@@ -445,7 +509,7 @@ impl Layouter<'_> {
         })
     }
 
-    fn members(&self, members: &[Member], row_major: bool, depth: u32) -> Option<TypeLayout> {
+    fn members(&self, members: Vec<TypeLayout>) -> Option<TypeLayout> {
         let mut size = 0_u32;
         let mut alignment = if self.packing == Packing::Std140 {
             VEC4_ALIGNMENT
@@ -453,9 +517,7 @@ impl Layouter<'_> {
             1
         };
         let mut laid = Vec::with_capacity(members.len());
-        for member in members {
-            let row_major = member_row_major(&member.qualifiers, row_major);
-            let inner = self.ty(&member.ty, row_major, depth)?;
+        for inner in members {
             alignment = alignment.max(inner.alignment);
             let offset = round_up(size, inner.alignment)?;
             size = offset.checked_add(inner.size)?;
@@ -473,4 +535,14 @@ impl Layouter<'_> {
             shape: Shape::Struct(laid),
         })
     }
+}
+
+enum LayoutTask<'t> {
+    Visit {
+        kind: TypeKind,
+        dims: &'t [ArraySize],
+        row_major: bool,
+    },
+    Array(ArraySize),
+    Members(&'t [Member]),
 }

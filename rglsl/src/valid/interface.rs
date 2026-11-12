@@ -332,56 +332,85 @@ impl LocationShape {
             })
         };
 
-        match types[ty].inner {
-            Ti::Scalar(scalar) => scalar_shape(scalar, 1),
-            Ti::Vector { size, scalar } => scalar_shape(scalar, size as u32),
-            Ti::Matrix {
-                columns,
-                rows,
-                scalar,
-            } => {
-                let column = scalar_shape(scalar, rows as u32)?;
-                // Each column starts a new location.
-                let _: Vs = columns;
-                Some(Self {
-                    locations: column.locations * columns as u32,
-                    components: 4,
-                    ..column
-                })
-            }
-            Ti::Array {
-                base,
-                size: crate::ArraySize::Constant(length),
-                ..
-            } => {
-                let element = Self::of(types, base)?;
-                Some(Self {
-                    locations: element.locations.checked_mul(length.get())?,
-                    ..element
-                })
-            }
-            Ti::Array {
-                base,
-                size: crate::ArraySize::Pending(_),
-                ..
-            } => Self::of(types, base),
-            Ti::Struct { ref members, .. } => {
-                let mut shape = Self {
-                    locations: 0,
-                    components: 4,
-                    float: false,
-                    non_interpolable: false,
-                };
-                for member in members {
-                    let member = Self::of(types, member.ty)?;
-                    shape.locations = shape.locations.checked_add(member.locations)?;
-                    shape.float |= member.float;
-                    shape.non_interpolable |= member.non_interpolable;
+        let mut shapes: crate::FastHashMap<Handle<crate::Type>, Option<Self>> =
+            crate::FastHashMap::default();
+        let Ok(()) = crate::proc::post_order(
+            &mut shapes,
+            ty,
+            |shapes, ty, children| {
+                if shapes.contains_key(&ty) {
+                    return false;
                 }
-                (shape.locations > 0).then_some(shape)
-            }
-            _ => None,
-        }
+                match types[ty].inner {
+                    Ti::Array {
+                        base,
+                        size: crate::ArraySize::Constant(_) | crate::ArraySize::Pending(_),
+                        ..
+                    } => children.push(base),
+                    Ti::Struct { ref members, .. } => {
+                        children.extend(members.iter().map(|member| member.ty));
+                    }
+                    _ => {}
+                }
+                true
+            },
+            |shapes, ty| {
+                let shape = |ty| shapes.get(&ty).copied().flatten();
+                let shape = match types[ty].inner {
+                    Ti::Scalar(scalar) => scalar_shape(scalar, 1),
+                    Ti::Vector { size, scalar } => scalar_shape(scalar, size as u32),
+                    Ti::Matrix {
+                        columns,
+                        rows,
+                        scalar,
+                    } => scalar_shape(scalar, rows as u32).map(|column| {
+                        // Each column starts a new location.
+                        let _: Vs = columns;
+                        Self {
+                            locations: column.locations * columns as u32,
+                            components: 4,
+                            ..column
+                        }
+                    }),
+                    Ti::Array {
+                        base,
+                        size: crate::ArraySize::Constant(length),
+                        ..
+                    } => shape(base).and_then(|element| {
+                        Some(Self {
+                            locations: element.locations.checked_mul(length.get())?,
+                            ..element
+                        })
+                    }),
+                    Ti::Array {
+                        base,
+                        size: crate::ArraySize::Pending(_),
+                        ..
+                    } => shape(base),
+                    Ti::Struct { ref members, .. } => {
+                        let mut total = Some(Self {
+                            locations: 0,
+                            components: 4,
+                            float: false,
+                            non_interpolable: false,
+                        });
+                        for member in members {
+                            total = total.zip(shape(member.ty)).and_then(|(mut total, member)| {
+                                total.locations = total.locations.checked_add(member.locations)?;
+                                total.float |= member.float;
+                                total.non_interpolable |= member.non_interpolable;
+                                Some(total)
+                            });
+                        }
+                        total.filter(|total| total.locations > 0)
+                    }
+                    _ => None,
+                };
+                shapes.insert(ty, shape);
+                Ok::<(), core::convert::Infallible>(())
+            },
+        );
+        shapes.get(&ty).copied().flatten()
     }
 }
 
@@ -394,11 +423,14 @@ fn is_array_of(
     ty: &crate::TypeInner,
     element: &dyn Fn(&crate::TypeInner) -> bool,
 ) -> bool {
-    let crate::TypeInner::Array { base, .. } = *ty else {
-        return false;
-    };
-    let inner = &types[base].inner;
-    element(inner) || is_array_of(types, inner, element)
+    let mut ty = ty;
+    while let crate::TypeInner::Array { base, .. } = *ty {
+        ty = &types[base].inner;
+        if element(ty) {
+            return true;
+        }
+    }
+    false
 }
 
 const fn is_pre_rasterization(stage: crate::ShaderStage) -> bool {

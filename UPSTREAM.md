@@ -781,16 +781,60 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   several `Immediate` variables when no two of them have the same bank and member offset (no
   bank is bank 0, offset 0); `EntryPointError::MoreThanOneImmediateUsed` is reported otherwise.
 
-- **Small frames on recursive paths** (`docs/design/stack.md`). The statement recursion of
-  `valid/function.rs` (`validate_block_impl`), `valid/analyzer.rs` (`process_block`),
-  `valid/handles.rs` (`validate_block_handles`) and `back/spv/block.rs` (`write_block`) is a
-  small dispatcher over `Block`, `If`, `Switch` and `Loop`; the other statements are handled by
-  one non-recursive function each (`validate_statement`, `process_statement`,
-  `validate_statement_handles`, `write_statement`). The checks and the emitted code are
-  unchanged.
+- **No recursion over input structure** (`docs/design/stack.md`). Upstream recurses over
+  blocks, types and constant values; here every such walk is a loop, a work list or a frame
+  machine, with the same order of checks, diagnostics and emitted instructions:
+  - `ir/block.rs`: `Drop` and `Clone` for `Block` use work lists (`Statement::shell`,
+    `child_blocks{,_mut}`); `Block::walk` (pre-order statements) and `visit_blocks_mut` replace
+    the recursive block walks of `proc/terminator.rs`, `back/pipeline_constants.rs`
+    (`adjust_block`, `filter_emits_in_block`), the SPIR-V writer (`collect_texel_images`,
+    `reachable_functions`) and handle validation (`validate_block_handles`).
+  - `valid/function.rs`: `validate_block` is a task list (statement, scope end, loop end);
+    `validate_block_impl`, `validate_if`, `validate_switch` and `validate_loop` are gone.
+    `logically_matches` is a work list.
+  - `valid/analyzer.rs`: `process_block` is a frame machine (`Flow`) carrying the disruptor
+    and the combined uniformity through blocks, `if`, `switch` and loops.
+  - `valid/interface.rs` (`LocationShape::of`, memoized post-order), `valid/immediates.rs`
+    (`ImmediateSlots::from_type`, work list; member offsets wrap instead of overflowing),
+    `valid/mod.rs` (the debug check of `TypeFlags::CONSTRUCTIBLE` looks at the components'
+    flags instead of re-walking the type, which was quadratic).
+  - `proc`: `type_methods.rs` (`scalar_for_conversions`, `is_dynamically_sized`,
+    `needs_host_buffer_byte_size`, `is_abstract`, `automatically_converts_to` are loops;
+    `is_constructible` is a work list), `contains_ray_object`, and in `constant_evaluator.rs`
+    `eval_zero_value_and_splat`, `eval_zero_value_impl`, `cast_array` and `copy_from` are
+    post-order task lists (new `ConstantEvaluatorError::Unfinished` for a broken task list).
+    `proc/type_walk.rs` holds the shared helpers (`contains`, `contains_type`, `any_type`,
+    `post_order`, `array_element`).
+  - `back/spv`: `block.rs` writes blocks with a work list of frames (`Work`, `BlockFrame`,
+    `Resume`); `heap.rs` computes descriptor-heap layouts (`value_size` … `struct_size`) as
+    `async` frames on `rglsl_types::stack` (`frames.rs`, new `Error::Internal`), and memoizes
+    `contains_descriptor`; `writer.rs` declares std140 types in post-order
+    (`write_std140_compat_type_declaration`) and writes std140 conversion functions on the
+    heap stack; `plain_types.rs`, `message.rs`, `physical.rs`, `helpers.rs` and
+    `small_types.rs` use post-order or memoized work lists. `small_types.rs` no longer stops
+    at a type depth of 64. `contains_physical_type` finds a plain type's laid-out original
+    through a reverse map instead of scanning every plain type.
+  - `front/spv` (SPIR-V input): `BlockContext::lower` is a frame machine over the body tree;
+    `patch_statements` walks a stack of statement slices in the original pre-order;
+    `insert_composite` splits level by level (`split_composite`) and composes bottom-up;
+    `record_atomic_access` and `get_image_expr_ty` follow access chains in loops;
+    `can_comparison_sample` loops over binding arrays. `Body` keeps its `depth` and a
+    skew-binary `jump` pointer so `is_parent` is logarithmic instead of linear in the depth.
+  - `front/atomic_upgrade.rs`: `upgrade_type` is a post-order task list; an out-of-range field
+    index is `Error::Unsupported` instead of a panic.
 - **`Clone` for `Block` is iterative** (`ir/block.rs`): nested blocks are copied with a work
   list, through `Block::shallow_clone`, `Statement::shell` and `Statement::child_blocks{,_mut}`,
   so cloning a function uses constant stack.
+
+- **GLSL arithmetic.** `BinaryOperator::Modulo` on floats is GLSL's floored `mod`, written as
+  `OpFMod` (upstream `OpFRem`, WGSL's truncated `%`); the constant evaluator folds it floored,
+  and the SPIR-V front end reads `OpFMod` as `Modulo` and polyfills `OpFRem` with `trunc`.
+  `MathFunction::Round` is GLSL's `round` (`GLSL.std.450 Round`, not folded by the evaluator);
+  the new `MathFunction::RoundEven` is upstream's `Round`. Float `NotEqual` is
+  `OpFUnordNotEqual` (upstream `OpFOrdNotEqual`). `Normalize`, `FaceForward` and `Reflect`
+  accept scalars. An `As` conversion between integers of different width and signedness is
+  `OpSConvert`/`OpUConvert` by the source's signedness, then `OpBitcast` (upstream extended by
+  the target's signedness). The object `FORMAT_VERSION` is 4.
 
 ## Cherry-picked upstream commits
 

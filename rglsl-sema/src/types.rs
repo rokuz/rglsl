@@ -1,6 +1,9 @@
 use alloc::string::String;
+use alloc::sync::Arc;
 use alloc::vec::Vec;
+use core::cmp::Ordering;
 use core::fmt;
+use core::hash::{Hash, Hasher};
 
 use rglsl_ast::ast::NodeId;
 
@@ -799,12 +802,154 @@ impl ArraySize {
     }
 }
 
-pub const MAX_TYPE_DEPTH: usize = 64;
+#[derive(Clone)]
+struct Dimensions {
+    all: Option<Arc<[ArraySize]>>,
+    start: usize,
+}
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+impl Dimensions {
+    const NONE: Self = Self {
+        all: None,
+        start: 0,
+    };
+
+    fn from_vec(dimensions: Vec<ArraySize>) -> Self {
+        if dimensions.is_empty() {
+            Self::NONE
+        } else {
+            Self {
+                all: Some(Arc::from(dimensions)),
+                start: 0,
+            }
+        }
+    }
+
+    fn as_slice(&self) -> &[ArraySize] {
+        self.all
+            .as_deref()
+            .and_then(|all| all.get(self.start..))
+            .unwrap_or_default()
+    }
+
+    fn inner(&self) -> Self {
+        match self.all {
+            Some(ref all) if self.start + 1 < all.len() => Self {
+                all: Some(Arc::clone(all)),
+                start: self.start + 1,
+            },
+            _ => Self::NONE,
+        }
+    }
+
+    fn same(&self, other: &Self) -> bool {
+        match (&self.all, &other.all) {
+            (Some(left), Some(right)) if Arc::ptr_eq(left, right) && self.start == other.start => {
+                true
+            }
+            _ => self.as_slice() == other.as_slice(),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct SharedDimensions {
+    all: Arc<[ArraySize]>,
+    start: usize,
+}
+
+impl SharedDimensions {
+    fn address(&self) -> *const ArraySize {
+        Arc::as_ptr(&self.all).cast::<ArraySize>()
+    }
+}
+
+impl PartialEq for SharedDimensions {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.all, &other.all) && self.start == other.start
+    }
+}
+
+impl Eq for SharedDimensions {}
+
+impl PartialOrd for SharedDimensions {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for SharedDimensions {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.address()
+            .cmp(&other.address())
+            .then(self.start.cmp(&other.start))
+    }
+}
+
+impl Hash for SharedDimensions {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.address().hash(state);
+        self.start.hash(state);
+    }
+}
+
+impl fmt::Debug for SharedDimensions {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SharedDimensions")
+            .field("address", &self.address())
+            .field("start", &self.start)
+            .finish()
+    }
+}
+
+#[derive(Clone)]
 pub struct Type {
     pub kind: TypeKind,
-    pub array: Vec<ArraySize>,
+    dimensions: Dimensions,
+}
+
+impl PartialEq for Type {
+    fn eq(&self, other: &Self) -> bool {
+        self.kind == other.kind && self.dimensions.same(&other.dimensions)
+    }
+}
+
+impl Eq for Type {}
+
+impl PartialOrd for Type {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Type {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.kind.cmp(&other.kind).then_with(|| {
+            if self.dimensions.same(&other.dimensions) {
+                Ordering::Equal
+            } else {
+                self.dimensions().cmp(other.dimensions())
+            }
+        })
+    }
+}
+
+impl Hash for Type {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.kind.hash(state);
+        self.dimensions().hash(state);
+    }
+}
+
+impl fmt::Debug for Type {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("Type")
+            .field("kind", &self.kind)
+            .field("array", &self.dimensions())
+            .finish()
+    }
 }
 
 impl Type {
@@ -820,8 +965,49 @@ impl Type {
     pub const fn new(kind: TypeKind) -> Self {
         Self {
             kind,
-            array: Vec::new(),
+            dimensions: Dimensions::NONE,
         }
+    }
+
+    pub fn dimensions(&self) -> &[ArraySize] {
+        self.dimensions.as_slice()
+    }
+
+    pub fn shared_dimensions(&self) -> Option<SharedDimensions> {
+        self.dimensions.all.as_ref().map(|all| SharedDimensions {
+            all: Arc::clone(all),
+            start: self.dimensions.start,
+        })
+    }
+
+    pub fn set_dimensions(&mut self, dimensions: &[ArraySize]) {
+        if self.dimensions() != dimensions {
+            self.dimensions = Dimensions::from_vec(dimensions.to_vec());
+        }
+    }
+
+    pub fn update_dimensions(&mut self, update: impl FnOnce(&mut [ArraySize])) {
+        let mut dimensions = self.dimensions().to_vec();
+        update(&mut dimensions);
+        self.set_dimensions(&dimensions);
+    }
+
+    pub fn set_dimension(&mut self, index: usize, size: ArraySize) {
+        if self
+            .dimensions()
+            .get(index)
+            .is_some_and(|current| *current != size)
+        {
+            self.update_dimensions(|dimensions| {
+                if let Some(slot) = dimensions.get_mut(index) {
+                    *slot = size;
+                }
+            });
+        }
+    }
+
+    pub fn set_outer_size(&mut self, size: ArraySize) {
+        self.set_dimension(0, size);
     }
 
     pub const fn scalar(scalar: Scalar) -> Self {
@@ -881,34 +1067,17 @@ impl Type {
         }
     }
 
-    pub fn depth(&self, registry: &TypeRegistry) -> usize {
-        let inner = match self.kind {
-            TypeKind::Struct(id) => registry
-                .structure(id)
-                .map_or(0, |structure| structure.depth),
-            TypeKind::Block(id) => registry.block(id).map_or(0, |block| {
-                block
-                    .members
-                    .iter()
-                    .map(|member| member.ty.depth(registry))
-                    .max()
-                    .unwrap_or(0)
-                    .saturating_add(1)
-            }),
-            _ => 0,
-        };
-        inner.saturating_add(self.array.len())
-    }
-
-    pub fn array_of(mut self, size: ArraySize) -> Self {
-        self.array.insert(0, size);
-        self
+    pub fn array_of(self, size: ArraySize) -> Self {
+        self.with_dimensions(&[size])
     }
 
     pub fn with_dimensions(mut self, outer: &[ArraySize]) -> Self {
+        if outer.is_empty() {
+            return self;
+        }
         let mut dimensions = outer.to_vec();
-        dimensions.append(&mut self.array);
-        self.array = dimensions;
+        dimensions.extend_from_slice(self.dimensions());
+        self.dimensions = Dimensions::from_vec(dimensions);
         self
     }
 
@@ -925,7 +1094,7 @@ impl Type {
     }
 
     pub const fn is_array(&self) -> bool {
-        !self.array.is_empty()
+        self.dimensions.all.is_some()
     }
 
     pub const fn is_scalar(&self) -> bool {
@@ -1052,7 +1221,7 @@ impl Type {
     }
 
     pub fn contains_unsized_array(&self, registry: &TypeRegistry) -> bool {
-        if self.array.contains(&ArraySize::Unsized) {
+        if self.dimensions().contains(&ArraySize::Unsized) {
             return true;
         }
         match self.kind {
@@ -1109,7 +1278,7 @@ impl Type {
             TypeKind::Reference(_) => 1,
             _ => return None,
         };
-        for dimension in &self.array {
+        for dimension in self.dimensions() {
             match dimension {
                 ArraySize::Sized(size) => total = total.checked_mul(*size)?,
                 ArraySize::Specialized(_) | ArraySize::Unsized => return None,
@@ -1119,10 +1288,10 @@ impl Type {
     }
 
     pub fn element_type(&self) -> Option<Self> {
-        if let Some((_, inner)) = self.array.split_first() {
+        if self.is_array() {
             return Some(Self {
                 kind: self.kind,
-                array: inner.to_vec(),
+                dimensions: self.dimensions.inner(),
             });
         }
         match self.kind {
@@ -1156,11 +1325,11 @@ impl Type {
     }
 
     pub fn outer_size(&self) -> Option<ArraySize> {
-        self.array.first().copied()
+        self.dimensions().first().copied()
     }
 
     pub fn length(&self) -> Option<u32> {
-        if let Some(size) = self.array.first() {
+        if let Some(size) = self.dimensions().first() {
             return match size {
                 ArraySize::Sized(size) => Some(*size),
                 ArraySize::Specialized(_) | ArraySize::Unsized => None,
@@ -1201,12 +1370,12 @@ impl Type {
         };
         Self {
             kind,
-            array: self.array.clone(),
+            dimensions: self.dimensions.clone(),
         }
     }
 
     pub fn same_shape(&self, other: &Self) -> bool {
-        if self.array != other.array {
+        if !self.dimensions.same(&other.dimensions) {
             return false;
         }
         match (self.kind, other.kind) {
@@ -1396,7 +1565,7 @@ impl fmt::Display for TypeDisplay<'_> {
             }
             TypeKind::Spirv(_) => formatter.write_str("spirv_type")?,
         }
-        for dimension in &self.ty.array {
+        for dimension in self.ty.dimensions() {
             match dimension {
                 ArraySize::Sized(size) => write!(formatter, "[{size}]")?,
                 ArraySize::Specialized(_) => formatter.write_str("[specialization constant]")?,
@@ -1435,7 +1604,6 @@ pub struct StructType {
     pub contains_reference: bool,
     pub scalars: Vec<Scalar>,
     pub flattened_size: Option<u32>,
-    pub depth: usize,
 }
 
 impl StructType {
@@ -1578,9 +1746,7 @@ impl TypeRegistry {
         let mut contains_reference = false;
         let mut scalars = Vec::new();
         let mut flattened_size = Some(0_u32);
-        let mut depth = 0;
         for member in &members {
-            depth = depth.max(member.ty.depth(self));
             contains_opaque |= member.ty.contains_opaque(self);
             contains_unsized_array |= member.ty.contains_unsized_array(self);
             contains_reference |= member.ty.contains_reference(self);
@@ -1602,7 +1768,6 @@ impl TypeRegistry {
             contains_reference,
             scalars,
             flattened_size,
-            depth: depth.saturating_add(1),
         });
         Some(id)
     }

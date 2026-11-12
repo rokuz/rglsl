@@ -33,16 +33,56 @@ impl Writer {
     }
 
     fn laid_out_copy(&mut self, module: &crate::Module, ty: Handle<Type>) -> Result<Word, Error> {
-        if let Some(&id) = self.laid_out_copies.get(&ty) {
-            return Ok(id);
+        let mut tasks = Vec::from([(ty, None)]);
+        let mut results = Vec::new();
+        while let Some((ty, normal)) = tasks.pop() {
+            let Some(normal) = normal else {
+                if let Some(&id) = self.laid_out_copies.get(&ty) {
+                    results.push(id);
+                    continue;
+                }
+                let normal = self.get_handle_type_id(ty)?;
+                if self.laid_out_types.contains(ty) {
+                    results.push(normal);
+                    continue;
+                }
+                match module.types[ty].inner {
+                    TypeInner::Array { base, .. } => {
+                        tasks.push((ty, Some(normal)));
+                        tasks.push((base, None));
+                    }
+                    TypeInner::Struct { ref members, .. } => {
+                        tasks.push((ty, Some(normal)));
+                        tasks.extend(members.iter().rev().map(|member| (member.ty, None)));
+                    }
+                    _ => {
+                        self.laid_out_copies.insert(ty, normal);
+                        results.push(normal);
+                    }
+                }
+                continue;
+            };
+            let id = self.write_laid_out_copy(module, ty, normal, &mut results)?;
+            self.laid_out_copies.insert(ty, id);
+            results.push(id);
         }
-        let normal = self.get_handle_type_id(ty)?;
-        if self.laid_out_types.contains(ty) {
-            return Ok(normal);
-        }
-        let id = match module.types[ty].inner {
-            TypeInner::Array { base, stride, .. } => {
-                let element = self.laid_out_copy(module, base)?;
+        results
+            .pop()
+            .ok_or(Error::Internal("a laid out copy did not finish"))
+    }
+
+    fn write_laid_out_copy(
+        &mut self,
+        module: &crate::Module,
+        ty: Handle<Type>,
+        normal: Word,
+        results: &mut Vec<Word>,
+    ) -> Result<Word, Error> {
+        Ok(match module.types[ty].inner {
+            TypeInner::Array { stride, .. } => {
+                let element = results
+                    .pop()
+                    .ok_or(Error::Internal("a laid out copy lost its element"))?;
                 let length = match self
                     .composite_types
                     .get(&normal)
@@ -61,10 +101,11 @@ impl Writer {
                 id
             }
             TypeInner::Struct { ref members, .. } => {
-                let mut member_ids = Vec::with_capacity(members.len());
-                for member in members {
-                    member_ids.push(self.laid_out_copy(module, member.ty)?);
-                }
+                let start = results
+                    .len()
+                    .checked_sub(members.len())
+                    .ok_or(Error::Internal("a laid out copy lost its members"))?;
+                let member_ids = results.split_off(start);
                 let id = self.id_gen.next();
                 for (index, member) in members.iter().enumerate() {
                     self.decorate_struct_member(id, index, member, &module.types, true)?;
@@ -79,9 +120,7 @@ impl Writer {
                 id
             }
             _ => normal,
-        };
-        self.laid_out_copies.insert(ty, id);
-        Ok(id)
+        })
     }
 }
 

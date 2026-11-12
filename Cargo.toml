@@ -10,7 +10,7 @@ members = [
     "rglsl-cli",
     "rglsl-fuzz",
     "rglsl-link",
-    "rglsl/fuzz",
+    "rglsl-fuzz/fuzz",
     "rglsl/xtask",
     "xtask",
 ]

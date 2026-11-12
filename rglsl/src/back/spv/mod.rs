@@ -100,6 +100,7 @@ mod atomic;
 mod block;
 mod cooperative;
 mod f16_polyfill;
+mod frames;
 mod heap;
 mod helpers;
 mod image;
@@ -196,6 +197,8 @@ pub enum Error {
     MissingBinding(crate::ResourceBinding),
     #[error("function `{0}` is imported: link the module before writing SPIR-V")]
     Import(String),
+    #[error("internal error: {0}")]
+    Internal(&'static str),
 }
 
 #[derive(Default)]
@@ -946,6 +949,8 @@ pub struct Writer {
     laid_out_types: crate::arena::HandleSet<crate::Type>,
     composite_types: crate::FastHashMap<Word, plain_types::CompositeType>,
     plain_types: crate::FastHashMap<Word, Word>,
+    laid_out_of_plain: crate::FastHashMap<Word, Word>,
+    physical_types: crate::FastHashMap<Word, bool>,
     decorated_blocks: crate::arena::HandleSet<crate::Type>,
     buffer_blocks: crate::FastHashSet<Word>,
     physical_pointees: crate::FastHashMap<Handle<crate::Type>, crate::StorageAccess>,

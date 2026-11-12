@@ -56,7 +56,7 @@ twin = "also writes `vals[3] = vector<int, 12>(4)`"
 
 ["spv.matrix.float16.frag"]
 undefined = "divides by zero: `f16mat3x4(x)` leaves the off-diagonal elements 0, so `sum34 /= matrixCompMult(m1, m2)` and `f / m1` divide by 0 (and by `src`, which may be 0 or overflow half precision); SPIR-V leaves the result undefined, and glslang's own module wrote infinities of different signs on two runs on the NVIDIA target"
-twin = "fills every element of `m1` and `m2` and takes every operand from `exp2(floor(clamp(src, -2.0, 2.0)))`, a power of two from 0.25 to 4, so no divisor is 0, nothing overflows half precision, and dividing equals multiplying by the reciprocal (glslang lowers `m / s` to `m * (1 / s)`, rglsl to a division per column, which rounds differently in half precision); drops the comments"
+twin = "fills every element of `m1` and `m2` and takes every operand from `exp2(floor(clamp(src, -2.0, 2.0)))`, a power of two from 0.25 to 4, so no divisor is 0, nothing overflows half precision; drops the comments"
 
 ["spv.coopmatKHR_arithmetic.comp"]
 undefined = "declares cooperative matrices no device lists in `VkCooperativeMatrixPropertiesKHR` (VUID-RuntimeSpirv-OpTypeCooperativeMatrixKHR-10163): float and uint32_t `gl_MatrixUseA`/`gl_MatrixUseB` (neither remote target has a float32 or uint32 A or B type) and 8×8 float16_t, uint8_t and int8_t (the AMD target lists 16×16, the NVIDIA target 16×16 or 16×8 for float16_t and 16×32 for uint8_t and int8_t); it also reads its matrices uninitialized and divides `u8` and `i8` by zero after `-=`"

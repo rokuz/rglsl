@@ -1094,90 +1094,26 @@ impl super::Validator {
         current_function: Option<Handle<crate::Function>>,
         types: &UniqueArena<crate::Type>,
     ) -> Result<(), InvalidHandleError> {
-        for statement in block.iter() {
-            Self::validate_statement_kind_handles(
-                statement,
-                expressions,
-                functions,
-                current_function,
-                types,
-            )?;
-        }
-        Ok(())
-    }
-
-    fn validate_statement_kind_handles(
-        statement: &crate::Statement,
-        expressions: &Arena<crate::Expression>,
-        functions: &Arena<crate::Function>,
-        current_function: Option<Handle<crate::Function>>,
-        types: &UniqueArena<crate::Type>,
-    ) -> Result<(), InvalidHandleError> {
-        match *statement {
-            crate::Statement::Block(ref block) => {
-                Self::validate_block_handles(block, expressions, functions, current_function, types)
+        for statement in block.walk() {
+            let condition = match *statement {
+                crate::Statement::Block(_) => None,
+                crate::Statement::If { condition, .. } => Some(condition),
+                crate::Statement::Switch { selector, .. } => Some(selector),
+                crate::Statement::Loop { break_if, .. } => break_if,
+                _ => {
+                    Self::validate_statement_handles(
+                        statement,
+                        expressions,
+                        functions,
+                        current_function,
+                        types,
+                    )?;
+                    continue;
+                }
+            };
+            if let Some(condition) = condition {
+                Self::validate_expression_handle(condition, expressions)?;
             }
-            crate::Statement::If {
-                condition,
-                ref accept,
-                ref reject,
-                control: _,
-            } => Self::validate_nested_handles(
-                Some(condition),
-                [accept, reject].into_iter(),
-                expressions,
-                functions,
-                current_function,
-                types,
-            ),
-            crate::Statement::Switch {
-                selector,
-                ref cases,
-                control: _,
-            } => Self::validate_nested_handles(
-                Some(selector),
-                cases.iter().map(|case| &case.body),
-                expressions,
-                functions,
-                current_function,
-                types,
-            ),
-            crate::Statement::Loop {
-                ref body,
-                ref continuing,
-                break_if,
-                control: _,
-            } => Self::validate_nested_handles(
-                break_if,
-                [body, continuing].into_iter(),
-                expressions,
-                functions,
-                current_function,
-                types,
-            ),
-            _ => Self::validate_statement_handles(
-                statement,
-                expressions,
-                functions,
-                current_function,
-                types,
-            ),
-        }
-    }
-
-    fn validate_nested_handles<'b>(
-        condition: Option<Handle<crate::Expression>>,
-        blocks: impl Iterator<Item = &'b crate::Block>,
-        expressions: &Arena<crate::Expression>,
-        functions: &Arena<crate::Function>,
-        current_function: Option<Handle<crate::Function>>,
-        types: &UniqueArena<crate::Type>,
-    ) -> Result<(), InvalidHandleError> {
-        if let Some(condition) = condition {
-            Self::validate_expression_handle(condition, expressions)?;
-        }
-        for block in blocks {
-            Self::validate_block_handles(block, expressions, functions, current_function, types)?;
         }
         Ok(())
     }

@@ -18,7 +18,7 @@ use rglsl::{
 };
 
 pub use error::{LinkError, LinkErrors};
-pub use file::{decode, encode, FileError, MAX_BLOCK_DEPTH};
+pub use file::{decode, encode, FileError};
 pub use program::{group_by_stage, link_objects, link_program};
 pub use rglsl::object::ObjectModule;
 

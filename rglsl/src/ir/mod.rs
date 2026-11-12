@@ -235,7 +235,7 @@ use crate::arena::{Arena, Handle, Range, UniqueArena};
 use crate::diagnostic_filter::DiagnosticFilterNode;
 use crate::{FastIndexMap, NamedExpressions, NonUniformExpressions, PrecisionExpressions};
 
-pub use block::Block;
+pub use block::{Block, Walk};
 pub use rglsl_types::{ResourceBinding, ShaderStage};
 
 /// Explicitly allows early depth/stencil tests.
@@ -1722,7 +1722,7 @@ pub enum BinaryOperator {
     Subtract,
     Multiply,
     Divide,
-    /// Equivalent of the WGSL's `%` operator or SPIR-V's `OpFRem`
+    /// Equivalent of SPIR-V's `OpSMod`, `OpUMod` and `OpFMod` (GLSL's `%` and `mod`)
     Modulo,
     Equal,
     NotEqual,
@@ -1942,6 +1942,7 @@ pub enum MathFunction {
     Ceil,
     Floor,
     Round,
+    RoundEven,
     Fract,
     Trunc,
     Modf,

@@ -699,7 +699,14 @@ impl Analyzer<'_> {
                     operand.value.as_ref().map(|value| value.convert(scalar))
                 })
                 .collect();
-            converted.and_then(|converted| fold_builtin(name, &converted))
+            let result = if matches!(name, "any" | "all") {
+                Some(Scalar::Bool)
+            } else {
+                function.return_type.base_scalar()
+            };
+            converted
+                .zip(result)
+                .and_then(|(converted, result)| fold_builtin(name, &converted, result))
         } else {
             None
         };
@@ -1318,9 +1325,7 @@ impl Analyzer<'_> {
             }
             match ty.outer_size() {
                 Some(ArraySize::Unsized) => {
-                    if let Some(first) = ty.array.first_mut() {
-                        *first = ArraySize::Sized(count);
-                    }
+                    ty.set_outer_size(ArraySize::Sized(count));
                 }
                 Some(ArraySize::Sized(size)) if size != count => {
                     return fail(
@@ -1331,15 +1336,19 @@ impl Analyzer<'_> {
                 }
                 _ => {}
             }
-            if ty.array.len() > 1 {
-                let inner = operands.first().map(|operand| operand.ty.array.clone());
+            if ty.dimensions().len() > 1 {
+                let inner = operands
+                    .first()
+                    .map(|operand| operand.ty.dimensions().to_vec());
                 match inner {
-                    Some(inner) if inner.len() + 1 == ty.array.len() => {
-                        for (slot, size) in ty.array.iter_mut().skip(1).zip(inner) {
-                            if *slot == ArraySize::Unsized {
-                                *slot = size;
+                    Some(inner) if inner.len() + 1 == ty.dimensions().len() => {
+                        ty.update_dimensions(|dimensions| {
+                            for (slot, size) in dimensions.iter_mut().skip(1).zip(inner) {
+                                if *slot == ArraySize::Unsized {
+                                    *slot = size;
+                                }
                             }
-                        }
+                        });
                     }
                     _ => {
                         return fail(

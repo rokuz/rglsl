@@ -6,30 +6,12 @@ use rglsl::{Block, Function, Handle, Statement};
 use crate::error::LinkError;
 
 pub(crate) fn callees(block: &Block, found: &mut Vec<Handle<Function>>) {
-    for statement in block.iter() {
+    for statement in block.walk() {
         match *statement {
-            Statement::Block(ref inner) => callees(inner, found),
-            Statement::If {
-                ref accept,
-                ref reject,
-                ..
-            } => {
-                callees(accept, found);
-                callees(reject, found);
-            }
-            Statement::Switch { ref cases, .. } => {
-                for case in cases {
-                    callees(&case.body, found);
-                }
-            }
-            Statement::Loop {
-                ref body,
-                ref continuing,
-                ..
-            } => {
-                callees(body, found);
-                callees(continuing, found);
-            }
+            Statement::Block(_)
+            | Statement::If { .. }
+            | Statement::Switch { .. }
+            | Statement::Loop { .. } => {}
             Statement::Call { function, .. } => {
                 if !found.contains(&function) {
                     found.push(function);

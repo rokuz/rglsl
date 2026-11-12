@@ -31,7 +31,7 @@ impl Lowerer<'_> {
             path.extend(step);
             let mut ty = ty;
             let mut sized = true;
-            for size in &declared.array {
+            for size in declared.dimensions() {
                 let base = match self.module.types[ty].inner {
                     TypeInner::Array { base, .. } | TypeInner::BindingArray { base, .. } => base,
                     _ => {

@@ -663,10 +663,10 @@ const NESTS: [(&str, &str, &str, &str, usize); 17] = [
 ];
 
 #[test]
-fn nesting_up_to_the_parser_limit_is_analysed() -> TestResult {
-    let limit = usize::try_from(rglsl_ast::MAX_NESTING_DEPTH)?;
+fn nested_sources_are_analysed() -> TestResult {
+    let limit = 1_000;
     for (open, core, close, tail, levels_per_repeat) in NESTS {
-        let count = (limit - 8) / levels_per_repeat;
+        let count = limit / levels_per_repeat;
         let source = format!(
             "#version 450\nint f(int a) {{ return a; }}\nvoid main() {{ bool a; int b, c, d, e, g, h, i, j, k; {}{core}{}{tail} }}\n",
             open.repeat(count),
@@ -678,15 +678,15 @@ fn nesting_up_to_the_parser_limit_is_analysed() -> TestResult {
     }
     let structures = format!(
         "#version 450\n{}int a; {}\nvoid main() {{}}\n",
-        "struct { ".repeat(limit - 8),
-        "} a; ".repeat(limit - 8)
+        "struct { ".repeat(limit),
+        "} a; ".repeat(limit)
     );
     let unit = rglsl_ast::parse(&structures)?;
     assert!(!analyze(&unit, &Options::new(Stage::Fragment)).is_ok());
     let lists = format!(
         "#version 450\nint a = {}1{};\nvoid main() {{}}\n",
-        "{".repeat(limit - 8),
-        "}".repeat(limit - 8)
+        "{".repeat(limit),
+        "}".repeat(limit)
     );
     let unit = rglsl_ast::parse(&lists)?;
     assert!(!analyze(&unit, &Options::new(Stage::Fragment)).is_ok());
@@ -780,7 +780,7 @@ fn sized_literals_fold_with_their_width() -> TestResult {
             Some(Value::Uint64(1)),
             Some(Value::Int16(32767)),
             Some(Value::Uint8(4)),
-            Some(Value::Float16(half::f16::from_f64(0.1).to_f64())),
+            Some(Value::Float16(0.1)),
             Some(Value::Int64(i64::MIN)),
         ]
     );

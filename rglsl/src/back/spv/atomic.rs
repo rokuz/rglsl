@@ -28,30 +28,8 @@ pub(super) struct OrderIds {
 }
 
 pub(super) fn collect_texel_images(block: &crate::Block, images: &mut HandleSet<Expression>) {
-    for statement in block.iter() {
+    for statement in block.walk() {
         match *statement {
-            Statement::Block(ref inner) => collect_texel_images(inner, images),
-            Statement::If {
-                ref accept,
-                ref reject,
-                ..
-            } => {
-                collect_texel_images(accept, images);
-                collect_texel_images(reject, images);
-            }
-            Statement::Switch { ref cases, .. } => {
-                for case in cases {
-                    collect_texel_images(&case.body, images);
-                }
-            }
-            Statement::Loop {
-                ref body,
-                ref continuing,
-                ..
-            } => {
-                collect_texel_images(body, images);
-                collect_texel_images(continuing, images);
-            }
             Statement::ImageAtomic {
                 image,
                 order: Some(_),

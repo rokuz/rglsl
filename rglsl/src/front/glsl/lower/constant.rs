@@ -6,6 +6,16 @@ use rglsl_sema::types::{ArraySize, Type as GlslType, TypeKind};
 use super::{internal, Lowerer, Result};
 use crate::{Expression, Handle, Literal, Span};
 
+fn half_toward_zero(value: f64) -> half::f16 {
+    let single = value as f32;
+    let nearest = half::f16::from_f32(single);
+    if single.is_finite() && nearest.to_f32().abs() > single.abs() {
+        half::f16::from_bits(nearest.to_bits().saturating_sub(1))
+    } else {
+        nearest
+    }
+}
+
 pub(super) fn literal(value: Value) -> Literal {
     match value {
         Value::Bool(value) => Literal::Bool(value),
@@ -17,7 +27,7 @@ pub(super) fn literal(value: Value) -> Literal {
         Value::Uint16(value) => Literal::U16(value),
         Value::Int64(value) => Literal::I64(value),
         Value::Uint64(value) => Literal::U64(value),
-        Value::Float16(value) => Literal::F16(half::f16::from_f64(value)),
+        Value::Float16(value) => Literal::F16(half_toward_zero(value)),
         Value::Int8(value) => Literal::I8(value),
         Value::Uint8(value) => Literal::U8(value),
         Value::BFloat16(value) => Literal::BF16(crate::proc::small_float::bf16_from_f64(value)),
@@ -124,7 +134,21 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
         values: Vec<Value>,
         span: Span,
     ) -> Result<Handle<Expression>> {
-        let values = values.as_slice();
+        let end = values.len();
+        let values: alloc::rc::Rc<[Value]> = values.into();
+        self.nest(self.clone().global_constant_part(ty, values, 0..end, span))
+            .await
+    }
+
+    async fn global_constant_part(
+        self,
+        ty: GlslType,
+        all: alloc::rc::Rc<[Value]>,
+        range: core::ops::Range<usize>,
+        span: Span,
+    ) -> Result<Handle<Expression>> {
+        let offset = range.start;
+        let values = all.get(range).ok_or_else(|| internal(span))?;
         let ty = &ty;
         let analysis = self.with(|this| this.analysis)?;
         match shape(ty, values, &analysis.types).ok_or_else(|| internal(span))? {
@@ -136,12 +160,15 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
             Shape::Compose(parts) => {
                 let mut components = Vec::with_capacity(parts.len());
                 for (part, start, size) in parts {
+                    let start = offset.checked_add(start).ok_or_else(|| internal(span))?;
                     let end = start.checked_add(size).ok_or_else(|| internal(span))?;
-                    let slice = values.get(start..end).ok_or_else(|| internal(span))?;
                     components.push({
-                        let frame =
-                            self.clone()
-                                .global_constant(part.clone(), slice.to_vec(), span);
+                        let frame = self.clone().global_constant_part(
+                            part.clone(),
+                            alloc::rc::Rc::clone(&all),
+                            start..end,
+                            span,
+                        );
                         let result = self.nest(frame).await;
                         result
                     }?);

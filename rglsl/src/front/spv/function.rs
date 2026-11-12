@@ -140,7 +140,9 @@ impl<I: Iterator<Item = u32>> super::Frontend<I> {
             parameter_sampling: &mut parameters_sampling,
         };
         // Insert the main body whose parent is also himself
-        block_ctx.bodies.push(super::Body::with_parent(0));
+        block_ctx
+            .bodies
+            .push(super::Body::with_parent(&block_ctx.bodies, 0));
 
         // Scan the blocks and add them as nodes
         loop {
@@ -670,101 +672,256 @@ impl BlockContext<'_> {
 
     /// Consumes the `BlockContext` producing a Ir [`Block`](crate::Block)
     fn lower(mut self) -> Result<crate::Block, Error> {
-        fn lower_impl(
-            blocks: &mut crate::FastHashMap<spirv::Word, crate::Block>,
-            bodies: &[super::Body],
-            body_idx: BodyIndex,
-        ) -> Result<crate::Block, Error> {
-            let mut block = crate::Block::new();
-
-            for item in bodies[body_idx].data.iter() {
+        let bodies = &self.bodies;
+        let blocks = &mut self.blocks;
+        let mut frames = alloc::vec![Lowering::new(0)];
+        let mut active = crate::FastHashSet::from_iter([0]);
+        let mut finished: Option<crate::Block> = None;
+        while let Some(mut frame) = frames.pop() {
+            if let Some(child) = finished.take() {
+                if let Some(statement) = frame.receive(child)? {
+                    frame.block.push(statement, crate::Span::default());
+                }
+            }
+            if let Some(next) = frame.next_child() {
+                if !active.insert(next) {
+                    return Err(Error::InternalError("a body contains itself"));
+                }
+                frames.push(frame);
+                frames.push(Lowering::new(next));
+                continue;
+            }
+            let body = bodies
+                .get(frame.body)
+                .ok_or(Error::InternalError("a body index is out of range"))?;
+            let mut descended = None;
+            while let Some(item) = body.data.get(frame.item) {
+                frame.item += 1;
                 match *item {
-                    super::BodyFragment::BlockId(id) => {
-                        block.append(blocks.get_mut(&id).ok_or(Error::InvalidId(id))?)
-                    }
+                    super::BodyFragment::BlockId(id) => frame
+                        .block
+                        .append(blocks.get_mut(&id).ok_or(Error::InvalidId(id))?),
                     super::BodyFragment::If {
                         condition,
                         accept,
                         reject,
                     } => {
-                        let accept = lower_impl(blocks, bodies, accept)?;
-                        let reject = lower_impl(blocks, bodies, reject)?;
-
-                        block.push(
-                            crate::Statement::If {
-                                condition,
-                                accept,
-                                reject,
-                                control: crate::SelectionControl::None,
-                            },
-                            crate::Span::default(),
-                        )
+                        frame.pending = Some(Pending::If {
+                            condition,
+                            children: [accept, reject],
+                            accept: None,
+                        });
                     }
                     super::BodyFragment::Loop {
                         body,
                         continuing,
                         break_if,
                     } => {
-                        let body = lower_impl(blocks, bodies, body)?;
-                        let continuing = lower_impl(blocks, bodies, continuing)?;
-
-                        block.push(
-                            crate::Statement::Loop {
-                                body,
-                                continuing,
-                                break_if,
-                                control: crate::LoopControl::default(),
-                            },
-                            crate::Span::default(),
-                        )
+                        frame.pending = Some(Pending::Loop {
+                            children: [body, continuing],
+                            break_if,
+                            body: None,
+                        });
                     }
                     super::BodyFragment::Switch {
                         selector,
                         ref cases,
                         default,
                     } => {
-                        let mut ir_cases = cases
-                            .iter()
-                            .map(|&(value, body_idx)| {
-                                let body = lower_impl(blocks, bodies, body_idx)?;
-
-                                // Handle simple cases that would make a fallthrough statement unreachable code
-                                let fall_through = body.last().is_none_or(|s| !s.is_terminator());
-
-                                Ok(crate::SwitchCase {
-                                    value: crate::SwitchValue::I32(value),
-                                    body,
-                                    fall_through,
-                                })
-                            })
-                            .collect::<Result<Vec<_>, Error>>()?;
-                        ir_cases.push(crate::SwitchCase {
-                            value: crate::SwitchValue::Default,
-                            body: lower_impl(blocks, bodies, default)?,
-                            fall_through: false,
+                        frame.pending = Some(Pending::Switch {
+                            selector,
+                            children: cases
+                                .iter()
+                                .map(|&(_, body)| body)
+                                .chain(core::iter::once(default))
+                                .collect(),
+                            values: cases.iter().map(|&(value, _)| value).collect(),
+                            cases: Vec::with_capacity(cases.len() + 1),
                         });
-
-                        block.push(
-                            crate::Statement::Switch {
-                                selector,
-                                cases: ir_cases,
-                                control: crate::SelectionControl::None,
-                            },
-                            crate::Span::default(),
-                        )
                     }
-                    super::BodyFragment::Break => {
-                        block.push(crate::Statement::Break, crate::Span::default())
-                    }
-                    super::BodyFragment::Continue => {
-                        block.push(crate::Statement::Continue, crate::Span::default())
-                    }
+                    super::BodyFragment::Break => frame
+                        .block
+                        .push(crate::Statement::Break, crate::Span::default()),
+                    super::BodyFragment::Continue => frame
+                        .block
+                        .push(crate::Statement::Continue, crate::Span::default()),
+                }
+                if let Some(next) = frame.next_child() {
+                    descended = Some(next);
+                    break;
                 }
             }
-
-            Ok(block)
+            if let Some(next) = descended {
+                if !active.insert(next) {
+                    return Err(Error::InternalError("a body contains itself"));
+                }
+                frames.push(frame);
+                frames.push(Lowering::new(next));
+                continue;
+            }
+            active.remove(&frame.body);
+            finished = Some(frame.block);
         }
+        finished.ok_or(Error::InternalError("the function body was not lowered"))
+    }
+}
 
-        lower_impl(&mut self.blocks, &self.bodies, 0)
+struct Lowering {
+    body: BodyIndex,
+    item: usize,
+    block: crate::Block,
+    pending: Option<Pending>,
+}
+
+enum Pending {
+    If {
+        condition: Handle<crate::Expression>,
+        children: [BodyIndex; 2],
+        accept: Option<crate::Block>,
+    },
+    Loop {
+        children: [BodyIndex; 2],
+        break_if: Option<Handle<crate::Expression>>,
+        body: Option<crate::Block>,
+    },
+    Switch {
+        selector: Handle<crate::Expression>,
+        children: Vec<BodyIndex>,
+        values: Vec<i32>,
+        cases: Vec<crate::SwitchCase>,
+    },
+}
+
+impl Lowering {
+    const fn new(body: BodyIndex) -> Self {
+        Self {
+            body,
+            item: 0,
+            block: crate::Block::new(),
+            pending: None,
+        }
+    }
+
+    fn next_child(&self) -> Option<BodyIndex> {
+        match self.pending {
+            None => None,
+            Some(Pending::If {
+                children,
+                ref accept,
+                ..
+            }) => Some(children[usize::from(accept.is_some())]),
+            Some(Pending::Loop {
+                children, ref body, ..
+            }) => Some(children[usize::from(body.is_some())]),
+            Some(Pending::Switch {
+                ref children,
+                ref cases,
+                ..
+            }) => children.get(cases.len()).copied(),
+        }
+    }
+
+    fn receive(&mut self, child: crate::Block) -> Result<Option<crate::Statement>, Error> {
+        let pending = self
+            .pending
+            .take()
+            .ok_or(Error::InternalError("a body was lowered without a parent"))?;
+        let (pending, statement) = match pending {
+            Pending::If {
+                condition,
+                accept: None,
+                children,
+            } => (
+                Some(Pending::If {
+                    condition,
+                    children,
+                    accept: Some(child),
+                }),
+                None,
+            ),
+            Pending::If {
+                condition,
+                accept: Some(accept),
+                ..
+            } => (
+                None,
+                Some(crate::Statement::If {
+                    condition,
+                    accept,
+                    reject: child,
+                    control: crate::SelectionControl::None,
+                }),
+            ),
+            Pending::Loop {
+                children,
+                break_if,
+                body: None,
+            } => (
+                Some(Pending::Loop {
+                    children,
+                    break_if,
+                    body: Some(child),
+                }),
+                None,
+            ),
+            Pending::Loop {
+                break_if,
+                body: Some(body),
+                ..
+            } => (
+                None,
+                Some(crate::Statement::Loop {
+                    body,
+                    continuing: child,
+                    break_if,
+                    control: crate::LoopControl::default(),
+                }),
+            ),
+            Pending::Switch {
+                selector,
+                children,
+                values,
+                mut cases,
+            } => {
+                match values.get(cases.len()) {
+                    Some(&value) => {
+                        // Handle simple cases that would make a fallthrough statement unreachable code
+                        let fall_through = child.last().is_none_or(|s| !s.is_terminator());
+                        cases.push(crate::SwitchCase {
+                            value: crate::SwitchValue::I32(value),
+                            body: child,
+                            fall_through,
+                        });
+                    }
+                    None => cases.push(crate::SwitchCase {
+                        value: crate::SwitchValue::Default,
+                        body: child,
+                        fall_through: false,
+                    }),
+                }
+                if cases.len() == children.len() {
+                    (
+                        None,
+                        Some(crate::Statement::Switch {
+                            selector,
+                            cases,
+                            control: crate::SelectionControl::None,
+                        }),
+                    )
+                } else {
+                    (
+                        Some(Pending::Switch {
+                            selector,
+                            children,
+                            values,
+                            cases,
+                        }),
+                        None,
+                    )
+                }
+            }
+        };
+        self.pending = pending;
+        Ok(statement)
     }
 }

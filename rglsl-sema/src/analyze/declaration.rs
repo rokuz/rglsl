@@ -385,9 +385,9 @@ impl Analyzer<'_> {
             if !is_interface {
                 continue;
             }
-            match variable.ty.array.first_mut() {
-                Some(first @ ArraySize::Unsized) => *first = ArraySize::Sized(size),
-                Some(ArraySize::Sized(declared)) if *declared != size => {
+            match variable.ty.outer_size() {
+                Some(ArraySize::Unsized) => variable.ty.set_outer_size(ArraySize::Sized(size)),
+                Some(ArraySize::Sized(declared)) if declared != size => {
                     mismatched.push(symbol.name.clone());
                 }
                 _ => {}
@@ -942,7 +942,7 @@ impl Analyzer<'_> {
         } = place;
         let name = &declarator.name;
         let ty = base.clone().with_dimensions(dimensions);
-        let mut ty = self.bounded_type(ty, name.span);
+        let mut ty = ty;
         if in_block.is_some() {
             self.per_view_dimension(name.span, qualifiers, &mut ty, true);
         }
@@ -950,17 +950,17 @@ impl Analyzer<'_> {
             Some("a member cannot be `void`")
         } else if members.iter().any(|member| member.name == name.node) {
             Some("the name is already used by another member")
-        } else if in_block.is_none() && ty.array.contains(&ArraySize::Unsized) {
+        } else if in_block.is_none() && ty.dimensions().contains(&ArraySize::Unsized) {
             Some("an array size is required")
         } else if in_block.is_some()
             && ty.contains_opaque(&self.types)
             && !(in_heap && self.extension_enabled(super::heap::STRUCTURED_DESCRIPTOR_HEAP))
         {
             Some("a block member cannot have an opaque type")
-        } else if in_heap && !last && ty.array.first() == Some(&ArraySize::Unsized) {
+        } else if in_heap && !last && ty.dimensions().first() == Some(&ArraySize::Unsized) {
             Some("an array size is required")
         } else if ty
-            .array
+            .dimensions()
             .iter()
             .skip(1)
             .any(|size| *size == ArraySize::Unsized)
@@ -987,20 +987,7 @@ impl Analyzer<'_> {
         });
     }
 
-    fn struct_specifier_with(
-        &mut self,
-        specifier: &StructSpecifier,
-        span: Span,
-        members: Vec<Member>,
-    ) -> Type {
-        if self.options.type_depth_limit.is_some_and(|limit| {
-            members
-                .iter()
-                .any(|member| member.ty.depth(&self.types) >= limit)
-        }) {
-            self.error(span, DiagnosticKind::TypeTooDeep);
-            return Type::ERROR;
-        }
+    fn struct_specifier_with(&mut self, specifier: &StructSpecifier, members: Vec<Member>) -> Type {
         let name = specifier.name.as_ref().map(|name| name.node.clone());
         let Some(id) = self.types.add_struct(name, members) else {
             return Type::ERROR;
@@ -1012,18 +999,6 @@ impl Analyzer<'_> {
             }
         }
         Type::structure(id)
-    }
-
-    pub(crate) fn bounded_type(&mut self, ty: Type, span: Span) -> Type {
-        if self
-            .options
-            .type_depth_limit
-            .is_some_and(|limit| ty.depth(&self.types) > limit)
-        {
-            self.error(span, DiagnosticKind::TypeTooDeep);
-            return Type::ERROR;
-        }
-        ty
     }
 
     fn init_declarator_list(&mut self, list: &InitDeclaratorList) {
@@ -1342,7 +1317,7 @@ impl Analyzer<'_> {
         let name = &declarator.name;
         let dimensions = self.array_sizes(declarator.array.as_ref());
         let ty = base.clone().with_dimensions(&dimensions);
-        let mut ty = self.bounded_type(ty, name.span);
+        let mut ty = ty;
         let is_global = self.scopes.is_global();
         let mut qualifiers = qualifiers.clone();
         let mut broken = ty.is_error();
@@ -1480,7 +1455,7 @@ impl Analyzer<'_> {
         }
         if initializer.is_none()
             && ty
-                .array
+                .dimensions()
                 .iter()
                 .skip(1)
                 .any(|size| *size == ArraySize::Unsized)
@@ -1566,10 +1541,10 @@ impl Analyzer<'_> {
             name: name.node.clone(),
             reason,
         };
-        match (ty.array.first_mut(), size) {
+        match (ty.outer_size(), size) {
             (None, _) => self.error(name.span, invalid("the type must be an array")),
-            (Some(first @ ArraySize::Unsized), Some(size)) => *first = ArraySize::Sized(size),
-            (Some(ArraySize::Sized(declared)), Some(size)) if *declared != size => {
+            (Some(ArraySize::Unsized), Some(size)) => ty.set_outer_size(ArraySize::Sized(size)),
+            (Some(ArraySize::Sized(declared)), Some(size)) if declared != size => {
                 let reason = match (stage, qualifiers.storage) {
                     (Stage::Geometry, _) => "its size does not match the input primitive",
                     (_, Storage::In) => "its size must be gl_MaxPatchVertices",
@@ -1596,11 +1571,20 @@ impl Analyzer<'_> {
     }
 
     fn initialize(&mut self, span: Span, ty: &mut Type, operand: &Operand) -> bool {
-        if ty.array.len() == operand.ty.array.len() {
-            for (declared, given) in ty.array.iter_mut().zip(&operand.ty.array) {
-                if *declared == ArraySize::Unsized {
-                    *declared = *given;
-                }
+        if ty.dimensions().len() == operand.ty.dimensions().len() {
+            let given = operand.ty.dimensions();
+            if given
+                .iter()
+                .zip(ty.dimensions())
+                .any(|(given, declared)| *declared == ArraySize::Unsized && given != declared)
+            {
+                ty.update_dimensions(|dimensions| {
+                    for (declared, given) in dimensions.iter_mut().zip(given) {
+                        if *declared == ArraySize::Unsized {
+                            *declared = *given;
+                        }
+                    }
+                });
             }
         }
         if self.converts(&operand.ty, ty) && !operand.ty.is_void() {
@@ -1653,7 +1637,7 @@ impl Analyzer<'_> {
             let resizes = previous.is_some_and(|previous| {
                 previous.kind == ty.kind
                     && ty.is_array()
-                    && previous.array.get(1..) == ty.array.get(1..)
+                    && previous.dimensions().get(1..) == ty.dimensions().get(1..)
                     && (previous.outer_size() == Some(ArraySize::Unsized)
                         || (interface && previous == ty))
             });
@@ -1699,7 +1683,7 @@ impl Analyzer<'_> {
         if expected.is_error() {
             return Operand::error();
         }
-        let reason = if expected.array.contains(&ArraySize::Unsized) {
+        let reason = if expected.dimensions().contains(&ArraySize::Unsized) {
             Some("null initializers can't size unsized arrays")
         } else if expected.contains_opaque(&self.types) {
             Some("null initializers can't be used on opaque values")
@@ -1743,9 +1727,7 @@ impl Analyzer<'_> {
                 Some(ArraySize::Sized(size)) if size != count => mismatch = true,
                 _ => {}
             }
-            if let Some(first) = result.array.first_mut() {
-                *first = ArraySize::Sized(count);
-            }
+            result.set_outer_size(ArraySize::Sized(count));
             element_types = items.iter().map(|_| element.clone()).collect();
         } else if let TypeKind::Struct(id) = expected.kind {
             if let Some(structure) = self.types.structure(id) {
@@ -1798,7 +1780,7 @@ impl Analyzer<'_> {
         } else if !element.is_error() && !self.converts(&operand.ty, element) {
             let unsized_match = element.outer_size() == Some(ArraySize::Unsized)
                 && operand.ty.kind == element.kind
-                && operand.ty.array.get(1..) == element.array.get(1..);
+                && operand.ty.dimensions().get(1..) == element.dimensions().get(1..);
             if !unsized_match {
                 list.failed = true;
                 let aggregate = expected.is_array() || expected.is_struct();
@@ -1993,7 +1975,7 @@ impl Analyzer<'_> {
                 .filter(|_| sized)
                 .map(|symbol| &mut symbol.kind)
             {
-                variable.ty.array = dimensions;
+                variable.ty.set_dimensions(&dimensions);
             }
             return;
         }
@@ -2204,7 +2186,7 @@ impl Analyzer<'_> {
             self.symbol_mut(variable).map(|symbol| &mut symbol.kind)
         {
             if matches!(dimensions.first(), Some(ArraySize::Sized(_))) {
-                variable.ty.array = dimensions.to_vec();
+                variable.ty.set_dimensions(dimensions);
             }
             sized = Some(variable.ty.clone());
         }
@@ -2291,7 +2273,7 @@ impl Analyzer<'_> {
         let qualifiers = self.optional_qualifiers(&parameter.ty.node);
         let base = self.type_specifier(&parameter.ty.specifier);
         let dimensions = self.array_sizes(parameter.array.as_ref());
-        let ty = self.bounded_type(base.with_dimensions(&dimensions), parameter.span);
+        let ty = base.with_dimensions(&dimensions);
         let name = parameter.name.as_ref().map(|name| name.node.clone());
         if ty.is_void() && name.is_none() && parameter.ty.qualifier.is_none() {
             return None;
@@ -2319,7 +2301,7 @@ impl Analyzer<'_> {
             Some("cannot use spirv_literal qualifier")
         } else if ty.is_void() {
             Some("a parameter cannot be `void`")
-        } else if ty.array.contains(&ArraySize::Unsized) {
+        } else if ty.dimensions().contains(&ArraySize::Unsized) {
             Some("an array size is required")
         } else if direction != Direction::In && ty.contains_opaque(&self.types) {
             Some("an opaque type cannot be an output parameter")
@@ -2375,7 +2357,7 @@ impl Analyzer<'_> {
         let return_type = self.type_specifier(&prototype.return_type.specifier);
         let close = Span::new(prototype.span.end.saturating_sub(1), prototype.span.end);
         let control = self.function_attributes(prototype, close);
-        if return_type.array.contains(&ArraySize::Unsized) {
+        if return_type.dimensions().contains(&ArraySize::Unsized) {
             self.error(
                 prototype.return_type.span,
                 DiagnosticKind::UnsizedArrayNotAllowed,
@@ -2754,8 +2736,7 @@ impl<'b> Cx<'b, Analyzer<'_>> {
                 .await
             }
             TypeSpecifierNonArray::Struct(structure) => {
-                self.call(self.clone().struct_specifier(structure, span))
-                    .await
+                self.call(self.clone().struct_specifier(structure)).await
             }
             TypeSpecifierNonArray::Spirv(spirv) => {
                 self.call(self.clone().spirv_type_specifier(spirv)).await
@@ -2765,7 +2746,7 @@ impl<'b> Cx<'b, Analyzer<'_>> {
         let dimensions = self
             .call(self.clone().array_sizes(specifier.array.as_ref()))
             .await;
-        self.with(|analyzer| analyzer.bounded_type(base.with_dimensions(&dimensions), span))
+        base.with_dimensions(&dimensions)
     }
 
     pub(crate) async fn struct_members(
@@ -2829,7 +2810,6 @@ impl<'b> Cx<'b, Analyzer<'_>> {
                 .call(self.clone().array_sizes(declarator.array.as_ref()))
                 .await;
             let ty = base.clone().with_dimensions(&dimensions);
-            let ty = self.with(|analyzer| analyzer.bounded_type(ty, declarator.name.span));
             members.push(Member {
                 name: declarator.name.node.clone(),
                 ty,
@@ -2884,11 +2864,11 @@ impl<'b> Cx<'b, Analyzer<'_>> {
         members
     }
 
-    async fn struct_specifier(self, specifier: &'b StructSpecifier, span: Span) -> Type {
+    async fn struct_specifier(self, specifier: &'b StructSpecifier) -> Type {
         let members = self
             .call(self.clone().struct_members(&specifier.declarations, None))
             .await;
-        self.with(|analyzer| analyzer.struct_specifier_with(specifier, span, members))
+        self.with(|analyzer| analyzer.struct_specifier_with(specifier, members))
     }
 }
 

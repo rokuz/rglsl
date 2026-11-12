@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
@@ -11,12 +12,15 @@ use crate::exec::{Executor, TargetSpec};
 use crate::fuzz::{compare, Verdict};
 use crate::fuzz_exec::{self, Run};
 use crate::oracles;
+use crate::process::{self, Exit};
+use crate::worker::EXIT_ACCEPTED;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Interesting {
     Crash,
     Reject,
     InvalidSpirv,
+    RglslFails,
     DiffersFromGlslang,
     DiffersFromReference,
     ExecFails,
@@ -28,6 +32,7 @@ impl Interesting {
             "crash" => Some(Self::Crash),
             "reject" => Some(Self::Reject),
             "invalid-spirv" => Some(Self::InvalidSpirv),
+            "rglsl-fails" => Some(Self::RglslFails),
             "differs-from-glslang" => Some(Self::DiffersFromGlslang),
             "differs-from-reference" => Some(Self::DiffersFromReference),
             "exec-fails" => Some(Self::ExecFails),
@@ -104,6 +109,19 @@ impl Tools {
         )?;
         Ok((outcome.verdict, spirv))
     }
+
+    fn linked_alone_fails(&self, shader: &Path) -> Result<bool> {
+        let out_dir = shader.with_extension("linked");
+        let _ = fs::remove_dir_all(&out_dir);
+        fs::create_dir_all(&out_dir)?;
+        let mut command = Command::new(&self.self_exe);
+        command
+            .args(["compile-group", "--spv", "1.0", "--out-dir"])
+            .arg(&out_dir)
+            .arg(shader);
+        let output = process::run(command, self.timeout)?;
+        Ok(!matches!(output.exit, Exit::Code(EXIT_ACCEPTED)))
+    }
 }
 
 fn run_module(executor: &Executor, spirv: &Path, json: &Path, dir: &Path, tag: &str) -> Run {
@@ -178,9 +196,7 @@ pub fn run(root: &Path, options: Options) -> Result<()> {
         .and_then(|name| name.to_str())
         .unwrap_or("job")
         .to_owned();
-    let work = root
-        .join("target")
-        .join("fuzz")
+    let work = crate::fuzz_libfuzzer::fuzz_root(root)
         .join("reduce")
         .join(format!("{family}-{stem}"));
     let _ = fs::remove_dir_all(&work);
@@ -237,6 +253,11 @@ pub fn run(root: &Path, options: Options) -> Result<()> {
             Interesting::Crash => verdict == Verdict::Crash,
             Interesting::Reject => matches!(verdict, Verdict::WeReject | Verdict::BackendFailed),
             Interesting::InvalidSpirv => verdict == Verdict::InvalidSpirv,
+            Interesting::RglslFails => match verdict {
+                Verdict::Crash | Verdict::WeReject | Verdict::BackendFailed => true,
+                Verdict::Agree | Verdict::InvalidSpirv => tools.linked_alone_fails(&shader)?,
+                _ => false,
+            },
             Interesting::DiffersFromGlslang
             | Interesting::DiffersFromReference
             | Interesting::ExecFails => {

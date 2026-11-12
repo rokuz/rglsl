@@ -1,0 +1,35 @@
+#version 450
+layout(local_size_x = 8) in;
+
+layout(set = 0, binding = 0) buffer Results {
+    vec4 values[];
+} results;
+
+const float folded_a = 0.1;
+const float folded_b = folded_a * folded_a;
+
+void main()
+{
+    uint index = gl_GlobalInvocationID.x;
+    float s = float(index) * 0.37 + 0.11;
+    mat3 m = mat3(s, s * 1.3, s * 1.7, 0.3, 0.7, 1.1, -s, 2.0 * s, 0.9);
+    mat3 divided = m / (s + 2.9);
+    mat3 assigned = m;
+    assigned /= 3.0 + s;
+    mat3 negated = -m;
+    precise mat3 summed = m * s + m;
+    float zero = float(index) - float(index);
+    float nan = zero / zero;
+    vec3 x = vec3(s * 7.3, -s * 5.1, s * 3.9);
+    vec3 y = vec3(1.7, 2.3, -0.9);
+    int signed_index = -int(index) - 3;
+    uint base = index * 8u;
+    results.values[base + 0u] = vec4(divided[0], divided[2].z);
+    results.values[base + 1u] = vec4(assigned[1], assigned[2].x);
+    results.values[base + 2u] = vec4(negated[1], float(nan != nan) + 2.0 * float(nan != s));
+    results.values[base + 3u] = vec4(summed[2], float(notEqual(vec2(nan), vec2(s)).x));
+    results.values[base + 4u] = vec4(mod(x, y), mod(-s, 0.7));
+    results.values[base + 5u] = vec4(round(float(index) + 0.5), roundEven(float(index) + 0.5), round(s * 3.0), normalize(s - 0.5));
+    results.values[base + 6u] = vec4(reflect(s, 0.6), faceforward(s, -s, s), float(signed_index % 3), float(uint(signed_index) % 5u));
+    results.values[base + 7u] = vec4(mod(5.3, 2.1), (folded_b * 3.0), smoothstep(0.0, 1.0, 0.3), round(2.5) + fract(-1.7));
+}

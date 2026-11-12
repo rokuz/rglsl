@@ -474,7 +474,9 @@ fn tessellation_and_geometry_variables() {
     let array_of = |table: &Builtins, name: &str| {
         let (_, id) = table.variables().find(|(found, _)| *found == name)?;
         let symbol = table.symbols().get(usize::try_from(id.index()).ok()?)?;
-        symbol.variable().map(|variable| variable.ty.array.clone())
+        symbol
+            .variable()
+            .map(|variable| variable.ty.dimensions().to_vec())
     };
     assert_eq!(
         array_of(&control, "gl_in"),
@@ -589,7 +591,7 @@ fn constants_take_their_values_from_the_resource_limits() {
         .find(|(name, _)| *name == "gl_in")
         .and_then(|(_, id)| table.symbols().get(usize::try_from(id.index()).ok()?))
         .and_then(|symbol| symbol.variable())
-        .map(|variable| variable.ty.array.clone());
+        .map(|variable| variable.ty.dimensions().to_vec());
     assert_eq!(input, Some(vec![ArraySize::Sized(12)]));
     for name in [
         "gl_MaxVaryingFloats",

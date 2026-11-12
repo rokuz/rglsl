@@ -129,10 +129,7 @@ impl FunctionLowerer<'_, '_> {
             "mod" => {
                 let x = arg(&values, 0)?;
                 let y = arg(&values, 1)?;
-                let divided = self.binary_op(BinaryOperator::Divide, x, y, at)?;
-                let floor = self.math_call(MathFunction::Floor, &[divided], at)?;
-                let product = self.binary_op(BinaryOperator::Multiply, floor, y, at)?;
-                return self.binary_op(BinaryOperator::Subtract, x, product, at);
+                return self.binary_op(BinaryOperator::Modulo, x, y, at);
             }
             "mix" if types.get(2).is_some_and(is_bool) => {
                 return self.add(

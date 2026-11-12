@@ -44,6 +44,7 @@ impl ir::MathFunction {
             | Mf::Ceil
             | Mf::Floor
             | Mf::Round
+            | Mf::RoundEven
             | Mf::Fract
             | Mf::Trunc
             | Mf::Exp
@@ -98,9 +99,9 @@ impl ir::MathFunction {
                 regular!(2, SCALAR|VECN of FLOAT_ABSTRACT_UNIMPLEMENTED -> Scalar).into()
             }
             Mf::Length => regular!(1, SCALAR|VECN of FLOAT -> Scalar).into(),
-            Mf::Normalize => regular!(1, VECN of FLOAT).into(),
-            Mf::FaceForward => regular!(3, VECN of FLOAT_ABSTRACT_UNIMPLEMENTED).into(),
-            Mf::Reflect => regular!(2, VECN of FLOAT_ABSTRACT_UNIMPLEMENTED).into(),
+            Mf::Normalize => regular!(1, SCALAR|VECN of FLOAT).into(),
+            Mf::FaceForward => regular!(3, SCALAR|VECN of FLOAT_ABSTRACT_UNIMPLEMENTED).into(),
+            Mf::Reflect => regular!(2, SCALAR|VECN of FLOAT_ABSTRACT_UNIMPLEMENTED).into(),
             Mf::Refract => refract().into(),
             Mf::Mix => mix().into(),
             Mf::Inverse => regular!(1, MAT2X2|MAT3X3|MAT4X4 of FLOAT).into(),

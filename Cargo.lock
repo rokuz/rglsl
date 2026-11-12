@@ -581,6 +581,7 @@ dependencies = [
  "cfg_aliases",
  "libfuzzer-sys",
  "rglsl",
+ "rglsl-fuzz",
  "rglsl-link",
 ]
 
@@ -604,6 +605,7 @@ name = "rglsl-sema"
 version = "0.1.0"
 dependencies = [
  "half",
+ "libm",
  "rglsl-ast",
  "rglsl-types",
  "thiserror",
