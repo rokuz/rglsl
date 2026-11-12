@@ -378,10 +378,15 @@ fn run_case(
     let debug = match (case.target.debug, &oracle, spirv_val) {
         (Some(_), OracleResult::Accepted, Some(true)) if reference.is_file() => {
             let comparison = crate::debuginfo::compare(&out, &reference)?;
-            if !comparison.matches() {
+            if comparison.matches() {
+                Some(true)
+            } else if let Some(reason) = crate::debuginfo::expected_difference(&case.name) {
+                note = format!("expected ({reason}): {}", comparison.note());
+                Some(true)
+            } else {
                 note = comparison.note();
+                Some(false)
             }
-            Some(comparison.matches())
         }
         _ => None,
     };

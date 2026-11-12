@@ -10837,8 +10837,44 @@ void main() {
     Ok(())
 }
 
+fn constant_branches(module: &dr::Module) -> usize {
+    let constants: Vec<u32> = module
+        .types_global_values
+        .iter()
+        .filter(|inst| matches!(inst.class.opcode, Op::ConstantTrue | Op::ConstantFalse))
+        .filter_map(|inst| inst.result_id)
+        .collect();
+    [Op::BranchConditional, Op::Select]
+        .into_iter()
+        .flat_map(|op| instructions(module, op))
+        .filter(|inst| constants.contains(&inst.operands[0].unwrap_id_ref()))
+        .count()
+}
+
+fn float_constants(module: &dr::Module, op: Op) -> Vec<f32> {
+    let mut values = Vec::new();
+    for inst in instructions(module, op) {
+        for operand in &inst.operands {
+            let Operand::IdRef(id) = *operand else {
+                continue;
+            };
+            let constant = module
+                .types_global_values
+                .iter()
+                .find(|inst| inst.result_id == Some(id) && inst.class.opcode == Op::Constant);
+            if let Some(&Operand::LiteralBit32(bits)) =
+                constant.and_then(|inst| inst.operands.first())
+            {
+                values.push(f32::from_bits(bits));
+            }
+        }
+    }
+    values.sort_by(f32::total_cmp);
+    values
+}
+
 #[test]
-fn branches_on_constant_conditions_are_kept_as_glslang_keeps_them() -> crate::TestResult {
+fn branches_on_constant_conditions_are_dropped() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Fragment,
         "#version 450
@@ -10854,19 +10890,386 @@ void main() {
 }
 ",
     )?;
-    assert_eq!(instructions(&module, Op::Switch).len(), 1);
-    assert_eq!(instructions(&module, Op::LoopMerge).len(), 1);
-    assert_eq!(instructions(&module, Op::Store).len(), 7);
-    let constants: Vec<u32> = module
+    assert!(instructions(&module, Op::Switch).is_empty());
+    assert!(instructions(&module, Op::LoopMerge).is_empty());
+    assert!(instructions(&module, Op::SelectionMerge).is_empty());
+    assert_eq!(instructions(&module, Op::Store).len(), 3);
+    assert_eq!(constant_branches(&module), 0);
+    Ok(())
+}
+
+#[test]
+fn nested_constant_ifs_keep_only_the_taken_branches() -> crate::TestResult {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+layout(location = 0) out vec4 o;
+layout(location = 0) in float x;
+const bool T = true;
+const int N = 3;
+void main() {
+    o = vec4(0.0);
+    if (T) {
+        float a = 2.0;
+        if (N > 4) {
+            o.x = 11.0;
+        } else if (!T) {
+            o.x = 12.0;
+        } else {
+            if (x > 0.5) { o.y = a; }
+            if (N == 3 && T) { o.z = 13.0; }
+        }
+    } else {
+        o.w = 14.0;
+    }
+    if (false) {
+        o.w = 15.0;
+    } else if (true) {
+        if (false) return;
+        o.w = 16.0;
+        if (true) return;
+        o.w = 17.0;
+    }
+    o.w = 18.0;
+}
+",
+    )?;
+    assert_eq!(constant_branches(&module), 0);
+    assert_eq!(instructions(&module, Op::SelectionMerge).len(), 1);
+    assert_eq!(
+        float_constants(&module, Op::Store),
+        [2.0, 13.0, 16.0],
+        "stores of dead branches or of code after `return`"
+    );
+    assert_eq!(instructions(&module, Op::Return).len(), 1);
+    Ok(())
+}
+
+#[test]
+fn specialization_constants_are_not_constant_conditions() -> crate::TestResult {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+layout(location = 0) out vec4 o;
+layout(location = 0) in float x;
+layout(constant_id = 0) const bool S = false;
+layout(constant_id = 1) const int K = 2;
+void main() {
+    o = vec4(0.0);
+    if (S) { o.x = 1.0; }
+    o.y = S ? x : 3.0;
+    switch (K) { case 2: o.z = 4.0; break; default: o.z = 5.0; }
+    while (S) { o.w += 1.0; }
+}
+",
+    )?;
+    let specialized: Vec<u32> = module
         .types_global_values
         .iter()
-        .filter(|inst| matches!(inst.class.opcode, Op::ConstantTrue | Op::ConstantFalse))
+        .filter(|inst| {
+            matches!(
+                inst.class.opcode,
+                Op::SpecConstantTrue | Op::SpecConstantFalse | Op::SpecConstant
+            )
+        })
         .filter_map(|inst| inst.result_id)
         .collect();
-    let constant_branches = instructions(&module, Op::BranchConditional)
-        .into_iter()
-        .filter(|inst| constants.contains(&inst.operands[0].unwrap_id_ref()))
-        .count();
-    assert!(constant_branches >= 3, "{constant_branches}");
+    let on_specialization = |op: Op| {
+        instructions(&module, op)
+            .iter()
+            .filter(|inst| specialized.contains(&inst.operands[0].unwrap_id_ref()))
+            .count()
+    };
+    assert_eq!(on_specialization(Op::Switch), 1);
+    assert_eq!(on_specialization(Op::Select), 1);
+    assert!(on_specialization(Op::BranchConditional) >= 1);
+    assert_eq!(instructions(&module, Op::LoopMerge).len(), 1);
+    Ok(())
+}
+
+#[test]
+fn constant_switches_keep_the_selected_case_and_its_fall_through() -> crate::TestResult {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+layout(location = 0) out vec4 o;
+layout(location = 0) in float x;
+const uint U = 7u;
+void main() {
+    o = vec4(0.0);
+    switch (1) {
+    case 0:
+        float t = 2.0;
+        o.x = 20.0;
+    case 1:
+        t = 21.0;
+        o.y = t;
+    case 2:
+    case 3:
+        o.z = 22.0;
+        break;
+        o.z = 23.0;
+    default:
+        o.w = 24.0;
+    }
+    switch (U) {
+    case 1u:
+        o.x = 25.0;
+        break;
+    default:
+        o.y = 26.0;
+    case 2u:
+        o.z = 27.0;
+    }
+    switch (5) {
+    case 0:
+        o.x = 28.0;
+    }
+    for (int i = 0; i < 4; i++) {
+        switch (3) {
+        case 3:
+            if (x > float(i)) { continue; }
+            o.w = 29.0;
+        }
+    }
+}
+",
+    )?;
+    assert!(instructions(&module, Op::Switch).is_empty());
+    assert_eq!(constant_branches(&module), 0);
+    assert_eq!(
+        float_constants(&module, Op::Store),
+        [0.0, 21.0, 22.0, 26.0, 27.0, 29.0]
+    );
+    Ok(())
+}
+
+#[test]
+fn constant_switches_with_inner_breaks_keep_a_default_only_switch() -> crate::TestResult {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+layout(location = 0) out vec4 o;
+layout(location = 0) in float x;
+void main() {
+    o = vec4(0.0);
+    switch (2) {
+    case 1:
+        o.x = 30.0;
+    case 2:
+        if (x > 0.5) { break; }
+        o.y = 31.0;
+    case 3:
+        o.z = 32.0;
+        break;
+    default:
+        o.w = 33.0;
+    }
+}
+",
+    )?;
+    let switches = instructions(&module, Op::Switch);
+    assert_eq!(switches.len(), 1);
+    assert_eq!(switches[0].operands.len(), 2, "only the default target");
+    assert_eq!(float_constants(&module, Op::Store), [31.0, 32.0]);
+    Ok(())
+}
+
+#[test]
+fn loops_with_constant_conditions() -> crate::TestResult {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+layout(location = 0) out vec4 o;
+layout(location = 0) in float x;
+const bool F = false;
+void main() {
+    o = vec4(0.0);
+    while (false) { o.x = 40.0; }
+    while (F) { o.x = 41.0; }
+    for (float f = 42.0; F; f += 1.0) { o.x = f; }
+    do { o.y = 43.0; } while (false);
+    do {
+        if (x > 0.5) { break; }
+        o.z = 44.0;
+    } while (F);
+    do {
+        o.w = 45.0;
+        for (int i = 0; i < 2; i++) { if (x > 0.25) break; }
+        switch (int(x)) { case 0: break; }
+    } while (F);
+}
+",
+    )?;
+    assert_eq!(constant_branches(&module), 0);
+    assert_eq!(instructions(&module, Op::LoopMerge).len(), 2);
+    assert_eq!(
+        float_constants(&module, Op::Store),
+        [0.0, 42.0, 43.0, 44.0, 45.0]
+    );
+    Ok(())
+}
+
+#[test]
+fn do_while_false_with_continue_keeps_its_loop() -> crate::TestResult {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+layout(location = 0) out vec4 o;
+layout(location = 0) in float x;
+void main() {
+    o = vec4(0.0);
+    do {
+        if (x > 0.5) { continue; }
+        o.x = 46.0;
+    } while (false);
+    o.y = 47.0;
+}
+",
+    )?;
+    assert_eq!(instructions(&module, Op::LoopMerge).len(), 1);
+    assert_eq!(float_constants(&module, Op::Store), [46.0, 47.0]);
+    Ok(())
+}
+
+#[test]
+fn infinite_loops_with_constant_true_conditions_have_no_exit_branch() -> crate::TestResult {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+layout(location = 0) out vec4 o;
+layout(location = 0) in float x;
+const bool T = true;
+void main() {
+    o = vec4(0.0);
+    while (T) { if (x > o.x) break; o.x += 1.0; }
+    for (; T; ) { if (x > o.y) break; o.y += 1.0; }
+    do { if (x > o.z) break; o.z += 1.0; } while (T);
+}
+",
+    )?;
+    assert_eq!(constant_branches(&module), 0);
+    assert_eq!(instructions(&module, Op::LoopMerge).len(), 3);
+    Ok(())
+}
+
+#[test]
+fn ternaries_with_constant_conditions_keep_the_chosen_operand() -> crate::TestResult {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+layout(location = 0) out vec4 o;
+layout(location = 0) in float x;
+const bool T = true;
+float counter = 0.0;
+float bump(float by) { counter += by; return counter; }
+void main() {
+    o.x = T ? x : 50.0;
+    o.y = (x > 0.5) ? 51.0 : false ? x : 52.0;
+    o.z = false ? bump(53.0) : true ? bump(54.0) : bump(55.0);
+    T ? bump(56.0) : bump(57.0);
+    o.w = (x > 0.25) ? x : (T ? bump(58.0) : bump(59.0));
+}
+",
+    )?;
+    assert_eq!(constant_branches(&module), 0);
+    assert_eq!(instructions(&module, Op::Select).len(), 1);
+    assert_eq!(
+        float_constants(&module, Op::FunctionCall),
+        [54.0, 56.0, 58.0]
+    );
+    assert_eq!(float_constants(&module, Op::Select), [51.0, 52.0]);
+    Ok(())
+}
+
+#[test]
+fn logical_operators_with_constant_left_operands_skip_the_dead_operand() -> crate::TestResult {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+layout(location = 0) out vec4 o;
+const bool T = true;
+const bool F = false;
+float counter = 0.0;
+float bump(float by) { counter += by; return counter; }
+void main() {
+    bool a = false && bump(60.0) > 0.0;
+    bool b = T || bump(61.0) > 0.0;
+    bool c = T && bump(62.0) > 0.0;
+    bool d = F || bump(63.0) > 0.0;
+    o = vec4(a, b, c, d);
+}
+",
+    )?;
+    assert_eq!(constant_branches(&module), 0);
+    assert!(instructions(&module, Op::SelectionMerge).is_empty());
+    assert_eq!(float_constants(&module, Op::FunctionCall), [62.0, 63.0]);
+    Ok(())
+}
+
+#[test]
+fn errors_in_dead_code_are_still_reported() {
+    for body in [
+        "if (false) { o = undeclared; }",
+        "switch (1) { case 0: o = 1; case 1: break; }",
+        "while (false) { o.x = vec2(1.0); }",
+        "o.x = true ? 1.0 : vec2(2.0);",
+        "do { } while (false); if (false) { break; }",
+    ] {
+        let source = format!(
+            "#version 450\nlayout(location = 0) out vec4 o;\nvoid main() {{ o = vec4(0.0); {body} }}\n"
+        );
+        assert!(
+            parse(ShaderStage::Fragment, &source).is_err(),
+            "accepted: {body}"
+        );
+    }
+}
+
+#[test]
+fn dead_code_leaves_no_debug_lines() -> crate::TestResult {
+    use crate::cooperative::{compile_with, Debug, Glslang, VULKAN_1_3};
+    const DEBUG_LINE: u32 = 103;
+    let source = "#version 450
+layout(local_size_x = 1) in;
+layout(binding = 0) buffer B { int v[]; };
+void main() {
+    if (false) {
+        v[0] = 1;
+    } else {
+        v[1] = 2;
+    }
+    switch (0) {
+    case 0:
+        v[2] = 3;
+    case 1:
+        v[3] = 4;
+        break;
+    default:
+        v[4] = 5;
+    }
+    while (false) {
+        v[5] = 6;
+    }
+    v[6] = true ? 7 : v[7];
+}
+";
+    let compiled = compile_with(source, VULKAN_1_3, Debug::NonSemantic, Glslang::Accepts)?;
+    let mut lines = Vec::new();
+    for inst in compiled.instructions(Op::ExtInst) {
+        if inst.operands.get(1) != Some(&Operand::LiteralExtInstInteger(DEBUG_LINE)) {
+            continue;
+        }
+        let line = inst.operands.get(3).ok_or("DebugLine without a line")?;
+        lines.push(constant(&compiled.module, line)?);
+    }
+    lines.sort_unstable();
+    lines.dedup();
+    for dead in [6, 17, 20] {
+        assert!(!lines.contains(&dead), "line {dead} in {lines:?}");
+    }
+    for live in [8, 12, 14, 22] {
+        assert!(lines.contains(&live), "line {live} missing from {lines:?}");
+    }
     Ok(())
 }

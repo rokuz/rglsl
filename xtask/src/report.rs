@@ -632,6 +632,17 @@ pub fn summary(results: &[CaseResult], ran: &[TargetId]) -> String {
             for result in compared.iter().filter(|r| r.debug == Some(false)) {
                 let _ = writeln!(out, "  debug FAIL {}: {}", result.case.name, result.note);
             }
+            for result in compared.iter().filter(|r| {
+                r.debug == Some(true)
+                    && crate::debuginfo::expected_difference(&r.case.name).is_some()
+                    && r.note.contains("expected (")
+            }) {
+                let _ = writeln!(
+                    out,
+                    "  debug expected {}: {}",
+                    result.case.name, result.note
+                );
+            }
         }
         for result in &results {
             if result.interface() == Some(false) {

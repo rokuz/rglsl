@@ -120,6 +120,41 @@ impl FunctionLowerer<'_, '_> {
         Ok(modes)
     }
 
+    fn conditional_spine<'e>(&self, expression: &'e AstExpression) -> Result<Spine<'e>> {
+        let mut links = Vec::new();
+        let mut head = expression;
+        while let ExpressionKind::Conditional {
+            ref else_expression,
+            ..
+        } = head.kind
+        {
+            if !links.is_empty() && (self.folds(head)? || self.constant_choice(head).is_some()) {
+                break;
+            }
+            links.push(head);
+            head = else_expression;
+        }
+        Ok(Spine { links, head })
+    }
+
+    fn constant_choice<'e>(&self, node: &'e AstExpression) -> Option<&'e AstExpression> {
+        let ExpressionKind::Conditional {
+            ref condition,
+            ref then_expression,
+            ref else_expression,
+        } = node.kind
+        else {
+            return None;
+        };
+        self.constant_condition(condition).map(|taken| {
+            if taken {
+                &**then_expression
+            } else {
+                &**else_expression
+            }
+        })
+    }
+
     fn conditional_parts<'e>(
         &self,
         node: &'e AstExpression,
@@ -371,15 +406,26 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         let at = self.with(|this| this.at(node.span))?;
         let ExpressionKind::Binary {
             operator,
+            left: ref left_operand,
             ref right,
-            ..
         } = node.kind
         else {
             return Err(internal(at));
         };
-        let value = if matches!(operator, AstBinary::LogicalAnd | AstBinary::LogicalOr)
-            && !self.with(|this| this.pure(right))?
+        let logical = matches!(operator, AstBinary::LogicalAnd | AstBinary::LogicalOr);
+        if let Some(constant) = logical
+            .then(|| self.with(|this| this.constant_condition(left_operand)))
+            .transpose()?
+            .flatten()
         {
+            if constant == (operator == AstBinary::LogicalOr) {
+                return Ok(left.0);
+            }
+            let frame = self.clone().rvalue(right);
+            let result = self.nest(frame).await;
+            return result;
+        }
+        let value = if logical && !self.with(|this| this.pure(right))? {
             {
                 let frame = self.clone().short_circuit(operator, left.0, right, at);
                 let result = self.nest(frame).await;
@@ -524,7 +570,17 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         self,
         expression: &'b AstExpression,
     ) -> Result<Option<Handle<Expression>>> {
-        let spine = self.with(|this| this.lowered_spine(expression))??;
+        if let Some(chosen) = self.with(|this| this.constant_choice(expression))? {
+            if self.with(|this| this.info(expression))??.ty.is_void() {
+                let frame = self.clone().effect(chosen);
+                let result = self.nest(frame).await;
+                return result.map(|()| None);
+            }
+            let frame = self.clone().rvalue(chosen);
+            let result = self.nest(frame).await;
+            return result.map(Some);
+        }
+        let spine = self.with(|this| this.conditional_spine(expression))??;
         let modes = self.with(|this| this.conditional_modes(&spine.links, spine.head))??;
         let first = modes
             .first()
