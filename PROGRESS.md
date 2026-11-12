@@ -13,16 +13,16 @@ Shaders that glslang's own test suite (`gtests/*.FromFile.cpp`) compiles under V
 
 | Stage | Files | accept | diag | valid | interface | exec local | exec amd | exec nvidia | link | crashes |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| **all** | 694 | 687 / 694 (99.0 %) | 141 / 143 (98.6 %) | 543 / 543 (100.0 %) | 543 / 543 (100.0 %) | 192 / 192 (100.0 %) | 279 / 279 (100.0 %) | 310 / 310 (100.0 %) | 12 / 12 (100.0 %) | 0 |
-| vert | 68 | 67 / 68 (98.5 %) | 9 / 9 (100.0 %) | 58 / 58 (100.0 %) | 58 / 58 (100.0 %) | 33 / 33 (100.0 %) | 44 / 44 (100.0 %) | 45 / 45 (100.0 %) | 6 / 6 (100.0 %) | 0 |
+| **all** | 694 | 687 / 694 (99.0 %) | 141 / 143 (98.6 %) | 543 / 543 (100.0 %) | 543 / 543 (100.0 %) | 199 / 199 (100.0 %) | 300 / 300 (100.0 %) | 331 / 331 (100.0 %) | 12 / 12 (100.0 %) | 0 |
+| vert | 68 | 67 / 68 (98.5 %) | 9 / 9 (100.0 %) | 58 / 58 (100.0 %) | 58 / 58 (100.0 %) | 33 / 33 (100.0 %) | 46 / 46 (100.0 %) | 46 / 46 (100.0 %) | 6 / 6 (100.0 %) | 0 |
 | tesc | 7 | 7 / 7 (100.0 %) | 1 / 1 (100.0 %) | 6 / 6 (100.0 %) | 6 / 6 (100.0 %) | 2 / 2 (100.0 %) | 3 / 3 (100.0 %) | 4 / 4 (100.0 %) | – | 0 |
 | tese | 4 | 4 / 4 (100.0 %) | – | 4 / 4 (100.0 %) | 4 / 4 (100.0 %) | 3 / 3 (100.0 %) | 4 / 4 (100.0 %) | 4 / 4 (100.0 %) | – | 0 |
 | geom | 4 | 4 / 4 (100.0 %) | – | 4 / 4 (100.0 %) | 4 / 4 (100.0 %) | – | 3 / 3 (100.0 %) | 3 / 3 (100.0 %) | – | 0 |
-| frag | 207 | 204 / 207 (98.6 %) | 32 / 33 (97.0 %) | 171 / 171 (100.0 %) | 171 / 171 (100.0 %) | 98 / 98 (100.0 %) | 111 / 111 (100.0 %) | 111 / 111 (100.0 %) | 4 / 4 (100.0 %) | 0 |
-| comp | 296 | 293 / 296 (99.0 %) | 74 / 75 (98.7 %) | 217 / 217 (100.0 %) | 217 / 217 (100.0 %) | 56 / 56 (100.0 %) | 90 / 90 (100.0 %) | 92 / 92 (100.0 %) | 2 / 2 (100.0 %) | 0 |
-| mesh | 20 | 20 / 20 (100.0 %) | 4 / 4 (100.0 %) | 16 / 16 (100.0 %) | 16 / 16 (100.0 %) | – | 6 / 6 (100.0 %) | 14 / 14 (100.0 %) | – | 0 |
-| task | 6 | 6 / 6 (100.0 %) | 1 / 1 (100.0 %) | 5 / 5 (100.0 %) | 5 / 5 (100.0 %) | – | 3 / 3 (100.0 %) | 4 / 4 (100.0 %) | – | 0 |
-| rgen | 41 | 41 / 41 (100.0 %) | 10 / 10 (100.0 %) | 31 / 31 (100.0 %) | 31 / 31 (100.0 %) | – | 9 / 9 (100.0 %) | 17 / 17 (100.0 %) | – | 0 |
+| frag | 207 | 204 / 207 (98.6 %) | 32 / 33 (97.0 %) | 171 / 171 (100.0 %) | 171 / 171 (100.0 %) | 105 / 105 (100.0 %) | 126 / 126 (100.0 %) | 127 / 127 (100.0 %) | 4 / 4 (100.0 %) | 0 |
+| comp | 296 | 293 / 296 (99.0 %) | 74 / 75 (98.7 %) | 217 / 217 (100.0 %) | 217 / 217 (100.0 %) | 56 / 56 (100.0 %) | 91 / 91 (100.0 %) | 94 / 94 (100.0 %) | 2 / 2 (100.0 %) | 0 |
+| mesh | 20 | 20 / 20 (100.0 %) | 4 / 4 (100.0 %) | 16 / 16 (100.0 %) | 16 / 16 (100.0 %) | – | 7 / 7 (100.0 %) | 14 / 14 (100.0 %) | – | 0 |
+| task | 6 | 6 / 6 (100.0 %) | 1 / 1 (100.0 %) | 5 / 5 (100.0 %) | 5 / 5 (100.0 %) | – | 4 / 4 (100.0 %) | 4 / 4 (100.0 %) | – | 0 |
+| rgen | 41 | 41 / 41 (100.0 %) | 10 / 10 (100.0 %) | 31 / 31 (100.0 %) | 31 / 31 (100.0 %) | – | 10 / 10 (100.0 %) | 19 / 19 (100.0 %) | – | 0 |
 | rint | 5 | 5 / 5 (100.0 %) | 2 / 2 (100.0 %) | 3 / 3 (100.0 %) | 3 / 3 (100.0 %) | – | 1 / 1 (100.0 %) | 3 / 3 (100.0 %) | – | 0 |
 | rahit | 10 | 10 / 10 (100.0 %) | 2 / 2 (100.0 %) | 8 / 8 (100.0 %) | 8 / 8 (100.0 %) | – | 3 / 3 (100.0 %) | 6 / 6 (100.0 %) | – | 0 |
 | rchit | 13 | 13 / 13 (100.0 %) | 2 / 2 (100.0 %) | 11 / 11 (100.0 %) | 11 / 11 (100.0 %) | – | 1 / 1 (100.0 %) | 3 / 3 (100.0 %) | – | 0 |
@@ -40,13 +40,13 @@ Shaders that glslang's own test suite (`gtests/*.FromFile.cpp`) compiles under V
 
 | | shaders |
 |---|---:|
-| executed | 192 |
-| passed | 192 |
+| executed | 199 |
+| passed | 199 |
 | passed within the float tolerance | 0 |
 | failed | 0 |
-| skipped: capability or extension the harness cannot enable | 159 |
-| skipped: device feature missing on the driver | 161 |
-| skipped: resource or interface the harness cannot bind | 19 |
+| skipped: capability or extension the harness cannot enable | 154 |
+| skipped: device feature missing on the driver | 176 |
+| skipped: resource or interface the harness cannot bind | 2 |
 | skipped: glslang's module is not valid SPIR-V | 11 |
 | skipped: known driver bug (xtask/exec-drivers) | 1 |
 
@@ -54,13 +54,13 @@ Shaders that glslang's own test suite (`gtests/*.FromFile.cpp`) compiles under V
 
 | | shaders |
 |---|---:|
-| executed | 279 |
-| passed | 279 |
+| executed | 300 |
+| passed | 300 |
 | passed within the float tolerance | 0 |
 | failed | 0 |
-| skipped: capability or extension the harness cannot enable | 188 |
-| skipped: device feature missing on the driver | 39 |
-| skipped: resource or interface the harness cannot bind | 22 |
+| skipped: capability or extension the harness cannot enable | 181 |
+| skipped: device feature missing on the driver | 44 |
+| skipped: resource or interface the harness cannot bind | 3 |
 | skipped: glslang's module is not valid SPIR-V | 11 |
 | skipped: glslang's module fails on the driver | 3 |
 | skipped: known driver bug (xtask/exec-drivers) | 1 |
@@ -69,13 +69,13 @@ Shaders that glslang's own test suite (`gtests/*.FromFile.cpp`) compiles under V
 
 | | shaders |
 |---|---:|
-| executed | 310 |
-| passed | 310 |
+| executed | 331 |
+| passed | 331 |
 | passed within the float tolerance | 0 |
 | failed | 0 |
-| skipped: capability or extension the harness cannot enable | 189 |
-| skipped: device feature missing on the driver | 7 |
-| skipped: resource or interface the harness cannot bind | 22 |
+| skipped: capability or extension the harness cannot enable | 182 |
+| skipped: device feature missing on the driver | 12 |
+| skipped: resource or interface the harness cannot bind | 3 |
 | skipped: glslang's module is not valid SPIR-V | 11 |
 | skipped: glslang's module fails on the driver | 4 |
 
@@ -85,8 +85,8 @@ Shaders that glslang's own test suite compiles under OpenGL semantics. Here glsl
 
 | Stage | Files | accept | diag | valid | interface | exec local | exec amd | exec nvidia | link | crashes |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| **all** | 218 | 218 / 218 (100.0 %) | 142 / 143 (99.3 %) | 75 / 75 (100.0 %) | 75 / 75 (100.0 %) | 47 / 47 (100.0 %) | 58 / 58 (100.0 %) | 58 / 58 (100.0 %) | 15 / 15 (100.0 %) | 0 |
-| vert | 73 | 73 / 73 (100.0 %) | 34 / 34 (100.0 %) | 39 / 39 (100.0 %) | 39 / 39 (100.0 %) | 27 / 27 (100.0 %) | 33 / 33 (100.0 %) | 33 / 33 (100.0 %) | 10 / 10 (100.0 %) | 0 |
+| **all** | 218 | 218 / 218 (100.0 %) | 142 / 143 (99.3 %) | 75 / 75 (100.0 %) | 75 / 75 (100.0 %) | 47 / 47 (100.0 %) | 59 / 59 (100.0 %) | 59 / 59 (100.0 %) | 15 / 15 (100.0 %) | 0 |
+| vert | 73 | 73 / 73 (100.0 %) | 34 / 34 (100.0 %) | 39 / 39 (100.0 %) | 39 / 39 (100.0 %) | 27 / 27 (100.0 %) | 34 / 34 (100.0 %) | 34 / 34 (100.0 %) | 10 / 10 (100.0 %) | 0 |
 | tesc | 6 | 6 / 6 (100.0 %) | 5 / 5 (100.0 %) | 1 / 1 (100.0 %) | 1 / 1 (100.0 %) | 1 / 1 (100.0 %) | 1 / 1 (100.0 %) | 1 / 1 (100.0 %) | – | 0 |
 | tese | 2 | 2 / 2 (100.0 %) | 2 / 2 (100.0 %) | – | – | – | – | – | – | 0 |
 | geom | 11 | 11 / 11 (100.0 %) | 6 / 6 (100.0 %) | 5 / 5 (100.0 %) | 5 / 5 (100.0 %) | – | 3 / 3 (100.0 %) | 3 / 3 (100.0 %) | 1 / 1 (100.0 %) | 0 |
@@ -117,32 +117,32 @@ Shaders that glslang's own test suite compiles under OpenGL semantics. Here glsl
 | passed within the float tolerance | 0 |
 | failed | 0 |
 | skipped: capability or extension the harness cannot enable | 1 |
-| skipped: device feature missing on the driver | 11 |
-| skipped: resource or interface the harness cannot bind | 3 |
+| skipped: device feature missing on the driver | 12 |
+| skipped: resource or interface the harness cannot bind | 2 |
 | skipped: glslang's module is not valid SPIR-V | 13 |
 
 `exec amd` in detail:
 
 | | shaders |
 |---|---:|
-| executed | 58 |
-| passed | 58 |
+| executed | 59 |
+| passed | 59 |
 | passed within the float tolerance | 0 |
 | failed | 0 |
 | skipped: capability or extension the harness cannot enable | 1 |
-| skipped: resource or interface the harness cannot bind | 3 |
+| skipped: resource or interface the harness cannot bind | 2 |
 | skipped: glslang's module is not valid SPIR-V | 13 |
 
 `exec nvidia` in detail:
 
 | | shaders |
 |---|---:|
-| executed | 58 |
-| passed | 58 |
+| executed | 59 |
+| passed | 59 |
 | passed within the float tolerance | 0 |
 | failed | 0 |
 | skipped: capability or extension the harness cannot enable | 1 |
-| skipped: resource or interface the harness cannot bind | 3 |
+| skipped: resource or interface the harness cannot bind | 2 |
 | skipped: glslang's module is not valid SPIR-V | 13 |
 
 ## rglsl link tests
