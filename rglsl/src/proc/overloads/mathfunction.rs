@@ -44,6 +44,7 @@ impl ir::MathFunction {
             | Mf::Ceil
             | Mf::Floor
             | Mf::Round
+            | Mf::RoundEven
             | Mf::Fract
             | Mf::Trunc
             | Mf::Exp

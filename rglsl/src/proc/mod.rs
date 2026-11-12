@@ -367,6 +367,7 @@ impl super::MathFunction {
             Self::Ceil => 1,
             Self::Floor => 1,
             Self::Round => 1,
+            Self::RoundEven => 1,
             Self::Fract => 1,
             Self::Trunc => 1,
             Self::Modf => 1,

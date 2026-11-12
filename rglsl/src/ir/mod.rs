@@ -1942,6 +1942,7 @@ pub enum MathFunction {
     Ceil,
     Floor,
     Round,
+    RoundEven,
     Fract,
     Trunc,
     Modf,

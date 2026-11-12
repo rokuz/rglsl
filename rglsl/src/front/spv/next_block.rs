@@ -1713,7 +1713,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
 
                     let fun = match gl_op {
                         Glo::Round => Mf::Round,
-                        Glo::RoundEven => Mf::Round,
+                        Glo::RoundEven => Mf::RoundEven,
                         Glo::Trunc => Mf::Trunc,
                         Glo::FAbs | Glo::SAbs => Mf::Abs,
                         Glo::FSign | Glo::SSign => Mf::Sign,

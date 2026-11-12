@@ -1834,7 +1834,7 @@ impl<'a> ConstantEvaluator<'a> {
             crate::MathFunction::Floor => {
                 component_wise_float!(self, span, [arg], |e| { Ok([e.floor()]) })
             }
-            crate::MathFunction::Round => {
+            crate::MathFunction::RoundEven => {
                 component_wise_float(self, span, [arg], |e| match e {
                     Float::Abstract([e]) => Ok(Float::Abstract([libm::rint(e)])),
                     Float::F32([e]) => Ok(Float::F32([libm::rintf(e)])),
@@ -2162,7 +2162,8 @@ impl<'a> ConstantEvaluator<'a> {
             }
 
             // unimplemented
-            crate::MathFunction::Modf
+            crate::MathFunction::Round
+            | crate::MathFunction::Modf
             | crate::MathFunction::Frexp
             | crate::MathFunction::AddCarry
             | crate::MathFunction::SubBorrow

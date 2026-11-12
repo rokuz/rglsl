@@ -103,7 +103,7 @@ OpStore %31 %15
 %87 = OpExtInst  %3  %1 Ceil %86
 OpStore %33 %87
 %88 = OpLoad  %3  %26
-%89 = OpExtInst  %3  %1 RoundEven %88
+%89 = OpExtInst  %3  %1 Round %88
 OpStore %34 %89
 %90 = OpLoad  %3  %26
 %91 = OpExtInst  %3  %1 Floor %90

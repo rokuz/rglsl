@@ -118,7 +118,7 @@ OpStore %27 %15
 %102 = OpExtInst  %3  %1 Ceil %101
 OpStore %29 %102
 %103 = OpLoad  %3  %22
-%104 = OpExtInst  %3  %1 RoundEven %103
+%104 = OpExtInst  %3  %1 Round %103
 OpStore %30 %104
 %105 = OpLoad  %3  %22
 %106 = OpExtInst  %3  %1 Floor %105

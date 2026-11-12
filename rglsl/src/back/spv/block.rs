@@ -1346,7 +1346,8 @@ impl BlockContext<'_> {
                     Mf::Degrees => MathOp::Ext(spirv::GlslStd450Op::Degrees),
                     // decomposition
                     Mf::Ceil => MathOp::Ext(spirv::GlslStd450Op::Ceil),
-                    Mf::Round => MathOp::Ext(spirv::GlslStd450Op::RoundEven),
+                    Mf::Round => MathOp::Ext(spirv::GlslStd450Op::Round),
+                    Mf::RoundEven => MathOp::Ext(spirv::GlslStd450Op::RoundEven),
                     Mf::Floor => MathOp::Ext(spirv::GlslStd450Op::Floor),
                     Mf::Fract => MathOp::Ext(spirv::GlslStd450Op::Fract),
                     Mf::Trunc => MathOp::Ext(spirv::GlslStd450Op::Trunc),
