@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
-use spirv::{BuiltIn, Capability, Dim, ExecutionMode, ExecutionModel, ImageFormat};
+use spirv::{BuiltIn, Capability, Dim, ExecutionMode, ExecutionModel, ImageFormat, Op};
 
 use super::data::{fill_random, fill_values, Rng, Value};
 use super::glsl;
@@ -382,6 +382,13 @@ fn buffer_bytes(
     bytes
 }
 
+const UNSIZED_ACCESSES: [Op; 4] = [
+    Op::CooperativeMatrixLoadTensorNV,
+    Op::CooperativeMatrixStoreTensorNV,
+    Op::CooperativeVectorOuterProductAccumulateNV,
+    Op::CooperativeVectorReduceSumAccumulateNV,
+];
+
 pub fn requirements(reflection: &Reflection) -> Result<BTreeSet<Need>, Refusal> {
     if let Some(unknown) = reflection.unknown_capabilities.first() {
         let name = match unknown {
@@ -497,6 +504,11 @@ impl Plan {
     pub fn new(reflection: &Reflection, inputs: &Inputs) -> Result<Self, Refusal> {
         let stage = stage_of(reflection.model)?;
         let mut needs = requirements(reflection)?;
+        if let Some(op) = UNSIZED_ACCESSES.iter().find(|op| reflection.uses(**op)) {
+            return Err(Refusal::Binding(format!(
+                "{op:?} addresses memory through sizes and layouts the harness cannot bind safely"
+            )));
+        }
         if let Some(problem) = reflection.problems.first() {
             return Err(Refusal::Binding(problem.clone()));
         }
