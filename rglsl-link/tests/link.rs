@@ -1146,3 +1146,37 @@ fn work_group_size_is_specialized_by_a_library() -> TestResult {
     assert!(alone.module.overrides.is_empty());
     Ok(())
 }
+
+#[test]
+fn implicit_xfb_strides_cover_every_unit() -> TestResult {
+    let main = object(
+        ShaderStage::Vertex,
+        "#version 450
+layout(location = 0, xfb_buffer = 0, xfb_offset = 0) out vec4 a;
+layout(location = 1, xfb_buffer = 1, xfb_offset = 0) out float c;
+void more();
+void main() { a = vec4(1.0); c = 1.0; more(); }
+",
+    )?;
+    let more = library(
+        "#version 450
+layout(location = 2, xfb_buffer = 0, xfb_offset = 16) out vec4 b;
+layout(location = 3, xfb_buffer = 1, xfb_offset = 8) out double d;
+void more() { b = vec4(2.0); d = 2.0lf; }
+",
+    )?;
+    let options = LinkOptions {
+        auto_map_locations: true,
+        auto_map_bindings: false,
+    };
+    let result = link(&[main, more], &options)?;
+    let mut strides: Vec<(u32, u32)> = result
+        .module
+        .global_variables
+        .iter()
+        .filter_map(|(_, global)| global.xfb.map(|xfb| (xfb.buffer, xfb.stride)))
+        .collect();
+    strides.sort_unstable();
+    assert_eq!(strides, [(0, 32), (0, 32), (1, 16), (1, 16)]);
+    Ok(())
+}
