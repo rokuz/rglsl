@@ -15,8 +15,6 @@ const SPV_NV_COOPERATIVE_MATRIX2: &str = "SPV_NV_cooperative_matrix2";
 const SPV_EXT_COOPERATIVE_MATRIX_MAINTENANCE1: &str = "SPV_EXT_cooperative_matrix_maintenance1";
 const SPV_NV_COOPERATIVE_MATRIX_DECODE_VECTOR: &str = "SPV_NV_cooperative_matrix_decode_vector";
 const CAPABILITY_COOPERATIVE_MATRIX_CONVERSIONS_EXT: Word = 5429;
-const CAPABILITY_COOPERATIVE_MATRIX_REDUCTIONS_EXT: Word = 5430;
-const CAPABILITY_COOPERATIVE_MATRIX_PER_ELEMENT_OPERATIONS_EXT: Word = 5432;
 const CAPABILITY_COOPERATIVE_MATRIX_GET_COORDINATE_EXT: Word = 5438;
 const CAPABILITY_COOPERATIVE_MATRIX_DECODE_VECTOR_NV: Word = 5447;
 const OP_COOPERATIVE_MATRIX_GET_COORDINATE_EXT: Word = 5363;
@@ -761,18 +759,15 @@ impl BlockContext<'_> {
         &mut self,
         family: CooperativeFamily,
         capability: spirv::Capability,
-        ext_capability: Word,
     ) -> Result<(), Error> {
+        self.writer
+            .require_any("cooperative matrix operation", &[capability])?;
         match family {
-            CooperativeFamily::Ext => {
-                self.writer.raw_capabilities.insert(ext_capability);
-                self.writer
-                    .use_extension(SPV_EXT_COOPERATIVE_MATRIX_MAINTENANCE1);
-            }
+            CooperativeFamily::Ext => self
+                .writer
+                .use_extension(SPV_EXT_COOPERATIVE_MATRIX_MAINTENANCE1),
             CooperativeFamily::Khr | CooperativeFamily::Nv => {
-                self.writer
-                    .require_any("cooperative matrix operation", &[capability])?;
-                self.writer.use_extension(SPV_NV_COOPERATIVE_MATRIX2);
+                self.writer.use_extension(SPV_NV_COOPERATIVE_MATRIX2)
             }
         }
         Ok(())
@@ -998,11 +993,7 @@ impl BlockContext<'_> {
                 combine,
                 family,
             } => {
-                self.require_family(
-                    family,
-                    spirv::Capability::CooperativeMatrixReductionsNV,
-                    CAPABILITY_COOPERATIVE_MATRIX_REDUCTIONS_EXT,
-                )?;
+                self.require_family(family, spirv::Capability::CooperativeMatrixReductionsNV)?;
                 let mut instruction = Instruction::new(Op::CooperativeMatrixReduceNV);
                 instruction.set_type(result_type_id);
                 instruction.set_result(id);
@@ -1020,7 +1011,6 @@ impl BlockContext<'_> {
                 self.require_family(
                     family,
                     spirv::Capability::CooperativeMatrixPerElementOperationsNV,
-                    CAPABILITY_COOPERATIVE_MATRIX_PER_ELEMENT_OPERATIONS_EXT,
                 )?;
                 let mut instruction = Instruction::new(Op::CooperativeMatrixPerElementOpNV);
                 instruction.set_type(result_type_id);

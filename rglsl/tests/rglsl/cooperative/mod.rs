@@ -1,7 +1,12 @@
-use std::collections::{BTreeMap, BTreeSet};
+#![allow(
+    dead_code,
+    reason = "helpers shared by the cooperative test modules, each uses a part"
+)]
+
+use alloc::collections::{BTreeMap, BTreeSet};
+use core::sync::atomic::{AtomicUsize, Ordering};
 use std::path::PathBuf;
 use std::process::Command;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 use rglsl::{
     back::spv,
@@ -15,6 +20,7 @@ use spirv::Op;
 
 use crate::TestResult;
 
+mod matrix2;
 mod smoke;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -226,7 +232,7 @@ fn line_of(source: &str, span: rglsl::Span) -> u32 {
     span.location(source).line_number
 }
 
-fn message(error: &dyn std::error::Error) -> String {
+fn message(error: &dyn core::error::Error) -> String {
     let mut text = error.to_string();
     let mut source = error.source();
     while let Some(inner) = source {
@@ -293,7 +299,7 @@ fn spirv_val(words: &[u32], target: Target) -> TestResult {
 }
 
 enum GlslangResult {
-    Accepted(dr::Module),
+    Accepted(Vec<u32>),
     Rejected(Vec<(u32, String)>),
 }
 
@@ -320,10 +326,13 @@ fn glslang(source: &str, target: Target, debug: Debug) -> TestResult<Option<Glsl
         String::from_utf8_lossy(&result.stderr)
     );
     if result.status.success() {
-        let words = std::fs::read(&output)?;
+        let bytes = std::fs::read(&output)?;
         let _ = std::fs::remove_file(&output);
-        let module = dr::load_bytes(words)?;
-        return Ok(Some(GlslangResult::Accepted(module)));
+        let words = bytes
+            .chunks_exact(4)
+            .filter_map(|chunk| chunk.try_into().ok().map(u32::from_le_bytes))
+            .collect();
+        return Ok(Some(GlslangResult::Accepted(words)));
     }
     let _ = std::fs::remove_file(&output);
     let errors = text
@@ -367,7 +376,7 @@ pub fn compile_with(
         Some(GlslangResult::Rejected(errors)) => {
             return Err(format!("glslang rejects the shader: {errors:?}").into())
         }
-        Some(GlslangResult::Accepted(reference)) => Some(reference),
+        Some(GlslangResult::Accepted(reference)) => Some(dr::load_words(reference)?),
     };
     if let (Some(reference), Glslang::SameStructure) = (&reference, expectation) {
         let theirs = structure(reference);
@@ -451,6 +460,179 @@ pub fn assert_rejected_like_glslang(source: &str, target: Target) -> TestResult 
                 .into());
             }
             Ok(())
+        }
+    }
+}
+
+pub struct RawCompiled {
+    pub words: Vec<u32>,
+    pub glslang: Option<Vec<u32>>,
+}
+
+impl RawCompiled {
+    pub fn count(&self, opcode: u32) -> usize {
+        raw_instructions(&self.words)
+            .filter(|(op, _)| *op == opcode)
+            .count()
+    }
+
+    pub fn has_capability(&self, capability: u32) -> bool {
+        raw_capabilities(&self.words).contains(&capability)
+    }
+
+    pub fn has_extension(&self, name: &str) -> bool {
+        raw_extensions(&self.words).contains(name)
+    }
+
+    pub fn operands(&self, opcode: u32) -> Vec<Vec<u32>> {
+        raw_instructions(&self.words)
+            .filter(|(op, _)| *op == opcode)
+            .map(|(_, operands)| operands.to_vec())
+            .collect()
+    }
+}
+
+fn raw_instructions(words: &[u32]) -> impl Iterator<Item = (u32, &[u32])> {
+    let mut rest = words.get(5..).unwrap_or_default();
+    core::iter::from_fn(move || {
+        let (&first, _) = rest.split_first()?;
+        let length = usize::try_from(first >> 16).ok()?.max(1);
+        let instruction = rest.get(..length)?;
+        rest = rest.get(length..).unwrap_or_default();
+        Some((first & 0xffff, instruction.get(1..).unwrap_or_default()))
+    })
+}
+
+fn raw_string(operands: &[u32]) -> String {
+    let bytes: Vec<u8> = operands
+        .iter()
+        .flat_map(|word| word.to_le_bytes())
+        .take_while(|byte| *byte != 0)
+        .collect();
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
+fn raw_capabilities(words: &[u32]) -> BTreeSet<u32> {
+    raw_instructions(words)
+        .filter(|(op, _)| *op == Op::Capability as u32)
+        .filter_map(|(_, operands)| operands.first().copied())
+        .collect()
+}
+
+fn raw_extensions(words: &[u32]) -> BTreeSet<String> {
+    raw_instructions(words)
+        .filter(|(op, _)| *op == Op::Extension as u32)
+        .map(|(_, operands)| raw_string(operands))
+        .collect()
+}
+
+fn raw_name(opcode: u32) -> String {
+    Op::from_u32(opcode).map_or_else(|| format!("Op{opcode}"), |op| format!("{op:?}"))
+}
+
+const RAW_COOPERATIVE_OPCODES: [u32; 1] = [5363];
+
+fn raw_structure(words: &[u32]) -> BTreeMap<String, usize> {
+    let mut histogram = BTreeMap::new();
+    for (opcode, _) in raw_instructions(words) {
+        let name = raw_name(opcode);
+        if RAW_COOPERATIVE_OPCODES.contains(&opcode)
+            || COOPERATIVE_WORDS.iter().any(|word| name.contains(word))
+        {
+            *histogram.entry(name).or_insert(0) += 1;
+        }
+    }
+    for capability in raw_capabilities(words) {
+        let name = spirv::Capability::from_u32(capability)
+            .map_or_else(|| capability.to_string(), |known| format!("{known:?}"));
+        histogram.insert(format!("capability {name}"), 1);
+    }
+    for extension in raw_extensions(words) {
+        histogram.insert(format!("extension {extension}"), 1);
+    }
+    histogram
+}
+
+fn histogram_difference(
+    theirs: &BTreeMap<String, usize>,
+    mine: &BTreeMap<String, usize>,
+) -> Option<String> {
+    if theirs == mine {
+        return None;
+    }
+    let keys: BTreeSet<&String> = theirs.keys().chain(mine.keys()).collect();
+    let differences: Vec<String> = keys
+        .into_iter()
+        .filter(|key| theirs.get(*key) != mine.get(*key))
+        .map(|key| {
+            format!(
+                "{key}: glslang {}, rglsl {}",
+                theirs.get(key).copied().unwrap_or_default(),
+                mine.get(key).copied().unwrap_or_default()
+            )
+        })
+        .collect();
+    Some(differences.join("; "))
+}
+
+pub fn compile_raw(source: &str, target: Target) -> TestResult<RawCompiled> {
+    compile_raw_with(source, target, Glslang::SameStructure)
+}
+
+pub fn compile_raw_with(
+    source: &str,
+    target: Target,
+    expectation: Glslang,
+) -> TestResult<RawCompiled> {
+    let words = ours(source, target, Debug::None).map_err(|errors| {
+        format!(
+            "rglsl rejects the shader: {}",
+            errors
+                .iter()
+                .map(|(line, text)| format!("{line}: {text}"))
+                .collect::<Vec<_>>()
+                .join("; ")
+        )
+    })?;
+    spirv_val(&words, target)?;
+    let reference = match glslang(source, target, Debug::None)? {
+        None => None,
+        Some(GlslangResult::Rejected(errors)) => {
+            return Err(format!("glslang rejects the shader: {errors:?}").into())
+        }
+        Some(GlslangResult::Accepted(reference)) => Some(reference),
+    };
+    if let (Some(reference), Glslang::SameStructure) = (&reference, expectation) {
+        if let Some(difference) =
+            histogram_difference(&raw_structure(reference), &raw_structure(&words))
+        {
+            return Err(format!("the module differs from glslang's: {difference}").into());
+        }
+    }
+    Ok(RawCompiled {
+        words,
+        glslang: reference,
+    })
+}
+
+pub fn assert_rejected_unlike_glslang(
+    source: &str,
+    target: Target,
+    expected: &[(u32, &str)],
+) -> TestResult {
+    let found = errors(source, target)?;
+    for (line, text) in expected {
+        if !found
+            .iter()
+            .any(|(found_line, message)| found_line == line && message.contains(text))
+        {
+            return Err(format!("no error `{text}` on line {line}; errors: {found:?}").into());
+        }
+    }
+    match glslang(source, target, Debug::None)? {
+        None | Some(GlslangResult::Accepted(_)) => Ok(()),
+        Some(GlslangResult::Rejected(theirs)) => {
+            Err(format!("glslang rejects the shader too: {theirs:?}").into())
         }
     }
 }

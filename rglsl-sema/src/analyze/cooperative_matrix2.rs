@@ -70,7 +70,7 @@ const REDUCE_COLUMN: i64 = 0x2;
 const REDUCE_ROW_AND_COLUMN: i64 = 0x3;
 const REDUCE_2X2: i64 = 0x4;
 
-fn known_mismatch(left: ArraySize, right: ArraySize) -> bool {
+const fn known_mismatch(left: ArraySize, right: ArraySize) -> bool {
     matches!((left, right), (ArraySize::Sized(left), ArraySize::Sized(right)) if left != right)
 }
 
