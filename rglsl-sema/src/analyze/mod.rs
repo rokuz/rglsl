@@ -11,6 +11,7 @@ mod heap;
 mod layout_qualifiers;
 mod memory;
 mod mesh;
+mod opencl;
 mod precise;
 mod precision;
 mod qcom;
@@ -360,6 +361,7 @@ pub(crate) struct Analyzer<'a> {
     pub library: Option<Arc<StageTables>>,
     pub stage_diagnostics: Vec<StageDiagnostic>,
     pub trust: Vec<u16>,
+    target_limits: Vec<(Diagnostic, u16)>,
     pub options: &'a Options,
     pub version: Option<u32>,
     pub builtins: Arc<Builtins>,
@@ -442,6 +444,7 @@ impl<'a> Analyzer<'a> {
             library: None,
             stage_diagnostics: Vec::new(),
             trust,
+            target_limits: Vec::new(),
             options,
             version: None,
             types: builtins.types().clone(),
@@ -813,7 +816,13 @@ impl<'a> Analyzer<'a> {
         self.library.clone()
     }
 
-    fn finish(self) -> Analysis {
+    fn finish(mut self) -> Analysis {
+        if self.diagnostics.is_empty() {
+            for (diagnostic, trusted) in core::mem::take(&mut self.target_limits) {
+                self.diagnostics.push(diagnostic);
+                self.trust.push(trusted);
+            }
+        }
         Analysis {
             stages: self.probe.compatible(),
             stage_names: self.stage_names.into_inner(),
@@ -857,6 +866,11 @@ impl<'a> Analyzer<'a> {
     pub(crate) fn error(&mut self, span: Span, kind: DiagnosticKind) {
         self.diagnostics.push(Diagnostic { span, kind });
         self.trust.push(self.probe.compatible());
+    }
+
+    pub(crate) fn target_limit(&mut self, span: Span, kind: DiagnosticKind) {
+        self.target_limits
+            .push((Diagnostic { span, kind }, self.probe.compatible()));
     }
 
     pub(crate) fn show(&self, ty: &Type) -> String {

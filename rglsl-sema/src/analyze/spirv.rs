@@ -119,6 +119,9 @@ impl Analyzer<'_> {
                     }
                     Some(integers) => {
                         capabilities = true;
+                        for (value, &capability) in requirement.values.iter().zip(&integers) {
+                            self.opencl_capability(value.span, capability);
+                        }
                         self.spirv_requirements.capabilities.extend(integers);
                     }
                     None => self.error(
@@ -142,6 +145,7 @@ impl Analyzer<'_> {
             set: String::new(),
             id: None,
         };
+        let mut id_span = None;
         for qualifier in qualifiers {
             let name = qualifier.name.node.as_str();
             match (name, &qualifier.value.kind) {
@@ -169,6 +173,7 @@ impl Analyzer<'_> {
                         );
                     } else {
                         instruction.id = integer(&qualifier.value);
+                        id_span = Some(qualifier.value.span);
                     }
                 }
                 _ => self.error(
@@ -176,6 +181,9 @@ impl Analyzer<'_> {
                     intrinsic(name, "unknown SPIR-V instruction qualifier"),
                 ),
             }
+        }
+        if let (Some(id), Some(span)) = (instruction.id, id_span) {
+            self.opencl_instruction(span, &instruction.set, id);
         }
         instruction
     }
@@ -194,6 +202,7 @@ impl Analyzer<'_> {
         let Some(id) = integer(&mode.mode) else {
             return;
         };
+        self.opencl_execution_mode(mode.mode.span, id);
         let operands = match mode.kind {
             SpirvExecutionModeKind::Literal => SpirvExecutionModeOperands::Literals(
                 mode.operands
@@ -260,7 +269,9 @@ impl Analyzer<'_> {
             );
         }
         self.spirv_requirements(&class.requirements);
-        integer(&class.class)
+        let value = integer(&class.class)?;
+        self.opencl_storage_class(class.class.span, value);
+        Some(value)
     }
 
     fn spirv_decorate_with(
@@ -393,7 +404,10 @@ impl<'b> Cx<'b, Analyzer<'_>> {
     ) -> Option<SpirvDecoration> {
         let decoration = self.with(|analyzer| {
             analyzer.spirv_requirements(&decorate.requirements);
-            integer(&decorate.decoration)
+            let decoration = integer(&decorate.decoration)?;
+            let first_literal = decorate.operands.first().and_then(integer);
+            analyzer.opencl_decoration(decorate.decoration.span, decoration, first_literal);
+            Some(decoration)
         })?;
         let mut ids = Vec::new();
         if decorate.kind == SpirvDecorateKind::Id {
@@ -414,8 +428,16 @@ impl<'b> Cx<'b, Analyzer<'_>> {
             analyzer.spirv_requirements(&specifier.requirements);
             analyzer.spirv_instruction(&specifier.instruction)
         });
+        let opcode = instruction.id.filter(|_| instruction.set.is_empty());
         let mut parameters = Vec::new();
-        for parameter in &specifier.parameters {
+        for (index, parameter) in specifier.parameters.iter().enumerate() {
+            if let (Some(opcode), SpirvTypeParameter::Constant(expression)) = (opcode, parameter) {
+                if let Some(value) = integer(expression) {
+                    self.with(|analyzer| {
+                        analyzer.opencl_type_operand(expression.span, opcode, index, value);
+                    });
+                }
+            }
             match parameter {
                 SpirvTypeParameter::Type(ty) => {
                     let ty = self.call(self.clone().type_specifier(ty)).await;

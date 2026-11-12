@@ -553,6 +553,7 @@ dependencies = [
  "libm",
  "rglsl-ast",
  "rglsl-types",
+ "rspirv",
  "thiserror",
 ]
 
