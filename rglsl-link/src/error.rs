@@ -42,6 +42,12 @@ pub enum LinkError {
     MissingLayout(&'static str),
     #[error("{0}")]
     Mode(&'static str),
+    #[error("xfb_stride is too large:\n    xfb_buffer {buffer}, components (1/4 stride) needed are {components}, gl_MaxTransformFeedbackInterleavedComponents is {limit}")]
+    XfbStride {
+        buffer: u32,
+        components: u32,
+        limit: i32,
+    },
     #[error("{stages}: {what} of `{name}` must match between stages")]
     CrossStage {
         stages: String,

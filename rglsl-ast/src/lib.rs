@@ -46,4 +46,4 @@ pub use error::{ParseError, ParseErrorKind};
 pub use parser::{parse, parse_prefix, NON_UNIFORM};
 pub use printer::print;
 pub use span::{line_column, LineColumn, Span};
-pub use walk::expressions;
+pub use walk::{expressions, statement_expressions};

@@ -61,7 +61,7 @@ pub(super) fn parse(
         Mode::Program,
         root,
         includer,
-        &mut library::StageNames::default(),
+        &mut library::StageNames::new(options.limits),
         false,
         &StageClass::new(options.stage),
     )
@@ -80,7 +80,7 @@ pub(super) fn compile(
         root,
         includer,
         true,
-        &mut library::StageNames::default(),
+        &mut library::StageNames::new(options.limits),
     )
 }
 
@@ -90,7 +90,7 @@ pub(super) fn library_lowerings(
     root: rglsl_pp::FileId,
     includer: &mut dyn rglsl_pp::Includer,
 ) -> usize {
-    let mut names = library::StageNames::default();
+    let mut names = library::StageNames::new(options.limits);
     let _ = compile_sharing(options, source, root, includer, true, &mut names);
     names.lowerings
 }
@@ -145,7 +145,7 @@ pub(super) fn compile_library_per_stage(
         root,
         includer,
         false,
-        &mut library::StageNames::default(),
+        &mut library::StageNames::new(options.limits),
     )
 }
 
@@ -748,6 +748,7 @@ fn sema_options(options: &Options, text: &str) -> rglsl_sema::Options {
         spirv_version: options.spirv_version,
         end_of_input: u32::try_from(text.len()).ok(),
         require_bindings: !options.auto_map_bindings,
+        limits: options.limits,
         ..rglsl_sema::Options::new(stage(options.stage))
     }
 }

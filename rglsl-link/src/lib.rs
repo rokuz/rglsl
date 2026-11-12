@@ -34,6 +34,7 @@ pub struct Options {
     pub auto_map_locations: bool,
     pub auto_map_bindings: bool,
     pub binding_shifts: Vec<(ShaderStage, rglsl::proc::BindingShifts)>,
+    pub limits: rglsl_sema::ResourceLimits,
 }
 
 impl Options {
@@ -189,6 +190,7 @@ pub(crate) fn merge(objects: &[ObjectModule], options: &Options) -> Result<Merge
         objects,
         &mut builder.module,
         &mut entry,
+        options.limits.max_transform_feedback_interleaved_components,
         &mut builder.errors,
     );
     geometry_interface(&builder, &layout, &mut entry)?;

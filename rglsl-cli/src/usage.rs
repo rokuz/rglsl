@@ -23,6 +23,8 @@ subset of glslangValidator's options that applies to Vulkan GLSL.
 2) .<stage>.glsl compound suffix, where stage options are described above
 3) .glsl without a stage: a library, linked into the programs of the other files
 4) .rglo: an rglsl object module (see --object)
+5) .conf: a configuration file of resource limits that replaces the default
+   configuration (see -c below for generating a template)
 
 Options:
   -C          accepted for compatibility (all errors are reported)
@@ -41,6 +43,8 @@ Options:
               undefine a pre-processor macro
   -V[100]     create SPIR-V binary under Vulkan semantics; turns on -l; default
               file name is <stage>.spv (-o overrides this)
+  -c          configuration dump; creates the default configuration file
+              (redirect to a .conf file)
   -e <name> | --entry-point <name>
               specify <name> as the entry-point function name
   -g          generate debug information

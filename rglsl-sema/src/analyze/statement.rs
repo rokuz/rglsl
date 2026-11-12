@@ -335,6 +335,7 @@ impl<'b> Cx<'b, Analyzer<'_>> {
             }
             StatementKind::While { condition, body } => {
                 self.with(|analyzer| {
+                    analyzer.loop_limitation(statement.span, "while");
                     analyzer.scopes.push();
                     analyzer.condition(condition);
                 });
@@ -348,12 +349,14 @@ impl<'b> Cx<'b, Analyzer<'_>> {
                 let end = statement.span.end;
                 let operand = self.call(self.clone().value_expression(condition)).await;
                 self.with(|analyzer| {
+                    analyzer.loop_limitation(statement.span, "do-while");
                     analyzer
                         .boolean_condition_with(Span::new(end.saturating_sub(1), end), &operand);
                 });
             }
-            StatementKind::For(statement) => {
-                self.call(self.clone().for_statement(statement)).await;
+            StatementKind::For(for_statement) => {
+                self.call(self.clone().for_statement(for_statement)).await;
+                self.with(|analyzer| analyzer.inductive_loop_check(statement.span, for_statement));
             }
             StatementKind::Jump(jump) => self.with(|analyzer| analyzer.jump(statement.span, jump)),
             StatementKind::Attributed {

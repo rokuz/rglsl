@@ -7,6 +7,8 @@ use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 
+mod limits;
+
 use crate::interface;
 use crate::oracles::{self, Tool};
 use crate::process::{self, Exit};
@@ -756,12 +758,6 @@ fn cases() -> Vec<Case> {
         )
         .rejected("SPIR-V with linkage is not supported; --object writes rglsl object modules"),
         Case::new(
-            "config-file",
-            &["-V", TARGET_SHADER, "limits.conf"],
-            &[TARGET_SHADER],
-        )
-        .rejected("resource limit files are not supported"),
-        Case::new(
             "hlsl-iomap",
             &["-V", "--hlsl-iomap", TARGET_SHADER],
             &[TARGET_SHADER],
@@ -1259,7 +1255,7 @@ pub fn run(root: &Path, options: &Options) -> Result<i32> {
     };
     let mut report = String::from("case\tverdict\tcommand\tnote\n");
     let (mut passed, mut expected, mut failed) = (0, 0, 0);
-    for case in cases() {
+    for case in cases().into_iter().chain(limits::cases()) {
         if let Some(ref filter) = options.filter {
             if !case.name.contains(filter.as_str()) {
                 continue;

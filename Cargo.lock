@@ -536,6 +536,7 @@ version = "0.1.0"
 dependencies = [
  "rglsl",
  "rglsl-pp",
+ "rglsl-sema",
  "ron",
  "serde",
  "thiserror",

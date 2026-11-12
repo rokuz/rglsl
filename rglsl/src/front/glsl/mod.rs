@@ -13,6 +13,7 @@ To begin, take a look at the documentation for the [`Frontend`].
 
 pub use error::{Error, ErrorKind, IncludeLocation, ParseErrors};
 pub use rglsl_pp::{FileId, Includer, NoIncluder};
+pub use rglsl_sema::ResourceLimits;
 
 use alloc::string::String;
 
@@ -66,6 +67,7 @@ pub struct Options {
     pub keep_uncalled: bool,
     pub resource_set: Option<u32>,
     pub binding_shifts: crate::proc::BindingShifts,
+    pub limits: ResourceLimits,
 }
 
 impl From<ShaderStage> for Options {
@@ -83,6 +85,7 @@ impl From<ShaderStage> for Options {
             keep_uncalled: false,
             resource_set: None,
             binding_shifts: crate::proc::BindingShifts::default(),
+            limits: ResourceLimits::default(),
         }
     }
 }

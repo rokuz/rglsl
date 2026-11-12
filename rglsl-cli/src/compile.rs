@@ -14,6 +14,7 @@ use crate::args::{
     self, Debug, Exit, Macro, Options, VersionDump, EXIT_COMPILE, EXIT_LINK, EXIT_SUCCESS,
 };
 use crate::output;
+use rglsl_cli::config;
 
 pub const OBJECT_EXTENSION: &str = "rglo";
 
@@ -122,6 +123,7 @@ struct Compiled {
 
 pub struct Session<'a> {
     options: &'a Options,
+    limits: glsl::ResourceLimits,
     defines: FastHashMap<String, String>,
     directory: Option<String>,
     included: BTreeSet<String>,
@@ -155,7 +157,25 @@ fn print_version(dump: VersionDump) {
     }
 }
 
+fn resource_limits(options: &Options) -> Result<glsl::ResourceLimits, Exit> {
+    let Some(ref name) = options.config_file else {
+        return Ok(glsl::ResourceLimits::default());
+    };
+    let bytes = fs::read(name).map_err(|_| Exit::error("unable to open input file"))?;
+    let decoded = config::decode(&bytes);
+    for message in &decoded.messages {
+        output::stdout(message);
+    }
+    Ok(decoded.limits)
+}
+
 pub fn run(options: &Options) -> Result<i32, Exit> {
+    if options.dump_config {
+        output::stdout(&config::default_configuration());
+        if options.files.is_empty() {
+            return Ok(EXIT_SUCCESS);
+        }
+    }
     if let Some(dump) = options.version {
         print_version(dump);
         if options.files.is_empty() && !options.stdin {
@@ -165,7 +185,8 @@ pub fn run(options: &Options) -> Result<i32, Exit> {
     if options.files.is_empty() && !options.stdin {
         return Err(Exit::Usage);
     }
-    let mut session = Session::new(options);
+    let limits = resource_limits(options)?;
+    let mut session = Session::new(options, limits);
     if options.object {
         return session.objects();
     }
@@ -176,7 +197,7 @@ pub fn run(options: &Options) -> Result<i32, Exit> {
 }
 
 impl<'a> Session<'a> {
-    fn new(options: &'a Options) -> Self {
+    fn new(options: &'a Options, limits: glsl::ResourceLimits) -> Self {
         let mut defines = FastHashMap::default();
         for edit in &options.macros {
             match *edit {
@@ -193,6 +214,7 @@ impl<'a> Session<'a> {
         }
         Self {
             options,
+            limits,
             defines,
             directory: std::env::current_dir()
                 .ok()
@@ -322,6 +344,7 @@ impl<'a> Session<'a> {
             keep_uncalled: self.options.keep_uncalled,
             resource_set: self.resource_set(stage),
             binding_shifts: self.shifts(stage),
+            limits: self.limits,
             ..glsl::Options::from(stage.unwrap_or(ShaderStage::Compute))
         }
     }
@@ -589,12 +612,9 @@ impl<'a> Session<'a> {
             Err(errors) => {
                 let parsed = self.parse_log(unit, &errors);
                 log.compile.extend(parsed.compile);
-                log.compile.extend(
-                    parsed
-                        .link
-                        .into_iter()
-                        .map(|message| format!("ERROR: {}: {message}", self.root_name(unit))),
-                );
+                log.compile.extend(parsed.link.into_iter().map(|message| {
+                    continued(format!("ERROR: {}: {message}", self.root_name(unit)))
+                }));
                 Compiled { object: None, log }
             }
         }
@@ -770,10 +790,10 @@ impl<'a> Session<'a> {
                     .link
                     .iter()
                     .map(|message| {
-                        format!(
+                        continued(format!(
                             "ERROR: Linking {} stage: {message}",
                             glslang_stage_name(stage)
-                        )
+                        ))
                     })
                     .collect();
                 self.report_link(&link);
@@ -829,6 +849,7 @@ impl<'a> Session<'a> {
             auto_map_locations: self.options.auto_map_locations,
             auto_map_bindings: self.options.auto_map_bindings,
             binding_shifts,
+            limits: self.limits,
         }
     }
 
@@ -984,8 +1005,12 @@ impl<'a> Session<'a> {
     }
 }
 
+fn continued(message: String) -> String {
+    message.replace('\n', "\nERROR: ")
+}
+
 fn link_line(stage: Option<ShaderStage>, error: &rglsl_link::LinkError) -> String {
-    match (stage, error) {
+    continued(match (stage, error) {
         (_, rglsl_link::LinkError::CrossStage { stages, name, what }) => format!(
             "ERROR: Linking {} stages: {what} of `{name}` must match between stages",
             stages.to_lowercase()
@@ -995,5 +1020,5 @@ fn link_line(stage: Option<ShaderStage>, error: &rglsl_link::LinkError) -> Strin
             glslang_stage_name(stage)
         ),
         (None, _) => format!("ERROR: Linking: {error}"),
-    }
+    })
 }

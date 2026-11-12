@@ -197,6 +197,27 @@ pub enum DiagnosticKind {
         qualifier: &'static str,
         reason: &'static str,
     },
+    #[error("invalid use of qualifier `{qualifier}`: {reason}; {limit} is {value}")]
+    ResourceLimit {
+        qualifier: &'static str,
+        reason: &'static str,
+        limit: &'static str,
+        value: i32,
+    },
+    #[error("{feature} must be less than or equal to {limit} ({value})")]
+    ArrayLimit {
+        feature: &'static str,
+        limit: &'static str,
+        value: i32,
+    },
+    #[error("the built-in array `{0}` cannot be declared: its size gl_MaxPatchVertices must be a positive integer")]
+    BuiltinArraySize(&'static str),
+    #[error("{0} loops are not available: the resource limits disable them")]
+    LoopNotAvailable(&'static str),
+    #[error("the resource limits require an inductive loop: {0}")]
+    InductiveLoop(&'static str),
+    #[error("the resource limits require a constant-index-expression: an index can only use constants and loop indices")]
+    NonConstantIndex,
     #[error("`gl_WorkGroupSize` cannot be read before the local size is declared")]
     WorkGroupSizeNotDeclared,
     #[error("the value of layout qualifier `{0}` must be a constant integer expression")]

@@ -1,6 +1,7 @@
 mod api;
 mod builtins;
 mod dimensions;
+mod limits;
 
 use alloc::format;
 use alloc::string::{String, ToString};

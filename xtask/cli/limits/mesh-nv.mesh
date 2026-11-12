@@ -1,0 +1,11 @@
+#version 450
+#extension GL_NV_mesh_shader : require
+layout(local_size_x = 64) in;
+layout(triangles, max_vertices = 300, max_primitives = 600) out;
+layout(location = 0) perviewNV out vec4 color[][5];
+void main()
+{
+    gl_MeshVerticesNV[gl_LocalInvocationID.x].gl_Position = vec4(0.0);
+    color[0][4] = vec4(gl_MaxMeshViewCountNV);
+    gl_PrimitiveCountNV = 1;
+}

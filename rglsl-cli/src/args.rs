@@ -74,6 +74,8 @@ pub struct Options {
     pub stdin: bool,
     pub depfile: Option<String>,
     pub version: Option<VersionDump>,
+    pub dump_config: bool,
+    pub config_file: Option<String>,
     pub files: Vec<String>,
     pub command_line: String,
 }
@@ -524,12 +526,7 @@ fn short_option(cursor: &mut Cursor, options: &mut Options) -> Result<(), Exit> 
                 }
             }
         }
-        'c' => {
-            return Err(Exit::unsupported(
-                &argument,
-                "dumping the resource configuration",
-            ))
-        }
+        'c' => options.dump_config = true,
         'e' => match cursor.take_next() {
             Some(name) => options.entry_point = Some(name),
             None => return Err(Exit::error("no <name> provided for -e")),
@@ -588,10 +585,7 @@ pub fn parse(arguments: Vec<String>) -> Result<Options, Exit> {
         } else if argument.starts_with('-') {
             short_option(&mut cursor, &mut options)?;
         } else if argument.len() >= 5 && argument.ends_with(".conf") {
-            return Err(Exit::unsupported(
-                &argument,
-                "a resource limits configuration file",
-            ));
+            options.config_file = Some(argument);
         } else {
             options.files.push(argument);
         }
