@@ -1,0 +1,2 @@
+reject
+transform feedback of 16-bit components is not supported: Vulkan captures components of at least 32 bits

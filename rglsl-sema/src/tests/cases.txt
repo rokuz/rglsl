@@ -6514,3 +6514,62 @@ layout(local_size_x = 1) in;
 layout(max_vertices = 3, max_primitives = 1) out;
 layout(triangles) out;
 void main() {}
+### 16-bit transform feedback variable | vert | 3:NarrowTransformFeedback
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+layout(location = 0, xfb_buffer = 0, xfb_offset = 0) out f16vec3 v;
+void main() {}
+### 16-bit transform feedback block member | vert | 5:NarrowTransformFeedback
+#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require
+layout(location = 0, xfb_buffer = 1) out Block {
+    float f;
+    layout(xfb_offset = 4) int16_t i;
+};
+void main() {}
+### 16-bit block member without an offset is not captured | vert | ok
+#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require
+layout(location = 0, xfb_buffer = 1) out Block {
+    layout(xfb_offset = 0) float f;
+    uint16_t u;
+};
+void main() {}
+### block offset captures every 16-bit member | vert | 3:NarrowTransformFeedback
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+layout(location = 1, xfb_buffer = 1, xfb_offset = 0) out Block {
+    float f;
+    f16vec2 h;
+} block;
+void main() {}
+### 16-bit transform feedback array | geom | 5:NarrowTransformFeedback
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+layout(points) in;
+layout(points, max_vertices = 1) out;
+layout(location = 0, xfb_buffer = 0, xfb_offset = 0) out float16_t a[2];
+void main() {}
+### 16-bit transform feedback structure | tese | 5:NarrowTransformFeedback
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+layout(triangles) in;
+struct S { float f; f16mat2 m; };
+layout(location = 0, xfb_buffer = 0, xfb_offset = 0) out S s;
+void main() {}
+### 8-bit transform feedback variable | vert | 3:NarrowTransformFeedback
+#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
+layout(location = 0, xfb_buffer = 0, xfb_offset = 0) flat out u8vec4 v;
+void main() {}
+### bfloat16 transform feedback is an input/output error first | vert | 3:InvalidQualifier
+#extension GL_EXT_bfloat16 : require
+layout(location = 0, xfb_buffer = 0, xfb_offset = 0) out bfloat16_t v;
+void main() {}
+### 32-bit transform feedback beside a 16-bit output | vert | ok
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+layout(location = 0, xfb_buffer = 0, xfb_offset = 0) out vec3 v;
+layout(location = 1) out float16_t h;
+layout(location = 2, xfb_buffer = 1, xfb_offset = 0) out Block {
+    float f;
+    ivec2 i;
+    double d;
+};
+void main() {}
+### 16-bit transform feedback is reported after language errors | vert | 4:UndeclaredIdentifier
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+layout(location = 0, xfb_buffer = 0, xfb_offset = 0) out float16_t v;
+void main() { v = missing; }

@@ -176,11 +176,7 @@ pub(super) enum Mode {
 }
 
 const fn link_time(kind: &rglsl_sema::DiagnosticKind) -> bool {
-    matches!(
-        *kind,
-        rglsl_sema::DiagnosticKind::MissingEntryPoint
-            | rglsl_sema::DiagnosticKind::MissingFunctionBody(_)
-    )
+    kind.decided_at_link_time()
 }
 
 fn link_message(kind: &rglsl_sema::DiagnosticKind) -> Option<String> {
@@ -472,11 +468,19 @@ fn lower(
     if options.export_functions {
         errors.extend(exported_main(map, &unit));
     }
-    if !errors.is_empty() {
+    let reported = analysis
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| !(object && link_time(&diagnostic.kind)));
+    let waits_for_lowering = errors.len() == reported.clone().count()
+        && reported
+            .clone()
+            .all(|diagnostic| diagnostic.kind.waits_for_lowering());
+    if !errors.is_empty() && !waits_for_lowering {
         return Err(errors.into());
     }
     names.lowerings += 1;
-    run_lowerer(
+    let object = run_lowerer(
         options,
         source,
         &preprocessed,
@@ -486,7 +490,12 @@ fn lower(
         &class.probe,
         &class.names,
         specialize,
-    )
+    )?;
+    if errors.is_empty() {
+        Ok(object)
+    } else {
+        Err(errors.into())
+    }
 }
 
 fn exported_main(

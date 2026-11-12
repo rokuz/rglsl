@@ -24,6 +24,7 @@ mod stage;
 mod statement;
 mod tensor;
 mod texture;
+mod xfb;
 
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::format;
@@ -825,7 +826,15 @@ impl<'a> Analyzer<'a> {
 
     fn finish(mut self) -> Analysis {
         self.finish_index_limitations();
-        if self.diagnostics.is_empty() {
+        let library = self
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.kind == DiagnosticKind::MissingEntryPoint);
+        if self
+            .diagnostics
+            .iter()
+            .all(|diagnostic| library && diagnostic.kind.decided_at_link_time())
+        {
             for (diagnostic, trusted) in core::mem::take(&mut self.target_limits) {
                 self.diagnostics.push(diagnostic);
                 self.trust.push(trusted);

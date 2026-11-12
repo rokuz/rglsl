@@ -1597,6 +1597,7 @@ impl Analyzer<'_> {
         }
         self.global_storage_checks(&qualifiers, &ty, name.span, false);
         if is_global {
+            self.xfb_variable_check(name.span, &qualifiers, &ty);
             self.fragment_location_limit_check(name.span, &qualifiers);
         }
         if is_global {
@@ -2198,6 +2199,17 @@ impl Analyzer<'_> {
                 );
             }
         }
+        let spans: Vec<Span> = structure
+            .members
+            .iter()
+            .flat_map(|declaration| &declaration.declarators)
+            .map(|declarator| declarator.name.span)
+            .collect();
+        self.xfb_block_check(
+            structure.name.span,
+            &qualifiers,
+            spans.into_iter().zip(&members),
+        );
         let dimensions = instance
             .map(|instance| self.array_sizes(instance.array.as_ref()))
             .unwrap_or_default();
