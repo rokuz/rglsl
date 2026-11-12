@@ -79,7 +79,7 @@ OpStore %25 %40
 OpStore %26 %43
 %44 = OpLoad  %3  %18
 %45 = OpLoad  %3  %20
-%46 = OpFOrdNotEqual  %11  %44 %45
+%46 = OpFUnordNotEqual  %11  %44 %45
 OpStore %27 %46
 OpReturn
 OpFunctionEnd
@@ -121,7 +121,7 @@ OpStore %58 %73
 OpStore %59 %76
 %77 = OpLoad  %5  %52
 %78 = OpLoad  %5  %54
-%79 = OpFOrdNotEqual  %11  %77 %78
+%79 = OpFUnordNotEqual  %11  %77 %78
 OpStore %60 %79
 OpReturn
 OpFunctionEnd

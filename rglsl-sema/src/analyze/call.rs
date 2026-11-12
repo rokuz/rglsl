@@ -699,7 +699,14 @@ impl Analyzer<'_> {
                     operand.value.as_ref().map(|value| value.convert(scalar))
                 })
                 .collect();
-            converted.and_then(|converted| fold_builtin(name, &converted))
+            let result = if matches!(name, "any" | "all") {
+                Some(Scalar::Bool)
+            } else {
+                function.return_type.base_scalar()
+            };
+            converted
+                .zip(result)
+                .and_then(|(converted, result)| fold_builtin(name, &converted, result))
         } else {
             None
         };

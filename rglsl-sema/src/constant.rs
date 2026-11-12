@@ -2,8 +2,6 @@ use alloc::vec::Vec;
 
 use rglsl_ast::ast::{BinaryOperator, UnaryOperator};
 
-use rglsl_types::small_float;
-
 use crate::types::Scalar;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -28,22 +26,6 @@ pub enum Value {
     FloatE2M3(f64),
     FloatUE8M0(f64),
     FloatMXINT8(f64),
-}
-
-fn round_to_half(value: f64) -> f64 {
-    half::f16::from_f64(value).to_f64()
-}
-
-fn round_to_single(value: f64) -> f64 {
-    f64::from(value as f32)
-}
-
-const fn truncate_float(value: f64) -> i128 {
-    if value.is_nan() {
-        0
-    } else {
-        value as i128
-    }
 }
 
 impl Value {
@@ -99,24 +81,18 @@ impl Value {
 
     pub fn floating(scalar: Scalar, value: f64) -> Self {
         match scalar {
-            Scalar::Float => Self::Float(round_to_single(value)),
+            Scalar::Float => Self::Float(value),
             Scalar::Double => Self::Double(value),
-            Scalar::Float16 => Self::Float16(round_to_half(value)),
-            Scalar::BFloat16 => {
-                Self::BFloat16(small_float::bf16_to_f64(small_float::bf16_from_f64(value)))
-            }
-            Scalar::FloatE4M3 => Self::FloatE4M3(small_float::fe4m3_to_f64(
-                small_float::fe4m3_from_f64(value),
-            )),
-            Scalar::FloatE5M2 => Self::FloatE5M2(small_float::fe5m2_to_f64(
-                small_float::fe5m2_from_f64(value),
-            )),
+            Scalar::Float16 => Self::Float16(value),
+            Scalar::BFloat16 => Self::BFloat16(value),
+            Scalar::FloatE4M3 => Self::FloatE4M3(value),
+            Scalar::FloatE5M2 => Self::FloatE5M2(value),
             Scalar::FloatE2M1 => Self::FloatE2M1(value),
             Scalar::FloatE3M2 => Self::FloatE3M2(value),
             Scalar::FloatE2M3 => Self::FloatE2M3(value),
             Scalar::FloatUE8M0 => Self::FloatUE8M0(value),
             Scalar::FloatMXINT8 => Self::FloatMXINT8(value),
-            _ => Self::integer(scalar, truncate_float(value)),
+            _ => Self::truncated(scalar, value),
         }
     }
 
@@ -198,16 +174,20 @@ impl Value {
         if target.is_floating() || target.is_encoded_float() {
             return Self::floating(target, self.as_f64());
         }
-        match self {
-            Self::Bool(value) => Self::integer(target, i128::from(value)),
-            Self::Float(value) | Self::Double(value) | Self::Float16(value) => {
-                if value < 0.0 && target.is_unsigned() {
-                    Self::integer(target, i128::from(value as i64))
-                } else {
-                    Self::integer(target, truncate_float(value))
-                }
-            }
-            other => Self::integer(target, other.wide().unwrap_or(0)),
+        match (self, self.float()) {
+            (Self::Bool(value), _) => Self::integer(target, i128::from(value)),
+            (_, Some(value)) => Self::truncated(target, value),
+            (other, None) => Self::integer(target, other.wide().unwrap_or(0)),
+        }
+    }
+
+    fn truncated(target: Scalar, value: f64) -> Self {
+        match target {
+            Scalar::Int => Self::Int(value as i32),
+            Scalar::Uint => Self::Uint(value as u32),
+            Scalar::Int64 => Self::Int64(value as i64),
+            Scalar::Uint64 => Self::Uint64(value as u64),
+            _ => Self::integer(target, i128::from(value as i32)),
         }
     }
 }
@@ -318,7 +298,8 @@ const fn division_by_zero(scalar: Scalar) -> i128 {
 fn fold_shift(operator: BinaryOperator, left: Value, right: Value) -> Option<Value> {
     let scalar = left.scalar();
     let value = left.wide()?;
-    let amount = u32::try_from(right.wide()?.rem_euclid(i128::from(scalar.bits()))).ok()?;
+    let promoted = scalar.bits().max(32);
+    let amount = u32::try_from(right.wide()?.rem_euclid(i128::from(promoted))).ok()?;
     Some(match operator {
         BinaryOperator::ShiftLeft => Value::integer(scalar, value << amount),
         BinaryOperator::ShiftRight => Value::integer(scalar, value >> amount),
@@ -332,13 +313,29 @@ fn fold_float(operator: BinaryOperator, scalar: Scalar, left: f64, right: f64) -
         BinaryOperator::Add => wrap(left + right),
         BinaryOperator::Subtract => wrap(left - right),
         BinaryOperator::Multiply => wrap(left * right),
-        BinaryOperator::Divide => wrap(left / right),
+        BinaryOperator::Divide => wrap(divided(left, right)),
         BinaryOperator::Less => Value::Bool(left < right),
         BinaryOperator::Greater => Value::Bool(left > right),
-        BinaryOperator::LessEqual => Value::Bool(left <= right),
-        BinaryOperator::GreaterEqual => Value::Bool(left >= right),
+        BinaryOperator::LessEqual => {
+            Value::Bool(left.partial_cmp(&right) != Some(core::cmp::Ordering::Greater))
+        }
+        BinaryOperator::GreaterEqual => {
+            Value::Bool(left.partial_cmp(&right) != Some(core::cmp::Ordering::Less))
+        }
         _ => return None,
     })
+}
+
+fn divided(left: f64, right: f64) -> f64 {
+    if right != 0.0 {
+        left / right
+    } else if left > 0.0 {
+        f64::INFINITY
+    } else if left < 0.0 {
+        f64::NEG_INFINITY
+    } else {
+        f64::NAN
+    }
 }
 
 fn fold_pair(operator: BinaryOperator, left: Value, right: Value) -> Option<Value> {
@@ -394,104 +391,360 @@ pub fn fold_binary(
     Some(Constant::new(values))
 }
 
-fn compare(left: Value, right: Value) -> Option<core::cmp::Ordering> {
+fn less(left: Value, right: Value) -> Option<bool> {
     if left.scalar() != right.scalar() {
         return None;
     }
     match (left.wide(), right.wide()) {
-        (Some(left), Some(right)) => Some(left.cmp(&right)),
-        _ => left.float()?.partial_cmp(&right.float()?),
+        (Some(left), Some(right)) => Some(left < right),
+        _ => Some(left.float()? < right.float()?),
     }
 }
 
 fn smaller(left: Value, right: Value) -> Option<Value> {
-    Some(if compare(right, left)?.is_lt() {
-        right
-    } else {
-        left
-    })
+    Some(if less(right, left)? { right } else { left })
 }
 
 fn larger(left: Value, right: Value) -> Option<Value> {
-    Some(if compare(left, right)?.is_lt() {
-        right
-    } else {
-        left
-    })
+    Some(if less(left, right)? { right } else { left })
+}
+
+fn equal(left: Value, right: Value) -> Option<bool> {
+    if left.scalar() != right.scalar() {
+        return None;
+    }
+    match (left, right) {
+        (Value::Bool(left), Value::Bool(right)) => Some(left == right),
+        _ => match (left.wide(), right.wide()) {
+            (Some(left), Some(right)) => Some(left == right),
+            _ => Some(left.float()? == right.float()?),
+        },
+    }
 }
 
 fn absolute(value: Value) -> Option<Value> {
-    let scalar = value.scalar();
-    if scalar.is_signed() {
-        return Some(Value::integer(scalar, value.wide()?.wrapping_abs()));
-    }
-    let number = value.float()?;
-    Some(Value::floating(
-        scalar,
-        if number < 0.0 { -number } else { number },
-    ))
-}
-
-fn truncated(value: f64) -> Option<f64> {
-    const LIMIT: f64 = 4_503_599_627_370_496.0;
-    if value.is_nan() {
-        None
-    } else if value >= LIMIT || value <= -LIMIT {
-        Some(value)
-    } else {
-        Some((value as i64) as f64)
-    }
-}
-
-fn rounded(name: &str, value: Value) -> Option<Value> {
-    let number = value.float()?;
-    let whole = truncated(number)?;
-    let result = match name {
-        "trunc" => whole,
-        "floor" if whole > number => whole - 1.0,
-        "ceil" if whole < number => whole + 1.0,
-        "floor" | "ceil" => whole,
-        "sign" if number > 0.0 => 1.0,
-        "sign" if number < 0.0 => -1.0,
-        "sign" => 0.0,
-        _ => return None,
-    };
-    Some(Value::floating(value.scalar(), result))
+    Some(match value {
+        Value::Int(number) => Value::Int(number.wrapping_abs()),
+        other if other.float().is_some() => Value::floating(other.scalar(), other.float()?.abs()),
+        other => other,
+    })
 }
 
 fn sign(value: Value) -> Option<Value> {
     let scalar = value.scalar();
-    if scalar.is_signed() {
-        return Some(Value::integer(scalar, value.wide()?.signum()));
+    if let Some(number) = value.float() {
+        let sign = if number == 0.0 {
+            0.0
+        } else if number < 0.0 {
+            -1.0
+        } else {
+            1.0
+        };
+        return Some(Value::floating(scalar, sign));
     }
-    rounded("sign", value)
+    Some(Value::integer(scalar, value.wide()?.signum()))
 }
 
-pub fn fold_builtin(name: &str, arguments: &[Constant]) -> Option<Constant> {
+fn round_even(value: f64) -> f64 {
+    let floor = libm::floor(value);
+    let even = floor / 2.0 == libm::floor(floor / 2.0);
+    if even {
+        libm::ceil(value - 0.5)
+    } else {
+        libm::floor(value + 0.5)
+    }
+}
+
+fn unary_float(name: &str, value: f64) -> Option<f64> {
+    use core::f64::consts::PI;
+    Some(match name {
+        "radians" => value * PI / 180.0,
+        "degrees" => value * 180.0 / PI,
+        "sin" => libm::sin(value),
+        "cos" => libm::cos(value),
+        "tan" => libm::tan(value),
+        "asin" => libm::asin(value),
+        "acos" => libm::acos(value),
+        "atan" => libm::atan(value),
+        "sinh" => libm::sinh(value),
+        "cosh" => libm::cosh(value),
+        "tanh" => libm::tanh(value),
+        "asinh" => libm::asinh(value),
+        "acosh" => libm::acosh(value),
+        "atanh" => libm::atanh(value),
+        "dFdx" | "dFdy" | "fwidth" | "dFdxFine" | "dFdyFine" | "fwidthFine" | "dFdxCoarse"
+        | "dFdyCoarse" | "fwidthCoarse" => 0.0,
+        "exp" => libm::exp(value),
+        "log" => libm::log(value),
+        "exp2" => libm::exp2(value),
+        "log2" => libm::log2(value),
+        "sqrt" => libm::sqrt(value),
+        "inversesqrt" => 1.0 / libm::sqrt(value),
+        "floor" => libm::floor(value),
+        "ceil" => libm::ceil(value),
+        "trunc" if value > 0.0 => libm::floor(value),
+        "trunc" => libm::ceil(value),
+        "round" => libm::floor(0.5 + value),
+        "roundEven" => round_even(value),
+        "fract" => value - libm::floor(value),
+        _ => return None,
+    })
+}
+
+fn bits(name: &str, value: Value) -> Option<Value> {
+    Some(match name {
+        "floatBitsToInt" => Value::Int((value.float()? as f32).to_bits() as i32),
+        "floatBitsToUint" => Value::Uint((value.float()? as f32).to_bits()),
+        "intBitsToFloat" => match value {
+            Value::Int(bits) => Value::Float(f64::from(f32::from_bits(bits as u32))),
+            _ => return None,
+        },
+        "uintBitsToFloat" => match value {
+            Value::Uint(bits) => Value::Float(f64::from(f32::from_bits(bits))),
+            _ => return None,
+        },
+        _ => return None,
+    })
+}
+
+fn smooth(edge0: f64, edge1: f64, value: f64) -> f64 {
+    let t = ((value - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+fn componentwise(name: &str, result: Scalar, arguments: &[Value]) -> Option<Value> {
+    let float = |index: usize| arguments.get(index).and_then(|value| value.float());
+    let value = |index: usize| arguments.get(index).copied();
+    let floating = |number: f64| Some(Value::floating(result, number));
+    match (name, arguments.len()) {
+        ("abs", 1) => absolute(value(0)?),
+        ("sign", 1) => sign(value(0)?),
+        ("isnan", 1) => Some(Value::Bool(float(0)?.is_nan())),
+        ("isinf", 1) => Some(Value::Bool(float(0)?.is_infinite())),
+        ("not", 1) => Some(Value::Bool(!value(0)?.as_bool()?)),
+        ("floatBitsToInt" | "floatBitsToUint" | "intBitsToFloat" | "uintBitsToFloat", 1) => {
+            bits(name, value(0)?)
+        }
+        (_, 1) => floating(unary_float(name, float(0)?)?),
+        ("atan", 2) => floating(libm::atan2(float(0)?, float(1)?)),
+        ("pow", 2) => floating(libm::pow(float(0)?, float(1)?)),
+        ("mod", 2) => {
+            let (left, right) = (float(0)?, float(1)?);
+            floating(left - right * libm::floor(left / right))
+        }
+        ("min", 2) => smaller(value(0)?, value(1)?),
+        ("max", 2) => larger(value(0)?, value(1)?),
+        ("clamp", 3) => smaller(larger(value(0)?, value(1)?)?, value(2)?),
+        ("lessThan", 2) => less(value(0)?, value(1)?).map(Value::Bool),
+        ("greaterThan", 2) => less(value(1)?, value(0)?).map(Value::Bool),
+        ("lessThanEqual", 2) => less(value(1)?, value(0)?).map(|greater| Value::Bool(!greater)),
+        ("greaterThanEqual", 2) => less(value(0)?, value(1)?).map(|less| Value::Bool(!less)),
+        ("equal", 2) => equal(value(0)?, value(1)?).map(Value::Bool),
+        ("notEqual", 2) => equal(value(0)?, value(1)?).map(|equal| Value::Bool(!equal)),
+        ("mix", 3) => match value(2)? {
+            Value::Bool(select) => floating(if select { float(1)? } else { float(0)? }),
+            _ => {
+                let (left, right, weight) = (float(0)?, float(1)?, float(2)?);
+                floating(left * (1.0 - weight) + right * weight)
+            }
+        },
+        ("step", 2) => floating(if float(1)? < float(0)? { 0.0 } else { 1.0 }),
+        ("smoothstep", 3) => floating(smooth(float(0)?, float(1)?, float(2)?)),
+        ("matrixCompMult", 2) => floating(float(0)? * float(1)?),
+        _ => None,
+    }
+}
+
+fn floats(constant: &Constant) -> Option<Vec<f64>> {
+    constant.values.iter().map(|value| value.float()).collect()
+}
+
+fn dot(left: &[f64], right: &[f64]) -> f64 {
+    left.iter()
+        .zip(right)
+        .fold(0.0, |sum, (left, right)| sum + left * right)
+}
+
+fn geometric(name: &str, result: Scalar, arguments: &[Constant]) -> Option<Vec<Value>> {
+    let float = |index: usize| arguments.get(index).and_then(floats);
+    let wrap = |numbers: Vec<f64>| {
+        numbers
+            .into_iter()
+            .map(|number| Value::floating(result, number))
+            .collect::<Vec<_>>()
+    };
+    let booleans = |index: usize| -> Option<Vec<bool>> {
+        arguments
+            .get(index)?
+            .values
+            .iter()
+            .map(|value| value.as_bool())
+            .collect()
+    };
+    Some(match name {
+        "length" => {
+            let vector = float(0)?;
+            wrap(alloc::vec![libm::sqrt(dot(&vector, &vector))])
+        }
+        "normalize" => {
+            let vector = float(0)?;
+            let length = libm::sqrt(dot(&vector, &vector));
+            wrap(vector.iter().map(|component| component / length).collect())
+        }
+        "distance" => {
+            let (from, to) = (float(0)?, float(1)?);
+            let sum = from
+                .iter()
+                .zip(&to)
+                .fold(0.0, |sum, (from, to)| sum + (to - from) * (to - from));
+            wrap(alloc::vec![libm::sqrt(sum)])
+        }
+        "dot" => wrap(alloc::vec![dot(&float(0)?, &float(1)?)]),
+        "cross" => {
+            let (a, b) = (float(0)?, float(1)?);
+            let (&[a0, a1, a2], &[b0, b1, b2]) = (a.as_slice(), b.as_slice()) else {
+                return None;
+            };
+            wrap(alloc::vec![
+                a1 * b2 - a2 * b1,
+                a2 * b0 - a0 * b2,
+                a0 * b1 - a1 * b0
+            ])
+        }
+        "faceforward" => {
+            let (normal, incident, reference) = (float(0)?, float(1)?, float(2)?);
+            let facing = dot(&incident, &reference) < 0.0;
+            wrap(
+                normal
+                    .iter()
+                    .map(|&component| if facing { component } else { -component })
+                    .collect(),
+            )
+        }
+        "reflect" => {
+            let (incident, normal) = (float(0)?, float(1)?);
+            let twice = dot(&incident, &normal) * 2.0;
+            wrap(
+                incident
+                    .iter()
+                    .zip(&normal)
+                    .map(|(incident, normal)| incident - twice * normal)
+                    .collect(),
+            )
+        }
+        "refract" => {
+            let (incident, normal) = (float(0)?, float(1)?);
+            let eta = *float(2)?.first()?;
+            let cosine = dot(&incident, &normal);
+            let k = 1.0 - eta * eta * (1.0 - cosine * cosine);
+            wrap(if k < 0.0 {
+                alloc::vec![0.0; incident.len()]
+            } else {
+                incident
+                    .iter()
+                    .zip(&normal)
+                    .map(|(incident, normal)| {
+                        eta * incident - (eta * cosine + libm::sqrt(k)) * normal
+                    })
+                    .collect()
+            })
+        }
+        "outerProduct" => {
+            let (column, row) = (float(0)?, float(1)?);
+            wrap(
+                row.iter()
+                    .flat_map(|right| column.iter().map(move |left| left * right))
+                    .collect(),
+            )
+        }
+        "any" => alloc::vec![Value::Bool(booleans(0)?.into_iter().any(|value| value))],
+        "all" => alloc::vec![Value::Bool(booleans(0)?.into_iter().all(|value| value))],
+        _ => return None,
+    })
+}
+
+pub fn fold_builtin(name: &str, arguments: &[Constant], result: Scalar) -> Option<Constant> {
+    if let Some(values) = geometric(name, result, arguments) {
+        return Some(Constant::new(values));
+    }
     let length = arguments
         .iter()
         .map(|argument| argument.values.len())
         .max()?;
-    let pick = |argument: usize, index: usize| -> Option<Value> {
-        let constant = arguments.get(argument)?;
-        match constant.values.as_slice() {
+    let pick = |argument: &Constant, index: usize| -> Option<Value> {
+        match argument.values.as_slice() {
             [single] => Some(*single),
             values => values.get(index).copied(),
         }
     };
     let values = (0..length)
-        .map(|index| match (name, arguments.len()) {
-            ("abs", 1) => absolute(pick(0, index)?),
-            ("sign", 1) => sign(pick(0, index)?),
-            ("floor" | "ceil" | "trunc", 1) => rounded(name, pick(0, index)?),
-            ("min", 2) => smaller(pick(0, index)?, pick(1, index)?),
-            ("max", 2) => larger(pick(0, index)?, pick(1, index)?),
-            ("clamp", 3) => smaller(larger(pick(0, index)?, pick(1, index)?)?, pick(2, index)?),
-            ("matrixCompMult", 2) => {
-                fold_pair(BinaryOperator::Multiply, pick(0, index)?, pick(1, index)?)
-            }
-            _ => None,
+        .map(|index| {
+            let components = arguments
+                .iter()
+                .map(|argument| pick(argument, index))
+                .collect::<Option<Vec<_>>>()?;
+            componentwise(name, result, &components)
         })
         .collect::<Option<Vec<_>>>()?;
     Some(Constant::new(values))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Linear {
+    Vector(usize),
+    Matrix { columns: usize, rows: usize },
+}
+
+fn total(mut terms: impl Iterator<Item = Option<f64>>) -> Option<f64> {
+    terms.try_fold(0.0, |sum, term| Some(sum + term?))
+}
+
+pub fn fold_linear(
+    left: &Constant,
+    left_shape: Linear,
+    right: &Constant,
+    right_shape: Linear,
+) -> Option<Constant> {
+    let result = left.first()?.scalar();
+    let (a, b) = (floats(left)?, floats(right)?);
+    let at = |values: &[f64], index: usize| values.get(index).copied();
+    let mut values = Vec::new();
+    match (left_shape, right_shape) {
+        (
+            Linear::Matrix { rows, .. },
+            Linear::Matrix {
+                columns: right_columns,
+                rows: inner,
+            },
+        ) => {
+            for column in 0..right_columns {
+                for row in 0..rows {
+                    values.push(total((0..inner).map(|i| {
+                        Some(at(&a, i * rows + row)? * at(&b, column * inner + i)?)
+                    }))?);
+                }
+            }
+        }
+        (Linear::Matrix { rows, .. }, Linear::Vector(inner)) => {
+            for row in 0..rows {
+                values.push(total(
+                    (0..inner).map(|j| Some(at(&a, j * rows + row)? * at(&b, j)?)),
+                )?);
+            }
+        }
+        (Linear::Vector(inner), Linear::Matrix { columns, rows }) => {
+            for column in 0..columns {
+                values.push(total(
+                    (0..inner).map(|j| Some(at(&a, j)? * at(&b, column * rows + j)?)),
+                )?);
+            }
+        }
+        (Linear::Vector(_), Linear::Vector(_)) => return None,
+    }
+    Some(Constant::new(
+        values
+            .into_iter()
+            .map(|number| Value::floating(result, number))
+            .collect(),
+    ))
 }

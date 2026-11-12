@@ -47,7 +47,8 @@ pub(super) fn math(name: &str, arguments: usize) -> Option<MathFunction> {
         "sign" => Mf::Sign,
         "floor" => Mf::Floor,
         "trunc" => Mf::Trunc,
-        "round" | "roundEven" => Mf::Round,
+        "round" => Mf::Round,
+        "roundEven" => Mf::RoundEven,
         "ceil" => Mf::Ceil,
         "fract" => Mf::Fract,
         "min" => Mf::Min,
@@ -228,16 +229,20 @@ impl FunctionLowerer<'_, '_> {
     ) -> Result<Handle<Expression>> {
         let mut iterator = arguments.iter().copied();
         let arg = iterator.next().ok_or_else(|| internal(at))?;
-        self.add(
-            Expression::Math {
-                fun,
-                arg,
-                arg1: iterator.next(),
-                arg2: iterator.next(),
-                arg3: iterator.next(),
-            },
-            at,
-        )
+        let expression = Expression::Math {
+            fun,
+            arg,
+            arg1: iterator.next(),
+            arg2: iterator.next(),
+            arg3: iterator.next(),
+        };
+        if arguments
+            .iter()
+            .all(|&argument| self.tracker.is_const(argument))
+        {
+            return Ok(self.unemitted(expression, at));
+        }
+        self.add(expression, at)
     }
 
     pub(super) fn binary_op(
@@ -476,10 +481,7 @@ impl FunctionLowerer<'_, '_> {
                 {
                     y = self.splat(y, size, at)?;
                 }
-                let divided = self.binary_op(BinaryOperator::Divide, x, y, at)?;
-                let floor = self.math_call(MathFunction::Floor, &[divided], at)?;
-                let product = self.binary_op(BinaryOperator::Multiply, floor, y, at)?;
-                return self.binary_op(BinaryOperator::Subtract, x, product, at);
+                return self.binary_op(BinaryOperator::Modulo, x, y, at);
             }
             "mix" if types.get(2).and_then(GlslType::base_scalar) == Some(GlslScalar::Bool) => {
                 return self.add(
@@ -520,45 +522,8 @@ impl FunctionLowerer<'_, '_> {
             }
             _ => {}
         }
-        if first_ty.is_scalar() {
-            match name {
-                "dot" => return self.binary_op(BinaryOperator::Multiply, arg(0)?, arg(1)?, at),
-                "normalize" => return self.math_call(MathFunction::Sign, &[arg(0)?], at),
-                "faceforward" => {
-                    let (n, i, reference) = (arg(0)?, arg(1)?, arg(2)?);
-                    let product = self.binary_op(BinaryOperator::Multiply, reference, i, at)?;
-                    let base = first_ty.base_scalar().ok_or_else(|| internal(at))?;
-                    let zero = Literal::zero(scalar(base)).ok_or_else(|| internal(at))?;
-                    let zero = self.literal(zero, at)?;
-                    let condition = self.binary_op(BinaryOperator::Less, product, zero, at)?;
-                    let negated = self.add(
-                        Expression::Unary {
-                            op: UnaryOperator::Negate,
-                            expr: n,
-                        },
-                        at,
-                    )?;
-                    return self.add(
-                        Expression::Select {
-                            condition,
-                            accept: n,
-                            reject: negated,
-                        },
-                        at,
-                    );
-                }
-                "reflect" => {
-                    let (i, n) = (arg(0)?, arg(1)?);
-                    let base = first_ty.base_scalar().ok_or_else(|| internal(at))?;
-                    let two = Literal::new(2, scalar(base)).ok_or_else(|| internal(at))?;
-                    let two = self.literal(two, at)?;
-                    let dot = self.binary_op(BinaryOperator::Multiply, n, i, at)?;
-                    let scaled = self.binary_op(BinaryOperator::Multiply, two, dot, at)?;
-                    let product = self.binary_op(BinaryOperator::Multiply, scaled, n, at)?;
-                    return self.binary_op(BinaryOperator::Subtract, i, product, at);
-                }
-                _ => {}
-            }
+        if first_ty.is_scalar() && name == "dot" {
+            return self.binary_op(BinaryOperator::Multiply, arg(0)?, arg(1)?, at);
         }
         let fun = math(name, values.len())
             .ok_or_else(|| unsupported(format!("the built-in function `{name}`"), at))?;

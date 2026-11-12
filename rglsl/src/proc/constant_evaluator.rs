@@ -1834,7 +1834,7 @@ impl<'a> ConstantEvaluator<'a> {
             crate::MathFunction::Floor => {
                 component_wise_float!(self, span, [arg], |e| { Ok([e.floor()]) })
             }
-            crate::MathFunction::Round => {
+            crate::MathFunction::RoundEven => {
                 component_wise_float(self, span, [arg], |e| match e {
                     Float::Abstract([e]) => Ok(Float::Abstract([libm::rint(e)])),
                     Float::F32([e]) => Ok(Float::F32([libm::rintf(e)])),
@@ -2162,7 +2162,8 @@ impl<'a> ConstantEvaluator<'a> {
             }
 
             // unimplemented
-            crate::MathFunction::Modf
+            crate::MathFunction::Round
+            | crate::MathFunction::Modf
             | crate::MathFunction::Frexp
             | crate::MathFunction::AddCarry
             | crate::MathFunction::SubBorrow
@@ -3441,7 +3442,9 @@ impl<'a> ConstantEvaluator<'a> {
                             BinaryOperator::Subtract => a - b,
                             BinaryOperator::Multiply => a * b,
                             BinaryOperator::Divide => a / b,
-                            BinaryOperator::Modulo => a % b,
+                            BinaryOperator::Modulo => {
+                                floored_modulo(f64::from(a), f64::from(b)) as f32
+                            }
                             _ => return Err(ConstantEvaluatorError::InvalidBinaryOpArgs),
                         }),
                         (Literal::AbstractInt(a), Literal::U32(b)) => {
@@ -3464,7 +3467,9 @@ impl<'a> ConstantEvaluator<'a> {
                                 BinaryOperator::Subtract => a - b,
                                 BinaryOperator::Multiply => a * b,
                                 BinaryOperator::Divide => a / b,
-                                BinaryOperator::Modulo => a % b,
+                                BinaryOperator::Modulo => {
+                                    f16::from_f64(floored_modulo(a.to_f64(), b.to_f64()))
+                                }
                                 _ => return Err(ConstantEvaluatorError::InvalidBinaryOpArgs),
                             };
                             if !result.is_finite() {
@@ -4575,6 +4580,10 @@ where
         a[2] * b[0] - a[0] * b[2],
         a[0] * b[1] - a[1] * b[0],
     ]
+}
+
+fn floored_modulo(left: f64, right: f64) -> f64 {
+    left - right * Real::floor(left / right)
 }
 
 #[cfg(test)]

@@ -1,7 +1,7 @@
 ; SPIR-V
 ; Version: 1.1
 ; Generator: rspirv
-; Bound: 153
+; Bound: 138
 OpCapability Shader
 OpCapability Float64
 %1 = OpExtInstImport "GLSL.std.450"
@@ -20,174 +20,159 @@ OpExecutionMode %9 OriginUpperLeft
 %13 = OpConstant  %4  2
 %14 = OpConstantComposite  %3  %13 %13 %13 %13
 %15 = OpConstant  %6  5
-%16 = OpTypeFloat 32
-%17 = OpConstant  %16  0
-%18 = OpConstant  %16  1
-%19 = OpConstant  %16  0.5
-%20 = OpConstant  %4  0
-%21 = OpConstantComposite  %3  %20 %20 %20 %20
-%22 = OpConstant  %4  0.5
-%23 = OpConstantComposite  %3  %22 %22 %22 %22
-%24 = OpConstantComposite  %3  %20 %20 %20 %20
-%25 = OpConstantComposite  %3  %11 %11 %11 %11
-%27 = OpTypePointer Function %3
-%30 = OpTypePointer Function %5
-%32 = OpTypePointer Function %6
-%45 = OpTypePointer Function %4
-%53 = OpTypePointer Function %7
-%113 = OpTypeInt 32 0
-%112 = OpConstant  %113  0
+%16 = OpConstant  %4  0.5
+%17 = OpConstantComposite  %3  %16 %16 %16 %16
+%19 = OpTypePointer Function %3
+%22 = OpTypePointer Function %5
+%24 = OpTypePointer Function %6
+%37 = OpTypePointer Function %4
+%45 = OpTypePointer Function %7
+%105 = OpTypeInt 32 0
+%104 = OpConstant  %105  0
 %9 = OpFunction  %2  None %10
 %8 = OpLabel
-%58 = OpVariable  %27  Function
-%55 = OpVariable  %27  Function
-%51 = OpVariable  %27  Function
-%48 = OpVariable  %45  Function
+%50 = OpVariable  %19  Function
+%47 = OpVariable  %19  Function
+%43 = OpVariable  %19  Function
+%40 = OpVariable  %37  Function
+%36 = OpVariable  %37  Function
+%33 = OpVariable  %19  Function
+%30 = OpVariable  %19  Function
+%27 = OpVariable  %19  Function
+%23 = OpVariable  %24  Function
+%18 = OpVariable  %19  Function
+%51 = OpVariable  %19  Function
+%48 = OpVariable  %37  Function
 %44 = OpVariable  %45  Function
-%41 = OpVariable  %27  Function
-%38 = OpVariable  %27  Function
-%35 = OpVariable  %27  Function
-%31 = OpVariable  %32  Function
-%26 = OpVariable  %27  Function
-%59 = OpVariable  %27  Function
-%56 = OpVariable  %45  Function
-%52 = OpVariable  %53  Function
-%49 = OpVariable  %27  Function
-%46 = OpVariable  %45  Function
-%42 = OpVariable  %30  Function
-%39 = OpVariable  %27  Function
-%36 = OpVariable  %27  Function
-%33 = OpVariable  %27  Function
-%28 = OpVariable  %27  Function
-%57 = OpVariable  %45  Function
-%54 = OpVariable  %45  Function
-%50 = OpVariable  %27  Function
-%47 = OpVariable  %45  Function
-%43 = OpVariable  %27  Function
-%40 = OpVariable  %27  Function
-%37 = OpVariable  %27  Function
-%34 = OpVariable  %27  Function
-%29 = OpVariable  %30  Function
-OpBranch %60
-%60 = OpLabel
-OpStore %26 %12
-OpStore %28 %14
-%61 = OpLoad  %3  %26
-%62 = OpLoad  %3  %28
-%63 = OpLoad  %3  %26
-%64 = OpLoad  %3  %28
-%65 = OpCompositeExtract  %4  %61 0
-%66 = OpCompositeExtract  %4  %61 1
-%67 = OpCompositeExtract  %4  %61 2
-%68 = OpCompositeExtract  %4  %61 3
-%69 = OpCompositeExtract  %4  %62 0
-%70 = OpCompositeExtract  %4  %62 1
-%71 = OpCompositeExtract  %4  %62 2
-%72 = OpCompositeExtract  %4  %62 3
-%73 = OpCompositeExtract  %4  %63 0
-%74 = OpCompositeExtract  %4  %63 1
-%75 = OpCompositeExtract  %4  %63 2
-%76 = OpCompositeExtract  %4  %63 3
-%77 = OpCompositeExtract  %4  %64 0
-%78 = OpCompositeExtract  %4  %64 1
-%79 = OpCompositeExtract  %4  %64 2
-%80 = OpCompositeExtract  %4  %64 3
-%81 = OpCompositeConstruct  %3  %65 %66 %67 %68
-%82 = OpCompositeConstruct  %3  %69 %70 %71 %72
-%83 = OpCompositeConstruct  %3  %73 %74 %75 %76
-%84 = OpCompositeConstruct  %3  %77 %78 %79 %80
-%85 = OpCompositeConstruct  %5  %81 %82 %83 %84
-OpStore %29 %85
-OpStore %31 %15
-%86 = OpLoad  %3  %26
-%87 = OpExtInst  %3  %1 Ceil %86
-OpStore %33 %87
-%88 = OpLoad  %3  %26
-%89 = OpExtInst  %3  %1 RoundEven %88
-OpStore %34 %89
-%90 = OpLoad  %3  %26
-%91 = OpExtInst  %3  %1 Floor %90
-OpStore %35 %91
-%92 = OpLoad  %3  %26
-%93 = OpExtInst  %3  %1 Fract %92
-OpStore %36 %93
-%94 = OpLoad  %3  %26
-%95 = OpExtInst  %3  %1 Trunc %94
-OpStore %37 %95
-%96 = OpLoad  %3  %26
-%97 = OpExtInst  %3  %1 FAbs %96
-OpStore %38 %97
-%98 = OpLoad  %3  %26
-%99 = OpExtInst  %3  %1 Sqrt %98
-OpStore %39 %99
-%100 = OpLoad  %3  %26
-%101 = OpExtInst  %3  %1 InverseSqrt %100
-OpStore %40 %101
-%102 = OpLoad  %3  %26
-%103 = OpExtInst  %3  %1 FSign %102
-OpStore %41 %103
-%104 = OpLoad  %5  %29
-%105 = OpTranspose  %5  %104
-OpStore %42 %105
-%106 = OpLoad  %3  %26
-%107 = OpExtInst  %3  %1 Normalize %106
-OpStore %43 %107
-%108 = OpLoad  %3  %26
-%109 = OpExtInst  %4  %1 Length %108
-OpStore %44 %109
-%110 = OpLoad  %5  %29
-%111 = OpExtInst  %4  %1 Determinant %110
-OpStore %46 %111
-%114 = OpAccessChain  %45  %26 %112
-%115 = OpLoad  %4  %114
-%116 = OpAccessChain  %45  %28 %112
-%117 = OpLoad  %4  %116
-%118 = OpFDiv  %4  %115 %117
-%119 = OpExtInst  %4  %1 Floor %118
-%120 = OpFMul  %4  %119 %117
-%121 = OpFSub  %4  %115 %120
-OpStore %47 %121
-%122 = OpLoad  %3  %26
-%123 = OpLoad  %3  %28
-%124 = OpDot  %4  %122 %123
-OpStore %48 %124
-%125 = OpLoad  %3  %26
-%126 = OpLoad  %3  %28
-%127 = OpExtInst  %3  %1 FMax %125 %126
-OpStore %49 %127
-%128 = OpLoad  %3  %26
-%129 = OpLoad  %3  %28
-%130 = OpExtInst  %3  %1 FMin %128 %129
-OpStore %50 %130
-%131 = OpLoad  %3  %26
-%132 = OpLoad  %3  %28
-%133 = OpExtInst  %3  %1 Reflect %131 %132
-OpStore %51 %133
-%134 = OpLoad  %3  %26
-%135 = OpVectorShuffle  %7  %134 %134 0 1 2
-%136 = OpLoad  %3  %28
-%137 = OpVectorShuffle  %7  %136 %136 0 1 2
-%138 = OpExtInst  %7  %1 Cross %135 %137
-OpStore %52 %138
-%139 = OpLoad  %3  %26
-%140 = OpLoad  %3  %28
-%141 = OpExtInst  %4  %1 Distance %139 %140
-OpStore %54 %141
-%142 = OpLoad  %3  %26
-%143 = OpLoad  %3  %28
-%144 = OpExtInst  %3  %1 Step %142 %143
-OpStore %55 %144
-%145 = OpAccessChain  %45  %26 %112
-%146 = OpLoad  %4  %145
-%147 = OpLoad  %6  %31
-%148 = OpExtInst  %4  %1 Ldexp %146 %147
-OpStore %56 %148
-%149 = OpExtInst  %16  %1 SmoothStep %17 %18 %19
-%150 = OpFConvert  %4  %149
-OpStore %57 %150
-%151 = OpExtInst  %3  %1 SmoothStep %21 %12 %23
-OpStore %58 %151
-%152 = OpExtInst  %3  %1 SmoothStep %24 %25 %23
-OpStore %59 %152
+%41 = OpVariable  %19  Function
+%38 = OpVariable  %37  Function
+%34 = OpVariable  %22  Function
+%31 = OpVariable  %19  Function
+%28 = OpVariable  %19  Function
+%25 = OpVariable  %19  Function
+%20 = OpVariable  %19  Function
+%49 = OpVariable  %37  Function
+%46 = OpVariable  %37  Function
+%42 = OpVariable  %19  Function
+%39 = OpVariable  %37  Function
+%35 = OpVariable  %19  Function
+%32 = OpVariable  %19  Function
+%29 = OpVariable  %19  Function
+%26 = OpVariable  %19  Function
+%21 = OpVariable  %22  Function
+OpBranch %52
+%52 = OpLabel
+OpStore %18 %12
+OpStore %20 %14
+%53 = OpLoad  %3  %18
+%54 = OpLoad  %3  %20
+%55 = OpLoad  %3  %18
+%56 = OpLoad  %3  %20
+%57 = OpCompositeExtract  %4  %53 0
+%58 = OpCompositeExtract  %4  %53 1
+%59 = OpCompositeExtract  %4  %53 2
+%60 = OpCompositeExtract  %4  %53 3
+%61 = OpCompositeExtract  %4  %54 0
+%62 = OpCompositeExtract  %4  %54 1
+%63 = OpCompositeExtract  %4  %54 2
+%64 = OpCompositeExtract  %4  %54 3
+%65 = OpCompositeExtract  %4  %55 0
+%66 = OpCompositeExtract  %4  %55 1
+%67 = OpCompositeExtract  %4  %55 2
+%68 = OpCompositeExtract  %4  %55 3
+%69 = OpCompositeExtract  %4  %56 0
+%70 = OpCompositeExtract  %4  %56 1
+%71 = OpCompositeExtract  %4  %56 2
+%72 = OpCompositeExtract  %4  %56 3
+%73 = OpCompositeConstruct  %3  %57 %58 %59 %60
+%74 = OpCompositeConstruct  %3  %61 %62 %63 %64
+%75 = OpCompositeConstruct  %3  %65 %66 %67 %68
+%76 = OpCompositeConstruct  %3  %69 %70 %71 %72
+%77 = OpCompositeConstruct  %5  %73 %74 %75 %76
+OpStore %21 %77
+OpStore %23 %15
+%78 = OpLoad  %3  %18
+%79 = OpExtInst  %3  %1 Ceil %78
+OpStore %25 %79
+%80 = OpLoad  %3  %18
+%81 = OpExtInst  %3  %1 Round %80
+OpStore %26 %81
+%82 = OpLoad  %3  %18
+%83 = OpExtInst  %3  %1 Floor %82
+OpStore %27 %83
+%84 = OpLoad  %3  %18
+%85 = OpExtInst  %3  %1 Fract %84
+OpStore %28 %85
+%86 = OpLoad  %3  %18
+%87 = OpExtInst  %3  %1 Trunc %86
+OpStore %29 %87
+%88 = OpLoad  %3  %18
+%89 = OpExtInst  %3  %1 FAbs %88
+OpStore %30 %89
+%90 = OpLoad  %3  %18
+%91 = OpExtInst  %3  %1 Sqrt %90
+OpStore %31 %91
+%92 = OpLoad  %3  %18
+%93 = OpExtInst  %3  %1 InverseSqrt %92
+OpStore %32 %93
+%94 = OpLoad  %3  %18
+%95 = OpExtInst  %3  %1 FSign %94
+OpStore %33 %95
+%96 = OpLoad  %5  %21
+%97 = OpTranspose  %5  %96
+OpStore %34 %97
+%98 = OpLoad  %3  %18
+%99 = OpExtInst  %3  %1 Normalize %98
+OpStore %35 %99
+%100 = OpLoad  %3  %18
+%101 = OpExtInst  %4  %1 Length %100
+OpStore %36 %101
+%102 = OpLoad  %5  %21
+%103 = OpExtInst  %4  %1 Determinant %102
+OpStore %38 %103
+%106 = OpAccessChain  %37  %18 %104
+%107 = OpLoad  %4  %106
+%108 = OpAccessChain  %37  %20 %104
+%109 = OpLoad  %4  %108
+%110 = OpFMod  %4  %107 %109
+OpStore %39 %110
+%111 = OpLoad  %3  %18
+%112 = OpLoad  %3  %20
+%113 = OpDot  %4  %111 %112
+OpStore %40 %113
+%114 = OpLoad  %3  %18
+%115 = OpLoad  %3  %20
+%116 = OpExtInst  %3  %1 FMax %114 %115
+OpStore %41 %116
+%117 = OpLoad  %3  %18
+%118 = OpLoad  %3  %20
+%119 = OpExtInst  %3  %1 FMin %117 %118
+OpStore %42 %119
+%120 = OpLoad  %3  %18
+%121 = OpLoad  %3  %20
+%122 = OpExtInst  %3  %1 Reflect %120 %121
+OpStore %43 %122
+%123 = OpLoad  %3  %18
+%124 = OpVectorShuffle  %7  %123 %123 0 1 2
+%125 = OpLoad  %3  %20
+%126 = OpVectorShuffle  %7  %125 %125 0 1 2
+%127 = OpExtInst  %7  %1 Cross %124 %126
+OpStore %44 %127
+%128 = OpLoad  %3  %18
+%129 = OpLoad  %3  %20
+%130 = OpExtInst  %4  %1 Distance %128 %129
+OpStore %46 %130
+%131 = OpLoad  %3  %18
+%132 = OpLoad  %3  %20
+%133 = OpExtInst  %3  %1 Step %131 %132
+OpStore %47 %133
+%134 = OpAccessChain  %37  %18 %104
+%135 = OpLoad  %4  %134
+%136 = OpLoad  %6  %23
+%137 = OpExtInst  %4  %1 Ldexp %135 %136
+OpStore %48 %137
+OpStore %49 %16
+OpStore %50 %17
+OpStore %51 %17
 OpReturn
 OpFunctionEnd

@@ -4,6 +4,7 @@
     reason = "test support code fails by panicking"
 )]
 
+mod arithmetic;
 mod glsl_vulkan;
 mod snapshots;
 mod spirv_roundtrip;

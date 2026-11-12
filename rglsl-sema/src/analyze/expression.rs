@@ -13,7 +13,7 @@ use rglsl_ast::{Chain, Span, Spine};
 use super::frames::Cx;
 use super::{Analyzer, ExpressionInfo, Operand, Place};
 use crate::builtins::Stage;
-use crate::constant::{fold_binary, fold_unary, Constant, Value};
+use crate::constant::{fold_binary, fold_linear, fold_unary, Constant, Linear, Value};
 use crate::diagnostic::DiagnosticKind;
 use crate::scope::{Lookup, Origin, Qualifiers, Storage, SymbolId, SymbolKind};
 use crate::types::{ArraySize, BlockStorage, NumericFeatures, Scalar, Type, TypeKind};
@@ -323,6 +323,17 @@ pub(crate) struct BinaryResult {
     pub left: Type,
     pub right: Type,
     pub foldable: bool,
+}
+
+const fn linear_shape(ty: &Type) -> Option<Linear> {
+    match ty.kind {
+        TypeKind::Vector { size, .. } => Some(Linear::Vector(size as usize)),
+        TypeKind::Matrix { columns, rows, .. } => Some(Linear::Matrix {
+            columns: columns as usize,
+            rows: rows as usize,
+        }),
+        _ => None,
+    }
 }
 
 pub(crate) fn binary_types(
@@ -1327,14 +1338,30 @@ impl Analyzer<'_> {
         let floating_specialization = (left_operand.specialization || right_operand.specialization)
             && result.left.base_scalar().is_some_and(Scalar::is_floating);
         let constant = constant && !floating_specialization;
-        let value = if constant && result.foldable {
-            let convert = |operand: &Operand, target: &Type| {
-                let scalar = target.base_scalar();
-                operand.value.as_ref().map(|constant| match scalar {
-                    Some(scalar) => constant.convert(scalar),
-                    None => constant.clone(),
-                })
-            };
+        let convert = |operand: &Operand, target: &Type| {
+            let scalar = target.base_scalar();
+            operand.value.as_ref().map(|constant| match scalar {
+                Some(scalar) => constant.convert(scalar),
+                None => constant.clone(),
+            })
+        };
+        let linear = match (linear_shape(&result.left), linear_shape(&result.right)) {
+            (Some(left), Some(right)) if operator == BinaryOperator::Multiply => {
+                Some((left, right))
+            }
+            _ => None,
+        };
+        let value = if !constant {
+            None
+        } else if let (Some((left_shape, right_shape)), true) = (linear, !result.foldable) {
+            match (
+                convert(&left_operand, &result.left),
+                convert(&right_operand, &result.right),
+            ) {
+                (Some(left), Some(right)) => fold_linear(&left, left_shape, &right, right_shape),
+                _ => None,
+            }
+        } else if result.foldable {
             match (
                 convert(&left_operand, &result.left),
                 convert(&right_operand, &result.right),
