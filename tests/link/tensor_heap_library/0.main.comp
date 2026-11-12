@@ -1,0 +1,19 @@
+#version 460
+#extension GL_EXT_descriptor_heap : require
+#extension GL_ARM_tensors : require
+
+layout(local_size_x = 1) in;
+
+layout(descriptor_heap) uniform tensorARM<float, 2> tensors[4];
+layout(descriptor_heap) buffer Result {
+    float value;
+    uint size;
+} results[];
+
+float first(uint index);
+
+void main()
+{
+    results[0].value = first(1u);
+    results[0].size = tensorSizeARM(tensors[0], 1);
+}

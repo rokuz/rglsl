@@ -1128,7 +1128,7 @@ impl<'a> Lowerer<'a> {
             } => {
                 let inner = TypeInner::Tensor {
                     scalar: super::types::scalar(element),
-                    rank,
+                    rank: self.tensor_rank(rank, at)?,
                 };
                 return self.handle_global(symbol, name, inner, None, at);
             }

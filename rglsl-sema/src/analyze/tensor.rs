@@ -7,6 +7,7 @@ use rglsl_ast::Span;
 use super::{Analyzer, Callee, Operand};
 use crate::builtins::{TENSOR_OPERAND_NONTEMPORAL, TENSOR_OPERAND_OUT_OF_BOUNDS_VALUE};
 use crate::diagnostic::DiagnosticKind;
+use crate::scope::Qualifiers;
 use crate::types::{ArraySize, Scalar, Type};
 
 const EXTENSION: &str = "GL_ARM_tensors";
@@ -53,7 +54,7 @@ const fn tensor_element(scalar: Scalar) -> bool {
 fn data_scalar(ty: &Type) -> Option<Scalar> {
     let element = match ty.dimensions() {
         [] => ty.clone(),
-        [ArraySize::Sized(_)] => ty.element_type()?,
+        [ArraySize::Sized(_) | ArraySize::Specialized(_)] => ty.element_type()?,
         _ => return None,
     };
     element
@@ -63,8 +64,16 @@ fn data_scalar(ty: &Type) -> Option<Scalar> {
 
 fn coordinate_count(ty: &Type) -> Option<u32> {
     match ty.dimensions() {
-        [ArraySize::Sized(count)] if ty.element_type()? == Type::UINT => Some(*count),
+        [count] if ty.element_type()? == Type::UINT => Some(count.checked_size()),
         _ => None,
+    }
+}
+
+fn formal_qualifiers(readonly: bool, writeonly: bool) -> Qualifiers {
+    Qualifiers {
+        readonly,
+        writeonly,
+        ..Qualifiers::default()
     }
 }
 
@@ -97,10 +106,11 @@ impl Analyzer<'_> {
         if operands.iter().any(|operand| operand.ty.is_error()) {
             return Operand::error();
         }
+        let first_argument = arguments.first().map_or(span, |argument| argument.span);
         let call = if name == "tensorSizeARM" {
-            self.tensor_size(span, name, &operands)
+            self.tensor_size(span, first_argument, name, &operands)
         } else {
-            self.tensor_access(span, name, arguments, &operands)
+            self.tensor_access(span, first_argument, name, arguments, &operands)
         };
         let Some((call, result)) = call else {
             return Operand::error();
@@ -114,9 +124,18 @@ impl Analyzer<'_> {
         None
     }
 
+    fn converts_to_uint(&self, operand: &Operand) -> bool {
+        operand.ty.is_scalar()
+            && operand
+                .ty
+                .scalar_type()
+                .is_some_and(|scalar| scalar.promotes_to(Scalar::Uint, self.numeric_features()))
+    }
+
     fn tensor_size(
         &mut self,
         span: Span,
+        first_argument: Span,
         name: &str,
         operands: &[Operand],
     ) -> Option<(TensorArmCall, Type)> {
@@ -126,12 +145,15 @@ impl Analyzer<'_> {
         let Some((_, rank)) = tensor.ty.as_tensor() else {
             return self.no_tensor_overload(span, name);
         };
-        if !dimension.ty.is_scalar_integer() {
+        if !self.converts_to_uint(dimension) {
             return self.no_tensor_overload(span, name);
         }
         if !self.require_extension(span, EXTENSION, name) {
             return None;
         }
+        let formal = formal_qualifiers(true, true);
+        let allowed = self.builtin_arguments_allowed(first_argument, operands, 2, &formal);
+        let rank = rank.checked_size();
         let Some(value) = constant_value(dimension) else {
             self.tensor_error(span, "dim", "dimension argument must be constant");
             return None;
@@ -141,12 +163,13 @@ impl Analyzer<'_> {
             self.tensor_error(span, "dim", "dimension argument exceeds tensor rank");
             return None;
         };
-        Some((TensorArmCall::Size { dimension }, Type::UINT))
+        allowed.then_some((TensorArmCall::Size { dimension }, Type::UINT))
     }
 
     fn tensor_access(
         &mut self,
         span: Span,
+        first_argument: Span,
         name: &str,
         arguments: &[Expression],
         operands: &[Operand],
@@ -160,19 +183,21 @@ impl Analyzer<'_> {
         let Some((element, rank)) = tensor.ty.as_tensor() else {
             return self.no_tensor_overload(span, name);
         };
+        let rank = rank.checked_size();
         let (Some(count), Some(data_scalar)) =
             (coordinate_count(&coordinates.ty), data_scalar(&data.ty))
         else {
             return self.no_tensor_overload(span, name);
         };
         let flags = operands.get(3);
-        if flags.is_some_and(|flags| !flags.ty.is_scalar_integer()) {
+        if flags.is_some_and(|flags| !self.converts_to_uint(flags)) {
             return self.no_tensor_overload(span, name);
         }
         if !self.require_extension(span, EXTENSION, name) {
             return None;
         }
-        let mut failed = !self.keeps_tensor_qualifiers(span, tensor, read);
+        let formal = formal_qualifiers(read, !read);
+        let mut failed = !self.builtin_arguments_allowed(first_argument, operands, 4, &formal);
         if count != rank {
             self.tensor_error(
                 span,
@@ -272,30 +297,35 @@ impl Analyzer<'_> {
         true
     }
 
-    fn keeps_tensor_qualifiers(&mut self, span: Span, tensor: &Operand, read: bool) -> bool {
-        let Some(qualifiers) = tensor
-            .root
+    fn builtin_arguments_allowed(
+        &mut self,
+        span: Span,
+        operands: &[Operand],
+        parameters: usize,
+        formal: &Qualifiers,
+    ) -> bool {
+        let mut allowed = true;
+        if let Some(qualifiers) = operands
+            .first()
+            .and_then(|tensor| tensor.root)
             .and_then(|id| self.symbol(id))
             .and_then(|symbol| symbol.variable())
             .map(|variable| variable.qualifiers.clone())
-        else {
-            return true;
-        };
-        let dropped = [
-            (qualifiers.volatile, "volatile"),
-            (qualifiers.coherent, "coherent"),
-            (qualifiers.readonly && !read, "readonly"),
-            (qualifiers.writeonly && read, "writeonly"),
-        ];
-        let mut kept = true;
-        for (_, qualifier) in dropped.into_iter().filter(|(dropped, _)| *dropped) {
-            self.tensor_error(
-                span,
-                qualifier,
-                "argument cannot drop memory qualifier when passed to formal parameter",
-            );
-            kept = false;
+        {
+            for qualifier in qualifiers.dropped_memory_qualifiers(formal) {
+                self.tensor_error(
+                    span,
+                    qualifier,
+                    "argument cannot drop memory qualifier when passed to formal parameter",
+                );
+                allowed = false;
+            }
         }
-        kept
+        let reason = "{} types can only be in uniform block or buffer storage";
+        for operand in operands.iter().take(parameters) {
+            allowed &=
+                self.require_small_arithmetic(span, &operand.ty, "built-in function", reason);
+        }
+        allowed
     }
 }

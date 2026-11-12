@@ -1626,8 +1626,8 @@ impl super::Validator {
                 let coordinates_inner =
                     context.resolve_type_inner(coordinates, &self.valid_expression_set)?;
                 match super::expression::tensor_shape(coordinates_inner, context.types) {
-                    Some((index, Some(length)))
-                        if length == rank
+                    Some((index, shape))
+                        if shape.coordinates_of(rank)
                             && matches!(
                                 index.kind,
                                 crate::ScalarKind::Uint | crate::ScalarKind::Sint

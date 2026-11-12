@@ -536,9 +536,11 @@ impl super::Validator {
             | crate::TypeInner::SampledImage { .. }
             | crate::TypeInner::Sampler { .. }
             | crate::TypeInner::AccelerationStructure { .. }
-            | crate::TypeInner::Tensor { .. }
             | crate::TypeInner::RayQuery { .. }
             | crate::TypeInner::HitObject { .. } => None,
+            crate::TypeInner::Tensor { rank, .. } => {
+                Self::validate_cooperative_size(handle, rank, overrides)?
+            }
             crate::TypeInner::Pointer {
                 base,
                 space: crate::AddressSpace::PhysicalStorage { .. },

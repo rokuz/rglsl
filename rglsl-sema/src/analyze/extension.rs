@@ -187,6 +187,7 @@ impl Analyzer<'_> {
             }),
             TypeKind::Block(_) => false,
             TypeKind::CooperativeMatrix(matrix) if matrix.spirv_element => false,
+            TypeKind::Tensor { scalar, .. } => kind.matches(scalar),
             _ => ty.base_scalar().is_some_and(|scalar| kind.matches(scalar)),
         }
     }

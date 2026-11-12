@@ -33,9 +33,10 @@ impl TypeTracer<'_> {
             | Ti::SampledImage { .. }
             | Ti::Sampler { .. }
             | Ti::AccelerationStructure { .. }
-            | Ti::Tensor { .. }
             | Ti::RayQuery { .. }
             | Ti::HitObject { .. } => {}
+
+            Ti::Tensor { rank, .. } => self.trace_cooperative_size(rank),
 
             Ti::CooperativeMatrix {
                 columns,
@@ -115,9 +116,14 @@ impl ModuleMap {
             | Ti::SampledImage { .. }
             | Ti::Sampler { .. }
             | Ti::AccelerationStructure { .. }
-            | Ti::Tensor { .. }
             | Ti::RayQuery { .. }
             | Ti::HitObject { .. } => {}
+
+            Ti::Tensor { ref mut rank, .. } => {
+                if let crate::CooperativeSize::Pending(ref mut r#override) = *rank {
+                    self.overrides.adjust(r#override)?;
+                }
+            }
 
             Ti::CooperativeMatrix {
                 ref mut columns,

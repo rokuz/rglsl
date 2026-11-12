@@ -264,11 +264,20 @@ pub(crate) fn spirv_val(words: &[u32]) -> TestResult {
     spirv_val_in(words, &["--target-env", "vulkan1.0"])
 }
 
+pub(crate) fn oracle(variable: &str, name: &str) -> std::path::PathBuf {
+    std::env::var_os(variable).map_or_else(
+        || {
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../target/oracles/bin")
+                .join(name)
+        },
+        std::path::PathBuf::from,
+    )
+}
+
 pub(crate) fn spirv_val_in(words: &[u32], arguments: &[&str]) -> TestResult {
-    let validator = std::path::Path::new(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../target/oracles/bin/spirv-val"
-    ));
+    let validator = oracle("RGLSL_SPIRV_VAL", "spirv-val");
+    let validator = validator.as_path();
     if !validator.exists() {
         println!("spirv-val not found at {}", validator.display());
         return Ok(());

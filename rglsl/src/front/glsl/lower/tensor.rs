@@ -1,11 +1,25 @@
+use core::num::NonZeroU32;
+
 use rglsl_ast::ast::Expression as AstExpression;
+use rglsl_sema::types::ArraySize as GlslArraySize;
 use rglsl_sema::TensorArmCall;
 
-use super::function::FunctionLowerer;
-use super::{internal, Result};
-use crate::{Expression, Handle, Span, Statement};
+use super::{internal, Lowerer, Result};
+use crate::{CooperativeSize, Expression, Handle, Span, Statement};
 
-impl FunctionLowerer<'_, '_> {}
+impl Lowerer<'_> {
+    pub(super) fn tensor_rank(&mut self, rank: GlslArraySize, at: Span) -> Result<CooperativeSize> {
+        match rank {
+            GlslArraySize::Sized(rank) => NonZeroU32::new(rank)
+                .map(CooperativeSize::Constant)
+                .ok_or_else(|| internal(at)),
+            GlslArraySize::Specialized(size) => self
+                .specialized_size(size, at)
+                .map(CooperativeSize::Pending),
+            GlslArraySize::Unsized => Err(internal(at)),
+        }
+    }
+}
 
 impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
     pub(super) async fn tensor_arm_call(
@@ -45,6 +59,11 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 } else {
                     None
                 };
+                let first_extra = if out_of_bounds.is_some() { 5 } else { 4 };
+                for extra in arguments.iter().skip(first_extra) {
+                    let frame = self.clone().rvalue(extra);
+                    let _ = self.nest(frame).await?;
+                }
                 let data = argument(2)?;
                 let data_ty = self.with(|this| this.info(data))??.ty.clone();
                 let ty = self.with(|this| this.lw.ir_type(&data_ty, at))??;
@@ -79,6 +98,10 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     let result = self.nest(frame).await;
                     result
                 }?;
+                for extra in arguments.iter().skip(4) {
+                    let frame = self.clone().rvalue(extra);
+                    let _ = self.nest(frame).await?;
+                }
                 self.with(|this| {
                     this.push(
                         Statement::TensorWrite {
