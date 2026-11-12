@@ -58,7 +58,7 @@ pub fn literal_string(words: &[u32]) -> Option<(String, usize)> {
 fn result_id_index(opcode: u32) -> Option<usize> {
     const TYPE_FIRST: u32 = Op::TypeVoid as u32;
     const TYPE_LAST: u32 = Op::TypeForwardPointer as u32;
-    const TYPED: [Op; 12] = [
+    const TYPED: [Op; 14] = [
         Op::Constant,
         Op::ConstantTrue,
         Op::ConstantFalse,
@@ -71,13 +71,18 @@ fn result_id_index(opcode: u32) -> Option<usize> {
         Op::SpecConstantOp,
         Op::Variable,
         Op::Undef,
+        Op::ConstantCompositeReplicateEXT,
+        Op::SpecConstantCompositeReplicateEXT,
     ];
-    const UNTYPED: [Op; 6] = [
+    const UNTYPED: [Op; 9] = [
         Op::TypeRayQueryKHR,
         Op::TypeAccelerationStructureKHR,
         Op::TypeCooperativeMatrixKHR,
         Op::TypeCooperativeMatrixNV,
         Op::TypeHitObjectNV,
+        Op::TypeCooperativeVectorNV,
+        Op::TypeTensorLayoutNV,
+        Op::TypeTensorViewNV,
         Op::ExtInstImport,
     ];
     if opcode == Op::TypeForwardPointer as u32 {

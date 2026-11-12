@@ -77,6 +77,7 @@ pub struct ExecInput {
     pub reference: PathBuf,
     pub invalid_reference: Option<String>,
     pub twin: Option<Twin>,
+    pub script: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
@@ -209,6 +210,7 @@ pub fn run(root: &Path, options: Options) -> Result<()> {
     let mut cases = corpus::load(&env.glslang_dir)?;
     cases.extend(groups::load_groups(&env.glslang_dir)?);
     cases.extend(groups::load_own(root)?);
+    cases.extend(groups::load_exec(root)?);
     if let Some(filter) = &options.filter {
         cases.retain(|c| c.name.contains(filter.as_str()));
     }
@@ -312,6 +314,9 @@ fn run_case(
     case: &Case,
     timeout: Duration,
 ) -> Result<CaseResult> {
+    if matches!(case.kind, Kind::Script { .. }) {
+        return run_script(env, self_exe, work_dir, case, timeout);
+    }
     if !case.kind.is_file() {
         return run_group(env, self_exe, work_dir, case, timeout);
     }
@@ -396,6 +401,7 @@ fn run_case(
                 ours: out.clone(),
                 reference,
                 twin: None,
+                script: None,
             }),
         }
     } else {
@@ -473,6 +479,7 @@ fn twin_input(
         reference: reference.clone(),
         invalid_reference: None,
         twin: Some(Twin::Broken(message)),
+        script: None,
     };
     let name = format!("{}/{}", known::DIR, case.name);
     let mut command = Command::new(&env.glslang.path);
@@ -530,6 +537,7 @@ fn twin_input(
         reference,
         invalid_reference: None,
         twin: Some(Twin::Ready),
+        script: None,
     })
 }
 
@@ -561,6 +569,7 @@ fn run_exec(executor: &Executor, results: &[CaseResult]) -> Vec<(usize, exec::Ou
             ours: input.ours.clone(),
             reference: input.reference.clone(),
             twin: input.twin.is_some(),
+            script: input.script.clone(),
         });
         indices.push(index);
     }
@@ -707,7 +716,7 @@ fn run_group(
             let sources: Vec<PathBuf> = files.iter().map(|file| dir.join(file)).collect();
             (sources, true, oracle, Some(expectation.clone()))
         }
-        Kind::File => bail!("`{}` is not a group", case.name),
+        Kind::File | Kind::Script { .. } => bail!("`{}` is not a group", case.name),
     };
 
     let spirv = format!("{}.{}", case.target.spirv.0, case.target.spirv.1);
@@ -818,6 +827,7 @@ fn run_group(
                     ours: module.clone(),
                     reference,
                     twin: None,
+                    script: None,
                 }),
                 None => None,
             }
@@ -834,6 +844,148 @@ fn run_group(
         exec_input,
         exec: BTreeMap::new(),
         expected_messages,
+        interface,
+        debug: None,
+    })
+}
+
+fn ours_result(output: &process::Output, note: &mut String) -> OursResult {
+    let first = output.stdout.lines().find_map(|l| l.strip_prefix("E "));
+    let first_line = first
+        .and_then(|d| d.split(' ').nth(1))
+        .and_then(|l| l.parse().ok());
+    if let Some(first) = first {
+        first.clone_into(note);
+    }
+    match output.exit {
+        Exit::Code(EXIT_ACCEPTED) => OursResult::Accepted,
+        Exit::Code(EXIT_REJECTED) => OursResult::Rejected { first_line },
+        Exit::Code(EXIT_BACKEND_FAILED) => OursResult::BackendFailed,
+        Exit::Code(code) => {
+            *note = format!("crash (exit {code}): {}", first_stderr_line(&output.stderr));
+            OursResult::Crashed
+        }
+        Exit::Signal => {
+            *note = format!("crash (signal): {}", first_stderr_line(&output.stderr));
+            OursResult::Crashed
+        }
+        Exit::Timeout => {
+            *note = "timeout".into();
+            OursResult::Crashed
+        }
+    }
+}
+
+fn run_script(
+    env: &Environment,
+    self_exe: &Path,
+    work_dir: &Path,
+    case: &Case,
+    timeout: Duration,
+) -> Result<CaseResult> {
+    let Kind::Script {
+        ref dir,
+        ref files,
+        ref script,
+    } = case.kind
+    else {
+        bail!("`{}` is not an exec test", case.name);
+    };
+    let directory = work_dir.join("scripts").join(case.name.replace('/', "_"));
+    let ours_dir = directory.join("ours");
+    let reference_dir = directory.join("glslang");
+    let _ = fs::remove_dir_all(&directory);
+    fs::create_dir_all(&ours_dir)?;
+    fs::create_dir_all(&reference_dir)?;
+    let mut oracle = OracleResult::Accepted;
+    let mut ours = OursResult::Accepted;
+    let mut note = String::new();
+    let mut pairs: Vec<(PathBuf, PathBuf)> = Vec::new();
+    for file in files {
+        let stage = groups::stage_of(file).unwrap_or(case.stage);
+        let stem = file
+            .rsplit_once('.')
+            .map_or(file.as_str(), |(stem, _)| stem);
+        let reference = reference_dir.join(format!("{stem}.spv"));
+        let mut command = Command::new(&env.glslang.path);
+        command
+            .current_dir(dir)
+            .args(case.target.glslang_args())
+            .arg("-o")
+            .arg(&reference)
+            .arg(file);
+        let result = oracle_result(process::run(command, timeout)?);
+        if matches!(oracle, OracleResult::Accepted) {
+            oracle = result;
+        }
+        let module = ours_dir.join(format!("{stem}.spv"));
+        let mut command = Command::new(self_exe);
+        command
+            .arg("compile-one")
+            .args(["--stage", stage])
+            .args([
+                "--spv",
+                &format!("{}.{}", case.target.spirv.0, case.target.spirv.1),
+            ])
+            .arg("--out")
+            .arg(&module)
+            .arg(dir.join(file));
+        let output = process::run(command, timeout)?;
+        let mut message = String::new();
+        let result = ours_result(&output, &mut message);
+        if matches!(ours, OursResult::Accepted) && !matches!(result, OursResult::Accepted) {
+            ours = result;
+            note = format!("{file}: {message}");
+        }
+        pairs.push((reference, module));
+    }
+    let spirv_val = match ours {
+        OursResult::Accepted => {
+            let mut valid = true;
+            for (_, module) in &pairs {
+                if let Some(message) = validate(env, case, module, timeout)? {
+                    note = format!("spirv-val: {message}");
+                    valid = false;
+                }
+            }
+            Some(valid)
+        }
+        _ => None,
+    };
+    let both = matches!(oracle, OracleResult::Accepted) && matches!(ours, OursResult::Accepted);
+    let interface = both.then(|| {
+        let pairs: Vec<(&Path, &Path)> = pairs
+            .iter()
+            .map(|(reference, ours)| (reference.as_path(), ours.as_path()))
+            .collect();
+        interface::check_files(&env.interface_expected, &case.name, &pairs)
+    });
+    let exec_input = if both && spirv_val == Some(true) && !env.executors.is_empty() {
+        let mut invalid_reference = None;
+        for (reference, _) in &pairs {
+            if let Some(message) = validate(env, case, reference, timeout)? {
+                invalid_reference = Some(message);
+            }
+        }
+        Some(ExecInput {
+            ours: ours_dir,
+            reference: reference_dir,
+            invalid_reference,
+            twin: None,
+            script: Some(dir.join(script)),
+        })
+    } else {
+        None
+    };
+    Ok(CaseResult {
+        case: case.clone(),
+        oracle,
+        ours,
+        spirv_val,
+        note,
+        exec_input,
+        exec: BTreeMap::new(),
+        expected_messages: None,
         interface,
         debug: None,
     })

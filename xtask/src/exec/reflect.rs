@@ -385,8 +385,15 @@ pub struct RayIndices {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MatrixClass {
+    Khr,
+    Nv,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CooperativeMatrixType {
-    pub component: Option<Scalar>,
+    pub class: MatrixClass,
+    pub component: Option<u32>,
     pub scope: Option<u32>,
     pub rows: Option<u32>,
     pub columns: Option<u32>,
@@ -420,7 +427,19 @@ pub struct Reflection {
     pub body_opcodes: BTreeSet<u32>,
     pub ray_indices: RayIndices,
     pub cooperative_matrices: Vec<CooperativeMatrixType>,
+    pub vector_products: Vec<VectorProduct>,
+    pub saturating_accumulation: bool,
     pub problems: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VectorProduct {
+    pub input: Option<u32>,
+    pub input_interpretation: Option<u32>,
+    pub matrix_interpretation: Option<u32>,
+    pub bias_interpretation: Option<Option<u32>>,
+    pub result: Option<u32>,
+    pub transpose: Option<bool>,
 }
 
 impl Reflection {
@@ -449,6 +468,8 @@ impl Reflection {
             body_opcodes: BTreeSet::new(),
             ray_indices: RayIndices::default(),
             cooperative_matrices: Vec::new(),
+            vector_products: Vec::new(),
+            saturating_accumulation: false,
             problems: Vec::new(),
         }
     }
@@ -1085,6 +1106,38 @@ fn ray_indices(body: &[Instruction], types: &Types) -> RayIndices {
     indices
 }
 
+pub const COMPONENT_BFLOAT16: u32 = 1_000_141_000;
+pub const COMPONENT_FLOAT_E4M3: u32 = 1_000_491_002;
+pub const COMPONENT_FLOAT_E5M2: u32 = 1_000_491_003;
+
+fn component_type(types: &Types, id: u32) -> Option<u32> {
+    let instruction = types.get(id)?;
+    if instruction.is(Op::TypeFloat) {
+        return match (instruction.word(1)?, instruction.word(2)) {
+            (16, None) => Some(0),
+            (32, None) => Some(1),
+            (64, None) => Some(2),
+            (16, Some(0)) => Some(COMPONENT_BFLOAT16),
+            (8, Some(4214)) => Some(COMPONENT_FLOAT_E4M3),
+            (8, Some(4215)) => Some(COMPONENT_FLOAT_E5M2),
+            _ => None,
+        };
+    }
+    if instruction.is(Op::TypeInt) {
+        let signed = instruction.word(2)? != 0;
+        let base = if signed { 3 } else { 7 };
+        let offset = match instruction.word(1)? {
+            8 => 0,
+            16 => 1,
+            32 => 2,
+            64 => 3,
+            _ => return None,
+        };
+        return Some(base + offset);
+    }
+    None
+}
+
 fn cooperative_matrix_type(instruction: &Instruction, types: &Types) -> CooperativeMatrixType {
     let constant = |index: usize| {
         instruction
@@ -1097,15 +1150,115 @@ fn cooperative_matrix_type(instruction: &Instruction, types: &Types) -> Cooperat
             .filter(|id| types.get(*id).is_some_and(|i| i.is(Op::SpecConstant)))
             .and_then(|id| types.decorations.value(id, Decoration::SpecId))
     };
+    let class = if instruction.is(Op::TypeCooperativeMatrixNV) {
+        MatrixClass::Nv
+    } else {
+        MatrixClass::Khr
+    };
     CooperativeMatrixType {
-        component: instruction.word(1).and_then(|id| types.scalar(id)),
+        class,
+        component: instruction.word(1).and_then(|id| component_type(types, id)),
         scope: constant(2),
         rows: constant(3),
         columns: constant(4),
-        usage: constant(5),
+        usage: match class {
+            MatrixClass::Khr => constant(5),
+            MatrixClass::Nv => None,
+        },
         rows_spec: spec(3),
         columns_spec: spec(4),
     }
+}
+
+const TYPED_RESULTS: [Op; 24] = [
+    Op::Load,
+    Op::CooperativeVectorLoadNV,
+    Op::CooperativeVectorMatrixMulNV,
+    Op::CooperativeVectorMatrixMulAddNV,
+    Op::CompositeConstruct,
+    Op::CompositeConstructReplicateEXT,
+    Op::ConstantComposite,
+    Op::ConstantCompositeReplicateEXT,
+    Op::ConstantNull,
+    Op::FConvert,
+    Op::SConvert,
+    Op::UConvert,
+    Op::ConvertFToS,
+    Op::ConvertFToU,
+    Op::ConvertSToF,
+    Op::ConvertUToF,
+    Op::FunctionParameter,
+    Op::FunctionCall,
+    Op::Phi,
+    Op::Select,
+    Op::CopyObject,
+    Op::FAdd,
+    Op::FMul,
+    Op::ExtInst,
+];
+
+fn result_types(module: &Module) -> BTreeMap<u32, u32> {
+    module
+        .globals
+        .iter()
+        .chain(&module.body)
+        .filter(|i| TYPED_RESULTS.iter().any(|op| i.is(*op)))
+        .filter_map(|i| Some((i.word(1)?, i.word(0)?)))
+        .collect()
+}
+
+fn vector_component(types: &Types, results: &BTreeMap<u32, u32>, value: u32) -> Option<u32> {
+    let ty = types.get(*results.get(&value)?)?;
+    if !ty.is(Op::TypeCooperativeVectorNV) {
+        return None;
+    }
+    component_type(types, ty.word(1)?)
+}
+
+fn vector_products(module: &Module, types: &Types) -> Vec<VectorProduct> {
+    let results = result_types(module);
+    let transpose = |id: Option<u32>| {
+        let instruction = types.get(id?)?;
+        if instruction.is(Op::ConstantTrue) {
+            Some(true)
+        } else if instruction.is(Op::ConstantFalse) {
+            Some(false)
+        } else {
+            None
+        }
+    };
+    let constant = |id: Option<u32>| id.and_then(|id| types.constant_u32(id));
+    module
+        .body
+        .iter()
+        .filter_map(|i| {
+            let with_bias = if i.is(Op::CooperativeVectorMatrixMulAddNV) {
+                true
+            } else if i.is(Op::CooperativeVectorMatrixMulNV) {
+                false
+            } else {
+                return None;
+            };
+            let input = i.word(2);
+            let result = i.word(0).and_then(|ty| {
+                let ty = types.get(ty)?;
+                component_type(types, ty.word(1)?)
+            });
+            let (bias, transposed) = if with_bias {
+                (Some(constant(i.word(9))), transpose(i.word(13)))
+            } else {
+                (None, transpose(i.word(10)))
+            };
+            Some(VectorProduct {
+                input: input.and_then(|value| vector_component(types, &results, value)),
+                input_interpretation: constant(i.word(3)),
+                matrix_interpretation: constant(i.word(6)),
+                bias_interpretation: bias,
+                result,
+                transpose: transposed,
+            })
+        })
+        .collect()
 }
 
 pub fn reflect(module: &Module) -> Result<Reflection, String> {
@@ -1347,9 +1500,14 @@ pub fn reflect(module: &Module) -> Result<Reflection, String> {
     reflection.cooperative_matrices = module
         .globals
         .iter()
-        .filter(|i| i.is(Op::TypeCooperativeMatrixKHR))
+        .filter(|i| i.is(Op::TypeCooperativeMatrixKHR) || i.is(Op::TypeCooperativeMatrixNV))
         .map(|i| cooperative_matrix_type(i, &types))
         .collect();
+    reflection.vector_products = vector_products(module, &types);
+    reflection.saturating_accumulation = module.body.iter().any(|i| {
+        i.is(Op::CooperativeMatrixMulAddKHR)
+            && i.word(5).is_some_and(|operands| operands & 0x10 != 0)
+    });
     if reflection.uses(Op::ConvertUToPtr) || reflection.uses(Op::Bitcast) {
         match pointer_fields(&module.body, &types, &roots) {
             Ok(fields) => reflection.pointer_fields = fields,

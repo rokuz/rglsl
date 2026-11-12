@@ -1,0 +1,31 @@
+#version 450
+#extension GL_KHR_cooperative_matrix : require
+#extension GL_KHR_memory_scope_semantics : require
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+layout(local_size_x = 64) in;
+layout(set = 0, binding = 0) buffer A { float16_t a[256]; float16_t b[256]; };
+layout(set = 0, binding = 1) buffer D { float d[256]; };
+
+shared float16_t sa[256];
+shared float16_t sb[256];
+shared float sd[256];
+
+void main() {
+    for (uint i = gl_LocalInvocationIndex; i < 256; i += 64) {
+        sa[i] = a[i];
+        sb[i] = b[i];
+    }
+    barrier();
+    coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseA> ma;
+    coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseB> mb;
+    coopMatLoad(ma, sa, 0, 16, gl_CooperativeMatrixLayoutRowMajor);
+    coopMatLoad(mb, sb, 0, 16, gl_CooperativeMatrixLayoutRowMajor);
+    coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator> mc =
+        coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator>(1.125);
+    mc = coopMatMulAdd(ma, mb, mc);
+    coopMatStore(mc, sd, 0, 16, gl_CooperativeMatrixLayoutRowMajor);
+    barrier();
+    for (uint i = gl_LocalInvocationIndex; i < 256; i += 64) {
+        d[i] = sd[i];
+    }
+}

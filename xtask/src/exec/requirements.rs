@@ -58,6 +58,11 @@ pub const RAY_TRACING_NV: [Need; 4] = [
     F("BufferDeviceAddressFeatures.bufferDeviceAddress"),
 ];
 
+pub const COOPERATIVE_MATRIX_NV: Need = F("CooperativeMatrixFeaturesNV.cooperativeMatrix");
+pub const COOPERATIVE_MATRIX_WORKGROUP_SCOPE: Need =
+    F("CooperativeMatrix2FeaturesNV.cooperativeMatrixWorkgroupScope");
+pub const COOPERATIVE_MATRIX_FLEXIBLE_DIMENSIONS: Need =
+    F("CooperativeMatrix2FeaturesNV.cooperativeMatrixFlexibleDimensions");
 pub const MULTIVIEW: Need = F("MultiviewFeatures.multiview");
 pub const MESH_SHADER: Need = F("MeshShaderFeaturesEXT.meshShader");
 pub const TASK_SHADER: Need = F("MeshShaderFeaturesEXT.taskShader");
@@ -285,8 +290,36 @@ pub fn capability(capability: Capability) -> Requirement {
                 "input attachments (Amber builds render passes without input attachment references and has no input attachment descriptors)",
             )
         }
-        C::CooperativeMatrixNV => {
-            Requirement::Unsupported("NV cooperative matrices (Amber cannot enable them)")
+        C::CooperativeMatrixNV => needs![COOPERATIVE_MATRIX_NV],
+        C::CooperativeMatrixReductionsNV => needs![F(
+            "CooperativeMatrix2FeaturesNV.cooperativeMatrixReductions"
+        )],
+        C::CooperativeMatrixConversionsNV => needs![F(
+            "CooperativeMatrix2FeaturesNV.cooperativeMatrixConversions"
+        )],
+        C::CooperativeMatrixPerElementOperationsNV => needs![F(
+            "CooperativeMatrix2FeaturesNV.cooperativeMatrixPerElementOperations"
+        )],
+        C::CooperativeMatrixTensorAddressingNV | C::TensorAddressingNV => needs![F(
+            "CooperativeMatrix2FeaturesNV.cooperativeMatrixTensorAddressing"
+        )],
+        C::CooperativeMatrixBlockLoadsNV => needs![F(
+            "CooperativeMatrix2FeaturesNV.cooperativeMatrixBlockLoads"
+        )],
+        C::CooperativeVectorNV => needs![F("CooperativeVectorFeaturesNV.cooperativeVector")],
+        C::CooperativeVectorTrainingNV => needs![F(
+            "CooperativeVectorFeaturesNV.cooperativeVectorTraining"
+        )],
+        C::BFloat16TypeKHR => needs![F("ShaderBfloat16FeaturesKHR.shaderBFloat16Type")],
+        C::BFloat16DotProductKHR => {
+            needs![F("ShaderBfloat16FeaturesKHR.shaderBFloat16DotProduct")]
+        }
+        C::BFloat16CooperativeMatrixKHR => needs![F(
+            "ShaderBfloat16FeaturesKHR.shaderBFloat16CooperativeMatrix"
+        )],
+        C::Float8EXT => needs![F("ShaderFloat8FeaturesEXT.shaderFloat8")],
+        C::Float8CooperativeMatrixEXT => {
+            needs![F("ShaderFloat8FeaturesEXT.shaderFloat8CooperativeMatrix")]
         }
         _ => Requirement::Unsupported("a capability the harness does not enable"),
     }
@@ -414,6 +447,12 @@ pub fn extension(name: &str) -> bool {
             | "SPV_KHR_shader_ballot"
             | "SPV_KHR_subgroup_vote"
             | "SPV_KHR_cooperative_matrix"
+            | "SPV_NV_cooperative_matrix"
+            | "SPV_NV_cooperative_matrix2"
+            | "SPV_NV_tensor_addressing"
+            | "SPV_NV_cooperative_vector"
+            | "SPV_KHR_bfloat16"
+            | "SPV_EXT_float8"
             | "SPV_EXT_long_vector"
             | "SPV_EXT_demote_to_helper_invocation"
             | "SPV_GOOGLE_user_type"
@@ -495,6 +534,8 @@ pub fn probes() -> Vec<Need> {
         F("vertexPipelineStoresAndAtomics"),
         PRIMITIVE_SHADING_RATE,
         PRIMITIVE_SHADING_RATE_MESH,
+        COOPERATIVE_MATRIX_WORKGROUP_SCOPE,
+        COOPERATIVE_MATRIX_FLEXIBLE_DIMENSIONS,
     ]);
     needs.sort();
     needs.dedup();

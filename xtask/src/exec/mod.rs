@@ -260,6 +260,7 @@ pub struct ExecCase {
     pub ours: PathBuf,
     pub reference: PathBuf,
     pub twin: bool,
+    pub script: Option<PathBuf>,
 }
 
 #[derive(Debug)]
@@ -665,9 +666,35 @@ impl Executor {
                 self.why_missing(need),
             ));
         }
-        let specializations =
-            cooperative::specialize(&theirs.cooperative_matrices, &self.device.cooperative)
-                .map_err(|shape| Outcome::skip(SkipReason::DeviceFeature, shape))?;
+        let limits = cooperative::Limits {
+            invocations: theirs.local_size.iter().product(),
+            max_dimension: self.device.cooperative.max_dimension,
+        };
+        let specialization = cooperative::specialize(
+            &theirs.cooperative_matrices,
+            &self.device.cooperative,
+            &limits,
+        )
+        .map_err(|shape| Outcome::skip(SkipReason::DeviceFeature, shape))?;
+        if let Some(product) =
+            cooperative::unsupported_product(&theirs.vector_products, &self.device.cooperative)
+                .or_else(|| {
+                    cooperative::unsupported_saturation(
+                        theirs.saturating_accumulation,
+                        &self.device.cooperative,
+                    )
+                })
+        {
+            return Err(Outcome::skip(SkipReason::DeviceFeature, product));
+        }
+        plan.needs.extend(specialization.needs.iter().copied());
+        if let Some(need) = self.missing(&plan.needs) {
+            return Err(Outcome::skip(
+                SkipReason::DeviceFeature,
+                self.why_missing(need),
+            ));
+        }
+        let specializations = specialization.values;
         if let Some(difference) = interface_difference(&theirs, &mine) {
             return Err(Outcome::Fail(format!("interface differs: {difference}")));
         }
@@ -705,6 +732,175 @@ impl Executor {
     }
 
     pub fn exec_all(&self, cases: &[ExecCase]) -> Vec<Outcome> {
+        type Indexed<'a> = Vec<(usize, &'a ExecCase)>;
+        let (scripts, plain): (Indexed, Indexed) = cases
+            .iter()
+            .enumerate()
+            .partition(|(_, case)| case.script.is_some());
+        let plain_cases: Vec<ExecCase> = plain.iter().map(|(_, case)| (*case).clone()).collect();
+        let script_cases: Vec<&ExecCase> = scripts.iter().map(|(_, case)| *case).collect();
+        let mut outcomes: Vec<Option<Outcome>> = vec![None; cases.len()];
+        for ((index, _), outcome) in plain.iter().zip(self.exec_plain(&plain_cases)) {
+            if let Some(slot) = outcomes.get_mut(*index) {
+                *slot = Some(outcome);
+            }
+        }
+        for ((index, _), outcome) in scripts.iter().zip(self.exec_scripts(&script_cases)) {
+            if let Some(slot) = outcomes.get_mut(*index) {
+                *slot = Some(outcome);
+            }
+        }
+        outcomes
+            .into_iter()
+            .map(|o| o.unwrap_or_else(|| Outcome::skip(SkipReason::ReferenceFails, "no result")))
+            .collect()
+    }
+
+    fn stage_script(&self, case: &ExecCase) -> Result<(Job, Job), Outcome> {
+        let script = case
+            .script
+            .as_ref()
+            .ok_or_else(|| Outcome::Fail("no script".into()))?;
+        let modules = |dir: &Path| -> Result<Vec<PathBuf>, String> {
+            let mut list: Vec<PathBuf> = fs::read_dir(dir)
+                .map_err(|e| e.to_string())?
+                .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+                .filter(|path| path.extension().is_some_and(|e| e == "spv"))
+                .collect();
+            list.sort();
+            Ok(list)
+        };
+        let ours = modules(&case.ours).map_err(Outcome::Fail)?;
+        let theirs = modules(&case.reference).map_err(Outcome::Fail)?;
+        let mut needs: BTreeSet<Need> = BTreeSet::new();
+        for module in &ours {
+            let bytes = fs::read(module).map_err(|e| Outcome::Fail(e.to_string()))?;
+            let reflection = reflect::reflect_bytes(&bytes)
+                .map_err(|e| Outcome::Fail(format!("reflecting our module: {e}")))?;
+            needs.extend(plan::requirements(&reflection).map_err(refusal)?);
+            needs.extend(requirements::stage_needs(reflection.model));
+            let limits = cooperative::Limits {
+                invocations: reflection.local_size.iter().product(),
+                max_dimension: self.device.cooperative.max_dimension,
+            };
+            let specialization = cooperative::specialize(
+                &reflection.cooperative_matrices,
+                &self.device.cooperative,
+                &limits,
+            )
+            .map_err(|shape| Outcome::skip(SkipReason::DeviceFeature, shape))?;
+            if !specialization.values.is_empty() {
+                return Err(Outcome::skip(
+                    SkipReason::DeviceFeature,
+                    "the cooperative matrix sizes of the test are not supported",
+                ));
+            }
+            needs.extend(specialization.needs);
+            if let Some(product) = cooperative::unsupported_product(
+                &reflection.vector_products,
+                &self.device.cooperative,
+            )
+            .or_else(|| {
+                cooperative::unsupported_saturation(
+                    reflection.saturating_accumulation,
+                    &self.device.cooperative,
+                )
+            }) {
+                return Err(Outcome::skip(SkipReason::DeviceFeature, product));
+            }
+        }
+        if let Some(need) = self.missing(&needs) {
+            return Err(Outcome::skip(
+                SkipReason::DeviceFeature,
+                self.why_missing(need),
+            ));
+        }
+        let text = fs::read_to_string(script)
+            .map_err(|e| Outcome::Fail(format!("reading {}: {e}", script.display())))?;
+        let body = text.strip_prefix("#!amber\n").unwrap_or(&text);
+        let mut header = String::from("#!amber\n");
+        for need in &needs {
+            header.push_str(&need.line());
+            header.push('\n');
+        }
+        let script_name = script
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("test.amber")
+            .to_string();
+        let stage = |tag: &str, modules: &[PathBuf]| -> Result<Job, Outcome> {
+            let dir = self.work.join(&case.name).join(tag);
+            let _ = fs::remove_dir_all(&dir);
+            fs::create_dir_all(&dir).map_err(|e| Outcome::Fail(e.to_string()))?;
+            for module in modules {
+                let Some(name) = module.file_name() else {
+                    continue;
+                };
+                fs::copy(module, dir.join(name)).map_err(|e| Outcome::Fail(e.to_string()))?;
+            }
+            fs::write(dir.join(&script_name), format!("{header}{body}"))
+                .map_err(|e| Outcome::Fail(e.to_string()))?;
+            Ok(Job {
+                dir,
+                script: script_name.clone(),
+                dumps: Vec::new(),
+            })
+        };
+        Ok((stage("rglsl", &ours)?, stage("glslang", &theirs)?))
+    }
+
+    fn exec_scripts(&self, cases: &[&ExecCase]) -> Vec<Outcome> {
+        let staged = parallel_map(cases, |case| self.stage_script(case));
+        let mut jobs = Vec::new();
+        for (ours, theirs) in staged.iter().flatten() {
+            jobs.push(ours.clone());
+            jobs.push(theirs.clone());
+        }
+        let mut results = self.run_jobs(&jobs).into_iter();
+        let mut outcomes = Vec::with_capacity(staged.len());
+        let mut again = Vec::new();
+        for (index, entry) in staged.iter().enumerate() {
+            match entry {
+                Err(outcome) => outcomes.push(Some(outcome.clone())),
+                Ok((ours, _)) => {
+                    let mine = results
+                        .next()
+                        .unwrap_or_else(|| Err("no result from the batch".into()));
+                    let reference = results
+                        .next()
+                        .unwrap_or_else(|| Err("no result from the batch".into()));
+                    if mine.is_ok() {
+                        outcomes.push(Some(Outcome::Pass { tolerated: 0 }));
+                    } else {
+                        outcomes.push(None);
+                        again.push((index, ours.clone(), reference));
+                    }
+                }
+            }
+        }
+        let jobs: Vec<Job> = again.iter().map(|(_, job, _)| job.clone()).collect();
+        let confirmed = self.confirm_jobs(&jobs);
+        for ((index, _, reference), result) in again.into_iter().zip(confirmed) {
+            let outcome = match (result, reference) {
+                (Ok(_), _) => Outcome::Pass { tolerated: 0 },
+                (Err(error), Ok(_)) => Outcome::Fail(format!(
+                    "the script fails with our modules (confirmed alone) and passes with glslang's: {error}"
+                )),
+                (Err(error), Err(theirs)) => Outcome::Fail(format!(
+                    "the script fails with our modules (confirmed alone): {error}; with glslang's: {theirs}"
+                )),
+            };
+            if let Some(slot) = outcomes.get_mut(index) {
+                *slot = Some(outcome);
+            }
+        }
+        outcomes
+            .into_iter()
+            .map(|o| o.unwrap_or_else(|| Outcome::skip(SkipReason::ReferenceFails, "no result")))
+            .collect()
+    }
+
+    fn exec_plain(&self, cases: &[ExecCase]) -> Vec<Outcome> {
         let staged = parallel_map(cases, |case| {
             self.stage_case(case).map_err(|outcome| {
                 if case.twin {
@@ -1071,7 +1267,7 @@ mod tests {
             name: name.into(),
             api_version: "1.4".into(),
             driver: driver.into(),
-            cooperative: Vec::new(),
+            cooperative: cooperative::Support::default(),
         };
         let remote = || TargetId::Remote(String::new());
         let labels = target_labels(&[
