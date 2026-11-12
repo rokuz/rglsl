@@ -887,6 +887,7 @@ fn run_script(
         ref dir,
         ref files,
         ref script,
+        ref beyond_glslang,
     } = case.kind
     else {
         bail!("`{}` is not an exec test", case.name);
@@ -952,8 +953,18 @@ fn run_script(
         }
         _ => None,
     };
+    let beyond = match (beyond_glslang, &oracle) {
+        (Some(reason), OracleResult::Rejected { .. }) => {
+            if note.is_empty() {
+                note = format!("glslang rejects the test as expected: {reason}");
+            }
+            oracle = OracleResult::Accepted;
+            true
+        }
+        _ => false,
+    };
     let both = matches!(oracle, OracleResult::Accepted) && matches!(ours, OursResult::Accepted);
-    let interface = both.then(|| {
+    let interface = (both && !beyond).then(|| {
         let pairs: Vec<(&Path, &Path)> = pairs
             .iter()
             .map(|(reference, ours)| (reference.as_path(), ours.as_path()))
@@ -962,7 +973,7 @@ fn run_script(
     });
     let exec_input = if both && spirv_val == Some(true) && !env.executors.is_empty() {
         let mut invalid_reference = None;
-        for (reference, _) in &pairs {
+        for (reference, _) in pairs.iter().filter(|(reference, _)| reference.is_file()) {
             if let Some(message) = validate(env, case, reference, timeout)? {
                 invalid_reference = Some(message);
             }

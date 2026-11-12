@@ -1,0 +1,15 @@
+#version 460
+#extension GL_ARM_tensors : require
+#extension GL_EXT_nonuniform_qualifier : require
+layout(local_size_x = 8) in;
+
+layout(set = 0, binding = 0) uniform readonly tensorARM<int, 1> ts[];
+layout(set = 0, binding = 1) buffer Out { int r[8]; };
+
+void main() {
+  uint i = gl_LocalInvocationID.x;
+  uint k = i % 4u;
+  int v;
+  tensorReadARM(ts[nonuniformEXT(k)], uint[](i / 4u), v);
+  r[i] = v + int(tensorSizeARM(ts[nonuniformEXT(k)], 0));
+}

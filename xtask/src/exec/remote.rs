@@ -9,7 +9,7 @@ use anyhow::{anyhow, bail, Result};
 
 use super::amber::{first_line, parse_device, Device, VULKAN_VERSION};
 use super::batch::{self, Job, JobResult};
-use crate::oracles::ExecPins;
+use crate::oracles::{self, ExecPins, TENSOR_LAYER_DLL, TENSOR_LAYER_TARGET};
 use crate::process::{self, Exit};
 
 pub const HOST_VAR: &str = "RGLSL_EXEC_REMOTE";
@@ -159,6 +159,10 @@ impl Remote {
         self.windows("bin/amber.exe")
     }
 
+    fn tensor_layer(&self) -> String {
+        self.windows(&format!("bin/{TENSOR_LAYER_DLL}"))
+    }
+
     fn ssh_command(&self) -> Command {
         let mut command = Command::new("ssh");
         command.args([
@@ -224,12 +228,14 @@ impl Remote {
     }
 
     pub fn device(&self) -> Result<Device, String> {
+        let query = format!(
+            "\"{}\" -d -v {VULKAN_VERSION} -V{}",
+            self.amber(),
+            self.device_args()
+        );
+        let layer = self.tensor_layer();
         let output = self.ssh(
-            &format!(
-                "\"{}\" -d -v {VULKAN_VERSION} -V{}",
-                self.amber(),
-                self.device_args()
-            ),
+            &format!("if exist \"{layer}\" ({query} --layer-library \"{layer}\") else ({query})"),
             CONNECT,
         )?;
         if !matches!(output.exit, Exit::Code(0)) {
@@ -248,8 +254,12 @@ impl Remote {
 
     pub fn setup(&self, pins: &ExecPins, local: &Path) -> Result<()> {
         fs::create_dir_all(local)?;
+        let amber_src = oracles::amber_source_override();
         let script = local.join("rglsl-setup.bat");
-        fs::write(&script, setup_script(pins).replace('\n', "\r\n"))?;
+        fs::write(
+            &script,
+            setup_script(pins, amber_src.is_some()).replace('\n', "\r\n"),
+        )?;
         eprintln!("[xtask] preparing {} on {}", self.dir, self.host);
         self.ssh_ok(
             &format!("if not exist \"{0}\" mkdir \"{0}\"", self.windows("runs")),
@@ -257,10 +267,22 @@ impl Remote {
             "creating the work directory",
         )
         .map_err(|e| anyhow!(e))?;
-        self.upload(&[script.as_path()], "", CONNECT)
+        let mut uploads = vec![script.clone()];
+        if let Some(src) = &amber_src {
+            let archive = local.join(AMBER_ARCHIVE);
+            pack_amber_sources(src, &archive)?;
+            eprintln!(
+                "[xtask] uploading the local Amber sources in {} to {}",
+                src.display(),
+                self.host
+            );
+            uploads.push(archive);
+        }
+        let files: Vec<&Path> = uploads.iter().map(PathBuf::as_path).collect();
+        self.upload(&files, "", CONNECT + Duration::from_secs(600))
             .map_err(|e| anyhow!(e))?;
         eprintln!(
-            "[xtask] building Amber on {} (MSVC, CMake, Ninja)",
+            "[xtask] building Amber and the ML emulation layer on {} (MSVC, CMake, Ninja)",
             self.host
         );
         let mut command = self.ssh_command();
@@ -413,17 +435,103 @@ pub fn local_dir(root: &Path) -> PathBuf {
     root.join("target").join("xtask").join("remote")
 }
 
-pub fn setup_script(pins: &ExecPins) -> String {
-    format!(
-        "@echo off
-setlocal
-set \"ROOT=%~dp0\"
-set \"SRC=%ROOT%src\\amber\"
+const AMBER_ARCHIVE: &str = "amber-src.tgz";
+const AMBER_ARCHIVE_EXCLUDES: [&str; 5] = [
+    "./out",
+    "./build",
+    "./third_party/googletest",
+    "./third_party/vulkan-headers",
+    "./framebuffer.png",
+];
+
+fn pack_amber_sources(src: &Path, archive: &Path) -> Result<()> {
+    let mut tar = Command::new("tar");
+    tar.env("COPYFILE_DISABLE", "1").arg("-czf").arg(archive);
+    for exclude in AMBER_ARCHIVE_EXCLUDES {
+        tar.arg(format!("--exclude={exclude}"));
+    }
+    tar.arg("-C").arg(src).arg(".");
+    let output = process::run(tar, CONNECT)?;
+    if !matches!(output.exit, Exit::Code(0)) {
+        bail!(
+            "packing the Amber sources in {}: {}",
+            src.display(),
+            first_line(&output.stderr, &output.stdout)
+        );
+    }
+    Ok(())
+}
+
+fn amber_sources(pins: &ExecPins, local_sources: bool) -> String {
+    if local_sources {
+        format!(
+            "set \"SRC=%ROOT%src\\amber-local\"
+set \"HEADERS=%ROOT%src\\amber-vulkan-headers\"
+set \"BUILD=%ROOT%build\\amber-local\"
+if not exist \"%ROOT%{AMBER_ARCHIVE}\" (echo {AMBER_ARCHIVE} is missing & exit /b 1)
+if exist \"%SRC%\" rmdir /s /q \"%SRC%\"
+mkdir \"%SRC%\" || exit /b 1
+tar -xzf \"%ROOT%{AMBER_ARCHIVE}\" -C \"%SRC%\" || exit /b 1
+del /q \"%ROOT%{AMBER_ARCHIVE}\"
+call :checkout \"%HEADERS%\" {headers_repo} {headers_commit} || exit /b 1
+set \"AMBER_PIN=local sources\"
+",
+            headers_repo = pins.amber_vulkan_headers.repo,
+            headers_commit = pins.amber_vulkan_headers.commit,
+        )
+    } else {
+        format!(
+            "set \"SRC=%ROOT%src\\amber\"
 set \"HEADERS=%SRC%\\third_party\\vulkan-headers\"
 set \"BUILD=%ROOT%build\\amber\"
 call :checkout \"%SRC%\" {amber_repo} {amber_commit} || exit /b 1
 call :checkout \"%HEADERS%\" {headers_repo} {headers_commit} || exit /b 1
-set \"VSWHERE=%ProgramFiles(x86)%\\Microsoft Visual Studio\\Installer\\vswhere.exe\"
+set \"AMBER_PIN={amber_commit}\"
+",
+            amber_repo = pins.amber.repo,
+            amber_commit = pins.amber.commit,
+            headers_repo = pins.amber_vulkan_headers.repo,
+            headers_commit = pins.amber_vulkan_headers.commit,
+        )
+    }
+}
+
+fn tensor_layer_build(pins: &ExecPins) -> String {
+    let layer = &pins.tensor_layer;
+    let mut out = format!(
+        "set \"EML=%ROOT%src\\eml\"
+set \"EML_BUILD=%ROOT%build\\eml\"
+call :checkout \"%EML%\\layer\" {} {} || exit /b 1
+",
+        layer.layer.repo, layer.layer.commit
+    );
+    let mut definitions = String::new();
+    for (name, variable, pin) in &layer.dependencies {
+        let _ = writeln!(
+            out,
+            "call :checkout \"%EML%\\{name}\" {} {} || exit /b 1",
+            pin.repo, pin.commit
+        );
+        let _ = write!(definitions, " \"-D{variable}=%EML%\\{name}\"");
+    }
+    let _ = write!(
+        out,
+        "cmake -S \"%EML%\\layer\" -B \"%EML_BUILD%\" -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF{definitions} || exit /b 1
+cmake --build \"%EML_BUILD%\" --target {TENSOR_LAYER_TARGET} --parallel || exit /b 1
+copy /y \"%EML_BUILD%\\tensor\\{TENSOR_LAYER_DLL}\" \"%ROOT%bin\\{TENSOR_LAYER_DLL}\" >nul || exit /b 1
+echo ml-emulation-layer {}> \"%ROOT%bin\\eml.pin\"
+",
+        layer.layer.commit
+    );
+    out
+}
+
+pub fn setup_script(pins: &ExecPins, local_sources: bool) -> String {
+    format!(
+        "@echo off
+setlocal
+set \"ROOT=%~dp0\"
+{sources}set \"VSWHERE=%ProgramFiles(x86)%\\Microsoft Visual Studio\\Installer\\vswhere.exe\"
 if not exist \"%VSWHERE%\" (echo vswhere.exe not found & exit /b 1)
 set \"VS=\"
 for /f \"usebackq delims=\" %%i in (`\"%VSWHERE%\" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set \"VS=%%i\"
@@ -434,8 +542,8 @@ cmake -S \"%SRC%\" -B \"%BUILD%\" -G Ninja -DCMAKE_BUILD_TYPE=Release -DAMBER_SK
 cmake --build \"%BUILD%\" --target amber --parallel || exit /b 1
 if not exist \"%ROOT%bin\" mkdir \"%ROOT%bin\"
 copy /y \"%BUILD%\\amber.exe\" \"%ROOT%bin\\amber.exe\" >nul || exit /b 1
-echo amber {amber_commit}> \"%ROOT%bin\\amber.pin\"
-exit /b 0
+echo amber %AMBER_PIN%> \"%ROOT%bin\\amber.pin\"
+{tensor_layer}exit /b 0
 :checkout
 if not exist \"%~1\\.git\" (
   git init -q \"%~1\" || exit /b 1
@@ -448,10 +556,8 @@ git -C \"%~1\" fetch -q --depth 1 origin %3 || exit /b 1
 git -C \"%~1\" checkout -q --detach FETCH_HEAD || exit /b 1
 exit /b 0
 ",
-        amber_repo = pins.amber.repo,
-        amber_commit = pins.amber.commit,
-        headers_repo = pins.amber_vulkan_headers.repo,
-        headers_commit = pins.amber_vulkan_headers.commit,
+        sources = amber_sources(pins, local_sources),
+        tensor_layer = tensor_layer_build(pins),
     )
 }
 
@@ -477,13 +583,40 @@ mod tests {
                 repo: "https://example.com/headers".into(),
                 commit: "def".into(),
             },
+            tensor_layer: oracles::TensorLayerPins {
+                layer: Pin {
+                    repo: "https://example.com/layer".into(),
+                    commit: "fed".into(),
+                },
+                version: "v1".into(),
+                dependencies: vec![(
+                    "glslang",
+                    "GLSLANG_PATH",
+                    Pin {
+                        repo: "https://example.com/glslang".into(),
+                        commit: "cab".into(),
+                    },
+                )],
+            },
         };
-        let script = setup_script(&pins);
+        let script = setup_script(&pins, false);
         assert!(script.contains("call :checkout \"%SRC%\" https://example.com/amber abc"));
         assert!(script.contains("https://example.com/headers def"));
         assert!(script.contains("vcvars64.bat"));
         assert!(script.contains("%VULKAN_SDK%\\Lib\\vulkan-1.lib"));
         assert!(!script.contains("rem "));
+        assert!(script.contains("call :checkout \"%EML%\\layer\" https://example.com/layer fed"));
+        assert!(
+            script.contains("call :checkout \"%EML%\\glslang\" https://example.com/glslang cab")
+        );
+        assert!(script.contains("\"-DGLSLANG_PATH=%EML%\\glslang\""));
+        assert!(script.contains("--target VkLayer_Tensor"));
+        assert!(script.contains("bin\\VkLayer_Tensor.dll"));
+        assert!(!script.contains("amber-local"));
+        let local = setup_script(&pins, true);
+        assert!(local.contains("tar -xzf \"%ROOT%amber-src.tgz\" -C \"%SRC%\""));
+        assert!(local.contains("call :checkout \"%HEADERS%\" https://example.com/headers def"));
+        assert!(!local.contains("https://example.com/amber"));
     }
 
     #[test]

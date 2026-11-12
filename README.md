@@ -75,23 +75,32 @@ images filled and read per sample, multiview rendering (`MULTIVIEW`), and the de
 the mesh and ray tracing stages, float and 64-bit image atomics, multiview, transform feedback,
 expect/assume, replicated composites, compute derivatives (also in mesh and task shaders),
 subgroup rotate and partitioned operations, quad control, fragment shader interlock, image
-footprints, fragment density maps, shading rate images and relaxed extended instructions need.
-Both are pinned in `oracles.toml` and installed by
+footprints, fragment density maps, shading rate images and relaxed extended instructions need,
+and tensors (`TENSOR`, `AS tensor`, `VK_ARM_tensors`). Tensor shaders run through Arm's
+[ML Emulation Layer for Vulkan](https://github.com/arm/ai-ml-emulation-layer-for-vulkan), which
+implements `VK_ARM_tensors` on any Vulkan 1.3 driver; Amber loads its library directly
+(`--layer-library`), without a manifest or environment variable, for the scripts that use
+tensors ([docs/design/tensors.md](docs/design/tensors.md)). All three are pinned in
+`oracles.toml` and installed by
 `cargo xtask oracles`: it downloads the prebuilt KosmicKrisp release, checks its sha256, unpacks
 it into `target/oracles/kosmickrisp/` with an ICD manifest that points at the driver by absolute
-path, builds Amber against that loader, and prints the Vulkan device it finds. Requirements:
+path, builds Amber against that loader and the emulation layer's tensor library, and prints the
+Vulkan device it finds. Requirements:
 `cmake`, `ninja` (optional), `python3`, `curl`, `unzip`, `shasum`, and Homebrew's `spirv-tools`
 (`brew install spirv-tools`), which the prebuilt driver links against.
 
 ```sh
-cargo xtask oracles --exec-only          # install only KosmicKrisp and Amber
+cargo xtask oracles --exec-only          # install only KosmicKrisp, Amber and the tensor layer
 cargo xtask test --no-exec               # skip exec; PROGRESS.md keeps the last exec results
 cargo xtask fuzz --shaders DIR --exec    # metamorphic check of rglsl-fuzz shader families
 cargo xtask fuzz --libfuzzer glsl_variant --time 1800   # coverage-guided variants (cargo-fuzz)
 ```
 
 On other platforms `cargo xtask oracles` skips the exec oracles and `cargo xtask test` needs
-`--no-exec`. `RGLSL_AMBER` and `RGLSL_VK_ICD` select another Amber binary or driver manifest.
+`--no-exec`. `RGLSL_AMBER`, `RGLSL_VK_ICD` and `RGLSL_TENSOR_LAYER` select another Amber binary,
+driver manifest or tensor layer library. `RGLSL_AMBER_SRC=<dir>` makes `cargo xtask oracles`
+(also with `--remote`, which uploads the sources) build Amber from a local working copy instead
+of the pinned commit, to try Amber changes before they are committed.
 Scripts, inputs and dumps of the last run are kept in `target/xtask/exec/<target>/<shader>/`.
 
 #### Remote Windows targets
@@ -110,8 +119,9 @@ with the C++ tools (found with `vswhere`), the Vulkan SDK (`VULKAN_SDK`), Git an
 
 ```sh
 export RGLSL_EXEC_REMOTE=gpu-box,big-box@NVIDIA   # your aliases; never commit them
-cargo xtask oracles --remote               # clone and build the pinned Amber on every machine
-                                           # in parallel, then smoke check every target
+cargo xtask oracles --remote               # clone and build the pinned Amber and the ML
+                                           # emulation layer on every machine in parallel,
+                                           # then smoke check every target
 cargo xtask test                           # exec on the Mac and every remote target, in parallel
 cargo xtask test --no-remote-exec          # Mac only
 cargo xtask fuzz --shaders DIR --exec --exec-target big-box@NVIDIA   # one target
@@ -124,7 +134,9 @@ targets share a vendor. The name labels the target's column in `PROGRESS.md` (`e
 driver-bug lists in `xtask/exec-drivers/` apply by driver name.
 
 Everything stays in one directory on each machine (`C:/rglsl-exec`): sources, build, and per-run
-batches that are deleted when a run ends. Nothing is installed system-wide.
+batches that are deleted when a run ends. Nothing is installed system-wide: the tensor layer is
+a library next to `amber.exe` that Amber loads itself, because the loader ignores
+`VK_ADD_LAYER_PATH` in the elevated session.
 `RGLSL_EXEC_REMOTE_DIR` changes that directory and `RGLSL_EXEC_REMOTE_JOBS` bounds the Amber
 processes running at once on a machine (default 4); both take one value for every machine or a
 comma-separated list of `alias=value` entries with an optional plain default, e.g.

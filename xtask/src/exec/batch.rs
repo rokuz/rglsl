@@ -14,6 +14,7 @@ pub struct Job {
     pub dir: PathBuf,
     pub script: String,
     pub dumps: Vec<String>,
+    pub tensor_layer: bool,
 }
 
 const ATTEMPTS: usize = 3;
@@ -39,12 +40,13 @@ pub fn run_local(amber: &Amber, jobs: &[Job], workers: usize) -> Vec<JobResult> 
                 let Some(job) = jobs.get(index) else { break };
                 let dumps: Vec<&str> = job.dumps.iter().map(String::as_str).collect();
                 let out = job.dir.join(format!("{}.dump.txt", job.script));
-                let mut result = amber.run(&job.dir.join(&job.script), &dumps, &out);
+                let script = job.dir.join(&job.script);
+                let mut result = amber.run(&script, &dumps, &out, job.tensor_layer);
                 for _ in 1..ATTEMPTS {
                     if !result.as_ref().is_err_and(|e| transient(e)) {
                         break;
                     }
-                    result = amber.run(&job.dir.join(&job.script), &dumps, &out);
+                    result = amber.run(&script, &dumps, &out, job.tensor_layer);
                 }
                 results
                     .lock()
@@ -73,7 +75,12 @@ pub fn manifest(root: &Path, jobs: &[Job]) -> Result<String, String> {
                 .ok_or_else(|| format!("{} is not UTF-8", relative.display()))?;
             parts.push(part);
         }
-        let fields = [parts.join("/"), job.script.clone(), job.dumps.join(",")];
+        let fields = [
+            parts.join("/"),
+            job.script.clone(),
+            job.dumps.join(","),
+            if job.tensor_layer { "tensor" } else { "" }.to_string(),
+        ];
         if fields.iter().any(|f| f.contains(['\t', '\n'])) {
             return Err(format!("job {index} has a tab or newline in a field"));
         }
@@ -126,6 +133,7 @@ mod tests {
             dir: PathBuf::from(dir),
             script: script.into(),
             dumps: dumps.iter().map(|d| (*d).to_string()).collect(),
+            tensor_layer: false,
         }
     }
 
@@ -150,7 +158,7 @@ mod tests {
         let text = manifest(Path::new("/w"), &jobs).map_err(anyhow::Error::msg)?;
         assert_eq!(
             text,
-            "0\ta.comp\tglslang.amber\tdump:0:0,dump:0:1\n1\tprobes/x\tp.amber\t\n"
+            "0\ta.comp\tglslang.amber\tdump:0:0,dump:0:1\t\n1\tprobes/x\tp.amber\t\t\n"
         );
         assert!(manifest(Path::new("/other"), &jobs).is_err());
         assert_eq!(dirs(Path::new("/w"), &jobs), ["a.comp", "probes/x"]);

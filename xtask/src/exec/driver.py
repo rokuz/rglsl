@@ -76,12 +76,14 @@ def transient(status):
 
 def run_job(settings, job):
     amber, version, timeout, base, results, device = settings
-    index, directory, script, dumps = job
+    index, directory, script, dumps, layer = job
     cwd = os.path.join(base, directory)
     dump = os.path.join(cwd, "batch-%s.dump.txt" % index)
     command = [amber, "-d", "-v", version, "-q"]
     if device:
         command += ["--device-name", device]
+    if layer == "tensor":
+        command += ["--layer-library", os.path.join(os.path.dirname(amber), "VkLayer_Tensor.dll")]
     if dumps:
         command += ["-b", dump]
         for name in dumps:
@@ -106,10 +108,10 @@ def read_manifest(path):
     with open(path, encoding="utf-8") as file:
         for line in file:
             fields = line.rstrip("\n").split("\t")
-            if len(fields) != 4:
+            if len(fields) != 5:
                 continue
-            index, directory, script, dumps = fields
-            jobs.append((index, directory, script, [d for d in dumps.split(",") if d]))
+            index, directory, script, dumps, layer = fields
+            jobs.append((index, directory, script, [d for d in dumps.split(",") if d], layer))
     return jobs
 
 

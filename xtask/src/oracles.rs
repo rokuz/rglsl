@@ -29,10 +29,56 @@ pub struct Release {
 }
 
 #[derive(Debug, Clone)]
+pub struct TensorLayerPins {
+    pub layer: Pin,
+    pub version: String,
+    pub dependencies: Vec<(&'static str, &'static str, Pin)>,
+}
+
+#[derive(Debug, Clone)]
 pub struct ExecPins {
     pub kosmickrisp: Release,
     pub amber: Pin,
     pub amber_vulkan_headers: Pin,
+    pub tensor_layer: TensorLayerPins,
+}
+
+pub const TENSOR_LAYER_DEPENDENCIES: [(&str, &str); 6] = [
+    ("glslang", "GLSLANG_PATH"),
+    ("spirv-cross", "SPIRV_CROSS_PATH"),
+    ("spirv-headers", "SPIRV_HEADERS_PATH"),
+    ("spirv-tools", "SPIRV_TOOLS_PATH"),
+    ("vulkan-headers", "VULKAN_HEADERS_PATH"),
+    ("json", "JSON_PATH"),
+];
+
+pub const TENSOR_LAYER_TARGET: &str = "VkLayer_Tensor";
+pub const TENSOR_LAYER_DLL: &str = "VkLayer_Tensor.dll";
+pub const TENSOR_LAYER_VAR: &str = "RGLSL_TENSOR_LAYER";
+pub const AMBER_SRC_VAR: &str = "RGLSL_AMBER_SRC";
+
+pub const fn tensor_layer_file() -> &'static str {
+    if cfg!(windows) {
+        TENSOR_LAYER_DLL
+    } else if cfg!(target_os = "macos") {
+        "libVkLayer_Tensor.dylib"
+    } else {
+        "libVkLayer_Tensor.so"
+    }
+}
+
+pub fn tensor_layer(root: &Path) -> Option<PathBuf> {
+    if let Some(path) = std::env::var_os(TENSOR_LAYER_VAR) {
+        return Some(PathBuf::from(path));
+    }
+    let built = oracles_dir(root).join("bin").join(tensor_layer_file());
+    built.is_file().then_some(built)
+}
+
+pub fn amber_source_override() -> Option<PathBuf> {
+    std::env::var_os(AMBER_SRC_VAR)
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
 }
 
 #[derive(Debug, Clone)]
@@ -78,6 +124,20 @@ pub fn load_pins(root: &Path) -> Result<Pins> {
             },
             amber: pin("amber")?,
             amber_vulkan_headers: pin("amber-vulkan-headers")?,
+            tensor_layer: TensorLayerPins {
+                layer: pin("ml-emulation-layer")?,
+                version: field("ml-emulation-layer", "version")?,
+                dependencies: TENSOR_LAYER_DEPENDENCIES
+                    .iter()
+                    .map(|(name, variable)| {
+                        Ok((
+                            *name,
+                            *variable,
+                            pin(&format!("ml-emulation-layer-{name}"))?,
+                        ))
+                    })
+                    .collect::<Result<Vec<_>>>()?,
+            },
         },
     })
 }
@@ -181,6 +241,18 @@ pub fn build_remote(root: &Path) -> Result<()> {
             device.driver,
             label.label()
         );
+        match device.tensors {
+            Some(tensors) => eprintln!(
+                "[xtask] {}: ML emulation layer {}: VK_ARM_tensors with tensors of rank up to {}",
+                spec.entry(),
+                pins.exec.tensor_layer.version,
+                tensors.max_rank
+            ),
+            None => failures.push(format!(
+                "{}: the ML emulation layer did not expose VK_ARM_tensors",
+                spec.entry()
+            )),
+        }
     }
     if !failures.is_empty() {
         bail!("remote smoke check failed:\n{}", failures.join("\n"));
@@ -195,12 +267,23 @@ fn write_stamp(root: &Path, pins: &Pins) -> Result<()> {
         pins.glslang.commit, pins.spirv_tools.commit, pins.spirv_headers.commit
     );
     if dir.join("bin").join("amber").is_file() {
+        let amber = amber_source_override().map_or_else(
+            || pins.exec.amber.commit.clone(),
+            |src| format!("local {}", src.display()),
+        );
         let _ = write!(
             stamp,
             "amber = \"{}\"\namber-vulkan-headers = \"{}\"\nkosmickrisp = \"{}\"\n",
-            pins.exec.amber.commit,
+            amber.replace('\\', "/").replace('"', "'"),
             pins.exec.amber_vulkan_headers.commit,
             pins.exec.kosmickrisp.tag
+        );
+    }
+    if dir.join("bin").join(tensor_layer_file()).is_file() {
+        let _ = writeln!(
+            stamp,
+            "ml-emulation-layer = \"{}\"",
+            pins.exec.tensor_layer.layer.commit
         );
     }
     fs::write(dir.join("stamp.toml"), stamp)?;
@@ -300,11 +383,24 @@ fn build_exec(root: &Path, pins: &ExecPins, generator: &[String]) -> Result<()> 
     let kk = dir.join("kosmickrisp");
     install_kosmickrisp(&dir, &kk, &pins.kosmickrisp)?;
 
-    let amber_src = dir.join("src").join("amber");
-    checkout(&pins.amber, &amber_src)?;
-    let headers = amber_src.join("third_party").join("vulkan-headers");
-    checkout(&pins.amber_vulkan_headers, &headers)?;
-    let amber_build = dir.join("build").join("amber");
+    let (amber_src, headers, amber_build) = match amber_source_override() {
+        Some(src) => {
+            eprintln!(
+                "[xtask] building Amber from the local sources in {} ({AMBER_SRC_VAR})",
+                src.display()
+            );
+            let headers = dir.join("src").join("amber-vulkan-headers");
+            checkout(&pins.amber_vulkan_headers, &headers)?;
+            (src, headers, dir.join("build").join("amber-local"))
+        }
+        None => {
+            let src = dir.join("src").join("amber");
+            checkout(&pins.amber, &src)?;
+            let headers = src.join("third_party").join("vulkan-headers");
+            checkout(&pins.amber_vulkan_headers, &headers)?;
+            (src, headers, dir.join("build").join("amber"))
+        }
+    };
     let loader = kk.join("lib").join("libvulkan.dylib");
     checked(
         Command::new("cmake")
@@ -333,10 +429,12 @@ fn build_exec(root: &Path, pins: &ExecPins, generator: &[String]) -> Result<()> 
         "build Amber",
     )?;
     copy_binary(&amber_build, "amber", &dir.join("bin"))?;
+    let layer = build_tensor_layer(&dir, &pins.tensor_layer, generator)?;
 
     let amber = Amber {
         binary: dir.join("bin").join("amber"),
         icd: kk.join("icd.json"),
+        layer: Some(layer),
         timeout: Duration::from_secs(60),
     };
     let device = amber
@@ -346,7 +444,53 @@ fn build_exec(root: &Path, pins: &ExecPins, generator: &[String]) -> Result<()> 
         "[xtask] Vulkan device: {} (API {}, {})",
         device.name, device.api_version, device.driver
     );
+    let tensors = device.tensors.ok_or_else(|| {
+        anyhow!("the ML emulation layer did not expose VK_ARM_tensors on KosmicKrisp")
+    })?;
+    eprintln!(
+        "[xtask] ML emulation layer {}: VK_ARM_tensors with tensors of rank up to {}",
+        pins.tensor_layer.version, tensors.max_rank
+    );
     Ok(())
+}
+
+fn build_tensor_layer(dir: &Path, pins: &TensorLayerPins, generator: &[String]) -> Result<PathBuf> {
+    let src = dir.join("src").join("eml");
+    checkout(&pins.layer, &src.join("layer"))?;
+    let mut definitions = Vec::new();
+    for (name, variable, pin) in &pins.dependencies {
+        let path = src.join(name);
+        checkout(pin, &path)?;
+        definitions.push(format!("-D{variable}={}", path.display()));
+    }
+    let build = dir.join("build").join("eml");
+    let mut configure = Command::new("cmake");
+    configure
+        .arg("-S")
+        .arg(src.join("layer"))
+        .arg("-B")
+        .arg(&build)
+        .args(generator)
+        .args(["-DCMAKE_BUILD_TYPE=Release", "-DBUILD_TESTING=OFF"])
+        .args(&definitions);
+    if cfg!(target_os = "macos") {
+        configure.arg("-DCMAKE_CXX_FLAGS=-UEXPERIMENTAL_MOLTEN_VK_SUPPORT");
+    }
+    checked(&mut configure, "configure the ML emulation layer")?;
+    checked(
+        Command::new("cmake").arg("--build").arg(&build).args([
+            "--target",
+            TENSOR_LAYER_TARGET,
+            "--parallel",
+        ]),
+        "build the ML emulation layer",
+    )?;
+    let name = tensor_layer_file();
+    let built = build.join("tensor").join(name);
+    let installed = dir.join("bin").join(name);
+    let _ = fs::remove_file(&installed);
+    fs::copy(&built, &installed).with_context(|| format!("copying {}", built.display()))?;
+    Ok(installed)
 }
 
 fn install_kosmickrisp(oracles: &Path, kk: &Path, release: &Release) -> Result<()> {

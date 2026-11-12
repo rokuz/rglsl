@@ -287,10 +287,18 @@ pub fn progress(env: &Environment, results: &[CaseResult], carried: Option<&Carr
         match (source, executor) {
             (ExecSource::Ran, Some(executor)) => {
                 let device = &executor.device;
+                let layer = if device.tensors.is_some() {
+                    format!(
+                        ", ML emulation layer `{}` for tensors",
+                        env.pins.exec.tensor_layer.version
+                    )
+                } else {
+                    String::new()
+                };
                 let _ = match target {
                     TargetId::Local => writeln!(
                         out,
-                        "{}Amber `{}` with KosmicKrisp `{}` on {} (Vulkan {}).",
+                        "{}Amber `{}` with KosmicKrisp `{}` on {} (Vulkan {}){layer}.",
                         oracle_prefix(target),
                         short(&env.pins.exec.amber.commit),
                         env.pins.exec.kosmickrisp.tag,
@@ -299,7 +307,7 @@ pub fn progress(env: &Environment, results: &[CaseResult], carried: Option<&Carr
                     ),
                     TargetId::Remote(_) => writeln!(
                         out,
-                        "{}Amber `{}` on {}, {} (Vulkan {}), Windows over SSH.",
+                        "{}Amber `{}` on {}, {} (Vulkan {}), Windows over SSH{layer}.",
                         oracle_prefix(target),
                         short(&env.pins.exec.amber.commit),
                         device.name,

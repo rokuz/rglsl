@@ -12,7 +12,22 @@ pub const VULKAN_VERSION: &str = "1.3";
 pub struct Amber {
     pub binary: PathBuf,
     pub icd: PathBuf,
+    pub layer: Option<PathBuf>,
     pub timeout: Duration,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TensorSupport {
+    pub max_rank: u32,
+    pub stages: u32,
+}
+
+impl TensorSupport {
+    pub const COMPUTE: u32 = 0x20;
+
+    pub const fn compute_only(self) -> bool {
+        self.stages & !Self::COMPUTE == 0
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -21,6 +36,7 @@ pub struct Device {
     pub api_version: String,
     pub driver: String,
     pub cooperative: Support,
+    pub tensors: Option<TensorSupport>,
 }
 
 impl Device {
@@ -58,18 +74,21 @@ impl Device {
 }
 
 impl Amber {
-    fn command(&self) -> Command {
+    fn command(&self, layer: bool) -> Command {
         let mut command = Command::new(&self.binary);
         command
             .env("VK_DRIVER_FILES", &self.icd)
             .env("VK_ICD_FILENAMES", &self.icd)
             .env_remove("VK_INSTANCE_LAYERS")
             .args(["-d", "-v", VULKAN_VERSION]);
+        if let (true, Some(library)) = (layer, &self.layer) {
+            command.arg("--layer-library").arg(library);
+        }
         command
     }
 
     pub fn device(&self) -> Result<Device, String> {
-        let mut command = self.command();
+        let mut command = self.command(true);
         command.arg("-V");
         let output = process::run(command, self.timeout).map_err(|e| format!("{e:#}"))?;
         if !matches!(output.exit, Exit::Code(0)) {
@@ -88,9 +107,16 @@ impl Amber {
         script: &Path,
         dumps: &[&str],
         out: &Path,
+        layer: bool,
     ) -> Result<BTreeMap<String, Vec<u8>>, String> {
+        if layer && self.layer.is_none() {
+            return Err(format!(
+                "the script needs the ML emulation layer, which is not built: run `cargo xtask oracles` or set {}",
+                crate::oracles::TENSOR_LAYER_VAR
+            ));
+        }
         let _ = std::fs::remove_file(out);
-        let mut command = self.command();
+        let mut command = self.command(layer);
         command.arg("-q");
         if !dumps.is_empty() {
             command.arg("-b").arg(out);
@@ -157,11 +183,20 @@ pub fn parse_device(text: &str) -> Option<Device> {
         (None, Some(info)) => info,
         (None, None) => String::new(),
     };
+    let tensors = field("maxTensorDimensionCount:")
+        .and_then(|rank| rank.parse().ok())
+        .map(|max_rank| TensorSupport {
+            max_rank,
+            stages: field("shaderTensorSupportedStages:")
+                .and_then(|stages| stages.parse().ok())
+                .unwrap_or(0),
+        });
     Some(Device {
         name,
         api_version,
         driver,
         cooperative: cooperative::parse_support(text),
+        tensors,
     })
 }
 
@@ -217,6 +252,16 @@ mod tests {
         assert_eq!(device.driver, "KosmicKrisp Mesa 26.2.1");
         assert!(parse_device("Summary: 0 pass").is_none());
         assert_eq!(device.vendor(), "apple");
+        assert_eq!(device.tensors, None);
+        let layered = format!(
+            "{}  maxTensorDimensionCount: 6\n  shaderTensorSupportedStages: 32\nEnd of physical device properties.\n",
+            text.trim_end_matches("End of physical device properties.\n")
+        );
+        let tensors = parse_device(&layered)
+            .and_then(|device| device.tensors)
+            .context("no tensor support")?;
+        assert_eq!(tensors.max_rank, 6);
+        assert!(tensors.compute_only());
         Ok(())
     }
 }
