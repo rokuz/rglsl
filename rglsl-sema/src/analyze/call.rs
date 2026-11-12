@@ -1050,7 +1050,7 @@ impl Analyzer<'_> {
                 .map(|variable| (variable.qualifiers.readonly, variable.qualifiers.writeonly));
             let integer_image = first
                 .and_then(|operand| operand.ty.as_opaque())
-                .is_some_and(|opaque| opaque.sampled != crate::types::SampledType::Float);
+                .is_some_and(|opaque| opaque.sampled.is_integer());
             let has_atomic_format = first
                 .and_then(|operand| operand.root)
                 .and_then(|id| self.symbol(id))
@@ -1108,6 +1108,12 @@ impl Analyzer<'_> {
             "textureGradOffset" | "textureProjGradOffset" | "sparseTextureGradOffsetARB" => Some(4),
             _ => None,
         };
+        let half_shadow_compare = first
+            .and_then(|operand| operand.ty.as_opaque())
+            .is_some_and(|opaque| opaque.shadow)
+            && operands.get(1).and_then(|operand| operand.ty.base_scalar())
+                == Some(Scalar::Float16);
+        let offset_index = offset_index.map(|index| index + usize::from(half_shadow_compare));
         if let Some(index) = offset_index {
             if let Some(operand) = operands.get(index) {
                 if !operand.constant {

@@ -54,14 +54,14 @@ fn variable_names(builtins: &Builtins) -> BTreeSet<String> {
 #[test]
 fn the_tables_have_the_expected_sizes() {
     let expected = [
-        (Stage::Vertex, 7381, 35, 189, 225),
-        (Stage::TessControl, 7382, 35, 181, 214),
-        (Stage::TessEvaluation, 7381, 35, 189, 222),
-        (Stage::Geometry, 7385, 35, 188, 221),
-        (Stage::Fragment, 7902, 35, 193, 229),
-        (Stage::Compute, 7847, 37, 179, 215),
-        (Stage::Mesh, 7597, 37, 192, 226),
-        (Stage::RayGeneration, 7381, 122, 171, 210),
+        (Stage::Vertex, 8063, 35, 189, 225),
+        (Stage::TessControl, 8064, 35, 181, 214),
+        (Stage::TessEvaluation, 8063, 35, 189, 222),
+        (Stage::Geometry, 8067, 35, 188, 221),
+        (Stage::Fragment, 8890, 35, 193, 229),
+        (Stage::Compute, 8807, 37, 179, 215),
+        (Stage::Mesh, 8337, 37, 192, 226),
+        (Stage::RayGeneration, 8063, 122, 171, 210),
     ];
     for (stage, functions, added, variables_450, variables_460) in expected {
         let older = builtins(450, stage);
