@@ -66,6 +66,7 @@ pub struct CaseResult {
     pub exec_input: Option<ExecInput>,
     pub exec: BTreeMap<TargetId, exec::Outcome>,
     pub expected_messages: Option<bool>,
+    pub debug: Option<bool>,
 }
 
 #[derive(Debug, Clone)]
@@ -345,6 +346,16 @@ fn run_case(
     };
 
     let reference = work_dir.join("glslang").join(format!("{}.spv", case.name));
+    let debug = match (case.target.debug, &oracle, spirv_val) {
+        (Some(_), OracleResult::Accepted, Some(true)) if reference.is_file() => {
+            let comparison = crate::debuginfo::compare(&out, &reference)?;
+            if !comparison.matches() {
+                note = comparison.note();
+            }
+            Some(comparison.matches())
+        }
+        _ => None,
+    };
     let exec_input = if !env.executors.is_empty()
         && matches!(oracle, OracleResult::Accepted)
         && spirv_val == Some(true)
@@ -380,6 +391,7 @@ fn run_case(
         exec_input,
         exec: BTreeMap::new(),
         expected_messages: None,
+        debug,
     })
 }
 
@@ -405,6 +417,9 @@ fn ours_command(
     }
     if case.target.compile_only {
         command.arg("--object");
+    }
+    if let Some(debug) = case.target.debug {
+        command.args(["--debug", debug]);
     }
     let test_dir = env.glslang_dir.join("Test");
     let runtests = corpus::runtests_options(&case.name);
@@ -780,6 +795,7 @@ fn run_group(
         exec_input,
         exec: BTreeMap::new(),
         expected_messages,
+        debug: None,
     })
 }
 

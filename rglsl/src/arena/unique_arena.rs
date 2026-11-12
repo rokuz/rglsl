@@ -80,6 +80,10 @@ impl<T> UniqueArena<T> {
             .unwrap_or(&Span::default())
     }
 
+    pub fn spans_mut(&mut self) -> &mut [Span] {
+        &mut self.span_info
+    }
+
     pub(crate) fn drain_all(&mut self) -> UniqueArenaDrain<'_, T> {
         let handles = Range::full_range_from_size(self.set.len());
         UniqueArenaDrain {

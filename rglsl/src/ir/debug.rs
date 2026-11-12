@@ -300,3 +300,78 @@ pub fn shift_span(span: Span, offset: u32) -> Span {
         None => span,
     }
 }
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+pub struct ModuleSpans {
+    pub spans: Vec<[u32; 2]>,
+}
+
+fn function_span_slots<'a>(function: &'a mut crate::Function, slots: &mut Vec<&'a mut Span>) {
+    slots.extend(function.local_variables.spans_mut().iter_mut());
+    slots.extend(function.expressions.spans_mut().iter_mut());
+    let mut blocks: Vec<&'a mut crate::Block> = Vec::from([&mut function.body]);
+    while let Some(block) = blocks.pop() {
+        let mut children: Vec<&'a mut crate::Block> = Vec::new();
+        for (statement, span) in block.span_iter_mut() {
+            if let Some(span) = span {
+                slots.push(span);
+            }
+            children.extend(statement.child_blocks_mut());
+        }
+        children.reverse();
+        blocks.append(&mut children);
+    }
+}
+
+fn span_slots(module: &mut crate::Module) -> Vec<&mut Span> {
+    let mut slots: Vec<&mut Span> = Vec::new();
+    slots.extend(module.types.spans_mut().iter_mut());
+    slots.extend(module.constants.spans_mut().iter_mut());
+    slots.extend(module.overrides.spans_mut().iter_mut());
+    slots.extend(module.global_variables.spans_mut().iter_mut());
+    slots.extend(module.global_expressions.spans_mut().iter_mut());
+    let (spans, functions) = module.functions.spans_and_values_mut();
+    slots.extend(spans.iter_mut());
+    for function in functions {
+        function_span_slots(function, &mut slots);
+    }
+    for entry in &mut module.entry_points {
+        function_span_slots(&mut entry.function, &mut slots);
+    }
+    slots
+}
+
+pub fn collect_spans(module: &mut crate::Module) -> ModuleSpans {
+    ModuleSpans {
+        spans: span_slots(module)
+            .into_iter()
+            .map(|span| {
+                span.to_range().map_or([0, 0], |range| {
+                    [
+                        u32::try_from(range.start).unwrap_or(u32::MAX),
+                        u32::try_from(range.end).unwrap_or(u32::MAX),
+                    ]
+                })
+            })
+            .collect(),
+    }
+}
+
+pub fn apply_spans(module: &mut crate::Module, spans: &ModuleSpans) -> bool {
+    let slots = span_slots(module);
+    if slots.len() != spans.spans.len() {
+        return false;
+    }
+    for (slot, &[start, end]) in slots.into_iter().zip(&spans.spans) {
+        *slot = Span::new(start, end);
+    }
+    true
+}
+
+pub fn shift_module_spans(module: &mut crate::Module, offset: u32) {
+    for slot in span_slots(module) {
+        *slot = shift_span(*slot, offset);
+    }
+}

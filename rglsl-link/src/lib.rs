@@ -101,7 +101,7 @@ pub(crate) fn merge(objects: &[ObjectModule], options: &Options) -> Result<Merge
             Some(_) => {}
         }
     }
-    let specialized: Vec<ObjectModule> = match stage {
+    let mut specialized: Vec<ObjectModule> = match stage {
         Some(stage) => objects
             .iter()
             .filter_map(|object| {
@@ -133,6 +133,7 @@ pub(crate) fn merge(objects: &[ObjectModule], options: &Options) -> Result<Merge
     {
         return Err(errors.into());
     }
+    let debug_info = merge_debug_info(&mut specialized);
     let objects = specialized.as_slice();
     let mains: Vec<usize> = objects
         .iter()
@@ -200,6 +201,7 @@ pub(crate) fn merge(objects: &[ObjectModule], options: &Options) -> Result<Merge
         return Err(errors.into());
     }
     module.entry_points.push(entry);
+    module.debug_info = debug_info;
     if objects.len() > 1 {
         if options.auto_map_locations {
             interface::assign_locations(&mut module, &globals, stage);
@@ -215,6 +217,24 @@ pub(crate) fn merge(objects: &[ObjectModule], options: &Options) -> Result<Merge
         globals,
         warnings,
     })
+}
+
+fn merge_debug_info(objects: &mut [ObjectModule]) -> Option<Box<rglsl::DebugInfo>> {
+    if objects.iter().all(|object| object.module.debug_info.is_none()) {
+        return None;
+    }
+    let mut merged = rglsl::DebugInfo::default();
+    let mut base = 0_u32;
+    for object in objects.iter_mut() {
+        let Some(info) = object.module.debug_info.take() else {
+            continue;
+        };
+        rglsl::shift_module_spans(&mut object.module, base);
+        let end = info.end();
+        merged.append(*info, base);
+        base = base.saturating_add(end).saturating_add(1);
+    }
+    Some(Box::new(merged))
 }
 
 const fn primitive_vertices(primitive: GeometryInputPrimitive) -> u32 {

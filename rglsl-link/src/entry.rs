@@ -135,7 +135,8 @@ impl Builder<'_> {
             self.remap(index)?
                 .adjust_function(&mut function)
                 .map_err(internal)?;
-            let new = self.module.functions.append(function, Span::UNDEFINED);
+            let span = object.module.functions.get_span(handle);
+            let new = self.module.functions.append(function, span);
             if library {
                 self.library_functions.push(new);
             }

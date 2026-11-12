@@ -214,6 +214,14 @@ impl<T> Arena<T> {
             .unwrap_or(&Span::default())
     }
 
+    pub fn spans_mut(&mut self) -> &mut [Span] {
+        &mut self.span_info
+    }
+
+    pub fn spans_and_values_mut(&mut self) -> (&mut [Span], &mut [T]) {
+        (&mut self.span_info, &mut self.data)
+    }
+
     /// Assert that `handle` is valid for this arena.
     pub fn check_contains_handle(&self, handle: Handle<T>) -> Result<(), BadHandle> {
         if handle.index() < self.data.len() {
