@@ -3913,12 +3913,22 @@ impl BlockContext<'_> {
         let Some(mut block) = self.resume_frame(state, finished) else {
             return Ok(Some(BlockExitDisposition::Discarded));
         };
+        let nested = !core::ptr::eq(ir, &self.ir_function.body);
         while let Some((statement, span)) = ir.span_at(next) {
             next += 1;
             match *statement {
                 Statement::Block(_) => {}
                 Statement::Return { .. } if !span.is_defined() => {
-                    self.writer.debug_mark_end(&mut block);
+                    if !(nested && super::debug::ends_at_location(&block)) {
+                        self.writer.debug_mark_end(&mut block);
+                    }
+                }
+                Statement::If { condition, .. }
+                | Statement::Switch {
+                    selector: condition,
+                    ..
+                } if self.expression_constness.is_const(condition) => {
+                    self.writer.debug_mark_scope(&mut block, *span);
                 }
                 _ => self.writer.debug_mark(&mut block, *span),
             }
@@ -3943,7 +3953,7 @@ impl BlockContext<'_> {
                 }
             }
         }
-        self.finish_block(block, exit, loop_context)?;
+        self.finish_block(block, exit, loop_context, nested)?;
         Ok(Some(BlockExitDisposition::Used))
     }
 
@@ -4005,10 +4015,13 @@ impl BlockContext<'_> {
         block: Block,
         exit: BlockExit,
         loop_context: LoopContext,
+        nested: bool,
     ) -> Result<(), Error> {
         let mut block = block;
         if let BlockExit::Return = exit {
-            self.writer.debug_mark_end(&mut block);
+            if !(nested && super::debug::ends_at_location(&block)) {
+                self.writer.debug_mark_end(&mut block);
+            }
         }
         let termination = match exit {
             // We're generating code for the top-level Block of the function, so we

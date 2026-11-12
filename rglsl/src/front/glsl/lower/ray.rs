@@ -86,6 +86,15 @@ pub(super) fn ray_builtin(name: &str) -> Option<(BuiltIn, &'static str)> {
     })
 }
 
+pub(super) fn ray_builtin_name<'a>(name: &'a str, key: &'a str) -> &'a str {
+    match name {
+        "gl_HitTNV" => "gl_RayTmaxNV",
+        "gl_HitTEXT" => "gl_RayTmaxEXT",
+        _ if transposed_builtin(name) => key,
+        _ => name,
+    }
+}
+
 const fn transposed_builtin(name: &str) -> bool {
     matches!(
         name.as_bytes(),
