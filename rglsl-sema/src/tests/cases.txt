@@ -6002,3 +6002,25 @@ int f(int x) {
 void main() {
     f(1);
 }
+### layout qualifiers on parameters | frag | 5:InvalidParameter, 6:InvalidParameter, 7:InvalidParameter, 8:InvalidParameter, 9:InvalidParameter
+#extension GL_EXT_buffer_reference : require
+layout(buffer_reference) buffer R { float x; };
+layout(location = 0) out vec4 o;
+float a(layout(r32f) image2D i) { return 0.0; }
+float b(layout(binding = 1) sampler2D s) { return 0.0; }
+float c(layout(location = 1) float x) { return x; }
+float d(layout(row_major) mat4 m) { return m[0][0]; }
+float e(layout(buffer_reference) R r) { return 0.0; }
+float f(layout(constant_id = 3) float x, layout(input_attachment_index = 0) float y) { return x + y; }
+float g(layout(buffer_reference_align = 16) R r) { return 0.0; }
+void main() { o = vec4(0.0); }
+### interpolation, auxiliary and invariant qualifiers on parameters | frag | 3:InvalidParameter, 4:InvalidParameter, 5:InvalidParameter, 6:InvalidParameter, 7:InvalidParameter, 8:InvalidParameter, 8:InvalidParameter
+layout(location = 0) out vec4 o;
+float a(flat float x) { return x; }
+float b(centroid float x) { return x; }
+float c(sample float x) { return x; }
+float d(noperspective float x) { return x; }
+float e(invariant float x) { return x; }
+float f(smooth invariant float x) { return x; }
+float g(precise out float x) { x = 1.0; return x; }
+void main() { o = vec4(0.0); }
