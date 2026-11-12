@@ -483,8 +483,11 @@ impl VaryingContext<'_> {
                     crate::BuiltIn::Position { .. } => {
                         crate::BuiltIn::Position { invariant: false }
                     }
-                    crate::BuiltIn::Barycentric { .. } => {
-                        crate::BuiltIn::Barycentric { perspective: false }
+                    crate::BuiltIn::Barycentric { perspective, .. } => {
+                        crate::BuiltIn::Barycentric {
+                            perspective,
+                            nv: false,
+                        }
                     }
                     crate::BuiltIn::Layer { .. } => crate::BuiltIn::Layer {
                         viewport_relative: false,
@@ -1075,10 +1078,12 @@ impl VaryingContext<'_> {
                         Capabilities::MESH_SHADER,
                     ));
                 }
-                if interpolation == Some(crate::Interpolation::PerVertex) {
+                let per_vertex =
+                    matches!(interpolation, Some(crate::Interpolation::PerVertex { .. }));
+                if let Some(per_vertex @ crate::Interpolation::PerVertex { .. }) = interpolation {
                     if self.stage != crate::ShaderStage::Fragment {
                         return Err(VaryingError::InvalidInterpolationInStage(
-                            crate::Interpolation::PerVertex,
+                            per_vertex,
                             crate::ShaderStage::Fragment,
                         ));
                     }
@@ -1093,7 +1098,7 @@ impl VaryingContext<'_> {
                 }
                 // If this is per-vertex, we change the type we validate to the inner type, otherwise we leave it be.
                 // This lets all validation be done on the inner type once we've ensured the per-vertex is array<T, 3>
-                let (ty, ty_inner) = if interpolation == Some(crate::Interpolation::PerVertex) {
+                let (ty, ty_inner) = if per_vertex {
                     match ty_inner {
                         &Ti::Array {
                             base,
@@ -1276,7 +1281,7 @@ impl VaryingContext<'_> {
                     return Err(VaryingError::UnsupportedCapability(required));
                 }
 
-                if interpolation != Some(crate::Interpolation::PerVertex) {
+                if !per_vertex {
                     // Integers and doubles cannot be interpolated: where they
                     // enter the fragment stage they must be `flat` (Vulkan
                     // VUID-StandaloneSpirv-Flat-04744). The outputs of the
@@ -1389,12 +1394,60 @@ fn view_element(
 }
 
 impl VaryingContext<'_> {
+    fn per_vertex_block(
+        &self,
+        ty: Handle<crate::Type>,
+        io: Option<&crate::Binding>,
+    ) -> Result<Option<(Handle<crate::Type>, crate::Binding)>, WithSpan<VaryingError>> {
+        let Some(&crate::Binding::Location {
+            interpolation: Some(interpolation @ crate::Interpolation::PerVertex { .. }),
+            ..
+        }) = io
+        else {
+            return Ok(None);
+        };
+        let crate::TypeInner::Array { base, size, .. } = self.types[ty].inner else {
+            return Ok(None);
+        };
+        if crate::proc::interface_block(self.types, base).is_none() {
+            return Ok(None);
+        }
+        let fail =
+            |error: VaryingError| Err(error.with_span_context(self.types.get_span_context(ty)));
+        if self.stage != crate::ShaderStage::Fragment || self.output {
+            return fail(VaryingError::InvalidInterpolationInStage(
+                interpolation,
+                crate::ShaderStage::Fragment,
+            ));
+        }
+        if !self.capabilities.contains(Capabilities::PER_VERTEX) {
+            return fail(VaryingError::UnsupportedCapability(
+                Capabilities::PER_VERTEX,
+            ));
+        }
+        if !matches!(size, crate::ArraySize::Constant(length) if length.get() == 3) {
+            return fail(VaryingError::PerVertexNotArrayOfThree);
+        }
+        let mut binding = io.cloned();
+        if let Some(crate::Binding::Location {
+            ref mut interpolation,
+            ..
+        }) = binding
+        {
+            *interpolation = None;
+        }
+        Ok(binding.map(|binding| (base, binding)))
+    }
+
     fn validate_interface(
         &mut self,
         ep: &crate::EntryPoint,
         ty: Handle<crate::Type>,
         io: Option<&crate::Binding>,
     ) -> Result<(), WithSpan<VaryingError>> {
+        if let Some((element, binding)) = self.per_vertex_block(ty, io)? {
+            return self.validate_interface(ep, element, Some(&binding));
+        }
         let Some(block) = crate::proc::interface_block(self.types, ty) else {
             return self.validate(ep, ty, io);
         };

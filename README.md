@@ -46,6 +46,20 @@ cargo xtask test --glslang-dir ../glslang --filter spv.100ops --no-progress-file
 
 Per-shader results go to `target/xtask/results.tsv`.
 
+### Renamed twins
+
+rglsl always reserves the keywords of extensions (`demote`, `vector`, ...), also when the
+extension is not enabled, where glslang leaves them names. glslang's sources are not modified,
+so a test that uses such a word as a name is listed in
+[xtask/corpus-renamed/renamed.toml](xtask/corpus-renamed/renamed.toml): the words it renames,
+their new names, and why. Its twin `xtask/corpus-renamed/<name>` renames only those identifiers,
+on the same lines, and replaces the original for glslang and for rglsl in every column
+(`accept`, `diag`, `valid`, `interface`, `debug`, `exec`), compiled with the original's
+options, stage and suite. `cargo xtask test` checks that every listed test has a twin and every
+twin is listed, that the twin is the original with the renames applied and nothing else, and
+that glslang gives the twin the original's verdict and error lines. The test's row in
+`results.tsv` notes `renamed twin: vector → vector_`.
+
 ### Comparing interfaces (`interface`)
 
 The `interface` column reflects our SPIR-V module and glslang's for every shader both accept

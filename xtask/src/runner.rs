@@ -17,6 +17,7 @@ use crate::groups;
 use crate::interface;
 use crate::oracles::{self, Tool};
 use crate::process::{self, Exit};
+use crate::renamed::{self, Renamings};
 use crate::report;
 use crate::worker::{EXIT_ACCEPTED, EXIT_BACKEND_FAILED, EXIT_REJECTED};
 
@@ -160,6 +161,7 @@ pub struct Environment {
     pub pins: oracles::Pins,
     pub executors: Vec<Executor>,
     pub known: Known,
+    pub renamed: Renamings,
     pub interface_expected: interface::Expected,
 }
 
@@ -181,6 +183,7 @@ pub fn run(root: &Path, options: Options) -> Result<()> {
         spirv_val: oracles::find_tool(root, "spirv-val", "RGLSL_SPIRV_VAL")?,
         executors: Vec::new(),
         known: Known::load(root)?,
+        renamed: Renamings::load(root)?,
         interface_expected: interface::Expected::load(root)?,
         glslang_dir,
         pins,
@@ -208,6 +211,7 @@ pub fn run(root: &Path, options: Options) -> Result<()> {
     }
 
     let mut cases = corpus::load(&env.glslang_dir)?;
+    env.renamed.apply(&mut cases)?;
     cases.extend(groups::load_groups(&env.glslang_dir)?);
     cases.extend(groups::load_own(root)?);
     cases.extend(groups::load_exec(root)?);
@@ -408,6 +412,11 @@ fn run_case(
         None
     };
 
+    let note = match env.renamed.get(&case.name) {
+        Some(renamed) if note.is_empty() => renamed.note(),
+        Some(renamed) => format!("{}; {note}", renamed.note()),
+        None => note,
+    };
     Ok(CaseResult {
         case: case.clone(),
         oracle,
@@ -616,14 +625,43 @@ fn run_oracle(
     case: &Case,
     timeout: Duration,
 ) -> Result<OracleResult> {
+    let module = work_dir.join("glslang").join(format!("{}.spv", case.name));
+    let Some(renamed) = env.renamed.get(&case.name) else {
+        return run_glslang(env, case, Path::new(&case.name), &module, timeout);
+    };
+    let original = work_dir
+        .join("glslang")
+        .join(format!("{}.original.spv", case.name));
+    let original = run_glslang(env, case, Path::new(&case.name), &original, timeout)?;
+    let twin = run_glslang(env, case, &renamed.twin, &module, timeout)?;
+    let same = match (&original, &twin) {
+        (OracleResult::Accepted, OracleResult::Accepted) => true,
+        (OracleResult::Rejected { lines: a }, OracleResult::Rejected { lines: b }) => a == b,
+        _ => false,
+    };
+    if !same {
+        bail!(
+            "glslang gives the renamed twin {}/{} another verdict than the original ({twin:?} instead of {original:?}); fix the twin",
+            renamed::DIR,
+            case.name
+        );
+    }
+    Ok(twin)
+}
+
+fn run_glslang(
+    env: &Environment,
+    case: &Case,
+    source: &Path,
+    module: &Path,
+    timeout: Duration,
+) -> Result<OracleResult> {
     let mut command = Command::new(&env.glslang.path);
     command
         .current_dir(env.glslang_dir.join("Test"))
         .args(case.target.glslang_args());
     if !case.target.ast_only || case.target.semantics == corpus::Semantics::Vulkan {
-        command
-            .arg("-o")
-            .arg(work_dir.join("glslang").join(format!("{}.spv", case.name)));
+        command.arg("-o").arg(module);
     }
     let runtests = corpus::runtests_options(&case.name);
     for directory in runtests.include_dirs {
@@ -635,7 +673,7 @@ fn run_oracle(
     if runtests.hlsl_offsets {
         command.arg("--hlsl-offsets");
     }
-    command.arg(&case.name);
+    command.arg(source);
     let output = process::run(command, timeout)?;
     Ok(match output.exit {
         Exit::Code(0) => OracleResult::Accepted,

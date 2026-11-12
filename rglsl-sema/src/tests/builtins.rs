@@ -58,7 +58,7 @@ fn the_tables_have_the_expected_sizes() {
         (Stage::TessControl, 7382, 35, 181, 214),
         (Stage::TessEvaluation, 7381, 35, 189, 222),
         (Stage::Geometry, 7385, 35, 188, 221),
-        (Stage::Fragment, 7902, 35, 193, 229),
+        (Stage::Fragment, 7902, 35, 197, 233),
         (Stage::Compute, 7847, 37, 179, 215),
         (Stage::Mesh, 7597, 37, 192, 226),
         (Stage::RayGeneration, 7381, 122, 171, 210),

@@ -251,6 +251,9 @@ impl<'a> Lowerer<'a> {
             return false;
         }
         let storage = qualifiers.storage;
+        if storage == Storage::In && qualifiers.per_vertex.is_some() {
+            return true;
+        }
         let per_task = qualifiers.per_task;
         self.stage_map(|stage| match storage {
             Storage::In => stage.has_arrayed_io(),

@@ -49,6 +49,7 @@
                         ty: 0,
                         binding: Some(BuiltIn(Barycentric(
                             perspective: true,
+                            nv: false,
                         ))),
                     ),
                 ],
@@ -106,6 +107,7 @@
                         ty: 0,
                         binding: Some(BuiltIn(Barycentric(
                             perspective: false,
+                            nv: false,
                         ))),
                     ),
                 ],

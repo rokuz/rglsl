@@ -4983,6 +4983,30 @@ void main() {}
 layout(location = 0) perprimitiveEXT in vec4 v;
 layout(location = 0) out vec4 o;
 void main() { o = v; }
+### per-vertex fragment inputs | frag | ok
+#extension GL_EXT_fragment_shader_barycentric : require
+#extension GL_NV_fragment_shader_barycentric : require
+layout(location = 0) pervertexEXT in float a[];
+layout(location = 1) pervertexNV in block { vec2 c; } b[];
+layout(location = 0) out vec4 o;
+void main() { o = vec4(a[2] * gl_BaryCoordEXT.x, b[1].c * gl_BaryCoordNoPerspNV.yz, a.length()); }
+### per-vertex inputs need the extension | frag | 2:ExtensionRequired
+layout(location = 0) pervertexEXT in float a[];
+layout(location = 0) out vec4 o;
+void main() { o = vec4(a[0]); }
+### per-vertex arrays have 3 elements | frag | 3:InvalidInterfaceArray, 4:InvalidInterfaceArray
+#extension GL_EXT_fragment_shader_barycentric : require
+layout(location = 0) pervertexEXT in float a[4];
+layout(location = 1) pervertexEXT in float b;
+layout(location = 0) out vec4 o;
+void main() { o = vec4(a[0], b, 0.0, 0.0); }
+### per-vertex only in fragment shaders | vert | 3:InvalidQualifier
+#extension GL_EXT_fragment_shader_barycentric : require
+layout(location = 0) pervertexEXT in float a[3];
+void main() {}
+### barycentric built-ins need the extension | frag | 3:ExtensionRequired
+layout(location = 0) out vec4 o;
+void main() { o = vec4(gl_BaryCoordEXT, 1.0); }
 ### NV derivative groups only in compute shaders | mesh 450 | 4:InvalidQualifier
 #extension GL_EXT_mesh_shader : require
 #extension GL_NV_compute_shader_derivatives : require

@@ -417,6 +417,18 @@ impl Writer {
         )
     }
 
+    fn require_barycentrics(&mut self, nv: bool) -> Result<(), Error> {
+        self.use_extension(if nv {
+            "SPV_NV_fragment_shader_barycentric"
+        } else {
+            "SPV_KHR_fragment_shader_barycentric"
+        });
+        self.require_any(
+            "fragment shader barycentrics",
+            &[spirv::Capability::FragmentBarycentricKHR],
+        )
+    }
+
     pub(super) fn require_mesh_shading(&mut self) -> Result<(), Error> {
         match self.mesh_extension {
             Some(crate::MeshShaderExtension::Nv) => {
@@ -3754,13 +3766,9 @@ impl Writer {
                         Some(crate::Interpolation::Linear) => {
                             others.push(Decoration::NoPerspective);
                         }
-                        Some(crate::Interpolation::PerVertex) => {
+                        Some(crate::Interpolation::PerVertex { nv }) => {
                             others.push(Decoration::PerVertexKHR);
-                            self.require_any(
-                                "`per_vertex` interpolation",
-                                &[spirv::Capability::FragmentBarycentricKHR],
-                            )?;
-                            self.use_extension("SPV_KHR_fragment_shader_barycentric");
+                            self.require_barycentrics(nv)?;
                         }
                     }
                     match sampling {
@@ -3978,12 +3986,8 @@ impl Writer {
                         }
                         BuiltIn::PrimitiveId
                     }
-                    Bi::Barycentric { perspective } => {
-                        self.require_any(
-                            "`barycentric` built-in",
-                            &[spirv::Capability::FragmentBarycentricKHR],
-                        )?;
-                        self.use_extension("SPV_KHR_fragment_shader_barycentric");
+                    Bi::Barycentric { perspective, nv } => {
+                        self.require_barycentrics(nv)?;
                         if perspective {
                             BuiltIn::BaryCoordKHR
                         } else {

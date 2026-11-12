@@ -1,12 +1,13 @@
 use alloc::string::String;
 
+use rglsl_ast::ast::StorageQualifier;
 use rglsl_ast::extensions::Request;
 use rglsl_ast::Span;
 
 use super::Analyzer;
 use crate::builtins::Stage;
 use crate::diagnostic::{Diagnostic, DiagnosticKind};
-use crate::scope::{Qualifiers, Storage};
+use crate::scope::{PerVertex, Qualifiers, Storage};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Interlock {
@@ -339,5 +340,30 @@ impl Analyzer<'_> {
             })
         });
         self.require_extension(span, "GL_EXT_demote_to_helper_invocation", "demote");
+    }
+}
+
+impl Analyzer<'_> {
+    pub(crate) fn per_vertex_qualifier(
+        &mut self,
+        span: Span,
+        storage: StorageQualifier,
+    ) -> Option<PerVertex> {
+        let qualifier = storage.keyword();
+        let (per_vertex, extension) = if storage == StorageQualifier::PerVertexNV {
+            (PerVertex::Nv, "GL_NV_fragment_shader_barycentric")
+        } else {
+            (PerVertex::Ext, "GL_EXT_fragment_shader_barycentric")
+        };
+        let reason = if !self.scopes.is_global() {
+            "not allowed in nested scope"
+        } else if !self.stage_is(Stage::Fragment) {
+            "only fragment shader inputs can be per-vertex"
+        } else {
+            self.require_extension(span, extension, qualifier);
+            return Some(per_vertex);
+        };
+        self.error(span, DiagnosticKind::InvalidQualifier { qualifier, reason });
+        None
     }
 }

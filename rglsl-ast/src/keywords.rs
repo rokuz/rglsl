@@ -96,7 +96,7 @@ const RESERVED_UNDER_VULKAN: [&str; 7] = [
     "uimage2DRect",
 ];
 
-const EXTENSION_ONLY: [&str; 4] = ["inline", "noinline", "pervertexNV", "pervertexEXT"];
+const EXTENSION_ONLY: [&str; 2] = ["inline", "noinline"];
 
 const EXTENSION_KEYWORDS: [&str; 85] = [
     "terminateInvocation",

@@ -17,6 +17,7 @@ mod groups;
 mod interface;
 mod oracles;
 mod process;
+mod renamed;
 mod report;
 mod runner;
 mod worker;

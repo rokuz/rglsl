@@ -892,6 +892,14 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   `FORMAT_VERSION` 12 (10 on the cooperative branch, 11 for parameter memory decorations).
   `docs/design/cooperative.md`.
 
+- **Fragment shader barycentrics of both extensions.** `BuiltIn::Barycentric { perspective, nv }`
+  and `Interpolation::PerVertex { nv }` (upstream: no `nv`) choose
+  `SPV_NV_fragment_shader_barycentric` or `SPV_KHR_fragment_shader_barycentric`, as glslang
+  does for `GL_NV_`/`GL_EXT_fragment_shader_barycentric`; the duplicate check of built-ins
+  keeps the perspective and no-perspective coordinates apart (upstream: one built-in). The
+  validator accepts a per-vertex interface block array of three (`pervertexEXT in B { ... } v[]`)
+  bound to one location. The object `FORMAT_VERSION` is 14.
+
 ## Cherry-picked upstream commits
 
 None yet.
