@@ -727,6 +727,7 @@ impl<'a> Lowerer<'a> {
                 descriptor_heap: analysis.extensions.contains(heap::HEAP_EXTENSION),
                 shader_64bit_indexing: analysis.shader_64bit_indexing,
                 legacy_buffer_blocks: !analysis.storage_buffer_class,
+                source_extensions: analysis.requested_extensions.clone(),
                 ..Module::default()
             },
             layouter: Layouter::default(),

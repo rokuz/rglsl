@@ -11,7 +11,7 @@ use crate::{
     TessellationVertexOrder,
 };
 
-pub const FORMAT_VERSION: u32 = 7;
+pub const FORMAT_VERSION: u32 = 8;
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]

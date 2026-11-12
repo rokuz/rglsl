@@ -383,6 +383,13 @@ impl Builder<'_> {
             self.module.vulkan_memory_model |= vulkan_memory_model;
             self.module.descriptor_heap |= descriptor_heap;
             self.module.ray_tracing |= ray_tracing;
+            for extension in &source.source_extensions {
+                if let Err(position) = self.module.source_extensions.binary_search(extension) {
+                    self.module
+                        .source_extensions
+                        .insert(position, extension.clone());
+                }
+            }
             let requirements = source.spirv_requirements.clone();
             let merged = &mut self.module.spirv_requirements;
             for extension in requirements.extensions {

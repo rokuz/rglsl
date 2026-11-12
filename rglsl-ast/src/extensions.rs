@@ -677,6 +677,10 @@ impl ExtensionState {
             .unwrap_or(ExtensionBehavior::Disable)
     }
 
+    pub fn requested(&self) -> impl Iterator<Item = &'static str> + '_ {
+        self.requested.iter().copied()
+    }
+
     pub fn is_requested(&self, name: &str) -> bool {
         self.requested.contains(name)
     }

@@ -453,3 +453,44 @@ fn a_sampler_constructor_declares_its_debug_type() -> TestResult {
     );
     Ok(())
 }
+
+const REQUESTED: &str = "#version 450
+#extension GL_EXT_buffer_reference2 : enable
+#extension GL_EXT_scalar_block_layout : enable
+#extension GL_EXT_scalar_block_layout : disable
+#extension GL_EXT_unknown_extension : enable
+layout(location = 0) out vec4 color;
+void main() {
+    color = vec4(1.0);
+}
+";
+
+#[test]
+fn source_extensions_list_every_requested_extension() -> TestResult {
+    let module = single(ShaderStage::Fragment, "requested.frag", REQUESTED)?;
+    let info = Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&module)?;
+    let mut options = spv::Options::default();
+    options.flags |= spv::WriterFlags::DEBUG;
+    let words = spv::write_vec(&module, &info, &options, None)?;
+    let extensions: Vec<String> = opcodes(&words)
+        .into_iter()
+        .filter(|&(opcode, _)| opcode == 4)
+        .map(|(_, operands)| {
+            let bytes: Vec<u8> = operands
+                .iter()
+                .flat_map(|word| word.to_le_bytes())
+                .take_while(|&byte| byte != 0)
+                .collect();
+            String::from_utf8_lossy(&bytes).into_owned()
+        })
+        .collect();
+    assert_eq!(
+        extensions,
+        [
+            "GL_EXT_buffer_reference",
+            "GL_EXT_buffer_reference2",
+            "GL_EXT_scalar_block_layout"
+        ]
+    );
+    Ok(())
+}
