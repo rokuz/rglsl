@@ -440,13 +440,11 @@ pub enum SampledType {
     Uint,
     Int64,
     Uint64,
-    Float16,
 }
 
 impl SampledType {
     pub const ALL: [Self; 3] = [Self::Float, Self::Int, Self::Uint];
     pub const WIDE: [Self; 2] = [Self::Int64, Self::Uint64];
-    pub const HALF: [Self; 1] = [Self::Float16];
 
     pub const fn scalar(self) -> Scalar {
         match self {
@@ -455,16 +453,11 @@ impl SampledType {
             Self::Uint => Scalar::Uint,
             Self::Int64 => Scalar::Int64,
             Self::Uint64 => Scalar::Uint64,
-            Self::Float16 => Scalar::Float16,
         }
     }
 
     pub const fn is_integer(self) -> bool {
-        !self.is_float()
-    }
-
-    pub const fn is_float(self) -> bool {
-        matches!(self, Self::Float | Self::Float16)
+        !matches!(self, Self::Float)
     }
 
     const fn prefix(self) -> &'static str {
@@ -474,7 +467,6 @@ impl SampledType {
             Self::Uint => "u",
             Self::Int64 => "i64",
             Self::Uint64 => "u64",
-            Self::Float16 => "f16",
         }
     }
 }
@@ -573,9 +565,6 @@ impl Opaque {
         let is_family = |rest: &str| families.iter().any(|family| rest.starts_with(family));
         let (sampled, rest) = match (word.strip_prefix('i'), word.strip_prefix('u')) {
             _ if is_family(word) => (SampledType::Float, word),
-            _ if word.strip_prefix("f16").is_some_and(is_family) => {
-                (SampledType::Float16, word.get(3..).unwrap_or_default())
-            }
             (Some(rest), _) if rest.starts_with("64image") => {
                 (SampledType::Int64, rest.trim_start_matches("64"))
             }
@@ -604,7 +593,7 @@ impl Opaque {
             Some(shape) => (shape, true),
             None => (shape, false),
         };
-        if shadow && (kind != OpaqueKind::CombinedSampler || !sampled.is_float()) {
+        if shadow && (kind != OpaqueKind::CombinedSampler || sampled != SampledType::Float) {
             return None;
         }
         let (dimension, arrayed, multisample) = match shape {

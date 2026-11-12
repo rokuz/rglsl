@@ -80,6 +80,17 @@ impl Analyzer<'_> {
                 }
             }
         }
+        if let Some(reason) = extensions::unsupported_in_vulkan(name) {
+            if behavior != ExtensionBehavior::Disable {
+                self.error(
+                    span,
+                    DiagnosticKind::ExtensionNotInVulkan {
+                        name: String::from(name),
+                        reason,
+                    },
+                );
+            }
+        }
         if extensions::unsupported_with_spirv(name) {
             self.error(
                 span,

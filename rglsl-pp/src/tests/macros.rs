@@ -329,7 +329,7 @@ fn predefined_macros() {
         ..Options::default()
     };
     let result = run_with(
-        "#version 450\nint a = GL_core_profile + VULKAN + GL_SPIRV + GL_FRAGMENT_SHADER + GL_FRAGMENT_PRECISION_HIGH;\n#if defined(GL_ARB_shading_language_420pack) && defined GL_EXT_ray_tracing && defined GL_GOOGLE_include_directive\nint b;\n#endif\n#ifdef GL_compatibility_profile\nint c;\n#endif\n#ifdef GL_ARB_bindless_texture\nint d;\n#endif\n",
+        "#version 450\nint a = GL_core_profile + VULKAN + GL_SPIRV + GL_FRAGMENT_SHADER + GL_FRAGMENT_PRECISION_HIGH;\n#if defined(GL_ARB_shading_language_420pack) && defined GL_EXT_ray_tracing && defined GL_GOOGLE_include_directive\nint b;\n#endif\n#ifdef GL_compatibility_profile\nint c;\n#endif\n#ifdef GL_ARB_bindless_texture\nint d;\n#endif\n#ifdef GL_AMD_gpu_shader_half_float_fetch\nint e;\n#endif\n",
         &options,
     );
     assert!(errors(&result).is_empty(), "{:?}", result.diagnostics);

@@ -4,7 +4,7 @@ use alloc::string::String;
 use crate::options::Options;
 use crate::version::{Profile, Version};
 
-const DESKTOP: [&str; 153] = [
+const DESKTOP: [&str; 152] = [
     "GL_ARB_texture_rectangle",
     "GL_ARB_shading_language_420pack",
     "GL_ARB_texture_gather",
@@ -96,7 +96,6 @@ const DESKTOP: [&str; 153] = [
     "GL_AMD_gpu_shader_int16",
     "GL_AMD_shader_image_load_store_lod",
     "GL_AMD_shader_fragment_mask",
-    "GL_AMD_gpu_shader_half_float_fetch",
     "GL_INTEL_shader_integer_functions2",
     "GL_NV_sample_mask_override_coverage",
     "GL_NV_geometry_shader_passthrough",

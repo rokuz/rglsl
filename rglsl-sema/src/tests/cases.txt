@@ -921,26 +921,6 @@ void main() { imageStoreLodAMD(i, ivec2(0), 1, vec4(0.0)); }
 layout(rgba8, binding = 0) uniform image2DMS i;
 layout(rgba8, binding = 1) uniform imageBuffer b;
 void main() { vec4 a = imageLoadLodAMD(b, 0, 1); }
-### half float sampling with half coordinates | frag | ok
-#extension GL_AMD_gpu_shader_half_float : enable
-#extension GL_AMD_gpu_shader_half_float_fetch : enable
-layout(binding = 0) uniform f16sampler2DShadow s;
-layout(binding = 1) uniform f16sampler2DArray a;
-void main() {
-    float16_t d = texture(s, f16vec2(0.0hf), 0.5) + texture(s, vec3(0.0)) + textureOffset(s, f16vec2(0.0hf), 0.5, ivec2(1));
-    f16vec4 t = textureLod(a, f16vec3(0.0hf), 1.0hf) + textureGather(a, f16vec3(0.0hf), 1) + texture(a, vec3(0.0));
-    vec2 q = textureQueryLod(a, f16vec2(0.0hf));
-}
-### half float shadow sampling with a half reference converts it | frag | ok
-#extension GL_AMD_gpu_shader_half_float : enable
-#extension GL_AMD_gpu_shader_half_float_fetch : enable
-layout(binding = 0) uniform f16sampler2DShadow s;
-void main() { float16_t d = texture(s, f16vec3(0.0hf)); }
-### half float samplers have no qcom gathers or atomics | frag | 5:NoMatchingFunction
-#extension GL_AMD_gpu_shader_half_float : enable
-#extension GL_AMD_gpu_shader_half_float_fetch : enable
-layout(binding = 0, rgba16f) uniform f16image2D i;
-void main() { imageAtomicExchange(i, ivec2(0), 1.0hf); }
 ### texel fetch on a texture buffer | frag | ok
 layout(binding = 0) uniform textureBuffer t;
 void main() {
@@ -4068,6 +4048,12 @@ void main() {}
 void main() {}
 ### bindless textures are not allowed with spir-v | frag | 2:ExtensionWithoutSpirv
 #extension GL_ARB_bindless_texture : enable
+void main() {}
+### half float fetch is not supported in vulkan | frag | 2:ExtensionNotInVulkan
+#extension GL_AMD_gpu_shader_half_float_fetch : require
+void main() {}
+### half float fetch may be disabled | frag | ok
+#extension GL_AMD_gpu_shader_half_float_fetch : disable
 void main() {}
 ### explicit arithmetic types convert implicitly | frag | ok
 #extension GL_EXT_shader_explicit_arithmetic_types : enable
