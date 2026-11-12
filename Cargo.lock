@@ -505,6 +505,7 @@ dependencies = [
  "rglsl-link",
  "rglsl-pp",
  "rspirv",
+ "spirv",
 ]
 
 [[package]]
