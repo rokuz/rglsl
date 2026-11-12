@@ -2024,7 +2024,10 @@ impl<'a> Lowerer<'a> {
                 immediate_bank: None,
                 block: None,
             },
-            Span::UNDEFINED,
+            match (self.debug.is_some(), self.per_vertex_first_use) {
+                (true, Some(first)) => Span::new(first, first),
+                _ => Span::UNDEFINED,
+            },
         );
         self.interface.push(handle);
         self.per_vertex = Some((handle, names));

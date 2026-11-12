@@ -960,6 +960,87 @@ fn deep_object_files_link_on_a_small_stack(depth: usize) -> TestResult {
     Ok(())
 }
 
+fn debug_pipeline(source: &str, level: spv::DebugLevel) -> Outcome {
+    let options = Options {
+        debug_info: true,
+        source_name: Some(String::from("nested.frag")),
+        ..Options::from(ShaderStage::Fragment)
+    };
+    let spv_options = spv::Options {
+        debug_info: Some(spv::DebugInfo {
+            level,
+            source_text: true,
+            ..spv::DebugInfo::default()
+        }),
+        ..spv::Options::default()
+    };
+    let mut module = match front(&options, source, Includes::None) {
+        Ok(module) => module,
+        Err(outcome) => return outcome,
+    };
+    if let Err(error) = compact(&mut module, KeepUnused::No) {
+        return Outcome::Failed(format!("compaction: {error:?}"));
+    }
+    let mut validator = Validator::new(ValidationFlags::all(), Capabilities::all());
+    let info = match validator.validate(&module) {
+        Ok(info) => info,
+        Err(error) => return Outcome::Failed(format!("validation: {error:?}")),
+    };
+    if let Err(error) = spv::write_vec(&module, &info, &spv_options, None) {
+        return Outcome::Failed(format!("SPIR-V: {error}"));
+    }
+    let object = match Frontend::default().compile(&options, source) {
+        Ok(object) => object,
+        Err(errors) => return Outcome::Failed(format!("object: {errors:?}")),
+    };
+    let object = match encode(&object).map(|text| decode(&text)) {
+        Ok(Ok(object)) => object,
+        Ok(Err(error)) | Err(error) => return Outcome::Failed(format!("object file: {error}")),
+    };
+    let linked = match link(&[object], &LinkOptions::default()) {
+        Ok(linked) => linked,
+        Err(errors) => return Outcome::Failed(format!("link: {errors}")),
+    };
+    match spv::write_vec(&linked.module, &linked.info, &spv_options, None) {
+        Ok(_) => Outcome::Compiled,
+        Err(error) => Outcome::Failed(format!("linked SPIR-V: {error}")),
+    }
+}
+
+fn deep_debug_info_compiles_on_a_small_stack(depth: usize) -> TestResult {
+    let cases = [
+        ("blocks", "", "{ ", "b = 2;", " }"),
+        ("if blocks", "", "if (t) { ", "b = 2;", " }"),
+        ("for", "", "for (int i = 0; i < 2; i++) ", "b = 2;", ""),
+        ("while", "", "while (t) ", "b = 2;", ""),
+        ("do while", "", "do { ", "b = 2;", " } while (b > 5);"),
+        ("switch", "", "switch (b) { case 1: ", "b = 2;", " break; }"),
+        ("binary chain", "b = ", "b + (", "b", ")"),
+    ];
+    let structs = shader(
+        &struct_chain(depth),
+        &format!("S{0} s; s.b = 1; S{0} r = s; b = r.b;", depth - 1),
+    );
+    let sources = cases
+        .into_iter()
+        .map(|(name, prefix, open, core, close)| {
+            (name, nested_body(prefix, open, core, close)(depth))
+        })
+        .chain([("struct chains", structs)]);
+    for (name, source) in sources {
+        for level in [spv::DebugLevel::NonSemantic, spv::DebugLevel::Lines] {
+            let source = source.clone();
+            let outcome = on_small_stack(move || debug_pipeline(&source, level))?;
+            assert_eq!(
+                outcome,
+                Outcome::Compiled,
+                "debug information for {name} at {depth}"
+            );
+        }
+    }
+    Ok(())
+}
+
 type Group = (fn(usize) -> TestResult, usize);
 
 fn every_kind(depth: usize) -> Vec<Group> {
@@ -980,6 +1061,7 @@ fn every_kind(depth: usize) -> Vec<Group> {
         ),
         (deep_object_files_link_on_a_small_stack, depth),
         (deep_spirv_inputs_compile_on_a_small_stack, depth),
+        (deep_debug_info_compiles_on_a_small_stack, depth),
     ])
 }
 

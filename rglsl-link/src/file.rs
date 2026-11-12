@@ -30,6 +30,8 @@ struct File {
     format_version: u32,
     object: ObjectModule,
     bodies: Vec<Vec<Flat>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    spans: Vec<rglsl::ModuleSpans>,
 }
 
 enum Open {
@@ -45,6 +47,12 @@ enum Open {
 
 pub fn encode(object: &ObjectModule) -> Result<String, FileError> {
     let mut object = object.clone();
+    let modules = modules(&mut object);
+    let spans = if modules.iter().any(|module| module.debug_info.is_some()) {
+        modules.into_iter().map(rglsl::collect_spans).collect()
+    } else {
+        Vec::new()
+    };
     let bodies = body_slots(&mut object)
         .into_iter()
         .map(|body| flatten(&core::mem::take(body)))
@@ -53,6 +61,7 @@ pub fn encode(object: &ObjectModule) -> Result<String, FileError> {
         format_version: FORMAT_VERSION,
         object,
         bodies,
+        spans,
     };
     ron::ser::to_string(&file).map_err(|error| FileError::Encode(error.to_string()))
 }
@@ -68,7 +77,10 @@ pub fn decode(text: &str) -> Result<ObjectModule, FileError> {
         });
     }
     let File {
-        mut object, bodies, ..
+        mut object,
+        bodies,
+        spans,
+        ..
     } = ron::de::from_str(text).map_err(|error| FileError::Decode(error.to_string()))?;
     let slots = body_slots(&mut object);
     if slots.len() != bodies.len() {
@@ -76,6 +88,17 @@ pub fn decode(text: &str) -> Result<ObjectModule, FileError> {
     }
     for (slot, flat) in slots.into_iter().zip(bodies) {
         *slot = unflatten(flat)?;
+    }
+    if !spans.is_empty() {
+        let modules = modules(&mut object);
+        if modules.len() != spans.len() {
+            return Err(decode_error("the number of span tables does not match"));
+        }
+        for (module, spans) in modules.into_iter().zip(&spans) {
+            if !rglsl::apply_spans(module, spans) {
+                return Err(decode_error("a span table does not match its module"));
+            }
+        }
     }
     validate(&object)?;
     Ok(object)
@@ -121,6 +144,16 @@ fn validate(object: &ObjectModule) -> Result<(), FileError> {
 
 fn decode_error(message: &str) -> FileError {
     FileError::Decode(String::from(message))
+}
+
+fn modules(object: &mut ObjectModule) -> Vec<&mut rglsl::Module> {
+    let mut found = Vec::new();
+    let mut objects = Vec::from([object]);
+    while let Some(object) = objects.pop() {
+        found.push(&mut object.module);
+        objects.extend(object.variants.iter_mut().rev());
+    }
+    found
 }
 
 fn body_slots(object: &mut ObjectModule) -> Vec<&mut Block> {

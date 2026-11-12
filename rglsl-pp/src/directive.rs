@@ -478,7 +478,11 @@ impl Preprocessor<'_> {
         let current = self.current_at().source;
         let number = number.unwrap_or_else(|| self.source_number(current));
         let index = u32::try_from(self.sources.len()).unwrap_or(u32::MAX);
-        self.sources.push(SourceInfo { number, name });
+        self.sources.push(SourceInfo {
+            number,
+            name,
+            file: None,
+        });
         if let Some(file) = self.innermost_file_mut() {
             file.source = index;
         }
@@ -557,9 +561,13 @@ impl Preprocessor<'_> {
         }
         let number = self.source_number(self.current_at().source);
         let index = u32::try_from(self.sources.len()).unwrap_or(u32::MAX);
+        self.texts
+            .entry(included.file)
+            .or_insert_with(|| included.source.clone());
         self.sources.push(SourceInfo {
             number,
             name: Some(included.name),
+            file: Some(included.file),
         });
         self.enter_include_stack(included.file);
         self.push_file(FileInput::new(

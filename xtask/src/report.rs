@@ -592,6 +592,22 @@ pub fn summary(results: &[CaseResult], ran: &[TargetId]) -> String {
             out.push_str(&exec_summary(&counted_results, target));
             out.push('\n');
         }
+        let compared: Vec<&CaseResult> = results
+            .iter()
+            .copied()
+            .filter(|r| r.debug.is_some())
+            .collect();
+        if !compared.is_empty() {
+            let same = compared.iter().filter(|r| r.debug == Some(true)).count();
+            let _ = writeln!(
+                out,
+                "debug information as glslang's: {same} / {}\n",
+                compared.len()
+            );
+            for result in compared.iter().filter(|r| r.debug == Some(false)) {
+                let _ = writeln!(out, "  debug FAIL {}: {}", result.case.name, result.note);
+            }
+        }
         for result in &results {
             if result.interface() == Some(false) {
                 let first = result
@@ -676,7 +692,7 @@ pub fn details(results: &[CaseResult]) -> String {
         targets.extend(r.exec.keys().cloned());
     }
     let mut out = String::from(
-        "file\tcorpus\tversion\tstage\ttarget\tsuite\tglslang\tours\taccept\tdiag\tvalid\tinterface",
+        "file\tcorpus\tversion\tstage\ttarget\tsuite\tglslang\tours\taccept\tdiag\tvalid\tinterface\tdebug",
     );
     for target in &targets {
         let _ = write!(out, "\texec_{}", target.label());
@@ -717,7 +733,7 @@ pub fn details(results: &[CaseResult]) -> String {
             .collect();
         let _ = write!(
             out,
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
             r.case.name,
             match r.case.corpus {
                 Corpus::Vulkan => "vulkan",
@@ -734,6 +750,7 @@ pub fn details(results: &[CaseResult]) -> String {
             mark(r.diag()),
             mark(r.valid()),
             mark(r.interface()),
+            mark(r.debug),
         );
         for (cell, _) in &columns {
             let _ = write!(out, "\t{cell}");

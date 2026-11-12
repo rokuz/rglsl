@@ -77,9 +77,11 @@ struct Args {
     #[argh(option)]
     stdin_file_path: Option<String>,
 
-    /// generate debug symbols, only works for spv-out for now
-    #[argh(switch, short = 'g')]
-    generate_debug_symbols: bool,
+    /// debug information, as glslangValidator's `-g` (OpLine, OpSource with the sources),
+    /// `-gV` (NonSemantic.Shader.DebugInfo) and `-gVS` (with the source text), which are
+    /// accepted as well; `g0` strips the names
+    #[argh(option)]
+    debug_info: Option<DebugMode>,
 
     /// compact the module's IR and revalidate.
     ///
@@ -369,6 +371,7 @@ struct Parameters<'a> {
     auto_map_locations: bool,
     spirv_version: Option<(u8, u8)>,
     capabilities: rglsl::valid::Capabilities,
+    debug: Option<DebugMode>,
 
     /// We use this copy of `args.compact` to know whether we should pass the
     /// entrypoint to `process_overrides`, which will result in removal from
@@ -377,6 +380,83 @@ struct Parameters<'a> {
     /// When we don't know an entrypoint, we still compact the module as a whole
     /// if `args.compact` is set, but we don't use this copy for anything.
     compact: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DebugMode {
+    Lines,
+    NonSemantic,
+    NonSemanticSource,
+    Strip,
+}
+
+impl FromStr for DebugMode {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "g" => Ok(Self::Lines),
+            "gV" => Ok(Self::NonSemantic),
+            "gVS" => Ok(Self::NonSemanticSource),
+            "g0" => Ok(Self::Strip),
+            _ => Err(format!(
+                "unknown debug information mode `{s}`: use g, gV, gVS or g0"
+            )),
+        }
+    }
+}
+
+impl Parameters<'_> {
+    fn wants_debug_info(&self) -> bool {
+        matches!(
+            self.debug,
+            Some(DebugMode::Lines | DebugMode::NonSemantic | DebugMode::NonSemanticSource)
+        )
+    }
+}
+
+fn parse_args() -> Args {
+    let mut arguments: Vec<String> = Vec::new();
+    for argument in std::env::args().skip(1) {
+        match argument.as_str() {
+            "-g" | "-gV" | "-gVS" | "-g0" => {
+                arguments.push(String::from("--debug-info"));
+                arguments.push(argument.trim_start_matches('-').to_owned());
+            }
+            _ => arguments.push(argument),
+        }
+    }
+    let command = std::env::args()
+        .next()
+        .unwrap_or_else(|| String::from("rglsl"));
+    let borrowed: Vec<&str> = arguments.iter().map(String::as_str).collect();
+    match <Args as argh::FromArgs>::from_args(&[command.as_str()], &borrowed) {
+        Ok(args) => args,
+        Err(early) => {
+            let failed = early.status.is_err();
+            if failed {
+                eprintln!("{}", early.output);
+            } else {
+                println!("{}", early.output);
+            }
+            std::process::exit(i32::from(failed));
+        }
+    }
+}
+
+fn debug_processes(args: &Args) -> Vec<String> {
+    let mut processes = Vec::new();
+    if args.auto_map_locations {
+        processes.push(String::from("auto-map-locations"));
+    }
+    if args.auto_map_bindings {
+        processes.push(String::from("auto-map-bindings"));
+    }
+    processes.push(String::from("client vulkan100"));
+    if let Some(ref version) = args.spirv_version {
+        processes.push(format!("target-env spirv{}.{}", version.0, version.1));
+    }
+    processes.push(String::from("entry-point main"));
+    processes
 }
 
 trait PrettyResult {
@@ -440,7 +520,7 @@ fn run() -> anyhow::Result<()> {
 
     // Parse commandline arguments
     let args = {
-        let mut args: Args = argh::from_env();
+        let mut args: Args = parse_args();
 
         if args.before_compaction.is_some() {
             args.compact = true;
@@ -454,9 +534,45 @@ fn run() -> anyhow::Result<()> {
         return Ok(());
     }
 
+    let debug_processes = debug_processes(&args);
+    let debug_command = std::env::args().skip(1).collect::<Vec<_>>().join(" ");
+    let debug_directory = std::env::current_dir()
+        .ok()
+        .map(|directory| directory.to_string_lossy().into_owned());
+
     // Initialize default parameters
     //TODO: read the parameters from RON?
-    let mut params = Parameters::default();
+    let mut params = Parameters {
+        debug: args.debug_info,
+        ..Parameters::default()
+    };
+    match args.debug_info {
+        Some(DebugMode::Strip) => params
+            .spv_out
+            .flags
+            .set(rglsl::back::spv::WriterFlags::DEBUG, false),
+        Some(mode) => {
+            params
+                .spv_out
+                .flags
+                .set(rglsl::back::spv::WriterFlags::DEBUG, true);
+            params.spv_out.debug_info = Some(rglsl::back::spv::DebugInfo {
+                level: if mode == DebugMode::Lines {
+                    rglsl::back::spv::DebugLevel::Lines
+                } else {
+                    rglsl::back::spv::DebugLevel::NonSemantic
+                },
+                source_text: mode != DebugMode::NonSemantic,
+                processes: &debug_processes,
+                entry_point: Some(rglsl::back::spv::DebugEntryPoint {
+                    signature: "rglsl",
+                    arguments: &debug_command,
+                    directory: debug_directory.as_deref(),
+                }),
+            });
+        }
+        None => {}
+    }
 
     // Update parameters from commandline arguments
     if let Some(bits) = args.validate {
@@ -556,25 +672,10 @@ fn run() -> anyhow::Result<()> {
         language == rglsl::back::spv::SourceLanguage::GLSL,
     );
 
-    // Include debugging information if requested.
-    if args.generate_debug_symbols {
-        if let Some(ref input_text) = input_text {
-            params
-                .spv_out
-                .flags
-                .set(rglsl::back::spv::WriterFlags::DEBUG, true);
-            params.spv_out.debug_info = Some(rglsl::back::spv::DebugInfo {
-                source_code: input_text,
-                file_name: &file_name,
-                language,
-            })
-        } else {
-            eprintln!(
-                "warning: `--generate-debug-symbols` was passed, \
-                       but input is not human-readable: {}",
-                input_path.display()
-            );
-        }
+    if params.debug.is_some() && input_text.is_none() {
+        eprintln!(
+            "warning: debug information was requested, but the input is not GLSL: {file_name}"
+        );
     }
 
     let output_paths = files;
@@ -721,9 +822,11 @@ fn parse_input(input_path: &Path, input: Vec<u8>, params: &Parameters) -> anyhow
             };
             let input = String::from_utf8(input)?;
             let mut parser = rglsl::front::glsl::Frontend::default();
+            let mut includer = rglsl_pp::FileSystemIncluder::new(Vec::<String>::new());
+            let root = includer.add_root(input_path);
             Parsed {
                 module: parser
-                    .parse(
+                    .parse_with_includer(
                         &rglsl::front::glsl::Options {
                             stage: shader_stage.0,
                             defines: params.defines.clone(),
@@ -732,8 +835,12 @@ fn parse_input(input_path: &Path, input: Vec<u8>, params: &Parameters) -> anyhow
                             spirv_version: params.spirv_version,
                             library: false,
                             hlsl_offsets: false,
+                            debug_info: params.wants_debug_info(),
+                            source_name: Some(input_path.to_string_lossy().into_owned()),
                         },
                         &input,
+                        root,
+                        &mut includer,
                     )
                     .unwrap_or_else(|error| {
                         let filename = input_path
@@ -930,6 +1037,8 @@ fn compile_object_file(
         auto_map_locations: params.auto_map_locations,
         spirv_version: params.spirv_version,
         library,
+        debug_info: params.wants_debug_info(),
+        source_name: Some(path.to_string_lossy().into_owned()),
         ..rglsl::front::glsl::Options::from(stage.unwrap_or(rglsl::ShaderStage::Compute))
     };
     let source = fs::read_to_string(path)?;

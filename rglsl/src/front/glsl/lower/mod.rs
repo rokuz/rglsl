@@ -240,7 +240,232 @@ fn lower(
     if !errors.is_empty() {
         return Err(errors.into());
     }
-    Lowerer::new(&unit, &analysis, options, map, mode).run()
+    let debug = options.debug_info;
+    Lowerer::new(&unit, &analysis, options, map, mode)
+        .run()
+        .map_err(|errors| {
+            if !debug {
+                return errors;
+            }
+            let ParseErrors { errors } = errors;
+            errors
+                .into_iter()
+                .map(|error| Error {
+                    meta: preprocessed_to_original(map, error.meta),
+                    ..error
+                })
+                .collect::<Vec<_>>()
+                .into()
+        })
+        .map(|mut object| {
+            if debug {
+                let mut info = debug_info(
+                    options,
+                    source,
+                    &preprocessed,
+                    &object.debug,
+                    analysis.version.unwrap_or(0),
+                );
+                info.anchors = debug_anchors(&unit, &preprocessed.text);
+                object.object.module.debug_info = Some(alloc::boxed::Box::new(info));
+            }
+            object.object
+        })
+}
+
+fn preprocessed_to_original(map: &rglsl_pp::SourceMap, span: Span) -> Span {
+    match span.to_range() {
+        Some(range) => original(
+            map,
+            rglsl_ast::Span::new(
+                u32::try_from(range.start).unwrap_or(u32::MAX),
+                u32::try_from(range.end).unwrap_or(u32::MAX),
+            ),
+        ),
+        None => span,
+    }
+}
+
+#[derive(Debug, Default)]
+pub(super) struct DebugCollector {
+    pub scopes: Vec<crate::DebugScope>,
+    pub functions: Vec<crate::DebugFunction>,
+    pub structs: Vec<crate::DebugStruct>,
+    pub entry: Option<u32>,
+}
+
+fn debug_anchors(unit: &TranslationUnit, text: &str) -> Vec<crate::DebugAnchor> {
+    let bytes = text.as_bytes();
+    let after = |offset: u32| {
+        let mut position = usize::try_from(offset).unwrap_or(usize::MAX);
+        while bytes
+            .get(position)
+            .is_some_and(|byte| byte.is_ascii_whitespace() || *byte == b')')
+        {
+            position += 1;
+        }
+        u32::try_from(position).unwrap_or(offset)
+    };
+    let mut anchors: Vec<crate::DebugAnchor> = rglsl_ast::expressions(unit)
+        .into_iter()
+        .filter_map(|expression| {
+            let at = match expression.kind {
+                rglsl_ast::ast::ExpressionKind::Binary { ref right, .. } => right.span.start,
+                rglsl_ast::ast::ExpressionKind::Assignment { ref target, .. } => {
+                    after(target.span.end)
+                }
+                rglsl_ast::ast::ExpressionKind::FunctionCall(_) => {
+                    expression.span.end.saturating_sub(1)
+                }
+                _ => return None,
+            };
+            Some(crate::DebugAnchor {
+                start: expression.span.start,
+                end: expression.span.end,
+                at,
+            })
+        })
+        .collect();
+    anchors.sort_by_key(|anchor| (anchor.start, anchor.end));
+    anchors.dedup_by_key(|anchor| (anchor.start, anchor.end));
+    anchors
+}
+
+pub(super) struct Lowered {
+    pub object: crate::object::ObjectModule,
+    pub debug: DebugCollector,
+}
+
+fn debug_info(
+    options: &Options,
+    source: &str,
+    preprocessed: &rglsl_pp::Preprocessed,
+    collected: &DebugCollector,
+    version: u32,
+) -> crate::DebugInfo {
+    let map = &preprocessed.source_map;
+    let root_name = options.source_name.clone().unwrap_or_default();
+    let mut sources: Vec<crate::DebugSource> = vec![crate::DebugSource {
+        name: root_name.clone(),
+        text: Some(String::from(source)),
+    }];
+    let mut by_name: BTreeMap<String, u32> = BTreeMap::new();
+    by_name.insert(root_name, 0);
+    let mut indices: Vec<u32> = Vec::new();
+    for index in 0..map.source_count() {
+        let Some(name) = map.source_name(index) else {
+            indices.push(0);
+            continue;
+        };
+        let text = map.source_file(index).and_then(|file| {
+            if file == map.root() {
+                Some(String::from(source))
+            } else {
+                map.file_text(file).map(String::from)
+            }
+        });
+        let position = match by_name.get(name) {
+            Some(&position) => {
+                if let Some(slot) = usize::try_from(position)
+                    .ok()
+                    .and_then(|position| sources.get_mut(position))
+                {
+                    if slot.text.is_none() {
+                        slot.text = text;
+                    }
+                }
+                position
+            }
+            None => {
+                let position = u32::try_from(sources.len()).unwrap_or(u32::MAX);
+                sources.push(crate::DebugSource {
+                    name: String::from(name),
+                    text,
+                });
+                by_name.insert(String::from(name), position);
+                position
+            }
+        };
+        indices.push(position);
+    }
+    let mut lines: Vec<crate::DebugLine> = Vec::new();
+    for entry in map.line_entries() {
+        let source = usize::try_from(entry.source)
+            .ok()
+            .and_then(|index| indices.get(index))
+            .copied()
+            .unwrap_or(0);
+        if lines
+            .last()
+            .is_some_and(|last| last.source == source && last.line == entry.line)
+        {
+            continue;
+        }
+        lines.push(crate::DebugLine {
+            offset: entry.offset,
+            source,
+            line: entry.line,
+        });
+    }
+    let remap = |position: crate::DebugPosition| crate::DebugPosition {
+        source: usize::try_from(position.source)
+            .ok()
+            .and_then(|index| indices.get(index))
+            .copied()
+            .unwrap_or(0),
+        ..position
+    };
+    let mut scopes: Vec<crate::DebugScope> = collected
+        .scopes
+        .iter()
+        .map(|scope| crate::DebugScope {
+            at: remap(scope.at),
+            ..*scope
+        })
+        .collect();
+    scopes.sort_by(|a, b| a.start.cmp(&b.start).then(b.end.cmp(&a.end)));
+    let mut functions: Vec<crate::DebugFunction> = collected
+        .functions
+        .iter()
+        .map(|function| crate::DebugFunction {
+            at: remap(function.at),
+            end: function.end.map(remap),
+            ..*function
+        })
+        .collect();
+    functions.sort_by_key(|function| function.start);
+    functions.dedup_by_key(|function| function.start);
+    let structs = collected
+        .structs
+        .iter()
+        .map(|structure| crate::DebugStruct {
+            at: remap(structure.at),
+            members: structure
+                .members
+                .iter()
+                .map(|member| crate::DebugMember {
+                    at: remap(member.at),
+                    ..member.clone()
+                })
+                .collect(),
+            ..structure.clone()
+        })
+        .collect();
+    crate::DebugInfo {
+        sources,
+        units: vec![crate::DebugUnit {
+            source: 0,
+            start: 0,
+            end: u32::try_from(preprocessed.text.len()).unwrap_or(u32::MAX),
+            version,
+            entry: collected.entry,
+        }],
+        lines,
+        scopes,
+        structs,
+        functions,
+        anchors: Vec::new(),
+    }
 }
 
 fn sema_options(options: &Options, text: &str) -> rglsl_sema::Options {
@@ -461,6 +686,7 @@ pub(super) struct Lowerer<'a> {
     pub override_coverage: bool,
     pub per_vertex: Option<(Handle<GlobalVariable>, Vec<String>)>,
     pub per_vertex_used: BTreeSet<String>,
+    pub per_vertex_first_use: Option<u32>,
     pub per_vertex_redeclared: bool,
     pub block_outputs: BTreeSet<String>,
     pub specialized_sizes: BTreeMap<rglsl_ast::ast::NodeId, Handle<crate::Override>>,
@@ -480,6 +706,7 @@ pub(super) struct Lowerer<'a> {
     pub automatic_locations: Vec<Handle<GlobalVariable>>,
     pub automatic_bindings: Vec<(Handle<GlobalVariable>, Option<u32>)>,
     pub declared_local_size: [Option<u32>; 3],
+    pub debug: Option<DebugCollector>,
 }
 
 impl<'a> Lowerer<'a> {
@@ -545,6 +772,7 @@ impl<'a> Lowerer<'a> {
             override_coverage: false,
             per_vertex: None,
             per_vertex_used: BTreeSet::new(),
+            per_vertex_first_use: None,
             per_vertex_redeclared: false,
             block_outputs: BTreeSet::new(),
             specialized_sizes: BTreeMap::new(),
@@ -570,11 +798,125 @@ impl<'a> Lowerer<'a> {
             automatic_locations: Vec::new(),
             automatic_bindings: Vec::new(),
             declared_local_size: [None; 3],
+            debug: options.debug_info.then(DebugCollector::default),
         }
     }
 
     pub(super) fn at(&self, span: rglsl_ast::Span) -> Span {
+        if self.debug.is_some() {
+            return Span::new(span.start, span.end);
+        }
         original(self.source_map, span)
+    }
+
+    pub(super) fn debug_scope(&mut self, start: u32, end: u32, at: u32) {
+        if self.debug.is_none() {
+            return;
+        }
+        let position = self.debug_position(at);
+        if let Some(ref mut debug) = self.debug {
+            debug.scopes.push(crate::DebugScope {
+                start,
+                end,
+                at: position,
+            });
+        }
+    }
+
+    pub(super) fn debug_function(&mut self, node: &Node<FunctionDefinition>, entry: bool) {
+        if self.debug.is_none() {
+            return;
+        }
+        let definition = &node.kind;
+        let start = node.span.start;
+        let at = self.debug_position(definition.prototype.span.end.saturating_sub(1));
+        let end = (!definition.body.statements.is_empty())
+            .then(|| self.debug_position(definition.body.span.end.saturating_sub(1)));
+        if let Some(ref mut debug) = self.debug {
+            debug.functions.push(crate::DebugFunction {
+                start,
+                stop: node.span.end,
+                at,
+                end,
+            });
+            if entry {
+                debug.entry = Some(start);
+            }
+        }
+    }
+
+    fn debug_structs(&mut self) {
+        if self.debug.is_none() {
+            return;
+        }
+        let mut structs = Vec::new();
+        for declaration in &self.unit.external_declarations {
+            let ExternalDeclaration::Declaration(ref declaration) = *declaration else {
+                continue;
+            };
+            let (name, members) = match declaration.kind {
+                rglsl_ast::ast::DeclarationKind::InitDeclaratorList(ref list) => {
+                    match list.ty.node.specifier.node.non_array {
+                        rglsl_ast::ast::TypeSpecifierNonArray::Struct(ref specifier) => {
+                            (specifier.name.as_ref(), specifier.declarations.as_slice())
+                        }
+                        _ => continue,
+                    }
+                }
+                rglsl_ast::ast::DeclarationKind::Block { ref structure, .. } => {
+                    (Some(&structure.name), structure.members.as_slice())
+                }
+                _ => continue,
+            };
+            let Some(name) = name else {
+                continue;
+            };
+            let members = members
+                .iter()
+                .flat_map(|member| {
+                    let boolean = matches!(
+                        member.node.ty.node.specifier.node.non_array,
+                        rglsl_ast::ast::TypeSpecifierNonArray::Basic(
+                            rglsl_ast::ast::BasicType::Scalar(rglsl_ast::ast::ScalarType::Bool)
+                                | rglsl_ast::ast::BasicType::Vector {
+                                    scalar: rglsl_ast::ast::ScalarType::Bool,
+                                    ..
+                                }
+                        )
+                    );
+                    member
+                        .node
+                        .declarators
+                        .iter()
+                        .map(move |declarator| (boolean, declarator))
+                })
+                .map(|(boolean, declarator)| crate::DebugMember {
+                    name: declarator.node.name.node.clone(),
+                    at: self.debug_position(declarator.node.name.span.start),
+                    boolean,
+                })
+                .collect();
+            structs.push(crate::DebugStruct {
+                name: name.node.clone(),
+                unit: 0,
+                at: self.debug_position(name.span.start),
+                members,
+            });
+        }
+        if let Some(ref mut debug) = self.debug {
+            debug.structs = structs;
+        }
+    }
+
+    pub(super) fn debug_position(&self, offset: u32) -> crate::DebugPosition {
+        let entry = self
+            .source_map
+            .position(usize::try_from(offset).unwrap_or(usize::MAX));
+        crate::DebugPosition {
+            source: entry.source,
+            line: entry.line,
+            column: entry.column.saturating_add(1),
+        }
     }
 
     pub(super) fn symbol(&self, id: SymbolId) -> Option<&'a Symbol> {
@@ -594,8 +936,9 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    fn run(mut self) -> core::result::Result<crate::object::ObjectModule, ParseErrors> {
+    fn run(mut self) -> core::result::Result<Lowered, ParseErrors> {
         let unit = self.unit;
+        self.debug_structs();
         let mut definitions: Vec<&'a Node<FunctionDefinition>> = Vec::new();
         for declaration in &unit.external_declarations {
             match *declaration {
@@ -673,7 +1016,11 @@ impl<'a> Lowerer<'a> {
         }
         self.module.ray_tracing = self.ray_tracing_features();
         self.relax_globals();
-        Ok(self.into_object())
+        let debug = self.debug.take().unwrap_or_default();
+        Ok(Lowered {
+            object: self.into_object(),
+            debug,
+        })
     }
 
     fn relax_globals(&mut self) {

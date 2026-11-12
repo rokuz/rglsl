@@ -152,6 +152,11 @@ rglsl --link main.frag lighting.rglo -o shader.spv             # link object mod
 rglsl --link scene.vert scene.frag common.glsl                 # one program, vert.spv and frag.spv
 ```
 
+Debug information uses glslangValidator's options: `-g` (`OpLine`, `OpSource` with the
+sources of the main and included files), `-gV` (`NonSemantic.Shader.DebugInfo`), `-gVS` (with
+the source text) and `-g0` (no names); it survives object files and linking
+([docs/design/debug-info.md](docs/design/debug-info.md)).
+
 `-I DIR` adds an include directory; `#include` needs no extension directive. Link errors are
 glslang's (missing or duplicate definitions, mismatched globals, contradictory layouts); see
 [docs/design/linking.md](docs/design/linking.md).

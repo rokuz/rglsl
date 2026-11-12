@@ -68,6 +68,7 @@ pub struct CaseResult {
     pub exec: BTreeMap<TargetId, exec::Outcome>,
     pub expected_messages: Option<bool>,
     pub interface: Option<interface::Check>,
+    pub debug: Option<bool>,
 }
 
 #[derive(Debug, Clone)]
@@ -365,6 +366,16 @@ fn run_case(
             &[(reference.as_path(), out.as_path())],
         )
     });
+    let debug = match (case.target.debug, &oracle, spirv_val) {
+        (Some(_), OracleResult::Accepted, Some(true)) if reference.is_file() => {
+            let comparison = crate::debuginfo::compare(&out, &reference)?;
+            if !comparison.matches() {
+                note = comparison.note();
+            }
+            Some(comparison.matches())
+        }
+        _ => None,
+    };
     let exec_input = if !env.executors.is_empty()
         && matches!(oracle, OracleResult::Accepted)
         && spirv_val == Some(true)
@@ -401,6 +412,7 @@ fn run_case(
         exec: BTreeMap::new(),
         expected_messages: None,
         interface,
+        debug,
     })
 }
 
@@ -426,6 +438,9 @@ fn ours_command(
     }
     if case.target.compile_only {
         command.arg("--object");
+    }
+    if let Some(debug) = case.target.debug {
+        command.args(["--debug", debug]);
     }
     let test_dir = env.glslang_dir.join("Test");
     let runtests = corpus::runtests_options(&case.name);
@@ -820,6 +835,7 @@ fn run_group(
         exec: BTreeMap::new(),
         expected_messages,
         interface,
+        debug: None,
     })
 }
 

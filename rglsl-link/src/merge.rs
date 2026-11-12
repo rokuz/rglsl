@@ -178,7 +178,7 @@ impl<'a> Builder<'a> {
             let new = self
                 .module
                 .global_expressions
-                .append(expression, Span::UNDEFINED);
+                .append(expression, source.global_expressions.get_span(handle));
             remap.map_global_expression(handle, new);
         }
         for (handle, _) in source.constants.iter() {
@@ -203,7 +203,8 @@ impl<'a> Builder<'a> {
                 *offset = remap.global_expression(*offset).map_err(internal)?;
             }
             global.spirv_decorations = Vec::new();
-            let new = self.add_global(index, handle, global);
+            let span = source.global_variables.get_span(handle);
+            let new = self.add_global(index, handle, global, span);
             remap.map_global(handle, new);
         }
         for (handle, global) in source.global_variables.iter() {
@@ -247,7 +248,10 @@ impl<'a> Builder<'a> {
         let mut constant = source.constants.try_get(handle).map_err(internal)?.clone();
         constant.ty = remap.ty(constant.ty).map_err(internal)?;
         constant.init = remap.global_expression(constant.init).map_err(internal)?;
-        let new = self.module.constants.append(constant, Span::UNDEFINED);
+        let new = self
+            .module
+            .constants
+            .append(constant, source.constants.get_span(handle));
         remap.map_constant(handle, new);
         Ok(())
     }
@@ -257,6 +261,7 @@ impl<'a> Builder<'a> {
         object: usize,
         handle: Handle<GlobalVariable>,
         global: GlobalVariable,
+        span: Span,
     ) -> Handle<GlobalVariable> {
         let symbol = self
             .objects
@@ -268,7 +273,7 @@ impl<'a> Builder<'a> {
             .map(|symbol| symbol.name.clone())
             .or_else(|| global.name.clone());
         let Some(name) = name else {
-            return self.module.global_variables.append(global, Span::UNDEFINED);
+            return self.module.global_variables.append(global, span);
         };
         let kind = symbol
             .as_ref()
@@ -298,7 +303,7 @@ impl<'a> Builder<'a> {
                 return existing.handle;
             }
         }
-        let new = self.module.global_variables.append(global, Span::UNDEFINED);
+        let new = self.module.global_variables.append(global, span);
         self.keys.insert(key, self.globals.len());
         self.globals.push(MergedGlobal {
             handle: new,

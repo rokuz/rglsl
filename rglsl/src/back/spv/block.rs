@@ -210,12 +210,6 @@ struct LoopContext {
     break_id: Option<Word>,
 }
 
-#[derive(Debug)]
-pub(crate) struct DebugInfoInner<'a> {
-    pub source_code: &'a str,
-    pub source_file_id: Word,
-}
-
 impl Writer {
     // Flip Y coordinate to adjust for coordinate space difference
     // between SPIR-V and our IR.
@@ -3839,7 +3833,6 @@ impl BlockContext<'_> {
         rglsl_block: &crate::Block,
         exit: BlockExit,
         loop_context: LoopContext,
-        debug_info: Option<&DebugInfoInner>,
     ) -> Result<(), Error> {
         let mut work = Vec::from([Work::Block {
             label_id,
@@ -3866,9 +3859,7 @@ impl BlockContext<'_> {
                     .function
                     .consume(Block::new(label_id), Instruction::branch(target)),
                 Work::Frame(frame) => {
-                    if let Some(disposition) =
-                        self.write_frame(frame, finished, &mut work, debug_info)?
-                    {
+                    if let Some(disposition) = self.write_frame(frame, finished, &mut work)? {
                         finished = disposition;
                     }
                 }
@@ -3911,7 +3902,6 @@ impl BlockContext<'_> {
         frame: BlockFrame<'a>,
         finished: BlockExitDisposition,
         work: &mut Vec<Work<'a>>,
-        debug_info: Option<&DebugInfoInner>,
     ) -> Result<Option<BlockExitDisposition>, Error> {
         let BlockFrame {
             ir,
@@ -3925,8 +3915,14 @@ impl BlockContext<'_> {
         };
         while let Some((statement, span)) = ir.span_at(next) {
             next += 1;
-            Self::write_line(&mut block, statement, span, debug_info);
-            match self.write_statement_kind(block, statement, span, loop_context, debug_info)? {
+            match *statement {
+                Statement::Block(_) => {}
+                Statement::Return { .. } if !span.is_defined() => {
+                    self.writer.debug_mark_end(&mut block);
+                }
+                _ => self.writer.debug_mark(&mut block, *span),
+            }
+            match self.write_statement_kind(block, statement, loop_context)? {
                 Nested::Done(Some(next)) if !self.reachability.completes(statement) => {
                     self.function
                         .consume(next, Instruction::new(spirv::Op::Unreachable));
@@ -3951,40 +3947,11 @@ impl BlockContext<'_> {
         Ok(Some(BlockExitDisposition::Used))
     }
 
-    fn write_line(
-        block: &mut Block,
-        statement: &Statement,
-        span: &crate::Span,
-        debug_info: Option<&DebugInfoInner>,
-    ) {
-        if let (Some(debug_info), false) = (
-            debug_info,
-            matches!(
-                statement,
-                &(Statement::Block(..)
-                    | Statement::Break
-                    | Statement::Continue
-                    | Statement::Kill
-                    | Statement::Return { .. }
-                    | Statement::Loop { .. })
-            ),
-        ) {
-            let loc: crate::SourceLocation = span.location(debug_info.source_code);
-            block.body.push(Instruction::line(
-                debug_info.source_file_id,
-                loc.line_number,
-                loc.line_position,
-            ));
-        }
-    }
-
     fn write_statement_kind<'a>(
         &mut self,
         block: Block,
         statement: &'a Statement,
-        span: &crate::Span,
         loop_context: LoopContext,
-        debug_info: Option<&DebugInfoInner>,
     ) -> Result<Nested<'a>, Error> {
         match *statement {
             Statement::Block(ref block_statements) => {
@@ -4023,7 +3990,6 @@ impl BlockContext<'_> {
                 ),
                 break_if,
                 control,
-                (span, debug_info),
                 statement,
             )),
             _ => Ok(Nested::Done(self.write_statement(
@@ -4040,6 +4006,10 @@ impl BlockContext<'_> {
         exit: BlockExit,
         loop_context: LoopContext,
     ) -> Result<(), Error> {
+        let mut block = block;
+        if let BlockExit::Return = exit {
+            self.writer.debug_mark_end(&mut block);
+        }
         let termination = match exit {
             // We're generating code for the top-level Block of the function, so we
             // need to end it with some kind of return instruction.
@@ -4261,7 +4231,6 @@ impl BlockContext<'_> {
         (body, continuing): (&'a crate::Block, Option<&'a crate::Block>),
         break_if: Option<Handle<crate::Expression>>,
         control: crate::LoopControl,
-        (span, debug_info): (&crate::Span, Option<&DebugInfoInner>),
         statement: &'a Statement,
     ) -> Nested<'a> {
         let mut block = block;
@@ -4276,16 +4245,6 @@ impl BlockContext<'_> {
         // SPIR-V requires the continuing to the `OpLoopMerge`,
         // so we have to start a new block with it.
         block = Block::new(preamble_id);
-        // HACK the loop statement is begin with branch instruction,
-        // so we need to put `OpLine` debug info before merge instruction
-        if let Some(debug_info) = debug_info {
-            let loc: crate::SourceLocation = span.location(debug_info.source_code);
-            block.body.push(Instruction::line(
-                debug_info.source_file_id,
-                loc.line_number,
-                loc.line_position,
-            ))
-        }
         block
             .body
             .push(self.loop_merge(merge_id, continuing_id, control));
@@ -4349,6 +4308,8 @@ impl BlockContext<'_> {
                 for handle in range.clone() {
                     // omit const expressions as we've already cached those
                     if !self.expression_constness.is_constant_instruction(handle) {
+                        let span = self.ir_function.expressions.get_span(handle);
+                        self.writer.debug_mark(&mut block, span);
                         self.cache_expression_value(handle, &mut block)?;
                     }
                 }
@@ -5015,18 +4976,13 @@ impl BlockContext<'_> {
         Ok(Some(block))
     }
 
-    pub(super) fn write_function_body(
-        &mut self,
-        entry_id: Word,
-        debug_info: Option<&DebugInfoInner>,
-    ) -> Result<(), Error> {
+    pub(super) fn write_function_body(&mut self, entry_id: Word) -> Result<(), Error> {
         let function = self.ir_function;
         self.write_block(
             entry_id,
             &function.body,
             BlockExit::Return,
             LoopContext::default(),
-            debug_info,
         )
     }
 }

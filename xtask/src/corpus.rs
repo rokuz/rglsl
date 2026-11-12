@@ -47,6 +47,7 @@ pub struct Target {
     pub automap: bool,
     /// `EShMsgRelaxSetBindingLimits`: larger `set`/`binding` values are allowed.
     pub relax_set_binding_limits: bool,
+    pub debug: Option<&'static str>,
 }
 
 impl Target {
@@ -59,6 +60,7 @@ impl Target {
         compile_only: false,
         automap: false,
         relax_set_binding_limits: false,
+        debug: None,
     };
 
     /// Vulkan 1.0 with the options glslang's Vulkan test suites use by default.
@@ -70,6 +72,7 @@ impl Target {
         compile_only: false,
         automap: true,
         relax_set_binding_limits: false,
+        debug: None,
     };
 
     /// Command-line options that make glslangValidator compile like the gtest does.
@@ -93,6 +96,9 @@ impl Target {
         }
         if self.relax_set_binding_limits {
             args.push("--relax-set-binding-limits".into());
+        }
+        if let Some(debug) = self.debug {
+            args.push(format!("-{debug}"));
         }
         args
     }
@@ -336,10 +342,28 @@ fn parse_test_bodies(source: &str) -> BTreeMap<String, Target> {
             // `loadFileCompileAndCheck(..., Target::X, /*automap=*/false)`
             automap: !body.contains("Target::Spv, false") && !body.contains("Target::AST, false"),
             relax_set_binding_limits: body.contains("EShMsgRelaxSetBindingLimits"),
+            debug: debug_mode(body),
         };
         targets.entry(suite).or_insert(target);
     }
     targets
+}
+
+fn debug_mode(body: &str) -> Option<&'static str> {
+    let at = body.find("\"/baseResults/\",")?;
+    let flags: Vec<&str> = body
+        .get(at..)?
+        .split(')')
+        .next()?
+        .split(',')
+        .skip(1)
+        .map(str::trim)
+        .collect();
+    match flags.as_slice() {
+        [_, "true", "true", ..] => Some("gVS"),
+        [_, "true", ..] => Some("g"),
+        _ => None,
+    }
 }
 
 /// Parses `Prefix_1_3` style versions.

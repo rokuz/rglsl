@@ -52,5 +52,5 @@ pub use include::{
 };
 pub use options::{Define, Limits, Options, Stage};
 pub use preprocessor::{preprocess, Preprocessed};
-pub use source_map::{PresumedSource, SourceMap};
+pub use source_map::{LineEntry, PresumedSource, SourceMap};
 pub use version::{find_version, Profile, Version, VersionDirective};

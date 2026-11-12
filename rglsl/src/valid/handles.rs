@@ -48,6 +48,7 @@ impl super::Validator {
             legacy_buffer_blocks: _,
             ray_tracing: _,
             spirv_requirements: _,
+            debug_info: _,
         } = module;
 
         // Because types can refer to global expressions and vice versa, to

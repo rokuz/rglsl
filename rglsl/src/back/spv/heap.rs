@@ -275,6 +275,7 @@ impl Writer {
                 if class == spirv::StorageClass::StorageBuffer && self.lang_version() < (1, 3) {
                     self.use_extension("SPV_KHR_storage_buffer_storage_class");
                 }
+                self.debug.buffer_type = true;
                 Instruction::type_buffer(id, class)
             }
             _ => return,

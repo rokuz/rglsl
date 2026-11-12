@@ -225,6 +225,21 @@ impl FunctionLowerer<'_, '_> {
                         })
                     {
                         self.bind_variable(symbol, Local::Constant);
+                        if self.lw.debug.is_some() {
+                            if let Some(ref value) = variable.value {
+                                let ir = self.lw.ir_type(&variable.ty, at)?;
+                                let init =
+                                    self.lw.global_constant(&variable.ty, &value.values, at)?;
+                                self.lw.module.constants.append(
+                                    crate::Constant {
+                                        name: Some(declarator.name.node.clone()),
+                                        ty: ir,
+                                        init,
+                                    },
+                                    at,
+                                );
+                            }
+                        }
                         continue;
                     }
                     let ty = variable.ty.clone();
@@ -294,6 +309,15 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         let at = self.with(|this| this.at(statement.span))?;
         match statement.kind {
             StatementKind::Compound(ref compound) => {
+                self.with(|this| {
+                    if let Some(first) = compound.statements.first() {
+                        this.lw.debug_scope(
+                            statement.span.start,
+                            statement.span.end,
+                            statement_anchor(first),
+                        );
+                    }
+                })?;
                 let frame = self.clone().statements(&compound.statements);
                 let result = self.nest(frame).await;
                 result
@@ -347,6 +371,21 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 result
             }
             StatementKind::Jump(ref jump) => self.with(|this| this.jump(jump, at))?,
+        }
+    }
+
+    async fn loop_body(self, body: &'b Statement) -> Result<()> {
+        match body.kind {
+            StatementKind::Compound(ref compound) => {
+                let frame = self.clone().statements(&compound.statements);
+                let result = self.nest(frame).await;
+                result
+            }
+            _ => {
+                let frame = self.clone().statement(body);
+                let result = self.nest(frame).await;
+                result
+            }
         }
     }
 
@@ -442,6 +481,14 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
 
     async fn iteration(self, statement: &'b Statement, control: LoopControl) -> Result<()> {
         let at = self.with(|this| this.at(statement.span))?;
+        self.with(|this| {
+            let anchor = match statement.kind {
+                StatementKind::DoWhile { ref condition, .. } => condition.span.start,
+                _ => statement.span.start,
+            };
+            this.lw
+                .debug_scope(statement.span.start, statement.span.end, anchor);
+        })?;
         match statement.kind {
             StatementKind::While {
                 ref condition,
@@ -481,7 +528,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 let condition = cx.with(|this| this.condition(condition))??;
                 cx.with(|this| this.break_unless(condition, at))??;
             }
-            cx.nest(cx.clone().statement(body)).await
+            cx.nest(cx.clone().loop_body(body)).await
         };
         let body = {
             let result = self.clone().block(self.nest(frame)).await;
@@ -568,7 +615,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 let condition = cx.with(|this| this.condition(condition))??;
                 cx.with(|this| this.break_unless(condition, at))??;
             }
-            cx.nest(cx.clone().statement(&statement.body)).await
+            cx.nest(cx.clone().loop_body(&statement.body)).await
         };
         let body = {
             let result = self.clone().block(self.nest(frame)).await;
@@ -694,7 +741,20 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 let fall_through = match block.last() {
                     Some(&IrStatement::Break) => {
                         let length = block.len();
+                        let span = block
+                            .span_at(length.saturating_sub(1))
+                            .map(|(_, span)| *span);
                         block.cull(length.saturating_sub(1)..);
+                        if let Some(span) = span.filter(|span| span.is_defined()) {
+                            let marker = self.with(|this| {
+                                this.lw.debug.is_some().then(|| {
+                                    crate::Range::from_index_range(0..0, &this.expressions)
+                                })
+                            })?;
+                            if let Some(range) = marker {
+                                block.push(IrStatement::Emit(range), span);
+                            }
+                        }
                         false
                     }
                     Some(
@@ -738,5 +798,20 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             )
         })?;
         Ok(())
+    }
+}
+
+fn statement_anchor(statement: &Statement) -> u32 {
+    match statement.kind {
+        StatementKind::Declaration(ref declaration) => match declaration.kind {
+            DeclarationKind::InitDeclaratorList(ref list) => list
+                .declarators
+                .first()
+                .map_or(statement.span.start, |declarator| {
+                    declarator.name.span.start
+                }),
+            _ => statement.span.start,
+        },
+        _ => statement.span.start,
     }
 }

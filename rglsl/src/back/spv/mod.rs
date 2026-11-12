@@ -99,6 +99,7 @@ are read-only.
 mod atomic;
 mod block;
 mod cooperative;
+mod debug;
 mod f16_polyfill;
 mod frames;
 mod heap;
@@ -126,6 +127,7 @@ mod writer;
 
 pub use nt::spv::*;
 
+pub use debug::{DebugEntryPoint, DebugInfo, DebugLevel};
 pub use mesh_shader::{MeshReturnInfo, MeshReturnMember};
 pub use spirv::{Capability, SourceLanguage};
 
@@ -209,13 +211,6 @@ impl IdGenerator {
         self.0 += 1;
         self.0
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct DebugInfo<'a> {
-    pub source_code: &'a str,
-    pub file_name: &'a str,
-    pub language: SourceLanguage,
 }
 
 /// A SPIR-V block to which we are still adding instructions.
@@ -998,6 +993,7 @@ pub struct Writer {
     mesh_shader_primitive_indices_clamp: bool,
     heap: heap::HeapState,
     descriptor_heap: bool,
+    debug: debug::DebugState,
 }
 
 bitflags::bitflags! {
@@ -1122,13 +1118,7 @@ pub fn write_vec(
     let mut words: Vec<u32> = Vec::new();
     let mut w = Writer::new(options)?;
 
-    w.write(
-        module,
-        info,
-        pipeline_options,
-        &options.debug_info,
-        &mut words,
-    )?;
+    w.write(module, info, pipeline_options, &mut words)?;
     Ok(words)
 }
 

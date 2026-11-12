@@ -65,6 +65,25 @@ pub struct OneOptions<'a> {
     pub object: bool,
     pub hlsl_offsets: bool,
     pub include_dirs: &'a [String],
+    pub debug: Option<&'a str>,
+}
+
+fn debug_options(debug: Option<&str>) -> Option<spv::DebugInfo<'static>> {
+    let (level, source_text) = match debug? {
+        "g" => (spv::DebugLevel::Lines, true),
+        "gV" => (spv::DebugLevel::NonSemantic, false),
+        _ => (spv::DebugLevel::NonSemantic, true),
+    };
+    Some(spv::DebugInfo {
+        level,
+        source_text,
+        processes: &[],
+        entry_point: Some(spv::DebugEntryPoint {
+            signature: "rglsl",
+            arguments: "",
+            directory: Some("."),
+        }),
+    })
 }
 
 pub fn compile_one(input: &Path, one: &OneOptions<'_>, out: &Path) -> i32 {
@@ -75,6 +94,7 @@ pub fn compile_one(input: &Path, one: &OneOptions<'_>, out: &Path) -> i32 {
         object,
         hlsl_offsets,
         include_dirs,
+        debug,
     } = *one;
     let source = match std::fs::read(input) {
         Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
@@ -106,6 +126,8 @@ pub fn compile_one(input: &Path, one: &OneOptions<'_>, out: &Path) -> i32 {
         auto_map_locations: auto_map,
         spirv_version: Some(lang_version),
         hlsl_offsets,
+        debug_info: debug.is_some(),
+        source_name: Some(input.to_string_lossy().into_owned()),
         ..glsl::Options::from(stage)
     };
     let mut includer = rglsl_pp::FileSystemIncluder::new(include_dirs);
@@ -140,12 +162,13 @@ pub fn compile_one(input: &Path, one: &OneOptions<'_>, out: &Path) -> i32 {
         }
     };
 
-    write_spirv(&module, &info, lang_version, out)
+    write_spirv(&module, &info, lang_version, debug, out)
 }
 
-fn spirv_options(lang_version: (u8, u8)) -> spv::Options<'static> {
+fn spirv_options(lang_version: (u8, u8), debug: Option<&str>) -> spv::Options<'static> {
     spv::Options {
         lang_version,
+        debug_info: debug_options(debug),
         flags: spv::WriterFlags::DEBUG
             | spv::WriterFlags::LABEL_VARYINGS
             | spv::WriterFlags::SMALL_TYPE_CAPABILITIES_BY_USE,
@@ -158,9 +181,10 @@ fn write_spirv(
     module: &rglsl::Module,
     info: &rglsl::valid::ModuleInfo,
     lang_version: (u8, u8),
+    debug: Option<&str>,
     out: &Path,
 ) -> i32 {
-    let options = spirv_options(lang_version);
+    let options = spirv_options(lang_version, debug);
     let words = match spv::write_vec(module, info, &options, None) {
         Ok(words) => words,
         Err(error) => {
@@ -178,6 +202,7 @@ fn write_spirv(
 
 pub struct GroupOptions<'a> {
     pub spv_version: &'a str,
+    pub debug: Option<String>,
     pub auto_map_locations: bool,
     pub auto_map_bindings: bool,
     pub out_dir: &'a Path,
@@ -212,6 +237,8 @@ pub fn compile_group(inputs: &[String], options: &GroupOptions) -> i32 {
             auto_map_locations: options.auto_map_locations,
             spirv_version: Some(lang_version),
             library,
+            debug_info: options.debug.is_some(),
+            source_name: Some(input.clone()),
             ..glsl::Options::from(stage)
         };
         let mut includer = rglsl_pp::FileSystemIncluder::new(Vec::<String>::new());
@@ -267,7 +294,13 @@ pub fn compile_group(inputs: &[String], options: &GroupOptions) -> i32 {
         let out = options
             .out_dir
             .join(format!("{}.spv", stage_extension(stage.stage)));
-        let code = write_spirv(&stage.module, &stage.info, lang_version, &out);
+        let code = write_spirv(
+            &stage.module,
+            &stage.info,
+            lang_version,
+            options.debug.as_deref(),
+            &out,
+        );
         if code != EXIT_ACCEPTED {
             return code;
         }

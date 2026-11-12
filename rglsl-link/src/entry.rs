@@ -1,5 +1,5 @@
 use rglsl::object::PathStep;
-use rglsl::{AddressSpace, Binding, EntryPoint, Expression, GlobalVariable, Handle, Span, Type};
+use rglsl::{AddressSpace, Binding, EntryPoint, Expression, GlobalVariable, Handle, Type};
 
 use crate::calls::{callees, Node, SymbolTable};
 use crate::error::{internal, LinkError};
@@ -139,7 +139,8 @@ impl Builder<'_> {
             self.remap(index)?
                 .adjust_function(&mut function)
                 .map_err(internal)?;
-            let new = self.module.functions.append(function, Span::UNDEFINED);
+            let span = object.module.functions.get_span(handle);
+            let new = self.module.functions.append(function, span);
             if library {
                 self.library_functions.push(new);
             }
