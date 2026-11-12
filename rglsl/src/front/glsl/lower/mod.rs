@@ -104,7 +104,8 @@ fn compile_sharing(
     names: &mut library::StageNames,
 ) -> core::result::Result<crate::object::ObjectModule, ParseErrors> {
     let hint = (!options.library).then_some(options.stage);
-    match defines_main(options, hint, source, root, includer) {
+    let parsed = Parsed::new(options, hint, source, root, includer);
+    match parsed.defines_main() {
         Some(true) if options.library => Err(vec![semantic(
             "a module compiled as a library cannot define `main`: a module with `main` is a program and needs a shader stage",
             Span::UNDEFINED,
@@ -119,7 +120,16 @@ fn compile_sharing(
             names,
             &StageClass::new(options.stage),
         ),
-        Some(false) | None => library::compile(options, hint, source, root, includer, share, names),
+        Some(false) | None => library::compile(
+            options,
+            hint,
+            source,
+            root,
+            includer,
+            share,
+            names,
+            parsed,
+        ),
     }
 }
 
@@ -195,25 +205,53 @@ fn preprocess(
     )
 }
 
-fn defines_main(
-    options: &Options,
+pub(super) struct Parsed {
     stage: Option<ShaderStage>,
-    source: &str,
-    root: rglsl_pp::FileId,
-    includer: &mut dyn rglsl_pp::Includer,
-) -> Option<bool> {
-    let preprocessed = preprocess(options, stage, source, root, includer);
-    if preprocessed.has_errors() {
-        return None;
+    preprocessed: rglsl_pp::Preprocessed,
+    unit: Option<(TranslationUnit, bool)>,
+}
+
+impl Parsed {
+    fn new(
+        options: &Options,
+        stage: Option<ShaderStage>,
+        source: &str,
+        root: rglsl_pp::FileId,
+        includer: &mut dyn rglsl_pp::Includer,
+    ) -> Self {
+        let preprocessed = preprocess(options, stage, source, root, includer);
+        let unit = (!preprocessed.has_errors()).then(|| {
+            let (unit, failure) = rglsl_ast::parse_prefix(preprocessed.text.as_str());
+            (unit, failure.is_some())
+        });
+        Self {
+            stage,
+            preprocessed,
+            unit,
+        }
     }
-    let (unit, _) = rglsl_ast::parse_prefix(preprocessed.text.as_str());
-    Some(unit.external_declarations.iter().any(|declaration| {
-        matches!(
-            *declaration,
-            ExternalDeclaration::FunctionDefinition(ref definition)
-                if definition.prototype.name.node == "main"
-        )
-    }))
+
+    fn defines_main(&self) -> Option<bool> {
+        let (ref unit, _) = *self.unit.as_ref()?;
+        Some(unit.external_declarations.iter().any(|declaration| {
+            matches!(
+                *declaration,
+                ExternalDeclaration::FunctionDefinition(ref definition)
+                    if definition.prototype.name.node == "main"
+            )
+        }))
+    }
+
+    pub(super) fn reuse(
+        self,
+        stage: ShaderStage,
+    ) -> Option<(rglsl_pp::Preprocessed, TranslationUnit, bool)> {
+        if self.stage.is_some_and(|own| own != stage) {
+            return None;
+        }
+        let (unit, failed) = self.unit?;
+        Some((self.preprocessed, unit, failed))
+    }
 }
 
 pub(super) struct StageClass {

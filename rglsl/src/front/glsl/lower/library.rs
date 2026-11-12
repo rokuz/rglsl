@@ -12,7 +12,7 @@ use rglsl_types::probe::StageProbe;
 
 use super::{
     link_time, lower_object, preprocess, preprocessor_options, preprocessor_stage, run_lowerer,
-    sema_error, sema_options, stage, Mode, StageClass,
+    sema_error, sema_options, stage, Mode, Parsed, StageClass,
 };
 use crate::front::glsl::{Error, ErrorKind, Options, ParseErrors};
 use crate::object::{ObjectModule, StageRejection};
@@ -91,11 +91,12 @@ pub(super) fn compile(
     includer: &mut dyn rglsl_pp::Includer,
     share: bool,
     names: &mut StageNames,
+    parsed: Parsed,
 ) -> Result<ObjectModule, ParseErrors> {
     let order = stage_order(hint);
     let all = order.iter().fold(0, |mask, &stage| mask | stage_bit(stage));
     let once = if share {
-        once(options, hint, source, root, includer, names)
+        once(options, hint, source, root, includer, names, parsed)
     } else {
         None
     };
@@ -306,7 +307,7 @@ fn choose(
         .copied()
         .filter(|&candidate| allowed & stage_bit(candidate) != 0)
         .collect();
-    let mut scores: BTreeMap<ShaderStage, usize> = BTreeMap::new();
+    let mut scores: BTreeMap<ShaderStage, (usize, usize)> = BTreeMap::new();
     for identifier in identifiers {
         let lower = identifier.to_ascii_lowercase();
         let layout = rglsl_sema::layout_stages(&lower);
@@ -321,26 +322,25 @@ fn choose(
         let most = counts.iter().copied().max().unwrap_or(0);
         let varies = counts.iter().any(|&count| count != most);
         for (&candidate, &count) in candidates.iter().zip(&counts) {
-            let mut score = 0;
+            let mut declared = 0;
             if tables.variable(stage(candidate), identifier).is_some() {
-                score += 1;
-            }
-            if varies && count == most {
-                score += 1;
+                declared += 1;
             }
             if layout.is_some_and(|stages| stages.contains(&stage(candidate))) {
-                score += 1;
+                declared += 1;
             }
             if keyword.is_some_and(|stages| stages.contains(&candidate)) {
-                score += 1;
+                declared += 1;
             }
-            *scores.entry(candidate).or_default() += score;
+            let entry = scores.entry(candidate).or_default();
+            entry.0 += declared;
+            entry.1 += usize::from(varies && count == most);
         }
     }
-    let best = scores.values().copied().max().unwrap_or(0);
+    let best = scores.values().copied().max().unwrap_or_default();
     candidates
         .into_iter()
-        .find(|candidate| scores.get(candidate).copied().unwrap_or(0) == best)
+        .find(|candidate| scores.get(candidate).copied().unwrap_or_default() == best)
 }
 
 fn once(
@@ -350,6 +350,7 @@ fn once(
     root: rglsl_pp::FileId,
     includer: &mut dyn rglsl_pp::Includer,
     names: &mut StageNames,
+    parsed: Parsed,
 ) -> Option<Once> {
     let order = stage_order(hint);
     let base = rglsl_pp::version_check(source, &preprocessor_options(options, None));
@@ -384,15 +385,21 @@ fn once(
         .iter()
         .copied()
         .find(|&candidate| versioned & stage_bit(candidate) != 0)?;
-    let preprocessed = preprocess(options, Some(first), source, root, includer);
-    if !preprocessed.same_for_stage(preprocessor_stage(first)) || preprocessed.has_errors() {
+    let (preprocessed, unit, failed) = match parsed.reuse(first) {
+        Some(reused) => reused,
+        None => {
+            let preprocessed = preprocess(options, Some(first), source, root, includer);
+            let (unit, failure) = rglsl_ast::parse_prefix(preprocessed.text.as_str());
+            (preprocessed, unit, failure.is_some())
+        }
+    };
+    if !preprocessed.same_for_stage(preprocessor_stage(first))
+        || preprocessed.has_errors()
+        || failed
+    {
         return None;
     }
     let text = preprocessed.text.as_str();
-    let (unit, failure) = rglsl_ast::parse_prefix(text);
-    if failure.is_some() {
-        return None;
-    }
     let version = if preprocessed.version.number == 460 {
         460
     } else {

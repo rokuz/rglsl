@@ -2257,6 +2257,19 @@ impl Analyzer<'_> {
         storage: BlockStorage,
         instance: &str,
     ) -> Option<(crate::types::BlockId, SymbolId)> {
+        let names: &[&str] = match storage {
+            BlockStorage::In => &["gl_in"],
+            _ => &[
+                "gl_Position",
+                "gl_PointSize",
+                "gl_ClipDistance",
+                "gl_CullDistance",
+                "gl_out",
+            ],
+        };
+        for name in names {
+            self.builtin_name(name);
+        }
         self.symbols.iter().enumerate().find_map(|(index, symbol)| {
             let variable = symbol.variable()?;
             let TypeKind::Block(id) = variable.ty.kind else {
