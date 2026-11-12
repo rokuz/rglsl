@@ -668,7 +668,7 @@ fn features_vulkan_lacks_have_short_messages() -> TestResult {
             "capability `Kernel` is not supported: it is OpenCL-only",
             "execution mode `LocalSizeHint` is not supported: it is OpenCL-only",
             "storage class `CrossWorkgroup` is not supported: it is OpenCL-only",
-            "OpenCL.std instruction `vloadn` is not supported: Vulkan has no physical addressing",
+            "Compilation requires OpenCL.std instruction `vloadn` that is not supported",
         ]
     );
     Ok(())

@@ -266,6 +266,8 @@ pub enum DiagnosticKind {
         subject: String,
         reason: &'static str,
     },
+    #[error("Compilation requires OpenCL.std instruction `{0}` that is not supported")]
+    UnsupportedOpenClInstruction(String),
     #[error(
         "transform feedback of {0}-bit components is not supported: Vulkan captures components of at least 32 bits"
     )]

@@ -5709,7 +5709,7 @@ spirv_instruction(id = 260)
 void groupWaitEvents();
 spirv_type(id = 38, 0) Pipe;
 void main() {}
-### OpenCL.std memory instructions and printf | comp 450 | 4:NotSupportedInVulkan, 6:NotSupportedInVulkan, 8:NotSupportedInVulkan
+### OpenCL.std memory instructions and printf | comp 450 | 4:UnsupportedOpenClInstruction, 6:UnsupportedOpenClInstruction, 8:UnsupportedOpenClInstruction
 #extension GL_EXT_spirv_intrinsics : enable
 layout(local_size_x = 1) in;
 spirv_instruction(set = "OpenCL.std", id = 171)

@@ -114,26 +114,20 @@ impl Analyzer<'_> {
         if set != OPENCL_STD {
             return;
         }
-        let reason = if opcode == OPENCL_PRINTF {
-            "Vulkan shaders print with `debugPrintfEXT`"
-        } else if OPENCL_PHYSICAL_MEMORY
-            .iter()
-            .any(|range| range.contains(&opcode))
+        if opcode != OPENCL_PRINTF
+            && !OPENCL_PHYSICAL_MEMORY
+                .iter()
+                .any(|range| range.contains(&opcode))
         {
-            PHYSICAL_ADDRESSING
-        } else {
             return;
-        };
+        }
         let name = ext_inst_table(set)
             .and_then(|table| table.lookup_opcode(opcode))
             .map_or_else(
                 || format!("{opcode}"),
                 |instruction| String::from(instruction.opname),
             );
-        self.target_limit(
-            span,
-            not_supported(format!("{OPENCL_STD} instruction `{name}`"), reason),
-        );
+        self.target_limit(span, DiagnosticKind::UnsupportedOpenClInstruction(name));
     }
 
     pub(crate) fn opencl_type_operand(
