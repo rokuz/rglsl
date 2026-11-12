@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 
 use super::{body_of, round_trip, unit};
 use crate::ast::{DeclarationKind, ExpressionKind, ExternalDeclaration, NodeId, StatementKind};
-use crate::{parse, print, ParseErrorKind, MAX_NESTING_DEPTH};
+use crate::{parse, print};
 
 const SHADER: &str = "#version 450\n#extension GL_EXT_scalar_block_layout : enable\nprecision highp float;\nlayout(location = 0) out vec4 color;\nlayout(set = 0, binding = 1, std140) uniform Params {\n    vec2 resolution;\n    float weights[4];\n} params[2];\nstruct Item { int key; float value[2]; };\nconst int COUNT = 0x10, MASK = 077;\nuniform sampler2D image;\nfloat weigh(in Item item, inout float total, const uint steps);\nfloat weigh(in Item item, inout float total, const uint steps) {\n    for (uint i = 0u; i < steps; ++i) {\n        total += item.value[i % 2u] * 1.5e-1f;\n        if (total > 1e3) break; else continue;\n    }\n    return total;\n}\nvoid main() {\n    Item items[2] = Item[2](Item(1, float[2](0.5, .25)), Item(2, float[](1., 2.0)));\n    float grid[2][2] = {{0.0, 1.0}, {2.0, 3.0}};\n    float total = 0.0lf > 1.0LF ? 1.0 : -grid[1][0];\n    int index = COUNT & MASK | 1 ^ 2 << 3 >> 1;\n    bool flag = !(index == 3) && total >= 0.0 || index != 4 ^^ true;\n    while (bool more = index-- > 0) { total = weigh(items[index % 2], total, 3u); }\n    do { index++, total -= 1.0; } while (index < items.length());\n    switch (index) {\n        case 0:\n        case 1: color = vec4(total); break;\n        default: { discard; }\n    }\n    color = flag ? texture(image, gl_FragCoord.xy / params[0].resolution) : vec4(grid[0], ~index, +total);\n    ;\n}\n";
 
@@ -143,13 +143,6 @@ fn mutated_shaders_parse_or_fail_without_panicking() {
     assert!(outcomes > 1000);
 }
 
-fn nesting_error(source: &str) -> bool {
-    matches!(
-        parse(source),
-        Err(error) if error.kind == ParseErrorKind::NestingTooDeep
-    )
-}
-
 struct Nest {
     open: &'static str,
     core: &'static str,
@@ -207,10 +200,10 @@ impl Nest {
 }
 
 #[test]
-fn hostile_nesting_is_an_error_and_not_a_stack_overflow() {
-    let huge = 100_000;
+fn deep_nesting_parses_and_unbalanced_nesting_is_an_error() {
+    let huge = 20_000;
     for case in &NESTS {
-        assert!(nesting_error(&case.source(huge)), "{}", case.open);
+        assert!(parse(&case.source(huge)).is_ok(), "{}", case.open);
         let unbalanced = alloc::format!("void f() {{ {}", case.open.repeat(huge));
         assert!(parse(&unbalanced).is_err(), "{}", case.open);
     }
@@ -221,26 +214,29 @@ fn hostile_nesting_is_an_error_and_not_a_stack_overflow() {
             "} a; ".repeat(huge)
         ),
         alloc::format!("int a = {}1{};", "{".repeat(huge), "}".repeat(huge)),
+    ] {
+        assert!(parse(&source).is_ok());
+    }
+    for source in [
         alloc::format!("int a = {}", "{".repeat(huge)),
         alloc::format!("layout(a = {}", "(".repeat(huge)),
         alloc::format!("int a[{}", "a[".repeat(huge)),
     ] {
-        assert!(nesting_error(&source));
+        assert!(parse(&source).is_err());
     }
 }
 
 #[test]
-fn nesting_up_to_the_limit_is_accepted() {
-    let limit = usize::try_from(MAX_NESTING_DEPTH).unwrap_or(0);
+fn nested_sources_round_trip() {
+    let limit = 120;
     for case in &NESTS {
-        let deepest = (limit - 8) / case.levels_per_repeat;
+        let deepest = limit / case.levels_per_repeat;
         let source = case.source(deepest);
         let parsed = unit(&source);
         round_trip(&source);
         let copy = parsed.clone();
         assert_eq!(copy, parsed);
         assert!(alloc::format!("{copy:?}").len() > source.len());
-        assert!(nesting_error(&case.source(limit + 1)), "{}", case.open);
     }
     let structures = alloc::format!(
         "{}int a; {}",
@@ -257,7 +253,7 @@ fn nesting_up_to_the_limit_is_accepted() {
 }
 
 #[test]
-fn flat_chains_do_not_count_against_the_nesting_depth() {
+fn flat_chains_parse_and_round_trip() {
     let huge = 20_000;
     let chain =
         |link: &str, links: usize| alloc::format!("void f() {{ a = a{}; }}", link.repeat(links));
@@ -298,12 +294,12 @@ fn flat_chains_do_not_count_against_the_nesting_depth() {
         "a + (a + ".repeat(70),
         ")".repeat(70)
     );
-    assert!(nesting_error(&nested_in_chain));
+    round_trip(&nested_in_chain);
 }
 
 #[test]
-fn nested_operands_of_chains_count_against_the_nesting_depth() {
-    let limit = usize::try_from(MAX_NESTING_DEPTH).unwrap_or(0);
+fn nested_operands_of_chains_round_trip() {
+    let limit = 1_000;
     let chain =
         |link: &str, links: usize| alloc::format!("void f() {{ a = a{}; }}", link.repeat(links));
     for (link, height_per_link) in [("(a)", 1), (".length()", 1)] {
@@ -311,8 +307,6 @@ fn nested_operands_of_chains_count_against_the_nesting_depth() {
         let parsed = unit(&source);
         round_trip(&source);
         assert!(alloc::format!("{:?}", parsed.clone()).len() > source.len());
-        assert!(nesting_error(&chain(link, limit + 8)), "{link}");
-        assert!(nesting_error(&chain(link, 300_000)), "{link}");
     }
     for (open, close, per_level) in [
         ("a + (", ")", 2),
@@ -324,7 +318,7 @@ fn nested_operands_of_chains_count_against_the_nesting_depth() {
         ("a = (", ")", 2),
         ("a[(", ")]", 4),
     ] {
-        let fits = (limit - 8) / per_level;
+        let fits = limit / per_level;
         let source = |count: usize| {
             alloc::format!(
                 "void f() {{ {}a{}; }}",
@@ -333,7 +327,6 @@ fn nested_operands_of_chains_count_against_the_nesting_depth() {
             )
         };
         round_trip(&source(fits));
-        assert!(nesting_error(&source(limit)), "{open}");
     }
     for source in [
         alloc::format!("void f() {{ g({}a); }}", "a, ".repeat(100_000)),

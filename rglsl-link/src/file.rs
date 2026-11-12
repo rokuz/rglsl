@@ -2,8 +2,6 @@ use rglsl::object::{ObjectModule, FORMAT_VERSION};
 use rglsl::valid::{Capabilities, ValidationFlags, ValidationMode, Validator};
 use rglsl::{Block, Span, Statement};
 
-pub const MAX_BLOCK_DEPTH: usize = 160;
-
 #[derive(Debug, thiserror::Error)]
 pub enum FileError {
     #[error("cannot write the object module: {0}")]
@@ -175,7 +173,6 @@ fn flatten(root: &Block) -> Result<Vec<Flat>, FileError> {
 
 fn unflatten(flat: Vec<Flat>) -> Result<Block, FileError> {
     let mut open: Vec<Open> = Vec::new();
-    let mut depth = 0;
     let mut root = None;
     for entry in flat {
         if root.is_some() {
@@ -183,10 +180,6 @@ fn unflatten(flat: Vec<Flat>) -> Result<Block, FileError> {
         }
         match entry {
             Flat::Block(length) => {
-                depth += 1;
-                if depth > MAX_BLOCK_DEPTH {
-                    return Err(decode_error("a function body is nested too deeply"));
-                }
                 let remaining =
                     usize::try_from(length).map_err(|_| decode_error("a block is too long"))?;
                 open.push(Open::Block {
@@ -205,7 +198,7 @@ fn unflatten(flat: Vec<Flat>) -> Result<Block, FileError> {
                 }
             }
         }
-        root = settle(&mut open, &mut depth)?;
+        root = settle(&mut open)?;
     }
     root.ok_or_else(|| decode_error("a function body is incomplete"))
 }
@@ -224,7 +217,7 @@ fn add_statement(open: &mut [Open], statement: Statement) -> Result<(), FileErro
     }
 }
 
-fn settle(open: &mut Vec<Open>, depth: &mut usize) -> Result<Option<Block>, FileError> {
+fn settle(open: &mut Vec<Open>) -> Result<Option<Block>, FileError> {
     loop {
         let finished = match open.last() {
             Some(&Open::Block { remaining: 0, .. }) => open.pop(),
@@ -233,7 +226,6 @@ fn settle(open: &mut Vec<Open>, depth: &mut usize) -> Result<Option<Block>, File
         let Some(Open::Block { block, .. }) = finished else {
             return Err(decode_error("a block is malformed"));
         };
-        *depth = depth.saturating_sub(1);
         let complete = match open.last_mut() {
             None => return Ok(Some(block)),
             Some(&mut Open::Statement {

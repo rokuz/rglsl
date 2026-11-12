@@ -107,6 +107,7 @@ struct Module {
     types: FastHashMap<Word, TypeInfo>,
     value_types: FastHashMap<Word, Word>,
     buffer_blocks: FastHashSet<Word>,
+    contained: FastHashMap<(Word, bool, Word), bool>,
 }
 
 impl Module {
@@ -114,31 +115,35 @@ impl Module {
         self.types.get(&id)
     }
 
-    fn contains(&self, id: Word, float: bool, width: Word, depth: u32) -> bool {
-        if depth > 64 {
-            return false;
-        }
-        match self.info(id) {
-            Some(&TypeInfo::Int(found)) => !float && found == width,
-            Some(&TypeInfo::Float(found)) => float && found == width,
-            Some(&TypeInfo::Struct(ref members)) => members
-                .iter()
-                .any(|member| self.contains(*member, float, width, depth + 1)),
-            Some(&TypeInfo::Element(element)) => self.contains(element, float, width, depth + 1),
-            Some(&(TypeInfo::Pointer(..) | TypeInfo::Other)) | None => false,
-        }
+    fn contains(&mut self, id: Word, float: bool, width: Word) -> bool {
+        let types = &self.types;
+        crate::proc::contains(
+            (id, float, width),
+            &mut self.contained,
+            |(id, float, width), children| match types.get(&id) {
+                Some(&TypeInfo::Int(found)) => !float && found == width,
+                Some(&TypeInfo::Float(found)) => float && found == width,
+                Some(&TypeInfo::Struct(ref members)) => {
+                    children.extend(members.iter().map(|&member| (member, float, width)));
+                    false
+                }
+                Some(&TypeInfo::Element(element)) => {
+                    children.push((element, float, width));
+                    false
+                }
+                Some(&(TypeInfo::Pointer(..) | TypeInfo::Other)) | None => false,
+            },
+        )
     }
 
-    fn basic(&self, id: Word, depth: u32) -> Option<&TypeInfo> {
-        if depth > 64 {
-            return None;
-        }
-        match *self.info(id)? {
-            TypeInfo::Element(element) | TypeInfo::Pointer(_, element) => {
-                self.basic(element, depth + 1)
+    fn basic(&self, mut id: Word) -> Option<&TypeInfo> {
+        for _ in 0..=self.types.len() {
+            match *self.info(id)? {
+                TypeInfo::Element(element) | TypeInfo::Pointer(_, element) => id = element,
+                ref other => return Some(other),
             }
-            ref other => Some(other),
         }
+        None
     }
 
     fn storage_class(&self, pointer: Word) -> Option<Word> {
@@ -159,6 +164,7 @@ pub(super) fn usage(declarations: &[Word], functions: &[Word], annotations: &[Wo
         types: FastHashMap::default(),
         value_types: FastHashMap::default(),
         buffer_blocks: FastHashSet::default(),
+        contained: FastHashMap::default(),
     };
     for instruction in instructions(annotations) {
         if instruction.op == op(Op::Decorate)
@@ -253,13 +259,13 @@ pub(super) fn usage(declarations: &[Word], functions: &[Word], annotations: &[Wo
         capabilities.insert(capability);
     };
     for ty in constants {
-        if module.contains(ty, false, 8, 0) {
+        if module.contains(ty, false, 8) {
             add(Capability::Int8);
         }
-        if module.contains(ty, false, 16, 0) {
+        if module.contains(ty, false, 16) {
             add(Capability::Int16);
         }
-        if module.contains(ty, true, 16, 0) {
+        if module.contains(ty, true, 16) {
             add(Capability::Float16);
         }
     }
@@ -268,8 +274,8 @@ pub(super) fn usage(declarations: &[Word], functions: &[Word], annotations: &[Wo
             continue;
         };
         let storage = storage.unwrap_or(class(StorageClass::Function));
-        let float16 = module.contains(pointee, true, 16, 0);
-        let int16 = module.contains(pointee, false, 16, 0);
+        let float16 = module.contains(pointee, true, 16);
+        let int16 = module.contains(pointee, false, 16);
         if float16 || int16 {
             let storage_capability = if storage == class(StorageClass::Input)
                 || storage == class(StorageClass::Output)
@@ -305,7 +311,7 @@ pub(super) fn usage(declarations: &[Word], functions: &[Word], annotations: &[Wo
                 }
             }
         }
-        if module.contains(pointee, false, 8, 0) {
+        if module.contains(pointee, false, 8) {
             let storage_capability = if storage == class(StorageClass::PushConstant) {
                 Some(Capability::StoragePushConstant8)
             } else if storage == class(StorageClass::Uniform) {
@@ -369,7 +375,14 @@ pub(super) fn usage(declarations: &[Word], functions: &[Word], annotations: &[Wo
             }
         }
         for ty in types {
-            post_process(&module, &instruction, ty, storage16, storage8, &mut found);
+            post_process(
+                &mut module,
+                &instruction,
+                ty,
+                storage16,
+                storage8,
+                &mut found,
+            );
         }
     }
     for capability in found {
@@ -409,14 +422,14 @@ pub(super) fn usage(declarations: &[Word], functions: &[Word], annotations: &[Wo
 }
 
 fn post_process(
-    module: &Module,
+    module: &mut Module,
     instruction: &Instruction<'_>,
     ty: Word,
     storage16: bool,
     storage8: bool,
     found: &mut Vec<Capability>,
 ) {
-    let basic = module.basic(ty, 0);
+    let basic = module.basic(ty);
     let (int, float, structure) = match basic {
         Some(&TypeInfo::Int(width)) => (Some(width), None, false),
         Some(&TypeInfo::Float(width)) => (None, Some(width), false),
@@ -426,13 +439,13 @@ fn post_process(
     let code = instruction.op;
     if code == op(Op::Load) || code == op(Op::Store) {
         if structure {
-            if module.contains(ty, false, 8, 0) {
+            if module.contains(ty, false, 8) {
                 found.push(Capability::Int8);
             }
-            if module.contains(ty, false, 16, 0) {
+            if module.contains(ty, false, 16) {
                 found.push(Capability::Int16);
             }
-            if module.contains(ty, true, 16, 0) {
+            if module.contains(ty, true, 16) {
                 found.push(Capability::Float16);
             }
             return;
@@ -474,14 +487,14 @@ fn post_process(
     }
     if code == op(Op::FConvert) || code == op(Op::SConvert) || code == op(Op::UConvert) {
         if !storage16 {
-            if module.contains(ty, true, 16, 0) {
+            if module.contains(ty, true, 16) {
                 found.push(Capability::Float16);
             }
-            if module.contains(ty, false, 16, 0) {
+            if module.contains(ty, false, 16) {
                 found.push(Capability::Int16);
             }
         }
-        if module.contains(ty, false, 8, 0) && !storage8 {
+        if module.contains(ty, false, 8) && !storage8 {
             found.push(Capability::Int8);
         }
         return;

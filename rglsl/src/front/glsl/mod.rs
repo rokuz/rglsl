@@ -61,7 +61,6 @@ pub struct Options {
     pub spirv_version: Option<(u8, u8)>,
     pub library: bool,
     pub hlsl_offsets: bool,
-    pub nesting_limits: bool,
 }
 
 impl From<ShaderStage> for Options {
@@ -74,7 +73,6 @@ impl From<ShaderStage> for Options {
             spirv_version: None,
             library: false,
             hlsl_offsets: false,
-            nesting_limits: true,
         }
     }
 }

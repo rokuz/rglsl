@@ -162,8 +162,6 @@ pub enum DiagnosticKind {
     },
     #[error("an array size must be greater than zero")]
     ArraySizeNotPositive,
-    #[error("the type is nested too deeply")]
-    TypeTooDeep,
     #[error("internal error: the analysis stopped")]
     Internal,
     #[error("an array size is required here")]

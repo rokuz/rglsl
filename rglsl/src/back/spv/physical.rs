@@ -9,16 +9,30 @@ fn physical_qualifiers(
     types: &crate::UniqueArena<crate::Type>,
     ty: Handle<crate::Type>,
 ) -> Option<PointerQualifiers> {
-    match types[ty].inner {
+    let element = crate::proc::array_element(types, ty);
+    match types[element].inner {
         TypeInner::Pointer {
             space: AddressSpace::PhysicalStorage { qualifiers, .. },
             ..
         } => Some(qualifiers),
-        TypeInner::Array { base, .. } => physical_qualifiers(types, base),
-        TypeInner::Struct { ref members, .. } => members
-            .iter()
-            .any(|member| physical_qualifiers(types, member.ty).is_some())
-            .then_some(PointerQualifiers::empty()),
+        TypeInner::Struct { .. } => {
+            crate::proc::any_type(types, element, |inner, children| match *inner {
+                TypeInner::Pointer {
+                    space: AddressSpace::PhysicalStorage { .. },
+                    ..
+                } => true,
+                TypeInner::Array { base, .. } => {
+                    children.push(base);
+                    false
+                }
+                TypeInner::Struct { ref members, .. } => {
+                    children.extend(members.iter().map(|member| member.ty));
+                    false
+                }
+                _ => false,
+            })
+            .then_some(PointerQualifiers::empty())
+        }
         _ => None,
     }
 }
@@ -100,30 +114,29 @@ impl super::Writer {
 }
 
 impl super::Writer {
-    pub(super) fn contains_physical_type(&self, id: super::Word) -> bool {
-        if self.physical_type_ids.contains(&id) {
-            return true;
-        }
-        if let Some((&laid, _)) = self
-            .plain_types
-            .iter()
-            .find(|&(&laid, &plain)| plain == id && laid != id)
-        {
-            return self.contains_physical_type(laid);
-        }
-        match self
-            .composite_types
-            .get(&id)
-            .map(|composite| &composite.shape)
-        {
-            Some(&super::plain_types::CompositeShape::Array { element, .. }) => {
-                self.contains_physical_type(element)
+    pub(super) fn contains_physical_type(&mut self, id: super::Word) -> bool {
+        let physical = &self.physical_type_ids;
+        let laid_out = &self.laid_out_of_plain;
+        let composites = &self.composite_types;
+        crate::proc::contains(id, &mut self.physical_types, |id, children| {
+            if physical.contains(&id) {
+                return true;
             }
-            Some(&super::plain_types::CompositeShape::Struct { ref members, .. }) => members
-                .iter()
-                .any(|member| self.contains_physical_type(*member)),
-            None => false,
-        }
+            if let Some(&laid) = laid_out.get(&id) {
+                children.push(laid);
+                return false;
+            }
+            match composites.get(&id).map(|composite| &composite.shape) {
+                Some(&super::plain_types::CompositeShape::Array { element, .. }) => {
+                    children.push(element);
+                }
+                Some(&super::plain_types::CompositeShape::Struct { ref members, .. }) => {
+                    children.extend(members.iter().copied());
+                }
+                None => {}
+            }
+            false
+        })
     }
 }
 

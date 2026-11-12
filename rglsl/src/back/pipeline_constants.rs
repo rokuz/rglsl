@@ -949,9 +949,11 @@ fn adjust_expr(new_pos: &HandleVec<Expression, Handle<Expression>>, expr: &mut E
 /// Replace every expression handle in `block` with its counterpart
 /// given by `new_pos`.
 fn adjust_block(new_pos: &HandleVec<Expression, Handle<Expression>>, block: &mut Block) {
-    for stmt in block.iter_mut() {
-        adjust_stmt(new_pos, stmt);
-    }
+    block.visit_blocks_mut(|block| {
+        for stmt in block.iter_mut() {
+            adjust_stmt(new_pos, stmt);
+        }
+    });
 }
 
 /// Replace every expression handle in `stmt` with its counterpart
@@ -968,37 +970,28 @@ fn adjust_stmt(new_pos: &HandleVec<Expression, Handle<Expression>>, stmt: &mut S
                 *range = Range::new_from_bounds(first, last);
             }
         }
-        Statement::Block(ref mut block) => {
-            adjust_block(new_pos, block);
-        }
+        Statement::Block(_) => {}
         Statement::If {
             ref mut condition,
-            ref mut accept,
-            ref mut reject,
+            accept: _,
+            reject: _,
             control: _,
         } => {
             adjust(condition);
-            adjust_block(new_pos, accept);
-            adjust_block(new_pos, reject);
         }
         Statement::Switch {
             ref mut selector,
-            ref mut cases,
+            cases: _,
             control: _,
         } => {
             adjust(selector);
-            for case in cases.iter_mut() {
-                adjust_block(new_pos, &mut case.body);
-            }
         }
         Statement::Loop {
-            ref mut body,
-            ref mut continuing,
+            body: _,
+            continuing: _,
             ref mut break_if,
             control: _,
         } => {
-            adjust_block(new_pos, body);
-            adjust_block(new_pos, continuing);
             if let Some(e) = break_if.as_mut() {
                 adjust(e);
             }
@@ -1320,6 +1313,10 @@ fn adjust_location(location: &mut crate::AtomicLocation, adjust: &dyn Fn(&mut Ha
 /// [`needs_pre_emit`]: Expression::needs_pre_emit
 /// [`Override`]: Expression::Override
 fn filter_emits_in_block(block: &mut Block, expressions: &Arena<Expression>) {
+    block.visit_blocks_mut(|block| filter_emits(block, expressions));
+}
+
+fn filter_emits(block: &mut Block, expressions: &Arena<Expression>) {
     let original = mem::replace(block, Block::with_capacity(block.len()));
     for (stmt, span) in original.span_into_iter() {
         match stmt {
@@ -1342,64 +1339,7 @@ fn filter_emits_in_block(block: &mut Block, expressions: &Arena<Expression>) {
                     block.push(Statement::Emit(Range::new_from_bounds(first, last)), span);
                 }
             }
-            Statement::Block(mut child) => {
-                filter_emits_in_block(&mut child, expressions);
-                block.push(Statement::Block(child), span);
-            }
-            Statement::If {
-                condition,
-                mut accept,
-                mut reject,
-                control,
-            } => {
-                filter_emits_in_block(&mut accept, expressions);
-                filter_emits_in_block(&mut reject, expressions);
-                block.push(
-                    Statement::If {
-                        condition,
-                        accept,
-                        reject,
-                        control,
-                    },
-                    span,
-                );
-            }
-            Statement::Switch {
-                selector,
-                mut cases,
-                control,
-            } => {
-                for case in &mut cases {
-                    filter_emits_in_block(&mut case.body, expressions);
-                }
-                block.push(
-                    Statement::Switch {
-                        selector,
-                        cases,
-                        control,
-                    },
-                    span,
-                );
-            }
-            Statement::Loop {
-                mut body,
-                mut continuing,
-                break_if,
-                control,
-            } => {
-                filter_emits_in_block(&mut body, expressions);
-                filter_emits_in_block(&mut continuing, expressions);
-                block.push(
-                    Statement::Loop {
-                        body,
-                        continuing,
-                        break_if,
-                        control,
-                    },
-                    span,
-                );
-            }
-            stmt => block.push(stmt.clone(), span),
+            stmt => block.push(stmt, span),
         }
     }
 }

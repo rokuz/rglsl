@@ -1,6 +1,6 @@
 #![allow(clippy::panic)]
 
-use rglsl_ast::{parse_with, ParseOptions};
+use rglsl_ast::parse;
 use rglsl_sema::{analyze, Options, Stage};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -32,17 +32,8 @@ fn analyzed_with(name: &str, source: String, clean: bool) -> TestResult {
     std::thread::Builder::new()
         .stack_size(STACK)
         .spawn(move || -> Result<(), String> {
-            let unit = parse_with(
-                &source,
-                &ParseOptions {
-                    nesting_limit: None,
-                },
-            )
-            .map_err(|error| format!("{name}: {error}"))?;
-            let options = Options {
-                type_depth_limit: None,
-                ..Options::new(Stage::Fragment)
-            };
+            let unit = parse(&source).map_err(|error| format!("{name}: {error}"))?;
+            let options = Options::new(Stage::Fragment);
             let analysis = analyze(&unit, &options);
             let errors: Vec<String> = analysis
                 .diagnostics

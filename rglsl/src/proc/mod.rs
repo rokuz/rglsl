@@ -12,6 +12,7 @@ pub use rglsl_types::small_float;
 mod subgroup;
 mod terminator;
 mod type_methods;
+mod type_walk;
 mod typifier;
 
 pub use constant_evaluator::{
@@ -27,6 +28,7 @@ use thiserror::Error;
 pub use type_methods::{
     concrete_int_scalars, min_max_float_representable_by, vector_size_str, vector_sizes,
 };
+pub use type_walk::{any_type, array_element, contains, contains_type, post_order};
 pub use typifier::{compare_types, ResolveContext, ResolveError, TypeResolution, LSS_ARRAY_LENGTH};
 
 use crate::non_max_u32::NonMaxU32;
@@ -1616,11 +1618,10 @@ pub fn contains_ray_object(
     types: &crate::UniqueArena<crate::Type>,
     ty: crate::Handle<crate::Type>,
 ) -> bool {
-    match types[ty].inner {
-        crate::TypeInner::RayQuery { .. } | crate::TypeInner::HitObject { .. } => true,
-        crate::TypeInner::Array { base, .. } => contains_ray_object(types, base),
-        _ => false,
-    }
+    matches!(
+        types[array_element(types, ty)].inner,
+        crate::TypeInner::RayQuery { .. } | crate::TypeInner::HitObject { .. }
+    )
 }
 
 pub fn long_math_result_members(

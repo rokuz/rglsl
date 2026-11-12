@@ -1,4 +1,4 @@
-use alloc::{format, string::String};
+use alloc::{format, string::String, vec::Vec};
 
 use super::{
     analyzer::{UniformityDisruptor, UniformityRequirements},
@@ -129,6 +129,8 @@ pub enum LocalVariableError {
 #[derive(Clone, Debug, thiserror::Error)]
 #[cfg_attr(test, derive(PartialEq))]
 pub enum FunctionError {
+    #[error("internal error: the analysis of a block did not finish")]
+    Unfinished,
     #[error("Expression {handle:?} is invalid")]
     Expression {
         handle: Handle<crate::Expression>,
@@ -296,40 +298,53 @@ fn logically_matches(
     right: Handle<crate::Type>,
 ) -> bool {
     use crate::TypeInner as Ti;
-    if left == right {
-        return true;
-    }
-    match (&types[left].inner, &types[right].inner) {
-        (
-            &Ti::Array {
-                base: left_base,
-                size: left_size,
-                ..
-            },
-            &Ti::Array {
-                base: right_base,
-                size: right_size,
-                ..
-            },
-        ) => left_size == right_size && logically_matches(types, left_base, right_base),
-        (
-            &Ti::Struct {
-                members: ref left_members,
-                ..
-            },
-            &Ti::Struct {
-                members: ref right_members,
-                ..
-            },
-        ) => {
-            left_members.len() == right_members.len()
-                && left_members
-                    .iter()
-                    .zip(right_members)
-                    .all(|(left, right)| logically_matches(types, left.ty, right.ty))
+    let mut pending = Vec::from([(left, right)]);
+    while let Some((left, right)) = pending.pop() {
+        if left == right {
+            continue;
         }
-        (left, right) => left == right,
+        let matches = match (&types[left].inner, &types[right].inner) {
+            (
+                &Ti::Array {
+                    base: left_base,
+                    size: left_size,
+                    ..
+                },
+                &Ti::Array {
+                    base: right_base,
+                    size: right_size,
+                    ..
+                },
+            ) => {
+                pending.push((left_base, right_base));
+                left_size == right_size
+            }
+            (
+                &Ti::Struct {
+                    members: ref left_members,
+                    ..
+                },
+                &Ti::Struct {
+                    members: ref right_members,
+                    ..
+                },
+            ) => {
+                pending.extend(
+                    left_members
+                        .iter()
+                        .zip(right_members)
+                        .rev()
+                        .map(|(left, right)| (left.ty, right.ty)),
+                );
+                left_members.len() == right_members.len()
+            }
+            (left, right) => left == right,
+        };
+        if !matches {
+            return false;
+        }
     }
+    true
 }
 
 pub(crate) fn abort_message_length(message: &str) -> u32 {
@@ -350,10 +365,26 @@ bitflags::bitflags! {
     }
 }
 
+enum Validation<'a> {
+    Block {
+        statements: &'a crate::Block,
+        context: BlockContext<'a>,
+        scoped: bool,
+    },
+    Statement(&'a crate::Statement, crate::Span, BlockContext<'a>),
+    Scope(usize),
+    BreakIf {
+        condition: Option<Handle<crate::Expression>>,
+        context: BlockContext<'a>,
+        base: usize,
+    },
+}
+
 struct BlockInfo {
     stages: super::ShaderStages,
 }
 
+#[derive(Clone, Copy)]
 struct BlockContext<'a> {
     abilities: ControlFlowAbility,
     info: &'a FunctionInfo,
@@ -1219,48 +1250,6 @@ impl super::Validator {
         }
     }
 
-    fn validate_block_impl(
-        &mut self,
-        statements: &crate::Block,
-        context: &BlockContext,
-    ) -> Result<BlockInfo, WithSpan<FunctionError>> {
-        let mut stages = super::ShaderStages::all();
-        for (statement, &span) in statements.span_iter() {
-            stages &= self.validate_statement_kind(statement, span, context)?;
-        }
-        Ok(BlockInfo { stages })
-    }
-
-    fn validate_statement_kind(
-        &mut self,
-        statement: &crate::Statement,
-        span: crate::Span,
-        context: &BlockContext,
-    ) -> Result<super::ShaderStages, WithSpan<FunctionError>> {
-        use crate::Statement as S;
-        match *statement {
-            S::Block(ref block) => self.validate_block(block, context).map(|info| info.stages),
-            S::If {
-                condition,
-                ref accept,
-                ref reject,
-                control: _,
-            } => self.validate_if(condition, accept, reject, context),
-            S::Switch {
-                selector,
-                ref cases,
-                control: _,
-            } => self.validate_switch(selector, cases, span, context),
-            S::Loop {
-                ref body,
-                ref continuing,
-                break_if,
-                control: _,
-            } => self.validate_loop(body, continuing, break_if, context),
-            _ => self.validate_statement(statement, span, context),
-        }
-    }
-
     fn validate_condition(
         &self,
         condition: Handle<crate::Expression>,
@@ -1274,74 +1263,6 @@ impl super::Validator {
             _ => Err(FunctionError::InvalidIfType(condition)
                 .with_span_handle(condition, context.expressions)),
         }
-    }
-
-    fn validate_if(
-        &mut self,
-        condition: Handle<crate::Expression>,
-        accept: &crate::Block,
-        reject: &crate::Block,
-        context: &BlockContext,
-    ) -> Result<super::ShaderStages, WithSpan<FunctionError>> {
-        self.validate_condition(condition, context)?;
-        let mut stages = super::ShaderStages::all();
-        for block in [accept, reject] {
-            stages &= self.validate_block(block, context)?.stages;
-        }
-        Ok(stages)
-    }
-
-    fn validate_switch(
-        &mut self,
-        selector: Handle<crate::Expression>,
-        cases: &[crate::SwitchCase],
-        span: crate::Span,
-        context: &BlockContext,
-    ) -> Result<super::ShaderStages, WithSpan<FunctionError>> {
-        self.validate_switch_cases(selector, cases, span, context)?;
-        let pass_through_abilities =
-            context.abilities & (ControlFlowAbility::RETURN | ControlFlowAbility::CONTINUE);
-        let sub_context =
-            context.with_abilities(pass_through_abilities | ControlFlowAbility::BREAK);
-        let mut stages = super::ShaderStages::all();
-        for case in cases {
-            stages &= self.validate_block(&case.body, &sub_context)?.stages;
-        }
-        Ok(stages)
-    }
-
-    fn validate_loop(
-        &mut self,
-        body: &crate::Block,
-        continuing: &crate::Block,
-        break_if: Option<Handle<crate::Expression>>,
-        context: &BlockContext,
-    ) -> Result<super::ShaderStages, WithSpan<FunctionError>> {
-        let base_expression_count = self.valid_expression_list.len();
-        let pass_through_abilities = context.abilities & ControlFlowAbility::RETURN;
-        let mut stages = self
-            .validate_block_impl(
-                body,
-                &context.with_abilities(
-                    pass_through_abilities
-                        | ControlFlowAbility::BREAK
-                        | ControlFlowAbility::CONTINUE,
-                ),
-            )?
-            .stages;
-        stages &= self
-            .validate_block_impl(
-                continuing,
-                &context.with_abilities(ControlFlowAbility::empty()),
-            )?
-            .stages;
-        if let Some(condition) = break_if {
-            self.validate_condition(condition, context)?;
-        }
-        for handle in self.valid_expression_list.drain(base_expression_count..) {
-            self.valid_expression_set.remove(handle);
-        }
-        Ok(stages)
     }
 
     fn validate_switch_cases(
@@ -2465,12 +2386,128 @@ impl super::Validator {
         statements: &crate::Block,
         context: &BlockContext,
     ) -> Result<BlockInfo, WithSpan<FunctionError>> {
-        let base_expression_count = self.valid_expression_list.len();
-        let info = self.validate_block_impl(statements, context)?;
-        for handle in self.valid_expression_list.drain(base_expression_count..) {
+        let mut stages = super::ShaderStages::all();
+        let mut tasks = Vec::from([Validation::Block {
+            statements,
+            context: *context,
+            scoped: true,
+        }]);
+        while let Some(task) = tasks.pop() {
+            match task {
+                Validation::Block {
+                    statements,
+                    context,
+                    scoped,
+                } => {
+                    if scoped {
+                        tasks.push(Validation::Scope(self.valid_expression_list.len()));
+                    }
+                    tasks.extend(
+                        (0..statements.len())
+                            .rev()
+                            .filter_map(|index| statements.span_at(index))
+                            .map(|(statement, &span)| {
+                                Validation::Statement(statement, span, context)
+                            }),
+                    );
+                }
+                Validation::Statement(statement, span, context) => {
+                    stages &= self.validate_statement_kind(statement, span, context, &mut tasks)?;
+                }
+                Validation::Scope(base) => self.forget_expressions(base),
+                Validation::BreakIf {
+                    condition,
+                    context,
+                    base,
+                } => {
+                    if let Some(condition) = condition {
+                        self.validate_condition(condition, &context)?;
+                    }
+                    self.forget_expressions(base);
+                }
+            }
+        }
+        Ok(BlockInfo { stages })
+    }
+
+    fn forget_expressions(&mut self, base: usize) {
+        for handle in self.valid_expression_list.drain(base..) {
             self.valid_expression_set.remove(handle);
         }
-        Ok(info)
+    }
+
+    fn validate_statement_kind<'a>(
+        &mut self,
+        statement: &'a crate::Statement,
+        span: crate::Span,
+        context: BlockContext<'a>,
+        tasks: &mut Vec<Validation<'a>>,
+    ) -> Result<super::ShaderStages, WithSpan<FunctionError>> {
+        use crate::Statement as S;
+        let block = |statements, context, scoped| Validation::Block {
+            statements,
+            context,
+            scoped,
+        };
+        match *statement {
+            S::Block(ref inner) => tasks.push(block(inner, context, true)),
+            S::If {
+                condition,
+                ref accept,
+                ref reject,
+                control: _,
+            } => {
+                self.validate_condition(condition, &context)?;
+                tasks.push(block(reject, context, true));
+                tasks.push(block(accept, context, true));
+            }
+            S::Switch {
+                selector,
+                ref cases,
+                control: _,
+            } => {
+                self.validate_switch_cases(selector, cases, span, &context)?;
+                let pass_through_abilities =
+                    context.abilities & (ControlFlowAbility::RETURN | ControlFlowAbility::CONTINUE);
+                let sub_context =
+                    context.with_abilities(pass_through_abilities | ControlFlowAbility::BREAK);
+                tasks.extend(
+                    cases
+                        .iter()
+                        .rev()
+                        .map(|case| block(&case.body, sub_context, true)),
+                );
+            }
+            S::Loop {
+                ref body,
+                ref continuing,
+                break_if,
+                control: _,
+            } => {
+                let pass_through_abilities = context.abilities & ControlFlowAbility::RETURN;
+                tasks.push(Validation::BreakIf {
+                    condition: break_if,
+                    context,
+                    base: self.valid_expression_list.len(),
+                });
+                tasks.push(block(
+                    continuing,
+                    context.with_abilities(ControlFlowAbility::empty()),
+                    false,
+                ));
+                tasks.push(block(
+                    body,
+                    context.with_abilities(
+                        pass_through_abilities
+                            | ControlFlowAbility::BREAK
+                            | ControlFlowAbility::CONTINUE,
+                    ),
+                    false,
+                ));
+            }
+            _ => return self.validate_statement(statement, span, &context),
+        }
+        Ok(super::ShaderStages::all())
     }
 
     fn validate_local_var(

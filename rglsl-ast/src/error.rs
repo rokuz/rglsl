@@ -44,8 +44,6 @@ pub enum ParseErrorKind {
     UnknownType(String),
     #[error("`{0}` is a reserved word and cannot be used as a name")]
     ReservedWord(String),
-    #[error("the source is nested too deeply")]
-    NestingTooDeep,
     #[error("the source is too large")]
     SourceTooLarge,
     #[error("the source has too many syntax nodes")]

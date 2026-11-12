@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use rglsl_ast::ast::{ExpressionKind, StatementKind, TranslationUnit};
-use rglsl_ast::{parse_with, ParseOptions};
+
 use rglsl_fuzz::build::Builder;
 use rglsl_fuzz::injection::{apply_edits, contains_top_level_break, injection_points};
 use rglsl_fuzz::job::{add_braces, node_count};
@@ -58,12 +58,7 @@ fn shader() -> String {
 }
 
 fn parse(source: &str) -> TestResult<TranslationUnit> {
-    Ok(parse_with(
-        source,
-        &ParseOptions {
-            nesting_limit: None,
-        },
-    )?)
+    Ok(rglsl_ast::parse(source)?)
 }
 
 #[test]

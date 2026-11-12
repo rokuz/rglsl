@@ -87,22 +87,54 @@ fn compatible_sizes(
 }
 
 fn compatible(a: &Side, b: &Side, path: &mut Vec<PathStep>, strict: bool) -> Result<(), Mismatch> {
-    let left = &a.module.types[a.ty];
-    let right = &b.module.types[b.ty];
-    if left.name != right.name {
-        return Err(Mismatch::Types);
-    }
-    let nested = |path: &mut Vec<PathStep>, step, ty_a, ty_b| {
-        path.push(step);
-        let result = compatible(
+    let start = path.len();
+    let mut pending = Vec::from([(a.ty, b.ty, start, None, true)]);
+    while let Some((ty_a, ty_b, depth, step, same)) = pending.pop() {
+        if !same {
+            path.truncate(start);
+            return Err(Mismatch::Types);
+        }
+        path.truncate(depth);
+        path.extend(step);
+        let checked = compatible_shallow(
             &Side { ty: ty_a, ..*a },
             &Side { ty: ty_b, ..*b },
             path,
             strict,
         );
-        path.pop();
-        result
-    };
+        match checked {
+            Ok(children) => {
+                let depth = path.len();
+                pending.extend(
+                    children
+                        .into_iter()
+                        .rev()
+                        .map(|(step, ty_a, ty_b, same)| (ty_a, ty_b, depth, Some(step), same)),
+                );
+            }
+            Err(mismatch) => {
+                path.truncate(start);
+                return Err(mismatch);
+            }
+        }
+    }
+    path.truncate(start);
+    Ok(())
+}
+
+type Nested = (PathStep, Handle<Type>, Handle<Type>, bool);
+
+fn compatible_shallow(
+    a: &Side,
+    b: &Side,
+    path: &[PathStep],
+    strict: bool,
+) -> Result<Vec<Nested>, Mismatch> {
+    let left = &a.module.types[a.ty];
+    let right = &b.module.types[b.ty];
+    if left.name != right.name {
+        return Err(Mismatch::Types);
+    }
     match (&left.inner, &right.inner) {
         (
             &TypeInner::Array {
@@ -132,7 +164,7 @@ fn compatible(a: &Side, b: &Side, path: &mut Vec<PathStep>, strict: bool) -> Res
                 (a.implicit_at(path), b.implicit_at(path)),
                 strict,
             )?;
-            nested(path, PathStep::Element, base_a, base_b)
+            Ok(Vec::from([(PathStep::Element, base_a, base_b, true)]))
         }
         (
             TypeInner::Struct {
@@ -145,17 +177,21 @@ fn compatible(a: &Side, b: &Side, path: &mut Vec<PathStep>, strict: bool) -> Res
             if members_a.len() != members_b.len() {
                 return Err(Mismatch::Types);
             }
-            for (index, (member_a, member_b)) in (0_u32..).zip(members_a.iter().zip(members_b)) {
-                if member_a.name != member_b.name || member_a.binding != member_b.binding {
-                    return Err(Mismatch::Types);
-                }
-                nested(path, PathStep::Member(index), member_a.ty, member_b.ty)?;
-            }
-            Ok(())
+            Ok((0_u32..)
+                .zip(members_a.iter().zip(members_b))
+                .map(|(index, (member_a, member_b))| {
+                    (
+                        PathStep::Member(index),
+                        member_a.ty,
+                        member_b.ty,
+                        member_a.name == member_b.name && member_a.binding == member_b.binding,
+                    )
+                })
+                .collect())
         }
         (left, right) => {
             if structurally_equal(a.module, left, b.module, right) {
-                Ok(())
+                Ok(Vec::new())
             } else {
                 Err(Mismatch::Types)
             }
@@ -164,26 +200,27 @@ fn compatible(a: &Side, b: &Side, path: &mut Vec<PathStep>, strict: bool) -> Res
 }
 
 fn structurally_equal(module_a: &Module, a: &TypeInner, module_b: &Module, b: &TypeInner) -> bool {
-    match (a, b) {
-        (
-            &TypeInner::Pointer {
-                base: base_a,
-                space: space_a,
-            },
-            &TypeInner::Pointer {
-                base: base_b,
-                space: space_b,
-            },
-        ) => {
-            space_a == space_b
-                && structurally_equal(
-                    module_a,
-                    &module_a.types[base_a].inner,
-                    module_b,
-                    &module_b.types[base_b].inner,
-                )
+    let (mut a, mut b) = (a, b);
+    loop {
+        match (a, b) {
+            (
+                &TypeInner::Pointer {
+                    base: base_a,
+                    space: space_a,
+                },
+                &TypeInner::Pointer {
+                    base: base_b,
+                    space: space_b,
+                },
+            ) => {
+                if space_a != space_b {
+                    return false;
+                }
+                a = &module_a.types[base_a].inner;
+                b = &module_b.types[base_b].inner;
+            }
+            _ => return a == b,
         }
-        _ => a == b,
     }
 }
 

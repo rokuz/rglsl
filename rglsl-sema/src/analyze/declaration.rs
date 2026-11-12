@@ -942,7 +942,7 @@ impl Analyzer<'_> {
         } = place;
         let name = &declarator.name;
         let ty = base.clone().with_dimensions(dimensions);
-        let mut ty = self.bounded_type(ty, name.span);
+        let mut ty = ty;
         if in_block.is_some() {
             self.per_view_dimension(name.span, qualifiers, &mut ty, true);
         }
@@ -987,20 +987,7 @@ impl Analyzer<'_> {
         });
     }
 
-    fn struct_specifier_with(
-        &mut self,
-        specifier: &StructSpecifier,
-        span: Span,
-        members: Vec<Member>,
-    ) -> Type {
-        if self.options.type_depth_limit.is_some_and(|limit| {
-            members
-                .iter()
-                .any(|member| member.ty.depth(&self.types) >= limit)
-        }) {
-            self.error(span, DiagnosticKind::TypeTooDeep);
-            return Type::ERROR;
-        }
+    fn struct_specifier_with(&mut self, specifier: &StructSpecifier, members: Vec<Member>) -> Type {
         let name = specifier.name.as_ref().map(|name| name.node.clone());
         let Some(id) = self.types.add_struct(name, members) else {
             return Type::ERROR;
@@ -1012,18 +999,6 @@ impl Analyzer<'_> {
             }
         }
         Type::structure(id)
-    }
-
-    pub(crate) fn bounded_type(&mut self, ty: Type, span: Span) -> Type {
-        if self
-            .options
-            .type_depth_limit
-            .is_some_and(|limit| ty.depth(&self.types) > limit)
-        {
-            self.error(span, DiagnosticKind::TypeTooDeep);
-            return Type::ERROR;
-        }
-        ty
     }
 
     fn init_declarator_list(&mut self, list: &InitDeclaratorList) {
@@ -1342,7 +1317,7 @@ impl Analyzer<'_> {
         let name = &declarator.name;
         let dimensions = self.array_sizes(declarator.array.as_ref());
         let ty = base.clone().with_dimensions(&dimensions);
-        let mut ty = self.bounded_type(ty, name.span);
+        let mut ty = ty;
         let is_global = self.scopes.is_global();
         let mut qualifiers = qualifiers.clone();
         let mut broken = ty.is_error();
@@ -2291,7 +2266,7 @@ impl Analyzer<'_> {
         let qualifiers = self.optional_qualifiers(&parameter.ty.node);
         let base = self.type_specifier(&parameter.ty.specifier);
         let dimensions = self.array_sizes(parameter.array.as_ref());
-        let ty = self.bounded_type(base.with_dimensions(&dimensions), parameter.span);
+        let ty = base.with_dimensions(&dimensions);
         let name = parameter.name.as_ref().map(|name| name.node.clone());
         if ty.is_void() && name.is_none() && parameter.ty.qualifier.is_none() {
             return None;
@@ -2754,8 +2729,7 @@ impl<'b> Cx<'b, Analyzer<'_>> {
                 .await
             }
             TypeSpecifierNonArray::Struct(structure) => {
-                self.call(self.clone().struct_specifier(structure, span))
-                    .await
+                self.call(self.clone().struct_specifier(structure)).await
             }
             TypeSpecifierNonArray::Spirv(spirv) => {
                 self.call(self.clone().spirv_type_specifier(spirv)).await
@@ -2765,7 +2739,7 @@ impl<'b> Cx<'b, Analyzer<'_>> {
         let dimensions = self
             .call(self.clone().array_sizes(specifier.array.as_ref()))
             .await;
-        self.with(|analyzer| analyzer.bounded_type(base.with_dimensions(&dimensions), span))
+        base.with_dimensions(&dimensions)
     }
 
     pub(crate) async fn struct_members(
@@ -2829,7 +2803,6 @@ impl<'b> Cx<'b, Analyzer<'_>> {
                 .call(self.clone().array_sizes(declarator.array.as_ref()))
                 .await;
             let ty = base.clone().with_dimensions(&dimensions);
-            let ty = self.with(|analyzer| analyzer.bounded_type(ty, declarator.name.span));
             members.push(Member {
                 name: declarator.name.node.clone(),
                 ty,
@@ -2884,11 +2857,11 @@ impl<'b> Cx<'b, Analyzer<'_>> {
         members
     }
 
-    async fn struct_specifier(self, specifier: &'b StructSpecifier, span: Span) -> Type {
+    async fn struct_specifier(self, specifier: &'b StructSpecifier) -> Type {
         let members = self
             .call(self.clone().struct_members(&specifier.declarations, None))
             .await;
-        self.with(|analyzer| analyzer.struct_specifier_with(specifier, span, members))
+        self.with(|analyzer| analyzer.struct_specifier_with(specifier, members))
     }
 }
 

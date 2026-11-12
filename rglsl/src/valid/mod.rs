@@ -854,7 +854,12 @@ impl Validator {
                 })?;
             debug_assert!(
                 ty_info.flags.contains(TypeFlags::CONSTRUCTIBLE)
-                    == module.types[handle].inner.is_constructible(&module.types)
+                    == module.types[handle]
+                        .inner
+                        .is_constructible_with(|component| self
+                            .types
+                            .get(component.index())
+                            .is_some_and(|info| info.flags.contains(TypeFlags::CONSTRUCTIBLE)))
             );
             mod_info.type_flags.push(ty_info.flags);
             self.types[handle.index()] = ty_info;

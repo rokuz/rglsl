@@ -1,5 +1,5 @@
 use rglsl::object::PathStep;
-use rglsl::{ArraySize, Expression, Handle, Module, Span, Type, TypeInner};
+use rglsl::{ArraySize, Expression, Handle, Module, Span, StructMember, Type, TypeInner};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Mismatch {
@@ -56,15 +56,148 @@ pub(crate) fn unify(
     implicit: &Implicit,
     path: &mut Vec<PathStep>,
 ) -> Result<Handle<Type>, Mismatch> {
+    let start = path.len();
+    let result = unify_types(module, a, b, implicit, path);
+    path.truncate(start);
+    result
+}
+
+enum Unifying {
+    Array {
+        name: Option<String>,
+        bases: (Handle<Type>, Handle<Type>),
+        size: ArraySize,
+        strides: (u32, u32),
+    },
+    BindingArray {
+        name: Option<String>,
+        size: ArraySize,
+    },
+    Struct {
+        name: Option<String>,
+        members_a: Vec<StructMember>,
+        members_b: Vec<StructMember>,
+        span: u32,
+        members: Vec<StructMember>,
+    },
+}
+
+enum Entered {
+    Done(Handle<Type>),
+    Child(Handle<Type>, Handle<Type>),
+    Frame,
+}
+
+fn unify_types(
+    module: &mut Module,
+    a: Handle<Type>,
+    b: Handle<Type>,
+    implicit: &Implicit,
+    path: &mut Vec<PathStep>,
+) -> Result<Handle<Type>, Mismatch> {
+    let mut frames = Vec::new();
+    let mut next = Some((a, b));
+    let mut finished = None;
+    loop {
+        if let Some((a, b)) = next.take() {
+            match enter(module, a, b, implicit, path, &mut frames)? {
+                Entered::Done(ty) => finished = Some(ty),
+                Entered::Child(a, b) => {
+                    next = Some((a, b));
+                    continue;
+                }
+                Entered::Frame => {}
+            }
+        }
+        let Some(frame) = frames.pop() else {
+            return finished.ok_or(Mismatch::Types);
+        };
+        let (name, inner) = match frame {
+            Unifying::Array {
+                name,
+                bases: (base_a, base_b),
+                size,
+                strides: (stride_a, stride_b),
+            } => {
+                path.pop();
+                let base = finished.take().ok_or(Mismatch::Types)?;
+                let stride = if stride_a == stride_b || base != base_a || base != base_b {
+                    stride_a.max(stride_b)
+                } else {
+                    return Err(Mismatch::Types);
+                };
+                (name, TypeInner::Array { base, size, stride })
+            }
+            Unifying::BindingArray { name, size } => {
+                path.pop();
+                let base = finished.take().ok_or(Mismatch::Types)?;
+                (name, TypeInner::BindingArray { base, size })
+            }
+            Unifying::Struct {
+                name,
+                members_a,
+                members_b,
+                span,
+                mut members,
+            } => {
+                if let Some(ty) = finished.take() {
+                    path.pop();
+                    let member = members_a.get(members.len()).ok_or(Mismatch::Types)?;
+                    members.push(StructMember {
+                        ty,
+                        ..member.clone()
+                    });
+                }
+                let index = members.len();
+                if let (Some(member_a), Some(member_b)) =
+                    (members_a.get(index), members_b.get(index))
+                {
+                    let same_declaration = member_a.name == member_b.name
+                        && member_a.binding == member_b.binding
+                        && member_a.offset == member_b.offset
+                        && member_a.matrix_layout == member_b.matrix_layout
+                        && member_a.xfb_offset == member_b.xfb_offset
+                        && member_a.heap == member_b.heap
+                        && member_a.memory_decorations == member_b.memory_decorations;
+                    if !same_declaration {
+                        return Err(Mismatch::Types);
+                    }
+                    let step = u32::try_from(index).map_err(|_| Mismatch::Types)?;
+                    path.push(PathStep::Member(step));
+                    next = Some((member_a.ty, member_b.ty));
+                    frames.push(Unifying::Struct {
+                        name,
+                        members_a,
+                        members_b,
+                        span,
+                        members,
+                    });
+                    continue;
+                }
+                (name, TypeInner::Struct { members, span })
+            }
+        };
+        finished = Some(module.types.insert(Type { name, inner }, Span::UNDEFINED));
+    }
+}
+
+fn enter(
+    module: &Module,
+    a: Handle<Type>,
+    b: Handle<Type>,
+    implicit: &Implicit,
+    path: &mut Vec<PathStep>,
+    frames: &mut Vec<Unifying>,
+) -> Result<Entered, Mismatch> {
     if a == b {
-        return Ok(a);
+        return Ok(Entered::Done(a));
     }
     let type_a = module.types[a].clone();
     let type_b = module.types[b].clone();
     if type_a.name != type_b.name {
         return Err(Mismatch::Types);
     }
-    let inner = match (type_a.inner, type_b.inner) {
+    match (type_a.inner, type_b.inner) {
         (
             TypeInner::Array {
                 base: base_a,
@@ -79,15 +212,13 @@ pub(crate) fn unify(
         ) => {
             let size = merge_size(size_a, size_b, implicit.at(path))?;
             path.push(PathStep::Element);
-            let base = unify(module, base_a, base_b, implicit, path);
-            path.pop();
-            let base = base?;
-            let stride = if stride_a == stride_b || base != base_a || base != base_b {
-                stride_a.max(stride_b)
-            } else {
-                return Err(Mismatch::Types);
-            };
-            TypeInner::Array { base, size, stride }
+            frames.push(Unifying::Array {
+                name: type_a.name,
+                bases: (base_a, base_b),
+                size,
+                strides: (stride_a, stride_b),
+            });
+            Ok(Entered::Child(base_a, base_b))
         }
         (
             TypeInner::BindingArray {
@@ -101,9 +232,11 @@ pub(crate) fn unify(
         ) => {
             let size = merge_size(size_a, size_b, implicit.at(path))?;
             path.push(PathStep::Element);
-            let base = unify(module, base_a, base_b, implicit, path);
-            path.pop();
-            TypeInner::BindingArray { base: base?, size }
+            frames.push(Unifying::BindingArray {
+                name: type_a.name,
+                size,
+            });
+            Ok(Entered::Child(base_a, base_b))
         }
         (
             TypeInner::Struct {
@@ -118,46 +251,38 @@ pub(crate) fn unify(
             if members_a.len() != members_b.len() {
                 return Err(Mismatch::Types);
             }
-            let mut members = Vec::with_capacity(members_a.len());
-            for (index, (member_a, member_b)) in (0_u32..).zip(members_a.iter().zip(&members_b)) {
-                let same_declaration = member_a.name == member_b.name
-                    && member_a.binding == member_b.binding
-                    && member_a.offset == member_b.offset
-                    && member_a.matrix_layout == member_b.matrix_layout
-                    && member_a.xfb_offset == member_b.xfb_offset
-                    && member_a.heap == member_b.heap
-                    && member_a.memory_decorations == member_b.memory_decorations;
-                if !same_declaration {
-                    return Err(Mismatch::Types);
-                }
-                path.push(PathStep::Member(index));
-                let ty = unify(module, member_a.ty, member_b.ty, implicit, path);
-                path.pop();
-                members.push(rglsl::StructMember {
-                    ty: ty?,
-                    ..member_a.clone()
-                });
-            }
-            TypeInner::Struct {
-                members,
+            frames.push(Unifying::Struct {
+                name: type_a.name,
+                members: Vec::with_capacity(members_a.len()),
+                members_a,
+                members_b,
                 span: span_a.max(span_b),
-            }
+            });
+            Ok(Entered::Frame)
         }
-        _ => return Err(Mismatch::Types),
-    };
-    Ok(module.types.insert(
-        Type {
-            name: type_a.name,
-            inner,
-        },
-        Span::UNDEFINED,
-    ))
+        _ => Err(Mismatch::Types),
+    }
 }
 
 pub(crate) fn same_expression(
     module: &Module,
     a: Handle<Expression>,
     b: Handle<Expression>,
+) -> bool {
+    let mut pending = Vec::from([(a, b)]);
+    while let Some((a, b)) = pending.pop() {
+        if !same_expression_shallow(module, a, b, &mut pending) {
+            return false;
+        }
+    }
+    true
+}
+
+fn same_expression_shallow(
+    module: &Module,
+    a: Handle<Expression>,
+    b: Handle<Expression>,
+    pending: &mut Vec<(Handle<Expression>, Handle<Expression>)>,
 ) -> bool {
     if a == b {
         return true;
@@ -173,7 +298,10 @@ pub(crate) fn same_expression(
         (Expression::ZeroValue(x), Expression::ZeroValue(y)) => x == y,
         (Expression::Constant(x), Expression::Constant(y)) => {
             match (module.constants.try_get(*x), module.constants.try_get(*y)) {
-                (Ok(x), Ok(y)) => x.ty == y.ty && same_expression(module, x.init, y.init),
+                (Ok(x), Ok(y)) if x.ty == y.ty => {
+                    pending.push((x.init, y.init));
+                    true
+                }
                 _ => false,
             }
         }
@@ -187,12 +315,17 @@ pub(crate) fn same_expression(
                 components: components_b,
             },
         ) => {
-            ty_a == ty_b
-                && components_a.len() == components_b.len()
-                && components_a
+            if ty_a != ty_b || components_a.len() != components_b.len() {
+                return false;
+            }
+            pending.extend(
+                components_a
                     .iter()
-                    .zip(components_b)
-                    .all(|(&x, &y)| same_expression(module, x, y))
+                    .copied()
+                    .zip(components_b.iter().copied())
+                    .rev(),
+            );
+            true
         }
         (
             Expression::Splat {
@@ -203,7 +336,13 @@ pub(crate) fn same_expression(
                 size: size_b,
                 value: value_b,
             },
-        ) => size_a == size_b && same_expression(module, *value_a, *value_b),
+        ) => {
+            if size_a != size_b {
+                return false;
+            }
+            pending.push((*value_a, *value_b));
+            true
+        }
         _ => left == right,
     }
 }
