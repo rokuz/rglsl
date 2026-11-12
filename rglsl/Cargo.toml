@@ -40,7 +40,6 @@ arbitrary = [
     "half/std",
     "rglsl-types/arbitrary",
 ]
-spv-in = ["dep:petgraph", "petgraph/graphmap", "dep:spirv"]
 spv-out = ["dep:spirv"]
 
 ## Enables colored output through codespan-reporting and termcolor.
@@ -74,7 +73,6 @@ num-traits.workspace = true
 spirv = { workspace = true, optional = true }
 thiserror.workspace = true
 serde = { workspace = true, features = ["alloc", "derive"], optional = true }
-petgraph = { workspace = true, optional = true }
 
 [build-dependencies]
 cfg_aliases.workspace = true

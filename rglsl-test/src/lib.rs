@@ -78,20 +78,6 @@ pub struct WriterSharedOptions {
     pub bounds_checks_policies: rglsl::proc::BoundsCheckPolicies,
 }
 
-#[derive(Debug, Default, serde::Deserialize)]
-#[serde(default)]
-pub struct SpirvInParameters {
-    pub adjust_coordinate_space: bool,
-}
-impl From<&SpirvInParameters> for rglsl::front::spv::Options {
-    fn from(value: &SpirvInParameters) -> Self {
-        Self {
-            adjust_coordinate_space: value.adjust_coordinate_space,
-            ..Default::default()
-        }
-    }
-}
-
 #[derive(Debug, serde::Deserialize)]
 #[serde(default)]
 pub struct SpirvOutParameters {
@@ -162,10 +148,6 @@ pub struct Parameters {
     //
     // Capabilities to enable. Defaults to `Capabilities::default()`.
     pub capabilities: Option<rglsl::valid::Capabilities>,
-
-    // -- spirv-in options --
-    #[serde(rename = "spv-in")]
-    pub spv_in: SpirvInParameters,
 
     // -- SPIR-V options --
     pub spv: SpirvOutParameters,
@@ -378,7 +360,7 @@ impl Input {
                 .extension()
                 .and_then(|extension| extension.to_str())
             {
-                Some("ron" | "spvasm" | "vert" | "frag" | "comp") => {
+                Some("ron" | "vert" | "frag" | "comp") => {
                     params.targets = Some(Targets::default_targets())
                 }
                 _ => return Err(format!("Unknown extension: {}", input_path.display()).into()),

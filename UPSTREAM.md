@@ -45,8 +45,8 @@ changelog was dropped; see upstream for the history before the fork.
   `back::Level`, `Baked`, `proc::index::{find_checked_indexes, access_needs_check,
   bounds_check_iter, oob_local_types}`.
 - Snapshot tests: outputs and parameters for the removed backends, the `Targets` flags for
-  them, and the SPIRV-Cross step (`*.spvasm.glsl`). GLSL and SPIR-V inputs now produce
-  SPIR-V snapshots (they used to produce WGSL).
+  them, and the SPIRV-Cross step (`*.spvasm.glsl`). GLSL inputs now produce SPIR-V
+  snapshots (they used to produce WGSL).
 - `naga-cli`: the output formats and options of the removed backends. `naga-xtask`: every
   `validate` subcommand except `spv`. In M9 the rest of `naga-cli` was replaced by a
   glslangValidator-compatible command line (`docs/design/cli.md`): SPIR-V and bincode IR input,
@@ -63,6 +63,14 @@ changelog was dropped; see upstream for the history before the fork.
 - Upstream's 165 WGSL snapshot inputs were converted to serialized IR (`rglsl/tests/in/ir/*.ron`)
   with the WGSL frontend before it was removed, so the SPIR-V backend keeps that coverage.
   The 24 snapshots that embedded the WGSL source as debug information lost it.
+
+- **The SPIR-V frontend** (`front/spv`, the `spv-in` feature, 2026-11-12), with what only it
+  used: `front/atomic_upgrade.rs` (`Module::upgrade_atomics`), `front/interpolator.rs`
+  (`Binding::apply_default_interpolation`), `HandleSet::is_empty`, the `petgraph` dependency,
+  the `spv_parser` fuzz target, the SPIR-V snapshot inputs (`rglsl/tests/in/spv`, their
+  outputs and the `spv-in` snapshot parameters) and the SPIR-V input cases of the nesting test.
+  The SPIR-V round trip of `atomicCompareExchange` inspects the written SPIR-V with `rspirv`
+  instead of reading it back, and the `glsl_variant` fuzz target no longer reads its SPIR-V back.
 
 - **WGSL semantics in the SPIR-V backend.** Code that made the output behave as WGSL
   requires and that glslang does not emit, since GLSL leaves those cases undefined or does
@@ -161,7 +169,6 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
 - **`MathFunction::Outer` typing.** `outer(c, r)` has one row per component of `c` and one
   column per component of `r`, as in GLSL and SPIR-V; upstream had them swapped
   (`proc/overloads/mathfunction.rs`).
-- **Default interpolation keeps an explicit sampling** (`front/interpolator.rs`).
 - **Cull distances are supported by the SPIR-V backend** (`Capabilities::CULL_DISTANCE` is in
   `back::spv::supported_capabilities`): every vertex shader declares `gl_PerVertex` with
   `gl_CullDistance`, as glslang does.
@@ -386,13 +393,8 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   an array sized by a specialization constant in push constants (it built a context without
   overrides); such an array covers the rest of the push-constant range, and
   `ImmediateSlots::from_range` saturates instead of overflowing.
-- **No panics in the front ends.** The SPIR-V front end returns an error where upstream
-  panicked on malformed input or a broken invariant (`front/spv`: the new `Error` variants
-  `InvalidImageCoordinateType`, `Layout` and `InternalError`; `atomic_upgrade::Error::
-  StructNotAccessedAtomically`). An `OpExecutionMode LocalSize` without three operands, an `OpCompositeInsert` index
-  past the composite's last component (`InvalidAccessIndex`) and an `OpCompositeConstruct`
-  without constituents no longer panic. `ParseErrors::emit_to_writer*`/`emit_to_stderr*` (GLSL) and
-  `spv::Error::emit_to_writer*` return the rendering error instead of panicking, and
+- **No panics in the front ends.** `ParseErrors::emit_to_writer*`/`emit_to_stderr*` (GLSL)
+  return the rendering error instead of panicking, and
   `emit_to_string*` falls back to the plain message when the source location cannot be
   rendered. `VertexFormat::min_acceleration_structure_vertex_stride` and
   `acceleration_structure_stride_alignment` (`rglsl-types`) return `None` for other formats.
@@ -419,8 +421,8 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   member index out of range. Deserializing a `UniqueArena` with duplicate elements is an error
   instead of silently merging them and shifting later handles. Found by the `ir` fuzz target.
 - **No `unwrap`/`expect` in tests.** The unit tests taken from upstream (`compact`,
-  `proc::constant_evaluator`, `proc::overloads::regular`, `valid`, `back::spv::writer`,
-  `front::spv`), the integration tests in `rglsl/tests` and the `rglsl-test` snapshot support
+  `proc::constant_evaluator`, `proc::overloads::regular`, `valid`, `back::spv::writer`),
+  the integration tests in `rglsl/tests` and the `rglsl-test` snapshot support
   return `Result` (the crate's test-only `TestResult`) and use `?` instead of
   `unwrap`/`expect`/`unwrap_err`. The `glsl_parser` fuzz target builds its `defines` map without
   `unwrap`.
@@ -819,21 +821,12 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
     `small_types.rs` use post-order or memoized work lists. `small_types.rs` no longer stops
     at a type depth of 64. `contains_physical_type` finds a plain type's laid-out original
     through a reverse map instead of scanning every plain type.
-  - `front/spv` (SPIR-V input): `BlockContext::lower` is a frame machine over the body tree;
-    `patch_statements` walks a stack of statement slices in the original pre-order;
-    `insert_composite` splits level by level (`split_composite`) and composes bottom-up;
-    `record_atomic_access` and `get_image_expr_ty` follow access chains in loops;
-    `can_comparison_sample` loops over binding arrays. `Body` keeps its `depth` and a
-    skew-binary `jump` pointer so `is_parent` is logarithmic instead of linear in the depth.
-  - `front/atomic_upgrade.rs`: `upgrade_type` is a post-order task list; an out-of-range field
-    index is `Error::Unsupported` instead of a panic.
 - **`Clone` for `Block` is iterative** (`ir/block.rs`): nested blocks are copied with a work
   list, through `Block::shallow_clone`, `Statement::shell` and `Statement::child_blocks{,_mut}`,
   so cloning a function uses constant stack.
 
 - **GLSL arithmetic.** `BinaryOperator::Modulo` on floats is GLSL's floored `mod`, written as
-  `OpFMod` (upstream `OpFRem`, WGSL's truncated `%`); the constant evaluator folds it floored,
-  and the SPIR-V front end reads `OpFMod` as `Modulo` and polyfills `OpFRem` with `trunc`.
+  `OpFMod` (upstream `OpFRem`, WGSL's truncated `%`); the constant evaluator folds it floored.
   `MathFunction::Round` is GLSL's `round` (`GLSL.std.450 Round`, not folded by the evaluator);
   the new `MathFunction::RoundEven` is upstream's `Round`. Float `NotEqual` is
   `OpFUnordNotEqual` (upstream `OpFOrdNotEqual`). `Normalize`, `FaceForward` and `Reflect`

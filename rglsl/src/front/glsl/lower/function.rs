@@ -41,6 +41,14 @@ pub(super) struct FunctionLowerer<'l, 'a> {
     pub stepped: Option<Handle<Expression>>,
     pub physical_bases: BTreeMap<Handle<Expression>, Handle<crate::Type>>,
     pub argument_types: Vec<Handle<crate::Type>>,
+    jump_targets: Vec<JumpTarget>,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct JumpTarget {
+    pub breaks: usize,
+    pub continues: usize,
+    innermost_loop: Option<usize>,
 }
 
 #[derive(Clone)]
@@ -151,6 +159,20 @@ macro_rules! on_heap {
 
 pub(super) use on_heap;
 
+pub(super) fn ends_in_jump(block: &Block) -> bool {
+    match block.last() {
+        Some(
+            &(Statement::Break
+            | Statement::Continue
+            | Statement::Return { .. }
+            | Statement::Kill
+            | Statement::Abort { .. }),
+        ) => true,
+        Some(&Statement::RayPipelineFunction(ref function)) => function.is_terminator(),
+        _ => false,
+    }
+}
+
 fn ensure_returns(block: &mut Block) {
     let mut pending = alloc::vec![block];
     while let Some(block) = pending.pop() {
@@ -215,7 +237,52 @@ impl<'l, 'a> FunctionLowerer<'l, 'a> {
             stepped: None,
             physical_bases: BTreeMap::new(),
             argument_types: Vec::new(),
+            jump_targets: Vec::new(),
         }
+    }
+
+    pub(super) fn enter_jump_target(&mut self, is_loop: bool) {
+        let index = self.jump_targets.len();
+        let innermost_loop = if is_loop {
+            Some(index)
+        } else {
+            self.jump_targets
+                .last()
+                .and_then(|target| target.innermost_loop)
+        };
+        self.jump_targets.push(JumpTarget {
+            innermost_loop,
+            ..JumpTarget::default()
+        });
+    }
+
+    pub(super) fn leave_jump_target(&mut self, at: Span) -> Result<JumpTarget> {
+        self.jump_targets.pop().ok_or_else(|| internal(at))
+    }
+
+    pub(super) fn count_jump(&mut self, statement: &Statement) {
+        match *statement {
+            Statement::Break => {
+                if let Some(target) = self.jump_targets.last_mut() {
+                    target.breaks = target.breaks.saturating_add(1);
+                }
+            }
+            Statement::Continue => {
+                let innermost = self
+                    .jump_targets
+                    .last()
+                    .and_then(|target| target.innermost_loop);
+                if let Some(target) = innermost.and_then(|index| self.jump_targets.get_mut(index)) {
+                    target.continues = target.continues.saturating_add(1);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    pub(super) fn splice(&mut self, block: Block) {
+        self.flush();
+        self.block.extend_block(block);
     }
 
     pub(super) fn mark_precision(
@@ -354,17 +421,7 @@ impl<'l, 'a> FunctionLowerer<'l, 'a> {
     }
 
     pub(super) fn terminated(&self) -> bool {
-        match self.block.last() {
-            Some(
-                &(Statement::Break
-                | Statement::Continue
-                | Statement::Return { .. }
-                | Statement::Kill
-                | Statement::Abort { .. }),
-            ) => true,
-            Some(&Statement::RayPipelineFunction(ref function)) => function.is_terminator(),
-            _ => false,
-        }
+        ends_in_jump(&self.block)
     }
 
     pub(super) fn local(

@@ -18,7 +18,6 @@ thiserror.workspace = true
 [dev-dependencies]
 rglsl = { workspace = true, features = [
     "glsl-in",
-    "spv-in",
     "spv-out",
     "serialize",
     "deserialize",

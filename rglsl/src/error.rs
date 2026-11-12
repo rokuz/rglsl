@@ -18,15 +18,6 @@ impl fmt::Display for ShaderError<crate::front::glsl::ParseErrors> {
     }
 }
 
-#[cfg(feature = "spv-in")]
-impl fmt::Display for ShaderError<crate::front::spv::Error> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let label = self.label.as_deref().unwrap_or_default();
-        let string = self.inner.emit_to_string(&self.source);
-        write!(f, "\nShader '{label}' parsing {string}")
-    }
-}
-
 impl fmt::Display for ShaderError<crate::WithSpan<crate::valid::ValidationError>> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use codespan_reporting::{files::SimpleFile, term};
@@ -65,7 +56,7 @@ pub(crate) use _ErrorWrite as ErrorWrite;
 
 #[cfg(feature = "stderr")]
 #[cfg_attr(
-    not(any(feature = "spv-in", feature = "glsl-in")),
+    not(feature = "glsl-in"),
     expect(
         dead_code,
         reason = "only need `emit_to_writer` with an appropriate front-end."

@@ -8,12 +8,24 @@ use rglsl_sema::constant::Value;
 use rglsl_sema::types::{Scalar as GlslScalar, Type as GlslType};
 
 use super::constant::shape;
-use super::function::{FunctionLowerer, Local};
+use super::function::{ends_in_jump, FunctionLowerer, Local};
 use super::{internal, semantic, unsupported, GlobalRef, Result};
 use crate::{
     Block, Expression, Literal, LoopControl, LoopDependency, SelectionControl,
     Statement as IrStatement, SwitchCase, SwitchValue, UnaryOperator,
 };
+
+const fn switch_value(value: Value, unsigned: bool) -> Option<SwitchValue> {
+    match (value, unsigned) {
+        (Value::Int(value), false) => Some(SwitchValue::I32(value)),
+        (Value::Int(value), true) => Some(SwitchValue::U32(value.cast_unsigned())),
+        (Value::Uint(value), true) => Some(SwitchValue::U32(value)),
+        (Value::Uint(value), false) => Some(SwitchValue::I32(value.cast_signed())),
+        _ => None,
+    }
+}
+
+type CaseGroup<'b> = (Vec<SwitchValue>, Vec<&'b Statement>);
 
 fn selection_control(attributes: &[Attribute]) -> SelectionControl {
     let mut flatten = false;
@@ -71,8 +83,59 @@ impl FunctionLowerer<'_, '_> {
                     value: Some(self.rvalue(value)?),
                 },
             };
+        self.count_jump(&statement);
         self.push(statement, at);
         Ok(())
+    }
+
+    pub(super) fn constant_condition(
+        &self,
+        condition: &rglsl_ast::ast::Expression,
+    ) -> Option<bool> {
+        let info = self.lw.analysis.expression(condition.id)?;
+        if !info.is_constant || info.is_specialization {
+            return None;
+        }
+        match *info.value.as_ref()?.values.as_slice() {
+            [Value::Bool(value)] => Some(value),
+            _ => None,
+        }
+    }
+
+    fn constant_loop_condition(&self, condition: &Condition) -> Option<bool> {
+        match *condition {
+            Condition::Expression(ref expression) => self.constant_condition(expression),
+            Condition::Declaration(_) => None,
+        }
+    }
+
+    fn constant_selector(
+        &self,
+        selector: &rglsl_ast::ast::Expression,
+    ) -> Option<(Value, GlslType)> {
+        let info = self.lw.analysis.expression(selector.id)?;
+        if !info.is_constant || info.is_specialization {
+            return None;
+        }
+        Some((info.value.as_ref()?.first()?, info.ty.clone()))
+    }
+
+    fn strip_trailing_break(&mut self, block: &mut Block) -> bool {
+        if !matches!(block.last(), Some(&IrStatement::Break)) {
+            return false;
+        }
+        let length = block.len();
+        let span = block
+            .span_at(length.saturating_sub(1))
+            .map(|(_, span)| *span);
+        block.cull(length.saturating_sub(1)..);
+        if let Some(span) = span.filter(|span| span.is_defined()) {
+            if self.lw.debug.is_some() {
+                let marker = crate::Range::from_index_range(0..0, &self.expressions);
+                block.push(IrStatement::Emit(marker), span);
+            }
+        }
+        true
     }
 
     fn loop_control(&self, attributes: &[Attribute]) -> LoopControl {
@@ -443,6 +506,19 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         control: SelectionControl,
         at: crate::Span,
     ) -> Result<()> {
+        if let Some(taken) = self.with(|this| this.constant_condition(condition))? {
+            let branch = if taken {
+                Some(then_branch)
+            } else {
+                else_branch
+            };
+            if let Some(branch) = branch {
+                let frame = self.clone().statement(branch);
+                let result = self.nest(frame).await;
+                result?;
+            }
+            return Ok(());
+        }
         let condition = {
             let frame = self.clone().rvalue(condition);
             let result = self.nest(frame).await;
@@ -522,9 +598,14 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         control: LoopControl,
         at: crate::Span,
     ) -> Result<()> {
+        let constant = self.with(|this| this.constant_loop_condition(condition))?;
+        if constant == Some(false) {
+            return Ok(());
+        }
+        self.with(|this| this.enter_jump_target(true))?;
         let cx = self.clone();
         let frame = async move {
-            {
+            if constant.is_none() {
                 let condition = cx.with(|this| this.condition(condition))??;
                 cx.with(|this| this.break_unless(condition, at))??;
             }
@@ -534,6 +615,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             let result = self.clone().block(self.nest(frame)).await;
             result
         }?;
+        self.with(|this| this.leave_jump_target(at))??;
         self.with(|this| {
             this.push(
                 IrStatement::Loop {
@@ -555,15 +637,45 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         control: LoopControl,
         at: crate::Span,
     ) -> Result<()> {
-        let body = {
+        let constant = self.with(|this| this.constant_condition(condition))?;
+        self.with(|this| this.enter_jump_target(true))?;
+        let mut body = {
             let result = self
                 .clone()
                 .block(self.nest(self.clone().statement(body)))
                 .await;
             result
         }?;
+        let mut target = self.with(|this| this.leave_jump_target(at))??;
+        if constant == Some(false) && target.continues == 0 {
+            if self.with(|this| this.strip_trailing_break(&mut body))? {
+                target.breaks = target.breaks.saturating_sub(1);
+            }
+            if target.breaks == 0 {
+                self.with(|this| this.splice(body))?;
+                return Ok(());
+            }
+            if !ends_in_jump(&body) {
+                body.push(IrStatement::Break, at);
+            }
+            self.with(|this| {
+                this.push(
+                    IrStatement::Loop {
+                        body,
+                        continuing: Block::new(),
+                        break_if: None,
+                        control,
+                    },
+                    at,
+                )
+            })?;
+            return Ok(());
+        }
         let cx = self.clone();
         let frame = async move {
+            if constant == Some(true) {
+                return Ok(None);
+            }
             let value = cx.nest(cx.clone().rvalue(condition)).await?;
             cx.try_with(|lowerer| {
                 if lowerer.is_true(value) {
@@ -609,9 +721,17 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             let result = self.nest(frame).await;
             result
         }?;
+        let constant = match statement.condition {
+            Some(ref condition) => self.with(|this| this.constant_loop_condition(condition))?,
+            None => Some(true),
+        };
+        if constant == Some(false) {
+            return Ok(());
+        }
+        self.with(|this| this.enter_jump_target(true))?;
         let cx = self.clone();
         let frame = async move {
-            if let Some(ref condition) = statement.condition {
+            if let (Some(condition), None) = (statement.condition.as_ref(), constant) {
                 let condition = cx.with(|this| this.condition(condition))??;
                 cx.with(|this| this.break_unless(condition, at))??;
             }
@@ -621,6 +741,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             let result = self.clone().block(self.nest(frame)).await;
             result
         }?;
+        self.with(|this| this.leave_jump_target(at))??;
         let cx = self.clone();
         let frame = async move {
             match statement.increment {
@@ -660,13 +781,20 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 result
             };
         }
-        let (value, ty) = {
-            let frame = self.clone().typed(selector);
-            let result = self.nest(frame).await;
-            result
-        }?;
+        let constant = self.with(|this| this.constant_selector(selector))?;
+        let (value, ty) = match constant {
+            Some((_, ref ty)) => (None, ty.clone()),
+            None => {
+                let (value, ty) = {
+                    let frame = self.clone().typed(selector);
+                    let result = self.nest(frame).await;
+                    result
+                }?;
+                (Some(value), ty)
+            }
+        };
         let unsigned = ty == GlslType::scalar(GlslScalar::Uint);
-        let mut groups: Vec<(Vec<SwitchValue>, Vec<&Statement>)> = Vec::new();
+        let mut groups: Vec<CaseGroup<'b>> = Vec::new();
         for statement in statements {
             match statement.kind {
                 StatementKind::CaseLabel(ref label) => {
@@ -682,17 +810,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                                     .and_then(|value| value.first())
                                     .ok_or_else(|| internal(label_at))
                             })??;
-                            match (constant, unsigned) {
-                                (Value::Int(value), false) => SwitchValue::I32(value),
-                                (Value::Int(value), true) => {
-                                    SwitchValue::U32(value.cast_unsigned())
-                                }
-                                (Value::Uint(value), true) => SwitchValue::U32(value),
-                                (Value::Uint(value), false) => {
-                                    SwitchValue::I32(value.cast_signed())
-                                }
-                                _ => return Err(internal(label_at)),
-                            }
+                            switch_value(constant, unsigned).ok_or_else(|| internal(label_at))?
                         }
                     };
                     match groups.last_mut() {
@@ -709,6 +827,16 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 }
             }
         }
+        if let Some((selected, _)) = constant {
+            let selected = switch_value(selected, unsigned).ok_or_else(|| internal(at))?;
+            let frame = self
+                .clone()
+                .constant_switch(selector, groups, selected, control, at);
+            let result = self.nest(frame).await;
+            return result;
+        }
+        let value = value.ok_or_else(|| internal(at))?;
+        self.with(|this| this.enter_jump_target(false))?;
         let mut cases = Vec::new();
         for (labels, body) in groups {
             let count = labels.len();
@@ -721,54 +849,28 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     });
                     continue;
                 }
-                let cx = self.clone();
-                let statements = body.clone();
-                let frame = async move {
-                    for statement in statements {
-                        let terminated = cx.with(|this| this.terminated())?;
-                        if terminated {
-                            cx.try_with(|this| this.unreachable_declaration(statement))?;
-                        } else {
-                            cx.nest(cx.clone().statement(statement)).await?;
-                        }
-                    }
-                    Ok(())
-                };
                 let mut block = {
+                    let frame = self.clone().case_statements(body.clone());
                     let result = self.clone().block(self.nest(frame)).await;
                     result
                 }?;
-                let fall_through = match block.last() {
-                    Some(&IrStatement::Break) => {
-                        let length = block.len();
-                        let span = block
-                            .span_at(length.saturating_sub(1))
-                            .map(|(_, span)| *span);
-                        block.cull(length.saturating_sub(1)..);
-                        if let Some(span) = span.filter(|span| span.is_defined()) {
-                            let marker = self.with(|this| {
-                                this.lw.debug.is_some().then(|| {
-                                    crate::Range::from_index_range(0..0, &this.expressions)
-                                })
-                            })?;
-                            if let Some(range) = marker {
-                                block.push(IrStatement::Emit(range), span);
-                            }
+                let fall_through = if self.with(|this| this.strip_trailing_break(&mut block))? {
+                    false
+                } else {
+                    match block.last() {
+                        Some(
+                            &(IrStatement::Return { .. }
+                            | IrStatement::Continue
+                            | IrStatement::Kill
+                            | IrStatement::Abort { .. }),
+                        ) => false,
+                        Some(&IrStatement::RayPipelineFunction(ref function))
+                            if function.is_terminator() =>
+                        {
+                            false
                         }
-                        false
+                        _ => true,
                     }
-                    Some(
-                        &(IrStatement::Return { .. }
-                        | IrStatement::Continue
-                        | IrStatement::Kill
-                        | IrStatement::Abort { .. }),
-                    ) => false,
-                    Some(&IrStatement::RayPipelineFunction(ref function))
-                        if function.is_terminator() =>
-                    {
-                        false
-                    }
-                    _ => true,
                 };
                 cases.push(SwitchCase {
                     value: label,
@@ -777,6 +879,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 });
             }
         }
+        self.with(|this| this.leave_jump_target(at))??;
         if let Some(last) = cases.last_mut() {
             last.fall_through = false;
         }
@@ -792,6 +895,86 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 IrStatement::Switch {
                     selector: value,
                     cases,
+                    control,
+                },
+                at,
+            )
+        })?;
+        Ok(())
+    }
+
+    async fn case_statements(self, statements: Vec<&'b Statement>) -> Result<()> {
+        for statement in statements {
+            if self.with(|this| this.terminated())? {
+                self.try_with(|this| this.unreachable_declaration(statement))?;
+            } else {
+                let frame = self.clone().statement(statement);
+                let result = self.nest(frame).await;
+                result?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn constant_switch(
+        self,
+        selector: &'b rglsl_ast::ast::Expression,
+        groups: Vec<CaseGroup<'b>>,
+        selected: SwitchValue,
+        control: SelectionControl,
+        at: crate::Span,
+    ) -> Result<()> {
+        let chosen = groups
+            .iter()
+            .position(|&(ref labels, _)| labels.contains(&selected))
+            .or_else(|| {
+                groups
+                    .iter()
+                    .position(|&(ref labels, _)| labels.contains(&SwitchValue::Default))
+            });
+        let skipped = groups
+            .get(..chosen.unwrap_or(groups.len()))
+            .unwrap_or_default();
+        for statement in skipped.iter().flat_map(|&(_, ref body)| body.iter()) {
+            self.try_with(|this| this.unreachable_declaration(statement))?;
+        }
+        let Some(chosen) = chosen else {
+            return Ok(());
+        };
+        let statements: Vec<&'b Statement> = groups
+            .get(chosen..)
+            .unwrap_or_default()
+            .iter()
+            .flat_map(|&(_, ref body)| body.iter().copied())
+            .collect();
+        self.with(|this| this.enter_jump_target(false))?;
+        let mut block = {
+            let frame = self.clone().case_statements(statements);
+            let result = self.clone().block(self.nest(frame)).await;
+            result
+        }?;
+        let mut target = self.with(|this| this.leave_jump_target(at))??;
+        if self.with(|this| this.strip_trailing_break(&mut block))? {
+            target.breaks = target.breaks.saturating_sub(1);
+        }
+        if target.breaks == 0 {
+            self.with(|this| this.splice(block))?;
+            return Ok(());
+        }
+        let selector = {
+            let frame = self.clone().rvalue(selector);
+            let result = self.nest(frame).await;
+            result
+        }?;
+        self.with(|this| {
+            this.push(
+                IrStatement::Switch {
+                    selector,
+                    cases: alloc::vec![SwitchCase {
+                        value: SwitchValue::Default,
+                        body: block,
+                        fall_through: false,
+                    }],
                     control,
                 },
                 at,
