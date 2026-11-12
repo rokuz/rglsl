@@ -163,6 +163,7 @@ pub(crate) struct Preprocessor<'a> {
     pub(crate) disable_escapes: bool,
     pub(crate) extensions: [bool; TRACKED_EXTENSIONS.len()],
     pub(crate) include_stack: Vec<FileId>,
+    pub(crate) line_markers: Vec<LineMarker>,
     pub(crate) active_includes: BTreeMap<FileId, Vec<usize>>,
     pub(crate) changes: Vec<Change>,
     pub(crate) included_once: BTreeSet<FileId>,
@@ -174,6 +175,13 @@ pub(crate) struct Preprocessor<'a> {
     pub(crate) aborted: bool,
     pub(crate) last_at: At,
     pub(crate) root: FileId,
+}
+
+#[derive(Debug)]
+pub(crate) struct LineMarker {
+    pub(crate) epilogue: String,
+    pub(crate) end: (FileId, u32),
+    pub(crate) resume: (FileId, u32),
 }
 
 pub(crate) enum Scanned {
@@ -285,13 +293,14 @@ pub fn preprocess(
         disable_escapes: false,
         extensions: [false; TRACKED_EXTENSIONS.len()],
         include_stack: Vec::new(),
+        line_markers: Vec::new(),
         active_includes: BTreeMap::new(),
         changes: Vec::new(),
         included_once: BTreeSet::new(),
         sources,
         files,
         texts: BTreeMap::new(),
-        output: Output::new(file, options.limits.max_output_bytes),
+        output: Output::new(file, options.limits.max_output_bytes, options.listing),
         tokens_scanned: 0,
         aborted: false,
         last_at: root_at,
@@ -681,6 +690,7 @@ fn scan_tokens(macros: &MacroTable, input: &mut TokenInput, current: At) -> Toke
         token.at.column = current.column;
         token.at.line = current.line;
         token.at.source = current.source;
+        token.at.expanded = true;
         token
     }
 }
@@ -767,6 +777,12 @@ impl Preprocessor<'_> {
             self.last_at = file.current_at();
             if file.role == Role::Included {
                 self.leave_include();
+                if self.options.listing {
+                    if let Some(marker) = self.line_markers.pop() {
+                        self.output
+                            .line_directive(&marker.epilogue, marker.end, marker.resume);
+                    }
+                }
             }
         }
     }

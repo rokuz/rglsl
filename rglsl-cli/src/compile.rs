@@ -677,6 +677,8 @@ impl<'a> Session<'a> {
                 stage: unit
                     .stage()
                     .and_then(|stage| rglsl_pp::Stage::from_extension(stage_extension(stage))),
+                source_name: Some(unit.name.clone()),
+                listing: true,
                 ..rglsl_pp::Options::default()
             };
             let mut includer = self.includer();

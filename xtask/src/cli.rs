@@ -33,6 +33,7 @@ struct Case {
     stdin: Option<&'static str>,
     ignore_stdout: Option<&'static str>,
     ignore_stderr: bool,
+    exact_stdout: bool,
     spirv_val: Vec<&'static str>,
     expect: Expect,
 }
@@ -47,6 +48,7 @@ impl Case {
             stdin: None,
             ignore_stdout: None,
             ignore_stderr: false,
+            exact_stdout: false,
             spirv_val: Vec::new(),
             expect: Expect::Same,
         }
@@ -75,6 +77,11 @@ impl Case {
     fn ignore_messages(mut self, why: &'static str) -> Self {
         self.ignore_stdout = Some(why);
         self.ignore_stderr = true;
+        self
+    }
+
+    fn exact_stdout(mut self) -> Self {
+        self.exact_stdout = true;
         self
     }
 
@@ -368,14 +375,45 @@ fn cases() -> Vec<Case> {
             "E",
             &["-E", "-DUNDEFED", "-DFOO=200", "glsl.-D-U.frag"],
             &["glsl.-D-U.frag"],
-        ),
+        )
+        .exact_stdout(),
         Case::new(
             "E-include",
             &["-E", "-Iinc2", "include.system.vert"],
             &["include.system.vert", "bar.h"],
         )
         .dir("inc2")
-        .ignore_stdout("rglsl's -E output has no #line directives around included text"),
+        .exact_stdout(),
+        Case::new(
+            "E-include-nested",
+            &["-E", "include.vert"],
+            &["include.vert"],
+        )
+        .dir("inc1")
+        .dir("inc2")
+        .file_as("bar.h", "bar.h")
+        .file_as("foo.h", "foo.h")
+        .exact_stdout(),
+        Case::new(
+            "E-line",
+            &["-E", "vk.relaxed.stagelink.0.0.vert"],
+            &["vk.relaxed.stagelink.0.0.vert"],
+        )
+        .exact_stdout(),
+        Case::new(
+            "E-macros-pragmas",
+            &[
+                "-E",
+                "preprocessor.paste_stringify.vert",
+                "spv.pragma.stdgl.oob.vert",
+            ],
+            &[
+                "preprocessor.paste_stringify.vert",
+                "spv.pragma.stdgl.oob.vert",
+                "parent.h",
+            ],
+        )
+        .exact_stdout(),
         Case::new(
             "include-system",
             &["-V", "--aml", "-Iinc2", "include.system.vert"],
@@ -1196,6 +1234,14 @@ fn check(env: &Environment, case: &Case) -> Result<Verdict> {
         problems.push(format!(
             "stderr: {}",
             first_difference(&reference_stderr, &ours_stderr)
+        ));
+    }
+    if case.exact_stdout && glslang.stdout != ours.stdout {
+        let reference: Vec<String> = glslang.stdout.lines().map(str::to_owned).collect();
+        let mine: Vec<String> = ours.stdout.lines().map(str::to_owned).collect();
+        problems.push(format!(
+            "stdout differs byte for byte: {}",
+            first_difference(&reference, &mine)
         ));
     }
     if case.ignore_stdout.is_none() {

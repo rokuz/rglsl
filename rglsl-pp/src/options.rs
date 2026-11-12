@@ -120,6 +120,7 @@ pub struct Options {
     pub source_name: Option<String>,
     pub default_version: u32,
     pub limits: Limits,
+    pub listing: bool,
 }
 
 impl Default for Options {
@@ -132,6 +133,7 @@ impl Default for Options {
             source_name: None,
             default_version: 100,
             limits: Limits::default(),
+            listing: false,
         }
     }
 }

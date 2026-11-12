@@ -130,6 +130,7 @@ impl FileInput {
             column: offset_u32(self.pos.saturating_sub(self.line_start)),
             line: self.line,
             source: self.source,
+            expanded: false,
         }
     }
 

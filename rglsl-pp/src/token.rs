@@ -52,6 +52,7 @@ pub(crate) struct At {
     pub(crate) column: u32,
     pub(crate) line: i64,
     pub(crate) source: u32,
+    pub(crate) expanded: bool,
 }
 
 #[derive(Debug, Clone)]

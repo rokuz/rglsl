@@ -149,6 +149,7 @@ impl Preprocessor<'_> {
             file,
             offset,
             exact: 0,
+            expanded: true,
             ..current
         };
         token.fully_expanded = false;
