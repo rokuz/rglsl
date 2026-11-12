@@ -212,9 +212,7 @@ impl Analyzer<'_> {
                     };
                     return self.parameter_error(span, keyword, reason);
                 };
-                if kind == ParameterizedType::CooperativeVectorNv
-                    && matches!(scalar, Scalar::Bool | Scalar::Double)
-                {
+                if kind == ParameterizedType::CooperativeVectorNv && scalar == Scalar::Bool {
                     return self.parameter_error(span, keyword, "invalid component type");
                 }
                 let [size] = values.as_slice() else {
@@ -426,7 +424,17 @@ impl Analyzer<'_> {
                     ..Operand::temporary(ty.clone())
                 };
             }
-            if operand.ty.same_shape(ty) {
+            let paired_vectors = matches!(
+                (operand.ty.kind, ty.kind),
+                (
+                    TypeKind::LongVector { size: left, .. },
+                    TypeKind::CooperativeVector { size: right, .. }
+                ) | (
+                    TypeKind::CooperativeVector { size: left, .. },
+                    TypeKind::LongVector { size: right, .. }
+                ) if left == right && !operand.ty.is_array()
+            );
+            if operand.ty.same_shape(ty) || paired_vectors {
                 let value = match (constant, ty.component_count()) {
                     (true, Some(count)) => {
                         self.fold_constructor(ty, target, count, core::slice::from_ref(operand))
@@ -486,14 +494,19 @@ impl Analyzer<'_> {
         arguments: &[Expression],
         operands: &[Operand],
     ) -> Operand {
+        let cooperative_operands = operands
+            .iter()
+            .any(|operand| operand.ty.is_cooperative_vector());
         let ambiguous = |analyzer: &mut Self| {
-            analyzer.error(
-                span,
+            let kind = if cooperative_operands {
+                DiagnosticKind::NoMatchingFunction(String::from(name))
+            } else {
                 DiagnosticKind::InvalidCooperativeCall {
                     function: String::from(name),
                     reason: "can't resolve types (ambiguous long vector overload)",
-                },
-            );
+                }
+            };
+            analyzer.error(span, kind);
             Operand::error()
         };
         if operands.iter().any(|operand| operand.ty.is_error()) {
@@ -524,7 +537,18 @@ impl Analyzer<'_> {
         let Some((size, cooperative)) = shape else {
             return ambiguous(self);
         };
-        if cooperative && !COOPERATIVE_VECTOR_BUILTINS.contains(&name) {
+        let builtin_operand = |operand: &Operand| {
+            operand.ty.is_cooperative_vector()
+                && operand
+                    .ty
+                    .base_scalar()
+                    .and_then(Scalar::cooperative_vector_family)
+                    .is_some()
+        };
+        if cooperative
+            && (!COOPERATIVE_VECTOR_BUILTINS.contains(&name)
+                || !operands.iter().all(builtin_operand))
+        {
             self.error(span, DiagnosticKind::NoMatchingFunction(String::from(name)));
             return Operand::error();
         }
@@ -709,7 +733,9 @@ impl<'b> Cx<'b, Analyzer<'_>> {
         }
         if !matches!(
             kind,
-            ParameterizedType::LongVector | ParameterizedType::TensorArm
+            ParameterizedType::LongVector
+                | ParameterizedType::TensorArm
+                | ParameterizedType::CooperativeVectorNv
         ) {
             self.with(|analyzer| analyzer.vulkan_memory_model = true);
         }

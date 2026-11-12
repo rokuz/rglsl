@@ -41,8 +41,15 @@ pub(super) const fn replicate_shape(inner: &TypeInner) -> Result<ReplicateShape,
     })
 }
 
+fn vector_memory_operands(mut memory: Vec<Word>) -> Vec<Word> {
+    if memory.is_empty() {
+        memory.push(spirv::MemoryAccess::NONE.bits());
+    }
+    memory
+}
+
 impl Writer {
-    fn require_replicated_composites(&mut self) -> Result<(), Error> {
+    pub(super) fn require_replicated_composites(&mut self) -> Result<(), Error> {
         self.require_any(
             "replicated composites",
             &[spirv::Capability::ReplicatedCompositesEXT],
@@ -78,6 +85,13 @@ impl Writer {
                 self.get_constant_composite(LookupType::Handle(ty), &parts)
             }
             ReplicateShape::Replicated => {
+                let key = super::CachedConstant::Composite {
+                    ty: LookupType::Handle(ty),
+                    constituent_ids: alloc::vec![value_id],
+                };
+                if let Some(&id) = self.cached_constants.get(&key) {
+                    return Ok(id);
+                }
                 self.require_replicated_composites()?;
                 let type_id = self.get_handle_type_id(ty)?;
                 let id = self.id_gen.next();
@@ -86,6 +100,7 @@ impl Writer {
                 instruction.set_result(id);
                 instruction.add_operand(value_id);
                 instruction.to_words(&mut self.logical_layout.declarations);
+                self.cached_constants.insert(key, id);
                 Ok(id)
             }
         }
@@ -531,7 +546,7 @@ impl BlockContext<'_> {
         result_type_id: Word,
         block: &mut Block,
     ) -> Result<Word, Error> {
-        let memory = self.memory_access(pointer, false, false);
+        let memory = vector_memory_operands(self.memory_access(pointer, false, false));
         let pointer_id = self.cooperative_pointer(pointer, block)?;
         let offset_id = self.cached.get(offset)?;
         let id = self.gen_id();
@@ -615,7 +630,7 @@ impl BlockContext<'_> {
                 pointer,
                 offset,
             } => {
-                let memory = self.memory_access(pointer, false, true);
+                let memory = vector_memory_operands(self.memory_access(pointer, false, true));
                 let pointer_id = self.cooperative_pointer(pointer, block)?;
                 let mut instruction = Instruction::new(Op::CooperativeVectorStoreNV);
                 instruction.add_operand(pointer_id);

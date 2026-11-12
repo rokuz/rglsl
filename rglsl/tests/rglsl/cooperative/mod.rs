@@ -1,7 +1,7 @@
-use std::collections::{BTreeMap, BTreeSet};
+use alloc::collections::{BTreeMap, BTreeSet};
+use core::sync::atomic::{AtomicUsize, Ordering};
 use std::path::PathBuf;
 use std::process::Command;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 use rglsl::{
     back::spv,
@@ -16,6 +16,7 @@ use spirv::Op;
 use crate::TestResult;
 
 mod smoke;
+mod vector;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Target {
@@ -133,6 +134,26 @@ impl Compiled {
     }
 }
 
+fn load(words: &[u32]) -> TestResult<dr::Module> {
+    let mut kept = Vec::with_capacity(words.len());
+    kept.extend(words.iter().take(5));
+    let mut rest = words.get(5..).unwrap_or_default();
+    let mut in_functions = false;
+    while let Some(&first) = rest.first() {
+        let length = usize::try_from(first >> 16)?.max(1);
+        let opcode = first & 0xffff;
+        let instruction = rest.get(..length).ok_or("truncated SPIR-V")?;
+        if opcode == Op::Function as u32 {
+            in_functions = true;
+        }
+        if in_functions || opcode != Op::ExtInst as u32 {
+            kept.extend_from_slice(instruction);
+        }
+        rest = rest.get(length..).unwrap_or_default();
+    }
+    Ok(dr::load_words(kept)?)
+}
+
 fn count(module: &dr::Module, op: Op) -> usize {
     module
         .all_inst_iter()
@@ -226,7 +247,7 @@ fn line_of(source: &str, span: rglsl::Span) -> u32 {
     span.location(source).line_number
 }
 
-fn message(error: &dyn std::error::Error) -> String {
+fn message(error: &dyn core::error::Error) -> String {
     let mut text = error.to_string();
     let mut source = error.source();
     while let Some(inner) = source {
@@ -293,7 +314,7 @@ fn spirv_val(words: &[u32], target: Target) -> TestResult {
 }
 
 enum GlslangResult {
-    Accepted(dr::Module),
+    Accepted(Box<dr::Module>),
     Rejected(Vec<(u32, String)>),
 }
 
@@ -320,10 +341,14 @@ fn glslang(source: &str, target: Target, debug: Debug) -> TestResult<Option<Glsl
         String::from_utf8_lossy(&result.stderr)
     );
     if result.status.success() {
-        let words = std::fs::read(&output)?;
+        let bytes = std::fs::read(&output)?;
         let _ = std::fs::remove_file(&output);
-        let module = dr::load_bytes(words)?;
-        return Ok(Some(GlslangResult::Accepted(module)));
+        let words: Vec<u32> = bytes
+            .chunks_exact(4)
+            .filter_map(|chunk| <[u8; 4]>::try_from(chunk).ok().map(u32::from_le_bytes))
+            .collect();
+        let module = load(&words)?;
+        return Ok(Some(GlslangResult::Accepted(Box::new(module))));
     }
     let _ = std::fs::remove_file(&output);
     let errors = text
@@ -361,13 +386,13 @@ pub fn compile_with(
         )
     })?;
     spirv_val(&words, target)?;
-    let module = dr::load_words(&words)?;
+    let module = load(&words)?;
     let reference = match glslang(source, target, debug)? {
         None => None,
         Some(GlslangResult::Rejected(errors)) => {
             return Err(format!("glslang rejects the shader: {errors:?}").into())
         }
-        Some(GlslangResult::Accepted(reference)) => Some(reference),
+        Some(GlslangResult::Accepted(reference)) => Some(*reference),
     };
     if let (Some(reference), Glslang::SameStructure) = (&reference, expectation) {
         let theirs = structure(reference);
