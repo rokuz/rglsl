@@ -118,8 +118,8 @@ fn command(tool: &Path, case: &corpus::Case, test_dir: &Path, module: &Path) -> 
     for directory in runtests.include_dirs {
         command.arg(format!("-I{directory}"));
     }
-    if let Some(preamble) = runtests.glslang_preamble {
-        command.args(["--preamble-text", preamble]);
+    for line in runtests.preamble {
+        command.args(["--preamble-text", line]);
     }
     if runtests.hlsl_offsets {
         command.arg("--hlsl-offsets");
