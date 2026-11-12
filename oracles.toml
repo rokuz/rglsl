@@ -31,7 +31,7 @@ commit = "2f786eb352a298175454d05aa72da1633b0c82df"
 
 [amber-vulkan-headers]
 repo = "https://github.com/KhronosGroup/Vulkan-Headers"
-commit = "0007545ec811852c8ea6154f201624583c88563f"
+commit = "6802bb4733b63ed5efd3adb308a6c885ef180ea1"
 
 [ml-emulation-layer]
 repo = "https://github.com/arm/ai-ml-emulation-layer-for-vulkan"

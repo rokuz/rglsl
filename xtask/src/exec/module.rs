@@ -95,6 +95,59 @@ fn result_id_index(opcode: u32) -> Option<usize> {
     TYPED.iter().any(|op| *op as u32 == opcode).then_some(1)
 }
 
+pub fn shift_output_locations(bytes: &[u8], shift: u32) -> Result<Vec<u8>, String> {
+    if !bytes.len().is_multiple_of(4) {
+        return Err("SPIR-V size is not a multiple of 4".into());
+    }
+    let mut words: Vec<u32> = bytes
+        .chunks_exact(4)
+        .map(|chunk| u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+        .collect();
+    if words.first() != Some(&MAGIC) {
+        return Err("not a little-endian SPIR-V module".into());
+    }
+    let mut outputs = BTreeSet::new();
+    let mut locations = Vec::new();
+    let mut position = HEADER_WORDS;
+    while let Some(&first) = words.get(position) {
+        let count = usize::try_from(first >> 16).unwrap_or(0);
+        if count == 0 || position + count > words.len() {
+            return Err(format!("malformed instruction at word {position}"));
+        }
+        let operands = words
+            .get(position + 1..position + count)
+            .unwrap_or_default();
+        match (first & 0xffff, operands) {
+            (opcode, [_, id, class, ..])
+                if opcode == Op::Variable as u32
+                    && *class == spirv::StorageClass::Output as u32 =>
+            {
+                outputs.insert(*id);
+            }
+            (opcode, [target, decoration, _])
+                if opcode == Op::Decorate as u32
+                    && *decoration == spirv::Decoration::Location as u32 =>
+            {
+                locations.push((*target, position + 3));
+            }
+            _ => {}
+        }
+        position += count;
+    }
+    for (target, index) in locations {
+        if !outputs.contains(&target) {
+            continue;
+        }
+        let word = words
+            .get_mut(index)
+            .ok_or_else(|| format!("location operand at word {index} is missing"))?;
+        *word = word
+            .checked_sub(shift)
+            .ok_or_else(|| format!("output location {word} is below the shift {shift}"))?;
+    }
+    Ok(words.iter().flat_map(|word| word.to_le_bytes()).collect())
+}
+
 pub fn parse_bytes(bytes: &[u8]) -> Result<Module, String> {
     if !bytes.len().is_multiple_of(4) {
         return Err("SPIR-V size is not a multiple of 4".into());
@@ -232,6 +285,35 @@ pub mod tests {
             parse(&swapped).map_err(anyhow::Error::msg)?.globals.len(),
             1
         );
+        Ok(())
+    }
+
+    #[test]
+    fn shifts_only_output_locations() -> anyhow::Result<()> {
+        let location = spirv::Decoration::Location as u32;
+        let words = module(&[
+            instruction(Op::Decorate as u32, &[8, location, 8])?,
+            instruction(Op::Decorate as u32, &[9, location, 8])?,
+            instruction(
+                Op::Variable as u32,
+                &[7, 8, spirv::StorageClass::Output as u32],
+            )?,
+            instruction(
+                Op::Variable as u32,
+                &[6, 9, spirv::StorageClass::Input as u32],
+            )?,
+        ]);
+        let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
+        let shifted = parse_bytes(&shift_output_locations(&bytes, 8).map_err(anyhow::Error::msg)?)
+            .map_err(anyhow::Error::msg)?;
+        let values: Vec<u32> = shifted
+            .globals
+            .iter()
+            .filter(|i| i.is(Op::Decorate))
+            .filter_map(|i| i.word(2))
+            .collect();
+        assert_eq!(values, [0, 8]);
+        assert!(shift_output_locations(&bytes, 9).is_err());
         Ok(())
     }
 }

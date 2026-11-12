@@ -516,7 +516,14 @@ pub struct Reflection {
     pub vector_products: Vec<VectorProduct>,
     pub saturating_accumulation: bool,
     pub xfb: Option<Result<Xfb, String>>,
+    pub memory_extents: Vec<MemoryExtent>,
     pub problems: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MemoryExtent {
+    pub buffer: AddressBuffer,
+    pub end: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -558,6 +565,7 @@ impl Reflection {
             vector_products: Vec::new(),
             saturating_accumulation: false,
             xfb: None,
+            memory_extents: Vec::new(),
             problems: Vec::new(),
         }
     }
@@ -719,6 +727,16 @@ impl Types<'_> {
         None
     }
 
+    fn stored_scalar(&self, id: u32) -> Option<Scalar> {
+        self.scalar(id).or_else(|| {
+            let instruction = self.get(id).filter(|i| i.is(Op::TypeFloat))?;
+            Some(Scalar {
+                kind: ScalarKind::Uint,
+                width: instruction.word(1)?,
+            })
+        })
+    }
+
     fn layout(&self, id: u32, matrix: Option<(u32, bool)>, depth: u32) -> Result<Layout, String> {
         self.layout_in(id, matrix, depth, &mut Vec::new())
     }
@@ -765,7 +783,7 @@ impl Types<'_> {
         let op = instruction.opcode;
         if op == Op::TypeBool as u32 || op == Op::TypeInt as u32 || op == Op::TypeFloat as u32 {
             return self
-                .scalar(id)
+                .stored_scalar(id)
                 .map(Layout::Scalar)
                 .ok_or_else(|| "unsupported scalar type".to_string());
         }
@@ -773,7 +791,7 @@ impl Types<'_> {
             let component = instruction.word(1).ok_or("bad vector type")?;
             let count = instruction.word(2).ok_or("bad vector type")?;
             let scalar = self
-                .scalar(component)
+                .stored_scalar(component)
                 .ok_or_else(|| "unsupported vector component".to_string())?;
             return Ok(Layout::Vector { scalar, count });
         }
@@ -1502,10 +1520,14 @@ pub fn reflect(module: &Module) -> Result<Reflection, String> {
                     }
                     continue;
                 }
-                let arrayed = arrayed_interface(model, output)
-                    || (!output
-                        && model == ExecutionModel::Fragment
-                        && decorations.has(id, Decoration::PerVertexKHR));
+                let passthrough = !output
+                    && model == ExecutionModel::Geometry
+                    && decorations.has(id, Decoration::PassthroughNV);
+                let arrayed = !passthrough
+                    && (arrayed_interface(model, output)
+                        || (!output
+                            && model == ExecutionModel::Fragment
+                            && decorations.has(id, Decoration::PerVertexKHR)));
                 let block = if arrayed {
                     per_vertex_element(&types, pointee).unwrap_or(pointee)
                 } else {
@@ -1524,6 +1546,9 @@ pub fn reflect(module: &Module) -> Result<Reflection, String> {
                 if output {
                     reflection.outputs.extend(varyings);
                 } else {
+                    if passthrough {
+                        reflection.outputs.extend(varyings.iter().cloned());
+                    }
                     reflection.inputs.extend(varyings);
                 }
             }
@@ -1659,6 +1684,12 @@ pub fn reflect(module: &Module) -> Result<Reflection, String> {
     if reflection.uses(Op::ConvertUToPtr) || reflection.uses(Op::Bitcast) {
         match pointer_fields(&module.body, &types, &roots) {
             Ok(fields) => reflection.pointer_fields = fields,
+            Err(problem) => reflection.problems.push(problem),
+        }
+    }
+    if EXTENT_ACCESSES.iter().any(|op| reflection.uses(*op)) {
+        match memory_extents(module, &types, &roots) {
+            Ok(extents) => reflection.memory_extents = extents,
             Err(problem) => reflection.problems.push(problem),
         }
     }
@@ -2044,6 +2075,358 @@ fn drop_unused_aliases(resources: &mut Vec<Resource>, ids: &[u32], body: &[Instr
         .collect();
     let mut flags = keep.into_iter();
     resources.retain(|_| flags.next().unwrap_or(true));
+}
+
+pub const EXTENT_ACCESSES: [Op; 8] = [
+    Op::CooperativeMatrixLoadKHR,
+    Op::CooperativeMatrixStoreKHR,
+    Op::CooperativeMatrixLoadNV,
+    Op::CooperativeMatrixStoreNV,
+    Op::CooperativeMatrixLoadTensorNV,
+    Op::CooperativeMatrixStoreTensorNV,
+    Op::CooperativeVectorOuterProductAccumulateNV,
+    Op::CooperativeVectorReduceSumAccumulateNV,
+];
+
+const MAX_EXTENT: u64 = 1 << 26;
+const DECODE_UNIT: u64 = 16;
+const OPTIMAL_ALIGNMENT: u64 = 64;
+
+fn component_bytes(types: &Types, id: u32) -> Option<u64> {
+    let instruction = types.get(id)?;
+    if instruction.is(Op::TypeFloat) || instruction.is(Op::TypeInt) {
+        return Some(u64::from(instruction.word(1)?.div_ceil(8)));
+    }
+    None
+}
+
+const fn interpretation_bytes(interpretation: u32) -> u64 {
+    match interpretation {
+        0 | 4 | 8 | COMPONENT_BFLOAT16 => 2,
+        1 | 5 | 9 => 4,
+        3 | 7 | COMPONENT_FLOAT_E4M3 | COMPONENT_FLOAT_E5M2 => 1,
+        _ => 8,
+    }
+}
+
+fn cooperative_vector_length(
+    types: &Types,
+    results: &BTreeMap<u32, u32>,
+    value: u32,
+) -> Option<(u64, u64)> {
+    let ty = types.get(*results.get(&value)?)?;
+    if !ty.is(Op::TypeCooperativeVectorNV) {
+        return None;
+    }
+    let length = types.constant_u32(ty.word(2)?)?;
+    Some((u64::from(length), component_bytes(types, ty.word(1)?)?))
+}
+
+fn memory_operand_words(mask: u32) -> usize {
+    [0x2, 0x8, 0x10]
+        .iter()
+        .filter(|bit| mask & **bit != 0)
+        .count()
+}
+
+fn tensor_layout_extent(module: &Module, types: &Types) -> Result<u64, String> {
+    if module
+        .body
+        .iter()
+        .any(|i| i.is(Op::TensorLayoutSetStrideNV))
+    {
+        return Err("a tensor layout with explicit strides".into());
+    }
+    let mut largest: Option<u64> = None;
+    for instruction in module
+        .body
+        .iter()
+        .filter(|i| i.is(Op::TensorLayoutSetDimensionNV))
+    {
+        let mut offset = 0u64;
+        let mut stride = 1u64;
+        for id in instruction.rest(3).iter().rev() {
+            let dimension = types
+                .constant_u32(*id)
+                .ok_or("a tensor layout dimension that is not a constant")?;
+            offset = offset
+                .saturating_add(u64::from(dimension.saturating_sub(1)).saturating_mul(stride));
+            stride = stride.saturating_mul(u64::from(dimension));
+        }
+        largest = Some(largest.map_or(offset, |known| known.max(offset)));
+    }
+    largest.ok_or_else(|| "tensor layouts without dimensions".into())
+}
+
+fn matrix_access(
+    instruction: &Instruction,
+    types: &Types,
+    defs: &BTreeMap<u32, &Instruction>,
+    roots: &BTreeMap<u32, AddressRoot>,
+    results: &BTreeMap<u32, u32>,
+) -> Option<(AddressBuffer, u64)> {
+    let khr = instruction.is(Op::CooperativeMatrixLoadKHR)
+        || instruction.is(Op::CooperativeMatrixStoreKHR);
+    let load =
+        instruction.is(Op::CooperativeMatrixLoadKHR) || instruction.is(Op::CooperativeMatrixLoadNV);
+    let store = instruction.is(Op::CooperativeMatrixStoreKHR)
+        || instruction.is(Op::CooperativeMatrixStoreNV);
+    let (matrix, pointer, rest) = if load {
+        (
+            types.get(instruction.word(0)?)?,
+            instruction.word(2)?,
+            instruction.rest(3),
+        )
+    } else if store {
+        (
+            types.get(*results.get(&instruction.word(1)?)?)?,
+            instruction.word(0)?,
+            instruction.rest(2),
+        )
+    } else {
+        return None;
+    };
+    let constant = |id: u32| {
+        types
+            .get(id)
+            .filter(|i| i.is(Op::Constant))
+            .and_then(|_| types.constant_u32(id))
+            .map(u64::from)
+    };
+    let rows = constant(matrix.word(3)?)?;
+    let columns = constant(matrix.word(4)?)?;
+    let component = component_bytes(types, matrix.word(1)?)?;
+    let (stride, column_major) = if khr {
+        let layout = constant(*rest.first()?)?;
+        if layout > 1 {
+            return None;
+        }
+        (constant(*rest.get(1)?)?, layout == 1)
+    } else {
+        let major = types.get(*rest.get(1)?)?;
+        (constant(*rest.first()?)?, major.is(Op::ConstantTrue))
+    };
+    let (major, minor) = if column_major {
+        (columns, rows)
+    } else {
+        (rows, columns)
+    };
+    let (buffer, base, layout) = field_pointer(defs, types, roots, pointer)?;
+    let element = u64::from(layout.size(0));
+    if element == 0 {
+        return None;
+    }
+    let end = u64::from(base)
+        .saturating_add(
+            major
+                .saturating_sub(1)
+                .saturating_mul(stride)
+                .saturating_mul(element),
+        )
+        .saturating_add(minor.saturating_mul(component).max(element));
+    Some((buffer, end))
+}
+
+fn decode_unit(module: &Module, types: &Types, function: u32) -> u64 {
+    let parameter = module
+        .body
+        .iter()
+        .skip_while(|i| !(i.is(Op::Function) && i.word(1) == Some(function)))
+        .nth(1)
+        .filter(|i| i.is(Op::FunctionParameter));
+    parameter
+        .and_then(|parameter| types.get(parameter.word(0)?))
+        .filter(|pointer| pointer.is(Op::TypePointer))
+        .and_then(|pointer| types.layout(pointer.word(2)?, None, 0).ok())
+        .map_or(DECODE_UNIT, |layout| u64::from(layout.size(0)).max(1))
+}
+
+fn traced_layouts(body: &[Instruction]) -> BTreeMap<u32, bool> {
+    let mut values: BTreeMap<u32, bool> = BTreeMap::new();
+    let mut variables: BTreeMap<u32, bool> = BTreeMap::new();
+    for instruction in body {
+        let result = instruction.word(1);
+        if instruction.is(Op::CreateTensorLayoutNV) {
+            if let Some(id) = result {
+                values.insert(id, false);
+            }
+        } else if instruction.is(Op::TensorLayoutSetDimensionNV) {
+            if let Some(id) = result {
+                values.insert(id, true);
+            }
+        } else if instruction.is(Op::TensorLayoutSliceNV)
+            || instruction.is(Op::TensorLayoutSetBlockSizeNV)
+            || instruction.is(Op::TensorLayoutSetClampValueNV)
+            || instruction.is(Op::TensorLayoutSetStrideNV)
+            || instruction.is(Op::Load)
+            || instruction.is(Op::CopyObject)
+        {
+            let source = instruction.word(2);
+            let known = source.and_then(|source| {
+                if instruction.is(Op::Load) {
+                    variables.get(&source).copied()
+                } else {
+                    values.get(&source).copied()
+                }
+            });
+            if let (Some(id), Some(known)) = (result, known) {
+                values.insert(id, known);
+            }
+        } else if instruction.is(Op::Store) {
+            if let (Some(pointer), Some(value)) = (instruction.word(0), instruction.word(1)) {
+                if let Some(known) = values.get(&value).copied() {
+                    variables.insert(pointer, known);
+                }
+            }
+        }
+    }
+    values
+}
+
+fn memory_extents(
+    module: &Module,
+    types: &Types,
+    roots: &BTreeMap<u32, AddressRoot>,
+) -> Result<Vec<MemoryExtent>, String> {
+    let defs = value_defs(&module.body);
+    let results = result_types(module);
+    let layouts = traced_layouts(&module.body);
+    let mut layout_extent: Option<u64> = None;
+    let mut extents = Vec::new();
+    let object_type = |value: u32| -> Option<&Instruction> { types.get(*results.get(&value)?) };
+    for instruction in &module.body {
+        let load = instruction.is(Op::CooperativeMatrixLoadTensorNV);
+        let store = instruction.is(Op::CooperativeMatrixStoreTensorNV);
+        let (pointer, size) = if load || store {
+            let operands = if load {
+                instruction.rest(2)
+            } else {
+                instruction.rest(0)
+            };
+            let [pointer, object, layout, memory, rest @ ..] = operands else {
+                return Err("a malformed tensor load or store".into());
+            };
+            match layouts.get(layout) {
+                Some(true) => {}
+                Some(false) => return Err("a tensor layout without dimensions".into()),
+                None => return Err("a tensor layout the harness cannot trace".into()),
+            }
+            let matrix = if load {
+                instruction.word(0).and_then(|ty| types.get(ty))
+            } else {
+                object_type(*object)
+            }
+            .filter(|ty| ty.is(Op::TypeCooperativeMatrixKHR))
+            .ok_or("a tensor load or store of an unknown matrix type")?;
+            let mut unit = matrix
+                .word(1)
+                .and_then(|component| component_bytes(types, component))
+                .ok_or("a cooperative matrix of an unknown component type")?;
+            let extras = memory_operand_words(*memory);
+            let addressing = rest.get(extras).copied().unwrap_or(0);
+            if addressing & 0x2 != 0 {
+                let decode = rest
+                    .get(extras + 1 + usize::from(addressing & 0x1 != 0))
+                    .copied()
+                    .ok_or("a decoding tensor load without its function")?;
+                unit = unit.max(decode_unit(module, types, decode));
+            }
+            let elements = match layout_extent {
+                Some(known) => known,
+                None => {
+                    let known = tensor_layout_extent(module, types)?;
+                    layout_extent = Some(known);
+                    known
+                }
+            };
+            (*pointer, elements.saturating_add(1).saturating_mul(unit))
+        } else if instruction.is(Op::CooperativeVectorOuterProductAccumulateNV) {
+            let [pointer, offset, a, b, layout, interpretation, rest @ ..] = instruction.rest(0)
+            else {
+                return Err("a malformed outer product".into());
+            };
+            let constant = |id: &u32| types.constant_u32(*id).map(u64::from);
+            let offset = constant(offset).ok_or("an outer product at a variable offset")?;
+            let (rows, _) = cooperative_vector_length(types, &results, *a)
+                .ok_or("an outer product of an unknown vector")?;
+            let (columns, _) = cooperative_vector_length(types, &results, *b)
+                .ok_or("an outer product of an unknown vector")?;
+            let element = interpretation_bytes(
+                types
+                    .constant_u32(*interpretation)
+                    .ok_or("an outer product with a variable matrix interpretation")?,
+            );
+            let layout = constant(layout).ok_or("an outer product with a variable layout")?;
+            let matrix = match layout {
+                0 | 1 => {
+                    let stride = rest
+                        .first()
+                        .and_then(constant)
+                        .ok_or("an outer product without a constant stride")?;
+                    let (major, minor) = if layout == 0 {
+                        (rows, columns)
+                    } else {
+                        (columns, rows)
+                    };
+                    major
+                        .saturating_sub(1)
+                        .saturating_mul(stride)
+                        .saturating_add(minor.saturating_mul(element))
+                }
+                _ => rows
+                    .next_multiple_of(OPTIMAL_ALIGNMENT)
+                    .saturating_mul(columns.next_multiple_of(OPTIMAL_ALIGNMENT))
+                    .saturating_mul(element)
+                    .saturating_mul(2),
+            };
+            (*pointer, offset.saturating_add(matrix))
+        } else if instruction.is(Op::CooperativeVectorReduceSumAccumulateNV) {
+            let [pointer, offset, vector, ..] = instruction.rest(0) else {
+                return Err("a malformed reduction".into());
+            };
+            let offset = types
+                .constant_u32(*offset)
+                .map(u64::from)
+                .ok_or("a reduction at a variable offset")?;
+            let (length, element) = cooperative_vector_length(types, &results, *vector)
+                .ok_or("a reduction of an unknown vector")?;
+            (
+                *pointer,
+                offset.saturating_add(length.saturating_mul(element)),
+            )
+        } else if let Some((buffer, end)) =
+            matrix_access(instruction, types, &defs, roots, &results)
+        {
+            if end <= MAX_EXTENT {
+                match extents
+                    .iter_mut()
+                    .find(|extent: &&mut MemoryExtent| extent.buffer == buffer)
+                {
+                    Some(extent) => extent.end = extent.end.max(end),
+                    None => extents.push(MemoryExtent { buffer, end }),
+                }
+            }
+            continue;
+        } else {
+            continue;
+        };
+        let (buffer, base, _) = field_pointer(&defs, types, roots, pointer)
+            .ok_or("a cooperative access through a pointer the harness cannot trace")?;
+        let end = u64::from(base).saturating_add(size);
+        if end > MAX_EXTENT {
+            return Err(format!(
+                "a cooperative access that reaches byte {end}, beyond the {MAX_EXTENT} bytes the harness binds"
+            ));
+        }
+        match extents
+            .iter_mut()
+            .find(|extent: &&mut MemoryExtent| extent.buffer == buffer)
+        {
+            Some(extent) => extent.end = extent.end.max(end),
+            None => extents.push(MemoryExtent { buffer, end }),
+        }
+    }
+    Ok(extents)
 }
 
 fn value_defs(body: &[Instruction]) -> BTreeMap<u32, &Instruction> {
@@ -2789,6 +3172,81 @@ mod tests {
                 },
                 count: 4
             }
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn sizes_tensor_loads_from_the_layout_dimensions() -> anyhow::Result<()> {
+        let storage = StorageClass::StorageBuffer as u32;
+        let words = module(&[
+            op(Op::Capability, &[Capability::Shader as u32])?,
+            op(Op::EntryPoint, &entry(ExecutionModel::GLCompute))?,
+            op(Op::Decorate, &[10, Decoration::Block as u32])?,
+            op(Op::MemberDecorate, &[10, 0, Decoration::Offset as u32, 0])?,
+            op(Op::Decorate, &[12, Decoration::DescriptorSet as u32, 0])?,
+            op(Op::Decorate, &[12, Decoration::Binding as u32, 0])?,
+            op(Op::Decorate, &[9, Decoration::ArrayStride as u32, 2])?,
+            op(Op::TypeVoid, &[2])?,
+            op(Op::TypeFunction, &[3, 2])?,
+            op(Op::TypeInt, &[5, 32, 0])?,
+            op(Op::TypeFloat, &[6, 16])?,
+            op(Op::Constant, &[5, 20, 0])?,
+            op(Op::Constant, &[5, 21, 2])?,
+            op(Op::Constant, &[5, 22, 4])?,
+            op(Op::Constant, &[5, 23, 8])?,
+            op(Op::Constant, &[5, 24, 3])?,
+            op(Op::TypeRuntimeArray, &[9, 6])?,
+            op(Op::TypeStruct, &[10, 9])?,
+            op(Op::TypePointer, &[11, storage, 10])?,
+            op(Op::TypePointer, &[13, storage, 6])?,
+            op(Op::Variable, &[11, 12, storage])?,
+            op(Op::TypeTensorLayoutNV, &[14, 21, 20])?,
+            op(Op::TypeCooperativeMatrixKHR, &[15, 6, 24, 22, 22, 20])?,
+            op(Op::Function, &[2, 1, 0, 3])?,
+            op(Op::Label, &[4])?,
+            op(Op::CreateTensorLayoutNV, &[14, 30])?,
+            op(Op::TensorLayoutSetDimensionNV, &[14, 31, 30, 22, 23])?,
+            op(Op::AccessChain, &[13, 32, 12, 20, 20])?,
+            op(
+                Op::CooperativeMatrixLoadTensorNV,
+                &[15, 33, 32, 0, 31, 0, 0],
+            )?,
+            op(Op::Return, &[])?,
+            op(Op::FunctionEnd, &[])?,
+        ]);
+        let reflection = reflected(&words)?;
+        assert!(reflection.problems.is_empty(), "{:?}", reflection.problems);
+        assert_eq!(
+            reflection.memory_extents,
+            [MemoryExtent {
+                buffer: AddressBuffer::Resource {
+                    set: 0,
+                    binding: 0,
+                    element: None
+                },
+                end: 64
+            }]
+        );
+        let parsed = module::parse(&words).map_err(anyhow::Error::msg)?;
+        let undimensioned: Vec<Vec<u32>> = parsed
+            .globals
+            .iter()
+            .chain(&parsed.body)
+            .filter(|i| !i.is(Op::TensorLayoutSetDimensionNV))
+            .map(|i| {
+                let operands: Vec<u32> = if i.is(Op::CooperativeMatrixLoadTensorNV) {
+                    vec![15, 33, 32, 0, 30, 0, 0]
+                } else {
+                    i.operands.clone()
+                };
+                instruction(i.opcode, &operands)
+            })
+            .collect::<anyhow::Result<_>>()?;
+        let reflection = reflected(&module(&undimensioned))?;
+        assert_eq!(
+            reflection.problems,
+            ["a tensor layout without dimensions".to_string()]
         );
         Ok(())
     }
