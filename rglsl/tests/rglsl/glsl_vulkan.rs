@@ -8470,7 +8470,11 @@ void main() { vec2 v = vloadn(0u, data[0], 2); }
     .map(|_| ())
     .err()
     .ok_or("expected an error")?;
-    assert!(rejected.contains("physical addressing"), "{rejected}");
+    assert!(
+        rejected
+            .contains("Compilation requires OpenCL.std instruction `vloadn` that is not supported"),
+        "{rejected}"
+    );
     Ok(())
 }
 
