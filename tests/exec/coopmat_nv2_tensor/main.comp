@@ -1,0 +1,46 @@
+#version 450
+#extension GL_KHR_cooperative_matrix : require
+#extension GL_NV_cooperative_matrix2 : require
+#extension GL_KHR_memory_scope_semantics : require
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+#extension GL_EXT_buffer_reference : require
+layout(local_size_x = 32) in;
+layout(set = 0, binding = 0) buffer Src { float16_t src[]; };
+layout(set = 0, binding = 1) buffer Sliced { float16_t sliced[]; };
+layout(set = 0, binding = 2) buffer ViewT { float16_t viewT[]; };
+layout(set = 0, binding = 3) buffer Edge { float16_t edge[]; };
+layout(set = 0, binding = 4) buffer Stored { float16_t stored[]; };
+layout(set = 0, binding = 5) buffer Raw { uint8_t raw[]; };
+layout(set = 0, binding = 6) buffer Decoded { float16_t decoded[]; };
+
+layout(buffer_reference, std430, buffer_reference_align = 1) buffer Bytes { uint8_t value; };
+
+float16_t decode(const in Bytes b, const in uint32_t blockCoords[2], const in uint32_t coordInBlock[2]) {
+    return float16_t(b.value) * float16_t(0.5);
+}
+
+void main() {
+    coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator> m;
+    tensorLayoutNV<2> t = createTensorLayoutNV(2);
+    t = setTensorLayoutDimensionNV(t, 32, 32);
+    coopMatLoadTensorNV(m, src, 0, sliceTensorLayoutNV(t, 8, 16, 16, 16));
+    coopMatStore(m, sliced, 0, 16, gl_CooperativeMatrixLayoutRowMajor);
+
+    tensorViewNV<2, false, 1, 0> v = createTensorViewNV(2, false, 1, 0);
+    coopMatLoadTensorNV(m, src, 0, sliceTensorLayoutNV(t, 0, 16, 0, 16), v);
+    coopMatStore(m, viewT, 0, 16, gl_CooperativeMatrixLayoutRowMajor);
+
+    tensorLayoutNV<2, gl_CooperativeMatrixClampModeClampToEdgeNV> e =
+        createTensorLayoutNV(2, gl_CooperativeMatrixClampModeClampToEdgeNV);
+    e = setTensorLayoutDimensionNV(e, 32, 32);
+    coopMatLoadTensorNV(m, src, 0, sliceTensorLayoutNV(e, 24, 16, 20, 16));
+    coopMatStore(m, edge, 0, 16, gl_CooperativeMatrixLayoutRowMajor);
+
+    coopMatLoad(m, sliced, 0, 16, gl_CooperativeMatrixLayoutRowMajor);
+    coopMatStoreTensorNV(m, stored, 0, sliceTensorLayoutNV(t, 4, 16, 2, 16));
+
+    tensorLayoutNV<2> r = createTensorLayoutNV(2);
+    r = setTensorLayoutDimensionNV(r, 16, 16);
+    coopMatLoadTensorNV(m, raw, 0, r, decode);
+    coopMatStore(m, decoded, 0, 16, gl_CooperativeMatrixLayoutRowMajor);
+}

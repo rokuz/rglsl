@@ -1,0 +1,28 @@
+#version 450
+#extension GL_NV_cooperative_vector : require
+#extension GL_KHR_memory_scope_semantics : require
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+layout(local_size_x = 32) in;
+layout(set = 0, binding = 0) buffer Input { float16_t x[]; };
+layout(set = 0, binding = 1) buffer Matrix { float16_t matrix[]; };
+layout(set = 0, binding = 2) buffer Bias { float16_t bias[]; };
+layout(set = 0, binding = 3) buffer Plain { float16_t plain[]; };
+layout(set = 0, binding = 4) buffer Added { float16_t added[]; };
+layout(set = 0, binding = 5) buffer Columns { float16_t columns[]; };
+
+void main() {
+    uint offset = gl_LocalInvocationIndex * 32;
+    coopvecNV<float16_t, 16> v;
+    coopVecLoadNV(v, x, offset);
+    coopvecNV<float16_t, 16> r;
+    coopVecMatMulNV(r, v, gl_ComponentTypeFloat16NV, matrix, 0, gl_ComponentTypeFloat16NV, 16, 16,
+                    gl_CooperativeVectorMatrixLayoutRowMajorNV, false, 32);
+    coopVecStoreNV(r, plain, offset);
+    coopVecMatMulAddNV(r, v, gl_ComponentTypeFloat16NV, matrix, 0, gl_ComponentTypeFloat16NV,
+                       bias, 0, gl_ComponentTypeFloat16NV, 16, 16,
+                       gl_CooperativeVectorMatrixLayoutRowMajorNV, false, 32);
+    coopVecStoreNV(r, added, offset);
+    coopVecMatMulNV(r, v, gl_ComponentTypeFloat16NV, matrix, 0, gl_ComponentTypeFloat16NV, 16, 16,
+                    gl_CooperativeVectorMatrixLayoutColumnMajorNV, false, 32);
+    coopVecStoreNV(r, columns, offset);
+}

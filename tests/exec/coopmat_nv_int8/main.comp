@@ -1,0 +1,21 @@
+#version 450
+#extension GL_NV_cooperative_matrix : require
+#extension GL_NV_integer_cooperative_matrix : require
+#extension GL_KHR_memory_scope_semantics : require
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+layout(local_size_x = 32) in;
+layout(set = 0, binding = 0) buffer A { int8_t a[]; };
+layout(set = 0, binding = 1) buffer B { int8_t b[]; };
+layout(set = 0, binding = 2) buffer C { int32_t c[]; };
+layout(set = 0, binding = 3) buffer D { int32_t d[]; };
+
+void main() {
+    icoopmatNV<8, gl_ScopeSubgroup, 16, 32> ma;
+    icoopmatNV<8, gl_ScopeSubgroup, 32, 16> mb;
+    icoopmatNV<32, gl_ScopeSubgroup, 16, 16> mc;
+    coopMatLoadNV(ma, a, 0, 32, false);
+    coopMatLoadNV(mb, b, 0, 16, false);
+    coopMatLoadNV(mc, c, 0, 16, false);
+    mc = coopMatMulAddNV(ma, mb, mc);
+    coopMatStoreNV(mc, d, 0, 16, false);
+}

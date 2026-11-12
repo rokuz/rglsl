@@ -1,0 +1,19 @@
+#version 450
+#extension GL_NV_cooperative_vector : require
+#extension GL_KHR_memory_scope_semantics : require
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+layout(local_size_x = 32) in;
+layout(set = 0, binding = 0) buffer Input { float x[]; };
+layout(set = 0, binding = 1) buffer Matrix { int8_t matrix[]; };
+layout(set = 0, binding = 2) buffer Bias { int32_t bias[]; };
+layout(set = 0, binding = 3) buffer Result { int32_t result[]; };
+
+void main() {
+    coopvecNV<float, 16> v;
+    coopVecLoadNV(v, x, gl_LocalInvocationIndex * 64);
+    coopvecNV<int32_t, 16> r;
+    coopVecMatMulAddNV(r, v, gl_ComponentTypeSignedInt8NV, matrix, 0, gl_ComponentTypeSignedInt8NV,
+                       bias, 0, gl_ComponentTypeSignedInt32NV, 16, 16,
+                       gl_CooperativeVectorMatrixLayoutRowMajorNV, false, 16);
+    coopVecStoreNV(r, result, gl_LocalInvocationIndex * 64);
+}

@@ -1,0 +1,24 @@
+#version 450
+#extension GL_NV_cooperative_vector : require
+#extension GL_KHR_memory_scope_semantics : require
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+layout(local_size_x = 32) in;
+layout(set = 0, binding = 0) buffer X { float x[]; };
+layout(set = 0, binding = 1) buffer Y { float y[]; };
+layout(set = 0, binding = 2) buffer R { float r[]; };
+
+void main() {
+    uint offset = gl_LocalInvocationIndex * 32;
+    coopvecNV<float, 8> a;
+    coopvecNV<float, 8> b;
+    coopVecLoadNV(a, x, offset);
+    coopVecLoadNV(b, y, offset);
+    coopvecNV<float, 8> c = a + b;
+    c = c * b - a;
+    c = max(c, a);
+    c = min(c, coopvecNV<float, 8>(6.0));
+    c = clamp(c, coopvecNV<float, 8>(-2.0), coopvecNV<float, 8>(4.0));
+    c *= 2.0;
+    c[3] = c[3] + 10.0;
+    coopVecStoreNV(c, r, offset);
+}
