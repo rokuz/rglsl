@@ -1163,6 +1163,18 @@ impl Type {
             .is_some()
     }
 
+    pub fn contains_tensor_nv(&self, registry: &TypeRegistry) -> bool {
+        registry
+            .find_in_members(self, |ty| {
+                matches!(
+                    ty.kind,
+                    TypeKind::TensorLayout { .. } | TypeKind::TensorView { .. }
+                )
+                .then_some(())
+            })
+            .is_some()
+    }
+
     pub const fn scalar_type(&self) -> Option<Scalar> {
         if self.is_array() {
             None

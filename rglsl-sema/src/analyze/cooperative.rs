@@ -246,13 +246,18 @@ impl Analyzer<'_> {
                     .get(1)
                     .copied()
                     .map_or(Some(ArraySize::Sized(0)), Parameter::raw);
-                match (dimensions.flatten(), clamp_mode) {
-                    (Some(dimensions), Some(clamp_mode)) => Type::new(TypeKind::TensorLayout {
-                        dimensions,
-                        clamp_mode,
-                    }),
-                    _ => self.parameter_error(span, keyword, "invalid type parameters"),
+                let (Some(dimensions), Some(clamp_mode)) = (dimensions.flatten(), clamp_mode)
+                else {
+                    return self.parameter_error(span, keyword, "invalid type parameters");
+                };
+                let kind = TypeKind::TensorLayout {
+                    dimensions,
+                    clamp_mode,
+                };
+                if let Some(reason) = super::cooperative_matrix2::tensor_type_problem(&kind) {
+                    return self.parameter_error(span, keyword, reason);
                 }
+                Type::new(kind)
             }
             ParameterizedType::TensorArm => {
                 let [rank] = values.as_slice() else {
@@ -324,11 +329,15 @@ impl Analyzer<'_> {
                         }
                     }
                 }
-                Type::new(TypeKind::TensorView {
+                let kind = TypeKind::TensorView {
                     dimensions,
                     has_dimensions,
                     permutation,
-                })
+                };
+                if let Some(reason) = super::cooperative_matrix2::tensor_type_problem(&kind) {
+                    return self.parameter_error(span, keyword, reason);
+                }
+                Type::new(kind)
             }
         }
     }

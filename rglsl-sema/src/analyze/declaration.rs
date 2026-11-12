@@ -1929,6 +1929,15 @@ impl Analyzer<'_> {
                     },
                 );
             }
+            if member.ty.contains_tensor_nv(&self.types) {
+                self.error(
+                    declarator.name.span,
+                    DiagnosticKind::InvalidBlock {
+                        name: member.name.clone(),
+                        reason: "member of block cannot be or contain a tensor layout or tensor view type",
+                    },
+                );
+            }
         }
         let dimensions = instance
             .map(|instance| self.array_sizes(instance.array.as_ref()))

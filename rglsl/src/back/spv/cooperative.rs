@@ -15,6 +15,8 @@ const SPV_NV_COOPERATIVE_MATRIX2: &str = "SPV_NV_cooperative_matrix2";
 const SPV_EXT_COOPERATIVE_MATRIX_MAINTENANCE1: &str = "SPV_EXT_cooperative_matrix_maintenance1";
 const SPV_NV_COOPERATIVE_MATRIX_DECODE_VECTOR: &str = "SPV_NV_cooperative_matrix_decode_vector";
 const CAPABILITY_COOPERATIVE_MATRIX_CONVERSIONS_EXT: Word = 5429;
+const CAPABILITY_COOPERATIVE_MATRIX_REDUCTIONS_EXT: Word = 5430;
+const CAPABILITY_COOPERATIVE_MATRIX_PER_ELEMENT_OPERATIONS_EXT: Word = 5432;
 const CAPABILITY_COOPERATIVE_MATRIX_GET_COORDINATE_EXT: Word = 5438;
 const CAPABILITY_COOPERATIVE_MATRIX_DECODE_VECTOR_NV: Word = 5447;
 const OP_COOPERATIVE_MATRIX_GET_COORDINATE_EXT: Word = 5363;
@@ -474,6 +476,21 @@ impl BlockContext<'_> {
 
     fn result_inner(&self, expr: Handle<Expression>, scalar: crate::Scalar) -> TypeInner {
         match *self.fun_info[expr].ty.inner_with(&self.ir_module.types) {
+            TypeInner::CooperativeMatrix {
+                columns,
+                rows,
+                role,
+                scope,
+                class,
+                ..
+            } => TypeInner::CooperativeMatrix {
+                columns,
+                rows,
+                scalar,
+                role,
+                scope,
+                class,
+            },
             TypeInner::LongVector { size, class, .. } => TypeInner::LongVector {
                 size,
                 scalar,
@@ -695,19 +712,12 @@ impl BlockContext<'_> {
         if use_changes {
             self.require_conversions(family)?;
         }
-        let id = if source == target {
-            let expr_id = self.cached.get(expr)?;
-            if !use_changes {
-                return Ok(expr_id);
-            }
-            let id = self.gen_id();
-            block.body.push(Instruction::unary(
-                Op::CooperativeMatrixConvertNV,
-                result_type_id,
-                id,
-                expr_id,
-            ));
-            id
+        let id = if source == target && !use_changes {
+            self.cached.get(expr)?
+        } else if matches!(target_inner, TypeInner::CooperativeMatrix { .. })
+            && matches!(source_inner, TypeInner::CooperativeMatrix { .. })
+        {
+            self.write_matrix_conversion(expr, &target_inner, result_type_id, false, block)?
         } else {
             self.write_cooperative_cast(
                 expr,
@@ -751,15 +761,18 @@ impl BlockContext<'_> {
         &mut self,
         family: CooperativeFamily,
         capability: spirv::Capability,
+        ext_capability: Word,
     ) -> Result<(), Error> {
-        self.writer
-            .require_any("cooperative matrix operation", &[capability])?;
         match family {
-            CooperativeFamily::Ext => self
-                .writer
-                .use_extension(SPV_EXT_COOPERATIVE_MATRIX_MAINTENANCE1),
+            CooperativeFamily::Ext => {
+                self.writer.raw_capabilities.insert(ext_capability);
+                self.writer
+                    .use_extension(SPV_EXT_COOPERATIVE_MATRIX_MAINTENANCE1);
+            }
             CooperativeFamily::Khr | CooperativeFamily::Nv => {
-                self.writer.use_extension(SPV_NV_COOPERATIVE_MATRIX2)
+                self.writer
+                    .require_any("cooperative matrix operation", &[capability])?;
+                self.writer.use_extension(SPV_NV_COOPERATIVE_MATRIX2);
             }
         }
         Ok(())
@@ -825,14 +838,6 @@ impl BlockContext<'_> {
             ))
     }
 
-    fn result_scalar(&self, expression: Handle<Expression>) -> Result<crate::Scalar, Error> {
-        self.fun_info[expression]
-            .ty
-            .inner_with(&self.ir_module.types)
-            .scalar()
-            .ok_or(Error::Validation("a cooperative operand is not numeric"))
-    }
-
     fn write_transpose_ext(
         &mut self,
         matrix: Handle<Expression>,
@@ -841,21 +846,54 @@ impl BlockContext<'_> {
         block: &mut Block,
     ) -> Result<Word, Error> {
         self.require_conversions(CooperativeFamily::Ext)?;
-        let source = self.result_scalar(matrix)?;
-        let target = self.result_scalar(result)?;
+        let target = self.fun_info[result]
+            .ty
+            .inner_with(&self.ir_module.types)
+            .clone();
+        self.write_matrix_conversion(matrix, &target, result_type_id, true, block)
+    }
+
+    fn write_matrix_conversion(
+        &mut self,
+        matrix: Handle<Expression>,
+        target_inner: &TypeInner,
+        result_type_id: Word,
+        transpose: bool,
+        block: &mut Block,
+    ) -> Result<Word, Error> {
+        let source_inner = self.fun_info[matrix].ty.inner_with(&self.ir_module.types);
+        let (
+            &TypeInner::CooperativeMatrix {
+                scalar: source,
+                role: source_role,
+                ..
+            },
+            &TypeInner::CooperativeMatrix {
+                columns,
+                rows,
+                scalar: target,
+                role,
+                scope,
+                class,
+            },
+        ) = (source_inner, target_inner)
+        else {
+            return Err(Error::Validation("a matrix conversion of a non-matrix"));
+        };
+        let same_use = source_role == role;
         let matrix_id = self.cached.get(matrix)?;
         let integer = |kind: ScalarKind| matches!(kind, ScalarKind::Sint | ScalarKind::Uint);
         let float = |kind: ScalarKind| kind.is_any_float();
         let op = match (source.kind, target.kind) {
-            _ if source == target => Op::CooperativeMatrixConvertNV,
-            (from, to) if float(from) && float(to) => Op::FConvert,
+            (from, to) if float(from) && float(to) && source != target => Op::FConvert,
             (ScalarKind::Sint, to) if float(to) => Op::ConvertSToF,
             (ScalarKind::Uint, to) if float(to) => Op::ConvertUToF,
             (from, ScalarKind::Sint) if float(from) => Op::ConvertFToS,
             (from, ScalarKind::Uint) if float(from) => Op::ConvertFToU,
-            (ScalarKind::Sint, _) if source.width != target.width => Op::SConvert,
-            (ScalarKind::Uint, _) if source.width != target.width => Op::UConvert,
-            _ => Op::CooperativeMatrixConvertNV,
+            (_, ScalarKind::Sint) if source.width != target.width => Op::SConvert,
+            (_, ScalarKind::Uint) if source.width != target.width => Op::UConvert,
+            _ if !same_use => Op::CooperativeMatrixConvertNV,
+            _ => Op::Bitcast,
         };
         let sign_change = integer(source.kind)
             && integer(target.kind)
@@ -863,26 +901,21 @@ impl BlockContext<'_> {
             && source.width != target.width;
         let converted = self.gen_id();
         if sign_change {
-            let intermediate = match self.fun_info[result].ty.inner_with(&self.ir_module.types) {
-                &TypeInner::CooperativeMatrix {
-                    columns,
-                    rows,
-                    role,
-                    scope,
-                    class,
-                    ..
-                } => TypeInner::CooperativeMatrix {
-                    columns,
-                    rows,
-                    scalar: crate::Scalar {
-                        kind: source.kind,
-                        width: target.width,
-                    },
-                    role,
-                    scope,
-                    class,
+            let op = if source.kind == ScalarKind::Sint {
+                Op::SConvert
+            } else {
+                Op::UConvert
+            };
+            let intermediate = TypeInner::CooperativeMatrix {
+                columns,
+                rows,
+                scalar: crate::Scalar {
+                    kind: source.kind,
+                    width: target.width,
                 },
-                _ => return Err(Error::Validation("transpose into a non-matrix")),
+                role,
+                scope,
+                class,
             };
             let intermediate_type =
                 self.get_expression_type_id(&crate::proc::TypeResolution::Value(intermediate))?;
@@ -892,7 +925,9 @@ impl BlockContext<'_> {
                 converted,
                 matrix_id,
             ));
-            self.decorate_transpose(converted);
+            if transpose {
+                self.decorate_transpose(converted);
+            }
             let id = self.gen_id();
             block.body.push(Instruction::unary(
                 Op::Bitcast,
@@ -905,7 +940,9 @@ impl BlockContext<'_> {
         block
             .body
             .push(Instruction::unary(op, result_type_id, converted, matrix_id));
-        self.decorate_transpose(converted);
+        if transpose {
+            self.decorate_transpose(converted);
+        }
         Ok(converted)
     }
 
@@ -961,7 +998,11 @@ impl BlockContext<'_> {
                 combine,
                 family,
             } => {
-                self.require_family(family, spirv::Capability::CooperativeMatrixReductionsNV)?;
+                self.require_family(
+                    family,
+                    spirv::Capability::CooperativeMatrixReductionsNV,
+                    CAPABILITY_COOPERATIVE_MATRIX_REDUCTIONS_EXT,
+                )?;
                 let mut instruction = Instruction::new(Op::CooperativeMatrixReduceNV);
                 instruction.set_type(result_type_id);
                 instruction.set_result(id);
@@ -979,6 +1020,7 @@ impl BlockContext<'_> {
                 self.require_family(
                     family,
                     spirv::Capability::CooperativeMatrixPerElementOperationsNV,
+                    CAPABILITY_COOPERATIVE_MATRIX_PER_ELEMENT_OPERATIONS_EXT,
                 )?;
                 let mut instruction = Instruction::new(Op::CooperativeMatrixPerElementOpNV);
                 instruction.set_type(result_type_id);

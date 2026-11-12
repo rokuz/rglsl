@@ -1277,6 +1277,7 @@ impl Analyzer<'_> {
             !ty.is_void()
                 && !ty.is_string()
                 && !ty.contains_opaque(&self.types)
+                && !ty.contains_tensor_nv(&self.types)
                 && !matches!(ty.kind, TypeKind::Block(_))
         };
         if !comparable(left) || !comparable(right) {

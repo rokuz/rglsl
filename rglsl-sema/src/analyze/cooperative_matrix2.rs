@@ -67,10 +67,69 @@ pub(crate) fn matrix_call(name: &str) -> bool {
 
 const REDUCE_ROW: i64 = 0x1;
 const REDUCE_COLUMN: i64 = 0x2;
+const REDUCE_ROW_AND_COLUMN: i64 = 0x3;
 const REDUCE_2X2: i64 = 0x4;
 
+fn known_mismatch(left: ArraySize, right: ArraySize) -> bool {
+    matches!((left, right), (ArraySize::Sized(left), ArraySize::Sized(right)) if left != right)
+}
+
+fn half(size: ArraySize, of: ArraySize) -> bool {
+    match (size, of) {
+        (ArraySize::Sized(size), ArraySize::Sized(of)) => u64::from(size) * 2 == u64::from(of),
+        _ => true,
+    }
+}
+
+pub(crate) fn tensor_type_problem(kind: &TypeKind) -> Option<&'static str> {
+    let known = |size: ArraySize| match size {
+        ArraySize::Sized(value) => Some(value),
+        ArraySize::Specialized(_) | ArraySize::Unsized => None,
+    };
+    match *kind {
+        TypeKind::TensorLayout {
+            dimensions,
+            clamp_mode,
+        } => {
+            if known(dimensions).is_some_and(|value| !(1..=5).contains(&value)) {
+                return Some("the dimension count must be between 1 and 5");
+            }
+            if known(clamp_mode).is_some_and(|value| value > 4) {
+                return Some("the clamp mode must be a gl_CooperativeMatrixClampMode value");
+            }
+            None
+        }
+        TypeKind::TensorView {
+            dimensions,
+            permutation,
+            ..
+        } => {
+            let count = known(dimensions)?;
+            if !(1..=5).contains(&count) {
+                return Some("the dimension count must be between 1 and 5");
+            }
+            let used = permutation
+                .iter()
+                .take(usize::try_from(count).unwrap_or_default());
+            let mut seen = [false; 5];
+            for &value in used {
+                match seen.get_mut(usize::from(value)) {
+                    Some(slot) if u32::from(value) < count && !*slot => *slot = true,
+                    _ => return Some("the dimension permutation is not a permutation"),
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+fn is_component(ty: &Type, scalar: Scalar) -> bool {
+    ty.is_scalar() && ty.base_scalar() == Some(scalar)
+}
+
 enum TensorArguments {
-    Parameters(Vec<Option<ArraySize>>),
+    Parameters(Vec<Operand>),
     Operands(Vec<Operand>),
 }
 
@@ -94,10 +153,7 @@ impl<'b> Cx<'b, Analyzer<'_>> {
                 let uses = self.with(|analyzer| analyzer.specialization_uses);
                 let mut parameters = Vec::with_capacity(arguments.len());
                 for argument in arguments {
-                    let operand = self.call(self.clone().expression(argument)).await;
-                    parameters.push(
-                        self.with(|analyzer| analyzer.type_argument_with(argument, &operand)),
-                    );
+                    parameters.push(self.call(self.clone().expression(argument)).await);
                 }
                 self.with(|analyzer| analyzer.specialization_uses = uses);
                 TensorArguments::Parameters(parameters)
@@ -165,7 +221,11 @@ impl Analyzer<'_> {
         if operand.ty.is_error() {
             return None;
         }
-        let integer = operand.ty.is_scalar_integer() || operand.ty.is_bool();
+        let integer = operand.ty.is_scalar()
+            && matches!(
+                operand.ty.base_scalar(),
+                Some(Scalar::Int | Scalar::Uint | Scalar::Bool)
+            );
         if !operand.constant || !integer {
             self.error(
                 argument.span,
@@ -201,7 +261,17 @@ impl Analyzer<'_> {
                 crate::constant::Value::Bool(flag) => Some(i64::from(flag)),
                 other => other.as_i64(),
             })?;
-        u32::try_from(value).ok().map(ArraySize::Sized)
+        let Ok(value) = u32::try_from(value) else {
+            self.error(
+                argument.span,
+                DiagnosticKind::InvalidTypeParameters {
+                    ty: "type",
+                    reason: "type parameter must be a non-negative integer",
+                },
+            );
+            return None;
+        };
+        Some(ArraySize::Sized(value))
     }
 
     fn tensor_function_with(
@@ -217,56 +287,72 @@ impl Analyzer<'_> {
             TensorArguments::Parameters(parameters) => (parameters, Vec::new()),
             TensorArguments::Operands(operands) => (Vec::new(), operands),
         };
+        let no_match = |analyzer: &mut Self| {
+            analyzer.error(span, DiagnosticKind::NoMatchingFunction(String::from(name)));
+            Operand::error()
+        };
         let result = match call {
-            TensorCall::CreateLayout => {
-                if parameters.iter().any(Option::is_none) {
+            TensorCall::CreateLayout | TensorCall::CreateView => {
+                if parameters.iter().any(|operand| operand.ty.is_error()) {
                     return Operand::error();
                 }
-                let (Some(Some(dimensions)), clamp_mode) =
-                    (parameters.first().copied(), parameters.get(1).copied())
-                else {
-                    self.error(span, DiagnosticKind::NoMatchingFunction(String::from(name)));
+                let layout = call == TensorCall::CreateLayout;
+                let limit = if layout { 2 } else { 7 };
+                let matches = (1..=limit).contains(&parameters.len())
+                    && parameters.iter().enumerate().all(|(index, operand)| {
+                        if !layout && index == 1 {
+                            operand.ty.is_bool()
+                        } else {
+                            operand.ty.is_scalar() && self.converts(&operand.ty, &Type::UINT)
+                        }
+                    });
+                if !matches {
+                    return no_match(self);
+                }
+                let mut values = Vec::with_capacity(parameters.len());
+                for (argument, operand) in arguments.iter().zip(&parameters) {
+                    values.push(self.type_argument_with(argument, operand));
+                }
+                if values.iter().any(Option::is_none) {
                     return Operand::error();
+                }
+                let values: Vec<ArraySize> = values.into_iter().flatten().collect();
+                let Some(&dimensions) = values.first() else {
+                    return no_match(self);
                 };
-                if parameters.len() > 2 {
-                    self.error(span, DiagnosticKind::NoMatchingFunction(String::from(name)));
-                    return Operand::error();
-                }
-                Type::new(TypeKind::TensorLayout {
-                    dimensions,
-                    clamp_mode: clamp_mode.flatten().unwrap_or(ArraySize::Sized(0)),
-                })
-            }
-            TensorCall::CreateView => {
-                if parameters.iter().any(Option::is_none) {
-                    return Operand::error();
-                }
-                let Some(Some(dimensions)) = parameters.first().copied() else {
-                    self.error(span, DiagnosticKind::NoMatchingFunction(String::from(name)));
-                    return Operand::error();
-                };
-                let has_dimensions = matches!(
-                    parameters.get(1).copied().flatten(),
-                    Some(ArraySize::Sized(value)) if value != 0
-                );
-                let mut permutation = [0, 1, 2, 3, 4];
-                for (slot, parameter) in permutation.iter_mut().zip(parameters.iter().skip(2)) {
-                    match parameter.and_then(ArraySize::nominal) {
-                        Some(value) if value < 5 => *slot = u8::try_from(value).unwrap_or(0),
-                        _ => {
-                            self.error(
-                                span,
-                                DiagnosticKind::NoMatchingFunction(String::from(name)),
-                            );
-                            return Operand::error();
+                let kind = if layout {
+                    TypeKind::TensorLayout {
+                        dimensions,
+                        clamp_mode: values.get(1).copied().unwrap_or(ArraySize::Sized(0)),
+                    }
+                } else {
+                    let has_dimensions = matches!(
+                        values.get(1).copied(),
+                        Some(ArraySize::Sized(value)) if value != 0
+                    );
+                    let mut permutation = [0, 1, 2, 3, 4];
+                    for (slot, value) in permutation.iter_mut().zip(values.iter().skip(2)) {
+                        match value.nominal().and_then(|value| u8::try_from(value).ok()) {
+                            Some(value) => *slot = value,
+                            None => {
+                                return self.matrix2_error(
+                                    span,
+                                    name,
+                                    "the dimension permutation is not a permutation",
+                                )
+                            }
                         }
                     }
+                    TypeKind::TensorView {
+                        dimensions,
+                        has_dimensions,
+                        permutation,
+                    }
+                };
+                if let Some(reason) = tensor_type_problem(&kind) {
+                    return self.matrix2_error(span, name, reason);
                 }
-                Type::new(TypeKind::TensorView {
-                    dimensions,
-                    has_dimensions,
-                    permutation,
-                })
+                Type::new(kind)
             }
             _ => {
                 let Some(base) = operands.first() else {
@@ -291,13 +377,35 @@ impl Analyzer<'_> {
                     TensorCall::LayoutSlice => (2..=10).contains(&count) && count.is_multiple_of(2),
                     _ => (1..=5).contains(&count),
                 };
-                let integers = operands
-                    .iter()
-                    .skip(1)
-                    .all(|operand| operand.ty.is_scalar_integer());
+                let integers = operands.iter().skip(1).all(|operand| {
+                    operand.ty.is_scalar() && self.converts(&operand.ty, &Type::UINT)
+                });
                 if base.ty.is_array() || !valid_base || !count_valid || !integers {
                     self.error(span, DiagnosticKind::NoMatchingFunction(String::from(name)));
                     return Operand::error();
+                }
+                let dimensions = match base.ty.kind {
+                    TypeKind::TensorLayout {
+                        dimensions: ArraySize::Sized(dimensions),
+                        ..
+                    }
+                    | TypeKind::TensorView {
+                        dimensions: ArraySize::Sized(dimensions),
+                        ..
+                    } => usize::try_from(dimensions).ok(),
+                    _ => None,
+                };
+                let expected = match call {
+                    TensorCall::LayoutSetClampValue | TensorCall::ViewSetClip => None,
+                    TensorCall::LayoutSlice => dimensions.map(|dimensions| dimensions * 2),
+                    _ => dimensions,
+                };
+                if expected.is_some_and(|expected| expected != count) {
+                    return self.matrix2_error(
+                        span,
+                        name,
+                        "the number of values must match the tensor dimension count",
+                    );
                 }
                 for (argument, operand) in arguments.iter().zip(&operands).skip(1) {
                     self.record_conversion(argument, &operand.ty, &Type::UINT);
@@ -410,8 +518,16 @@ impl Analyzer<'_> {
         operands: Vec<Operand>,
     ) -> Operand {
         let ext = name.ends_with("EXT");
+        let tensor_memory = matches!(name, "coopMatLoadTensorNV" | "coopMatStoreTensorNV");
+        let wide_element = tensor_memory
+            && operands
+                .get(2)
+                .and_then(|operand| operand.ty.scalar_type())
+                .is_some_and(|scalar| scalar.is_integer() && scalar.bits() == 64);
         let extension = if ext {
             "GL_EXT_cooperative_matrix_maintenance1"
+        } else if wide_element {
+            "GL_EXT_shader_64bit_indexing"
         } else {
             "GL_NV_cooperative_matrix2"
         };
@@ -434,9 +550,26 @@ impl Analyzer<'_> {
                     return self.matrix2_error(span, name, "the first argument must be a matrix");
                 };
                 let buffer_valid = operands.get(1).is_some_and(|operand| operand.ty.is_array());
-                let element_valid = operands
-                    .get(2)
-                    .is_some_and(|operand| operand.ty.is_scalar_integer());
+                let element_target = if wide_element {
+                    Type::scalar(Scalar::Uint64)
+                } else {
+                    Type::UINT
+                };
+                let element_valid = operands.get(2).is_some_and(|operand| {
+                    operand.ty.is_scalar() && self.converts(&operand.ty, &element_target)
+                });
+                let ambiguous = self.extension_enabled("GL_EXT_shader_64bit_indexing")
+                    && operands.get(2).is_some_and(|operand| {
+                        !matches!(
+                            operand.ty.scalar_type(),
+                            Some(Scalar::Uint | Scalar::Uint64)
+                        ) && self.converts(&operand.ty, &Type::UINT)
+                            && self.converts(&operand.ty, &Type::scalar(Scalar::Uint64))
+                    });
+                if ambiguous {
+                    self.error(span, DiagnosticKind::AmbiguousCall(String::from(name)));
+                    return Operand::error();
+                }
                 let layout = operands.get(3).and_then(|operand| match operand.ty.kind {
                     TypeKind::TensorLayout { dimensions, .. } => Some(dimensions),
                     _ => None,
@@ -444,6 +577,9 @@ impl Analyzer<'_> {
                 if !buffer_valid || !element_valid || layout.is_none() {
                     self.error(span, DiagnosticKind::NoMatchingFunction(String::from(name)));
                     return Operand::error();
+                }
+                if let (Some(argument), Some(operand)) = (arguments.get(2), operands.get(2)) {
+                    self.record_conversion(argument, &operand.ty, &element_target);
                 }
                 let storage = operands.get(1).map(|operand| operand.storage);
                 if !matches!(
@@ -513,30 +649,34 @@ impl Analyzer<'_> {
                     self.error(span, DiagnosticKind::NoMatchingFunction(String::from(name)));
                     return Operand::error();
                 };
-                if ext {
-                    let mut failed = false;
-                    if source.usage != CooperativeUse::Accumulator {
-                        self.matrix2_error(
-                            span,
-                            name,
-                            "Cooperative matrix source Use must be Accumulator",
-                        );
-                        failed = true;
-                    }
+                let mut failed = false;
+                let mut fail = |analyzer: &mut Self, reason: &'static str| {
+                    analyzer.matrix2_error(span, name, reason);
+                    failed = true;
+                };
+                if known_mismatch(result.scope, source.scope) {
+                    fail(self, "scope must match");
+                }
+                if known_mismatch(result.rows, source.columns)
+                    || known_mismatch(result.columns, source.rows)
+                {
+                    fail(self, "rows/columns must be swapped");
+                }
+                if source.usage != CooperativeUse::Accumulator {
+                    fail(self, "Cooperative matrix source Use must be Accumulator");
+                }
+                if self.extension_enabled("GL_EXT_cooperative_matrix_maintenance1") {
                     if result.usage == CooperativeUse::Accumulator {
-                        self.matrix2_error(
-                            span,
-                            name,
+                        fail(
+                            self,
                             "Cooperative matrix result Use must not be Accumulator",
                         );
-                        failed = true;
                     }
-                    if failed {
-                        return Operand::error();
-                    }
+                } else if result.usage != CooperativeUse::B {
+                    fail(self, "Cooperative matrix result Use must be B");
                 }
-                if result.rows != source.columns || result.columns != source.rows {
-                    return self.matrix2_error(span, name, "transposed sizes must match");
+                if failed {
+                    return Operand::error();
                 }
                 if let Some(operand) = operands.first() {
                     if !self.require_lvalue(first, operand) {
@@ -554,93 +694,102 @@ impl Analyzer<'_> {
                     self.error(span, DiagnosticKind::NoMatchingFunction(String::from(name)));
                     return Operand::error();
                 };
+                let mask_type = operands.get(2).is_some_and(|operand| {
+                    operand.ty.is_scalar() && self.converts(&operand.ty, &Type::INT)
+                });
+                if !mask_type {
+                    self.error(span, DiagnosticKind::NoMatchingFunction(String::from(name)));
+                    return Operand::error();
+                }
+                let mut failed = false;
+                let mut fail = |analyzer: &mut Self, reason: &'static str| {
+                    analyzer.matrix2_error(span, name, reason);
+                    failed = true;
+                };
+                if result.scalar != source.scalar {
+                    fail(self, "input and result component types must match");
+                }
+                if result.usage != CooperativeUse::Accumulator
+                    || source.usage != CooperativeUse::Accumulator
+                {
+                    fail(self, "input and result Use must be Accumulator");
+                }
+                if known_mismatch(result.scope, source.scope) {
+                    fail(self, "input and result scopes must match");
+                }
                 let mask = operands.get(2).and_then(|operand| {
                     (operand.constant && !operand.specialization)
                         .then(|| operand.value.as_ref()?.scalar_i64())
                         .flatten()
                 });
-                let Some(mask) = mask else {
-                    return self.matrix2_error(
-                        span,
-                        name,
-                        "reduceMask must be a constant expression",
-                    );
-                };
-                if !(1..=4).contains(&mask) {
-                    return self.matrix2_error(
-                        span,
-                        name,
-                        "reduceMask must be a valid cooperative matrix reduction value",
-                    );
-                }
-                if result.scalar != source.scalar {
-                    return self.matrix2_error(
-                        span,
-                        name,
-                        "input and result component types must match",
-                    );
-                }
-                if result.scope != source.scope {
-                    return self.matrix2_error(span, name, "input and result scopes must match");
-                }
-                if result.usage != CooperativeUse::Accumulator
-                    || source.usage != CooperativeUse::Accumulator
-                {
-                    return self.matrix2_error(
-                        span,
-                        name,
-                        "input and result Use must be Accumulator",
-                    );
-                }
-                let half = |size: ArraySize, of: ArraySize| match (size, of) {
-                    (ArraySize::Sized(size), ArraySize::Sized(of)) => size * 2 == of,
-                    _ => true,
-                };
-                if mask & REDUCE_2X2 != 0 {
-                    if !half(result.rows, source.rows) || !half(result.columns, source.columns) {
-                        return self.matrix2_error(
-                            span,
-                            name,
-                            "result rows and columns must be half the input rows and columns for a 2x2 reduction",
+                match mask {
+                    None => fail(self, "reduceMask must be a constant expression"),
+                    Some(value)
+                        if !matches!(
+                            value,
+                            REDUCE_ROW | REDUCE_COLUMN | REDUCE_ROW_AND_COLUMN | REDUCE_2X2
+                        ) =>
+                    {
+                        fail(
+                            self,
+                            "reduceMask must be a valid cooperative matrix reduction value",
                         );
                     }
-                } else {
-                    if mask & REDUCE_ROW != 0 && result.rows != source.rows {
-                        return self.matrix2_error(
-                            span,
-                            name,
-                            "result rows must match input rows for a row reduction",
-                        );
-                    }
-                    if mask & REDUCE_COLUMN != 0 && result.columns != source.columns {
-                        return self.matrix2_error(
-                            span,
-                            name,
+                    Some(REDUCE_ROW) if known_mismatch(result.rows, source.rows) => fail(
+                        self,
+                        "result rows must match input rows for a row reduction",
+                    ),
+                    Some(REDUCE_COLUMN) if known_mismatch(result.columns, source.columns) => {
+                        fail(
+                            self,
                             "result columns must match input columns for a column reduction",
                         );
                     }
+                    Some(REDUCE_2X2)
+                        if !half(result.rows, source.rows)
+                            || !half(result.columns, source.columns) =>
+                    {
+                        fail(
+                            self,
+                            "result rows and columns must be half the input rows and columns for a 2x2 reduction",
+                        );
+                    }
+                    Some(_) => {}
                 }
                 if !self.check_function_parameters(span, combine) {
-                    return Operand::error();
+                    failed = true;
                 }
                 let Some(function) = self.function(combine).cloned() else {
                     return Operand::error();
                 };
-                let component = Type::scalar(source.scalar);
-                let types_match = function.parameters.len() == 2
-                    && function
-                        .parameters
-                        .iter()
-                        .all(|parameter| parameter.ty == component)
-                    && function.return_type == component;
-                if !types_match {
-                    self.error(
+                let mut fail_function = |analyzer: &mut Self, reason: &'static str| {
+                    analyzer.error(
                         span,
                         DiagnosticKind::InvalidCooperativeCall {
                             function: function.name.clone(),
-                            reason: "parameter types must match cooperative matrix component type",
+                            reason,
                         },
                     );
+                    failed = true;
+                };
+                if function.parameters.len() != 2 {
+                    fail_function(self, "must have two parameters");
+                }
+                for parameter in &function.parameters {
+                    if !is_component(&parameter.ty, source.scalar) {
+                        fail_function(
+                            self,
+                            "parameter types must match cooperative matrix component type",
+                        );
+                    }
+                }
+                if !is_component(&function.return_type, source.scalar) {
+                    fail_function(
+                        self,
+                        "return type must match cooperative matrix component type",
+                    );
+                }
+                if failed {
                     return Operand::error();
                 }
                 if let Some(operand) = operands.first() {
@@ -657,49 +806,111 @@ impl Analyzer<'_> {
                     .insert(combine);
                 MatrixCall::Reduce {
                     ext,
-                    mask: u32::try_from(mask).unwrap_or(0),
+                    mask: mask
+                        .and_then(|value| u32::try_from(value).ok())
+                        .unwrap_or_default(),
                 }
             }
             "coopMatPerElementNV" | "coopMatPerElementEXT" => {
-                let (Some(result), Some(source), Some(Some(function_id))) =
-                    (matrix(0), matrix(1), references.get(2).copied())
-                else {
+                let (Some(result_type), Some(source_type), Some(Some(function_id))) = (
+                    operands.first().map(|operand| &operand.ty),
+                    operands.get(1).map(|operand| &operand.ty),
+                    references.get(2).copied(),
+                ) else {
                     return self.matrix2_error(
                         span,
                         name,
                         "expected a result matrix, an input matrix, and a per-element function",
                     );
                 };
-                let Some(function) = self.function(function_id).cloned() else {
-                    return Operand::error();
-                };
-                let extra = operands.get(3..).unwrap_or_default();
-                let mut expected = alloc::vec![Type::UINT, Type::UINT, Type::scalar(source.scalar)];
-                for operand in extra {
-                    let ty = match operand.ty.as_cooperative_matrix() {
-                        Some(matrix) => Type::scalar(matrix.scalar),
-                        None => operand.ty.clone(),
-                    };
-                    expected.push(ty);
-                }
-                let parameters: Vec<Type> = function
-                    .parameters
-                    .iter()
-                    .map(|parameter| parameter.ty.clone())
-                    .collect();
-                if parameters != expected
-                    || function.return_type != Type::scalar(result.scalar)
-                    || result.scope != source.scope
-                    || result.rows != source.rows
-                    || result.columns != source.columns
-                {
+                let Some(source) = source_type.as_cooperative_matrix() else {
                     return self.matrix2_error(
                         span,
                         name,
-                        "per-element function does not match the matrices",
+                        "expected a result matrix, an input matrix, and a per-element function",
                     );
+                };
+                let types_match = result_type == source_type;
+                let mut failed = !self.check_function_parameters(span, function_id);
+                let Some(function) = self.function(function_id).cloned() else {
+                    return Operand::error();
+                };
+                if !types_match {
+                    self.error(
+                        span,
+                        DiagnosticKind::InvalidCooperativeCall {
+                            function: String::new(),
+                            reason: "cooperative matrix input and result types must match",
+                        },
+                    );
+                    failed = true;
                 }
-                if !self.check_function_parameters(span, function_id) {
+                let mut fail_function = |analyzer: &mut Self, reason: &'static str| {
+                    analyzer.error(
+                        span,
+                        DiagnosticKind::InvalidCooperativeCall {
+                            function: function.name.clone(),
+                            reason,
+                        },
+                    );
+                    failed = true;
+                };
+                let parameters = &function.parameters;
+                if parameters.len() < 3 {
+                    fail_function(self, "not enough parameters");
+                } else if parameters.len() != operands.len() {
+                    fail_function(
+                        self,
+                        "number of parameters must match call to cooperative matrix per-element operation",
+                    );
+                } else {
+                    let coordinate =
+                        |ty: &Type| ty.is_scalar() && ty.base_scalar() == Some(Scalar::Uint);
+                    if !parameters
+                        .iter()
+                        .take(2)
+                        .all(|parameter| coordinate(&parameter.ty))
+                    {
+                        fail_function(self, "row/column parameters must be uint32_t");
+                    }
+                    if !parameters
+                        .get(2)
+                        .is_some_and(|parameter| is_component(&parameter.ty, source.scalar))
+                    {
+                        fail_function(
+                            self,
+                            "third parameter must match cooperative matrix component type",
+                        );
+                    }
+                    for (parameter, operand) in parameters.iter().zip(&operands).skip(3) {
+                        if operand.ty.as_cooperative_matrix().is_some() {
+                            if operand.ty != *source_type {
+                                fail_function(
+                                    self,
+                                    "optional cooperative matrix types must match the input matrix type",
+                                );
+                            }
+                            if !is_component(&parameter.ty, source.scalar) {
+                                fail_function(
+                                    self,
+                                    "parameters corresponding to cooperative matrices must match the matrix component type",
+                                );
+                            }
+                        } else if operand.ty != parameter.ty {
+                            fail_function(
+                                self,
+                                "parameter types must match or be cooperative matrix component type",
+                            );
+                        }
+                    }
+                    if !is_component(&function.return_type, source.scalar) {
+                        fail_function(
+                            self,
+                            "return type must match cooperative matrix component type",
+                        );
+                    }
+                }
+                if failed {
                     return Operand::error();
                 }
                 if let Some(operand) = operands.first() {
@@ -722,7 +933,7 @@ impl Analyzer<'_> {
                     self.error(span, DiagnosticKind::NoMatchingFunction(String::from(name)));
                     return Operand::error();
                 };
-                if !index.ty.is_scalar_integer() {
+                if !index.ty.is_scalar() || !self.converts(&index.ty, &Type::UINT) {
                     self.error(span, DiagnosticKind::NoMatchingFunction(String::from(name)));
                     return Operand::error();
                 }
