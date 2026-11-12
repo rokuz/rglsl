@@ -697,11 +697,24 @@ impl BlockContext<'_> {
                     }
 
                     let id = self.gen_id();
-                    block.body.push(Instruction::composite_construct(
-                        result_type_id,
-                        id,
-                        &self.temp_list,
-                    ));
+                    match self
+                        .writer
+                        .replicated_constituent(result_type_id, &self.temp_list)
+                    {
+                        Some(value) => {
+                            let mut instruction =
+                                Instruction::new(spirv::Op::CompositeConstructReplicateEXT);
+                            instruction.set_type(result_type_id);
+                            instruction.set_result(id);
+                            instruction.add_operand(value);
+                            block.body.push(instruction);
+                        }
+                        None => block.body.push(Instruction::composite_construct(
+                            result_type_id,
+                            id,
+                            &self.temp_list,
+                        )),
+                    }
                     id
                 }
             }

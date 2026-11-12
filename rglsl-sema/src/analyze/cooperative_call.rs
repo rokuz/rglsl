@@ -1,7 +1,7 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use rglsl_ast::ast::Expression;
+use rglsl_ast::ast::{Expression, ExpressionKind};
 use rglsl_ast::Span;
 
 use super::qcom::QcomConversion;
@@ -9,7 +9,7 @@ use super::{Analyzer, Callee, Operand};
 use crate::constant::Value;
 use crate::diagnostic::DiagnosticKind;
 use crate::scope::Storage;
-use crate::types::{CooperativeUse, Scalar, Type, TypeKind};
+use crate::types::{ArraySize, CooperativeUse, Scalar, Type, TypeKind};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CooperativeCall {
@@ -314,7 +314,18 @@ impl Analyzer<'_> {
         Some((CooperativeCall::MulAdd { nv, saturating }, c_type))
     }
 
-    fn require_storage(&mut self, span: Span, name: &str, buffer: &Operand) -> bool {
+    fn require_storage(
+        &mut self,
+        span: Span,
+        name: &str,
+        buffer: &Operand,
+        vectors: bool,
+        writes: bool,
+    ) -> bool {
+        let memory_scalar = |scalar: Scalar| {
+            scalar.is_integer()
+                || matches!(scalar, Scalar::Float16 | Scalar::Float | Scalar::Double)
+        };
         let valid_element = buffer
             .ty
             .element_type()
@@ -322,8 +333,8 @@ impl Analyzer<'_> {
             .is_some_and(|ty| {
                 !ty.is_array()
                     && match ty.kind {
-                        TypeKind::Scalar(scalar) => scalar.is_numeric(),
-                        TypeKind::Vector { scalar, .. } => scalar.is_numeric(),
+                        TypeKind::Scalar(scalar) => memory_scalar(scalar),
+                        TypeKind::Vector { scalar, .. } => vectors && memory_scalar(scalar),
                         _ => false,
                     }
             });
@@ -340,7 +351,15 @@ impl Analyzer<'_> {
             );
             return false;
         }
-        true
+        if writes {
+            if let super::Place::ReadOnly(reason) = buffer.place {
+                self.error(span, DiagnosticKind::NotAnLValue(reason));
+                return false;
+            }
+            true
+        } else {
+            self.readable(span, buffer)
+        }
     }
 
     fn cooperative_vector_call(
@@ -352,6 +371,14 @@ impl Analyzer<'_> {
         operands: &[Operand],
     ) -> Operand {
         let vector = |operand: &Operand| operand.ty.is_cooperative_vector();
+        let input = |operand: &Operand| {
+            vector(operand)
+                && operand
+                    .ty
+                    .base_scalar()
+                    .and_then(Scalar::cooperative_vector_family)
+                    .is_some()
+        };
         let mismatch = |analyzer: &mut Self| {
             analyzer.error(span, DiagnosticKind::NoMatchingFunction(String::from(name)));
             Operand::error()
@@ -361,11 +388,33 @@ impl Analyzer<'_> {
                 let [value, buffer, offset] = operands else {
                     return mismatch(self);
                 };
-                if !vector(value) || !offset.ty.is_scalar_integer() {
+                let accepted = if name == "coopVecLoadNV" {
+                    vector(value)
+                } else {
+                    input(value)
+                };
+                if !accepted || !offset.ty.is_scalar_integer() {
                     return mismatch(self);
                 }
-                if !self.require_storage(span, name, buffer) {
+                if !self.require_storage(span, name, buffer, true, name == "coopVecStoreNV") {
                     return Operand::error();
+                }
+                if let Some(argument) = arguments.get(1) {
+                    let mut inner = argument;
+                    while let ExpressionKind::Parenthesized(nested) = &inner.kind {
+                        inner = nested;
+                    }
+                    if !matches!(
+                        inner.kind,
+                        ExpressionKind::Variable(_) | ExpressionKind::FieldSelection { .. }
+                    ) {
+                        self.cooperative_error(
+                            span,
+                            name,
+                            "buffer argument must be in buffer or shared storage",
+                        );
+                        return Operand::error();
+                    }
                 }
                 if name == "coopVecLoadNV" {
                     let first = arguments.first().map_or(span, |argument| argument.span);
@@ -384,8 +433,51 @@ impl Analyzer<'_> {
                     return mismatch(self);
                 }
                 let at = |index: usize| operands.get(index);
-                if !at(0).is_some_and(vector) || !at(1).is_some_and(vector) {
+                let transpose = if bias { 12 } else { 9 };
+                if !at(0).is_some_and(vector)
+                    || !at(1).is_some_and(input)
+                    || at(transpose).is_none_or(|operand| operand.ty != Type::BOOL)
+                {
                     return mismatch(self);
+                }
+                let result_scalar = at(0).and_then(|operand| operand.ty.base_scalar());
+                if !matches!(
+                    result_scalar,
+                    Some(Scalar::Float16 | Scalar::Float | Scalar::Int | Scalar::Uint)
+                ) {
+                    return self.cooperative_error(
+                        span,
+                        name,
+                        "result component type must be a 32-bit integer or a 16- or 32-bit float",
+                    );
+                }
+                let (rows, columns) = if bias { (9, 10) } else { (6, 7) };
+                let packed = at(2)
+                    .and_then(Self::constant_argument)
+                    .is_some_and(|value| matches!(value, 1_000_491_000 | 1_000_491_001));
+                let mismatched = |vector: usize, count: usize| {
+                    let size = at(vector).and_then(|operand| operand.ty.sized_vector_length());
+                    let value = at(count).and_then(Self::constant_argument);
+                    match (size, value) {
+                        (Some(ArraySize::Sized(size)), Some(value)) => {
+                            u32::try_from(value).ok() != Some(size)
+                        }
+                        _ => false,
+                    }
+                };
+                if mismatched(0, rows) {
+                    return self.cooperative_error(
+                        span,
+                        name,
+                        "M must match the number of components of the result",
+                    );
+                }
+                if !packed && mismatched(1, columns) {
+                    return self.cooperative_error(
+                        span,
+                        name,
+                        "K must match the number of components of the input",
+                    );
                 }
                 let first = arguments.first().map_or(span, |argument| argument.span);
                 if let Some(result) = at(0) {
@@ -394,13 +486,13 @@ impl Analyzer<'_> {
                     }
                 }
                 if let Some(matrix) = at(3) {
-                    if !self.require_storage(span, name, matrix) {
+                    if !self.require_storage(span, name, matrix, false, false) {
                         return Operand::error();
                     }
                 }
                 if bias {
                     if let Some(bias) = at(6) {
-                        if !self.require_storage(span, name, bias) {
+                        if !self.require_storage(span, name, bias, false, false) {
                             return Operand::error();
                         }
                     }
@@ -442,14 +534,14 @@ impl Analyzer<'_> {
                 let [a, b, buffer, _, _, _, _] = operands else {
                     return mismatch(self);
                 };
-                if !vector(a) || !vector(b) {
+                if !input(a) || !input(b) {
                     return mismatch(self);
                 }
                 if a.ty.base_scalar() != b.ty.base_scalar() {
                     self.cooperative_error(span, name, "cooperative vector basic types must match");
                     return Operand::error();
                 }
-                if !self.require_storage(span, name, buffer) {
+                if !self.require_storage(span, name, buffer, false, true) {
                     return Operand::error();
                 }
                 (
@@ -464,10 +556,10 @@ impl Analyzer<'_> {
                 let [value, buffer, offset] = operands else {
                     return mismatch(self);
                 };
-                if !vector(value) || !offset.ty.is_scalar_integer() {
+                if !input(value) || !offset.ty.is_scalar_integer() {
                     return mismatch(self);
                 }
-                if !self.require_storage(span, name, buffer) {
+                if !self.require_storage(span, name, buffer, false, true) {
                     return Operand::error();
                 }
                 (CooperativeCall::VectorReduceSum, &[2], &[], &[], &[])
@@ -485,20 +577,38 @@ impl Analyzer<'_> {
         if failed {
             return Operand::error();
         }
-        let mut wide = false;
+        let mut offset_types = Vec::with_capacity(offsets.len());
         for &index in offsets {
             let (Some(argument), Some(operand)) = (arguments.get(index), operands.get(index))
             else {
                 return mismatch(self);
             };
-            match operand.ty.scalar_type() {
-                Some(Scalar::Uint64) => wide = true,
-                Some(Scalar::Uint) => {}
-                Some(scalar) if scalar.is_integer() => {
-                    self.record_conversion(argument, &operand.ty, &Type::UINT);
+            offset_types.push((argument, operand.ty.clone()));
+        }
+        let narrow = Type::UINT;
+        let wide_type = Type::scalar(Scalar::Uint64);
+        let narrow_viable = offset_types
+            .iter()
+            .all(|(_, ty)| ty.is_scalar_integer() && self.converts(ty, &narrow));
+        let wide_viable = offset_types
+            .iter()
+            .all(|(_, ty)| ty.is_scalar_integer() && self.converts(ty, &wide_type));
+        let wide = match (narrow_viable, wide_viable) {
+            (false, false) => return mismatch(self),
+            (true, false) => false,
+            (false, true) => true,
+            (true, true) => {
+                let narrow_better = offset_types.iter().any(|(_, ty)| *ty == narrow);
+                if !narrow_better && self.extension_enabled("GL_EXT_shader_64bit_indexing") {
+                    self.error(span, DiagnosticKind::AmbiguousCall(String::from(name)));
+                    return Operand::error();
                 }
-                _ => return mismatch(self),
+                false
             }
+        };
+        let target = if wide { &wide_type } else { &narrow };
+        for (argument, ty) in &offset_types {
+            self.record_conversion(argument, ty, target);
         }
         let typed: Vec<(usize, Type)> = uints
             .iter()
@@ -510,7 +620,7 @@ impl Analyzer<'_> {
             else {
                 return mismatch(self);
             };
-            if !operand.ty.is_scalar_integer() {
+            if !operand.ty.is_scalar_integer() || !self.converts(&operand.ty, &target) {
                 return mismatch(self);
             }
             self.record_conversion(argument, &operand.ty, &target);

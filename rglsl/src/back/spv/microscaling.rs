@@ -63,8 +63,14 @@ impl BlockContext<'_> {
         offset: Option<Handle<Expression>>,
         block: &mut Block,
     ) -> Result<Word, Error> {
-        let id = self.gen_id();
         let source = self.cached.get(expr)?;
+        if offset.is_none() {
+            let source_type_id = self.get_expression_type_id(&self.fun_info[expr].ty)?;
+            if source_type_id == result_type_id {
+                return Ok(source);
+            }
+        }
+        let id = self.gen_id();
         let instruction = match offset {
             None => Instruction::unary(Op::Bitcast, result_type_id, id, source),
             Some(offset) => {

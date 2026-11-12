@@ -1110,6 +1110,23 @@ impl Analyzer<'_> {
                 return;
             }
         }
+        if qualifiers.storage == Storage::Shared
+            && self
+                .types
+                .find_in_members(ty, |member| {
+                    matches!(member.kind, TypeKind::CooperativeVector { .. }).then_some(())
+                })
+                .is_some()
+        {
+            self.error(
+                span,
+                invalid(
+                    "shared",
+                    "cooperative vector types not allowed in shared memory",
+                ),
+            );
+            return;
+        }
         if qualifiers.storage == Storage::Inout {
             self.error(span, invalid("inout", "not allowed at global scope"));
             return;
@@ -1608,6 +1625,9 @@ impl Analyzer<'_> {
         qualifiers: Qualifiers,
         value: Option<Constant>,
     ) {
+        if matches!(ty.kind, TypeKind::CooperativeVector { .. }) {
+            self.vulkan_memory_model = true;
+        }
         let name = &declarator.name;
         if let Some(builtin) = self.redeclared_builtin(&name.node) {
             self.declarations.insert(declarator.id, builtin);
@@ -1917,6 +1937,21 @@ impl Analyzer<'_> {
             .iter()
             .flat_map(|declaration| &declaration.declarators);
         for (declarator, member) in declarators.zip(&members) {
+            if self
+                .types
+                .find_in_members(&member.ty, |ty| {
+                    matches!(ty.kind, TypeKind::CooperativeVector { .. }).then_some(())
+                })
+                .is_some()
+            {
+                self.error(
+                    declarator.name.span,
+                    DiagnosticKind::InvalidBlock {
+                        name: member.name.clone(),
+                        reason: "member of block cannot be or contain a cooperative vector type",
+                    },
+                );
+            }
             if member
                 .ty
                 .contains_scalar_where(&self.types, Scalar::is_sub_byte)

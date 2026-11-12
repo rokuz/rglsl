@@ -316,11 +316,20 @@ impl Writer {
     fn write_spec_constant_composite(&mut self, type_id: Word, constituents: &[Word]) -> Word {
         let key = (type_id, constituents.to_vec());
         let id = self.id_gen.next();
-        let mut instruction = Instruction::new(Op::SpecConstantComposite);
+        let replicated = self.replicated_constituent(type_id, constituents);
+        let mut instruction = Instruction::new(match replicated {
+            Some(_) => Op::SpecConstantCompositeReplicateEXT,
+            None => Op::SpecConstantComposite,
+        });
         instruction.set_type(type_id);
         instruction.set_result(id);
-        for &constituent in constituents {
-            instruction.add_operand(constituent);
+        match replicated {
+            Some(value) => instruction.add_operand(value),
+            None => {
+                for &constituent in constituents {
+                    instruction.add_operand(constituent);
+                }
+            }
         }
         instruction.to_words(&mut self.logical_layout.declarations);
         self.spec_composites.entry(key).or_insert(id);

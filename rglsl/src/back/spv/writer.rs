@@ -101,6 +101,7 @@ impl Writer {
             override_dependent: Vec::new(),
             spec_defaults: Vec::new(),
             spec_composites: crate::FastHashMap::default(),
+            cooperative_vector_types: crate::FastHashSet::default(),
             global_variables: HandleVec::new(),
             std140_compat_uniform_types: crate::FastHashMap::default(),
             laid_out_types: crate::arena::HandleSet::new(),
@@ -283,6 +284,7 @@ impl Writer {
             override_dependent: take(&mut self.override_dependent).reclaim(),
             spec_defaults: take(&mut self.spec_defaults).reclaim(),
             spec_composites: take(&mut self.spec_composites).reclaim(),
+            cooperative_vector_types: take(&mut self.cooperative_vector_types).reclaim(),
             global_variables: take(&mut self.global_variables).reclaim(),
             std140_compat_uniform_types: take(&mut self.std140_compat_uniform_types).reclaim(),
             laid_out_types: crate::arena::HandleSet::new(),
@@ -623,7 +625,10 @@ impl Writer {
             } => LocalType::Cooperative(CooperativeType::Vector {
                 size,
                 scalar,
-                class,
+                class: match size {
+                    crate::CooperativeSize::Pending(_) => crate::LongVectorClass::CooperativeNv,
+                    crate::CooperativeSize::Constant(_) => class,
+                },
             }),
             crate::TypeInner::Pointer {
                 space: crate::AddressSpace::DescriptorHeap(_),
@@ -2472,6 +2477,9 @@ impl Writer {
                         instruction
                     }
                     _ => {
+                        if class == crate::LongVectorClass::CooperativeNv {
+                            self.cooperative_vector_types.insert(id);
+                        }
                         let size_id = self.cooperative_size_id(size);
                         let mut instruction = Instruction::new(spirv::Op::TypeVectorIdEXT);
                         instruction.set_result(id);
@@ -3310,8 +3318,32 @@ impl Writer {
                 self.debugs.push(Instruction::name(id, name));
             }
         }
+        if let Some(value) = self.replicated_constituent(type_id, constituent_ids) {
+            let mut instruction = Instruction::new(spirv::Op::ConstantCompositeReplicateEXT);
+            instruction.set_type(type_id);
+            instruction.set_result(id);
+            instruction.add_operand(value);
+            instruction.to_words(&mut self.logical_layout.declarations);
+            return;
+        }
         Instruction::constant_composite(type_id, id, constituent_ids)
             .to_words(&mut self.logical_layout.declarations);
+    }
+
+    pub(super) fn replicated_constituent(
+        &mut self,
+        type_id: Word,
+        constituent_ids: &[Word],
+    ) -> Option<Word> {
+        if !self.cooperative_vector_types.contains(&type_id) {
+            return None;
+        }
+        let (&first, rest) = constituent_ids.split_first()?;
+        if rest.iter().any(|&id| id != first) {
+            return None;
+        }
+        self.require_replicated_composites().ok()?;
+        Some(first)
     }
 
     pub(super) fn get_constant_null(&mut self, type_id: Word) -> Word {

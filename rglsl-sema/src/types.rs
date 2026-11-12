@@ -138,6 +138,15 @@ impl Scalar {
         matches!(self, Self::Float | Self::Double | Self::Float16)
     }
 
+    pub const fn cooperative_vector_family(self) -> Option<u8> {
+        match self {
+            Self::Float | Self::Float16 => Some(0),
+            Self::Uint | Self::Uint8 | Self::Uint16 => Some(1),
+            Self::Int | Self::Int8 | Self::Int16 => Some(2),
+            _ => None,
+        }
+    }
+
     pub const fn is_16bit(self) -> bool {
         matches!(self, Self::Int16 | Self::Uint16 | Self::Float16)
     }
@@ -1133,6 +1142,26 @@ impl Type {
         !self.is_array() && matches!(self.kind, TypeKind::CooperativeVector { .. })
     }
 
+    pub fn passes_as_cooperative_vector(&self, parameter: &Self) -> bool {
+        match (self.kind, parameter.kind) {
+            (
+                TypeKind::CooperativeVector {
+                    scalar: from,
+                    size: from_size,
+                },
+                TypeKind::CooperativeVector {
+                    scalar: to,
+                    size: to_size,
+                },
+            ) if !self.is_array() && !parameter.is_array() => {
+                from_size == to_size
+                    && from.cooperative_vector_family().is_some()
+                    && from.cooperative_vector_family() == to.cooperative_vector_family()
+            }
+            _ => false,
+        }
+    }
+
     pub const fn as_cooperative_matrix(&self) -> Option<CooperativeMatrix> {
         match self.kind {
             TypeKind::CooperativeMatrix(matrix) if !self.is_array() => Some(matrix),
@@ -1463,6 +1492,8 @@ impl Type {
         }
         if matches!(self.kind, TypeKind::CooperativeMatrix(_))
             || matches!(target.kind, TypeKind::CooperativeMatrix(_))
+            || self.is_cooperative_vector()
+            || target.is_cooperative_vector()
             || !self.same_shape(target)
         {
             return false;

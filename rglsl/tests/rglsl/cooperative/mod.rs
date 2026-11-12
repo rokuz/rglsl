@@ -22,6 +22,7 @@ use crate::TestResult;
 
 mod matrix2;
 mod smoke;
+mod vector;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Target {
@@ -137,6 +138,26 @@ impl Compiled {
     pub fn disassemble(&self) -> String {
         self.module.disassemble()
     }
+}
+
+fn load(words: &[u32]) -> TestResult<dr::Module> {
+    let mut kept = Vec::with_capacity(words.len());
+    kept.extend(words.iter().take(5));
+    let mut rest = words.get(5..).unwrap_or_default();
+    let mut in_functions = false;
+    while let Some(&first) = rest.first() {
+        let length = usize::try_from(first >> 16)?.max(1);
+        let opcode = first & 0xffff;
+        let instruction = rest.get(..length).ok_or("truncated SPIR-V")?;
+        if opcode == Op::Function as u32 {
+            in_functions = true;
+        }
+        if in_functions || opcode != Op::ExtInst as u32 {
+            kept.extend_from_slice(instruction);
+        }
+        rest = rest.get(length..).unwrap_or_default();
+    }
+    Ok(dr::load_words(kept)?)
 }
 
 fn count(module: &dr::Module, op: Op) -> usize {
@@ -370,13 +391,13 @@ pub fn compile_with(
         )
     })?;
     spirv_val(&words, target)?;
-    let module = dr::load_words(&words)?;
+    let module = load(&words)?;
     let reference = match glslang(source, target, debug)? {
         None => None,
         Some(GlslangResult::Rejected(errors)) => {
             return Err(format!("glslang rejects the shader: {errors:?}").into())
         }
-        Some(GlslangResult::Accepted(reference)) => Some(dr::load_words(reference)?),
+        Some(GlslangResult::Accepted(reference)) => Some(load(&reference)?),
     };
     if let (Some(reference), Glslang::SameStructure) = (&reference, expectation) {
         let theirs = structure(reference);

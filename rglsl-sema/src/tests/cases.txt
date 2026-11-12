@@ -5995,3 +5995,116 @@ void main() {
     tensorLayoutNV<2> u = t;
     bool same = t == u;
 }
+### cooperative vector operators | comp 450 | ok
+#extension GL_NV_cooperative_vector : enable
+#extension GL_EXT_shader_explicit_arithmetic_types : enable
+layout(local_size_x = 32) in;
+void main() {
+    coopvecNV<uint8_t, 4> a, b;
+    a = a + b; a = a % b; a = a << b; a = a & b; a = a * uint8_t(2); a = uint8_t(2) * a; a *= uint8_t(3);
+    coopvecNV<float16_t, 4> h;
+    h = h * float16_t(2.0) / h - h;
+    coopvecNV<double, 4> d;
+    d = d * 2.0lf;
+}
+### cooperative vector operands must be identical | comp 450 | 7:InvalidOperands, 8:InvalidOperands, 9:InvalidOperands, 10:InvalidOperands, 11:InvalidOperands, 12:InvalidOperands
+#extension GL_NV_cooperative_vector : enable
+#extension GL_EXT_shader_explicit_arithmetic_types : enable
+layout(local_size_x = 32) in;
+void main() {
+    coopvecNV<float, 4> f; coopvecNV<float16_t, 4> h; coopvecNV<float, 5> g; coopvecNV<uint, 4> u; coopvecNV<int, 4> i;
+    f = f + h;
+    f = f + g;
+    u = u << i;
+    f = f + 1.0;
+    u = u >> 1u;
+    bool same = f == f;
+}
+### cooperative vectors do not convert implicitly | comp 450 | 7:CannotConvert
+#extension GL_NV_cooperative_vector : enable
+#extension GL_EXT_shader_explicit_arithmetic_types : enable
+layout(local_size_x = 32) in;
+void main() {
+    coopvecNV<float, 4> f; coopvecNV<float16_t, 4> h;
+    f = h;
+}
+### cooperative vector function arguments convert within a family | comp 450 | 9:NoMatchingFunction
+#extension GL_NV_cooperative_vector : enable
+#extension GL_EXT_shader_explicit_arithmetic_types : enable
+layout(local_size_x = 32) in;
+float f(coopvecNV<float, 4> v) { return v[0]; }
+void main() {
+    coopvecNV<float16_t, 4> h; coopvecNV<int, 4> i;
+    float x = f(h);
+    float y = f(i);
+}
+### cooperative vector storage | comp 450 | 4:InvalidQualifier, 5:InvalidBlock, 6:InvalidBlock
+#extension GL_NV_cooperative_vector : enable
+#extension GL_EXT_buffer_reference : enable
+shared coopvecNV<float, 4> s;
+layout(binding = 0) buffer B { coopvecNV<float, 4> m; } b;
+layout(buffer_reference) buffer R { coopvecNV<float, 4> m; };
+layout(local_size_x = 32) in;
+void main() { }
+### vectors are not constructed from cooperative vectors | comp 450 | 6:InvalidConstructor, 7:InvalidConstructor
+#extension GL_NV_cooperative_vector : enable
+layout(local_size_x = 32) in;
+void main() {
+    coopvecNV<float, 4> v;
+    vec4 a = vec4(v);
+    float b = float(v);
+}
+### long vectors and cooperative vectors convert by constructor | comp 450 | ok
+#extension GL_NV_cooperative_vector : enable
+#extension GL_EXT_long_vector : enable
+layout(local_size_x = 32) in;
+layout(constant_id = 0) const uint N = 6;
+void main() {
+    vector<float, N> a;
+    coopvecNV<float, N> b = coopvecNV<float, N>(a);
+    vector<float, N> c = vector<float, N>(b);
+    coopvecNV<float, 20> d = coopvecNV<float, 20>(vector<float, 20>(1.0));
+}
+### cooperative vector index against the default size | comp 450 | 6:IndexOutOfRange
+#extension GL_NV_cooperative_vector : enable
+layout(local_size_x = 32) in;
+layout(constant_id = 0) const uint N = 6;
+void main() {
+    coopvecNV<float, N> v; v[6] = 1.0; v[5] = 1.0;
+}
+### cooperative vector offsets are ambiguous with 64-bit indexing | comp 450 | 9:AmbiguousCall
+#extension GL_NV_cooperative_vector : enable
+#extension GL_EXT_shader_explicit_arithmetic_types : enable
+#extension GL_EXT_shader_64bit_indexing : enable
+layout(local_size_x = 32) in;
+layout(binding = 0) buffer B { float data[]; };
+void main() {
+    coopvecNV<float, 4> v;
+    coopVecLoadNV(v, data, 0);
+    coopVecLoadNV(v, data, 0u);
+    coopVecLoadNV(v, data, 0ul);
+}
+### cooperative vector multiplication checks | comp 450 | 9:InvalidCooperativeCall, 10:InvalidCooperativeCall, 11:InvalidCooperativeCall, 12:NoMatchingFunction, 13:NoMatchingFunction
+#extension GL_NV_cooperative_vector : enable
+#extension GL_EXT_shader_explicit_arithmetic_types : enable
+layout(local_size_x = 32) in;
+layout(binding = 0) buffer B { float16_t data[]; };
+void main() {
+    coopvecNV<float16_t, 8> v; coopvecNV<float16_t, 16> r; coopvecNV<int8_t, 16> bad;
+    coopVecMatMulNV(r, v, 0, data, 0, 0, 16, 8, 0, false, 32);
+    coopVecMatMulNV(bad, v, 0, data, 0, 0, 16, 8, 0, false, 32);
+    coopVecMatMulNV(r, v, 0, data, 0, 0, 15, 8, 0, false, 32);
+    coopVecMatMulNV(r, v, 0, data, 0, 0, 16, 9, 0, false, 32);
+    coopVecMatMulNV(r, v, 0, data, 0, 0, 16, 8, 0, 0, 32);
+    coopVecMatMulNV(r, v, 0u, data, 0, 0, 16, 8, 0, false, 32);
+}
+### cooperative vector memory access follows the qualifiers | comp 450 | 8:NotAnLValue, 9:WriteOnlyRead
+#extension GL_NV_cooperative_vector : enable
+layout(local_size_x = 32) in;
+layout(binding = 0) readonly buffer R { float data[]; } ro;
+layout(binding = 1) writeonly buffer W { float data[]; } wo;
+void main() {
+    coopvecNV<float, 4> v;
+    coopVecStoreNV(v, ro.data, 0);
+    coopVecLoadNV(v, wo.data, 0);
+}
