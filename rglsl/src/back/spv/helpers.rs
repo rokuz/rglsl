@@ -1,4 +1,4 @@
-use alloc::{vec, vec::Vec};
+use alloc::vec::Vec;
 
 use arrayvec::ArrayVec;
 use spirv::Word;
@@ -23,23 +23,6 @@ pub(super) fn str_bytes_to_words(bytes: &[u8]) -> Vec<Word> {
     if bytes.len().is_multiple_of(4) {
         // nul-termination
         words.push(0x0u32);
-    }
-
-    words
-}
-
-/// split a string into chunks and keep utf8 valid
-pub(super) fn string_to_byte_chunks(input: &str, limit: usize) -> Vec<&[u8]> {
-    let mut offset: usize = 0;
-    let mut start: usize = 0;
-    let mut words = vec![];
-    while offset < input.len() {
-        offset = input.floor_char_boundary(offset + limit);
-        // Clippy wants us to call as_bytes() first to avoid the UTF-8 check,
-        // but we want to assert the output is valid UTF-8.
-        #[allow(clippy::sliced_string_as_bytes)]
-        words.push(input[start..offset].as_bytes());
-        start = offset;
     }
 
     words

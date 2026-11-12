@@ -703,6 +703,7 @@ impl Writer {
             spirv::Decoration::BuiltIn,
             &[spirv::BuiltIn::WorkgroupSize as u32],
         );
+        self.debug_workgroup_size_id(id);
     }
 
     pub(super) fn write_workgroup_size(

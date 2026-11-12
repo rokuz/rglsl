@@ -61,6 +61,8 @@ pub struct Options {
     pub spirv_version: Option<(u8, u8)>,
     pub library: bool,
     pub hlsl_offsets: bool,
+    pub debug_info: bool,
+    pub source_name: Option<String>,
 }
 
 impl From<ShaderStage> for Options {
@@ -73,6 +75,8 @@ impl From<ShaderStage> for Options {
             spirv_version: None,
             library: false,
             hlsl_offsets: false,
+            debug_info: false,
+            source_name: None,
         }
     }
 }

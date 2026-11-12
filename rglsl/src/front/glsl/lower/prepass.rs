@@ -123,6 +123,11 @@ impl<'a> Lowerer<'a> {
                         if let Some(symbol) = self.symbol(symbol) {
                             self.per_vertex_used.insert(symbol.name.clone());
                         }
+                        let start = expression.span.start;
+                        self.per_vertex_first_use = Some(
+                            self.per_vertex_first_use
+                                .map_or(start, |first| first.min(start)),
+                        );
                     }
                 }
                 ExpressionKind::FunctionCall(ref call) => {

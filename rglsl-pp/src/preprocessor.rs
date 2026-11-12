@@ -127,6 +127,7 @@ pub(crate) struct Preprocessor<'a> {
     pub(crate) included_once: BTreeSet<FileId>,
     pub(crate) sources: Vec<SourceInfo>,
     pub(crate) files: BTreeMap<FileId, String>,
+    pub(crate) texts: BTreeMap<FileId, String>,
     pub(crate) output: Output,
     pub(crate) tokens_scanned: usize,
     pub(crate) aborted: bool,
@@ -181,10 +182,12 @@ pub fn preprocess(
         SourceInfo {
             number: -1,
             name: None,
+            file: None,
         },
         SourceInfo {
             number: 0,
             name: options.source_name.clone(),
+            file: Some(file),
         },
     ];
     let root_at = At {
@@ -226,6 +229,7 @@ pub fn preprocess(
         included_once: BTreeSet::new(),
         sources,
         files,
+        texts: BTreeMap::new(),
         output: Output::new(file, options.limits.max_output_bytes),
         tokens_scanned: 0,
         aborted: false,
@@ -267,6 +271,7 @@ impl Preprocessor<'_> {
                 segments: self.output.segments,
                 sources: self.sources,
                 files: self.files,
+                texts: self.texts,
             },
             diagnostics: self.diagnostics,
             version: self.version,

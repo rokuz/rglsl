@@ -97,18 +97,7 @@ Note: this is an issue with snapshot configuration, not code. If you added a new
     }
 
     if targets.contains(Targets::SPIRV) {
-        let mut debug_info = None;
-        if let Some(source_code) = source_code {
-            debug_info = Some(rglsl::back::spv::DebugInfo {
-                source_code,
-                file_name: &name,
-                // wgpu#6266: we technically know all the information here to
-                // produce the valid language but it's not too important for
-                // validation purposes
-                language: rglsl::back::spv::SourceLanguage::Unknown,
-            })
-        }
-
+        let debug_info = source_code.map(|_| rglsl::back::spv::DebugInfo::default());
         write_output_spv(
             input,
             module,

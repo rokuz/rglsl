@@ -13,6 +13,7 @@ pub(crate) struct Segment {
     pub(crate) exact: u32,
     pub(crate) cur_file: FileId,
     pub(crate) line: i64,
+    pub(crate) column: u32,
     pub(crate) source: u32,
 }
 
@@ -20,6 +21,7 @@ pub(crate) struct Segment {
 pub(crate) struct SourceInfo {
     pub(crate) number: i64,
     pub(crate) name: Option<String>,
+    pub(crate) file: Option<FileId>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,6 +36,15 @@ pub struct SourceMap {
     pub(crate) segments: Vec<Segment>,
     pub(crate) sources: Vec<SourceInfo>,
     pub(crate) files: BTreeMap<FileId, String>,
+    pub(crate) texts: BTreeMap<FileId, String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LineEntry {
+    pub offset: u32,
+    pub source: u32,
+    pub line: u32,
+    pub column: u32,
 }
 
 pub(crate) fn clamp_line(line: i64) -> u32 {
@@ -95,5 +106,54 @@ impl SourceMap {
 
     pub const fn root(&self) -> FileId {
         self.root
+    }
+
+    pub fn file_text(&self, file: FileId) -> Option<&str> {
+        self.texts.get(&file).map(String::as_str)
+    }
+
+    pub fn source_count(&self) -> u32 {
+        u32::try_from(self.sources.len()).unwrap_or(u32::MAX)
+    }
+
+    pub fn source_name(&self, source: u32) -> Option<&str> {
+        self.source_info(source)
+            .and_then(|info| info.name.as_deref())
+    }
+
+    pub fn source_file(&self, source: u32) -> Option<FileId> {
+        self.source_info(source).and_then(|info| info.file)
+    }
+
+    fn source_info(&self, source: u32) -> Option<&SourceInfo> {
+        usize::try_from(source)
+            .ok()
+            .and_then(|index| self.sources.get(index))
+    }
+
+    pub fn line_entries(&self) -> impl Iterator<Item = LineEntry> + '_ {
+        self.segments.iter().map(|segment| LineEntry {
+            offset: segment.start,
+            source: segment.source,
+            line: clamp_line(segment.line),
+            column: segment.column,
+        })
+    }
+
+    pub fn position(&self, offset: usize) -> LineEntry {
+        self.segment(offset).map_or(
+            LineEntry {
+                offset: 0,
+                source: 1,
+                line: 1,
+                column: 0,
+            },
+            |segment| LineEntry {
+                offset: segment.start,
+                source: segment.source,
+                line: clamp_line(segment.line),
+                column: segment.column,
+            },
+        )
     }
 }

@@ -88,6 +88,7 @@ impl Output {
             exact: at.exact,
             cur_file: at.cur_file,
             line: at.line,
+            column: at.column,
             source: at.source,
         };
         if let Some(last) = self.segments.last_mut() {

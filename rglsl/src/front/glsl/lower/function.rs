@@ -566,6 +566,7 @@ impl<'a> Lowerer<'a> {
         let Some(&handle) = self.functions.get(&id) else {
             return Ok(());
         };
+        self.debug_function(definition, false);
         let function = self.lower_body(id, definition, false)?;
         *self.module.functions.get_mut(handle) = function;
         Ok(())
@@ -647,6 +648,7 @@ impl<'a> Lowerer<'a> {
             .function_declarations
             .get(&definition.id)
             .ok_or_else(|| internal(at))?;
+        self.debug_function(definition, true);
         let function = self.lower_body(id, definition, true)?;
         let stage = self.options.stage;
         let (workgroup_size, workgroup_size_overrides) = if stage.compute_like() {

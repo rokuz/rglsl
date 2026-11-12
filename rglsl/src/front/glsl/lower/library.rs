@@ -16,6 +16,7 @@ fn stage_options(options: &Options, stage: ShaderStage) -> Options {
         stage,
         defines: options.defines.clone(),
         library: false,
+        source_name: options.source_name.clone(),
         ..*options
     }
 }

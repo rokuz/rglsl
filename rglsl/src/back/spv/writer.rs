@@ -5,9 +5,8 @@ use hashbrown::hash_map::Entry;
 use spirv::Word;
 
 use super::{
-    block::DebugInfoInner,
     helpers::{contains_builtin, global_needs_wrapper, map_storage_class},
-    Block, BlockContext, CachedConstant, CachedExpressions, CooperativeType, DebugInfo,
+    Block, BlockContext, CachedConstant, CachedExpressions, CooperativeType,
     EntryPointContext, Error, Function, FunctionArgument, GlobalVariable, IdGenerator, Instruction,
     LocalImageType, LocalType, LocalVariable, LogicalLayout, LookupFunctionType, LookupType,
     NumericType, Options, PhysicalLayout, PipelineOptions, ResultMember, Writer, WriterFlags,
@@ -52,7 +51,9 @@ impl Function {
                 }
             }
             for instruction in block.body.iter() {
-                instruction.to_words(sink);
+                if !super::debug::is_marker(instruction) {
+                    instruction.to_words(sink);
+                }
             }
         }
         Instruction::function_end().to_words(sink);
@@ -138,6 +139,7 @@ impl Writer {
             mesh_shader_primitive_indices_clamp: options.mesh_shader_primitive_indices_clamp,
             heap: super::heap::HeapState::default(),
             descriptor_heap: false,
+            debug: super::debug::DebugState::new(options.debug_info.as_ref()),
         })
     }
 
@@ -156,6 +158,7 @@ impl Writer {
             super::f16_polyfill::F16IoPolyfill::new(options.use_storage_input_output_16);
         self.task_dispatch_limits = options.task_dispatch_limits;
         self.mesh_shader_primitive_indices_clamp = options.mesh_shader_primitive_indices_clamp;
+        self.debug = super::debug::DebugState::new(options.debug_info.as_ref());
         Ok(())
     }
 
@@ -250,6 +253,7 @@ impl Writer {
             laid_out_copies: take(&mut self.laid_out_copies).reclaim(),
             heap: super::heap::HeapState::default(),
             descriptor_heap: false,
+            debug: take(&mut self.debug),
         };
 
         *self = fresh;
@@ -1121,7 +1125,7 @@ impl Writer {
         info: &FunctionInfo,
         ir_module: &crate::Module,
         mut interface: Option<FunctionInterface>,
-        debug_info: &Option<DebugInfoInner>,
+        debug_start: Option<u32>,
     ) -> Result<Word, Error> {
         self.write_wrapped_functions(ir_function, info, ir_module)?;
 
@@ -1578,7 +1582,21 @@ impl Writer {
             .function
             .consume(prelude, Instruction::branch(next_id));
 
-        context.write_function_body(next_id, debug_info.as_ref())?;
+        let parameter_ids: Vec<Word> = context
+            .function
+            .parameters
+            .iter()
+            .map(|parameter| parameter.instruction.result_id.unwrap_or(0))
+            .collect();
+        context.writer.debug_function_begin(
+            ir_module,
+            ir_function,
+            debug_start,
+            (function_id, &parameter_ids),
+            &context.function.variables,
+        );
+
+        context.write_function_body(next_id)?;
 
         // Consume the `BlockContext`, ending its borrows and letting the
         // `Writer` steal back its cached expression table and temp_list.
@@ -1588,6 +1606,7 @@ impl Writer {
         self.saved_cached = cached;
         self.temp_list = temp_list;
 
+        self.debug_function_finish(ir_module, &mut function);
         function.to_words(&mut self.logical_layout.function_definitions)?;
 
         if let Some(EntryPointContext {
@@ -1624,7 +1643,6 @@ impl Writer {
         entry_point: &crate::EntryPoint,
         info: &FunctionInfo,
         ir_module: &crate::Module,
-        debug_info: &Option<DebugInfoInner>,
     ) -> Result<Instruction, Error> {
         let mut interface_ids = Vec::new();
 
@@ -1641,7 +1659,10 @@ impl Writer {
                 mesh_info: entry_point.mesh_info.clone(),
                 workgroup_size: entry_point.workgroup_size,
             }),
-            debug_info,
+            ir_module
+                .debug_info
+                .as_deref()
+                .and_then(|info| info.units.iter().find_map(|unit| unit.entry)),
         )?;
 
         // Inputs and outputs that are global variables.
@@ -1899,6 +1920,7 @@ impl Writer {
                     }
                     _ => self.write_workgroup_size(function_id, entry_point)?,
                 }
+                self.debug_workgroup_size(ir_module, entry_point);
                 spirv::ExecutionModel::GLCompute
             }
             crate::ShaderStage::Task | crate::ShaderStage::Mesh
@@ -4811,7 +4833,6 @@ impl Writer {
         ir_module: &crate::Module,
         mod_info: &ModuleInfo,
         ep_index: Option<usize>,
-        debug_info: &Option<DebugInfo>,
     ) -> Result<(), Error> {
         let has_storage_buffers =
             ir_module
@@ -4849,24 +4870,7 @@ impl Writer {
             .to_words(&mut self.logical_layout.ext_inst_imports);
         self.use_spirv_requirements(ir_module);
 
-        let mut debug_info_inner = None;
-        if self.flags.contains(WriterFlags::DEBUG) {
-            if let Some(debug_info) = debug_info.as_ref() {
-                let source_file_id = self.id_gen.next();
-                self.debugs
-                    .push(Instruction::string(debug_info.file_name, source_file_id));
-
-                debug_info_inner = Some(DebugInfoInner {
-                    source_code: debug_info.source_code,
-                    source_file_id,
-                });
-                self.debugs.append(&mut Instruction::source_auto_continued(
-                    debug_info.language,
-                    0,
-                    &debug_info_inner,
-                ));
-            }
-        }
+        self.debug_begin(ir_module);
 
         // Find the types that are stored in buffers; see `laid_out_types`.
         self.laid_out_types = crate::arena::HandleSet::for_arena(&ir_module.types);
@@ -4998,6 +5002,7 @@ impl Writer {
             self.global_variables.insert(handle, gvar);
         }
         self.write_spirv_decorations(ir_module)?;
+        self.debug_module(ir_module)?;
 
         // write all functions
         for (handle, ir_function) in ir_module.functions.iter() {
@@ -5025,7 +5030,12 @@ impl Writer {
                     continue;
                 }
             }
-            let id = self.write_function(ir_function, info, ir_module, None, &debug_info_inner)?;
+            let debug_start = ir_module
+                .functions
+                .get_span(handle)
+                .to_range()
+                .and_then(|range| u32::try_from(range.start).ok());
+            let id = self.write_function(ir_function, info, ir_module, None, debug_start)?;
             self.lookup_function.insert(handle, id);
         }
 
@@ -5036,7 +5046,7 @@ impl Writer {
             }
             let info = mod_info.get_entry_point(index);
             let ep_instruction =
-                self.write_entry_point(ir_ep, info, ir_module, &debug_info_inner)?;
+                self.write_entry_point(ir_ep, info, ir_module)?;
             ep_instruction.to_words(&mut self.logical_layout.entry_points);
         }
 
@@ -5119,15 +5129,19 @@ impl Writer {
         Instruction::memory_model(addressing_model, memory_model)
             .to_words(&mut self.logical_layout.memory_model);
 
+        self.debug_end();
         for debug_string in self.debug_strings.iter() {
             debug_string.to_words(&mut self.logical_layout.debugs);
         }
+        self.debug_end_sources();
 
         if self.flags.contains(WriterFlags::DEBUG) {
             for debug in self.debugs.iter() {
                 debug.to_words(&mut self.logical_layout.debugs);
             }
         }
+        self.debug_end_processes();
+        self.debug_end_declarations();
 
         for annotation in self.annotations.iter() {
             annotation.to_words(&mut self.logical_layout.annotations);
@@ -5141,7 +5155,6 @@ impl Writer {
         ir_module: &crate::Module,
         info: &ModuleInfo,
         pipeline_options: Option<&PipelineOptions>,
-        debug_info: &Option<DebugInfo>,
         words: &mut Vec<Word>,
     ) -> Result<(), Error> {
         self.reset();
@@ -5169,7 +5182,7 @@ impl Writer {
             None => None,
         };
 
-        self.write_logical_layout(ir_module, info, ep_index, debug_info)?;
+        self.write_logical_layout(ir_module, info, ep_index)?;
         if self.abstract_type_declared {
             return Err(Error::Validation(
                 "abstract types should never reach the backend",

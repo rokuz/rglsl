@@ -220,6 +220,7 @@ An override expression can be evaluated at pipeline creation time.
 */
 
 mod block;
+mod debug;
 
 use alloc::{boxed::Box, string::String, vec::Vec};
 
@@ -236,6 +237,10 @@ use crate::diagnostic_filter::DiagnosticFilterNode;
 use crate::{FastIndexMap, NamedExpressions, NonUniformExpressions, PrecisionExpressions};
 
 pub use block::{Block, Walk};
+pub use debug::{
+    shift_span, DebugAnchor, DebugFunction, DebugInfo, DebugLine, DebugMember, DebugPosition, DebugScope, DebugSource,
+    DebugStruct, DebugUnit, ScopeIndex,
+};
 pub use rglsl_types::{ResourceBinding, ShaderStage};
 
 /// Explicitly allows early depth/stencil tests.
@@ -4824,4 +4829,10 @@ pub struct Module {
     )]
     #[cfg_attr(feature = "deserialize", serde(default))]
     pub spirv_requirements: SpirvRequirements,
+    #[cfg_attr(
+        feature = "serialize",
+        serde(skip_serializing_if = "Option::is_none")
+    )]
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    pub debug_info: Option<Box<DebugInfo>>,
 }

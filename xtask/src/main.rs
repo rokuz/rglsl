@@ -6,6 +6,7 @@
 //!   writes `PROGRESS.md`.
 
 mod corpus;
+mod debuginfo;
 mod exec;
 mod fuzz;
 mod fuzz_exec;
@@ -248,6 +249,7 @@ fn run(args: Vec<String>) -> Result<i32> {
             let auto_map = args.flag("--auto-map");
             let object = args.flag("--object");
             let hlsl_offsets = args.flag("--hlsl-offsets");
+            let debug = args.value("--debug")?;
             let mut include_dirs = Vec::new();
             while let Some(directory) = args.value("--include-dir")? {
                 include_dirs.push(directory);
@@ -263,15 +265,32 @@ fn run(args: Vec<String>) -> Result<i32> {
                     object,
                     hlsl_offsets,
                     include_dirs: &include_dirs,
+                    debug: debug.as_deref(),
                 },
                 Path::new(&out),
             ))
+        }
+        "debug-compare" => {
+            let ours = args.next_positional().context("our module is required")?;
+            let reference = args
+                .next_positional()
+                .context("glslang's module is required")?;
+            args.finish()?;
+            let comparison = debuginfo::compare(Path::new(&ours), Path::new(&reference))?;
+            for fact in &comparison.missing {
+                println!("- {fact}");
+            }
+            for fact in &comparison.extra {
+                println!("+ {fact}");
+            }
+            Ok(i32::from(!comparison.matches()))
         }
         "compile-group" => {
             let spv = args.value("--spv")?.context("--spv is required")?;
             let out_dir = args.value("--out-dir")?.context("--out-dir is required")?;
             let auto_map_locations = args.flag("--auto-map-locations");
             let auto_map_bindings = args.flag("--auto-map-bindings");
+            let debug = args.value("--debug")?;
             let mut inputs = Vec::new();
             while let Some(input) = args.next_positional() {
                 inputs.push(input);
@@ -281,6 +300,7 @@ fn run(args: Vec<String>) -> Result<i32> {
                 &inputs,
                 &worker::GroupOptions {
                     spv_version: &spv,
+                    debug,
                     auto_map_locations,
                     auto_map_bindings,
                     out_dir: Path::new(&out_dir),

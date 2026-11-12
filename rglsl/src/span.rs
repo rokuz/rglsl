@@ -78,16 +78,20 @@ impl Span {
 
     /// Return a [`SourceLocation`] for this span in the provided source.
     pub fn location(&self, source: &str) -> SourceLocation {
-        let prefix = &source[..self.start as usize];
+        let mut start = (self.start as usize).min(source.len());
+        while !source.is_char_boundary(start) {
+            start -= 1;
+        }
+        let prefix = source.get(..start).unwrap_or_default();
         let line_number = prefix.matches('\n').count() as u32 + 1;
         let line_start = prefix.rfind('\n').map(|pos| pos + 1).unwrap_or(0) as u32;
-        let line_position = self.start - line_start + 1;
+        let line_position = (start as u32).saturating_sub(line_start) + 1;
 
         SourceLocation {
             line_number,
             line_position,
             offset: self.start,
-            length: self.end - self.start,
+            length: self.end.saturating_sub(self.start),
         }
     }
 }
