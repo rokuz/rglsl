@@ -875,6 +875,16 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   `docs/design/debug-info.md`.
 - **Source extensions.** `Module::source_extensions` (new) lists the GLSL extensions the
   source requested; the backend writes them as `OpSourceExtension` with the names.
+- **Function parameters of opaque types.** `FunctionArgument::memory_decorations` (new,
+  serialized only when set; object `FORMAT_VERSION` 11) carries the memory qualifiers of image
+  and tensor parameters; the backend writes them on the `OpFunctionParameter` as glslang does
+  (`Volatile` with `Coherent`, `Coherent`, `Restrict`, `NonWritable`, `NonReadable`; no
+  `Coherent`/`Volatile` under the Vulkan memory model). A call may pass a storage image whose
+  type differs from the parameter's only in its `StorageAccess` (SPIR-V image types carry no
+  access). A `BindingArray` of tensors with a constant size is an `ARGUMENT` type (passed as a
+  `UniformConstant` pointer) and, like a tensor, may be a function result; the backend loads
+  the array for `return`, extracts constant indices from a returned array and spills it for
+  variable ones (`docs/design/tensors.md`).
 
 ## Cherry-picked upstream commits
 

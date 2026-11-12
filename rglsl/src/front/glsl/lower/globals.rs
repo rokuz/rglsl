@@ -166,6 +166,16 @@ fn tensor_access(qualifiers: &Qualifiers, ty: &GlslType) -> MemoryDecorations {
     decorations
 }
 
+pub(super) fn parameter_memory(qualifiers: &Qualifiers, ty: &GlslType) -> MemoryDecorations {
+    let image = ty
+        .as_opaque()
+        .is_some_and(|opaque| opaque.kind == OpaqueKind::Image);
+    if !image && !matches!(ty.kind, TypeKind::Tensor { .. }) {
+        return MemoryDecorations::empty();
+    }
+    member_memory(qualifiers, qualifiers)
+}
+
 pub(super) fn member_memory(block: &Qualifiers, member: &Qualifiers) -> MemoryDecorations {
     let mut decorations = memory(block) | memory(member);
     if block.readonly || member.readonly {

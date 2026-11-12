@@ -3728,6 +3728,12 @@ pub struct FunctionArgument {
     )]
     #[cfg_attr(feature = "deserialize", serde(default))]
     pub relaxed_precision: bool,
+    #[cfg_attr(
+        feature = "serialize",
+        serde(skip_serializing_if = "MemoryDecorations::is_empty")
+    )]
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    pub memory_decorations: MemoryDecorations,
 }
 
 /// A function result.

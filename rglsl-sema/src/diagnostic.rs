@@ -168,6 +168,10 @@ pub enum DiagnosticKind {
     UnsizedArrayNotAllowed,
     #[error("opaque type `{0}` can only be used for uniforms and `in` parameters")]
     OpaqueNotAllowed(String),
+    #[error(
+        "a tensor returned by a function cannot be passed to a function parameter: a tensor parameter is a `UniformConstant` pointer to a variable"
+    )]
+    TensorArgumentNotAVariable,
     #[error("`void` cannot be the type of `{0}`")]
     VoidVariable(String),
     #[error("invalid struct member `{name}`: {reason}")]

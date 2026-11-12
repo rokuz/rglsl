@@ -442,6 +442,28 @@ impl<'l, 'a> FunctionLowerer<'l, 'a> {
 impl<'b, 'l, 'a> Cx<'b, 'l, 'a> {}
 
 impl<'a> Lowerer<'a> {
+    fn tensor_array_type(
+        &mut self,
+        ty: &GlslType,
+        span: Span,
+    ) -> Result<Option<Handle<crate::Type>>> {
+        let size = match *ty.dimensions() {
+            [size @ rglsl_sema::types::ArraySize::Sized(_)] => size,
+            _ => return Ok(None),
+        };
+        let Some(element) = ty
+            .element_type()
+            .filter(|element| element.as_tensor().is_some())
+        else {
+            return Ok(None);
+        };
+        let base = self.ir_type(&element, span)?;
+        let size = self.array_size(size, span)?;
+        Ok(Some(
+            self.insert_type(TypeInner::BindingArray { base, size }),
+        ))
+    }
+
     fn parameter_type(
         &mut self,
         ty: &GlslType,
@@ -450,6 +472,9 @@ impl<'a> Lowerer<'a> {
     ) -> Result<Handle<crate::Type>> {
         let depth = symbol.is_some_and(|symbol| self.depth.contains(&symbol));
         let comparison = symbol.is_some_and(|symbol| self.comparison.contains(&symbol));
+        if let Some(array) = self.tensor_array_type(ty, span)? {
+            return Ok(array);
+        }
         if let Some(qualifiers) = symbol
             .and_then(|symbol| self.variable(symbol))
             .map(|variable| &variable.qualifiers)
@@ -524,13 +549,20 @@ impl<'a> Lowerer<'a> {
                 ty,
                 binding: None,
                 relaxed_precision: super::relaxed(&parameter.qualifiers),
+                memory_decorations: super::globals::parameter_memory(
+                    &parameter.qualifiers,
+                    &parameter.ty,
+                ),
             });
         }
         let result = if function.return_type.is_void() {
             None
         } else {
             Some(FunctionResult {
-                ty: self.ir_type(&function.return_type, span)?,
+                ty: match self.tensor_array_type(&function.return_type, span)? {
+                    Some(array) => array,
+                    None => self.ir_type(&function.return_type, span)?,
+                },
                 binding: None,
                 relaxed_precision: super::relaxed(&function.return_qualifiers),
             })

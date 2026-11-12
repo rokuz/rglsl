@@ -244,6 +244,28 @@ impl Analyzer<'_> {
         }
     }
 
+    pub(crate) fn object_layout(&self, qualifiers: &Qualifiers) -> Option<Span> {
+        let shader: alloc::vec::Vec<Span> = self.stage_map(|stage| {
+            shader_layouts(stage, qualifiers)
+                .map(|(_, _, entry)| entry.span)
+                .collect()
+        });
+        qualifiers
+            .layout
+            .iter()
+            .filter(|entry| !shader.contains(&entry.span))
+            .find(|entry| {
+                ![
+                    "constant_id",
+                    "input_attachment_index",
+                    "buffer_reference_align",
+                ]
+                .iter()
+                .any(|name| entry.name.eq_ignore_ascii_case(name))
+            })
+            .map(|entry| entry.span)
+    }
+
     pub(crate) fn no_shader_layouts(&mut self, qualifiers: &Qualifiers) {
         let found: alloc::vec::Vec<(&'static str, Span)> = self.stage_map(|stage| {
             shader_layouts(stage, qualifiers)

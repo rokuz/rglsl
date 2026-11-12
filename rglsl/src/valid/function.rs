@@ -488,6 +488,39 @@ impl<'a> BlockContext<'a> {
     }
 }
 
+fn same_image_but_access(parameter: &crate::TypeInner, argument: &crate::TypeInner) -> bool {
+    match (parameter, argument) {
+        (
+            &crate::TypeInner::Image {
+                dim,
+                arrayed,
+                class:
+                    crate::ImageClass::Storage {
+                        format,
+                        multi,
+                        access: _,
+                    },
+            },
+            &crate::TypeInner::Image {
+                dim: argument_dim,
+                arrayed: argument_arrayed,
+                class:
+                    crate::ImageClass::Storage {
+                        format: argument_format,
+                        multi: argument_multi,
+                        access: _,
+                    },
+            },
+        ) => {
+            dim == argument_dim
+                && arrayed == argument_arrayed
+                && format == argument_format
+                && multi == argument_multi
+        }
+        _ => false,
+    }
+}
+
 impl super::Validator {
     fn validate_call(
         &mut self,
@@ -511,7 +544,12 @@ impl super::Validator {
                     CallError::Argument { index, source }
                         .with_span_handle(expr, context.expressions)
                 })?;
-            if !context.compare_types(&TypeResolution::Handle(arg.ty), ty) {
+            if !context.compare_types(&TypeResolution::Handle(arg.ty), ty)
+                && !same_image_but_access(
+                    &context.types[arg.ty].inner,
+                    ty.inner_with(context.types),
+                )
+            {
                 return Err(CallError::ArgumentType {
                     index,
                     required: arg.ty,
@@ -2618,9 +2656,18 @@ impl super::Validator {
         }
 
         if let Some(ref result) = fun.result {
-            if !self.types[result.ty.index()]
-                .flags
-                .contains(super::TypeFlags::CONSTRUCTIBLE)
+            let tensor = match module.types[result.ty].inner {
+                crate::TypeInner::Tensor { .. } => true,
+                crate::TypeInner::BindingArray {
+                    base,
+                    size: crate::ArraySize::Constant(_),
+                } => matches!(module.types[base].inner, crate::TypeInner::Tensor { .. }),
+                _ => false,
+            };
+            if !tensor
+                && !self.types[result.ty.index()]
+                    .flags
+                    .contains(super::TypeFlags::CONSTRUCTIBLE)
             {
                 return Err(FunctionError::NonConstructibleReturnType
                     .with_span_handle(result.ty, &module.types));

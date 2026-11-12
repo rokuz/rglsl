@@ -240,6 +240,7 @@ impl super::Validator {
                     ty,
                     binding: _,
                     relaxed_precision: _,
+                    memory_decorations: _,
                 } = arg;
                 validate_type(ty)?;
             }

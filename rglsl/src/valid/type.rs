@@ -1151,7 +1151,16 @@ impl super::Validator {
                     return Err(TypeError::InvalidData(base));
                 }
 
-                TypeInfo::new(base_info.flags & type_info_mask, Alignment::ONE)
+                let argument = match (size, &gctx.types[base].inner) {
+                    (crate::ArraySize::Constant(_), &crate::TypeInner::Tensor { .. }) => {
+                        TypeFlags::ARGUMENT
+                    }
+                    _ => TypeFlags::empty(),
+                };
+                TypeInfo::new(
+                    (base_info.flags & type_info_mask) | argument,
+                    Alignment::ONE,
+                )
             }
             Ti::BufferDescriptor { base, space } => {
                 let base_info = &self.types[base.index()];
