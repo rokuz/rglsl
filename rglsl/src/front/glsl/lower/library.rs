@@ -29,11 +29,16 @@ fn fingerprint(object: &ObjectModule) -> String {
 
 fn rejection(stage: ShaderStage, errors: &ParseErrors, source: &str) -> StageRejection {
     let first = errors.errors.first();
+    let included = errors.include_location(0);
     StageRejection {
         stage,
-        line: first
-            .filter(|error| error.meta.is_defined())
-            .map(|error| error.meta.location(source).line_number),
+        file: included.map(|location| location.file.clone()),
+        line: match included {
+            Some(location) => Some(location.line),
+            None => first
+                .filter(|error| error.meta.is_defined())
+                .map(|error| error.meta.location(source).line_number),
+        },
         message: first.map_or_else(
             || {
                 format!(
@@ -88,7 +93,10 @@ pub(super) fn compile(
                 .into_iter()
                 .min_by_key(|&(_, ref errors)| errors.errors.len()),
         };
-        return Err(best.map_or_else(|| Vec::new().into(), |(_, errors)| errors));
+        return Err(best.map_or_else(
+            || ParseErrors::from(Vec::<crate::front::glsl::Error>::new()),
+            |(_, errors)| errors,
+        ));
     };
     library.variants = variants.collect();
     library.rejections = failures

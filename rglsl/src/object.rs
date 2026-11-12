@@ -89,6 +89,7 @@ impl ObjectModule {
                 .cloned()
                 .unwrap_or_else(|| StageRejection {
                     stage,
+                    file: None,
                     line: None,
                     message: match self.stage {
                         Some(own) => alloc::format!("the module is a {} shader", own.name()),
@@ -122,6 +123,7 @@ impl ObjectModule {
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
 pub struct StageRejection {
     pub stage: ShaderStage,
+    pub file: Option<String>,
     pub line: Option<u32>,
     pub message: String,
 }

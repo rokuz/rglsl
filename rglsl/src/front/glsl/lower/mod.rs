@@ -40,7 +40,7 @@ use rglsl_sema::scope::{Symbol, SymbolKind, Variable};
 use rglsl_sema::types::{BlockId, SharedDimensions, StructId};
 use rglsl_sema::{Analysis, FunctionId, SymbolId};
 
-use super::{Error, ErrorKind, Options, ParseErrors};
+use super::{Error, ErrorKind, IncludeLocation, Options, ParseErrors};
 use crate::{
     proc::Layouter, ConservativeDepth, GlobalVariable, Handle, Module, ShaderStage, Span, Type,
 };
@@ -161,27 +161,37 @@ fn lower(
         let errors = preprocessed
             .errors()
             .map(|diagnostic| {
-                let offset = if diagnostic.location.file == map.root() {
-                    diagnostic.location.offset
-                } else {
-                    0
-                };
-                Error {
-                    kind: ErrorKind::Syntax(diagnostic.kind.to_string()),
-                    meta: Span::new(offset, offset),
-                }
+                let root = diagnostic.location.file == map.root();
+                let offset = if root { diagnostic.location.offset } else { 0 };
+                let included = (!root)
+                    .then(|| map.file_name(diagnostic.location.file))
+                    .flatten()
+                    .map(|file| IncludeLocation {
+                        file: String::from(file),
+                        line: diagnostic.line,
+                    });
+                (
+                    Error {
+                        kind: ErrorKind::Syntax(diagnostic.kind.to_string()),
+                        meta: Span::new(offset, offset),
+                    },
+                    included,
+                )
             })
             .collect::<Vec<_>>();
         let first = errors
             .iter()
-            .filter_map(|error| error.meta.to_range())
+            .filter_map(|&(ref error, _)| error.meta.to_range())
             .map(|range| range.start)
             .min();
-        let mut earlier = first
+        let mut earlier: Vec<(Error, Option<IncludeLocation>)> = first
             .map(|first| semantic_errors_before(options, &preprocessed, first))
-            .unwrap_or_default();
+            .unwrap_or_default()
+            .into_iter()
+            .map(|error| (error, None))
+            .collect();
         earlier.extend(errors);
-        earlier.sort_by_key(|error| !error.meta.is_defined());
+        earlier.sort_by_key(|&(ref error, _)| !error.meta.is_defined());
         return Err(earlier.into());
     }
     let text = preprocessed.text.as_str();
@@ -201,13 +211,21 @@ fn lower(
                     .last()
                     .is_none_or(|last| diagnostic.span.start < external_end(last))
         });
-        let mut errors: Vec<Error> = earlier
-            .map(|diagnostic| semantic_error(map, text, diagnostic))
+        let mut errors: Vec<(Error, Option<IncludeLocation>)> = earlier
+            .map(|diagnostic| {
+                (
+                    semantic_error(map, text, diagnostic),
+                    included(map, diagnostic.offset(text)),
+                )
+            })
             .collect();
-        errors.push(Error {
-            kind: ErrorKind::Syntax(error.kind.to_string()),
-            meta: original(map, error.span),
-        });
+        errors.push((
+            Error {
+                kind: ErrorKind::Syntax(error.kind.to_string()),
+                meta: original(map, error.span),
+            },
+            included(map, error.span.start),
+        ));
         return Err(errors.into());
     }
     let errors = analysis
@@ -221,11 +239,12 @@ fn lower(
                 .then(|| names.stage_diagnostic(&diagnostic.kind, analysis.version, options.stage))
                 .flatten()
                 .unwrap_or_else(|| diagnostic.kind.to_string());
-            Error {
+            let past_end = usize::try_from(start).is_ok_and(|start| start >= text.len());
+            let error = Error {
                 kind: ErrorKind::SemanticError(Cow::Owned(message)),
                 meta: if link_time(&diagnostic.kind) {
                     Span::UNDEFINED
-                } else if usize::try_from(start).is_ok_and(|start| start >= text.len()) {
+                } else if past_end {
                     let end = u32::try_from(source.len()).unwrap_or(u32::MAX);
                     Span::new(end, end)
                 } else {
@@ -234,7 +253,11 @@ fn lower(
                         rglsl_ast::Span::new(start, diagnostic.span.end.max(start)),
                     )
                 },
-            }
+            };
+            let location = (!link_time(&diagnostic.kind) && !past_end)
+                .then(|| included(map, start))
+                .flatten();
+            (error, location)
         })
         .collect::<Vec<_>>();
     if !errors.is_empty() {
@@ -302,6 +325,17 @@ fn semantic_error(
             rglsl_ast::Span::new(start, diagnostic.span.end.max(start)),
         ),
     }
+}
+
+fn included(map: &rglsl_pp::SourceMap, offset: u32) -> Option<IncludeLocation> {
+    let (file, line) = map.line(usize::try_from(offset).unwrap_or(usize::MAX));
+    if file == map.root() {
+        return None;
+    }
+    map.file_name(file).map(|name| IncludeLocation {
+        file: String::from(name),
+        line,
+    })
 }
 
 fn original(map: &rglsl_pp::SourceMap, span: rglsl_ast::Span) -> Span {

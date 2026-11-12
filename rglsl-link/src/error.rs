@@ -49,11 +49,12 @@ pub enum LinkError {
     #[error(
         "library {library} cannot be linked into a {stage_name} shader: {message}{at}",
         stage_name = .stage.name(),
-        at = line_suffix(*.line)
+        at = location_suffix(.file.as_deref(), *.line)
     )]
     LibraryStage {
         library: String,
         stage: ShaderStage,
+        file: Option<String>,
         line: Option<u32>,
         message: String,
     },
@@ -108,6 +109,11 @@ pub(crate) fn internal(error: impl fmt::Display) -> LinkError {
     LinkError::Internal(error.to_string())
 }
 
-fn line_suffix(line: Option<u32>) -> String {
-    line.map_or_else(String::new, |line| format!(" (line {line})"))
+fn location_suffix(file: Option<&str>, line: Option<u32>) -> String {
+    match (file, line) {
+        (Some(file), Some(line)) => format!(" (`{file}`, line {line})"),
+        (Some(file), None) => format!(" (`{file}`)"),
+        (None, Some(line)) => format!(" (line {line})"),
+        (None, None) => String::new(),
+    }
 }

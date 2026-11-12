@@ -117,6 +117,7 @@ pub(crate) fn merge(objects: &[ObjectModule], options: &Options) -> Result<Merge
                                 |name| format!("`{name}`"),
                             ),
                             stage,
+                            file: rejection.file,
                             line: rejection.line,
                             message: rejection.message,
                         });

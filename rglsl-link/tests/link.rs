@@ -518,6 +518,7 @@ fn libraries_record_the_stages_they_link_into() -> TestResult {
         return Err("a fragment-only library links into a vertex shader".into());
     };
     assert_eq!(rejection.line, Some(2));
+    assert_eq!(rejection.file, None);
     assert_eq!(
         rejection.message,
         "`gl_FragCoord` is not available in vertex shaders"

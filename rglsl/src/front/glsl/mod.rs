@@ -11,7 +11,7 @@ To begin, take a look at the documentation for the [`Frontend`].
 [glsl]: https://www.khronos.org/registry/OpenGL/index_gl.php
 */
 
-pub use error::{Error, ErrorKind, ParseErrors};
+pub use error::{Error, ErrorKind, IncludeLocation, ParseErrors};
 pub use rglsl_pp::{FileId, Includer, NoIncluder};
 
 use alloc::string::String;
