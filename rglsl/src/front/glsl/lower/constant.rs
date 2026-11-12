@@ -134,7 +134,21 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
         values: Vec<Value>,
         span: Span,
     ) -> Result<Handle<Expression>> {
-        let values = values.as_slice();
+        let end = values.len();
+        let values: alloc::rc::Rc<[Value]> = values.into();
+        self.nest(self.clone().global_constant_part(ty, values, 0..end, span))
+            .await
+    }
+
+    async fn global_constant_part(
+        self,
+        ty: GlslType,
+        all: alloc::rc::Rc<[Value]>,
+        range: core::ops::Range<usize>,
+        span: Span,
+    ) -> Result<Handle<Expression>> {
+        let offset = range.start;
+        let values = all.get(range).ok_or_else(|| internal(span))?;
         let ty = &ty;
         let analysis = self.with(|this| this.analysis)?;
         match shape(ty, values, &analysis.types).ok_or_else(|| internal(span))? {
@@ -146,12 +160,15 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
             Shape::Compose(parts) => {
                 let mut components = Vec::with_capacity(parts.len());
                 for (part, start, size) in parts {
+                    let start = offset.checked_add(start).ok_or_else(|| internal(span))?;
                     let end = start.checked_add(size).ok_or_else(|| internal(span))?;
-                    let slice = values.get(start..end).ok_or_else(|| internal(span))?;
                     components.push({
-                        let frame =
-                            self.clone()
-                                .global_constant(part.clone(), slice.to_vec(), span);
+                        let frame = self.clone().global_constant_part(
+                            part.clone(),
+                            alloc::rc::Rc::clone(&all),
+                            start..end,
+                            span,
+                        );
                         let result = self.nest(frame).await;
                         result
                     }?);

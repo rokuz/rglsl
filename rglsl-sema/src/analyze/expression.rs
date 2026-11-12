@@ -5,8 +5,8 @@ use core::cell::RefCell;
 use rglsl_types::stack::run;
 
 use rglsl_ast::ast::{
-    AssignmentOperator, BinaryOperator, Expression, ExpressionKind, Identifier, NumericKind,
-    NumericLiteral, UnaryOperator,
+    AssignmentOperator, BinaryOperator, Expression, ExpressionKind, FunctionIdentifier, Identifier,
+    NumericKind, NumericLiteral, UnaryOperator,
 };
 use rglsl_ast::{Chain, Span, Spine};
 
@@ -502,6 +502,20 @@ impl Analyzer<'_> {
         finished.unwrap_or_else(|| self.stalled(Operand::error()))
     }
 
+    fn forget_component_values(&mut self, expression: &Expression) {
+        let ExpressionKind::FunctionCall(ref call) = expression.kind else {
+            return;
+        };
+        if !matches!(call.function.node, FunctionIdentifier::Constructor(_)) {
+            return;
+        }
+        for argument in &call.arguments {
+            if let Some(info) = self.expressions.get_mut(&argument.id) {
+                info.value = None;
+            }
+        }
+    }
+
     fn recorded(&mut self, expression: &Expression, uses: u32, operand: Operand) -> Operand {
         let mut operand = operand;
         let direct = matches!(
@@ -511,6 +525,9 @@ impl Analyzer<'_> {
         if self.specialization_uses != uses && !direct {
             operand.specialization = operand.constant;
             operand.value = None;
+        }
+        if operand.value.is_some() && !operand.ty.contains_reference(&self.types) {
+            self.forget_component_values(expression);
         }
         self.expressions.insert(
             expression.id,

@@ -122,6 +122,12 @@ impl Instruction {
     }
 }
 
+type SplitComposite = (
+    Handle<crate::Type>,
+    Vec<Handle<crate::Expression>>,
+    spirv::Word,
+);
+
 impl crate::TypeInner {
     fn can_comparison_sample(&self, module: &crate::Module) -> bool {
         match *self {
@@ -135,6 +141,12 @@ impl crate::TypeInner {
             } => true,
             crate::TypeInner::Sampler { .. } => true,
             crate::TypeInner::BindingArray { base, .. } => {
+                let mut base = base;
+                while let crate::TypeInner::BindingArray { base: inner, .. } =
+                    module.types[base].inner
+                {
+                    base = inner;
+                }
                 module.types[base].inner.can_comparison_sample(module)
             }
             _ => false,
@@ -488,14 +500,34 @@ enum BodyFragment {
 struct Body {
     /// The index of the direct parent of this body
     parent: usize,
+    depth: usize,
+    jump: usize,
     data: Vec<BodyFragment>,
 }
 
 impl Body {
     /// Creates a new empty `Body` with the specified `parent`
-    pub const fn with_parent(parent: usize) -> Self {
+    fn with_parent(bodies: &[Body], parent: usize) -> Self {
+        let Some(above) = bodies.get(parent) else {
+            return Body {
+                parent,
+                depth: 0,
+                jump: parent,
+                data: Vec::new(),
+            };
+        };
+        let depth_of = |index: usize| bodies.get(index).map_or(0, |body| body.depth);
+        let jump_of = |index: usize| bodies.get(index).map_or(index, |body| body.jump);
+        let skip = above.jump;
+        let jump = if above.depth - depth_of(skip) == depth_of(skip) - depth_of(jump_of(skip)) {
+            jump_of(skip)
+        } else {
+            parent
+        };
         Body {
             parent,
+            depth: above.depth + 1,
+            jump,
             data: Vec::new(),
         }
     }
@@ -1359,10 +1391,44 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
         expressions: &mut Arena<crate::Expression>,
         span: crate::Span,
     ) -> Result<Handle<crate::Expression>, Error> {
-        let selection = match selections.first() {
-            Some(&index) => index,
-            None => return Ok(object_expr),
-        };
+        let mut levels = Vec::with_capacity(selections.len());
+        let mut root_expr = root_expr;
+        let mut root_type_id = root_type_id;
+        for &selection in selections {
+            let (ty, components, child_type_id) = self.split_composite(
+                root_expr,
+                root_type_id,
+                selection,
+                type_arena,
+                expressions,
+                span,
+            )?;
+            root_expr = *components
+                .get(selection as usize)
+                .ok_or(Error::InvalidAccessIndex(selection))?;
+            root_type_id = child_type_id;
+            levels.push((ty, components, selection));
+        }
+        let mut inserted = object_expr;
+        while let Some((ty, mut components, selection)) = levels.pop() {
+            let slot = components
+                .get_mut(selection as usize)
+                .ok_or(Error::InvalidAccessIndex(selection))?;
+            *slot = inserted;
+            inserted = expressions.append(crate::Expression::Compose { ty, components }, span);
+        }
+        Ok(inserted)
+    }
+
+    fn split_composite(
+        &self,
+        root_expr: Handle<crate::Expression>,
+        root_type_id: spirv::Word,
+        selection: spirv::Word,
+        type_arena: &UniqueArena<crate::Type>,
+        expressions: &mut Arena<crate::Expression>,
+        span: crate::Span,
+    ) -> Result<SplitComposite, Error> {
         let root_span = expressions.get_span(root_expr);
         let root_lookup = self.lookup_type.lookup(root_type_id)?;
 
@@ -1413,30 +1479,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
             );
             components.push(expr);
         }
-        let selected = *components
-            .get(selection as usize)
-            .ok_or(Error::InvalidAccessIndex(selection))?;
-        let inserted = self.insert_composite(
-            selected,
-            child_type_id,
-            object_expr,
-            &selections[1..],
-            type_arena,
-            expressions,
-            span,
-        )?;
-        let slot = components
-            .get_mut(selection as usize)
-            .ok_or(Error::InvalidAccessIndex(selection))?;
-        *slot = inserted;
-
-        Ok(expressions.append(
-            crate::Expression::Compose {
-                ty: root_lookup.handle,
-                components,
-            },
-            span,
-        ))
+        Ok((root_lookup.handle, components, child_type_id))
     }
 
     /// Return the rglsl [`Expression`] for `pointer_id`, and its referent [`Type`].
@@ -1611,30 +1654,30 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
         fun_parameter_sampling: &mut [image::SamplingFlags],
     ) -> Result<(), Error> {
         use crate::Statement as S;
-        let mut i = 0usize;
-        while i < statements.len() {
-            match statements[i] {
+        let mut pending: Vec<&mut [crate::Statement]> = Vec::from([&mut **statements]);
+        while let Some(slice) = pending.pop() {
+            let Some((statement, rest)) = slice.split_first_mut() else {
+                continue;
+            };
+            pending.push(rest);
+            match *statement {
                 S::Emit(_) => {}
-                S::Block(ref mut block) => {
-                    self.patch_statements(block, expressions, fun_parameter_sampling)?;
-                }
+                S::Block(ref mut block) => pending.push(block),
                 S::If {
                     condition: _,
                     ref mut accept,
                     ref mut reject,
                     control: _,
                 } => {
-                    self.patch_statements(reject, expressions, fun_parameter_sampling)?;
-                    self.patch_statements(accept, expressions, fun_parameter_sampling)?;
+                    pending.push(accept);
+                    pending.push(reject);
                 }
                 S::Switch {
                     selector: _,
                     ref mut cases,
                     control: _,
                 } => {
-                    for case in cases.iter_mut() {
-                        self.patch_statements(&mut case.body, expressions, fun_parameter_sampling)?;
-                    }
+                    pending.extend(cases.iter_mut().rev().map(|case| &mut *case.body));
                 }
                 S::Loop {
                     ref mut body,
@@ -1642,8 +1685,8 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                     break_if: _,
                     control: _,
                 } => {
-                    self.patch_statements(body, expressions, fun_parameter_sampling)?;
-                    self.patch_statements(continuing, expressions, fun_parameter_sampling)?;
+                    pending.push(continuing);
+                    pending.push(body);
                 }
                 S::Break
                 | S::Continue
@@ -1712,7 +1755,6 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                     }
                 }
             }
-            i += 1;
         }
         Ok(())
     }
@@ -3279,18 +3321,48 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
         handle: Handle<crate::Expression>,
     ) -> Result<Handle<crate::Type>, Error> {
         log::debug!("\t\tlocating global variable in {handle:?}");
+        let mut chain = Vec::new();
+        let mut root = handle;
+        while let crate::Expression::Access { base, .. }
+        | crate::Expression::AccessIndex { base, .. } = ctx.expressions[root]
+        {
+            chain.push(root);
+            root = base;
+        }
+        let mut ty = match ctx.expressions[root] {
+            crate::Expression::GlobalVariable(h) => {
+                log::debug!("\t\t  found {h:?}");
+                self.upgrade_atomics.insert_global(h);
+                ctx.module.global_variables[h].ty
+            }
+            _ => {
+                return Err(Error::AtomicUpgradeError(
+                    crate::front::atomic_upgrade::Error::GlobalVariableMissing,
+                ))
+            }
+        };
+        while let Some(handle) = chain.pop() {
+            ty = self.record_atomic_step(ctx, handle, ty)?;
+        }
+        Ok(ty)
+    }
+
+    fn record_atomic_step(
+        &mut self,
+        ctx: &BlockContext,
+        handle: Handle<crate::Expression>,
+        ty: Handle<crate::Type>,
+    ) -> Result<Handle<crate::Type>, Error> {
         match ctx.expressions[handle] {
-            crate::Expression::Access { base, index } => {
+            crate::Expression::Access { index, .. } => {
                 log::debug!("\t\t  access {handle:?} {index:?}");
-                let ty = self.record_atomic_access(ctx, base)?;
                 let crate::TypeInner::Array { base, .. } = ctx.module.types[ty].inner else {
                     return Err(Error::InvalidAccess(ctx.expressions[handle].clone()));
                 };
                 Ok(base)
             }
-            crate::Expression::AccessIndex { base, index } => {
+            crate::Expression::AccessIndex { index, .. } => {
                 log::debug!("\t\t  access index {handle:?} {index:?}");
-                let ty = self.record_atomic_access(ctx, base)?;
                 match ctx.module.types[ty].inner {
                     crate::TypeInner::Struct { ref members, .. } => {
                         let index = index as usize;
@@ -3304,11 +3376,6 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                     crate::TypeInner::Array { base, .. } => Ok(base),
                     _ => Err(Error::InvalidAccess(ctx.expressions[handle].clone())),
                 }
-            }
-            crate::Expression::GlobalVariable(h) => {
-                log::debug!("\t\t  found {h:?}");
-                self.upgrade_atomics.insert_global(h);
-                Ok(ctx.module.global_variables[h].ty)
             }
             _ => Err(Error::AtomicUpgradeError(
                 crate::front::atomic_upgrade::Error::GlobalVariableMissing,
@@ -3339,18 +3406,22 @@ pub fn parse_u8_slice(data: &[u8], options: &Options) -> Result<crate::Module, E
 }
 
 /// Helper function to check if `child` is in the scope of `parent`
-fn is_parent(mut child: usize, parent: usize, block_ctx: &BlockContext) -> bool {
-    loop {
-        if child == parent {
-            // The child is in the scope parent
-            break true;
-        } else if child == 0 {
-            // Searched finished at the root the child isn't in the parent's body
-            break false;
+fn is_parent(child: usize, parent: usize, block_ctx: &BlockContext) -> bool {
+    let bodies = &block_ctx.bodies;
+    let Some(target) = bodies.get(parent).map(|body| body.depth) else {
+        return false;
+    };
+    let mut current = child;
+    while let Some(body) = bodies.get(current) {
+        if body.depth <= target {
+            return current == parent;
         }
-
-        child = block_ctx.bodies[child].parent;
+        current = match bodies.get(body.jump) {
+            Some(skip) if skip.depth >= target => body.jump,
+            _ => body.parent,
+        };
     }
+    false
 }
 
 #[cfg(test)]

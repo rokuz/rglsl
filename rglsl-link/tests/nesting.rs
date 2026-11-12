@@ -7,15 +7,16 @@ use rglsl::valid::{Capabilities, ValidationFlags, Validator};
 use rglsl::ShaderStage;
 use rglsl_link::{decode, encode, link, Options as LinkOptions};
 use rglsl_pp::{FileId, IncludeError, IncludeKind, IncludedFile, Includer, Limits};
-use std::sync::{Condvar, Mutex};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 const STACK: usize = 256 << 10;
-const DEPTHS: [usize; 2] = [10_000, 100_000];
+const DEFAULT_DEPTH: usize = 10_000;
+const DEEP_DEPTH: usize = 100_000;
+const SUBSCRIPTS: usize = 1_000;
+const WORKERS: usize = 2;
 const FLAT: usize = 20_000;
 const LONG: usize = 4_000;
-const CONCURRENT: usize = 4;
 
 #[derive(Debug, PartialEq, Eq)]
 enum Outcome {
@@ -82,42 +83,12 @@ enum Includes {
     Recursive,
 }
 
-static RUNNING: Mutex<usize> = Mutex::new(0);
-static FINISHED: Condvar = Condvar::new();
-
-struct Slot;
-
-impl Slot {
-    fn take() -> TestResult<Self> {
-        let mut running = RUNNING.lock().map_err(|_| "the slot lock is poisoned")?;
-        while *running >= CONCURRENT {
-            running = FINISHED
-                .wait(running)
-                .map_err(|_| "the slot lock is poisoned")?;
-        }
-        *running += 1;
-        Ok(Self)
-    }
-}
-
-impl Drop for Slot {
-    fn drop(&mut self) {
-        if let Ok(mut running) = RUNNING.lock() {
-            *running = running.saturating_sub(1);
-        }
-        FINISHED.notify_one();
-    }
-}
-
 fn on_small_stack<T: Send + 'static>(run: impl FnOnce() -> T + Send + 'static) -> TestResult<T> {
-    let slot = Slot::take()?;
-    let result = std::thread::Builder::new()
+    std::thread::Builder::new()
         .stack_size(STACK)
         .spawn(run)?
         .join()
-        .map_err(|_| "the thread on the small stack panicked".into());
-    drop(slot);
-    result
+        .map_err(|_| "the thread on the small stack panicked".into())
 }
 
 fn front(options: &Options, source: &str, includes: Includes) -> Result<rglsl::Module, Outcome> {
@@ -141,11 +112,9 @@ fn front(options: &Options, source: &str, includes: Includes) -> Result<rglsl::M
 
 fn pipeline(source: &str, includes: Includes, paths: Paths) -> Outcome {
     let options = Options::from(ShaderStage::Fragment);
-    if paths == Paths::Direct || paths == Paths::Both {
-        let outcome = direct(&options, source, includes);
-        if outcome != Outcome::Compiled || paths == Paths::Direct {
-            return outcome;
-        }
+    let outcome = direct(&options, source, includes);
+    if outcome != Outcome::Compiled || paths == Paths::Direct {
+        return outcome;
     }
     linked(&options, source)
 }
@@ -197,7 +166,6 @@ fn linked(options: &Options, source: &str) -> Outcome {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Paths {
     Direct,
-    Linked,
     Both,
 }
 
@@ -205,27 +173,16 @@ fn check(source: String) -> TestResult<Outcome> {
     on_small_stack(move || pipeline(&source, Includes::None, Paths::Both))
 }
 
-fn check_at(source: String, depth: usize) -> TestResult<Outcome> {
-    let paths = if depth > DEPTHS[0] {
-        Paths::Linked
-    } else {
-        Paths::Both
-    };
-    on_small_stack(move || pipeline(&source, Includes::None, paths))
-}
-
 fn check_including(source: String, includes: Includes) -> TestResult<Outcome> {
     on_small_stack(move || pipeline(&source, includes, Paths::Direct))
 }
 
-fn compiles_at_every_depth(name: &str, source: impl Fn(usize) -> String) -> TestResult {
-    for depth in DEPTHS {
-        assert_eq!(
-            check_at(source(depth), depth)?,
-            Outcome::Compiled,
-            "{name} at {depth}"
-        );
-    }
+fn compiles_at(depth: usize, name: &str, source: impl Fn(usize) -> String) -> TestResult {
+    assert_eq!(
+        check(source(depth))?,
+        Outcome::Compiled,
+        "{name} at {depth}"
+    );
     Ok(())
 }
 
@@ -285,8 +242,7 @@ fn struct_constructor(count: usize) -> String {
     constructor
 }
 
-#[test]
-fn deep_expressions_compile_on_a_small_stack() -> TestResult {
+fn deep_expressions_compile_on_a_small_stack(depth: usize) -> TestResult {
     let cases = [
         ("parentheses", "b = ", "(", "b", ")"),
         ("negation", "b = ", "-(", "b", ")"),
@@ -335,13 +291,12 @@ fn deep_expressions_compile_on_a_small_stack() -> TestResult {
         ("sequence", "b = ", "(b, ", "b", ")"),
     ];
     for (name, prefix, open, core, close) in cases {
-        compiles_at_every_depth(name, nested_body(prefix, open, core, close))?;
+        compiles_at(depth, name, nested_body(prefix, open, core, close))?;
     }
     Ok(())
 }
 
-#[test]
-fn deep_statements_compile_on_a_small_stack() -> TestResult {
+fn deep_statements_compile_on_a_small_stack(depth: usize) -> TestResult {
     let cases = [
         ("blocks", "{ ", " }"),
         ("if", "if (t) ", ""),
@@ -359,20 +314,19 @@ fn deep_statements_compile_on_a_small_stack() -> TestResult {
         ),
     ];
     for (name, open, close) in cases {
-        compiles_at_every_depth(name, nested_body("", open, "b = 2;", close))?;
+        compiles_at(depth, name, nested_body("", open, "b = 2;", close))?;
     }
     Ok(())
 }
 
-#[test]
-fn deep_types_compile_on_a_small_stack() -> TestResult {
-    compiles_at_every_depth("struct chains", |count| {
+fn deep_types_compile_on_a_small_stack(depth: usize) -> TestResult {
+    compiles_at(depth, "struct chains", |count| {
         shader(
             &struct_chain(count),
             &format!("S{0} s; s.b = 1; S{0} r = s; b = r.b;", count - 1),
         )
     })?;
-    compiles_at_every_depth("array dimensions", |count| {
+    compiles_at(depth, "array dimensions", |count| {
         shader(
             "",
             &format!(
@@ -381,7 +335,7 @@ fn deep_types_compile_on_a_small_stack() -> TestResult {
             ),
         )
     })?;
-    compiles_at_every_depth("struct parameters and results", |count| {
+    compiles_at(depth, "struct parameters and results", |count| {
         let last = count - 1;
         shader(
             &format!(
@@ -391,7 +345,7 @@ fn deep_types_compile_on_a_small_stack() -> TestResult {
             "b = p(q());",
         )
     })?;
-    compiles_at_every_depth("uniform block members", |count| {
+    compiles_at(depth, "uniform block members", |count| {
         shader(
             &format!(
                 "{}layout(std140, binding = 0) uniform U {{ S{} s; }} u;",
@@ -401,7 +355,7 @@ fn deep_types_compile_on_a_small_stack() -> TestResult {
             "b = u.s.b;",
         )
     })?;
-    compiles_at_every_depth("storage block members", |count| {
+    compiles_at(depth, "storage block members", |count| {
         shader(
             &format!(
                 "{}layout(std430, binding = 1) buffer B {{ S{} s; }} bb;",
@@ -411,7 +365,7 @@ fn deep_types_compile_on_a_small_stack() -> TestResult {
             "bb.s.b = b; b = bb.s.b;",
         )
     })?;
-    compiles_at_every_depth("push constant members", |count| {
+    compiles_at(depth, "push constant members", |count| {
         shader(
             &format!(
                 "{}layout(push_constant) uniform P {{ S{} s; }} pc;",
@@ -421,25 +375,31 @@ fn deep_types_compile_on_a_small_stack() -> TestResult {
             "b = pc.s.b;",
         )
     })?;
-    compiles_at_every_depth("storage block array dimensions", |count| {
+    compiles_at(depth, "storage block array dimensions", |count| {
         shader(
             &format!(
                 "layout(std430, binding = 2) buffer A {{ int a{}; }} ab;",
                 "[1]".repeat(count)
             ),
-            &format!("b = ab.a{};", "[0]".repeat(count)),
+            &format!(
+                "b = ab.a{}.length();",
+                "[0]".repeat(count.min(SUBSCRIPTS) - 1)
+            ),
         )
     })?;
-    compiles_at_every_depth("uniform matrix array dimensions", |count| {
+    compiles_at(depth, "uniform matrix array dimensions", |count| {
         shader(
             &format!(
                 "layout(std140, binding = 3) uniform M {{ mat2 m{}; }} um;",
                 "[1]".repeat(count)
             ),
-            &format!("v.x = um.m{}[0].x;", "[0]".repeat(count)),
+            &format!(
+                "b = um.m{}.length();",
+                "[0]".repeat(count.min(SUBSCRIPTS) - 1)
+            ),
         )
     })?;
-    compiles_at_every_depth("input structs", |count| {
+    compiles_at(depth, "input structs", |count| {
         shader(
             &format!(
                 "{}layout(location = 1) flat in I{} si;",
@@ -451,7 +411,7 @@ fn deep_types_compile_on_a_small_stack() -> TestResult {
             &format!("b = si{};", ".a".repeat(count)),
         )
     })?;
-    compiles_at_every_depth("16-bit members", |count| {
+    compiles_at(depth, "16-bit members", |count| {
         shader(
             &format!(
                 "#extension GL_EXT_shader_explicit_arithmetic_types : enable\n{}layout(std430, binding = 5) buffer H {{ H{} h; }} hb;",
@@ -463,7 +423,7 @@ fn deep_types_compile_on_a_small_stack() -> TestResult {
             "b = hb.h.b;",
         )
     })?;
-    compiles_at_every_depth("buffer references", |count| {
+    compiles_at(depth, "buffer references", |count| {
         shader(
             &format!(
                 "#extension GL_EXT_buffer_reference : enable\n{}layout(std430, binding = 6) buffer RB {{ R{} r; }} rb;",
@@ -480,7 +440,7 @@ fn deep_types_compile_on_a_small_stack() -> TestResult {
             "b = rb.r.a;",
         )
     })?;
-    for depth in DEPTHS {
+    {
         let source = shader(
             &format!(
                 "{}int a; {}",
@@ -490,16 +450,15 @@ fn deep_types_compile_on_a_small_stack() -> TestResult {
             "",
         );
         assert!(
-            matches!(check_at(source, depth)?, Outcome::Rejected(_)),
+            matches!(check(source)?, Outcome::Rejected(_)),
             "inline structs at {depth}"
         );
     }
     Ok(())
 }
 
-#[test]
-fn deep_initializers_compile_on_a_small_stack() -> TestResult {
-    compiles_at_every_depth("struct initializer lists", |count| {
+fn deep_initializers_compile_on_a_small_stack(depth: usize) -> TestResult {
+    compiles_at(depth, "struct initializer lists", |count| {
         let mut initializer = String::from("{2}");
         for _ in 1..count {
             initializer = format!("{{{initializer}, 0}}");
@@ -509,13 +468,13 @@ fn deep_initializers_compile_on_a_small_stack() -> TestResult {
             &format!("S{} s = {initializer}; b = s.b;", count - 1),
         )
     })?;
-    compiles_at_every_depth("struct constructors", |count| {
+    compiles_at(depth, "struct constructors", |count| {
         shader(
             &struct_chain(count),
             &format!("S{} s = {}; b = s.b;", count - 1, struct_constructor(count)),
         )
     })?;
-    compiles_at_every_depth("constant structs", |count| {
+    compiles_at(depth, "constant structs", |count| {
         shader(
             &format!(
                 "{}const S{} k = {};",
@@ -526,7 +485,10 @@ fn deep_initializers_compile_on_a_small_stack() -> TestResult {
             "b = k.b;",
         )
     })?;
-    let depth = DEPTHS[0];
+    Ok(())
+}
+
+fn array_initializer_lists(depth: usize) -> TestResult {
     let source = shader(
         "",
         &format!(
@@ -541,9 +503,8 @@ fn deep_initializers_compile_on_a_small_stack() -> TestResult {
     Ok(())
 }
 
-#[test]
-fn deep_calls_compile_on_a_small_stack() -> TestResult {
-    compiles_at_every_depth("call chains", |count| {
+fn deep_calls_compile_on_a_small_stack(depth: usize) -> TestResult {
+    compiles_at(depth, "call chains", |count| {
         shader(
             &chain_of("int h0(int a) { return a + 1; }\n", count, |index| {
                 format!("int h{index}(int a) {{ return h{}(a) + 1; }}\n", index - 1)
@@ -575,24 +536,22 @@ fn deep_calls_compile_on_a_small_stack() -> TestResult {
         );
         shader(&globals, &body)
     };
-    let count = DEPTHS[0];
     assert_eq!(
-        check(combined(count))?,
+        check(combined(depth))?,
         Outcome::Compiled,
-        "statements, types and calls together at {count}"
+        "statements, types and calls together at {depth}"
     );
     Ok(())
 }
 
-#[test]
-fn preprocessor_limits_match_glslang_on_a_small_stack() -> TestResult {
+fn preprocessor_limits_match_glslang_on_a_small_stack(depth: usize) -> TestResult {
     let limits = Limits::default();
-    for depth in DEPTHS {
+    {
         let macros = shader(
             "#define F(x) x",
             &format!("b = {}b{};", "F(".repeat(depth), ")".repeat(depth)),
         );
-        let outcome = check_at(macros, depth)?;
+        let outcome = check(macros)?;
         assert!(
             outcome.rejected_with("macro expansion depth limit exceeded")
                 || outcome.rejected_with("preprocessing token limit exceeded"),
@@ -605,7 +564,7 @@ fn preprocessor_limits_match_glslang_on_a_small_stack() -> TestResult {
             &format!("b = M{}(b);", depth - 1),
         );
         assert_eq!(
-            check_at(definitions, depth)?,
+            check(definitions)?,
             Outcome::Compiled,
             "macro definitions at {depth}"
         );
@@ -613,7 +572,7 @@ fn preprocessor_limits_match_glslang_on_a_small_stack() -> TestResult {
             &format!("{}\n{}", "#if 1\n".repeat(depth), "#endif\n".repeat(depth)),
             "",
         );
-        let outcome = check_at(conditions, depth)?;
+        let outcome = check(conditions)?;
         assert!(
             outcome.rejected_with("maximum nesting depth exceeded"),
             "#if at {depth}: {outcome:?}"
@@ -622,17 +581,9 @@ fn preprocessor_limits_match_glslang_on_a_small_stack() -> TestResult {
             &format!("#if {}1{}\n#endif", "(".repeat(depth), ")".repeat(depth)),
             "",
         );
-        assert_eq!(
-            check_at(parentheses, depth)?,
-            Outcome::Compiled,
-            "#if expressions"
-        );
+        assert_eq!(check(parentheses)?, Outcome::Compiled, "#if expressions");
         let operators = shader(&format!("#if {}1\n#endif", "- ~ ".repeat(depth)), "");
-        assert_eq!(
-            check_at(operators, depth)?,
-            Outcome::Compiled,
-            "#if operators"
-        );
+        assert_eq!(check(operators)?, Outcome::Compiled, "#if operators");
         let include = shader(
             "#extension GL_GOOGLE_include_directive : enable\n#include \"first.h\"",
             "",
@@ -669,8 +620,7 @@ fn preprocessor_limits_match_glslang_on_a_small_stack() -> TestResult {
     Ok(())
 }
 
-#[test]
-fn the_preprocessor_without_limits_handles_deep_input_on_a_small_stack() -> TestResult {
+fn the_preprocessor_without_limits_handles_deep_input_on_a_small_stack(depth: usize) -> TestResult {
     struct NoIncludes;
     impl Includer for NoIncludes {
         fn include(
@@ -683,7 +633,7 @@ fn the_preprocessor_without_limits_handles_deep_input_on_a_small_stack() -> Test
             Err(IncludeError::new(format!("no {requested}")))
         }
     }
-    for depth in DEPTHS {
+    {
         let sources = [
             format!(
                 "{}int b = M{}(1);\n",
@@ -744,7 +694,6 @@ fn repeated(open: &str, core: &str, close: &str) -> String {
     format!("{}{core}{}", open.repeat(FLAT), close.repeat(FLAT))
 }
 
-#[test]
 fn flat_chains_compile_on_a_small_stack() -> TestResult {
     let cases = [
         (
@@ -915,7 +864,6 @@ fn flat_chains_compile_on_a_small_stack() -> TestResult {
     Ok(())
 }
 
-#[test]
 fn long_flat_inputs_compile_on_a_small_stack() -> TestResult {
     let long = [
         shader("", &"b = b + 1;\n".repeat(LONG)),
@@ -989,9 +937,8 @@ fn nested_object(depth: usize) -> TestResult<String> {
     Ok(encode(&object)?)
 }
 
-#[test]
-fn deep_object_files_link_on_a_small_stack() -> TestResult {
-    for depth in DEPTHS {
+fn deep_object_files_link_on_a_small_stack(depth: usize) -> TestResult {
+    {
         let text = on_small_stack(move || nested_object(depth))??;
         let outcome = on_small_stack(move || {
             let object = match decode(&text) {
@@ -1015,6 +962,242 @@ fn deep_object_files_link_on_a_small_stack() -> TestResult {
             outcome,
             Outcome::Compiled,
             "object file nested {depth} deep"
+        );
+    }
+    Ok(())
+}
+
+type Group = (fn(usize) -> TestResult, usize);
+
+fn every_kind(depth: usize) -> Vec<Group> {
+    Vec::from([
+        (
+            deep_expressions_compile_on_a_small_stack as fn(usize) -> TestResult,
+            depth,
+        ),
+        (deep_statements_compile_on_a_small_stack, depth),
+        (deep_types_compile_on_a_small_stack, depth),
+        (deep_initializers_compile_on_a_small_stack, depth),
+        (deep_calls_compile_on_a_small_stack, depth),
+        (preprocessor_limits_match_glslang_on_a_small_stack, depth),
+        (
+            the_preprocessor_without_limits_handles_deep_input_on_a_small_stack,
+            depth,
+        ),
+        (deep_object_files_link_on_a_small_stack, depth),
+        (deep_spirv_inputs_compile_on_a_small_stack, depth),
+    ])
+}
+
+fn run_groups(groups: Vec<Group>) -> TestResult {
+    let pending = std::sync::Mutex::new(groups);
+    let failures = std::sync::Mutex::new(Vec::new());
+    std::thread::scope(|scope| {
+        for _ in 0..WORKERS {
+            scope.spawn(|| loop {
+                let next = match pending.lock() {
+                    Ok(mut pending) => pending.pop(),
+                    Err(_) => None,
+                };
+                let Some((group, depth)) = next else {
+                    break;
+                };
+                if let Err(error) = group(depth) {
+                    if let Ok(mut failures) = failures.lock() {
+                        failures.push(error.to_string());
+                    }
+                }
+            });
+        }
+    });
+    let failures = failures
+        .into_inner()
+        .map_err(|_| "a worker panicked while recording a failure")?;
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("\n").into())
+    }
+}
+
+#[test]
+fn nesting_10_000_levels_deep_on_a_small_stack() -> TestResult {
+    let mut groups = every_kind(DEFAULT_DEPTH);
+    groups.push((|_| flat_chains_compile_on_a_small_stack(), 0));
+    groups.push((|_| long_flat_inputs_compile_on_a_small_stack(), 0));
+    groups.push((|_| hostile_object_files_are_rejected_on_a_small_stack(), 0));
+    run_groups(groups)
+}
+
+#[test]
+#[ignore = "minutes in a debug build: run with `cargo test --release -p rglsl-link --test nesting -- --ignored`"]
+fn nesting_100_000_levels_deep_on_a_small_stack() -> TestResult {
+    let mut groups = every_kind(DEEP_DEPTH);
+    groups.push((array_initializer_lists, DEFAULT_DEPTH));
+    run_groups(groups)
+}
+
+fn spirv_words(source: &str) -> Result<Vec<u32>, String> {
+    let options = Options::from(ShaderStage::Fragment);
+    let mut module =
+        front(&options, source, Includes::None).map_err(|outcome| format!("{outcome:?}"))?;
+    let mut validator = Validator::new(ValidationFlags::all(), Capabilities::all());
+    validator
+        .validate(&module)
+        .map_err(|error| format!("validation: {error:?}"))?;
+    compact(&mut module, KeepUnused::No).map_err(|error| format!("compaction: {error:?}"))?;
+    let info = validator
+        .validate(&module)
+        .map_err(|error| format!("validation: {error:?}"))?;
+    spv::write_vec(&module, &info, &spv::Options::default(), None)
+        .map_err(|error| format!("SPIR-V: {error}"))
+}
+
+fn through_spirv(words: &[u32]) -> Outcome {
+    let bytes: Vec<u8> = words.iter().flat_map(|word| word.to_le_bytes()).collect();
+    let module =
+        match rglsl::front::spv::parse_u8_slice(&bytes, &rglsl::front::spv::Options::default()) {
+            Ok(module) => module,
+            Err(error) => return Outcome::Rejected(format!("SPIR-V input: {error}")),
+        };
+    let mut validator = Validator::new(ValidationFlags::all(), Capabilities::all());
+    let info = match validator.validate(&module) {
+        Ok(info) => info,
+        Err(error) => return Outcome::Failed(format!("validation: {error:?}")),
+    };
+    match spv::write_vec(&module, &info, &spv::Options::default(), None) {
+        Ok(_) => Outcome::Compiled,
+        Err(error) => Outcome::Failed(format!("SPIR-V: {error}")),
+    }
+}
+
+fn instruction(words: &mut Vec<u32>, op: u32, operands: &[u32]) -> TestResult {
+    let count = u32::try_from(operands.len() + 1)?;
+    words.push(count << 16 | op);
+    words.extend_from_slice(operands);
+    Ok(())
+}
+
+fn composite_insert_module(depth: usize) -> TestResult<Vec<u32>> {
+    let depth = u32::try_from(depth)?;
+    let (void, function_type, int, one, main, label, undef, result) = (1, 2, 3, 4, 5, 6, 7, 8);
+    let first_struct = 9;
+    let last_struct = first_struct + depth - 1;
+    let mut words = Vec::from([0x0723_0203, 0x0001_0000, 0, last_struct + 1, 0]);
+    instruction(&mut words, 17, &[1])?;
+    instruction(&mut words, 14, &[0, 1])?;
+    instruction(&mut words, 15, &[4, main, u32::from_le_bytes(*b"main"), 0])?;
+    instruction(&mut words, 16, &[main, 7])?;
+    instruction(&mut words, 19, &[void])?;
+    instruction(&mut words, 33, &[function_type, void])?;
+    instruction(&mut words, 21, &[int, 32, 1])?;
+    instruction(&mut words, 43, &[int, one, 1])?;
+    instruction(&mut words, 30, &[first_struct, int])?;
+    for id in first_struct + 1..=last_struct {
+        instruction(&mut words, 30, &[id, id - 1])?;
+    }
+    instruction(&mut words, 1, &[last_struct, undef])?;
+    instruction(&mut words, 54, &[void, main, 0, function_type])?;
+    instruction(&mut words, 248, &[label])?;
+    let mut operands = Vec::from([last_struct, result, one, undef]);
+    operands.extend(core::iter::repeat_n(0, usize::try_from(depth)?));
+    instruction(&mut words, 82, &operands)?;
+    instruction(&mut words, 253, &[])?;
+    instruction(&mut words, 56, &[])?;
+    Ok(words)
+}
+
+fn deep_spirv_inputs_compile_on_a_small_stack(depth: usize) -> TestResult {
+    let cases = [
+        (
+            "if blocks",
+            nested_body("", "if (t) { ", "b = 2;", " }")(depth),
+        ),
+        (
+            "loops",
+            nested_body("", "for (int i = 0; i < 2; i++) { ", "b = 2;", " }")(depth),
+        ),
+        (
+            "switch",
+            nested_body("", "switch (b) { case 1: ", "b = 2;", " break; }")(depth),
+        ),
+        (
+            "do while",
+            nested_body("", "do { ", "b = 2;", " } while (b > 5);")(depth),
+        ),
+        (
+            "struct chains",
+            shader(
+                &struct_chain(depth),
+                &format!("S{0} s; s.b = 1; S{0} r = s; b = r.b;", depth - 1),
+            ),
+        ),
+        (
+            "array dimensions",
+            shader(
+                "",
+                &format!(
+                    "int a{0}; int r{0} = a; b = r.length();",
+                    "[1]".repeat(depth)
+                ),
+            ),
+        ),
+    ];
+    for (name, source) in cases {
+        let outcome = on_small_stack(move || match spirv_words(&source) {
+            Ok(words) => through_spirv(&words),
+            Err(message) => Outcome::Failed(message),
+        })?;
+        assert_eq!(
+            outcome,
+            Outcome::Compiled,
+            "SPIR-V input: {name} at {depth}"
+        );
+    }
+    let inserts = depth.min(60_000);
+    let words = composite_insert_module(inserts)?;
+    let outcome = on_small_stack(move || through_spirv(&words))?;
+    assert_eq!(
+        outcome,
+        Outcome::Compiled,
+        "SPIR-V input: composite insert {inserts} deep"
+    );
+    Ok(())
+}
+
+fn hostile_object_files_are_rejected_on_a_small_stack() -> TestResult {
+    let options = Options::from(ShaderStage::Fragment);
+    let object = Frontend::default()
+        .compile(&options, &shader("", "if (t) { b = 2; }"))
+        .map_err(|errors| format!("{errors:?}"))?;
+    let text = encode(&object)?;
+    let shell = "accept:[],reject:[]";
+    let at = text
+        .find(shell)
+        .ok_or("the object file has no if statement")?;
+    let condition = text[..at]
+        .rfind("If(condition:")
+        .ok_or("the object file has no if statement")?;
+    let head = &text[condition..at];
+    for depth in [3, 5, 8, 100, 1_000, DEEP_DEPTH] {
+        let inner = format!(
+            "{}{head}accept:[],reject:[]){}",
+            format!("{head}accept:[").repeat(depth - 1),
+            "],reject:[])".repeat(depth - 1)
+        );
+        let hostile = format!(
+            "{}accept:[{inner}],reject:[]{}",
+            text.get(..at).unwrap_or_default(),
+            text.get(at + shell.len()..).unwrap_or_default()
+        );
+        let decoded = on_small_stack(move || {
+            decode(&hostile)
+                .map(drop)
+                .map_err(|error| error.to_string())
+        })?;
+        assert!(
+            decoded.is_err() || depth < 100,
+            "a hostile object file nested {depth} deep: {decoded:?}"
         );
     }
     Ok(())

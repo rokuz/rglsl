@@ -58,6 +58,7 @@ pub fn encode(object: &ObjectModule) -> Result<String, FileError> {
 }
 
 pub fn decode(text: &str) -> Result<ObjectModule, FileError> {
+    check_structure_depth(text)?;
     let header: Header =
         ron::de::from_str(text).map_err(|error| FileError::Decode(error.to_string()))?;
     if header.format_version != FORMAT_VERSION {
@@ -251,6 +252,83 @@ fn settle(open: &mut Vec<Open>) -> Result<Option<Block>, FileError> {
                 *slot = child;
             }
             add_statement(open, statement)?;
+        }
+    }
+}
+
+const MAX_STRUCTURE_DEPTH: usize = 32;
+
+fn check_structure_depth(text: &str) -> Result<(), FileError> {
+    let bytes = text.as_bytes();
+    let mut depth = 0_usize;
+    let mut index = 0;
+    while let Some(&byte) = bytes.get(index) {
+        index += 1;
+        match byte {
+            b'(' | b'[' | b'{' => {
+                depth += 1;
+                if depth > MAX_STRUCTURE_DEPTH {
+                    return Err(decode_error(
+                        "the object file is nested deeper than its format allows",
+                    ));
+                }
+            }
+            b')' | b']' | b'}' => {
+                depth = depth
+                    .checked_sub(1)
+                    .ok_or_else(|| decode_error("the object file has unbalanced brackets"))?;
+            }
+            b'"' => index = skip_string(bytes, index, 0)?,
+            b'r' if matches!(bytes.get(index), Some(b'"' | b'#')) => {
+                let hashes = bytes.get(index..).map_or(0, |rest| {
+                    rest.iter().take_while(|&&byte| byte == b'#').count()
+                });
+                if bytes.get(index + hashes) == Some(&b'"') {
+                    index = skip_string(bytes, index + hashes + 1, hashes)?;
+                }
+            }
+            b'/' if bytes.get(index) == Some(&b'/') => {
+                while bytes.get(index).is_some_and(|&byte| byte != b'\n') {
+                    index += 1;
+                }
+            }
+            b'/' if bytes.get(index) == Some(&b'*') => {
+                let mut open = 1_usize;
+                index += 1;
+                while open > 0 {
+                    match (bytes.get(index), bytes.get(index + 1)) {
+                        (Some(b'/'), Some(b'*')) => {
+                            open += 1;
+                            index += 2;
+                        }
+                        (Some(b'*'), Some(b'/')) => {
+                            open -= 1;
+                            index += 2;
+                        }
+                        (Some(_), _) => index += 1,
+                        (None, _) => return Err(decode_error("an unterminated comment")),
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn skip_string(bytes: &[u8], mut index: usize, hashes: usize) -> Result<usize, FileError> {
+    loop {
+        match bytes.get(index) {
+            None => return Err(decode_error("an unterminated string")),
+            Some(b'\\') if hashes == 0 => index += 2,
+            Some(b'"')
+                if bytes
+                    .get(index + 1..index + 1 + hashes)
+                    .is_some_and(|rest| rest.iter().all(|&byte| byte == b'#')) =>
+            {
+                return Ok(index + 1 + hashes);
+            }
+            Some(_) => index += 1,
         }
     }
 }

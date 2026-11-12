@@ -2078,7 +2078,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
 
                     // Start a body block for the `accept` branch.
                     let accept = ctx.bodies.len();
-                    let mut accept_block = Body::with_parent(body_idx);
+                    let mut accept_block = Body::with_parent(&ctx.bodies, body_idx);
 
                     // If the `OpBranchConditional` target is somebody else's
                     // merge or continue block, then put a `Break` or `Continue`
@@ -2111,7 +2111,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
 
                     // Handle the `reject` branch just like the `accept` block.
                     let reject = ctx.bodies.len();
-                    let mut reject_block = Body::with_parent(body_idx);
+                    let mut reject_block = Body::with_parent(&ctx.bodies, body_idx);
 
                     if let Some(info) = false_target.merge_info {
                         merger(&mut reject_block, &info)
@@ -2144,7 +2144,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                     }
 
                     let default = ctx.bodies.len();
-                    ctx.bodies.push(Body::with_parent(body_idx));
+                    ctx.bodies.push(Body::with_parent(&ctx.bodies, body_idx));
                     ctx.body_for_label.entry(default_id).or_insert(default);
 
                     let selector_lexp = self.lookup_expression.lookup(selector)?;
@@ -2190,7 +2190,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                             continue;
                         }
 
-                        let mut body = Body::with_parent(body_idx);
+                        let mut body = Body::with_parent(&ctx.bodies, body_idx);
 
                         if let Some(info) = ctx.mergers.get(&target) {
                             merger(&mut body, info);
@@ -2219,7 +2219,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
 
                         for &literal in literals.iter().skip(1) {
                             let empty_body_idx = ctx.bodies.len();
-                            let body = Body::with_parent(body_idx);
+                            let body = Body::with_parent(&ctx.bodies, body_idx);
 
                             ctx.bodies.push(body);
 
@@ -2280,11 +2280,12 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                         .insert(merge_block_id, MergeBlockInformation::LoopMerge);
 
                     let loop_body_idx = ctx.bodies.len();
-                    ctx.bodies.push(Body::with_parent(body_idx));
+                    ctx.bodies.push(Body::with_parent(&ctx.bodies, body_idx));
 
                     let continue_idx = ctx.bodies.len();
                     // The continue block inherits the scope of the loop body
-                    ctx.bodies.push(Body::with_parent(loop_body_idx));
+                    ctx.bodies
+                        .push(Body::with_parent(&ctx.bodies, loop_body_idx));
                     ctx.body_for_label.entry(continuing).or_insert(continue_idx);
                     // Let subsequent branches to the continue block know that
                     // they're `Continue` statements.

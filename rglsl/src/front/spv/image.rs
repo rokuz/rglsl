@@ -29,13 +29,16 @@ impl super::BlockContext<'_> {
         &self,
         handle: Handle<crate::Expression>,
     ) -> Result<Handle<crate::Type>, Error> {
-        match self.expressions[handle] {
-            crate::Expression::GlobalVariable(handle) => {
-                Ok(self.module.global_variables[handle].ty)
+        let mut handle = handle;
+        loop {
+            match self.expressions[handle] {
+                crate::Expression::GlobalVariable(handle) => {
+                    return Ok(self.module.global_variables[handle].ty)
+                }
+                crate::Expression::FunctionArgument(i) => return Ok(self.arguments[i as usize].ty),
+                crate::Expression::Access { base, .. } => handle = base,
+                ref other => return Err(Error::InvalidImageExpression(other.clone())),
             }
-            crate::Expression::FunctionArgument(i) => Ok(self.arguments[i as usize].ty),
-            crate::Expression::Access { base, .. } => Ok(self.get_image_expr_ty(base)?),
-            ref other => Err(Error::InvalidImageExpression(other.clone())),
         }
     }
 }

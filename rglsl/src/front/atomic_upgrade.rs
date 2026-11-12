@@ -125,6 +125,11 @@ impl Upgrades {
     }
 }
 
+enum Upgrade {
+    Enter(Handle<Type>),
+    Exit(Handle<Type>, usize),
+}
+
 struct UpgradeState<'a> {
     padding: Padding,
     module: &'a mut Module,
@@ -164,39 +169,87 @@ impl UpgradeState<'_> {
         ty: Handle<Type>,
         upgrades: &Upgrades,
     ) -> Result<Handle<Type>, Error> {
-        let padding = self.inc_padding();
-        padding.trace("visiting type: ", ty);
+        let mut tasks = alloc::vec![Upgrade::Enter(ty)];
+        let mut results = alloc::vec::Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                Upgrade::Enter(ty) => {
+                    let padding = self.inc_padding();
+                    padding.trace("visiting type: ", ty);
 
-        // If we've already upgraded this type, return the handle we produced at
-        // the time.
-        if let Some(&new) = self.upgraded_types.get(&ty) {
-            return Ok(new);
-        }
+                    // If we've already upgraded this type, return the handle we produced at
+                    // the time.
+                    if let Some(&new) = self.upgraded_types.get(&ty) {
+                        results.push(new);
+                        continue;
+                    }
 
-        let inner = match self.module.types[ty].inner {
-            TypeInner::Scalar(scalar) => {
-                log::trace!("{padding}hit the scalar leaf, replacing with an atomic");
-                TypeInner::Atomic(scalar)
+                    match self.module.types[ty].inner {
+                        TypeInner::Scalar(_) => {
+                            log::trace!("{padding}hit the scalar leaf, replacing with an atomic");
+                            tasks.push(Upgrade::Exit(ty, 0));
+                        }
+                        TypeInner::Pointer { base, .. }
+                        | TypeInner::Array { base, .. }
+                        | TypeInner::BindingArray { base, .. } => {
+                            tasks.push(Upgrade::Exit(ty, 1));
+                            tasks.push(Upgrade::Enter(base));
+                        }
+                        TypeInner::Struct { ref members, .. } => {
+                            // If no field or subfield of this struct was ever accessed
+                            // atomically, no change is needed. We should never have arrived here.
+                            let Some(fields) = upgrades.fields.get(&ty) else {
+                                return Err(Error::StructNotAccessedAtomically);
+                            };
+                            let fields: alloc::vec::Vec<usize> = fields.iter().collect();
+                            tasks.push(Upgrade::Exit(ty, fields.len()));
+                            for &field in fields.iter().rev() {
+                                let member = members.get(field).ok_or(Error::Unsupported)?;
+                                tasks.push(Upgrade::Enter(member.ty));
+                            }
+                        }
+                        _ => results.push(ty),
+                    }
+                }
+                Upgrade::Exit(ty, count) => {
+                    let start = results.len().checked_sub(count).ok_or(Error::Unsupported)?;
+                    let upgraded = results.split_off(start);
+                    let new_handle = self.upgraded(ty, &upgraded, upgrades)?;
+                    results.push(new_handle);
+                }
             }
-            TypeInner::Pointer { base, space } => TypeInner::Pointer {
-                base: self.upgrade_type(base, upgrades)?,
+        }
+        results.pop().ok_or(Error::Unsupported)
+    }
+
+    fn upgraded(
+        &mut self,
+        ty: Handle<Type>,
+        upgraded: &[Handle<Type>],
+        upgrades: &Upgrades,
+    ) -> Result<Handle<Type>, Error> {
+        let padding = self.inc_padding();
+        let first = || upgraded.first().copied().ok_or(Error::Unsupported);
+        let inner = match self.module.types[ty].inner {
+            TypeInner::Scalar(scalar) => TypeInner::Atomic(scalar),
+            TypeInner::Pointer { space, .. } => TypeInner::Pointer {
+                base: first()?,
                 space,
             },
-            TypeInner::Array { base, size, stride } => TypeInner::Array {
-                base: self.upgrade_type(base, upgrades)?,
+            TypeInner::Array { size, stride, .. } => TypeInner::Array {
+                base: first()?,
                 size,
                 stride,
             },
             TypeInner::Struct { ref members, span } => {
-                // If no field or subfield of this struct was ever accessed
-                // atomically, no change is needed. We should never have arrived here.
-                let Some(fields) = upgrades.fields.get(&ty) else {
-                    return Err(Error::StructNotAccessedAtomically);
-                };
-
+                let fields = upgrades
+                    .fields
+                    .get(&ty)
+                    .ok_or(Error::StructNotAccessedAtomically)?;
                 let mut new_members = members.clone();
-                for field in fields {
-                    new_members[field].ty = self.upgrade_type(new_members[field].ty, upgrades)?;
+                for (field, &upgraded) in fields.iter().zip(upgraded) {
+                    let member = new_members.get_mut(field).ok_or(Error::Unsupported)?;
+                    member.ty = upgraded;
                 }
 
                 TypeInner::Struct {
@@ -204,8 +257,8 @@ impl UpgradeState<'_> {
                     span,
                 }
             }
-            TypeInner::BindingArray { base, size } => TypeInner::BindingArray {
-                base: self.upgrade_type(base, upgrades)?,
+            TypeInner::BindingArray { size, .. } => TypeInner::BindingArray {
+                base: first()?,
                 size,
             },
             _ => return Ok(ty),
