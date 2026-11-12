@@ -346,6 +346,9 @@ fn sampling(emitter: &mut Emitter<'_>, opaque: Opaque) {
         if !variant.exists_for(opaque) {
             continue;
         }
+        if opaque.kind == OpaqueKind::Texture && (!variant.fetch || variant.grad) {
+            continue;
+        }
         let mut total = dimensions + u8::from(opaque.arrayed);
         if opaque.shadow && total < 2 {
             total = 2;
@@ -679,20 +682,16 @@ pub(super) fn prototypes() -> Vec<Prototype> {
             }
         }
     }
-    for sampled in SampledType::ALL {
-        let buffer = Opaque {
+    for opaque in opaque_types() {
+        if opaque.kind != OpaqueKind::CombinedSampler || opaque.shadow {
+            continue;
+        }
+        let texture = Opaque {
             kind: OpaqueKind::Texture,
-            sampled,
-            dimension: TextureDimension::Buffer,
-            arrayed: false,
-            shadow: false,
-            multisample: false,
+            ..opaque
         };
-        emitter.common(
-            "texelFetch",
-            texel(buffer),
-            alloc::vec![Type::opaque(buffer), Type::INT],
-        );
+        queries(&mut emitter, texture);
+        sampling(&mut emitter, texture);
     }
     shadow_lod(&mut emitter);
     subpasses(&mut emitter);

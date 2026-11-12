@@ -54,14 +54,14 @@ fn variable_names(builtins: &Builtins) -> BTreeSet<String> {
 #[test]
 fn the_tables_have_the_expected_sizes() {
     let expected = [
-        (Stage::Vertex, 7065, 35, 189, 225),
-        (Stage::TessControl, 7066, 35, 181, 214),
-        (Stage::TessEvaluation, 7065, 35, 189, 222),
-        (Stage::Geometry, 7069, 35, 188, 221),
-        (Stage::Fragment, 7586, 35, 193, 229),
-        (Stage::Compute, 7531, 37, 179, 215),
-        (Stage::Mesh, 7281, 37, 192, 226),
-        (Stage::RayGeneration, 7065, 122, 171, 210),
+        (Stage::Vertex, 7182, 35, 189, 225),
+        (Stage::TessControl, 7183, 35, 181, 214),
+        (Stage::TessEvaluation, 7182, 35, 189, 222),
+        (Stage::Geometry, 7186, 35, 188, 221),
+        (Stage::Fragment, 7703, 35, 193, 229),
+        (Stage::Compute, 7648, 37, 179, 215),
+        (Stage::Mesh, 7398, 37, 192, 226),
+        (Stage::RayGeneration, 7182, 122, 171, 210),
     ];
     for (stage, functions, added, variables_450, variables_460) in expected {
         let older = builtins(450, stage);
@@ -196,13 +196,15 @@ fn texture_functions_follow_the_sampler_type() {
         "vec4 texelFetch(samplerBuffer, int)",
         "ivec4 texelFetch(isampler2DMSArray, ivec3, int)",
         "uvec4 texelFetch(utextureBuffer, int)",
+        "vec4 texelFetch(texture2D, ivec2, int)",
+        "ivec4 texelFetch(itexture2DMS, ivec2, int)",
     ] {
         assert!(fetch.contains(&expected.to_string()), "{expected}");
     }
     assert!(!fetch.iter().any(|signature| signature.contains("Cube")));
-    assert!(!fetch
+    assert!(!signatures(&table, "texture")
         .iter()
-        .any(|signature| signature.contains("texture2D")));
+        .any(|signature| signature.contains("(texture")));
     let size = signatures(&table, "textureSize");
     for expected in [
         "ivec2 textureSize(sampler2D, int)",

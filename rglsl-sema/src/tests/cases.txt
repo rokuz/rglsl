@@ -861,11 +861,46 @@ layout(binding = 1) uniform sampler s;
 void main() {
     sampler2D(s, s);
 }
-### texture functions on a bare texture need an extension | frag | 4:NoMatchingFunction
+### texture functions on a bare texture need an extension | frag | 4:ExtensionRequired
 layout(binding = 0) uniform texture2D t;
 void main() {
     vec4 a = texelFetch(t, ivec2(0), 0);
 }
+### texture queries on a bare texture need an extension | frag | 5:ExtensionRequired
+layout(binding = 0) uniform texture2DMS t;
+layout(binding = 1) uniform textureBuffer b;
+void main() {
+    int a = textureSamples(t);
+}
+### samplerless texture functions on every texture type | frag | ok
+#extension GL_EXT_samplerless_texture_functions : enable
+layout(binding = 0) uniform texture1D t1;
+layout(binding = 1) uniform itexture1DArray t1a;
+layout(binding = 2) uniform utexture2D t2;
+layout(binding = 3) uniform texture2DArray t2a;
+layout(binding = 4) uniform texture3D t3;
+layout(binding = 5) uniform textureCube tc;
+layout(binding = 6) uniform textureCubeArray tca;
+layout(binding = 7) uniform itexture2DMS ms;
+layout(binding = 8) uniform utexture2DMSArray msa;
+layout(binding = 9) uniform textureBuffer b;
+void main() {
+    vec4 a = texelFetch(t1, 0, 0) + texelFetchOffset(t1, 0, 0, 1);
+    ivec4 c = texelFetch(t1a, ivec2(0), 0) + texelFetchOffset(t1a, ivec2(0), 0, 1) + texelFetch(ms, ivec2(0), 1);
+    uvec4 d = texelFetch(t2, ivec2(0), 0) + texelFetch(msa, ivec3(0), 2);
+    vec4 e = texelFetch(t2a, ivec3(0), 0) + texelFetch(t3, ivec3(0), 0) + texelFetchOffset(t3, ivec3(0), 0, ivec3(1)) + texelFetch(b, 0);
+    int f = textureSize(t1, 0) + textureSize(b) + textureQueryLevels(t1) + textureQueryLevels(tc) + textureQueryLevels(tca) + textureSamples(ms) + textureSamples(msa);
+    ivec2 g = textureSize(t1a, 0) + textureSize(t2, 0) + textureSize(tc, 0) + textureSize(ms);
+    ivec3 h = textureSize(t2a, 0) + textureSize(t3, 0) + textureSize(tca, 0) + textureSize(msa);
+}
+### no samplerless sampling on a bare texture | frag | 4:NoMatchingFunction
+#extension GL_EXT_samplerless_texture_functions : enable
+layout(binding = 0) uniform texture2D t;
+void main() { vec4 a = texture(t, vec2(0.0)); }
+### no samplerless fetch on a cube texture | frag | 4:NoMatchingFunction
+#extension GL_EXT_samplerless_texture_functions : enable
+layout(binding = 0) uniform textureCube t;
+void main() { vec4 a = texelFetch(t, ivec3(0), 0); }
 ### texel fetch on a texture buffer | frag | ok
 layout(binding = 0) uniform textureBuffer t;
 void main() {

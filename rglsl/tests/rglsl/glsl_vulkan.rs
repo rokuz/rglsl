@@ -10512,3 +10512,28 @@ void main() {
     assert_eq!(instructions(&module, Op::ImageSampleImplicitLod).len(), 1);
     Ok(())
 }
+
+#[test]
+fn samplerless_texture_functions_use_the_image_directly() -> crate::TestResult {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+#extension GL_EXT_samplerless_texture_functions : enable
+layout(binding = 0) uniform texture2D t;
+layout(binding = 1) uniform itexture2DMSArray ms;
+layout(binding = 2) uniform textureBuffer b;
+layout(location = 0) out vec4 o;
+void main() {
+    vec4 a = texelFetch(t, ivec2(0), 0) + texelFetchOffset(t, ivec2(0), 0, ivec2(1));
+    ivec4 c = texelFetch(ms, ivec3(0), 1);
+    int n = textureSize(t, 0).x + textureSize(ms).z + textureSize(b) + textureQueryLevels(t) + textureSamples(ms);
+    o = a + vec4(c) + texelFetch(b, n);
+}
+",
+    )?;
+    assert_eq!(instructions(&module, Op::ImageFetch).len(), 4);
+    assert_eq!(instructions(&module, Op::SampledImage).len(), 0);
+    assert_eq!(instructions(&module, Op::ImageQueryLevels).len(), 1);
+    assert_eq!(instructions(&module, Op::ImageQuerySamples).len(), 1);
+    Ok(())
+}
