@@ -1609,6 +1609,7 @@ impl<'a> Lowerer<'a> {
             .fold(1, u32::saturating_mul);
         let total = per_block.saturating_mul(elements);
         let slot = usize::from(!input);
+        let automatic_location = !member_located && block_location.is_none();
         let io = if member_located {
             if arrayed {
                 return Err(semantic(
@@ -1721,6 +1722,9 @@ impl<'a> Lowerer<'a> {
         );
         self.interface.push(handle);
         self.globals.insert(symbol, GlobalRef::Variable(handle));
+        if automatic_location {
+            self.automatic_locations.push(handle);
+        }
         if outer.per_task {
             self.task_memory.push(handle);
         }

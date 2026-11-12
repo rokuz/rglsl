@@ -1015,3 +1015,76 @@ vec4 shade() { return gl_FragCoord; }
         .any(|error| error.contains("`pixel_center_integer` is not allowed in Vulkan")));
     Ok(())
 }
+
+fn auto_located(stage: ShaderStage, source: &str) -> TestResult<ObjectModule> {
+    let options = Options {
+        auto_map_locations: true,
+        ..Options::from(stage)
+    };
+    Frontend::default()
+        .compile(&options, source)
+        .map_err(|errors| format!("{source}\n{errors:?}").into())
+}
+
+fn block_locations(linked: &Linked, name: &str) -> TestResult<(u32, Vec<u32>)> {
+    let module = &linked.module;
+    let global = module
+        .global_variables
+        .iter()
+        .map(|(_, global)| global)
+        .find(|global| global.name.as_deref() == Some(name))
+        .ok_or("no such global")?;
+    let Some(rglsl::Binding::Location { location, .. }) = global.io else {
+        return Err("the block has no location".into());
+    };
+    let TypeInner::Struct { ref members, .. } = module.types[global.ty].inner else {
+        return Err("the block is not a structure".into());
+    };
+    let members = members
+        .iter()
+        .filter_map(|member| match member.binding {
+            Some(rglsl::Binding::Location { location, .. }) => Some(location),
+            _ => None,
+        })
+        .collect();
+    Ok((location, members))
+}
+
+#[test]
+fn automatic_block_locations_are_reassigned_across_modules() -> TestResult {
+    let main = auto_located(
+        ShaderStage::Vertex,
+        "#version 450
+out vec4 extra;
+out Block { vec4 a; vec4 b; } blk;
+void fill();
+void main() { extra = vec4(0.0); fill(); }
+",
+    )?;
+    let fill = auto_located(
+        ShaderStage::Vertex,
+        "#version 450
+out vec2 more;
+out vec4 again;
+out Block { vec4 a; vec4 b; } blk;
+void fill() { blk.a = vec4(1.0); blk.b = vec4(2.0); more = vec2(3.0); again = vec4(4.0); }
+",
+    )?;
+    let options = LinkOptions {
+        auto_map_locations: true,
+        auto_map_bindings: false,
+    };
+    let result = link(&[main.clone(), fill.clone()], &options)?;
+    assert_eq!(block_locations(&result, "blk")?, (1, vec![1, 2]));
+    let explicit = auto_located(
+        ShaderStage::Vertex,
+        "#version 450
+layout(location = 5) out Block { vec4 a; vec4 b; } blk;
+void fill() { blk.a = vec4(1.0); }
+",
+    )?;
+    let result = link(&[main, explicit], &options)?;
+    assert_eq!(block_locations(&result, "blk")?, (5, vec![5, 6]));
+    assert!(!spirv(&result)?.is_empty());
+    Ok(())
+}

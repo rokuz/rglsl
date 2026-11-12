@@ -108,6 +108,64 @@ fn ranges(module: &Module, stage: ShaderStage, global: &GlobalVariable) -> Vec<(
     }
 }
 
+pub(crate) fn relocate(module: &mut Module, ty: Handle<Type>, from: u32, to: u32) -> Handle<Type> {
+    if from == to {
+        return ty;
+    }
+    let mut layers = Vec::new();
+    let mut current = ty;
+    while let TypeInner::Array { base, size, stride } = module.types[current].inner {
+        layers.push((module.types[current].name.clone(), size, stride));
+        current = base;
+    }
+    let TypeInner::Struct {
+        ref members,
+        span: size,
+    } = module.types[current].inner
+    else {
+        return ty;
+    };
+    let mut members = members.clone();
+    let mut moved = false;
+    for member in &mut members {
+        if let Some(Binding::Location {
+            ref mut location, ..
+        }) = member.binding
+        {
+            *location = to.saturating_add(location.saturating_sub(from));
+            moved = true;
+        }
+    }
+    if !moved {
+        return ty;
+    }
+    let span = module.types.get_span(current);
+    let mut relocated = module.types.insert(
+        Type {
+            name: module.types[current].name.clone(),
+            inner: TypeInner::Struct {
+                members,
+                span: size,
+            },
+        },
+        span,
+    );
+    for (name, size, stride) in layers.into_iter().rev() {
+        relocated = module.types.insert(
+            Type {
+                name,
+                inner: TypeInner::Array {
+                    base: relocated,
+                    size,
+                    stride,
+                },
+            },
+            span,
+        );
+    }
+    relocated
+}
+
 pub(crate) fn assign_locations(module: &mut Module, globals: &[MergedGlobal], stage: ShaderStage) {
     let automatic: BTreeSet<Handle<GlobalVariable>> = globals
         .iter()
@@ -140,9 +198,18 @@ pub(crate) fn assign_locations(module: &mut Module, globals: &[MergedGlobal], st
                 start = until;
             }
             next = start.saturating_add(count);
+            let (ty, previous) = match module.global_variables[merged.handle].io {
+                Some(Binding::Location { location, .. }) => {
+                    (module.global_variables[merged.handle].ty, location)
+                }
+                _ => continue,
+            };
+            let ty = relocate(module, ty, previous, start);
+            let global = module.global_variables.get_mut(merged.handle);
+            global.ty = ty;
             if let Some(Binding::Location {
                 ref mut location, ..
-            }) = module.global_variables.get_mut(merged.handle).io
+            }) = global.io
             {
                 *location = start;
             }
