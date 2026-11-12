@@ -287,6 +287,7 @@ pub struct TensorType {
     pub rank: TensorRank,
     pub readable: bool,
     pub writable: bool,
+    pub runtime_array: bool,
 }
 
 impl TensorElement {
@@ -1401,12 +1402,17 @@ pub fn reflect(module: &Module) -> Result<Reflection, String> {
                     }
                     _ => (None, Some(pointee)),
                 };
-                let kind = match element {
+                let mut kind = match element {
                     Some(element) if count != Some(0) => resource_kind(&types, class, id, element),
                     _ => ResourceKind::Unsupported(
                         "descriptor arrays without a constant length".into(),
                     ),
                 };
+                if let ResourceKind::Tensor(ref mut tensor) = kind {
+                    tensor.runtime_array = types
+                        .get(pointee)
+                        .is_some_and(|array| array.is(Op::TypeRuntimeArray));
+                }
                 if let ResourceKind::UniformBuffer(layout)
                 | ResourceKind::StorageBuffer { layout, .. } = &kind
                 {
@@ -2049,6 +2055,7 @@ fn resource_kind(types: &Types, class: StorageClass, variable: u32, pointee: u32
                 rank,
                 readable: !decorations.has(variable, Decoration::NonReadable),
                 writable: !decorations.has(variable, Decoration::NonWritable),
+                runtime_array: false,
             }),
             None => ResourceKind::Unsupported("tensor of an unknown element or rank".into()),
         };
@@ -2202,6 +2209,8 @@ mod tests {
             op(Op::Decorate, &[30, Decoration::Binding as u32, 0])?,
             op(Op::Decorate, &[30, Decoration::NonReadable as u32])?,
             op(Op::Decorate, &[7, Decoration::SpecId as u32, 4])?,
+            op(Op::Decorate, &[31, Decoration::DescriptorSet as u32, 3])?,
+            op(Op::Decorate, &[31, Decoration::Binding as u32, 0])?,
             op(Op::TypeInt, &[5, 32, 0])?,
             op(Op::TypeInt, &[6, 32, 1])?,
             op(Op::TypeFloat, &[8, 16, 0])?,
@@ -2215,6 +2224,9 @@ mod tests {
             op(Op::TypeTensorARM, &[21, 6, 7])?,
             op(Op::TypePointer, &[22, constant, 21])?,
             op(Op::Variable, &[22, 30, constant])?,
+            op(Op::TypeRuntimeArray, &[23, 21])?,
+            op(Op::TypePointer, &[24, constant, 23])?,
+            op(Op::Variable, &[24, 31, constant])?,
         ]);
         let reflection = reflected(&words)?;
         let tensors: Vec<(u32, u32, Option<u32>, TensorType)> = reflection
@@ -2243,6 +2255,7 @@ mod tests {
                         rank: TensorRank::Constant(2),
                         readable: true,
                         writable: false,
+                        runtime_array: false,
                     }
                 ),
                 (
@@ -2261,6 +2274,26 @@ mod tests {
                         },
                         readable: false,
                         writable: true,
+                        runtime_array: false,
+                    }
+                ),
+                (
+                    3,
+                    0,
+                    Some(RUNTIME_DESCRIPTORS),
+                    TensorType {
+                        element: TensorElement {
+                            kind: ScalarKind::Sint,
+                            width: 32,
+                            encoding: None,
+                        },
+                        rank: TensorRank::Specialized {
+                            spec_id: Some(4),
+                            default: 5,
+                        },
+                        readable: true,
+                        writable: true,
+                        runtime_array: true,
                     }
                 ),
             ]
@@ -2281,6 +2314,12 @@ mod tests {
             "{reason}"
         );
         assert!(reason.contains("VK_ARM_tensors"), "{reason}");
+        assert!(
+            reason.contains(
+                "set 3 binding 0 tensorARM<int32_t, specialization constant 4 = 5> read/write[] (runtime array)"
+            ),
+            "{reason}"
+        );
         Ok(())
     }
 

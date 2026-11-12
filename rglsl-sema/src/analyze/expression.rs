@@ -940,8 +940,7 @@ impl Analyzer<'_> {
                 .map(|symbol| symbol.name.as_str());
             let allowed = base_operand.storage == Storage::Buffer
                 || matches!(name, Some("gl_SampleMask" | "gl_SampleMaskIn"))
-                || (self.extension_enabled("GL_EXT_nonuniform_qualifier")
-                    && !matches!(element.kind, TypeKind::Tensor { .. }));
+                || self.extension_enabled("GL_EXT_nonuniform_qualifier");
             if !allowed {
                 self.error(span, DiagnosticKind::VariableIndexIntoUnsizedArray);
             }
