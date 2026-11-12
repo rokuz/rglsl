@@ -229,16 +229,20 @@ impl FunctionLowerer<'_, '_> {
     ) -> Result<Handle<Expression>> {
         let mut iterator = arguments.iter().copied();
         let arg = iterator.next().ok_or_else(|| internal(at))?;
-        self.add(
-            Expression::Math {
-                fun,
-                arg,
-                arg1: iterator.next(),
-                arg2: iterator.next(),
-                arg3: iterator.next(),
-            },
-            at,
-        )
+        let expression = Expression::Math {
+            fun,
+            arg,
+            arg1: iterator.next(),
+            arg2: iterator.next(),
+            arg3: iterator.next(),
+        };
+        if arguments
+            .iter()
+            .all(|&argument| self.tracker.is_const(argument))
+        {
+            return Ok(self.unemitted(expression, at));
+        }
+        self.add(expression, at)
     }
 
     pub(super) fn binary_op(

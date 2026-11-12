@@ -16,6 +16,7 @@ name = "rglsl_sema"
 rglsl-ast.workspace = true
 rglsl-types.workspace = true
 half.workspace = true
+libm.workspace = true
 thiserror.workspace = true
 
 [lints]

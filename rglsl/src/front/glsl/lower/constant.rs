@@ -6,6 +6,16 @@ use rglsl_sema::types::{ArraySize, Type as GlslType, TypeKind};
 use super::{internal, Lowerer, Result};
 use crate::{Expression, Handle, Literal, Span};
 
+fn half_toward_zero(value: f64) -> half::f16 {
+    let single = value as f32;
+    let nearest = half::f16::from_f32(single);
+    if single.is_finite() && nearest.to_f32().abs() > single.abs() {
+        half::f16::from_bits(nearest.to_bits().saturating_sub(1))
+    } else {
+        nearest
+    }
+}
+
 pub(super) fn literal(value: Value) -> Literal {
     match value {
         Value::Bool(value) => Literal::Bool(value),
@@ -17,7 +27,7 @@ pub(super) fn literal(value: Value) -> Literal {
         Value::Uint16(value) => Literal::U16(value),
         Value::Int64(value) => Literal::I64(value),
         Value::Uint64(value) => Literal::U64(value),
-        Value::Float16(value) => Literal::F16(half::f16::from_f64(value)),
+        Value::Float16(value) => Literal::F16(half_toward_zero(value)),
         Value::Int8(value) => Literal::I8(value),
         Value::Uint8(value) => Literal::U8(value),
         Value::BFloat16(value) => Literal::BF16(crate::proc::small_float::bf16_from_f64(value)),

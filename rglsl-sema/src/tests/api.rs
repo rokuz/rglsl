@@ -780,7 +780,7 @@ fn sized_literals_fold_with_their_width() -> TestResult {
             Some(Value::Uint64(1)),
             Some(Value::Int16(32767)),
             Some(Value::Uint8(4)),
-            Some(Value::Float16(half::f16::from_f64(0.1).to_f64())),
+            Some(Value::Float16(0.1)),
             Some(Value::Int64(i64::MIN)),
         ]
     );
