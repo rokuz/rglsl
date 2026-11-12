@@ -808,7 +808,14 @@ pub fn reflect(module: &Module) -> Result<Interface, String> {
         }) && !instruction.is(Op::Variable)
     });
     if let Some(constant) = workgroup_size {
-        let components = component_names(&context, constant.rest(2));
+        let replicated = constant.is(Op::ConstantCompositeReplicateEXT)
+            || constant.is(Op::SpecConstantCompositeReplicateEXT);
+        let ids = if replicated {
+            constant.rest(2).repeat(3)
+        } else {
+            constant.rest(2).to_vec()
+        };
+        let components = component_names(&context, &ids);
         for model in models.values() {
             if matches!(
                 model.as_str(),

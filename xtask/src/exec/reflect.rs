@@ -903,11 +903,16 @@ fn local_size(module: &Module, types: &Types, modes: &BTreeMap<u32, Vec<u32>>) -
             continue;
         };
         if types.decorations.builtins.get(&id) == Some(&BuiltIn::WorkgroupSize) {
-            let components: Vec<u32> = instruction
+            let mut components: Vec<u32> = instruction
                 .rest(2)
                 .iter()
                 .filter_map(|id| types.constant_u32(*id))
                 .collect();
+            if instruction.is(Op::ConstantCompositeReplicateEXT)
+                || instruction.is(Op::SpecConstantCompositeReplicateEXT)
+            {
+                components = components.repeat(3);
+            }
             if let [x, y, z] = components.as_slice() {
                 return [*x, *y, *z];
             }
