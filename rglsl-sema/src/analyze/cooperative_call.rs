@@ -208,6 +208,10 @@ impl Analyzer<'_> {
         if load && !self.require_lvalue(first_argument, matrix) {
             return None;
         }
+        let buffer_argument = arguments.get(1).map_or(span, |argument| argument.span);
+        if !load && !self.require_lvalue(buffer_argument, buffer) {
+            return None;
+        }
         let element_type = buffer.ty.element_type().filter(|_| buffer.ty.is_array());
         let valid_element = element_type.as_ref().is_some_and(|ty| {
             !ty.is_array()
@@ -275,10 +279,14 @@ impl Analyzer<'_> {
                 self.cooperative_error(span, name, "colMajor must be a bool");
                 return None;
             }
+            if !layout.constant {
+                self.cooperative_error(span, name, "colMajor must be a constant");
+                return None;
+            }
         } else if !narrow(layout) || layout.ty.scalar_type() == Some(Scalar::Uint) {
             self.error(span, DiagnosticKind::NoMatchingFunction(String::from(name)));
             return None;
-        } else if Self::constant_argument(layout).is_none() {
+        } else if !layout.constant {
             let layout_span = arguments.get(4).map_or(span, |argument| argument.span);
             self.cooperative_error(
                 layout_span,

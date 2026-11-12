@@ -2394,6 +2394,15 @@ impl Analyzer<'_> {
     ) -> Option<FunctionId> {
         let name = &prototype.name;
         let return_qualifiers = self.optional_qualifiers(&prototype.return_type.node);
+        if return_qualifiers.constant || return_qualifiers.storage != Storage::None {
+            self.error(
+                name.span,
+                DiagnosticKind::InvalidQualifier {
+                    qualifier: "return",
+                    reason: "no qualifiers allowed for function return",
+                },
+            );
+        }
         if return_qualifiers.nonuniform {
             self.non_uniform_storage_check(
                 prototype.return_type.qualifier.as_ref(),

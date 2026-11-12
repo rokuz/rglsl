@@ -479,6 +479,21 @@ impl BlockContext<'_> {
                 scalar,
                 class,
             },
+            TypeInner::CooperativeMatrix {
+                columns,
+                rows,
+                role,
+                scope,
+                class,
+                ..
+            } => TypeInner::CooperativeMatrix {
+                columns,
+                rows,
+                scalar,
+                role,
+                scope,
+                class,
+            },
             ref other => other.clone(),
         }
     }

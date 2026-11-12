@@ -2412,7 +2412,7 @@ impl Writer {
         }
     }
 
-    fn cooperative_size_id(&mut self, size: crate::CooperativeSize) -> Word {
+    pub(super) fn cooperative_size_id(&mut self, size: crate::CooperativeSize) -> Word {
         match size {
             crate::CooperativeSize::Constant(size) => self.get_index_constant(size.get()),
             crate::CooperativeSize::Pending(handle) => self

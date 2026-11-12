@@ -329,6 +329,14 @@ fn describe(
             ));
             Some(description)
         }
+        110 => Some(format!(
+            "coopmat<{},{},{},{},{}>",
+            name(0),
+            constant(1),
+            constant(2),
+            constant(3),
+            constant(4)
+        )),
         107 => {
             facts.insert(format!("entrypoint {}", name(0)));
             None
