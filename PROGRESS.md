@@ -201,8 +201,8 @@ Our own execution tests (`tests/exec`): each test is one or more shaders and an 
 
 | Stage | Files | accept | diag | valid | interface | exec local | exec amd | exec nvidia | link | crashes |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| **all** | 29 | 29 / 29 (100.0 %) | – | 29 / 29 (100.0 %) | 28 / 28 (100.0 %) | 8 / 8 (100.0 %) | 16 / 16 (100.0 %) | 27 / 27 (100.0 %) | 29 / 29 (100.0 %) | 0 |
-| frag | 2 | 2 / 2 (100.0 %) | – | 2 / 2 (100.0 %) | 2 / 2 (100.0 %) | – | 1 / 1 (100.0 %) | 2 / 2 (100.0 %) | 2 / 2 (100.0 %) | 0 |
+| **all** | 30 | 30 / 30 (100.0 %) | – | 30 / 30 (100.0 %) | 29 / 29 (100.0 %) | 8 / 8 (100.0 %) | 17 / 17 (100.0 %) | 27 / 27 (100.0 %) | 30 / 30 (100.0 %) | 0 |
+| frag | 3 | 3 / 3 (100.0 %) | – | 3 / 3 (100.0 %) | 3 / 3 (100.0 %) | – | 2 / 2 (100.0 %) | 2 / 2 (100.0 %) | 3 / 3 (100.0 %) | 0 |
 | comp | 27 | 27 / 27 (100.0 %) | – | 27 / 27 (100.0 %) | 26 / 26 (100.0 %) | 8 / 8 (100.0 %) | 15 / 15 (100.0 %) | 25 / 25 (100.0 %) | 27 / 27 (100.0 %) | 0 |
 
 `accept` in detail:
@@ -220,14 +220,14 @@ Our own execution tests (`tests/exec`): each test is one or more shaders and an 
 | passed | 8 |
 | passed within the float tolerance | 0 |
 | failed | 0 |
-| skipped: device feature missing on the driver | 21 |
+| skipped: device feature missing on the driver | 22 |
 
 `exec amd` in detail:
 
 | | shaders |
 |---|---:|
-| executed | 16 |
-| passed | 16 |
+| executed | 17 |
+| passed | 17 |
 | passed within the float tolerance | 0 |
 | failed | 0 |
 | skipped: device feature missing on the driver | 13 |
@@ -241,6 +241,7 @@ Our own execution tests (`tests/exec`): each test is one or more shaders and an 
 | passed within the float tolerance | 0 |
 | failed | 0 |
 | skipped: device feature missing on the driver | 2 |
+| skipped: known driver bug (xtask/exec-drivers) | 1 |
 
 ## Modes
 
