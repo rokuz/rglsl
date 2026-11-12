@@ -21,8 +21,6 @@ use crate::{
 };
 
 const OP_TYPE_VECTOR: u32 = 23;
-const OPENCL_STD: &str = "OpenCL.std";
-const OPENCL_MEMORY: core::ops::RangeInclusive<u32> = 171..=185;
 
 impl Lowerer<'_> {
     pub(super) fn spirv_type(&mut self, id: SpirvTypeId, span: Span) -> Result<TypeInner> {
@@ -260,12 +258,6 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         let opcode = spirv
             .id
             .ok_or_else(|| unsupported("`spirv_instruction` without an `id`", at))?;
-        if spirv.set == OPENCL_STD && OPENCL_MEMORY.contains(&opcode) {
-            return Err(unsupported(
-                "OpenCL.std memory instructions, which need a physical addressing model",
-                at,
-            ));
-        }
         let instruction = SpirvInstruction {
             set: (!spirv.set.is_empty()).then(|| String::from(spirv.set.as_str())),
             opcode,

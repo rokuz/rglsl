@@ -180,6 +180,8 @@ pub enum DiagnosticKind {
     InvalidStructMember { name: String, reason: &'static str },
     #[error("non-opaque uniforms outside a block are not allowed when targeting Vulkan")]
     UniformOutsideBlock,
+    #[error("structures with opaque members are not supported: Vulkan forbids opaque types in structures")]
+    OpaqueInStructure,
     #[error("invalid attribute `{attribute}`: {reason}")]
     InvalidAttribute {
         attribute: String,
@@ -238,6 +240,11 @@ pub enum DiagnosticKind {
     ExtensionWithoutSpirv(String),
     #[error("extension `{name}` is not supported: {reason}")]
     ExtensionNotInVulkan { name: String, reason: &'static str },
+    #[error("{subject} is not supported: {reason}")]
+    NotSupportedInVulkan {
+        subject: String,
+        reason: &'static str,
+    },
     #[error("extension `{0}` needs a newer SPIR-V version")]
     ExtensionSpirvVersion(String),
     #[error("{feature} requires SPIR-V {version}")]

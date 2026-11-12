@@ -17,6 +17,7 @@ rglsl-ast.workspace = true
 rglsl-types.workspace = true
 half.workspace = true
 libm.workspace = true
+rspirv.workspace = true
 thiserror.workspace = true
 
 [lints]

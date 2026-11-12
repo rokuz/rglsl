@@ -1895,9 +1895,29 @@ struct S { sampler2D s; };
 void main() {
     S a;
 }
-### struct with a sampler as a uniform | frag | ok
+### struct with a sampler as a uniform | frag | 3:OpaqueInStructure
 struct S { sampler2D s; };
 uniform S a;
+void main() {}
+### a language error hides a struct with a sampler as a uniform | frag | 5:CannotConvert
+struct S { sampler2D s; };
+uniform S a;
+void main() {
+    int i = 1.5;
+}
+### array of structs with a sampler as a uniform | frag | 4:OpaqueInStructure
+struct S { sampler2D s; };
+struct T { S inner; };
+layout(binding = 0) uniform T a[2];
+void main() {}
+### struct with an acceleration structure as a uniform | rgen 460 | 4:OpaqueInStructure
+#extension GL_EXT_ray_tracing : enable
+struct S { accelerationStructureEXT a; };
+uniform S s;
+void main() {}
+### struct with a sampler as an unused parameter | frag | ok
+struct S { sampler2D s; };
+vec4 f(S p) { return texture(p.s, vec2(0.5)); }
 void main() {}
 ### opaque block member | frag | 2:InvalidStructMember
 layout(binding = 0) uniform U { sampler2D s; };
@@ -1909,7 +1929,7 @@ void main() {}
 struct S { float a; };
 uniform S s;
 void main() {}
-### uniform struct mixing opaque and non-opaque | frag | 3:UniformOutsideBlock
+### uniform struct mixing opaque and non-opaque | frag | 3:OpaqueInStructure
 struct S { float a; sampler2D s; };
 uniform S s;
 void main() {}
@@ -2336,11 +2356,10 @@ void main() { A a; a.b[1].x = 1.0; A c = A(B[2](B(1.0), B(2.0))); }
 struct S { sampler2D s; };
 void f(S s) {}
 void main() {}
-### struct eq with sampler | frag | 5:InvalidOperands
+### struct eq with sampler | frag | 3:InvalidOperands
 struct S { sampler2D s; };
-uniform S a;
-uniform S b;
-void main() { bool c = a == b; }
+bool f(S a, S b) { return a == b; }
+void main() {}
 ### param named as function | frag | ok
 void f(int f) { f = 1; }
 void main() {}
@@ -5642,6 +5661,63 @@ spirv_decorate(0) float g = 1.0;
 layout(location = 0) out uvec2 o;
 void main() {
     o = clockRealtime2x32EXT(1);
+}
+### OpenCL-only capabilities | comp 450 | 4:NotSupportedInVulkan, 4:NotSupportedInVulkan, 4:NotSupportedInVulkan
+#extension GL_EXT_spirv_intrinsics : enable
+layout(local_size_x = 1) in;
+spirv_execution_mode(capabilities = [6, 4, 15, 1], 5027);
+void main() {}
+### OpenCL-only execution modes | comp 450 | 4:NotSupportedInVulkan, 5:NotSupportedInVulkan, 6:NotSupportedInVulkan
+#extension GL_EXT_spirv_intrinsics : enable
+layout(local_size_x = 1) in;
+spirv_execution_mode(18, 4, 1, 1);
+spirv_execution_mode(31);
+spirv_execution_mode(35, 8);
+void main() {}
+### OpenCL-only storage classes | comp 450 | 4:NotSupportedInVulkan, 5:NotSupportedInVulkan, 6:NotSupportedInVulkan
+#extension GL_EXT_spirv_intrinsics : enable
+layout(local_size_x = 1) in;
+spirv_storage_class(5) float g;
+spirv_storage_class(8) float h;
+spirv_type(id = 32, 5, uint) CrossWorkgroupPointer;
+void main() {}
+### OpenCL-only decorations and built-ins | comp 450 | 4:NotSupportedInVulkan, 5:NotSupportedInVulkan
+#extension GL_EXT_spirv_intrinsics : enable
+layout(local_size_x = 1) in;
+spirv_decorate(44, 4) shared float aligned;
+spirv_decorate(11, 34) shared uint linearId;
+void main() {}
+### OpenCL-only instructions and types | comp 450 | 4:NotSupportedInVulkan, 6:NotSupportedInVulkan, 6:NotSupportedInVulkan
+#extension GL_EXT_spirv_intrinsics : enable
+layout(local_size_x = 1) in;
+spirv_instruction(id = 260)
+void groupWaitEvents();
+spirv_type(id = 38, 0) Pipe;
+void main() {}
+### OpenCL.std memory instructions and printf | comp 450 | 4:NotSupportedInVulkan, 6:NotSupportedInVulkan, 8:NotSupportedInVulkan
+#extension GL_EXT_spirv_intrinsics : enable
+layout(local_size_x = 1) in;
+spirv_instruction(set = "OpenCL.std", id = 171)
+vec2 vloadn(uint offset, spirv_by_reference float p, spirv_literal int n);
+spirv_instruction(set = "OpenCL.std", id = 185)
+void prefetch(spirv_by_reference float p, uint count);
+spirv_instruction(set = "OpenCL.std", id = 184)
+int printf(int format);
+void main() {}
+### Vulkan uses of OpenCL.std and addressing | comp 450 | ok
+#extension GL_EXT_spirv_intrinsics : enable
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : enable
+layout(local_size_x = 1) in;
+spirv_instruction(id = 120)
+spirv_type(extensions = ["SPV_KHR_physical_storage_buffer"], capabilities = [5347], id = 32, 5349, uint) toPointer(uint64_t address);
+spirv_instruction(set = "OpenCL.std", id = 26)
+float clFma(float a, float b, float c);
+spirv_instruction(set = "OpenCL.std", id = 182)
+vec2 clShuffle(vec4 x, uvec2 mask);
+layout(binding = 0) buffer B { vec4 v; float f; } b;
+void main() {
+    b.f = clFma(b.f, 2.0, 1.0);
+    b.v.xy = clShuffle(b.v, uvec2(1, 0));
 }
 ### hit objects are declared without a storage qualifier | rgen 460 | 4:HitObjectStorage
 #extension GL_EXT_ray_tracing : enable

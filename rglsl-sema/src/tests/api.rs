@@ -640,6 +640,36 @@ fn diagnostics_have_messages() -> TestResult {
     Ok(())
 }
 
+#[test]
+fn features_vulkan_lacks_have_short_messages() -> TestResult {
+    let opaque = check(
+        Stage::Fragment,
+        "struct S { sampler2D s; };\nuniform S s;\nvoid main() {}\n",
+    )?;
+    let opencl = check(
+        Stage::Compute,
+        "#extension GL_EXT_spirv_intrinsics : enable\nlayout(local_size_x = 1) in;\nspirv_execution_mode(capabilities = [6], 18, 1, 1, 1);\nspirv_storage_class(5) float g;\nspirv_instruction(set = \"OpenCL.std\", id = 171)\nvec2 vloadn(uint offset, spirv_by_reference float p, spirv_literal int n);\nvoid main() {}\n",
+    )?;
+    let messages: Vec<String> = opaque
+        .analysis
+        .diagnostics
+        .iter()
+        .chain(&opencl.analysis.diagnostics)
+        .map(|diagnostic| diagnostic.kind.to_string())
+        .collect();
+    assert_eq!(
+        messages,
+        [
+            "structures with opaque members are not supported: Vulkan forbids opaque types in structures",
+            "capability `Kernel` is not supported: it is OpenCL-only",
+            "execution mode `LocalSizeHint` is not supported: it is OpenCL-only",
+            "storage class `CrossWorkgroup` is not supported: it is OpenCL-only",
+            "OpenCL.std instruction `vloadn` is not supported: Vulkan has no physical addressing",
+        ]
+    );
+    Ok(())
+}
+
 const ALL_PRECEDENCES: &str = "a || b ^^ c && d | e ^ f & g == h < i << j + k * (";
 
 const NESTS: [(&str, &str, &str, &str, usize); 17] = [

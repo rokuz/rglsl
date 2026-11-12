@@ -1487,6 +1487,12 @@ impl Analyzer<'_> {
             self.error(name.span, DiagnosticKind::OpaqueNotAllowed(self.show(&ty)));
         } else if qualifiers.storage == Storage::Uniform
             && is_global
+            && matches!(ty.kind, TypeKind::Struct(_))
+            && ty.contains_opaque(&self.types)
+        {
+            self.target_limit(name.span, DiagnosticKind::OpaqueInStructure);
+        } else if qualifiers.storage == Storage::Uniform
+            && is_global
             && !self.options.relaxed_uniforms
             && self.contains_non_opaque(&ty)
         {

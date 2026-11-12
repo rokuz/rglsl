@@ -1172,10 +1172,7 @@ impl<'a> Lowerer<'a> {
                 return self.handle_global(symbol, name, inner, None, at);
             }
             TypeKind::Struct(_) if ty.contains_opaque(&self.analysis.types) => {
-                return Err(unsupported(
-                    "uniform structures of opaque types, which Vulkan does not allow in SPIR-V (VUID-StandaloneSpirv-None-04667) until they are split into separate resources",
-                    at,
-                ))
+                return Err(internal(at))
             }
             _ => {
                 return Err(semantic(
