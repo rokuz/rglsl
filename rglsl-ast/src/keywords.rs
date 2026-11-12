@@ -220,15 +220,8 @@ pub fn is_opaque_type_keyword(word: &str) -> bool {
         name.strip_prefix("image")
             .is_some_and(|shape| SAMPLED_SHAPES.contains(&shape))
     };
-    let is_half_member = |name: &str| {
-        is_family_member(name)
-            || name
-                .strip_prefix("sampler")
-                .is_some_and(|shape| SHADOW_SHAPES.contains(&shape))
-    };
     is_family_member(word)
         || word.strip_prefix(['i', 'u']).is_some_and(is_family_member)
-        || word.strip_prefix("f16").is_some_and(is_half_member)
         || word
             .strip_prefix("i64")
             .or_else(|| word.strip_prefix("u64"))

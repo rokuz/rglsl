@@ -230,6 +230,8 @@ pub enum DiagnosticKind {
     ConflictingExtensions(String, &'static str),
     #[error("extension `{0}` is not allowed when generating SPIR-V")]
     ExtensionWithoutSpirv(String),
+    #[error("extension `{name}` is not supported: {reason}")]
+    ExtensionNotInVulkan { name: String, reason: &'static str },
     #[error("extension `{0}` needs a newer SPIR-V version")]
     ExtensionSpirvVersion(String),
     #[error("{feature} requires SPIR-V {version}")]

@@ -179,17 +179,6 @@ fn extension_types_without_their_extension_are_rejected() -> TestResult {
         error.kind,
         ParseErrorKind::ExtensionRequired { .. }
     ));
-    let error = rejected(
-        parse("#version 450\nuniform f16sampler2DShadow s;\n"),
-        "f16sampler2DShadow needs an extension",
-    )?;
-    assert!(
-        matches!(error.kind, ParseErrorKind::ExtensionRequired { ref extensions, .. } if extensions == "GL_AMD_gpu_shader_half_float_fetch"),
-        "{error}"
-    );
-    let enabled = "#version 450\n#extension GL_AMD_gpu_shader_half_float_fetch : enable\n\
-        uniform f16texture2DMSArray t;\nuniform f16subpassInputMS p;\n";
-    assert!(parse(enabled).is_ok());
     Ok(())
 }
 

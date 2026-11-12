@@ -261,6 +261,7 @@ pub mod names {
     pub const MESH_SHADER_EXT: &str = "GL_EXT_mesh_shader";
     pub const MESH_SHADER_NV: &str = "GL_NV_mesh_shader";
     pub const BINDLESS_TEXTURE: &str = "GL_ARB_bindless_texture";
+    pub const HALF_FLOAT_FETCH: &str = "GL_AMD_gpu_shader_half_float_fetch";
     pub const BUFFER_REFERENCE: &str = "GL_EXT_buffer_reference";
     pub const BUFFER_REFERENCE2: &str = "GL_EXT_buffer_reference2";
     pub const BUFFER_REFERENCE_UVEC2: &str = "GL_EXT_buffer_reference_uvec2";
@@ -371,7 +372,6 @@ pub enum Feature {
     FloatUE8M0Type,
     FloatMXINT8Type,
     Int64ImageType,
-    HalfFloatOpaqueType,
     TileImageType,
 }
 
@@ -435,7 +435,6 @@ impl Feature {
             Self::FloatUE8M0Type => &["GL_EXT_float_ue8m0"],
             Self::FloatMXINT8Type => &["GL_EXT_float_mxint8"],
             Self::Int64ImageType => &["GL_EXT_shader_image_int64"],
-            Self::HalfFloatOpaqueType => &["GL_AMD_gpu_shader_half_float_fetch"],
             Self::TileImageType => &["GL_EXT_shader_tile_image"],
         }
     }
@@ -480,12 +479,6 @@ impl Feature {
             Self::TileImageType
         } else if word.starts_with("i64image") || word.starts_with("u64image") {
             Self::Int64ImageType
-        } else if word.starts_with("f16")
-            && ["sampler", "texture", "image", "subpassInput"]
-                .iter()
-                .any(|family| word.get(3..).is_some_and(|rest| rest.starts_with(family)))
-        {
-            Self::HalfFloatOpaqueType
         } else if word == "coopmat" {
             Self::CooperativeMatrixType
         } else if word == "fcoopmatNV" {
@@ -583,6 +576,10 @@ pub fn minimum_spirv(name: &str) -> Option<(u8, u8)> {
 
 pub fn unsupported_with_spirv(name: &str) -> bool {
     name == names::BINDLESS_TEXTURE
+}
+
+pub fn unsupported_in_vulkan(name: &str) -> Option<&'static str> {
+    (name == names::HALF_FLOAT_FETCH).then_some("SPIR-V for Vulkan has no 16-bit float images")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
