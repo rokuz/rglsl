@@ -1458,6 +1458,71 @@ impl BlockContext<'_> {
                             return Err(Error::Validation("dot product of an invalid operand type"))
                         }
                     },
+                    fun @ (Mf::IntegerDot
+                    | Mf::IntegerDotAccSat
+                    | Mf::PackedIntegerDot4x8
+                    | Mf::PackedIntegerDot4x8AccSat) => {
+                        let packed =
+                            matches!(fun, Mf::PackedIntegerDot4x8 | Mf::PackedIntegerDot4x8AccSat);
+                        let accumulate =
+                            matches!(fun, Mf::IntegerDotAccSat | Mf::PackedIntegerDot4x8AccSat);
+                        let right_ty = match arg1 {
+                            Some(handle) => {
+                                self.fun_info[handle].ty.inner_with(&self.ir_module.types)
+                            }
+                            None => return Err(Error::Validation("integer dot product operands")),
+                        };
+                        let left_scalar = arg_ty.scalar();
+                        let right_scalar = right_ty.scalar();
+                        let (Some(left_scalar), Some(right_scalar)) = (left_scalar, right_scalar)
+                        else {
+                            return Err(Error::Validation("integer dot product operands"));
+                        };
+                        let input = if packed {
+                            spirv::Capability::DotProductInput4x8BitPacked
+                        } else if left_scalar.width == 1
+                            && matches!(
+                                *arg_ty,
+                                crate::TypeInner::Vector {
+                                    size: crate::VectorSize::Quad,
+                                    ..
+                                }
+                            )
+                        {
+                            spirv::Capability::DotProductInput4x8Bit
+                        } else {
+                            spirv::Capability::DotProductInputAll
+                        };
+                        self.writer
+                            .require_any("integer dot product", &[spirv::Capability::DotProduct])?;
+                        self.writer.require_any("integer dot product", &[input])?;
+                        if self.writer.lang_version() < (1, 6) {
+                            self.writer.use_extension("SPV_KHR_integer_dot_product");
+                        }
+                        let left_signed = left_scalar.kind == crate::ScalarKind::Sint;
+                        let right_signed = right_scalar.kind == crate::ScalarKind::Sint;
+                        let (op, first, second) = match (left_signed, right_signed, accumulate) {
+                            (false, false, false) => (spirv::Op::UDot, arg0_id, arg1_id),
+                            (false, false, true) => (spirv::Op::UDotAccSat, arg0_id, arg1_id),
+                            (true, true, false) => (spirv::Op::SDot, arg0_id, arg1_id),
+                            (true, true, true) => (spirv::Op::SDotAccSat, arg0_id, arg1_id),
+                            (true, false, false) => (spirv::Op::SUDot, arg0_id, arg1_id),
+                            (true, false, true) => (spirv::Op::SUDotAccSat, arg0_id, arg1_id),
+                            (false, true, false) => (spirv::Op::SUDot, arg1_id, arg0_id),
+                            (false, true, true) => (spirv::Op::SUDotAccSat, arg1_id, arg0_id),
+                        };
+                        let mut instruction =
+                            Instruction::binary(op, result_type_id, id, first, second);
+                        if accumulate {
+                            instruction.add_operand(arg2_id);
+                        }
+                        if packed {
+                            instruction.add_operand(
+                                spirv::PackedVectorFormat::PackedVectorFormat4x8Bit as Word,
+                            );
+                        }
+                        MathOp::Custom(instruction)
+                    }
                     fun @ (Mf::Dot4I8Packed | Mf::Dot4U8Packed) => {
                         let signed = matches!(fun, Mf::Dot4I8Packed);
                         if self

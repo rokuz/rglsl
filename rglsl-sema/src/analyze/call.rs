@@ -839,6 +839,12 @@ impl Analyzer<'_> {
         if let Some(extension) = subgroup::function_extension(name) {
             self.require_extension(span, extension, name);
         }
+        if matches!(
+            name,
+            "dotEXT" | "dotAccSatEXT" | "dotPacked4x8EXT" | "dotPacked4x8AccSatEXT"
+        ) {
+            self.require_extension(span, "GL_EXT_integer_dot_product", name);
+        }
         if matches!(name, "expectEXT" | "assumeEXT") {
             self.require_extension(span, "GL_EXT_expect_assume", name);
         }

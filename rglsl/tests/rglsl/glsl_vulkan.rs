@@ -10537,3 +10537,51 @@ void main() {
     assert_eq!(instructions(&module, Op::ImageQuerySamples).len(), 1);
     Ok(())
 }
+
+#[test]
+fn integer_dot_products_put_the_signed_operand_first() -> crate::TestResult {
+    let module = compile_valid(
+        ShaderStage::Compute,
+        "#version 450
+#extension GL_EXT_shader_explicit_arithmetic_types : enable
+#extension GL_EXT_integer_dot_product : enable
+layout(local_size_x = 1) in;
+layout(binding = 0) buffer B { int i32; uint u32; int r[8]; uint ru[4]; int64_t r64; };
+void main() {
+    r[0] = dotPacked4x8EXT(u32, i32);
+    ru[0] = dotPacked4x8AccSatEXT(u32, u32, u32);
+    r[1] = dotEXT(u8vec4(u32), i8vec4(i32));
+    r[2] = dotAccSatEXT(i16vec3(i32), u16vec3(u32), i32);
+    ru[1] = dotEXT(uvec2(u32), uvec2(1u));
+    r64 = dotEXT(i64vec2(i32), u64vec2(u32));
+    r[3] = dotEXT(i8vec2(i32), i8vec2(2));
+    r[4] = dotPacked4x8AccSatEXT(i32, i32, i32);
+}
+",
+    )?;
+    let su_dots = instructions(&module, Op::SUDot);
+    assert_eq!(su_dots.len(), 3);
+    assert_eq!(su_dots[0].operands.len(), 3);
+    assert_eq!(instructions(&module, Op::SUDotAccSat).len(), 1);
+    assert_eq!(instructions(&module, Op::UDotAccSat).len(), 1);
+    assert_eq!(instructions(&module, Op::UDot).len(), 1);
+    assert_eq!(instructions(&module, Op::SDot).len(), 1);
+    assert_eq!(instructions(&module, Op::SDotAccSat).len(), 1);
+    let capabilities: Vec<_> = module
+        .capabilities
+        .iter()
+        .map(|inst| inst.operands[0].clone())
+        .collect();
+    for capability in [
+        spirv::Capability::DotProduct,
+        spirv::Capability::DotProductInput4x8BitPacked,
+        spirv::Capability::DotProductInput4x8Bit,
+        spirv::Capability::DotProductInputAll,
+    ] {
+        assert!(
+            capabilities.contains(&Operand::Capability(capability)),
+            "{capability:?}"
+        );
+    }
+    Ok(())
+}

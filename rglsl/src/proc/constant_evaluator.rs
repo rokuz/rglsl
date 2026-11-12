@@ -2231,6 +2231,10 @@ impl<'a> ConstantEvaluator<'a> {
             | crate::MathFunction::Pack4xI8
             | crate::MathFunction::Pack4xU8
             | crate::MathFunction::Pack4xI8Clamp
+            | crate::MathFunction::IntegerDot
+            | crate::MathFunction::IntegerDotAccSat
+            | crate::MathFunction::PackedIntegerDot4x8
+            | crate::MathFunction::PackedIntegerDot4x8AccSat
             | crate::MathFunction::Pack4xU8Clamp
             | crate::MathFunction::Unpack4x8snorm
             | crate::MathFunction::Unpack4x8unorm

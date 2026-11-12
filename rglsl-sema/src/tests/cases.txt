@@ -901,6 +901,14 @@ void main() { vec4 a = texture(t, vec2(0.0)); }
 #extension GL_EXT_samplerless_texture_functions : enable
 layout(binding = 0) uniform textureCube t;
 void main() { vec4 a = texelFetch(t, ivec3(0), 0); }
+### integer dot product needs its extension | frag | 2:ExtensionRequired
+void main() { int a = dotPacked4x8EXT(1, 2u); }
+### integer dot product with mixed signedness | frag | ok
+#extension GL_EXT_integer_dot_product : enable
+void main() { int a = dotPacked4x8EXT(1u, 2) + dotEXT(ivec3(1), uvec3(2u)) + dotAccSatEXT(uvec2(1u), ivec2(2), 3); uint b = dotPacked4x8AccSatEXT(1u, 2u, 3u); }
+### integer dot product has no scalar form | frag | 3:NoMatchingFunction
+#extension GL_EXT_integer_dot_product : enable
+void main() { int a = dotEXT(1, 2); }
 ### texel fetch on a texture buffer | frag | ok
 layout(binding = 0) uniform textureBuffer t;
 void main() {
