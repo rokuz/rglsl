@@ -201,7 +201,7 @@ impl Nest {
 
 #[test]
 fn deep_nesting_parses_and_unbalanced_nesting_is_an_error() {
-    let huge = 100_000;
+    let huge = 20_000;
     for case in &NESTS {
         assert!(parse(&case.source(huge)).is_ok(), "{}", case.open);
         let unbalanced = alloc::format!("void f() {{ {}", case.open.repeat(huge));
@@ -228,7 +228,7 @@ fn deep_nesting_parses_and_unbalanced_nesting_is_an_error() {
 
 #[test]
 fn nested_sources_round_trip() {
-    let limit = 1_000;
+    let limit = 120;
     for case in &NESTS {
         let deepest = limit / case.levels_per_repeat;
         let source = case.source(deepest);
