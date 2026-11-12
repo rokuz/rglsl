@@ -4,6 +4,8 @@
     reason = "test support code fails by panicking"
 )]
 
+extern crate alloc;
+
 mod arithmetic;
 mod cooperative;
 mod glsl_vulkan;
