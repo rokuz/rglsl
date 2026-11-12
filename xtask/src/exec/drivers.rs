@@ -66,6 +66,12 @@ mod tests {
             .is_some_and(|why| why.starts_with("kosmickrisp: ")));
         let amd = DriverBugs::load(&root(), "AMD proprietary driver 26.10.1 (LLPC)")?;
         assert!(amd.get(shader).is_none());
+        assert!(amd
+            .get("spv.subgroupArithmetic.comp")
+            .is_some_and(|why| why.starts_with("amd: ")));
+        let nvidia = DriverBugs::load(&root(), "NVIDIA 617.14")?;
+        assert!(nvidia.get("spv.subgroupArithmetic.comp").is_none());
+        assert!(nvidia.get(shader).is_none());
         Ok(())
     }
 }

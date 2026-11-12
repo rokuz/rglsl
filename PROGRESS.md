@@ -62,7 +62,7 @@ Shaders that glslang's own test suite (`gtests/*.FromFile.cpp`) compiles under V
 | skipped: device feature missing on the driver | 28 |
 | skipped: resource or interface the harness cannot bind | 26 |
 | skipped: glslang's module is not valid SPIR-V | 11 |
-| skipped: glslang's module fails on the driver | 1 |
+| skipped: known driver bug (xtask/exec-drivers) | 1 |
 
 `exec nvidia` in detail:
 
