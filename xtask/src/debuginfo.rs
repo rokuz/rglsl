@@ -6,6 +6,7 @@ use anyhow::{bail, Context, Result};
 const OP_STRING: u32 = 7;
 const OP_LINE: u32 = 8;
 const OP_SOURCE: u32 = 3;
+const OP_SOURCE_EXTENSION: u32 = 4;
 const OP_EXT_INST_IMPORT: u32 = 11;
 const OP_EXT_INST: u32 = 12;
 const OP_EXT_INST_WITH_FORWARD_REFS: u32 = 4433;
@@ -222,6 +223,9 @@ fn body_facts(
                         basename(&module.string(file))
                     ));
                 }
+            }
+            OP_SOURCE_EXTENSION => {
+                facts.insert(format!("opsourceextension {}", literal_string(operands)));
             }
             OP_SOURCE => {
                 if let Some(&file) = operands.get(2) {

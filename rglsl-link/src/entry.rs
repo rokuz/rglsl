@@ -3,6 +3,7 @@ use rglsl::{AddressSpace, Binding, EntryPoint, Expression, GlobalVariable, Handl
 
 use crate::calls::{callees, Node, SymbolTable};
 use crate::error::{internal, LinkError};
+use crate::interface::relocate;
 use crate::merge::{Builder, MergedGlobal};
 use crate::unify::{common_paths, same_expression, unify, Implicit, Mismatch};
 
@@ -92,7 +93,8 @@ impl Builder<'_> {
             a: &existing.implicit,
             b: candidate.implicit,
         };
-        match unify(&mut self.module, current.ty, ty, &implicit, &mut Vec::new()) {
+        let (current_ty, ty) = self.align_locations(existing, candidate, &current, ty);
+        match unify(&mut self.module, current_ty, ty, &implicit, &mut Vec::new()) {
             Ok(unified) => {
                 self.module.global_variables.get_mut(existing.handle).ty = unified;
                 if existing.automatic_binding.is_some() && candidate.automatic_binding.is_none() {
@@ -120,6 +122,40 @@ impl Builder<'_> {
                     "Matched shader interfaces are using different instance names: block `{name}`"
                 ));
             }
+        }
+    }
+
+    fn align_locations(
+        &mut self,
+        existing: &MergedGlobal,
+        candidate: &Candidate,
+        current: &GlobalVariable,
+        ty: Handle<Type>,
+    ) -> (Handle<Type>, Handle<Type>) {
+        let (
+            Some(&Binding::Location { location: here, .. }),
+            Some(&Binding::Location {
+                location: there, ..
+            }),
+        ) = (current.io.as_ref(), candidate.global.io.as_ref())
+        else {
+            return (current.ty, ty);
+        };
+        if existing.automatic_location && !candidate.automatic_location {
+            let relocated = relocate(&mut self.module, current.ty, here, there);
+            let global = self.module.global_variables.get_mut(existing.handle);
+            global.ty = relocated;
+            if let Some(Binding::Location {
+                ref mut location, ..
+            }) = global.io
+            {
+                *location = there;
+            }
+            (relocated, ty)
+        } else if existing.automatic_location || candidate.automatic_location {
+            (current.ty, relocate(&mut self.module, ty, there, here))
+        } else {
+            (current.ty, ty)
         }
     }
 
@@ -383,6 +419,13 @@ impl Builder<'_> {
             self.module.vulkan_memory_model |= vulkan_memory_model;
             self.module.descriptor_heap |= descriptor_heap;
             self.module.ray_tracing |= ray_tracing;
+            for extension in &source.source_extensions {
+                if let Err(position) = self.module.source_extensions.binary_search(extension) {
+                    self.module
+                        .source_extensions
+                        .insert(position, extension.clone());
+                }
+            }
             let requirements = source.spirv_requirements.clone();
             let merged = &mut self.module.spirv_requirements;
             for extension in requirements.extensions {

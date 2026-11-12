@@ -1,0 +1,16 @@
+#version 450
+layout(local_size_x = 4) in;
+layout(set = 0, binding = 0) buffer Data {
+    uint values[];
+} data;
+uint twice(uint x);
+void main()
+{
+    switch (gl_GlobalInvocationID.x) {
+    case gl_WorkGroupSize.x:
+        data.values[0] = twice(1u);
+        break;
+    default:
+        break;
+    }
+}

@@ -1,4 +1,4 @@
-use alloc::{string::String, vec::Vec};
+use alloc::{boxed::Box, string::String, vec::Vec};
 
 #[cfg(feature = "deserialize")]
 use serde::Deserialize;
@@ -7,11 +7,11 @@ use serde::Serialize;
 
 use crate::{
     ConservativeDepth, Function, GeometryInputPrimitive, GeometryOutputPrimitive, GlobalVariable,
-    Handle, MeshOutputTopology, Module, ShaderStage, TessellationPrimitive, TessellationSpacing,
-    TessellationVertexOrder,
+    Handle, MeshOutputTopology, Module, Override, ShaderStage, TessellationPrimitive,
+    TessellationSpacing, TessellationVertexOrder,
 };
 
-pub const FORMAT_VERSION: u32 = 7;
+pub const FORMAT_VERSION: u32 = 9;
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
@@ -29,6 +29,9 @@ pub struct ObjectModule {
     pub layout: StageLayout,
     pub variants: Vec<ObjectModule>,
     pub rejections: Vec<StageRejection>,
+    pub work_group_size_constant: bool,
+    pub work_group_size_placeholders: [Option<Handle<Override>>; 3],
+    pub specialized: Option<Box<ObjectModule>>,
 }
 
 impl ObjectModule {
@@ -49,6 +52,9 @@ impl ObjectModule {
             layout: StageLayout::default(),
             variants: Vec::new(),
             rejections: Vec::new(),
+            work_group_size_constant: false,
+            work_group_size_placeholders: [None; 3],
+            specialized: None,
         }
     }
 
@@ -89,6 +95,7 @@ impl ObjectModule {
                 .cloned()
                 .unwrap_or_else(|| StageRejection {
                     stage,
+                    file: None,
                     line: None,
                     message: match self.stage {
                         Some(own) => alloc::format!("the module is a {} shader", own.name()),
@@ -122,6 +129,7 @@ impl ObjectModule {
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
 pub struct StageRejection {
     pub stage: ShaderStage,
+    pub file: Option<String>,
     pub line: Option<u32>,
     pub message: String,
 }
@@ -199,4 +207,11 @@ pub struct StageLayout {
     pub transform_feedback: bool,
     pub tile_shading_rate: [Option<u32>; 3],
     pub non_coherent_tile_read: bool,
+    pub post_depth_coverage: bool,
+    pub non_coherent_color_attachment_read: bool,
+    pub non_coherent_depth_attachment_read: bool,
+    pub non_coherent_stencil_attachment_read: bool,
+    pub multi_stream: bool,
+    pub streams: Vec<(Handle<GlobalVariable>, u32)>,
+    pub passthrough: Vec<Handle<GlobalVariable>>,
 }

@@ -93,14 +93,6 @@ pub(super) fn math(name: &str, arguments: usize) -> Option<MathFunction> {
     })
 }
 
-fn half_opaque(function: &Function) -> bool {
-    function
-        .parameters
-        .first()
-        .and_then(|parameter| parameter.ty.as_opaque())
-        .is_some_and(|opaque| opaque.sampled == rglsl_sema::types::SampledType::Float16)
-}
-
 fn gather_pattern(name: &str) -> Option<(&'static str, ImageGatherPattern)> {
     let rest = name.strip_prefix("textureGather")?.strip_suffix("QCOM")?;
     let (mode, base) = match rest.strip_suffix("Offset") {
@@ -918,30 +910,6 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
     ) -> Result<Option<Handle<Expression>>> {
         let analysis = self.with(|this| this.lw.analysis)?;
         let function = analysis.builtins.function(id).ok_or_else(|| internal(at))?;
-        let result = {
-            let frame = self.clone().builtin_value(id, call_type, arguments, at);
-            let result = self.nest(frame).await;
-            result
-        }?;
-        let half_texel = half_opaque(function)
-            && function.return_type.base_scalar() == Some(GlslScalar::Float16);
-        match result {
-            Some(value) if half_texel => self
-                .with(|this| this.as_kind(value, crate::Scalar::F16, at))?
-                .map(Some),
-            _ => Ok(result),
-        }
-    }
-
-    async fn builtin_value(
-        self,
-        id: BuiltinFunctionId,
-        call_type: &'b GlslType,
-        arguments: &'b [AstExpression],
-        at: Span,
-    ) -> Result<Option<Handle<Expression>>> {
-        let analysis = self.with(|this| this.lw.analysis)?;
-        let function = analysis.builtins.function(id).ok_or_else(|| internal(at))?;
         let name = function.name.as_str();
         if let Some(result) = {
             let frame = self.clone().ray_builtin_call(name, arguments, at);
@@ -1728,21 +1696,13 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             let result = self.nest(frame).await;
             result
         }?;
-        let half_address = coordinate_ty.base_scalar() == Some(GlslScalar::Float16);
-        let coordinate = if half_address {
-            self.with(|this| this.as_kind(coordinate, crate::Scalar::F32, at))??
-        } else {
-            coordinate
-        };
         let mut size = u32::from(match coordinate_ty.kind {
             TypeKind::Vector { size, .. } => size,
             _ => 1,
         });
         let mut next = 2;
         let separate_reference = opaque.shadow
-            && (gather
-                || half_address
-                || (opaque.dimension == TextureDimension::Cube && opaque.arrayed));
+            && (gather || (opaque.dimension == TextureDimension::Cube && opaque.arrayed));
         let reference_argument = if separate_reference {
             Some({
                 let frame = self.clone().next_argument(
@@ -1919,14 +1879,16 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 result
             }?);
         }
-        let stage = self.with(|this| this.lw.options.stage)?;
-        let derivatives = stage == ShaderStage::Fragment
-            || (stage == ShaderStage::Compute
-                && self.with(|this| this.lw.analysis.derivative_group.is_some())?);
         let implicit = match level {
             SampleLevel::Auto => !self.with(|this| this.lw.library)?,
             SampleLevel::Bias(_) => true,
             SampleLevel::Zero | SampleLevel::Exact(_) | SampleLevel::Gradient { .. } => false,
+        };
+        let derivatives = implicit && !gather && {
+            let stage = self.with(|this| this.lw.stage())?;
+            stage == ShaderStage::Fragment
+                || (stage == ShaderStage::Compute
+                    && self.with(|this| this.lw.analysis.derivative_group.is_some())?)
         };
         if implicit && !gather && !derivatives {
             level = SampleLevel::Zero;
@@ -1940,7 +1902,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         let sparse = match texel_out {
             Some(_) => {
                 let texel = if opaque.shadow && !gather {
-                    crate::TypeInner::Scalar(super::types::sampled_scalar(opaque.sampled))
+                    crate::TypeInner::Scalar(crate::Scalar::F32)
                 } else {
                     crate::TypeInner::Vector {
                         size: crate::VectorSize::Quad,
@@ -2010,11 +1972,6 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             let result = self.nest(frame).await;
             result
         }?;
-        let texel = if half_opaque(function) {
-            self.with(|this| this.as_kind(texel, crate::Scalar::F16, at))??
-        } else {
-            texel
-        };
         let texel = self.with(|this| this.convert(texel, &parameter.ty, &output_ty, at))??;
         self.with(|this| this.store(&place, texel, at))??;
         self.with(|this| {
@@ -2035,24 +1992,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         at: Span,
     ) -> Result<Handle<Expression>> {
         let value = arguments.get(index).ok_or_else(|| internal(at))?;
-        self.nest(self.clone().sampling_operand(value, at)).await
-    }
-
-    async fn sampling_operand(
-        self,
-        expression: &'b AstExpression,
-        at: Span,
-    ) -> Result<Handle<Expression>> {
-        let (value, ty) = {
-            let frame = self.clone().typed(expression);
-            let result = self.nest(frame).await;
-            result
-        }?;
-        if ty.base_scalar() == Some(GlslScalar::Float16) {
-            self.with(|this| this.as_kind(value, crate::Scalar::F32, at))?
-        } else {
-            Ok(value)
-        }
+        self.nest(self.clone().rvalue(value)).await
     }
 
     async fn fetch(
@@ -2162,7 +2102,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         let coordinate = {
             let frame = self
                 .clone()
-                .sampling_operand(arguments.get(1).ok_or_else(|| internal(at))?, at);
+                .rvalue(arguments.get(1).ok_or_else(|| internal(at))?);
             let result = self.nest(frame).await;
             result
         }?;
@@ -2593,7 +2533,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         }
         let value = arguments.get(operands).ok_or_else(|| internal(at))?;
         let value = {
-            let frame = self.clone().sampling_operand(value, at);
+            let frame = self.clone().rvalue(value);
             let result = self.nest(frame).await;
             result
         }?;

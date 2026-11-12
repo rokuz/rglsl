@@ -20,6 +20,23 @@ pub enum Stage {
 }
 
 impl Stage {
+    pub const ALL: [Self; 14] = [
+        Self::Vertex,
+        Self::TessControl,
+        Self::TessEvaluation,
+        Self::Geometry,
+        Self::Fragment,
+        Self::Compute,
+        Self::RayGeneration,
+        Self::Intersection,
+        Self::AnyHit,
+        Self::ClosestHit,
+        Self::Miss,
+        Self::Callable,
+        Self::Task,
+        Self::Mesh,
+    ];
+
     pub fn from_extension(extension: &str) -> Option<Self> {
         Some(match extension {
             "vert" => Self::Vertex,

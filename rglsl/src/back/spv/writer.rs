@@ -5228,6 +5228,11 @@ impl Writer {
         self.debug_end_sources();
 
         if self.flags.contains(WriterFlags::DEBUG) {
+            for extension in &ir_module.source_extensions {
+                let mut instruction = Instruction::new(spirv::Op::SourceExtension);
+                instruction.add_operands(super::helpers::string_to_words(extension));
+                instruction.to_words(&mut self.logical_layout.debugs);
+            }
             for debug in self.debugs.iter() {
                 debug.to_words(&mut self.logical_layout.debugs);
             }

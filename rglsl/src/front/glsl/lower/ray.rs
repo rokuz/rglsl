@@ -86,6 +86,15 @@ pub(super) fn ray_builtin(name: &str) -> Option<(BuiltIn, &'static str)> {
     })
 }
 
+pub(super) fn ray_builtin_name<'a>(name: &'a str, key: &'a str) -> &'a str {
+    match name {
+        "gl_HitTNV" => "gl_RayTmaxNV",
+        "gl_HitTEXT" => "gl_RayTmaxEXT",
+        _ if transposed_builtin(name) => key,
+        _ => name,
+    }
+}
+
 const fn transposed_builtin(name: &str) -> bool {
     matches!(
         name.as_bytes(),
@@ -142,9 +151,8 @@ const fn ray_space(storage: Storage) -> Option<(AddressSpace, Option<usize>)> {
 impl Lowerer<'_> {
     pub(super) fn ray_tracing_features(&self) -> RayTracingFeatures {
         let extensions = &self.analysis.extensions;
-        let stage = self.options.stage;
         let mut features = RayTracingFeatures::empty();
-        if stage.ray_tracing() {
+        if self.stage_map(ShaderStage::ray_tracing) {
             if extensions.contains(RAY_TRACING_NV) {
                 features |= RayTracingFeatures::NV;
             }
@@ -158,7 +166,9 @@ impl Lowerer<'_> {
             {
                 features |= RayTracingFeatures::PAYLOAD_LOCATIONS;
             }
-            if !matches!(stage, ShaderStage::RayGeneration | ShaderStage::Callable) {
+            if !self.stage_map(|stage| {
+                matches!(stage, ShaderStage::RayGeneration | ShaderStage::Callable)
+            }) {
                 if extensions.contains("GL_EXT_ray_cull_mask") {
                     features |= RayTracingFeatures::CULL_MASK;
                 }
@@ -180,12 +190,11 @@ impl Lowerer<'_> {
         features
     }
 
-    pub(super) const fn ray_builtin_decorations(&self, builtin: BuiltIn) -> MemoryDecorations {
-        match (builtin, self.options.stage) {
-            (BuiltIn::RayTCurrentMax, ShaderStage::Intersection) => {
-                MemoryDecorations::VOLATILE.union(MemoryDecorations::COHERENT)
-            }
-            _ => MemoryDecorations::empty(),
+    pub(super) fn ray_builtin_decorations(&self, builtin: BuiltIn) -> MemoryDecorations {
+        if builtin == BuiltIn::RayTCurrentMax && self.stage_is(ShaderStage::Intersection) {
+            MemoryDecorations::VOLATILE.union(MemoryDecorations::COHERENT)
+        } else {
+            MemoryDecorations::empty()
         }
     }
 
@@ -777,6 +786,7 @@ impl Lowerer<'_> {
         {
             return Ok(None);
         }
+        self.builtin_name("gl_EnableOpacityMicromapEXT");
         let analysis = self.analysis;
         let Some(symbol) = analysis
             .builtins

@@ -80,6 +80,17 @@ impl Analyzer<'_> {
                 }
             }
         }
+        if let Some(reason) = extensions::unsupported_in_vulkan(name) {
+            if behavior != ExtensionBehavior::Disable {
+                self.error(
+                    span,
+                    DiagnosticKind::ExtensionNotInVulkan {
+                        name: String::from(name),
+                        reason,
+                    },
+                );
+            }
+        }
         if extensions::unsupported_with_spirv(name) {
             self.error(
                 span,
@@ -110,8 +121,8 @@ impl Analyzer<'_> {
             names::MESH_SHADER_EXT => names::MESH_SHADER_NV,
             _ => return,
         };
-        let stage = self.options.stage;
-        if !matches!(stage, Stage::Task | Stage::Mesh | Stage::Fragment) {
+        if !self.stage_in(&[Stage::Task, Stage::Mesh, Stage::Fragment]) {
+            let stage = self.stage();
             self.error(
                 span,
                 DiagnosticKind::ExtensionStage {

@@ -834,7 +834,7 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   `OpFUnordNotEqual` (upstream `OpFOrdNotEqual`). `Normalize`, `FaceForward` and `Reflect`
   accept scalars. An `As` conversion between integers of different width and signedness is
   `OpSConvert`/`OpUConvert` by the source's signedness, then `OpBitcast` (upstream extended by
-  the target's signedness). The object `FORMAT_VERSION` is 7.
+  the target's signedness). The object `FORMAT_VERSION` is 9.
 
 - **Storage buffers before SPIR-V 1.3** (`back/spv`). With `Module::legacy_buffer_blocks` (set by
   the GLSL frontend unless the shader asks for the `StorageBuffer` class as glslang's
@@ -866,6 +866,8 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   `helpers::string_to_byte_chunks` are gone. With debug information the IR spans are offsets
   into the preprocessed text; `Span::location` clamps instead of slicing out of range.
   `docs/design/debug-info.md`.
+- **Source extensions.** `Module::source_extensions` (new) lists the GLSL extensions the
+  source requested; the backend writes them as `OpSourceExtension` with the names.
 
 ## Cherry-picked upstream commits
 

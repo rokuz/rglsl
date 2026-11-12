@@ -70,8 +70,7 @@ fn opaque_types() -> Vec<Opaque> {
                         } else {
                             &[]
                         };
-                        let all = SampledType::ALL.iter().chain(&SampledType::HALF);
-                        for &sampled in all.chain(wide) {
+                        for &sampled in SampledType::ALL.iter().chain(wide) {
                             let opaque = Opaque {
                                 kind,
                                 sampled,
@@ -106,19 +105,7 @@ fn is_valid(opaque: Opaque) -> bool {
     if dimension == TextureDimension::D3 && (opaque.shadow || opaque.arrayed) {
         return false;
     }
-    !opaque.shadow || opaque.sampled.is_float()
-}
-
-const fn half(opaque: Opaque) -> bool {
-    matches!(opaque.sampled, SampledType::Float16)
-}
-
-const fn shadow_result(opaque: Opaque) -> Type {
-    if half(opaque) {
-        Type::scalar(Scalar::Float16)
-    } else {
-        Type::FLOAT
-    }
+    !(opaque.shadow && opaque.sampled != SampledType::Float)
 }
 
 fn queries(emitter: &mut Emitter<'_>, opaque: Opaque) {
@@ -145,23 +132,15 @@ fn queries(emitter: &mut Emitter<'_>, opaque: Opaque) {
     if opaque.is_image() || opaque.multisample || opaque.is_buffer() {
         return;
     }
+    let coordinate = sized(Scalar::Float, opaque.dimension.coordinate_count());
     if opaque.kind == OpaqueKind::CombinedSampler {
-        for (address, stages) in [
-            (Scalar::Float, DERIVATIVE_STAGES),
-            (Scalar::Float16, FRAGMENT),
-        ] {
-            if address == Scalar::Float16 && !half(opaque) {
-                continue;
-            }
-            let coordinate = sized(address, opaque.dimension.coordinate_count());
-            for name in ["textureQueryLod", "textureQueryLOD"] {
-                emitter.staged(
-                    name,
-                    Type::vector(Scalar::Float, 2),
-                    alloc::vec![ty.clone(), coordinate.clone()],
-                    stages,
-                );
-            }
+        for name in ["textureQueryLod", "textureQueryLOD"] {
+            emitter.staged(
+                name,
+                Type::vector(Scalar::Float, 2),
+                alloc::vec![ty.clone(), coordinate.clone()],
+                DERIVATIVE_STAGES,
+            );
         }
     }
     emitter.common("textureQueryLevels", Type::INT, alloc::vec![ty]);
@@ -193,9 +172,6 @@ fn images(emitter: &mut Emitter<'_>, opaque: Opaque) {
         if opaque.dimension != TextureDimension::D1 {
             emitter.sparse("sparseImageLoadLodAMD", lod, texel(opaque), &[], 0);
         }
-    }
-    if half(opaque) {
-        return;
     }
     let data = Type::scalar(opaque.sampled.scalar());
     let scope = [Type::INT, Type::INT, Type::INT];
@@ -375,111 +351,82 @@ impl Variant {
 }
 
 fn sampling(emitter: &mut Emitter<'_>, opaque: Opaque) {
-    for &address in addresses(opaque) {
-        for variant in Variant::all() {
-            if address == Scalar::Float16 && variant.fetch {
-                continue;
-            }
-            sampling_variant(emitter, opaque, variant, address);
+    let dimensions = opaque.dimension.coordinate_count();
+    for variant in Variant::all() {
+        if !variant.exists_for(opaque) {
+            continue;
+        }
+        if opaque.kind == OpaqueKind::Texture && (!variant.fetch || variant.grad) {
+            continue;
+        }
+        let mut total = dimensions + u8::from(opaque.arrayed);
+        if opaque.shadow && total < 2 {
+            total = 2;
+        }
+        total += u8::from(opaque.shadow) + u8::from(variant.proj);
+        let mut compare = false;
+        if total > 4 && opaque.shadow {
+            compare = true;
+            total = 4;
+        }
+        let mut parameters = alloc::vec![Type::opaque(opaque)];
+        if variant.extra_proj {
+            parameters.push(Type::vector(Scalar::Float, 4));
+        } else if variant.fetch {
+            parameters.push(sized(Scalar::Int, total));
+        } else {
+            parameters.push(sized(Scalar::Float, total));
+        }
+        if compare {
+            parameters.push(Type::FLOAT);
+        }
+        if variant.fetch && !opaque.is_buffer() {
+            parameters.push(Type::INT);
+        }
+        if variant.lod {
+            parameters.push(Type::FLOAT);
+        }
+        if variant.grad {
+            parameters.push(sized(Scalar::Float, dimensions));
+            parameters.push(sized(Scalar::Float, dimensions));
+        }
+        if variant.offset {
+            parameters.push(sized(Scalar::Int, dimensions));
+        }
+        if variant.clamp {
+            parameters.push(Type::FLOAT);
+        }
+        let bias = if variant.bias {
+            alloc::vec![Type::FLOAT]
+        } else {
+            Vec::new()
+        };
+        let result = if opaque.shadow {
+            Type::FLOAT
+        } else {
+            texel(opaque)
+        };
+        let stages = if !variant.grad && (variant.bias || variant.clamp) {
+            IMPLICIT_LOD_STAGES
+        } else {
+            0
+        };
+        if variant.sparse {
+            emitter.sparse(&variant.name(), parameters, result, &bias, stages);
+        } else {
+            parameters.extend(bias);
+            emitter.staged(&variant.name(), result, parameters, stages);
         }
     }
 }
 
-const fn addresses(opaque: Opaque) -> &'static [Scalar] {
-    if half(opaque) {
-        &[Scalar::Float, Scalar::Float16]
-    } else {
-        &[Scalar::Float]
-    }
-}
-
-fn sampling_variant(emitter: &mut Emitter<'_>, opaque: Opaque, variant: Variant, address: Scalar) {
-    let dimensions = opaque.dimension.coordinate_count();
-    if !variant.exists_for(opaque) {
-        return;
-    }
-    if opaque.kind == OpaqueKind::Texture && (!variant.fetch || variant.grad) {
-        return;
-    }
-    let mut total = dimensions + u8::from(opaque.arrayed);
-    if opaque.shadow && total < 2 {
-        total = 2;
-    }
-    total += u8::from(opaque.shadow) + u8::from(variant.proj);
-    let mut compare = false;
-    if total > 4 && opaque.shadow {
-        compare = true;
-        total = 4;
-    }
-    if address == Scalar::Float16 && opaque.shadow && !compare {
-        compare = true;
-        total -= 1;
-    }
-    let float = Type::scalar(address);
-    let mut parameters = alloc::vec![Type::opaque(opaque)];
-    if variant.extra_proj {
-        parameters.push(Type::vector(address, 4));
-    } else if variant.fetch {
-        parameters.push(sized(Scalar::Int, total));
-    } else {
-        parameters.push(sized(address, total));
-    }
-    if compare {
-        parameters.push(Type::FLOAT);
-    }
-    if variant.fetch && !opaque.is_buffer() {
-        parameters.push(Type::INT);
-    }
-    if variant.lod {
-        parameters.push(float.clone());
-    }
-    if variant.grad {
-        parameters.push(sized(address, dimensions));
-        parameters.push(sized(address, dimensions));
-    }
-    if variant.offset {
-        parameters.push(sized(Scalar::Int, dimensions));
-    }
-    if variant.clamp {
-        parameters.push(float.clone());
-    }
-    let bias = if variant.bias {
-        alloc::vec![float]
-    } else {
-        Vec::new()
-    };
-    let result = if opaque.shadow {
-        shadow_result(opaque)
-    } else {
-        texel(opaque)
-    };
-    let stages = if !variant.grad && (variant.bias || variant.clamp) {
-        IMPLICIT_LOD_STAGES
-    } else {
-        0
-    };
-    if variant.sparse {
-        emitter.sparse(&variant.name(), parameters, result, &bias, stages);
-    } else {
-        parameters.extend(bias);
-        emitter.staged(&variant.name(), result, parameters, stages);
-    }
-}
-
 fn gathers(emitter: &mut Emitter<'_>, opaque: Opaque) {
-    for &address in addresses(opaque) {
-        gathers_at(emitter, opaque, address);
-    }
-}
-
-fn gathers_at(emitter: &mut Emitter<'_>, opaque: Opaque, address: Scalar) {
     let cube = opaque.dimension == TextureDimension::Cube;
     if !(cube || opaque.dimension == TextureDimension::D2) || opaque.multisample {
         return;
     }
-    let float = Type::scalar(address);
     let coordinate = sized(
-        address,
+        Scalar::Float,
         opaque.dimension.coordinate_count() + u8::from(opaque.arrayed),
     );
     let offsets = [
@@ -530,12 +477,12 @@ fn gathers_at(emitter: &mut Emitter<'_>, opaque: Opaque, address: Scalar) {
             continue;
         }
         let mut biased = alloc::vec![Type::opaque(opaque), coordinate.clone()];
-        let mut lod = alloc::vec![Type::opaque(opaque), coordinate.clone(), float.clone()];
+        let mut lod = alloc::vec![Type::opaque(opaque), coordinate.clone(), Type::FLOAT];
         if let Some(offset) = offset {
             biased.push(offset.clone());
             lod.push(offset.clone());
         }
-        let biased_trailing = [Type::INT, float.clone()];
+        let biased_trailing = [Type::INT, Type::FLOAT];
         emitter.sparse(
             &alloc::format!("sparse{}ARB", capitalized(name)),
             biased.clone(),
@@ -577,11 +524,7 @@ fn capitalized(name: &str) -> String {
 }
 
 fn qcom_gathers(emitter: &mut Emitter<'_>, opaque: Opaque) {
-    if opaque.dimension != TextureDimension::D2
-        || opaque.multisample
-        || opaque.shadow
-        || half(opaque)
-    {
+    if opaque.dimension != TextureDimension::D2 || opaque.multisample || opaque.shadow {
         return;
     }
     let coordinate = sized(Scalar::Float, 2 + u8::from(opaque.arrayed));
@@ -659,7 +602,7 @@ fn image_processing(emitter: &mut Emitter<'_>) {
 }
 
 fn subpasses(emitter: &mut Emitter<'_>) {
-    for sampled in SampledType::ALL.into_iter().chain(SampledType::HALF) {
+    for sampled in SampledType::ALL {
         for multisample in [false, true] {
             let opaque = Opaque::subpass_input(sampled, multisample);
             let mut parameters = alloc::vec![Type::opaque(opaque)];

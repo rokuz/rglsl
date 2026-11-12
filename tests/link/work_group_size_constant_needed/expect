@@ -1,0 +1,2 @@
+reject
+`gl_WorkGroupSize` is read as a constant in `0.main.comp`

@@ -13,12 +13,12 @@ Shaders that glslang's own test suite (`gtests/*.FromFile.cpp`) compiles under V
 
 | Stage | Files | accept | diag | valid | interface | exec local | exec amd | exec nvidia | link | crashes |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| **all** | 694 | 688 / 694 (99.1 %) | 141 / 143 (98.6 %) | 544 / 544 (100.0 %) | 544 / 544 (100.0 %) | 192 / 192 (100.0 %) | 279 / 279 (100.0 %) | 310 / 310 (100.0 %) | 12 / 12 (100.0 %) | 0 |
+| **all** | 694 | 687 / 694 (99.0 %) | 141 / 143 (98.6 %) | 543 / 543 (100.0 %) | 543 / 543 (100.0 %) | 192 / 192 (100.0 %) | 279 / 279 (100.0 %) | 310 / 310 (100.0 %) | 12 / 12 (100.0 %) | 0 |
 | vert | 68 | 67 / 68 (98.5 %) | 9 / 9 (100.0 %) | 58 / 58 (100.0 %) | 58 / 58 (100.0 %) | 33 / 33 (100.0 %) | 44 / 44 (100.0 %) | 45 / 45 (100.0 %) | 6 / 6 (100.0 %) | 0 |
 | tesc | 7 | 7 / 7 (100.0 %) | 1 / 1 (100.0 %) | 6 / 6 (100.0 %) | 6 / 6 (100.0 %) | 2 / 2 (100.0 %) | 3 / 3 (100.0 %) | 4 / 4 (100.0 %) | – | 0 |
 | tese | 4 | 4 / 4 (100.0 %) | – | 4 / 4 (100.0 %) | 4 / 4 (100.0 %) | 3 / 3 (100.0 %) | 4 / 4 (100.0 %) | 4 / 4 (100.0 %) | – | 0 |
 | geom | 4 | 4 / 4 (100.0 %) | – | 4 / 4 (100.0 %) | 4 / 4 (100.0 %) | – | 3 / 3 (100.0 %) | 3 / 3 (100.0 %) | – | 0 |
-| frag | 207 | 205 / 207 (99.0 %) | 32 / 33 (97.0 %) | 172 / 172 (100.0 %) | 172 / 172 (100.0 %) | 98 / 98 (100.0 %) | 111 / 111 (100.0 %) | 111 / 111 (100.0 %) | 4 / 4 (100.0 %) | 0 |
+| frag | 207 | 204 / 207 (98.6 %) | 32 / 33 (97.0 %) | 171 / 171 (100.0 %) | 171 / 171 (100.0 %) | 98 / 98 (100.0 %) | 111 / 111 (100.0 %) | 111 / 111 (100.0 %) | 4 / 4 (100.0 %) | 0 |
 | comp | 296 | 293 / 296 (99.0 %) | 74 / 75 (98.7 %) | 217 / 217 (100.0 %) | 217 / 217 (100.0 %) | 56 / 56 (100.0 %) | 90 / 90 (100.0 %) | 92 / 92 (100.0 %) | 2 / 2 (100.0 %) | 0 |
 | mesh | 20 | 20 / 20 (100.0 %) | 4 / 4 (100.0 %) | 16 / 16 (100.0 %) | 16 / 16 (100.0 %) | – | 6 / 6 (100.0 %) | 14 / 14 (100.0 %) | – | 0 |
 | task | 6 | 6 / 6 (100.0 %) | 1 / 1 (100.0 %) | 5 / 5 (100.0 %) | 5 / 5 (100.0 %) | – | 3 / 3 (100.0 %) | 4 / 4 (100.0 %) | – | 0 |
@@ -33,7 +33,7 @@ Shaders that glslang's own test suite (`gtests/*.FromFile.cpp`) compiles under V
 
 | | we accept | we reject |
 |---|---:|---:|
-| glslang accepts | 545 | 6 |
+| glslang accepts | 544 | 7 |
 | glslang rejects | 0 | 143 |
 
 `exec local` in detail:
@@ -47,7 +47,7 @@ Shaders that glslang's own test suite (`gtests/*.FromFile.cpp`) compiles under V
 | skipped: capability or extension the harness cannot enable | 159 |
 | skipped: device feature missing on the driver | 161 |
 | skipped: resource or interface the harness cannot bind | 19 |
-| skipped: glslang's module is not valid SPIR-V | 12 |
+| skipped: glslang's module is not valid SPIR-V | 11 |
 | skipped: known driver bug (xtask/exec-drivers) | 1 |
 
 `exec amd` in detail:
@@ -61,7 +61,7 @@ Shaders that glslang's own test suite (`gtests/*.FromFile.cpp`) compiles under V
 | skipped: capability or extension the harness cannot enable | 188 |
 | skipped: device feature missing on the driver | 39 |
 | skipped: resource or interface the harness cannot bind | 22 |
-| skipped: glslang's module is not valid SPIR-V | 12 |
+| skipped: glslang's module is not valid SPIR-V | 11 |
 | skipped: glslang's module fails on the driver | 3 |
 | skipped: known driver bug (xtask/exec-drivers) | 1 |
 
@@ -76,7 +76,7 @@ Shaders that glslang's own test suite (`gtests/*.FromFile.cpp`) compiles under V
 | skipped: capability or extension the harness cannot enable | 189 |
 | skipped: device feature missing on the driver | 7 |
 | skipped: resource or interface the harness cannot bind | 22 |
-| skipped: glslang's module is not valid SPIR-V | 12 |
+| skipped: glslang's module is not valid SPIR-V | 11 |
 | skipped: glslang's module fails on the driver | 4 |
 
 ## glslang OpenGL tests, compiled for Vulkan
@@ -151,13 +151,13 @@ Our own tests of the rglsl-specific linking rules (`tests/link`): imports, libra
 
 | Stage | Files | accept | diag | valid | interface | exec local | exec amd | exec nvidia | link | crashes |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| **all** | 52 | 52 / 52 (100.0 %) | 21 / 21 (100.0 %) | 31 / 31 (100.0 %) | 18 / 18 (100.0 %) | 18 / 18 (100.0 %) | 18 / 18 (100.0 %) | 18 / 18 (100.0 %) | 52 / 52 (100.0 %) | 0 |
-| vert | 9 | 9 / 9 (100.0 %) | 3 / 3 (100.0 %) | 6 / 6 (100.0 %) | 3 / 3 (100.0 %) | 3 / 3 (100.0 %) | 3 / 3 (100.0 %) | 3 / 3 (100.0 %) | 9 / 9 (100.0 %) | 0 |
+| **all** | 66 | 66 / 66 (100.0 %) | 27 / 27 (100.0 %) | 39 / 39 (100.0 %) | 23 / 23 (100.0 %) | 23 / 23 (100.0 %) | 23 / 23 (100.0 %) | 23 / 23 (100.0 %) | 66 / 66 (100.0 %) | 0 |
+| vert | 15 | 15 / 15 (100.0 %) | 6 / 6 (100.0 %) | 9 / 9 (100.0 %) | 5 / 5 (100.0 %) | 5 / 5 (100.0 %) | 5 / 5 (100.0 %) | 5 / 5 (100.0 %) | 15 / 15 (100.0 %) | 0 |
 | tesc | 1 | 1 / 1 (100.0 %) | – | 1 / 1 (100.0 %) | – | – | – | – | 1 / 1 (100.0 %) | 0 |
 | tese | 1 | 1 / 1 (100.0 %) | – | 1 / 1 (100.0 %) | – | – | – | – | 1 / 1 (100.0 %) | 0 |
-| geom | 2 | 2 / 2 (100.0 %) | 1 / 1 (100.0 %) | 1 / 1 (100.0 %) | – | – | – | – | 2 / 2 (100.0 %) | 0 |
-| frag | 25 | 25 / 25 (100.0 %) | 13 / 13 (100.0 %) | 12 / 12 (100.0 %) | 8 / 8 (100.0 %) | 8 / 8 (100.0 %) | 8 / 8 (100.0 %) | 8 / 8 (100.0 %) | 25 / 25 (100.0 %) | 0 |
-| comp | 13 | 13 / 13 (100.0 %) | 4 / 4 (100.0 %) | 9 / 9 (100.0 %) | 7 / 7 (100.0 %) | 7 / 7 (100.0 %) | 7 / 7 (100.0 %) | 7 / 7 (100.0 %) | 13 / 13 (100.0 %) | 0 |
+| geom | 3 | 3 / 3 (100.0 %) | 1 / 1 (100.0 %) | 2 / 2 (100.0 %) | – | – | – | – | 3 / 3 (100.0 %) | 0 |
+| frag | 29 | 29 / 29 (100.0 %) | 15 / 15 (100.0 %) | 14 / 14 (100.0 %) | 9 / 9 (100.0 %) | 9 / 9 (100.0 %) | 9 / 9 (100.0 %) | 9 / 9 (100.0 %) | 29 / 29 (100.0 %) | 0 |
+| comp | 16 | 16 / 16 (100.0 %) | 5 / 5 (100.0 %) | 11 / 11 (100.0 %) | 9 / 9 (100.0 %) | 9 / 9 (100.0 %) | 9 / 9 (100.0 %) | 9 / 9 (100.0 %) | 16 / 16 (100.0 %) | 0 |
 | mesh | 1 | 1 / 1 (100.0 %) | – | 1 / 1 (100.0 %) | – | – | – | – | 1 / 1 (100.0 %) | 0 |
 
 `accept` in detail:
@@ -171,8 +171,8 @@ Our own tests of the rglsl-specific linking rules (`tests/link`): imports, libra
 
 | | shaders |
 |---|---:|
-| executed | 18 |
-| passed | 18 |
+| executed | 23 |
+| passed | 23 |
 | passed within the float tolerance | 0 |
 | failed | 0 |
 
@@ -180,8 +180,8 @@ Our own tests of the rglsl-specific linking rules (`tests/link`): imports, libra
 
 | | shaders |
 |---|---:|
-| executed | 18 |
-| passed | 18 |
+| executed | 23 |
+| passed | 23 |
 | passed within the float tolerance | 0 |
 | failed | 0 |
 
@@ -189,8 +189,8 @@ Our own tests of the rglsl-specific linking rules (`tests/link`): imports, libra
 
 | | shaders |
 |---|---:|
-| executed | 18 |
-| passed | 18 |
+| executed | 23 |
+| passed | 23 |
 | passed within the float tolerance | 0 |
 | failed | 0 |
 

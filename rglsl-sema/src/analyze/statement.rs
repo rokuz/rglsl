@@ -190,7 +190,7 @@ impl Analyzer<'_> {
                 }
             }
             JumpStatement::Discard => {
-                if self.options.stage != Stage::Fragment {
+                if !self.stage_is(Stage::Fragment) {
                     self.error(span, DiagnosticKind::DiscardOutsideFragment);
                 }
             }

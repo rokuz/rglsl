@@ -518,6 +518,7 @@ fn libraries_record_the_stages_they_link_into() -> TestResult {
         return Err("a fragment-only library links into a vertex shader".into());
     };
     assert_eq!(rejection.line, Some(2));
+    assert_eq!(rejection.file, None);
     assert_eq!(
         rejection.message,
         "`gl_FragCoord` is not available in vertex shaders"
@@ -839,5 +840,399 @@ float helper(float x) {
     }
     assert_eq!(found, [Sc::Flatten, Sc::DontFlatten]);
     assert!(!spirv(&result)?.is_empty());
+    Ok(())
+}
+
+const FRAGMENT_MAIN: &str = "#version 450
+layout(location = 0) out vec4 color;
+vec4 shade();
+void main() { color = shade(); }
+";
+
+#[test]
+fn fragment_modes_of_a_library_reach_the_entry_point() -> TestResult {
+    let main = object(
+        ShaderStage::Fragment,
+        "#version 450
+layout(early_fragment_tests) in;
+layout(location = 0) out vec4 color;
+vec4 shade();
+void main() { color = shade(); }
+",
+    )?;
+    let lib = library(
+        "#version 450
+#extension GL_EXT_post_depth_coverage : require
+#extension GL_EXT_shader_tile_image : require
+layout(post_depth_coverage) in;
+layout(non_coherent_color_attachment_readEXT) in;
+vec4 shade() { return vec4(1.0); }
+",
+    )?;
+    let result = linked(&[main, lib])?;
+    let entry = &result.module.entry_points[0];
+    assert!(entry.fragment_modes.post_depth_coverage);
+    assert!(entry.fragment_modes.non_coherent_color_attachment_read);
+    assert!(!entry.fragment_modes.non_coherent_depth_attachment_read);
+    assert_eq!(entry.early_depth_test, Some(rglsl::EarlyDepthTest::Force));
+    Ok(())
+}
+
+#[test]
+fn post_depth_coverage_needs_early_fragment_tests_in_some_unit() -> TestResult {
+    let lib = library(
+        "#version 450
+#extension GL_EXT_post_depth_coverage : require
+layout(post_depth_coverage) in;
+vec4 shade() { return vec4(1.0); }
+",
+    )?;
+    let found = errors(&[object(ShaderStage::Fragment, FRAGMENT_MAIN)?, lib.clone()])?;
+    assert!(found.contains(&LinkError::Mode(
+        "post_depth_coverage requires early_fragment_tests"
+    )));
+    let early = object(
+        ShaderStage::Fragment,
+        "#version 450\nlayout(early_fragment_tests) in;\nvoid unused() {}\n",
+    )?;
+    let result = linked(&[object(ShaderStage::Fragment, FRAGMENT_MAIN)?, lib, early])?;
+    assert!(
+        result.module.entry_points[0]
+            .fragment_modes
+            .post_depth_coverage
+    );
+    Ok(())
+}
+
+#[test]
+fn arb_post_depth_coverage_implies_early_fragment_tests() -> TestResult {
+    let lib = library(
+        "#version 450
+#extension GL_ARB_post_depth_coverage : require
+layout(post_depth_coverage) in;
+vec4 shade() { return vec4(1.0); }
+",
+    )?;
+    let result = linked(&[object(ShaderStage::Fragment, FRAGMENT_MAIN)?, lib])?;
+    let entry = &result.module.entry_points[0];
+    assert!(entry.fragment_modes.post_depth_coverage);
+    assert_eq!(entry.early_depth_test, Some(rglsl::EarlyDepthTest::Force));
+    Ok(())
+}
+
+#[test]
+fn geometry_streams_of_every_unit_are_kept() -> TestResult {
+    let main = object(
+        ShaderStage::Geometry,
+        "#version 450
+layout(points) in;
+layout(points, max_vertices = 2) out;
+layout(location = 0) out vec4 first;
+void emit_second();
+void main() {
+    first = vec4(1.0);
+    EmitStreamVertex(0);
+    emit_second();
+}
+",
+    )?;
+    let lib = library(
+        "#version 450
+layout(stream = 1) out;
+layout(location = 1) out vec4 second;
+void emit_second() {
+    second = vec4(2.0);
+    EmitStreamVertex(1);
+}
+",
+    )?;
+    let result = linked(&[main, lib])?;
+    let module = &result.module;
+    let info = module.entry_points[0]
+        .geometry
+        .as_ref()
+        .ok_or("no geometry info")?;
+    let streams: Vec<(Option<&str>, u32)> = info
+        .streams
+        .iter()
+        .map(|&(handle, stream)| (module.global_variables[handle].name.as_deref(), stream))
+        .collect();
+    assert!(streams.contains(&(Some("first"), 0)));
+    assert!(streams.contains(&(Some("second"), 1)));
+    assert!(!spirv(&result)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn geometry_passthrough_inputs_of_a_library_are_kept() -> TestResult {
+    let main = object(
+        ShaderStage::Geometry,
+        "#version 450
+#extension GL_NV_geometry_shader_passthrough : require
+layout(triangles) in;
+layout(passthrough) in gl_PerVertex { vec4 gl_Position; } gl_in[];
+void forward();
+void main() { forward(); }
+",
+    )?;
+    let lib = library(
+        "#version 450
+#extension GL_NV_geometry_shader_passthrough : require
+layout(location = 0, passthrough) in vec4 color[3];
+void forward() {}
+",
+    )?;
+    let result = linked(&[main, lib])?;
+    let module = &result.module;
+    let info = module.entry_points[0]
+        .geometry
+        .as_ref()
+        .ok_or("no geometry info")?;
+    assert_eq!(info.passthrough.len(), 2);
+    assert!(info
+        .passthrough
+        .iter()
+        .any(|&handle| module.global_variables[handle].name.as_deref() == Some("color")));
+    Ok(())
+}
+
+#[test]
+fn gl_frag_coord_redeclarations() -> TestResult {
+    let lib = library(
+        "#version 450
+layout(origin_upper_left) in vec4 gl_FragCoord;
+vec4 shade() { return gl_FragCoord; }
+",
+    )?;
+    linked(&[object(ShaderStage::Fragment, FRAGMENT_MAIN)?, lib])?;
+    let rejected = library_errors(
+        "#version 450
+layout(pixel_center_integer) in vec4 gl_FragCoord;
+vec4 shade() { return gl_FragCoord; }
+",
+    );
+    assert!(rejected
+        .iter()
+        .any(|error| error.contains("`pixel_center_integer` is not allowed in Vulkan")));
+    Ok(())
+}
+
+fn auto_located(stage: ShaderStage, source: &str) -> TestResult<ObjectModule> {
+    let options = Options {
+        auto_map_locations: true,
+        ..Options::from(stage)
+    };
+    Frontend::default()
+        .compile(&options, source)
+        .map_err(|errors| format!("{source}\n{errors:?}").into())
+}
+
+fn block_locations(linked: &Linked, name: &str) -> TestResult<(u32, Vec<u32>)> {
+    let module = &linked.module;
+    let global = module
+        .global_variables
+        .iter()
+        .map(|(_, global)| global)
+        .find(|global| global.name.as_deref() == Some(name))
+        .ok_or("no such global")?;
+    let Some(rglsl::Binding::Location { location, .. }) = global.io else {
+        return Err("the block has no location".into());
+    };
+    let TypeInner::Struct { ref members, .. } = module.types[global.ty].inner else {
+        return Err("the block is not a structure".into());
+    };
+    let members = members
+        .iter()
+        .filter_map(|member| match member.binding {
+            Some(rglsl::Binding::Location { location, .. }) => Some(location),
+            _ => None,
+        })
+        .collect();
+    Ok((location, members))
+}
+
+#[test]
+fn automatic_block_locations_are_reassigned_across_modules() -> TestResult {
+    let main = auto_located(
+        ShaderStage::Vertex,
+        "#version 450
+out vec4 extra;
+out Block { vec4 a; vec4 b; } blk;
+void fill();
+void main() { extra = vec4(0.0); fill(); }
+",
+    )?;
+    let fill = auto_located(
+        ShaderStage::Vertex,
+        "#version 450
+out vec2 more;
+out vec4 again;
+out Block { vec4 a; vec4 b; } blk;
+void fill() { blk.a = vec4(1.0); blk.b = vec4(2.0); more = vec2(3.0); again = vec4(4.0); }
+",
+    )?;
+    let options = LinkOptions {
+        auto_map_locations: true,
+        auto_map_bindings: false,
+    };
+    let result = link(&[main.clone(), fill.clone()], &options)?;
+    assert_eq!(block_locations(&result, "blk")?, (1, vec![1, 2]));
+    let explicit = auto_located(
+        ShaderStage::Vertex,
+        "#version 450
+layout(location = 5) out Block { vec4 a; vec4 b; } blk;
+void fill() { blk.a = vec4(1.0); }
+",
+    )?;
+    let result = link(&[main, explicit], &options)?;
+    assert_eq!(block_locations(&result, "blk")?, (5, vec![5, 6]));
+    assert!(!spirv(&result)?.is_empty());
+    Ok(())
+}
+
+const WORK_GROUP_MAIN: &str = "#version 450
+layout(local_size_x = 4) in;
+layout(set = 0, binding = 0) buffer Data { uint values[]; } data;
+uint twice(uint x);
+void main() { data.values[0] = twice(gl_WorkGroupSize.x); }
+";
+
+const WORK_GROUP_LIBRARY: &str = "#version 450
+layout(local_size_x_id = 3) in;
+uint twice(uint x) { return x * 2u; }
+";
+
+fn work_group_size_override(linked: &Linked) -> TestResult<rglsl::Override> {
+    let module = &linked.module;
+    module
+        .overrides
+        .iter()
+        .find(|&(_, value)| value.name.as_deref() == Some("gl_WorkGroupSize"))
+        .map(|(_, value)| value.clone())
+        .ok_or_else(|| "gl_WorkGroupSize is not a specialization constant".into())
+}
+
+#[test]
+fn work_group_size_is_specialized_by_a_library() -> TestResult {
+    let main = object(ShaderStage::Compute, WORK_GROUP_MAIN)?;
+    assert!(main.work_group_size_constant);
+    assert!(main.specialized.is_some());
+    let lib = library(WORK_GROUP_LIBRARY)?;
+    let result = linked(&[main.clone(), lib.clone()])?;
+    work_group_size_override(&result)?;
+    let module = &result.module;
+    let spec = module
+        .overrides
+        .iter()
+        .find(|&(_, value)| value.id == Some(3))
+        .map(|(_, value)| value)
+        .ok_or("no override with id 3")?;
+    let init = spec.init.ok_or("no default")?;
+    assert_eq!(
+        module.global_expressions[init],
+        rglsl::Expression::Literal(rglsl::Literal::U32(4))
+    );
+    let entry = &module.entry_points[0];
+    assert_eq!(entry.workgroup_size, [4, 1, 1]);
+    assert!(entry
+        .workgroup_size_overrides
+        .is_some_and(|slots| slots[0].is_some() && slots[1].is_none() && slots[2].is_none()));
+    assert!(!spirv(&result)?.is_empty());
+    let round_trip = decode(&encode(&main)?)?;
+    let result = linked(&[round_trip, lib])?;
+    work_group_size_override(&result)?;
+    let plain = library("#version 450\nuint twice(uint x) { return x * 2u; }\n")?;
+    let alone = linked(&[main, plain])?;
+    assert!(alone.module.overrides.is_empty());
+    Ok(())
+}
+
+#[test]
+fn implicit_xfb_strides_cover_every_unit() -> TestResult {
+    let main = object(
+        ShaderStage::Vertex,
+        "#version 450
+layout(location = 0, xfb_buffer = 0, xfb_offset = 0) out vec4 a;
+layout(location = 1, xfb_buffer = 1, xfb_offset = 0) out float c;
+void more();
+void main() { a = vec4(1.0); c = 1.0; more(); }
+",
+    )?;
+    let more = library(
+        "#version 450
+layout(location = 2, xfb_buffer = 0, xfb_offset = 16) out vec4 b;
+layout(location = 3, xfb_buffer = 1, xfb_offset = 8) out double d;
+void more() { b = vec4(2.0); d = 2.0lf; }
+",
+    )?;
+    let options = LinkOptions {
+        auto_map_locations: true,
+        auto_map_bindings: false,
+    };
+    let result = link(&[main, more], &options)?;
+    let mut strides: Vec<(u32, u32)> = result
+        .module
+        .global_variables
+        .iter()
+        .filter_map(|(_, global)| global.xfb.map(|xfb| (xfb.buffer, xfb.stride)))
+        .collect();
+    strides.sort_unstable();
+    assert_eq!(strides, [(0, 32), (0, 32), (1, 16), (1, 16)]);
+    Ok(())
+}
+
+fn io_location(linked: &Linked, name: &str) -> TestResult<u32> {
+    linked
+        .module
+        .global_variables
+        .iter()
+        .find(|&(_, global)| global.name.as_deref() == Some(name))
+        .and_then(|(_, global)| match global.io {
+            Some(rglsl::Binding::Location { location, .. }) => Some(location),
+            _ => None,
+        })
+        .ok_or_else(|| format!("no location for {name}").into())
+}
+
+#[test]
+fn automatic_locations_match_between_stages() -> TestResult {
+    let vertex = auto_located(
+        ShaderStage::Vertex,
+        "#version 450
+layout(location = 0) out vec4 first;
+out vec4 shared_value;
+out Block { vec4 a; } blk;
+out vec4 vertex_only;
+void main() { first = vec4(0.0); shared_value = vec4(1.0); blk.a = vec4(2.0); vertex_only = vec4(3.0); }
+",
+    )?;
+    let fragment = auto_located(
+        ShaderStage::Fragment,
+        "#version 450
+layout(location = 1) in vec4 explicit_input;
+in vec4 fragment_only;
+in Block { vec4 a; } blk;
+in vec4 shared_value;
+layout(location = 0) out vec4 color;
+void main() { color = explicit_input + fragment_only + blk.a + shared_value; }
+",
+    )?;
+    let options = LinkOptions {
+        auto_map_locations: true,
+        auto_map_bindings: false,
+    };
+    let stages = link_objects(&[vertex, fragment], &options)?;
+    let [ref vertex, ref fragment] = *stages.as_slice() else {
+        return Err("two stages expected".into());
+    };
+    for name in ["shared_value", "blk"] {
+        assert_eq!(io_location(vertex, name)?, io_location(fragment, name)?);
+    }
+    assert_ne!(io_location(fragment, "shared_value")?, 1);
+    assert_ne!(io_location(fragment, "blk")?, 1);
+    assert_ne!(
+        io_location(fragment, "fragment_only")?,
+        io_location(fragment, "shared_value")?
+    );
     Ok(())
 }

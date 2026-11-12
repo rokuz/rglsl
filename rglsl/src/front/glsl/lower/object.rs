@@ -284,7 +284,12 @@ impl Lowerer<'_> {
         layout.local_size = self.declared_local_size;
         layout.local_size_ids = self.local_size_ids;
         layout.depth = self.conservative_depth;
-        layout.early_fragment_tests = self.early_fragment_tests;
+        let fragment = self.analysis.fragment;
+        layout.early_fragment_tests = self.early_fragment_tests || fragment.early_fragment_tests;
+        layout.post_depth_coverage = fragment.post_depth_coverage;
+        layout.non_coherent_color_attachment_read = fragment.non_coherent_color_attachment_read;
+        layout.non_coherent_depth_attachment_read = fragment.non_coherent_depth_attachment_read;
+        layout.non_coherent_stencil_attachment_read = fragment.non_coherent_stencil_attachment_read;
         layout.xfb_strides = self.xfb.declared_strides();
         layout.transform_feedback = self.xfb.mode;
         layout.tile_shading_rate = self.tile_shading_rate;
@@ -298,20 +303,22 @@ impl Lowerer<'_> {
         let layout = self.layout_record();
         let mut extensions: Vec<String> = self.analysis.extensions.iter().cloned().collect();
         extensions.sort();
-        let stage = (!self.library).then_some(self.options.stage);
+        let stage = (!self.library).then(|| self.stage());
         let module = core::mem::take(&mut self.module);
+        let work_group_size_constant = !self.specialize_work_group_size
+            && self.analysis.work_group_size_read
+            && self.local_size_ids.iter().any(Option::is_none)
+            && self.stage_map(crate::ShaderStage::compute_like);
         ObjectModule {
             stage,
+            work_group_size_constant,
+            work_group_size_placeholders: self.work_group_size_placeholders,
             glsl_version: self.analysis.version.unwrap_or(0),
             extensions,
             functions,
             globals,
             layout,
-            stages: if self.library {
-                alloc::vec![self.options.stage]
-            } else {
-                Vec::new()
-            },
+            stages: Vec::new(),
             ..ObjectModule::new(stage, module)
         }
     }

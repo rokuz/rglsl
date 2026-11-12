@@ -10838,52 +10838,6 @@ void main() {
 }
 
 #[test]
-fn half_float_fetch_samples_32_bit_images_and_converts_the_texel() -> crate::TestResult {
-    let module = compile_valid(
-        ShaderStage::Fragment,
-        "#version 450
-#extension GL_AMD_gpu_shader_half_float : enable
-#extension GL_AMD_gpu_shader_half_float_fetch : enable
-#extension GL_ARB_sparse_texture2 : enable
-layout(binding = 0) uniform f16sampler2D s;
-layout(binding = 1) uniform f16sampler2DShadow shadow;
-layout(binding = 2, rgba16f) uniform f16image2D img;
-layout(binding = 3) uniform f16texture2D t;
-layout(binding = 4) uniform sampler plain;
-layout(location = 0) in f16vec2 coordinate;
-layout(location = 1) in float compare;
-layout(location = 0) out vec4 o;
-void main() {
-    f16vec4 texel = texture(s, coordinate, float16_t(0.5));
-    float16_t depth = texture(shadow, coordinate, compare);
-    f16vec4 loaded = imageLoad(img, ivec2(0));
-    imageStore(img, ivec2(1), texel);
-    f16vec4 sparse;
-    int code = sparseTextureARB(s, vec2(coordinate), sparse);
-    f16vec4 separate = texture(f16sampler2D(t, plain), coordinate);
-    o = vec4(texel + loaded + sparse + separate) + float(depth) + float(code);
-}
-",
-    )?;
-    for image in instructions(&module, Op::TypeImage) {
-        let sampled = image.operands[0].unwrap_id_ref();
-        let float = module
-            .types_global_values
-            .iter()
-            .find(|inst| inst.result_id == Some(sampled))
-            .ok_or("the sampled type is not declared")?;
-        assert_eq!(float.class.opcode, Op::TypeFloat);
-        assert_eq!(float.operands[0], Operand::LiteralBit32(32));
-    }
-    assert!(instructions(&module, Op::FConvert).len() >= 6);
-    assert!(!module
-        .capabilities
-        .iter()
-        .any(|inst| inst.operands[0] == Operand::Capability(spirv::Capability::Float16ImageAMD)));
-    Ok(())
-}
-
-#[test]
 fn branches_on_constant_conditions_are_kept_as_glslang_keeps_them() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Fragment,

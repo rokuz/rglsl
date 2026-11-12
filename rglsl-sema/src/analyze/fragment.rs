@@ -85,7 +85,7 @@ const fn invalid(qualifier: &'static str, reason: &'static str) -> DiagnosticKin
 
 impl Analyzer<'_> {
     pub(crate) fn fragment_layouts(&mut self, qualifiers: &Qualifiers) {
-        if self.options.stage != Stage::Fragment {
+        if !self.stage_is(Stage::Fragment) {
             return;
         }
         let input = qualifiers.storage == Storage::In;
@@ -279,12 +279,12 @@ impl Analyzer<'_> {
             );
             return;
         }
-        if self.options.stage != Stage::Fragment {
+        if !self.stage_is(Stage::Fragment) {
             self.error(
                 span,
                 DiagnosticKind::NotSupportedInStage {
                     feature: String::from("tileImageEXT"),
-                    stage: self.options.stage.name(),
+                    stage: self.stage().name(),
                 },
             );
         }
@@ -322,12 +322,12 @@ impl Analyzer<'_> {
     }
 
     pub(crate) fn demote(&mut self, span: Span) {
-        if self.options.stage != Stage::Fragment {
+        if !self.stage_is(Stage::Fragment) {
             self.error(
                 span,
                 DiagnosticKind::NotSupportedInStage {
                     feature: String::from("demote"),
-                    stage: self.options.stage.name(),
+                    stage: self.stage().name(),
                 },
             );
         }
