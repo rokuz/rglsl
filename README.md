@@ -29,7 +29,7 @@ rglsl -V main.frag lighting.glsl -o shader.spv        # compile and link
 rglsl --object lighting.glsl                          # object module lighting.rglo
 ```
 
-Options, exit codes and messages are `glslangValidator`'s ([docs/design/cli.md](docs/design/cli.md)).
+Options, exit codes and messages are `glslangValidator`'s.
 
 ## Development
 
@@ -39,8 +39,7 @@ cargo xtask oracles --glslang-dir ../glslang          # pinned glslang, spirv-va
 cargo xtask test --glslang-dir ../glslang             # glslang's corpus, rewrites PROGRESS.md
 ```
 
-Rules for contributors: [AGENTS.md](AGENTS.md). Plan: [docs/PLAN.md](docs/PLAN.md). Testing and
-GPU execution: [docs/testing.md](docs/testing.md). Design notes: [docs/design/](docs/design/).
+Rules for contributors: [AGENTS.md](AGENTS.md).
 
 ## License
 
