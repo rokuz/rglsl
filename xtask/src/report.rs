@@ -588,7 +588,11 @@ pub fn summary(results: &[CaseResult], ran: &[TargetId]) -> String {
             out.push_str(&exec_summary(&counted_results, target));
             out.push('\n');
         }
-        let compared: Vec<&CaseResult> = results.iter().copied().filter(|r| r.debug.is_some()).collect();
+        let compared: Vec<&CaseResult> = results
+            .iter()
+            .copied()
+            .filter(|r| r.debug.is_some())
+            .collect();
         if !compared.is_empty() {
             let same = compared.iter().filter(|r| r.debug == Some(true)).count();
             let _ = writeln!(

@@ -1,4 +1,3 @@
-
 use spirv::{Op, Word};
 
 use super::helpers;

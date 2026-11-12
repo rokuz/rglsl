@@ -3792,9 +3792,7 @@ impl BlockContext<'_> {
                     .function
                     .consume(Block::new(label_id), Instruction::branch(target)),
                 Work::Frame(frame) => {
-                    if let Some(disposition) =
-                        self.write_frame(frame, finished, &mut work)?
-                    {
+                    if let Some(disposition) = self.write_frame(frame, finished, &mut work)? {
                         finished = disposition;
                     }
                 }

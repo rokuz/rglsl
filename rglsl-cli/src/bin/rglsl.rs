@@ -398,7 +398,9 @@ impl FromStr for DebugMode {
             "gV" => Ok(Self::NonSemantic),
             "gVS" => Ok(Self::NonSemanticSource),
             "g0" => Ok(Self::Strip),
-            _ => Err(format!("unknown debug information mode `{s}`: use g, gV, gVS or g0")),
+            _ => Err(format!(
+                "unknown debug information mode `{s}`: use g, gV, gVS or g0"
+            )),
         }
     }
 }
@@ -423,7 +425,9 @@ fn parse_args() -> Args {
             _ => arguments.push(argument),
         }
     }
-    let command = std::env::args().next().unwrap_or_else(|| String::from("rglsl"));
+    let command = std::env::args()
+        .next()
+        .unwrap_or_else(|| String::from("rglsl"));
     let borrowed: Vec<&str> = arguments.iter().map(String::as_str).collect();
     match <Args as argh::FromArgs>::from_args(&[command.as_str()], &borrowed) {
         Ok(args) => args,
@@ -538,8 +542,10 @@ fn run() -> anyhow::Result<()> {
 
     // Initialize default parameters
     //TODO: read the parameters from RON?
-    let mut params = Parameters::default();
-    params.debug = args.debug_info;
+    let mut params = Parameters {
+        debug: args.debug_info,
+        ..Parameters::default()
+    };
     match args.debug_info {
         Some(DebugMode::Strip) => params
             .spv_out

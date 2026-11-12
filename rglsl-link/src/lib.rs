@@ -220,7 +220,10 @@ pub(crate) fn merge(objects: &[ObjectModule], options: &Options) -> Result<Merge
 }
 
 fn merge_debug_info(objects: &mut [ObjectModule]) -> Option<Box<rglsl::DebugInfo>> {
-    if objects.iter().all(|object| object.module.debug_info.is_none()) {
+    if objects
+        .iter()
+        .all(|object| object.module.debug_info.is_none())
+    {
         return None;
     }
     let mut merged = rglsl::DebugInfo::default();

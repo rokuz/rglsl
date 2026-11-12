@@ -280,7 +280,13 @@ fn describe(
             facts.insert(format!("composite {description} {{{}}}", members.join(",")));
             Some(description)
         }
-        11 => Some(format!("{}:{}@{}:{}", string(0), name(1), constant(3), constant(4))),
+        11 => Some(format!(
+            "{}:{}@{}:{}",
+            string(0),
+            name(1),
+            constant(3),
+            constant(4)
+        )),
         18 => {
             facts.insert(format!(
                 "global {} type={} source={} line={}",
@@ -346,11 +352,7 @@ fn body_fact(
         28 => format!("declare {}", name(0)),
         29 => format!("value {}", name(0)),
         101 => format!("definition {}", name(0)),
-        103 => format!(
-            "line {}:{} in {function}",
-            name(0),
-            module.constant(at(1))
-        ),
+        103 => format!("line {}:{} in {function}", name(0), module.constant(at(1))),
         _ => return,
     };
     facts.insert(fact);

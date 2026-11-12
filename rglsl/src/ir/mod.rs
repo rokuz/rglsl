@@ -238,8 +238,9 @@ use crate::{FastIndexMap, NamedExpressions, NonUniformExpressions, PrecisionExpr
 
 pub use block::{Block, Walk};
 pub use debug::{
-    apply_spans, collect_spans, shift_module_spans, shift_span, DebugAnchor, DebugFunction, DebugInfo, DebugLine, DebugMember, DebugPosition, DebugScope, DebugSource,
-    DebugStruct, DebugUnit, ModuleSpans, ScopeIndex,
+    apply_spans, collect_spans, shift_module_spans, shift_span, DebugAnchor, DebugFunction,
+    DebugInfo, DebugLine, DebugMember, DebugPosition, DebugScope, DebugSource, DebugStruct,
+    DebugUnit, ModuleSpans, ScopeIndex,
 };
 pub use rglsl_types::{ResourceBinding, ShaderStage};
 
@@ -4829,10 +4830,7 @@ pub struct Module {
     )]
     #[cfg_attr(feature = "deserialize", serde(default))]
     pub spirv_requirements: SpirvRequirements,
-    #[cfg_attr(
-        feature = "serialize",
-        serde(skip_serializing_if = "Option::is_none")
-    )]
+    #[cfg_attr(feature = "serialize", serde(skip_serializing_if = "Option::is_none"))]
     #[cfg_attr(feature = "deserialize", serde(default))]
     pub debug_info: Option<Box<DebugInfo>>,
 }

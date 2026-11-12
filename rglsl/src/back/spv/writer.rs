@@ -6,11 +6,10 @@ use spirv::Word;
 
 use super::{
     helpers::{contains_builtin, global_needs_wrapper, map_storage_class},
-    Block, BlockContext, CachedConstant, CachedExpressions, CooperativeType,
-    EntryPointContext, Error, Function, FunctionArgument, GlobalVariable, IdGenerator, Instruction,
-    LocalImageType, LocalType, LocalVariable, LogicalLayout, LookupFunctionType, LookupType,
-    NumericType, Options, PhysicalLayout, PipelineOptions, ResultMember, Writer, WriterFlags,
-    BITS_PER_BYTE,
+    Block, BlockContext, CachedConstant, CachedExpressions, CooperativeType, EntryPointContext,
+    Error, Function, FunctionArgument, GlobalVariable, IdGenerator, Instruction, LocalImageType,
+    LocalType, LocalVariable, LogicalLayout, LookupFunctionType, LookupType, NumericType, Options,
+    PhysicalLayout, PipelineOptions, ResultMember, Writer, WriterFlags, BITS_PER_BYTE,
 };
 use crate::{
     arena::{Handle, HandleVec, UniqueArena},
@@ -5045,8 +5044,7 @@ impl Writer {
                 continue;
             }
             let info = mod_info.get_entry_point(index);
-            let ep_instruction =
-                self.write_entry_point(ir_ep, info, ir_module)?;
+            let ep_instruction = self.write_entry_point(ir_ep, info, ir_module)?;
             ep_instruction.to_words(&mut self.logical_layout.entry_points);
         }
 

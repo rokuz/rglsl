@@ -228,7 +228,8 @@ impl FunctionLowerer<'_, '_> {
                         if self.lw.debug.is_some() {
                             if let Some(ref value) = variable.value {
                                 let ir = self.lw.ir_type(&variable.ty, at)?;
-                                let init = self.lw.global_constant(&variable.ty, &value.values, at)?;
+                                let init =
+                                    self.lw.global_constant(&variable.ty, &value.values, at)?;
                                 self.lw.module.constants.append(
                                     crate::Constant {
                                         name: Some(declarator.name.node.clone()),
@@ -806,7 +807,9 @@ fn statement_anchor(statement: &Statement) -> u32 {
             DeclarationKind::InitDeclaratorList(ref list) => list
                 .declarators
                 .first()
-                .map_or(statement.span.start, |declarator| declarator.name.span.start),
+                .map_or(statement.span.start, |declarator| {
+                    declarator.name.span.start
+                }),
             _ => statement.span.start,
         },
         _ => statement.span.start,

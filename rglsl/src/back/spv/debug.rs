@@ -102,7 +102,11 @@ pub(super) struct DebugState {
     anchors: crate::DebugInfo,
     workgroup_size: Word,
     reserved: FastHashMap<Handle<crate::Type>, Word>,
+    pending: crate::FastHashSet<Word>,
     line_lengths: Vec<Vec<u32>>,
+    constants: Vec<(u32, Handle<crate::Constant>)>,
+    privates: Vec<(u32, Handle<crate::GlobalVariable>)>,
+    structs: FastHashMap<String, Vec<usize>>,
     pub(super) buffer_type: bool,
 }
 
@@ -302,13 +306,38 @@ impl Writer {
             self.debug.scope_index = info.scope_index();
             self.debug.scopes = alloc::vec![0; info.scopes.len()];
             self.debug.anchors.anchors.clone_from(&info.anchors);
+            for (index, record) in info.structs.iter().enumerate() {
+                self.debug
+                    .structs
+                    .entry(record.name.clone())
+                    .or_default()
+                    .push(index);
+            }
+            self.debug.constants = ir_module
+                .constants
+                .iter()
+                .filter(|&(_, constant)| constant.name.is_some())
+                .filter_map(|(handle, _)| {
+                    let range = ir_module.constants.get_span(handle).to_range()?;
+                    Some((u32::try_from(range.start).ok()?, handle))
+                })
+                .collect();
+            self.debug.constants.sort_by_key(|&(offset, _)| offset);
+            self.debug.privates = ir_module
+                .global_variables
+                .iter()
+                .filter(|&(_, global)| global.space == crate::AddressSpace::Private)
+                .filter_map(|(handle, _)| {
+                    let range = ir_module.global_variables.get_span(handle).to_range()?;
+                    Some((u32::try_from(range.start).ok()?, handle))
+                })
+                .collect();
+            self.debug.privates.sort_by_key(|&(offset, _)| offset);
             if self.debug.source_text && self.debug.level == DebugLevel::NonSemantic {
                 self.debug.line_lengths = info
                     .sources
                     .iter()
-                    .map(|source| {
-                        source.text.as_deref().map_or_else(Vec::new, line_lengths)
-                    })
+                    .map(|source| source.text.as_deref().map_or_else(Vec::new, line_lengths))
                     .collect();
             }
         }
@@ -484,10 +513,7 @@ impl Writer {
             let dwarf = self.debug_uint(4);
             let source = self.debug_file(unit.source);
             let language = self.debug_uint(LANGUAGE_GLSL);
-            let id = self.debug_ext(
-                DEBUG_COMPILATION_UNIT,
-                &[version, dwarf, source, language],
-            );
+            let id = self.debug_ext(DEBUG_COMPILATION_UNIT, &[version, dwarf, source, language]);
             self.debug.units.push(id);
         }
     }
@@ -548,7 +574,9 @@ impl Writer {
         let flags = self.debug_uint(FLAG_IS_PUBLIC);
         let id = self.debug_ext(
             DEBUG_TYPE_COMPOSITE,
-            &[name_id, tag, source, line, column, unit, linkage, size, flags],
+            &[
+                name_id, tag, source, line, column, unit, linkage, size, flags,
+            ],
         );
         self.debug.opaques.insert(String::from(name), id);
         id
@@ -567,6 +595,7 @@ impl Writer {
             None => {
                 let id = self.id_gen.next();
                 self.debug.reserved.insert(ty, id);
+                self.debug.pending.insert(id);
                 id
             }
         }
@@ -676,6 +705,16 @@ impl Writer {
         ir_module: &crate::Module,
         info: &crate::DebugInfo,
     ) -> Result<(), super::Error> {
+        let mut complete_structs: FastHashMap<&str, Handle<crate::Type>> = FastHashMap::default();
+        for (handle, ty) in ir_module.types.iter() {
+            if let (Some(name), &crate::TypeInner::Struct { ref members, .. }) =
+                (ty.name.as_deref(), &ty.inner)
+            {
+                if !members.is_empty() {
+                    complete_structs.insert(name, handle);
+                }
+            }
+        }
         for (handle, ty) in ir_module.types.iter() {
             let id = match ty.inner {
                 crate::TypeInner::Scalar(scalar) | crate::TypeInner::Atomic(scalar) => {
@@ -705,7 +744,7 @@ impl Writer {
                 crate::TypeInner::Pointer { base, space } => {
                     let class = helpers::map_storage_class(space);
                     match self.debug.types.get(&base).copied() {
-                        Some(id) if !self.debug.reserved.values().any(|&pending| pending == id) => {
+                        Some(id) if !self.debug.pending.contains(&id) => {
                             self.debug_pointer(id, class)
                         }
                         Some(id) => self.debug_forward_pointer(id, class),
@@ -730,32 +769,33 @@ impl Writer {
                 crate::TypeInner::Struct { ref members, .. }
                     if members.is_empty() && ty.name.is_some() =>
                 {
-                    let complete = ir_module.types.iter().find_map(|(other, candidate)| {
-                        match candidate.inner {
-                            crate::TypeInner::Struct { ref members, .. }
-                                if !members.is_empty() && candidate.name == ty.name =>
-                            {
-                                Some(other)
-                            }
-                            _ => None,
-                        }
-                    });
+                    let complete = ty
+                        .name
+                        .as_deref()
+                        .and_then(|name| complete_structs.get(name))
+                        .copied();
                     match complete {
                         Some(other) if other.index() > handle.index() => self.debug_reserve(other),
-                        _ => self.debug_struct(
-                            ty.name.as_deref().unwrap_or(""),
-                            members,
-                            info,
-                            &ir_module.types,
-                        )?,
+                        _ => {
+                            let reserved = self.debug.reserved.remove(&handle);
+                            self.debug_struct(
+                                ty.name.as_deref().unwrap_or(""),
+                                members,
+                                (info, &ir_module.types),
+                                reserved,
+                            )?
+                        }
                     }
                 }
-                crate::TypeInner::Struct { ref members, .. } => self.debug_struct(
-                    ty.name.as_deref().unwrap_or(""),
-                    members,
-                    info,
-                    &ir_module.types,
-                )?,
+                crate::TypeInner::Struct { ref members, .. } => {
+                    let reserved = self.debug.reserved.remove(&handle);
+                    self.debug_struct(
+                        ty.name.as_deref().unwrap_or(""),
+                        members,
+                        (info, &ir_module.types),
+                        reserved,
+                    )?
+                }
                 crate::TypeInner::Image {
                     dim,
                     arrayed,
@@ -826,26 +866,26 @@ impl Writer {
         &mut self,
         name: &str,
         members: &[crate::StructMember],
-        info: &crate::DebugInfo,
-        types: &crate::UniqueArena<crate::Type>,
+        (info, types): (&crate::DebugInfo, &crate::UniqueArena<crate::Type>),
+        reserved: Option<Word>,
     ) -> Result<Word, super::Error> {
-        let record = info.structs.iter().find(|record| {
+        let candidates = self.debug.structs.get(name).cloned().unwrap_or_default();
+        let record = candidates.iter().filter_map(|&index| info.structs.get(index)).find(|record| {
             record.name == name
                 && record.members.len() == members.len()
                 && record
                     .members
                     .iter()
                     .zip(members)
-                    .all(|(declared, member)| member.name.as_deref() == Some(declared.name.as_str()))
+                    .all(|(declared, member)| {
+                        member.name.as_deref() == Some(declared.name.as_str())
+                    })
         });
         let unit = record.map_or(0, |record| record.unit);
         let unit_id = self.debug_unit(unit);
         let at = record.map_or(
             crate::DebugPosition {
-                source: info
-                    .units
-                    .first()
-                    .map_or(0, |first| first.source),
+                source: info.units.first().map_or(0, |first| first.source),
                 line: 0,
                 column: 0,
             },
@@ -885,11 +925,23 @@ impl Writer {
         let column = self.debug_uint(0);
         let size = self.debug_uint(0);
         let flags = self.debug_uint(FLAG_IS_PUBLIC);
-        let mut operands = alloc::vec![
-            name_id, tag, source, line, column, unit_id, name_id, size, flags
-        ];
+        let mut operands =
+            alloc::vec![name_id, tag, source, line, column, unit_id, name_id, size, flags];
         operands.extend(member_ids);
-        Ok(self.debug_ext(DEBUG_TYPE_COMPOSITE, &operands))
+        Ok(match reserved {
+            Some(id) => {
+                self.debug.declarations.push(Instruction::ext_inst(
+                    self.debug.set,
+                    DEBUG_TYPE_COMPOSITE,
+                    self.void_type,
+                    id,
+                    &operands,
+                ));
+                self.debug.pending.remove(&id);
+                id
+            }
+            None => self.debug_ext(DEBUG_TYPE_COMPOSITE, &operands),
+        })
     }
 
     fn debug_globals(&mut self, ir_module: &crate::Module, info: &crate::DebugInfo) {
@@ -1000,7 +1052,7 @@ impl Writer {
         }
     }
 
-    pub(super) fn debug_workgroup_size_id(&mut self, id: Word) {
+    pub(super) const fn debug_workgroup_size_id(&mut self, id: Word) {
         self.debug.workgroup_size = id;
     }
 
@@ -1173,9 +1225,13 @@ impl Writer {
             if let Some(ref mut end) = state.end {
                 end.scope = scope;
             }
-            for (index, scope_record) in info.scopes.iter().enumerate() {
-                if scope_record.start < record.start || scope_record.start > record.stop {
-                    continue;
+            let first = info
+                .scopes
+                .partition_point(|scope_record| scope_record.start < record.start);
+            for (position, scope_record) in info.scopes.get(first..).unwrap_or_default().iter().enumerate() {
+                let index = first + position;
+                if scope_record.start > record.stop {
+                    break;
                 }
                 let parent = self
                     .debug
@@ -1211,7 +1267,16 @@ impl Writer {
                 let argument_number = self.debug_uint(number.saturating_add(1));
                 let variable = self.debug_ext(
                     DEBUG_LOCAL_VARIABLE,
-                    &[name, ty, source, line, column, scope, flags, argument_number],
+                    &[
+                        name,
+                        ty,
+                        source,
+                        line,
+                        column,
+                        scope,
+                        flags,
+                        argument_number,
+                    ],
                 );
                 let copy = copies
                     .get(&number)
@@ -1279,21 +1344,24 @@ impl Writer {
                     value: false,
                 });
             }
-            for (handle, constant) in ir_module.constants.iter() {
+            let first = self
+                .debug
+                .constants
+                .partition_point(|&(offset, _)| offset < record.start);
+            let constants: Vec<(u32, Handle<crate::Constant>)> = self
+                .debug
+                .constants
+                .get(first..)
+                .unwrap_or_default()
+                .iter()
+                .take_while(|&&(offset, _)| offset <= record.stop)
+                .copied()
+                .collect();
+            for (offset, handle) in constants {
+                let constant = &ir_module.constants[handle];
                 let Some(ref name) = constant.name else {
                     continue;
                 };
-                let Some(offset) = ir_module
-                    .constants
-                    .get_span(handle)
-                    .to_range()
-                    .and_then(|range| u32::try_from(range.start).ok())
-                else {
-                    continue;
-                };
-                if offset < record.start || offset > record.stop {
-                    continue;
-                }
                 let Some(line) = info.line(offset).copied() else {
                     continue;
                 };
@@ -1327,21 +1395,21 @@ impl Writer {
                     value: true,
                 });
             }
-            for (handle, global) in ir_module.global_variables.iter() {
-                if global.space != crate::AddressSpace::Private {
-                    continue;
-                }
-                let Some(offset) = ir_module
-                    .global_variables
-                    .get_span(handle)
-                    .to_range()
-                    .and_then(|range| u32::try_from(range.start).ok())
-                else {
-                    continue;
-                };
-                if offset < record.start || offset > record.stop {
-                    continue;
-                }
+            let first = self
+                .debug
+                .privates
+                .partition_point(|&(offset, _)| offset < record.start);
+            let privates: Vec<(u32, Handle<crate::GlobalVariable>)> = self
+                .debug
+                .privates
+                .get(first..)
+                .unwrap_or_default()
+                .iter()
+                .take_while(|&&(offset, _)| offset <= record.stop)
+                .copied()
+                .collect();
+            for (offset, handle) in privates {
+                let global = &ir_module.global_variables[handle];
                 let target = self.global_variables[handle].var_id;
                 let Some(line) = info.line(offset).copied().filter(|_| target != 0) else {
                     continue;
@@ -1385,7 +1453,11 @@ impl Writer {
             return;
         };
         if let Some(ref mut state) = self.debug.function {
-            while let Some(declared) = state.declares.get(state.cursor).map(|declare| declare.offset) {
+            while let Some(declared) = state
+                .declares
+                .get(state.cursor)
+                .map(|declare| declare.offset)
+            {
                 if declared > offset {
                     break;
                 }
@@ -1441,7 +1513,11 @@ impl Writer {
             let mut after_merge = false;
             for instruction in body {
                 let instruction = if instruction.op == MARKER {
-                    let kind = instruction.operands.first().copied().unwrap_or(MARK_LOCATION);
+                    let kind = instruction
+                        .operands
+                        .first()
+                        .copied()
+                        .unwrap_or(MARK_LOCATION);
                     let payload = instruction.operands.get(1).copied().unwrap_or(0);
                     match kind {
                         MARK_LOCATION => {
@@ -1451,7 +1527,9 @@ impl Writer {
                             continue;
                         }
                         MARK_END => {
-                            if let Some(end) = self.debug.function.as_ref().and_then(|state| state.end) {
+                            if let Some(end) =
+                                self.debug.function.as_ref().and_then(|state| state.end)
+                            {
                                 current = end;
                             }
                             continue;
@@ -1474,7 +1552,12 @@ impl Writer {
                     continue;
                 }
                 if !after_merge {
-                    self.debug_emit_location(&mut out, current, &mut emitted_scope, &mut emitted_line);
+                    self.debug_emit_location(
+                        &mut out,
+                        current,
+                        &mut emitted_scope,
+                        &mut emitted_line,
+                    );
                 }
                 after_merge = instruction.op == spirv::Op::SelectionMerge as u32
                     || instruction.op == spirv::Op::LoopMerge as u32;

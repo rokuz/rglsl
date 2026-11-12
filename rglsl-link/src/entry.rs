@@ -1,5 +1,5 @@
 use rglsl::object::PathStep;
-use rglsl::{AddressSpace, Binding, EntryPoint, Expression, GlobalVariable, Handle, Span, Type};
+use rglsl::{AddressSpace, Binding, EntryPoint, Expression, GlobalVariable, Handle, Type};
 
 use crate::calls::{callees, Node, SymbolTable};
 use crate::error::{internal, LinkError};

@@ -856,10 +856,9 @@ impl<'a> Lowerer<'a> {
             let (name, members) = match declaration.kind {
                 rglsl_ast::ast::DeclarationKind::InitDeclaratorList(ref list) => {
                     match list.ty.node.specifier.node.non_array {
-                        rglsl_ast::ast::TypeSpecifierNonArray::Struct(ref specifier) => (
-                            specifier.name.as_ref(),
-                            specifier.declarations.as_slice(),
-                        ),
+                        rglsl_ast::ast::TypeSpecifierNonArray::Struct(ref specifier) => {
+                            (specifier.name.as_ref(), specifier.declarations.as_slice())
+                        }
                         _ => continue,
                     }
                 }
