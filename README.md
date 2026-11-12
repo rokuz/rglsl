@@ -46,6 +46,20 @@ cargo xtask test --glslang-dir ../glslang --filter spv.100ops --no-progress-file
 
 Per-shader results go to `target/xtask/results.tsv`.
 
+### Comparing interfaces (`interface`)
+
+The `interface` column reflects our SPIR-V module and glslang's for every shader both accept
+(`xtask/src/interface.rs`, a reader of the binary that ignores ids, names and debug
+information) and compares entry points, execution modes, the local size with its
+specialization constant ids, inputs and outputs (location, component, built-in, type,
+interpolation and the other interface decorations), resources (set, binding, storage class,
+type with array sizes, image dimensions, format and sampling, block layout: offsets, strides,
+matrix layout), push constants, ray tracing and task payloads, and specialization constants
+(ids, types, defaults). Every mismatch is listed in `target/xtask/results.tsv` (`interface`,
+`interface_note`) and in the terminal summary. Deliberate differences from glslang are listed,
+with the reason, in `xtask/interface-expected.toml`: a mismatch on one of the keys an entry
+names for a shader counts as expected and is reported as such.
+
 ### Running shaders (`exec`)
 
 The `exec` column runs our module and glslang's on a Vulkan driver and compares what they

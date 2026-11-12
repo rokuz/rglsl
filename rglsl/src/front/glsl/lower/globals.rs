@@ -749,6 +749,7 @@ impl<'a> Lowerer<'a> {
                         spirv_decorations: Vec::new(),
                         relaxed_precision: false,
                         immediate_bank: None,
+                        block: None,
                     },
                     at,
                 );
@@ -805,6 +806,7 @@ impl<'a> Lowerer<'a> {
                 heap_offset: None,
                 tile_attachment: false,
                 immediate_bank: None,
+                block: None,
                 spirv_decorations: Vec::new(),
                 relaxed_precision: false,
             },
@@ -888,6 +890,7 @@ impl<'a> Lowerer<'a> {
                 spirv_decorations: Vec::new(),
                 relaxed_precision: false,
                 immediate_bank: None,
+                block: None,
             },
             at,
         );
@@ -961,6 +964,7 @@ impl<'a> Lowerer<'a> {
                     spirv_decorations: Vec::new(),
                     relaxed_precision: false,
                     immediate_bank: None,
+                    block: None,
                 },
                 at,
             );
@@ -1037,6 +1041,7 @@ impl<'a> Lowerer<'a> {
                 spirv_decorations: Vec::new(),
                 relaxed_precision: false,
                 immediate_bank: None,
+                block: None,
             },
             at,
         );
@@ -1226,6 +1231,7 @@ impl<'a> Lowerer<'a> {
                 spirv_decorations: Vec::new(),
                 relaxed_precision: false,
                 immediate_bank: None,
+                block: None,
             },
             at,
         );
@@ -1346,6 +1352,14 @@ impl<'a> Lowerer<'a> {
         if push_constant || shader_record {
             decorations.remove(MemoryDecorations::RESTRICT);
         }
+        if !buffer || push_constant || shader_record {
+            if qualifiers.readonly {
+                decorations |= MemoryDecorations::NON_WRITABLE;
+            }
+            if qualifiers.writeonly {
+                decorations |= MemoryDecorations::NON_READABLE;
+            }
+        }
         let space = if push_constant {
             AddressSpace::Immediate
         } else if shader_record {
@@ -1400,6 +1414,11 @@ impl<'a> Lowerer<'a> {
                 spirv_decorations: Vec::new(),
                 relaxed_precision: false,
                 immediate_bank,
+                block: shader_record.then_some(if buffer {
+                    crate::BlockDeclaration::Buffer
+                } else {
+                    crate::BlockDeclaration::Uniform
+                }),
             },
             at,
         );
@@ -1717,6 +1736,7 @@ impl<'a> Lowerer<'a> {
                 spirv_decorations: Vec::new(),
                 relaxed_precision: false,
                 immediate_bank: None,
+                block: None,
             },
             at,
         );
@@ -2006,6 +2026,7 @@ impl<'a> Lowerer<'a> {
                 spirv_decorations: Vec::new(),
                 relaxed_precision: false,
                 immediate_bank: None,
+                block: None,
             },
             Span::UNDEFINED,
         );
@@ -2481,6 +2502,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
                     spirv_decorations: Vec::new(),
                     relaxed_precision: false,
                     immediate_bank: None,
+                    block: None,
                 },
                 at,
             )

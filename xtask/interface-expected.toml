@@ -1,0 +1,30 @@
+[automatic-locations]
+why = "with --auto-map-locations glslang counts automatic locations from 0 without reserving the explicit ones, so an automatic input or output can take a location that an explicit declaration already uses (two variables at one location); rglsl skips the explicit locations of the stage (docs/design/stage-io.md)"
+keys = ["Input location", "Output location"]
+shaders = [
+    "spv.430.vert",
+    "spv.noLocation.vert",
+    "link.crossStageIO.0.vert",
+    "link.crossStageIO.0.frag",
+    "link.crossStageIO.1.vert",
+    "link.crossStageIO.1.geom",
+    "link.crossStageIO.1.frag",
+    "link.missingCrossStageIO.0.frag",
+    "link.vk.crossStageIO.0.vert",
+    "link.vk.crossStageIO.0.frag",
+    "link.vk.crossStageIO.1.vert",
+    "link.vk.crossStageIO.1.geom",
+    "link.vk.crossStageIO.1.frag",
+    "link.vk.missingCrossStageIO.0.frag",
+    "link.crossStageIO.0.vert+link.crossStageIO.0.frag",
+    "link.crossStageIO.1.vert+link.crossStageIO.1.geom+link.crossStageIO.1.frag",
+    "link.missingCrossStageIO.0.vert+link.missingCrossStageIO.0.frag",
+    "link.vk.crossStageIO.0.vert+link.vk.crossStageIO.0.frag",
+    "link.vk.crossStageIO.1.vert+link.vk.crossStageIO.1.geom+link.vk.crossStageIO.1.frag",
+    "link.vk.missingCrossStageIO.0.vert+link.vk.missingCrossStageIO.0.frag",
+]
+
+[invariant-struct-members]
+why = "for an invariant output of a struct type glslang declares a copy of the struct and repeats Invariant on every member; rglsl decorates the variable only, which already makes the whole output invariant, and keeps one struct type (docs/design/stage-io.md)"
+keys = ["Output location 10"]
+shaders = ["spv.layoutNested.vert"]

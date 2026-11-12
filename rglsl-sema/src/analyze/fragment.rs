@@ -55,6 +55,7 @@ pub struct FragmentLayout {
     pub interlock: Option<Interlock>,
     pub post_depth_coverage: bool,
     pub early_fragment_tests: bool,
+    pub early_and_late_fragment_tests: bool,
     pub non_coherent_color_attachment_read: bool,
     pub non_coherent_depth_attachment_read: bool,
     pub non_coherent_stencil_attachment_read: bool,
@@ -124,6 +125,7 @@ impl Analyzer<'_> {
                     ("post_depth_coverage", 0)
                 }
                 "early_fragment_tests" => ("early_fragment_tests", 1),
+                "early_and_late_fragment_tests_amd" => ("early_and_late_fragment_tests_amd", 5),
                 "non_coherent_color_attachment_readext" => {
                     self.require_extension(
                         span,
@@ -165,6 +167,7 @@ impl Analyzer<'_> {
                     }
                 }
                 1 => layout.early_fragment_tests = true,
+                5 => layout.early_and_late_fragment_tests = true,
                 2 => layout.non_coherent_color_attachment_read = true,
                 3 => layout.non_coherent_depth_attachment_read = true,
                 _ => layout.non_coherent_stencil_attachment_read = true,

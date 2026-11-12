@@ -969,6 +969,9 @@ pub struct Writer {
     temp_list: Vec<Word>,
 
     has_ray_tracing_pipeline: bool,
+    legacy_buffer_blocks: bool,
+    invariant_outputs: bool,
+    legacy_storage_blocks: crate::FastHashSet<Word>,
     mesh_extension: Option<crate::MeshShaderExtension>,
     task_memory_strides: crate::FastHashSet<Handle<crate::Type>>,
 

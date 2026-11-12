@@ -14,6 +14,7 @@ use crate::corpus::{self, Case, Kind};
 use crate::exec::known::{self, Known};
 use crate::exec::{self, ExecCase, Executor, TargetId, TargetSpec};
 use crate::groups;
+use crate::interface;
 use crate::oracles::{self, Tool};
 use crate::process::{self, Exit};
 use crate::report;
@@ -66,6 +67,7 @@ pub struct CaseResult {
     pub exec_input: Option<ExecInput>,
     pub exec: BTreeMap<TargetId, exec::Outcome>,
     pub expected_messages: Option<bool>,
+    pub interface: Option<interface::Check>,
 }
 
 #[derive(Debug, Clone)]
@@ -126,11 +128,16 @@ impl CaseResult {
             self.accept() == Some(true)
                 && !failed(self.diag())
                 && !failed(self.valid())
+                && !failed(self.interface())
                 && !self
                     .exec
                     .values()
                     .any(|outcome| matches!(outcome, exec::Outcome::Fail(_))),
         )
+    }
+
+    pub fn interface(&self) -> Option<bool> {
+        self.interface.as_ref().map(interface::Check::passed)
     }
 
     /// `valid`: everything we accept becomes SPIR-V that passes spirv-val.
@@ -151,6 +158,7 @@ pub struct Environment {
     pub pins: oracles::Pins,
     pub executors: Vec<Executor>,
     pub known: Known,
+    pub interface_expected: interface::Expected,
 }
 
 pub fn run(root: &Path, options: Options) -> Result<()> {
@@ -171,6 +179,7 @@ pub fn run(root: &Path, options: Options) -> Result<()> {
         spirv_val: oracles::find_tool(root, "spirv-val", "RGLSL_SPIRV_VAL")?,
         executors: Vec::new(),
         known: Known::load(root)?,
+        interface_expected: interface::Expected::load(root)?,
         glslang_dir,
         pins,
     };
@@ -345,6 +354,17 @@ fn run_case(
     };
 
     let reference = work_dir.join("glslang").join(format!("{}.spv", case.name));
+    let interface = (matches!(oracle, OracleResult::Accepted)
+        && matches!(ours, OursResult::Accepted)
+        && !case.target.compile_only
+        && reference.is_file())
+    .then(|| {
+        interface::check_files(
+            &env.interface_expected,
+            &case.name,
+            &[(reference.as_path(), out.as_path())],
+        )
+    });
     let exec_input = if !env.executors.is_empty()
         && matches!(oracle, OracleResult::Accepted)
         && spirv_val == Some(true)
@@ -380,6 +400,7 @@ fn run_case(
         exec_input,
         exec: BTreeMap::new(),
         expected_messages: None,
+        interface,
     })
 }
 
@@ -748,6 +769,24 @@ fn run_group(
         _ => None,
     };
 
+    let pairs: Vec<(PathBuf, &PathBuf)> = produced
+        .iter()
+        .filter_map(|module| {
+            let reference = reference_dir.join(module.file_name()?);
+            reference.is_file().then_some((reference, module))
+        })
+        .collect();
+    let interface = (matches!(oracle, OracleResult::Accepted)
+        && matches!(ours, OursResult::Accepted)
+        && !pairs.is_empty())
+    .then(|| {
+        let pairs: Vec<(&Path, &Path)> = pairs
+            .iter()
+            .map(|(reference, ours)| (reference.as_path(), ours.as_path()))
+            .collect();
+        interface::check_files(&env.interface_expected, &case.name, &pairs)
+    });
+
     let exec_input = match produced.as_slice() {
         [module]
             if !env.executors.is_empty()
@@ -780,6 +819,7 @@ fn run_group(
         exec_input,
         exec: BTreeMap::new(),
         expected_messages,
+        interface,
     })
 }
 

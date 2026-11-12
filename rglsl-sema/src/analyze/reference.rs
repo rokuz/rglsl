@@ -81,6 +81,7 @@ impl Analyzer<'_> {
         for entry in &qualifiers.layout {
             if entry.name.eq_ignore_ascii_case("buffer_reference") {
                 reference = true;
+                self.storage_buffer_class = true;
                 self.require_extension(entry.span, names::BUFFER_REFERENCE, "buffer_reference");
             } else if entry.name.eq_ignore_ascii_case("buffer_reference_align") {
                 self.require_extension(

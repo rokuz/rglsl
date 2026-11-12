@@ -294,10 +294,12 @@ impl Writer {
             spirv::Decoration::PerTaskNV,
             &[],
         ));
+        self.plain_types.insert(struct_id, struct_id);
         let mut ty = member.ty;
         while let crate::TypeInner::Array { base, stride, .. } = ir_module.types[ty].inner {
+            let id = self.get_handle_type_id(ty)?;
+            self.plain_types.insert(id, id);
             if !self.laid_out_types.contains(ty) && self.task_memory_strides.insert(ty) {
-                let id = self.get_handle_type_id(ty)?;
                 self.decorate(id, spirv::Decoration::ArrayStride, &[stride]);
             }
             ty = base;

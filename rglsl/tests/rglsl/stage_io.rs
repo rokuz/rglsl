@@ -95,6 +95,7 @@ impl Builder {
                 spirv_decorations: Vec::new(),
                 relaxed_precision: false,
                 immediate_bank: None,
+                block: None,
             },
             Span::UNDEFINED,
         )
@@ -219,6 +220,7 @@ impl Builder {
             derivative_group: None,
             spirv_execution_modes: Vec::new(),
             reconvergence: rglsl::Reconvergence::default(),
+            invariant_outputs: false,
         });
         self.module
     }
@@ -581,6 +583,7 @@ fn invalid_interfaces_are_rejected() -> TestResult {
                 spirv_decorations: Vec::new(),
                 relaxed_precision: false,
                 immediate_bank: None,
+                block: None,
             },
             Span::UNDEFINED,
         );

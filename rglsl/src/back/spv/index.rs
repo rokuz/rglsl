@@ -3,9 +3,8 @@ Bounds-checking for SPIR-V output.
 */
 
 use super::{
-    helpers::{global_needs_wrapper, map_storage_class},
-    selection::Selection,
-    Block, BlockContext, Error, IdGenerator, Instruction, Word,
+    helpers::global_needs_wrapper, selection::Selection, Block, BlockContext, Error, IdGenerator,
+    Instruction, Word,
 };
 use crate::{
     arena::Handle,
@@ -249,7 +248,7 @@ impl BlockContext<'_> {
                 let element_type_id = match self.ir_module.types[global.ty].inner {
                     crate::TypeInner::BindingArray { base, size: _ } => {
                         let base_id = self.get_handle_type_id(base)?;
-                        let class = map_storage_class(global.space);
+                        let class = self.writer.storage_class(global.space);
                         self.get_pointer_type_id(base_id, class)
                     }
                     _ => return Err(Error::Validation("array length expression case-5")),

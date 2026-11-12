@@ -114,6 +114,7 @@ impl Lowerer<'_> {
                 spirv_decorations: Vec::new(),
                 relaxed_precision: false,
                 immediate_bank: None,
+                block: None,
             },
             at,
         );

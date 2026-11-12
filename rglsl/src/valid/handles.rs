@@ -45,6 +45,7 @@ impl super::Validator {
             vulkan_memory_model: _,
             descriptor_heap: _,
             shader_64bit_indexing: _,
+            legacy_buffer_blocks: _,
             ray_tracing: _,
             spirv_requirements: _,
         } = module;
@@ -192,6 +193,7 @@ impl super::Validator {
                 ref spirv_decorations,
                 relaxed_precision: _,
                 immediate_bank: _,
+                block: _,
             } = global_variable;
             validate_type(ty)?;
             if let Some(init_expr) = init {

@@ -1972,6 +1972,7 @@ fn uniform_control_flow() -> crate::TestResult {
             spirv_decorations: Default::default(),
             relaxed_precision: false,
             immediate_bank: None,
+            block: None,
         },
         Default::default(),
     );
@@ -1991,6 +1992,7 @@ fn uniform_control_flow() -> crate::TestResult {
             spirv_decorations: Default::default(),
             relaxed_precision: false,
             immediate_bank: None,
+            block: None,
         },
         Default::default(),
     );

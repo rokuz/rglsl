@@ -12,6 +12,7 @@ mod fuzz_exec;
 mod fuzz_libfuzzer;
 mod fuzz_reduce;
 mod groups;
+mod interface;
 mod oracles;
 mod process;
 mod report;
