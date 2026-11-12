@@ -2417,7 +2417,7 @@ impl Writer {
         }
     }
 
-    fn cooperative_size_id(&mut self, size: crate::CooperativeSize) -> Word {
+    pub(super) fn cooperative_size_id(&mut self, size: crate::CooperativeSize) -> Word {
         match size {
             crate::CooperativeSize::Constant(size) => self.get_index_constant(size.get()),
             crate::CooperativeSize::Pending(handle) => self
@@ -5174,6 +5174,22 @@ impl Writer {
             ep_instruction.to_words(&mut self.logical_layout.entry_points);
         }
 
+        if ir_module.variable_pointers {
+            self.capabilities_used
+                .insert(spirv::Capability::VariablePointers);
+        }
+        if ir_module.replicated_composites {
+            let declarations =
+                super::replicate::replicate_composites(&mut self.logical_layout.declarations);
+            let functions = super::replicate::replicate_composites(
+                &mut self.logical_layout.function_definitions,
+            );
+            if declarations || functions {
+                self.capabilities_used
+                    .insert(spirv::Capability::ReplicatedCompositesEXT);
+                self.use_extension("SPV_EXT_replicated_composites");
+            }
+        }
         if self
             .flags
             .contains(WriterFlags::SMALL_TYPE_CAPABILITIES_BY_USE)

@@ -1405,7 +1405,7 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
         let non_array = self
             .call(self.clone().parse_type_specifier_non_array(token, word))
             .await?;
-        self.call(self.clone().finish_type_specifier(token, word, non_array))
+        self.call(self.clone().finish_type_specifier(token, non_array))
             .await
     }
 
@@ -1430,22 +1430,13 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
     async fn finish_type_specifier(
         self,
         token: Token<'a>,
-        word: &'a str,
         non_array: TypeSpecifierNonArray,
     ) -> Result<Spanned<TypeSpecifier>> {
         let parameters = if self.at("<")
             && !matches!(
                 non_array,
-                TypeSpecifierNonArray::TypeName(_)
-                    | TypeSpecifierNonArray::Struct(_)
-                    | TypeSpecifierNonArray::Spirv(_)
+                TypeSpecifierNonArray::Struct(_) | TypeSpecifierNonArray::Spirv(_)
             ) {
-            if !matches!(non_array, TypeSpecifierNonArray::Parameterized(_)) {
-                return Err(self.error(
-                    ParseErrorKind::UnexpectedTypeParameters(word.to_owned()),
-                    token.span,
-                ));
-            }
             Some(self.call(self.clone().parse_type_parameters()).await?)
         } else {
             None

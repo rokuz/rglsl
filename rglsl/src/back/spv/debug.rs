@@ -12,6 +12,7 @@ const MARK_END: Word = 2;
 const MARK_SCOPE: Word = 3;
 
 const NON_SEMANTIC_SET: &str = "NonSemantic.Shader.DebugInfo.100";
+const NON_SEMANTIC_SET_101: &str = "NonSemantic.Shader.DebugInfo.101";
 const NON_SEMANTIC_SET_102: &str = "NonSemantic.Shader.DebugInfo.102";
 const DEBUG_ENTRY_POINT: Word = 107;
 const OP_EXT_INST_WITH_FORWARD_REFS: u32 = 4433;
@@ -39,6 +40,7 @@ const DEBUG_FUNCTION_DEFINITION: Word = 101;
 const DEBUG_SOURCE_CONTINUED: Word = 102;
 const DEBUG_LINE: Word = 103;
 const DEBUG_TYPE_MATRIX: Word = 108;
+const DEBUG_TYPE_COOPERATIVE_MATRIX: Word = 110;
 
 const FLAG_IS_PUBLIC: Word = 3;
 const FLAG_IS_LOCAL: Word = 4;
@@ -366,6 +368,16 @@ impl Writer {
                 .is_some_and(|entry| entry.2.is_some())
             {
                 NON_SEMANTIC_SET_102
+            } else if ir_module.types.iter().any(|(_, ty)| {
+                matches!(
+                    ty.inner,
+                    crate::TypeInner::CooperativeMatrix {
+                        class: crate::CooperativeMatrixClass::Khr,
+                        ..
+                    }
+                )
+            }) {
+                NON_SEMANTIC_SET_101
             } else {
                 NON_SEMANTIC_SET
             };
@@ -388,6 +400,45 @@ impl Writer {
 
     fn debug_uint(&mut self, value: u32) -> Word {
         self.get_index_constant(value)
+    }
+
+    fn debug_cooperative_size(
+        &mut self,
+        ir_module: &crate::Module,
+        size: crate::CooperativeSize,
+    ) -> Word {
+        let id = self.cooperative_size_id(size);
+        let crate::CooperativeSize::Pending(handle) = size else {
+            return id;
+        };
+        let signed = ir_module
+            .overrides
+            .try_get(handle)
+            .ok()
+            .and_then(|constant| ir_module.types.get_handle(constant.ty).ok())
+            .is_some_and(|ty| {
+                matches!(
+                    ty.inner,
+                    crate::TypeInner::Scalar(crate::Scalar {
+                        kind: crate::ScalarKind::Sint,
+                        ..
+                    })
+                )
+            });
+        if !signed {
+            return id;
+        }
+        let uint = self.get_u32_type_id();
+        let zero = self.get_index_constant(0);
+        let converted = self.id_gen.next();
+        let mut instruction = Instruction::new(spirv::Op::SpecConstantOp);
+        instruction.set_type(uint);
+        instruction.set_result(converted);
+        instruction.add_operand(spirv::Op::IAdd as Word);
+        instruction.add_operand(id);
+        instruction.add_operand(zero);
+        self.debug.declarations.push(instruction);
+        converted
     }
 
     fn debug_ext(&mut self, opcode: Word, operands: &[Word]) -> Word {
@@ -840,6 +891,25 @@ impl Writer {
                     crate::HitObjectKind::Ext => "hitObjectEXT",
                 }),
                 crate::TypeInner::BufferDescriptor { base, .. } => self.debug_type(base),
+                crate::TypeInner::CooperativeMatrix {
+                    columns,
+                    rows,
+                    scalar,
+                    role,
+                    scope,
+                    class: crate::CooperativeMatrixClass::Khr,
+                } => {
+                    let component = self.debug_basic(scalar);
+                    let scope = self.debug_cooperative_size(ir_module, scope);
+                    let rows = self.debug_cooperative_size(ir_module, rows);
+                    let columns = self.debug_cooperative_size(ir_module, columns);
+                    let role =
+                        self.get_index_constant(spirv::CooperativeMatrixUse::from(role) as u32);
+                    self.debug_ext(
+                        DEBUG_TYPE_COOPERATIVE_MATRIX,
+                        &[component, scope, rows, columns, role],
+                    )
+                }
                 crate::TypeInner::CooperativeMatrix { .. } => self.debug_opaque("coopmat"),
                 crate::TypeInner::LongVector { .. } => self.debug_opaque("coopvec"),
                 crate::TypeInner::TensorLayout { .. } => self.debug_opaque("tensorLayoutNV"),

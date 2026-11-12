@@ -619,6 +619,8 @@ void main() {
             let reference = Compiled {
                 module: module.clone(),
                 glslang: None,
+                words: Vec::new(),
+                glslang_words: None,
             };
             (
                 memory_operands(&reference, Op::CooperativeVectorLoadNV, 2),

@@ -20,7 +20,11 @@ use spirv::Op;
 
 use crate::TestResult;
 
+mod debug;
+mod khr;
 mod matrix2;
+mod nv;
+mod replicate;
 mod smoke;
 mod vector;
 
@@ -43,6 +47,11 @@ pub const VULKAN_1_3: Target = Target {
 pub const VULKAN_1_4: Target = Target {
     vulkan: (1, 4),
     spirv: (1, 6),
+};
+
+pub const VULKAN_1_0: Target = Target {
+    vulkan: (1, 0),
+    spirv: (1, 0),
 };
 
 impl Target {
@@ -107,6 +116,8 @@ pub enum Glslang {
 pub struct Compiled {
     pub module: dr::Module,
     pub glslang: Option<dr::Module>,
+    pub words: Vec<u32>,
+    pub glslang_words: Option<Vec<u32>>,
 }
 
 impl Compiled {
@@ -158,6 +169,53 @@ fn load(words: &[u32]) -> TestResult<dr::Module> {
         rest = rest.get(length..).unwrap_or_default();
     }
     Ok(dr::load_words(kept)?)
+}
+
+fn loadable(words: &[u32]) -> Vec<u32> {
+    let mut output = words.get(..5).unwrap_or(words).to_vec();
+    let mut rest = words.get(5..).unwrap_or(&[]);
+    let mut in_functions = false;
+    while let Some((&first, _)) = rest.split_first() {
+        let length = usize::try_from(first >> 16)
+            .unwrap_or(1)
+            .clamp(1, rest.len());
+        let (instruction, tail) = rest.split_at(length);
+        rest = tail;
+        let opcode = first & 0xffff;
+        in_functions |= opcode == Op::Function as u32;
+        if in_functions || opcode != Op::ExtInst as u32 {
+            output.extend_from_slice(instruction);
+        }
+    }
+    output
+}
+
+fn literal_operands(module: &dr::Module, op: Op) -> Vec<Vec<String>> {
+    module
+        .all_inst_iter()
+        .filter(|inst| inst.class.opcode == op)
+        .map(|inst| {
+            inst.operands
+                .iter()
+                .filter(|operand| !matches!(operand, dr::Operand::IdRef(_)))
+                .map(|operand| format!("{operand:?}"))
+                .collect()
+        })
+        .collect()
+}
+
+pub fn same_literal_operands(compiled: &Compiled, op: Op) -> TestResult<usize> {
+    let mine = literal_operands(&compiled.module, op);
+    if let Some(reference) = &compiled.glslang {
+        let theirs = literal_operands(reference, op);
+        if theirs != mine {
+            return Err(format!(
+                "literal operands of {op:?} differ from glslang's: glslang {theirs:?}, rglsl {mine:?}"
+            )
+            .into());
+        }
+    }
+    Ok(mine.len())
 }
 
 fn count(module: &dr::Module, op: Op) -> usize {
@@ -391,13 +449,18 @@ pub fn compile_with(
         )
     })?;
     spirv_val(&words, target)?;
-    let module = load(&words)?;
-    let reference = match glslang(source, target, debug)? {
+    let module = dr::load_words(loadable(&words))?;
+    let glslang_words = match glslang(source, target, debug)? {
         None => None,
         Some(GlslangResult::Rejected(errors)) => {
             return Err(format!("glslang rejects the shader: {errors:?}").into())
         }
-        Some(GlslangResult::Accepted(reference)) => Some(load(&reference)?),
+        Some(GlslangResult::Accepted(words)) => Some(words),
+    };
+    let reference = match (&glslang_words, expectation) {
+        (None, _) => None,
+        (Some(words), Glslang::SameStructure) => Some(dr::load_words(loadable(words))?),
+        (Some(words), Glslang::Accepts) => dr::load_words(loadable(words)).ok(),
     };
     if let (Some(reference), Glslang::SameStructure) = (&reference, expectation) {
         let theirs = structure(reference);
@@ -425,6 +488,8 @@ pub fn compile_with(
     Ok(Compiled {
         module,
         glslang: reference,
+        words,
+        glslang_words,
     })
 }
 

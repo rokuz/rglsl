@@ -16,6 +16,7 @@ use crate::builtins::Stage;
 use crate::constant::{fold_binary, fold_linear, fold_unary, Constant, Linear, Value};
 use crate::diagnostic::DiagnosticKind;
 use crate::scope::{Lookup, Origin, Qualifiers, Storage, SymbolId, SymbolKind};
+use crate::types::CooperativeUse;
 use crate::types::{ArraySize, BlockStorage, NumericFeatures, Scalar, Type, TypeKind};
 
 impl<'b> Cx<'b, Analyzer<'_>> {
@@ -442,8 +443,11 @@ fn cooperative_binary_types(
         return None;
     }
     let arithmetic = matches!(operator, Op::Add | Op::Subtract | Op::Multiply | Op::Divide);
+    let nv_product = operator == Op::Multiply
+        && left_matrix.is_some_and(|matrix| matrix.usage == CooperativeUse::Nv)
+        && right_matrix.is_some_and(|matrix| matrix.usage == CooperativeUse::Nv);
     Some(match (left_matrix, right_matrix) {
-        (Some(_), Some(_)) => (arithmetic && left == right).then(|| BinaryResult {
+        (Some(_), Some(_)) => (arithmetic && !nv_product && left == right).then(|| BinaryResult {
             ty: left.clone(),
             left: left.clone(),
             right: right.clone(),
@@ -456,10 +460,7 @@ fn cooperative_binary_types(
                 (left, right)
             };
             let target = Type::scalar(matrix.scalar);
-            (operator == Op::Multiply
-                && scalar.is_scalar()
-                && scalar.converts_with(&target, features))
-            .then(|| BinaryResult {
+            (operator == Op::Multiply && *scalar == target).then(|| BinaryResult {
                 ty: matrix_ty.clone(),
                 left: if left_matrix.is_some() {
                     left.clone()
@@ -1293,7 +1294,11 @@ impl Analyzer<'_> {
             UnaryOperator::Plus | UnaryOperator::Minus => value.ty.is_arithmetic(),
             UnaryOperator::LogicalNot => value.ty.is_bool(),
             UnaryOperator::BitNot => {
-                value.ty.is_integer() && !matches!(value.ty.kind, TypeKind::Matrix { .. })
+                value.ty.is_integer()
+                    && !matches!(
+                        value.ty.kind,
+                        TypeKind::Matrix { .. } | TypeKind::CooperativeMatrix(_)
+                    )
             }
             UnaryOperator::Increment | UnaryOperator::Decrement => false,
         };
@@ -1398,7 +1403,10 @@ impl Analyzer<'_> {
         let result = if !small_allowed {
             None
         } else if matches!(operator, BinaryOperator::Equal | BinaryOperator::NotEqual) {
+            let cooperative = left_operand.ty.as_cooperative_matrix().is_some()
+                || right_operand.ty.as_cooperative_matrix().is_some();
             self.equality_type(&left_operand.ty, &right_operand.ty)
+                .filter(|_| !cooperative)
                 .map(|common| BinaryResult {
                     ty: Type::BOOL,
                     left: common.clone(),

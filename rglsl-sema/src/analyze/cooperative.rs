@@ -73,13 +73,19 @@ impl Analyzer<'_> {
         if operand.ty.is_error() {
             return None;
         }
-        let integer = operand.ty.is_scalar_integer() || operand.ty.is_bool();
-        if !operand.constant || !integer {
+        let booleans = self.extension_enabled("GL_NV_cooperative_matrix2");
+        let integer = matches!(operand.ty.scalar_type(), Some(Scalar::Int | Scalar::Uint))
+            && operand.ty.is_scalar();
+        if !operand.constant || !(integer || (booleans && operand.ty.is_bool())) {
             self.error(
                 expression.span,
                 DiagnosticKind::InvalidTypeParameters {
                     ty: "type",
-                    reason: "a type parameter must be a constant integer or boolean expression",
+                    reason: if booleans {
+                        "a type parameter must be a constant integer or boolean expression"
+                    } else {
+                        "a type parameter must be a constant integer expression"
+                    },
                 },
             );
             return None;
@@ -90,6 +96,16 @@ impl Analyzer<'_> {
                 other => other.as_i64(),
             })
         });
+        if value.is_some_and(|value| value < 0) {
+            self.error(
+                expression.span,
+                DiagnosticKind::InvalidTypeParameters {
+                    ty: "type",
+                    reason: "a type parameter must be a non-negative integer",
+                },
+            );
+            return None;
+        }
         if operand.specialization {
             let mut inner = expression;
             while let ExpressionKind::Parenthesized(nested) = &inner.kind {
@@ -405,7 +421,7 @@ impl Analyzer<'_> {
                 }
                 return Operand::temporary(ty.clone());
             }
-            if !operand.ty.is_scalar() || !operand.ty.is_numeric() {
+            if !operand.ty.is_scalar() || !(operand.ty.is_numeric() || operand.ty.is_bool()) {
                 return fail(
                     self,
                     "Cooperative matrix constructor argument must be scalar or cooperative matrix",
@@ -727,6 +743,18 @@ const NO_DOUBLE_LONG_VECTOR: [&str; 19] = [
 ];
 
 impl<'b> Cx<'b, Analyzer<'_>> {
+    pub(crate) async fn ignored_type_parameters(self, parameters: &'b Spanned<TypeParameters>) {
+        if let Some(element) = &parameters.element {
+            self.call(self.clone().type_specifier(element)).await;
+        }
+        let uses = self.with(|analyzer| analyzer.specialization_uses);
+        for value in &parameters.values {
+            let operand = self.call(self.clone().expression(value)).await;
+            self.with(|analyzer| analyzer.type_parameter_with(value, &operand));
+        }
+        self.with(|analyzer| analyzer.specialization_uses = uses);
+    }
+
     pub(crate) async fn parameterized_type(
         self,
         kind: ParameterizedType,
