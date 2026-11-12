@@ -131,12 +131,21 @@ pub fn compile_one(input: &Path, one: &OneOptions<'_>, out: &Path) -> i32 {
         debug_info: debug.is_some(),
         source_name: Some(input.to_string_lossy().into_owned()),
         preamble: preamble.clone(),
+        export_functions: object,
         ..glsl::Options::from(stage)
     };
     let mut includer = rglsl_pp::FileSystemIncluder::new(include_dirs);
     let root = includer.add_root(input);
     if object {
-        return compile_object(&mut frontend, &options, &source, root, &mut includer, out);
+        return compile_only(
+            &mut frontend,
+            &options,
+            &source,
+            root,
+            &mut includer,
+            (lang_version, debug),
+            out,
+        );
     }
     let module = match frontend.parse_with_includer(&options, &source, root, &mut includer) {
         Ok(module) => module,
@@ -187,8 +196,16 @@ fn write_spirv(
     debug: Option<&str>,
     out: &Path,
 ) -> i32 {
-    let options = spirv_options(lang_version, debug);
-    let words = match spv::write_vec(module, info, &options, None) {
+    write_words(module, info, &spirv_options(lang_version, debug), out)
+}
+
+fn write_words(
+    module: &rglsl::Module,
+    info: &rglsl::valid::ModuleInfo,
+    options: &spv::Options<'_>,
+    out: &Path,
+) -> i32 {
+    let words = match spv::write_vec(module, info, options, None) {
         Ok(words) => words,
         Err(error) => {
             diagnostic("spv-out", None, &full_message(&error));
@@ -341,12 +358,13 @@ pub const fn stage_extension(stage: ShaderStage) -> &'static str {
     }
 }
 
-fn compile_object(
+fn compile_only(
     frontend: &mut glsl::Frontend,
     options: &glsl::Options,
     source: &str,
     root: rglsl_pp::FileId,
     includer: &mut rglsl_pp::FileSystemIncluder,
+    (lang_version, debug): ((u8, u8), Option<&str>),
     out: &Path,
 ) -> i32 {
     let object = match frontend.compile_with_includer(options, source, root, includer) {
@@ -362,22 +380,16 @@ fn compile_object(
             return EXIT_REJECTED;
         }
     };
-    if let Err(errors) = rglsl_link::validate_object(&object) {
-        for error in errors.iter() {
-            diagnostic("validate", None, &error.to_string());
-        }
-        return EXIT_REJECTED;
-    }
-    let text = match rglsl_link::encode(&object) {
-        Ok(text) => text,
-        Err(error) => {
-            diagnostic("object", None, &error.to_string());
-            return EXIT_BACKEND_FAILED;
+    let info = match rglsl_link::validate_object(&object) {
+        Ok(info) => info,
+        Err(errors) => {
+            for error in errors.iter() {
+                diagnostic("validate", None, &error.to_string());
+            }
+            return EXIT_REJECTED;
         }
     };
-    if let Err(err) = std::fs::write(out, text) {
-        diagnostic("io", None, &err.to_string());
-        return EXIT_BACKEND_FAILED;
-    }
-    EXIT_ACCEPTED
+    let mut options = spirv_options(lang_version, debug);
+    options.flags |= spv::WriterFlags::EXPORT_FUNCTIONS;
+    write_words(&object.module, &info, &options, out)
 }

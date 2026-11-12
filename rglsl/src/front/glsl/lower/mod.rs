@@ -449,6 +449,10 @@ fn lower(
             sema_error(map, text, source, diagnostic, reworded)
         })
         .collect::<Vec<_>>();
+    let mut errors = errors;
+    if options.export_functions {
+        errors.extend(exported_main(map, &unit));
+    }
     if !errors.is_empty() {
         return Err(errors.into());
     }
@@ -464,6 +468,31 @@ fn lower(
         &class.names,
         specialize,
     )
+}
+
+fn exported_main(
+    map: &rglsl_pp::SourceMap,
+    unit: &TranslationUnit,
+) -> Option<(Error, Option<IncludeLocation>)> {
+    unit.external_declarations
+        .iter()
+        .find_map(|declaration| match *declaration {
+            ExternalDeclaration::FunctionDefinition(ref definition)
+                if definition.prototype.node.name.node == "main" =>
+            {
+                let end = definition.prototype.span.end.saturating_sub(1);
+                Some((
+                    Error {
+                        kind: ErrorKind::SemanticError(Cow::Borrowed(
+                            "main function cannot be exported",
+                        )),
+                        meta: original(map, rglsl_ast::Span::new(end, end)),
+                    },
+                    included(map, end),
+                ))
+            }
+            _ => None,
+        })
 }
 
 fn sema_error(

@@ -863,11 +863,41 @@ fn cases() -> Vec<Case> {
         Case::new("reflection", &["-l", "-q", TARGET_SHADER], &[TARGET_SHADER])
             .rejected("the reflection query database is not supported"),
         Case::new(
-            "no-link",
+            "no-link-main",
             &["-V", "--no-link", TARGET_SHADER],
             &[TARGET_SHADER],
-        )
-        .rejected("SPIR-V with linkage is not supported; --object writes rglsl object modules"),
+        ),
+        Case::new(
+            "no-link",
+            &["-V", "--no-link", "spv.exportFunctions.comp"],
+            &["spv.exportFunctions.comp"],
+        ),
+        Case::new(
+            "no-link-H",
+            &["-H", "--no-link", "spv.exportFunctions.comp"],
+            &["spv.exportFunctions.comp"],
+        ),
+        Case::new(
+            "no-link-o",
+            &[
+                "-V",
+                "--no-link",
+                "-o",
+                "out.spv",
+                "spv.exportFunctions.comp",
+            ],
+            &["spv.exportFunctions.comp"],
+        ),
+        Case::new(
+            "no-link-l",
+            &["-l", "--no-link", "spv.exportFunctions.comp"],
+            &["spv.exportFunctions.comp"],
+        ),
+        Case::new(
+            "no-link-validate",
+            &["--no-link", "spv.exportFunctions.comp"],
+            &["spv.exportFunctions.comp"],
+        ),
         Case::new(
             "config-file",
             &["-V", TARGET_SHADER, "limits.conf"],

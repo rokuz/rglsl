@@ -66,6 +66,7 @@ pub struct ResourceSet {
 pub struct Options {
     pub spirv: bool,
     pub link: bool,
+    pub no_link: bool,
     pub object: bool,
     pub preprocess: bool,
     pub disassemble: bool,
@@ -438,12 +439,7 @@ fn long_option(cursor: &mut Cursor, options: &mut Options) -> Result<(), Exit> {
             Some(text) => options.macros.push(Macro::Text(first_line(&text))),
             None => return Err(Exit::detailed("expects <text>", argument)),
         },
-        "no-link" => {
-            return Err(Exit::unsupported(
-                &argument,
-                "SPIR-V with linkage (use `--object` for rglsl object modules)",
-            ))
-        }
+        "no-link" => options.no_link = true,
         "lto" => return Err(Exit::unsupported(&argument, "link time optimization")),
         "validate-io" => return Err(Exit::unsupported(&argument, "cross stage IO validation")),
         "bindings-per-resource-type" => {

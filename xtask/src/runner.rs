@@ -352,7 +352,6 @@ fn run_case(
     };
 
     let spirv_val = match ours {
-        OursResult::Accepted if case.target.compile_only => None,
         OursResult::Accepted => {
             let failure = validate(env, case, &out, timeout)?;
             if let Some(message) = &failure {
@@ -596,7 +595,12 @@ fn validate(
     timeout: Duration,
 ) -> Result<Option<String>> {
     let mut command = Command::new(&env.spirv_val.path);
-    command.args(["--target-env", &case.target.spirv_val_env()]);
+    let environment = if case.target.compile_only {
+        format!("spv{}.{}", case.target.spirv.0, case.target.spirv.1)
+    } else {
+        case.target.spirv_val_env()
+    };
+    command.args(["--target-env", &environment]);
     if enables_extension(&case.path, "GL_EXT_texture_offset_non_const") {
         command.arg("--allow-offset-texture-operand");
     }

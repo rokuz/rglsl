@@ -169,6 +169,9 @@ pub fn run(options: &Options) -> Result<i32, Exit> {
     if options.object {
         return session.objects();
     }
+    if options.no_link && !options.preprocess && (options.spirv || options.link) {
+        return session.compile_only();
+    }
     if options.preprocess || options.link {
         return session.compile_and_link();
     }
@@ -308,6 +311,7 @@ impl<'a> Session<'a> {
             keep_uncalled: self.options.keep_uncalled,
             resource_set: self.resource_set(stage),
             binding_shifts: self.shifts(stage),
+            export_functions: self.options.no_link && self.options.spirv,
             ..glsl::Options::from(stage.unwrap_or(ShaderStage::Compute))
         }
     }
@@ -723,6 +727,45 @@ impl<'a> Session<'a> {
         Ok(code)
     }
 
+    fn compile_only(&mut self) -> Result<i32, Exit> {
+        let units = self.load_all()?;
+        self.warn_source_entry_point();
+        let mut compiled = Vec::with_capacity(units.len());
+        let mut failed = false;
+        for unit in &units {
+            let Class::Stage(stage) = unit.class else {
+                return Err(Exit::detailed(
+                    "--no-link compiles shaders of a stage; a library or an object module has none",
+                    unit.name.clone(),
+                ));
+            };
+            let result = self.compile_object(unit);
+            self.report_unit(unit, &result.log);
+            match result.object {
+                Some(object) => compiled.push((stage, object, unit.name.clone())),
+                None => failed = true,
+            }
+        }
+        if failed {
+            self.not_generated();
+            return Ok(EXIT_COMPILE);
+        }
+        if self.options.spirv {
+            for (stage, mut object, name) in compiled {
+                let info = rglsl_link::validate_object(&object).map_err(|errors| {
+                    Exit::error(format!("cannot validate the module of {name}: {errors}"))
+                })?;
+                self.rename_entry_point(&mut object.module);
+                let code = self.emit(stage, &object.module, &info, &name)?;
+                if code != EXIT_SUCCESS {
+                    return Ok(code);
+                }
+            }
+        }
+        self.write_depfile(&units)?;
+        Ok(EXIT_SUCCESS)
+    }
+
     fn not_generated(&self) {
         if self.options.spirv {
             output::out!("SPIR-V is not generated for failed compile or link");
@@ -906,6 +949,9 @@ impl<'a> Session<'a> {
         });
         let mut flags =
             spv::WriterFlags::LABEL_VARYINGS | spv::WriterFlags::SMALL_TYPE_CAPABILITIES_BY_USE;
+        if self.options.no_link {
+            flags |= spv::WriterFlags::EXPORT_FUNCTIONS;
+        }
         if self.options.debug != Some(Debug::Strip) {
             flags |= spv::WriterFlags::DEBUG;
         }
