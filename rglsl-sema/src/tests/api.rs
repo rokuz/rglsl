@@ -619,7 +619,11 @@ fn cached_built_ins_are_reused_when_they_fit() -> TestResult {
 #[test]
 fn every_stage_can_be_analysed() -> TestResult {
     for stage in Stage::ALL {
-        let source = "#version 460\nvoid main() { float a = sqrt(4.0); }\n";
+        let source = if matches!(stage, Stage::Task | Stage::Mesh) {
+            "#version 460\n#extension GL_EXT_mesh_shader : require\nvoid main() { float a = sqrt(4.0); }\n"
+        } else {
+            "#version 460\nvoid main() { float a = sqrt(4.0); }\n"
+        };
         let unit = rglsl_ast::parse(source)?;
         let analysis = analyze(&unit, &Options::new(stage));
         assert!(analysis.is_ok(), "{stage:?}: {:?}", analysis.diagnostics);

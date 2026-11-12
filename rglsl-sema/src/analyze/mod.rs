@@ -561,6 +561,7 @@ impl<'a> Analyzer<'a> {
             self.error(Span::new(end, end), DiagnosticKind::MissingEntryPoint);
         }
         let end_of_input = self.options.end_of_input.unwrap_or(end);
+        self.stage_extension_check(Span::new(end_of_input, end_of_input));
         self.check_derivative_group(Span::new(end_of_input, end_of_input));
         self.mesh_output_reads(unit);
     }
