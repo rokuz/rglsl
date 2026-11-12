@@ -870,17 +870,20 @@ impl Writer {
         reserved: Option<Word>,
     ) -> Result<Word, super::Error> {
         let candidates = self.debug.structs.get(name).cloned().unwrap_or_default();
-        let record = candidates.iter().filter_map(|&index| info.structs.get(index)).find(|record| {
-            record.name == name
-                && record.members.len() == members.len()
-                && record
-                    .members
-                    .iter()
-                    .zip(members)
-                    .all(|(declared, member)| {
-                        member.name.as_deref() == Some(declared.name.as_str())
-                    })
-        });
+        let record = candidates
+            .iter()
+            .filter_map(|&index| info.structs.get(index))
+            .find(|record| {
+                record.name == name
+                    && record.members.len() == members.len()
+                    && record
+                        .members
+                        .iter()
+                        .zip(members)
+                        .all(|(declared, member)| {
+                            member.name.as_deref() == Some(declared.name.as_str())
+                        })
+            });
         let unit = record.map_or(0, |record| record.unit);
         let unit_id = self.debug_unit(unit);
         let at = record.map_or(
@@ -1228,7 +1231,13 @@ impl Writer {
             let first = info
                 .scopes
                 .partition_point(|scope_record| scope_record.start < record.start);
-            for (position, scope_record) in info.scopes.get(first..).unwrap_or_default().iter().enumerate() {
+            for (position, scope_record) in info
+                .scopes
+                .get(first..)
+                .unwrap_or_default()
+                .iter()
+                .enumerate()
+            {
                 let index = first + position;
                 if scope_record.start > record.stop {
                     break;

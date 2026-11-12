@@ -834,7 +834,16 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   `OpFUnordNotEqual` (upstream `OpFOrdNotEqual`). `Normalize`, `FaceForward` and `Reflect`
   accept scalars. An `As` conversion between integers of different width and signedness is
   `OpSConvert`/`OpUConvert` by the source's signedness, then `OpBitcast` (upstream extended by
-  the target's signedness). The object `FORMAT_VERSION` is 4.
+  the target's signedness). The object `FORMAT_VERSION` is 5.
+
+- **Debug information.** The SPIR-V backend's `DebugInfo` option (one source text, `OpLine`
+  per statement from the main file's offsets) is replaced by `back/spv/debug.rs`: the levels
+  `Lines` (glslang's `-g`) and `NonSemantic` (`-gV`/`-gVS`), driven by the new
+  `Module::debug_info` the GLSL frontend records (sources of included files, logical lines,
+  lexical blocks); the upstream `Instruction::source*` helpers and
+  `helpers::string_to_byte_chunks` are gone. With debug information the IR spans are offsets
+  into the preprocessed text; `Span::location` clamps instead of slicing out of range.
+  `docs/design/debug-info.md`.
 
 ## Cherry-picked upstream commits
 
