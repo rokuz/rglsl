@@ -166,6 +166,12 @@ struct Parser<'a> {
     next_id: Cell<u32>,
     struct_scopes: RefCell<StructScopes<'a>>,
     extensions: RefCell<ExtensionState>,
+    partial_function: RefCell<Option<PartialFunction>>,
+}
+
+struct PartialFunction {
+    start: u32,
+    definition: FunctionDefinition,
 }
 
 #[derive(Clone)]
@@ -219,6 +225,7 @@ pub fn parse_prefix(source: &str) -> (TranslationUnit, Option<ParseError>) {
             "gl_TextureFootprint3DNV",
         ])),
         extensions: RefCell::new(ExtensionState::new()),
+        partial_function: RefCell::new(None),
     };
     let mut external_declarations = Vec::new();
     let mut failure = None;
@@ -233,6 +240,16 @@ pub fn parse_prefix(source: &str) -> (TranslationUnit, Option<ParseError>) {
         match parsed {
             Some(Ok(external)) => external_declarations.push(external),
             Some(Err(error)) => {
+                if let Some(partial) = parser.partial_function.borrow_mut().take() {
+                    let end = partial.definition.body.span.end;
+                    let id = NodeId::new(parser.next_id.get());
+                    external_declarations.push(ExternalDeclaration::FunctionDefinition(Node::new(
+                        id,
+                        Span::new(partial.start, end),
+                        partial.definition,
+                    )));
+                    parser.next_id.set(parser.next_id.get().saturating_add(1));
+                }
                 failure = Some(*error);
                 break;
             }
@@ -1080,7 +1097,38 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
         if !allow_definition || !self.at("{") {
             return Err(self.unexpected("`;`"));
         }
-        let body = self.call(self.clone().parse_compound_statement()).await?;
+        let body_start = self.start();
+        self.expect("{")?;
+        self.struct_scopes.borrow_mut().push();
+        let mut statements = Vec::new();
+        let mut failure = None;
+        while !self.at("}") {
+            if self.peek().kind == TokenKind::End {
+                failure = Some(self.unexpected("`}`"));
+                break;
+            }
+            match self.call(self.clone().parse_statement()).await {
+                Ok(statement) => statements.push(statement),
+                Err(error) => {
+                    failure = Some(error);
+                    break;
+                }
+            }
+        }
+        self.struct_scopes.borrow_mut().pop();
+        if let Some(error) = failure {
+            let end = statements
+                .last()
+                .map_or(body_start, |statement| statement.span.end);
+            let body = Spanned::new(Span::new(body_start, end), CompoundStatement { statements });
+            self.partial_function.replace(Some(PartialFunction {
+                start,
+                definition: FunctionDefinition { prototype, body },
+            }));
+            return Err(error);
+        }
+        self.expect("}")?;
+        let body = self.spanned(body_start, CompoundStatement { statements });
         let definition = FunctionDefinition { prototype, body };
         Ok(ExternalDeclaration::FunctionDefinition(
             self.node(start, definition)?,

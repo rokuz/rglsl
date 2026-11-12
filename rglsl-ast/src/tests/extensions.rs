@@ -296,6 +296,15 @@ fn a_prefix_is_returned_with_the_first_syntax_error() -> TestResult {
     let (unit, error) = crate::parse_prefix("float a;\n");
     assert_eq!(unit.external_declarations.len(), 1);
     assert!(error.is_none());
+    let (unit, error) =
+        crate::parse_prefix("void f() {\n    int a = 1;\n    { a = 2; }\n    a = float;\n}\n");
+    assert_eq!(error.ok_or("expected a syntax error")?.position.line, 4);
+    let Some(ExternalDeclaration::FunctionDefinition(definition)) =
+        unit.external_declarations.first()
+    else {
+        panic!("the partial function is missing");
+    };
+    assert_eq!(definition.body.node.statements.len(), 2);
     Ok(())
 }
 

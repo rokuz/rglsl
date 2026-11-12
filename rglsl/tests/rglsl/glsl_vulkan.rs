@@ -2630,6 +2630,27 @@ void main() {}
             .collect();
         assert_eq!(lines, [3, 4]);
     }
+    {
+        let source = "#version 450
+layout(location = 0) out vec4 o;
+void main() {
+    int i = 1;
+    i.x = vec2(1.0);
+    o = vec4(1.0);
+    if (i > 0) { o = vec4(i, float, 0.0, 1.0); }
+}
+";
+        let errors = glsl::Frontend::default()
+            .parse(&glsl::Options::from(ShaderStage::Fragment), source)
+            .err()
+            .ok_or("expected an error")?;
+        let lines: Vec<u32> = errors
+            .errors
+            .iter()
+            .map(|error| error.meta.location(source).line_number)
+            .collect();
+        assert_eq!(lines, [5, 7]);
+    }
     Ok(())
 }
 
@@ -10659,5 +10680,39 @@ void main() {
         .capabilities
         .iter()
         .any(|inst| inst.operands[0] == Operand::Capability(spirv::Capability::Float16ImageAMD)));
+    Ok(())
+}
+
+#[test]
+fn branches_on_constant_conditions_are_kept_as_glslang_keeps_them() -> crate::TestResult {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+layout(location = 0) out vec4 o;
+layout(location = 0) in float x;
+const bool B = false;
+void main() {
+    o = vec4(0.0);
+    if (false) { o = vec4(1.0); }
+    if (B) { o.z = 4.0; } else { o.w = x; }
+    switch (2) { case 1: o.x = 5.0; break; default: o.z = 7.0; }
+    while (false) { o.x += 1.0; }
+}
+",
+    )?;
+    assert_eq!(instructions(&module, Op::Switch).len(), 1);
+    assert_eq!(instructions(&module, Op::LoopMerge).len(), 1);
+    assert_eq!(instructions(&module, Op::Store).len(), 7);
+    let constants: Vec<u32> = module
+        .types_global_values
+        .iter()
+        .filter(|inst| matches!(inst.class.opcode, Op::ConstantTrue | Op::ConstantFalse))
+        .filter_map(|inst| inst.result_id)
+        .collect();
+    let constant_branches = instructions(&module, Op::BranchConditional)
+        .into_iter()
+        .filter(|inst| constants.contains(&inst.operands[0].unwrap_id_ref()))
+        .count();
+    assert!(constant_branches >= 3, "{constant_branches}");
     Ok(())
 }
