@@ -83,6 +83,8 @@ pub const MESH_SHADER_NV: Need = F("MeshShaderFeaturesNV.meshShader");
 pub const TASK_SHADER_NV: Need = F("MeshShaderFeaturesNV.taskShader");
 pub const MESH_DERIVATIVES: Need =
     F("ComputeShaderDerivativesPropertiesKHR.meshAndTaskShaderDerivatives");
+pub const FRAGMENT_BARYCENTRIC: Need =
+    F("FragmentShaderBarycentricFeaturesKHR.fragmentShaderBarycentric");
 pub const PRIMITIVE_SHADING_RATE: Need =
     F("FragmentShadingRateFeaturesKHR.primitiveFragmentShadingRate");
 pub const PRIMITIVE_SHADING_RATE_MESH: Need =
@@ -301,6 +303,7 @@ pub fn capability(capability: Capability) -> Requirement {
         C::MultiView => needs![MULTIVIEW],
         C::PerViewAttributesNV => needs![MULTIVIEW, E("VK_NVX_multiview_per_view_attributes")],
         C::FragmentDensityEXT => NONE,
+        C::FragmentBarycentricKHR => needs![FRAGMENT_BARYCENTRIC],
         C::InputAttachment => NONE,
         C::CooperativeMatrixNV => needs![COOPERATIVE_MATRIX_NV],
         C::CooperativeMatrixReductionsNV => needs![F(
@@ -499,6 +502,8 @@ pub fn extension(name: &str) -> bool {
             | "SPV_KHR_relaxed_extended_instruction"
             | "SPV_EXT_fragment_invocation_density"
             | "SPV_NV_shading_rate"
+            | "SPV_KHR_fragment_shader_barycentric"
+            | "SPV_NV_fragment_shader_barycentric"
             | "SPV_ARM_tensors"
     )
 }
@@ -518,11 +523,15 @@ pub const SHADING_RATE_IMAGE: [Need; 2] = [
     F("ShadingRateImageFeaturesNV.shadingRateImage"),
 ];
 
+pub const FRAGMENT_BARYCENTRIC_NV: [Need; 2] =
+    [E("VK_NV_fragment_shader_barycentric"), FRAGMENT_BARYCENTRIC];
+
 pub fn extension_needs(name: &str) -> &'static [Need] {
     match name {
         "SPV_KHR_relaxed_extended_instruction" => &RELAXED_EXTENDED_INSTRUCTION,
         "SPV_EXT_fragment_invocation_density" => &FRAGMENT_DENSITY,
         "SPV_NV_shading_rate" => &SHADING_RATE_IMAGE,
+        "SPV_NV_fragment_shader_barycentric" => &FRAGMENT_BARYCENTRIC_NV,
         _ => &[],
     }
 }
@@ -579,6 +588,7 @@ pub fn probes() -> Vec<Need> {
     needs.extend(RELAXED_EXTENDED_INSTRUCTION);
     needs.extend(FRAGMENT_DENSITY);
     needs.extend(SHADING_RATE_IMAGE);
+    needs.extend(FRAGMENT_BARYCENTRIC_NV);
     needs.push(MESH_DERIVATIVES);
     needs.push(MULTIVIEW_MESH);
     needs.extend([
@@ -653,6 +663,16 @@ mod tests {
             &RELAXED_EXTENDED_INSTRUCTION
         );
         assert!(extension_needs("SPV_KHR_16bit_storage").is_empty());
+        assert_eq!(
+            extension_needs("SPV_NV_fragment_shader_barycentric"),
+            &FRAGMENT_BARYCENTRIC_NV
+        );
+        assert!(extension_needs("SPV_KHR_fragment_shader_barycentric").is_empty());
+        assert_eq!(
+            capability(Capability::FragmentBarycentricKHR),
+            Requirement::Needs(&[FRAGMENT_BARYCENTRIC])
+        );
+        assert!(probes().contains(&E("VK_NV_fragment_shader_barycentric")));
     }
 
     #[test]

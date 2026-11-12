@@ -1502,7 +1502,10 @@ pub fn reflect(module: &Module) -> Result<Reflection, String> {
                     }
                     continue;
                 }
-                let arrayed = arrayed_interface(model, output);
+                let arrayed = arrayed_interface(model, output)
+                    || (!output
+                        && model == ExecutionModel::Fragment
+                        && decorations.has(id, Decoration::PerVertexKHR));
                 let block = if arrayed {
                     per_vertex_element(&types, pointee).unwrap_or(pointee)
                 } else {
