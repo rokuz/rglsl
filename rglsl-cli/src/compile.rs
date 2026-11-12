@@ -856,6 +856,7 @@ impl<'a> Session<'a> {
             auto_map_locations: self.options.auto_map_locations,
             auto_map_bindings: self.options.auto_map_bindings,
             binding_shifts,
+            keep_uncalled: self.options.keep_uncalled,
         }
     }
 

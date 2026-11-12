@@ -334,3 +334,108 @@ fn disassembles_with_h() -> TestResult {
     assert!(directory.join("frag.spv").is_file());
     Ok(())
 }
+
+#[test]
+fn preprocesses_with_line_directives_around_included_text() -> TestResult {
+    let directory = work_dir("preprocess-include")?;
+    fs::write(
+        directory.join("shader.frag"),
+        "#version 450\n#extension GL_GOOGLE_include_directive : require\n#include \"common.h\"\nlayout(location = 0) out vec4 color;\nvoid main() { color = tint; }\n",
+    )?;
+    fs::write(directory.join("common.h"), "const vec4 tint = vec4(1.0);\n")?;
+    let run = rglsl(&directory, &["-E", "shader.frag"])?;
+    assert_eq!(run.code, Some(0), "{}", run.stderr);
+    assert_eq!(
+        run.stdout,
+        "#version 450\n#extension GL_GOOGLE_include_directive : require\n#line 1 \"./common.h\"\nconst vec4 tint = vec4(1.0);\n#line 4 \"shader.frag\"\n layout(location = 0) out vec4 color;\nvoid main() { color = tint; }\n\n"
+    );
+    Ok(())
+}
+
+#[test]
+fn takes_preamble_text() -> TestResult {
+    let directory = work_dir("preamble")?;
+    fs::write(
+        directory.join("shader.frag"),
+        "#version 450\n#ifndef ONE\n#error ONE\n#endif\nlayout(location = 0) out vec4 color;\nvoid main() { color = tint(); }\n",
+    )?;
+    let run = rglsl(
+        &directory,
+        &[
+            "-V",
+            "-DONE",
+            "--preamble-text",
+            "vec4 tint() { return vec4(1.0); }",
+            "shader.frag",
+        ],
+    )?;
+    assert_eq!(run.code, Some(0), "{}", run.stderr);
+    let run = rglsl(&directory, &["-V", "-DONE", "-P#undef ONE", "shader.frag"])?;
+    assert_eq!(run.code, Some(2));
+    assert!(
+        run.stderr.contains("ERROR: shader.frag:3:"),
+        "{}",
+        run.stderr
+    );
+    let run = rglsl(&directory, &["-V", "-P#error early", "shader.frag"])?;
+    assert_eq!(run.code, Some(2));
+    assert!(run.stderr.contains("ERROR: -1:1:"), "{}", run.stderr);
+    Ok(())
+}
+
+#[test]
+fn compiles_without_linking() -> TestResult {
+    let directory = work_dir("no-link")?;
+    fs::write(
+        directory.join("functions.comp"),
+        "#version 450\nfloat imported(float x);\nfloat add(float a, float b) { return a + imported(b); }\n",
+    )?;
+    let run = rglsl(&directory, &["-V", "--no-link", "functions.comp"])?;
+    assert_eq!(run.code, Some(0), "{}", run.stderr);
+    let module = module(&directory.join("comp.spv"))?;
+    assert!(module.entry_points.is_empty());
+    assert!(module.capabilities.iter().any(|instruction| matches!(
+        instruction.operands.first(),
+        Some(rspirv::dr::Operand::Capability(spirv::Capability::Linkage))
+    )));
+    let linkage: Vec<String> = module
+        .annotations
+        .iter()
+        .filter_map(|instruction| match instruction.operands.as_slice() {
+            [_, rspirv::dr::Operand::Decoration(spirv::Decoration::LinkageAttributes), rspirv::dr::Operand::LiteralString(name), rspirv::dr::Operand::LinkageType(kind)] => {
+                Some(format!("{name} {kind:?}"))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(linkage, ["imported Import", "add Export"]);
+    fs::write(directory.join("main.frag"), FRAGMENT)?;
+    let run = rglsl(&directory, &["-V", "--no-link", "main.frag"])?;
+    assert_eq!(run.code, Some(2));
+    assert!(
+        run.stderr.contains("main function cannot be exported"),
+        "{}",
+        run.stderr
+    );
+    Ok(())
+}
+
+#[test]
+fn keeps_uncalled_functions_of_every_linked_file() -> TestResult {
+    let directory = work_dir("keep-uncalled")?;
+    fs::write(
+        directory.join("main.frag"),
+        "#version 450\nlayout(location = 0) out vec4 color;\nfloat used(float x);\nfloat unusedA(float x) { return x * 2.0; }\nvoid main() { color = vec4(used(1.0)); }\n",
+    )?;
+    fs::write(
+        directory.join("helpers.frag"),
+        "#version 450\nfloat used(float x) { return x + 1.0; }\nfloat unusedB(float x) { return x - 1.0; }\n",
+    )?;
+    let run = rglsl(&directory, &["-V", "main.frag", "helpers.frag"])?;
+    assert_eq!(run.code, Some(0), "{}", run.stderr);
+    assert_eq!(module(&directory.join("frag.spv"))?.functions.len(), 2);
+    let run = rglsl(&directory, &["-V", "--ku", "main.frag", "helpers.frag"])?;
+    assert_eq!(run.code, Some(0), "{}", run.stderr);
+    assert_eq!(module(&directory.join("frag.spv"))?.functions.len(), 4);
+    Ok(())
+}
