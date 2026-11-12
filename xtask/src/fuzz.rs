@@ -79,7 +79,7 @@ pub struct Outcome {
 pub fn run(root: &Path, options: Options) -> Result<()> {
     let glslang = oracles::find_tool(root, "glslang", "RGLSL_GLSLANG")?;
     let spirv_val = oracles::find_tool(root, "spirv-val", "RGLSL_SPIRV_VAL")?;
-    let work = root.join("target").join("fuzz");
+    let work = crate::fuzz_libfuzzer::fuzz_root(root).join("differential");
     fs::create_dir_all(&work)?;
 
     let shaders_dir = options.shaders.clone();
@@ -518,7 +518,7 @@ fn merge(outcomes: &mut [Outcome], per_target: &[(TargetId, Vec<Judgement>)]) {
 }
 
 fn details(root: &Path, outcomes: &[Outcome]) -> String {
-    let mut out = String::from("shader\tverdict\tnote\n");
+    let mut out = String::from("input\tverdict\tnote\n");
     for outcome in outcomes {
         let shader = outcome.shader.strip_prefix(root).unwrap_or(&outcome.shader);
         let _ = writeln!(
