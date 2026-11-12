@@ -15,7 +15,7 @@ use crate::types::{ArraySize, BlockStorage, Type, TypeKind};
 
 pub const MESH_EXT: &str = "GL_EXT_mesh_shader";
 pub const MESH_NV: &str = "GL_NV_mesh_shader";
-const MESH_ANY: [&str; 2] = [MESH_NV, MESH_EXT];
+pub(crate) const MESH_ANY: [&str; 2] = [MESH_NV, MESH_EXT];
 
 pub const MESH_BLOCK_NAMES: [(&str, &str); 4] = [
     ("gl_MeshPerVertexNV", "gl_MeshVerticesNV"),

@@ -4822,8 +4822,9 @@ void main() {
     bool a = subgroupQuadAll(true);
     bool b = subgroupQuadAny(false);
 }
-### quad control layouts need the extension | frag | 2:ExtensionRequired
+### quad control layouts are core at 450 | frag | ok
 layout(full_quads) in;
+layout(quad_derivatives) in;
 void main() {}
 ### shader ballot variables and functions need their extension | comp | 5:ExtensionRequired, 6:ExtensionRequired
 #extension GL_ARB_gpu_shader_int64 : enable
@@ -6416,3 +6417,100 @@ float e(invariant float x) { return x; }
 float f(smooth invariant float x) { return x; }
 float g(precise out float x) { x = 1.0; return x; }
 void main() { o = vec4(0.0); }
+### scalar block layout needs its extension | frag | 2:ExtensionRequired
+layout(scalar, binding = 0) buffer B { vec3 v; float f; };
+void main() {}
+### scalar uniform block needs its extension | frag | 2:ExtensionRequired
+layout(scalar, binding = 0) uniform U { vec3 v; float f; };
+void main() {}
+### scalar push constant needs its extension | frag | 2:ExtensionRequired
+layout(push_constant, scalar) uniform P { vec3 v; } p;
+void main() {}
+### scalar default uniform layout needs its extension | frag | 2:ExtensionRequired
+layout(scalar) uniform;
+void main() {}
+### scalar default buffer layout needs its extension | frag | 2:ExtensionRequired
+layout(scalar) buffer;
+void main() {}
+### scalar block member needs its extension | frag | 2:ExtensionRequired
+layout(binding = 0) buffer B { layout(scalar) vec3 v; };
+void main() {}
+### scalar buffer reference needs its extension | frag | 3:ExtensionRequired
+#extension GL_EXT_buffer_reference : require
+layout(buffer_reference, scalar) buffer R { vec3 v; };
+void main() {}
+### scalar block layout with its extension | frag | ok
+#extension GL_EXT_scalar_block_layout : require
+layout(scalar, binding = 0) buffer B { vec3 v; float f; };
+layout(scalar) uniform;
+void main() {}
+### bindless layouts need their extension | frag | 2:ExtensionRequired, 3:ExtensionRequired, 4:ExtensionRequired, 5:ExtensionRequired
+layout(bindless_sampler) uniform;
+layout(bindless_image) uniform;
+layout(bound_sampler) uniform;
+layout(bound_image) uniform;
+void main() {}
+### num_views needs a multiview extension | vert | 3:ExtensionRequired
+#extension GL_EXT_multiview : require
+layout(num_views = 2) in;
+void main() {}
+### num_views with the multiview extension | vert | ok
+#extension GL_OVR_multiview : require
+layout(num_views = 2) in;
+void main() {}
+### blend equations need their extension | frag | 2:ExtensionRequired
+layout(blend_support_multiply) out;
+void main() {}
+### blend equations with their extension | frag | ok
+#extension GL_KHR_blend_equation_advanced : require
+layout(blend_support_multiply, blend_support_all_equations) out;
+void main() {}
+### unknown blend equation | frag | 3:InvalidQualifier
+#extension GL_KHR_blend_equation_advanced : require
+layout(blend_support_foo) out;
+void main() {}
+### NV derivative groups need their extension | comp | 2:ExtensionRequired
+layout(derivative_group_quadsNV) in;
+layout(local_size_x = 2, local_size_y = 2) in;
+void main() {}
+### KHR derivative groups need their extension | comp | 2:ExtensionRequired
+layout(derivative_group_linearKHR) in;
+layout(local_size_x = 4) in;
+void main() {}
+### NV derivative groups do not accept the KHR extension | comp | 3:ExtensionRequired, 5:InvalidQualifier
+#extension GL_KHR_compute_shader_derivatives : require
+layout(derivative_group_quadsNV) in;
+layout(local_size_x = 2, local_size_y = 2) in;
+void main() {}
+### derivative groups outside compute-like stages | frag | 2:NotSupportedInStage
+layout(derivative_group_quadsNV) in;
+void main() {}
+### shader record layouts need their extensions | rgen 460 | 3:ExtensionRequired, 4:ExtensionRequired
+#extension GL_NV_ray_tracing : require
+layout(shaderRecordEXT) buffer B { vec4 v; };
+layout(shaderRecordEXT) buffer C { vec4 v; } c;
+void main() {}
+### shader record outside ray tracing stages | frag 460 | 2:NotSupportedInStage
+layout(shaderRecordEXT) buffer B { vec4 v; };
+void main() {}
+### hit object shader record layouts need their extensions | rgen 460 | 3:ExtensionRequired, 4:ExtensionRequired
+#extension GL_EXT_ray_tracing : require
+layout(hitobjectshaderrecordnv) buffer B { vec4 v; };
+layout(hitobjectshaderrecordext) buffer C { vec4 w; };
+void main() {}
+### mesh layouts need a mesh extension | mesh 460 | 2:ExtensionRequired, 3:ExtensionRequired, 3:ExtensionRequired, 5:ExtensionRequired
+layout(local_size_x = 1) in;
+layout(max_vertices = 3, max_primitives = 1) out;
+layout(triangles) out;
+void main() {}
+### task layouts need a mesh extension | task 460 | 2:ExtensionRequired, 3:ExtensionRequired
+layout(local_size_x = 1) in;
+void main() {}
+### task shaders need a mesh extension | task 460 | 2:ExtensionRequired
+void main() {}
+### mesh layouts with a mesh extension | mesh 460 | ok
+#extension GL_EXT_mesh_shader : require
+layout(local_size_x = 1) in;
+layout(max_vertices = 3, max_primitives = 1) out;
+layout(triangles) out;
+void main() {}

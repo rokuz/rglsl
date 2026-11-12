@@ -116,11 +116,34 @@ const PRE_RASTERIZATION: &[Stage] = &[
 
 const COMPUTE_LIKE: &[Stage] = &[Stage::Compute, Stage::Task, Stage::Mesh];
 
+const RAY_TRACING: &[Stage] = &[
+    Stage::RayGeneration,
+    Stage::Intersection,
+    Stage::AnyHit,
+    Stage::ClosestHit,
+    Stage::Miss,
+    Stage::Callable,
+];
+
 pub fn layout_stages(name: &str) -> Option<&'static [Stage]> {
     Some(match name {
-        "local_size_x" | "local_size_y" | "local_size_z" | "local_size_x_id"
-        | "local_size_y_id" | "local_size_z_id" | "shading_rate_xqcom" | "shading_rate_yqcom"
-        | "shading_rate_zqcom" => COMPUTE_LIKE,
+        "local_size_x"
+        | "local_size_y"
+        | "local_size_z"
+        | "local_size_x_id"
+        | "local_size_y_id"
+        | "local_size_z_id"
+        | "shading_rate_xqcom"
+        | "shading_rate_yqcom"
+        | "shading_rate_zqcom"
+        | "derivative_group_quadsnv"
+        | "derivative_group_linearnv"
+        | "derivative_group_quadskhr"
+        | "derivative_group_linearkhr" => COMPUTE_LIKE,
+        "shaderrecordnv"
+        | "shaderrecordext"
+        | "hitobjectshaderrecordnv"
+        | "hitobjectshaderrecordext" => RAY_TRACING,
         "vertices" => &[Stage::TessControl],
         "max_vertices" | "points" | "lines" => &[Stage::Geometry, Stage::Mesh],
         "max_primitives" => &[Stage::Mesh],
