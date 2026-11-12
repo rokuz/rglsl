@@ -8,6 +8,7 @@ use crate::{FastHashMap, FastHashSet, FastIndexSet};
 enum TypeInfo {
     Int(Word),
     Float(Word),
+    EncodedFloat(Word),
     Struct(Vec<Word>),
     Element(Word),
     Pointer(Word, Word),
@@ -131,7 +132,8 @@ impl Module {
                     children.push((element, float, width));
                     false
                 }
-                Some(&(TypeInfo::Pointer(..) | TypeInfo::Other)) | None => false,
+                Some(&(TypeInfo::Pointer(..) | TypeInfo::EncodedFloat(_) | TypeInfo::Other))
+                | None => false,
             },
         )
     }
@@ -185,6 +187,7 @@ pub(super) fn usage(declarations: &[Word], functions: &[Word], annotations: &[Wo
         let second = operands.get(1).copied();
         let info = match Op::from_u32(instruction.op) {
             Some(Op::TypeInt) => second.map(TypeInfo::Int),
+            Some(Op::TypeFloat) if operands.get(2).is_some() => second.map(TypeInfo::EncodedFloat),
             Some(Op::TypeFloat) => second.map(TypeInfo::Float),
             Some(Op::TypeStruct) => {
                 Some(TypeInfo::Struct(operands.get(1..).unwrap_or(&[]).to_vec()))
@@ -432,7 +435,9 @@ fn post_process(
     let basic = module.basic(ty);
     let (int, float, structure) = match basic {
         Some(&TypeInfo::Int(width)) => (Some(width), None, false),
-        Some(&TypeInfo::Float(width)) => (None, Some(width), false),
+        Some(&(TypeInfo::Float(width) | TypeInfo::EncodedFloat(width))) => {
+            (None, Some(width), false)
+        }
         Some(&TypeInfo::Struct(_)) => (None, None, true),
         _ => (None, None, false),
     };

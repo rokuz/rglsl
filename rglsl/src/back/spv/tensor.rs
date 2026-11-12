@@ -1,7 +1,7 @@
 use spirv::{Op, TensorOperands, Word};
 
 use super::{Block, BlockContext, Error, Instruction, Writer};
-use crate::{arena::Handle, Expression, Scalar};
+use crate::{arena::Handle, CooperativeSize, Expression, Scalar};
 
 const SPV_ARM_TENSORS: &str = "SPV_ARM_tensors";
 
@@ -10,11 +10,11 @@ impl Writer {
         &mut self,
         id: Word,
         scalar: Scalar,
-        rank: u32,
+        rank: CooperativeSize,
     ) -> Result<Instruction, Error> {
         self.require_tensors()?;
         let element = self.get_numeric_type_id(super::NumericType::Scalar(scalar));
-        let rank = self.get_index_constant(rank);
+        let rank = self.cooperative_size_id(rank);
         let mut instruction = Instruction::new(Op::TypeTensorARM);
         instruction.set_result(id);
         instruction.add_operand(element);

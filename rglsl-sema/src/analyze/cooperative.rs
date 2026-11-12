@@ -262,11 +262,7 @@ impl Analyzer<'_> {
                         "tensor type requires exactly 1 rank specifier",
                     );
                 };
-                let Some(rank) = rank
-                    .value()
-                    .and_then(|rank| u32::try_from(rank).ok())
-                    .filter(|rank| *rank >= 1)
-                else {
+                let Some(rank) = rank.raw().filter(|rank| rank.checked_size() >= 1) else {
                     return self.parameter_error(
                         span,
                         keyword,
@@ -280,7 +276,7 @@ impl Analyzer<'_> {
                         "expected bool, integer or floating point type parameter",
                     );
                 };
-                if rank > 15 {
+                if rank.checked_size() > 15 {
                     return self.parameter_error(span, keyword, "tensor rank must be at most 15");
                 }
                 let extension = match scalar {

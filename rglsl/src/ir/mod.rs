@@ -1132,7 +1132,7 @@ pub enum TypeInner {
     },
     Tensor {
         scalar: Scalar,
-        rank: u32,
+        rank: CooperativeSize,
     },
     /// Atomic scalar.
     Atomic(Scalar),

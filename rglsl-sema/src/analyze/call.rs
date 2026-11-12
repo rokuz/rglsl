@@ -999,12 +999,10 @@ impl Analyzer<'_> {
         else {
             return true;
         };
-        let formal = &parameter.qualifiers;
-        (!argument.readonly || formal.readonly)
-            && (!argument.writeonly || formal.writeonly)
-            && (!argument.volatile || formal.volatile)
-            && (!argument.nontemporal || formal.nontemporal)
-            && (!argument.coherent || formal.coherent)
+        argument
+            .dropped_memory_qualifiers(&parameter.qualifiers)
+            .next()
+            .is_none()
     }
 
     fn builtin_checks(&mut self, span: Span, name: &str, operands: &[Operand]) -> bool {
