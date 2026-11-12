@@ -2270,6 +2270,39 @@ impl Analyzer<'_> {
         }
     }
 
+    fn parameter_qualifiers(&mut self, span: Span, name: &str, qualifiers: &Qualifiers) {
+        self.no_shader_layouts(qualifiers);
+        let auxiliary = qualifiers.centroid
+            || qualifiers.patch
+            || qualifiers.sample
+            || qualifiers.interpolation.is_some();
+        let errors = [
+            (
+                auxiliary.then_some(span),
+                "cannot use auxiliary or interpolation qualifiers on a function parameter",
+            ),
+            (
+                self.object_layout(qualifiers),
+                "cannot use layout qualifiers on a function parameter",
+            ),
+            (
+                qualifiers.invariant.then_some(span),
+                "cannot use invariant qualifier on a function parameter",
+            ),
+        ];
+        for (at, reason) in errors {
+            if let Some(at) = at {
+                self.error(
+                    at,
+                    DiagnosticKind::InvalidParameter {
+                        name: String::from(name),
+                        reason,
+                    },
+                );
+            }
+        }
+    }
+
     fn parameter(&mut self, parameter: &Node<ParameterDeclaration>) -> Option<Parameter> {
         let qualifiers = self.optional_qualifiers(&parameter.ty.node);
         let base = self.type_specifier(&parameter.ty.specifier);
@@ -2288,6 +2321,7 @@ impl Analyzer<'_> {
             self.reserved_check(identifier);
         }
         let shown = name.clone().unwrap_or_default();
+        self.parameter_qualifiers(parameter.span, &shown, &qualifiers);
         let literal_type = ty.is_scalar()
             && matches!(
                 ty.scalar_type(),
