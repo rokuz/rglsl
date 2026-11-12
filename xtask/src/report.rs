@@ -5,6 +5,7 @@ use std::fmt::Write as _;
 
 use crate::corpus::{Corpus, Kind, STAGE_EXTENSIONS};
 use crate::exec::{Outcome, SkipReason, TargetId};
+use crate::interface;
 use crate::runner::{CaseResult, Environment, OracleResult, OursResult};
 
 fn table_header(sources: &[(TargetId, ExecSource)]) -> String {
@@ -61,6 +62,7 @@ struct Row {
     accept: Score,
     diag: Score,
     valid: Score,
+    interface: Score,
     exec: BTreeMap<TargetId, Score>,
     link: Score,
     crashes: usize,
@@ -77,6 +79,7 @@ impl Row {
         self.accept.add(result.accept());
         self.diag.add(result.diag());
         self.valid.add(result.valid());
+        self.interface.add(result.interface());
         for (target, outcome) in &result.exec {
             self.exec
                 .entry(target.clone())
@@ -91,11 +94,12 @@ impl Row {
 
     fn line(&self, label: &str, exec: &[String]) -> String {
         format!(
-            "| {label} | {} | {} | {} | {} | – | {} | {} | {} |\n",
+            "| {label} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
             self.files,
             self.accept.cell(),
             self.diag.cell(),
             self.valid.cell(),
+            self.interface.cell(),
             exec.join(" | "),
             self.link.cell(),
             self.crashes
@@ -353,7 +357,7 @@ pub fn progress(env: &Environment, results: &[CaseResult], carried: Option<&Carr
 | `accept` | we accept the shader exactly when glslang does | every shader glslang compiles without crashing |
 | `diag` | we reject it and our first error is on a line glslang reports an error on | shaders glslang rejects |
 | `valid` | we produce SPIR-V and `spirv-val` accepts it | shaders we accept |
-| `interface` | reflection matches glslang | not implemented yet (M9) |
+| `interface` | reflection of our module matches glslang's: entry points, execution modes and local size (with specialization constant ids), inputs and outputs (location, component, built-in, type, interpolation and other interface decorations), resources (set, binding, storage class, type with array sizes, image dimensions, format and sampling, block layout: offsets, strides, matrix layout), push constants, ray tracing and task payloads, specialization constants (ids, types, defaults); names, ids and debug information are ignored; the deliberate differences listed in `xtask/interface-expected.toml` count as matches | shaders both accept (also when exec is skipped); for link groups, every linked module |
 | `exec local` | our module and glslang's, run by Amber on KosmicKrisp on the Mac with the same inputs, write the same buffers, images and color attachments | shaders both accept and that we could execute; skips are counted apart |
 | {remote_columns} | the same on each remote Windows target (a real GPU and its vendor's Vulkan driver), driven over SSH; the column is named after the GPU's vendor, or after the GPU when two targets share a vendor | as for `exec local` |
 | `link` | a group of files compiled and linked into one program gives glslang's verdict (accept, diag and valid as above, exec when the program has one stage); for our own tests, the verdict and the errors their `expect` file names | glslang's link tests (`gtests/Link.FromFile*.cpp`) in scope, and our tests in `tests/link` |
@@ -589,6 +593,16 @@ pub fn summary(results: &[CaseResult], ran: &[TargetId]) -> String {
             out.push('\n');
         }
         for result in &results {
+            if result.interface() == Some(false) {
+                let first = result
+                    .interface
+                    .as_ref()
+                    .and_then(|check| check.mismatches.first())
+                    .map_or("", String::as_str);
+                let _ = writeln!(out, "  interface FAIL {}: {first}", result.case.name);
+            }
+        }
+        for result in &results {
             if result.link() == Some(false) {
                 let _ = writeln!(out, "  link FAIL {}: {}", result.case.name, result.note);
             }
@@ -662,12 +676,12 @@ pub fn details(results: &[CaseResult]) -> String {
         targets.extend(r.exec.keys().cloned());
     }
     let mut out = String::from(
-        "file\tcorpus\tversion\tstage\ttarget\tsuite\tglslang\tours\taccept\tdiag\tvalid",
+        "file\tcorpus\tversion\tstage\ttarget\tsuite\tglslang\tours\taccept\tdiag\tvalid\tinterface",
     );
     for target in &targets {
         let _ = write!(out, "\texec_{}", target.label());
     }
-    out.push_str("\tnote");
+    out.push_str("\tnote\tinterface_note");
     for target in &targets {
         let _ = write!(out, "\texec_{}_note", target.label());
     }
@@ -703,7 +717,7 @@ pub fn details(results: &[CaseResult]) -> String {
             .collect();
         let _ = write!(
             out,
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
             r.case.name,
             match r.case.corpus {
                 Corpus::Vulkan => "vulkan",
@@ -719,11 +733,18 @@ pub fn details(results: &[CaseResult]) -> String {
             mark(r.accept()),
             mark(r.diag()),
             mark(r.valid()),
+            mark(r.interface()),
         );
         for (cell, _) in &columns {
             let _ = write!(out, "\t{cell}");
         }
         let _ = write!(out, "\t{}", r.note.replace(['\t', '\n'], " "));
+        let interface_note = r
+            .interface
+            .as_ref()
+            .map(interface::Check::note)
+            .unwrap_or_default();
+        let _ = write!(out, "\t{}", interface_note.replace(['\t', '\n'], " "));
         for (_, note) in &columns {
             let _ = write!(out, "\t{}", note.replace(['\t', '\n'], " "));
         }
