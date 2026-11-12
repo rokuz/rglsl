@@ -74,8 +74,9 @@ fn result_id_index(opcode: u32) -> Option<usize> {
         Op::ConstantCompositeReplicateEXT,
         Op::SpecConstantCompositeReplicateEXT,
     ];
-    const UNTYPED: [Op; 9] = [
+    const UNTYPED: [Op; 10] = [
         Op::TypeRayQueryKHR,
+        Op::TypeTensorARM,
         Op::TypeAccelerationStructureKHR,
         Op::TypeCooperativeMatrixKHR,
         Op::TypeCooperativeMatrixNV,

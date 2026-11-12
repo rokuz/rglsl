@@ -12,7 +12,7 @@ use super::rays::{self, Geometry, RayPipeline, ShaderRef};
 use super::references::{self, Root, Table};
 use super::reflect::{
     AddressBuffer, ImageType, Layout, Reflection, Resource, ResourceKind, Scalar, ScalarKind, Slot,
-    Varying,
+    Varying, Xfb, XfbField,
 };
 use super::requirements::{self, Need, Requirement};
 
@@ -21,6 +21,8 @@ pub const VERTEX_COUNT: u32 = 12;
 const TEXEL_BUFFER_TEXELS: u32 = 64;
 const RAY_COUNT: u32 = rays::LAUNCH_SIZE * rays::LAUNCH_SIZE;
 const MAX_BUFFER_BYTES: u32 = 1 << 22;
+const XFB_VERTICES: u32 = 64;
+const MULTIVIEW_VIEWS: u32 = 2;
 const DATA_DIR: &str = "{DATA}";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,7 +70,9 @@ pub struct Plan {
     pub targets: Vec<Target>,
     pub harness: Vec<(ShaderKind, String)>,
     pub attachments: Vec<Attachment>,
+    pub unwritten_attachments: BTreeSet<u32>,
     pub framebuffer: u32,
+    pub views: u32,
     pub placeholder: bool,
     pub draw: Draw,
     pub rays: Option<RayPipeline>,
@@ -118,6 +122,27 @@ fn storage_format(format: ImageFormat) -> Option<ImageFormatInfo> {
         ImageFormat::Rgba8ui => ("R8G8B8A8_UINT", scalar(Uint, 8), 4),
         ImageFormat::Rgba8i => ("R8G8B8A8_SINT", scalar(Sint, 8), 4),
         ImageFormat::R64ui => ("R64_UINT", scalar(Uint, 64), 1),
+        ImageFormat::Rgba16 => ("R16G16B16A16_UNORM", scalar(Uint, 16), 4),
+        ImageFormat::Rg16 => ("R16G16_UNORM", scalar(Uint, 16), 2),
+        ImageFormat::R16 => ("R16_UNORM", scalar(Uint, 16), 1),
+        ImageFormat::Rgba16Snorm => ("R16G16B16A16_SNORM", scalar(Sint, 16), 4),
+        ImageFormat::Rg16Snorm => ("R16G16_SNORM", scalar(Sint, 16), 2),
+        ImageFormat::R16Snorm => ("R16_SNORM", scalar(Sint, 16), 1),
+        ImageFormat::Rg8 => ("R8G8_UNORM", scalar(Uint, 8), 2),
+        ImageFormat::R8 => ("R8_UNORM", scalar(Uint, 8), 1),
+        ImageFormat::Rgba8Snorm => ("R8G8B8A8_SNORM", scalar(Sint, 8), 4),
+        ImageFormat::Rg8Snorm => ("R8G8_SNORM", scalar(Sint, 8), 2),
+        ImageFormat::R8Snorm => ("R8_SNORM", scalar(Sint, 8), 1),
+        ImageFormat::Rgba16i => ("R16G16B16A16_SINT", scalar(Sint, 16), 4),
+        ImageFormat::Rg16i => ("R16G16_SINT", scalar(Sint, 16), 2),
+        ImageFormat::R16i => ("R16_SINT", scalar(Sint, 16), 1),
+        ImageFormat::Rgba16ui => ("R16G16B16A16_UINT", scalar(Uint, 16), 4),
+        ImageFormat::Rg16ui => ("R16G16_UINT", scalar(Uint, 16), 2),
+        ImageFormat::R16ui => ("R16_UINT", scalar(Uint, 16), 1),
+        ImageFormat::Rg8i => ("R8G8_SINT", scalar(Sint, 8), 2),
+        ImageFormat::R8i => ("R8_SINT", scalar(Sint, 8), 1),
+        ImageFormat::Rg8ui => ("R8G8_UINT", scalar(Uint, 8), 2),
+        ImageFormat::R8ui => ("R8_UINT", scalar(Uint, 8), 1),
         ImageFormat::R64i => ("R64_SINT", scalar(Sint, 64), 1),
         _ => return None,
     };
@@ -148,40 +173,87 @@ fn sampled_format(image: &ImageType) -> ImageFormatInfo {
     }
 }
 
+const IMAGE_LAYERS: u32 = 3;
+const CUBE_ARRAY_LAYERS: u32 = 12;
+
+const IMAGE_SAMPLES: u32 = 4;
+
 fn image_extent(image: &ImageType) -> Result<(String, u32), Refusal> {
-    if image.arrayed {
-        return Err(Refusal::Binding(
-            "arrayed images (Amber images have a single layer)".into(),
-        ));
-    }
     if image.multisampled {
-        return Err(Refusal::Binding(
-            "multisampled images (Amber cannot fill them with data)".into(),
+        let (extent, texels) = match (image.dim, image.arrayed) {
+            (Dim::Dim2D, false) => ("DIM_2D WIDTH 8 HEIGHT 8".to_string(), 64),
+            (Dim::Dim2D, true) => (
+                format!("DIM_2D_ARRAY WIDTH 8 HEIGHT 8 LAYERS {IMAGE_LAYERS}"),
+                64 * IMAGE_LAYERS,
+            ),
+            (other, _) => return Err(Refusal::Binding(format!("multisampled {other:?} images"))),
+        };
+        return Ok((
+            format!("{extent} SAMPLES {IMAGE_SAMPLES}"),
+            texels * IMAGE_SAMPLES,
         ));
     }
-    if image.depth && image.sampled != 2 {
-        return Err(Refusal::Binding(
-            "depth-comparison images (Amber has no comparison samplers for them)".into(),
-        ));
-    }
-    match image.dim {
-        Dim::Dim1D => Ok(("DIM_1D WIDTH 8".into(), 8)),
-        Dim::Dim2D => Ok(("DIM_2D WIDTH 8 HEIGHT 8".into(), 64)),
-        Dim::Dim3D => Ok(("DIM_3D WIDTH 4 HEIGHT 4 DEPTH 4".into(), 64)),
-        Dim::DimCube => Err(Refusal::Binding(
-            "cube images (Amber has no cube image views)".into(),
+    match (image.dim, image.arrayed) {
+        (Dim::Dim1D, false) => Ok(("DIM_1D WIDTH 8".into(), 8)),
+        (Dim::Dim1D, true) => Ok((
+            format!("DIM_1D_ARRAY WIDTH 8 LAYERS {IMAGE_LAYERS}"),
+            8 * IMAGE_LAYERS,
         )),
-        Dim::DimRect => Err(Refusal::Binding("rectangle images".into())),
-        other => Err(Refusal::Binding(format!("{other:?} images"))),
+        (Dim::Dim2D, false) => Ok(("DIM_2D WIDTH 8 HEIGHT 8".into(), 64)),
+        (Dim::Dim2D, true) => Ok((
+            format!("DIM_2D_ARRAY WIDTH 8 HEIGHT 8 LAYERS {IMAGE_LAYERS}"),
+            64 * IMAGE_LAYERS,
+        )),
+        (Dim::Dim3D, false) => Ok(("DIM_3D WIDTH 4 HEIGHT 4 DEPTH 4".into(), 64)),
+        (Dim::DimCube, false) => Ok(("DIM_CUBE WIDTH 4 HEIGHT 4".into(), 96)),
+        (Dim::DimCube, true) => Ok((
+            format!("DIM_CUBE_ARRAY WIDTH 4 HEIGHT 4 LAYERS {CUBE_ARRAY_LAYERS}"),
+            16 * CUBE_ARRAY_LAYERS,
+        )),
+        (Dim::DimRect, _) => Err(Refusal::Binding("rectangle images".into())),
+        (other, _) => Err(Refusal::Binding(format!(
+            "{other:?} images{}",
+            if image.arrayed { " (arrayed)" } else { "" }
+        ))),
     }
+}
+
+const fn compares_depth(image: &ImageType) -> bool {
+    image.depth && image.sampled != 2
+}
+
+const DEPTH_FORMAT: ImageFormatInfo = ImageFormatInfo {
+    name: "D32_SFLOAT",
+    scalar: scalar(ScalarKind::Float, 32),
+    components: 1,
+};
+
+fn multisample_needs(image: &ImageType, info: &ImageFormatInfo) -> Result<Option<Need>, Refusal> {
+    if !image.multisampled {
+        return Ok(None);
+    }
+    let bytes = info.scalar.bytes() * info.components;
+    if !matches!(bytes, 4 | 8 | 16) {
+        return Err(Refusal::Binding(format!(
+            "multisampled images with {bytes}-byte texels (Amber fills multisampled images with 4, 8 or 16 bytes per texel)"
+        )));
+    }
+    Ok(Some(Need::Feature("shaderStorageImageMultisample")))
 }
 
 fn image_values(info: &ImageFormatInfo, texels: u32, rng: &mut Rng) -> String {
     let mut out = String::new();
     for texel in 0..texels {
         for _ in 0..info.components {
-            let value = if info.scalar.width == 8 && info.name.ends_with("UNORM") {
-                Value::Int(i64::try_from(rng.below(256)).unwrap_or(0))
+            let value = if info.name == DEPTH_FORMAT.name {
+                Value::Float(f64::from(u32::try_from(rng.below(1025)).unwrap_or(0)) / 1024.0)
+            } else if info.name.ends_with("UNORM") {
+                Value::Int(i64::try_from(rng.below(1 << info.scalar.width)).unwrap_or(0))
+            } else if info.name.ends_with("SNORM") {
+                let half = 1i64 << (info.scalar.width - 1);
+                Value::Int(
+                    i64::try_from(rng.below((1 << info.scalar.width) - 1)).unwrap_or(0) - half + 1,
+                )
             } else {
                 Value::random(info.scalar, rng)
             };
@@ -252,6 +324,37 @@ fn aliased(kinds: &[&ResourceKind]) -> Option<ResourceKind> {
         _ => None,
     }) {
         return Some(ResourceKind::UniformBuffer(merged(&list)));
+    }
+    if let Some(images) = kinds
+        .iter()
+        .map(|kind| match kind {
+            ResourceKind::StorageImage(image) => Some(*image),
+            _ => None,
+        })
+        .collect::<Option<Vec<_>>>()
+    {
+        let first = *images.first()?;
+        let same_view = images.iter().all(|image| {
+            image.dim == first.dim
+                && image.arrayed == first.arrayed
+                && image.multisampled == first.multisampled
+                && image.depth == first.depth
+                && image.scalar == first.scalar
+        });
+        let mut formats: Vec<ImageFormat> = Vec::new();
+        for image in &images {
+            if image.format != ImageFormat::Unknown && !formats.contains(&image.format) {
+                formats.push(image.format);
+            }
+        }
+        return match formats.as_slice() {
+            [] if same_view => Some(ResourceKind::StorageImage(first)),
+            [format] if same_view => Some(ResourceKind::StorageImage(ImageType {
+                format: *format,
+                ..first
+            })),
+            _ => None,
+        };
     }
     match kinds {
         [ResourceKind::SampledImage(image), ResourceKind::Sampler]
@@ -382,6 +485,44 @@ fn buffer_bytes(
     bytes
 }
 
+pub fn tensor_refusal(reflection: &Reflection) -> String {
+    let tensors: Vec<String> = reflection
+        .resources
+        .iter()
+        .filter_map(|resource| match &resource.kind {
+            ResourceKind::Tensor(tensor) => Some(match resource.count {
+                Some(_) if tensor.runtime_array => format!(
+                    "set {} binding {} {}[] (runtime array)",
+                    resource.set,
+                    resource.binding,
+                    tensor.glsl()
+                ),
+                Some(count) => format!(
+                    "set {} binding {} {}[{count}]",
+                    resource.set,
+                    resource.binding,
+                    tensor.glsl()
+                ),
+                None => format!(
+                    "set {} binding {} {}",
+                    resource.set,
+                    resource.binding,
+                    tensor.glsl()
+                ),
+            }),
+            _ => None,
+        })
+        .collect();
+    let resources = if tensors.is_empty() {
+        "tensors outside descriptor bindings".to_string()
+    } else {
+        tensors.join(", ")
+    };
+    format!(
+        "TensorsARM ({resources}): no exec target exposes VK_ARM_tensors and Amber cannot \
+         create, bind, upload or read back tensors (docs/design/tensors.md)"
+    )
+}
 const UNSIZED_ACCESSES: [Op; 4] = [
     Op::CooperativeMatrixLoadTensorNV,
     Op::CooperativeMatrixStoreTensorNV,
@@ -400,6 +541,9 @@ pub fn requirements(reflection: &Reflection) -> Result<BTreeSet<Need>, Refusal> 
         return Err(Refusal::Capability(format!(
             "{name} (newer than the harness's SPIR-V tables; Amber cannot enable it)"
         )));
+    }
+    if reflection.capabilities.contains(&Capability::TensorsARM) {
+        return Err(Refusal::Capability(tensor_refusal(reflection)));
     }
     let mut needs = BTreeSet::new();
     for capability in &reflection.capabilities {
@@ -424,11 +568,7 @@ pub fn requirements(reflection: &Reflection) -> Result<BTreeSet<Need>, Refusal> 
                 .capabilities
                 .contains(&Capability::ComputeDerivativeGroupLinearKHR))
     {
-        return Err(Refusal::Capability(
-            "derivatives in a mesh or task shader (they need the meshAndTaskShaderDerivatives \
-             property, which Amber does not check)"
-                .into(),
-        ));
+        needs.insert(requirements::MESH_DERIVATIVES);
     }
     if needs.contains(&requirements::MULTIVIEW) {
         needs.extend(requirements::multiview_stage(reflection.model));
@@ -444,6 +584,7 @@ pub fn requirements(reflection: &Reflection) -> Result<BTreeSet<Need>, Refusal> 
         if !requirements::extension(extension) {
             return Err(Refusal::Capability(format!("extension {extension}")));
         }
+        needs.extend(requirements::extension_needs(extension).iter().copied());
     }
     Ok(needs)
 }
@@ -530,7 +671,9 @@ impl Plan {
             targets: Vec::new(),
             harness: Vec::new(),
             attachments: Vec::new(),
+            unwritten_attachments: BTreeSet::new(),
             framebuffer: inputs.framebuffer.unwrap_or(FRAMEBUFFER),
+            views: 0,
             placeholder: false,
             draw: Draw::Dispatch,
             rays: None,
@@ -549,6 +692,8 @@ impl Plan {
             .fold(1u32, |acc, size| acc.saturating_mul(*size))
             .min(4096);
         let mut sampler_declared = false;
+        let mut comparison_declared = false;
+        let mut input_attachments = BTreeSet::new();
         let mut writes = false;
         let mut scene: Option<Geometry> = None;
 
@@ -638,6 +783,7 @@ impl Plan {
                         Refusal::Binding(format!("storage image format {:?}", image.format))
                     })?;
                     let (extent, texels) = image_extent(image)?;
+                    needs.extend(multisample_needs(image, &info)?);
                     for (index, name) in names.iter().enumerate() {
                         let data = image_values(&info, texels, &mut rng);
                         let _ = writeln!(
@@ -661,8 +807,20 @@ impl Plan {
                     if image.scalar.width != 32 {
                         return Err(Refusal::Binding("images with non-32-bit texels".into()));
                     }
-                    let info = sampled_format(image);
+                    let comparison = compares_depth(image);
+                    if comparison && matches!(resource.kind, ResourceKind::SampledImage(_)) {
+                        return Err(Refusal::Binding(
+                            "depth-comparison images with a separate sampler (which sampler compares is not known)"
+                                .into(),
+                        ));
+                    }
+                    let info = if comparison {
+                        DEPTH_FORMAT
+                    } else {
+                        sampled_format(image)
+                    };
                     let (extent, texels) = image_extent(image)?;
+                    needs.extend(multisample_needs(image, &info)?);
                     for name in &names {
                         let data = image_values(&info, texels, &mut rng);
                         let _ = writeln!(
@@ -677,15 +835,19 @@ impl Plan {
                             "  BIND {bind} {list} AS sampled_image {location}"
                         );
                     } else {
-                        plan.declare_sampler(&mut sampler_declared);
+                        let sampler = if comparison {
+                            plan.declare_comparison_sampler(&mut comparison_declared)
+                        } else {
+                            plan.declare_sampler(&mut sampler_declared)
+                        };
                         let _ = writeln!(
                             plan.bindings,
-                            "  BIND {bind} {list} AS combined_image_sampler SAMPLER smp {location}"
+                            "  BIND {bind} {list} AS combined_image_sampler SAMPLER {sampler} {location}"
                         );
                     }
                 }
                 ResourceKind::Sampler => {
-                    plan.declare_sampler(&mut sampler_declared);
+                    let _ = plan.declare_sampler(&mut sampler_declared);
                     match resource.count {
                         None | Some(1) => {
                             let _ = writeln!(plan.bindings, "  BIND SAMPLER smp {location}");
@@ -744,15 +906,63 @@ impl Plan {
                     );
                 }
                 ResourceKind::AccelerationStructure => {
-                    if resource.count.is_some() {
-                        return Err(Refusal::Binding("arrays of acceleration structures".into()));
-                    }
                     scene = Some(Geometry::Triangles);
+                    for _ in 0..resource.count.unwrap_or(1) {
+                        let _ = writeln!(
+                            plan.bindings,
+                            "  BIND ACCELERATION_STRUCTURE {} {location}",
+                            rays::SCENE_TLAS
+                        );
+                    }
+                }
+                ResourceKind::InputAttachment { image, index } => {
+                    if stage != ShaderKind::Fragment {
+                        return Err(Refusal::Binding(format!(
+                            "an input attachment in a {stage:?} shader"
+                        )));
+                    }
+                    let index = index.ok_or_else(|| {
+                        Refusal::Binding(
+                            "an input attachment without an InputAttachmentIndex (it would read a color attachment through dynamic rendering local read)"
+                                .into(),
+                        )
+                    })?;
+                    if image.multisampled {
+                        return Err(Refusal::Binding(
+                            "multisampled input attachments (Amber cannot fill them with data)"
+                                .into(),
+                        ));
+                    }
+                    if image.scalar.width != 32 {
+                        return Err(Refusal::Binding(
+                            "input attachments with non-32-bit texels".into(),
+                        ));
+                    }
+                    let info = sampled_format(image);
+                    let size = plan.framebuffer;
+                    let mut images = Vec::new();
+                    for element in 0..resource.count.unwrap_or(1) {
+                        let attachment = index.saturating_add(element);
+                        let name = format!("ia{attachment}");
+                        if !input_attachments.contains(&attachment) {
+                            input_attachments.insert(attachment);
+                            let data = image_values(&info, size * size, &mut rng);
+                            let _ = writeln!(
+                                plan.declarations,
+                                "IMAGE {name} FORMAT {} DIM_2D WIDTH {size} HEIGHT {size} DATA\n{data}\nEND",
+                                info.name
+                            );
+                        }
+                        images.push(name);
+                    }
                     let _ = writeln!(
                         plan.bindings,
-                        "  BIND ACCELERATION_STRUCTURE {} {location}",
-                        rays::SCENE_TLAS
+                        "  BIND {bind} {} AS input_attachment INPUT_ATTACHMENT_INDEX {index} {location}",
+                        images.join(" ")
                     );
+                }
+                ResourceKind::Tensor(_) => {
+                    return Err(Refusal::Capability(tensor_refusal(reflection)));
                 }
                 ResourceKind::Unsupported(reason) => return Err(Refusal::Binding(reason.clone())),
             }
@@ -893,6 +1103,18 @@ impl Plan {
                         });
                     }
                 }
+                let written: BTreeSet<u32> = plan.attachments.iter().map(|a| a.location).collect();
+                for location in 0..written.last().copied().unwrap_or(0) {
+                    if !written.contains(&location) {
+                        plan.attachments.push(Attachment {
+                            location,
+                            kind: ScalarKind::Float,
+                            components: 4,
+                        });
+                        plan.unwritten_attachments.insert(location);
+                    }
+                }
+                plan.attachments.sort_by_key(|a| a.location);
                 if plan.attachments.is_empty() {
                     plan.placeholder = true;
                 }
@@ -902,14 +1124,16 @@ impl Plan {
                     needs.insert(Need::Feature("vertexPipelineStoresAndAtomics"));
                 }
                 for input in &reflection.inputs {
-                    if input.array.is_some() {
-                        return Err(Refusal::Binding(format!(
-                            "location {}: array vertex input",
-                            input.location
-                        )));
+                    let (scalar, count) = harness::simple(input).map_err(Refusal::Binding)?;
+                    let stride = harness::locations(scalar, count);
+                    for element in 0..input.array.unwrap_or(1) {
+                        plan.add_vertex_input(
+                            input.location + element * stride,
+                            scalar,
+                            count,
+                            &mut rng,
+                        );
                     }
-                    let (scalar, count) = harness::simple_32(input).map_err(Refusal::Binding)?;
-                    plan.add_vertex_input(input.location, scalar, count, &mut rng);
                 }
                 if reflection.inputs.is_empty() {
                     plan.add_vertex_input(0, scalar(ScalarKind::Float, 32), 4, &mut rng);
@@ -967,6 +1191,12 @@ impl Plan {
                 plan.finish_with_fragment(&reflection.outputs);
             }
         }
+        if let Some(xfb) = &reflection.xfb {
+            let xfb = xfb
+                .as_ref()
+                .map_err(|e| Refusal::Binding(format!("transform feedback: {e}")))?;
+            plan.add_transform_feedback(xfb);
+        }
         plan.add_references(invocations, &mut rng)?;
         if !plan.addresses.is_empty() && scene.is_none() {
             scene = Some(Geometry::Triangles);
@@ -983,9 +1213,54 @@ impl Plan {
                 rays::SCENE_TLAS
             );
         }
+        if needs.contains(&requirements::MULTIVIEW)
+            && matches!(plan.draw, Draw::Rect | Draw::Array { .. } | Draw::Mesh)
+            && !plan.mesh_nv
+        {
+            plan.views = MULTIVIEW_VIEWS;
+            if plan.draw == Draw::Mesh {
+                needs.insert(requirements::MULTIVIEW_MESH);
+            }
+        }
         plan.add_attachment_targets();
         plan.needs = needs;
         Ok(plan)
+    }
+
+    fn add_transform_feedback(&mut self, xfb: &Xfb) {
+        for (buffer, stride) in &xfb.strides {
+            let name = format!("xfb{buffer}");
+            let size = round_up(stride.saturating_mul(XFB_VERTICES).max(4), 4);
+            self.add_buffer(&name, vec![0; usize::try_from(size).unwrap_or(4)]);
+            let _ = writeln!(
+                self.bindings,
+                "  BIND BUFFER {name} AS transform_feedback XFB_BUFFER {buffer}"
+            );
+            let fields: Vec<&XfbField> = xfb
+                .fields
+                .iter()
+                .filter(|field| field.buffer == *buffer)
+                .collect();
+            for field in fields.iter().filter(|field| !field.written) {
+                self.notes.push(format!(
+                    "transform feedback buffer {buffer} offset {} is captured but never written",
+                    field.offset
+                ));
+            }
+            let slots: Vec<Slot> = (0..XFB_VERTICES)
+                .flat_map(|vertex| {
+                    fields
+                        .iter()
+                        .filter(|field| field.written)
+                        .map(move |field| Slot {
+                            offset: vertex * stride + field.offset,
+                            scalar: field.scalar,
+                        })
+                })
+                .filter(|slot| slot.offset + slot.scalar.bytes() <= size)
+                .collect();
+            self.add_target(format!("transform feedback buffer {buffer}"), &name, slots);
+        }
     }
 
     fn add_shader_record(
@@ -1139,11 +1414,21 @@ impl Plan {
         self.files.push((file, bytes));
     }
 
-    fn declare_sampler(&mut self, declared: &mut bool) {
+    fn declare_sampler(&mut self, declared: &mut bool) -> &'static str {
         if !*declared {
             self.declarations.push_str("SAMPLER smp\n");
             *declared = true;
         }
+        "smp"
+    }
+
+    fn declare_comparison_sampler(&mut self, declared: &mut bool) -> &'static str {
+        if !*declared {
+            self.declarations
+                .push_str("SAMPLER smpc COMPARE on COMPARE_OP less_or_equal\n");
+            *declared = true;
+        }
+        "smpc"
     }
 
     fn add_vertex_input(&mut self, location: u32, scalar: Scalar, count: u32, rng: &mut Rng) {
@@ -1152,7 +1437,19 @@ impl Plan {
             ScalarKind::Sint => "int32",
             ScalarKind::Uint | ScalarKind::Bool => "uint32",
         };
-        let ty = if count == 1 {
+        let ty = if scalar.width != 32 {
+            let channels: String = ["R", "G", "B", "A"]
+                .iter()
+                .take(usize::try_from(count).unwrap_or(4))
+                .map(|channel| format!("{channel}{}", scalar.width))
+                .collect();
+            let suffix = match scalar.kind {
+                ScalarKind::Float => "SFLOAT",
+                ScalarKind::Sint => "SINT",
+                ScalarKind::Uint | ScalarKind::Bool => "UINT",
+            };
+            format!("{channels}_{suffix}")
+        } else if count == 1 {
             base.to_string()
         } else {
             format!("vec{count}<{base}>")
@@ -1179,8 +1476,11 @@ impl Plan {
     }
 
     fn add_attachment_targets(&mut self) {
-        let pixels = self.framebuffer * self.framebuffer;
+        let pixels = self.framebuffer * self.framebuffer * self.views.max(1);
         for attachment in self.attachments.clone() {
+            if self.unwritten_attachments.contains(&attachment.location) {
+                continue;
+            }
             let stride = attachment.texel_components() * 4;
             let scalar = Scalar {
                 kind: attachment.kind,
@@ -1310,6 +1610,9 @@ impl Plan {
                     let _ = writeln!(out, "  PATCH_CONTROL_POINTS {count}");
                 }
                 let _ = writeln!(out, "  FRAMEBUFFER_SIZE {size} {size}");
+                if self.views > 0 {
+                    let _ = writeln!(out, "  MULTIVIEW {}", self.views);
+                }
                 for attachment in &self.attachments {
                     let _ = writeln!(
                         out,
@@ -1482,6 +1785,42 @@ mod tests {
     }
 
     #[test]
+    fn multiview_renders_two_views() -> anyhow::Result<()> {
+        let mut module = reflection(ExecutionModel::Fragment);
+        module.capabilities.insert(spirv::Capability::MultiView);
+        module.outputs = vec![Varying {
+            location: 0,
+            component: 0,
+            ty: VaryingType::Simple {
+                scalar: F32,
+                count: 4,
+            },
+            array: None,
+            interpolation: Interpolation::Smooth,
+            centroid: false,
+            sample: false,
+            patch: false,
+            per_primitive: false,
+        }];
+        let plan = planned(&module, &Inputs::default())?;
+        assert_eq!(plan.views, 2);
+        assert_eq!(
+            plan.targets[0].slots.len(),
+            (FRAMEBUFFER * FRAMEBUFFER * 2 * 4) as usize
+        );
+        let (tested, dump, data) = paths();
+        let harness = [(ShaderKind::Vertex, PathBuf::from("/w/harness.spv"))];
+        let script = plan.script(ScriptPaths {
+            tested: &tested,
+            harness: &harness,
+            dump: &dump,
+            data: &data,
+        });
+        assert!(script.contains("  FRAMEBUFFER_SIZE 32 32\n  MULTIVIEW 2\n"));
+        Ok(())
+    }
+
+    #[test]
     fn fragment_script_renders_and_dumps_attachments() -> anyhow::Result<()> {
         let mut module = reflection(ExecutionModel::Fragment);
         module.inputs = vec![Varying {
@@ -1608,11 +1947,63 @@ mod tests {
     }
 
     #[test]
+    fn input_attachments_share_images_by_index() -> anyhow::Result<()> {
+        let image = ImageType {
+            dim: Dim::DimSubpassData,
+            depth: false,
+            arrayed: false,
+            multisampled: false,
+            sampled: 2,
+            format: ImageFormat::Unknown,
+            scalar: F32,
+        };
+        let mut module = reflection(ExecutionModel::Fragment);
+        module.resources = vec![
+            Resource {
+                set: 0,
+                binding: 0,
+                count: Some(2),
+                kind: ResourceKind::InputAttachment {
+                    image,
+                    index: Some(0),
+                },
+            },
+            Resource {
+                set: 0,
+                binding: 1,
+                count: None,
+                kind: ResourceKind::InputAttachment {
+                    image,
+                    index: Some(1),
+                },
+            },
+        ];
+        let plan = planned(&module, &Inputs::default())?;
+        assert_eq!(plan.declarations.matches("IMAGE ia").count(), 2);
+        assert!(plan
+            .declarations
+            .contains("IMAGE ia1 FORMAT R32G32B32A32_SFLOAT DIM_2D WIDTH 32 HEIGHT 32 DATA\n"));
+        assert!(plan.bindings.contains(
+            "  BIND BUFFER_ARRAY ia0 ia1 AS input_attachment INPUT_ATTACHMENT_INDEX 0 DESCRIPTOR_SET 0 BINDING 0\n"
+        ));
+        assert!(plan.bindings.contains(
+            "  BIND BUFFER ia1 AS input_attachment INPUT_ATTACHMENT_INDEX 1 DESCRIPTOR_SET 0 BINDING 1\n"
+        ));
+        module.resources.truncate(1);
+        module.resources[0].kind = ResourceKind::InputAttachment { image, index: None };
+        assert!(matches!(
+            Plan::new(&module, &Inputs::default()),
+            Err(Refusal::Binding(_))
+        ));
+        Ok(())
+    }
+
+    #[test]
     fn refuses_what_it_cannot_bind() -> anyhow::Result<()> {
         let mut module = reflection(ExecutionModel::GLCompute);
         module
             .capabilities
-            .insert(spirv::Capability::InputAttachment);
+            .insert(spirv::Capability::CooperativeMatrixLayoutsARM);
         assert!(matches!(
             Plan::new(&module, &Inputs::default()),
             Err(Refusal::Capability(_))
@@ -2221,15 +2612,109 @@ mod tests {
             binding: 0,
             count: None,
             kind: ResourceKind::SampledImage(ImageType {
-                dim: Dim::DimCube,
+                dim: Dim::Dim2D,
+                multisampled: true,
                 sampled: 1,
                 ..image
             }),
         });
+        let plan = planned(&module, &Inputs::default())?;
+        assert!(plan.declarations.contains(
+            "IMAGE r0_0 FORMAT R32G32B32A32_UINT DIM_2D WIDTH 8 HEIGHT 8 SAMPLES 4 DATA\n"
+        ));
+        assert!(plan
+            .needs
+            .contains(&Need::Feature("shaderStorageImageMultisample")));
+        module.resources[0].kind = ResourceKind::SampledImage(ImageType {
+            dim: Dim::Dim3D,
+            multisampled: true,
+            sampled: 1,
+            ..image
+        });
         let Err(Refusal::Binding(reason)) = Plan::new(&module, &Inputs::default()) else {
-            panic!("cube images are refused");
+            panic!("multisampled 3D images are refused");
         };
-        assert!(reason.contains("Amber"));
+        assert!(reason.contains("multisampled"));
+        Ok(())
+    }
+
+    #[test]
+    fn layered_cube_and_comparison_images_are_declared() -> anyhow::Result<()> {
+        let image = ImageType {
+            dim: Dim::DimCube,
+            depth: false,
+            arrayed: false,
+            multisampled: false,
+            sampled: 1,
+            format: ImageFormat::Unknown,
+            scalar: F32,
+        };
+        let mut module = reflection(ExecutionModel::GLCompute);
+        module.resources = vec![
+            Resource {
+                set: 0,
+                binding: 0,
+                count: None,
+                kind: ResourceKind::CombinedImageSampler(image),
+            },
+            Resource {
+                set: 0,
+                binding: 1,
+                count: None,
+                kind: ResourceKind::CombinedImageSampler(ImageType {
+                    dim: Dim::Dim2D,
+                    arrayed: true,
+                    depth: true,
+                    ..image
+                }),
+            },
+            Resource {
+                set: 0,
+                binding: 2,
+                count: None,
+                kind: ResourceKind::StorageImage(ImageType {
+                    dim: Dim::DimCube,
+                    arrayed: true,
+                    sampled: 2,
+                    format: ImageFormat::R32f,
+                    ..image
+                }),
+            },
+        ];
+        let plan = planned(&module, &Inputs::default())?;
+        assert!(plan
+            .declarations
+            .contains("IMAGE r0_0 FORMAT R32G32B32A32_SFLOAT DIM_CUBE WIDTH 4 HEIGHT 4 DATA\n"));
+        assert!(plan.declarations.contains(
+            "IMAGE r0_1 FORMAT D32_SFLOAT DIM_2D_ARRAY WIDTH 8 HEIGHT 8 LAYERS 3 DATA\n"
+        ));
+        assert!(plan.declarations.contains(
+            "IMAGE r0_2 FORMAT R32_SFLOAT DIM_CUBE_ARRAY WIDTH 4 HEIGHT 4 LAYERS 12 DATA\n"
+        ));
+        assert!(plan
+            .declarations
+            .contains("SAMPLER smpc COMPARE on COMPARE_OP less_or_equal\n"));
+        assert!(plan.bindings.contains(
+            "  BIND BUFFER r0_1 AS combined_image_sampler SAMPLER smpc DESCRIPTOR_SET 0 BINDING 1\n"
+        ));
+        assert!(plan.bindings.contains(
+            "  BIND BUFFER r0_0 AS combined_image_sampler SAMPLER smp DESCRIPTOR_SET 0 BINDING 0\n"
+        ));
+        assert_eq!(plan.targets.len(), 1);
+        assert_eq!(plan.targets[0].slots.len(), 16 * 12);
+        let depth = plan
+            .declarations
+            .split("IMAGE r0_1 FORMAT D32_SFLOAT")
+            .nth(1)
+            .and_then(|rest| rest.split("DATA\n").nth(1))
+            .and_then(|rest| rest.split("END").next())
+            .ok_or_else(|| anyhow::anyhow!("no depth image data"))?;
+        let values = depth
+            .split_whitespace()
+            .filter_map(|word| word.parse::<f64>().ok())
+            .collect::<Vec<_>>();
+        assert_eq!(values.len(), 192);
+        assert!(values.iter().all(|v| (0.0..=1.0).contains(v)));
         Ok(())
     }
 }

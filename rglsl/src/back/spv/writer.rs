@@ -1220,7 +1220,11 @@ impl Writer {
         for argument in ir_function.arguments.iter() {
             let class = spirv::StorageClass::Input;
             let handle_ty = ir_module.types[argument.ty].inner.is_handle();
-            let argument_type_id = if handle_ty {
+            let binding_array = matches!(
+                ir_module.types[argument.ty].inner,
+                crate::TypeInner::BindingArray { .. }
+            );
+            let argument_type_id = if handle_ty || binding_array {
                 self.get_handle_pointer_type_id(argument.ty, spirv::StorageClass::UniformConstant)?
             } else {
                 self.get_handle_type_id(argument.ty)?
@@ -1295,6 +1299,7 @@ impl Writer {
                 if argument.relaxed_precision {
                     self.decorate(argument_id, spirv::Decoration::RelaxedPrecision, &[]);
                 }
+                self.decorate_parameter_memory(argument_id, argument.memory_decorations);
                 let instruction = Instruction::function_parameter(argument_type_id, argument_id);
                 if self.flags.contains(WriterFlags::DEBUG) {
                     if let Some(ref name) = argument.name {
@@ -2417,6 +2422,31 @@ impl Writer {
         }
     }
 
+    fn decorate_parameter_memory(&mut self, id: Word, memory: crate::MemoryDecorations) {
+        use crate::MemoryDecorations as Md;
+        use spirv::Decoration;
+        let mut decorations = Vec::new();
+        if !self.vulkan_memory_model {
+            if memory.contains(Md::VOLATILE) {
+                decorations.extend([Decoration::Volatile, Decoration::Coherent]);
+            } else if memory.contains(Md::COHERENT) {
+                decorations.push(Decoration::Coherent);
+            }
+        }
+        for (flag, decoration) in [
+            (Md::RESTRICT, Decoration::Restrict),
+            (Md::NON_WRITABLE, Decoration::NonWritable),
+            (Md::NON_READABLE, Decoration::NonReadable),
+        ] {
+            if memory.contains(flag) {
+                decorations.push(decoration);
+            }
+        }
+        for decoration in decorations {
+            self.decorate(id, decoration, &[]);
+        }
+    }
+
     pub(super) fn cooperative_size_id(&mut self, size: crate::CooperativeSize) -> Word {
         match size {
             crate::CooperativeSize::Constant(size) => self.get_index_constant(size.get()),
@@ -2554,7 +2584,8 @@ impl Writer {
                 scope,
                 ..
             } => [Some(columns), Some(rows), Some(scope)],
-            crate::TypeInner::LongVector { size, .. } => [Some(size), None, None],
+            crate::TypeInner::LongVector { size, .. }
+            | crate::TypeInner::Tensor { rank: size, .. } => [Some(size), None, None],
             _ => [None, None, None],
         };
         for size in pending.into_iter().flatten() {

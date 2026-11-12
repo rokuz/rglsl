@@ -642,7 +642,109 @@ impl BlockContext<'_> {
         Ok(())
     }
 
+    #[inline(never)]
+    fn returned_array_element(
+        &mut self,
+        expr_handle: Handle<crate::Expression>,
+        block: &mut Block,
+    ) -> Result<Option<Word>, Error> {
+        let (base, index) = match self.ir_function.expressions[expr_handle] {
+            crate::Expression::Access { base, .. } => (base, None),
+            crate::Expression::AccessIndex { base, index } => (base, Some(index)),
+            _ => return Ok(None),
+        };
+        let returned = matches!(
+            self.ir_function.expressions[base],
+            crate::Expression::CallResult(_)
+        ) && matches!(
+            *self.fun_info[base].ty.inner_with(&self.ir_module.types),
+            crate::TypeInner::BindingArray { .. }
+        );
+        if !returned {
+            return Ok(None);
+        }
+        let result_type_id = self.get_expression_type_id(&self.fun_info[expr_handle].ty)?;
+        let Some(index) = index else {
+            self.spill_to_internal_variable(base, block)?;
+            self.function.spilled_accesses.insert(expr_handle);
+            return self
+                .maybe_access_spilled_composite(expr_handle, block, result_type_id)
+                .map(Some);
+        };
+        let id = self.gen_id();
+        let base_id = self.cached.get(base)?;
+        block.body.push(Instruction::composite_extract(
+            result_type_id,
+            id,
+            base_id,
+            &[index],
+        ));
+        Ok(Some(id))
+    }
+
     /// Cache an expression for a value.
+    #[inline(never)]
+    fn write_compose(
+        &mut self,
+        expr_handle: Handle<crate::Expression>,
+        ty: Handle<crate::Type>,
+        components: &[Handle<crate::Expression>],
+        result_type_id: Word,
+        block: &mut Block,
+    ) -> Result<Word, Error> {
+        self.temp_list.clear();
+        let id = if self.expression_constness.is_const(expr_handle) {
+            for component in crate::proc::flatten_compose(
+                ty,
+                components,
+                &self.ir_function.expressions,
+                &self.ir_module.types,
+            ) {
+                self.temp_list.push(self.cached.get(component)?);
+            }
+            self.writer
+                .get_constant_composite(LookupType::Handle(ty), &self.temp_list)?
+        } else if self.expression_constness.is_specialized(expr_handle) {
+            for component in crate::proc::flatten_compose(
+                ty,
+                components,
+                &self.ir_function.expressions,
+                &self.ir_module.types,
+            ) {
+                self.temp_list.push(self.cached.get(component)?);
+            }
+            let type_id = self.writer.get_handle_type_id(ty)?;
+            self.writer
+                .get_spec_constant_composite(type_id, &self.temp_list)
+        } else {
+            for &component in components {
+                self.temp_list.push(self.cached.get(component)?);
+            }
+
+            let id = self.gen_id();
+            match self
+                .writer
+                .replicated_constituent(result_type_id, &self.temp_list)
+            {
+                Some(value) => {
+                    let mut instruction =
+                        Instruction::new(spirv::Op::CompositeConstructReplicateEXT);
+                    instruction.set_type(result_type_id);
+                    instruction.set_result(id);
+                    instruction.add_operand(value);
+                    block.body.push(instruction);
+                }
+                None => block.body.push(Instruction::composite_construct(
+                    result_type_id,
+                    id,
+                    &self.temp_list,
+                )),
+            }
+            id
+        };
+        Ok(id)
+    }
+
     fn write_expression_value(
         &mut self,
         expr_handle: Handle<crate::Expression>,
@@ -657,6 +759,9 @@ impl BlockContext<'_> {
             return Ok(());
         }
 
+        if let Some(id) = self.returned_array_element(expr_handle, block)? {
+            return self.cached.set(expr_handle, id);
+        }
         let result_type_id = self.get_expression_type_id(&self.fun_info[expr_handle].ty)?;
         let id = match self.ir_function.expressions[expr_handle] {
             crate::Expression::Literal(literal) => self.writer.get_constant_scalar(literal),
@@ -667,56 +772,7 @@ impl BlockContext<'_> {
             crate::Expression::Override(handle) => self.writer.written_override_id(handle)?,
             crate::Expression::ZeroValue(_) => self.writer.get_constant_null(result_type_id),
             crate::Expression::Compose { ty, ref components } => {
-                self.temp_list.clear();
-                if self.expression_constness.is_const(expr_handle) {
-                    for component in crate::proc::flatten_compose(
-                        ty,
-                        components,
-                        &self.ir_function.expressions,
-                        &self.ir_module.types,
-                    ) {
-                        self.temp_list.push(self.cached.get(component)?);
-                    }
-                    self.writer
-                        .get_constant_composite(LookupType::Handle(ty), &self.temp_list)?
-                } else if self.expression_constness.is_specialized(expr_handle) {
-                    for component in crate::proc::flatten_compose(
-                        ty,
-                        components,
-                        &self.ir_function.expressions,
-                        &self.ir_module.types,
-                    ) {
-                        self.temp_list.push(self.cached.get(component)?);
-                    }
-                    let type_id = self.writer.get_handle_type_id(ty)?;
-                    self.writer
-                        .get_spec_constant_composite(type_id, &self.temp_list)
-                } else {
-                    for &component in components {
-                        self.temp_list.push(self.cached.get(component)?);
-                    }
-
-                    let id = self.gen_id();
-                    match self
-                        .writer
-                        .replicated_constituent(result_type_id, &self.temp_list)
-                    {
-                        Some(value) => {
-                            let mut instruction =
-                                Instruction::new(spirv::Op::CompositeConstructReplicateEXT);
-                            instruction.set_type(result_type_id);
-                            instruction.set_result(id);
-                            instruction.add_operand(value);
-                            block.body.push(instruction);
-                        }
-                        None => block.body.push(Instruction::composite_construct(
-                            result_type_id,
-                            id,
-                            &self.temp_list,
-                        )),
-                    }
-                    id
-                }
+                self.write_compose(expr_handle, ty, components, result_type_id, block)?
             }
             crate::Expression::Splat { size, value } => {
                 let value_id = self.cached.get(value)?;
@@ -2394,6 +2450,37 @@ impl BlockContext<'_> {
             && !self.expression_constness.is_specialized(expr_handle)
     }
 
+    fn tensor_array_capability(
+        &mut self,
+        base: Handle<crate::Expression>,
+        index: Handle<crate::Expression>,
+        non_uniform: bool,
+    ) -> Result<(), Error> {
+        use spirv::Capability as Cap;
+        let mut ty = self.fun_info[base].ty.inner_with(&self.ir_module.types);
+        if let crate::TypeInner::Pointer { base, .. } = *ty {
+            ty = &self.ir_module.types[base].inner;
+        }
+        let element = match *ty {
+            crate::TypeInner::BindingArray { base, .. } => base,
+            _ => return Ok(()),
+        };
+        if !matches!(
+            self.ir_module.types[element].inner,
+            crate::TypeInner::Tensor { .. }
+        ) || self.expression_constness.is_const(index)
+        {
+            return Ok(());
+        }
+        let capability = if non_uniform {
+            Cap::StorageTensorArrayNonUniformIndexingARM
+        } else {
+            Cap::StorageTensorArrayDynamicIndexingARM
+        };
+        self.writer
+            .require_any("dynamic indexing of tensor arrays", &[capability])
+    }
+
     fn binding_array_capability(
         &mut self,
         base: Handle<crate::Expression>,
@@ -2844,6 +2931,7 @@ impl BlockContext<'_> {
                         .contains(crate::NonUniform::ACCESS)
                         && !self.non_uniform(base).contains(crate::NonUniform::ACCESS);
                     self.binding_array_capability(base, non_uniform_index)?;
+                    self.tensor_array_capability(base, index, non_uniform_index)?;
                     let index = GuardedIndex::Expression(index);
                     let index_id =
                         self.write_access_chain_index(base, index, &mut accumulated_checks, block)?;
@@ -4356,7 +4444,26 @@ impl BlockContext<'_> {
                 return Ok(None);
             }
             Statement::Return { value: Some(value) } => {
-                let value_id = self.cached.get(value)?;
+                let value_id = match *self.fun_info[value].ty.inner_with(&self.ir_module.types) {
+                    crate::TypeInner::Tensor { .. } => self.get_handle_id(value)?,
+                    crate::TypeInner::BindingArray { .. }
+                        if matches!(
+                            self.ir_function.expressions[value],
+                            crate::Expression::GlobalVariable(_)
+                                | crate::Expression::FunctionArgument(_)
+                        ) =>
+                    {
+                        let ty = self.fun_info[value].ty.clone();
+                        let type_id = self.writer.get_expression_type_id(&ty)?;
+                        let pointer_id = self.cached.get(value)?;
+                        let id = self.gen_id();
+                        block
+                            .body
+                            .push(Instruction::load(type_id, id, pointer_id, None));
+                        id
+                    }
+                    _ => self.cached.get(value)?,
+                };
                 let instruction = match self.function.entry_point_context {
                     // If this is an entry point, and we need to return anything,
                     // let's instead store the output variables and return `void`.

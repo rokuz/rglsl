@@ -1,0 +1,17 @@
+#version 460
+#extension GL_ARM_tensors : require
+
+layout(local_size_x = 1) in;
+
+layout(set = 0, binding = 0) uniform tensorARM<uint, 3> t;
+
+layout(set = 0, binding = 1) buffer Result {
+    uint size;
+} result;
+
+uint other();
+
+void main()
+{
+    result.size = tensorSizeARM(t, 2) + other();
+}

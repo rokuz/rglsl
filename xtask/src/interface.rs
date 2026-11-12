@@ -494,6 +494,19 @@ impl Describer<'_> {
             | Op::ExtInstImport
             | Op::String => return None,
             Op::TypeAccelerationStructureKHR => "acceleration_structure".to_string(),
+            Op::TypeTensorARM => match instruction.word(3) {
+                Some(shape) => format!(
+                    "tensor<{}, rank {}, shape {}>",
+                    self.name(word(1)),
+                    self.name(word(2)),
+                    self.name(shape)
+                ),
+                None => format!(
+                    "tensor<{}, rank {}>",
+                    self.name(word(1)),
+                    self.name(word(2))
+                ),
+            },
             Op::TypeRayQueryKHR => "ray_query".to_string(),
             Op::Constant => format!(
                 "{} {}",

@@ -1,0 +1,25 @@
+#version 460
+#extension GL_ARM_tensors : require
+
+layout(local_size_x = 1) in;
+
+layout(set = 0, binding = 0) uniform tensorARM<float, 2> source;
+writeonly layout(set = 0, binding = 1) uniform tensorARM<float, 2> destination;
+layout(set = 0, binding = 2) uniform tensorARM<int, 1> indices[2];
+
+layout(set = 0, binding = 3) buffer Result {
+    uint size;
+    float values[2];
+} result;
+
+float sum(readonly tensorARM<float, 2> tensor, uint row);
+void scale(readonly tensorARM<float, 2> from, writeonly tensorARM<float, 2> to, float factor);
+uint count(readonly writeonly tensorARM<int, 1> tensor);
+
+void main()
+{
+    result.values[0] = sum(source, 0u);
+    result.values[1] = sum(source, 1u);
+    scale(source, destination, 2.0);
+    result.size = count(indices[0]) + count(indices[1]);
+}

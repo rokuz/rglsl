@@ -733,7 +733,7 @@ pub enum TypeKind {
     },
     Tensor {
         scalar: Scalar,
-        rank: u32,
+        rank: ArraySize,
     },
     Spirv(SpirvTypeId),
 }
@@ -807,6 +807,15 @@ impl ArraySize {
             Self::Sized(size)
             | Self::Specialized(SpecializedSize::Constant { default: size, .. }) => Some(size),
             Self::Specialized(SpecializedSize::Expression(_)) | Self::Unsized => None,
+        }
+    }
+
+    pub const fn checked_size(self) -> u32 {
+        match self {
+            Self::Sized(size)
+            | Self::Specialized(SpecializedSize::Constant { default: size, .. }) => size,
+            Self::Specialized(SpecializedSize::Expression(_)) => 1,
+            Self::Unsized => 0,
         }
     }
 }
@@ -1245,7 +1254,7 @@ impl Type {
         matches!(self.kind, TypeKind::Opaque(_) | TypeKind::Tensor { .. })
     }
 
-    pub const fn as_tensor(&self) -> Option<(Scalar, u32)> {
+    pub const fn as_tensor(&self) -> Option<(Scalar, ArraySize)> {
         match self.kind {
             TypeKind::Tensor { scalar, rank } if !self.is_array() => Some((scalar, rank)),
             _ => None,
@@ -1612,7 +1621,12 @@ impl fmt::Display for TypeDisplay<'_> {
                 write!(formatter, "tensorViewNV<{}>", ShowSize(dimensions))?;
             }
             TypeKind::Tensor { scalar, rank } => {
-                write!(formatter, "tensorARM<{}, {rank}>", scalar.keyword())?;
+                write!(
+                    formatter,
+                    "tensorARM<{}, {}>",
+                    scalar.keyword(),
+                    ShowSize(rank)
+                )?;
             }
             TypeKind::Spirv(_) => formatter.write_str("spirv_type")?,
         }

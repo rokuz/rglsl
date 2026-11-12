@@ -68,10 +68,15 @@ Vulkan driver on Metal, so `exec` needs macOS on Apple silicon. The modules are 
 of [Amber](https://github.com/google/amber), [rokuz/amber](https://github.com/rokuz/amber)
 (branch `rglsl`), which adds mesh shading pipelines (EXT and NV), shader record data, NV ray
 tracing pipelines and acceleration structures, motion blur pipelines and scenes, buffer device
-addresses written into other buffers (`BUFFER_ADDRESS`), and the device features the mesh and ray
-tracing stages, float and 64-bit image atomics, multiview, transform feedback, expect/assume,
-replicated composites, compute derivatives, subgroup rotate and partitioned operations, quad
-control, fragment shader interlock and image footprints need. Both are pinned in `oracles.toml` and installed by
+addresses written into other buffers (`BUFFER_ADDRESS`), transform feedback buffers
+(`AS transform_feedback`), input attachments (`AS input_attachment`), image arrays, cube and
+cube-array images (`DIM_1D_ARRAY`, `DIM_2D_ARRAY`, `DIM_CUBE`, `DIM_CUBE_ARRAY`), multisampled
+images filled and read per sample, multiview rendering (`MULTIVIEW`), and the device features
+the mesh and ray tracing stages, float and 64-bit image atomics, multiview, transform feedback,
+expect/assume, replicated composites, compute derivatives (also in mesh and task shaders),
+subgroup rotate and partitioned operations, quad control, fragment shader interlock, image
+footprints, fragment density maps, shading rate images and relaxed extended instructions need.
+Both are pinned in `oracles.toml` and installed by
 `cargo xtask oracles`: it downloads the prebuilt KosmicKrisp release, checks its sha256, unpacks
 it into `target/oracles/kosmickrisp/` with an ICD manifest that points at the driver by absolute
 path, builds Amber against that loader, and prints the Vulkan device it finds. Requirements:
@@ -130,13 +135,26 @@ every remote column with the targets it ran.
 
 ## Command line
 
+`rglsl` takes `glslangValidator`'s command lines for Vulkan GLSL: the same options, output
+names, exit codes and message format ([docs/design/cli.md](docs/design/cli.md)).
+
 ```sh
-cargo run -p rglsl-cli -- shader.frag shader.spv
-cargo run -p rglsl-cli -- --auto-map-bindings --auto-map-locations shader.frag shader.spv
+cargo run -p rglsl-cli -- -V shader.frag                       # writes frag.spv
+rglsl -V --target-env vulkan1.2 -o shader.spv shader.comp
+rglsl -V --amb --aml -DQUALITY=2 -Iinclude -g -o out.spv shader.frag
+rglsl -V --vn shader_words -o shader.h shader.vert              # C header
+rglsl -V --sub 10 --stb frag 20 --rsb 1 shader.frag             # binding shifts, set
+rglsl -E shader.frag                                            # preprocess only
+rglsl shader.frag                                               # validate only
 ```
 
-`--auto-map-bindings` and `--auto-map-locations` assign missing bindings and locations the way
-glslang's options of the same names do.
+Supported: `-V`, `-H`, `-S`, `-o`, `-e`, `--sep`, `-D`/`-U`, `-I`, `--target-env`, `-x`/`--vn`,
+`-g`/`-g0`/`-gV`/`-gVS`, `-l`, `-E`, `--amb`/`--aml`, `--shift-*-binding`, `--rsb`, `--ku`,
+`--hlsl-offsets`, `--stdin`, `--depfile`, `--quiet`, `-s`, `--error-column`, `--absolute-path`,
+`-v`; `-O*`, `-C`, `-t`, `-i`, `-r`, `-w`, `--spirv-val` are accepted. OpenGL, HLSL, other GLSL
+versions, reflection (`-q`), preamble text and resource limit files are usage errors. Exit codes
+are glslang's: 1 usage, 2 compile, 3 link. `cargo xtask cli` compares rglsl with glslang on
+glslangValidator command lines.
 
 ### Linking
 
@@ -146,10 +164,10 @@ that stage and may leave out `main`; `.glsl` files are libraries, which have no 
 into a program of any stage.
 
 ```sh
-rglsl --link main.frag lighting.glsl noise.glsl -o shader.spv   # compile and link in one step
+rglsl -V main.frag lighting.glsl noise.glsl -o shader.spv      # compile and link in one step
 rglsl --object lighting.glsl                                   # writes lighting.rglo
-rglsl --link main.frag lighting.rglo -o shader.spv             # link object modules
-rglsl --link scene.vert scene.frag common.glsl                 # one program, vert.spv and frag.spv
+rglsl -V main.frag lighting.rglo -o shader.spv                 # link object modules
+rglsl -V scene.vert scene.frag common.glsl                     # one program, vert.spv and frag.spv
 ```
 
 Debug information uses glslangValidator's options: `-g` (`OpLine`, `OpSource` with the
@@ -157,7 +175,7 @@ sources of the main and included files), `-gV` (`NonSemantic.Shader.DebugInfo`),
 the source text) and `-g0` (no names); it survives object files and linking
 ([docs/design/debug-info.md](docs/design/debug-info.md)).
 
-`-I DIR` adds an include directory; `#include` needs no extension directive. Link errors are
+`-IDIR` adds an include directory; `#include` needs no extension directive. Link errors are
 glslang's (missing or duplicate definitions, mismatched globals, contradictory layouts); see
 [docs/design/linking.md](docs/design/linking.md).
 

@@ -166,6 +166,16 @@ fn tensor_access(qualifiers: &Qualifiers, ty: &GlslType) -> MemoryDecorations {
     decorations
 }
 
+pub(super) fn parameter_memory(qualifiers: &Qualifiers, ty: &GlslType) -> MemoryDecorations {
+    let image = ty
+        .as_opaque()
+        .is_some_and(|opaque| opaque.kind == OpaqueKind::Image);
+    if !image && !matches!(ty.kind, TypeKind::Tensor { .. }) {
+        return MemoryDecorations::empty();
+    }
+    member_memory(qualifiers, qualifiers)
+}
+
 pub(super) fn member_memory(block: &Qualifiers, member: &Qualifiers) -> MemoryDecorations {
     let mut decorations = memory(block) | memory(member);
     if block.readonly || member.readonly {
@@ -1083,7 +1093,7 @@ impl<'a> Lowerer<'a> {
             }
         };
         let binding = value("binding")?;
-        let set = value("set")?;
+        let set = value("set")?.or(self.options.resource_set);
         match binding {
             Some(binding) => Ok((
                 Some(ResourceBinding {
@@ -1119,7 +1129,7 @@ impl<'a> Lowerer<'a> {
             } => {
                 let inner = TypeInner::Tensor {
                     scalar: super::types::scalar(element),
-                    rank,
+                    rank: self.tensor_rank(rank, at)?,
                 };
                 return self.handle_global(symbol, name, inner, None, at);
             }
@@ -2250,6 +2260,11 @@ impl<'a> Lowerer<'a> {
     fn assign_bindings(&mut self) {
         self.automatic_bindings.clone_from(&self.unbound);
         let mut unbound = core::mem::take(&mut self.unbound);
+        let shifts = &self.options.binding_shifts;
+        shifts.shift_explicit(
+            &mut self.module,
+            &unbound.iter().map(|&(handle, _)| handle).collect(),
+        );
         if unbound.is_empty() {
             return;
         }
@@ -2281,10 +2296,10 @@ impl<'a> Lowerer<'a> {
         for (handle, set) in unbound {
             let group = set.unwrap_or(0);
             let binding = if live.contains(handle) {
+                let base =
+                    shifts.base_of(&self.module, &self.module.global_variables[handle], group);
                 let used = taken.entry(group).or_default();
-                let free = (0..=u32::MAX)
-                    .find(|binding| !used.contains(binding))
-                    .unwrap_or(u32::MAX);
+                let free = crate::proc::free_binding(used, base);
                 used.insert(free);
                 free
             } else {

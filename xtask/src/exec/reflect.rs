@@ -268,10 +268,75 @@ pub struct ImageType {
     pub scalar: Scalar,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TensorRank {
+    Constant(u32),
+    Specialized { spec_id: Option<u32>, default: u32 },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TensorElement {
+    pub kind: ScalarKind,
+    pub width: u32,
+    pub encoding: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TensorType {
+    pub element: TensorElement,
+    pub rank: TensorRank,
+    pub readable: bool,
+    pub writable: bool,
+    pub runtime_array: bool,
+}
+
+impl TensorElement {
+    pub fn glsl(self) -> String {
+        match (self.kind, self.width, self.encoding) {
+            (ScalarKind::Bool, _, _) => "bool".into(),
+            (ScalarKind::Sint, width, _) => format!("int{width}_t"),
+            (ScalarKind::Uint, width, _) => format!("uint{width}_t"),
+            (ScalarKind::Float, 16, Some(0)) => "bfloat16_t".into(),
+            (ScalarKind::Float, 8, Some(4214)) => "floate4m3_t".into(),
+            (ScalarKind::Float, 8, Some(4215)) => "floate5m2_t".into(),
+            (ScalarKind::Float, width, Some(encoding)) => {
+                format!("float{width}_t (encoding {encoding})")
+            }
+            (ScalarKind::Float, width, None) => format!("float{width}_t"),
+        }
+    }
+}
+
+impl TensorType {
+    pub fn glsl(self) -> String {
+        let rank = match self.rank {
+            TensorRank::Constant(rank) => rank.to_string(),
+            TensorRank::Specialized {
+                spec_id: Some(spec_id),
+                default,
+            } => format!("specialization constant {spec_id} = {default}"),
+            TensorRank::Specialized {
+                spec_id: None,
+                default,
+            } => format!("specialization constant expression = {default}"),
+        };
+        let access = match (self.readable, self.writable) {
+            (true, true) => "read/write",
+            (true, false) => "readonly",
+            (false, true) => "writeonly",
+            (false, false) => "size queries only",
+        };
+        format!("tensorARM<{}, {rank}> {access}", self.element.glsl())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResourceKind {
     UniformBuffer(Layout),
-    StorageBuffer { layout: Layout, writable: bool },
+    StorageBuffer {
+        layout: Layout,
+        writable: bool,
+    },
     StorageImage(ImageType),
     SampledImage(ImageType),
     CombinedImageSampler(ImageType),
@@ -279,6 +344,11 @@ pub enum ResourceKind {
     UniformTexelBuffer(ImageType),
     StorageTexelBuffer(ImageType),
     AccelerationStructure,
+    Tensor(TensorType),
+    InputAttachment {
+        image: ImageType,
+        index: Option<u32>,
+    },
     Unsupported(String),
 }
 
@@ -294,6 +364,8 @@ impl ResourceKind {
             Self::UniformTexelBuffer(_) => "uniform texel buffer",
             Self::StorageTexelBuffer(_) => "storage texel buffer",
             Self::AccelerationStructure => "acceleration structure",
+            Self::Tensor(_) => "tensor",
+            Self::InputAttachment { .. } => "input attachment",
             Self::Unsupported(_) => "unsupported resource",
         }
     }
@@ -377,6 +449,20 @@ pub struct PointerField {
     pub pointee: Pointee,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct XfbField {
+    pub buffer: u32,
+    pub offset: u32,
+    pub scalar: Scalar,
+    pub written: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Xfb {
+    pub strides: BTreeMap<u32, u32>,
+    pub fields: Vec<XfbField>,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RayIndices {
     pub hit_offsets: BTreeSet<u32>,
@@ -429,6 +515,7 @@ pub struct Reflection {
     pub cooperative_matrices: Vec<CooperativeMatrixType>,
     pub vector_products: Vec<VectorProduct>,
     pub saturating_accumulation: bool,
+    pub xfb: Option<Result<Xfb, String>>,
     pub problems: Vec<String>,
 }
 
@@ -470,6 +557,7 @@ impl Reflection {
             cooperative_matrices: Vec::new(),
             vector_products: Vec::new(),
             saturating_accumulation: false,
+            xfb: None,
             problems: Vec::new(),
         }
     }
@@ -557,6 +645,46 @@ impl Types<'_> {
             [low, 0] => Some(*low),
             _ => None,
         }
+    }
+
+    fn tensor(&self, id: u32) -> Option<(TensorElement, TensorRank)> {
+        let tensor = self.get(id)?;
+        let element = self.get(tensor.word(1)?)?;
+        let element = if element.is(Op::TypeFloat) {
+            TensorElement {
+                kind: ScalarKind::Float,
+                width: element.word(1)?,
+                encoding: element.word(2),
+            }
+        } else {
+            let scalar = self.scalar(tensor.word(1)?)?;
+            TensorElement {
+                kind: scalar.kind,
+                width: if scalar.kind == ScalarKind::Bool {
+                    1
+                } else {
+                    scalar.width
+                },
+                encoding: None,
+            }
+        };
+        let rank_id = tensor.word(2)?;
+        let rank = self.get(rank_id)?;
+        let value = self.constant_u32(rank_id);
+        let rank = if rank.is(Op::Constant) {
+            TensorRank::Constant(value?)
+        } else if rank.is(Op::SpecConstant) {
+            TensorRank::Specialized {
+                spec_id: self.decorations.value(rank_id, Decoration::SpecId),
+                default: value?,
+            }
+        } else {
+            TensorRank::Specialized {
+                spec_id: None,
+                default: 0,
+            }
+        };
+        Some((element, rank))
     }
 
     fn scalar(&self, id: u32) -> Option<Scalar> {
@@ -1337,6 +1465,7 @@ pub fn reflect(module: &Module) -> Result<Reflection, String> {
 
     let mut roots = BTreeMap::new();
     let mut resource_ids = Vec::new();
+    let mut output_ids = Vec::new();
     for instruction in &module.globals {
         if !instruction.is(Op::Variable) {
             continue;
@@ -1362,6 +1491,9 @@ pub fn reflect(module: &Module) -> Result<Reflection, String> {
         match class {
             StorageClass::Input | StorageClass::Output => {
                 let output = class == StorageClass::Output;
+                if output {
+                    output_ids.push((id, pointee));
+                }
                 if let Some(builtin) = decorations.builtins.get(&id) {
                     if output {
                         reflection.output_builtins.insert(*builtin);
@@ -1428,12 +1560,17 @@ pub fn reflect(module: &Module) -> Result<Reflection, String> {
                     }
                     _ => (None, Some(pointee)),
                 };
-                let kind = match element {
+                let mut kind = match element {
                     Some(element) if count != Some(0) => resource_kind(&types, class, id, element),
                     _ => ResourceKind::Unsupported(
                         "descriptor arrays without a constant length".into(),
                     ),
                 };
+                if let ResourceKind::Tensor(ref mut tensor) = kind {
+                    tensor.runtime_array = types
+                        .get(pointee)
+                        .is_some_and(|array| array.is(Op::TypeRuntimeArray));
+                }
                 if let ResourceKind::UniformBuffer(layout)
                 | ResourceKind::StorageBuffer { layout, .. } = &kind
                 {
@@ -1501,6 +1638,9 @@ pub fn reflect(module: &Module) -> Result<Reflection, String> {
         }
     }
     drop_unused_aliases(&mut reflection.resources, &resource_ids, &module.body);
+    if reflection.has_mode(ExecutionMode::Xfb) {
+        reflection.xfb = Some(xfb_fields(module, &types, &output_ids));
+    }
     reflection.ray_indices = ray_indices(&module.body, &types);
     reflection.cooperative_matrices = module
         .globals
@@ -1541,6 +1681,222 @@ pub fn reflect(module: &Module) -> Result<Reflection, String> {
         .outputs
         .sort_by_key(|v| (v.location, v.component));
     Ok(reflection)
+}
+
+const fn xfb_alignment(scalar: Scalar) -> u32 {
+    if scalar.width == 64 {
+        8
+    } else {
+        4
+    }
+}
+
+enum XfbStep {
+    Type { id: u32, offset: u32 },
+}
+
+fn xfb_type_size(types: &Types, id: u32, depth: u32) -> Result<(u32, u32), String> {
+    let mut fields = Vec::new();
+    flatten_xfb(types, id, 0, depth + 1, &mut fields)?;
+    let alignment = fields
+        .iter()
+        .map(|(_, scalar)| xfb_alignment(*scalar))
+        .max()
+        .unwrap_or(4);
+    let end = fields
+        .iter()
+        .map(|(offset, scalar)| offset + scalar.bytes())
+        .max()
+        .unwrap_or(0);
+    Ok((end.div_ceil(alignment) * alignment, alignment))
+}
+
+fn flatten_xfb(
+    types: &Types,
+    id: u32,
+    base: u32,
+    depth: u32,
+    out: &mut Vec<(u32, Scalar)>,
+) -> Result<(), String> {
+    if depth > 32 {
+        return Err("transform feedback type nesting too deep".into());
+    }
+    let mut work = vec![XfbStep::Type { id, offset: base }];
+    let mut steps = 0usize;
+    while let Some(XfbStep::Type { id, offset }) = work.pop() {
+        steps += 1;
+        if steps > 1 << 16 {
+            return Err("transform feedback output too large".into());
+        }
+        let instruction = types
+            .get(id)
+            .ok_or_else(|| format!("unknown transform feedback type %{id}"))?;
+        if let Some(scalar) = types.scalar(id) {
+            if scalar.kind == ScalarKind::Bool {
+                return Err("boolean transform feedback output".into());
+            }
+            out.push((offset, scalar));
+        } else if instruction.is(Op::TypeVector) || instruction.is(Op::TypeMatrix) {
+            let element = instruction.word(1).ok_or("bad vector type")?;
+            let count = instruction.word(2).ok_or("bad vector type")?;
+            let (size, _) = xfb_type_size(types, element, depth)?;
+            for index in (0..count).rev() {
+                work.push(XfbStep::Type {
+                    id: element,
+                    offset: offset + index * size,
+                });
+            }
+        } else if instruction.is(Op::TypeArray) {
+            let element = instruction.word(1).ok_or("bad array type")?;
+            let length = instruction
+                .word(2)
+                .and_then(|length| types.constant_u32(length))
+                .ok_or("transform feedback array without a constant length")?;
+            let (size, _) = xfb_type_size(types, element, depth)?;
+            for index in (0..length).rev() {
+                work.push(XfbStep::Type {
+                    id: element,
+                    offset: offset + index * size,
+                });
+            }
+        } else if instruction.is(Op::TypeStruct) {
+            let mut next = 0u32;
+            let mut members = Vec::new();
+            for (index, member) in instruction.rest(1).iter().enumerate() {
+                let index = u32::try_from(index).map_err(|_| "struct too large")?;
+                let (size, alignment) = xfb_type_size(types, *member, depth)?;
+                let at = types
+                    .decorations
+                    .member_value(id, index, Decoration::Offset)
+                    .unwrap_or_else(|| next.div_ceil(alignment) * alignment);
+                next = at + size;
+                members.push(XfbStep::Type {
+                    id: *member,
+                    offset: offset + at,
+                });
+            }
+            work.extend(members.into_iter().rev());
+        } else {
+            return Err(format!(
+                "{} in transform feedback",
+                op_name(instruction.opcode)
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn written_outputs(body: &[Instruction]) -> BTreeSet<(u32, Option<u32>)> {
+    let chains: BTreeMap<u32, &Instruction> = body
+        .iter()
+        .filter(|i| {
+            i.is(Op::AccessChain) || i.is(Op::InBoundsAccessChain) || i.is(Op::PtrAccessChain)
+        })
+        .filter_map(|i| i.word(1).map(|id| (id, i)))
+        .collect();
+    let mut written = BTreeSet::new();
+    for instruction in body {
+        let target = if instruction.is(Op::Store) || instruction.is(Op::CopyMemory) {
+            instruction.word(0)
+        } else {
+            None
+        };
+        let Some(mut pointer) = target else {
+            continue;
+        };
+        let mut member = None;
+        let mut steps = 0;
+        while let Some(chain) = chains.get(&pointer) {
+            steps += 1;
+            if steps > 4096 {
+                break;
+            }
+            let Some(base) = chain.word(2) else {
+                break;
+            };
+            member = chain.word(3);
+            pointer = base;
+        }
+        written.insert((pointer, member));
+    }
+    written
+}
+
+fn xfb_fields(module: &Module, types: &Types, outputs: &[(u32, u32)]) -> Result<Xfb, String> {
+    let decorations = types.decorations;
+    let written = written_outputs(&module.body);
+    let member_written = |variable: u32, member: u32, constant: &dyn Fn(u32) -> Option<u32>| {
+        written.contains(&(variable, None))
+            || written
+                .iter()
+                .any(|(id, index)| *id == variable && index.and_then(constant) == Some(member))
+    };
+    let constant = |id: u32| types.constant_u32(id);
+    let mut xfb = Xfb::default();
+    for &(variable, pointee) in outputs {
+        let buffer = decorations.value(variable, Decoration::XfbBuffer);
+        let stride = decorations.value(variable, Decoration::XfbStride);
+        if let (Some(buffer), Some(stride)) = (buffer, stride) {
+            xfb.strides.insert(buffer, stride);
+        }
+        let instruction = types
+            .get(pointee)
+            .ok_or("transform feedback output of an unknown type")?;
+        let block = instruction.is(Op::TypeStruct)
+            && (decorations.has(pointee, Decoration::Block)
+                || decorations.member_builtins.contains(&pointee));
+        if block {
+            for (index, member) in instruction.rest(1).iter().enumerate() {
+                let index = u32::try_from(index).map_err(|_| "struct too large")?;
+                let buffer = decorations
+                    .member_value(pointee, index, Decoration::XfbBuffer)
+                    .or(buffer);
+                if let (Some(buffer), Some(stride)) = (
+                    buffer,
+                    decorations.member_value(pointee, index, Decoration::XfbStride),
+                ) {
+                    xfb.strides.insert(buffer, stride);
+                }
+                let offset = decorations.member_value(pointee, index, Decoration::Offset);
+                let (Some(buffer), Some(offset)) = (buffer, offset) else {
+                    continue;
+                };
+                let mut fields = Vec::new();
+                flatten_xfb(types, *member, offset, 0, &mut fields)?;
+                let written = member_written(variable, index, &constant);
+                xfb.fields
+                    .extend(fields.into_iter().map(|(offset, scalar)| XfbField {
+                        buffer,
+                        offset,
+                        scalar,
+                        written,
+                    }));
+            }
+        } else if let (Some(buffer), Some(offset)) =
+            (buffer, decorations.value(variable, Decoration::Offset))
+        {
+            let mut fields = Vec::new();
+            flatten_xfb(types, pointee, offset, 0, &mut fields)?;
+            let written = written.iter().any(|(id, _)| *id == variable);
+            xfb.fields
+                .extend(fields.into_iter().map(|(offset, scalar)| XfbField {
+                    buffer,
+                    offset,
+                    scalar,
+                    written,
+                }));
+        }
+    }
+    for field in &xfb.fields {
+        if !xfb.strides.contains_key(&field.buffer) {
+            return Err(format!(
+                "transform feedback buffer {} without an XfbStride",
+                field.buffer
+            ));
+        }
+    }
+    xfb.fields.sort();
+    Ok(xfb)
 }
 
 struct AddressRoot {
@@ -1855,6 +2211,18 @@ fn resource_kind(types: &Types, class: StorageClass, variable: u32, pointee: u32
         return ResourceKind::AccelerationStructure;
     }
     let decorations = types.decorations;
+    if instruction.is(Op::TypeTensorARM) && class == StorageClass::UniformConstant {
+        return match types.tensor(pointee) {
+            Some((element, rank)) => ResourceKind::Tensor(TensorType {
+                element,
+                rank,
+                readable: !decorations.has(variable, Decoration::NonReadable),
+                writable: !decorations.has(variable, Decoration::NonWritable),
+                runtime_array: false,
+            }),
+            None => ResourceKind::Unsupported("tensor of an unknown element or rank".into()),
+        };
+    }
     match class {
         StorageClass::Uniform | StorageClass::StorageBuffer => {
             let layout = match types.layout(pointee, None, 0) {
@@ -1897,9 +2265,12 @@ fn resource_kind(types: &Types, class: StorageClass, variable: u32, pointee: u32
                     Ok(image) => match (image.dim, image.sampled) {
                         (Dim::DimBuffer, 2) => ResourceKind::StorageTexelBuffer(image),
                         (Dim::DimBuffer, _) => ResourceKind::UniformTexelBuffer(image),
-                        (Dim::DimSubpassData, _) => {
-                            ResourceKind::Unsupported("subpass inputs".into())
-                        }
+                        (Dim::DimSubpassData, _) => ResourceKind::InputAttachment {
+                            image,
+                            index: types
+                                .decorations
+                                .value(variable, Decoration::InputAttachmentIndex),
+                        },
                         (_, 2) => ResourceKind::StorageImage(image),
                         _ => ResourceKind::SampledImage(image),
                     },
@@ -1983,6 +2354,135 @@ mod tests {
         };
         assert!(*writable);
         assert_eq!(layout.runtime_stride(), 4);
+        Ok(())
+    }
+
+    #[test]
+    fn reflects_tensors_and_refuses_them_precisely() -> anyhow::Result<()> {
+        let constant = StorageClass::UniformConstant as u32;
+        let words = module(&[
+            op(Op::Capability, &[Capability::Shader as u32])?,
+            op(Op::Capability, &[Capability::TensorsARM as u32])?,
+            op(Op::Extension, &string_words("SPV_ARM_tensors"))?,
+            op(Op::EntryPoint, &entry(ExecutionModel::GLCompute))?,
+            op(Op::Decorate, &[20, Decoration::DescriptorSet as u32, 0])?,
+            op(Op::Decorate, &[20, Decoration::Binding as u32, 1])?,
+            op(Op::Decorate, &[20, Decoration::NonWritable as u32])?,
+            op(Op::Decorate, &[30, Decoration::DescriptorSet as u32, 2])?,
+            op(Op::Decorate, &[30, Decoration::Binding as u32, 0])?,
+            op(Op::Decorate, &[30, Decoration::NonReadable as u32])?,
+            op(Op::Decorate, &[7, Decoration::SpecId as u32, 4])?,
+            op(Op::Decorate, &[31, Decoration::DescriptorSet as u32, 3])?,
+            op(Op::Decorate, &[31, Decoration::Binding as u32, 0])?,
+            op(Op::TypeInt, &[5, 32, 0])?,
+            op(Op::TypeInt, &[6, 32, 1])?,
+            op(Op::TypeFloat, &[8, 16, 0])?,
+            op(Op::Constant, &[5, 9, 2])?,
+            op(Op::Constant, &[5, 10, 3])?,
+            op(Op::SpecConstant, &[6, 7, 5])?,
+            op(Op::TypeTensorARM, &[11, 8, 9])?,
+            op(Op::TypeArray, &[12, 11, 10])?,
+            op(Op::TypePointer, &[13, constant, 12])?,
+            op(Op::Variable, &[13, 20, constant])?,
+            op(Op::TypeTensorARM, &[21, 6, 7])?,
+            op(Op::TypePointer, &[22, constant, 21])?,
+            op(Op::Variable, &[22, 30, constant])?,
+            op(Op::TypeRuntimeArray, &[23, 21])?,
+            op(Op::TypePointer, &[24, constant, 23])?,
+            op(Op::Variable, &[24, 31, constant])?,
+        ]);
+        let reflection = reflected(&words)?;
+        let tensors: Vec<(u32, u32, Option<u32>, TensorType)> = reflection
+            .resources
+            .iter()
+            .filter_map(|resource| match resource.kind {
+                ResourceKind::Tensor(tensor) => {
+                    Some((resource.set, resource.binding, resource.count, tensor))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            tensors,
+            [
+                (
+                    0,
+                    1,
+                    Some(3),
+                    TensorType {
+                        element: TensorElement {
+                            kind: ScalarKind::Float,
+                            width: 16,
+                            encoding: Some(0),
+                        },
+                        rank: TensorRank::Constant(2),
+                        readable: true,
+                        writable: false,
+                        runtime_array: false,
+                    }
+                ),
+                (
+                    2,
+                    0,
+                    None,
+                    TensorType {
+                        element: TensorElement {
+                            kind: ScalarKind::Sint,
+                            width: 32,
+                            encoding: None,
+                        },
+                        rank: TensorRank::Specialized {
+                            spec_id: Some(4),
+                            default: 5,
+                        },
+                        readable: false,
+                        writable: true,
+                        runtime_array: false,
+                    }
+                ),
+                (
+                    3,
+                    0,
+                    Some(RUNTIME_DESCRIPTORS),
+                    TensorType {
+                        element: TensorElement {
+                            kind: ScalarKind::Sint,
+                            width: 32,
+                            encoding: None,
+                        },
+                        rank: TensorRank::Specialized {
+                            spec_id: Some(4),
+                            default: 5,
+                        },
+                        readable: true,
+                        writable: true,
+                        runtime_array: true,
+                    }
+                ),
+            ]
+        );
+        let Err(crate::exec::plan::Refusal::Capability(reason)) =
+            crate::exec::plan::requirements(&reflection)
+        else {
+            panic!("tensors must be refused as a capability");
+        };
+        assert!(
+            reason.contains("set 0 binding 1 tensorARM<bfloat16_t, 2> readonly[3]"),
+            "{reason}"
+        );
+        assert!(
+            reason.contains(
+                "set 2 binding 0 tensorARM<int32_t, specialization constant 4 = 5> writeonly"
+            ),
+            "{reason}"
+        );
+        assert!(reason.contains("VK_ARM_tensors"), "{reason}");
+        assert!(
+            reason.contains(
+                "set 3 binding 0 tensorARM<int32_t, specialization constant 4 = 5> read/write[] (runtime array)"
+            ),
+            "{reason}"
+        );
         Ok(())
     }
 

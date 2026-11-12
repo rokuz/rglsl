@@ -5333,6 +5333,126 @@ uint size(readonly tensorARM<int, 4> tensor) {
 void main() {
     uint s = size(t);
 }
+### tensor operands and dimensions convert implicitly to uint | comp 460 | ok
+#extension GL_ARM_tensors : require
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+layout(set = 0, binding = 0) uniform tensorARM<int, 2> t;
+void main() {
+    int value;
+    tensorReadARM(t, uint[](0, 0), value, 1);
+    tensorReadARM(t, uint[](0, 0), value, uint16_t(1));
+    tensorWriteARM(t, uint[](0, 0), value, int8_t(0));
+    uint a = tensorSizeARM(t, 1) + tensorSizeARM(t, int16_t(0));
+}
+### tensor operands and dimensions do not convert from wider or other types | comp 460 | 7:NoMatchingFunction, 8:NoMatchingFunction, 9:NoMatchingFunction, 10:NoMatchingFunction
+#extension GL_ARM_tensors : require
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+layout(set = 0, binding = 0) uniform tensorARM<int, 2> t;
+void main() {
+    int value;
+    tensorReadARM(t, uint[](0, 0), value, 1ul);
+    tensorWriteARM(t, uint[](0, 0), value, true);
+    uint a = tensorSizeARM(t, 1l);
+    uint b = tensorSizeARM(t, 1.0);
+}
+### tensor calls keep every memory qualifier | comp 460 | 10:InvalidCooperativeCall, 11:InvalidCooperativeCall, 12:InvalidCooperativeCall, 13:InvalidCooperativeCall
+#extension GL_ARM_tensors : require
+#extension GL_KHR_memory_scope_semantics : require
+layout(set = 0, binding = 0) uniform coherent tensorARM<int, 1> c;
+layout(set = 0, binding = 1) uniform devicecoherent tensorARM<int, 1> d;
+layout(set = 0, binding = 2) uniform workgroupcoherent tensorARM<int, 1> w;
+layout(set = 0, binding = 3) uniform volatile tensorARM<int, 1> v;
+void main() {
+    int value;
+    uint a = tensorSizeARM(c, 0);
+    tensorReadARM(d, uint[](0), value);
+    tensorWriteARM(w, uint[](0), value);
+    uint b = tensorSizeARM(v, 0);
+}
+### user functions keep the coherent family | comp 460 | 9:InvalidQualifier, 10:InvalidQualifier
+#extension GL_KHR_memory_scope_semantics : require
+layout(set = 0, binding = 0) uniform writeonly devicecoherent image2D d;
+layout(set = 0, binding = 1) uniform writeonly subgroupcoherent image2D s;
+void use(writeonly image2D image) {}
+void keep(writeonly workgroupcoherent image2D image) {}
+void main() {
+    keep(s);
+    use(d);
+    use(s);
+}
+### tensor calls need small type arithmetic | comp 460 | 7:ExtensionRequired, 8:ExtensionRequired, 8:ExtensionRequired
+#extension GL_ARM_tensors : require
+#extension GL_EXT_shader_16bit_storage : require
+layout(set = 0, binding = 0) uniform tensorARM<float16_t, 1> t;
+layout(set = 0, binding = 1) buffer B { float16_t value; } b;
+void main() {
+    uint a = tensorSizeARM(t, 0);
+    tensorReadARM(t, uint[](0), b.value);
+}
+### tensor parameters need small type arithmetic | comp 460 | 4:ExtensionRequired
+#extension GL_ARM_tensors : require
+#extension GL_EXT_shader_8bit_storage : require
+void use(tensorARM<int8_t, 1> tensor) {}
+void main() {}
+### unsized tensor arrays need constant indices without nonuniform_qualifier | comp 460 | 7:VariableIndexIntoUnsizedArray
+#extension GL_ARM_tensors : require
+layout(set = 0, binding = 0) uniform tensorARM<int, 1> t[];
+layout(set = 0, binding = 1) buffer B { uint index; } b;
+void main() {
+    int value;
+    tensorReadARM(t[b.index], uint[](0), value);
+    tensorReadARM(t[2], uint[](0), value);
+}
+### runtime tensor arrays with nonuniform_qualifier | comp 460 | ok
+#extension GL_ARM_tensors : require
+#extension GL_EXT_nonuniform_qualifier : require
+layout(set = 0, binding = 0) uniform tensorARM<int, 1> t[];
+layout(set = 0, binding = 1) buffer B { uint index; } b;
+void main() {
+    int value;
+    tensorReadARM(t[nonuniformEXT(b.index)], uint[](0), value);
+    tensorReadARM(t[2], uint[](0), value);
+}
+### tensor ranks from specialization constants | comp 460 | 11:InvalidCooperativeCall, 12:InvalidCooperativeCall
+#extension GL_ARM_tensors : require
+layout(constant_id = 0) const int R = 2;
+layout(set = 0, binding = 0) uniform tensorARM<float, R> t;
+layout(set = 0, binding = 1) buffer B { float value; float values[R]; } b;
+void main() {
+    uint c[R];
+    tensorReadARM(t, c, b.value);
+    tensorWriteARM(t, uint[](0, 1), b.values);
+    uint s = tensorSizeARM(t, 1);
+    tensorReadARM(t, uint[](0), b.value);
+    s = tensorSizeARM(t, 2);
+}
+### functions return tensors and arrays of tensors | comp 460 | ok
+#extension GL_ARM_tensors : require
+layout(set = 0, binding = 0) uniform tensorARM<float, 2> t;
+layout(set = 0, binding = 1) uniform tensorARM<float, 2> ta[2];
+tensorARM<float, 2> same() { return t; }
+tensorARM<float, 2>[2] all() { return ta; }
+uint size(tensorARM<float, 2> x[2]) { return tensorSizeARM(x[1], 0); }
+void main() {
+    uint s = tensorSizeARM(same(), 0) + tensorSizeARM(all()[1], 1) + size(ta);
+}
+### returned tensors are not parameters | comp 460 | 10:TensorArgumentNotAVariable, 11:TensorArgumentNotAVariable
+#extension GL_ARM_tensors : require
+layout(set = 0, binding = 0) uniform tensorARM<float, 2> t;
+layout(set = 0, binding = 1) uniform tensorARM<float, 2> ta[2];
+tensorARM<float, 2> same() { return t; }
+uint one(tensorARM<float, 2> x) { return tensorSizeARM(x, 0); }
+uint two(tensorARM<float, 2> x[2]) { return tensorSizeARM(x[1], 0); }
+tensorARM<float, 2>[2] pair() { return ta; }
+void main() {
+    uint s = one(same());
+    s = two(pair());
+}
+### tensor element types are scalars | comp 460 | 3:InvalidTypeParameters, 4:InvalidTypeParameters
+#extension GL_ARM_tensors : require
+layout(set = 0, binding = 0) uniform tensorARM<vec2, 1> v;
+layout(set = 0, binding = 1) uniform tensorARM<float[2], 1> a;
+void main() {}
 ### type parameters cannot be structures | comp 460 | 3:InvalidTypeParameters
 #extension GL_ARM_tensors : require
 layout(set = 0, binding = 0) uniform tensorARM<struct S { float a; }, 1> t;
@@ -6160,3 +6280,25 @@ void main() {
 layout(local_size_x = 1) in;
 void main() {
 }
+### layout qualifiers on parameters | frag | 5:InvalidParameter, 6:InvalidParameter, 7:InvalidParameter, 8:InvalidParameter, 9:InvalidParameter
+#extension GL_EXT_buffer_reference : require
+layout(buffer_reference) buffer R { float x; };
+layout(location = 0) out vec4 o;
+float a(layout(r32f) image2D i) { return 0.0; }
+float b(layout(binding = 1) sampler2D s) { return 0.0; }
+float c(layout(location = 1) float x) { return x; }
+float d(layout(row_major) mat4 m) { return m[0][0]; }
+float e(layout(buffer_reference) R r) { return 0.0; }
+float f(layout(constant_id = 3) float x, layout(input_attachment_index = 0) float y) { return x + y; }
+float g(layout(buffer_reference_align = 16) R r) { return 0.0; }
+void main() { o = vec4(0.0); }
+### interpolation, auxiliary and invariant qualifiers on parameters | frag | 3:InvalidParameter, 4:InvalidParameter, 5:InvalidParameter, 6:InvalidParameter, 7:InvalidParameter, 8:InvalidParameter, 8:InvalidParameter
+layout(location = 0) out vec4 o;
+float a(flat float x) { return x; }
+float b(centroid float x) { return x; }
+float c(sample float x) { return x; }
+float d(noperspective float x) { return x; }
+float e(invariant float x) { return x; }
+float f(smooth invariant float x) { return x; }
+float g(precise out float x) { x = 1.0; return x; }
+void main() { o = vec4(0.0); }

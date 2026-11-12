@@ -128,6 +128,18 @@ const fn link_time(kind: &rglsl_sema::DiagnosticKind) -> bool {
     )
 }
 
+fn link_message(kind: &rglsl_sema::DiagnosticKind) -> Option<String> {
+    match *kind {
+        rglsl_sema::DiagnosticKind::MissingEntryPoint => Some(String::from(
+            "Missing entry point: Each stage requires one entry point",
+        )),
+        rglsl_sema::DiagnosticKind::MissingFunctionBody(ref name) => {
+            Some(format!("No function definition (body) found: {name}"))
+        }
+        _ => None,
+    }
+}
+
 fn preprocess(
     options: &Options,
     stage: Option<ShaderStage>,
@@ -365,7 +377,10 @@ fn lower(
             let message = reworded.unwrap_or_else(|| diagnostic.kind.to_string());
             let past_end = usize::try_from(start).is_ok_and(|start| start >= text.len());
             let error = Error {
-                kind: ErrorKind::SemanticError(Cow::Owned(message)),
+                kind: match link_message(&diagnostic.kind) {
+                    Some(message) => ErrorKind::Link(message),
+                    None => ErrorKind::SemanticError(Cow::Owned(message)),
+                },
                 meta: if link_time(&diagnostic.kind) {
                     Span::UNDEFINED
                 } else if past_end {

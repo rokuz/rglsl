@@ -48,7 +48,12 @@ changelog was dropped; see upstream for the history before the fork.
   them, and the SPIRV-Cross step (`*.spvasm.glsl`). GLSL and SPIR-V inputs now produce
   SPIR-V snapshots (they used to produce WGSL).
 - `naga-cli`: the output formats and options of the removed backends. `naga-xtask`: every
-  `validate` subcommand except `spv`.
+  `validate` subcommand except `spv`. In M9 the rest of `naga-cli` was replaced by a
+  glslangValidator-compatible command line (`docs/design/cli.md`): SPIR-V and bincode IR input,
+  `.txt`/`.bin` IR output, bulk validation, pipeline overrides, bounds-check policies,
+  compaction, `--capabilities`, `--task-limits`, the coordinate space flip (the output never
+  flips `y`, as glslang's) and the `input output` positional form are gone; the argh dependency
+  went with them.
 
 - **The WGSL frontend** (`front/wgsl`, the `wgsl-in` feature), the shared WGSL helpers
   (`common/wgsl`, `keywords`, `front::SymbolTable`), its fuzz target and its tests
@@ -868,6 +873,22 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   `docs/design/debug-info.md`.
 - **Source extensions.** `Module::source_extensions` (new) lists the GLSL extensions the
   source requested; the backend writes them as `OpSourceExtension` with the names.
+- **Function parameters of opaque types.** `FunctionArgument::memory_decorations` (new,
+  serialized only when set; object `FORMAT_VERSION` 11) carries the memory qualifiers of image
+  and tensor parameters; the backend writes them on the `OpFunctionParameter` as glslang does
+  (`Volatile` with `Coherent`, `Coherent`, `Restrict`, `NonWritable`, `NonReadable`; no
+  `Coherent`/`Volatile` under the Vulkan memory model). A call may pass a storage image whose
+  type differs from the parameter's only in its `StorageAccess` (SPIR-V image types carry no
+  access). A `BindingArray` of tensors with a constant size is an `ARGUMENT` type (passed as a
+  `UniformConstant` pointer) and, like a tensor, may be a function result; the backend loads
+  the array for `return`, extracts constant indices from a returned array and spills it for
+  variable ones (`docs/design/tensors.md`).
+- **Module-wide SPIR-V pragmas.** `Module::variable_pointers` (`#pragma use_variable_pointers`,
+  the `VariablePointers` capability) and `Module::replicated_composites`
+  (`#pragma use_replicated_composites`: composites whose constituents are equal become the
+  `Replicate` forms, `back/spv/replicate.rs`) are new; the linker merges them with OR. Object
+  `FORMAT_VERSION` 12 (10 on the cooperative branch, 11 for parameter memory decorations).
+  `docs/design/cooperative.md`.
 
 ## Cherry-picked upstream commits
 

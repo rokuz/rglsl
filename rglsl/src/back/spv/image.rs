@@ -424,6 +424,7 @@ impl BlockContext<'_> {
             crate::Expression::Access { .. }
             | crate::Expression::AccessIndex { .. }
             | crate::Expression::Load { .. }
+            | crate::Expression::CallResult(_)
             | crate::Expression::AccelerationStructureFromAddress { .. } => {
                 self.cached.get(expr_handle)?
             }
