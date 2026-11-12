@@ -5,7 +5,7 @@ layout(location = 0) out vec2 position;
 layout(location = 1) flat out int id;
 layout(location = 2) out Vertex {
     float weight;
-    noperspective float plain;
+    float tenfold;
 } vertex;
 
 void main()
@@ -14,5 +14,5 @@ void main()
     position = inPosition;
     id = 1 << gl_VertexIndex;
     vertex.weight = float(gl_VertexIndex + 1);
-    vertex.plain = float(10 * (gl_VertexIndex + 1));
+    vertex.tenfold = float(10 * (gl_VertexIndex + 1));
 }
