@@ -185,3 +185,7 @@ twin = "`c0` defaults to 4; drops the comments"
 ["spv.longVectorBuiltinsSpecConstint32.comp"]
 undefined = "the specialization constant `c0` defaults to 0, so every `vector<..., c0>` has no components (Amber crashed on both remote targets with glslang's module)"
 twin = "`c0` defaults to 4; drops the comments"
+
+["spv.16bitxfb.vert"]
+undefined = "captures 16-bit components in transform feedback, which Vulkan forbids (\"The size of each component of an output variable must be at least 32-bits\", Transform Feedback Capture; spirv-val and the validation layer do not check it), and never writes `gl_Position`. The AMD driver stores each captured 16-bit vector as whole dwords at the dword-aligned address below its offset: a vertex at byte 6 of the 6-byte stride overwrites bytes 4..11 and so part of the previous vertex, and the padding half of each dword holds garbage that changes from run to run (byte 36 of buffer 1 was 0x0018 or 0 for glslang's module); with `xfb_stride = 8`, with `gl_Position` written or with a single buffer the 16-bit captures are still wrong, while the same shader with 32-bit outputs is captured exactly and the same on every run"
+twin = "captures `vec3`, `float` and `vec2`, `ivec3`, `uint` and `uvec2` converted from the same 16-bit inputs with `xfb_stride = 12`, and writes `gl_Position = vec4(vec2(if16v4.xy), 0.0, 1.0)`"
