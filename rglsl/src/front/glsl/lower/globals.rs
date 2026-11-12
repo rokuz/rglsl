@@ -5,7 +5,7 @@ use rglsl_ast::ast::{
     InitDeclarator, InitDeclaratorList, Initializer, InterpolationQualifier, Node,
     SingleTypeQualifier, Spanned, StorageQualifier, TypeQualifier,
 };
-use rglsl_sema::scope::{Origin, Qualifiers, Storage, SymbolKind, Variable};
+use rglsl_sema::scope::{Origin, PerVertex, Qualifiers, Storage, SymbolKind, Variable};
 use rglsl_sema::types::{
     ArraySize as GlslArraySize, BlockId, BlockStorage, OpaqueKind, Scalar, Type as GlslType,
     TypeKind,
@@ -73,6 +73,12 @@ const PER_VERTEX: [&str; 4] = [
     "gl_ClipDistance",
     "gl_CullDistance",
 ];
+
+const fn per_vertex_interpolation(per_vertex: PerVertex) -> Interpolation {
+    Interpolation::PerVertex {
+        nv: matches!(per_vertex, PerVertex::Nv),
+    }
+}
 
 const fn interpolation_of(qualifier: InterpolationQualifier) -> Interpolation {
     match qualifier {
@@ -254,6 +260,22 @@ fn builtin_of(name: &str) -> Option<BuiltIn> {
         "gl_FragmentSizeNV" => BuiltIn::FragSize { nv: true },
         "gl_InvocationsPerPixelNV" => BuiltIn::FragInvocationCount { nv: true },
         "gl_FragFullyCoveredNV" => BuiltIn::FullyCovered,
+        "gl_BaryCoordNV" => BuiltIn::Barycentric {
+            perspective: true,
+            nv: true,
+        },
+        "gl_BaryCoordNoPerspNV" => BuiltIn::Barycentric {
+            perspective: false,
+            nv: true,
+        },
+        "gl_BaryCoordEXT" => BuiltIn::Barycentric {
+            perspective: true,
+            nv: false,
+        },
+        "gl_BaryCoordNoPerspEXT" => BuiltIn::Barycentric {
+            perspective: false,
+            nv: false,
+        },
         "gl_FragStencilRefARB" => BuiltIn::FragStencilRef,
         "gl_NumWorkGroups" => BuiltIn::NumWorkGroups,
         "gl_WorkGroupID" => BuiltIn::WorkGroupId,
@@ -1001,7 +1023,10 @@ impl<'a> Lowerer<'a> {
                 ))
             }
         };
-        let mut interpolation = qualifiers.interpolation.map(interpolation_of);
+        let mut interpolation = match qualifiers.per_vertex {
+            Some(per_vertex) => Some(per_vertex_interpolation(per_vertex)),
+            None => qualifiers.interpolation.map(interpolation_of),
+        };
         let mut sampling = if qualifiers.sample {
             Some(Sampling::Sample)
         } else if qualifiers.centroid {
@@ -1714,7 +1739,7 @@ impl<'a> Lowerer<'a> {
             }
             Some(Binding::Location {
                 location: start,
-                interpolation: None,
+                interpolation: outer.per_vertex.map(per_vertex_interpolation),
                 sampling: None,
                 blend_src: None,
                 per_primitive: false,

@@ -448,6 +448,8 @@ pub enum StorageQualifier {
     HitObjectAttributeEXT,
     PerPrimitiveNV,
     PerPrimitiveEXT,
+    PerVertexNV,
+    PerVertexEXT,
     PerViewNV,
     TaskNV,
     TaskPayloadSharedEXT,
@@ -455,7 +457,7 @@ pub enum StorageQualifier {
 }
 
 impl StorageQualifier {
-    pub const ALL: [Self; 44] = [
+    pub const ALL: [Self; 46] = [
         Self::Const,
         Self::In,
         Self::Out,
@@ -496,6 +498,8 @@ impl StorageQualifier {
         Self::HitObjectAttributeEXT,
         Self::PerPrimitiveNV,
         Self::PerPrimitiveEXT,
+        Self::PerVertexNV,
+        Self::PerVertexEXT,
         Self::PerViewNV,
         Self::TaskNV,
         Self::TaskPayloadSharedEXT,
@@ -544,6 +548,8 @@ impl StorageQualifier {
             Self::HitObjectAttributeEXT => "hitObjectAttributeEXT",
             Self::PerPrimitiveNV => "perprimitiveNV",
             Self::PerPrimitiveEXT => "perprimitiveEXT",
+            Self::PerVertexNV => "pervertexNV",
+            Self::PerVertexEXT => "pervertexEXT",
             Self::PerViewNV => "perviewNV",
             Self::TaskNV => "taskNV",
             Self::TaskPayloadSharedEXT => "taskPayloadSharedEXT",

@@ -532,6 +532,9 @@ impl Analyzer<'_> {
                     self.mesh_qualifier(single.span, *storage);
                     result.per_view = true;
                 }
+                StorageQualifier::PerVertexNV | StorageQualifier::PerVertexEXT => {
+                    result.per_vertex = self.per_vertex_qualifier(single.span, *storage);
+                }
                 StorageQualifier::TaskNV => {
                     self.mesh_qualifier(single.span, *storage);
                     result.per_task = true;
@@ -946,6 +949,7 @@ impl Analyzer<'_> {
             qualifiers.nontemporal |= block.nontemporal;
             qualifiers.writeonly |= block.writeonly;
             qualifiers.per_primitive |= block.per_primitive;
+            qualifiers.per_vertex = qualifiers.per_vertex.or(block.per_vertex);
             qualifiers.per_view |= block.per_view;
             qualifiers.per_task |= block.per_task;
         }
@@ -1612,7 +1616,25 @@ impl Analyzer<'_> {
         let output_size = self.output_array_size;
         let patch_vertices = u32::try_from(self.options.limits.max_patch_vertices).ok();
         let outer = ty.outer_size();
+        let per_vertex = qualifiers.per_vertex.is_some();
         let outcome = |stage: Stage| -> InterfaceArray {
+            let invalid = |reason| DiagnosticKind::InvalidInterfaceArray {
+                name: name.node.clone(),
+                reason,
+            };
+            if per_vertex {
+                return match (storage, outer) {
+                    (Storage::Out, _) => {
+                        InterfaceArray::Invalid(invalid("an output cannot be per-vertex"))
+                    }
+                    (_, None) => InterfaceArray::Invalid(invalid("the type must be an array")),
+                    (_, Some(ArraySize::Unsized)) => InterfaceArray::Sized(3),
+                    (_, Some(ArraySize::Sized(declared))) if declared != 3 => {
+                        InterfaceArray::Invalid(invalid("a per-vertex array must have 3 elements"))
+                    }
+                    _ => InterfaceArray::Unchanged,
+                };
+            }
             let size = match (storage, stage) {
                 (Storage::In, Stage::Geometry) => input_size,
                 (Storage::In, Stage::TessControl | Stage::TessEvaluation) => {
@@ -1620,10 +1642,6 @@ impl Analyzer<'_> {
                 }
                 (Storage::Out, Stage::TessControl) => output_size,
                 _ => return InterfaceArray::Unchanged,
-            };
-            let invalid = |reason| DiagnosticKind::InvalidInterfaceArray {
-                name: name.node.clone(),
-                reason,
             };
             match (outer, size) {
                 (None, _) => InterfaceArray::Invalid(invalid("the type must be an array")),

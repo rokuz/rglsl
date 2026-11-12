@@ -375,7 +375,6 @@ fn reserved_words_cannot_be_names() -> TestResult {
         "superp",
         "goto",
         "inline",
-        "pervertexNV",
         "noinline",
     ] {
         assert!(is_unavailable_word(word), "{word}");

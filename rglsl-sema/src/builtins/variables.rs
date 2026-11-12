@@ -81,6 +81,10 @@ flat in ivec2 gl_FragmentSizeNV
 flat in int gl_InvocationsPerPixelNV
 flat in int gl_ShadingRateEXT
 out int gl_FragStencilRefARB
+in vec3 gl_BaryCoordNV
+in vec3 gl_BaryCoordNoPerspNV
+in vec3 gl_BaryCoordEXT
+in vec3 gl_BaryCoordNoPerspEXT
 ",
     },
     Group {
@@ -427,6 +431,8 @@ pub fn variable_extension(name: &str) -> Option<&'static str> {
         "gl_FragmentSizeNV" | "gl_InvocationsPerPixelNV" => "GL_NV_shading_rate_image",
         "gl_FragFullyCoveredNV" => "GL_NV_conservative_raster_underestimation",
         "gl_FragStencilRefARB" => "GL_ARB_shader_stencil_export",
+        "gl_BaryCoordNV" | "gl_BaryCoordNoPerspNV" => "GL_NV_fragment_shader_barycentric",
+        "gl_BaryCoordEXT" | "gl_BaryCoordNoPerspEXT" => "GL_EXT_fragment_shader_barycentric",
         _ => return None,
     })
 }

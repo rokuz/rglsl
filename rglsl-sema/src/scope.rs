@@ -55,6 +55,12 @@ pub struct LayoutEntry {
     pub span: Span,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PerVertex {
+    Nv,
+    Ext,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Qualifiers {
     pub storage: Storage,
@@ -79,6 +85,7 @@ pub struct Qualifiers {
     pub nonprivate: bool,
     pub nontemporal: bool,
     pub per_primitive: bool,
+    pub per_vertex: Option<PerVertex>,
     pub per_view: bool,
     pub per_task: bool,
     pub interpolation: Option<InterpolationQualifier>,

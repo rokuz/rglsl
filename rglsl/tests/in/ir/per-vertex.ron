@@ -54,7 +54,9 @@
                         ty: 1,
                         binding: Some(Location(
                             location: 0,
-                            interpolation: Some(PerVertex),
+                            interpolation: Some(PerVertex(
+                                nv: false,
+                            )),
                             sampling: None,
                             blend_src: None,
                             per_primitive: false,

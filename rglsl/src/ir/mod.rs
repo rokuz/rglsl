@@ -502,6 +502,7 @@ pub enum BuiltIn {
     /// Read in fragment shaders
     Barycentric {
         perspective: bool,
+        nv: bool,
     },
     /// Read in fragment shaders
     SampleIndex,
@@ -790,7 +791,7 @@ pub enum Interpolation {
     Flat,
     /// Indicates the fragment input binding holds an array of per-vertex values.
     /// This is typically used with barycentrics.
-    PerVertex,
+    PerVertex { nv: bool },
 }
 
 /// The sampling qualifiers of a binding or struct field.
