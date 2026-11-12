@@ -814,6 +814,14 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
     `small_types.rs` use post-order or memoized work lists. `small_types.rs` no longer stops
     at a type depth of 64. `contains_physical_type` finds a plain type's laid-out original
     through a reverse map instead of scanning every plain type.
+  - `front/spv` (SPIR-V input): `BlockContext::lower` is a frame machine over the body tree;
+    `patch_statements` walks a stack of statement slices in the original pre-order;
+    `insert_composite` splits level by level (`split_composite`) and composes bottom-up;
+    `record_atomic_access` and `get_image_expr_ty` follow access chains in loops;
+    `can_comparison_sample` loops over binding arrays. `Body` keeps its `depth` and a
+    skew-binary `jump` pointer so `is_parent` is logarithmic instead of linear in the depth.
+  - `front/atomic_upgrade.rs`: `upgrade_type` is a post-order task list; an out-of-range field
+    index is `Error::Unsupported` instead of a panic.
 - **`Clone` for `Block` is iterative** (`ir/block.rs`): nested blocks are copied with a work
   list, through `Block::shallow_clone`, `Statement::shell` and `Statement::child_blocks{,_mut}`,
   so cloning a function uses constant stack.

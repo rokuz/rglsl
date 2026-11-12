@@ -34,6 +34,7 @@ jobs:
         env:
           RUSTFLAGS: --cfg fuzzing
       - run: cargo test --workspace --all-features
+      - run: cargo test --release -p rglsl-link --test nesting -- --ignored
 
   deny:
     name: cargo deny

@@ -36,15 +36,18 @@ goal, the language rules for linkage and `#include`, and the milestones (M0–M9
   the `rglsl` crate's own `[lints]`). Do not add `allow(unsafe_code)`.
 - **No panics on user input.** A crash in the corpus run is always a bug.
 - **No recursion over input structure.** A stack overflow aborts the process. Every pass —
-  preprocessor, AST, sema, lowering, fuzzer, IR (`Block` drop and clone), `proc`, compaction,
+  preprocessor, AST, sema, lowering, fuzzer, SPIR-V frontend, IR (`Block` drop and clone), `proc`,
+  compaction,
   validator, uniformity analysis, SPIR-V backend, linker, object files — walks nesting with
   loops, work lists, or `async` functions driven by `rglsl_types::stack` (every recursive call
   through `Stack::call`), so its stack use is constant. Recursion is fine only over structure
   bounded by a small constant (vector sizes, matrix columns). There are no artificial nesting
   limits; only glslang's preprocessor limits (macro expansion depth 200, `#if` nesting 65) are
-  kept for parity. `rglsl-link/tests/nesting.rs` runs the whole pipeline at 10,000 and 100,000
-  levels on a 256 KiB debug stack: add a case for every new kind of nesting, and replace a scan
-  per level (quadratic at depth) with an index or a memo (`docs/design/stack.md`).
+  kept for parity. `rglsl-link/tests/nesting.rs` runs the whole pipeline (GLSL and SPIR-V
+  input) at 10,000 levels on a 256 KiB debug stack in `cargo test`, and at 100,000 levels in
+  release behind `--ignored` (CI and the final gate run it): add a case for every new kind of
+  nesting, and replace a scan per level (quadratic at depth) with an index or a memo
+  (`docs/design/stack.md`).
 - **No `unwrap` or `expect` anywhere, no other panics in non-test code.** `unwrap`, `expect`,
   `panic!`, `unreachable!`, `unimplemented!` and `todo!` are denied by clippy in every crate;
   return a `Result` instead, and never a silent default that hides a broken invariant.
@@ -79,6 +82,7 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 RUSTFLAGS="--cfg fuzzing" cargo clippy -p rglsl-libfuzzer --all-targets -- -D warnings
 cargo test --workspace --all-features
+cargo test --release -p rglsl-link --test nesting -- --ignored   # 100,000-level nesting (CI, final gate)
 cargo deny check
 
 cargo xtask oracles [--glslang-dir ../glslang]     # build pinned glslang + spirv-val
