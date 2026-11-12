@@ -1163,6 +1163,14 @@ impl Type {
             .is_some()
     }
 
+    pub fn contains_cooperative_matrix(&self, registry: &TypeRegistry) -> bool {
+        registry
+            .find_in_members(self, |ty| {
+                matches!(ty.kind, TypeKind::CooperativeMatrix(_)).then_some(())
+            })
+            .is_some()
+    }
+
     pub const fn scalar_type(&self) -> Option<Scalar> {
         if self.is_array() {
             None

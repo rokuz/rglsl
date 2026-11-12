@@ -5142,6 +5142,22 @@ impl Writer {
             ep_instruction.to_words(&mut self.logical_layout.entry_points);
         }
 
+        if ir_module.variable_pointers {
+            self.capabilities_used
+                .insert(spirv::Capability::VariablePointers);
+        }
+        if ir_module.replicated_composites {
+            let declarations =
+                super::replicate::replicate_composites(&mut self.logical_layout.declarations);
+            let functions = super::replicate::replicate_composites(
+                &mut self.logical_layout.function_definitions,
+            );
+            if declarations || functions {
+                self.capabilities_used
+                    .insert(spirv::Capability::ReplicatedCompositesEXT);
+                self.use_extension("SPV_EXT_replicated_composites");
+            }
+        }
         if self
             .flags
             .contains(WriterFlags::SMALL_TYPE_CAPABILITIES_BY_USE)

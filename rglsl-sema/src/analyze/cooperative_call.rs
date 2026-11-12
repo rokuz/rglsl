@@ -50,6 +50,43 @@ pub(crate) fn cooperative_function(name: &str) -> bool {
 
 const SATURATING_ACCUMULATION: i64 = 0x10;
 
+const fn buffer_scalar(nv: bool, floating: bool, load: bool, scalar: Scalar, vector: bool) -> bool {
+    let integer = matches!(
+        scalar,
+        Scalar::Int8 | Scalar::Int16 | Scalar::Int | Scalar::Int64
+    );
+    let unsigned = matches!(
+        scalar,
+        Scalar::Uint8 | Scalar::Uint16 | Scalar::Uint | Scalar::Uint64
+    );
+    if !nv {
+        return integer
+            || unsigned
+            || matches!(
+                scalar,
+                Scalar::Float
+                    | Scalar::Float16
+                    | Scalar::BFloat16
+                    | Scalar::FloatE5M2
+                    | Scalar::FloatE4M3
+                    | Scalar::Double
+            );
+    }
+    if !floating {
+        return if vector {
+            matches!(scalar, Scalar::Int | Scalar::Uint)
+        } else {
+            integer || unsigned
+        };
+    }
+    if vector {
+        return matches!(scalar, Scalar::Uint);
+    }
+    unsigned
+        || matches!(scalar, Scalar::Float16 | Scalar::Float)
+        || (!load && matches!(scalar, Scalar::Double))
+}
+
 type VectorArguments = (
     CooperativeCall,
     &'static [usize],
@@ -123,10 +160,13 @@ impl Analyzer<'_> {
         let wide_index = matches!(
             call,
             CooperativeCall::Load { .. } | CooperativeCall::Store { .. }
-        ) && operands
+        ) && (operands
             .get(2)
             .and_then(|operand| operand.ty.scalar_type())
-            .is_some_and(|scalar| scalar.bits() == 64);
+            .is_some_and(|scalar| scalar.bits() == 64)
+            || (!nv
+                && operands.get(1).and_then(|operand| operand.ty.base_scalar())
+                    == Some(Scalar::Uint64)));
         let required = if wide_index {
             "GL_EXT_shader_64bit_indexing"
         } else {
@@ -172,9 +212,12 @@ impl Analyzer<'_> {
         let valid_element = element_type.as_ref().is_some_and(|ty| {
             !ty.is_array()
                 && match ty.kind {
-                    TypeKind::Scalar(scalar) => scalar.is_numeric(),
+                    TypeKind::Scalar(scalar) => {
+                        buffer_scalar(nv, shape.scalar.is_floating(), load, scalar, false)
+                    }
                     TypeKind::Vector { scalar, size } => {
-                        scalar.is_numeric() && matches!(size, 2 | 4)
+                        matches!(size, 2 | 4)
+                            && buffer_scalar(nv, shape.scalar.is_floating(), load, scalar, true)
                     }
                     _ => false,
                 }
@@ -187,9 +230,44 @@ impl Analyzer<'_> {
             );
             return None;
         }
-        let integer = |operand: &Operand| operand.ty.is_scalar_integer();
-        if !integer(element) || !integer(stride) {
+        if !matches!(buffer.storage, Storage::Buffer | Storage::Shared) && !buffer.through_reference
+        {
+            self.cooperative_error(
+                span,
+                name,
+                "only l-values corresponding to storage block or shared variables can be used with cooperative matrix load/store functions",
+            );
+            return None;
+        }
+        let narrow = |operand: &Operand| {
+            operand.ty.is_scalar_integer()
+                && operand
+                    .ty
+                    .scalar_type()
+                    .is_some_and(|scalar| scalar.bits() <= 32)
+        };
+        let element_valid = if nv {
+            narrow(element)
+        } else {
+            element.ty.is_scalar_integer()
+        };
+        if !element_valid || !narrow(stride) {
             self.cooperative_error(span, name, "element and stride must be integers");
+            return None;
+        }
+        let element_scalar = element.ty.scalar_type();
+        if !nv
+            && self.extension_enabled(super::expression::SHADER_64BIT_INDEXING)
+            && !matches!(
+                element_scalar,
+                Some(Scalar::Uint | Scalar::Uint64 | Scalar::Int64)
+            )
+        {
+            self.cooperative_error(
+                span,
+                name,
+                "ambiguous best function under implicit type conversion",
+            );
             return None;
         }
         if nv {
@@ -197,7 +275,10 @@ impl Analyzer<'_> {
                 self.cooperative_error(span, name, "colMajor must be a bool");
                 return None;
             }
-        } else if !layout.ty.is_scalar_integer() || Self::constant_argument(layout).is_none() {
+        } else if !narrow(layout) || layout.ty.scalar_type() == Some(Scalar::Uint) {
+            self.error(span, DiagnosticKind::NoMatchingFunction(String::from(name)));
+            return None;
+        } else if Self::constant_argument(layout).is_none() {
             let layout_span = arguments.get(4).map_or(span, |argument| argument.span);
             self.cooperative_error(
                 layout_span,

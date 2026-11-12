@@ -4851,6 +4851,18 @@ pub struct Module {
         serde(skip_serializing_if = "core::ops::Not::not")
     )]
     #[cfg_attr(feature = "deserialize", serde(default))]
+    pub variable_pointers: bool,
+    #[cfg_attr(
+        feature = "serialize",
+        serde(skip_serializing_if = "core::ops::Not::not")
+    )]
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    pub replicated_composites: bool,
+    #[cfg_attr(
+        feature = "serialize",
+        serde(skip_serializing_if = "core::ops::Not::not")
+    )]
+    #[cfg_attr(feature = "deserialize", serde(default))]
     pub legacy_buffer_blocks: bool,
     #[cfg_attr(
         feature = "serialize",

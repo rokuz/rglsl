@@ -694,6 +694,18 @@ const NO_DOUBLE_LONG_VECTOR: [&str; 19] = [
 ];
 
 impl<'b> Cx<'b, Analyzer<'_>> {
+    pub(crate) async fn ignored_type_parameters(self, parameters: &'b Spanned<TypeParameters>) {
+        if let Some(element) = &parameters.element {
+            self.call(self.clone().type_specifier(element)).await;
+        }
+        let uses = self.with(|analyzer| analyzer.specialization_uses);
+        for value in &parameters.values {
+            let operand = self.call(self.clone().expression(value)).await;
+            self.with(|analyzer| analyzer.type_parameter_with(value, &operand));
+        }
+        self.with(|analyzer| analyzer.specialization_uses = uses);
+    }
+
     pub(crate) async fn parameterized_type(
         self,
         kind: ParameterizedType,

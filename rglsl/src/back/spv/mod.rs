@@ -117,6 +117,7 @@ mod plain_types;
 mod qcom;
 mod ray;
 mod reclaimable;
+mod replicate;
 mod selection;
 mod small_types;
 mod specialization;
