@@ -9,7 +9,8 @@ import time
 TRANSIENT = (
     "ERROR_INCOMPATIBLE_DRIVER",
     "ERROR_INITIALIZATION_FAILED",
-    "ERROR_DEVICE_LOST",
+    "DEVICE_LOST",
+    "device lost",
     "Unable to create vulkan",
 )
 ATTEMPTS = 3

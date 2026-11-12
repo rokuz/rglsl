@@ -1,5 +1,7 @@
 use spirv::{Capability, ExecutionModel};
 
+use super::reflect::{AtomicPlace, FloatAtomic, FloatAtomicOp};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Need {
     Feature(&'static str),
@@ -56,6 +58,7 @@ pub const RAY_TRACING_NV: [Need; 4] = [
     F("BufferDeviceAddressFeatures.bufferDeviceAddress"),
 ];
 
+pub const MULTIVIEW: Need = F("MultiviewFeatures.multiview");
 pub const MESH_SHADER: Need = F("MeshShaderFeaturesEXT.meshShader");
 pub const TASK_SHADER: Need = F("MeshShaderFeaturesEXT.taskShader");
 pub const MESH_SHADER_NV: Need = F("MeshShaderFeaturesNV.meshShader");
@@ -165,6 +168,7 @@ pub fn capability(capability: Capability) -> Requirement {
         }
         C::MeshShadingEXT => needs![MESH_SHADER],
         C::MeshShadingNV => needs![MESH_SHADER_NV],
+        C::ShaderViewportMaskNV => needs![E("VK_NV_viewport_array2")],
         C::FragmentShadingRateKHR => {
             needs![F(
                 "FragmentShadingRateFeaturesKHR.pipelineFragmentShadingRate"
@@ -210,30 +214,132 @@ pub fn capability(capability: Capability) -> Requirement {
         C::StorageTexelBufferArrayNonUniformIndexing => needs![F(
             "DescriptorIndexingFeatures.shaderStorageTexelBufferArrayNonUniformIndexing"
         )],
-        C::PhysicalStorageBufferAddresses => Requirement::Unsupported(
-            "buffer device address (Amber cannot store a buffer's address in another buffer)",
-        ),
-        C::Int64ImageEXT => {
-            Requirement::Unsupported("64-bit image atomics (Amber cannot enable them)")
+        C::PhysicalStorageBufferAddresses => {
+            needs![F("BufferDeviceAddressFeatures.bufferDeviceAddress")]
         }
+        C::Int64ImageEXT => needs![F(
+            "ShaderImageAtomicInt64FeaturesEXT.shaderImageInt64Atomics"
+        )],
         C::AtomicFloat32AddEXT
         | C::AtomicFloat64AddEXT
         | C::AtomicFloat16AddEXT
         | C::AtomicFloat32MinMaxEXT
         | C::AtomicFloat64MinMaxEXT
-        | C::AtomicFloat16MinMaxEXT => {
-            Requirement::Unsupported("floating-point atomics (Amber cannot enable them)")
+        | C::AtomicFloat16MinMaxEXT => NONE,
+        C::ExpectAssumeKHR => needs![F("ShaderExpectAssumeFeaturesKHR.shaderExpectAssume")],
+        C::ReplicatedCompositesEXT => {
+            needs![F(
+                "ShaderReplicatedCompositesFeaturesEXT.shaderReplicatedComposites"
+            )]
         }
+        C::ComputeDerivativeGroupQuadsKHR => {
+            needs![F(
+                "ComputeShaderDerivativesFeaturesKHR.computeDerivativeGroupQuads"
+            )]
+        }
+        C::ComputeDerivativeGroupLinearKHR => {
+            needs![F(
+                "ComputeShaderDerivativesFeaturesKHR.computeDerivativeGroupLinear"
+            )]
+        }
+        C::GroupNonUniformRotateKHR => needs![
+            F("ShaderSubgroupRotateFeaturesKHR.shaderSubgroupRotate"),
+            F("ShaderSubgroupRotateFeaturesKHR.shaderSubgroupRotateClustered"),
+        ],
+        C::QuadControlKHR => needs![F("ShaderQuadControlFeaturesKHR.shaderQuadControl")],
+        C::FragmentShaderSampleInterlockEXT => {
+            needs![F(
+                "FragmentShaderInterlockFeaturesEXT.fragmentShaderSampleInterlock"
+            )]
+        }
+        C::FragmentShaderPixelInterlockEXT => {
+            needs![F(
+                "FragmentShaderInterlockFeaturesEXT.fragmentShaderPixelInterlock"
+            )]
+        }
+        C::FragmentShaderShadingRateInterlockEXT => {
+            needs![F(
+                "FragmentShaderInterlockFeaturesEXT.fragmentShaderShadingRateInterlock"
+            )]
+        }
+        C::ImageFootprintNV => needs![F("ShaderImageFootprintFeaturesNV.imageFootprint")],
+        C::StencilExportEXT => needs![E("VK_EXT_shader_stencil_export")],
+        C::SampleMaskPostDepthCoverage => needs![E("VK_EXT_post_depth_coverage")],
+        C::GeometryShaderPassthroughNV => needs![E("VK_NV_geometry_shader_passthrough")],
+        C::DeviceGroup => NONE,
+        C::TransformFeedback => needs![F("TransformFeedbackFeaturesEXT.transformFeedback")],
+        C::GeometryStreams => needs![
+            F("TransformFeedbackFeaturesEXT.transformFeedback"),
+            F("TransformFeedbackFeaturesEXT.geometryStreams"),
+        ],
+        C::GroupNonUniformPartitionedEXT => needs![
+            E("VK_NV_shader_subgroup_partitioned"),
+            F("SubgroupSupportedOperations.partitionedNV"),
+        ],
         C::SubgroupBallotKHR => needs![E("VK_EXT_shader_subgroup_ballot")],
         C::SubgroupVoteKHR => needs![E("VK_EXT_shader_subgroup_vote")],
-        C::MultiView => Requirement::Unsupported("multiview (Amber renders one view)"),
+        C::MultiView => needs![MULTIVIEW],
+        C::PerViewAttributesNV => needs![MULTIVIEW, E("VK_NVX_multiview_per_view_attributes")],
         C::InputAttachment => {
-            Requirement::Unsupported("input attachments (Amber cannot bind them)")
+            Requirement::Unsupported(
+                "input attachments (Amber builds render passes without input attachment references and has no input attachment descriptors)",
+            )
         }
         C::CooperativeMatrixNV => {
             Requirement::Unsupported("NV cooperative matrices (Amber cannot enable them)")
         }
         _ => Requirement::Unsupported("a capability the harness does not enable"),
+    }
+}
+
+pub fn float_atomic(atomic: FloatAtomic) -> Need {
+    use AtomicPlace as P;
+    use FloatAtomicOp as O;
+    let name = match (atomic.op, atomic.place, atomic.width) {
+        (O::Add, P::Buffer, 16) => "ShaderAtomicFloat2FeaturesEXT.shaderBufferFloat16AtomicAdd",
+        (O::Add, P::Shared, 16) => "ShaderAtomicFloat2FeaturesEXT.shaderSharedFloat16AtomicAdd",
+        (O::Add, P::Buffer, 64) => "ShaderAtomicFloatFeaturesEXT.shaderBufferFloat64AtomicAdd",
+        (O::Add, P::Shared, 64) => "ShaderAtomicFloatFeaturesEXT.shaderSharedFloat64AtomicAdd",
+        (O::Add, P::Buffer, _) => "ShaderAtomicFloatFeaturesEXT.shaderBufferFloat32AtomicAdd",
+        (O::Add, P::Shared, _) => "ShaderAtomicFloatFeaturesEXT.shaderSharedFloat32AtomicAdd",
+        (O::Add, P::Image, _) => "ShaderAtomicFloatFeaturesEXT.shaderImageFloat32AtomicAdd",
+        (O::MinMax, P::Buffer, 16) => {
+            "ShaderAtomicFloat2FeaturesEXT.shaderBufferFloat16AtomicMinMax"
+        }
+        (O::MinMax, P::Shared, 16) => {
+            "ShaderAtomicFloat2FeaturesEXT.shaderSharedFloat16AtomicMinMax"
+        }
+        (O::MinMax, P::Buffer, 64) => {
+            "ShaderAtomicFloat2FeaturesEXT.shaderBufferFloat64AtomicMinMax"
+        }
+        (O::MinMax, P::Shared, 64) => {
+            "ShaderAtomicFloat2FeaturesEXT.shaderSharedFloat64AtomicMinMax"
+        }
+        (O::MinMax, P::Buffer, _) => {
+            "ShaderAtomicFloat2FeaturesEXT.shaderBufferFloat32AtomicMinMax"
+        }
+        (O::MinMax, P::Shared, _) => {
+            "ShaderAtomicFloat2FeaturesEXT.shaderSharedFloat32AtomicMinMax"
+        }
+        (O::MinMax, P::Image, _) => "ShaderAtomicFloat2FeaturesEXT.shaderImageFloat32AtomicMinMax",
+        (O::Access, P::Buffer, 16) => "ShaderAtomicFloat2FeaturesEXT.shaderBufferFloat16Atomics",
+        (O::Access, P::Shared, 16) => "ShaderAtomicFloat2FeaturesEXT.shaderSharedFloat16Atomics",
+        (O::Access, P::Buffer, 64) => "ShaderAtomicFloatFeaturesEXT.shaderBufferFloat64Atomics",
+        (O::Access, P::Shared, 64) => "ShaderAtomicFloatFeaturesEXT.shaderSharedFloat64Atomics",
+        (O::Access, P::Buffer, _) => "ShaderAtomicFloatFeaturesEXT.shaderBufferFloat32Atomics",
+        (O::Access, P::Shared, _) => "ShaderAtomicFloatFeaturesEXT.shaderSharedFloat32Atomics",
+        (O::Access, P::Image, _) => "ShaderAtomicFloatFeaturesEXT.shaderImageFloat32Atomics",
+    };
+    F(name)
+}
+
+pub fn multiview_stage(model: ExecutionModel) -> Option<Need> {
+    match model {
+        ExecutionModel::Geometry => Some(F("MultiviewFeatures.multiviewGeometryShader")),
+        ExecutionModel::TessellationControl | ExecutionModel::TessellationEvaluation => {
+            Some(F("MultiviewFeatures.multiviewTessellationShader"))
+        }
+        _ => None,
     }
 }
 
@@ -302,6 +408,7 @@ pub fn extension(name: &str) -> bool {
             | "SPV_NV_ray_tracing_motion_blur"
             | "SPV_EXT_mesh_shader"
             | "SPV_NV_mesh_shader"
+            | "SPV_NV_viewport_array2"
             | "SPV_EXT_descriptor_indexing"
             | "SPV_KHR_fragment_shading_rate"
             | "SPV_KHR_shader_ballot"
@@ -312,6 +419,25 @@ pub fn extension(name: &str) -> bool {
             | "SPV_GOOGLE_user_type"
             | "SPV_GOOGLE_hlsl_functionality1"
             | "SPV_GOOGLE_decorate_string"
+            | "SPV_KHR_expect_assume"
+            | "SPV_KHR_multiview"
+            | "SPV_NVX_multiview_per_view_attributes"
+            | "SPV_NV_shader_subgroup_partitioned"
+            | "SPV_EXT_shader_atomic_float_add"
+            | "SPV_EXT_shader_atomic_float_min_max"
+            | "SPV_EXT_shader_atomic_float16_add"
+            | "SPV_EXT_shader_image_int64"
+            | "SPV_EXT_replicated_composites"
+            | "SPV_KHR_compute_shader_derivatives"
+            | "SPV_NV_compute_shader_derivatives"
+            | "SPV_KHR_subgroup_rotate"
+            | "SPV_KHR_quad_control"
+            | "SPV_EXT_fragment_shader_interlock"
+            | "SPV_NV_shader_image_footprint"
+            | "SPV_EXT_shader_stencil_export"
+            | "SPV_KHR_post_depth_coverage"
+            | "SPV_NV_geometry_shader_passthrough"
+            | "SPV_KHR_device_group"
     )
 }
 
@@ -347,6 +473,23 @@ pub fn probes() -> Vec<Need> {
         }
         needs.extend(stage_needs(model));
     }
+    for op in [
+        FloatAtomicOp::Add,
+        FloatAtomicOp::MinMax,
+        FloatAtomicOp::Access,
+    ] {
+        for place in [AtomicPlace::Buffer, AtomicPlace::Shared, AtomicPlace::Image] {
+            for width in [16, 32, 64] {
+                needs.push(float_atomic(FloatAtomic { op, place, width }));
+            }
+        }
+    }
+    for model in [
+        ExecutionModel::Geometry,
+        ExecutionModel::TessellationControl,
+    ] {
+        needs.extend(multiview_stage(model));
+    }
     needs.extend([
         F("fragmentStoresAndAtomics"),
         F("vertexPipelineStoresAndAtomics"),
@@ -381,17 +524,28 @@ mod tests {
             capability(Capability::MeshShadingEXT),
             Requirement::Needs(&[MESH_SHADER])
         );
-        assert!(matches!(
+        assert_eq!(
             capability(Capability::Int64ImageEXT),
-            Requirement::Unsupported(_)
-        ));
+            Requirement::Needs(&[Need::Feature(
+                "ShaderImageAtomicInt64FeaturesEXT.shaderImageInt64Atomics"
+            )])
+        );
         assert!(matches!(
-            capability(Capability::GroupNonUniformPartitionedNV),
+            capability(Capability::InputAttachment),
             Requirement::Unsupported(_)
         ));
+        assert_eq!(
+            float_atomic(FloatAtomic {
+                op: FloatAtomicOp::MinMax,
+                place: AtomicPlace::Shared,
+                width: 16
+            }),
+            Need::Feature("ShaderAtomicFloat2FeaturesEXT.shaderSharedFloat16AtomicMinMax")
+        );
         assert!(extension("SPV_KHR_16bit_storage"));
         assert!(extension("SPV_EXT_mesh_shader"));
-        assert!(!extension("SPV_EXT_shader_atomic_float_add"));
+        assert!(extension("SPV_EXT_shader_atomic_float_add"));
+        assert!(!extension("SPV_KHR_untyped_pointers"));
     }
 
     #[test]

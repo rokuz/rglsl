@@ -17,10 +17,11 @@ pub struct Job {
 }
 
 const ATTEMPTS: usize = 3;
-const TRANSIENT: [&str; 4] = [
+const TRANSIENT: [&str; 5] = [
     "ERROR_INCOMPATIBLE_DRIVER",
     "ERROR_INITIALIZATION_FAILED",
-    "ERROR_DEVICE_LOST",
+    "DEVICE_LOST",
+    "device lost",
     "Unable to create vulkan",
 ];
 
@@ -126,6 +127,18 @@ mod tests {
             script: script.into(),
             dumps: dumps.iter().map(|d| (*d).to_string()).collect(),
         }
+    }
+
+    #[test]
+    fn device_losses_are_transient() {
+        assert!(transient(
+            "probe.amber: Vulkan::Calling vkQueueSubmit Fail (DEVICE_LOST)"
+        ));
+        assert!(transient(
+            "glslang.amber: Line 16: device lost after RUN (DrawRectCommand)"
+        ));
+        assert!(transient("VK_ERROR_DEVICE_LOST"));
+        assert!(!transient("Missing subgroup operation quad feature"));
     }
 
     #[test]

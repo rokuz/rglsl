@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
+use super::cooperative::{self, Shape};
 use crate::process::{self, Exit};
 
 pub const VULKAN_VERSION: &str = "1.3";
@@ -19,6 +20,7 @@ pub struct Device {
     pub name: String,
     pub api_version: String,
     pub driver: String,
+    pub cooperative: Vec<Shape>,
 }
 
 impl Device {
@@ -159,6 +161,7 @@ pub fn parse_device(text: &str) -> Option<Device> {
         name,
         api_version,
         driver,
+        cooperative: cooperative::parse_shapes(text),
     })
 }
 

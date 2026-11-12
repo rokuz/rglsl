@@ -52,7 +52,19 @@ pub enum Layout {
     Struct {
         members: Vec<(u32, Layout)>,
     },
+    Pointer(Pointee),
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Pointee {
+    Block(Box<Layout>),
+    Enclosing(u32),
+}
+
+pub const ADDRESS: Scalar = Scalar {
+    kind: ScalarKind::Uint,
+    width: 64,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Slot {
@@ -95,6 +107,7 @@ impl Layout {
                 .map(|(offset, member)| offset + member.size(runtime_length))
                 .max()
                 .unwrap_or(0),
+            Self::Pointer(_) => ADDRESS.bytes(),
         }
     }
 
@@ -173,6 +186,47 @@ impl Layout {
                     member.slots(base + offset, runtime_length, out);
                 }
             }
+            Self::Pointer(_) => out.push(Slot {
+                offset: base,
+                scalar: ADDRESS,
+            }),
+        }
+    }
+
+    pub fn pointers<'a>(
+        &'a self,
+        base: u32,
+        runtime_length: u32,
+        out: &mut Vec<(u32, &'a Pointee)>,
+    ) {
+        match self {
+            Self::Scalar(_) | Self::Vector { .. } | Self::Matrix { .. } => {}
+            Self::Array {
+                element,
+                length,
+                stride,
+            } => {
+                if element.has_pointer() {
+                    for i in 0..length.unwrap_or(runtime_length) {
+                        element.pointers(base + i * stride, runtime_length, out);
+                    }
+                }
+            }
+            Self::Struct { members } => {
+                for (offset, member) in members {
+                    member.pointers(base + offset, runtime_length, out);
+                }
+            }
+            Self::Pointer(pointee) => out.push((base, pointee)),
+        }
+    }
+
+    pub fn has_pointer(&self) -> bool {
+        match self {
+            Self::Scalar(_) | Self::Vector { .. } | Self::Matrix { .. } => false,
+            Self::Array { element, .. } => element.has_pointer(),
+            Self::Struct { members } => members.iter().any(|(_, m)| m.has_pointer()),
+            Self::Pointer(_) => true,
         }
     }
 }
@@ -296,6 +350,51 @@ pub struct AddressField {
     pub offset: u32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum FloatAtomicOp {
+    Add,
+    MinMax,
+    Access,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum AtomicPlace {
+    Buffer,
+    Shared,
+    Image,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct FloatAtomic {
+    pub op: FloatAtomicOp,
+    pub place: AtomicPlace,
+    pub width: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PointerField {
+    pub field: AddressField,
+    pub pointee: Pointee,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RayIndices {
+    pub hit_offsets: BTreeSet<u32>,
+    pub misses: BTreeSet<u32>,
+    pub callables: BTreeSet<u32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CooperativeMatrixType {
+    pub component: Option<Scalar>,
+    pub scope: Option<u32>,
+    pub rows: Option<u32>,
+    pub columns: Option<u32>,
+    pub usage: Option<u32>,
+    pub rows_spec: Option<u32>,
+    pub columns_spec: Option<u32>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Reflection {
     pub model: ExecutionModel,
@@ -315,8 +414,12 @@ pub struct Reflection {
     pub ray_variables: Vec<RayVariable>,
     pub shader_record: Option<Result<Layout, String>>,
     pub addresses: Vec<AddressField>,
+    pub pointer_fields: Vec<PointerField>,
+    pub float_atomics: BTreeSet<FloatAtomic>,
     pub task_payload: Option<Result<DataType, String>>,
     pub body_opcodes: BTreeSet<u32>,
+    pub ray_indices: RayIndices,
+    pub cooperative_matrices: Vec<CooperativeMatrixType>,
     pub problems: Vec<String>,
 }
 
@@ -340,8 +443,12 @@ impl Reflection {
             ray_variables: Vec::new(),
             shader_record: None,
             addresses: Vec::new(),
+            pointer_fields: Vec::new(),
+            float_atomics: BTreeSet::new(),
             task_payload: None,
             body_opcodes: BTreeSet::new(),
+            ray_indices: RayIndices::default(),
+            cooperative_matrices: Vec::new(),
             problems: Vec::new(),
         }
     }
@@ -464,6 +571,42 @@ impl Types<'_> {
     }
 
     fn layout(&self, id: u32, matrix: Option<(u32, bool)>, depth: u32) -> Result<Layout, String> {
+        self.layout_in(id, matrix, depth, &mut Vec::new())
+    }
+
+    fn pointee(
+        &self,
+        pointer: u32,
+        depth: u32,
+        enclosing: &mut Vec<u32>,
+    ) -> Result<Pointee, String> {
+        let instruction = self
+            .get(pointer)
+            .filter(|p| p.is(Op::TypePointer))
+            .ok_or_else(|| format!("unsupported pointer type %{pointer}"))?;
+        if instruction.word(1) != Some(StorageClass::PhysicalStorageBuffer as u32) {
+            return Err("pointers in buffers that are not buffer references".into());
+        }
+        let target = instruction.word(2).ok_or("bad pointer type")?;
+        if let Some(position) = enclosing.iter().rposition(|id| *id == target) {
+            let up = enclosing.len() - 1 - position;
+            return Ok(Pointee::Enclosing(
+                u32::try_from(up).map_err(|_| "pointer nesting too deep")?,
+            ));
+        }
+        enclosing.push(target);
+        let layout = self.layout_in(target, None, depth + 1, enclosing);
+        enclosing.pop();
+        Ok(Pointee::Block(Box::new(layout?)))
+    }
+
+    fn layout_in(
+        &self,
+        id: u32,
+        matrix: Option<(u32, bool)>,
+        depth: u32,
+        enclosing: &mut Vec<u32>,
+    ) -> Result<Layout, String> {
         if depth > 32 {
             return Err("type nesting too deep".into());
         }
@@ -488,7 +631,9 @@ impl Types<'_> {
         if op == Op::TypeMatrix as u32 {
             let column = instruction.word(1).ok_or("bad matrix type")?;
             let columns = instruction.word(2).ok_or("bad matrix type")?;
-            let Layout::Vector { scalar, count } = self.layout(column, None, depth + 1)? else {
+            let Layout::Vector { scalar, count } =
+                self.layout_in(column, None, depth + 1, enclosing)?
+            else {
                 return Err("bad matrix column type".into());
             };
             let (stride, row_major) =
@@ -517,7 +662,7 @@ impl Types<'_> {
                 .value(id, Decoration::ArrayStride)
                 .ok_or_else(|| "array without an ArrayStride".to_string())?;
             return Ok(Layout::Array {
-                element: Box::new(self.layout(element, matrix, depth + 1)?),
+                element: Box::new(self.layout_in(element, matrix, depth + 1, enclosing)?),
                 length,
                 stride,
             });
@@ -539,12 +684,15 @@ impl Types<'_> {
                             self.decorations.member_has(id, index, Decoration::RowMajor),
                         )
                     });
-                members.push((offset, self.layout(*member, matrix, depth + 1)?));
+                members.push((
+                    offset,
+                    self.layout_in(*member, matrix, depth + 1, enclosing)?,
+                ));
             }
             return Ok(Layout::Struct { members });
         }
-        if op == Op::TypePointer as u32 || op == Op::TypeForwardPointer as u32 {
-            return Err("pointers in buffers (buffer device address)".into());
+        if op == Op::TypePointer as u32 {
+            return Ok(Layout::Pointer(self.pointee(id, depth, enclosing)?));
         }
         Err(format!("unsupported type {} in a buffer", op_name(op)))
     }
@@ -916,6 +1064,50 @@ pub const fn is_ray_tracing(model: ExecutionModel) -> bool {
     )
 }
 
+fn ray_indices(body: &[Instruction], types: &Types) -> RayIndices {
+    let mut indices = RayIndices::default();
+    let constant = |instruction: &Instruction, index: usize| {
+        instruction
+            .word(index)
+            .and_then(|id| types.constant_u32(id))
+    };
+    for instruction in body {
+        if instruction.is(Op::TraceRayKHR)
+            || instruction.is(Op::TraceNV)
+            || instruction.is(Op::TraceRayMotionNV)
+        {
+            indices.hit_offsets.extend(constant(instruction, 3));
+            indices.misses.extend(constant(instruction, 5));
+        } else if instruction.is(Op::ExecuteCallableKHR) || instruction.is(Op::ExecuteCallableNV) {
+            indices.callables.extend(constant(instruction, 0));
+        }
+    }
+    indices
+}
+
+fn cooperative_matrix_type(instruction: &Instruction, types: &Types) -> CooperativeMatrixType {
+    let constant = |index: usize| {
+        instruction
+            .word(index)
+            .and_then(|id| types.constant_u32(id))
+    };
+    let spec = |index: usize| {
+        instruction
+            .word(index)
+            .filter(|id| types.get(*id).is_some_and(|i| i.is(Op::SpecConstant)))
+            .and_then(|id| types.decorations.value(id, Decoration::SpecId))
+    };
+    CooperativeMatrixType {
+        component: instruction.word(1).and_then(|id| types.scalar(id)),
+        scope: constant(2),
+        rows: constant(3),
+        columns: constant(4),
+        usage: constant(5),
+        rows_spec: spec(3),
+        columns_spec: spec(4),
+    }
+}
+
 pub fn reflect(module: &Module) -> Result<Reflection, String> {
     let decorations = collect_decorations(module);
     let defs: BTreeMap<u32, &Instruction> = module
@@ -986,6 +1178,7 @@ pub fn reflect(module: &Module) -> Result<Reflection, String> {
     };
 
     let mut roots = BTreeMap::new();
+    let mut resource_ids = Vec::new();
     for instruction in &module.globals {
         if !instruction.is(Op::Variable) {
             continue;
@@ -1105,6 +1298,7 @@ pub fn reflect(module: &Module) -> Result<Reflection, String> {
                     count,
                     kind,
                 });
+                resource_ids.push(id);
             }
             StorageClass::PhysicalStorageBuffer => reflection
                 .problems
@@ -1148,6 +1342,21 @@ pub fn reflect(module: &Module) -> Result<Reflection, String> {
             other => reflection.problems.push(format!("{other:?} variables")),
         }
     }
+    drop_unused_aliases(&mut reflection.resources, &resource_ids, &module.body);
+    reflection.ray_indices = ray_indices(&module.body, &types);
+    reflection.cooperative_matrices = module
+        .globals
+        .iter()
+        .filter(|i| i.is(Op::TypeCooperativeMatrixKHR))
+        .map(|i| cooperative_matrix_type(i, &types))
+        .collect();
+    if reflection.uses(Op::ConvertUToPtr) || reflection.uses(Op::Bitcast) {
+        match pointer_fields(&module.body, &types, &roots) {
+            Ok(fields) => reflection.pointer_fields = fields,
+            Err(problem) => reflection.problems.push(problem),
+        }
+    }
+    reflection.float_atomics = float_atomics(module, &types);
     if reflection.uses(Op::ConvertUToAccelerationStructureKHR) {
         match address_fields(&module.body, &types, &roots) {
             Ok(addresses) => reflection.addresses = addresses,
@@ -1157,9 +1366,13 @@ pub fn reflect(module: &Module) -> Result<Reflection, String> {
     reflection
         .ray_variables
         .sort_by_key(|v| (v.class as u32, v.location));
-    reflection
-        .resources
-        .sort_by_key(|resource| (resource.set, resource.binding));
+    reflection.resources.sort_by_cached_key(|resource| {
+        (
+            resource.set,
+            resource.binding,
+            format!("{:?}", resource.kind),
+        )
+    });
     reflection.inputs.sort_by_key(|v| (v.location, v.component));
     reflection
         .outputs
@@ -1180,20 +1393,7 @@ fn address_fields(
     types: &Types,
     roots: &BTreeMap<u32, AddressRoot>,
 ) -> Result<Vec<AddressField>, String> {
-    let defs: BTreeMap<u32, &Instruction> = body
-        .iter()
-        .filter(|i| {
-            [
-                Op::Load,
-                Op::CopyObject,
-                Op::AccessChain,
-                Op::InBoundsAccessChain,
-            ]
-            .iter()
-            .any(|op| i.is(*op))
-        })
-        .filter_map(|i| i.word(1).map(|id| (id, i)))
-        .collect();
+    let defs = value_defs(body);
     let mut fields = BTreeSet::new();
     for convert in body
         .iter()
@@ -1209,6 +1409,177 @@ fn address_fields(
         fields.insert(field);
     }
     Ok(fields.into_iter().collect())
+}
+
+fn float_atomics(module: &Module, types: &Types) -> BTreeSet<FloatAtomic> {
+    const TYPED: [Op; 11] = [
+        Op::Variable,
+        Op::AccessChain,
+        Op::InBoundsAccessChain,
+        Op::PtrAccessChain,
+        Op::InBoundsPtrAccessChain,
+        Op::ImageTexelPointer,
+        Op::FunctionParameter,
+        Op::CopyObject,
+        Op::Load,
+        Op::Select,
+        Op::Phi,
+    ];
+    let value_types: BTreeMap<u32, u32> = module
+        .globals
+        .iter()
+        .chain(&module.body)
+        .filter(|i| TYPED.iter().any(|op| i.is(*op)))
+        .filter_map(|i| Some((i.word(1)?, i.word(0)?)))
+        .collect();
+    let mut found = BTreeSet::new();
+    for instruction in &module.body {
+        let (op, pointer) = if instruction.is(Op::AtomicFAddEXT) {
+            (FloatAtomicOp::Add, instruction.word(2))
+        } else if instruction.is(Op::AtomicFMinEXT) || instruction.is(Op::AtomicFMaxEXT) {
+            (FloatAtomicOp::MinMax, instruction.word(2))
+        } else if instruction.is(Op::AtomicLoad) || instruction.is(Op::AtomicExchange) {
+            (FloatAtomicOp::Access, instruction.word(2))
+        } else if instruction.is(Op::AtomicStore) {
+            (FloatAtomicOp::Access, instruction.word(0))
+        } else {
+            continue;
+        };
+        let Some(pointer_type) = pointer
+            .and_then(|id| value_types.get(&id))
+            .and_then(|ty| types.get(*ty))
+            .filter(|ty| ty.is(Op::TypePointer))
+        else {
+            continue;
+        };
+        let Some(Scalar {
+            kind: ScalarKind::Float,
+            width,
+        }) = pointer_type
+            .word(2)
+            .and_then(|pointee| types.scalar(pointee))
+        else {
+            continue;
+        };
+        let place = match pointer_type.word(1).and_then(StorageClass::from_u32) {
+            Some(StorageClass::Workgroup) => AtomicPlace::Shared,
+            Some(StorageClass::Image) => AtomicPlace::Image,
+            _ => AtomicPlace::Buffer,
+        };
+        found.insert(FloatAtomic { op, place, width });
+    }
+    found
+}
+
+fn pointer_operands(instruction: &Instruction) -> Vec<u32> {
+    let words = |positions: &[usize]| -> Vec<u32> {
+        positions
+            .iter()
+            .filter_map(|position| instruction.word(*position))
+            .collect()
+    };
+    let op = Op::from_u32(instruction.opcode);
+    match op {
+        Some(
+            Op::Load
+            | Op::AccessChain
+            | Op::InBoundsAccessChain
+            | Op::PtrAccessChain
+            | Op::InBoundsPtrAccessChain
+            | Op::ArrayLength
+            | Op::ImageTexelPointer
+            | Op::CopyObject,
+        ) => words(&[2]),
+        Some(Op::Store | Op::AtomicStore) => words(&[0]),
+        Some(Op::CopyMemory | Op::CopyMemorySized) => words(&[0, 1]),
+        Some(Op::Select) => words(&[3, 4]),
+        Some(Op::FunctionCall) => instruction.operands.iter().skip(3).copied().collect(),
+        Some(Op::Phi) => instruction
+            .operands
+            .iter()
+            .skip(2)
+            .step_by(2)
+            .copied()
+            .collect(),
+        Some(other) if format!("{other:?}").starts_with("Atomic") => words(&[2]),
+        _ => Vec::new(),
+    }
+}
+
+fn drop_unused_aliases(resources: &mut Vec<Resource>, ids: &[u32], body: &[Instruction]) {
+    let shared = |index: usize| {
+        resources.get(index).is_some_and(|resource| {
+            resources
+                .iter()
+                .filter(|other| other.set == resource.set && other.binding == resource.binding)
+                .count()
+                > 1
+        })
+    };
+    let used: BTreeSet<u32> = body.iter().flat_map(pointer_operands).collect();
+    let keep: Vec<bool> = (0..resources.len())
+        .map(|index| !shared(index) || ids.get(index).is_some_and(|id| used.contains(id)))
+        .collect();
+    let mut flags = keep.into_iter();
+    resources.retain(|_| flags.next().unwrap_or(true));
+}
+
+fn value_defs(body: &[Instruction]) -> BTreeMap<u32, &Instruction> {
+    body.iter()
+        .filter(|i| {
+            [
+                Op::Load,
+                Op::CopyObject,
+                Op::AccessChain,
+                Op::InBoundsAccessChain,
+            ]
+            .iter()
+            .any(|op| i.is(*op))
+        })
+        .filter_map(|i| i.word(1).map(|id| (id, i)))
+        .collect()
+}
+
+fn is_buffer_reference(types: &Types, pointer: u32) -> bool {
+    types.get(pointer).is_some_and(|p| {
+        p.is(Op::TypePointer) && p.word(1) == Some(StorageClass::PhysicalStorageBuffer as u32)
+    })
+}
+
+fn pointer_fields(
+    body: &[Instruction],
+    types: &Types,
+    roots: &BTreeMap<u32, AddressRoot>,
+) -> Result<Vec<PointerField>, String> {
+    let defs = value_defs(body);
+    let mut fields: Vec<PointerField> = Vec::new();
+    for conversion in body
+        .iter()
+        .filter(|i| i.is(Op::ConvertUToPtr) || i.is(Op::Bitcast))
+    {
+        let (Some(result_type), Some(value)) = (conversion.word(0), conversion.word(2)) else {
+            continue;
+        };
+        if !is_buffer_reference(types, result_type) {
+            continue;
+        }
+        let Some(field) = address_field(&defs, types, roots, value) else {
+            continue;
+        };
+        let pointee = types.pointee(result_type, 0, &mut Vec::new())?;
+        match fields.iter().find(|f| f.field == field) {
+            Some(known) if known.pointee != pointee => {
+                return Err(format!(
+                    "the address at offset {} becomes two different buffer references",
+                    field.offset
+                ));
+            }
+            Some(_) => {}
+            None => fields.push(PointerField { field, pointee }),
+        }
+    }
+    fields.sort_by_key(|f| f.field);
+    Ok(fields)
 }
 
 fn address_field(
@@ -1239,7 +1610,10 @@ fn is_address(layout: &Layout) -> bool {
         Layout::Vector { scalar, count } => {
             scalar.kind == ScalarKind::Uint && scalar.width == 32 && *count == 2
         }
-        Layout::Matrix { .. } | Layout::Array { .. } | Layout::Struct { .. } => false,
+        Layout::Matrix { .. }
+        | Layout::Array { .. }
+        | Layout::Struct { .. }
+        | Layout::Pointer(_) => false,
     }
 }
 
@@ -1296,7 +1670,10 @@ fn field_pointer<'a>(
                 }
                 (index.checked_mul(*stride)?, element.as_ref())
             }
-            Layout::Scalar(_) | Layout::Vector { .. } | Layout::Matrix { .. } => return None,
+            Layout::Scalar(_)
+            | Layout::Vector { .. }
+            | Layout::Matrix { .. }
+            | Layout::Pointer(_) => return None,
         };
         offset = offset.checked_add(step)?;
         layout = inner;
@@ -1443,6 +1820,94 @@ mod tests {
         };
         assert!(*writable);
         assert_eq!(layout.runtime_stride(), 4);
+        Ok(())
+    }
+
+    #[test]
+    fn reflects_buffer_references_and_addresses_turned_into_them() -> anyhow::Result<()> {
+        let psb = StorageClass::PhysicalStorageBuffer as u32;
+        let words = module(&[
+            op(
+                Op::Capability,
+                &[Capability::PhysicalStorageBufferAddresses as u32],
+            )?,
+            op(Op::EntryPoint, &entry(ExecutionModel::GLCompute))?,
+            op(Op::Decorate, &[10, Decoration::Block as u32])?,
+            op(Op::MemberDecorate, &[10, 0, Decoration::Offset as u32, 0])?,
+            op(Op::MemberDecorate, &[10, 1, Decoration::Offset as u32, 8])?,
+            op(Op::Decorate, &[12, Decoration::Block as u32])?,
+            op(Op::MemberDecorate, &[12, 0, Decoration::Offset as u32, 0])?,
+            op(Op::MemberDecorate, &[12, 1, Decoration::Offset as u32, 8])?,
+            op(Op::Decorate, &[14, Decoration::DescriptorSet as u32, 0])?,
+            op(Op::Decorate, &[14, Decoration::Binding as u32, 0])?,
+            op(Op::TypeVoid, &[2])?,
+            op(Op::TypeFunction, &[3, 2])?,
+            op(Op::TypeInt, &[5, 32, 0])?,
+            op(Op::TypeVector, &[6, 5, 2])?,
+            op(Op::Constant, &[5, 8, 1])?,
+            op(Op::TypeForwardPointer, &[11, psb])?,
+            op(Op::TypeStruct, &[10, 5, 11])?,
+            op(Op::TypePointer, &[11, psb, 10])?,
+            op(Op::TypeStruct, &[12, 11, 6])?,
+            op(
+                Op::TypePointer,
+                &[13, StorageClass::StorageBuffer as u32, 12],
+            )?,
+            op(
+                Op::TypePointer,
+                &[15, StorageClass::StorageBuffer as u32, 6],
+            )?,
+            op(Op::Variable, &[13, 14, StorageClass::StorageBuffer as u32])?,
+            op(Op::Function, &[2, 1, 0, 3])?,
+            op(Op::Label, &[20])?,
+            op(Op::AccessChain, &[15, 21, 14, 8])?,
+            op(Op::Load, &[6, 22, 21])?,
+            op(Op::Bitcast, &[11, 23, 22])?,
+            op(Op::Return, &[])?,
+            op(Op::FunctionEnd, &[])?,
+        ]);
+        let reflection = reflected(&words)?;
+        assert!(reflection.problems.is_empty(), "{:?}", reflection.problems);
+        let node = Layout::Struct {
+            members: vec![
+                (
+                    0,
+                    Layout::Scalar(Scalar {
+                        kind: ScalarKind::Uint,
+                        width: 32,
+                    }),
+                ),
+                (8, Layout::Pointer(Pointee::Enclosing(0))),
+            ],
+        };
+        let ResourceKind::StorageBuffer { layout, .. } = &reflection.resources[0].kind else {
+            panic!("expected a storage buffer");
+        };
+        let Layout::Struct { members } = layout else {
+            panic!("expected a block");
+        };
+        assert_eq!(
+            members[0],
+            (0, Layout::Pointer(Pointee::Block(Box::new(node.clone()))))
+        );
+        assert!(layout.has_pointer());
+        let mut pointers = Vec::new();
+        layout.pointers(0, 0, &mut pointers);
+        assert_eq!(pointers.len(), 1);
+        assert_eq!(
+            reflection.pointer_fields,
+            vec![PointerField {
+                field: AddressField {
+                    buffer: AddressBuffer::Resource {
+                        set: 0,
+                        binding: 0,
+                        element: None,
+                    },
+                    offset: 8,
+                },
+                pointee: Pointee::Block(Box::new(node)),
+            }]
+        );
         Ok(())
     }
 

@@ -40,7 +40,7 @@ twin = "calls `EmitMeshTasksEXT(1, 1, 1)` after the atomics; the payload atomic 
 
 ["spv.coopmatKHR_constructor.comp"]
 undefined = "declares 8×8 cooperative matrices of types no device lists in `VkCooperativeMatrixPropertiesKHR` (the AMD target lists only 16×16 with float16, uint8 and int8 for `gl_MatrixUseA`; VUID-RuntimeSpirv-OpTypeCooperativeMatrixKHR-10163): the AMD driver crashes compiling it"
-twin = "uses 16×16 matrices and only the `gl_MatrixUseA` component types the AMD target lists (float16_t, uint8_t, int8_t): the float, uint32_t, uint16_t, int32_t and int16_t conversions are dropped, and `mat` and `matArr` are float16_t"
+twin = "uses 16×16 matrices and only the `gl_MatrixUseA` component types the AMD target lists (float16_t, uint8_t, int8_t): the float, uint32_t, uint16_t, int32_t and int16_t conversions are dropped, and `mat` and `matArr` are float16_t. The NVIDIA target lists `gl_MatrixUseA` float16_t only as 16×16 and 16×8 and uint8_t/int8_t only as 16×32, so no size serves a conversion between them there and the twin is skipped on NVIDIA with that reason"
 
 ["spv.for-notest.vert"]
 undefined = "the loop has no condition and no exit, so the vertex shader never terminates and the draw has no result (the AMD driver crashes compiling it; Metal's compiler deletes the loop)"
@@ -57,3 +57,71 @@ twin = "also writes `vals[3] = vector<int, 12>(4)`"
 ["spv.matrix.float16.frag"]
 undefined = "divides by zero: `f16mat3x4(x)` leaves the off-diagonal elements 0, so `sum34 /= matrixCompMult(m1, m2)` and `f / m1` divide by 0 (and by `src`, which may be 0 or overflow half precision); SPIR-V leaves the result undefined, and glslang's own module wrote infinities of different signs on two runs on the NVIDIA target"
 twin = "fills every element of `m1` and `m2` and takes every operand from `exp2(floor(clamp(src, -2.0, 2.0)))`, a power of two from 0.25 to 4, so no divisor is 0, nothing overflows half precision; drops the comments"
+
+["spv.coopmatKHR_arithmetic.comp"]
+undefined = "declares cooperative matrices no device lists in `VkCooperativeMatrixPropertiesKHR` (VUID-RuntimeSpirv-OpTypeCooperativeMatrixKHR-10163): float and uint32_t `gl_MatrixUseA`/`gl_MatrixUseB` (neither remote target has a float32 or uint32 A or B type) and 8×8 float16_t, uint8_t and int8_t (the AMD target lists 16×16, the NVIDIA target 16×16 or 16×8 for float16_t and 16×32 for uint8_t and int8_t); it also reads its matrices uninitialized and divides `u8` and `i8` by zero after `-=`"
+twin = "drops the float and uint32_t matrices and their operations; `f16` is 16×16, `u8` and `i8` are 16×`COLUMNS8`, a specialization constant (default 16) the harness sets to a size the device lists (16 on AMD, 32 on NVIDIA); every matrix is initialized with a constant and each `-=` moves after the `/=` so no division is by zero; drops the blank line"
+
+["spv.qcom.multiple_wait_queues.comp"]
+undefined = "its float `gl_MatrixUseA`/`gl_MatrixUseB` matrices (TILE_M×8, 8×TILE_N, specialization constants defaulting to 1) match no `VkCooperativeMatrixPropertiesKHR` entry of either remote target, whatever the constants, since neither lists a float32 A or B type (VUID-RuntimeSpirv-OpTypeCooperativeMatrixKHR-10163; NVIDIA's shader compiler crashes in nvgpucomp64.dll, also with the `MultipleWaitQueuesQCOM` loop control removed); the accumulator `matC` is read uninitialized"
+twin = "the inputs and `matA`/`matB` are float16_t with K = 16, so TILE_M and TILE_N are specialized to 16 on both remote targets; `matC` starts at 0.0; the `MultipleWaitQueuesQCOM` loop controls stay (both drivers accept them with valid matrix sizes; the validation layer's older SPIR-V grammar does not know the bit); drops the comments"
+
+["spv.ext.meshShaderRedeclBuiltins.mesh"]
+undefined = "writes `gl_Layer = 7` and `gl_ViewportIndex = 8` with one viewport and one layer, leaves clip distances 0–2 and cull distances 0, 1 and 3 and the point indices 1–30 unwritten, so which points survive clipping and culling and which vertices they use is undefined (glslang's own module gave different results on two runs on the AMD target)"
+twin = "writes 0 to `gl_Layer` and `gl_ViewportIndex`, 3.0 to every clip distance and 4.0 to every cull distance, and `gl_PrimitivePointIndicesEXT[iid] = iid` before the barrier that precedes the bound-limit writes; drops the comments"
+
+["spv.bufferhandle6.frag"]
+undefined = "indexes `x.a[2]`, `x.c[2]` and the `a[2]` of the blocks they reference with `pc.identity[1]`, which the test fills with 1 and the harness with a value from 0 to 7, so the loads leave the arrays"
+twin = "indexes with `pc.identity[1] % 2`; drops the comments"
+
+["spv.bufferhandle9.frag"]
+undefined = "dereferences `blockType(h)` and `blockType(i)`, addresses taken from the flat inputs `h` and `i`, which hold no buffer's address"
+twin = "`h` and `i` are push constants, which the harness fills with the addresses of buffers"
+
+["spv.bufferhandle10.frag"]
+undefined = "`atomicAdd(t.f.x[i], 1)` races with the plain stores `b.x[0] = 2` and `b2.x[0] = 3` of other invocations when the flat input `i` is 0"
+twin = "adds to `t.f.x[i + 1u]`, so the atomics never touch `x[0]`"
+
+["spv.bufferhandle14.frag"]
+undefined = "dereferences the uninitialized buffer references `t1`, `t2`, `t3` and `t4`"
+twin = "initializes them from the push constant block `refs`, which holds the addresses of buffers"
+
+["spv.bufferhandle16.frag"]
+undefined = "dereferences `a.y` where `a` is `T1(uint64_t(4))`, an address of no buffer"
+twin = "`a` is `refs.r`, a push constant that holds the address of a buffer; the other references stay addresses made from constants and are not dereferenced"
+
+["spv.bufferhandle18.frag"]
+undefined = "dereferences `a.y` where `a` is `T1(uint64_t(4))`, stores through `f`, an address made from a constant, and indexes with the uninitialized `i`; `j` and `m` are uninitialized"
+twin = "`a`, `f`, `j` and `m` come from the push constant block `refs`, which holds addresses of buffers, and `i` is 1, so every store lands within 64 bytes of the buffer `f` points to; drops the comments"
+
+["spv.bufferhandle21.frag"]
+undefined = "stores through the uninitialized buffer reference `x`"
+twin = "initializes `x` from the push constant block `refs`, which holds the address of a buffer"
+
+["spv.bufferhandle22.frag"]
+undefined = "stores through the uninitialized buffer reference `payload`"
+twin = "initializes `payload` from the push constant block `refs`, which holds the address of a buffer"
+
+["spv.bufferhandle23.frag"]
+undefined = "loads `x.e` through the uninitialized buffer reference `x`"
+twin = "initializes `x` from the push constant block `refs`, which holds the address of a buffer; drops the comment"
+
+["spv.bufferhandleUvec2.frag"]
+undefined = "dereferences `blockType(h)` and `blockType(i)`, addresses taken from the flat inputs `h` and `i`, which hold no buffer's address"
+twin = "`h` and `i` are push constants, which the harness fills with the addresses of buffers"
+
+["spv.ext.meshShaderBuiltins.mesh"]
+undefined = "writes `gl_Layer = 7` and `gl_ViewportIndex = 8` with one viewport and one layer, leaves clip distances 0–2 and cull distances 0 and 1 and the triangle indices of primitives 1–30 unwritten, uses the vertex index 257 past `vertexCount`, and every invocation races to write `gl_PrimitiveTriangleIndicesEXT[0]` with 257 and 0"
+twin = "writes 0 to `gl_Layer` and `gl_ViewportIndex`, 3.0 to every clip distance and 4.0 to every cull distance, and `gl_PrimitiveTriangleIndicesEXT[iid] = uvec3(iid)` before the barrier; invocation 0 alone does the bound-limit writes, with 257 % MAX_VER; drops the comments"
+
+["spv.ext.meshShaderBuiltinsShadingRate.mesh"]
+undefined = "as spv.ext.meshShaderBuiltins.mesh: `gl_Layer = 7` and `gl_ViewportIndex = 8` with one viewport and one layer, unwritten clip and cull distances and triangle indices, the vertex index 257 past `vertexCount`, and racing writes of `gl_PrimitiveTriangleIndicesEXT[0]`"
+twin = "the changes of the spv.ext.meshShaderBuiltins.mesh twin; drops the comments"
+
+["spv.meshShaderBuiltins.mesh"]
+undefined = "writes `gl_Layer = 7`, `gl_ViewportIndex = 8` and `gl_ViewportMask[0] = 9` with one viewport and one layer, leaves clip distances 0–2, cull distances 0 and 1 and most primitive indices unwritten, writes primitive 32 of 32 (`iid + 1`), uses the vertex index 257, reads `gl_PrimitiveIndicesNV[gid - 1]` at index -1, sets `gl_PrimitiveCountNV` to 96 with `max_primitives = 32`, and every invocation races on the bound-limit writes"
+twin = "writes 0 to `gl_Layer` and `gl_ViewportIndex`, 1 to `gl_ViewportMask[0]`, every clip and cull distance of the vertices it writes, and `gl_PrimitiveIndicesNV[iid * 3 + k] = iid`; copies to primitive `iid + 1` only below `MAX_PRIM`; invocation 0 alone does the bound-limit writes, with 257 % MAX_VER, `gid + 1` and `gl_PrimitiveCountNV = MAX_PRIM`; drops the comments"
+
+["spv.meshShaderRedeclBuiltins.mesh"]
+undefined = "writes `gl_Layer = 7`, `gl_ViewportIndex = 8` and `gl_ViewportMask[0] = 9` with one viewport and one layer, leaves clip distances 0–2, cull distances 0 and 1 and most primitive indices unwritten, writes primitive 32 of 32 (`iid + 1`), sets `gl_PrimitiveCountNV` to 96 with `max_primitives = 32`, and every invocation races on the bound-limit writes"
+twin = "writes 0 to `gl_Layer` and `gl_ViewportIndex`, 1 to `gl_ViewportMask[0]`, every clip and cull distance of the vertices it writes, and `gl_PrimitiveIndicesNV[iid * 3 + k] = iid`; copies to primitive `iid + 1` only below `MAX_PRIM`; invocation 0 alone does the bound-limit writes, with `gl_PrimitiveCountNV = MAX_PRIM`; drops the comments"

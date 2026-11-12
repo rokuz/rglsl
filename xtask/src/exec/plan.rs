@@ -9,8 +9,10 @@ use super::glsl;
 use super::harness::{self, Attachment, ShaderKind, MAX_ATTACHMENTS, PATCH_VERTICES};
 use super::mesh;
 use super::rays::{self, Geometry, RayPipeline, ShaderRef};
+use super::references::{self, Root, Table};
 use super::reflect::{
-    AddressBuffer, ImageType, Layout, Reflection, ResourceKind, Scalar, ScalarKind, Slot, Varying,
+    AddressBuffer, ImageType, Layout, Reflection, Resource, ResourceKind, Scalar, ScalarKind, Slot,
+    Varying,
 };
 use super::requirements::{self, Need, Requirement};
 
@@ -71,8 +73,12 @@ pub struct Plan {
     pub draw: Draw,
     pub rays: Option<RayPipeline>,
     pub harness_env: Option<&'static str>,
+    pub mesh_nv: bool,
+    pub specializations: Vec<(u32, u32)>,
     pub notes: Vec<String>,
     pub addresses: Vec<(String, u32)>,
+    pub roots: Vec<Root>,
+    pub reference_table: Option<Table>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -111,6 +117,8 @@ fn storage_format(format: ImageFormat) -> Option<ImageFormatInfo> {
         ImageFormat::Rgba8 => ("R8G8B8A8_UNORM", scalar(Uint, 8), 4),
         ImageFormat::Rgba8ui => ("R8G8B8A8_UINT", scalar(Uint, 8), 4),
         ImageFormat::Rgba8i => ("R8G8B8A8_SINT", scalar(Sint, 8), 4),
+        ImageFormat::R64ui => ("R64_UINT", scalar(Uint, 64), 1),
+        ImageFormat::R64i => ("R64_SINT", scalar(Sint, 64), 1),
         _ => return None,
     };
     Some(ImageFormatInfo {
@@ -118,6 +126,13 @@ fn storage_format(format: ImageFormat) -> Option<ImageFormatInfo> {
         scalar,
         components,
     })
+}
+
+fn storage_info(image: &ImageType) -> Option<ImageFormatInfo> {
+    if image.format == ImageFormat::Unknown && image.scalar.width == 32 {
+        return Some(sampled_format(image));
+    }
+    storage_format(image.format)
 }
 
 fn sampled_format(image: &ImageType) -> ImageFormatInfo {
@@ -210,6 +225,128 @@ fn address_offsets(reflection: &Reflection, buffer: AddressBuffer) -> Vec<u32> {
         .collect()
 }
 
+fn aliased(kinds: &[&ResourceKind]) -> Option<ResourceKind> {
+    let layouts = |pick: fn(&ResourceKind) -> Option<(&Layout, bool)>| {
+        kinds
+            .iter()
+            .map(|kind| pick(kind))
+            .collect::<Option<Vec<_>>>()
+    };
+    let merged = |list: &[(&Layout, bool)]| Layout::Struct {
+        members: list
+            .iter()
+            .map(|(layout, _)| (0, (*layout).clone()))
+            .collect(),
+    };
+    if let Some(list) = layouts(|kind| match kind {
+        ResourceKind::StorageBuffer { layout, writable } => Some((layout, *writable)),
+        _ => None,
+    }) {
+        return Some(ResourceKind::StorageBuffer {
+            layout: merged(&list),
+            writable: list.iter().any(|(_, writable)| *writable),
+        });
+    }
+    if let Some(list) = layouts(|kind| match kind {
+        ResourceKind::UniformBuffer(layout) => Some((layout, false)),
+        _ => None,
+    }) {
+        return Some(ResourceKind::UniformBuffer(merged(&list)));
+    }
+    match kinds {
+        [ResourceKind::SampledImage(image), ResourceKind::Sampler]
+        | [ResourceKind::Sampler, ResourceKind::SampledImage(image)] => {
+            Some(ResourceKind::CombinedImageSampler(*image))
+        }
+        _ => None,
+    }
+}
+
+fn shared_bindings(resources: &[Resource]) -> Result<Vec<Resource>, Refusal> {
+    let mut groups: Vec<Vec<&Resource>> = Vec::new();
+    for resource in resources {
+        match groups.last_mut() {
+            Some(group)
+                if group
+                    .first()
+                    .is_some_and(|r| r.set == resource.set && r.binding == resource.binding) =>
+            {
+                group.push(resource);
+            }
+            _ => groups.push(vec![resource]),
+        }
+    }
+    groups
+        .into_iter()
+        .map(|group| match group.as_slice() {
+            [single] => Ok((*single).clone()),
+            [first, ..] => {
+                let kinds: Vec<&ResourceKind> = group.iter().map(|r| &r.kind).collect();
+                let kind = aliased(&kinds)
+                    .filter(|_| group.iter().all(|r| r.count == first.count))
+                    .ok_or_else(|| {
+                        Refusal::Binding(format!(
+                            "several resources share set {} binding {} ({})",
+                            first.set,
+                            first.binding,
+                            kinds
+                                .iter()
+                                .map(|kind| kind.describe())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        ))
+                    })?;
+                Ok(Resource {
+                    kind,
+                    ..(*first).clone()
+                })
+            }
+            [] => Err(Refusal::Binding("an empty group of resources".into())),
+        })
+        .collect()
+}
+
+fn resource_buffer(resource: &super::reflect::Resource, index: usize) -> AddressBuffer {
+    AddressBuffer::Resource {
+        set: resource.set,
+        binding: resource.binding,
+        element: resource
+            .count
+            .map(|_| u32::try_from(index).unwrap_or(u32::MAX)),
+    }
+}
+
+fn pointer_roots(
+    reflection: &Reflection,
+    buffer: AddressBuffer,
+    holder: &str,
+    layout: &Layout,
+    length: u32,
+) -> Vec<Root> {
+    let mut found = Vec::new();
+    layout.pointers(0, length, &mut found);
+    let mut roots: Vec<Root> = found
+        .into_iter()
+        .map(|(offset, pointee)| Root {
+            holder: holder.to_string(),
+            offset,
+            pointee: pointee.clone(),
+        })
+        .collect();
+    roots.extend(
+        reflection
+            .pointer_fields
+            .iter()
+            .filter(|field| field.field.buffer == buffer)
+            .map(|field| Root {
+                holder: holder.to_string(),
+                offset: field.field.offset,
+                pointee: field.pointee.clone(),
+            }),
+    );
+    roots
+}
+
 fn outside_addresses(slot: &Slot, offsets: &[u32]) -> bool {
     let end = slot.offset.saturating_add(slot.scalar.bytes());
     offsets
@@ -266,6 +403,29 @@ pub fn requirements(reflection: &Reflection) -> Result<BTreeSet<Need>, Refusal> 
             }
         }
     }
+    needs.extend(
+        reflection
+            .float_atomics
+            .iter()
+            .map(|atomic| requirements::float_atomic(*atomic)),
+    );
+    if super::reflect::is_mesh_shading(reflection.model)
+        && (reflection
+            .capabilities
+            .contains(&Capability::ComputeDerivativeGroupQuadsKHR)
+            || reflection
+                .capabilities
+                .contains(&Capability::ComputeDerivativeGroupLinearKHR))
+    {
+        return Err(Refusal::Capability(
+            "derivatives in a mesh or task shader (they need the meshAndTaskShaderDerivatives \
+             property, which Amber does not check)"
+                .into(),
+        ));
+    }
+    if needs.contains(&requirements::MULTIVIEW) {
+        needs.extend(requirements::multiview_stage(reflection.model));
+    }
     if needs.iter().any(|need| {
         matches!(need, Need::Feature(name) if name.starts_with("SubgroupSupportedOperations"))
     }) {
@@ -295,13 +455,8 @@ fn stage_of(model: ExecutionModel) -> Result<ShaderKind, Refusal> {
         ExecutionModel::AnyHitKHR => ShaderKind::AnyHit,
         ExecutionModel::IntersectionKHR => ShaderKind::Intersection,
         ExecutionModel::CallableKHR => ShaderKind::Callable,
-        ExecutionModel::MeshEXT => ShaderKind::Mesh,
-        ExecutionModel::TaskEXT => ShaderKind::Task,
-        ExecutionModel::MeshNV | ExecutionModel::TaskNV => {
-            return Err(Refusal::Stage(format!(
-                "{model:?} (the harness generates EXT task, mesh and fragment stages)"
-            )))
-        }
+        ExecutionModel::MeshEXT | ExecutionModel::MeshNV => ShaderKind::Mesh,
+        ExecutionModel::TaskEXT | ExecutionModel::TaskNV => ShaderKind::Task,
         other => return Err(Refusal::Stage(format!("{other:?}"))),
     })
 }
@@ -368,8 +523,12 @@ impl Plan {
             draw: Draw::Dispatch,
             rays: None,
             harness_env: None,
+            mesh_nv: false,
+            specializations: Vec::new(),
             notes: Vec::new(),
             addresses: Vec::new(),
+            roots: Vec::new(),
+            reference_table: None,
         };
         let mut rng = Rng::from_text(&inputs.seed);
         let invocations = reflection
@@ -381,14 +540,14 @@ impl Plan {
         let mut writes = false;
         let mut scene: Option<Geometry> = None;
 
-        for resource in &reflection.resources {
+        for resource in &shared_bindings(&reflection.resources)? {
             let base = format!("r{}_{}", resource.set, resource.binding);
             let names: Vec<String> = match resource.count {
                 None => vec![base],
                 Some(count) => (0..count).map(|i| format!("{base}_{i}")).collect(),
             };
             let list = names.join(" ");
-            let bind = if resource.count.is_some() {
+            let bind = if resource.count.is_some_and(|count| count > 1) {
                 "BUFFER_ARRAY"
             } else {
                 "BUFFER"
@@ -428,6 +587,13 @@ impl Plan {
                         let mut bytes = buffer_bytes(layout, 0, values, &mut rng);
                         plan.clear_addresses(name, &mut bytes, &addresses(index))?;
                         plan.add_buffer(name, bytes);
+                        plan.roots.extend(pointer_roots(
+                            reflection,
+                            resource_buffer(resource, index),
+                            name,
+                            layout,
+                            0,
+                        ));
                     }
                     let _ = writeln!(plan.bindings, "  BIND {bind} {list} AS uniform {location}");
                 }
@@ -438,6 +604,13 @@ impl Plan {
                         let offsets = addresses(index);
                         plan.clear_addresses(name, &mut bytes, &offsets)?;
                         plan.add_buffer(name, bytes);
+                        plan.roots.extend(pointer_roots(
+                            reflection,
+                            resource_buffer(resource, index),
+                            name,
+                            layout,
+                            length,
+                        ));
                         if *writable {
                             writes = true;
                             let mut slots = Vec::new();
@@ -449,7 +622,7 @@ impl Plan {
                     let _ = writeln!(plan.bindings, "  BIND {bind} {list} AS storage {location}");
                 }
                 ResourceKind::StorageImage(image) => {
-                    let info = storage_format(image.format).ok_or_else(|| {
+                    let info = storage_info(image).ok_or_else(|| {
                         Refusal::Binding(format!("storage image format {:?}", image.format))
                     })?;
                     let (extent, texels) = image_extent(image)?;
@@ -502,7 +675,7 @@ impl Plan {
                 ResourceKind::Sampler => {
                     plan.declare_sampler(&mut sampler_declared);
                     match resource.count {
-                        None => {
+                        None | Some(1) => {
                             let _ = writeln!(plan.bindings, "  BIND SAMPLER smp {location}");
                         }
                         Some(count) => {
@@ -536,7 +709,7 @@ impl Plan {
                     );
                 }
                 ResourceKind::StorageTexelBuffer(image) => {
-                    let info = storage_format(image.format).ok_or_else(|| {
+                    let info = storage_info(image).ok_or_else(|| {
                         Refusal::Binding(format!("storage texel buffer format {:?}", image.format))
                     })?;
                     for (index, name) in names.iter().enumerate() {
@@ -587,8 +760,18 @@ impl Plan {
                 &address_offsets(reflection, AddressBuffer::PushConstants),
             )?;
             plan.add_buffer("push", bytes);
+            plan.roots.extend(pointer_roots(
+                reflection,
+                AddressBuffer::PushConstants,
+                "push",
+                layout,
+                0,
+            ));
             plan.bindings
                 .push_str("  BIND BUFFER push AS push_constant\n");
+        }
+        if !plan.roots.is_empty() {
+            writes = true;
         }
 
         match stage {
@@ -626,6 +809,20 @@ impl Plan {
                     layout.slots(0, 0, &mut slots);
                     plan.add_target("ray payloads".into(), "rglsl_out", slots);
                 }
+            }
+            ShaderKind::Mesh if reflection.model == ExecutionModel::MeshNV => {
+                plan.draw = Draw::Mesh;
+                plan.harness_env = Some(ShaderKind::Mesh.target_env());
+                plan.mesh_nv = true;
+                plan.finish_with_fragment(&reflection.outputs);
+            }
+            ShaderKind::Task if reflection.model == ExecutionModel::TaskNV => {
+                plan.draw = Draw::Mesh;
+                plan.harness_env = Some(ShaderKind::Task.target_env());
+                plan.mesh_nv = true;
+                plan.harness
+                    .push((ShaderKind::Mesh, mesh::MESH_FOR_TASK_NV.to_string()));
+                plan.finish_with_fragment(&mesh::mesh_for_task_outputs());
             }
             ShaderKind::Mesh => {
                 plan.draw = Draw::Mesh;
@@ -758,11 +955,14 @@ impl Plan {
                 plan.finish_with_fragment(&reflection.outputs);
             }
         }
+        plan.add_references(invocations, &mut rng)?;
         if !plan.addresses.is_empty() && scene.is_none() {
             scene = Some(Geometry::Triangles);
         }
         if let Some(geometry) = scene {
-            plan.declarations.push_str(&geometry.declarations());
+            plan.declarations.push_str(
+                &geometry.declarations(rays::Api::of(reflection), rays::motion(reflection)),
+            );
         }
         for (name, offset) in &plan.addresses {
             let _ = writeln!(
@@ -801,7 +1001,77 @@ impl Plan {
             &address_offsets(reflection, AddressBuffer::ShaderRecord),
         )?;
         self.add_buffer("rglsl_record", bytes);
+        self.roots.extend(pointer_roots(
+            reflection,
+            AddressBuffer::ShaderRecord,
+            "rglsl_record",
+            layout,
+            0,
+        ));
         Ok(Some("rglsl_record".into()))
+    }
+
+    fn add_references(&mut self, invocations: u32, rng: &mut Rng) -> Result<(), Refusal> {
+        if self.roots.is_empty() {
+            return Ok(());
+        }
+        let roots = std::mem::take(&mut self.roots);
+        let graph = references::build(roots, |layout| runtime_length(layout, invocations))
+            .map_err(Refusal::Binding)?;
+        let mut sizes = Vec::new();
+        for (index, node) in graph.nodes.iter().enumerate() {
+            let mut bytes = fill_random(&node.layout, node.length, rng);
+            let size = round_up(node.size.max(16), 16) + references::SLACK;
+            bytes.resize(usize::try_from(size).unwrap_or(16), 0);
+            self.add_buffer(&node.name, bytes);
+            let mut slots = Vec::new();
+            node.layout.slots(0, node.length, &mut slots);
+            slots.extend(
+                (round_up(node.size, 4)..size)
+                    .step_by(4)
+                    .map(|offset| Slot {
+                        offset,
+                        scalar: scalar(ScalarKind::Uint, 32),
+                    }),
+            );
+            self.add_target(format!("buffer reference {index}"), &node.name, slots);
+            sizes.push(size);
+        }
+        let table_size = round_up(u32::try_from(sizes.len()).unwrap_or(0) * 8, 16).max(16);
+        self.add_buffer(
+            references::TABLE,
+            vec![0; usize::try_from(table_size).unwrap_or(16)],
+        );
+        self.add_target(
+            "buffer reference addresses".into(),
+            references::TABLE,
+            Vec::new(),
+        );
+        let dump = self
+            .targets
+            .last()
+            .map(|target| target.dump.clone())
+            .unwrap_or_default();
+        for link in &graph.links {
+            let _ = writeln!(
+                self.bindings,
+                "  BUFFER_ADDRESS {} BUFFER {} OFFSET {}",
+                references::node_name(link.node),
+                link.holder,
+                link.offset
+            );
+        }
+        for (index, node) in graph.nodes.iter().enumerate() {
+            let _ = writeln!(
+                self.bindings,
+                "  BUFFER_ADDRESS {} BUFFER {} OFFSET {}",
+                node.name,
+                references::TABLE,
+                index * 8
+            );
+        }
+        self.reference_table = Some(Table { dump, sizes });
+        Ok(())
     }
 
     fn clear_addresses(
@@ -841,7 +1111,7 @@ impl Plan {
     }
 
     fn finish_with_fragment(&mut self, outputs: &[Varying]) {
-        let (source, attachments, ignored) = harness::fragment_for_vertex(outputs);
+        let (source, attachments, ignored) = harness::fragment_for(outputs, self.mesh_nv);
         self.harness.push((ShaderKind::Fragment, source));
         self.attachments = attachments;
         self.notes.extend(ignored);
@@ -982,11 +1252,14 @@ impl Plan {
         if self.placeholder {
             out.push_str("BUFFER fbnone FORMAT R8G8B8A8_UNORM\n");
         }
-        let entry = if self.entry == "main" {
+        let mut entry = if self.entry == "main" {
             String::new()
         } else {
             format!(" ENTRY_POINT {}", self.entry)
         };
+        for (id, value) in &self.specializations {
+            let _ = write!(entry, " SPECIALIZE {id} AS uint32 {value}");
+        }
         let attach = |name: &str| {
             if name == "tested" {
                 format!("  ATTACH tested{entry}\n")
@@ -1085,7 +1358,8 @@ mod tests {
 
     use super::*;
     use crate::exec::reflect::{
-        AddressField, DataType, Interpolation, RayVariable, Resource, Varying, VaryingType,
+        AddressField, DataType, Interpolation, Pointee, PointerField, RayVariable, Resource,
+        Varying, VaryingType,
     };
     use anyhow::Context;
 
@@ -1254,9 +1528,79 @@ mod tests {
     }
 
     #[test]
+    fn resources_sharing_a_binding_alias_one_descriptor() -> anyhow::Result<()> {
+        let image = ImageType {
+            dim: Dim::Dim2D,
+            depth: false,
+            arrayed: false,
+            multisampled: false,
+            sampled: 1,
+            format: ImageFormat::Unknown,
+            scalar: F32,
+        };
+        let buffer = |layout: Layout| Resource {
+            set: 0,
+            binding: 1,
+            count: None,
+            kind: ResourceKind::StorageBuffer {
+                layout,
+                writable: false,
+            },
+        };
+        let mut module = reflection(ExecutionModel::GLCompute);
+        module.resources = vec![
+            Resource {
+                set: 0,
+                binding: 0,
+                count: None,
+                kind: ResourceKind::SampledImage(image),
+            },
+            Resource {
+                set: 0,
+                binding: 0,
+                count: None,
+                kind: ResourceKind::Sampler,
+            },
+            buffer(Layout::Struct {
+                members: vec![(0, Layout::Scalar(U32))],
+            }),
+            buffer(Layout::Struct {
+                members: vec![(4, Layout::Scalar(F32))],
+            }),
+        ];
+        let plan = planned(&module, &Inputs::default())?;
+        assert!(plan.bindings.contains(
+            "  BIND BUFFER r0_0 AS combined_image_sampler SAMPLER smp DESCRIPTOR_SET 0 BINDING 0\n"
+        ));
+        assert!(plan
+            .bindings
+            .contains("  BIND BUFFER r0_1 AS storage DESCRIPTOR_SET 0 BINDING 1\n"));
+        assert_eq!(plan.bindings.matches("BINDING 1").count(), 1);
+        assert!(plan.targets.is_empty());
+        module.resources.push(Resource {
+            set: 0,
+            binding: 1,
+            count: None,
+            kind: ResourceKind::UniformBuffer(Layout::Struct {
+                members: vec![(0, Layout::Scalar(U32))],
+            }),
+        });
+        assert_eq!(
+            Plan::new(&module, &Inputs::default()).err(),
+            Some(Refusal::Binding(
+                "several resources share set 0 binding 1 (storage buffer, storage buffer, uniform buffer)"
+                    .into()
+            ))
+        );
+        Ok(())
+    }
+
+    #[test]
     fn refuses_what_it_cannot_bind() -> anyhow::Result<()> {
         let mut module = reflection(ExecutionModel::GLCompute);
-        module.capabilities.insert(spirv::Capability::Int64ImageEXT);
+        module
+            .capabilities
+            .insert(spirv::Capability::InputAttachment);
         assert!(matches!(
             Plan::new(&module, &Inputs::default()),
             Err(Refusal::Capability(_))
@@ -1273,7 +1617,7 @@ mod tests {
             Some(Refusal::Binding("arrays of descriptors".into()))
         );
         assert!(matches!(
-            Plan::new(&reflection(ExecutionModel::MeshNV), &Inputs::default()),
+            Plan::new(&reflection(ExecutionModel::Kernel), &Inputs::default()),
             Err(Refusal::Stage(_))
         ));
         assert!(matches!(
@@ -1510,6 +1854,70 @@ mod tests {
     }
 
     #[test]
+    fn buffer_references_get_buffers_and_addresses() -> anyhow::Result<()> {
+        let node = Layout::Struct {
+            members: vec![
+                (0, Layout::Scalar(U32)),
+                (8, Layout::Pointer(Pointee::Enclosing(0))),
+            ],
+        };
+        let mut module = reflection(ExecutionModel::Fragment);
+        module
+            .capabilities
+            .insert(spirv::Capability::PhysicalStorageBufferAddresses);
+        module.push_constants = Some(Layout::Struct {
+            members: vec![
+                (0, Layout::Pointer(Pointee::Block(Box::new(node.clone())))),
+                (
+                    8,
+                    Layout::Vector {
+                        scalar: U32,
+                        count: 2,
+                    },
+                ),
+            ],
+        });
+        module.pointer_fields = vec![PointerField {
+            field: AddressField {
+                buffer: AddressBuffer::PushConstants,
+                offset: 8,
+            },
+            pointee: Pointee::Block(Box::new(node)),
+        }];
+        let plan = planned(&module, &Inputs::default())?;
+        assert!(plan.needs.contains(&Need::Feature(
+            "BufferDeviceAddressFeatures.bufferDeviceAddress"
+        )));
+        assert!(plan
+            .needs
+            .contains(&Need::Feature("fragmentStoresAndAtomics")));
+        let buffers: Vec<&str> = plan.targets.iter().map(|t| t.buffer.as_str()).collect();
+        assert_eq!(buffers, ["rglsl_ref0", "rglsl_ref1", "rglsl_refs"]);
+        let table = plan.reference_table.clone().context("no reference table")?;
+        assert_eq!(table.sizes, [272, 272]);
+        assert_eq!(Some(&table.dump), plan.targets.get(2).map(|t| &t.dump));
+        assert_eq!(plan.targets[0].slots.len(), 2 + (272 - 16) / 4);
+        let (tested, dump, data) = paths();
+        let script = plan.script(ScriptPaths {
+            tested: &tested,
+            harness: &[],
+            dump: &dump,
+            data: &data,
+        });
+        assert!(script.contains(
+            "  BIND BUFFER push AS push_constant\n\
+             \x20 BUFFER_ADDRESS rglsl_ref0 BUFFER push OFFSET 0\n\
+             \x20 BUFFER_ADDRESS rglsl_ref1 BUFFER push OFFSET 8\n\
+             \x20 BUFFER_ADDRESS rglsl_ref0 BUFFER rglsl_ref0 OFFSET 8\n\
+             \x20 BUFFER_ADDRESS rglsl_ref1 BUFFER rglsl_ref1 OFFSET 8\n\
+             \x20 BUFFER_ADDRESS rglsl_ref0 BUFFER rglsl_refs OFFSET 0\n\
+             \x20 BUFFER_ADDRESS rglsl_ref1 BUFFER rglsl_refs OFFSET 8\n"
+        ));
+        assert!(script.contains("BIND BUFFER rglsl_refs AS storage DESCRIPTOR_SET 0 BINDING 2"));
+        Ok(())
+    }
+
+    #[test]
     fn addresses_in_push_constants_and_buffers_hold_the_scene() -> anyhow::Result<()> {
         let address = Layout::Vector {
             scalar: U32,
@@ -1712,6 +2120,43 @@ mod tests {
         assert_eq!(shaders(&plan), [ShaderKind::Mesh, ShaderKind::Fragment]);
         assert_eq!(plan.attachments.len(), 2);
         assert_eq!(plan.draw, Draw::Mesh);
+        Ok(())
+    }
+
+    #[test]
+    fn nv_mesh_and_task_shaders_get_nv_partner_stages() -> anyhow::Result<()> {
+        let mut module = reflection(ExecutionModel::MeshNV);
+        module.capabilities.insert(spirv::Capability::MeshShadingNV);
+        module.outputs = vec![Varying {
+            location: 2,
+            component: 0,
+            ty: VaryingType::Simple {
+                scalar: U32,
+                count: 1,
+            },
+            array: None,
+            interpolation: Interpolation::Flat,
+            centroid: false,
+            sample: false,
+            patch: false,
+            per_primitive: true,
+        }];
+        let plan = planned(&module, &Inputs::default())?;
+        assert_eq!(shaders(&plan), [ShaderKind::Fragment]);
+        assert!(plan.harness[0]
+            .1
+            .contains("layout(location = 2) flat perprimitiveNV in uint v2;"));
+        assert!(plan.needs.contains(&requirements::MESH_SHADER_NV));
+        assert!(!plan.needs.contains(&requirements::MESH_SHADER));
+        assert_eq!(plan.draw, Draw::Mesh);
+
+        let mut module = reflection(ExecutionModel::TaskNV);
+        module.capabilities.insert(spirv::Capability::MeshShadingNV);
+        let plan = planned(&module, &Inputs::default())?;
+        assert_eq!(shaders(&plan), [ShaderKind::Mesh, ShaderKind::Fragment]);
+        assert!(plan.harness[0].1.contains("GL_NV_mesh_shader"));
+        assert!(plan.harness[0].1.contains("gl_PrimitiveCountNV = 1u;"));
+        assert!(!plan.needs.contains(&requirements::TASK_SHADER));
         Ok(())
     }
 

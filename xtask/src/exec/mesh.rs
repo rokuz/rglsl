@@ -42,6 +42,27 @@ void main() {
 }
 ";
 
+pub const MESH_FOR_TASK_NV: &str = "#version 460
+#extension GL_NV_mesh_shader : require
+layout(local_size_x = 1) in;
+layout(triangles, max_vertices = 3, max_primitives = 1) out;
+layout(location = 0) flat out uint v0[];
+void main() {
+    uint id = gl_WorkGroupID.x;
+    vec2 corner = vec2(float(id % 8u), float((id / 8u) % 8u)) * 0.25 - 1.0;
+    gl_PrimitiveCountNV = 1u;
+    gl_MeshVerticesNV[0].gl_Position = vec4(corner, 0.5, 1.0);
+    gl_MeshVerticesNV[1].gl_Position = vec4(corner + vec2(0.25, 0.0), 0.5, 1.0);
+    gl_MeshVerticesNV[2].gl_Position = vec4(corner + vec2(0.0, 0.25), 0.5, 1.0);
+    v0[0] = id + 1u;
+    v0[1] = id + 1u;
+    v0[2] = id + 1u;
+    gl_PrimitiveIndicesNV[0] = 0u;
+    gl_PrimitiveIndicesNV[1] = 1u;
+    gl_PrimitiveIndicesNV[2] = 2u;
+}
+";
+
 pub fn mesh_for_task_outputs() -> Vec<Varying> {
     vec![Varying {
         location: 0,
