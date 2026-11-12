@@ -792,6 +792,16 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   list, through `Block::shallow_clone`, `Statement::shell` and `Statement::child_blocks{,_mut}`,
   so cloning a function uses constant stack.
 
+- **GLSL arithmetic.** `BinaryOperator::Modulo` on floats is GLSL's floored `mod`, written as
+  `OpFMod` (upstream `OpFRem`, WGSL's truncated `%`); the constant evaluator folds it floored,
+  and the SPIR-V front end reads `OpFMod` as `Modulo` and polyfills `OpFRem` with `trunc`.
+  `MathFunction::Round` is GLSL's `round` (`GLSL.std.450 Round`, not folded by the evaluator);
+  the new `MathFunction::RoundEven` is upstream's `Round`. Float `NotEqual` is
+  `OpFUnordNotEqual` (upstream `OpFOrdNotEqual`). `Normalize`, `FaceForward` and `Reflect`
+  accept scalars. An `As` conversion between integers of different width and signedness is
+  `OpSConvert`/`OpUConvert` by the source's signedness, then `OpBitcast` (upstream extended by
+  the target's signedness). The object `FORMAT_VERSION` is 4.
+
 ## Cherry-picked upstream commits
 
 None yet.
