@@ -362,7 +362,7 @@ impl Layouter<'_> {
     fn ty(&self, ty: &Type, row_major: bool) -> Option<TypeLayout> {
         let mut tasks = Vec::from([LayoutTask::Visit {
             kind: ty.kind,
-            dims: &ty.array,
+            dims: ty.dimensions(),
             row_major,
         }]);
         let mut results: Vec<TypeLayout> = Vec::new();
@@ -388,7 +388,7 @@ impl Layouter<'_> {
                             tasks.push(LayoutTask::Members(members));
                             tasks.extend(members.iter().rev().map(|member| LayoutTask::Visit {
                                 kind: member.ty.kind,
-                                dims: &member.ty.array,
+                                dims: member.ty.dimensions(),
                                 row_major: member_row_major(&member.qualifiers, row_major),
                             }));
                         }

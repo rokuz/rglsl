@@ -3,7 +3,7 @@ use alloc::{
     vec::Vec,
 };
 
-use rglsl_ast::ast::{Expression, ExpressionKind, FunctionDefinition, Node};
+use rglsl_ast::ast::{Expression, ExpressionKind, FunctionDefinition, Node, NodeId};
 use rglsl_sema::scope::{Origin, SymbolKind};
 use rglsl_sema::types::{BlockId, OpaqueKind, TypeKind};
 use rglsl_sema::{Callee, FunctionId, SymbolId};
@@ -16,6 +16,33 @@ pub(super) fn strip(expression: &Expression) -> &Expression {
         current = inner;
     }
     current
+}
+
+fn subscript_chain<'e>(
+    chains: &mut BTreeMap<NodeId, (usize, &'e Expression)>,
+    start: &'e Expression,
+) -> (usize, &'e Expression) {
+    let mut path = Vec::new();
+    let mut current = start;
+    let (mut depth, root) = loop {
+        if let Some(&known) = chains.get(&current.id) {
+            break known;
+        }
+        match current.kind {
+            ExpressionKind::Subscript {
+                base: ref outer, ..
+            } => {
+                path.push(current.id);
+                current = strip(outer);
+            }
+            _ => break (0, current),
+        }
+    };
+    while let Some(id) = path.pop() {
+        depth += 1;
+        chains.insert(id, (depth, root));
+    }
+    (depth, root)
 }
 
 pub(super) const CLIP_DISTANCES: [&str; 2] = ["gl_ClipDistance", "gl_CullDistance"];
@@ -85,6 +112,7 @@ impl<'a> Lowerer<'a> {
         let analysis = self.analysis;
         let mut edges: Vec<(SymbolId, SymbolId)> = Vec::new();
         let mut plain: BTreeSet<SymbolId> = BTreeSet::new();
+        let mut chains = BTreeMap::new();
         for expression in rglsl_ast::expressions(self.unit) {
             match expression.kind {
                 ExpressionKind::Variable(_) => {
@@ -160,15 +188,7 @@ impl<'a> Lowerer<'a> {
                         let entry = self.member_sizes.entry(member).or_insert(0);
                         *entry = (*entry).max(size);
                     }
-                    let mut depth = 0_usize;
-                    let mut inner = strip(base);
-                    while let ExpressionKind::Subscript {
-                        base: ref outer, ..
-                    } = inner.kind
-                    {
-                        depth += 1;
-                        inner = strip(outer);
-                    }
+                    let (depth, inner) = subscript_chain(&mut chains, strip(base));
                     if depth > 0 {
                         if let Some((block, member)) = self.block_member_of(inner) {
                             let entry = self

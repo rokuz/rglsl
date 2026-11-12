@@ -390,7 +390,7 @@ impl<'a> Lowerer<'a> {
         let inner = self.heap_image(&element, qualifiers, at)?;
         let base = self.insert_type(inner);
         let stride = layout_u32(qualifiers, "descriptor_stride", at)?.unwrap_or(0);
-        let dimensions = ty.array.clone();
+        let dimensions = ty.dimensions().to_vec();
         let view = self.descriptor_arrays(base, &dimensions, stride, at)?;
         let offset = self.heap_offset(qualifier, at)?;
         self.heap_view(symbol, name, heap, view, offset, at);
@@ -406,7 +406,7 @@ impl<'a> Lowerer<'a> {
         at: Span,
     ) -> Result<()> {
         let variable = self.variable(symbol).ok_or_else(|| internal(at))?;
-        let dimensions = variable.ty.array.clone();
+        let dimensions = variable.ty.dimensions().to_vec();
         let stride = layout_u32(&variable.qualifiers, "descriptor_stride", at)?.unwrap_or(0);
         let base = self.buffer_descriptor(id, at)?;
         let view = self.descriptor_arrays(base, &dimensions, stride, at)?;
@@ -560,7 +560,9 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
                     0
                 };
                 (
-                    self.with(|this| this.descriptor_arrays(leaf, &member.ty.array, stride, at))??,
+                    self.with(|this| {
+                        this.descriptor_arrays(leaf, member.ty.dimensions(), stride, at)
+                    })??,
                     None,
                 )
             } else {

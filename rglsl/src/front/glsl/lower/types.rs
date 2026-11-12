@@ -152,9 +152,9 @@ impl Lowerer<'_> {
     }
 
     fn record_relayout(&mut self, laid: Handle<Type>, plain: Handle<Type>) {
-        let mut pending = alloc::vec![(laid, plain)];
-        while let Some((laid, plain)) = pending.pop() {
-            if laid == plain || self.holds_booleans(plain) {
+        let mut pending = alloc::vec![(laid, plain, false)];
+        while let Some((laid, plain, without_booleans)) = pending.pop() {
+            if laid == plain || (!without_booleans && self.holds_booleans(plain)) {
                 continue;
             }
             if self.relayout.insert(laid, plain).is_some() {
@@ -175,11 +175,11 @@ impl Lowerer<'_> {
                     laid_members
                         .iter()
                         .zip(plain_members)
-                        .map(|(laid, plain)| (laid.ty, plain.ty))
+                        .map(|(laid, plain)| (laid.ty, plain.ty, false))
                         .rev(),
                 ),
                 (&TypeInner::Array { base: laid, .. }, &TypeInner::Array { base: plain, .. }) => {
-                    pending.push((laid, plain));
+                    pending.push((laid, plain, true));
                 }
                 _ => {}
             }
@@ -540,11 +540,28 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
                 result
             }?,
         };
-        {
-            let frame = self.clone().wrap_arrays(base, ty.array.to_vec(), span);
-            let result = self.nest(frame).await;
-            result
+        let mut pending = Vec::new();
+        let mut current = ty.clone();
+        let mut handle = base;
+        while let Some(shared) = current.shared_dimensions() {
+            let key = (shared, base);
+            if let Some(found) = self.with(|this| this.array_types.get(&key).copied())? {
+                handle = found;
+                break;
+            }
+            let outer = current.outer_size().ok_or_else(|| internal(span))?;
+            current = current.element_type().ok_or_else(|| internal(span))?;
+            pending.push((key, outer));
         }
+        while let Some((key, outer)) = pending.pop() {
+            handle = {
+                let frame = self.clone().wrap_arrays(handle, Vec::from([outer]), span);
+                let result = self.nest(frame).await;
+                result
+            }?;
+            self.with(|this| this.array_types.insert(key, handle))?;
+        }
+        Ok(handle)
     }
 
     pub(super) async fn wrap_arrays(
@@ -881,20 +898,19 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
             if !runtime && member_ty.outer_size() == Some(GlslArraySize::Unsized) {
                 let size =
                     self.with(|this| this.member_sizes.get(&(id, index)).copied().unwrap_or(1))?;
-                if let Some(first) = member_ty.array.first_mut() {
-                    *first = GlslArraySize::Sized(size);
-                }
+                member_ty.set_outer_size(GlslArraySize::Sized(size));
             }
             let lowered = match member_ty.kind {
                 TypeKind::Scalar(GlslScalar::Bool) => {
-                    Some(GlslType::scalar(GlslScalar::Uint).with_dimensions(&member_ty.array))
+                    Some(GlslType::scalar(GlslScalar::Uint).with_dimensions(member_ty.dimensions()))
                 }
                 TypeKind::Vector {
                     scalar: GlslScalar::Bool,
                     size,
-                } => {
-                    Some(GlslType::vector(GlslScalar::Uint, size).with_dimensions(&member_ty.array))
-                }
+                } => Some(
+                    GlslType::vector(GlslScalar::Uint, size)
+                        .with_dimensions(member_ty.dimensions()),
+                ),
                 _ => None,
             };
             let ty = match lowered {

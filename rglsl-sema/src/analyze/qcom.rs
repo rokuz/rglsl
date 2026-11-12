@@ -75,7 +75,7 @@ const VECTOR_ELEMENTS: [Scalar; 6] = [
 ];
 
 fn scalar_array(ty: &Type, allowed: &[Scalar]) -> Option<(Scalar, ArraySize)> {
-    let [size] = ty.array.as_slice() else {
+    let [size] = ty.dimensions() else {
         return None;
     };
     match ty.kind {
