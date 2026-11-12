@@ -1,7 +1,8 @@
 #![cfg(all(feature = "glsl-in", feature = "spv-out"))]
 
-use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+extern crate alloc;
+
+use alloc::collections::{BTreeMap, BTreeSet};
 use std::process::Command;
 
 use rglsl::back::spv;
@@ -77,7 +78,7 @@ fn compile_with(
     let info = Validator::new(ValidationFlags::all(), Capabilities::all())
         .validate(&module)
         .map_err(|error| format!("{:?}", error.into_inner()))?;
-    let debug_info = debug.then(|| spv::DebugInfo {
+    let debug_info = debug.then_some(spv::DebugInfo {
         level: spv::DebugLevel::NonSemantic,
         source_text: true,
         processes: &[],
