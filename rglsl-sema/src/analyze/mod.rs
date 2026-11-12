@@ -125,6 +125,8 @@ pub struct Analysis {
     pub storage_buffer_class: bool,
     pub shader_64bit_indexing: bool,
     pub promote_uint32_indices: bool,
+    pub variable_pointers: bool,
+    pub replicated_composites: bool,
     pub primitive_culling: bool,
     pub subgroup_uniform_control_flow: bool,
     pub maximally_reconverges: bool,
@@ -366,6 +368,8 @@ pub(crate) struct Analyzer<'a> {
     pub storage_buffer_class: bool,
     pub shader_64bit_indexing: bool,
     pub promote_uint32_indices: bool,
+    pub variable_pointers: bool,
+    pub replicated_composites: bool,
     pub ray_locations: [Vec<u32>; 3],
     pub primitive_culling: bool,
     pub subgroup_uniform_control_flow: bool,
@@ -442,6 +446,8 @@ impl<'a> Analyzer<'a> {
             storage_buffer_class: false,
             shader_64bit_indexing: false,
             promote_uint32_indices: false,
+            variable_pointers: false,
+            replicated_composites: false,
             ray_locations: [Vec::new(), Vec::new(), Vec::new()],
             primitive_culling: false,
             subgroup_uniform_control_flow: false,
@@ -513,13 +519,24 @@ impl<'a> Analyzer<'a> {
 
     fn pragma(&mut self, span: Span, tokens: &[String]) {
         let words: Vec<&str> = tokens.iter().map(String::as_str).collect();
+        if words.first() == Some(&"use_variable_pointers")
+            && self
+                .options
+                .spirv_version
+                .is_some_and(|version| version < (1, 3))
+        {
+            self.error(span, DiagnosticKind::InvalidPragma("requires SPIR-V 1.3"));
+        }
         let flag = match words.first() {
             Some(&"use_vulkan_memory_model") => Some(&mut self.vulkan_memory_model),
             Some(&"use_storage_buffer") => Some(&mut self.storage_buffer_class),
             Some(&"shader_64bit_indexing") => Some(&mut self.shader_64bit_indexing),
             Some(&"promote_uint32_indices") => Some(&mut self.promote_uint32_indices),
+            Some(&"use_variable_pointers") => Some(&mut self.variable_pointers),
+            Some(&"use_replicated_composites") => Some(&mut self.replicated_composites),
             _ => None,
         };
+
         if let Some(flag) = flag {
             *flag = true;
             if words.len() != 1 {
@@ -663,6 +680,8 @@ impl<'a> Analyzer<'a> {
             storage_buffer_class: self.storage_buffer_class,
             shader_64bit_indexing: self.shader_64bit_indexing,
             promote_uint32_indices: self.promote_uint32_indices,
+            variable_pointers: self.variable_pointers,
+            replicated_composites: self.replicated_composites,
             primitive_culling: self.primitive_culling,
             subgroup_uniform_control_flow: self.subgroup_uniform_control_flow,
             maximally_reconverges: self.maximally_reconverges,

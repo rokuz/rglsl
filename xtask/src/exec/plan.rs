@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
-use spirv::{BuiltIn, Capability, Dim, ExecutionMode, ExecutionModel, ImageFormat};
+use spirv::{BuiltIn, Capability, Dim, ExecutionMode, ExecutionModel, ImageFormat, Op};
 
 use super::data::{fill_random, fill_values, Rng, Value};
 use super::glsl;
@@ -523,6 +523,12 @@ pub fn tensor_refusal(reflection: &Reflection) -> String {
          create, bind, upload or read back tensors (docs/design/tensors.md)"
     )
 }
+const UNSIZED_ACCESSES: [Op; 4] = [
+    Op::CooperativeMatrixLoadTensorNV,
+    Op::CooperativeMatrixStoreTensorNV,
+    Op::CooperativeVectorOuterProductAccumulateNV,
+    Op::CooperativeVectorReduceSumAccumulateNV,
+];
 
 pub fn requirements(reflection: &Reflection) -> Result<BTreeSet<Need>, Refusal> {
     if let Some(unknown) = reflection.unknown_capabilities.first() {
@@ -639,6 +645,11 @@ impl Plan {
     pub fn new(reflection: &Reflection, inputs: &Inputs) -> Result<Self, Refusal> {
         let stage = stage_of(reflection.model)?;
         let mut needs = requirements(reflection)?;
+        if let Some(op) = UNSIZED_ACCESSES.iter().find(|op| reflection.uses(**op)) {
+            return Err(Refusal::Binding(format!(
+                "{op:?} addresses memory through sizes and layouts the harness cannot bind safely"
+            )));
+        }
         if let Some(problem) = reflection.problems.first() {
             return Err(Refusal::Binding(problem.clone()));
         }
@@ -1992,7 +2003,7 @@ mod tests {
         let mut module = reflection(ExecutionModel::GLCompute);
         module
             .capabilities
-            .insert(spirv::Capability::CooperativeMatrixNV);
+            .insert(spirv::Capability::CooperativeMatrixLayoutsARM);
         assert!(matches!(
             Plan::new(&module, &Inputs::default()),
             Err(Refusal::Capability(_))

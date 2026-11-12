@@ -6011,6 +6011,275 @@ int f(int x) {
 void main() {
     f(1);
 }
+### coopmat2 reductions with every mode | comp | ok
+#extension GL_KHR_memory_scope_semantics : enable
+#extension GL_KHR_cooperative_matrix : enable
+#extension GL_NV_cooperative_matrix2 : enable
+#extension GL_EXT_shader_explicit_arithmetic_types : enable
+layout(local_size_x = 32) in;
+float16_t sumh(const in float16_t a, const in float16_t b) { return a + b; }
+void main() {
+    coopmat<float16_t, gl_ScopeSubgroup, 16, 32, gl_MatrixUseAccumulator> m;
+    coopmat<float16_t, gl_ScopeSubgroup, 16, 8, gl_MatrixUseAccumulator> rows;
+    coopmat<float16_t, gl_ScopeSubgroup, 1, 32, gl_MatrixUseAccumulator> columns;
+    coopmat<float16_t, gl_ScopeSubgroup, 1, 1, gl_MatrixUseAccumulator> both;
+    coopmat<float16_t, gl_ScopeSubgroup, 8, 16, gl_MatrixUseAccumulator> quad;
+    coopMatReduceNV(rows, m, gl_CooperativeMatrixReduceRowNV, sumh);
+    coopMatReduceNV(columns, m, gl_CooperativeMatrixReduceColumnNV, sumh);
+    coopMatReduceNV(both, m, gl_CooperativeMatrixReduceRowAndColumnNV, sumh);
+    coopMatReduceNV(quad, m, gl_CooperativeMatrixReduce2x2NV, sumh);
+}
+### coopmat2 reduction errors | comp | 14:InvalidCooperativeCall, 15:InvalidCooperativeCall, 16:InvalidCooperativeCall, 17:NoMatchingFunction, 18:InvalidCooperativeCall, 19:InvalidCooperativeCall
+#extension GL_KHR_memory_scope_semantics : enable
+#extension GL_KHR_cooperative_matrix : enable
+#extension GL_NV_cooperative_matrix2 : enable
+#extension GL_EXT_shader_explicit_arithmetic_types : enable
+layout(local_size_x = 32) in;
+float16_t sumh(const in float16_t a, const in float16_t b) { return a + b; }
+float16_t sum3(const in float16_t a, const in float16_t b, const in float16_t c) { return a; }
+void main() {
+    coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator> m;
+    coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator> f;
+    coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseA> a;
+    int dynamic = 1;
+    coopMatReduceNV(m, m, dynamic, sumh);
+    coopMatReduceNV(m, m, 5, sumh);
+    coopMatReduceNV(f, m, gl_CooperativeMatrixReduceRowNV, sumh);
+    coopMatReduceNV(m, m, 1u, sumh);
+    coopMatReduceNV(a, m, gl_CooperativeMatrixReduceRowNV, sumh);
+    coopMatReduceNV(m, m, gl_CooperativeMatrixReduceRowNV, sum3);
+}
+### coopmat2 transposes need a B result without maintenance1 | comp | 11:InvalidCooperativeCall, 12:InvalidCooperativeCall
+#extension GL_KHR_memory_scope_semantics : enable
+#extension GL_KHR_cooperative_matrix : enable
+#extension GL_NV_cooperative_matrix2 : enable
+#extension GL_EXT_shader_explicit_arithmetic_types : enable
+layout(local_size_x = 32) in;
+void main() {
+    coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator> m;
+    coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseA> a;
+    coopmat<float16_t, gl_ScopeWorkgroup, 16, 16, gl_MatrixUseB> b;
+    coopMatTransposeNV(a, m);
+    coopMatTransposeNV(b, m);
+}
+### coopmat2 per-element input and result types must match | comp | 11:InvalidCooperativeCall, 12:InvalidCooperativeCall
+#extension GL_KHR_memory_scope_semantics : enable
+#extension GL_KHR_cooperative_matrix : enable
+#extension GL_NV_cooperative_matrix2 : enable
+#extension GL_EXT_shader_explicit_arithmetic_types : enable
+layout(local_size_x = 32) in;
+float16_t e(const in uint32_t r, const in uint32_t c, const in float16_t x) { return x; }
+void main() {
+    coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator> m;
+    coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseA> a;
+    coopMatPerElementNV(a, m, e);
+    coopMatPerElementNV(m, m, e, a);
+}
+### tensor layout and view type parameters | comp | 5:InvalidTypeParameters, 6:InvalidTypeParameters, 7:InvalidTypeParameters, 8:InvalidTypeParameters
+#extension GL_NV_cooperative_matrix2 : enable
+layout(local_size_x = 32) in;
+void main() {
+    tensorLayoutNV<6> a;
+    tensorLayoutNV<2, 5> b;
+    tensorViewNV<2, false, 0, 0> c;
+    tensorViewNV<3, true, 1, 2, 3> d;
+    tensorLayoutNV<5, 4> e;
+    tensorViewNV<3, true, 2, 0, 1> f;
+}
+### tensor creation arguments | comp | 6:InvalidTypeParameters, 7:NoMatchingFunction, 8:NoMatchingFunction, 9:InvalidTypeParameters
+#extension GL_NV_cooperative_matrix2 : enable
+#extension GL_EXT_shader_explicit_arithmetic_types : enable
+layout(local_size_x = 32) in;
+void main() {
+    createTensorLayoutNV(-1);
+    createTensorLayoutNV(true);
+    createTensorViewNV(2, 1);
+    createTensorLayoutNV(int8_t(2));
+}
+### tensor setters take one value per dimension | comp | 7:InvalidCooperativeCall, 8:InvalidCooperativeCall, 9:InvalidCooperativeCall
+#extension GL_NV_cooperative_matrix2 : enable
+layout(local_size_x = 32) in;
+void main() {
+    tensorLayoutNV<2> t = createTensorLayoutNV(2);
+    t = setTensorLayoutDimensionNV(t, 1, 2);
+    t = setTensorLayoutStrideNV(t, 1);
+    t = sliceTensorLayoutNV(t, 1, 2);
+    t = setTensorLayoutBlockSizeNV(t, 1, 2, 3);
+}
+### tensor layouts are not comparable or block members | comp | 4:InvalidBlock, 8:InvalidOperands
+#extension GL_NV_cooperative_matrix2 : enable
+layout(local_size_x = 32) in;
+layout(binding = 0) buffer B { tensorLayoutNV<2> m; } b;
+void main() {
+    tensorLayoutNV<2> t = createTensorLayoutNV(2);
+    tensorLayoutNV<2> u = t;
+    bool same = t == u;
+}
+### cooperative vector operators | comp 450 | ok
+#extension GL_NV_cooperative_vector : enable
+#extension GL_EXT_shader_explicit_arithmetic_types : enable
+layout(local_size_x = 32) in;
+void main() {
+    coopvecNV<uint8_t, 4> a, b;
+    a = a + b; a = a % b; a = a << b; a = a & b; a = a * uint8_t(2); a = uint8_t(2) * a; a *= uint8_t(3);
+    coopvecNV<float16_t, 4> h;
+    h = h * float16_t(2.0) / h - h;
+    coopvecNV<double, 4> d;
+    d = d * 2.0lf;
+}
+### cooperative vector operands must be identical | comp 450 | 7:InvalidOperands, 8:InvalidOperands, 9:InvalidOperands, 10:InvalidOperands, 11:InvalidOperands, 12:InvalidOperands
+#extension GL_NV_cooperative_vector : enable
+#extension GL_EXT_shader_explicit_arithmetic_types : enable
+layout(local_size_x = 32) in;
+void main() {
+    coopvecNV<float, 4> f; coopvecNV<float16_t, 4> h; coopvecNV<float, 5> g; coopvecNV<uint, 4> u; coopvecNV<int, 4> i;
+    f = f + h;
+    f = f + g;
+    u = u << i;
+    f = f + 1.0;
+    u = u >> 1u;
+    bool same = f == f;
+}
+### cooperative vectors do not convert implicitly | comp 450 | 7:CannotConvert
+#extension GL_NV_cooperative_vector : enable
+#extension GL_EXT_shader_explicit_arithmetic_types : enable
+layout(local_size_x = 32) in;
+void main() {
+    coopvecNV<float, 4> f; coopvecNV<float16_t, 4> h;
+    f = h;
+}
+### cooperative vector function arguments convert within a family | comp 450 | 9:NoMatchingFunction
+#extension GL_NV_cooperative_vector : enable
+#extension GL_EXT_shader_explicit_arithmetic_types : enable
+layout(local_size_x = 32) in;
+float f(coopvecNV<float, 4> v) { return v[0]; }
+void main() {
+    coopvecNV<float16_t, 4> h; coopvecNV<int, 4> i;
+    float x = f(h);
+    float y = f(i);
+}
+### cooperative vector storage | comp 450 | 4:InvalidQualifier, 5:InvalidBlock, 6:InvalidBlock
+#extension GL_NV_cooperative_vector : enable
+#extension GL_EXT_buffer_reference : enable
+shared coopvecNV<float, 4> s;
+layout(binding = 0) buffer B { coopvecNV<float, 4> m; } b;
+layout(buffer_reference) buffer R { coopvecNV<float, 4> m; };
+layout(local_size_x = 32) in;
+void main() { }
+### vectors are not constructed from cooperative vectors | comp 450 | 6:InvalidConstructor, 7:InvalidConstructor
+#extension GL_NV_cooperative_vector : enable
+layout(local_size_x = 32) in;
+void main() {
+    coopvecNV<float, 4> v;
+    vec4 a = vec4(v);
+    float b = float(v);
+}
+### long vectors and cooperative vectors convert by constructor | comp 450 | ok
+#extension GL_NV_cooperative_vector : enable
+#extension GL_EXT_long_vector : enable
+layout(local_size_x = 32) in;
+layout(constant_id = 0) const uint N = 6;
+void main() {
+    vector<float, N> a;
+    coopvecNV<float, N> b = coopvecNV<float, N>(a);
+    vector<float, N> c = vector<float, N>(b);
+    coopvecNV<float, 20> d = coopvecNV<float, 20>(vector<float, 20>(1.0));
+}
+### cooperative vector index against the default size | comp 450 | 6:IndexOutOfRange
+#extension GL_NV_cooperative_vector : enable
+layout(local_size_x = 32) in;
+layout(constant_id = 0) const uint N = 6;
+void main() {
+    coopvecNV<float, N> v; v[6] = 1.0; v[5] = 1.0;
+}
+### cooperative vector offsets are ambiguous with 64-bit indexing | comp 450 | 9:AmbiguousCall
+#extension GL_NV_cooperative_vector : enable
+#extension GL_EXT_shader_explicit_arithmetic_types : enable
+#extension GL_EXT_shader_64bit_indexing : enable
+layout(local_size_x = 32) in;
+layout(binding = 0) buffer B { float data[]; };
+void main() {
+    coopvecNV<float, 4> v;
+    coopVecLoadNV(v, data, 0);
+    coopVecLoadNV(v, data, 0u);
+    coopVecLoadNV(v, data, 0ul);
+}
+### cooperative vector multiplication checks | comp 450 | 9:InvalidCooperativeCall, 10:InvalidCooperativeCall, 11:InvalidCooperativeCall, 12:NoMatchingFunction, 13:NoMatchingFunction
+#extension GL_NV_cooperative_vector : enable
+#extension GL_EXT_shader_explicit_arithmetic_types : enable
+layout(local_size_x = 32) in;
+layout(binding = 0) buffer B { float16_t data[]; };
+void main() {
+    coopvecNV<float16_t, 8> v; coopvecNV<float16_t, 16> r; coopvecNV<int8_t, 16> bad;
+    coopVecMatMulNV(r, v, 0, data, 0, 0, 16, 8, 0, false, 32);
+    coopVecMatMulNV(bad, v, 0, data, 0, 0, 16, 8, 0, false, 32);
+    coopVecMatMulNV(r, v, 0, data, 0, 0, 15, 8, 0, false, 32);
+    coopVecMatMulNV(r, v, 0, data, 0, 0, 16, 9, 0, false, 32);
+    coopVecMatMulNV(r, v, 0, data, 0, 0, 16, 8, 0, 0, 32);
+    coopVecMatMulNV(r, v, 0u, data, 0, 0, 16, 8, 0, false, 32);
+}
+### cooperative vector memory access follows the qualifiers | comp 450 | 8:NotAnLValue, 9:WriteOnlyRead
+#extension GL_NV_cooperative_vector : enable
+layout(local_size_x = 32) in;
+layout(binding = 0) readonly buffer R { float data[]; } ro;
+layout(binding = 1) writeonly buffer W { float data[]; } wo;
+void main() {
+    coopvecNV<float, 4> v;
+    coopVecStoreNV(v, ro.data, 0);
+    coopVecLoadNV(v, wo.data, 0);
+}
+### type parameters on a plain type | comp 450 | 4:UnexpectedTypeParameters, 6:UnexpectedTypeParameters
+#extension GL_KHR_cooperative_matrix : require
+layout(local_size_x = 1) in;
+float<16> f;
+void main() {
+    vec4<2> v;
+}
+### cooperative matrices are not shared or block members | comp 450 | 6:InvalidQualifier, 7:InvalidStructMember
+#extension GL_KHR_cooperative_matrix : require
+#extension GL_KHR_memory_scope_semantics : require
+layout(local_size_x = 1) in;
+struct S { coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseA> m; };
+shared S s;
+layout(binding = 0) buffer B { S b; };
+void main() {
+}
+### cooperative load needs buffer or shared storage | comp 450 | 9:InvalidCooperativeCall
+#extension GL_KHR_cooperative_matrix : require
+#extension GL_KHR_memory_scope_semantics : require
+layout(local_size_x = 1) in;
+void main() {
+    float local[256];
+    coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseA> m;
+    m = coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseA>(1.0);
+    coopMatStore(m, local, 0u, 16u, 0);
+}
+### cooperative matrix scalar operands are not converted | comp 450 | 8:InvalidOperands
+#extension GL_KHR_cooperative_matrix : require
+#extension GL_KHR_memory_scope_semantics : require
+layout(local_size_x = 1) in;
+void main() {
+    coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseA> m;
+    m = coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseA>(1.0);
+    m = m * 2;
+}
+### constant_id needs a const scalar | comp 450 | 3:InvalidQualifier, 4:InvalidQualifier
+layout(local_size_x = 1) in;
+layout(constant_id = 0) int a = 1;
+layout(constant_id = 1) const vec2 b = vec2(1.0);
+void main() {
+}
+### function returns take no storage qualifier | comp 450 | 3:InvalidQualifier
+layout(local_size_x = 1) in;
+const float f() { return 1.0; }
+void main() {
+}
+### use_variable_pointers is a known pragma | comp 450 | ok
+#pragma use_variable_pointers
+#pragma use_replicated_composites
+layout(local_size_x = 1) in;
+void main() {
+}
 ### layout qualifiers on parameters | frag | 5:InvalidParameter, 6:InvalidParameter, 7:InvalidParameter, 8:InvalidParameter, 9:InvalidParameter
 #extension GL_EXT_buffer_reference : require
 layout(buffer_reference) buffer R { float x; };

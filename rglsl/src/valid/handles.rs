@@ -45,6 +45,8 @@ impl super::Validator {
             vulkan_memory_model: _,
             descriptor_heap: _,
             shader_64bit_indexing: _,
+            variable_pointers: _,
+            replicated_composites: _,
             legacy_buffer_blocks: _,
             ray_tracing: _,
             spirv_requirements: _,

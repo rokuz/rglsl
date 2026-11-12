@@ -150,6 +150,8 @@ pub enum DiagnosticKind {
     BindingRequired(&'static str),
     #[error("an array size must be a constant integer expression")]
     ArraySizeNotConstant,
+    #[error("`{0}`: unexpected type parameters")]
+    UnexpectedTypeParameters(String),
     #[error("invalid type parameters of `{ty}`: {reason}")]
     InvalidTypeParameters {
         ty: &'static str,

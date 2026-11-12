@@ -925,6 +925,8 @@ impl<'a> Lowerer<'a> {
                 vulkan_memory_model: analysis.vulkan_memory_model,
                 descriptor_heap: analysis.extensions.contains(heap::HEAP_EXTENSION),
                 shader_64bit_indexing: analysis.shader_64bit_indexing,
+                variable_pointers: analysis.variable_pointers,
+                replicated_composites: analysis.replicated_composites,
                 legacy_buffer_blocks: !analysis.storage_buffer_class,
                 source_extensions: analysis.requested_extensions.clone(),
                 ..Module::default()

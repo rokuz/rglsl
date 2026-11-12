@@ -683,6 +683,68 @@ impl BlockContext<'_> {
     }
 
     /// Cache an expression for a value.
+    #[inline(never)]
+    fn write_compose(
+        &mut self,
+        expr_handle: Handle<crate::Expression>,
+        ty: Handle<crate::Type>,
+        components: &[Handle<crate::Expression>],
+        result_type_id: Word,
+        block: &mut Block,
+    ) -> Result<Word, Error> {
+        self.temp_list.clear();
+        let id = if self.expression_constness.is_const(expr_handle) {
+            for component in crate::proc::flatten_compose(
+                ty,
+                components,
+                &self.ir_function.expressions,
+                &self.ir_module.types,
+            ) {
+                self.temp_list.push(self.cached.get(component)?);
+            }
+            self.writer
+                .get_constant_composite(LookupType::Handle(ty), &self.temp_list)?
+        } else if self.expression_constness.is_specialized(expr_handle) {
+            for component in crate::proc::flatten_compose(
+                ty,
+                components,
+                &self.ir_function.expressions,
+                &self.ir_module.types,
+            ) {
+                self.temp_list.push(self.cached.get(component)?);
+            }
+            let type_id = self.writer.get_handle_type_id(ty)?;
+            self.writer
+                .get_spec_constant_composite(type_id, &self.temp_list)
+        } else {
+            for &component in components {
+                self.temp_list.push(self.cached.get(component)?);
+            }
+
+            let id = self.gen_id();
+            match self
+                .writer
+                .replicated_constituent(result_type_id, &self.temp_list)
+            {
+                Some(value) => {
+                    let mut instruction =
+                        Instruction::new(spirv::Op::CompositeConstructReplicateEXT);
+                    instruction.set_type(result_type_id);
+                    instruction.set_result(id);
+                    instruction.add_operand(value);
+                    block.body.push(instruction);
+                }
+                None => block.body.push(Instruction::composite_construct(
+                    result_type_id,
+                    id,
+                    &self.temp_list,
+                )),
+            }
+            id
+        };
+        Ok(id)
+    }
+
     fn write_expression_value(
         &mut self,
         expr_handle: Handle<crate::Expression>,
@@ -710,43 +772,7 @@ impl BlockContext<'_> {
             crate::Expression::Override(handle) => self.writer.written_override_id(handle)?,
             crate::Expression::ZeroValue(_) => self.writer.get_constant_null(result_type_id),
             crate::Expression::Compose { ty, ref components } => {
-                self.temp_list.clear();
-                if self.expression_constness.is_const(expr_handle) {
-                    for component in crate::proc::flatten_compose(
-                        ty,
-                        components,
-                        &self.ir_function.expressions,
-                        &self.ir_module.types,
-                    ) {
-                        self.temp_list.push(self.cached.get(component)?);
-                    }
-                    self.writer
-                        .get_constant_composite(LookupType::Handle(ty), &self.temp_list)?
-                } else if self.expression_constness.is_specialized(expr_handle) {
-                    for component in crate::proc::flatten_compose(
-                        ty,
-                        components,
-                        &self.ir_function.expressions,
-                        &self.ir_module.types,
-                    ) {
-                        self.temp_list.push(self.cached.get(component)?);
-                    }
-                    let type_id = self.writer.get_handle_type_id(ty)?;
-                    self.writer
-                        .get_spec_constant_composite(type_id, &self.temp_list)
-                } else {
-                    for &component in components {
-                        self.temp_list.push(self.cached.get(component)?);
-                    }
-
-                    let id = self.gen_id();
-                    block.body.push(Instruction::composite_construct(
-                        result_type_id,
-                        id,
-                        &self.temp_list,
-                    ));
-                    id
-                }
+                self.write_compose(expr_handle, ty, components, result_type_id, block)?
             }
             crate::Expression::Splat { size, value } => {
                 let value_id = self.cached.get(value)?;

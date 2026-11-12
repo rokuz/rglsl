@@ -418,6 +418,8 @@ impl Builder<'_> {
             self.module.special_types = special;
             self.module.vulkan_memory_model |= vulkan_memory_model;
             self.module.descriptor_heap |= descriptor_heap;
+            self.module.variable_pointers |= source.variable_pointers;
+            self.module.replicated_composites |= source.replicated_composites;
             self.module.ray_tracing |= ray_tracing;
             for extension in &source.source_extensions {
                 if let Err(position) = self.module.source_extensions.binary_search(extension) {

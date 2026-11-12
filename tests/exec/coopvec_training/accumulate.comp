@@ -1,0 +1,20 @@
+#version 450
+#extension GL_NV_cooperative_vector : require
+#extension GL_KHR_memory_scope_semantics : require
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+layout(local_size_x = 32) in;
+layout(set = 0, binding = 0) buffer A { float16_t a[]; };
+layout(set = 0, binding = 1) buffer B { float16_t b[]; };
+layout(set = 0, binding = 2) buffer Matrix { float16_t matrix[]; };
+layout(set = 0, binding = 3) buffer Sums { float16_t sums[]; };
+
+void main() {
+    coopvecNV<float16_t, 16> va;
+    coopvecNV<float16_t, 16> vb;
+    coopVecLoadNV(va, a, gl_LocalInvocationIndex * 32);
+    coopVecLoadNV(vb, b, gl_LocalInvocationIndex * 32);
+    coopVecOuterProductAccumulateNV(va, vb, matrix, 0, 0,
+                                    gl_CooperativeVectorMatrixLayoutTrainingOptimalNV,
+                                    gl_ComponentTypeFloat16NV);
+    coopVecReduceSumAccumulateNV(va, sums, 0);
+}

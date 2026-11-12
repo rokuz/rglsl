@@ -1,0 +1,37 @@
+#version 450
+#extension GL_KHR_cooperative_matrix : require
+#extension GL_NV_cooperative_matrix2 : require
+#extension GL_KHR_memory_scope_semantics : require
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+layout(local_size_x = 32) in;
+layout(set = 0, binding = 0) buffer X { float16_t x[]; };
+layout(set = 0, binding = 1) buffer Big { float16_t big[]; };
+layout(set = 0, binding = 2) buffer Row { float16_t row[]; };
+layout(set = 0, binding = 3) buffer Col { float16_t col[]; };
+layout(set = 0, binding = 4) buffer Both { float16_t both[]; };
+layout(set = 0, binding = 5) buffer Quad { float16_t quad[]; };
+layout(set = 0, binding = 6) buffer Per { float16_t per[]; };
+
+float16_t sum(const in float16_t a, const in float16_t b) { return a + b; }
+float16_t maximum(const in float16_t a, const in float16_t b) { return max(a, b); }
+float16_t scaled(const in uint32_t r, const in uint32_t c, const in float16_t v, const in float16_t s) {
+    return v * s + float16_t(r) - float16_t(c);
+}
+
+void main() {
+    coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator> m;
+    coopMatLoad(m, x, 0, 16, gl_CooperativeMatrixLayoutRowMajor);
+    coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator> r;
+    coopMatReduceNV(r, m, gl_CooperativeMatrixReduceRowNV, sum);
+    coopMatStore(r, row, 0, 16, gl_CooperativeMatrixLayoutRowMajor);
+    coopMatReduceNV(r, m, gl_CooperativeMatrixReduceColumnNV, maximum);
+    coopMatStore(r, col, 0, 16, gl_CooperativeMatrixLayoutRowMajor);
+    coopMatReduceNV(r, m, gl_CooperativeMatrixReduceRowAndColumnNV, sum);
+    coopMatStore(r, both, 0, 16, gl_CooperativeMatrixLayoutRowMajor);
+    coopmat<float16_t, gl_ScopeSubgroup, 32, 32, gl_MatrixUseAccumulator> b;
+    coopMatLoad(b, big, 0, 32, gl_CooperativeMatrixLayoutRowMajor);
+    coopMatReduceNV(r, b, gl_CooperativeMatrixReduce2x2NV, sum);
+    coopMatStore(r, quad, 0, 16, gl_CooperativeMatrixLayoutRowMajor);
+    coopMatPerElementNV(r, m, scaled, float16_t(3.0));
+    coopMatStore(r, per, 0, 16, gl_CooperativeMatrixLayoutRowMajor);
+}

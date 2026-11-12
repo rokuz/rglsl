@@ -1760,8 +1760,17 @@ impl FunctionInfo {
                 result: _,
             } => {
                 let mut non_uniform_result = None;
+                let written = match *function {
+                    crate::CooperativeMatrixFunction::StoreTensor { pointer, .. } => Some(pointer),
+                    _ => None,
+                };
                 for operand in function.operands() {
-                    non_uniform_result = non_uniform_result.or(self.add_ref(operand));
+                    let reference = if Some(operand) == written {
+                        self.add_ref_impl(operand, GlobalUse::WRITE)
+                    } else {
+                        self.add_ref(operand)
+                    };
+                    non_uniform_result = non_uniform_result.or(reference);
                 }
                 FunctionUniformity {
                     result: Uniformity {

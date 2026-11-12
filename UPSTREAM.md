@@ -883,6 +883,12 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   `UniformConstant` pointer) and, like a tensor, may be a function result; the backend loads
   the array for `return`, extracts constant indices from a returned array and spills it for
   variable ones (`docs/design/tensors.md`).
+- **Module-wide SPIR-V pragmas.** `Module::variable_pointers` (`#pragma use_variable_pointers`,
+  the `VariablePointers` capability) and `Module::replicated_composites`
+  (`#pragma use_replicated_composites`: composites whose constituents are equal become the
+  `Replicate` forms, `back/spv/replicate.rs`) are new; the linker merges them with OR. Object
+  `FORMAT_VERSION` 12 (10 on the cooperative branch, 11 for parameter memory decorations).
+  `docs/design/cooperative.md`.
 
 ## Cherry-picked upstream commits
 

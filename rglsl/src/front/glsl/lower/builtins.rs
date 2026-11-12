@@ -462,14 +462,6 @@ impl FunctionLowerer<'_, '_> {
                     at,
                 );
             }
-            "packFloat2x16" => {
-                let wide = self.as_kind(arg(0)?, crate::Scalar::F32, at)?;
-                return self.math_call(MathFunction::Pack2x16float, &[wide], at);
-            }
-            "unpackFloat2x16" => {
-                let wide = self.math_call(MathFunction::Unpack2x16float, &[arg(0)?], at)?;
-                return self.as_kind(wide, crate::Scalar::F16, at);
-            }
             "packInt2x32" | "packUint2x32" | "packInt2x16" | "packUint2x16" | "packInt4x16"
             | "packUint4x16" | "pack16" | "pack32" | "pack64" => {
                 return self.pack_bits(arg(0)?, &first_ty, result, at);
@@ -2621,6 +2613,9 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
 }
 
 fn microscaling_bitcast(name: &str) -> Option<bool> {
+    if matches!(name, "packFloat2x16" | "unpackFloat2x16") {
+        return Some(false);
+    }
     let microscaling = ["fe2m1EXT", "fe3m2EXT", "fe2m3EXT"]
         .iter()
         .any(|suffix| name.ends_with(suffix));

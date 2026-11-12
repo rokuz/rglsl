@@ -205,6 +205,71 @@ pub fn load_own(root: &Path) -> Result<Vec<Case>> {
     Ok(cases)
 }
 
+pub const EXEC_SCRIPT: &str = "test.amber";
+
+pub fn load_exec(root: &Path) -> Result<Vec<Case>> {
+    let dir = root.join("tests").join("exec");
+    let mut cases = Vec::new();
+    let Ok(entries) = fs::read_dir(&dir) else {
+        return Ok(cases);
+    };
+    let mut tests: Vec<PathBuf> = entries
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| path.is_dir())
+        .collect();
+    tests.sort();
+    for test in tests {
+        let Some(test_name) = test.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if !test.join(EXEC_SCRIPT).is_file() {
+            anyhow::bail!("{}: no {EXEC_SCRIPT}", test.display());
+        }
+        let mut files: Vec<String> = fs::read_dir(&test)?
+            .filter_map(|entry| entry.ok())
+            .filter_map(|entry| entry.file_name().to_str().map(str::to_string))
+            .filter(|name| stage_of(name).is_some())
+            .collect();
+        files.sort();
+        let Some(first) = files.first() else {
+            anyhow::bail!("{}: no shader", test.display());
+        };
+        let stage = stage_of(first).unwrap_or("comp");
+        let source = fs::read_to_string(test.join(first))
+            .with_context(|| format!("reading {}", test.join(first).display()))?;
+        let version = supported_version(&source).with_context(|| {
+            format!(
+                "{}: `#version 450` or `460` expected",
+                test.join(first).display()
+            )
+        })?;
+        let target = match fs::read_to_string(test.join("target")) {
+            Ok(text) => parse_target(&text).with_context(|| {
+                format!(
+                    "{}: `target` must be `vulkan<major>.<minor> spirv<major>.<minor>`",
+                    test.display()
+                )
+            })?,
+            Err(_) => Target::VULKAN_DEFAULT,
+        };
+        cases.push(Case {
+            name: format!("exec/{test_name}"),
+            path: test.join(first),
+            stage,
+            target,
+            suite: None,
+            version,
+            corpus: Corpus::Exec,
+            kind: Kind::Script {
+                dir: test.clone(),
+                files,
+                script: EXEC_SCRIPT.to_string(),
+            },
+        });
+    }
+    Ok(cases)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

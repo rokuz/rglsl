@@ -2141,6 +2141,27 @@ impl super::Validator {
                 ShaderStages::all()
             }
             E::Bitcast { expr, ty, offset } => {
+                if let (
+                    None,
+                    &Ti::LongVector {
+                        size: source_size,
+                        scalar: source_scalar,
+                        ..
+                    },
+                    &Ti::LongVector {
+                        size: target_size,
+                        scalar: target_scalar,
+                        ..
+                    },
+                ) = (offset, &resolver[expr], &module.types[ty].inner)
+                {
+                    if source_size != target_size
+                        || source_scalar.bit_width() != target_scalar.bit_width()
+                    {
+                        return Err(ExpressionError::InvalidBitcast("sizes differ"));
+                    }
+                    return Ok(ShaderStages::all());
+                }
                 let shape = |inner: &Ti| -> Option<(u32, Sc)> {
                     match *inner {
                         Ti::Scalar(scalar) => Some((1, scalar)),

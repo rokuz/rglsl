@@ -73,13 +73,19 @@ impl Analyzer<'_> {
         if operand.ty.is_error() {
             return None;
         }
-        let integer = operand.ty.is_scalar_integer() || operand.ty.is_bool();
-        if !operand.constant || !integer {
+        let booleans = self.extension_enabled("GL_NV_cooperative_matrix2");
+        let integer = matches!(operand.ty.scalar_type(), Some(Scalar::Int | Scalar::Uint))
+            && operand.ty.is_scalar();
+        if !operand.constant || !(integer || (booleans && operand.ty.is_bool())) {
             self.error(
                 expression.span,
                 DiagnosticKind::InvalidTypeParameters {
                     ty: "type",
-                    reason: "a type parameter must be a constant integer or boolean expression",
+                    reason: if booleans {
+                        "a type parameter must be a constant integer or boolean expression"
+                    } else {
+                        "a type parameter must be a constant integer expression"
+                    },
                 },
             );
             return None;
@@ -90,6 +96,16 @@ impl Analyzer<'_> {
                 other => other.as_i64(),
             })
         });
+        if value.is_some_and(|value| value < 0) {
+            self.error(
+                expression.span,
+                DiagnosticKind::InvalidTypeParameters {
+                    ty: "type",
+                    reason: "a type parameter must be a non-negative integer",
+                },
+            );
+            return None;
+        }
         if operand.specialization {
             let mut inner = expression;
             while let ExpressionKind::Parenthesized(nested) = &inner.kind {
@@ -212,9 +228,7 @@ impl Analyzer<'_> {
                     };
                     return self.parameter_error(span, keyword, reason);
                 };
-                if kind == ParameterizedType::CooperativeVectorNv
-                    && matches!(scalar, Scalar::Bool | Scalar::Double)
-                {
+                if kind == ParameterizedType::CooperativeVectorNv && scalar == Scalar::Bool {
                     return self.parameter_error(span, keyword, "invalid component type");
                 }
                 let [size] = values.as_slice() else {
@@ -246,13 +260,18 @@ impl Analyzer<'_> {
                     .get(1)
                     .copied()
                     .map_or(Some(ArraySize::Sized(0)), Parameter::raw);
-                match (dimensions.flatten(), clamp_mode) {
-                    (Some(dimensions), Some(clamp_mode)) => Type::new(TypeKind::TensorLayout {
-                        dimensions,
-                        clamp_mode,
-                    }),
-                    _ => self.parameter_error(span, keyword, "invalid type parameters"),
+                let (Some(dimensions), Some(clamp_mode)) = (dimensions.flatten(), clamp_mode)
+                else {
+                    return self.parameter_error(span, keyword, "invalid type parameters");
+                };
+                let kind = TypeKind::TensorLayout {
+                    dimensions,
+                    clamp_mode,
+                };
+                if let Some(reason) = super::cooperative_matrix2::tensor_type_problem(&kind) {
+                    return self.parameter_error(span, keyword, reason);
                 }
+                Type::new(kind)
             }
             ParameterizedType::TensorArm => {
                 let [rank] = values.as_slice() else {
@@ -320,11 +339,15 @@ impl Analyzer<'_> {
                         }
                     }
                 }
-                Type::new(TypeKind::TensorView {
+                let kind = TypeKind::TensorView {
                     dimensions,
                     has_dimensions,
                     permutation,
-                })
+                };
+                if let Some(reason) = super::cooperative_matrix2::tensor_type_problem(&kind) {
+                    return self.parameter_error(span, keyword, reason);
+                }
+                Type::new(kind)
             }
         }
     }
@@ -394,7 +417,7 @@ impl Analyzer<'_> {
                 }
                 return Operand::temporary(ty.clone());
             }
-            if !operand.ty.is_scalar() || !operand.ty.is_numeric() {
+            if !operand.ty.is_scalar() || !(operand.ty.is_numeric() || operand.ty.is_bool()) {
                 return fail(
                     self,
                     "Cooperative matrix constructor argument must be scalar or cooperative matrix",
@@ -422,7 +445,17 @@ impl Analyzer<'_> {
                     ..Operand::temporary(ty.clone())
                 };
             }
-            if operand.ty.same_shape(ty) {
+            let paired_vectors = matches!(
+                (operand.ty.kind, ty.kind),
+                (
+                    TypeKind::LongVector { size: left, .. },
+                    TypeKind::CooperativeVector { size: right, .. }
+                ) | (
+                    TypeKind::CooperativeVector { size: left, .. },
+                    TypeKind::LongVector { size: right, .. }
+                ) if left == right && !operand.ty.is_array()
+            );
+            if operand.ty.same_shape(ty) || paired_vectors {
                 let value = match (constant, ty.component_count()) {
                     (true, Some(count)) => {
                         self.fold_constructor(ty, target, count, core::slice::from_ref(operand))
@@ -482,14 +515,19 @@ impl Analyzer<'_> {
         arguments: &[Expression],
         operands: &[Operand],
     ) -> Operand {
+        let cooperative_operands = operands
+            .iter()
+            .any(|operand| operand.ty.is_cooperative_vector());
         let ambiguous = |analyzer: &mut Self| {
-            analyzer.error(
-                span,
+            let kind = if cooperative_operands {
+                DiagnosticKind::NoMatchingFunction(String::from(name))
+            } else {
                 DiagnosticKind::InvalidCooperativeCall {
                     function: String::from(name),
                     reason: "can't resolve types (ambiguous long vector overload)",
-                },
-            );
+                }
+            };
+            analyzer.error(span, kind);
             Operand::error()
         };
         if operands.iter().any(|operand| operand.ty.is_error()) {
@@ -520,7 +558,18 @@ impl Analyzer<'_> {
         let Some((size, cooperative)) = shape else {
             return ambiguous(self);
         };
-        if cooperative && !COOPERATIVE_VECTOR_BUILTINS.contains(&name) {
+        let builtin_operand = |operand: &Operand| {
+            operand.ty.is_cooperative_vector()
+                && operand
+                    .ty
+                    .base_scalar()
+                    .and_then(Scalar::cooperative_vector_family)
+                    .is_some()
+        };
+        if cooperative
+            && (!COOPERATIVE_VECTOR_BUILTINS.contains(&name)
+                || !operands.iter().all(builtin_operand))
+        {
             self.error(span, DiagnosticKind::NoMatchingFunction(String::from(name)));
             return Operand::error();
         }
@@ -690,6 +739,18 @@ const NO_DOUBLE_LONG_VECTOR: [&str; 19] = [
 ];
 
 impl<'b> Cx<'b, Analyzer<'_>> {
+    pub(crate) async fn ignored_type_parameters(self, parameters: &'b Spanned<TypeParameters>) {
+        if let Some(element) = &parameters.element {
+            self.call(self.clone().type_specifier(element)).await;
+        }
+        let uses = self.with(|analyzer| analyzer.specialization_uses);
+        for value in &parameters.values {
+            let operand = self.call(self.clone().expression(value)).await;
+            self.with(|analyzer| analyzer.type_parameter_with(value, &operand));
+        }
+        self.with(|analyzer| analyzer.specialization_uses = uses);
+    }
+
     pub(crate) async fn parameterized_type(
         self,
         kind: ParameterizedType,
@@ -705,7 +766,9 @@ impl<'b> Cx<'b, Analyzer<'_>> {
         }
         if !matches!(
             kind,
-            ParameterizedType::LongVector | ParameterizedType::TensorArm
+            ParameterizedType::LongVector
+                | ParameterizedType::TensorArm
+                | ParameterizedType::CooperativeVectorNv
         ) {
             self.with(|analyzer| analyzer.vulkan_memory_model = true);
         }

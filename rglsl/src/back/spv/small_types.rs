@@ -80,6 +80,9 @@ fn has_result_type(code: u32) -> bool {
             | Op::RayQueryTerminateKHR
             | Op::RayQueryGenerateIntersectionKHR
             | Op::RayQueryConfirmIntersectionKHR
+            | Op::CooperativeVectorStoreNV
+            | Op::CooperativeVectorOuterProductAccumulateNV
+            | Op::CooperativeVectorReduceSumAccumulateNV
             | Op::Name
             | Op::MemberName
             | Op::Decorate
@@ -94,6 +97,10 @@ fn is_literal(code: u32, index: usize) -> bool {
         Some(Op::ExtInst) => index == 1,
         Some(Op::BranchConditional) => index >= 3,
         Some(Op::LoopMerge | Op::SelectionMerge) => true,
+        Some(Op::CooperativeVectorLoadNV) => index >= 2,
+        Some(Op::CooperativeVectorStoreNV) => index >= 3,
+        Some(Op::CooperativeVectorMatrixMulNV) => index >= 10,
+        Some(Op::CooperativeVectorMatrixMulAddNV) => index >= 13,
         _ => false,
     }
 }

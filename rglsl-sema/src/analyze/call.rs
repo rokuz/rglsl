@@ -27,7 +27,7 @@ struct Rules {
 }
 
 fn convertible(rules: Rules, from: &Type, to: &Type) -> bool {
-    from.converts_with(to, rules.features)
+    from.converts_with(to, rules.features) || from.passes_as_cooperative_vector(to)
 }
 
 fn better(rules: Rules, from: &Type, first: &Type, second: &Type) -> bool {
@@ -1521,6 +1521,12 @@ impl Analyzer<'_> {
                 &self.show(&ty),
                 "{} vectors only take vector types",
             );
+        }
+        if operands
+            .iter()
+            .any(|operand| operand.ty.is_cooperative_vector())
+        {
+            return fail(self, &ty, "can't convert a cooperative vector");
         }
         let mut size = 0_u32;
         let mut full = false;

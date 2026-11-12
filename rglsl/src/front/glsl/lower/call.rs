@@ -346,6 +346,19 @@ impl FunctionLowerer<'_, '_> {
                 let converted = self.scalar_to(value, source, target, at)?;
                 self.replicate(converted, ty, at)
             }
+            [(value, ref from)] if paired_vectors(from, ty) => {
+                let source = from.with_scalar(target);
+                let converted = self.convert(value, from, &source, at)?;
+                let ty = self.lw.ir_type(ty, at)?;
+                self.add(
+                    Expression::Bitcast {
+                        expr: converted,
+                        ty,
+                        offset: None,
+                    },
+                    at,
+                )
+            }
             [(value, ref from)] if from.same_shape(ty) => self.convert(value, from, ty, at),
             [(expr, ref from)] if from.as_cooperative_matrix().is_some() => {
                 let ty = self.lw.ir_type(ty, at)?;
@@ -372,6 +385,21 @@ impl FunctionLowerer<'_, '_> {
             }
         }
     }
+}
+
+fn paired_vectors(from: &GlslType, to: &GlslType) -> bool {
+    !from.is_array()
+        && !to.is_array()
+        && matches!(
+            (from.kind, to.kind),
+            (
+                TypeKind::LongVector { size: left, .. },
+                TypeKind::CooperativeVector { size: right, .. }
+            ) | (
+                TypeKind::CooperativeVector { size: left, .. },
+                TypeKind::LongVector { size: right, .. }
+            ) if left == right
+        )
 }
 
 impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {

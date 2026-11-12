@@ -329,7 +329,7 @@ pub fn progress(env: &Environment, results: &[CaseResult], carried: Option<&Carr
         let _ = writeln!(out, "\n**Not a reference run:** {}.", caveats.join("; "));
     }
 
-    for corpus in Corpus::ALL.into_iter().chain([Corpus::Link]) {
+    for corpus in Corpus::ALL.into_iter().chain([Corpus::Link, Corpus::Exec]) {
         let results: Vec<&CaseResult> =
             results.iter().filter(|r| r.case.corpus == corpus).collect();
         if !results.is_empty() {
@@ -422,6 +422,15 @@ const fn corpus_title(corpus: Corpus) -> (&'static str, &'static str) {
              and linked by rglsl; `accept` and `diag` compare with the test's `expect` file, and \
              `exec` runs the linked program against glslang's build of the same program written \
              as one file (`reference.*`).",
+        ),
+        Corpus::Exec => (
+            "rglsl exec tests",
+            "Our own execution tests (`tests/exec`): each test is one or more shaders and an Amber \
+             script that fills the buffers with known data, runs the pipelines and checks every \
+             result against values computed on the CPU (`EXPECT`). `exec` runs the script with \
+             rglsl's modules on every target (the device features they need are added from their \
+             capabilities); glslang's modules run the same script to tell a broken test or driver \
+             from a compiler bug.",
         ),
     }
 }
@@ -573,7 +582,7 @@ fn corpus_section(
 pub fn summary(results: &[CaseResult], ran: &[TargetId]) -> String {
     let mut out = String::new();
     let sources = exec_sources(ran, None);
-    for corpus in Corpus::ALL.into_iter().chain([Corpus::Link]) {
+    for corpus in Corpus::ALL.into_iter().chain([Corpus::Link, Corpus::Exec]) {
         let results: Vec<&CaseResult> =
             results.iter().filter(|r| r.case.corpus == corpus).collect();
         if results.is_empty() {
@@ -739,6 +748,7 @@ pub fn details(results: &[CaseResult]) -> String {
                 Corpus::Vulkan => "vulkan",
                 Corpus::OpenGlAsVulkan => "opengl-as-vulkan",
                 Corpus::Link => "link",
+                Corpus::Exec => "exec",
             },
             r.case.version,
             r.case.stage,

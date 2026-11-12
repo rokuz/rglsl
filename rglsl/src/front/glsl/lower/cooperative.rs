@@ -762,13 +762,10 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
         let argument = |index: usize| arguments.get(index).ok_or_else(|| internal(at));
-        let family = |ext: bool| {
-            if ext {
-                CooperativeFamily::Ext
-            } else {
-                CooperativeFamily::Nv
-            }
-        };
+        let family = self.with(|this| match this.cooperative_family() {
+            CooperativeFamily::Ext => CooperativeFamily::Ext,
+            CooperativeFamily::Khr | CooperativeFamily::Nv => CooperativeFamily::Nv,
+        })?;
         let (function, target) = match kind {
             MatrixCall::LoadTensor { view } | MatrixCall::StoreTensor { view } => {
                 let pointer = {
@@ -844,21 +841,18 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     Some(argument(0)?),
                 )
             }
-            MatrixCall::Transpose { ext } => {
+            MatrixCall::Transpose { .. } => {
                 let matrix = {
                     let frame = self.clone().rvalue(argument(1)?);
                     let result = self.nest(frame).await;
                     result
                 }?;
                 (
-                    CooperativeMatrixFunction::Transpose {
-                        matrix,
-                        family: family(ext),
-                    },
+                    CooperativeMatrixFunction::Transpose { matrix, family },
                     Some(argument(0)?),
                 )
             }
-            MatrixCall::Reduce { ext, mask } => {
+            MatrixCall::Reduce { mask, .. } => {
                 let matrix = {
                     let frame = self.clone().rvalue(argument(1)?);
                     let result = self.nest(frame).await;
@@ -871,12 +865,12 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                         matrix,
                         mask,
                         combine,
-                        family: family(ext),
+                        family,
                     },
                     Some(argument(0)?),
                 )
             }
-            MatrixCall::PerElement { ext } => {
+            MatrixCall::PerElement { .. } => {
                 let matrix = {
                     let frame = self.clone().rvalue(argument(1)?);
                     let result = self.nest(frame).await;
@@ -897,7 +891,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                         matrix,
                         function,
                         arguments: extra,
-                        family: family(ext),
+                        family,
                     },
                     Some(argument(0)?),
                 )

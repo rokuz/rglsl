@@ -50,8 +50,6 @@ pub enum ParseErrorKind {
     TooManyNodes,
     #[error("`{word}` requires one of the extensions: {extensions}")]
     ExtensionRequired { word: String, extensions: String },
-    #[error("`{0}` does not take type parameters")]
-    UnexpectedTypeParameters(String),
     #[error("internal parser error")]
     Internal,
 }

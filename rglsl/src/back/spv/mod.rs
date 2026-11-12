@@ -117,6 +117,7 @@ mod plain_types;
 mod qcom;
 mod ray;
 mod reclaimable;
+mod replicate;
 mod selection;
 mod small_types;
 mod specialization;
@@ -934,6 +935,7 @@ pub struct Writer {
     override_dependent: Vec<bool>,
     spec_defaults: Vec<bool>,
     spec_composites: crate::FastHashMap<(Word, Vec<Word>), Word>,
+    cooperative_vector_types: crate::FastHashSet<Word>,
     global_variables: HandleVec<crate::GlobalVariable, GlobalVariable>,
     std140_compat_uniform_types: crate::FastHashMap<Handle<crate::Type>, Std140CompatTypeInfo>,
     /// The types of the contents of uniform buffers, storage buffers and

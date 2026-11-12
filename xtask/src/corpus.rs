@@ -160,6 +160,11 @@ pub enum Kind {
         expectation: crate::groups::Expectation,
         reference: Option<String>,
     },
+    Script {
+        dir: PathBuf,
+        files: Vec<String>,
+        script: String,
+    },
 }
 
 impl Kind {
@@ -178,6 +183,7 @@ pub enum Corpus {
     /// which mostly exercises the rules for rejecting OpenGL-only constructs.
     OpenGlAsVulkan,
     Link,
+    Exec,
 }
 
 impl Corpus {

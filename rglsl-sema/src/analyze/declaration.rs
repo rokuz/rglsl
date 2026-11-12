@@ -955,6 +955,8 @@ impl Analyzer<'_> {
             && !(in_heap && self.extension_enabled(super::heap::STRUCTURED_DESCRIPTOR_HEAP))
         {
             Some("a block member cannot have an opaque type")
+        } else if in_block.is_some() && ty.contains_cooperative_matrix(&self.types) {
+            Some("a block member cannot be or contain a cooperative matrix type")
         } else if in_heap && !last && ty.dimensions().first() == Some(&ArraySize::Unsized) {
             Some("an array size is required")
         } else if ty
@@ -1027,6 +1029,19 @@ impl Analyzer<'_> {
             self.task_payload_type_only(list.ty.specifier.span, &qualifiers);
             self.global_storage_checks(&qualifiers, &base, list.ty.specifier.span, true);
             return;
+        }
+        if list.ty.specifier.node.parameters.is_some()
+            && !matches!(
+                list.ty.specifier.node.non_array,
+                TypeSpecifierNonArray::Parameterized(_)
+            )
+        {
+            for declarator in &list.declarators {
+                self.error(
+                    declarator.name.span,
+                    DiagnosticKind::UnexpectedTypeParameters(declarator.name.node.clone()),
+                );
+            }
         }
         self.no_shader_layouts(&qualifiers);
         self.passthrough_extension(&qualifiers);
@@ -1109,6 +1124,23 @@ impl Analyzer<'_> {
                 self.error(span, invalid("in/out", reason));
                 return;
             }
+        }
+        if qualifiers.storage == Storage::Shared
+            && self
+                .types
+                .find_in_members(ty, |member| {
+                    matches!(member.kind, TypeKind::CooperativeVector { .. }).then_some(())
+                })
+                .is_some()
+        {
+            self.error(
+                span,
+                invalid(
+                    "shared",
+                    "cooperative vector types not allowed in shared memory",
+                ),
+            );
+            return;
         }
         if qualifiers.storage == Storage::Inout {
             self.error(span, invalid("inout", "not allowed at global scope"));
@@ -1246,6 +1278,15 @@ impl Analyzer<'_> {
         {
             self.error(span, invalid("in", "an input or output cannot be opaque"));
         }
+        if qualifiers.storage == Storage::Shared && ty.contains_cooperative_matrix(&self.types) {
+            self.error(
+                span,
+                invalid(
+                    "shared",
+                    "cooperative matrix types must not be used in shared memory",
+                ),
+            );
+        }
     }
 
     fn reserved_check(&mut self, name: &Identifier) {
@@ -1352,6 +1393,27 @@ impl Analyzer<'_> {
                 name.span,
                 super::reference::invalid("can only be used with a block"),
             );
+        }
+        if qualifiers.has_layout("constant_id") {
+            if !qualifiers.constant {
+                self.error(
+                    name.span,
+                    DiagnosticKind::InvalidQualifier {
+                        qualifier: "constant_id",
+                        reason: "can only be applied to 'const'-qualified scalar",
+                    },
+                );
+                qualifiers.constant = initializer.is_some();
+            }
+            if !ty.is_scalar() {
+                self.error(
+                    name.span,
+                    DiagnosticKind::InvalidQualifier {
+                        qualifier: "constant_id",
+                        reason: "can only be applied to a scalar",
+                    },
+                );
+            }
         }
         if ty.contains_reference(&self.types) {
             if qualifiers.constant {
@@ -1608,6 +1670,9 @@ impl Analyzer<'_> {
         qualifiers: Qualifiers,
         value: Option<Constant>,
     ) {
+        if matches!(ty.kind, TypeKind::CooperativeVector { .. }) {
+            self.vulkan_memory_model = true;
+        }
         let name = &declarator.name;
         if let Some(builtin) = self.redeclared_builtin(&name.node) {
             self.declarations.insert(declarator.id, builtin);
@@ -1917,6 +1982,21 @@ impl Analyzer<'_> {
             .iter()
             .flat_map(|declaration| &declaration.declarators);
         for (declarator, member) in declarators.zip(&members) {
+            if self
+                .types
+                .find_in_members(&member.ty, |ty| {
+                    matches!(ty.kind, TypeKind::CooperativeVector { .. }).then_some(())
+                })
+                .is_some()
+            {
+                self.error(
+                    declarator.name.span,
+                    DiagnosticKind::InvalidBlock {
+                        name: member.name.clone(),
+                        reason: "member of block cannot be or contain a cooperative vector type",
+                    },
+                );
+            }
             if member
                 .ty
                 .contains_scalar_where(&self.types, Scalar::is_sub_byte)
@@ -1926,6 +2006,15 @@ impl Analyzer<'_> {
                     DiagnosticKind::InvalidBlock {
                         name: member.name.clone(),
                         reason: "member of block cannot be or contain a sub-byte type",
+                    },
+                );
+            }
+            if member.ty.contains_tensor_nv(&self.types) {
+                self.error(
+                    declarator.name.span,
+                    DiagnosticKind::InvalidBlock {
+                        name: member.name.clone(),
+                        reason: "member of block cannot be or contain a tensor layout or tensor view type",
                     },
                 );
             }
@@ -2383,6 +2472,15 @@ impl Analyzer<'_> {
     ) -> Option<FunctionId> {
         let name = &prototype.name;
         let return_qualifiers = self.optional_qualifiers(&prototype.return_type.node);
+        if return_qualifiers.constant || return_qualifiers.storage != Storage::None {
+            self.error(
+                name.span,
+                DiagnosticKind::InvalidQualifier {
+                    qualifier: "return",
+                    reason: "no qualifiers allowed for function return",
+                },
+            );
+        }
         if return_qualifiers.nonuniform {
             self.non_uniform_storage_check(
                 prototype.return_type.qualifier.as_ref(),
@@ -2777,7 +2875,13 @@ impl<'b> Cx<'b, Analyzer<'_>> {
             TypeSpecifierNonArray::Spirv(spirv) => {
                 self.call(self.clone().spirv_type_specifier(spirv)).await
             }
-            _ => self.with(|analyzer| analyzer.base_type(specifier, span)),
+            _ => {
+                if let Some(parameters) = specifier.parameters.as_ref() {
+                    self.call(self.clone().ignored_type_parameters(parameters))
+                        .await;
+                }
+                self.with(|analyzer| analyzer.base_type(specifier, span))
+            }
         };
         let dimensions = self
             .call(self.clone().array_sizes(specifier.array.as_ref()))
