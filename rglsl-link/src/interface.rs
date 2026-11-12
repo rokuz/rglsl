@@ -15,25 +15,53 @@ const fn vector_locations(size: VectorSize, width: u8) -> u32 {
 }
 
 fn location_count(module: &Module, ty: Handle<Type>) -> u32 {
-    match module.types[ty].inner {
-        TypeInner::Vector { size, scalar } => vector_locations(size, scalar.width),
-        TypeInner::Matrix {
-            columns,
-            rows,
-            scalar,
-        } => (columns as u32).saturating_mul(vector_locations(rows, scalar.width)),
-        TypeInner::Array {
-            base,
-            size: ArraySize::Constant(length),
-            ..
-        } => length.get().saturating_mul(location_count(module, base)),
-        TypeInner::Array { .. } => 1,
-        TypeInner::Struct { ref members, .. } => members
-            .iter()
-            .map(|member| location_count(module, member.ty))
-            .fold(0, u32::saturating_add),
-        _ => 1,
-    }
+    let mut counts: BTreeMap<Handle<Type>, u32> = BTreeMap::new();
+    let Ok(()) = rglsl::proc::post_order(
+        &mut counts,
+        ty,
+        |counts, ty, children| {
+            if counts.contains_key(&ty) {
+                return false;
+            }
+            match module.types[ty].inner {
+                TypeInner::Array {
+                    base,
+                    size: ArraySize::Constant(_),
+                    ..
+                } => children.push(base),
+                TypeInner::Struct { ref members, .. } => {
+                    children.extend(members.iter().map(|member| member.ty));
+                }
+                _ => {}
+            }
+            true
+        },
+        |counts, ty| {
+            let count = |ty| counts.get(&ty).copied().unwrap_or(1);
+            let total = match module.types[ty].inner {
+                TypeInner::Vector { size, scalar } => vector_locations(size, scalar.width),
+                TypeInner::Matrix {
+                    columns,
+                    rows,
+                    scalar,
+                } => (columns as u32).saturating_mul(vector_locations(rows, scalar.width)),
+                TypeInner::Array {
+                    base,
+                    size: ArraySize::Constant(length),
+                    ..
+                } => length.get().saturating_mul(count(base)),
+                TypeInner::Array { .. } => 1,
+                TypeInner::Struct { ref members, .. } => members
+                    .iter()
+                    .map(|member| count(member.ty))
+                    .fold(0, u32::saturating_add),
+                _ => 1,
+            };
+            counts.insert(ty, total);
+            Ok::<(), core::convert::Infallible>(())
+        },
+    );
+    counts.get(&ty).copied().unwrap_or(1)
 }
 
 const fn arrayed(stage: ShaderStage, space: AddressSpace) -> bool {
