@@ -48,7 +48,12 @@ changelog was dropped; see upstream for the history before the fork.
   them, and the SPIRV-Cross step (`*.spvasm.glsl`). GLSL and SPIR-V inputs now produce
   SPIR-V snapshots (they used to produce WGSL).
 - `naga-cli`: the output formats and options of the removed backends. `naga-xtask`: every
-  `validate` subcommand except `spv`.
+  `validate` subcommand except `spv`. In M9 the rest of `naga-cli` was replaced by a
+  glslangValidator-compatible command line (`docs/design/cli.md`): SPIR-V and bincode IR input,
+  `.txt`/`.bin` IR output, bulk validation, pipeline overrides, bounds-check policies,
+  compaction, `--capabilities`, `--task-limits`, the coordinate space flip (the output never
+  flips `y`, as glslang's) and the `input output` positional form are gone; the argh dependency
+  went with them.
 
 - **The WGSL frontend** (`front/wgsl`, the `wgsl-in` feature), the shared WGSL helpers
   (`common/wgsl`, `keywords`, `front::SymbolTable`), its fuzz target and its tests

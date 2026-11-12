@@ -130,13 +130,26 @@ every remote column with the targets it ran.
 
 ## Command line
 
+`rglsl` takes `glslangValidator`'s command lines for Vulkan GLSL: the same options, output
+names, exit codes and message format ([docs/design/cli.md](docs/design/cli.md)).
+
 ```sh
-cargo run -p rglsl-cli -- shader.frag shader.spv
-cargo run -p rglsl-cli -- --auto-map-bindings --auto-map-locations shader.frag shader.spv
+cargo run -p rglsl-cli -- -V shader.frag                       # writes frag.spv
+rglsl -V --target-env vulkan1.2 -o shader.spv shader.comp
+rglsl -V --amb --aml -DQUALITY=2 -Iinclude -g -o out.spv shader.frag
+rglsl -V --vn shader_words -o shader.h shader.vert              # C header
+rglsl -V --sub 10 --stb frag 20 --rsb 1 shader.frag             # binding shifts, set
+rglsl -E shader.frag                                            # preprocess only
+rglsl shader.frag                                               # validate only
 ```
 
-`--auto-map-bindings` and `--auto-map-locations` assign missing bindings and locations the way
-glslang's options of the same names do.
+Supported: `-V`, `-H`, `-S`, `-o`, `-e`, `--sep`, `-D`/`-U`, `-I`, `--target-env`, `-x`/`--vn`,
+`-g`/`-g0`/`-gV`/`-gVS`, `-l`, `-E`, `--amb`/`--aml`, `--shift-*-binding`, `--rsb`, `--ku`,
+`--hlsl-offsets`, `--stdin`, `--depfile`, `--quiet`, `-s`, `--error-column`, `--absolute-path`,
+`-v`; `-O*`, `-C`, `-t`, `-i`, `-r`, `-w`, `--spirv-val` are accepted. OpenGL, HLSL, other GLSL
+versions, reflection (`-q`), preamble text and resource limit files are usage errors. Exit codes
+are glslang's: 1 usage, 2 compile, 3 link. `cargo xtask cli` compares rglsl with glslang on
+glslangValidator command lines.
 
 ### Linking
 
@@ -146,10 +159,10 @@ that stage and may leave out `main`; `.glsl` files are libraries, which have no 
 into a program of any stage.
 
 ```sh
-rglsl --link main.frag lighting.glsl noise.glsl -o shader.spv   # compile and link in one step
+rglsl -V main.frag lighting.glsl noise.glsl -o shader.spv      # compile and link in one step
 rglsl --object lighting.glsl                                   # writes lighting.rglo
-rglsl --link main.frag lighting.rglo -o shader.spv             # link object modules
-rglsl --link scene.vert scene.frag common.glsl                 # one program, vert.spv and frag.spv
+rglsl -V main.frag lighting.rglo -o shader.spv                 # link object modules
+rglsl -V scene.vert scene.frag common.glsl                     # one program, vert.spv and frag.spv
 ```
 
 Debug information uses glslangValidator's options: `-g` (`OpLine`, `OpSource` with the
@@ -157,7 +170,7 @@ sources of the main and included files), `-gV` (`NonSemantic.Shader.DebugInfo`),
 the source text) and `-g0` (no names); it survives object files and linking
 ([docs/design/debug-info.md](docs/design/debug-info.md)).
 
-`-I DIR` adds an include directory; `#include` needs no extension directive. Link errors are
+`-IDIR` adds an include directory; `#include` needs no extension directive. Link errors are
 glslang's (missing or duplicate definitions, mismatched globals, contradictory layouts); see
 [docs/design/linking.md](docs/design/linking.md).
 
