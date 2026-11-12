@@ -218,7 +218,7 @@ impl Access for Store {
         &self,
         _id_gen: &mut IdGenerator,
         coordinates_id: Word,
-        _level_id: Option<Word>,
+        level_id: Option<Word>,
         sample_id: Option<Word>,
         block: &mut Block,
     ) {
@@ -226,11 +226,12 @@ impl Access for Store {
             Instruction::image_write(self.image_id, coordinates_id, self.value_id);
         let (memory, scope_id) = self.memory;
         let mut mask = memory;
+        mask.set(spirv::ImageOperands::LOD, level_id.is_some());
         mask.set(spirv::ImageOperands::SAMPLE, sample_id.is_some());
         if !mask.is_empty() {
             instruction.add_operand(mask.bits());
         }
-        for id in sample_id.into_iter().chain(scope_id) {
+        for id in level_id.into_iter().chain(sample_id).chain(scope_id) {
             instruction.add_operand(id);
         }
         block.body.push(instruction);
@@ -831,6 +832,9 @@ impl BlockContext<'_> {
         }
         if matches!(image_class, crate::ImageClass::Storage { .. }) {
             access.memory = self.texel_memory(image, false);
+            if level.is_some() && !subpass {
+                self.require_storage_image_lod()?;
+            }
         }
         if let crate::ImageClass::Storage {
             format: crate::StorageFormat::Unknown(_),
@@ -1623,12 +1627,23 @@ impl BlockContext<'_> {
         Ok(id)
     }
 
+    fn require_storage_image_lod(&mut self) -> Result<(), Error> {
+        self.writer
+            .use_extension("SPV_AMD_shader_image_load_store_lod");
+        self.writer.require_any(
+            "storage image access with a level of detail",
+            &[spirv::Capability::ImageReadWriteLodAMD],
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn write_image_store(
         &mut self,
         image: Handle<crate::Expression>,
         coordinate: Handle<crate::Expression>,
         array_index: Option<Handle<crate::Expression>>,
         sample: Option<Handle<crate::Expression>>,
+        level: Option<Handle<crate::Expression>>,
         value: Handle<crate::Expression>,
         block: &mut Block,
     ) -> Result<(), Error> {
@@ -1636,6 +1651,10 @@ impl BlockContext<'_> {
         let coordinates = self.write_image_coordinates(coordinate, array_index, block)?;
         let value_id = self.cached.get(value)?;
         let sample_id = sample.map(|expr| self.cached.get(expr)).transpose()?;
+        let level_id = level.map(|expr| self.cached.get(expr)).transpose()?;
+        if level_id.is_some() {
+            self.require_storage_image_lod()?;
+        }
 
         let memory = self.texel_memory(image, true);
         let write = Store {
@@ -1673,7 +1692,7 @@ impl BlockContext<'_> {
         write.generate(
             &mut self.writer.id_gen,
             coordinates.value_id,
-            None,
+            level_id,
             sample_id,
             block,
         );

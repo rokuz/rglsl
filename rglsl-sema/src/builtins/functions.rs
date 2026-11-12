@@ -252,6 +252,49 @@ genI findMSB(genI)
 genI findMSB(genU)
 ";
 
+const INTEGER_DOT: &str = "
+uint dotEXT(uvecN, uvecN)
+int dotEXT(ivecN, uvecN)
+int dotEXT(uvecN, ivecN)
+int dotEXT(ivecN, ivecN)
+uint dotAccSatEXT(uvecN, uvecN, uint)
+int dotAccSatEXT(ivecN, uvecN, int)
+int dotAccSatEXT(uvecN, ivecN, int)
+int dotAccSatEXT(ivecN, ivecN, int)
+uint dotEXT(u8vecN, u8vecN)
+int dotEXT(i8vecN, u8vecN)
+int dotEXT(u8vecN, i8vecN)
+int dotEXT(i8vecN, i8vecN)
+uint dotAccSatEXT(u8vecN, u8vecN, uint)
+int dotAccSatEXT(i8vecN, u8vecN, int)
+int dotAccSatEXT(u8vecN, i8vecN, int)
+int dotAccSatEXT(i8vecN, i8vecN, int)
+uint dotEXT(u16vecN, u16vecN)
+int dotEXT(i16vecN, u16vecN)
+int dotEXT(u16vecN, i16vecN)
+int dotEXT(i16vecN, i16vecN)
+uint dotAccSatEXT(u16vecN, u16vecN, uint)
+int dotAccSatEXT(i16vecN, u16vecN, int)
+int dotAccSatEXT(u16vecN, i16vecN, int)
+int dotAccSatEXT(i16vecN, i16vecN, int)
+uint64_t dotEXT(u64vecN, u64vecN)
+int64_t dotEXT(i64vecN, u64vecN)
+int64_t dotEXT(u64vecN, i64vecN)
+int64_t dotEXT(i64vecN, i64vecN)
+uint64_t dotAccSatEXT(u64vecN, u64vecN, uint64_t)
+int64_t dotAccSatEXT(i64vecN, u64vecN, int64_t)
+int64_t dotAccSatEXT(u64vecN, i64vecN, int64_t)
+int64_t dotAccSatEXT(i64vecN, i64vecN, int64_t)
+uint dotPacked4x8EXT(uint, uint)
+int dotPacked4x8EXT(int, uint)
+int dotPacked4x8EXT(uint, int)
+int dotPacked4x8EXT(int, int)
+uint dotPacked4x8AccSatEXT(uint, uint, uint)
+int dotPacked4x8AccSatEXT(int, uint, int)
+int dotPacked4x8AccSatEXT(uint, int, int)
+int dotPacked4x8AccSatEXT(int, int, int)
+";
+
 const ATOMIC_MEMORY: &str = "
 uint atomicAdd(inout uint, uint)
 int atomicAdd(inout int, int)
@@ -668,6 +711,7 @@ pub(super) const SECTIONS: &[Section] = &[
         .with_halves(),
     Section::new(VECTOR_RELATIONAL),
     Section::new(INTEGER),
+    Section::new(INTEGER_DOT),
     Section::new(ATOMIC_MEMORY),
     Section::new(DERIVATIVES)
         .with_doubles()

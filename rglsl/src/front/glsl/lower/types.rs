@@ -63,7 +63,7 @@ pub(super) const fn vector_size(size: u8) -> Option<VectorSize> {
 
 pub(super) const fn sampled_kind(sampled: SampledType) -> ScalarKind {
     match sampled {
-        SampledType::Float => ScalarKind::Float,
+        SampledType::Float | SampledType::Float16 => ScalarKind::Float,
         SampledType::Int | SampledType::Int64 => ScalarKind::Sint,
         SampledType::Uint | SampledType::Uint64 => ScalarKind::Uint,
     }
@@ -74,7 +74,7 @@ pub(super) const fn sampled_scalar(sampled: SampledType) -> Scalar {
         kind: sampled_kind(sampled),
         width: match sampled {
             SampledType::Int64 | SampledType::Uint64 => 8,
-            SampledType::Float | SampledType::Int | SampledType::Uint => 4,
+            SampledType::Float | SampledType::Int | SampledType::Uint | SampledType::Float16 => 4,
         },
     }
 }
@@ -313,7 +313,7 @@ impl Lowerer<'_> {
             OpaqueKind::Texture => {
                 let dim = image_dimension(opaque);
                 let class = if depth {
-                    if opaque.sampled != SampledType::Float {
+                    if !opaque.sampled.is_float() {
                         return Err(unsupported(
                             "integer textures sampled with a shadow sampler",
                             span,
@@ -336,7 +336,7 @@ impl Lowerer<'_> {
             }
             OpaqueKind::CombinedSampler => {
                 let class = if opaque.shadow {
-                    if opaque.sampled != SampledType::Float {
+                    if !opaque.sampled.is_float() {
                         return Err(internal(span));
                     }
                     ImageClass::Depth {

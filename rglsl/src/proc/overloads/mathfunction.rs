@@ -87,6 +87,10 @@ impl ir::MathFunction {
             Mf::Unpack4xU8 => regular!(1, SCALAR of U32 -> Vec4U).into(),
             Mf::Dot4I8Packed => regular!(2, SCALAR of U32 -> I32).into(),
             Mf::Dot4U8Packed => regular!(2, SCALAR of U32 -> U32).into(),
+            Mf::IntegerDot => integer_dot(false).into(),
+            Mf::IntegerDotAccSat => integer_dot(true).into(),
+            Mf::PackedIntegerDot4x8 => packed_integer_dot(false).into(),
+            Mf::PackedIntegerDot4x8AccSat => packed_integer_dot(true).into(),
 
             // One-off operations
             Mf::Dot => regular!(2, VECN of NUMERIC -> Scalar).into(),
@@ -153,6 +157,71 @@ fn ldexp() -> List {
                 })
         }),
     )
+}
+
+const fn integer_dot_result(left: ir::Scalar, right: ir::Scalar) -> ir::Scalar {
+    let kind = if matches!(left.kind, ir::ScalarKind::Uint)
+        && matches!(right.kind, ir::ScalarKind::Uint)
+    {
+        ir::ScalarKind::Uint
+    } else {
+        ir::ScalarKind::Sint
+    };
+    let width = if left.width > 4 { left.width } else { 4 };
+    ir::Scalar { kind, width }
+}
+
+fn integer_dot_rule(
+    left: ir::TypeInner,
+    right: ir::TypeInner,
+    result: ir::Scalar,
+    accumulate: bool,
+) -> crate::proc::overloads::rule::Rule {
+    let result = ir::TypeInner::Scalar(result);
+    if accumulate {
+        rule([left, right, result.clone()], result)
+    } else {
+        rule([left, right], result)
+    }
+}
+
+fn integer_dot(accumulate: bool) -> List {
+    list(concrete_int_scalars().flat_map(move |left| {
+        let other = ir::Scalar {
+            kind: match left.kind {
+                ir::ScalarKind::Uint => ir::ScalarKind::Sint,
+                _ => ir::ScalarKind::Uint,
+            },
+            width: left.width,
+        };
+        [left, other].into_iter().flat_map(move |right| {
+            vector_sizes().map(move |size| {
+                integer_dot_rule(
+                    ir::TypeInner::Vector { size, scalar: left },
+                    ir::TypeInner::Vector {
+                        size,
+                        scalar: right,
+                    },
+                    integer_dot_result(left, right),
+                    accumulate,
+                )
+            })
+        })
+    }))
+}
+
+fn packed_integer_dot(accumulate: bool) -> List {
+    let packed = [ir::Scalar::I32, ir::Scalar::U32];
+    list(packed.into_iter().flat_map(move |left| {
+        packed.into_iter().map(move |right| {
+            integer_dot_rule(
+                ir::TypeInner::Scalar(left),
+                ir::TypeInner::Scalar(right),
+                integer_dot_result(left, right),
+                accumulate,
+            )
+        })
+    }))
 }
 
 fn outer() -> List {

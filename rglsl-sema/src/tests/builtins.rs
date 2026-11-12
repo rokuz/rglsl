@@ -54,14 +54,14 @@ fn variable_names(builtins: &Builtins) -> BTreeSet<String> {
 #[test]
 fn the_tables_have_the_expected_sizes() {
     let expected = [
-        (Stage::Vertex, 7065, 35, 189, 225),
-        (Stage::TessControl, 7066, 35, 181, 214),
-        (Stage::TessEvaluation, 7065, 35, 189, 222),
-        (Stage::Geometry, 7069, 35, 188, 221),
-        (Stage::Fragment, 7586, 35, 193, 229),
-        (Stage::Compute, 7531, 37, 179, 215),
-        (Stage::Mesh, 7281, 37, 192, 226),
-        (Stage::RayGeneration, 7065, 122, 171, 210),
+        (Stage::Vertex, 8063, 35, 189, 225),
+        (Stage::TessControl, 8064, 35, 181, 214),
+        (Stage::TessEvaluation, 8063, 35, 189, 222),
+        (Stage::Geometry, 8067, 35, 188, 221),
+        (Stage::Fragment, 8890, 35, 193, 229),
+        (Stage::Compute, 8807, 37, 179, 215),
+        (Stage::Mesh, 8337, 37, 192, 226),
+        (Stage::RayGeneration, 8063, 122, 171, 210),
     ];
     for (stage, functions, added, variables_450, variables_460) in expected {
         let older = builtins(450, stage);
@@ -196,13 +196,15 @@ fn texture_functions_follow_the_sampler_type() {
         "vec4 texelFetch(samplerBuffer, int)",
         "ivec4 texelFetch(isampler2DMSArray, ivec3, int)",
         "uvec4 texelFetch(utextureBuffer, int)",
+        "vec4 texelFetch(texture2D, ivec2, int)",
+        "ivec4 texelFetch(itexture2DMS, ivec2, int)",
     ] {
         assert!(fetch.contains(&expected.to_string()), "{expected}");
     }
     assert!(!fetch.iter().any(|signature| signature.contains("Cube")));
-    assert!(!fetch
+    assert!(!signatures(&table, "texture")
         .iter()
-        .any(|signature| signature.contains("texture2D")));
+        .any(|signature| signature.contains("(texture")));
     let size = signatures(&table, "textureSize");
     for expected in [
         "ivec2 textureSize(sampler2D, int)",
@@ -399,7 +401,7 @@ fn every_core_function_name_is_known() {
     for name in names.split_whitespace() {
         assert!(!table.overloads(name).is_empty(), "{name}");
     }
-    assert_eq!(table.function_names().count(), 436);
+    assert_eq!(table.function_names().count(), 443);
 }
 
 fn storage_of(builtins: &Builtins, name: &str) -> Option<Storage> {

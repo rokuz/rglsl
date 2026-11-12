@@ -1155,12 +1155,14 @@ impl super::Validator {
                 coordinate,
                 array_index,
                 sample,
+                level,
                 value,
             } => {
                 validate_expr(image)?;
                 validate_expr(coordinate)?;
                 validate_expr_opt(array_index)?;
                 validate_expr_opt(sample)?;
+                validate_expr_opt(level)?;
                 validate_expr(value)?;
                 Ok(())
             }

@@ -861,11 +861,86 @@ layout(binding = 1) uniform sampler s;
 void main() {
     sampler2D(s, s);
 }
-### texture functions on a bare texture need an extension | frag | 4:NoMatchingFunction
+### texture functions on a bare texture need an extension | frag | 4:ExtensionRequired
 layout(binding = 0) uniform texture2D t;
 void main() {
     vec4 a = texelFetch(t, ivec2(0), 0);
 }
+### texture queries on a bare texture need an extension | frag | 5:ExtensionRequired
+layout(binding = 0) uniform texture2DMS t;
+layout(binding = 1) uniform textureBuffer b;
+void main() {
+    int a = textureSamples(t);
+}
+### samplerless texture functions on every texture type | frag | ok
+#extension GL_EXT_samplerless_texture_functions : enable
+layout(binding = 0) uniform texture1D t1;
+layout(binding = 1) uniform itexture1DArray t1a;
+layout(binding = 2) uniform utexture2D t2;
+layout(binding = 3) uniform texture2DArray t2a;
+layout(binding = 4) uniform texture3D t3;
+layout(binding = 5) uniform textureCube tc;
+layout(binding = 6) uniform textureCubeArray tca;
+layout(binding = 7) uniform itexture2DMS ms;
+layout(binding = 8) uniform utexture2DMSArray msa;
+layout(binding = 9) uniform textureBuffer b;
+void main() {
+    vec4 a = texelFetch(t1, 0, 0) + texelFetchOffset(t1, 0, 0, 1);
+    ivec4 c = texelFetch(t1a, ivec2(0), 0) + texelFetchOffset(t1a, ivec2(0), 0, 1) + texelFetch(ms, ivec2(0), 1);
+    uvec4 d = texelFetch(t2, ivec2(0), 0) + texelFetch(msa, ivec3(0), 2);
+    vec4 e = texelFetch(t2a, ivec3(0), 0) + texelFetch(t3, ivec3(0), 0) + texelFetchOffset(t3, ivec3(0), 0, ivec3(1)) + texelFetch(b, 0);
+    int f = textureSize(t1, 0) + textureSize(b) + textureQueryLevels(t1) + textureQueryLevels(tc) + textureQueryLevels(tca) + textureSamples(ms) + textureSamples(msa);
+    ivec2 g = textureSize(t1a, 0) + textureSize(t2, 0) + textureSize(tc, 0) + textureSize(ms);
+    ivec3 h = textureSize(t2a, 0) + textureSize(t3, 0) + textureSize(tca, 0) + textureSize(msa);
+}
+### no samplerless sampling on a bare texture | frag | 4:NoMatchingFunction
+#extension GL_EXT_samplerless_texture_functions : enable
+layout(binding = 0) uniform texture2D t;
+void main() { vec4 a = texture(t, vec2(0.0)); }
+### no samplerless fetch on a cube texture | frag | 4:NoMatchingFunction
+#extension GL_EXT_samplerless_texture_functions : enable
+layout(binding = 0) uniform textureCube t;
+void main() { vec4 a = texelFetch(t, ivec3(0), 0); }
+### integer dot product needs its extension | frag | 2:ExtensionRequired
+void main() { int a = dotPacked4x8EXT(1, 2u); }
+### integer dot product with mixed signedness | frag | ok
+#extension GL_EXT_integer_dot_product : enable
+void main() { int a = dotPacked4x8EXT(1u, 2) + dotEXT(ivec3(1), uvec3(2u)) + dotAccSatEXT(uvec2(1u), ivec2(2), 3); uint b = dotPacked4x8AccSatEXT(1u, 2u, 3u); }
+### integer dot product has no scalar form | frag | 3:NoMatchingFunction
+#extension GL_EXT_integer_dot_product : enable
+void main() { int a = dotEXT(1, 2); }
+### image lod access needs its extension | frag | 3:ExtensionRequired
+layout(rgba8, binding = 0) uniform image2D i;
+void main() { vec4 a = imageLoadLodAMD(i, ivec2(0), 1); }
+### image lod store on a readonly image | frag | 4:InvalidBuiltinCall
+#extension GL_AMD_shader_image_load_store_lod : enable
+layout(rgba8, binding = 0) readonly uniform image2D i;
+void main() { imageStoreLodAMD(i, ivec2(0), 1, vec4(0.0)); }
+### image lod access has no multisample or buffer form | frag | 5:NoMatchingFunction
+#extension GL_AMD_shader_image_load_store_lod : enable
+layout(rgba8, binding = 0) uniform image2DMS i;
+layout(rgba8, binding = 1) uniform imageBuffer b;
+void main() { vec4 a = imageLoadLodAMD(b, 0, 1); }
+### half float sampling with half coordinates | frag | ok
+#extension GL_AMD_gpu_shader_half_float : enable
+#extension GL_AMD_gpu_shader_half_float_fetch : enable
+layout(binding = 0) uniform f16sampler2DShadow s;
+layout(binding = 1) uniform f16sampler2DArray a;
+void main() {
+    float16_t d = texture(s, f16vec2(0.0hf), 0.5) + texture(s, vec3(0.0)) + textureOffset(s, f16vec2(0.0hf), 0.5, ivec2(1));
+    f16vec4 t = textureLod(a, f16vec3(0.0hf), 1.0hf) + textureGather(a, f16vec3(0.0hf), 1) + texture(a, vec3(0.0));
+    vec2 q = textureQueryLod(a, f16vec2(0.0hf));
+}
+### half float shadow sampling with a half reference converts it | frag | ok
+#extension GL_AMD_gpu_shader_half_float : enable
+#extension GL_AMD_gpu_shader_half_float_fetch : enable
+layout(binding = 0) uniform f16sampler2DShadow s;
+void main() { float16_t d = texture(s, f16vec3(0.0hf)); }
+### half float samplers have no qcom gathers or atomics | frag | 5:NoMatchingFunction
+#extension GL_AMD_gpu_shader_half_float : enable
+#extension GL_AMD_gpu_shader_half_float_fetch : enable
+layout(binding = 0, rgba16f) uniform f16image2D i;
+void main() { imageAtomicExchange(i, ivec2(0), 1.0hf); }
 ### texel fetch on a texture buffer | frag | ok
 layout(binding = 0) uniform textureBuffer t;
 void main() {

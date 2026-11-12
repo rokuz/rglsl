@@ -385,6 +385,10 @@ impl super::MathFunction {
             Self::Dot => 2,
             Self::Dot4I8Packed => 2,
             Self::Dot4U8Packed => 2,
+            Self::IntegerDot => 2,
+            Self::IntegerDotAccSat => 3,
+            Self::PackedIntegerDot4x8 => 2,
+            Self::PackedIntegerDot4x8AccSat => 3,
             Self::Outer => 2,
             Self::Cross => 2,
             Self::Distance => 2,
@@ -559,6 +563,16 @@ impl super::ImageClass {
 
     pub const fn is_depth(self) -> bool {
         matches!(self, crate::ImageClass::Depth { .. })
+    }
+
+    pub const fn has_optional_level(self, dim: crate::ImageDimension) -> bool {
+        matches!(self, crate::ImageClass::Storage { .. })
+            && !matches!(
+                dim,
+                crate::ImageDimension::Buffer
+                    | crate::ImageDimension::Subpass
+                    | crate::ImageDimension::TileImageData
+            )
     }
 
     pub const fn has_levels(self, dim: crate::ImageDimension) -> bool {

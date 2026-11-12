@@ -64,6 +64,7 @@ impl FunctionTracer<'_> {
                         coordinate,
                         array_index,
                         sample,
+                        level,
                         value,
                     } => {
                         self.expressions_used.insert(image);
@@ -73,6 +74,9 @@ impl FunctionTracer<'_> {
                         }
                         if let Some(sample) = sample {
                             self.expressions_used.insert(sample);
+                        }
+                        if let Some(level) = level {
+                            self.expressions_used.insert(level);
                         }
                         self.expressions_used.insert(value);
                     }
@@ -402,6 +406,7 @@ impl FunctionMap {
                         ref mut coordinate,
                         ref mut array_index,
                         ref mut sample,
+                        ref mut level,
                         ref mut value,
                     } => {
                         adjust(image)?;
@@ -411,6 +416,9 @@ impl FunctionMap {
                         }
                         if let Some(ref mut sample) = *sample {
                             adjust(sample)?;
+                        }
+                        if let Some(ref mut level) = *level {
+                            adjust(level)?;
                         }
                         adjust(value)?;
                     }

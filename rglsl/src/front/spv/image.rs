@@ -353,6 +353,7 @@ impl<I: Iterator<Item = u32>> super::Frontend<I> {
 
         Ok(crate::Statement::ImageStore {
             sample: None,
+            level: None,
             image: image_lexp.handle,
             coordinate,
             array_index,

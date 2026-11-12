@@ -2655,6 +2655,27 @@ void main() {}
             .collect();
         assert_eq!(lines, [3, 4]);
     }
+    {
+        let source = "#version 450
+layout(location = 0) out vec4 o;
+void main() {
+    int i = 1;
+    i.x = vec2(1.0);
+    o = vec4(1.0);
+    if (i > 0) { o = vec4(i, float, 0.0, 1.0); }
+}
+";
+        let errors = glsl::Frontend::default()
+            .parse(&glsl::Options::from(ShaderStage::Fragment), source)
+            .err()
+            .ok_or("expected an error")?;
+        let lines: Vec<u32> = errors
+            .errors
+            .iter()
+            .map(|error| error.meta.location(source).line_number)
+            .collect();
+        assert_eq!(lines, [5, 7]);
+    }
     Ok(())
 }
 
@@ -10710,5 +10731,188 @@ fn nv_task_memory_keeps_its_explicit_layout() -> crate::TestResult {
         })
         .count();
     assert_eq!(per_task, 2);
+    Ok(())
+}
+
+#[test]
+fn samplerless_texture_functions_use_the_image_directly() -> crate::TestResult {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+#extension GL_EXT_samplerless_texture_functions : enable
+layout(binding = 0) uniform texture2D t;
+layout(binding = 1) uniform itexture2DMSArray ms;
+layout(binding = 2) uniform textureBuffer b;
+layout(location = 0) out vec4 o;
+void main() {
+    vec4 a = texelFetch(t, ivec2(0), 0) + texelFetchOffset(t, ivec2(0), 0, ivec2(1));
+    ivec4 c = texelFetch(ms, ivec3(0), 1);
+    int n = textureSize(t, 0).x + textureSize(ms).z + textureSize(b) + textureQueryLevels(t) + textureSamples(ms);
+    o = a + vec4(c) + texelFetch(b, n);
+}
+",
+    )?;
+    assert_eq!(instructions(&module, Op::ImageFetch).len(), 4);
+    assert_eq!(instructions(&module, Op::SampledImage).len(), 0);
+    assert_eq!(instructions(&module, Op::ImageQueryLevels).len(), 1);
+    assert_eq!(instructions(&module, Op::ImageQuerySamples).len(), 1);
+    Ok(())
+}
+
+#[test]
+fn integer_dot_products_put_the_signed_operand_first() -> crate::TestResult {
+    let module = compile_valid(
+        ShaderStage::Compute,
+        "#version 450
+#extension GL_EXT_shader_explicit_arithmetic_types : enable
+#extension GL_EXT_integer_dot_product : enable
+layout(local_size_x = 1) in;
+layout(binding = 0) buffer B { int i32; uint u32; int r[8]; uint ru[4]; int64_t r64; };
+void main() {
+    r[0] = dotPacked4x8EXT(u32, i32);
+    ru[0] = dotPacked4x8AccSatEXT(u32, u32, u32);
+    r[1] = dotEXT(u8vec4(u32), i8vec4(i32));
+    r[2] = dotAccSatEXT(i16vec3(i32), u16vec3(u32), i32);
+    ru[1] = dotEXT(uvec2(u32), uvec2(1u));
+    r64 = dotEXT(i64vec2(i32), u64vec2(u32));
+    r[3] = dotEXT(i8vec2(i32), i8vec2(2));
+    r[4] = dotPacked4x8AccSatEXT(i32, i32, i32);
+}
+",
+    )?;
+    let su_dots = instructions(&module, Op::SUDot);
+    assert_eq!(su_dots.len(), 3);
+    assert_eq!(su_dots[0].operands.len(), 3);
+    assert_eq!(instructions(&module, Op::SUDotAccSat).len(), 1);
+    assert_eq!(instructions(&module, Op::UDotAccSat).len(), 1);
+    assert_eq!(instructions(&module, Op::UDot).len(), 1);
+    assert_eq!(instructions(&module, Op::SDot).len(), 1);
+    assert_eq!(instructions(&module, Op::SDotAccSat).len(), 1);
+    let capabilities: Vec<_> = module
+        .capabilities
+        .iter()
+        .map(|inst| inst.operands[0].clone())
+        .collect();
+    for capability in [
+        spirv::Capability::DotProduct,
+        spirv::Capability::DotProductInput4x8BitPacked,
+        spirv::Capability::DotProductInput4x8Bit,
+        spirv::Capability::DotProductInputAll,
+    ] {
+        assert!(
+            capabilities.contains(&Operand::Capability(capability)),
+            "{capability:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn storage_image_lod_access_uses_the_lod_operand() -> crate::TestResult {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+#extension GL_AMD_shader_image_load_store_lod : enable
+layout(rgba32f, binding = 0) uniform image2D color;
+layout(rgba32ui, binding = 1) uniform uimageCubeArray cubes;
+layout(location = 0) out vec4 o;
+void main() {
+    vec4 texel = imageLoadLodAMD(color, ivec2(1, 2), 3);
+    imageStoreLodAMD(color, ivec2(0), 1, texel);
+    uvec4 sparse;
+    int code = sparseImageLoadLodAMD(cubes, ivec3(4), 2, sparse);
+    o = texel + vec4(sparse) + float(code);
+}
+",
+    )?;
+    let lod = Operand::ImageOperands(spirv::ImageOperands::LOD);
+    for op in [Op::ImageRead, Op::ImageWrite, Op::ImageSparseRead] {
+        let found = instructions(&module, op);
+        assert_eq!(found.len(), 1, "{op:?}");
+        assert!(found[0].operands.contains(&lod), "{op:?}");
+    }
+    assert!(module.capabilities.iter().any(
+        |inst| inst.operands[0] == Operand::Capability(spirv::Capability::ImageReadWriteLodAMD)
+    ));
+    Ok(())
+}
+
+#[test]
+fn half_float_fetch_samples_32_bit_images_and_converts_the_texel() -> crate::TestResult {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+#extension GL_AMD_gpu_shader_half_float : enable
+#extension GL_AMD_gpu_shader_half_float_fetch : enable
+#extension GL_ARB_sparse_texture2 : enable
+layout(binding = 0) uniform f16sampler2D s;
+layout(binding = 1) uniform f16sampler2DShadow shadow;
+layout(binding = 2, rgba16f) uniform f16image2D img;
+layout(binding = 3) uniform f16texture2D t;
+layout(binding = 4) uniform sampler plain;
+layout(location = 0) in f16vec2 coordinate;
+layout(location = 1) in float compare;
+layout(location = 0) out vec4 o;
+void main() {
+    f16vec4 texel = texture(s, coordinate, float16_t(0.5));
+    float16_t depth = texture(shadow, coordinate, compare);
+    f16vec4 loaded = imageLoad(img, ivec2(0));
+    imageStore(img, ivec2(1), texel);
+    f16vec4 sparse;
+    int code = sparseTextureARB(s, vec2(coordinate), sparse);
+    f16vec4 separate = texture(f16sampler2D(t, plain), coordinate);
+    o = vec4(texel + loaded + sparse + separate) + float(depth) + float(code);
+}
+",
+    )?;
+    for image in instructions(&module, Op::TypeImage) {
+        let sampled = image.operands[0].unwrap_id_ref();
+        let float = module
+            .types_global_values
+            .iter()
+            .find(|inst| inst.result_id == Some(sampled))
+            .ok_or("the sampled type is not declared")?;
+        assert_eq!(float.class.opcode, Op::TypeFloat);
+        assert_eq!(float.operands[0], Operand::LiteralBit32(32));
+    }
+    assert!(instructions(&module, Op::FConvert).len() >= 6);
+    assert!(!module
+        .capabilities
+        .iter()
+        .any(|inst| inst.operands[0] == Operand::Capability(spirv::Capability::Float16ImageAMD)));
+    Ok(())
+}
+
+#[test]
+fn branches_on_constant_conditions_are_kept_as_glslang_keeps_them() -> crate::TestResult {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+layout(location = 0) out vec4 o;
+layout(location = 0) in float x;
+const bool B = false;
+void main() {
+    o = vec4(0.0);
+    if (false) { o = vec4(1.0); }
+    if (B) { o.z = 4.0; } else { o.w = x; }
+    switch (2) { case 1: o.x = 5.0; break; default: o.z = 7.0; }
+    while (false) { o.x += 1.0; }
+}
+",
+    )?;
+    assert_eq!(instructions(&module, Op::Switch).len(), 1);
+    assert_eq!(instructions(&module, Op::LoopMerge).len(), 1);
+    assert_eq!(instructions(&module, Op::Store).len(), 7);
+    let constants: Vec<u32> = module
+        .types_global_values
+        .iter()
+        .filter(|inst| matches!(inst.class.opcode, Op::ConstantTrue | Op::ConstantFalse))
+        .filter_map(|inst| inst.result_id)
+        .collect();
+    let constant_branches = instructions(&module, Op::BranchConditional)
+        .into_iter()
+        .filter(|inst| constants.contains(&inst.operands[0].unwrap_id_ref()))
+        .count();
+    assert!(constant_branches >= 3, "{constant_branches}");
     Ok(())
 }

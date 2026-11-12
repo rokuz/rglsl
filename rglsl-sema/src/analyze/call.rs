@@ -95,6 +95,17 @@ fn equivalent(rules: Rules, arguments: &[Type], first: &Function, second: &Funct
         && !has_better_parameter(rules, arguments, second, first)
 }
 
+fn image_load(name: &str) -> bool {
+    matches!(
+        name,
+        "imageLoad" | "imageLoadLodAMD" | "sparseImageLoadLodAMD"
+    )
+}
+
+fn image_store(name: &str) -> bool {
+    matches!(name, "imageStore" | "imageStoreLodAMD")
+}
+
 const DEBUG_PRINTF: &str = "debugPrintfEXT";
 const ABORT: &str = "abortEXT";
 
@@ -839,6 +850,12 @@ impl Analyzer<'_> {
         if let Some(extension) = subgroup::function_extension(name) {
             self.require_extension(span, extension, name);
         }
+        if matches!(
+            name,
+            "dotEXT" | "dotAccSatEXT" | "dotPacked4x8EXT" | "dotPacked4x8AccSatEXT"
+        ) {
+            self.require_extension(span, "GL_EXT_integer_dot_product", name);
+        }
         if matches!(name, "expectEXT" | "assumeEXT") {
             self.require_extension(span, "GL_EXT_expect_assume", name);
         }
@@ -1025,7 +1042,7 @@ impl Analyzer<'_> {
                     "the first argument must be a buffer or shared variable",
                 );
             }
-        } else if name.starts_with("imageAtomic") || name == "imageStore" || name == "imageLoad" {
+        } else if name.starts_with("imageAtomic") || image_load(name) || image_store(name) {
             let qualifiers = first
                 .and_then(|operand| operand.root)
                 .and_then(|id| self.symbol(id))
@@ -1033,7 +1050,7 @@ impl Analyzer<'_> {
                 .map(|variable| (variable.qualifiers.readonly, variable.qualifiers.writeonly));
             let integer_image = first
                 .and_then(|operand| operand.ty.as_opaque())
-                .is_some_and(|opaque| opaque.sampled != crate::types::SampledType::Float);
+                .is_some_and(|opaque| opaque.sampled.is_integer());
             let has_atomic_format = first
                 .and_then(|operand| operand.root)
                 .and_then(|id| self.symbol(id))
@@ -1073,10 +1090,10 @@ impl Analyzer<'_> {
                 }
             }
             if let Some((readonly, writeonly)) = qualifiers {
-                if readonly && name != "imageLoad" {
+                if readonly && !image_load(name) {
                     return invalid(self, span, "the image is `readonly`");
                 }
-                if writeonly && name != "imageStore" {
+                if writeonly && !image_store(name) {
                     return invalid(self, span, "the image is `writeonly`");
                 }
             }
@@ -1091,6 +1108,12 @@ impl Analyzer<'_> {
             "textureGradOffset" | "textureProjGradOffset" | "sparseTextureGradOffsetARB" => Some(4),
             _ => None,
         };
+        let half_shadow_compare = first
+            .and_then(|operand| operand.ty.as_opaque())
+            .is_some_and(|opaque| opaque.shadow)
+            && operands.get(1).and_then(|operand| operand.ty.base_scalar())
+                == Some(Scalar::Float16);
+        let offset_index = offset_index.map(|index| index + usize::from(half_shadow_compare));
         if let Some(index) = offset_index {
             if let Some(operand) = operands.get(index) {
                 if !operand.constant {

@@ -6,7 +6,7 @@ use rglsl_ast::Span;
 use super::{Analyzer, Operand};
 use crate::builtins::Stage;
 use crate::diagnostic::DiagnosticKind;
-use crate::types::TextureDimension;
+use crate::types::{OpaqueKind, TextureDimension};
 
 pub const SPARSE_TEXTURE2: &str = "GL_ARB_sparse_texture2";
 pub const SPARSE_TEXTURE_CLAMP: &str = "GL_ARB_sparse_texture_clamp";
@@ -14,6 +14,8 @@ pub const GATHER_BIAS_LOD: &str = "GL_AMD_texture_gather_bias_lod";
 pub const SHADOW_LOD: &str = "GL_EXT_texture_shadow_lod";
 pub const NV_DERIVATIVES: &str = "GL_NV_compute_shader_derivatives";
 pub const KHR_DERIVATIVES: &str = "GL_KHR_compute_shader_derivatives";
+pub const IMAGE_LOAD_STORE_LOD: &str = "GL_AMD_shader_image_load_store_lod";
+pub const SAMPLERLESS: &str = "GL_EXT_samplerless_texture_functions";
 
 const COMPUTE_DERIVATIVES: [&str; 2] = [NV_DERIVATIVES, KHR_DERIVATIVES];
 const KHR_ONLY: [&str; 1] = [KHR_DERIVATIVES];
@@ -58,6 +60,7 @@ pub(crate) fn function_extension(name: &str) -> Option<&'static str> {
         | "sparseTextureGatherLodAMD"
         | "sparseTextureGatherLodOffsetAMD"
         | "sparseTextureGatherLodOffsetsAMD" => GATHER_BIAS_LOD,
+        "imageLoadLodAMD" | "imageStoreLodAMD" | "sparseImageLoadLodAMD" => IMAGE_LOAD_STORE_LOD,
         _ => return None,
     })
 }
@@ -86,6 +89,20 @@ fn biased_gather(name: &str, operands: &[Operand], shadow: bool) -> bool {
             "sparseTextureGatherOffsetARB" | "sparseTextureGatherOffsetsARB" => count > 5,
             _ => false,
         }
+}
+
+fn samplerless(name: &str, operands: &[Operand]) -> bool {
+    let Some(opaque) = operands.first().and_then(|operand| operand.ty.as_opaque()) else {
+        return false;
+    };
+    if opaque.kind != OpaqueKind::Texture {
+        return false;
+    }
+    match name {
+        "textureSize" | "textureQueryLevels" | "textureSamples" => true,
+        "texelFetch" | "texelFetchOffset" => !opaque.is_buffer(),
+        _ => false,
+    }
 }
 
 fn shadow_lod_feature(name: &str, operands: &[Operand]) -> Option<String> {
@@ -131,6 +148,9 @@ impl Analyzer<'_> {
             .and_then(|operand| operand.ty.as_opaque())
             .is_some_and(|opaque| opaque.shadow);
         let mut valid = true;
+        if samplerless(name, operands) {
+            valid &= self.require_extension(span, SAMPLERLESS, name);
+        }
         if let Some(feature) = shadow_lod_feature(name, operands) {
             valid &= self.require_extension(span, SHADOW_LOD, &feature);
         }
