@@ -1239,3 +1239,80 @@ void main() { color = explicit_input + fragment_only + blk.a + shared_value; }
     );
     Ok(())
 }
+
+const NARROW_CAPTURE: &str = "transform feedback of 16-bit components is not supported: Vulkan captures components of at least 32 bits";
+
+fn program_errors(stage: ShaderStage, source: &str) -> Vec<String> {
+    match Frontend::default().compile(&Options::from(stage), source) {
+        Ok(_) => Vec::new(),
+        Err(errors) => errors.errors.iter().map(ToString::to_string).collect(),
+    }
+}
+
+#[test]
+fn narrow_transform_feedback_waits_for_the_lowering_errors() -> TestResult {
+    let narrow = "#version 450
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+layout(location = 0, xfb_buffer = 0, xfb_offset = 0) out float16_t h;
+void main() { h = float16_t(1.0); }
+";
+    assert_eq!(
+        program_errors(ShaderStage::Vertex, narrow),
+        [NARROW_CAPTURE]
+    );
+    let stride = "#version 450
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+layout(xfb_buffer = 0, xfb_stride = 3) out;
+layout(location = 0, xfb_buffer = 0, xfb_offset = 0) out float16_t h;
+void main() { h = float16_t(1.0); }
+";
+    let errors = program_errors(ShaderStage::Vertex, stride);
+    assert!(
+        errors
+            .first()
+            .is_some_and(|error| error.contains("xfb_stride must be multiple of 2")),
+        "{errors:?}"
+    );
+    let wide = "#version 450
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+layout(location = 0, xfb_buffer = 0, xfb_offset = 0) out float f;
+layout(location = 1) out float16_t h;
+void main() { f = 1.0; h = float16_t(f); }
+";
+    assert!(program_errors(ShaderStage::Vertex, wide).is_empty());
+    Ok(())
+}
+
+#[test]
+fn libraries_reject_narrow_transform_feedback_in_capturing_stages() -> TestResult {
+    let captured = library_errors(
+        "#version 450
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+layout(location = 0, xfb_buffer = 0, xfb_offset = 0) out float16_t h;
+void capture(float value) { h = float16_t(value); }
+",
+    );
+    assert_eq!(captured, [NARROW_CAPTURE]);
+    let stride = library_errors(
+        "#version 450
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+layout(xfb_buffer = 0, xfb_stride = 3) out;
+layout(location = 0, xfb_buffer = 0, xfb_offset = 0) out float16_t h;
+void capture(float value) { h = float16_t(value); }
+",
+    );
+    assert!(
+        stride
+            .first()
+            .is_some_and(|error| error.contains("xfb_stride must be multiple of 2")),
+        "{stride:?}"
+    );
+    let wide = library(
+        "#version 450
+layout(location = 0, xfb_buffer = 0, xfb_offset = 0) out float f;
+void capture(float value) { f = value; }
+",
+    )?;
+    assert!(wide.supports(ShaderStage::Vertex));
+    Ok(())
+}

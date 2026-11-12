@@ -490,6 +490,12 @@ impl Context<'_> {
             unknown: 0,
         };
         let mut clean = 0;
+        let mut waiting = Vec::new();
+        let waits_for_lowering = analysis
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| !link_time(&diagnostic.kind))
+            .all(|diagnostic| diagnostic.kind.waits_for_lowering());
         for &candidate in self.order {
             let bit = stage_bit(candidate);
             if self.versioned & bit == 0 {
@@ -504,8 +510,16 @@ impl Context<'_> {
                     let reworded = reword(self.tables, &diagnostic.kind, candidate);
                     let error = sema_error(map, text, self.source, diagnostic, reworded);
                     let errors = ParseErrors::from(alloc::vec![error]);
-                    run.rejected
-                        .push((candidate, rejection(candidate, &errors, self.source)));
+                    let rejected = (candidate, rejection(candidate, &errors, self.source));
+                    if waits_for_lowering
+                        && diagnostic.kind.waits_for_lowering()
+                        && analysis.stages & bit != 0
+                    {
+                        clean |= bit;
+                        waiting.push(rejected);
+                    } else {
+                        run.rejected.push(rejected);
+                    }
                 }
                 None if analysis.stages & bit != 0 => clean |= bit,
                 None => run.unknown |= bit,
@@ -539,7 +553,15 @@ impl Context<'_> {
         run.unknown |= clean & !compatible;
         match result {
             Ok(object) => {
-                run.accepted = compatible;
+                let mut waited = 0;
+                for (candidate, rejected) in waiting {
+                    let bit = stage_bit(candidate);
+                    if compatible & bit != 0 {
+                        waited |= bit;
+                        run.rejected.push((candidate, rejected));
+                    }
+                }
+                run.accepted = compatible & !waited;
                 run.object = Some(object);
             }
             Err(errors) => {

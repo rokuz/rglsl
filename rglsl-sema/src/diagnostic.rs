@@ -266,6 +266,10 @@ pub enum DiagnosticKind {
         subject: String,
         reason: &'static str,
     },
+    #[error(
+        "transform feedback of {0}-bit components is not supported: Vulkan captures components of at least 32 bits"
+    )]
+    NarrowTransformFeedback(u32),
     #[error("extension `{0}` needs a newer SPIR-V version")]
     ExtensionSpirvVersion(String),
     #[error("{feature} requires SPIR-V {version}")]
@@ -307,4 +311,17 @@ pub enum DiagnosticKind {
     },
     #[error("{0}")]
     Warning(String),
+}
+
+impl DiagnosticKind {
+    pub const fn decided_at_link_time(&self) -> bool {
+        matches!(
+            *self,
+            Self::MissingEntryPoint | Self::MissingFunctionBody(_)
+        )
+    }
+
+    pub const fn waits_for_lowering(&self) -> bool {
+        matches!(*self, Self::NarrowTransformFeedback(_))
+    }
 }

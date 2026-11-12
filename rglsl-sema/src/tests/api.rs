@@ -1044,3 +1044,29 @@ void main() {{
     assert_eq!(checked.integer(&negated)?, Some(-5));
     Ok(())
 }
+
+#[test]
+fn narrow_transform_feedback_names_the_narrowest_width() -> TestResult {
+    let checked = check(
+        Stage::Vertex,
+        "#extension GL_EXT_shader_explicit_arithmetic_types : require\nlayout(location = 0, xfb_buffer = 0, xfb_offset = 0) out Block {\n    float16_t h;\n    uint8_t b;\n};\nvoid main() {}\n",
+    )?;
+    let messages: Vec<String> = checked
+        .analysis
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.kind.to_string())
+        .collect();
+    assert_eq!(
+        messages,
+        [String::from(
+            "transform feedback of 8-bit components is not supported: Vulkan captures components of at least 32 bits"
+        )]
+    );
+    assert!(checked
+        .analysis
+        .diagnostics
+        .iter()
+        .all(|diagnostic| diagnostic.kind.waits_for_lowering()));
+    Ok(())
+}
