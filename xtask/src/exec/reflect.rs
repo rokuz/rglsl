@@ -350,6 +350,27 @@ pub struct AddressField {
     pub offset: u32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum FloatAtomicOp {
+    Add,
+    MinMax,
+    Access,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum AtomicPlace {
+    Buffer,
+    Shared,
+    Image,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct FloatAtomic {
+    pub op: FloatAtomicOp,
+    pub place: AtomicPlace,
+    pub width: u32,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PointerField {
     pub field: AddressField,
@@ -394,6 +415,7 @@ pub struct Reflection {
     pub shader_record: Option<Result<Layout, String>>,
     pub addresses: Vec<AddressField>,
     pub pointer_fields: Vec<PointerField>,
+    pub float_atomics: BTreeSet<FloatAtomic>,
     pub task_payload: Option<Result<DataType, String>>,
     pub body_opcodes: BTreeSet<u32>,
     pub ray_indices: RayIndices,
@@ -422,6 +444,7 @@ impl Reflection {
             shader_record: None,
             addresses: Vec::new(),
             pointer_fields: Vec::new(),
+            float_atomics: BTreeSet::new(),
             task_payload: None,
             body_opcodes: BTreeSet::new(),
             ray_indices: RayIndices::default(),
@@ -1155,6 +1178,7 @@ pub fn reflect(module: &Module) -> Result<Reflection, String> {
     };
 
     let mut roots = BTreeMap::new();
+    let mut resource_ids = Vec::new();
     for instruction in &module.globals {
         if !instruction.is(Op::Variable) {
             continue;
@@ -1274,6 +1298,7 @@ pub fn reflect(module: &Module) -> Result<Reflection, String> {
                     count,
                     kind,
                 });
+                resource_ids.push(id);
             }
             StorageClass::PhysicalStorageBuffer => reflection
                 .problems
@@ -1317,6 +1342,7 @@ pub fn reflect(module: &Module) -> Result<Reflection, String> {
             other => reflection.problems.push(format!("{other:?} variables")),
         }
     }
+    drop_unused_aliases(&mut reflection.resources, &resource_ids, &module.body);
     reflection.ray_indices = ray_indices(&module.body, &types);
     reflection.cooperative_matrices = module
         .globals
@@ -1330,6 +1356,7 @@ pub fn reflect(module: &Module) -> Result<Reflection, String> {
             Err(problem) => reflection.problems.push(problem),
         }
     }
+    reflection.float_atomics = float_atomics(module, &types);
     if reflection.uses(Op::ConvertUToAccelerationStructureKHR) {
         match address_fields(&module.body, &types, &roots) {
             Ok(addresses) => reflection.addresses = addresses,
@@ -1339,9 +1366,13 @@ pub fn reflect(module: &Module) -> Result<Reflection, String> {
     reflection
         .ray_variables
         .sort_by_key(|v| (v.class as u32, v.location));
-    reflection
-        .resources
-        .sort_by_key(|resource| (resource.set, resource.binding));
+    reflection.resources.sort_by_cached_key(|resource| {
+        (
+            resource.set,
+            resource.binding,
+            format!("{:?}", resource.kind),
+        )
+    });
     reflection.inputs.sort_by_key(|v| (v.location, v.component));
     reflection
         .outputs
@@ -1378,6 +1409,119 @@ fn address_fields(
         fields.insert(field);
     }
     Ok(fields.into_iter().collect())
+}
+
+fn float_atomics(module: &Module, types: &Types) -> BTreeSet<FloatAtomic> {
+    const TYPED: [Op; 11] = [
+        Op::Variable,
+        Op::AccessChain,
+        Op::InBoundsAccessChain,
+        Op::PtrAccessChain,
+        Op::InBoundsPtrAccessChain,
+        Op::ImageTexelPointer,
+        Op::FunctionParameter,
+        Op::CopyObject,
+        Op::Load,
+        Op::Select,
+        Op::Phi,
+    ];
+    let value_types: BTreeMap<u32, u32> = module
+        .globals
+        .iter()
+        .chain(&module.body)
+        .filter(|i| TYPED.iter().any(|op| i.is(*op)))
+        .filter_map(|i| Some((i.word(1)?, i.word(0)?)))
+        .collect();
+    let mut found = BTreeSet::new();
+    for instruction in &module.body {
+        let (op, pointer) = if instruction.is(Op::AtomicFAddEXT) {
+            (FloatAtomicOp::Add, instruction.word(2))
+        } else if instruction.is(Op::AtomicFMinEXT) || instruction.is(Op::AtomicFMaxEXT) {
+            (FloatAtomicOp::MinMax, instruction.word(2))
+        } else if instruction.is(Op::AtomicLoad) || instruction.is(Op::AtomicExchange) {
+            (FloatAtomicOp::Access, instruction.word(2))
+        } else if instruction.is(Op::AtomicStore) {
+            (FloatAtomicOp::Access, instruction.word(0))
+        } else {
+            continue;
+        };
+        let Some(pointer_type) = pointer
+            .and_then(|id| value_types.get(&id))
+            .and_then(|ty| types.get(*ty))
+            .filter(|ty| ty.is(Op::TypePointer))
+        else {
+            continue;
+        };
+        let Some(Scalar {
+            kind: ScalarKind::Float,
+            width,
+        }) = pointer_type
+            .word(2)
+            .and_then(|pointee| types.scalar(pointee))
+        else {
+            continue;
+        };
+        let place = match pointer_type.word(1).and_then(StorageClass::from_u32) {
+            Some(StorageClass::Workgroup) => AtomicPlace::Shared,
+            Some(StorageClass::Image) => AtomicPlace::Image,
+            _ => AtomicPlace::Buffer,
+        };
+        found.insert(FloatAtomic { op, place, width });
+    }
+    found
+}
+
+fn pointer_operands(instruction: &Instruction) -> Vec<u32> {
+    let words = |positions: &[usize]| -> Vec<u32> {
+        positions
+            .iter()
+            .filter_map(|position| instruction.word(*position))
+            .collect()
+    };
+    let op = Op::from_u32(instruction.opcode);
+    match op {
+        Some(
+            Op::Load
+            | Op::AccessChain
+            | Op::InBoundsAccessChain
+            | Op::PtrAccessChain
+            | Op::InBoundsPtrAccessChain
+            | Op::ArrayLength
+            | Op::ImageTexelPointer
+            | Op::CopyObject,
+        ) => words(&[2]),
+        Some(Op::Store | Op::AtomicStore) => words(&[0]),
+        Some(Op::CopyMemory | Op::CopyMemorySized) => words(&[0, 1]),
+        Some(Op::Select) => words(&[3, 4]),
+        Some(Op::FunctionCall) => instruction.operands.iter().skip(3).copied().collect(),
+        Some(Op::Phi) => instruction
+            .operands
+            .iter()
+            .skip(2)
+            .step_by(2)
+            .copied()
+            .collect(),
+        Some(other) if format!("{other:?}").starts_with("Atomic") => words(&[2]),
+        _ => Vec::new(),
+    }
+}
+
+fn drop_unused_aliases(resources: &mut Vec<Resource>, ids: &[u32], body: &[Instruction]) {
+    let shared = |index: usize| {
+        resources.get(index).is_some_and(|resource| {
+            resources
+                .iter()
+                .filter(|other| other.set == resource.set && other.binding == resource.binding)
+                .count()
+                > 1
+        })
+    };
+    let used: BTreeSet<u32> = body.iter().flat_map(pointer_operands).collect();
+    let keep: Vec<bool> = (0..resources.len())
+        .map(|index| !shared(index) || ids.get(index).is_some_and(|id| used.contains(id)))
+        .collect();
+    let mut flags = keep.into_iter();
+    resources.retain(|_| flags.next().unwrap_or(true));
 }
 
 fn value_defs(body: &[Instruction]) -> BTreeMap<u32, &Instruction> {

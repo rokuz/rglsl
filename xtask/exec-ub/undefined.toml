@@ -109,3 +109,19 @@ twin = "initializes `x` from the push constant block `refs`, which holds the add
 ["spv.bufferhandleUvec2.frag"]
 undefined = "dereferences `blockType(h)` and `blockType(i)`, addresses taken from the flat inputs `h` and `i`, which hold no buffer's address"
 twin = "`h` and `i` are push constants, which the harness fills with the addresses of buffers"
+
+["spv.ext.meshShaderBuiltins.mesh"]
+undefined = "writes `gl_Layer = 7` and `gl_ViewportIndex = 8` with one viewport and one layer, leaves clip distances 0–2 and cull distances 0 and 1 and the triangle indices of primitives 1–30 unwritten, uses the vertex index 257 past `vertexCount`, and every invocation races to write `gl_PrimitiveTriangleIndicesEXT[0]` with 257 and 0"
+twin = "writes 0 to `gl_Layer` and `gl_ViewportIndex`, 3.0 to every clip distance and 4.0 to every cull distance, and `gl_PrimitiveTriangleIndicesEXT[iid] = uvec3(iid)` before the barrier; invocation 0 alone does the bound-limit writes, with 257 % MAX_VER; drops the comments"
+
+["spv.ext.meshShaderBuiltinsShadingRate.mesh"]
+undefined = "as spv.ext.meshShaderBuiltins.mesh: `gl_Layer = 7` and `gl_ViewportIndex = 8` with one viewport and one layer, unwritten clip and cull distances and triangle indices, the vertex index 257 past `vertexCount`, and racing writes of `gl_PrimitiveTriangleIndicesEXT[0]`"
+twin = "the changes of the spv.ext.meshShaderBuiltins.mesh twin; drops the comments"
+
+["spv.meshShaderBuiltins.mesh"]
+undefined = "writes `gl_Layer = 7`, `gl_ViewportIndex = 8` and `gl_ViewportMask[0] = 9` with one viewport and one layer, leaves clip distances 0–2, cull distances 0 and 1 and most primitive indices unwritten, writes primitive 32 of 32 (`iid + 1`), uses the vertex index 257, reads `gl_PrimitiveIndicesNV[gid - 1]` at index -1, sets `gl_PrimitiveCountNV` to 96 with `max_primitives = 32`, and every invocation races on the bound-limit writes"
+twin = "writes 0 to `gl_Layer` and `gl_ViewportIndex`, 1 to `gl_ViewportMask[0]`, every clip and cull distance of the vertices it writes, and `gl_PrimitiveIndicesNV[iid * 3 + k] = iid`; copies to primitive `iid + 1` only below `MAX_PRIM`; invocation 0 alone does the bound-limit writes, with 257 % MAX_VER, `gid + 1` and `gl_PrimitiveCountNV = MAX_PRIM`; drops the comments"
+
+["spv.meshShaderRedeclBuiltins.mesh"]
+undefined = "writes `gl_Layer = 7`, `gl_ViewportIndex = 8` and `gl_ViewportMask[0] = 9` with one viewport and one layer, leaves clip distances 0–2, cull distances 0 and 1 and most primitive indices unwritten, writes primitive 32 of 32 (`iid + 1`), sets `gl_PrimitiveCountNV` to 96 with `max_primitives = 32`, and every invocation races on the bound-limit writes"
+twin = "writes 0 to `gl_Layer` and `gl_ViewportIndex`, 1 to `gl_ViewportMask[0]`, every clip and cull distance of the vertices it writes, and `gl_PrimitiveIndicesNV[iid * 3 + k] = iid`; copies to primitive `iid + 1` only below `MAX_PRIM`; invocation 0 alone does the bound-limit writes, with `gl_PrimitiveCountNV = MAX_PRIM`; drops the comments"

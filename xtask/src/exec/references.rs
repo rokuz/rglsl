@@ -132,46 +132,44 @@ fn read_u64(bytes: &[u8], at: usize) -> Option<u64> {
     Some(u64::from_le_bytes(raw))
 }
 
-pub fn symbolic(outputs: &Outputs, table: &Table) -> Outputs {
-    let bases: Vec<u64> = outputs.get(&table.dump).map_or_else(Vec::new, |bytes| {
-        (0..table.sizes.len())
-            .map_while(|index| read_u64(bytes, index * 8))
-            .collect()
-    });
-    let lookup = |value: u64| {
-        bases
-            .iter()
-            .zip(&table.sizes)
-            .enumerate()
-            .find_map(|(index, (base, size))| {
-                let offset = value.checked_sub(*base)?;
-                (offset <= u64::from(*size)).then(|| {
-                    let index = u64::try_from(index).unwrap_or(u64::MAX >> 16);
-                    SYMBOLIC | (index << 32) | offset
-                })
-            })
-    };
-    outputs
-        .iter()
-        .map(|(dump, bytes)| {
-            let mut bytes = bytes.clone();
-            if *dump != table.dump {
-                let mut at = 0;
-                while let Some(value) = read_u64(&bytes, at) {
-                    match lookup(value) {
-                        Some(symbol) => {
-                            if let Some(field) = bytes.get_mut(at..at + 8) {
-                                field.copy_from_slice(&symbol.to_le_bytes());
-                            }
-                            at += 8;
-                        }
-                        None => at += 4,
-                    }
-                }
-            }
-            (dump.clone(), bytes)
+fn symbol(outputs: &Outputs, table: &Table, value: u64) -> Option<u64> {
+    let bytes = outputs.get(&table.dump)?;
+    table.sizes.iter().enumerate().find_map(|(index, size)| {
+        let base = read_u64(bytes, index * 8)?;
+        let offset = value.checked_sub(base)?;
+        (offset <= u64::from(*size)).then(|| {
+            let index = u64::try_from(index).unwrap_or(u64::MAX >> 16);
+            SYMBOLIC | (index << 32) | offset
         })
-        .collect()
+    })
+}
+
+pub fn symbolic(expected: &Outputs, actual: &Outputs, table: &Table) -> (Outputs, Outputs) {
+    let mut expected_out = expected.clone();
+    let mut actual_out = actual.clone();
+    for (dump, a) in expected_out.iter_mut() {
+        if *dump == table.dump {
+            continue;
+        }
+        let Some(b) = actual_out.get_mut(dump) else {
+            continue;
+        };
+        let mut at = 0;
+        while let (Some(x), Some(y)) = (read_u64(a, at), read_u64(b, at)) {
+            match (symbol(expected, table, x), symbol(actual, table, y)) {
+                (Some(left), Some(right)) if left == right => {
+                    for bytes in [&mut *a, &mut *b] {
+                        if let Some(field) = bytes.get_mut(at..at + 8) {
+                            field.copy_from_slice(&left.to_le_bytes());
+                        }
+                    }
+                    at += 8;
+                }
+                _ => at += 4,
+            }
+        }
+    }
+    (expected_out, actual_out)
 }
 
 #[cfg(test)]
@@ -267,13 +265,26 @@ mod tests {
         data.extend((base_b + shift + 4).to_le_bytes());
         data.extend(99u64.to_le_bytes());
         second.insert("dump:0:0".into(), data);
-        let a = symbolic(&first, &table);
-        let b = symbolic(&second, &table);
+        let (a, b) = symbolic(&first, &second, &table);
         assert_eq!(a.get("dump:0:0"), b.get("dump:0:0"));
         assert_ne!(first.get("dump:0:0"), second.get("dump:0:0"));
         assert_eq!(
             a.get("dump:0:0").and_then(|bytes| read_u64(bytes, 4)),
             Some(SYMBOLIC | (1 << 32) | 4)
         );
+        let data_like_an_address = base_a + 5;
+        let mut third = first.clone();
+        third.insert(
+            "dump:0:1".into(),
+            data_like_an_address.to_le_bytes().to_vec(),
+        );
+        let mut fourth = second.clone();
+        fourth.insert(
+            "dump:0:1".into(),
+            data_like_an_address.to_le_bytes().to_vec(),
+        );
+        let (c, d) = symbolic(&third, &fourth, &table);
+        assert_eq!(c.get("dump:0:1"), third.get("dump:0:1"));
+        assert_eq!(c.get("dump:0:1"), d.get("dump:0:1"));
     }
 }

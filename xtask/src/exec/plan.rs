@@ -11,7 +11,8 @@ use super::mesh;
 use super::rays::{self, Geometry, RayPipeline, ShaderRef};
 use super::references::{self, Root, Table};
 use super::reflect::{
-    AddressBuffer, ImageType, Layout, Reflection, ResourceKind, Scalar, ScalarKind, Slot, Varying,
+    AddressBuffer, ImageType, Layout, Reflection, Resource, ResourceKind, Scalar, ScalarKind, Slot,
+    Varying,
 };
 use super::requirements::{self, Need, Requirement};
 
@@ -116,6 +117,8 @@ fn storage_format(format: ImageFormat) -> Option<ImageFormatInfo> {
         ImageFormat::Rgba8 => ("R8G8B8A8_UNORM", scalar(Uint, 8), 4),
         ImageFormat::Rgba8ui => ("R8G8B8A8_UINT", scalar(Uint, 8), 4),
         ImageFormat::Rgba8i => ("R8G8B8A8_SINT", scalar(Sint, 8), 4),
+        ImageFormat::R64ui => ("R64_UINT", scalar(Uint, 64), 1),
+        ImageFormat::R64i => ("R64_SINT", scalar(Sint, 64), 1),
         _ => return None,
     };
     Some(ImageFormatInfo {
@@ -123,6 +126,13 @@ fn storage_format(format: ImageFormat) -> Option<ImageFormatInfo> {
         scalar,
         components,
     })
+}
+
+fn storage_info(image: &ImageType) -> Option<ImageFormatInfo> {
+    if image.format == ImageFormat::Unknown && image.scalar.width == 32 {
+        return Some(sampled_format(image));
+    }
+    storage_format(image.format)
 }
 
 fn sampled_format(image: &ImageType) -> ImageFormatInfo {
@@ -212,6 +222,87 @@ fn address_offsets(reflection: &Reflection, buffer: AddressBuffer) -> Vec<u32> {
         .iter()
         .filter(|field| field.buffer == buffer)
         .map(|field| field.offset)
+        .collect()
+}
+
+fn aliased(kinds: &[&ResourceKind]) -> Option<ResourceKind> {
+    let layouts = |pick: fn(&ResourceKind) -> Option<(&Layout, bool)>| {
+        kinds
+            .iter()
+            .map(|kind| pick(kind))
+            .collect::<Option<Vec<_>>>()
+    };
+    let merged = |list: &[(&Layout, bool)]| Layout::Struct {
+        members: list
+            .iter()
+            .map(|(layout, _)| (0, (*layout).clone()))
+            .collect(),
+    };
+    if let Some(list) = layouts(|kind| match kind {
+        ResourceKind::StorageBuffer { layout, writable } => Some((layout, *writable)),
+        _ => None,
+    }) {
+        return Some(ResourceKind::StorageBuffer {
+            layout: merged(&list),
+            writable: list.iter().any(|(_, writable)| *writable),
+        });
+    }
+    if let Some(list) = layouts(|kind| match kind {
+        ResourceKind::UniformBuffer(layout) => Some((layout, false)),
+        _ => None,
+    }) {
+        return Some(ResourceKind::UniformBuffer(merged(&list)));
+    }
+    match kinds {
+        [ResourceKind::SampledImage(image), ResourceKind::Sampler]
+        | [ResourceKind::Sampler, ResourceKind::SampledImage(image)] => {
+            Some(ResourceKind::CombinedImageSampler(*image))
+        }
+        _ => None,
+    }
+}
+
+fn shared_bindings(resources: &[Resource]) -> Result<Vec<Resource>, Refusal> {
+    let mut groups: Vec<Vec<&Resource>> = Vec::new();
+    for resource in resources {
+        match groups.last_mut() {
+            Some(group)
+                if group
+                    .first()
+                    .is_some_and(|r| r.set == resource.set && r.binding == resource.binding) =>
+            {
+                group.push(resource);
+            }
+            _ => groups.push(vec![resource]),
+        }
+    }
+    groups
+        .into_iter()
+        .map(|group| match group.as_slice() {
+            [single] => Ok((*single).clone()),
+            [first, ..] => {
+                let kinds: Vec<&ResourceKind> = group.iter().map(|r| &r.kind).collect();
+                let kind = aliased(&kinds)
+                    .filter(|_| group.iter().all(|r| r.count == first.count))
+                    .ok_or_else(|| {
+                        Refusal::Binding(format!(
+                            "several resources share set {} binding {} ({})",
+                            first.set,
+                            first.binding,
+                            kinds
+                                .iter()
+                                .map(|kind| kind.describe())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        ))
+                    })?;
+                Ok(Resource {
+                    kind,
+                    ..(*first).clone()
+                })
+            }
+            [] => Err(Refusal::Binding("an empty group of resources".into())),
+        })
         .collect()
 }
 
@@ -311,6 +402,29 @@ pub fn requirements(reflection: &Reflection) -> Result<BTreeSet<Need>, Refusal> 
                 return Err(Refusal::Capability(format!("{capability:?} ({reason})")));
             }
         }
+    }
+    needs.extend(
+        reflection
+            .float_atomics
+            .iter()
+            .map(|atomic| requirements::float_atomic(*atomic)),
+    );
+    if super::reflect::is_mesh_shading(reflection.model)
+        && (reflection
+            .capabilities
+            .contains(&Capability::ComputeDerivativeGroupQuadsKHR)
+            || reflection
+                .capabilities
+                .contains(&Capability::ComputeDerivativeGroupLinearKHR))
+    {
+        return Err(Refusal::Capability(
+            "derivatives in a mesh or task shader (they need the meshAndTaskShaderDerivatives \
+             property, which Amber does not check)"
+                .into(),
+        ));
+    }
+    if needs.contains(&requirements::MULTIVIEW) {
+        needs.extend(requirements::multiview_stage(reflection.model));
     }
     if needs.iter().any(|need| {
         matches!(need, Need::Feature(name) if name.starts_with("SubgroupSupportedOperations"))
@@ -426,7 +540,7 @@ impl Plan {
         let mut writes = false;
         let mut scene: Option<Geometry> = None;
 
-        for resource in &reflection.resources {
+        for resource in &shared_bindings(&reflection.resources)? {
             let base = format!("r{}_{}", resource.set, resource.binding);
             let names: Vec<String> = match resource.count {
                 None => vec![base],
@@ -508,7 +622,7 @@ impl Plan {
                     let _ = writeln!(plan.bindings, "  BIND {bind} {list} AS storage {location}");
                 }
                 ResourceKind::StorageImage(image) => {
-                    let info = storage_format(image.format).ok_or_else(|| {
+                    let info = storage_info(image).ok_or_else(|| {
                         Refusal::Binding(format!("storage image format {:?}", image.format))
                     })?;
                     let (extent, texels) = image_extent(image)?;
@@ -595,7 +709,7 @@ impl Plan {
                     );
                 }
                 ResourceKind::StorageTexelBuffer(image) => {
-                    let info = storage_format(image.format).ok_or_else(|| {
+                    let info = storage_info(image).ok_or_else(|| {
                         Refusal::Binding(format!("storage texel buffer format {:?}", image.format))
                     })?;
                     for (index, name) in names.iter().enumerate() {
@@ -1414,9 +1528,79 @@ mod tests {
     }
 
     #[test]
+    fn resources_sharing_a_binding_alias_one_descriptor() -> anyhow::Result<()> {
+        let image = ImageType {
+            dim: Dim::Dim2D,
+            depth: false,
+            arrayed: false,
+            multisampled: false,
+            sampled: 1,
+            format: ImageFormat::Unknown,
+            scalar: F32,
+        };
+        let buffer = |layout: Layout| Resource {
+            set: 0,
+            binding: 1,
+            count: None,
+            kind: ResourceKind::StorageBuffer {
+                layout,
+                writable: false,
+            },
+        };
+        let mut module = reflection(ExecutionModel::GLCompute);
+        module.resources = vec![
+            Resource {
+                set: 0,
+                binding: 0,
+                count: None,
+                kind: ResourceKind::SampledImage(image),
+            },
+            Resource {
+                set: 0,
+                binding: 0,
+                count: None,
+                kind: ResourceKind::Sampler,
+            },
+            buffer(Layout::Struct {
+                members: vec![(0, Layout::Scalar(U32))],
+            }),
+            buffer(Layout::Struct {
+                members: vec![(4, Layout::Scalar(F32))],
+            }),
+        ];
+        let plan = planned(&module, &Inputs::default())?;
+        assert!(plan.bindings.contains(
+            "  BIND BUFFER r0_0 AS combined_image_sampler SAMPLER smp DESCRIPTOR_SET 0 BINDING 0\n"
+        ));
+        assert!(plan
+            .bindings
+            .contains("  BIND BUFFER r0_1 AS storage DESCRIPTOR_SET 0 BINDING 1\n"));
+        assert_eq!(plan.bindings.matches("BINDING 1").count(), 1);
+        assert!(plan.targets.is_empty());
+        module.resources.push(Resource {
+            set: 0,
+            binding: 1,
+            count: None,
+            kind: ResourceKind::UniformBuffer(Layout::Struct {
+                members: vec![(0, Layout::Scalar(U32))],
+            }),
+        });
+        assert_eq!(
+            Plan::new(&module, &Inputs::default()).err(),
+            Some(Refusal::Binding(
+                "several resources share set 0 binding 1 (storage buffer, storage buffer, uniform buffer)"
+                    .into()
+            ))
+        );
+        Ok(())
+    }
+
+    #[test]
     fn refuses_what_it_cannot_bind() -> anyhow::Result<()> {
         let mut module = reflection(ExecutionModel::GLCompute);
-        module.capabilities.insert(spirv::Capability::Int64ImageEXT);
+        module
+            .capabilities
+            .insert(spirv::Capability::InputAttachment);
         assert!(matches!(
             Plan::new(&module, &Inputs::default()),
             Err(Refusal::Capability(_))

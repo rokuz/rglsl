@@ -209,12 +209,10 @@ pub fn compare_outputs(
     expected: &Outputs,
     actual: &Outputs,
 ) -> Result<usize, TargetDifference> {
-    let symbolic = plan.reference_table.as_ref().map(|table| {
-        (
-            references::symbolic(expected, table),
-            references::symbolic(actual, table),
-        )
-    });
+    let symbolic = plan
+        .reference_table
+        .as_ref()
+        .map(|table| references::symbolic(expected, actual, table));
     let (expected, actual) = match &symbolic {
         Some((expected, actual)) => (expected, actual),
         None => (expected, actual),
@@ -670,9 +668,6 @@ impl Executor {
         let specializations =
             cooperative::specialize(&theirs.cooperative_matrices, &self.device.cooperative)
                 .map_err(|shape| Outcome::skip(SkipReason::DeviceFeature, shape))?;
-        if let Some(shared) = shared_binding(&theirs) {
-            return Err(Outcome::skip(SkipReason::Binding, shared));
-        }
         if let Some(difference) = interface_difference(&theirs, &mine) {
             return Err(Outcome::Fail(format!("interface differs: {difference}")));
         }
@@ -849,19 +844,6 @@ fn confirm(
     }
 }
 
-fn shared_binding(reflection: &Reflection) -> Option<String> {
-    reflection
-        .resources
-        .windows(2)
-        .find(|pair| pair[0].set == pair[1].set && pair[0].binding == pair[1].binding)
-        .map(|pair| {
-            format!(
-                "several resources share set {} binding {}",
-                pair[0].set, pair[0].binding
-            )
-        })
-}
-
 fn interface_difference(theirs: &Reflection, mine: &Reflection) -> Option<String> {
     if theirs.model != mine.model {
         return Some(format!("stage {:?} vs {:?}", theirs.model, mine.model));
@@ -873,11 +855,16 @@ fn interface_difference(theirs: &Reflection, mine: &Reflection) -> Option<String
         ));
     }
     for resource in &theirs.resources {
-        match mine
+        let same_binding =
+            |r: &&reflect::Resource| r.set == resource.set && r.binding == resource.binding;
+        if mine
             .resources
             .iter()
-            .find(|r| r.set == resource.set && r.binding == resource.binding)
+            .any(|r| same_binding(&r) && r.kind == resource.kind)
         {
+            continue;
+        }
+        match mine.resources.iter().find(same_binding) {
             None => {
                 return Some(format!(
                     "set {} binding {} ({}) is missing",

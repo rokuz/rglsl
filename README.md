@@ -55,7 +55,9 @@ of [Amber](https://github.com/google/amber), [rokuz/amber](https://github.com/ro
 (branch `rglsl`), which adds mesh shading pipelines (EXT and NV), shader record data, NV ray
 tracing pipelines and acceleration structures, motion blur pipelines and scenes, buffer device
 addresses written into other buffers (`BUFFER_ADDRESS`), and the device features the mesh and ray
-tracing stages need. Both are pinned in `oracles.toml` and installed by
+tracing stages, float and 64-bit image atomics, multiview, transform feedback, expect/assume,
+replicated composites, compute derivatives, subgroup rotate and partitioned operations, quad
+control, fragment shader interlock and image footprints need. Both are pinned in `oracles.toml` and installed by
 `cargo xtask oracles`: it downloads the prebuilt KosmicKrisp release, checks its sha256, unpacks
 it into `target/oracles/kosmickrisp/` with an ICD manifest that points at the driver by absolute
 path, builds Amber against that loader, and prints the Vulkan device it finds. Requirements:
