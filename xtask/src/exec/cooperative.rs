@@ -1,4 +1,8 @@
+use std::collections::BTreeMap;
+
 use super::reflect::{CooperativeMatrixType, Scalar, ScalarKind};
+
+const MAX_SPECIALIZED: usize = 6;
 
 const USE_A: u32 = 0;
 const USE_B: u32 = 1;
@@ -126,6 +130,87 @@ pub fn unsupported(types: &[CooperativeMatrixType], shapes: &[Shape]) -> Option<
     })
 }
 
+fn specialized(
+    types: &[CooperativeMatrixType],
+    values: &BTreeMap<u32, u32>,
+) -> Vec<CooperativeMatrixType> {
+    types
+        .iter()
+        .map(|matrix| CooperativeMatrixType {
+            rows: matrix
+                .rows_spec
+                .and_then(|id| values.get(&id).copied())
+                .or(matrix.rows),
+            columns: matrix
+                .columns_spec
+                .and_then(|id| values.get(&id).copied())
+                .or(matrix.columns),
+            ..*matrix
+        })
+        .collect()
+}
+
+pub fn specialize(
+    types: &[CooperativeMatrixType],
+    shapes: &[Shape],
+) -> Result<Vec<(u32, u32)>, String> {
+    let Some(problem) = unsupported(types, shapes) else {
+        return Ok(Vec::new());
+    };
+    let mut defaults: BTreeMap<u32, u32> = BTreeMap::new();
+    for matrix in types {
+        if let (Some(id), Some(value)) = (matrix.rows_spec, matrix.rows) {
+            defaults.insert(id, value);
+        }
+        if let (Some(id), Some(value)) = (matrix.columns_spec, matrix.columns) {
+            defaults.insert(id, value);
+        }
+    }
+    if defaults.is_empty() || defaults.len() > MAX_SPECIALIZED {
+        return Err(problem);
+    }
+    let mut sizes: Vec<u32> = shapes.iter().flat_map(|s| [s.m, s.n, s.k]).collect();
+    sizes.sort_unstable();
+    sizes.dedup();
+    let ids: Vec<u32> = defaults.keys().copied().collect();
+    let candidates: Vec<Vec<u32>> = ids
+        .iter()
+        .map(|id| {
+            let default = defaults.get(id).copied().unwrap_or_default();
+            let mut list = vec![default];
+            list.extend(sizes.iter().copied().filter(|size| *size != default));
+            list
+        })
+        .collect();
+    let mut choice = vec![0usize; ids.len()];
+    loop {
+        let values: BTreeMap<u32, u32> = ids
+            .iter()
+            .zip(&choice)
+            .zip(&candidates)
+            .filter_map(|((id, index), list)| list.get(*index).map(|value| (*id, *value)))
+            .collect();
+        if unsupported(&specialized(types, &values), shapes).is_none() {
+            return Ok(values.into_iter().collect());
+        }
+        let mut position = 0;
+        loop {
+            let (Some(index), Some(list)) = (choice.get_mut(position), candidates.get(position))
+            else {
+                return Err(format!(
+                    "{problem}, and no values of its specialization constants make every cooperative matrix type supported"
+                ));
+            };
+            *index += 1;
+            if *index < list.len() {
+                break;
+            }
+            *index = 0;
+            position += 1;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -146,6 +231,8 @@ mod tests {
             rows: Some(rows),
             columns: Some(columns),
             usage: Some(usage),
+            rows_spec: None,
+            columns_spec: None,
         }
     }
 
@@ -190,5 +277,37 @@ mod tests {
             ..matrix(F32, 1, 8, USE_A)
         }];
         assert_eq!(unsupported(&unknown, &shapes), None);
+    }
+
+    #[test]
+    fn specialization_constants_pick_supported_sizes() {
+        let shapes = parse_shapes(
+            "cooperativeMatrix: M=16 N=16 K=32 A=7 B=7 C=9 Result=9 saturating=0 scope=3\ncooperativeMatrix: M=16 N=16 K=16 A=0 B=0 C=1 Result=1 saturating=0 scope=3",
+        );
+        let u8 = Scalar {
+            kind: ScalarKind::Uint,
+            width: 8,
+        };
+        let types = [
+            CooperativeMatrixType {
+                rows_spec: Some(0),
+                columns_spec: Some(1),
+                ..matrix(u8, 16, 16, USE_A)
+            },
+            CooperativeMatrixType {
+                rows_spec: Some(0),
+                ..matrix(F16, 16, 16, USE_A)
+            },
+        ];
+        assert_eq!(specialize(&types, &shapes), Ok(vec![(0, 16), (1, 32)]));
+        assert_eq!(specialize(&types[1..], &shapes), Ok(Vec::new()));
+        let fixed = [matrix(F32, 1, 8, USE_A)];
+        assert!(specialize(&fixed, &shapes).is_err());
+        let hopeless = [CooperativeMatrixType {
+            rows_spec: Some(3),
+            ..matrix(F32, 1, 8, USE_A)
+        }];
+        assert!(specialize(&hopeless, &shapes)
+            .is_err_and(|e| e.contains("no values of its specialization constants")));
     }
 }

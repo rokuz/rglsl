@@ -72,6 +72,7 @@ pub struct Plan {
     pub rays: Option<RayPipeline>,
     pub harness_env: Option<&'static str>,
     pub mesh_nv: bool,
+    pub specializations: Vec<(u32, u32)>,
     pub notes: Vec<String>,
     pub addresses: Vec<(String, u32)>,
 }
@@ -365,6 +366,7 @@ impl Plan {
             rays: None,
             harness_env: None,
             mesh_nv: false,
+            specializations: Vec::new(),
             notes: Vec::new(),
             addresses: Vec::new(),
         };
@@ -995,11 +997,14 @@ impl Plan {
         if self.placeholder {
             out.push_str("BUFFER fbnone FORMAT R8G8B8A8_UNORM\n");
         }
-        let entry = if self.entry == "main" {
+        let mut entry = if self.entry == "main" {
             String::new()
         } else {
             format!(" ENTRY_POINT {}", self.entry)
         };
+        for (id, value) in &self.specializations {
+            let _ = write!(entry, " SPECIALIZE {id} AS uint32 {value}");
+        }
         let attach = |name: &str| {
             if name == "tested" {
                 format!("  ATTACH tested{entry}\n")

@@ -310,6 +310,8 @@ pub struct CooperativeMatrixType {
     pub rows: Option<u32>,
     pub columns: Option<u32>,
     pub usage: Option<u32>,
+    pub rows_spec: Option<u32>,
+    pub columns_spec: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -963,12 +965,20 @@ fn cooperative_matrix_type(instruction: &Instruction, types: &Types) -> Cooperat
             .word(index)
             .and_then(|id| types.constant_u32(id))
     };
+    let spec = |index: usize| {
+        instruction
+            .word(index)
+            .filter(|id| types.get(*id).is_some_and(|i| i.is(Op::SpecConstant)))
+            .and_then(|id| types.decorations.value(id, Decoration::SpecId))
+    };
     CooperativeMatrixType {
         component: instruction.word(1).and_then(|id| types.scalar(id)),
         scope: constant(2),
         rows: constant(3),
         columns: constant(4),
         usage: constant(5),
+        rows_spec: spec(3),
+        columns_spec: spec(4),
     }
 }
 

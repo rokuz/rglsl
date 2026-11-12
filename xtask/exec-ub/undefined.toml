@@ -40,7 +40,7 @@ twin = "calls `EmitMeshTasksEXT(1, 1, 1)` after the atomics; the payload atomic 
 
 ["spv.coopmatKHR_constructor.comp"]
 undefined = "declares 8×8 cooperative matrices of types no device lists in `VkCooperativeMatrixPropertiesKHR` (the AMD target lists only 16×16 with float16, uint8 and int8 for `gl_MatrixUseA`; VUID-RuntimeSpirv-OpTypeCooperativeMatrixKHR-10163): the AMD driver crashes compiling it"
-twin = "uses 16×16 matrices and only the `gl_MatrixUseA` component types the AMD target lists (float16_t, uint8_t, int8_t): the float, uint32_t, uint16_t, int32_t and int16_t conversions are dropped, and `mat` and `matArr` are float16_t"
+twin = "uses 16×16 matrices and only the `gl_MatrixUseA` component types the AMD target lists (float16_t, uint8_t, int8_t): the float, uint32_t, uint16_t, int32_t and int16_t conversions are dropped, and `mat` and `matArr` are float16_t. The NVIDIA target lists `gl_MatrixUseA` float16_t only as 16×16 and 16×8 and uint8_t/int8_t only as 16×32, so no size serves a conversion between them there and the twin is skipped on NVIDIA with that reason"
 
 ["spv.for-notest.vert"]
 undefined = "the loop has no condition and no exit, so the vertex shader never terminates and the draw has no result (the AMD driver crashes compiling it; Metal's compiler deletes the loop)"
@@ -57,3 +57,15 @@ twin = "also writes `vals[3] = vector<int, 12>(4)`"
 ["spv.matrix.float16.frag"]
 undefined = "divides by zero: `f16mat3x4(x)` leaves the off-diagonal elements 0, so `sum34 /= matrixCompMult(m1, m2)` and `f / m1` divide by 0 (and by `src`, which may be 0 or overflow half precision); SPIR-V leaves the result undefined, and glslang's own module wrote infinities of different signs on two runs on the NVIDIA target"
 twin = "fills every element of `m1` and `m2` and takes every operand from `exp2(floor(clamp(src, -2.0, 2.0)))`, a power of two from 0.25 to 4, so no divisor is 0, nothing overflows half precision, and dividing equals multiplying by the reciprocal (glslang lowers `m / s` to `m * (1 / s)`, rglsl to a division per column, which rounds differently in half precision); drops the comments"
+
+["spv.coopmatKHR_arithmetic.comp"]
+undefined = "declares cooperative matrices no device lists in `VkCooperativeMatrixPropertiesKHR` (VUID-RuntimeSpirv-OpTypeCooperativeMatrixKHR-10163): float and uint32_t `gl_MatrixUseA`/`gl_MatrixUseB` (neither remote target has a float32 or uint32 A or B type) and 8×8 float16_t, uint8_t and int8_t (the AMD target lists 16×16, the NVIDIA target 16×16 or 16×8 for float16_t and 16×32 for uint8_t and int8_t); it also reads its matrices uninitialized and divides `u8` and `i8` by zero after `-=`"
+twin = "drops the float and uint32_t matrices and their operations; `f16` is 16×16, `u8` and `i8` are 16×`COLUMNS8`, a specialization constant (default 16) the harness sets to a size the device lists (16 on AMD, 32 on NVIDIA); every matrix is initialized with a constant and each `-=` moves after the `/=` so no division is by zero; drops the blank line"
+
+["spv.qcom.multiple_wait_queues.comp"]
+undefined = "its float `gl_MatrixUseA`/`gl_MatrixUseB` matrices (TILE_M×8, 8×TILE_N, specialization constants defaulting to 1) match no `VkCooperativeMatrixPropertiesKHR` entry of either remote target, whatever the constants, since neither lists a float32 A or B type (VUID-RuntimeSpirv-OpTypeCooperativeMatrixKHR-10163; NVIDIA's shader compiler crashes in nvgpucomp64.dll, also with the `MultipleWaitQueuesQCOM` loop control removed); the accumulator `matC` is read uninitialized"
+twin = "the inputs and `matA`/`matB` are float16_t with K = 16, so TILE_M and TILE_N are specialized to 16 on both remote targets; `matC` starts at 0.0; the `MultipleWaitQueuesQCOM` loop controls stay (both drivers accept them with valid matrix sizes; the validation layer's older SPIR-V grammar does not know the bit); drops the comments"
+
+["spv.ext.meshShaderRedeclBuiltins.mesh"]
+undefined = "writes `gl_Layer = 7` and `gl_ViewportIndex = 8` with one viewport and one layer, leaves clip distances 0–2 and cull distances 0, 1 and 3 and the point indices 1–30 unwritten, so which points survive clipping and culling and which vertices they use is undefined (glslang's own module gave different results on two runs on the AMD target)"
+twin = "writes 0 to `gl_Layer` and `gl_ViewportIndex`, 3.0 to every clip distance and 4.0 to every cull distance, and `gl_PrimitivePointIndicesEXT[iid] = iid` before the barrier that precedes the bound-limit writes; drops the comments"

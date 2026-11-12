@@ -649,18 +649,16 @@ impl Executor {
             seed: case.name.clone(),
             ..Inputs::default()
         };
-        let plan = Plan::new(&theirs, &inputs).map_err(refusal)?;
+        let mut plan = Plan::new(&theirs, &inputs).map_err(refusal)?;
         if let Some(need) = self.missing(&plan.needs) {
             return Err(Outcome::skip(
                 SkipReason::DeviceFeature,
                 self.why_missing(need),
             ));
         }
-        if let Some(shape) =
-            cooperative::unsupported(&theirs.cooperative_matrices, &self.device.cooperative)
-        {
-            return Err(Outcome::skip(SkipReason::DeviceFeature, shape));
-        }
+        let specializations =
+            cooperative::specialize(&theirs.cooperative_matrices, &self.device.cooperative)
+                .map_err(|shape| Outcome::skip(SkipReason::DeviceFeature, shape))?;
         if let Some(shared) = shared_binding(&theirs) {
             return Err(Outcome::skip(SkipReason::Binding, shared));
         }
@@ -680,6 +678,8 @@ impl Executor {
             )));
         }
         our_plan.needs.extend(plan.needs.iter().copied());
+        plan.specializations.clone_from(&specializations);
+        our_plan.specializations = specializations;
         let dir = self.work.join(&case.name);
         let harness = self
             .prepare(&plan, &dir)
