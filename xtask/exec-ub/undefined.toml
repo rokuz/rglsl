@@ -56,4 +56,4 @@ twin = "also writes `vals[3] = vector<int, 12>(4)`"
 
 ["spv.matrix.float16.frag"]
 undefined = "divides by zero: `f16mat3x4(x)` leaves the off-diagonal elements 0, so `sum34 /= matrixCompMult(m1, m2)` and `f / m1` divide by 0 (and by `src`, which may be 0 or overflow half precision); SPIR-V leaves the result undefined, and glslang's own module wrote infinities of different signs on two runs on the NVIDIA target"
-twin = "fills every element of `m1` and `m2` and takes every operand from `exp2(floor(clamp(src, -2.0, 2.0)))`, a power of two from 0.25 to 4, so no divisor is 0, nothing overflows half precision, and dividing equals multiplying by the reciprocal (glslang lowers `m / s` to `m * (1 / s)`, rglsl to a division per column, which rounds differently in half precision); drops the comments"
+twin = "fills every element of `m1` and `m2` and takes every operand from `exp2(floor(clamp(src, -2.0, 2.0)))`, a power of two from 0.25 to 4, so no divisor is 0, nothing overflows half precision; drops the comments"
