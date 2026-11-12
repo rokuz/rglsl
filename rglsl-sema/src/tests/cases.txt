@@ -5394,7 +5394,16 @@ void main() {
 #extension GL_EXT_shader_8bit_storage : require
 void use(tensorARM<int8_t, 1> tensor) {}
 void main() {}
-### unsized tensor arrays need constant indices | comp 460 | 8:VariableIndexIntoUnsizedArray
+### unsized tensor arrays need constant indices without nonuniform_qualifier | comp 460 | 7:VariableIndexIntoUnsizedArray
+#extension GL_ARM_tensors : require
+layout(set = 0, binding = 0) uniform tensorARM<int, 1> t[];
+layout(set = 0, binding = 1) buffer B { uint index; } b;
+void main() {
+    int value;
+    tensorReadARM(t[b.index], uint[](0), value);
+    tensorReadARM(t[2], uint[](0), value);
+}
+### runtime tensor arrays with nonuniform_qualifier | comp 460 | ok
 #extension GL_ARM_tensors : require
 #extension GL_EXT_nonuniform_qualifier : require
 layout(set = 0, binding = 0) uniform tensorARM<int, 1> t[];

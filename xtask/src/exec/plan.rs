@@ -491,6 +491,12 @@ pub fn tensor_refusal(reflection: &Reflection) -> String {
         .iter()
         .filter_map(|resource| match &resource.kind {
             ResourceKind::Tensor(tensor) => Some(match resource.count {
+                Some(_) if tensor.runtime_array => format!(
+                    "set {} binding {} {}[] (runtime array)",
+                    resource.set,
+                    resource.binding,
+                    tensor.glsl()
+                ),
                 Some(count) => format!(
                     "set {} binding {} {}[{count}]",
                     resource.set,
