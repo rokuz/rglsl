@@ -59,6 +59,7 @@ pub const RAY_TRACING_NV: [Need; 4] = [
 ];
 
 pub const MULTIVIEW: Need = F("MultiviewFeatures.multiview");
+pub const MULTIVIEW_MESH: Need = F("MeshShaderFeaturesEXT.multiviewMeshShader");
 pub const MESH_SHADER: Need = F("MeshShaderFeaturesEXT.meshShader");
 pub const TASK_SHADER: Need = F("MeshShaderFeaturesEXT.taskShader");
 pub const MESH_SHADER_NV: Need = F("MeshShaderFeaturesNV.meshShader");
@@ -520,6 +521,7 @@ pub fn probes() -> Vec<Need> {
     needs.extend(FRAGMENT_DENSITY);
     needs.extend(SHADING_RATE_IMAGE);
     needs.push(MESH_DERIVATIVES);
+    needs.push(MULTIVIEW_MESH);
     needs.extend([
         F("fragmentStoresAndAtomics"),
         F("vertexPipelineStoresAndAtomics"),

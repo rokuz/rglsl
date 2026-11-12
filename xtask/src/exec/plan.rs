@@ -22,6 +22,7 @@ const TEXEL_BUFFER_TEXELS: u32 = 64;
 const RAY_COUNT: u32 = rays::LAUNCH_SIZE * rays::LAUNCH_SIZE;
 const MAX_BUFFER_BYTES: u32 = 1 << 22;
 const XFB_VERTICES: u32 = 64;
+const MULTIVIEW_VIEWS: u32 = 2;
 const DATA_DIR: &str = "{DATA}";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,6 +72,7 @@ pub struct Plan {
     pub attachments: Vec<Attachment>,
     pub unwritten_attachments: BTreeSet<u32>,
     pub framebuffer: u32,
+    pub views: u32,
     pub placeholder: bool,
     pub draw: Draw,
     pub rays: Option<RayPipeline>,
@@ -618,6 +620,7 @@ impl Plan {
             attachments: Vec::new(),
             unwritten_attachments: BTreeSet::new(),
             framebuffer: inputs.framebuffer.unwrap_or(FRAMEBUFFER),
+            views: 0,
             placeholder: false,
             draw: Draw::Dispatch,
             rays: None,
@@ -1154,6 +1157,15 @@ impl Plan {
                 rays::SCENE_TLAS
             );
         }
+        if needs.contains(&requirements::MULTIVIEW)
+            && matches!(plan.draw, Draw::Rect | Draw::Array { .. } | Draw::Mesh)
+            && !plan.mesh_nv
+        {
+            plan.views = MULTIVIEW_VIEWS;
+            if plan.draw == Draw::Mesh {
+                needs.insert(requirements::MULTIVIEW_MESH);
+            }
+        }
         plan.add_attachment_targets();
         plan.needs = needs;
         Ok(plan)
@@ -1408,7 +1420,7 @@ impl Plan {
     }
 
     fn add_attachment_targets(&mut self) {
-        let pixels = self.framebuffer * self.framebuffer;
+        let pixels = self.framebuffer * self.framebuffer * self.views.max(1);
         for attachment in self.attachments.clone() {
             if self.unwritten_attachments.contains(&attachment.location) {
                 continue;
@@ -1542,6 +1554,9 @@ impl Plan {
                     let _ = writeln!(out, "  PATCH_CONTROL_POINTS {count}");
                 }
                 let _ = writeln!(out, "  FRAMEBUFFER_SIZE {size} {size}");
+                if self.views > 0 {
+                    let _ = writeln!(out, "  MULTIVIEW {}", self.views);
+                }
                 for attachment in &self.attachments {
                     let _ = writeln!(
                         out,
@@ -1710,6 +1725,42 @@ mod tests {
 
         let again = planned(&module, &inputs)?;
         assert_eq!(again.files, plan.files);
+        Ok(())
+    }
+
+    #[test]
+    fn multiview_renders_two_views() -> anyhow::Result<()> {
+        let mut module = reflection(ExecutionModel::Fragment);
+        module.capabilities.insert(spirv::Capability::MultiView);
+        module.outputs = vec![Varying {
+            location: 0,
+            component: 0,
+            ty: VaryingType::Simple {
+                scalar: F32,
+                count: 4,
+            },
+            array: None,
+            interpolation: Interpolation::Smooth,
+            centroid: false,
+            sample: false,
+            patch: false,
+            per_primitive: false,
+        }];
+        let plan = planned(&module, &Inputs::default())?;
+        assert_eq!(plan.views, 2);
+        assert_eq!(
+            plan.targets[0].slots.len(),
+            (FRAMEBUFFER * FRAMEBUFFER * 2 * 4) as usize
+        );
+        let (tested, dump, data) = paths();
+        let harness = [(ShaderKind::Vertex, PathBuf::from("/w/harness.spv"))];
+        let script = plan.script(ScriptPaths {
+            tested: &tested,
+            harness: &harness,
+            dump: &dump,
+            data: &data,
+        });
+        assert!(script.contains("  FRAMEBUFFER_SIZE 32 32\n  MULTIVIEW 2\n"));
         Ok(())
     }
 
