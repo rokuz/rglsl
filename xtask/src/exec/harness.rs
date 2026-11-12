@@ -54,16 +54,82 @@ pub fn simple_32(varying: &Varying) -> Result<(Scalar, u32), String> {
     }
 }
 
-fn glsl_type(scalar: Scalar, count: u32) -> String {
-    let (prefix, base) = match scalar.kind {
-        ScalarKind::Float => ("", "float"),
-        ScalarKind::Sint => ("i", "int"),
-        ScalarKind::Uint | ScalarKind::Bool => ("u", "uint"),
-    };
-    if count == 1 {
-        base.to_string()
+pub fn simple(varying: &Varying) -> Result<(Scalar, u32), String> {
+    match &varying.ty {
+        VaryingType::Simple { scalar, count }
+            if matches!(scalar.width, 16 | 32 | 64) && scalar.kind != ScalarKind::Bool =>
+        {
+            if varying.component != 0 {
+                return Err(format!(
+                    "location {} uses a component qualifier",
+                    varying.location
+                ));
+            }
+            Ok((*scalar, *count))
+        }
+        VaryingType::Simple { scalar, .. } => Err(format!(
+            "location {} has {}-bit components",
+            varying.location, scalar.width
+        )),
+        VaryingType::Unsupported(what) => Err(format!("location {}: {what}", varying.location)),
+    }
+}
+
+pub const EXPLICIT_TYPES: &str = "#extension GL_EXT_shader_explicit_arithmetic_types : require\n";
+
+fn explicit_types<'a>(scalars: impl IntoIterator<Item = &'a Scalar>) -> &'static str {
+    if scalars.into_iter().any(|scalar| scalar.width != 32) {
+        EXPLICIT_TYPES
     } else {
-        format!("{prefix}vec{count}")
+        ""
+    }
+}
+
+pub const fn locations(scalar: Scalar, count: u32) -> u32 {
+    if scalar.width == 64 && count > 2 {
+        2
+    } else {
+        1
+    }
+}
+
+fn scalar_type(scalar: Scalar) -> &'static str {
+    match (scalar.kind, scalar.width) {
+        (ScalarKind::Float, 16) => "float16_t",
+        (ScalarKind::Float, 64) => "double",
+        (ScalarKind::Float, _) => "float",
+        (ScalarKind::Sint, 16) => "int16_t",
+        (ScalarKind::Sint, 64) => "int64_t",
+        (ScalarKind::Sint, _) => "int",
+        (ScalarKind::Uint | ScalarKind::Bool, 16) => "uint16_t",
+        (ScalarKind::Uint | ScalarKind::Bool, 64) => "uint64_t",
+        (ScalarKind::Uint | ScalarKind::Bool, _) => "uint",
+    }
+}
+
+fn glsl_type(scalar: Scalar, count: u32) -> String {
+    if count == 1 {
+        return scalar_type(scalar).to_string();
+    }
+    let prefix = match (scalar.kind, scalar.width) {
+        (ScalarKind::Float, 16) => "f16",
+        (ScalarKind::Float, 64) => "d",
+        (ScalarKind::Float, _) => "",
+        (ScalarKind::Sint, 16) => "i16",
+        (ScalarKind::Sint, 64) => "i64",
+        (ScalarKind::Sint, _) => "i",
+        (ScalarKind::Uint | ScalarKind::Bool, 16) => "u16",
+        (ScalarKind::Uint | ScalarKind::Bool, 64) => "u64",
+        (ScalarKind::Uint | ScalarKind::Bool, _) => "u",
+    };
+    format!("{prefix}vec{count}")
+}
+
+fn sized(scalar: Scalar, expression: String) -> String {
+    if scalar.width == 32 {
+        expression
+    } else {
+        format!("{}({expression})", scalar_type(scalar))
     }
 }
 
@@ -109,9 +175,18 @@ fn declarator(varying: &Varying) -> String {
 }
 
 fn elements(varying: &Varying) -> Vec<(u32, String)> {
+    let stride = match &varying.ty {
+        VaryingType::Simple { scalar, count } => locations(*scalar, *count),
+        VaryingType::Unsupported(_) => 1,
+    };
     match varying.array {
         Some(length) => (0..length)
-            .map(|i| (varying.location + i, format!("v{}[{i}]", varying.location)))
+            .map(|i| {
+                (
+                    varying.location + i * stride,
+                    format!("v{}[{i}]", varying.location),
+                )
+            })
             .collect(),
         None => vec![(varying.location, format!("v{}", varying.location))],
     }
@@ -120,8 +195,10 @@ fn elements(varying: &Varying) -> Vec<(u32, String)> {
 pub fn vertex_for_fragment(inputs: &[Varying]) -> Result<String, String> {
     let mut declarations = String::new();
     let mut body = String::new();
+    let mut scalars = Vec::new();
     for varying in inputs {
-        let (scalar, count) = simple_32(varying)?;
+        let (scalar, count) = simple(varying)?;
+        scalars.push(scalar);
         let ty = glsl_type(scalar, count);
         let _ = writeln!(
             declarations,
@@ -132,13 +209,19 @@ pub fn vertex_for_fragment(inputs: &[Varying]) -> Result<String, String> {
         );
         for (location, name) in elements(varying) {
             let components: Vec<String> = (0..count)
-                .map(|c| component_expression(scalar, location, c, "a_pos", "gl_VertexIndex"))
+                .map(|c| {
+                    sized(
+                        scalar,
+                        component_expression(scalar, location, c, "a_pos", "gl_VertexIndex"),
+                    )
+                })
                 .collect();
             let _ = writeln!(body, "    {name} = {ty}({});", components.join(", "));
         }
     }
+    let extension = explicit_types(&scalars);
     Ok(format!(
-        "#version 450\nlayout(location = 0) in vec4 a_pos;\n{declarations}void main() {{\n    gl_Position = a_pos;\n{body}}}\n"
+        "#version 450\n{extension}layout(location = 0) in vec4 a_pos;\n{declarations}void main() {{\n    gl_Position = a_pos;\n{body}}}\n"
     ))
 }
 
@@ -152,8 +235,9 @@ pub fn fragment_for(outputs: &[Varying], mesh_nv: bool) -> (String, Vec<Attachme
         components: 4,
     }];
     let mut ignored = Vec::new();
+    let mut scalars = Vec::new();
     for varying in outputs {
-        let (scalar, count) = match simple_32(varying) {
+        let (scalar, count) = match simple(varying) {
             Ok(simple) => simple,
             Err(reason) => {
                 ignored.push(reason);
@@ -168,6 +252,7 @@ pub fn fragment_for(outputs: &[Varying], mesh_nv: bool) -> (String, Vec<Attachme
             ));
             continue;
         }
+        scalars.push(scalar);
         let ty = glsl_type(scalar, count);
         let primitive = match (varying.per_primitive, mesh_nv) {
             (false, _) => "",
@@ -181,7 +266,11 @@ pub fn fragment_for(outputs: &[Varying], mesh_nv: bool) -> (String, Vec<Attachme
             qualifier(varying, scalar),
             declarator(varying)
         );
-        let out_ty = glsl_type(scalar, 4);
+        let wide = Scalar {
+            kind: scalar.kind,
+            width: 32,
+        };
+        let out_ty = glsl_type(wide, 4);
         let zero = match scalar.kind {
             ScalarKind::Float => "0.0",
             ScalarKind::Sint => "0",
@@ -207,11 +296,12 @@ pub fn fragment_for(outputs: &[Varying], mesh_nv: bool) -> (String, Vec<Attachme
             });
         }
     }
-    let extension = match (outputs.iter().any(|v| v.per_primitive), mesh_nv) {
+    let mesh = match (outputs.iter().any(|v| v.per_primitive), mesh_nv) {
         (false, _) => "",
         (true, false) => "#extension GL_EXT_mesh_shader : require\n",
         (true, true) => "#extension GL_NV_mesh_shader : require\n",
     };
+    let extension = format!("{mesh}{}", explicit_types(&scalars));
     (
         format!(
             "#version 450\n{extension}{declarations}layout(location = 0) out vec4 o0;\nvoid main() {{\n{body}}}\n"
@@ -303,7 +393,7 @@ pub const PATCH_VERTICES: u32 = 3;
 const TESS_LEVEL: &str = "3.0";
 
 fn tessellation_varying(varying: &Varying) -> Result<(Scalar, u32), String> {
-    let (scalar, count) = simple_32(varying)?;
+    let (scalar, count) = simple(varying)?;
     if varying.array.is_some() {
         return Err(format!(
             "location {}: array varying between tessellation stages",
@@ -320,17 +410,22 @@ pub fn control_for_evaluation(inputs: &[Varying]) -> Result<String, String> {
     );
     let mut patch_body = String::new();
     let position = "gl_in[gl_InvocationID].gl_Position";
+    let mut scalars = Vec::new();
     for varying in inputs {
         let (scalar, count) = tessellation_varying(varying)?;
+        scalars.push(scalar);
         let ty = glsl_type(scalar, count);
         let location = varying.location;
         let components: Vec<String> = (0..count)
             .map(|c| {
-                if varying.patch {
-                    component_expression(scalar, location, c, "vec4(0.25, -0.5, 0.0, 1.0)", "7")
-                } else {
-                    component_expression(scalar, location, c, position, "gl_InvocationID")
-                }
+                sized(
+                    scalar,
+                    if varying.patch {
+                        component_expression(scalar, location, c, "vec4(0.25, -0.5, 0.0, 1.0)", "7")
+                    } else {
+                        component_expression(scalar, location, c, position, "gl_InvocationID")
+                    },
+                )
             })
             .collect();
         if varying.patch {
@@ -355,8 +450,9 @@ pub fn control_for_evaluation(inputs: &[Varying]) -> Result<String, String> {
             );
         }
     }
+    let extension = explicit_types(&scalars);
     Ok(format!(
-        "#version 450\nlayout(vertices = {PATCH_VERTICES}) out;\n{declarations}void main() {{\n{body}    if (gl_InvocationID == 0) {{\n        gl_TessLevelOuter[0] = {TESS_LEVEL};\n        gl_TessLevelOuter[1] = {TESS_LEVEL};\n        gl_TessLevelOuter[2] = {TESS_LEVEL};\n        gl_TessLevelOuter[3] = {TESS_LEVEL};\n        gl_TessLevelInner[0] = {TESS_LEVEL};\n        gl_TessLevelInner[1] = {TESS_LEVEL};\n{patch_body}    }}\n}}\n"
+        "#version 450\n{extension}layout(vertices = {PATCH_VERTICES}) out;\n{declarations}void main() {{\n{body}    if (gl_InvocationID == 0) {{\n        gl_TessLevelOuter[0] = {TESS_LEVEL};\n        gl_TessLevelOuter[1] = {TESS_LEVEL};\n        gl_TessLevelOuter[2] = {TESS_LEVEL};\n        gl_TessLevelOuter[3] = {TESS_LEVEL};\n        gl_TessLevelInner[0] = {TESS_LEVEL};\n        gl_TessLevelInner[1] = {TESS_LEVEL};\n{patch_body}    }}\n}}\n"
     ))
 }
 
@@ -371,8 +467,10 @@ pub fn evaluation_for_control(
         "    gl_Position = vec4(gl_TessCoord.x * 1.6 - 0.8, gl_TessCoord.y * 1.6 - 0.8, 0.5, 1.0);\n",
     );
     let mut forwarded = Vec::new();
+    let mut scalars = Vec::new();
     for varying in outputs {
         let (scalar, count) = tessellation_varying(varying)?;
+        scalars.push(scalar);
         let ty = glsl_type(scalar, count);
         let location = varying.location;
         let flat = scalar.kind != ScalarKind::Float;
@@ -420,8 +518,11 @@ pub fn evaluation_for_control(
             per_primitive: false,
         });
     }
+    let extension = explicit_types(&scalars);
     Ok((
-        format!("#version 450\nlayout(triangles) in;\n{declarations}void main() {{\n{body}}}\n"),
+        format!(
+            "#version 450\n{extension}layout(triangles) in;\n{declarations}void main() {{\n{body}}}\n"
+        ),
         forwarded,
     ))
 }
@@ -476,6 +577,53 @@ mod tests {
         assert_eq!(attachments.len(), 3);
         assert!(source.contains("layout(location = 2) in vec4 v2[2];"));
         assert!(source.contains("o2 = vec4(v2[1]);"));
+        Ok(())
+    }
+
+    #[test]
+    fn harnesses_pass_16_and_64_bit_varyings() -> anyhow::Result<()> {
+        let mut half = varying(0, ScalarKind::Float, 3);
+        half.ty = VaryingType::Simple {
+            scalar: Scalar {
+                kind: ScalarKind::Float,
+                width: 16,
+            },
+            count: 3,
+        };
+        let mut double = varying(1, ScalarKind::Float, 3);
+        double.ty = VaryingType::Simple {
+            scalar: Scalar {
+                kind: ScalarKind::Float,
+                width: 64,
+            },
+            count: 3,
+        };
+        double.interpolation = Interpolation::Flat;
+        double.array = Some(2);
+        let mut long = varying(5, ScalarKind::Sint, 1);
+        long.ty = VaryingType::Simple {
+            scalar: Scalar {
+                kind: ScalarKind::Sint,
+                width: 64,
+            },
+            count: 1,
+        };
+        let inputs = [half, double, long];
+        let source = vertex_for_fragment(&inputs).map_err(anyhow::Error::msg)?;
+        assert!(source.starts_with(&format!("#version 450\n{EXPLICIT_TYPES}")));
+        assert!(source.contains("layout(location = 0) out f16vec3 v0;"));
+        assert!(source.contains("v0 = f16vec3(float16_t("));
+        assert!(source.contains("layout(location = 1) flat out dvec3 v1[2];"));
+        assert!(source.contains("v1[1] = dvec3(double((a_pos.x * 1.0"));
+        assert!(source.contains("layout(location = 5) flat out int64_t v5;"));
+        assert!(source.contains("v5 = int64_t(int64_t((gl_VertexIndex + 20)));"));
+        let (source, attachments, ignored) = fragment_for(&inputs, false);
+        assert!(ignored.is_empty());
+        assert_eq!(attachments.len(), 5);
+        assert!(source.contains(EXPLICIT_TYPES));
+        assert!(source.contains("o1 = vec4(v0, 0.0);"));
+        assert!(source.contains("o3 = vec4(v1[1], 0.0);"));
+        assert!(source.contains("o4 = ivec4(v5, 0, 0, 0);"));
         Ok(())
     }
 

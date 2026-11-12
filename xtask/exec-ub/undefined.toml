@@ -125,3 +125,27 @@ twin = "writes 0 to `gl_Layer` and `gl_ViewportIndex`, 1 to `gl_ViewportMask[0]`
 ["spv.meshShaderRedeclBuiltins.mesh"]
 undefined = "writes `gl_Layer = 7`, `gl_ViewportIndex = 8` and `gl_ViewportMask[0] = 9` with one viewport and one layer, leaves clip distances 0–2, cull distances 0 and 1 and most primitive indices unwritten, writes primitive 32 of 32 (`iid + 1`), sets `gl_PrimitiveCountNV` to 96 with `max_primitives = 32`, and every invocation races on the bound-limit writes"
 twin = "writes 0 to `gl_Layer` and `gl_ViewportIndex`, 1 to `gl_ViewportMask[0]`, every clip and cull distance of the vertices it writes, and `gl_PrimitiveIndicesNV[iid * 3 + k] = iid`; copies to primitive `iid + 1` only below `MAX_PRIM`; invocation 0 alone does the bound-limit writes, with `gl_PrimitiveCountNV = MAX_PRIM`; drops the comments"
+
+["spv.1.4.image.frag"]
+undefined = "`ii2D` (int) and `ui2D` (uint) share binding 12, and `ii2DMS` and `ui2DMS` share binding 13, and all of them are used, so one image view cannot have the numeric type of both (VUID-vkCmdDraw-format-07753); every fragment of a primitive loads and stores the same texels `ic2D` without synchronization"
+twin = "binds `ui2D` at binding 14 and `ui2DMS` at binding 15, and only the fragment at (3, 5) loads and stores"
+
+["spv.image.frag"]
+undefined = "every fragment of a primitive loads, stores and runs atomics on the same texels without synchronization; the coordinates come from flat inputs that may leave the images (the layer of `ic3D` and `ic2D`, which the harness fills with values up to 11); `imageStore(i2DMSArray, ic3D, 4, v)` writes sample 4 of a 4-sample image"
+twin = "only the fragment at (3, 5) loads, stores and runs atomics, with coordinates masked into every image (`ic1D & 3`, `ic2D & ivec2(3, 1)`, `ic3D & ivec3(3, 3, 1)`), sample 3 in place of 4, and `wo2D` (which shares binding 1 with `i2D`) written four texels further along x, so its store does not overwrite the texel of `i2D`"
+
+["spv.memoryQualifier.frag"]
+undefined = "`i3D` (image3D) and `iCube` (imageCube) share binding 3 and both are used, so one descriptor cannot have the view type of both (VUID-vkCmdDraw-viewType-07752); `texel[i1]` indexes a vec4 with a buffer value that may be 4 or more"
+twin = "binds `iCube` at binding 2 and writes `texel[i1 & 3]`"
+
+["spv.samplerlessTextureFunctions.frag"]
+undefined = "`tex2D` (texture2D) and `texMS` (texture2DMS) share binding 1 and both are used, so one descriptor cannot be both a single-sampled and a multisampled image (VUID-vkCmdDraw-viewType-07752)"
+twin = "binds `texMS` at binding 2"
+
+["spv.glsl.register.noautoassign.frag"]
+undefined = "the sampler `g_sSamp5` and the uniform block `myblock` share binding 4 and both are used, so the descriptor cannot have the type of both"
+twin = "binds `myblock` at binding 15"
+
+["spv.nonuniform.frag"]
+undefined = "reads the uninitialized private global `nu_gf` and the uninitialized locals `dyn_i`, `nu_li`, `v`, `m`, `s`, `arr`, `uv`, `um`, `us` and `uarr`, some of them as descriptor indices; indexes `uniformTexArr[8]`, `uv` and `um` with the flat input `nu_ii`, which may be out of range; every fragment of a primitive stores its own `b` into the same `storageBuffer[nu_ii].b` (glslang's own module stored different values on two runs on the NVIDIA target)"
+twin = "initializes every one of them, indexes with `nu_ii & 7` (`& 3` for `uv` and `um`) and stores `b` from the fragment at (3, 5) only"

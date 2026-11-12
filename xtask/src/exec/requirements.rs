@@ -63,6 +63,8 @@ pub const MESH_SHADER: Need = F("MeshShaderFeaturesEXT.meshShader");
 pub const TASK_SHADER: Need = F("MeshShaderFeaturesEXT.taskShader");
 pub const MESH_SHADER_NV: Need = F("MeshShaderFeaturesNV.meshShader");
 pub const TASK_SHADER_NV: Need = F("MeshShaderFeaturesNV.taskShader");
+pub const MESH_DERIVATIVES: Need =
+    F("ComputeShaderDerivativesPropertiesKHR.meshAndTaskShaderDerivatives");
 pub const PRIMITIVE_SHADING_RATE: Need =
     F("FragmentShadingRateFeaturesKHR.primitiveFragmentShadingRate");
 pub const PRIMITIVE_SHADING_RATE_MESH: Need =
@@ -280,11 +282,8 @@ pub fn capability(capability: Capability) -> Requirement {
         C::SubgroupVoteKHR => needs![E("VK_EXT_shader_subgroup_vote")],
         C::MultiView => needs![MULTIVIEW],
         C::PerViewAttributesNV => needs![MULTIVIEW, E("VK_NVX_multiview_per_view_attributes")],
-        C::InputAttachment => {
-            Requirement::Unsupported(
-                "input attachments (Amber builds render passes without input attachment references and has no input attachment descriptors)",
-            )
-        }
+        C::FragmentDensityEXT => NONE,
+        C::InputAttachment => NONE,
         C::CooperativeMatrixNV => {
             Requirement::Unsupported("NV cooperative matrices (Amber cannot enable them)")
         }
@@ -439,6 +438,8 @@ pub fn extension(name: &str) -> bool {
             | "SPV_NV_geometry_shader_passthrough"
             | "SPV_KHR_device_group"
             | "SPV_KHR_relaxed_extended_instruction"
+            | "SPV_EXT_fragment_invocation_density"
+            | "SPV_NV_shading_rate"
     )
 }
 
@@ -447,9 +448,21 @@ pub const RELAXED_EXTENDED_INSTRUCTION: [Need; 2] = [
     F("ShaderRelaxedExtendedInstructionFeaturesKHR.shaderRelaxedExtendedInstruction"),
 ];
 
+pub const FRAGMENT_DENSITY: [Need; 2] = [
+    E("VK_EXT_fragment_density_map"),
+    F("FragmentDensityMapFeaturesEXT.fragmentDensityMap"),
+];
+
+pub const SHADING_RATE_IMAGE: [Need; 2] = [
+    E("VK_NV_shading_rate_image"),
+    F("ShadingRateImageFeaturesNV.shadingRateImage"),
+];
+
 pub fn extension_needs(name: &str) -> &'static [Need] {
     match name {
         "SPV_KHR_relaxed_extended_instruction" => &RELAXED_EXTENDED_INSTRUCTION,
+        "SPV_EXT_fragment_invocation_density" => &FRAGMENT_DENSITY,
+        "SPV_NV_shading_rate" => &SHADING_RATE_IMAGE,
         _ => &[],
     }
 }
@@ -504,6 +517,9 @@ pub fn probes() -> Vec<Need> {
         needs.extend(multiview_stage(model));
     }
     needs.extend(RELAXED_EXTENDED_INSTRUCTION);
+    needs.extend(FRAGMENT_DENSITY);
+    needs.extend(SHADING_RATE_IMAGE);
+    needs.push(MESH_DERIVATIVES);
     needs.extend([
         F("fragmentStoresAndAtomics"),
         F("vertexPipelineStoresAndAtomics"),
@@ -544,8 +560,12 @@ mod tests {
                 "ShaderImageAtomicInt64FeaturesEXT.shaderImageInt64Atomics"
             )])
         );
-        assert!(matches!(
+        assert_eq!(
             capability(Capability::InputAttachment),
+            Requirement::Needs(&[])
+        );
+        assert!(matches!(
+            capability(Capability::CooperativeMatrixNV),
             Requirement::Unsupported(_)
         ));
         assert_eq!(
