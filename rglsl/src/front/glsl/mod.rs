@@ -122,6 +122,12 @@ impl From<ShaderStage> for Options {
 #[non_exhaustive]
 pub struct Frontend;
 
+#[derive(Debug)]
+pub struct Analyzed {
+    pub unit: rglsl_ast::TranslationUnit,
+    pub analysis: rglsl_sema::Analysis,
+}
+
 impl Frontend {
     /// Parses a shader either outputting a shader [`Module`] or a list of
     /// [`Error`]s.
@@ -157,6 +163,16 @@ impl Frontend {
         includer: &mut dyn Includer,
     ) -> Result<crate::object::ObjectModule, ParseErrors> {
         lower::compile(options, source, root, includer)
+    }
+
+    pub fn analyze_with_includer(
+        &mut self,
+        options: &Options,
+        source: &str,
+        root: FileId,
+        includer: &mut dyn Includer,
+    ) -> Option<Analyzed> {
+        lower::analyze(options, source, root, includer)
     }
 
     #[doc(hidden)]

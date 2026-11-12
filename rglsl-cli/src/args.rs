@@ -100,6 +100,8 @@ pub struct Options {
     pub version: Option<VersionDump>,
     pub dump_config: bool,
     pub config_file: Option<String>,
+    pub reflect: bool,
+    pub reflect_options: crate::reflect::Options,
     pub files: Vec<String>,
     pub command_line: String,
 }
@@ -475,9 +477,15 @@ fn long_option(cursor: &mut Cursor, options: &mut Options) -> Result<(), Exit> {
                 "dumping the built-in symbol table",
             ))
         }
-        reflection if reflection.starts_with("reflect-") => {
-            return Err(Exit::unsupported(&argument, "reflection"))
-        }
+        "reflect-strict-array-suffix" => options.reflect_options.strict_array_suffix = true,
+        "reflect-basic-array-suffix" => options.reflect_options.basic_array_suffix = true,
+        "reflect-intermediate-io" => options.reflect_options.intermediate_io = true,
+        "reflect-separate-buffers" => options.reflect_options.separate_buffers = true,
+        "reflect-all-block-variables" => options.reflect_options.all_block_variables = true,
+        "reflect-unwrap-io-blocks" => options.reflect_options.unwrap_io_blocks = true,
+        "reflect-all-io-variables" => options.reflect_options.all_io_variables = true,
+        "reflect-shared-std140-ubo" => options.reflect_options.shared_std140_ubo = true,
+        "reflect-shared-std140-ssbo" => options.reflect_options.shared_std140_ssbo = true,
         _ => return Err(Exit::detailed("unrecognized command-line option", argument)),
     }
     Ok(())
@@ -578,12 +586,7 @@ fn short_option(cursor: &mut Cursor, options: &mut Options) -> Result<(), Exit> 
             Some(output) => options.output = Some(output),
             None => return Err(Exit::error("no <file> provided for -o")),
         },
-        'q' => {
-            return Err(Exit::unsupported(
-                &argument,
-                "the reflection query database",
-            ))
-        }
+        'q' => options.reflect = true,
         'r' => options.relaxed_errors = true,
         's' => options.suppress_info = true,
         'v' => options.version = Some(VersionDump::Full),
@@ -621,6 +624,14 @@ pub fn parse(arguments: Vec<String>) -> Result<Options, Exit> {
     }
     if options.preprocess && options.link {
         return Err(Exit::error("can't use -E when linking is selected"));
+    }
+    if options.preprocess && options.reflect {
+        return Err(Exit::error(
+            "reflection requires linking, which can't be used when -E when is selected",
+        ));
+    }
+    if options.reflect && !options.link {
+        return Err(Exit::error("reflection requires -l for linking"));
     }
     if options.output.is_some() && !options.spirv && !options.object {
         return Err(Exit::error("no binary generation requested (e.g., -V)"));

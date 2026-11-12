@@ -14,6 +14,7 @@ use crate::oracles::{self, Tool};
 use crate::process::{self, Exit};
 
 mod disassembly;
+mod reflection;
 
 pub struct Options {
     pub glslang_dir: Option<PathBuf>,
@@ -868,8 +869,6 @@ fn cases() -> Vec<Case> {
             &["glsl.-P.frag"],
         )
         .exact_stdout(),
-        Case::new("reflection", &["-l", "-q", TARGET_SHADER], &[TARGET_SHADER])
-            .rejected("the reflection query database is not supported"),
         Case::new(
             "no-link-main",
             &["-V", "--no-link", TARGET_SHADER],
@@ -1137,6 +1136,7 @@ fn hex_skeleton(text: &str) -> Vec<String> {
         .collect()
 }
 
+#[derive(Clone)]
 struct Environment {
     glslang: Tool,
     spirv_val: Tool,
@@ -1363,6 +1363,9 @@ fn check(env: &Environment, case: &Case) -> Result<Verdict> {
             ));
         }
     }
+    if let Some(problem) = reflection::compare(&glslang.stdout, &ours.stdout) {
+        problems.push(problem);
+    }
     compare_files(env, case, &glslang, &ours, &mut problems)?;
     if disassembly::prints_disassembly(case) {
         disassembly::check_case(env, case, &glslang, &mut problems)?;
@@ -1415,15 +1418,25 @@ pub fn run(root: &Path, options: &Options) -> Result<i32> {
         work: root.join("target").join("xtask").join("cli"),
         timeout: Duration::from_secs(options.timeout_secs),
     };
+    let own = Environment {
+        test_dir: root.join(reflection::OWN_DIR),
+        ..env.clone()
+    };
     let mut report = String::from("case\tverdict\tcommand\tnote\n");
     let (mut passed, mut expected, mut failed) = (0, 0, 0);
-    for case in cases().into_iter().chain(limits::cases()) {
+    let all = cases()
+        .into_iter()
+        .chain(limits::cases())
+        .chain(reflection::glslang_cases())
+        .map(|case| (case, &env))
+        .chain(reflection::own_cases().into_iter().map(|case| (case, &own)));
+    for (case, env) in all {
         if let Some(ref filter) = options.filter {
             if !case.name.contains(filter.as_str()) {
                 continue;
             }
         }
-        let verdict = check(&env, &case)?;
+        let verdict = check(env, &case)?;
         let command = case.args.join(" ");
         let (label, note) = match verdict {
             Verdict::Pass => {
@@ -1443,6 +1456,11 @@ pub fn run(root: &Path, options: &Options) -> Result<i32> {
         let _ = writeln!(report, "{}\t{label}\t{command}\t{note}", case.name);
     }
     failed += disassembly::sweep(&env, options.filter.as_deref(), &mut report)?;
+    let sweep = reflection::sweep(&env, &glslang_dir, options.filter.as_deref())?;
+    passed += sweep.passed;
+    expected += sweep.expected;
+    failed += sweep.failed;
+    report.push_str(&sweep.report);
     fs::create_dir_all(&env.work)?;
     let report_path = env.work.join("report.tsv");
     fs::write(&report_path, report)?;

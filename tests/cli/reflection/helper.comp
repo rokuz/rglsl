@@ -1,0 +1,20 @@
+#version 450
+
+layout(binding = 1) uniform Params {
+    float factor;
+    vec2 range;
+} params;
+
+layout(binding = 2) uniform Extra {
+    vec4 bias;
+} extra;
+
+float helper(float x)
+{
+    return clamp(x, params.range.x, params.range.y);
+}
+
+float unused_helper(float x)
+{
+    return x + extra.bias.x;
+}
