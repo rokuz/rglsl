@@ -20,7 +20,7 @@ goal, the language rules for linkage and `#include`, and the milestones (M0–M9
 | `rglsl-fuzz/` | port of GraphicsFuzz's variant generator and reducer (Apache-2.0; see `docs/design/fuzzer.md`) |
 | `rglsl-fuzz/fuzz/` | the cargo-fuzz targets (crate `rglsl-libfuzzer`): `glsl_parser`, `spv_parser`, `ir`, `object`, `glsl_variant` |
 | `rglsl-types/` | types shared by the rglsl crates (`ShaderStage`, ...) |
-| `rglsl-cli/` | the `rglsl` command-line tool (to become `glslangValidator`-compatible in M9) |
+| `rglsl-cli/` | the `rglsl` command-line tool, `glslangValidator`-compatible for Vulkan GLSL (`docs/design/cli.md`) |
 | `rglsl-test/`, `rglsl/tests/` | upstream snapshot tests |
 | `rglsl/xtask/` | snapshot validation (`cd rglsl && cargo xtask validate spv`) |
 | `xtask/` | project automation: `cargo xtask oracles`, `cargo xtask test`, `cargo xtask fuzz` |
@@ -94,6 +94,7 @@ RGLSL_EXEC_REMOTE=<alias>,<alias>@<gpu> cargo xtask test [--glslang-dir ../glsla
 cargo xtask test --filter NAME --no-progress-file  # quick local check
 cargo xtask test --no-remote-exec | --no-local-exec | --no-exec   # per-target opt-outs (CI: --no-exec)
 
+cargo xtask cli [--glslang-dir ../glslang]         # glslangValidator command lines: rglsl vs glslang
 cargo xtask fuzz --shaders DIR [--exec]            # differential fuzzing against glslang (+ exec)
 cargo xtask fuzz --libfuzzer TARGET [--time SECS] [--jobs N]   # cargo +nightly fuzz run
 cargo xtask fuzz --decode INPUT                    # glsl_variant input -> shader family

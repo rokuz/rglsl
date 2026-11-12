@@ -42,6 +42,15 @@ impl FileSystemIncluder {
             .map(Path::new)
     }
 
+    pub fn files(&self) -> impl Iterator<Item = (FileId, &str)> {
+        self.names.iter().enumerate().map(|(index, name)| {
+            (
+                FileId(u32::try_from(index).unwrap_or(u32::MAX)),
+                name.as_str(),
+            )
+        })
+    }
+
     fn register(&mut self, name: String) -> FileId {
         let key = std::fs::canonicalize(&name).unwrap_or_else(|_| PathBuf::from(&name));
         if let Some(&file) = self.by_path.get(&key) {

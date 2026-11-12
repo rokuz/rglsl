@@ -63,6 +63,9 @@ pub struct Options {
     pub hlsl_offsets: bool,
     pub debug_info: bool,
     pub source_name: Option<String>,
+    pub keep_uncalled: bool,
+    pub resource_set: Option<u32>,
+    pub binding_shifts: crate::proc::BindingShifts,
 }
 
 impl From<ShaderStage> for Options {
@@ -77,6 +80,9 @@ impl From<ShaderStage> for Options {
             hlsl_offsets: false,
             debug_info: false,
             source_name: None,
+            keep_uncalled: false,
+            resource_set: None,
+            binding_shifts: crate::proc::BindingShifts::default(),
         }
     }
 }

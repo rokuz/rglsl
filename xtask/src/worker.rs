@@ -280,6 +280,7 @@ pub fn compile_group(inputs: &[String], options: &GroupOptions) -> i32 {
     let link_options = rglsl_link::Options {
         auto_map_locations: options.auto_map_locations,
         auto_map_bindings: options.auto_map_bindings,
+        ..rglsl_link::Options::default()
     };
     let linked = match rglsl_link::link_objects(&objects, &link_options) {
         Ok(linked) => linked,

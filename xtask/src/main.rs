@@ -5,6 +5,7 @@
 //! - `cargo xtask test` runs the conformance corpora against the oracles and
 //!   writes `PROGRESS.md`.
 
+mod cli;
 mod corpus;
 mod debuginfo;
 mod exec;
@@ -47,6 +48,12 @@ commands:
                           exec results of the last run that had them
       --no-local-exec     do not run shaders on KosmicKrisp on this Mac
       --no-remote-exec    do not run shaders on the remote Windows targets
+  cli                 run glslangValidator command lines with glslang and with the rglsl
+                      command-line tool and compare exit codes, messages and outputs
+                      (docs/design/cli.md); report in target/xtask/cli/report.tsv
+      --glslang-dir DIR   glslang checkout whose Test/ is used
+      --filter TEXT       only run cases whose name contains TEXT
+      --timeout SECS      per-process timeout (default: 30)
   fuzz                compare rglsl with glslang on a directory of shaders
                       (accepted or not, valid SPIR-V, crashes); findings go to
                       target/xtask/fuzz/differential/report.tsv
@@ -159,6 +166,15 @@ fn run(args: Vec<String>) -> Result<i32> {
             args.finish()?;
             runner::run(&workspace_root()?, options)?;
             Ok(0)
+        }
+        "cli" => {
+            let options = cli::Options {
+                glslang_dir: args.value("--glslang-dir")?.map(PathBuf::from),
+                filter: args.value("--filter")?,
+                timeout_secs: args.parsed("--timeout")?.unwrap_or(30),
+            };
+            args.finish()?;
+            cli::run(&workspace_root()?, &options)
         }
         "fuzz" if args.has("--libfuzzer") => {
             let options = fuzz_libfuzzer::Options {

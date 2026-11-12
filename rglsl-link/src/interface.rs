@@ -384,7 +384,11 @@ fn live_globals(module: &Module) -> BTreeSet<Handle<GlobalVariable>> {
     live
 }
 
-pub(crate) fn assign_bindings(module: &mut Module, globals: &[MergedGlobal]) {
+pub(crate) fn assign_bindings(
+    module: &mut Module,
+    globals: &[MergedGlobal],
+    shifts: Option<&rglsl::proc::BindingShifts>,
+) {
     let mut unbound: Vec<(Handle<GlobalVariable>, Option<u32>)> = globals
         .iter()
         .filter_map(|global| global.automatic_binding.map(|set| (global.handle, set)))
@@ -411,10 +415,11 @@ pub(crate) fn assign_bindings(module: &mut Module, globals: &[MergedGlobal]) {
     for (handle, set) in unbound {
         let group = set.unwrap_or(0);
         let binding = if live.contains(&handle) {
+            let base = shifts.map_or(0, |shifts| {
+                shifts.base_of(module, &module.global_variables[handle], group)
+            });
             let used = taken.entry(group).or_default();
-            let free = (0..=u32::MAX)
-                .find(|binding| !used.contains(binding))
-                .unwrap_or(u32::MAX);
+            let free = rglsl::proc::free_binding(used, base);
             used.insert(free);
             free
         } else {
