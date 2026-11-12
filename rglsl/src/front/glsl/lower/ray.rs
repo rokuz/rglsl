@@ -220,7 +220,7 @@ impl Lowerer<'_> {
             .or_else(|| variable.qualifiers.layout_entry("location"))
             .and_then(|entry| entry.value)
             .and_then(|value| u32::try_from(value).ok());
-        if !variable.ty.array.is_empty() {
+        if !variable.ty.dimensions().is_empty() {
             return Err(super::unsupported("arrays of ray tracing blocks", at));
         }
         let ir = self.block_struct(id, Packing::Std430, false, at)?;

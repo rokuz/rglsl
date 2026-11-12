@@ -51,7 +51,7 @@ const fn tensor_element(scalar: Scalar) -> bool {
 }
 
 fn data_scalar(ty: &Type) -> Option<Scalar> {
-    let element = match ty.array.as_slice() {
+    let element = match ty.dimensions() {
         [] => ty.clone(),
         [ArraySize::Sized(_)] => ty.element_type()?,
         _ => return None,
@@ -62,7 +62,7 @@ fn data_scalar(ty: &Type) -> Option<Scalar> {
 }
 
 fn coordinate_count(ty: &Type) -> Option<u32> {
-    match ty.array.as_slice() {
+    match ty.dimensions() {
         [ArraySize::Sized(count)] if ty.element_type()? == Type::UINT => Some(*count),
         _ => None,
     }

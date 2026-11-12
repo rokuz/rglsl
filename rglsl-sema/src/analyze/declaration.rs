@@ -385,9 +385,9 @@ impl Analyzer<'_> {
             if !is_interface {
                 continue;
             }
-            match variable.ty.array.first_mut() {
-                Some(first @ ArraySize::Unsized) => *first = ArraySize::Sized(size),
-                Some(ArraySize::Sized(declared)) if *declared != size => {
+            match variable.ty.outer_size() {
+                Some(ArraySize::Unsized) => variable.ty.set_outer_size(ArraySize::Sized(size)),
+                Some(ArraySize::Sized(declared)) if declared != size => {
                     mismatched.push(symbol.name.clone());
                 }
                 _ => {}
@@ -950,17 +950,17 @@ impl Analyzer<'_> {
             Some("a member cannot be `void`")
         } else if members.iter().any(|member| member.name == name.node) {
             Some("the name is already used by another member")
-        } else if in_block.is_none() && ty.array.contains(&ArraySize::Unsized) {
+        } else if in_block.is_none() && ty.dimensions().contains(&ArraySize::Unsized) {
             Some("an array size is required")
         } else if in_block.is_some()
             && ty.contains_opaque(&self.types)
             && !(in_heap && self.extension_enabled(super::heap::STRUCTURED_DESCRIPTOR_HEAP))
         {
             Some("a block member cannot have an opaque type")
-        } else if in_heap && !last && ty.array.first() == Some(&ArraySize::Unsized) {
+        } else if in_heap && !last && ty.dimensions().first() == Some(&ArraySize::Unsized) {
             Some("an array size is required")
         } else if ty
-            .array
+            .dimensions()
             .iter()
             .skip(1)
             .any(|size| *size == ArraySize::Unsized)
@@ -1455,7 +1455,7 @@ impl Analyzer<'_> {
         }
         if initializer.is_none()
             && ty
-                .array
+                .dimensions()
                 .iter()
                 .skip(1)
                 .any(|size| *size == ArraySize::Unsized)
@@ -1541,10 +1541,10 @@ impl Analyzer<'_> {
             name: name.node.clone(),
             reason,
         };
-        match (ty.array.first_mut(), size) {
+        match (ty.outer_size(), size) {
             (None, _) => self.error(name.span, invalid("the type must be an array")),
-            (Some(first @ ArraySize::Unsized), Some(size)) => *first = ArraySize::Sized(size),
-            (Some(ArraySize::Sized(declared)), Some(size)) if *declared != size => {
+            (Some(ArraySize::Unsized), Some(size)) => ty.set_outer_size(ArraySize::Sized(size)),
+            (Some(ArraySize::Sized(declared)), Some(size)) if declared != size => {
                 let reason = match (stage, qualifiers.storage) {
                     (Stage::Geometry, _) => "its size does not match the input primitive",
                     (_, Storage::In) => "its size must be gl_MaxPatchVertices",
@@ -1571,11 +1571,20 @@ impl Analyzer<'_> {
     }
 
     fn initialize(&mut self, span: Span, ty: &mut Type, operand: &Operand) -> bool {
-        if ty.array.len() == operand.ty.array.len() {
-            for (declared, given) in ty.array.iter_mut().zip(&operand.ty.array) {
-                if *declared == ArraySize::Unsized {
-                    *declared = *given;
-                }
+        if ty.dimensions().len() == operand.ty.dimensions().len() {
+            let given = operand.ty.dimensions();
+            if given
+                .iter()
+                .zip(ty.dimensions())
+                .any(|(given, declared)| *declared == ArraySize::Unsized && given != declared)
+            {
+                ty.update_dimensions(|dimensions| {
+                    for (declared, given) in dimensions.iter_mut().zip(given) {
+                        if *declared == ArraySize::Unsized {
+                            *declared = *given;
+                        }
+                    }
+                });
             }
         }
         if self.converts(&operand.ty, ty) && !operand.ty.is_void() {
@@ -1628,7 +1637,7 @@ impl Analyzer<'_> {
             let resizes = previous.is_some_and(|previous| {
                 previous.kind == ty.kind
                     && ty.is_array()
-                    && previous.array.get(1..) == ty.array.get(1..)
+                    && previous.dimensions().get(1..) == ty.dimensions().get(1..)
                     && (previous.outer_size() == Some(ArraySize::Unsized)
                         || (interface && previous == ty))
             });
@@ -1674,7 +1683,7 @@ impl Analyzer<'_> {
         if expected.is_error() {
             return Operand::error();
         }
-        let reason = if expected.array.contains(&ArraySize::Unsized) {
+        let reason = if expected.dimensions().contains(&ArraySize::Unsized) {
             Some("null initializers can't size unsized arrays")
         } else if expected.contains_opaque(&self.types) {
             Some("null initializers can't be used on opaque values")
@@ -1718,9 +1727,7 @@ impl Analyzer<'_> {
                 Some(ArraySize::Sized(size)) if size != count => mismatch = true,
                 _ => {}
             }
-            if let Some(first) = result.array.first_mut() {
-                *first = ArraySize::Sized(count);
-            }
+            result.set_outer_size(ArraySize::Sized(count));
             element_types = items.iter().map(|_| element.clone()).collect();
         } else if let TypeKind::Struct(id) = expected.kind {
             if let Some(structure) = self.types.structure(id) {
@@ -1773,7 +1780,7 @@ impl Analyzer<'_> {
         } else if !element.is_error() && !self.converts(&operand.ty, element) {
             let unsized_match = element.outer_size() == Some(ArraySize::Unsized)
                 && operand.ty.kind == element.kind
-                && operand.ty.array.get(1..) == element.array.get(1..);
+                && operand.ty.dimensions().get(1..) == element.dimensions().get(1..);
             if !unsized_match {
                 list.failed = true;
                 let aggregate = expected.is_array() || expected.is_struct();
@@ -1968,7 +1975,7 @@ impl Analyzer<'_> {
                 .filter(|_| sized)
                 .map(|symbol| &mut symbol.kind)
             {
-                variable.ty.array = dimensions;
+                variable.ty.set_dimensions(&dimensions);
             }
             return;
         }
@@ -2179,7 +2186,7 @@ impl Analyzer<'_> {
             self.symbol_mut(variable).map(|symbol| &mut symbol.kind)
         {
             if matches!(dimensions.first(), Some(ArraySize::Sized(_))) {
-                variable.ty.array = dimensions.to_vec();
+                variable.ty.set_dimensions(dimensions);
             }
             sized = Some(variable.ty.clone());
         }
@@ -2294,7 +2301,7 @@ impl Analyzer<'_> {
             Some("cannot use spirv_literal qualifier")
         } else if ty.is_void() {
             Some("a parameter cannot be `void`")
-        } else if ty.array.contains(&ArraySize::Unsized) {
+        } else if ty.dimensions().contains(&ArraySize::Unsized) {
             Some("an array size is required")
         } else if direction != Direction::In && ty.contains_opaque(&self.types) {
             Some("an opaque type cannot be an output parameter")
@@ -2350,7 +2357,7 @@ impl Analyzer<'_> {
         let return_type = self.type_specifier(&prototype.return_type.specifier);
         let close = Span::new(prototype.span.end.saturating_sub(1), prototype.span.end);
         let control = self.function_attributes(prototype, close);
-        if return_type.array.contains(&ArraySize::Unsized) {
+        if return_type.dimensions().contains(&ArraySize::Unsized) {
             self.error(
                 prototype.return_type.span,
                 DiagnosticKind::UnsizedArrayNotAllowed,

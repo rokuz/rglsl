@@ -202,9 +202,9 @@ impl Analyzer<'_> {
         let Some(size) = self.mesh_array_size(qualifiers, &name.node) else {
             return;
         };
-        match ty.array.first_mut() {
-            Some(first @ ArraySize::Unsized) => *first = ArraySize::Sized(size),
-            Some(ArraySize::Sized(declared)) if *declared != size => self.error(
+        match ty.outer_size() {
+            Some(ArraySize::Unsized) => ty.set_outer_size(ArraySize::Sized(size)),
+            Some(ArraySize::Sized(declared)) if declared != size => self.error(
                 name.span,
                 DiagnosticKind::InvalidInterfaceArray {
                     name: name.node.clone(),
@@ -255,9 +255,9 @@ impl Analyzer<'_> {
             let SymbolKind::Variable(variable) = &mut symbol.kind else {
                 continue;
             };
-            match variable.ty.array.first_mut() {
-                Some(first @ ArraySize::Unsized) => *first = ArraySize::Sized(size),
-                Some(ArraySize::Sized(declared)) if *declared != size => mismatched.push(name),
+            match variable.ty.outer_size() {
+                Some(ArraySize::Unsized) => variable.ty.set_outer_size(ArraySize::Sized(size)),
+                Some(ArraySize::Sized(declared)) if declared != size => mismatched.push(name),
                 _ => {}
             }
         }
@@ -284,9 +284,9 @@ impl Analyzer<'_> {
         }
         let dimension = usize::from(!member);
         let view_count = u32::try_from(self.options.limits.max_mesh_view_count_nv).unwrap_or(0);
-        match ty.array.get_mut(dimension) {
-            Some(size @ ArraySize::Unsized) => *size = ArraySize::Sized(view_count),
-            Some(ArraySize::Sized(size)) if *size == view_count => {}
+        match ty.dimensions().get(dimension).copied() {
+            Some(ArraySize::Unsized) => ty.set_dimension(dimension, ArraySize::Sized(view_count)),
+            Some(ArraySize::Sized(size)) if size == view_count => {}
             Some(_) => self.error(
                 span,
                 invalid(

@@ -13,7 +13,6 @@ type TestResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 const STACK: usize = 256 << 10;
 const DEFAULT_DEPTH: usize = 10_000;
 const DEEP_DEPTH: usize = 100_000;
-const SUBSCRIPTS: usize = 1_000;
 const WORKERS: usize = 2;
 const FLAT: usize = 20_000;
 const LONG: usize = 4_000;
@@ -381,10 +380,7 @@ fn deep_types_compile_on_a_small_stack(depth: usize) -> TestResult {
                 "layout(std430, binding = 2) buffer A {{ int a{}; }} ab;",
                 "[1]".repeat(count)
             ),
-            &format!(
-                "b = ab.a{}.length();",
-                "[0]".repeat(count.min(SUBSCRIPTS) - 1)
-            ),
+            &format!("b = ab.a{}.length();", "[0]".repeat(count - 1)),
         )
     })?;
     compiles_at(depth, "uniform matrix array dimensions", |count| {
@@ -393,10 +389,7 @@ fn deep_types_compile_on_a_small_stack(depth: usize) -> TestResult {
                 "layout(std140, binding = 3) uniform M {{ mat2 m{}; }} um;",
                 "[1]".repeat(count)
             ),
-            &format!(
-                "b = um.m{}.length();",
-                "[0]".repeat(count.min(SUBSCRIPTS) - 1)
-            ),
+            &format!("b = um.m{}.length();", "[0]".repeat(count - 1)),
         )
     })?;
     compiles_at(depth, "input structs", |count| {
@@ -978,6 +971,7 @@ fn every_kind(depth: usize) -> Vec<Group> {
         (deep_statements_compile_on_a_small_stack, depth),
         (deep_types_compile_on_a_small_stack, depth),
         (deep_initializers_compile_on_a_small_stack, depth),
+        (array_initializer_lists, depth),
         (deep_calls_compile_on_a_small_stack, depth),
         (preprocessor_limits_match_glslang_on_a_small_stack, depth),
         (
@@ -1032,9 +1026,7 @@ fn nesting_10_000_levels_deep_on_a_small_stack() -> TestResult {
 #[test]
 #[ignore = "minutes in a debug build: run with `cargo test --release -p rglsl-link --test nesting -- --ignored`"]
 fn nesting_100_000_levels_deep_on_a_small_stack() -> TestResult {
-    let mut groups = every_kind(DEEP_DEPTH);
-    groups.push((array_initializer_lists, DEFAULT_DEPTH));
-    run_groups(groups)
+    run_groups(every_kind(DEEP_DEPTH))
 }
 
 fn spirv_words(source: &str) -> Result<Vec<u32>, String> {

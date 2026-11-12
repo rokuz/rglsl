@@ -359,10 +359,11 @@ impl Analyzer<'_> {
             fail(self, "first parameter must be buffer reference type");
         }
         let coordinate = |ty: &Type| {
-            ty.array.len() == 1
+            ty.dimensions().len() == 1
                 && ty.base_scalar() == Some(Scalar::Uint)
                 && !matches!(ty.kind, TypeKind::Vector { .. })
-                && dimensions.is_none_or(|count| ty.array.first() == Some(&ArraySize::Sized(count)))
+                && dimensions
+                    .is_none_or(|count| ty.dimensions().first() == Some(&ArraySize::Sized(count)))
         };
         if !coordinate(&block.ty) || !coordinate(&coordinates.ty) {
             fail(self, "coordinate parameters must be uint32_t");

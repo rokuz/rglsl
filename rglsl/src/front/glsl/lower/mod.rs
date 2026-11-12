@@ -37,7 +37,7 @@ use alloc::{
 use rglsl_ast::ast::{ExternalDeclaration, FunctionDefinition, Initializer, Node, Spanned};
 use rglsl_ast::TranslationUnit;
 use rglsl_sema::scope::{Symbol, SymbolKind, Variable};
-use rglsl_sema::types::{BlockId, StructId};
+use rglsl_sema::types::{BlockId, SharedDimensions, StructId};
 use rglsl_sema::{Analysis, FunctionId, SymbolId};
 
 use super::{Error, ErrorKind, Options, ParseErrors};
@@ -421,6 +421,7 @@ pub(super) struct Lowerer<'a> {
     pub layouter: Layouter,
     pub errors: Vec<Error>,
     pub structs: BTreeMap<StructId, Handle<Type>>,
+    pub array_types: BTreeMap<(SharedDimensions, Handle<Type>), Handle<Type>>,
     pub relayout: BTreeMap<Handle<Type>, Handle<Type>>,
     pub references: BTreeMap<(BlockId, crate::PointerQualifiers), Handle<Type>>,
     pub references_in_progress: BTreeSet<BlockId>,
@@ -503,6 +504,7 @@ impl<'a> Lowerer<'a> {
             layouter: Layouter::default(),
             errors: Vec::new(),
             structs: BTreeMap::new(),
+            array_types: BTreeMap::new(),
             relayout: BTreeMap::new(),
             references: BTreeMap::new(),
             references_in_progress: BTreeSet::new(),

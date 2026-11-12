@@ -552,7 +552,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
             })
             .ok_or_else(|| unsupported(format_member(&member.name), at))?;
             let mut sized = member.ty.clone();
-            for (depth, size) in sized.array.iter_mut().enumerate() {
+            for (depth, size) in member.ty.dimensions().iter().enumerate() {
                 if *size == GlslArraySize::Unsized {
                     let used = if depth == 0 {
                         self.with(|this| this.member_sizes.get(&(id, index)).copied())?
@@ -563,7 +563,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
                                 .copied()
                         })?
                     };
-                    *size = GlslArraySize::Sized(used.unwrap_or(1));
+                    sized.set_dimension(depth, GlslArraySize::Sized(used.unwrap_or(1)));
                 }
             }
             let ty = {

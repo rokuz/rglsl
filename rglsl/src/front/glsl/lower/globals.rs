@@ -326,7 +326,7 @@ impl<'a> Lowerer<'a> {
         }
         let wide = |scalar: Scalar, size: u8| u32::from(scalar == Scalar::Double && size > 2) + 1;
         let arrayed = |ty: &GlslType, element: u32| {
-            ty.array
+            ty.dimensions()
                 .iter()
                 .map(|size| match *size {
                     GlslArraySize::Sized(length) => length,
@@ -440,9 +440,7 @@ impl<'a> Lowerer<'a> {
                     let mut member_ty = member.ty.clone();
                     if member_ty.outer_size() == Some(GlslArraySize::Unsized) {
                         let size = self.member_sizes.get(&(id, index)).copied().unwrap_or(1);
-                        if let Some(first) = member_ty.array.first_mut() {
-                            *first = GlslArraySize::Sized(size.max(1));
-                        }
+                        member_ty.set_outer_size(GlslArraySize::Sized(size.max(1)));
                     }
                     let count = match member_ty.element_type() {
                         Some(element) if member.qualifiers.per_view => {
@@ -834,9 +832,7 @@ impl<'a> Lowerer<'a> {
                 .copied()
                 .unwrap_or(1)
                 .max(1);
-            if let Some(first) = sized.array.first_mut() {
-                *first = GlslArraySize::Sized(size);
-            }
+            sized.set_outer_size(GlslArraySize::Sized(size));
             self.variable_ir_type(&sized, &variable.qualifiers, at)?
         } else {
             self.variable_ir_type(ty, &variable.qualifiers, at)?
@@ -928,9 +924,7 @@ impl<'a> Lowerer<'a> {
                     at,
                 )
             })?;
-            if let Some(first) = declared.array.first_mut() {
-                *first = GlslArraySize::Sized(size);
-            }
+            declared.set_outer_size(GlslArraySize::Sized(size));
         }
         let ty = self.ir_type(&declared, at)?;
         let element = match (per_vertex, &self.module.types[ty].inner) {
@@ -1180,7 +1174,7 @@ impl<'a> Lowerer<'a> {
         let qualifiers = &variable.qualifiers;
         let ty = &variable.ty;
         let mut handle_ty = self.insert_type(inner);
-        match *ty.array.as_slice() {
+        match *ty.dimensions() {
             [] => {}
             [size @ GlslArraySize::Sized(_)] => {
                 let size = self.array_size(size, at)?;
@@ -1336,7 +1330,7 @@ impl<'a> Lowerer<'a> {
             self.block_packing(qualifiers, buffer, push_constant)
         };
         let mut ty = self.block_struct(id, packing, row_major, at)?;
-        match *variable.ty.array.as_slice() {
+        match *variable.ty.dimensions() {
             [] => {}
             [size] => {
                 let size = match size {
@@ -1497,14 +1491,12 @@ impl<'a> Lowerer<'a> {
                     at,
                 )
             })?;
-            if let Some(first) = declared.array.first_mut() {
-                *first = GlslArraySize::Sized(size);
-            }
+            declared.set_outer_size(GlslArraySize::Sized(size));
         }
         let block_dimensions = if per_vertex {
-            declared.array.get(1..).unwrap_or_default()
+            declared.dimensions().get(1..).unwrap_or_default()
         } else {
-            declared.array.as_slice()
+            declared.dimensions()
         };
         let arrayed = !block_dimensions.is_empty();
         let mut members = Vec::with_capacity(block.members.len());
@@ -1516,9 +1508,7 @@ impl<'a> Lowerer<'a> {
             let mut member_ty = member.ty.clone();
             if member_ty.outer_size() == Some(GlslArraySize::Unsized) {
                 let size = self.member_sizes.get(&(id, index)).copied().unwrap_or(1);
-                if let Some(first) = member_ty.array.first_mut() {
-                    *first = GlslArraySize::Sized(size.max(1));
-                }
+                member_ty.set_outer_size(GlslArraySize::Sized(size.max(1)));
             }
             if qualifiers.invariant && input {
                 return Err(semantic("invariant can only apply to an output", at));
@@ -1705,7 +1695,7 @@ impl<'a> Lowerer<'a> {
             },
             at,
         );
-        let ty = self.wrap_arrays(structure, &declared.array, at)?;
+        let ty = self.wrap_arrays(structure, declared.dimensions(), at)?;
         let handle = self.module.global_variables.append(
             GlobalVariable {
                 name,
@@ -1857,11 +1847,8 @@ impl<'a> Lowerer<'a> {
                 };
                 let mut glsl = builtin.ty.clone();
                 if glsl.outer_size() == Some(GlslArraySize::Unsized) {
-                    if let (Some(size), Some(first)) = (
-                        self.declarator_size(declarator.array.as_ref()),
-                        glsl.array.first_mut(),
-                    ) {
-                        *first = GlslArraySize::Sized(size);
+                    if let Some(size) = self.declarator_size(declarator.array.as_ref()) {
+                        glsl.set_outer_size(GlslArraySize::Sized(size));
                     }
                 }
                 let ty = self.ir_type(&glsl, at)?;

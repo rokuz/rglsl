@@ -2569,7 +2569,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     let result = self.nest(frame).await;
                     result
                 }?;
-                if from.array.len() == ty.array.len() && from.kind == ty.kind {
+                if from.dimensions().len() == ty.dimensions().len() && from.kind == ty.kind {
                     return Ok(value);
                 }
                 self.with(|this| this.convert(value, &from, ty, at))?
