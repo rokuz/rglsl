@@ -579,9 +579,7 @@ pub fn unsupported_with_spirv(name: &str) -> bool {
 }
 
 pub fn unsupported_in_vulkan(name: &str) -> Option<&'static str> {
-    (name == names::HALF_FLOAT_FETCH).then_some(
-        "its 16-bit float images are not allowed in Vulkan, which needs a 32-bit int, 64-bit int or 32-bit float sampled type (VUID-StandaloneSpirv-OpTypeImage-04656), and SPV_AMD_gpu_shader_half_float_fetch is an OpenGL-only SPIR-V extension",
-    )
+    (name == names::HALF_FLOAT_FETCH).then_some("SPIR-V for Vulkan has no 16-bit float images")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -1074,6 +1074,7 @@ void fill() { blk.a = vec4(1.0); blk.b = vec4(2.0); more = vec2(3.0); again = ve
     let options = LinkOptions {
         auto_map_locations: true,
         auto_map_bindings: false,
+        ..Default::default()
     };
     let result = link(&[main.clone(), fill.clone()], &options)?;
     assert_eq!(block_locations(&result, "blk")?, (1, vec![1, 2]));
@@ -1168,6 +1169,7 @@ void more() { b = vec4(2.0); d = 2.0lf; }
     let options = LinkOptions {
         auto_map_locations: true,
         auto_map_bindings: false,
+        ..Default::default()
     };
     let result = link(&[main, more], &options)?;
     let mut strides: Vec<(u32, u32)> = result
@@ -1220,6 +1222,7 @@ void main() { color = explicit_input + fragment_only + blk.a + shared_value; }
     let options = LinkOptions {
         auto_map_locations: true,
         auto_map_bindings: false,
+        ..Default::default()
     };
     let stages = link_objects(&[vertex, fragment], &options)?;
     let [ref vertex, ref fragment] = *stages.as_slice() else {

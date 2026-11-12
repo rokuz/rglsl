@@ -73,6 +73,7 @@ fn run(test: &Path) -> TestResult<(bool, Vec<String>)> {
     let options = rglsl_link::Options {
         auto_map_locations: true,
         auto_map_bindings: true,
+        ..Default::default()
     };
     match rglsl_link::link_objects(&objects, &options) {
         Ok(stages) => {

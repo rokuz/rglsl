@@ -52,7 +52,6 @@ rglsl-types = { version = "0.1.0", path = "./rglsl-types" }
 
 anyhow = { version = "1.0.87", default-features = false }
 arbitrary = "1.4.2"
-argh = "0.1.13"
 arrayvec = { version = "0.7.1", default-features = false }
 bincode = "2"
 bit-set = { version = "0.10", default-features = false }

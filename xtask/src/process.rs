@@ -24,15 +24,33 @@ pub struct Output {
 }
 
 /// Runs `command` to completion, killing it after `timeout`.
-pub fn run(mut command: Command, timeout: Duration) -> Result<Output> {
+pub fn run(command: Command, timeout: Duration) -> Result<Output> {
+    run_with_input(command, timeout, None)
+}
+
+pub fn run_with_input(
+    mut command: Command,
+    timeout: Duration,
+    input: Option<Vec<u8>>,
+) -> Result<Output> {
     command
-        .stdin(Stdio::null())
+        .stdin(if input.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let program = command.get_program().to_string_lossy().into_owned();
     let mut child = command
         .spawn()
         .with_context(|| format!("failed to start `{program}`"))?;
+    if let (Some(input), Some(mut stdin)) = (input, child.stdin.take()) {
+        thread::spawn(move || {
+            use std::io::Write as _;
+            let _ = stdin.write_all(&input);
+        });
+    }
 
     // Drain the pipes on their own threads so a chatty child never blocks.
     let (Some(mut stdout), Some(mut stderr)) = (child.stdout.take(), child.stderr.take()) else {

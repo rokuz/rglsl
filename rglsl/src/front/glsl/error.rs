@@ -32,6 +32,8 @@ pub enum ErrorKind {
     /// This obviously is a bug and as such should be reported in the github issue tracker
     #[error("Internal error: {0}")]
     InternalError(&'static str),
+    #[error("{0}")]
+    Link(String),
 }
 
 impl From<ConstantEvaluatorError> for ErrorKind {
