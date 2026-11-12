@@ -12,6 +12,7 @@ use rglsl::{Module, ShaderStage};
 
 use crate::args::{
     self, Debug, Exit, Macro, Options, VersionDump, EXIT_COMPILE, EXIT_LINK, EXIT_SUCCESS,
+    EXIT_USAGE,
 };
 use crate::output;
 
@@ -993,8 +994,12 @@ impl<'a> Session<'a> {
             )));
         }
         self.outputs.push(path);
-        if self.options.disassemble {
-            output::out!("{}", rglsl_cli::disassemble::disassemble(&words));
+        if self.options.disassemble && !self.options.spirv_tools_disassembler {
+            let disassembly = rglsl_cli::disassemble::disassemble_bytes(&words);
+            output::stdout_bytes(&disassembly.text);
+            if disassembly.failed {
+                return Ok(EXIT_USAGE);
+            }
         }
         Ok(EXIT_SUCCESS)
     }

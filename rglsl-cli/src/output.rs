@@ -70,6 +70,11 @@ pub fn stdout(text: &str) {
     let _ = std::io::stdout().lock().write_all(text.as_bytes());
 }
 
+pub fn stdout_bytes(bytes: &[u8]) {
+    use std::io::Write as _;
+    let _ = std::io::stdout().lock().write_all(bytes);
+}
+
 pub fn stderr(text: &str) {
     use std::io::Write as _;
     let _ = std::io::stderr().lock().write_all(text.as_bytes());
