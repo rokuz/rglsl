@@ -69,3 +69,43 @@ twin = "the inputs and `matA`/`matB` are float16_t with K = 16, so TILE_M and TI
 ["spv.ext.meshShaderRedeclBuiltins.mesh"]
 undefined = "writes `gl_Layer = 7` and `gl_ViewportIndex = 8` with one viewport and one layer, leaves clip distances 0–2 and cull distances 0, 1 and 3 and the point indices 1–30 unwritten, so which points survive clipping and culling and which vertices they use is undefined (glslang's own module gave different results on two runs on the AMD target)"
 twin = "writes 0 to `gl_Layer` and `gl_ViewportIndex`, 3.0 to every clip distance and 4.0 to every cull distance, and `gl_PrimitivePointIndicesEXT[iid] = iid` before the barrier that precedes the bound-limit writes; drops the comments"
+
+["spv.bufferhandle6.frag"]
+undefined = "indexes `x.a[2]`, `x.c[2]` and the `a[2]` of the blocks they reference with `pc.identity[1]`, which the test fills with 1 and the harness with a value from 0 to 7, so the loads leave the arrays"
+twin = "indexes with `pc.identity[1] % 2`; drops the comments"
+
+["spv.bufferhandle9.frag"]
+undefined = "dereferences `blockType(h)` and `blockType(i)`, addresses taken from the flat inputs `h` and `i`, which hold no buffer's address"
+twin = "`h` and `i` are push constants, which the harness fills with the addresses of buffers"
+
+["spv.bufferhandle10.frag"]
+undefined = "`atomicAdd(t.f.x[i], 1)` races with the plain stores `b.x[0] = 2` and `b2.x[0] = 3` of other invocations when the flat input `i` is 0"
+twin = "adds to `t.f.x[i + 1u]`, so the atomics never touch `x[0]`"
+
+["spv.bufferhandle14.frag"]
+undefined = "dereferences the uninitialized buffer references `t1`, `t2`, `t3` and `t4`"
+twin = "initializes them from the push constant block `refs`, which holds the addresses of buffers"
+
+["spv.bufferhandle16.frag"]
+undefined = "dereferences `a.y` where `a` is `T1(uint64_t(4))`, an address of no buffer"
+twin = "`a` is `refs.r`, a push constant that holds the address of a buffer; the other references stay addresses made from constants and are not dereferenced"
+
+["spv.bufferhandle18.frag"]
+undefined = "dereferences `a.y` where `a` is `T1(uint64_t(4))`, stores through `f`, an address made from a constant, and indexes with the uninitialized `i`; `j` and `m` are uninitialized"
+twin = "`a`, `f`, `j` and `m` come from the push constant block `refs`, which holds addresses of buffers, and `i` is 1, so every store lands within 64 bytes of the buffer `f` points to; drops the comments"
+
+["spv.bufferhandle21.frag"]
+undefined = "stores through the uninitialized buffer reference `x`"
+twin = "initializes `x` from the push constant block `refs`, which holds the address of a buffer"
+
+["spv.bufferhandle22.frag"]
+undefined = "stores through the uninitialized buffer reference `payload`"
+twin = "initializes `payload` from the push constant block `refs`, which holds the address of a buffer"
+
+["spv.bufferhandle23.frag"]
+undefined = "loads `x.e` through the uninitialized buffer reference `x`"
+twin = "initializes `x` from the push constant block `refs`, which holds the address of a buffer; drops the comment"
+
+["spv.bufferhandleUvec2.frag"]
+undefined = "dereferences `blockType(h)` and `blockType(i)`, addresses taken from the flat inputs `h` and `i`, which hold no buffer's address"
+twin = "`h` and `i` are push constants, which the harness fills with the addresses of buffers"

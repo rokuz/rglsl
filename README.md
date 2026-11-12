@@ -53,8 +53,9 @@ write. The driver is [KosmicKrisp](https://docs.mesa3d.org/drivers/kosmickrisp.h
 Vulkan driver on Metal, so `exec` needs macOS on Apple silicon. The modules are run by our fork
 of [Amber](https://github.com/google/amber), [rokuz/amber](https://github.com/rokuz/amber)
 (branch `rglsl`), which adds mesh shading pipelines (EXT and NV), shader record data, NV ray
-tracing pipelines and acceleration structures, motion blur pipelines and scenes, and the device
-features the mesh and ray tracing stages need. Both are pinned in `oracles.toml` and installed by
+tracing pipelines and acceleration structures, motion blur pipelines and scenes, buffer device
+addresses written into other buffers (`BUFFER_ADDRESS`), and the device features the mesh and ray
+tracing stages need. Both are pinned in `oracles.toml` and installed by
 `cargo xtask oracles`: it downloads the prebuilt KosmicKrisp release, checks its sha256, unpacks
 it into `target/oracles/kosmickrisp/` with an ICD manifest that points at the driver by absolute
 path, builds Amber against that loader, and prints the Vulkan device it finds. Requirements:

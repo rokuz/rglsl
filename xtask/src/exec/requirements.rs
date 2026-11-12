@@ -211,9 +211,9 @@ pub fn capability(capability: Capability) -> Requirement {
         C::StorageTexelBufferArrayNonUniformIndexing => needs![F(
             "DescriptorIndexingFeatures.shaderStorageTexelBufferArrayNonUniformIndexing"
         )],
-        C::PhysicalStorageBufferAddresses => Requirement::Unsupported(
-            "buffer device address (Amber cannot store a buffer's address in another buffer)",
-        ),
+        C::PhysicalStorageBufferAddresses => {
+            needs![F("BufferDeviceAddressFeatures.bufferDeviceAddress")]
+        }
         C::Int64ImageEXT => {
             Requirement::Unsupported("64-bit image atomics (Amber cannot enable them)")
         }

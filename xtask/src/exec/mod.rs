@@ -11,6 +11,7 @@ pub mod mesh;
 pub mod module;
 pub mod plan;
 pub mod rays;
+pub mod references;
 pub mod reflect;
 pub mod remote;
 pub mod requirements;
@@ -208,6 +209,16 @@ pub fn compare_outputs(
     expected: &Outputs,
     actual: &Outputs,
 ) -> Result<usize, TargetDifference> {
+    let symbolic = plan.reference_table.as_ref().map(|table| {
+        (
+            references::symbolic(expected, table),
+            references::symbolic(actual, table),
+        )
+    });
+    let (expected, actual) = match &symbolic {
+        Some((expected, actual)) => (expected, actual),
+        None => (expected, actual),
+    };
     let mut tolerated = 0;
     for target in &plan.targets {
         let missing = Vec::new();
@@ -913,6 +924,12 @@ fn interface_difference(theirs: &Reflection, mine: &Reflection) -> Option<String
         return Some(format!(
             "shader record buffer {:?} vs {:?}",
             theirs.shader_record, mine.shader_record
+        ));
+    }
+    if theirs.pointer_fields != mine.pointer_fields {
+        return Some(format!(
+            "addresses used as buffer references {:?} vs {:?}",
+            theirs.pointer_fields, mine.pointer_fields
         ));
     }
     if theirs.addresses != mine.addresses {

@@ -9,6 +9,7 @@ use super::glsl;
 use super::harness::{self, Attachment, ShaderKind, MAX_ATTACHMENTS, PATCH_VERTICES};
 use super::mesh;
 use super::rays::{self, Geometry, RayPipeline, ShaderRef};
+use super::references::{self, Root, Table};
 use super::reflect::{
     AddressBuffer, ImageType, Layout, Reflection, ResourceKind, Scalar, ScalarKind, Slot, Varying,
 };
@@ -75,6 +76,8 @@ pub struct Plan {
     pub specializations: Vec<(u32, u32)>,
     pub notes: Vec<String>,
     pub addresses: Vec<(String, u32)>,
+    pub roots: Vec<Root>,
+    pub reference_table: Option<Table>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -210,6 +213,47 @@ fn address_offsets(reflection: &Reflection, buffer: AddressBuffer) -> Vec<u32> {
         .filter(|field| field.buffer == buffer)
         .map(|field| field.offset)
         .collect()
+}
+
+fn resource_buffer(resource: &super::reflect::Resource, index: usize) -> AddressBuffer {
+    AddressBuffer::Resource {
+        set: resource.set,
+        binding: resource.binding,
+        element: resource
+            .count
+            .map(|_| u32::try_from(index).unwrap_or(u32::MAX)),
+    }
+}
+
+fn pointer_roots(
+    reflection: &Reflection,
+    buffer: AddressBuffer,
+    holder: &str,
+    layout: &Layout,
+    length: u32,
+) -> Vec<Root> {
+    let mut found = Vec::new();
+    layout.pointers(0, length, &mut found);
+    let mut roots: Vec<Root> = found
+        .into_iter()
+        .map(|(offset, pointee)| Root {
+            holder: holder.to_string(),
+            offset,
+            pointee: pointee.clone(),
+        })
+        .collect();
+    roots.extend(
+        reflection
+            .pointer_fields
+            .iter()
+            .filter(|field| field.field.buffer == buffer)
+            .map(|field| Root {
+                holder: holder.to_string(),
+                offset: field.field.offset,
+                pointee: field.pointee.clone(),
+            }),
+    );
+    roots
 }
 
 fn outside_addresses(slot: &Slot, offsets: &[u32]) -> bool {
@@ -369,6 +413,8 @@ impl Plan {
             specializations: Vec::new(),
             notes: Vec::new(),
             addresses: Vec::new(),
+            roots: Vec::new(),
+            reference_table: None,
         };
         let mut rng = Rng::from_text(&inputs.seed);
         let invocations = reflection
@@ -387,7 +433,7 @@ impl Plan {
                 Some(count) => (0..count).map(|i| format!("{base}_{i}")).collect(),
             };
             let list = names.join(" ");
-            let bind = if resource.count.is_some() {
+            let bind = if resource.count.is_some_and(|count| count > 1) {
                 "BUFFER_ARRAY"
             } else {
                 "BUFFER"
@@ -427,6 +473,13 @@ impl Plan {
                         let mut bytes = buffer_bytes(layout, 0, values, &mut rng);
                         plan.clear_addresses(name, &mut bytes, &addresses(index))?;
                         plan.add_buffer(name, bytes);
+                        plan.roots.extend(pointer_roots(
+                            reflection,
+                            resource_buffer(resource, index),
+                            name,
+                            layout,
+                            0,
+                        ));
                     }
                     let _ = writeln!(plan.bindings, "  BIND {bind} {list} AS uniform {location}");
                 }
@@ -437,6 +490,13 @@ impl Plan {
                         let offsets = addresses(index);
                         plan.clear_addresses(name, &mut bytes, &offsets)?;
                         plan.add_buffer(name, bytes);
+                        plan.roots.extend(pointer_roots(
+                            reflection,
+                            resource_buffer(resource, index),
+                            name,
+                            layout,
+                            length,
+                        ));
                         if *writable {
                             writes = true;
                             let mut slots = Vec::new();
@@ -501,7 +561,7 @@ impl Plan {
                 ResourceKind::Sampler => {
                     plan.declare_sampler(&mut sampler_declared);
                     match resource.count {
-                        None => {
+                        None | Some(1) => {
                             let _ = writeln!(plan.bindings, "  BIND SAMPLER smp {location}");
                         }
                         Some(count) => {
@@ -586,8 +646,18 @@ impl Plan {
                 &address_offsets(reflection, AddressBuffer::PushConstants),
             )?;
             plan.add_buffer("push", bytes);
+            plan.roots.extend(pointer_roots(
+                reflection,
+                AddressBuffer::PushConstants,
+                "push",
+                layout,
+                0,
+            ));
             plan.bindings
                 .push_str("  BIND BUFFER push AS push_constant\n");
+        }
+        if !plan.roots.is_empty() {
+            writes = true;
         }
 
         match stage {
@@ -771,6 +841,7 @@ impl Plan {
                 plan.finish_with_fragment(&reflection.outputs);
             }
         }
+        plan.add_references(invocations, &mut rng)?;
         if !plan.addresses.is_empty() && scene.is_none() {
             scene = Some(Geometry::Triangles);
         }
@@ -816,7 +887,77 @@ impl Plan {
             &address_offsets(reflection, AddressBuffer::ShaderRecord),
         )?;
         self.add_buffer("rglsl_record", bytes);
+        self.roots.extend(pointer_roots(
+            reflection,
+            AddressBuffer::ShaderRecord,
+            "rglsl_record",
+            layout,
+            0,
+        ));
         Ok(Some("rglsl_record".into()))
+    }
+
+    fn add_references(&mut self, invocations: u32, rng: &mut Rng) -> Result<(), Refusal> {
+        if self.roots.is_empty() {
+            return Ok(());
+        }
+        let roots = std::mem::take(&mut self.roots);
+        let graph = references::build(roots, |layout| runtime_length(layout, invocations))
+            .map_err(Refusal::Binding)?;
+        let mut sizes = Vec::new();
+        for (index, node) in graph.nodes.iter().enumerate() {
+            let mut bytes = fill_random(&node.layout, node.length, rng);
+            let size = round_up(node.size.max(16), 16) + references::SLACK;
+            bytes.resize(usize::try_from(size).unwrap_or(16), 0);
+            self.add_buffer(&node.name, bytes);
+            let mut slots = Vec::new();
+            node.layout.slots(0, node.length, &mut slots);
+            slots.extend(
+                (round_up(node.size, 4)..size)
+                    .step_by(4)
+                    .map(|offset| Slot {
+                        offset,
+                        scalar: scalar(ScalarKind::Uint, 32),
+                    }),
+            );
+            self.add_target(format!("buffer reference {index}"), &node.name, slots);
+            sizes.push(size);
+        }
+        let table_size = round_up(u32::try_from(sizes.len()).unwrap_or(0) * 8, 16).max(16);
+        self.add_buffer(
+            references::TABLE,
+            vec![0; usize::try_from(table_size).unwrap_or(16)],
+        );
+        self.add_target(
+            "buffer reference addresses".into(),
+            references::TABLE,
+            Vec::new(),
+        );
+        let dump = self
+            .targets
+            .last()
+            .map(|target| target.dump.clone())
+            .unwrap_or_default();
+        for link in &graph.links {
+            let _ = writeln!(
+                self.bindings,
+                "  BUFFER_ADDRESS {} BUFFER {} OFFSET {}",
+                references::node_name(link.node),
+                link.holder,
+                link.offset
+            );
+        }
+        for (index, node) in graph.nodes.iter().enumerate() {
+            let _ = writeln!(
+                self.bindings,
+                "  BUFFER_ADDRESS {} BUFFER {} OFFSET {}",
+                node.name,
+                references::TABLE,
+                index * 8
+            );
+        }
+        self.reference_table = Some(Table { dump, sizes });
+        Ok(())
     }
 
     fn clear_addresses(
@@ -1103,7 +1244,8 @@ mod tests {
 
     use super::*;
     use crate::exec::reflect::{
-        AddressField, DataType, Interpolation, RayVariable, Resource, Varying, VaryingType,
+        AddressField, DataType, Interpolation, Pointee, PointerField, RayVariable, Resource,
+        Varying, VaryingType,
     };
     use anyhow::Context;
 
@@ -1524,6 +1666,70 @@ mod tests {
         assert!(script.contains("    g_raygen SHADER_RECORD rglsl_record\n"));
         assert!(script
             .contains("END\nACCELERATION_STRUCTURE ADDRESS tlas BUFFER rglsl_record OFFSET 8\n"));
+        Ok(())
+    }
+
+    #[test]
+    fn buffer_references_get_buffers_and_addresses() -> anyhow::Result<()> {
+        let node = Layout::Struct {
+            members: vec![
+                (0, Layout::Scalar(U32)),
+                (8, Layout::Pointer(Pointee::Enclosing(0))),
+            ],
+        };
+        let mut module = reflection(ExecutionModel::Fragment);
+        module
+            .capabilities
+            .insert(spirv::Capability::PhysicalStorageBufferAddresses);
+        module.push_constants = Some(Layout::Struct {
+            members: vec![
+                (0, Layout::Pointer(Pointee::Block(Box::new(node.clone())))),
+                (
+                    8,
+                    Layout::Vector {
+                        scalar: U32,
+                        count: 2,
+                    },
+                ),
+            ],
+        });
+        module.pointer_fields = vec![PointerField {
+            field: AddressField {
+                buffer: AddressBuffer::PushConstants,
+                offset: 8,
+            },
+            pointee: Pointee::Block(Box::new(node)),
+        }];
+        let plan = planned(&module, &Inputs::default())?;
+        assert!(plan.needs.contains(&Need::Feature(
+            "BufferDeviceAddressFeatures.bufferDeviceAddress"
+        )));
+        assert!(plan
+            .needs
+            .contains(&Need::Feature("fragmentStoresAndAtomics")));
+        let buffers: Vec<&str> = plan.targets.iter().map(|t| t.buffer.as_str()).collect();
+        assert_eq!(buffers, ["rglsl_ref0", "rglsl_ref1", "rglsl_refs"]);
+        let table = plan.reference_table.clone().context("no reference table")?;
+        assert_eq!(table.sizes, [272, 272]);
+        assert_eq!(Some(&table.dump), plan.targets.get(2).map(|t| &t.dump));
+        assert_eq!(plan.targets[0].slots.len(), 2 + (272 - 16) / 4);
+        let (tested, dump, data) = paths();
+        let script = plan.script(ScriptPaths {
+            tested: &tested,
+            harness: &[],
+            dump: &dump,
+            data: &data,
+        });
+        assert!(script.contains(
+            "  BIND BUFFER push AS push_constant\n\
+             \x20 BUFFER_ADDRESS rglsl_ref0 BUFFER push OFFSET 0\n\
+             \x20 BUFFER_ADDRESS rglsl_ref1 BUFFER push OFFSET 8\n\
+             \x20 BUFFER_ADDRESS rglsl_ref0 BUFFER rglsl_ref0 OFFSET 8\n\
+             \x20 BUFFER_ADDRESS rglsl_ref1 BUFFER rglsl_ref1 OFFSET 8\n\
+             \x20 BUFFER_ADDRESS rglsl_ref0 BUFFER rglsl_refs OFFSET 0\n\
+             \x20 BUFFER_ADDRESS rglsl_ref1 BUFFER rglsl_refs OFFSET 8\n"
+        ));
+        assert!(script.contains("BIND BUFFER rglsl_refs AS storage DESCRIPTOR_SET 0 BINDING 2"));
         Ok(())
     }
 
