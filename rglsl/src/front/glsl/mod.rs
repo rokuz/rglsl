@@ -141,4 +141,13 @@ impl Frontend {
     ) -> Result<crate::object::ObjectModule, ParseErrors> {
         lower::compile(options, source, root, includer)
     }
+
+    #[doc(hidden)]
+    pub fn compile_library_per_stage(
+        &mut self,
+        options: &Options,
+        source: &str,
+    ) -> Result<crate::object::ObjectModule, ParseErrors> {
+        lower::compile_library_per_stage(options, source, FileId(0), &mut NoIncluder)
+    }
 }

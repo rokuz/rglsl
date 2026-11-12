@@ -28,6 +28,9 @@ use alloc::format;
 use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
+use core::cell::RefCell;
+
+use rglsl_types::probe::StageProbe;
 
 use rglsl_ast::ast::{DirectiveKind, ExternalDeclaration, NodeId};
 use rglsl_ast::extensions::ExtensionState;
@@ -131,6 +134,8 @@ pub struct Analysis {
     pub no_contraction: BTreeSet<NodeId>,
     pub relaxed_precision: precision::RelaxedPrecision,
     pub work_group_size_read: bool,
+    pub stages: u16,
+    pub stage_names: BTreeSet<String>,
 }
 
 impl Analysis {
@@ -315,6 +320,8 @@ pub(crate) struct SwitchContext {
 }
 
 pub(crate) struct Analyzer<'a> {
+    probe: StageProbe<Stage>,
+    stage_names: RefCell<BTreeSet<String>>,
     pub options: &'a Options,
     pub version: Option<u32>,
     pub builtins: Arc<Builtins>,
@@ -387,13 +394,10 @@ impl<'a> Analyzer<'a> {
             let _ = scopes.declare(name, id);
         }
         scopes.push();
-        let input_array_size = match options.stage {
-            Stage::TessControl | Stage::TessEvaluation => {
-                u32::try_from(options.limits.max_patch_vertices).ok()
-            }
-            _ => None,
-        };
+        let probe = StageProbe::new(options.stage, &Stage::ALL);
         Self {
+            probe,
+            stage_names: RefCell::new(BTreeSet::new()),
             options,
             version: None,
             types: builtins.types().clone(),
@@ -419,7 +423,7 @@ impl<'a> Analyzer<'a> {
             local_size_declared: false,
             specialization_uses: 0,
             block_names: BTreeMap::new(),
-            input_array_size,
+            input_array_size: None,
             output_array_size: None,
             called: BTreeMap::new(),
             current_function: None,
@@ -615,8 +619,30 @@ impl<'a> Analyzer<'a> {
         }
     }
 
+    pub(crate) fn stage(&self) -> Stage {
+        self.probe.exact()
+    }
+
+    pub(crate) fn stage_is(&self, stage: Stage) -> bool {
+        self.probe.is(stage)
+    }
+
+    pub(crate) fn stage_in(&self, stages: &[Stage]) -> bool {
+        self.probe.any(stages)
+    }
+
+    pub(crate) fn stage_map<T: PartialEq>(&self, answer: impl Fn(Stage) -> T) -> T {
+        self.probe.map(answer)
+    }
+
+    pub(crate) fn builtin_name(&self, name: &str) {
+        self.stage_names.borrow_mut().insert(String::from(name));
+    }
+
     fn finish(self) -> Analysis {
         Analysis {
+            stages: self.probe.compatible(),
+            stage_names: self.stage_names.into_inner(),
             version: self.version,
             stage: self.options.stage,
             builtins: self.builtins,

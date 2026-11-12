@@ -67,7 +67,7 @@ impl Lowerer<'_> {
 
     pub(super) fn per_primitive_binding(&self, qualifiers: &Qualifiers) -> bool {
         qualifiers.per_primitive
-            && match self.options.stage {
+            && match self.stage() {
                 ShaderStage::Mesh => qualifiers.storage == Storage::Out,
                 ShaderStage::Fragment => qualifiers.storage == Storage::In,
                 _ => false,
@@ -125,7 +125,7 @@ impl Lowerer<'_> {
 
     pub(super) fn mesh_shader_info(&self) -> Option<MeshShaderInfo> {
         let extension = self.mesh_extension();
-        match self.options.stage {
+        match self.stage() {
             ShaderStage::Task => Some(MeshShaderInfo {
                 extension,
                 output: None,

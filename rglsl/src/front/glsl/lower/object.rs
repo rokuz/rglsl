@@ -303,12 +303,12 @@ impl Lowerer<'_> {
         let layout = self.layout_record();
         let mut extensions: Vec<String> = self.analysis.extensions.iter().cloned().collect();
         extensions.sort();
-        let stage = (!self.library).then_some(self.options.stage);
+        let stage = (!self.library).then(|| self.stage());
         let module = core::mem::take(&mut self.module);
         let work_group_size_constant = !self.specialize_work_group_size
-            && self.options.stage.compute_like()
             && self.analysis.work_group_size_read
-            && self.local_size_ids.iter().any(Option::is_none);
+            && self.local_size_ids.iter().any(Option::is_none)
+            && self.stage_map(crate::ShaderStage::compute_like);
         ObjectModule {
             stage,
             work_group_size_constant,
@@ -318,11 +318,7 @@ impl Lowerer<'_> {
             functions,
             globals,
             layout,
-            stages: if self.library {
-                alloc::vec![self.options.stage]
-            } else {
-                Vec::new()
-            },
+            stages: Vec::new(),
             ..ObjectModule::new(stage, module)
         }
     }

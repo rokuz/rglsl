@@ -212,7 +212,7 @@ impl Analyzer<'_> {
                 .and_then(|entry| entry.value)
                 .and_then(|value| u32::try_from(value).ok())
             {
-                if self.options.stage == Stage::TessControl && self.output_array_size.is_none() {
+                if self.stage_is(Stage::TessControl) && self.output_array_size.is_none() {
                     self.output_array_size = Some(vertices);
                     self.resize_interface_arrays(qualifier.span, Storage::Out, vertices);
                 }
@@ -278,6 +278,7 @@ impl Analyzer<'_> {
                 }
             }
         }
+        self.builtin_name("gl_WorkGroupSize");
         let Some(id) = self.work_group_size else {
             return;
         };
@@ -312,10 +313,7 @@ impl Analyzer<'_> {
     }
 
     fn derivative_layout(&mut self, span: Span, qualifiers: &Qualifiers) {
-        if !matches!(
-            self.options.stage,
-            Stage::Compute | Stage::Task | Stage::Mesh
-        ) {
+        if !matches!(self.stage(), Stage::Compute | Stage::Task | Stage::Mesh) {
             return;
         }
         let mut quads = false;
@@ -334,7 +332,7 @@ impl Analyzer<'_> {
                     self.khr_derivative_group = true;
                 }
                 "derivative_group_quadsnv" | "derivative_group_linearnv"
-                    if self.options.stage != Stage::Compute =>
+                    if !self.stage_is(Stage::Compute) =>
                 {
                     self.error(
                         entry.span,
@@ -393,7 +391,7 @@ impl Analyzer<'_> {
                 _ => {}
             }
         }
-        if storage == Storage::In && self.options.stage != Stage::Geometry {
+        if storage == Storage::In && !self.stage_is(Stage::Geometry) {
             return;
         }
         for name in mismatched {
@@ -408,7 +406,7 @@ impl Analyzer<'_> {
     }
 
     fn input_layout(&mut self, span: Span, qualifiers: &Qualifiers) {
-        if self.options.stage != Stage::Geometry {
+        if !self.stage_is(Stage::Geometry) {
             return;
         }
         let primitives = [
@@ -807,7 +805,7 @@ impl Analyzer<'_> {
             TypeSpecifierNonArray::Opaque(name) => match Opaque::from_keyword(name) {
                 Some(opaque) => {
                     if opaque.kind == crate::types::OpaqueKind::SubpassInput
-                        && self.options.stage != Stage::Fragment
+                        && !self.stage_is(Stage::Fragment)
                     {
                         self.error(
                             span,
@@ -1075,7 +1073,6 @@ impl Analyzer<'_> {
         if type_only {
             return;
         }
-        let stage = self.options.stage;
         if matches!(qualifiers.storage, Storage::In | Storage::Out)
             && ty.contains_scalar_where(&self.types, Scalar::is_microscaling)
         {
@@ -1118,12 +1115,12 @@ impl Analyzer<'_> {
             return;
         }
         if qualifiers.storage == Storage::Shared
-            && !matches!(stage, Stage::Compute | Stage::Mesh | Stage::Task)
+            && !self.stage_in(&[Stage::Compute, Stage::Mesh, Stage::Task])
         {
             self.error(span, invalid("shared", "not supported in this stage"));
             return;
         }
-        if qualifiers.patch && !matches!(stage, Stage::TessControl | Stage::TessEvaluation) {
+        if qualifiers.patch && !self.stage_in(&[Stage::TessControl, Stage::TessEvaluation]) {
             self.error(span, invalid("patch", "not supported in this stage"));
             return;
         }
@@ -1150,7 +1147,7 @@ impl Analyzer<'_> {
                 if qualifiers.patch && qualifiers.interpolation.is_some() {
                     self.error(span, invalid("patch", "cannot be interpolated"));
                 }
-                match stage {
+                match self.stage() {
                     Stage::Fragment => {
                         let flat = qualifiers.interpolation == Some(InterpolationQualifier::Flat);
                         if !flat && needs_flat {
@@ -1194,7 +1191,7 @@ impl Analyzer<'_> {
                 if qualifiers.patch && qualifiers.interpolation.is_some() {
                     self.error(span, invalid("patch", "cannot be interpolated"));
                 }
-                match stage {
+                match self.stage() {
                     Stage::Compute => {
                         self.error(
                             span,
@@ -1240,7 +1237,7 @@ impl Analyzer<'_> {
         }
         if matches!(qualifiers.storage, Storage::In | Storage::Out)
             && ty.base_scalar() == Some(Scalar::Bool)
-            && !(stage == Stage::Fragment && qualifiers.storage == Storage::Out)
+            && !(qualifiers.storage == Storage::Out && self.stage_is(Stage::Fragment))
         {
             self.error(span, invalid("in", "an input or output cannot be boolean"));
         }
@@ -1529,11 +1526,15 @@ impl Analyzer<'_> {
         if qualifiers.patch || name.node.starts_with("gl_") {
             return;
         }
-        let stage = self.options.stage;
+        if !matches!(qualifiers.storage, Storage::In | Storage::Out) {
+            return;
+        }
+        let stage = self.stage();
         let size = match (qualifiers.storage, stage) {
-            (Storage::In, Stage::Geometry | Stage::TessControl | Stage::TessEvaluation) => {
-                self.input_array_size
-            }
+            (Storage::In, Stage::Geometry) => self.input_array_size,
+            (Storage::In, Stage::TessControl | Stage::TessEvaluation) => self
+                .input_array_size
+                .or_else(|| u32::try_from(self.options.limits.max_patch_vertices).ok()),
             (Storage::Out, Stage::TessControl) => self.output_array_size,
             _ => return,
         };
@@ -1631,7 +1632,7 @@ impl Analyzer<'_> {
                 .map(|variable| variable.ty.clone());
             let interface = matches!(qualifiers.storage, Storage::In | Storage::Out)
                 && matches!(
-                    self.options.stage,
+                    self.stage(),
                     Stage::Geometry | Stage::TessControl | Stage::TessEvaluation
                 );
             let resizes = previous.is_some_and(|previous| {
@@ -1988,7 +1989,6 @@ impl Analyzer<'_> {
                 },
             );
         }
-        let stage = self.options.stage;
         let block_name = &structure.name;
         let invalid = |reason| DiagnosticKind::InvalidBlock {
             name: block_name.node.clone(),
@@ -2007,13 +2007,9 @@ impl Analyzer<'_> {
         }
         if let Some(instance) = instance {
             self.reserved_check(&instance.name);
-        } else if matches!(
-            (storage, stage),
-            (
-                BlockStorage::In,
-                Stage::Geometry | Stage::TessControl | Stage::TessEvaluation
-            )
-        ) && !qualifiers.has_layout("passthrough")
+        } else if storage == BlockStorage::In
+            && !qualifiers.has_layout("passthrough")
+            && self.stage_in(&[Stage::Geometry, Stage::TessControl, Stage::TessEvaluation])
         {
             self.error(
                 block_name.span,
@@ -2023,12 +2019,11 @@ impl Analyzer<'_> {
                 },
             );
         }
-        let unsupported = matches!(
-            (storage, stage),
-            (BlockStorage::In | BlockStorage::Out, Stage::Compute)
-                | (BlockStorage::In, Stage::Vertex)
-                | (BlockStorage::Out, Stage::Fragment)
-        );
+        let unsupported = match storage {
+            BlockStorage::In => self.stage_in(&[Stage::Compute, Stage::Vertex]),
+            BlockStorage::Out => self.stage_in(&[Stage::Compute, Stage::Fragment]),
+            _ => false,
+        };
         if unsupported {
             self.error(
                 block_name.span,
@@ -2150,7 +2145,7 @@ impl Analyzer<'_> {
         else {
             return false;
         };
-        if self.options.stage != Stage::Mesh {
+        if !self.stage_is(Stage::Mesh) {
             return false;
         }
         let given = instance.map_or("", |instance| instance.name.node.as_str());

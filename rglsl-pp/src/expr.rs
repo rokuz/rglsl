@@ -228,7 +228,7 @@ impl Preprocessor<'_> {
             }
             state.value = i32::from(
                 self.macros
-                    .get(&*token.text)
+                    .get(&token.text)
                     .is_some_and(|definition| !definition.undef),
             );
             *token = self.scan();

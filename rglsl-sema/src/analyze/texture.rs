@@ -162,18 +162,15 @@ impl Analyzer<'_> {
                 valid = false;
             }
         }
-        if !matches!(
-            self.options.stage,
-            Stage::Compute | Stage::Task | Stage::Mesh
-        ) {
-            return valid;
-        }
         let derivative = DERIVATIVE_FUNCTIONS.contains(&name);
         if !derivative && !implicit_lod(name, operands) {
             return valid;
         }
+        if !self.stage_in(&[Stage::Compute, Stage::Task, Stage::Mesh]) {
+            return valid;
+        }
         if derivative {
-            let extensions: &'static [&'static str] = if self.options.stage == Stage::Compute {
+            let extensions: &'static [&'static str] = if self.stage_is(Stage::Compute) {
                 &COMPUTE_DERIVATIVES
             } else {
                 &KHR_ONLY

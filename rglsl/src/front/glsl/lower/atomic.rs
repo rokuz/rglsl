@@ -144,7 +144,7 @@ impl FunctionLowerer<'_, '_> {
     ) -> Result<()> {
         let all = MemorySemantics::ACQUIRE_RELEASE;
         let statement = match (name, arguments) {
-            ("barrier", &[]) if self.lw.analysis.stage == rglsl_sema::Stage::TessControl => {
+            ("barrier", &[]) if self.lw.stage_is(crate::ShaderStage::TessControl) => {
                 if self.lw.analysis.vulkan_memory_model {
                     Statement::ScopedBarrier {
                         execution: Some(MemoryScope::Workgroup),

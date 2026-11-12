@@ -513,7 +513,7 @@ impl<'a> Lowerer<'a> {
                 .iter()
                 .any(|name| name.starts_with("xfb_"))
         }) {
-            if self.xfb.default_buffer.is_none() {
+            if self.xfb_default_buffer().is_none() {
                 return Err(semantic(
                     "transform feedback qualifier: not supported in this stage",
                     self.at(qualifier.span),
@@ -631,10 +631,10 @@ impl<'a> Lowerer<'a> {
                 self.stage_output_layout(&owned, qualifier);
                 let qualifier = Some(qualifier);
                 if let Some(buffer) = xfb::ast_layout_value(self, qualifier, "xfb_buffer") {
-                    self.xfb.default_buffer = Some(buffer);
+                    self.xfb.default_buffer = Some(Some(buffer));
                 }
                 if let (Some(buffer), Some(stride)) = (
-                    self.xfb.default_buffer,
+                    self.xfb_default_buffer(),
                     xfb::ast_layout_value(self, qualifier, "xfb_stride"),
                 ) {
                     self.xfb_stride(buffer, stride, at)?;
@@ -1057,7 +1057,7 @@ impl<'a> Lowerer<'a> {
         }
         self.outputs.insert(name, handle);
         self.output_stream(handle, qualifiers);
-        let buffer = xfb::layout_value(qualifiers, "xfb_buffer").or(self.xfb.default_buffer);
+        let buffer = xfb::layout_value(qualifiers, "xfb_buffer").or(self.xfb_default_buffer());
         if let Some(buffer) = buffer {
             let offset = xfb::layout_value(qualifiers, "xfb_offset");
             if let Some(stride) = xfb::layout_value(qualifiers, "xfb_stride") {
@@ -1500,7 +1500,7 @@ impl<'a> Lowerer<'a> {
         let xfb_buffer = if input {
             None
         } else {
-            xfb::layout_value(outer, "xfb_buffer").or(self.xfb.default_buffer)
+            xfb::layout_value(outer, "xfb_buffer").or(self.xfb_default_buffer())
         };
         let mut declared = variable.ty.clone();
         if declared.outer_size() == Some(GlslArraySize::Unsized) {
@@ -1765,19 +1765,21 @@ impl<'a> Lowerer<'a> {
     }
 
     pub(super) fn is_per_vertex_member(&self, symbol: SymbolId) -> bool {
-        if !matches!(
-            self.options.stage,
-            crate::ShaderStage::Vertex
-                | crate::ShaderStage::TessEvaluation
-                | crate::ShaderStage::Geometry
-        ) {
-            return false;
-        }
         let Some(&SymbolKind::BlockMember { instance, .. }) =
             self.symbol(symbol).map(|symbol| &symbol.kind)
         else {
             return false;
         };
+        if !self.stage_map(|stage| {
+            matches!(
+                stage,
+                crate::ShaderStage::Vertex
+                    | crate::ShaderStage::TessEvaluation
+                    | crate::ShaderStage::Geometry
+            )
+        }) {
+            return false;
+        }
         let Some(variable) = self.variable(instance) else {
             return false;
         };
@@ -1805,6 +1807,7 @@ impl<'a> Lowerer<'a> {
     }
 
     fn builtin_per_vertex(&self) -> Option<&'a rglsl_sema::types::BlockType> {
+        self.stage();
         let analysis = self.analysis;
         analysis
             .symbols
@@ -1844,7 +1847,7 @@ impl<'a> Lowerer<'a> {
     fn per_vertex_xfb(&mut self, structure: &'a BlockStructure, at: Span) -> Result<()> {
         let outer = Some(&structure.qualifier);
         let Some(buffer) =
-            xfb::ast_layout_value(self, outer, "xfb_buffer").or(self.xfb.default_buffer)
+            xfb::ast_layout_value(self, outer, "xfb_buffer").or(self.xfb_default_buffer())
         else {
             return Ok(());
         };
@@ -1907,15 +1910,19 @@ impl<'a> Lowerer<'a> {
     }
 
     pub(super) fn declare_per_vertex(&mut self) -> Result<()> {
-        if !matches!(
-            self.options.stage,
-            crate::ShaderStage::Vertex
-                | crate::ShaderStage::TessEvaluation
-                | crate::ShaderStage::Geometry
-        ) || (self.per_vertex_used.is_empty() && !self.per_vertex_redeclared)
+        if (self.per_vertex_used.is_empty() && !self.per_vertex_redeclared)
+            || !self.stage_map(|stage| {
+                matches!(
+                    stage,
+                    crate::ShaderStage::Vertex
+                        | crate::ShaderStage::TessEvaluation
+                        | crate::ShaderStage::Geometry
+                )
+            })
         {
             return Ok(());
         }
+        self.stage();
         let block = self
             .builtin_per_vertex()
             .ok_or_else(|| internal(Span::UNDEFINED))?;
@@ -2032,7 +2039,7 @@ impl<'a> Lowerer<'a> {
         );
         self.interface.push(handle);
         self.per_vertex = Some((handle, names));
-        if self.xfb.default_buffer.is_some() {
+        if self.xfb_default_buffer().is_some() {
             let buffer = self
                 .xfb
                 .per_vertex

@@ -177,10 +177,10 @@ const fn invalid(qualifier: &'static str, reason: &'static str) -> DiagnosticKin
 
 impl Analyzer<'_> {
     pub(crate) fn stage_layout_identifiers(&mut self, qualifiers: &Qualifiers) {
-        let stage = self.options.stage;
         for entry in &qualifiers.layout {
             let name = entry.name.to_ascii_lowercase();
-            if layout_stages(&name).is_some_and(|stages| !stages.contains(&stage)) {
+            if layout_stages(&name).is_some_and(|stages| !self.stage_in(stages)) {
+                let stage = self.stage();
                 self.error(
                     entry.span,
                     DiagnosticKind::NotSupportedInStage {
@@ -193,15 +193,12 @@ impl Analyzer<'_> {
     }
 
     pub(crate) fn passthrough_extension(&mut self, qualifiers: &Qualifiers) {
-        if self.options.stage != Stage::Geometry {
-            return;
-        }
         let span = qualifiers
             .layout
             .iter()
             .find(|entry| entry.name.eq_ignore_ascii_case("passthrough"))
             .map(|entry| entry.span);
-        if let Some(span) = span {
+        if let Some(span) = span.filter(|_| self.stage_is(Stage::Geometry)) {
             self.require_extension(
                 span,
                 "GL_NV_geometry_shader_passthrough",
@@ -211,11 +208,20 @@ impl Analyzer<'_> {
     }
 
     pub(crate) fn view_layout_extensions(&mut self, qualifiers: &Qualifiers) {
-        let pre_rasterization = matches!(
-            self.options.stage,
-            Stage::Vertex | Stage::TessControl | Stage::TessEvaluation | Stage::Geometry
-        );
-        let fragment = self.options.stage == Stage::Fragment;
+        let named = |wanted: &[&str]| {
+            qualifiers
+                .layout
+                .iter()
+                .any(|entry| wanted.contains(&entry.name.to_ascii_lowercase().as_str()))
+        };
+        let pre_rasterization = named(&["viewport_relative", "secondary_view_offset"])
+            && self.stage_in(&[
+                Stage::Vertex,
+                Stage::TessControl,
+                Stage::TessEvaluation,
+                Stage::Geometry,
+            ]);
+        let fragment = named(&["override_coverage"]) && self.stage_is(Stage::Fragment);
         let required: alloc::vec::Vec<(Span, &'static str, &'static str)> = qualifiers
             .layout
             .iter()
@@ -242,10 +248,11 @@ impl Analyzer<'_> {
     }
 
     pub(crate) fn no_shader_layouts(&mut self, qualifiers: &Qualifiers) {
-        let found: alloc::vec::Vec<(&'static str, Span)> =
-            shader_layouts(self.options.stage, qualifiers)
+        let found: alloc::vec::Vec<(&'static str, Span)> = self.stage_map(|stage| {
+            shader_layouts(stage, qualifiers)
                 .map(|(name, _, entry)| (name, entry.span))
-                .collect();
+                .collect()
+        });
         for (name, span) in found {
             self.error(
                 span,
@@ -255,7 +262,7 @@ impl Analyzer<'_> {
     }
 
     pub(crate) fn standalone_stage_layout(&mut self, qualifiers: &Qualifiers) {
-        let stage = self.options.stage;
+        let stage = self.stage();
         let found: alloc::vec::Vec<(&'static str, Kind, Span, Option<i64>)> =
             shader_layouts(stage, qualifiers)
                 .map(|(name, kind, entry)| (name, kind, entry.span, entry.value))
@@ -427,7 +434,7 @@ impl Analyzer<'_> {
     }
 
     pub(crate) fn tessellation_barrier(&mut self, span: Span) {
-        if self.options.stage != Stage::TessControl {
+        if !self.stage_is(Stage::TessControl) {
             return;
         }
         let reason =
@@ -449,7 +456,7 @@ impl Analyzer<'_> {
     pub(crate) fn viewport_layer_extension(&mut self, span: Span, name: &str) {
         if !matches!(name, "gl_Layer" | "gl_ViewportIndex")
             || !matches!(
-                self.options.stage,
+                self.stage(),
                 Stage::Vertex | Stage::TessControl | Stage::TessEvaluation
             )
         {

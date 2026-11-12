@@ -253,6 +253,7 @@ impl<'a> Lowerer<'a> {
     }
 
     pub(super) fn work_group_size_defaults(&self) -> [u32; 3] {
+        self.builtin_name("gl_WorkGroupSize");
         let mut sizes = [1_u32; 3];
         let values = self
             .analysis
@@ -272,6 +273,7 @@ impl<'a> Lowerer<'a> {
     }
 
     pub(super) fn is_work_group_size(&self, symbol: rglsl_sema::SymbolId) -> bool {
+        self.builtin_name("gl_WorkGroupSize");
         self.analysis
             .builtins
             .variables()

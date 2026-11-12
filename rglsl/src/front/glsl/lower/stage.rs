@@ -120,7 +120,7 @@ fn per_vertex_builtin(name: &str, invariant: bool) -> Option<BuiltIn> {
 
 impl<'a> Lowerer<'a> {
     pub(super) fn stage_input_layout(&mut self, names: &[String]) {
-        let stage = self.options.stage;
+        let stage = self.stage();
         for name in names {
             let name = name.to_ascii_lowercase();
             match stage {
@@ -149,7 +149,7 @@ impl<'a> Lowerer<'a> {
     }
 
     pub(super) fn stage_input_values(&mut self, qualifier: &'a Spanned<TypeQualifier>) {
-        if self.options.stage == ShaderStage::Geometry {
+        if self.stage_is(ShaderStage::Geometry) {
             if let Some(invocations) = xfb::ast_layout_value(self, Some(qualifier), "invocations") {
                 self.stage_layout.invocations.get_or_insert(invocations);
             }
@@ -161,7 +161,7 @@ impl<'a> Lowerer<'a> {
         names: &[String],
         qualifier: &'a Spanned<TypeQualifier>,
     ) {
-        match self.options.stage {
+        match self.stage() {
             ShaderStage::Geometry => {
                 for name in names {
                     if let Some(primitive) = output_primitive(&name.to_ascii_lowercase()) {
@@ -209,7 +209,7 @@ impl<'a> Lowerer<'a> {
         handle: Handle<GlobalVariable>,
         qualifiers: &Qualifiers,
     ) {
-        if self.options.stage != ShaderStage::Geometry {
+        if !self.stage_is(ShaderStage::Geometry) {
             return;
         }
         let stream = xfb::layout_value(qualifiers, "stream");
@@ -220,8 +220,8 @@ impl<'a> Lowerer<'a> {
         self.stage_layout.streams.push((handle, stream));
     }
 
-    pub(super) const fn is_per_vertex_io(&self, qualifiers: &Qualifiers) -> bool {
-        let stage = self.options.stage;
+    pub(super) fn is_per_vertex_io(&self, qualifiers: &Qualifiers) -> bool {
+        let stage = self.stage();
         if qualifiers.patch {
             return false;
         }
@@ -236,8 +236,8 @@ impl<'a> Lowerer<'a> {
     }
 
     pub(super) fn passthrough_defaults(&mut self) {
-        if self.options.stage != ShaderStage::Geometry
-            || !self.analysis.extensions.contains(PASSTHROUGH_EXTENSION)
+        if !self.analysis.extensions.contains(PASSTHROUGH_EXTENSION)
+            || !self.stage_is(ShaderStage::Geometry)
         {
             return;
         }
@@ -260,7 +260,7 @@ impl<'a> Lowerer<'a> {
     }
 
     pub(super) fn passthrough(&mut self, handle: Handle<GlobalVariable>, qualifiers: &Qualifiers) {
-        if self.options.stage == ShaderStage::Geometry && qualifiers.has_layout("passthrough") {
+        if self.stage_is(ShaderStage::Geometry) && qualifiers.has_layout("passthrough") {
             self.stage_layout.passthrough.push(handle);
         }
     }
@@ -270,6 +270,7 @@ impl<'a> Lowerer<'a> {
         structure: &rglsl_ast::ast::BlockStructure,
         at: Span,
     ) -> Result<()> {
+        self.builtin_name("gl_in");
         let analysis = self.analysis;
         let block = analysis
             .symbols
@@ -364,8 +365,8 @@ impl<'a> Lowerer<'a> {
         Ok(())
     }
 
-    const fn layout_missing(&self) -> bool {
-        match self.options.stage {
+    fn layout_missing(&self) -> bool {
+        match self.stage() {
             ShaderStage::Geometry => self.stage_layout.input_primitive.is_none(),
             ShaderStage::TessControl => self.stage_layout.vertices.is_none(),
             ShaderStage::Mesh => {
@@ -379,7 +380,7 @@ impl<'a> Lowerer<'a> {
 
     pub(super) fn check_stage_layout(&mut self) {
         let layout = &self.stage_layout;
-        let missing: &[(bool, &str)] = match self.options.stage {
+        let missing: &[(bool, &str)] = match self.stage() {
             ShaderStage::Geometry => &[
                 (
                     layout.input_primitive.is_none(),
@@ -428,7 +429,7 @@ impl<'a> Lowerer<'a> {
 
     pub(super) fn stage_info(&self) -> (Option<GeometryInfo>, Option<TessellationInfo>) {
         let layout = &self.stage_layout;
-        match self.options.stage {
+        match self.stage() {
             ShaderStage::Geometry => {
                 let geometry = match (layout.input_primitive, layout.output_primitive) {
                     (Some(input), Some(output)) => Some(GeometryInfo {
@@ -513,7 +514,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
             _ if self.with(|this| this.layout_missing())? => 1,
             _ => {
                 return Err(semantic(
-                    format_size_error(&record.name, self.with(|this| this.options.stage)?),
+                    format_size_error(&record.name, self.with(|this| this.stage())?),
                     at,
                 ))
             }
@@ -528,7 +529,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
         })?;
         for (index, member) in block.members.iter().enumerate() {
             let index = u32::try_from(index).map_err(|_| internal(at))?;
-            let requested = if self.with(|this| this.options.stage)? == ShaderStage::Mesh {
+            let requested = if self.with(|this| this.stage())? == ShaderStage::Mesh {
                 member.name != "gl_PrimitiveShadingRateEXT" || shading_rate
             } else {
                 rglsl_sema::builtins::view_extension(&member.name)

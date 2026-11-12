@@ -104,12 +104,53 @@ fn same_definition(left: Option<&Macro>, right: Option<&Macro>) -> bool {
     }
 }
 
+#[derive(Debug, Default)]
+pub(crate) struct MacroTable {
+    map: BTreeMap<String, Macro>,
+    stage_used: core::cell::Cell<bool>,
+}
+
+impl MacroTable {
+    fn watch(&self, name: &str) {
+        if crate::options::Stage::ALL
+            .iter()
+            .any(|stage| stage.macro_name() == name)
+        {
+            self.stage_used.set(true);
+        }
+    }
+
+    pub(crate) fn get(&self, name: &str) -> Option<&Macro> {
+        self.lookup(name, true)
+    }
+
+    pub(crate) fn lookup(&self, name: &str, watched: bool) -> Option<&Macro> {
+        if watched {
+            self.watch(name);
+        }
+        self.map.get(name)
+    }
+
+    pub(crate) fn get_mut(&mut self, name: &str) -> Option<&mut Macro> {
+        self.watch(name);
+        self.map.get_mut(name)
+    }
+
+    pub(crate) fn insert(&mut self, name: String, definition: Macro, watched: bool) {
+        if watched {
+            self.watch(&name);
+        }
+        self.map.insert(name, definition);
+    }
+}
+
 pub(crate) struct Preprocessor<'a> {
     pub(crate) options: &'a Options,
     pub(crate) includer: &'a mut dyn Includer,
     pub(crate) inputs: Vec<Input>,
     pub(crate) file_inputs: Vec<usize>,
-    pub(crate) macros: BTreeMap<String, Macro>,
+    pub(crate) macros: MacroTable,
+    pub(crate) version_stages: u16,
     pub(crate) diagnostics: Vec<Diagnostic>,
     pub(crate) events: Events,
     pub(crate) version: Version,
@@ -141,6 +182,7 @@ pub(crate) enum Scanned {
 
 #[derive(Debug)]
 pub struct Preprocessed {
+    stages: u16,
     pub text: String,
     pub source_map: SourceMap,
     pub diagnostics: Vec<Diagnostic>,
@@ -148,6 +190,13 @@ pub struct Preprocessed {
 }
 
 impl Preprocessed {
+    pub fn same_for_stage(&self, stage: crate::options::Stage) -> bool {
+        crate::options::Stage::ALL
+            .iter()
+            .position(|&candidate| candidate == stage)
+            .is_some_and(|index| self.stages & (1 << index) != 0)
+    }
+
     pub fn has_errors(&self) -> bool {
         self.diagnostics.iter().any(Diagnostic::is_error)
     }
@@ -168,6 +217,17 @@ pub fn preprocess(
     let scanned = version::scan_version(source.strip_prefix('\u{feff}').unwrap_or(source));
     let mut version_errors = Vec::new();
     let version = version::deduce(&scanned, options, &mut version_errors);
+    let mut version_stages = 0_u16;
+    for (index, candidate) in crate::options::Stage::ALL.into_iter().enumerate() {
+        let mut errors = Vec::new();
+        let other = Options {
+            stage: Some(candidate),
+            ..options.clone()
+        };
+        if version::deduce(&scanned, &other, &mut errors) == version && errors == version_errors {
+            version_stages |= 1 << index;
+        }
+    }
     let es = version.profile == Some(Profile::Es);
     let version_will_be_error = scanned.directive.is_none()
         || (es && version.number >= 300 && scanned.not_first)
@@ -208,7 +268,8 @@ pub fn preprocess(
             )),
         ],
         file_inputs: vec![0, 1],
-        macros: BTreeMap::new(),
+        macros: MacroTable::default(),
+        version_stages,
         diagnostics: Vec::new(),
         events: Vec::new(),
         version,
@@ -269,6 +330,11 @@ impl Preprocessor<'_> {
                 files: self.files,
             },
             diagnostics: self.diagnostics,
+            stages: if self.macros.stage_used.get() {
+                0
+            } else {
+                self.version_stages
+            },
             version: self.version,
         }
     }
@@ -590,7 +656,7 @@ impl Preprocessor<'_> {
     }
 }
 
-fn scan_tokens(macros: &BTreeMap<String, Macro>, input: &mut TokenInput, current: At) -> Token {
+fn scan_tokens(macros: &MacroTable, input: &mut TokenInput, current: At) -> Token {
     {
         let Some(mut token) = input.tokens.get(input.pos).cloned() else {
             return Token::new(Kind::End, current);
@@ -600,7 +666,7 @@ fn scan_tokens(macros: &BTreeMap<String, Macro>, input: &mut TokenInput, current
         if input.pos >= input.tokens.len()
             && token.kind == Kind::Identifier
             && macros
-                .get(&*token.text)
+                .get(&token.text)
                 .is_some_and(|definition| definition.function_like)
         {
             token.fully_expanded = false;

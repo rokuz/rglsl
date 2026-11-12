@@ -1875,14 +1875,16 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 result
             }?);
         }
-        let stage = self.with(|this| this.lw.options.stage)?;
-        let derivatives = stage == ShaderStage::Fragment
-            || (stage == ShaderStage::Compute
-                && self.with(|this| this.lw.analysis.derivative_group.is_some())?);
         let implicit = match level {
             SampleLevel::Auto => !self.with(|this| this.lw.library)?,
             SampleLevel::Bias(_) => true,
             SampleLevel::Zero | SampleLevel::Exact(_) | SampleLevel::Gradient { .. } => false,
+        };
+        let derivatives = implicit && !gather && {
+            let stage = self.with(|this| this.lw.stage())?;
+            stage == ShaderStage::Fragment
+                || (stage == ShaderStage::Compute
+                    && self.with(|this| this.lw.analysis.derivative_group.is_some())?)
         };
         if implicit && !gather && !derivatives {
             level = SampleLevel::Zero;

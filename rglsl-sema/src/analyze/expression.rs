@@ -591,12 +591,9 @@ impl Analyzer<'_> {
                     Place::ReadOnly("it is a uniform")
                 } else if shader_record {
                     Place::ReadOnly("can't modify a shaderrecordnv qualified buffer")
-                } else if storage == Storage::HitAttribute
-                    && self.options.stage != Stage::Intersection
-                {
+                } else if storage == Storage::HitAttribute && !self.stage_is(Stage::Intersection) {
                     Place::ReadOnly("cannot modify hitAttributeNV in this stage")
-                } else if storage == Storage::TaskPayloadShared && self.options.stage == Stage::Mesh
-                {
+                } else if storage == Storage::TaskPayloadShared && self.stage_is(Stage::Mesh) {
                     Place::ReadOnly(
                         "can't modify variable with storage qualifier taskPayloadSharedEXT in mesh shaders",
                     )
@@ -709,7 +706,7 @@ impl Analyzer<'_> {
             .is_some_and(|variable| variable.origin == Origin::BuiltIn);
         if builtin {
             if let Some(extensions) =
-                crate::builtins::ray::variable_extensions(name, self.options.stage)
+                self.stage_map(|stage| crate::builtins::ray::variable_extensions(name, stage))
             {
                 if !self.require_extensions(expression.span, extensions, name) {
                     return Operand::error();
@@ -835,9 +832,6 @@ impl Analyzer<'_> {
     }
 
     pub(crate) fn per_vertex_output_check(&mut self, target: &Expression) {
-        if self.options.stage != Stage::TessControl {
-            return;
-        }
         let mut current = target;
         loop {
             match &current.kind {
@@ -865,7 +859,7 @@ impl Analyzer<'_> {
                             &index.kind,
                             ExpressionKind::Variable(index) if index == "gl_InvocationID"
                         );
-                        if per_vertex && !by_invocation {
+                        if per_vertex && !by_invocation && self.stage_is(Stage::TessControl) {
                             self.error(target.span, DiagnosticKind::PerVertexOutputIndex);
                         }
                     }

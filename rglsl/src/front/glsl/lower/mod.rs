@@ -33,12 +33,14 @@ use alloc::{
     vec,
     vec::Vec,
 };
+use core::cell::RefCell;
 
 use rglsl_ast::ast::{ExternalDeclaration, FunctionDefinition, Initializer, Node, Spanned};
 use rglsl_ast::TranslationUnit;
 use rglsl_sema::scope::{Symbol, SymbolKind, Variable};
 use rglsl_sema::types::{BlockId, SharedDimensions, StructId};
 use rglsl_sema::{Analysis, FunctionId, SymbolId};
+use rglsl_types::probe::StageProbe;
 
 use super::{Error, ErrorKind, IncludeLocation, Options, ParseErrors};
 use crate::{
@@ -61,6 +63,7 @@ pub(super) fn parse(
         includer,
         &mut library::StageNames::default(),
         false,
+        &StageClass::new(options.stage),
     )
     .map(|object| object.module)
 }
@@ -70,6 +73,16 @@ pub(super) fn compile(
     source: &str,
     root: rglsl_pp::FileId,
     includer: &mut dyn rglsl_pp::Includer,
+) -> core::result::Result<crate::object::ObjectModule, ParseErrors> {
+    compile_sharing(options, source, root, includer, true)
+}
+
+fn compile_sharing(
+    options: &Options,
+    source: &str,
+    root: rglsl_pp::FileId,
+    includer: &mut dyn rglsl_pp::Includer,
+    share: bool,
 ) -> core::result::Result<crate::object::ObjectModule, ParseErrors> {
     let hint = (!options.library).then_some(options.stage);
     match defines_main(options, hint, source, root, includer) {
@@ -85,9 +98,19 @@ pub(super) fn compile(
             root,
             includer,
             &mut library::StageNames::default(),
+            &StageClass::new(options.stage),
         ),
-        Some(false) | None => library::compile(options, hint, source, root, includer),
+        Some(false) | None => library::compile(options, hint, source, root, includer, share),
     }
+}
+
+pub(super) fn compile_library_per_stage(
+    options: &Options,
+    source: &str,
+    root: rglsl_pp::FileId,
+    includer: &mut dyn rglsl_pp::Includer,
+) -> core::result::Result<crate::object::ObjectModule, ParseErrors> {
+    compile_sharing(options, source, root, includer, false)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -147,6 +170,62 @@ fn defines_main(
     }))
 }
 
+pub(super) struct StageClass {
+    probe: StageProbe<ShaderStage>,
+    names: RefCell<BTreeSet<String>>,
+    version: core::cell::Cell<Option<u32>>,
+}
+
+impl StageClass {
+    pub(super) fn new(stage: ShaderStage) -> Self {
+        Self {
+            probe: StageProbe::new(stage, &ShaderStage::ALL),
+            names: RefCell::new(BTreeSet::new()),
+            version: core::cell::Cell::new(None),
+        }
+    }
+
+    pub(super) const fn version(&self) -> Option<u32> {
+        self.version.get()
+    }
+
+    pub(super) fn stages(&self) -> u16 {
+        self.probe.compatible()
+    }
+
+    pub(super) fn into_names(self) -> BTreeSet<String> {
+        self.names.into_inner()
+    }
+
+    fn identifiers(&self, text: &str) {
+        let mut names = self.names.borrow_mut();
+        let mut start = None;
+        for (index, character) in text
+            .char_indices()
+            .chain(core::iter::once((text.len(), ' ')))
+        {
+            let word = character.is_ascii_alphanumeric() || character == '_';
+            match (start, word) {
+                (None, true) => start = Some(index),
+                (Some(from), false) => {
+                    if let Some(identifier) = text.get(from..index) {
+                        if identifier
+                            .chars()
+                            .next()
+                            .is_some_and(|first| !first.is_ascii_digit())
+                            && !names.contains(identifier)
+                        {
+                            names.insert(String::from(identifier));
+                        }
+                    }
+                    start = None;
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
 fn lower_object(
     options: &Options,
     source: &str,
@@ -154,16 +233,18 @@ fn lower_object(
     root: rglsl_pp::FileId,
     includer: &mut dyn rglsl_pp::Includer,
     names: &mut library::StageNames,
+    class: &StageClass,
 ) -> core::result::Result<crate::object::ObjectModule, ParseErrors> {
-    let mut object = lower(options, source, mode, root, includer, names, false)?;
+    let mut object = lower(options, source, mode, root, includer, names, false, class)?;
     if object.work_group_size_constant {
-        object.specialized = lower(options, source, mode, root, includer, names, true)
+        object.specialized = lower(options, source, mode, root, includer, names, true, class)
             .ok()
             .map(alloc::boxed::Box::new);
     }
     Ok(object)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn lower(
     options: &Options,
     source: &str,
@@ -172,10 +253,18 @@ fn lower(
     includer: &mut dyn rglsl_pp::Includer,
     names: &mut library::StageNames,
     specialize: bool,
+    class: &StageClass,
 ) -> core::result::Result<crate::object::ObjectModule, ParseErrors> {
     let object = mode != Mode::Program;
     let preprocessed = preprocess(options, Some(options.stage), source, root, includer);
     let map = &preprocessed.source_map;
+    if preprocessed.same_for_stage(preprocessor_stage(options.stage)) {
+        class
+            .probe
+            .map(|candidate| preprocessed.same_for_stage(preprocessor_stage(candidate)));
+    } else {
+        class.probe.exact();
+    }
     if preprocessed.has_errors() {
         let errors = preprocessed
             .errors()
@@ -204,7 +293,7 @@ fn lower(
             .map(|range| range.start)
             .min();
         let mut earlier: Vec<(Error, Option<IncludeLocation>)> = first
-            .map(|first| semantic_errors_before(options, &preprocessed, first))
+            .map(|first| semantic_errors_before(options, &preprocessed, first, class))
             .unwrap_or_default()
             .into_iter()
             .map(|error| (error, None))
@@ -214,6 +303,7 @@ fn lower(
         return Err(earlier.into());
     }
     let text = preprocessed.text.as_str();
+    class.identifiers(text);
     let (unit, failure) = rglsl_ast::parse_prefix(text);
     let analysis = rglsl_sema::analyze(
         &unit,
@@ -222,6 +312,12 @@ fn lower(
             ..sema_options(options, text)
         },
     );
+    class.probe.narrow(analysis.stages);
+    class.version.set(analysis.version);
+    class
+        .names
+        .borrow_mut()
+        .extend(analysis.stage_names.iter().cloned());
     if let Some(error) = failure {
         let earlier = analysis.diagnostics.iter().filter(|diagnostic| {
             diagnostic.offset(text) < error.span.start
@@ -260,10 +356,13 @@ fn lower(
         .enumerate()
         .map(|(index, diagnostic)| {
             let start = diagnostic.offset(text);
-            let message = (mode == Mode::Library && index == 0)
+            let reworded = (mode == Mode::Library && index == 0)
                 .then(|| names.stage_diagnostic(&diagnostic.kind, analysis.version, options.stage))
-                .flatten()
-                .unwrap_or_else(|| diagnostic.kind.to_string());
+                .flatten();
+            if reworded.is_some() {
+                class.probe.exact();
+            }
+            let message = reworded.unwrap_or_else(|| diagnostic.kind.to_string());
             let past_end = usize::try_from(start).is_ok_and(|start| start >= text.len());
             let error = Error {
                 kind: ErrorKind::SemanticError(Cow::Owned(message)),
@@ -288,7 +387,15 @@ fn lower(
     if !errors.is_empty() {
         return Err(errors.into());
     }
-    let mut lowerer = Lowerer::new(&unit, &analysis, options, map, mode);
+    let mut lowerer = Lowerer::new(
+        &unit,
+        &analysis,
+        options,
+        map,
+        mode,
+        &class.probe,
+        &class.names,
+    );
     lowerer.specialize_work_group_size = specialize;
     lowerer.run()
 }
@@ -306,11 +413,19 @@ fn semantic_errors_before(
     options: &Options,
     preprocessed: &rglsl_pp::Preprocessed,
     end: usize,
+    class: &StageClass,
 ) -> Vec<Error> {
     let map = &preprocessed.source_map;
     let text = preprocessed.text.as_str();
+    class.identifiers(text);
     let (unit, failure) = rglsl_ast::parse_prefix(text);
     let analysis = rglsl_sema::analyze(&unit, &sema_options(options, text));
+    class.probe.narrow(analysis.stages);
+    class.version.set(analysis.version);
+    class
+        .names
+        .borrow_mut()
+        .extend(analysis.stage_names.iter().cloned());
     let parsed = failure.map_or(u32::MAX, |error| error.span.start);
     let mut errors: Vec<Error> = analysis
         .diagnostics
@@ -478,6 +593,8 @@ pub(super) struct Lowerer<'a> {
     pub unit: &'a TranslationUnit,
     pub analysis: &'a Analysis,
     pub options: &'a Options,
+    probe: &'a StageProbe<ShaderStage>,
+    stage_names: &'a RefCell<BTreeSet<String>>,
     pub module: Module,
     pub layouter: Layouter,
     pub errors: Vec<Error>,
@@ -552,6 +669,8 @@ impl<'a> Lowerer<'a> {
         options: &'a Options,
         source_map: &'a rglsl_pp::SourceMap,
         mode: Mode,
+        probe: &'a StageProbe<ShaderStage>,
+        stage_names: &'a RefCell<BTreeSet<String>>,
     ) -> Self {
         Self {
             source_map,
@@ -622,14 +741,10 @@ impl<'a> Lowerer<'a> {
             ray_data: BTreeMap::new(),
             incoming_ray_payload: None,
             deferred_private: BTreeMap::new(),
-            xfb: xfb::Xfb::new(
-                matches!(
-                    options.stage,
-                    ShaderStage::Vertex | ShaderStage::TessEvaluation | ShaderStage::Geometry
-                )
-                .then_some(0),
-            ),
+            xfb: xfb::Xfb::new(),
             stage_layout: stage::StageLayout::default(),
+            probe,
+            stage_names,
             object: mode != Mode::Program,
             library: mode == Mode::Library,
             automatic_locations: Vec::new(),
@@ -657,6 +772,22 @@ impl<'a> Lowerer<'a> {
         if let Err(error) = result {
             self.errors.push(error);
         }
+    }
+
+    pub(super) fn stage(&self) -> ShaderStage {
+        self.probe.exact()
+    }
+
+    pub(super) fn stage_is(&self, stage: ShaderStage) -> bool {
+        self.probe.is(stage)
+    }
+
+    pub(super) fn stage_map<T: PartialEq>(&self, answer: impl Fn(ShaderStage) -> T) -> T {
+        self.probe.map(answer)
+    }
+
+    pub(super) fn builtin_name(&self, name: &str) {
+        self.stage_names.borrow_mut().insert(String::from(name));
     }
 
     fn run(mut self) -> core::result::Result<crate::object::ObjectModule, ParseErrors> {
@@ -756,6 +887,7 @@ impl<'a> Lowerer<'a> {
             }
         }
         for (name, &handle) in &self.builtins {
+            self.builtin_name(name);
             let relaxed_builtin = analysis.symbols.iter().any(|symbol| {
                 symbol.name == *name
                     && symbol
