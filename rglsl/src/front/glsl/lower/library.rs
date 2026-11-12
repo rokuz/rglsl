@@ -83,6 +83,7 @@ fn stage_order(hint: Option<ShaderStage>) -> Vec<ShaderStage> {
         .collect()
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn compile(
     options: &Options,
     hint: Option<ShaderStage>,
