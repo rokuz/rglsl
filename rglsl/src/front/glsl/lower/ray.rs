@@ -224,7 +224,9 @@ impl Lowerer<'_> {
             return Err(super::unsupported("arrays of ray tracing blocks", at));
         }
         let ir = self.block_struct(id, Packing::Std430, false, at)?;
-        self.ray_global(symbol, name, space, set, location, ir, at);
+        let handle = self.ray_global(symbol, name, space, set, location, ir, at);
+        self.module.global_variables.get_mut(handle).block =
+            Some(crate::BlockDeclaration::RayTracing);
         Ok(())
     }
 
@@ -238,7 +240,7 @@ impl Lowerer<'_> {
         location: Option<u32>,
         ty: Handle<crate::Type>,
         at: Span,
-    ) {
+    ) -> Handle<GlobalVariable> {
         let io = location.map(|location| Binding::Location {
             location,
             interpolation: None,
@@ -266,6 +268,7 @@ impl Lowerer<'_> {
                 spirv_decorations: Vec::new(),
                 relaxed_precision: false,
                 immediate_bank: None,
+                block: None,
             },
             at,
         );
@@ -276,6 +279,7 @@ impl Lowerer<'_> {
             self.incoming_ray_payload = Some(handle);
         }
         self.globals.insert(symbol, GlobalRef::Variable(handle));
+        handle
     }
 
     pub(super) fn ray_query_global(
@@ -300,6 +304,7 @@ impl Lowerer<'_> {
                 spirv_decorations: Vec::new(),
                 relaxed_precision: false,
                 immediate_bank: None,
+                block: None,
             },
             at,
         )

@@ -1615,6 +1615,19 @@ pub struct GlobalVariable {
     #[cfg_attr(feature = "serialize", serde(skip_serializing_if = "Option::is_none"))]
     #[cfg_attr(feature = "deserialize", serde(default))]
     pub immediate_bank: Option<ImmediateBank>,
+    #[cfg_attr(feature = "serialize", serde(skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    pub block: Option<BlockDeclaration>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub enum BlockDeclaration {
+    Uniform,
+    Buffer,
+    RayTracing,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
@@ -3986,6 +3999,12 @@ pub struct EntryPoint {
         serde(skip_serializing_if = "Reconvergence::is_default")
     )]
     pub reconvergence: Reconvergence,
+    #[cfg_attr(
+        feature = "serialize",
+        serde(skip_serializing_if = "core::ops::Not::not")
+    )]
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    pub invariant_outputs: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, Hash, Eq, PartialEq)]
@@ -4238,6 +4257,7 @@ pub struct Interlock {
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub struct FragmentModes {
     pub post_depth_coverage: bool,
+    pub early_and_late_fragment_tests: bool,
     pub interlock: Option<Interlock>,
     pub non_coherent_color_attachment_read: bool,
     pub non_coherent_depth_attachment_read: bool,
@@ -4812,6 +4832,12 @@ pub struct Module {
     )]
     #[cfg_attr(feature = "deserialize", serde(default))]
     pub shader_64bit_indexing: bool,
+    #[cfg_attr(
+        feature = "serialize",
+        serde(skip_serializing_if = "core::ops::Not::not")
+    )]
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    pub legacy_buffer_blocks: bool,
     #[cfg_attr(
         feature = "serialize",
         serde(skip_serializing_if = "RayTracingFeatures::is_empty")

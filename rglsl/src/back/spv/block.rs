@@ -8,9 +8,9 @@ use arrayvec::ArrayVec;
 use spirv::Word;
 
 use super::{
-    helpers::map_storage_class, index::BoundsCheckResult, selection::Selection, Block,
-    BlockContext, Dimension, Error, IdGenerator, Instruction, LocalType, LookupType, NumericType,
-    ResultMember, WrappedFunction, Writer, WriterFlags,
+    index::BoundsCheckResult, selection::Selection, Block, BlockContext, Dimension, Error,
+    IdGenerator, Instruction, LocalType, LookupType, NumericType, ResultMember, WrappedFunction,
+    Writer, WriterFlags,
 };
 use crate::{
     arena::Handle, back::spv::helpers::is_uniform_matcx2_struct_member_access,
@@ -553,7 +553,7 @@ impl BlockContext<'_> {
         });
         let column_type_id = self.get_numeric_type_id(NumericType::Vector { size: rows, scalar });
         let column_pointer_type_id =
-            self.get_pointer_type_id(column_type_id, map_storage_class(space));
+            self.get_pointer_type_id(column_type_id, self.writer.storage_class(space));
         let column0_index = self.writer.std140_compat_uniform_types[&struct_type].member_indices
             [member_index as usize];
         let column_indices = (0..columns as u32)
@@ -2728,7 +2728,7 @@ impl BlockContext<'_> {
                             space: space @ crate::AddressSpace::Uniform,
                         } => self.writer.get_pointer_type_id(
                             self.writer.std140_compat_uniform_types[&base].type_id,
-                            map_storage_class(space),
+                            self.writer.storage_class(space),
                         ),
                         _ => {
                             return Err(Error::Validation(
@@ -3169,7 +3169,9 @@ impl BlockContext<'_> {
     fn pointer_class(&self, pointer: Handle<crate::Expression>) -> Option<spirv::StorageClass> {
         match *self.fun_info[pointer].ty.inner_with(&self.ir_module.types) {
             crate::TypeInner::Pointer { space, .. }
-            | crate::TypeInner::ValuePointer { space, .. } => Some(map_storage_class(space)),
+            | crate::TypeInner::ValuePointer { space, .. } => {
+                Some(self.writer.storage_class(space))
+            }
             _ => None,
         }
     }

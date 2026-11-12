@@ -42,6 +42,7 @@ impl Builder<'_> {
             ref spirv_decorations,
             relaxed_precision: _,
             immediate_bank,
+            block,
         } = *candidate.global;
         if current.space != space {
             self.errors.push(mismatch("storage qualifiers"));
@@ -71,6 +72,9 @@ impl Builder<'_> {
         }
         if current.tile_attachment != tile_attachment {
             self.errors.push(mismatch("tile attachment qualifiers"));
+        }
+        if current.block != block {
+            self.errors.push(mismatch("block declarations"));
         }
         if current.immediate_bank != immediate_bank {
             self.errors.push(mismatch("push constant bank qualifiers"));
@@ -210,6 +214,7 @@ impl Builder<'_> {
             derivative_group,
             spirv_execution_modes,
             reconvergence,
+            invariant_outputs,
         } = entry;
         function.diagnostic_filter_leaf = None;
         remap.adjust_function(&mut function).map_err(internal)?;
@@ -306,6 +311,7 @@ impl Builder<'_> {
             derivative_group,
             spirv_execution_modes,
             reconvergence,
+            invariant_outputs,
         })
     }
 
@@ -336,6 +342,11 @@ impl Builder<'_> {
     }
 
     pub fn merge_module_flags(&mut self) -> Result<(), LinkError> {
+        self.module.legacy_buffer_blocks = !self.objects.is_empty()
+            && self
+                .objects
+                .iter()
+                .all(|object| object.module.legacy_buffer_blocks);
         for index in 0..self.objects.len() {
             let source = &self.object(index)?.module;
             let remap = self.remap(index)?;

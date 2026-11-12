@@ -3147,6 +3147,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                     spirv_decorations: Vec::new(),
                     relaxed_precision: false,
                     immediate_bank: None,
+                    block: None,
                 };
                 (Variable::Global, var)
             }
@@ -3203,6 +3204,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                     spirv_decorations: Vec::new(),
                     relaxed_precision: false,
                     immediate_bank: None,
+                    block: None,
                 };
 
                 let inner = Variable::Input(crate::FunctionArgument {
@@ -3273,6 +3275,7 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                     spirv_decorations: Vec::new(),
                     relaxed_precision: false,
                     immediate_bank: None,
+                    block: None,
                 };
                 let inner = Variable::Output(crate::FunctionResult {
                     ty,

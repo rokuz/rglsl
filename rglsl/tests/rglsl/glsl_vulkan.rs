@@ -311,13 +311,25 @@ fn invariant_is_applied_or_rejected() -> crate::TestResult {
         void f() { gl_Position = vec4(1.0); }
         #pragma STDGL invariant(all)
         void main() { f(); }",
+    ] {
+        let module = compile(ShaderStage::Vertex, source)?;
+        assert_eq!(
+            decorated(&module, Decoration::Invariant),
+            [
+                "gl_Position",
+                "gl_PointSize",
+                "gl_ClipDistance",
+                "gl_CullDistance"
+            ]
+        );
+    }
+    let module = compile(
+        ShaderStage::Vertex,
         "#version 450
         invariant gl_Position;
         void main() { gl_Position = vec4(1.0); }",
-    ] {
-        let module = compile(ShaderStage::Vertex, source)?;
-        assert_eq!(decorated(&module, Decoration::Invariant), ["gl_Position"]);
-    }
+    )?;
+    assert_eq!(decorated(&module, Decoration::Invariant), ["gl_Position"]);
 
     // Unknown pragmas are ignored.
     let module = compile(
@@ -339,6 +351,22 @@ fn invariant_is_applied_or_rejected() -> crate::TestResult {
         layout(location = 0) out vec4 v;
         #pragma STDGL invariant(all)
         void main() { v = vec4(1.0); gl_Position = vec4(1.0); }",
+    ] {
+        let module = compile(ShaderStage::Vertex, source)?;
+        let mut invariant = decorated(&module, Decoration::Invariant);
+        invariant.sort_unstable();
+        assert_eq!(
+            invariant,
+            [
+                "gl_ClipDistance",
+                "gl_CullDistance",
+                "gl_PointSize",
+                "gl_Position",
+                "v"
+            ]
+        );
+    }
+    for source in [
         "#version 450
         layout(location = 0) out vec4 v;
         invariant v;
@@ -2169,7 +2197,8 @@ fn buffer_blocks_decorate_their_own_struct() -> crate::TestResult {
     )?;
     let mut blocks = decorated(&module, Decoration::Block);
     blocks.sort_unstable();
-    assert_eq!(blocks, ["B", "P", "U", "U2"]);
+    assert_eq!(blocks, ["P", "U", "U2"]);
+    assert_eq!(decorated(&module, Decoration::BufferBlock), ["B"]);
     for (variable, block) in [("ub", "U"), ("sb", "B"), ("pc", "P"), ("", "U2")] {
         let id = named(&module, variable)?;
         let ty = module
@@ -2534,11 +2563,7 @@ fn eight_bit_storage_conversions_need_no_int8() -> crate::TestResult {
         )?;
         assert_eq!(
             capabilities_of(&module),
-            sorted(vec![
-                C::Shader,
-                C::UniformAndStorageBuffer8BitAccess,
-                C::StorageBuffer8BitAccess,
-            ])
+            sorted(vec![C::Shader, C::UniformAndStorageBuffer8BitAccess])
         );
         assert_eq!(extensions_of(&module), ["SPV_KHR_8bit_storage"]);
     }
@@ -3118,7 +3143,10 @@ fn arrays_of_buffer_blocks_match_glslang() -> crate::TestResult {
     }
     let mut blocks = decorated(&module, Decoration::Block);
     blocks.sort_unstable();
-    assert_eq!(blocks, ["B", "C", "I", "P", "U"]);
+    assert_eq!(blocks, ["I", "P", "U"]);
+    let mut buffer_blocks = decorated(&module, Decoration::BufferBlock);
+    buffer_blocks.sort_unstable();
+    assert_eq!(buffer_blocks, ["B", "C"]);
     assert_eq!(array_lengths(&module)?, [1, 2, 2, 2, 4, 4, 4]);
     Ok(())
 }
@@ -10510,5 +10538,177 @@ void main() {
     assert!(variable_decorations(&module, "dead")?.contains(&(Decoration::Binding, vec![1])));
     assert!(variable_decorations(&module, "live")?.contains(&(Decoration::Binding, vec![2])));
     assert_eq!(instructions(&module, Op::ImageSampleImplicitLod).len(), 1);
+    Ok(())
+}
+
+fn variable_class_and_pointee(
+    module: &dr::Module,
+    name: &str,
+) -> crate::TestResult<(spirv::StorageClass, u32)> {
+    let variable = global_value(module, named(module, name)?)?;
+    let pointer = global_value(module, variable.result_type.ok_or("an untyped variable")?)?;
+    match variable.operands.first() {
+        Some(&Operand::StorageClass(class)) => Ok((class, id_operand(&pointer.operands[1]))),
+        _ => Err("a variable without a storage class".into()),
+    }
+}
+
+#[test]
+fn storage_buffers_before_spirv_1_3_are_buffer_blocks_as_in_glslang() -> crate::TestResult {
+    let source = |pragma: &str| {
+        format!(
+            "#version 450
+            {pragma}
+            layout(local_size_x = 1) in;
+            layout(binding = 0) buffer B {{ uint data[]; }} sb;
+            void main() {{ sb.data[0] = uint(sb.data.length()); }}"
+        )
+    };
+    let legacy = compile_valid(ShaderStage::Compute, &source(""))?;
+    let (class, pointee) = variable_class_and_pointee(&legacy, "sb")?;
+    assert_eq!(class, spirv::StorageClass::Uniform);
+    assert!(has_decoration(&legacy, pointee, Decoration::BufferBlock));
+    assert!(decorated(&legacy, Decoration::Block).is_empty());
+    assert!(legacy.extensions.is_empty());
+
+    let asked = compile_valid(ShaderStage::Compute, &source("#pragma use_storage_buffer"))?;
+    let (class, pointee) = variable_class_and_pointee(&asked, "sb")?;
+    assert_eq!(class, spirv::StorageClass::StorageBuffer);
+    assert!(has_decoration(&asked, pointee, Decoration::Block));
+    assert!(has_extension(
+        &asked,
+        "SPV_KHR_storage_buffer_storage_class"
+    ));
+
+    let modern = compile_valid_1_3(ShaderStage::Compute, &source(""))?;
+    let (class, pointee) = variable_class_and_pointee(&modern, "sb")?;
+    assert_eq!(class, spirv::StorageClass::StorageBuffer);
+    assert!(has_decoration(&modern, pointee, Decoration::Block));
+    assert!(decorated(&modern, Decoration::BufferBlock).is_empty());
+    Ok(())
+}
+
+#[test]
+fn readonly_uniform_blocks_are_non_writable() -> crate::TestResult {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+        layout(binding = 0) readonly uniform U { vec4 v; } u;
+        layout(binding = 1) uniform W { vec4 w; } plain;
+        layout(location = 0) out vec4 o;
+        void main() { o = u.v + plain.w; }",
+    )?;
+    assert_eq!(decorated(&module, Decoration::NonWritable), ["u"]);
+    Ok(())
+}
+
+#[test]
+fn early_and_late_fragment_tests_become_an_execution_mode() -> crate::TestResult {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+        #extension GL_AMD_shader_early_and_late_fragment_tests : enable
+        layout(early_and_late_fragment_tests_amd) in;
+        layout(location = 0) out vec4 o;
+        void main() { o = vec4(1.0); }",
+    )?;
+    assert!(execution_modes(&module)
+        .iter()
+        .any(|(mode, _)| *mode == spirv::ExecutionMode::EarlyAndLateFragmentTestsAMD));
+    assert!(has_extension(
+        &module,
+        "SPV_AMD_shader_early_and_late_fragment_tests"
+    ));
+    Ok(())
+}
+
+fn member_built_ins(module: &dr::Module, built_in: spirv::BuiltIn) -> Vec<(Operand, u32)> {
+    module
+        .annotations
+        .iter()
+        .filter(|inst| {
+            inst.class.opcode == Op::MemberDecorate
+                && inst.operands.get(3) == Some(&Operand::BuiltIn(built_in))
+        })
+        .map(|inst| (inst.operands[0].clone(), literal(&inst.operands[1])))
+        .collect()
+}
+
+#[test]
+fn redeclared_per_vertex_members_keep_the_built_in_order() -> crate::TestResult {
+    let module = compile_valid(
+        ShaderStage::TessControl,
+        "#version 450
+        #extension GL_NVX_multiview_per_view_attributes : require
+        layout(vertices = 4) out;
+        out gl_PerVertex {
+            int gl_ViewportMaskPerViewNV[];
+            vec4 gl_PositionPerViewNV[];
+        } gl_out[];
+        void main() {
+            gl_out[gl_InvocationID].gl_ViewportMaskPerViewNV[0] = 1;
+            gl_out[gl_InvocationID].gl_PositionPerViewNV[0] = gl_in[1].gl_Position;
+        }",
+    )?;
+    let masks = member_built_ins(&module, spirv::BuiltIn::ViewportMaskPerViewNV);
+    let (block, mask) = masks.first().ok_or("no viewport mask")?;
+    let positions = member_built_ins(&module, spirv::BuiltIn::PositionPerViewNV);
+    let (_, position) = positions
+        .iter()
+        .find(|(structure, _)| structure == block)
+        .ok_or("no position in the output block")?;
+    assert_eq!((*position, *mask), (0, 1));
+    Ok(())
+}
+
+#[test]
+fn ray_tracing_blocks_are_decorated_as_glslang_does() -> crate::TestResult {
+    let module = compile(
+        ShaderStage::RayGeneration,
+        r#"#version 460
+#extension GL_EXT_ray_tracing : enable
+layout(binding = 0) uniform accelerationStructureEXT scene;
+layout(location = 0) rayPayloadEXT Payload { vec4 color; } payload;
+layout(location = 1) rayPayloadEXT vec4 plain;
+layout(shaderRecordEXT) buffer Record { vec3 origin; };
+void main() {
+    traceRayEXT(scene, 0u, 0xFFu, 0u, 1u, 0u, origin, 0.0, vec3(1.0), 1.0, 0);
+    traceRayEXT(scene, 0u, 0xFFu, 0u, 1u, 0u, origin, 0.0, vec3(1.0), 1.0, 1);
+}
+"#,
+    )?;
+    assert_eq!(decorated(&module, Decoration::Block), ["Payload"]);
+    assert_eq!(decorated(&module, Decoration::BufferBlock), ["Record"]);
+    Ok(())
+}
+
+#[test]
+fn nv_task_memory_keeps_its_explicit_layout() -> crate::TestResult {
+    let module = compile_mesh(
+        ShaderStage::Mesh,
+        "#version 450
+        #extension GL_NV_mesh_shader : require
+        layout(local_size_x = 1) in;
+        layout(max_vertices = 3, max_primitives = 1, triangles) out;
+        layout(location = 0) taskNV in taskBlock { float gid1[2]; vec4 gid2; } mytask;
+        void main() {
+            gl_MeshVerticesNV[0].gl_Position = mytask.gid2 + vec4(mytask.gid1[1]);
+            gl_PrimitiveCountNV = 1u;
+        }",
+        (1, 0),
+    )?;
+    let (class, pointee) = variable_class_and_pointee(&module, "mytask")?;
+    assert_eq!(class, spirv::StorageClass::Input);
+    assert!(has_decoration(&module, pointee, Decoration::Block));
+    let per_task = module
+        .annotations
+        .iter()
+        .filter(|inst| {
+            inst.class.opcode == Op::MemberDecorate
+                && inst.operands[0] == Operand::IdRef(pointee)
+                && inst.operands[2] == Operand::Decoration(Decoration::PerTaskNV)
+        })
+        .count();
+    assert_eq!(per_task, 2);
     Ok(())
 }

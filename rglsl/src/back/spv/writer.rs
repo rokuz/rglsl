@@ -119,6 +119,9 @@ impl Writer {
             gl450_ext_inst_id,
             temp_list: Vec::new(),
             has_ray_tracing_pipeline: false,
+            legacy_buffer_blocks: false,
+            invariant_outputs: false,
+            legacy_storage_blocks: crate::FastHashSet::default(),
             mesh_extension: None,
             task_memory_strides: crate::FastHashSet::default(),
             ray_tracing_features: crate::RayTracingFeatures::empty(),
@@ -162,6 +165,64 @@ impl Writer {
     /// Returns `(major, minor)` of the SPIR-V language version.
     pub const fn lang_version(&self) -> (u8, u8) {
         self.physical_layout.lang_version()
+    }
+
+    pub(super) const fn storage_class(&self, space: crate::AddressSpace) -> spirv::StorageClass {
+        match space {
+            crate::AddressSpace::Storage { .. } if self.legacy_buffer_blocks => {
+                spirv::StorageClass::Uniform
+            }
+            _ => map_storage_class(space),
+        }
+    }
+
+    const fn invariant_output(&self, class: spirv::StorageClass, built_in: crate::BuiltIn) -> bool {
+        use crate::BuiltIn as Bi;
+        self.invariant_outputs
+            && matches!(class, spirv::StorageClass::Output)
+            && matches!(
+                built_in,
+                Bi::PointSize
+                    | Bi::ClipDistances
+                    | Bi::CullDistance
+                    | Bi::TessLevelOuter
+                    | Bi::TessLevelInner
+                    | Bi::PrimitiveIndex
+                    | Bi::Layer { .. }
+                    | Bi::ViewportIndex
+                    | Bi::FragDepth
+                    | Bi::SampleMask { .. }
+            )
+    }
+
+    fn decorate_buffer_block(
+        &mut self,
+        id: Word,
+        global: &crate::GlobalVariable,
+    ) -> Result<bool, Error> {
+        let legacy = self.legacy_buffer_blocks
+            && match global.space {
+                crate::AddressSpace::Storage { .. } => true,
+                crate::AddressSpace::ShaderRecord => {
+                    global.block == Some(crate::BlockDeclaration::Buffer)
+                }
+                _ => false,
+            };
+        if !self.buffer_blocks.insert(id) {
+            if legacy != self.legacy_storage_blocks.contains(&id) {
+                return Err(Error::Validation(
+                    "a block type is shared by a uniform and a storage buffer",
+                ));
+            }
+            return Ok(false);
+        }
+        if legacy {
+            self.legacy_storage_blocks.insert(id);
+            self.decorate(id, spirv::Decoration::BufferBlock, &[]);
+        } else {
+            self.decorate(id, spirv::Decoration::Block, &[]);
+        }
+        Ok(true)
     }
 
     /// Reset `Writer` to its initial state, retaining any allocations.
@@ -235,6 +296,9 @@ impl Writer {
             saved_cached: take(&mut self.saved_cached).reclaim(),
             temp_list: take(&mut self.temp_list).reclaim(),
             has_ray_tracing_pipeline: false,
+            legacy_buffer_blocks: false,
+            invariant_outputs: false,
+            legacy_storage_blocks: crate::FastHashSet::default(),
             mesh_extension: None,
             task_memory_strides: crate::FastHashSet::default(),
             ray_tracing_features: crate::RayTracingFeatures::empty(),
@@ -565,7 +629,7 @@ impl Writer {
                 class: spirv::StorageClass::UniformConstant,
             },
             crate::TypeInner::Pointer { base, space } => {
-                let class = map_storage_class(space);
+                let class = self.storage_class(space);
                 let base_type_id = self.get_handle_type_id(base)?;
                 LocalType::Pointer {
                     base: self.pointee_type_id(base_type_id, class),
@@ -589,7 +653,7 @@ impl Writer {
                 };
                 LocalType::Pointer {
                     base: self.get_numeric_type_id(base_numeric_type),
-                    class: map_storage_class(space),
+                    class: self.storage_class(space),
                 }
             }
             crate::TypeInner::Image {
@@ -1446,7 +1510,7 @@ impl Writer {
                         gv.access_id = gv.var_id;
                         gv.handle_id = id;
                     } else if global_needs_wrapper(ir_module, var) {
-                        let class = map_storage_class(var.space);
+                        let class = self.storage_class(var.space);
                         let pointer_type_id = match self.std140_compat_uniform_types.get(&var.ty) {
                             Some(std140_type_info) if var.space == crate::AddressSpace::Uniform => {
                                 self.get_pointer_type_id(std140_type_info.type_id, class)
@@ -1777,6 +1841,13 @@ impl Writer {
                     None => {}
                 }
                 let modes = entry_point.fragment_modes;
+                if modes.early_and_late_fragment_tests {
+                    self.use_extension("SPV_AMD_shader_early_and_late_fragment_tests");
+                    self.write_execution_mode(
+                        function_id,
+                        spirv::ExecutionMode::EarlyAndLateFragmentTestsAMD,
+                    )?;
+                }
                 if modes.post_depth_coverage {
                     self.use_extension("SPV_KHR_post_depth_coverage");
                     self.require_any(
@@ -3651,6 +3722,9 @@ impl Writer {
             crate::Binding::BuiltIn(built_in) => {
                 use crate::BuiltIn as Bi;
                 let mut others = ArrayVec::new();
+                if self.invariant_output(class, built_in) {
+                    others.push(Decoration::Invariant);
+                }
                 let mesh_output =
                     stage == crate::ShaderStage::Mesh && class == spirv::StorageClass::Output;
 
@@ -4212,7 +4286,7 @@ impl Writer {
         } else if crate::proc::is_tile_image(ir_module, global_variable) {
             spirv::StorageClass::TileImageEXT
         } else {
-            map_storage_class(global_variable.space)
+            self.storage_class(global_variable.space)
         };
         if let (crate::AddressSpace::Handle, Some(&crate::Binding::Location { location, .. })) =
             (global_variable.space, global_variable.io.as_ref())
@@ -4407,7 +4481,7 @@ impl Writer {
         let pointer_type_id = if global_needs_wrapper(ir_module, global_variable) {
             let wrapper_type_id = self.id_gen.next();
 
-            self.decorate(wrapper_type_id, Decoration::Block, &[]);
+            self.decorate_buffer_block(wrapper_type_id, global_variable)?;
 
             match self.std140_compat_uniform_types.get(&global_variable.ty) {
                 Some(std140_type_info) if global_variable.space == crate::AddressSpace::Uniform => {
@@ -4466,6 +4540,13 @@ impl Writer {
                     .map(|info| info.type_id),
                 _ => None,
             };
+            if let (Some(structure), Some(crate::BlockDeclaration::RayTracing)) =
+                (block_struct, global_variable.block)
+            {
+                let structure_id = self.get_handle_type_id(structure)?;
+                let block_id = self.pointee_type_id(structure_id, class);
+                self.decorate_buffer_block(block_id, global_variable)?;
+            }
             if let Some(structure) = block_struct {
                 if let crate::AddressSpace::Uniform
                 | crate::AddressSpace::Storage { .. }
@@ -4476,8 +4557,7 @@ impl Writer {
                         Some(id) => id,
                         None => self.get_handle_type_id(structure)?,
                     };
-                    if self.buffer_blocks.insert(block_id) {
-                        self.decorate(block_id, Decoration::Block, &[]);
+                    if self.decorate_buffer_block(block_id, global_variable)? {
                         if let Some(bank) =
                             global_variable.immediate_bank.and_then(|bank| bank.bank)
                         {
@@ -4614,7 +4694,15 @@ impl Writer {
                     self.extensions_used = extensions;
                     decorations
                 }
-                Some(built_in) => BindingDecorations::BuiltIn(built_in, ArrayVec::new()),
+                Some(built_in) => {
+                    let mut others = ArrayVec::new();
+                    if let crate::Binding::BuiltIn(ir_built_in) = *binding {
+                        if self.invariant_output(class, ir_built_in) {
+                            others.push(spirv::Decoration::Invariant);
+                        }
+                    }
+                    BindingDecorations::BuiltIn(built_in, others)
+                }
                 None => self.map_binding(ir_module, stage, class, member.ty, binding)?,
             };
             match decorations {
@@ -4813,14 +4901,20 @@ impl Writer {
         ep_index: Option<usize>,
         debug_info: &Option<DebugInfo>,
     ) -> Result<(), Error> {
-        let has_storage_buffers =
-            ir_module
+        self.legacy_buffer_blocks =
+            ir_module.legacy_buffer_blocks && self.physical_layout.version < 0x10300;
+        self.invariant_outputs = ir_module
+            .entry_points
+            .iter()
+            .enumerate()
+            .any(|(index, entry)| {
+                entry.invariant_outputs && ep_index.is_none_or(|chosen| chosen == index)
+            });
+        let has_storage_buffers = !self.legacy_buffer_blocks
+            && ir_module
                 .global_variables
                 .iter()
-                .any(|(_, var)| match var.space {
-                    crate::AddressSpace::Storage { .. } => true,
-                    _ => false,
-                });
+                .any(|(_, var)| matches!(var.space, crate::AddressSpace::Storage { .. }));
         let rt_uses = ir_module.uses_ray_tracing(ep_index);
         let has_ray_query = rt_uses.queries;
         self.has_ray_tracing_pipeline = rt_uses.pipelines;

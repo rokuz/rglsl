@@ -352,6 +352,7 @@ impl<'a> Lowerer<'a> {
                 spirv_decorations: Vec::new(),
                 relaxed_precision: false,
                 immediate_bank: None,
+                block: None,
             },
             at,
         );
@@ -629,6 +630,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
                     spirv_decorations: Vec::new(),
                     relaxed_precision: false,
                     immediate_bank: None,
+                    block: None,
                 },
                 at,
             )

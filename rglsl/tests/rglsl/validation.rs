@@ -118,6 +118,7 @@ fn populate_atomic_result() -> crate::TestResult {
                 spirv_decorations: Vec::new(),
                 relaxed_precision: false,
                 immediate_bank: None,
+                block: None,
             },
             span,
         );
@@ -303,6 +304,7 @@ fn emit_workgroup_uniform_load_result() -> crate::TestResult {
                 spirv_decorations: Vec::new(),
                 relaxed_precision: false,
                 immediate_bank: None,
+                block: None,
             },
             span,
         );
@@ -662,6 +664,7 @@ fn local_var_override_sized_array() -> crate::TestResult {
             spirv_decorations: Vec::new(),
             relaxed_precision: false,
             immediate_bank: None,
+            block: None,
         },
         span,
     );
@@ -1060,6 +1063,7 @@ fn unexpected_task_payload() -> crate::TestResult {
             spirv_decorations: Vec::new(),
             relaxed_precision: false,
             immediate_bank: None,
+            block: None,
         },
         err_span,
     );
@@ -1087,6 +1091,7 @@ fn unexpected_task_payload() -> crate::TestResult {
         derivative_group: None,
         spirv_execution_modes: Vec::new(),
         reconvergence: rglsl::Reconvergence::default(),
+        invariant_outputs: false,
     };
     module.entry_points.push(entry_point);
 

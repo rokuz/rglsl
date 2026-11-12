@@ -696,6 +696,7 @@ impl<'a> Lowerer<'a> {
                 subgroup_uniform_control_flow: self.analysis.subgroup_uniform_control_flow,
                 maximally_reconverges: self.analysis.maximally_reconverges,
             },
+            invariant_outputs: self.invariant_all,
         });
         Ok(())
     }
@@ -704,6 +705,7 @@ impl<'a> Lowerer<'a> {
         let layout = self.analysis.fragment;
         crate::FragmentModes {
             post_depth_coverage: layout.post_depth_coverage,
+            early_and_late_fragment_tests: layout.early_and_late_fragment_tests,
             interlock: layout.interlock.map(|interlock| {
                 use rglsl_sema::Interlock as I;
                 crate::Interlock {

@@ -703,6 +703,12 @@ impl<'b> Cx<'b, Analyzer<'_>> {
         let keyword = kind.keyword();
         if !matches!(
             kind,
+            ParameterizedType::TensorLayoutNv | ParameterizedType::TensorViewNv
+        ) {
+            self.with(|analyzer| analyzer.storage_buffer_class = true);
+        }
+        if !matches!(
+            kind,
             ParameterizedType::LongVector | ParameterizedType::TensorArm
         ) {
             self.with(|analyzer| analyzer.vulkan_memory_model = true);

@@ -2228,7 +2228,7 @@ impl Analyzer<'_> {
         &mut self,
         id: crate::types::BlockId,
         variable: SymbolId,
-        members: Vec<Member>,
+        mut members: Vec<Member>,
     ) {
         let previous: Vec<String> = self
             .types
@@ -2241,6 +2241,12 @@ impl Analyzer<'_> {
                     .collect()
             })
             .unwrap_or_default();
+        members.sort_by_key(|member| {
+            previous
+                .iter()
+                .position(|name| *name == member.name)
+                .unwrap_or(previous.len())
+        });
         for name in &previous {
             let Some((0, Lookup::Symbol(symbol))) = self.scopes.lookup_level(name) else {
                 continue;

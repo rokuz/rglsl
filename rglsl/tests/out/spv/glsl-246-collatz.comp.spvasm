@@ -3,7 +3,6 @@
 ; Generator: rspirv
 ; Bound: 68
 OpCapability Shader
-OpExtension "SPV_KHR_storage_buffer_storage_class"
 %1 = OpExtInstImport "GLSL.std.450"
 OpMemoryModel Logical GLSL450
 OpEntryPoint GLCompute %52 "main" %9
@@ -12,7 +11,7 @@ OpDecorate %4 ArrayStride 4
 OpMemberDecorate %5 0 Offset 0
 OpDecorate %7 DescriptorSet 0
 OpDecorate %7 Binding 0
-OpDecorate %5 Block
+OpDecorate %5 BufferBlock
 OpDecorate %9 BuiltIn GlobalInvocationId
 OpDecorate %67 BuiltIn WorkgroupSize
 %2 = OpTypeVoid
@@ -20,8 +19,8 @@ OpDecorate %67 BuiltIn WorkgroupSize
 %4 = OpTypeRuntimeArray %3
 %5 = OpTypeStruct %4
 %6 = OpTypeVector %3 3
-%8 = OpTypePointer StorageBuffer %5
-%7 = OpVariable  %8  StorageBuffer
+%8 = OpTypePointer Uniform %5
+%7 = OpVariable  %8  Uniform
 %10 = OpTypePointer Input %6
 %9 = OpVariable  %10  Input
 %14 = OpTypeFunction %3 %3
@@ -36,8 +35,8 @@ OpDecorate %67 BuiltIn WorkgroupSize
 %31 = OpTypeBool
 %53 = OpTypeFunction %2
 %56 = OpTypePointer Input %3
-%59 = OpTypePointer StorageBuffer %4
-%61 = OpTypePointer StorageBuffer %3
+%59 = OpTypePointer Uniform %4
+%61 = OpTypePointer Uniform %3
 %67 = OpConstantComposite  %6  %16 %16 %16
 %13 = OpFunction  %3  None %14
 %12 = OpFunctionParameter  %3

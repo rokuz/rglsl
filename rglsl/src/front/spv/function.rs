@@ -654,6 +654,7 @@ impl<I: Iterator<Item = u32>> super::Frontend<I> {
             derivative_group: None,
             spirv_execution_modes: Vec::new(),
             reconvergence: crate::Reconvergence::default(),
+            invariant_outputs: false,
         });
 
         Ok(())

@@ -834,7 +834,18 @@ Changes to shared code (IR, validator, SPIR-V backend) that make it differ from 
   `OpFUnordNotEqual` (upstream `OpFOrdNotEqual`). `Normalize`, `FaceForward` and `Reflect`
   accept scalars. An `As` conversion between integers of different width and signedness is
   `OpSConvert`/`OpUConvert` by the source's signedness, then `OpBitcast` (upstream extended by
-  the target's signedness). The object `FORMAT_VERSION` is 4.
+  the target's signedness). The object `FORMAT_VERSION` is 5.
+
+- **Storage buffers before SPIR-V 1.3** (`back/spv`). With `Module::legacy_buffer_blocks` (set by
+  the GLSL frontend unless the shader asks for the `StorageBuffer` class as glslang's
+  `useStorageBuffer` does) and a SPIR-V version below 1.3, storage buffers are `Uniform`
+  variables of `BufferBlock` structs, as glslang emits them, instead of `StorageBuffer` with
+  `SPV_KHR_storage_buffer_storage_class`; `Writer::storage_class` replaces `map_storage_class`
+  for every pointer type. `GlobalVariable::block` keeps the kind of GLSL block a shader record
+  buffer or ray tracing variable was declared as (`BufferBlock` for `shaderRecordEXT buffer`,
+  `Block` on payload, callable data and hit attribute blocks), and
+  `EntryPoint::invariant_outputs` (`#pragma STDGL invariant(all)`) puts `Invariant` on the
+  built-in outputs glslang makes invariant.
 
 ## Cherry-picked upstream commits
 
