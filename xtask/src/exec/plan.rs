@@ -437,6 +437,7 @@ pub fn requirements(reflection: &Reflection) -> Result<BTreeSet<Need>, Refusal> 
         if !requirements::extension(extension) {
             return Err(Refusal::Capability(format!("extension {extension}")));
         }
+        needs.extend(requirements::extension_needs(extension).iter().copied());
     }
     Ok(needs)
 }

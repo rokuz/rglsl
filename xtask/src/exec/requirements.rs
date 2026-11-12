@@ -438,7 +438,20 @@ pub fn extension(name: &str) -> bool {
             | "SPV_KHR_post_depth_coverage"
             | "SPV_NV_geometry_shader_passthrough"
             | "SPV_KHR_device_group"
+            | "SPV_KHR_relaxed_extended_instruction"
     )
+}
+
+pub const RELAXED_EXTENDED_INSTRUCTION: [Need; 2] = [
+    E("VK_KHR_shader_relaxed_extended_instruction"),
+    F("ShaderRelaxedExtendedInstructionFeaturesKHR.shaderRelaxedExtendedInstruction"),
+];
+
+pub fn extension_needs(name: &str) -> &'static [Need] {
+    match name {
+        "SPV_KHR_relaxed_extended_instruction" => &RELAXED_EXTENDED_INSTRUCTION,
+        _ => &[],
+    }
 }
 
 pub fn probes() -> Vec<Need> {
@@ -490,6 +503,7 @@ pub fn probes() -> Vec<Need> {
     ] {
         needs.extend(multiview_stage(model));
     }
+    needs.extend(RELAXED_EXTENDED_INSTRUCTION);
     needs.extend([
         F("fragmentStoresAndAtomics"),
         F("vertexPipelineStoresAndAtomics"),
@@ -546,6 +560,12 @@ mod tests {
         assert!(extension("SPV_EXT_mesh_shader"));
         assert!(extension("SPV_EXT_shader_atomic_float_add"));
         assert!(!extension("SPV_KHR_untyped_pointers"));
+        assert!(extension("SPV_KHR_relaxed_extended_instruction"));
+        assert_eq!(
+            extension_needs("SPV_KHR_relaxed_extended_instruction"),
+            &RELAXED_EXTENDED_INSTRUCTION
+        );
+        assert!(extension_needs("SPV_KHR_16bit_storage").is_empty());
     }
 
     #[test]
