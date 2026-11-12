@@ -389,7 +389,13 @@ fn judge(outcomes: &[Outcome], runs: &BTreeMap<usize, RunPair>, index: usize) ->
     } else {
         match (reference_runs, ours) {
             (_, Run::Refused(why)) => (Verdict::ExecSkipped, why.clone()),
-            (_, Run::Failed(why)) => (Verdict::ExecFailed, why.clone()),
+            (_, Run::Failed(why)) => match theirs {
+                Some(Run::Failed(_)) => (
+                    Verdict::ExecSkipped,
+                    format!("glslang's module fails on the driver too: {why}"),
+                ),
+                _ => (Verdict::ExecFailed, why.clone()),
+            },
             (Some((reference_ours @ Run::Ran { .. }, reference_theirs)), Run::Ran { .. }) => {
                 let glslang_difference = match (reference_theirs, theirs) {
                     (Some(reference_theirs), Some(theirs)) => {
@@ -586,5 +592,33 @@ mod tests {
         );
         assert_eq!(cause("validate - bad"), "validate: bad");
         assert_eq!(cause("thread panicked"), "thread panicked");
+    }
+
+    #[test]
+    fn a_variant_that_fails_for_glslang_too_is_skipped() -> anyhow::Result<()> {
+        let dir = std::env::temp_dir().join(format!("rglsl-judge-{}", std::process::id()));
+        fs::create_dir_all(&dir)?;
+        fs::write(dir.join("reference.frag"), "")?;
+        fs::write(dir.join("variant_000.frag"), "")?;
+        let outcome = |name: &str| Outcome {
+            shader: dir.join(name),
+            verdict: Verdict::Agree,
+            note: String::new(),
+            spirv: PathBuf::new(),
+        };
+        let outcomes = [outcome("reference.frag"), outcome("variant_000.frag")];
+        let lost = || Run::Failed("device lost".to_string());
+        let verdict = |theirs: Option<Run>| {
+            let runs = BTreeMap::from([(0, (lost(), Some(lost()))), (1, (lost(), theirs))]);
+            judge(&outcomes, &runs, 1).map(|(verdict, _)| verdict)
+        };
+        assert_eq!(verdict(Some(lost())), Some(Verdict::ExecSkipped));
+        assert_eq!(verdict(None), Some(Verdict::ExecFailed));
+        assert_eq!(
+            verdict(Some(Run::Refused(String::new()))),
+            Some(Verdict::ExecFailed)
+        );
+        fs::remove_dir_all(&dir)?;
+        Ok(())
     }
 }
