@@ -334,6 +334,22 @@ impl<'a> FunctionLowerer<'_, 'a> {
             _ => value,
         };
         if let Some(operation) = operation {
+            let columnwise = matches!(
+                expression.kind,
+                ExpressionKind::Binary { .. }
+                    | ExpressionKind::Unary { .. }
+                    | ExpressionKind::Assignment { .. }
+            );
+            if columnwise {
+                self.mark_column_precision(operation, flags);
+            }
+            let flags = if columnwise
+                && matches!(self.expressions[operation], Expression::Compose { .. })
+            {
+                flags - crate::Precision::NO_CONTRACTION
+            } else {
+                flags
+            };
             self.mark_precision(operation, flags);
             if relaxed {
                 if let Expression::Swizzle { vector, .. } = self.expressions[operation] {
@@ -379,6 +395,25 @@ impl<'a> FunctionLowerer<'_, 'a> {
             self.unqualify(value, at)
         } else {
             Ok(value)
+        }
+    }
+
+    fn mark_column_precision(&mut self, value: Handle<Expression>, flags: crate::Precision) {
+        let Expression::Compose { ref components, .. } = self.expressions[value] else {
+            return;
+        };
+        let columns: Vec<Handle<Expression>> = components
+            .iter()
+            .copied()
+            .filter(|&part| {
+                matches!(
+                    self.expressions[part],
+                    Expression::Binary { .. } | Expression::Unary { .. }
+                )
+            })
+            .collect();
+        for column in columns {
+            self.mark_precision(column, flags);
         }
     }
 
@@ -1107,17 +1142,21 @@ impl<'a> FunctionLowerer<'_, 'a> {
             AstUnary::Minus => {
                 let base = ty.base_scalar().ok_or_else(|| internal(at))?;
                 match ty.kind {
-                    TypeKind::Matrix { .. } => {
-                        let minus = Literal::minus_one(scalar(base)).ok_or_else(|| internal(at))?;
-                        let minus = self.literal(minus, at)?;
-                        self.add(
-                            Expression::Binary {
-                                op: BinaryOperator::Multiply,
-                                left: minus,
-                                right: value,
-                            },
-                            at,
-                        )
+                    TypeKind::Matrix { columns, .. } => {
+                        let mut components = Vec::with_capacity(usize::from(columns));
+                        for index in 0..u32::from(columns) {
+                            let column =
+                                self.add(Expression::AccessIndex { base: value, index }, at)?;
+                            components.push(self.add(
+                                Expression::Unary {
+                                    op: UnaryOperator::Negate,
+                                    expr: column,
+                                },
+                                at,
+                            )?);
+                        }
+                        let ty = self.lw.ir_type(&ty, at)?;
+                        self.add(Expression::Compose { ty, components }, at)
                     }
                     _ if base.is_unsigned() => {
                         let zero = Literal::zero(scalar(base)).ok_or_else(|| internal(at))?;
@@ -1305,6 +1344,34 @@ impl<'a> FunctionLowerer<'_, 'a> {
         self.binary(operator, (left, &left_ty), (right, &right_ty), at)
     }
 
+    fn matrix_over_scalar(
+        &mut self,
+        matrix: Handle<Expression>,
+        divisor: Handle<Expression>,
+        divisor_ty: &GlslType,
+        at: Span,
+    ) -> Result<Handle<Expression>> {
+        let base = divisor_ty.base_scalar().ok_or_else(|| internal(at))?;
+        let one = Literal::one(scalar(base)).ok_or_else(|| internal(at))?;
+        let one = self.literal(one, at)?;
+        let reciprocal = self.unemitted(
+            Expression::Binary {
+                op: BinaryOperator::Divide,
+                left: one,
+                right: divisor,
+            },
+            at,
+        );
+        self.add(
+            Expression::Binary {
+                op: BinaryOperator::Multiply,
+                left: matrix,
+                right: reciprocal,
+            },
+            at,
+        )
+    }
+
     fn columns(
         &mut self,
         op: BinaryOperator,
@@ -1387,11 +1454,11 @@ impl<'a> FunctionLowerer<'_, 'a> {
         };
         let left_matrix = left_ty.is_matrix();
         let right_matrix = right_ty.is_matrix();
+        if left_matrix && right_ty.is_scalar() && op == BinaryOperator::Divide {
+            return self.matrix_over_scalar(left, right, right_ty, at);
+        }
         if left_matrix || right_matrix {
-            let linear = op == BinaryOperator::Multiply
-                && !(left_ty.is_scalar() || right_ty.is_scalar())
-                || op == BinaryOperator::Multiply && (left_ty.is_scalar() || right_ty.is_scalar());
-            if linear || (left_matrix && right_matrix && op != BinaryOperator::Divide) {
+            if op == BinaryOperator::Multiply {
                 return self.add(Expression::Binary { op, left, right }, at);
             }
             let matrix_ty = if left_matrix { left_ty } else { right_ty };
