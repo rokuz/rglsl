@@ -1,6 +1,6 @@
 [package]
 name = "rglsl-fuzz"
-version = "0.1.0"
+version.workspace = true
 authors = ["rglsl developers", "The GraphicsFuzz Project Authors"]
 edition.workspace = true
 rust-version.workspace = true

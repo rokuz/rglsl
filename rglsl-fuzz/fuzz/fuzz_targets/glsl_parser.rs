@@ -14,7 +14,7 @@ mod fuzz {
     #[derive(Debug, Arbitrary)]
     struct OptionsProxy {
         pub stage: ShaderStage,
-        pub defines: std::collections::HashMap<String, String>,
+        pub defines: Vec<(String, String)>,
         pub auto_map_bindings: bool,
         pub auto_map_locations: bool,
         pub library: bool,
