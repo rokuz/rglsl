@@ -59,6 +59,29 @@ cargo xtask test --glslang-dir ../glslang             # glslang's corpus
 
 Rules for contributors: [AGENTS.md](AGENTS.md).
 
+## Projects used
+
+- [naga](https://github.com/gfx-rs/wgpu/tree/trunk/naga) — the base of the IR, validator and
+  SPIR-V backend.
+- [glslang](https://github.com/KhronosGroup/glslang) — the reference compiler and its test corpus.
+- [SPIRV-Tools](https://github.com/KhronosGroup/SPIRV-Tools) (`spirv-val`),
+  [SPIRV-Headers](https://github.com/KhronosGroup/SPIRV-Headers),
+  [Vulkan-Headers](https://github.com/KhronosGroup/Vulkan-Headers).
+- [GraphicsFuzz](https://github.com/google/graphicsfuzz) — the variant generator and reducer,
+  ported in `rglsl-fuzz` (Apache-2.0).
+- [Amber](https://github.com/google/amber) ([fork](https://github.com/rokuz/amber)) — runs the
+  compiled shaders on GPUs.
+- [KosmicKrisp](https://gitlab.freedesktop.org/mesa/mesa) — Mesa's Vulkan driver on Apple
+  hardware ([prebuilt binaries](https://github.com/rokuz/kosmickrisp-binaries)).
+- [Arm ML Emulation Layer for Vulkan](https://github.com/arm/ai-ml-emulation-layer-for-vulkan) —
+  `VK_ARM_tensors` on GPUs without native support, with
+  [SPIRV-Cross](https://github.com/KhronosGroup/SPIRV-Cross) and
+  [nlohmann/json](https://github.com/nlohmann/json).
+- Rust crates: [rspirv](https://github.com/gfx-rs/rspirv), [spirv](https://crates.io/crates/spirv),
+  [ron](https://github.com/ron-rs/ron), [cargo-fuzz](https://github.com/rust-fuzz/cargo-fuzz) /
+  [libfuzzer-sys](https://github.com/rust-fuzz/libfuzzer), [arbitrary](https://github.com/rust-fuzz/arbitrary)
+  and others in `Cargo.lock`.
+
 ## License
 
 MIT OR Apache-2.0, like naga.
