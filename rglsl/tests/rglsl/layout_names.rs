@@ -468,6 +468,101 @@ void main() {}
 }
 
 #[test]
+fn unknown_layout_identifiers_are_rejected_like_glslang() -> TestResult {
+    let cases: [(ShaderStage, &str, &str); 8] = [
+        (
+            ShaderStage::Fragment,
+            "layout(Foo, binding = 0) uniform Block { float value; } block;",
+            "foo",
+        ),
+        (
+            ShaderStage::Fragment,
+            "layout(location = 0, BAR = 3) out vec4 color;",
+            "bar",
+        ),
+        (
+            ShaderStage::Fragment,
+            "layout(Location) out vec4 color;",
+            "location",
+        ),
+        (
+            ShaderStage::Fragment,
+            "layout(STD140 = 1, binding = 0) uniform Block { float value; } block;",
+            "std140",
+        ),
+        (ShaderStage::Fragment, "layout(Triangles) in;", "triangles"),
+        (
+            ShaderStage::Vertex,
+            "layout(location = 0, Index = 1) out vec4 color;",
+            "index",
+        ),
+        (
+            ShaderStage::Compute,
+            "layout(Viewport_Relative) out;",
+            "viewport_relative",
+        ),
+        (
+            ShaderStage::Vertex,
+            "layout(tile_attachmentQCOM, rgba8, binding = 0) uniform image2D picture;",
+            "tile_attachmentqcom",
+        ),
+    ];
+    for (stage, declaration, name) in cases {
+        let source = format!("#version 450\n{declaration}\nvoid main() {{}}\n");
+        assert_rejected_like_glslang(stage, &source, name)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn layout_values_need_literals_like_glslang() -> TestResult {
+    let cases: [(ShaderStage, &str, &str); 7] = [
+        (
+            ShaderStage::Compute,
+            "layout(binding = S) buffer Block { float value; } block;",
+            "binding",
+        ),
+        (
+            ShaderStage::Compute,
+            "layout(Set = S, binding = 0) buffer Block { float value; } block;",
+            "set",
+        ),
+        (
+            ShaderStage::Fragment,
+            "layout(location = S + 1) out vec4 color;",
+            "location",
+        ),
+        (
+            ShaderStage::Compute,
+            "layout(local_size_x = S) in;",
+            "local_size",
+        ),
+        (
+            ShaderStage::Compute,
+            "layout(LOCAL_SIZE_Y_ID = S) in;",
+            "local_size",
+        ),
+        (
+            ShaderStage::Compute,
+            "layout(constant_id = S) const int OTHER = 1;",
+            "constant_id",
+        ),
+        (
+            ShaderStage::Fragment,
+            "layout(input_attachment_index = S, binding = 0) uniform subpassInput attachment;",
+            "input_attachment_index",
+        ),
+    ];
+    for (stage, declaration, name) in cases {
+        let source = format!(
+            "#version 450\nlayout(constant_id = 1) const int S = 1;\n{declaration}\nvoid main() {{}}\n"
+        );
+        assert_rejected_like_glslang(stage, &source, name)?;
+    }
+    Ok(())
+}
+
+#[test]
 fn a_missing_location_is_one_error() -> TestResult {
     let errors = rglsl_errors(
         ShaderStage::Fragment,

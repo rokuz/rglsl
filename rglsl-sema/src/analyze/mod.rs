@@ -8,6 +8,7 @@ mod extension;
 mod fragment;
 mod frames;
 mod heap;
+mod layout_ids;
 mod layout_qualifiers;
 mod limitations;
 mod memory;
@@ -206,8 +207,8 @@ fn symbol_type(symbols: &[Symbol], types: &TypeRegistry, id: SymbolId) -> Option
 
 pub use declaration::is_null_initializer;
 pub use fragment::{FragmentLayout, Interlock};
+pub use layout_ids::layout_stages;
 pub use ray::is_shader_record;
-pub use stage::layout_stages;
 
 pub fn analyze(unit: &TranslationUnit, options: &Options) -> Analysis {
     run(unit, options, None)

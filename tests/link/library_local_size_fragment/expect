@@ -1,2 +1,2 @@
 reject
-library `1.lib.glsl` cannot be linked into a fragment shader: `layout(local_size_x)` is not supported in fragment shaders (line 2)
+library `1.lib.glsl` cannot be linked into a fragment shader: there is no such layout identifier `local_size_x` for this stage taking an assigned value (line 2)
