@@ -21,7 +21,7 @@ use rglsl::{
 
 pub use compiler::{
     CompileOptions, Diagnostic, Diagnostics, Program, ProgramOptions, Severity, StageBinary,
-    compile, compile_and_link, link_spirv, read_object, write_object,
+    compile, compile_and_link, compile_with_includer, link_spirv, read_object, write_object,
 };
 pub use error::{LinkError, LinkErrors};
 pub use file::{FileError, decode, encode};
@@ -31,6 +31,7 @@ pub use program::{
 };
 pub use rglsl::ShaderStage;
 pub use rglsl::object::ObjectModule;
+pub use rglsl_pp::{IncludeKind, IncludeRequest, ResolvedInclude};
 
 use calls::SymbolTable;
 use merge::{Builder, MergedGlobal};

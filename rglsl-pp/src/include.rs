@@ -226,6 +226,19 @@ impl MemoryIncluder {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IncludeRequest<'a> {
+    pub requested: &'a str,
+    pub kind: IncludeKind,
+    pub includer: Option<&'a str>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedInclude {
+    pub name: String,
+    pub source: String,
+}
+
 impl Includer for MemoryIncluder {
     fn include(
         &mut self,
@@ -233,6 +246,19 @@ impl Includer for MemoryIncluder {
         kind: IncludeKind,
         from: FileId,
         depth: usize,
+    ) -> Result<IncludedFile, IncludeError> {
+        self.include_or_resolve(requested, kind, from, depth, &mut |_| None)
+    }
+}
+
+impl MemoryIncluder {
+    pub fn include_or_resolve(
+        &mut self,
+        requested: &str,
+        kind: IncludeKind,
+        from: FileId,
+        depth: usize,
+        resolve: &mut dyn FnMut(IncludeRequest<'_>) -> Option<ResolvedInclude>,
     ) -> Result<IncludedFile, IncludeError> {
         let from_name = self.name(from).map(ToOwned::to_owned);
         self.stack.prepare(from_name.as_deref(), depth);
@@ -247,6 +273,18 @@ impl Includer for MemoryIncluder {
                 });
             }
         }
-        Err(IncludeError::not_found())
+        let request = IncludeRequest {
+            requested,
+            kind,
+            includer: from_name.as_deref(),
+        };
+        let resolved = resolve(request).ok_or_else(IncludeError::not_found)?;
+        let file = self.add_file(&resolved.name, &resolved.source);
+        self.stack.push(&resolved.name);
+        Ok(IncludedFile {
+            file,
+            name: resolved.name,
+            source: resolved.source,
+        })
     }
 }
