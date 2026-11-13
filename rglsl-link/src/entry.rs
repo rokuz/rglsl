@@ -1,4 +1,4 @@
-use rglsl::object::PathStep;
+use rglsl::object::{BindingAssignment, PathStep};
 use rglsl::{AddressSpace, Binding, EntryPoint, Expression, GlobalVariable, Handle, Type};
 
 use crate::calls::{callees, Node, SymbolTable};
@@ -11,7 +11,7 @@ pub(crate) struct Candidate<'c> {
     pub global: &'c GlobalVariable,
     pub implicit: &'c [Vec<PathStep>],
     pub automatic_location: bool,
-    pub automatic_binding: Option<Option<u32>>,
+    pub binding: BindingAssignment,
     pub instance: Option<String>,
 }
 
@@ -49,8 +49,7 @@ impl Builder<'_> {
             self.errors.push(mismatch("storage qualifiers"));
             return;
         }
-        let automatic =
-            existing.automatic_binding.is_some() || candidate.automatic_binding.is_some();
+        let automatic = existing.binding.is_automatic() || candidate.binding.is_automatic();
         if current.binding != binding && !automatic {
             self.errors.push(mismatch("layout binding qualifiers"));
         }
@@ -97,7 +96,7 @@ impl Builder<'_> {
         match unify(&mut self.module, current_ty, ty, &implicit, &mut Vec::new()) {
             Ok(unified) => {
                 self.module.global_variables.get_mut(existing.handle).ty = unified;
-                if existing.automatic_binding.is_some() && candidate.automatic_binding.is_none() {
+                if existing.binding.is_automatic() && !candidate.binding.is_automatic() {
                     self.module
                         .global_variables
                         .get_mut(existing.handle)
@@ -107,8 +106,8 @@ impl Builder<'_> {
                     merged.implicit = common_paths(&existing.implicit, candidate.implicit);
                     merged.automatic_location =
                         existing.automatic_location && candidate.automatic_location;
-                    if candidate.automatic_binding.is_none() {
-                        merged.automatic_binding = None;
+                    if !candidate.binding.is_automatic() {
+                        merged.binding = BindingAssignment::Explicit;
                     }
                 }
             }

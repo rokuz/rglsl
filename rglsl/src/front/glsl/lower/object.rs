@@ -11,8 +11,8 @@ use rglsl_sema::FunctionId;
 
 use super::{GlobalRef, Lowerer, Result};
 use crate::object::{
-    FunctionSymbol, GlobalSymbol, ObjectModule, ParameterQualifier, PathStep, StageLayout,
-    SymbolKind,
+    BindingAssignment, FunctionSymbol, GlobalSymbol, ObjectModule, ParameterQualifier, PathStep,
+    StageLayout, SymbolKind,
 };
 use crate::{Function, GlobalVariable, Handle, Linkage, Span, Type, TypeInner};
 
@@ -274,11 +274,13 @@ impl Lowerer<'_> {
             instance,
             implicit_sizes,
             automatic_location: self.automatic_locations.contains(&handle),
-            automatic_binding: self
+            binding: self
                 .automatic_bindings
                 .iter()
                 .find(|&&(global, _)| global == handle)
-                .map(|&(_, set)| set),
+                .map_or(BindingAssignment::Explicit, |&(_, set)| {
+                    BindingAssignment::Automatic { set }
+                }),
         }
     }
 

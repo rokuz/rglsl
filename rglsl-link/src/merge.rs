@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use rglsl::compact::Remap;
-use rglsl::object::{ObjectModule, PathStep, SymbolKind};
+use rglsl::object::{BindingAssignment, ObjectModule, PathStep, SymbolKind};
 use rglsl::{
     AddressSpace, Expression, Function, GlobalVariable, Handle, Module, Override, Span, TypeInner,
 };
@@ -48,7 +48,7 @@ pub(crate) struct MergedGlobal {
     pub kind: SymbolKind,
     pub implicit: Vec<Vec<PathStep>>,
     pub automatic_location: bool,
-    pub automatic_binding: Option<Option<u32>>,
+    pub binding: BindingAssignment,
 }
 
 #[derive(Debug)]
@@ -285,7 +285,9 @@ impl<'a> Builder<'a> {
         let automatic_location = symbol
             .as_ref()
             .is_some_and(|symbol| symbol.automatic_location);
-        let automatic_binding = symbol.as_ref().and_then(|symbol| symbol.automatic_binding);
+        let binding = symbol
+            .as_ref()
+            .map_or(BindingAssignment::Explicit, |symbol| symbol.binding);
         let key = (space_class(global.space), name.clone());
         if let Some(&position) = self.keys.get(&key) {
             if let Some(existing) = self.globals.get(position).cloned() {
@@ -296,7 +298,7 @@ impl<'a> Builder<'a> {
                         global: &global,
                         implicit: &implicit,
                         automatic_location,
-                        automatic_binding,
+                        binding,
                         instance: symbol.as_ref().and_then(|symbol| symbol.instance.clone()),
                     },
                 );
@@ -311,7 +313,7 @@ impl<'a> Builder<'a> {
             kind,
             implicit,
             automatic_location,
-            automatic_binding,
+            binding,
         });
         if let Some(instance) = symbol.and_then(|symbol| symbol.instance) {
             self.instances.push((new, instance));
