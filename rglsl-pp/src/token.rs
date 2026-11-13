@@ -79,8 +79,12 @@ impl Token {
 
     pub(crate) fn with_text(kind: Kind, text: &str, at: At) -> Self {
         Self {
+            kind,
             text: Rc::from(text),
-            ..Self::new(kind, at)
+            value: 0,
+            space: false,
+            fully_expanded: false,
+            at,
         }
     }
 
@@ -96,20 +100,21 @@ impl Token {
     }
 
     pub(crate) fn name(&self) -> String {
+        let mut name = String::new();
+        self.write_name(&mut name);
+        name
+    }
+
+    fn write_name(&self, out: &mut String) {
         match self.kind {
             Kind::Identifier | Kind::IntConst | Kind::Number | Kind::String => {
-                String::from(&*self.text)
+                out.push_str(&self.text);
             }
-            Kind::Op(op) => String::from(op),
-            Kind::Bad(character) => {
-                let mut text = String::new();
-                text.push(character);
-                text
-            }
-            Kind::Quote => String::from("'"),
-            Kind::Paste => String::from("##"),
+            Kind::Op(op) => out.push_str(op),
+            Kind::Bad(character) => out.push(character),
+            Kind::Quote => out.push('\''),
+            Kind::Paste => out.push_str("##"),
             Kind::Newline | Kind::End | Kind::Marker | Kind::StringifyPush | Kind::StringifyPop => {
-                String::new()
             }
         }
     }
@@ -121,7 +126,7 @@ impl Token {
                 escape_into(&self.text, out);
                 out.push('"');
             }
-            _ => out.push_str(&self.name()),
+            _ => self.write_name(out),
         }
     }
 }
