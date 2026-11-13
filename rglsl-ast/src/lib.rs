@@ -32,6 +32,7 @@ mod error;
 pub mod extensions;
 pub mod keywords;
 mod lexer;
+pub mod opaque;
 mod parser;
 mod printer;
 mod span;

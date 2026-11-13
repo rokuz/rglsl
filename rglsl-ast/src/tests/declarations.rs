@@ -8,6 +8,7 @@ use crate::ast::{
     PrecisionQualifier, ScalarType, SingleTypeQualifier, StorageQualifier, TypeSpecifierNonArray,
 };
 use crate::keywords::{is_keyword, is_opaque_type_keyword, is_reserved_word, is_unavailable_word};
+use crate::opaque::{OpaqueKeyword, SampledFamily, SampledPrefix, SampledShape};
 
 fn qualifiers(ty: &FullySpecifiedType) -> Vec<SingleTypeQualifier> {
     ty.qualifier
@@ -134,7 +135,11 @@ fn precision_declaration() {
     assert_eq!(qualifier.node, PrecisionQualifier::Medium);
     assert_eq!(
         ty.node.non_array,
-        TypeSpecifierNonArray::Opaque(String::from("sampler2D"))
+        TypeSpecifierNonArray::Opaque(OpaqueKeyword::Sampled {
+            prefix: SampledPrefix::Float,
+            family: SampledFamily::Sampler,
+            shape: SampledShape::D2,
+        })
     );
 }
 
@@ -328,6 +333,46 @@ fn basic_type_keywords() {
     }
     let source = "bool a;\nint b;\nuint c;\nfloat d;\ndouble e;\nbvec2 f;\nivec3 g;\nuvec4 h;\nvec2 i;\ndvec3 j;\nmat2 k;\nmat3x4 l;\ndmat4 m;\ndmat2x3 n;\n";
     assert_eq!(round_trip(source), source);
+}
+
+#[test]
+fn opaque_keywords_print_as_parsed() -> TestResult {
+    for word in [
+        "atomic_uint",
+        "sampler",
+        "samplerShadow",
+        "accelerationStructureNV",
+        "accelerationStructureEXT",
+        "rayQueryEXT",
+        "hitObjectNV",
+        "hitObjectEXT",
+        "attachmentEXT",
+        "iattachmentEXT",
+        "uattachmentEXT",
+        "sampler2DArrayShadow",
+        "image2D",
+        "iimage2D",
+        "usampler2DMSArray",
+        "texture1DArray",
+        "i64image2D",
+        "u64imageCubeArray",
+        "subpassInputMS",
+        "usubpassInput",
+    ] {
+        let keyword = OpaqueKeyword::parse(word).ok_or(word)?;
+        assert_eq!(keyword.to_string(), word);
+    }
+    for word in [
+        "sampler4D",
+        "sampler2DMSShadow",
+        "i64sampler2D",
+        "image",
+        "isampler",
+        "vec3",
+    ] {
+        assert_eq!(OpaqueKeyword::parse(word), None, "{word}");
+    }
+    Ok(())
 }
 
 #[test]

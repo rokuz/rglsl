@@ -29,6 +29,7 @@ use crate::keywords::{
     is_opaque_type_keyword, is_reserved_word, is_type_keyword, is_unavailable_word,
 };
 use crate::lexer::{tokenize, Token, TokenKind};
+use crate::opaque::OpaqueKeyword;
 use crate::span::Span;
 use rglsl_types::stack::{run, Call, Stack};
 
@@ -698,9 +699,9 @@ impl<'a> Parser<'a> {
         } else if let Some(basic) = BasicType::from_keyword(word) {
             self.require_type_extension(word, token.span)?;
             TypeSpecifierNonArray::Basic(basic)
-        } else if is_opaque_type_keyword(word) {
+        } else if let Some(keyword) = OpaqueKeyword::parse(word) {
             self.require_type_extension(word, token.span)?;
-            TypeSpecifierNonArray::Opaque(word.to_owned())
+            TypeSpecifierNonArray::Opaque(keyword)
         } else if let Some(kind) = ParameterizedType::from_keyword(word) {
             self.require_type_extension(word, token.span)?;
             TypeSpecifierNonArray::Parameterized(kind)

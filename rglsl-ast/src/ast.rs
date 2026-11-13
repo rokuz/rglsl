@@ -4,6 +4,7 @@ use alloc::vec::Vec;
 use core::fmt;
 use core::num::NonZeroU32;
 
+use crate::opaque::OpaqueKeyword;
 use crate::span::Span;
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -694,7 +695,7 @@ impl ParameterizedType {
 pub enum TypeSpecifierNonArray {
     Void,
     Basic(BasicType),
-    Opaque(String),
+    Opaque(OpaqueKeyword),
     Parameterized(ParameterizedType),
     Struct(StructSpecifier),
     TypeName(String),

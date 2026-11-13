@@ -1,5 +1,5 @@
 use crate::scope::QualifierFlags;
-use alloc::string::String;
+use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::cell::RefCell;
 
@@ -952,7 +952,7 @@ impl Analyzer<'_> {
         match &specifier.non_array {
             TypeSpecifierNonArray::Void => Type::VOID,
             TypeSpecifierNonArray::Basic(basic) => Type::from(*basic),
-            TypeSpecifierNonArray::Opaque(name) => match Opaque::from_keyword(name) {
+            TypeSpecifierNonArray::Opaque(keyword) => match Opaque::from_opaque_keyword(*keyword) {
                 Some(opaque) => {
                     if opaque.kind == crate::types::OpaqueKind::SubpassInput {
                         self.stage_check(span, |stage| {
@@ -967,7 +967,10 @@ impl Analyzer<'_> {
                     Type::opaque(opaque)
                 }
                 None => {
-                    self.error(span, DiagnosticKind::RemovedUnderVulkan(name.clone()));
+                    self.error(
+                        span,
+                        DiagnosticKind::RemovedUnderVulkan(keyword.to_string()),
+                    );
                     Type::ERROR
                 }
             },
@@ -3021,7 +3024,7 @@ const fn both_derivative_groups() -> DiagnosticKind {
     }
 }
 
-fn precision_key(specifier: &TypeSpecifier) -> Option<PrecisionKey> {
+const fn precision_key(specifier: &TypeSpecifier) -> Option<PrecisionKey> {
     use rglsl_ast::ast::{BasicType, ScalarType};
     match specifier.non_array {
         TypeSpecifierNonArray::Basic(
@@ -3033,7 +3036,7 @@ fn precision_key(specifier: &TypeSpecifier) -> Option<PrecisionKey> {
             ScalarType::Int | ScalarType::Uint => Some(PrecisionKey::Int),
             _ => None,
         },
-        TypeSpecifierNonArray::Opaque(ref word) => Some(PrecisionKey::Opaque(word.clone())),
+        TypeSpecifierNonArray::Opaque(keyword) => Some(PrecisionKey::Opaque(keyword)),
         _ => None,
     }
 }

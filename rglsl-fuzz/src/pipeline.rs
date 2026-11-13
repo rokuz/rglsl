@@ -83,7 +83,7 @@ pub fn uniform_declarators(unit: &TranslationUnit) -> Result<Vec<UniformDeclarat
                 UniformType::Basic(*ty)
             }
             TypeSpecifierNonArray::Opaque(name) if specifier.node.array.is_none() => {
-                UniformType::Opaque(name.clone())
+                UniformType::Opaque(name.to_string())
             }
             TypeSpecifierNonArray::Struct(_) | TypeSpecifierNonArray::TypeName(_) => continue,
             _ => {

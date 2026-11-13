@@ -259,7 +259,7 @@ fn member_text(list: &InitDeclaratorList, index: usize) -> String {
 
 fn sampler_text(list: &InitDeclaratorList, index: usize, binding: u32) -> String {
     let specifier = match &list.ty.node.specifier.node.non_array {
-        TypeSpecifierNonArray::Opaque(name) => name.clone(),
+        TypeSpecifierNonArray::Opaque(keyword) => keyword.to_string(),
         _ => String::from("sampler2D"),
     };
     let name = list

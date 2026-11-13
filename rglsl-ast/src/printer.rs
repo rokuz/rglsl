@@ -565,9 +565,13 @@ impl<'b> Cx<'b> {
                     self.failed.set(true);
                 }
             }
-            TypeSpecifierNonArray::Opaque(name) | TypeSpecifierNonArray::TypeName(name) => {
-                self.write(name);
+            TypeSpecifierNonArray::Opaque(keyword) => {
+                use fmt::Write as _;
+                if write!(self.output.borrow_mut(), "{keyword}").is_err() {
+                    self.failed.set(true);
+                }
             }
+            TypeSpecifierNonArray::TypeName(name) => self.write(name),
             TypeSpecifierNonArray::Parameterized(kind) => self.write(kind.keyword()),
             TypeSpecifierNonArray::Struct(specifier) => {
                 self.write("struct ");

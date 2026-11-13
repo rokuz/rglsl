@@ -368,7 +368,7 @@ struct Level {
 pub enum PrecisionKey {
     Float,
     Int,
-    Opaque(String),
+    Opaque(rglsl_ast::opaque::OpaqueKeyword),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

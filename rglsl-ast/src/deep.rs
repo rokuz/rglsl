@@ -686,7 +686,7 @@ impl Nested for TypeSpecifier {
             }
             TypeSpecifierNonArray::Void => TypeSpecifierNonArray::Void,
             TypeSpecifierNonArray::Basic(basic) => TypeSpecifierNonArray::Basic(*basic),
-            TypeSpecifierNonArray::Opaque(name) => TypeSpecifierNonArray::Opaque(name.clone()),
+            TypeSpecifierNonArray::Opaque(keyword) => TypeSpecifierNonArray::Opaque(*keyword),
             TypeSpecifierNonArray::Parameterized(kind) => {
                 TypeSpecifierNonArray::Parameterized(*kind)
             }
@@ -713,45 +713,46 @@ impl Nested for TypeSpecifier {
     }
 
     fn same_shell(&self, other: &Self) -> bool {
-        let same_non_array = match (&self.non_array, &other.non_array) {
-            (TypeSpecifierNonArray::Struct(left), TypeSpecifierNonArray::Struct(right)) => {
-                left.name == right.name && same_members(&left.declarations, &right.declarations)
-            }
-            (
-                TypeSpecifierNonArray::InlineBlock(left),
-                TypeSpecifierNonArray::InlineBlock(right),
-            ) => same_members(left, right),
-            (TypeSpecifierNonArray::Spirv(left), TypeSpecifierNonArray::Spirv(right)) => {
-                left.requirements == right.requirements
-                    && left.instruction == right.instruction
-                    && left.parameters.len() == right.parameters.len()
-                    && left
-                        .parameters
-                        .iter()
-                        .zip(&right.parameters)
-                        .all(|(left, right)| match (left, right) {
-                            (
-                                SpirvTypeParameter::Constant(left),
-                                SpirvTypeParameter::Constant(right),
-                            ) => left == right,
-                            (SpirvTypeParameter::Type(_), SpirvTypeParameter::Type(_)) => true,
-                            _ => false,
-                        })
-            }
-            (TypeSpecifierNonArray::Void, TypeSpecifierNonArray::Void) => true,
-            (TypeSpecifierNonArray::Basic(left), TypeSpecifierNonArray::Basic(right)) => {
-                left == right
-            }
-            (TypeSpecifierNonArray::Opaque(left), TypeSpecifierNonArray::Opaque(right))
-            | (TypeSpecifierNonArray::TypeName(left), TypeSpecifierNonArray::TypeName(right)) => {
-                left == right
-            }
-            (
-                TypeSpecifierNonArray::Parameterized(left),
-                TypeSpecifierNonArray::Parameterized(right),
-            ) => left == right,
-            _ => false,
-        };
+        let same_non_array =
+            match (&self.non_array, &other.non_array) {
+                (TypeSpecifierNonArray::Struct(left), TypeSpecifierNonArray::Struct(right)) => {
+                    left.name == right.name && same_members(&left.declarations, &right.declarations)
+                }
+                (
+                    TypeSpecifierNonArray::InlineBlock(left),
+                    TypeSpecifierNonArray::InlineBlock(right),
+                ) => same_members(left, right),
+                (TypeSpecifierNonArray::Spirv(left), TypeSpecifierNonArray::Spirv(right)) => {
+                    left.requirements == right.requirements
+                        && left.instruction == right.instruction
+                        && left.parameters.len() == right.parameters.len()
+                        && left.parameters.iter().zip(&right.parameters).all(
+                            |(left, right)| match (left, right) {
+                                (
+                                    SpirvTypeParameter::Constant(left),
+                                    SpirvTypeParameter::Constant(right),
+                                ) => left == right,
+                                (SpirvTypeParameter::Type(_), SpirvTypeParameter::Type(_)) => true,
+                                _ => false,
+                            },
+                        )
+                }
+                (TypeSpecifierNonArray::Void, TypeSpecifierNonArray::Void) => true,
+                (TypeSpecifierNonArray::Basic(left), TypeSpecifierNonArray::Basic(right)) => {
+                    left == right
+                }
+                (TypeSpecifierNonArray::Opaque(left), TypeSpecifierNonArray::Opaque(right)) => {
+                    left == right
+                }
+                (TypeSpecifierNonArray::TypeName(left), TypeSpecifierNonArray::TypeName(right)) => {
+                    left == right
+                }
+                (
+                    TypeSpecifierNonArray::Parameterized(left),
+                    TypeSpecifierNonArray::Parameterized(right),
+                ) => left == right,
+                _ => false,
+            };
         let same_parameters = match (&self.parameters, &other.parameters) {
             (None, None) => true,
             (Some(left), Some(right)) => {
