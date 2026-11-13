@@ -667,15 +667,20 @@ impl Analyzer<'_> {
                 expression.span,
                 DiagnosticKind::LayoutValueNegative(String::from(name)),
             );
-        } else if name == "input_attachment_index" {
-            self.input_attachment_index_value(expression.span, value, operand.specialization);
+        } else {
+            if operand.specialization {
+                self.literal_layout_value(name, expression.span);
+            }
+            if name == "input_attachment_index" {
+                self.input_attachment_index_value(expression.span, value);
+            }
         }
         value
     }
 
     fn finish_qualifiers(&mut self, result: &Qualifiers) {
         self.layout_extension_check(result);
-        self.stage_layout_identifiers(result);
+        self.layout_identifiers(result);
         self.heap_layout_check(result);
         self.push_constant_bank_layout_check(result);
         self.removed_packing_check(result);
@@ -814,16 +819,13 @@ impl Analyzer<'_> {
         );
     }
 
-    fn input_attachment_index_value(&mut self, span: Span, value: Option<i64>, specialized: bool) {
+    fn input_attachment_index_value(&mut self, span: Span, value: Option<i64>) {
         let invalid = |reason| DiagnosticKind::InvalidQualifier {
             qualifier: "input_attachment_index",
             reason,
         };
         if value.is_some_and(|value| value >= i64::from(i32::MAX)) {
             self.error(span, invalid("attachment index is too large"));
-        }
-        if specialized {
-            self.error(span, invalid("needs a literal integer"));
         }
     }
 

@@ -1141,7 +1141,7 @@ void main() {}
 ### attachment index on a block | frag | 2:InvalidQualifier
 layout(input_attachment_index = 3, binding = 0) uniform B { vec4 v; } b;
 void main() {}
-### non-literal attachment index | frag | 3:InvalidQualifier
+### non-literal attachment index | frag | 3:LayoutValueNotLiteral
 layout(constant_id = 1) const int c = 2;
 layout(input_attachment_index = c, binding = 0) uniform subpassInput color;
 void main() {}
@@ -2275,6 +2275,38 @@ layout(location = n) in vec4 a;
 void main() {}
 ### layout qualifier value negative | frag | 2:LayoutValueNegative
 layout(location = -1) in vec4 a;
+void main() {}
+### unknown layout identifier | frag | 2:UnrecognizedLayout
+layout(foo, binding = 0) uniform U { float b; };
+void main() {}
+### layout identifier that takes a value given none | frag | 2:UnrecognizedLayout
+layout(location) out vec4 a;
+void main() {}
+### unknown layout identifier with a value | frag | 2:UnknownLayoutWithValue
+layout(location = 0, bar = 3) out vec4 a;
+void main() {}
+### layout identifier without a value given one | frag | 2:UnknownLayoutWithValue
+layout(std140 = 1, binding = 0) uniform U { float b; };
+void main() {}
+### layout identifiers of another stage | frag | 2:UnrecognizedLayout, 3:UnknownLayoutWithValue
+layout(triangles) in;
+layout(local_size_x = 2) in;
+void main() {}
+### index outside fragment shaders | vert | 2:UnknownLayoutWithValue
+layout(location = 0, index = 1) out vec4 a;
+void main() {}
+### negative value of an unknown layout identifier | frag | 2:LayoutValueNegative
+layout(location = 0, foo = -1) out vec4 a;
+void main() {}
+### specialization constants are not literals | comp | 3:LayoutValueNotLiteral, 4:LayoutValueNotLiteral, 5:LayoutValueNotLiteral
+layout(constant_id = 1) const int S = 3;
+layout(binding = S, set = 0) buffer B { float x; };
+layout(local_size_x = S) in;
+layout(constant_id = S + 1) const int T = 2;
+void main() { x = float(T); }
+### specialization constant of a layout identifier of another stage | frag | 3:UnknownLayoutWithValue
+layout(constant_id = 1) const int S = 3;
+layout(local_size_x = S) in;
 void main() {}
 ### case label outside a switch | frag | 3:CaseOutsideSwitch
 void main() {
@@ -6482,7 +6514,7 @@ void main() {}
 layout(derivative_group_quadsNV) in;
 layout(local_size_x = 2, local_size_y = 2) in;
 void main() {}
-### derivative groups outside compute-like stages | frag | 2:NotSupportedInStage
+### derivative groups outside compute-like stages | frag | 2:UnrecognizedLayout
 layout(derivative_group_quadsNV) in;
 void main() {}
 ### shader record layouts need their extensions | rgen 460 | 3:ExtensionRequired, 4:ExtensionRequired
@@ -6490,7 +6522,7 @@ void main() {}
 layout(shaderRecordEXT) buffer B { vec4 v; };
 layout(shaderRecordEXT) buffer C { vec4 v; } c;
 void main() {}
-### shader record outside ray tracing stages | frag 460 | 2:NotSupportedInStage
+### shader record outside ray tracing stages | frag 460 | 2:UnrecognizedLayout
 layout(shaderRecordEXT) buffer B { vec4 v; };
 void main() {}
 ### hit object shader record layouts need their extensions | rgen 460 | 3:ExtensionRequired, 4:ExtensionRequired
