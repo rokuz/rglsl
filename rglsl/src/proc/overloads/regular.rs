@@ -204,7 +204,9 @@ pub(in crate::proc::overloads) enum ConclusionRule {
     Wide,
     U32,
     I32,
+    F64,
     Vec2F,
+    Vec2U,
     Vec4F,
     Vec4I,
     Vec4U,
@@ -220,9 +222,14 @@ impl ConclusionRule {
             Self::Wide => Conclusion::for_wide(size, scalar),
             Self::U32 => Conclusion::Value(ir::TypeInner::Scalar(ir::Scalar::U32)),
             Self::I32 => Conclusion::Value(ir::TypeInner::Scalar(ir::Scalar::I32)),
+            Self::F64 => Conclusion::Value(ir::TypeInner::Scalar(ir::Scalar::F64)),
             Self::Vec2F => Conclusion::Value(ir::TypeInner::Vector {
                 size: ir::VectorSize::Bi,
                 scalar: ir::Scalar::F32,
+            }),
+            Self::Vec2U => Conclusion::Value(ir::TypeInner::Vector {
+                size: ir::VectorSize::Bi,
+                scalar: ir::Scalar::U32,
             }),
             Self::Vec4F => Conclusion::Value(ir::TypeInner::Vector {
                 size: ir::VectorSize::Quad,

@@ -2007,6 +2007,7 @@ pub enum MathFunction {
     Pack4xU8,
     Pack4xI8Clamp,
     Pack4xU8Clamp,
+    PackDouble2x32,
     // data unpacking
     Unpack4x8snorm,
     Unpack4x8unorm,
@@ -2015,6 +2016,7 @@ pub enum MathFunction {
     Unpack2x16float,
     Unpack4xI8,
     Unpack4xU8,
+    UnpackDouble2x32,
 }
 
 /// Sampling modifier to control the level of detail.
@@ -2187,6 +2189,20 @@ pub enum SubgroupFunction {
         argument: Handle<Expression>,
         non_uniform: bool,
     },
+    AmdSwizzle {
+        argument: Handle<Expression>,
+        offset: [u32; 4],
+    },
+    AmdSwizzleMasked {
+        argument: Handle<Expression>,
+        mask: [u32; 3],
+    },
+    AmdWriteInvocation {
+        argument: Handle<Expression>,
+        value: Handle<Expression>,
+        index: Handle<Expression>,
+    },
+    AmdMbcnt(Handle<Expression>),
 }
 
 bitflags::bitflags! {

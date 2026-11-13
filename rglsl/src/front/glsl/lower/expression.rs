@@ -499,12 +499,27 @@ impl<'a> FunctionLowerer<'_, 'a> {
     }
 
     pub(super) fn constant_index(&self, expression: &AstExpression) -> Option<u32> {
+        self.constant_components(expression)
+            .map(|[index]: [u32; 1]| index)
+    }
+
+    pub(super) fn constant_components<const N: usize>(
+        &self,
+        expression: &AstExpression,
+    ) -> Option<[u32; N]> {
         let info = self.lw.analysis.expression(expression.id)?;
         if !info.is_constant || info.is_specialization {
             return None;
         }
-        let value = info.value.as_ref()?.scalar_i64()?;
-        u32::try_from(value).ok()
+        let values = &info.value.as_ref()?.values;
+        if values.len() != N {
+            return None;
+        }
+        let mut components = [0; N];
+        for (component, value) in components.iter_mut().zip(values) {
+            *component = u32::try_from(value.as_i64()?).ok()?;
+        }
+        Some(components)
     }
 
     pub(super) fn spill(

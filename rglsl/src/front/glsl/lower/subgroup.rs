@@ -51,6 +51,11 @@ enum Gather {
     ClusteredRotate,
 }
 
+enum ResultType {
+    Fixed(TypeInner),
+    Argument(GlslType),
+}
+
 #[derive(Clone, Copy)]
 enum Function {
     Elect,
@@ -70,6 +75,15 @@ enum Function {
     KhrAny,
     KhrAllEqual,
     Group(SubgroupOperation, Collective, bool),
+    Amd(AmdShaderBallot),
+}
+
+#[derive(Clone, Copy)]
+enum AmdShaderBallot {
+    Swizzle,
+    SwizzleMasked,
+    WriteInvocation,
+    Mbcnt,
 }
 
 fn operation(word: &str) -> Option<SubgroupOperation> {
@@ -160,6 +174,12 @@ fn classify(name: &str) -> Option<Lowered> {
         "allInvocationsEqualARB" | "allInvocationsEqual" => {
             Lowered::Function(Function::KhrAllEqual)
         }
+        "swizzleInvocationsAMD" => Lowered::Function(Function::Amd(AmdShaderBallot::Swizzle)),
+        "swizzleInvocationsMaskedAMD" => {
+            Lowered::Function(Function::Amd(AmdShaderBallot::SwizzleMasked))
+        }
+        "writeInvocationAMD" => Lowered::Function(Function::Amd(AmdShaderBallot::WriteInvocation)),
+        "mbcntAMD" => Lowered::Function(Function::Amd(AmdShaderBallot::Mbcnt)),
         _ => {
             if let Some(group) = amd_group(name) {
                 return Some(Lowered::Function(group));
@@ -221,6 +241,15 @@ impl FunctionLowerer<'_, '_> {
             &GlslType::scalar(GlslScalar::Uint64),
             at,
         )
+    }
+
+    fn lane_pattern<const N: usize>(
+        &self,
+        expression: &AstExpression,
+        at: Span,
+    ) -> Result<[u32; N]> {
+        self.constant_components(expression)
+            .ok_or_else(|| unsupported("a lane pattern that is not a constant expression", at))
     }
 
     fn subgroup_result_type(&mut self, inner: TypeInner) -> Expression {
@@ -423,35 +452,35 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             size: VectorSize::Quad,
             scalar: Scalar::U32,
         };
-        let (fun, inner) = match function {
-            Function::Elect => (SubgroupFunction::Elect, boolean),
+        let (fun, result_type) = match function {
+            Function::Elect => (SubgroupFunction::Elect, ResultType::Fixed(boolean)),
             Function::AllEqual => (
                 SubgroupFunction::AllEqual({
                     let frame = self.clone().rvalue(argument(0)?);
                     self.nest(frame).await
                 }?),
-                boolean,
+                ResultType::Fixed(boolean),
             ),
             Function::QuadAll => (
                 SubgroupFunction::QuadAll({
                     let frame = self.clone().rvalue(argument(0)?);
                     self.nest(frame).await
                 }?),
-                boolean,
+                ResultType::Fixed(boolean),
             ),
             Function::QuadAny => (
                 SubgroupFunction::QuadAny({
                     let frame = self.clone().rvalue(argument(0)?);
                     self.nest(frame).await
                 }?),
-                boolean,
+                ResultType::Fixed(boolean),
             ),
             Function::InverseBallot => (
                 SubgroupFunction::InverseBallot({
                     let frame = self.clone().rvalue(argument(0)?);
                     self.nest(frame).await
                 }?),
-                boolean,
+                ResultType::Fixed(boolean),
             ),
             Function::BallotBitExtract => (
                 SubgroupFunction::BallotBitExtract {
@@ -464,7 +493,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                         self.nest(frame).await
                     }?,
                 },
-                boolean,
+                ResultType::Fixed(boolean),
             ),
             Function::BallotBitCount(collective) => (
                 SubgroupFunction::BallotBitCount {
@@ -477,28 +506,28 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                         self.nest(frame).await
                     }?,
                 },
-                unsigned,
+                ResultType::Fixed(unsigned),
             ),
             Function::BallotFindLsb => (
                 SubgroupFunction::BallotFindLsb({
                     let frame = self.clone().rvalue(argument(0)?);
                     self.nest(frame).await
                 }?),
-                unsigned,
+                ResultType::Fixed(unsigned),
             ),
             Function::BallotFindMsb => (
                 SubgroupFunction::BallotFindMsb({
                     let frame = self.clone().rvalue(argument(0)?);
                     self.nest(frame).await
                 }?),
-                unsigned,
+                ResultType::Fixed(unsigned),
             ),
             Function::Partition => (
                 SubgroupFunction::Partition({
                     let frame = self.clone().rvalue(argument(0)?);
                     self.nest(frame).await
                 }?),
-                ballot,
+                ResultType::Fixed(ballot),
             ),
             Function::KhrBallot => {
                 let predicate = {
@@ -527,39 +556,23 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     let frame = self.clone().rvalue(argument(1)?);
                     self.nest(frame).await
                 }?;
-                let ty = self.with(|this| this.lw.ir_type(&ty, at))??;
-                let result = self.with(|this| {
-                    this.push_with_result(
-                        Expression::SubgroupOperationResult { ty },
-                        |result| Statement::SubgroupFunction {
-                            fun: SubgroupFunction::KhrReadInvocation {
-                                argument: value,
-                                index,
-                            },
-                            result,
-                        },
-                        at,
-                    )
-                })?;
-                return Ok(Some(result));
+                (
+                    SubgroupFunction::KhrReadInvocation {
+                        argument: value,
+                        index,
+                    },
+                    ResultType::Argument(ty),
+                )
             }
             Function::KhrReadFirstInvocation => {
                 let (value, ty) = {
                     let frame = self.clone().typed(argument(0)?);
                     self.nest(frame).await
                 }?;
-                let ty = self.with(|this| this.lw.ir_type(&ty, at))??;
-                let result = self.with(|this| {
-                    this.push_with_result(
-                        Expression::SubgroupOperationResult { ty },
-                        |result| Statement::SubgroupFunction {
-                            fun: SubgroupFunction::KhrReadFirstInvocation(value),
-                            result,
-                        },
-                        at,
-                    )
-                })?;
-                return Ok(Some(result));
+                (
+                    SubgroupFunction::KhrReadFirstInvocation(value),
+                    ResultType::Argument(ty),
+                )
             }
             Function::Group(op, collective, non_uniform) => {
                 let (value, ty) = {
@@ -570,54 +583,121 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     let frame = self.clone().collective_operation(collective, arguments, at);
                     self.nest(frame).await
                 }?;
-                let ty = self.with(|this| this.lw.ir_type(&ty, at))??;
-                let result = self.with(|this| {
-                    this.push_with_result(
-                        Expression::SubgroupOperationResult { ty },
-                        |result| Statement::SubgroupFunction {
-                            fun: SubgroupFunction::Group {
-                                op,
-                                collective_op,
-                                argument: value,
-                                non_uniform,
-                            },
-                            result,
-                        },
-                        at,
-                    )
-                })?;
-                return Ok(Some(result));
+                (
+                    SubgroupFunction::Group {
+                        op,
+                        collective_op,
+                        argument: value,
+                        non_uniform,
+                    },
+                    ResultType::Argument(ty),
+                )
+            }
+            Function::Amd(amd) => {
+                let frame = self.clone().amd_shader_ballot(amd, arguments, at);
+                self.nest(frame).await?
             }
             Function::KhrAll => (
                 SubgroupFunction::KhrAll({
                     let frame = self.clone().rvalue(argument(0)?);
                     self.nest(frame).await
                 }?),
-                boolean,
+                ResultType::Fixed(boolean),
             ),
             Function::KhrAny => (
                 SubgroupFunction::KhrAny({
                     let frame = self.clone().rvalue(argument(0)?);
                     self.nest(frame).await
                 }?),
-                boolean,
+                ResultType::Fixed(boolean),
             ),
             Function::KhrAllEqual => (
                 SubgroupFunction::KhrAllEqual({
                     let frame = self.clone().rvalue(argument(0)?);
                     self.nest(frame).await
                 }?),
-                boolean,
+                ResultType::Fixed(boolean),
             ),
         };
-        let result = self.with(|this| this.subgroup_result_type(inner))?;
+        let ty = match result_type {
+            ResultType::Fixed(inner) => self.with(|this| this.lw.insert_type(inner))?,
+            ResultType::Argument(ty) => self.with(|this| this.lw.ir_type(&ty, at))??,
+        };
         let result = self.with(|this| {
             this.push_with_result(
-                result,
+                Expression::SubgroupOperationResult { ty },
                 |result| Statement::SubgroupFunction { fun, result },
                 at,
             )
         })?;
         Ok(Some(result))
+    }
+
+    async fn amd_shader_ballot(
+        self,
+        function: AmdShaderBallot,
+        arguments: &'b [AstExpression],
+        at: Span,
+    ) -> Result<(SubgroupFunction, ResultType)> {
+        let argument = |index: usize| arguments.get(index).ok_or_else(|| internal(at));
+        Ok(match function {
+            AmdShaderBallot::Swizzle => {
+                let (value, ty) = {
+                    let frame = self.clone().typed(argument(0)?);
+                    self.nest(frame).await
+                }?;
+                let offset = self.try_with(|this| this.lane_pattern(argument(1)?, at))?;
+                (
+                    SubgroupFunction::AmdSwizzle {
+                        argument: value,
+                        offset,
+                    },
+                    ResultType::Argument(ty),
+                )
+            }
+            AmdShaderBallot::SwizzleMasked => {
+                let (value, ty) = {
+                    let frame = self.clone().typed(argument(0)?);
+                    self.nest(frame).await
+                }?;
+                let mask = self.try_with(|this| this.lane_pattern(argument(1)?, at))?;
+                (
+                    SubgroupFunction::AmdSwizzleMasked {
+                        argument: value,
+                        mask,
+                    },
+                    ResultType::Argument(ty),
+                )
+            }
+            AmdShaderBallot::WriteInvocation => {
+                let (value, ty) = {
+                    let frame = self.clone().typed(argument(0)?);
+                    self.nest(frame).await
+                }?;
+                let written = {
+                    let frame = self.clone().rvalue(argument(1)?);
+                    self.nest(frame).await
+                }?;
+                let index = {
+                    let frame = self.clone().rvalue(argument(2)?);
+                    self.nest(frame).await
+                }?;
+                (
+                    SubgroupFunction::AmdWriteInvocation {
+                        argument: value,
+                        value: written,
+                        index,
+                    },
+                    ResultType::Argument(ty),
+                )
+            }
+            AmdShaderBallot::Mbcnt => (
+                SubgroupFunction::AmdMbcnt({
+                    let frame = self.clone().rvalue(argument(0)?);
+                    self.nest(frame).await
+                }?),
+                ResultType::Fixed(TypeInner::Scalar(Scalar::U32)),
+            ),
+        })
     }
 }

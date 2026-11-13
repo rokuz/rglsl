@@ -1549,6 +1549,7 @@ impl BlockContext<'_> {
                     Mf::Pack2x16float => MathOp::Ext(spirv::GlslStd450Op::PackHalf2x16),
                     Mf::Pack2x16unorm => MathOp::Ext(spirv::GlslStd450Op::PackUnorm2x16),
                     Mf::Pack2x16snorm => MathOp::Ext(spirv::GlslStd450Op::PackSnorm2x16),
+                    Mf::PackDouble2x32 => MathOp::Ext(spirv::GlslStd450Op::PackDouble2x32),
                     fun @ (Mf::Pack4xI8 | Mf::Pack4xU8 | Mf::Pack4xI8Clamp | Mf::Pack4xU8Clamp) => {
                         let is_signed = matches!(fun, Mf::Pack4xI8 | Mf::Pack4xI8Clamp);
                         let should_clamp = matches!(fun, Mf::Pack4xI8Clamp | Mf::Pack4xU8Clamp);
@@ -1581,6 +1582,7 @@ impl BlockContext<'_> {
                     Mf::Unpack2x16float => MathOp::Ext(spirv::GlslStd450Op::UnpackHalf2x16),
                     Mf::Unpack2x16unorm => MathOp::Ext(spirv::GlslStd450Op::UnpackUnorm2x16),
                     Mf::Unpack2x16snorm => MathOp::Ext(spirv::GlslStd450Op::UnpackSnorm2x16),
+                    Mf::UnpackDouble2x32 => MathOp::Ext(spirv::GlslStd450Op::UnpackDouble2x32),
                     fun @ (Mf::Unpack4xI8 | Mf::Unpack4xU8) => {
                         let is_signed = matches!(fun, Mf::Unpack4xI8);
 

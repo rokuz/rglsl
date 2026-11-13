@@ -415,6 +415,7 @@ impl super::MathFunction {
             Self::Pack4xU8 => 1,
             Self::Pack4xI8Clamp => 1,
             Self::Pack4xU8Clamp => 1,
+            Self::PackDouble2x32 => 1,
             // data unpacking
             Self::Unpack4x8snorm => 1,
             Self::Unpack4x8unorm => 1,
@@ -423,6 +424,7 @@ impl super::MathFunction {
             Self::Unpack2x16float => 1,
             Self::Unpack4xI8 => 1,
             Self::Unpack4xU8 => 1,
+            Self::UnpackDouble2x32 => 1,
         }
     }
 }
