@@ -479,3 +479,12 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         }
     }
 }
+
+pub(super) fn is_image_atomic(name: &str) -> bool {
+    name.starts_with("imageAtomic")
+        && (atomic_function(name).is_some()
+            || matches!(
+                name,
+                "imageAtomicLoad" | "imageAtomicStore" | "imageAtomicCompSwap"
+            ))
+}

@@ -57,6 +57,60 @@ fn hit_object_value(stem: &str) -> Option<HitObjectValue> {
     })
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum HitObjectCall {
+    TraceRay,
+    TraceReorderExecute,
+    RecordHit,
+    RecordMiss,
+    RecordEmpty,
+    RecordFromQuery,
+    ExecuteShader,
+    ReorderExecute,
+    GetAttributes,
+    SetShaderBindingTableRecordIndex,
+    ReorderThread,
+}
+
+fn hit_object_call(stem: &str) -> Option<HitObjectCall> {
+    Some(match stem {
+        "hitObjectTraceRay" | "hitObjectTraceRayMotion" => HitObjectCall::TraceRay,
+        "hitObjectTraceReorderExecute" | "hitObjectTraceMotionReorderExecute" => {
+            HitObjectCall::TraceReorderExecute
+        }
+        "hitObjectRecordHit"
+        | "hitObjectRecordHitMotion"
+        | "hitObjectRecordHitWithIndex"
+        | "hitObjectRecordHitWithIndexMotion" => HitObjectCall::RecordHit,
+        "hitObjectRecordMiss" | "hitObjectRecordMissMotion" => HitObjectCall::RecordMiss,
+        "hitObjectRecordEmpty" => HitObjectCall::RecordEmpty,
+        "hitObjectRecordFromQuery" => HitObjectCall::RecordFromQuery,
+        "hitObjectExecuteShader" => HitObjectCall::ExecuteShader,
+        "hitObjectReorderExecute" => HitObjectCall::ReorderExecute,
+        "hitObjectGetAttributes" => HitObjectCall::GetAttributes,
+        "hitObjectSetShaderBindingTableRecordIndex" => {
+            HitObjectCall::SetShaderBindingTableRecordIndex
+        }
+        "reorderThread" => HitObjectCall::ReorderThread,
+        _ => return None,
+    })
+}
+
+fn micro_triangle_value(name: &str) -> Option<MicroTriangleVertexValue> {
+    match name {
+        "fetchMicroTriangleVertexPositionNV" => Some(MicroTriangleVertexValue::Position),
+        "fetchMicroTriangleVertexBarycentricNV" => Some(MicroTriangleVertexValue::Barycentric),
+        _ => None,
+    }
+}
+
+pub(super) fn is_hit_object_call(name: &str) -> bool {
+    micro_triangle_value(name).is_some()
+        || split_kind(name).is_some_and(|(stem, _)| {
+            hit_object_value(stem).is_some() || hit_object_call(stem).is_some()
+        })
+}
+
 impl FunctionLowerer<'_, '_> {
     pub(super) fn generate_value_type(&mut self, value: HitObjectValue) {
         match value {
@@ -173,11 +227,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Option<Option<Handle<Expression>>>> {
-        if let Some(value) = match name {
-            "fetchMicroTriangleVertexPositionNV" => Some(MicroTriangleVertexValue::Position),
-            "fetchMicroTriangleVertexBarycentricNV" => Some(MicroTriangleVertexValue::Barycentric),
-            _ => None,
-        } {
+        if let Some(value) = micro_triangle_value(name) {
             let [
                 acceleration_structure,
                 instance_id,
@@ -210,10 +260,12 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         let Some((stem, kind)) = split_kind(name) else {
             return Ok(None);
         };
-        if !stem.starts_with("hitObject") && stem != "reorderThread" {
+        let value = hit_object_value(stem);
+        let call = hit_object_call(stem);
+        if value.is_none() && call.is_none() {
             return Ok(None);
         }
-        if stem == "reorderThread"
+        if call == Some(HitObjectCall::ReorderThread)
             && let [ref hint, ref bits] = *arguments
         {
             let hint = {
@@ -232,7 +284,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             let frame = self.clone().ray_query_pointer(object);
             self.nest(frame).await
         }?;
-        if let Some(value) = hit_object_value(stem) {
+        if let Some(value) = value {
             self.with(|this| this.generate_value_type(value))?;
             let result =
                 self.with(|this| this.add(Expression::HitObjectGet { object, value }, at))??;
@@ -246,8 +298,8 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             }
             return Ok(Some(Some(result)));
         }
-        let fun = match stem {
-            "hitObjectTraceRay" | "hitObjectTraceRayMotion" => {
+        let fun = match call {
+            Some(HitObjectCall::TraceRay) => {
                 let (trace, hint) = {
                     let frame =
                         self.clone()
@@ -259,7 +311,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 }
                 HitObjectFunction::TraceRay(trace)
             }
-            "hitObjectTraceReorderExecute" | "hitObjectTraceMotionReorderExecute" => {
+            Some(HitObjectCall::TraceReorderExecute) => {
                 let (trace, hint) = {
                     let frame = self.clone().hit_object_trace(
                         rest,
@@ -270,10 +322,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 }?;
                 HitObjectFunction::TraceReorderExecute { trace, hint }
             }
-            "hitObjectRecordHit"
-            | "hitObjectRecordHitMotion"
-            | "hitObjectRecordHitWithIndex"
-            | "hitObjectRecordHitWithIndexMotion" => {
+            Some(HitObjectCall::RecordHit) => {
                 let with_index = stem.starts_with("hitObjectRecordHitWithIndex");
                 let motion = stem.ends_with("Motion");
                 let (attributes, operands) = rest.split_last().ok_or_else(|| internal(at))?;
@@ -350,7 +399,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     attributes,
                 }
             }
-            "hitObjectRecordMiss" | "hitObjectRecordMissMotion" => {
+            Some(HitObjectCall::RecordMiss) => {
                 let operands = {
                     let frame = self.clone().ray_operands(rest);
                     self.nest(frame).await
@@ -382,8 +431,8 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     time,
                 }
             }
-            "hitObjectRecordEmpty" => HitObjectFunction::RecordEmpty,
-            "hitObjectRecordFromQuery" => {
+            Some(HitObjectCall::RecordEmpty) => HitObjectFunction::RecordEmpty,
+            Some(HitObjectCall::RecordFromQuery) => {
                 let [
                     ref query,
                     ref sbt_record_index,
@@ -417,7 +466,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     hit_kind,
                 }
             }
-            "hitObjectExecuteShader" => {
+            Some(HitObjectCall::ExecuteShader) => {
                 let [ref payload] = *rest else {
                     return Err(internal(at));
                 };
@@ -425,7 +474,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     payload: self.with(|this| this.located(payload, PAYLOADS, at))??,
                 }
             }
-            "hitObjectReorderExecute" => {
+            Some(HitObjectCall::ReorderExecute) => {
                 let (payload, hint) = rest.split_last().ok_or_else(|| internal(at))?;
                 let hint = {
                     let frame = self.clone().hint(hint, at);
@@ -436,7 +485,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     hint,
                 }
             }
-            "hitObjectGetAttributes" => {
+            Some(HitObjectCall::GetAttributes) => {
                 let [ref attributes] = *rest else {
                     return Err(internal(at));
                 };
@@ -444,7 +493,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     attributes: self.with(|this| this.located(attributes, ATTRIBUTES, at))??,
                 }
             }
-            "hitObjectSetShaderBindingTableRecordIndex" => {
+            Some(HitObjectCall::SetShaderBindingTableRecordIndex) => {
                 let [ref index] = *rest else {
                     return Err(internal(at));
                 };
@@ -455,13 +504,13 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     }?,
                 }
             }
-            "reorderThread" => HitObjectFunction::ReorderThread {
+            Some(HitObjectCall::ReorderThread) => HitObjectFunction::ReorderThread {
                 hint: {
                     let frame = self.clone().hint(rest, at);
                     self.nest(frame).await
                 }?,
             },
-            _ => return Ok(None),
+            None => return Err(internal(at)),
         };
         self.with(|this| this.push(Statement::HitObject { object, fun }, at))?;
         Ok(Some(None))
