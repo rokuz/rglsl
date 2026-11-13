@@ -48,7 +48,8 @@ pub use diagnostic::{Diagnostic, DiagnosticKind, Location, Phase, Redefinition, 
 #[cfg(feature = "std")]
 pub use fs::FileSystemIncluder;
 pub use include::{
-    FileId, IncludeError, IncludeKind, IncludedFile, Includer, MemoryIncluder, NoIncluder,
+    FileId, IncludeError, IncludeKind, IncludeRequest, IncludedFile, Includer, MemoryIncluder,
+    NoIncluder, ResolvedInclude,
 };
 pub use options::{Define, Limits, Options};
 pub use preprocessor::{Preprocessed, preprocess};

@@ -19,7 +19,7 @@ concurrency:
 jobs:
   # Quality gates: fmt, clippy, tests. `unsafe_code` is forbidden through the
   # workspace lints (and `#![forbid(unsafe_code)]` in rglsl), so clippy and the
-  # build fail on any unsafe code.
+  # build fail on any unsafe code outside the FFI module of rglsl-capi.
   check:
     name: fmt, clippy, test
     runs-on: ubuntu-latest
@@ -36,6 +36,14 @@ jobs:
       - run: cargo test --workspace --all-features
       - run: cargo test --release -p rglsl-link --test nesting -- --ignored
       - run: sh samples/run.sh
+      - run: cargo xtask capi-header --check
+      - run: sh samples/c/run.sh
+      - name: C sample under AddressSanitizer, LeakSanitizer and UBSan
+        run: sh samples/c/run.sh
+        env:
+          SANITIZE: address,undefined
+          ASAN_OPTIONS: detect_leaks=1
+          UBSAN_OPTIONS: halt_on_error=1
 
   deny:
     name: cargo deny
@@ -65,6 +73,9 @@ jobs:
           key: oracles-${{ runner.os }}-${{ hashFiles('oracles.toml', 'xtask/src/oracles.rs') }}
       - run: cargo xtask oracles --no-exec
       - run: sh samples/run.sh
+        env:
+          SPIRV_VAL: target/oracles/bin/spirv-val
+      - run: sh samples/c/run.sh
         env:
           SPIRV_VAL: target/oracles/bin/spirv-val
       - run: cargo xtask snapshots

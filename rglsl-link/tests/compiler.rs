@@ -1,6 +1,7 @@
 use rglsl_link::{
-    CompileOptions, ProgramOptions, Severity, ShaderStage, compile, compile_and_link, link_spirv,
-    read_object, write_object,
+    CompileOptions, IncludeKind, IncludeRequest, ProgramOptions, ResolvedInclude, Severity,
+    ShaderStage, compile, compile_and_link, compile_with_includer, link_spirv, read_object,
+    write_object,
 };
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -95,4 +96,68 @@ fn link_errors_name_the_stage() -> TestResult {
 fn garbage_is_not_an_object() {
     assert!(read_object(b"\xff\xfe").is_err());
     assert!(read_object(b"not an object").is_err());
+}
+
+#[test]
+fn includes_resolve_through_a_callback() -> TestResult {
+    let source = "#version 450\n#include \"lib/scale.h\"\n#include <common.h>\nfloat halve(float x) {\n    return x * HALF * ONE;\n}\n";
+    let options = CompileOptions::library("shaders/halve.glsl");
+    let mut requests = Vec::new();
+    let object = compile_with_includer(source, &options, &mut |request: IncludeRequest<'_>| {
+        requests.push((
+            request.requested.to_owned(),
+            request.kind,
+            request.includer.map(str::to_owned),
+        ));
+        let (name, source) = match request.requested {
+            "lib/scale.h" => ("shaders/lib/scale.h", "#include \"half.h\"\n"),
+            "half.h" => ("shaders/lib/half.h", "const float HALF = 0.5;\n"),
+            "common.h" => ("include/common.h", "const float ONE = 1.0;\n"),
+            _ => return None,
+        };
+        Some(ResolvedInclude {
+            name: name.to_owned(),
+            source: source.to_owned(),
+        })
+    })?;
+    assert!(object.is_library());
+    assert_eq!(
+        requests,
+        [
+            (
+                "lib/scale.h".to_owned(),
+                IncludeKind::Local,
+                Some("shaders/halve.glsl".to_owned())
+            ),
+            (
+                "half.h".to_owned(),
+                IncludeKind::Local,
+                Some("shaders/lib/scale.h".to_owned())
+            ),
+            (
+                "common.h".to_owned(),
+                IncludeKind::System,
+                Some("shaders/halve.glsl".to_owned())
+            ),
+        ]
+    );
+    Ok(())
+}
+
+#[test]
+fn unresolved_includes_are_errors() {
+    let source = "#version 450\n#include \"missing.h\"\nvoid main() {}\n";
+    let mut calls = 0;
+    let Err(diagnostics) = compile_with_includer(
+        source,
+        &CompileOptions::new("main.comp", ShaderStage::Compute),
+        &mut |_| {
+            calls += 1;
+            None
+        },
+    ) else {
+        panic!("the shader compiled without its include");
+    };
+    assert!(diagnostics.to_string().contains("main.comp:2"));
+    assert_eq!(calls, 1);
 }

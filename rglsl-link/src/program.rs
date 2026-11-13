@@ -1,4 +1,6 @@
-use rglsl::object::{PathStep, SymbolKind};
+use std::borrow::Borrow;
+
+use rglsl::object::{ObjectModule, PathStep, SymbolKind};
 use rglsl::{AddressSpace, ArraySize, Binding, Handle, Module, ShaderStage, Type, TypeInner};
 
 use crate::error::{LinkError, LinkErrors};
@@ -462,22 +464,22 @@ pub fn link_program_staged(
     }
 }
 
-pub fn group_by_stage(
-    objects: &[rglsl::object::ObjectModule],
-) -> Vec<Vec<rglsl::object::ObjectModule>> {
+pub fn group_by_stage<O: Borrow<ObjectModule>>(objects: &[O]) -> Vec<Vec<ObjectModule>> {
     let mut stages: Vec<ShaderStage> = Vec::new();
-    for stage in objects
-        .iter()
-        .filter_map(rglsl::object::ObjectModule::stage)
-    {
+    for stage in objects.iter().filter_map(|object| object.borrow().stage()) {
         if !stages.contains(&stage) {
             stages.push(stage);
         }
     }
     if stages.is_empty() {
-        return vec![objects.to_vec()];
+        return vec![
+            objects
+                .iter()
+                .map(|object| object.borrow().clone())
+                .collect(),
+        ];
     }
-    let joins = |object: &rglsl::object::ObjectModule, stage: ShaderStage| match object.stage() {
+    let joins = |object: &ObjectModule, stage: ShaderStage| match object.stage() {
         Some(own) => own == stage,
         None => object.supports(stage) || stages.iter().all(|&other| !object.supports(other)),
     };
@@ -486,6 +488,7 @@ pub fn group_by_stage(
         .map(|&stage| {
             objects
                 .iter()
+                .map(Borrow::borrow)
                 .filter(|object| joins(object, stage))
                 .cloned()
                 .collect()
@@ -493,15 +496,15 @@ pub fn group_by_stage(
         .collect()
 }
 
-pub fn link_objects(
-    objects: &[rglsl::object::ObjectModule],
+pub fn link_objects<O: Borrow<ObjectModule>>(
+    objects: &[O],
     options: &Options,
 ) -> Result<Vec<Linked>, LinkErrors> {
     link_program(&group_by_stage(objects), options)
 }
 
-pub fn link_objects_staged(
-    objects: &[rglsl::object::ObjectModule],
+pub fn link_objects_staged<O: Borrow<ObjectModule>>(
+    objects: &[O],
     options: &Options,
 ) -> Result<Vec<Linked>, StagedErrors> {
     link_program_staged(&group_by_stage(objects), options)

@@ -1,10 +1,15 @@
+use std::borrow::Borrow;
+use std::collections::BTreeMap;
 use std::fmt;
 
 use rglsl::back::spv;
 use rglsl::front::glsl;
 use rglsl::object::ObjectModule;
 use rglsl::{FastHashMap, ShaderStage};
-use rglsl_pp::MemoryIncluder;
+use rglsl_pp::{
+    FileId, IncludeError, IncludeKind, IncludeRequest, IncludedFile, Includer, MemoryIncluder,
+    ResolvedInclude,
+};
 
 use crate::{LinkError, Options, file, link_objects_staged, message, validate_object};
 
@@ -169,11 +174,24 @@ impl CompileOptions {
 }
 
 pub fn compile(source: &str, options: &CompileOptions) -> Result<ObjectModule, Diagnostics> {
-    let mut includer = MemoryIncluder::with_include_dirs(options.include_dirs.iter().cloned());
+    compile_with_includer(source, options, &mut |_| None)
+}
+
+pub fn compile_with_includer(
+    source: &str,
+    options: &CompileOptions,
+    resolve: &mut dyn FnMut(IncludeRequest<'_>) -> Option<ResolvedInclude>,
+) -> Result<ObjectModule, Diagnostics> {
+    let mut memory = MemoryIncluder::with_include_dirs(options.include_dirs.iter().cloned());
     for (name, text) in &options.includes {
-        includer.add_file(name, text);
+        memory.add_file(name, text);
     }
-    let root = includer.add_file(&options.name, source);
+    let root = memory.add_file(&options.name, source);
+    let mut includer = ResolvingIncluder {
+        memory,
+        resolve,
+        answers: BTreeMap::new(),
+    };
     let mut object = glsl::Frontend::default()
         .compile_with_includer(&options.frontend(), source, root, &mut includer)
         .map_err(|errors| parse_diagnostics(&errors, source, &options.name))?;
@@ -185,6 +203,39 @@ pub fn compile(source: &str, options: &CompileOptions) -> Result<ObjectModule, D
             .collect(),
     })?;
     Ok(object)
+}
+
+struct ResolvingIncluder<'a> {
+    memory: MemoryIncluder,
+    resolve: &'a mut dyn FnMut(IncludeRequest<'_>) -> Option<ResolvedInclude>,
+    answers: BTreeMap<(String, bool, Option<String>), Option<ResolvedInclude>>,
+}
+
+impl Includer for ResolvingIncluder<'_> {
+    fn include(
+        &mut self,
+        requested: &str,
+        kind: IncludeKind,
+        from: FileId,
+        depth: usize,
+    ) -> Result<IncludedFile, IncludeError> {
+        let Self {
+            memory,
+            resolve,
+            answers,
+        } = self;
+        memory.include_or_resolve(requested, kind, from, depth, &mut |request| {
+            let key = (
+                request.requested.to_owned(),
+                request.kind == IncludeKind::System,
+                request.includer.map(str::to_owned),
+            );
+            answers
+                .entry(key)
+                .or_insert_with(|| resolve(request))
+                .clone()
+        })
+    }
 }
 
 fn parse_diagnostics(errors: &glsl::ParseErrors, source: &str, name: &str) -> Diagnostics {
@@ -267,8 +318,8 @@ impl Program {
     }
 }
 
-pub fn link_spirv(
-    objects: &[ObjectModule],
+pub fn link_spirv<O: Borrow<ObjectModule>>(
+    objects: &[O],
     options: &ProgramOptions,
 ) -> Result<Program, Diagnostics> {
     let link_options = Options {

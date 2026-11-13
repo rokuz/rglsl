@@ -1,0 +1,21 @@
+language = "C"
+include_guard = "RGLSL_H"
+cpp_compat = true
+documentation = false
+style = "type"
+usize_is_size_t = true
+sys_includes = ["stdbool.h", "stddef.h", "stdint.h"]
+no_includes = true
+
+[export.rename]
+"Blob" = "rglsl_blob"
+"CompileOptions" = "rglsl_compile_options"
+"Diagnostics" = "rglsl_diagnostics"
+"IncludeCallback" = "rglsl_include_callback"
+"IncludeResult" = "rglsl_include_result"
+"Object" = "rglsl_object"
+"Program" = "rglsl_program"
+"ProgramOptions" = "rglsl_program_options"
+"ResultCode" = "rglsl_result"
+"Severity" = "rglsl_severity"
+"Stage" = "rglsl_stage"
