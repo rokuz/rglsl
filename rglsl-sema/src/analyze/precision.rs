@@ -1,5 +1,5 @@
-use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::vec::Vec;
+use rglsl_types::{FastHashMap, FastHashSet};
 
 use rglsl_ast::ast::{
     AssignmentOperator, BinaryOperator, Condition, Declaration, DeclarationKind, Expression,
@@ -38,8 +38,8 @@ impl Precision {
 
 #[derive(Debug, Clone, Default)]
 pub struct RelaxedPrecision {
-    pub results: BTreeSet<NodeId>,
-    pub conversions: BTreeSet<NodeId>,
+    pub results: FastHashSet<NodeId>,
+    pub conversions: FastHashSet<NodeId>,
 }
 
 const HIGHP_PARAMETERS: [&str; 19] = [
@@ -112,9 +112,9 @@ fn counted_arguments(name: &str, count: usize) -> usize {
 pub(crate) fn relaxed_precision(unit: &TranslationUnit, analysis: &Analysis) -> RelaxedPrecision {
     let mut pass = Pass {
         analysis,
-        own: BTreeMap::new(),
-        operation: BTreeMap::new(),
-        conversion: BTreeMap::new(),
+        own: FastHashMap::default(),
+        operation: FastHashMap::default(),
+        conversion: FastHashMap::default(),
         return_precision: Precision::None,
     };
     for declaration in &unit.external_declarations {
@@ -152,9 +152,9 @@ pub(crate) fn relaxed_precision(unit: &TranslationUnit, analysis: &Analysis) -> 
 
 struct Pass<'a> {
     analysis: &'a Analysis,
-    own: BTreeMap<NodeId, Precision>,
-    operation: BTreeMap<NodeId, Precision>,
-    conversion: BTreeMap<NodeId, Precision>,
+    own: FastHashMap<NodeId, Precision>,
+    operation: FastHashMap<NodeId, Precision>,
+    conversion: FastHashMap<NodeId, Precision>,
     return_precision: Precision,
 }
 
