@@ -182,7 +182,7 @@ impl<'a> Pass<'a> {
     fn converted(&self, expression: &Expression) -> Option<&'a Type> {
         let info = self.analysis.expression(expression.id)?;
         info.conversion
-            .as_ref()
+            .as_deref()
             .filter(|target| target.base_scalar() != info.ty.base_scalar())
     }
 

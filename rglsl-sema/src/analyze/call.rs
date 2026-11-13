@@ -1,4 +1,5 @@
 use crate::scope::QualifierFlags;
+use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
 
@@ -874,7 +875,7 @@ impl Analyzer<'_> {
             }
             if parameter.direction.is_output() && operand.ty != parameter.ty {
                 if let Some(info) = self.expressions.get_mut(&argument.id) {
-                    info.output_conversion = Some(parameter.ty.clone());
+                    info.output_conversion = Some(Box::new(parameter.ty.clone()));
                 }
             }
         }

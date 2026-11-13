@@ -27,6 +27,7 @@ mod tensor;
 mod texture;
 mod xfb;
 
+use alloc::boxed::Box;
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::format;
 use alloc::string::String;
@@ -107,8 +108,8 @@ pub struct ExpressionInfo {
     pub is_specialization: bool,
     pub non_uniform: bool,
     pub value: Option<Constant>,
-    pub conversion: Option<Type>,
-    pub output_conversion: Option<Type>,
+    pub conversion: Option<Box<Type>>,
+    pub output_conversion: Option<Box<Type>>,
 }
 
 #[derive(Debug, Clone)]

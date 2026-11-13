@@ -1,3 +1,4 @@
+use alloc::boxed::Box;
 use core::cell::RefCell;
 
 use rglsl_types::stack::run;
@@ -258,7 +259,7 @@ impl Analyzer<'_> {
             return;
         }
         if let Some(info) = self.expressions.get_mut(&expression.id) {
-            info.conversion = Some(to.clone());
+            info.conversion = Some(Box::new(to.clone()));
         }
     }
 }

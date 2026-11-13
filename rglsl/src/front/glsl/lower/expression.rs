@@ -279,8 +279,8 @@ impl<'a> FunctionLowerer<'_, 'a> {
         let at = self.at(expression.span);
         let info = self.info(expression)?;
         let value = value.ok_or_else(|| semantic("a `void` value is used", at))?;
-        match info.conversion {
-            Some(ref target) if *target != info.ty => {
+        match info.conversion.as_deref() {
+            Some(target) if *target != info.ty => {
                 let converted = self.convert(value, &info.ty, target, at)?;
                 if self
                     .lw
@@ -1310,7 +1310,7 @@ impl<'a> FunctionLowerer<'_, 'a> {
         let value_non_uniform = value_info.non_uniform
             && value_info
                 .conversion
-                .as_ref()
+                .as_deref()
                 .is_none_or(|target| *target == value_info.ty);
         let result = self.binary(operator, (old, target_ty), (right, &right_ty), at)?;
         if place.non_uniform || value_non_uniform {

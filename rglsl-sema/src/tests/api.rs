@@ -324,7 +324,7 @@ void main() {
         .analysis
         .expression(checked.expression("d")?.id)
         .ok_or("the argument is not analysed")?;
-    assert_eq!(stored.output_conversion, Some(Type::INT));
+    assert_eq!(stored.output_conversion.as_deref(), Some(&Type::INT));
     assert_eq!(stored.conversion, None);
     Ok(())
 }
