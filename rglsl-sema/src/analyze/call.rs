@@ -1087,22 +1087,21 @@ impl Analyzer<'_> {
         if matches!(name, "expectEXT" | "assumeEXT") {
             self.require_extension(span, "GL_EXT_expect_assume", name);
         }
-        let lower = name.to_ascii_lowercase();
-        if lower.contains("bfloat16") {
+        if contains_ignore_ascii_case(name, "bfloat16") {
             self.require_extension(span, "GL_EXT_bfloat16", name);
-        } else if lower.contains("floate4m3") {
+        } else if contains_ignore_ascii_case(name, "floate4m3") {
             self.require_extension(span, "GL_EXT_float_e4m3", name);
-        } else if lower.contains("floate5m2") {
+        } else if contains_ignore_ascii_case(name, "floate5m2") {
             self.require_extension(span, "GL_EXT_float_e5m2", name);
-        } else if lower.contains("fe2m1") {
+        } else if contains_ignore_ascii_case(name, "fe2m1") {
             self.require_extension(span, "GL_EXT_float_e2m1", name);
-        } else if lower.contains("fe3m2") {
+        } else if contains_ignore_ascii_case(name, "fe3m2") {
             self.require_extension(span, "GL_EXT_float_e3m2", name);
-        } else if lower.contains("fe2m3") {
+        } else if contains_ignore_ascii_case(name, "fe2m3") {
             self.require_extension(span, "GL_EXT_float_e2m3", name);
-        } else if lower.contains("floatue8m0") {
+        } else if contains_ignore_ascii_case(name, "floatue8m0") {
             self.require_extension(span, "GL_EXT_float_ue8m0", name);
-        } else if lower.contains("floatmxint8") {
+        } else if contains_ignore_ascii_case(name, "floatmxint8") {
             self.require_extension(span, "GL_EXT_float_mxint8", name);
         }
         self.mesh_function_extension(span, name);
@@ -1868,3 +1867,11 @@ fn microscaling_conversion(ty: &Type, operands: &[Operand]) -> bool {
             .any(|operand| operand.ty.base_scalar() != ty.base_scalar())
 }
 pub(crate) const SPEC_CONSTANT_COMPOSITES: &str = "GL_EXT_spec_constant_composites";
+
+fn contains_ignore_ascii_case(text: &str, needle: &str) -> bool {
+    needle.is_empty()
+        || text
+            .as_bytes()
+            .windows(needle.len())
+            .any(|window| window.eq_ignore_ascii_case(needle.as_bytes()))
+}
