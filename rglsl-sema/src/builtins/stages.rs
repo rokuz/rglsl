@@ -4,13 +4,13 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use super::{
-    available, expand_prototypes, footprint, variables, BuiltinFunctionId, Builtins, Footprints,
-    ResourceLimits,
+    add_name, available, expand_prototypes, footprint, variables, BuiltinFunctionId, Builtins,
+    Footprints, ResourceLimits, Signature,
 };
 
 use crate::scope::{Function, Symbol, SymbolId, SymbolKind, Variable};
 use crate::types::{Type, TypeKind, TypeRegistry};
-use rglsl_types::ShaderStage;
+use rglsl_types::{FastHashMap, ShaderStage};
 
 pub const ALL_STAGE_BITS: u16 = rglsl_types::probe::ALL_STAGES;
 
@@ -27,7 +27,7 @@ pub struct StageTables {
     version: u32,
     limits: ResourceLimits,
     functions: Vec<(Function, u16)>,
-    names: BTreeMap<String, Vec<usize>>,
+    names: FastHashMap<String, Vec<usize>>,
     variables: Vec<StageVariables>,
     footprints: Footprints,
 }
@@ -113,29 +113,35 @@ fn stage_bits(stages: u16) -> u16 {
 
 impl StageTables {
     pub fn new(version: u32, limits: &ResourceLimits) -> Self {
-        let (prototypes, _, footprints) = expand_prototypes(version);
-        let mut remaining: BTreeMap<(String, Vec<Type>), u16> = BTreeMap::new();
-        let mut functions: Vec<(Function, u16)> = Vec::new();
-        let mut names: BTreeMap<String, Vec<usize>> = BTreeMap::new();
-        for prototype in prototypes {
-            let bits = stage_bits(prototype.stages);
-            let parameters: Vec<Type> = prototype
-                .parameters
+        let (prototypes, _, footprints) = expand_prototypes(version, None);
+        let kept: Vec<u16> = {
+            let mut remaining: FastHashMap<Signature<'_>, u16> =
+                FastHashMap::with_capacity_and_hasher(prototypes.len(), Default::default());
+            prototypes
                 .iter()
-                .map(|(ty, _)| ty.clone())
-                .collect();
-            let left = remaining
-                .entry((prototype.name.clone(), parameters))
-                .or_insert(ALL_STAGE_BITS);
-            let kept = bits & *left;
-            *left &= !bits;
+                .map(|prototype| {
+                    let bits = stage_bits(prototype.stages);
+                    let left = remaining
+                        .entry(Signature(prototype))
+                        .or_insert(ALL_STAGE_BITS);
+                    let kept = bits & *left;
+                    *left &= !bits;
+                    kept
+                })
+                .collect()
+        };
+        let mut functions: Vec<(Function, u16)> = Vec::new();
+        let mut names: FastHashMap<String, Vec<usize>> = FastHashMap::default();
+        for (prototype, kept) in prototypes.into_iter().zip(kept) {
             if kept == 0 {
                 continue;
             }
-            names
-                .entry(prototype.name.clone())
-                .or_default()
-                .push(functions.len());
+            match names.get_mut(prototype.name.as_str()) {
+                Some(indices) => indices.push(functions.len()),
+                None => {
+                    names.insert(prototype.name.clone(), Vec::from([functions.len()]));
+                }
+            }
             functions.push((prototype.function(), kept));
         }
         let variables = ShaderStage::ALL
@@ -166,7 +172,7 @@ impl StageTables {
     pub fn builtins(&self, own: ShaderStage) -> Builtins {
         let bit = crate::builtins::stage_bit(own);
         let mut functions = Vec::new();
-        let mut names: BTreeMap<String, Vec<BuiltinFunctionId>> = BTreeMap::new();
+        let mut names: FastHashMap<String, Vec<BuiltinFunctionId>> = FastHashMap::default();
         for &(ref function, stages) in &self.functions {
             if stages & bit == 0 {
                 continue;
@@ -174,10 +180,7 @@ impl StageTables {
             let Ok(index) = u32::try_from(functions.len()) else {
                 break;
             };
-            names
-                .entry(function.name.clone())
-                .or_default()
-                .push(BuiltinFunctionId(index));
+            add_name(&mut names, &function.name, BuiltinFunctionId(index));
             functions.push(function.clone());
         }
         let (symbols, scope, types) = self

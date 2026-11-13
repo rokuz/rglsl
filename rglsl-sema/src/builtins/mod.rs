@@ -10,7 +10,6 @@ mod variables;
 pub use variables::{variable_extension, view_extension};
 pub(crate) use variables::{TENSOR_OPERAND_NONTEMPORAL, TENSOR_OPERAND_OUT_OF_BOUNDS_VALUE};
 
-use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::String;
 use alloc::vec::Vec;
 
@@ -22,7 +21,7 @@ pub use stages::{StageTables, ALL_STAGE_BITS};
 
 use crate::scope::{Direction, Function, Parameter, Qualifiers, Symbol, SymbolId};
 use crate::types::{ArraySize, Opaque, Type, TypeRegistry};
-use rglsl_types::ShaderStage;
+use rglsl_types::{FastHashMap, FastHashSet, ShaderStage};
 
 pub(crate) const fn stage_bit(stage: ShaderStage) -> u16 {
     match stage {
@@ -112,6 +111,46 @@ struct Prototype {
     stages: u16,
 }
 
+struct Signature<'a>(&'a Prototype);
+
+impl PartialEq for Signature<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.name == other.0.name
+            && self.0.parameters.len() == other.0.parameters.len()
+            && self
+                .0
+                .parameters
+                .iter()
+                .zip(&other.0.parameters)
+                .all(|(left, right)| left.0 == right.0)
+    }
+}
+
+impl Eq for Signature<'_> {}
+
+impl core::hash::Hash for Signature<'_> {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        self.0.name.hash(state);
+        self.0.parameters.len().hash(state);
+        for parameter in &self.0.parameters {
+            parameter.0.hash(state);
+        }
+    }
+}
+
+fn add_name(
+    names: &mut FastHashMap<String, Vec<BuiltinFunctionId>>,
+    name: &str,
+    id: BuiltinFunctionId,
+) {
+    match names.get_mut(name) {
+        Some(ids) => ids.push(id),
+        None => {
+            names.insert(String::from(name), Vec::from([id]));
+        }
+    }
+}
+
 impl Prototype {
     fn function(self) -> Function {
         Function {
@@ -133,10 +172,13 @@ impl Prototype {
 
 pub(crate) type Footprints = Vec<(&'static str, crate::types::StructId)>;
 
-fn expand_prototypes(version: u32) -> (Vec<Prototype>, TypeRegistry, Footprints) {
+fn expand_prototypes(
+    version: u32,
+    stage: Option<ShaderStage>,
+) -> (Vec<Prototype>, TypeRegistry, Footprints) {
     let mut prototypes = Vec::new();
     for section in functions::SECTIONS.iter().chain(ray::SECTIONS) {
-        if version >= section.since {
+        if version >= section.since && stage.is_none_or(|stage| available(section.stages, stage)) {
             expand_section(section, &mut prototypes);
         }
     }
@@ -409,7 +451,7 @@ pub struct Builtins {
     stage: ShaderStage,
     limits: ResourceLimits,
     functions: Vec<Function>,
-    names: BTreeMap<String, Vec<BuiltinFunctionId>>,
+    names: FastHashMap<String, Vec<BuiltinFunctionId>>,
     types: TypeRegistry,
     symbols: Vec<Symbol>,
     scope: Vec<(String, SymbolId)>,
@@ -417,29 +459,27 @@ pub struct Builtins {
 
 impl Builtins {
     pub fn new(version: u32, stage: ShaderStage, limits: &ResourceLimits) -> Self {
-        let (prototypes, mut types, footprints) = expand_prototypes(version);
-        let mut seen = BTreeSet::new();
-        let mut functions = Vec::new();
-        let mut names: BTreeMap<String, Vec<BuiltinFunctionId>> = BTreeMap::new();
-        for prototype in prototypes {
-            if !available(prototype.stages, stage) {
-                continue;
-            }
-            let types: Vec<Type> = prototype
-                .parameters
+        let (prototypes, mut types, footprints) = expand_prototypes(version, Some(stage));
+        let kept: Vec<bool> = {
+            let mut seen =
+                FastHashSet::with_capacity_and_hasher(prototypes.len(), Default::default());
+            prototypes
                 .iter()
-                .map(|(ty, _)| ty.clone())
-                .collect();
-            if !seen.insert((prototype.name.clone(), types)) {
+                .map(|prototype| {
+                    available(prototype.stages, stage) && seen.insert(Signature(prototype))
+                })
+                .collect()
+        };
+        let mut functions = Vec::new();
+        let mut names: FastHashMap<String, Vec<BuiltinFunctionId>> = FastHashMap::default();
+        for (prototype, kept) in prototypes.into_iter().zip(kept) {
+            if !kept {
                 continue;
             }
             let Ok(index) = u32::try_from(functions.len()) else {
                 break;
             };
-            names
-                .entry(prototype.name.clone())
-                .or_default()
-                .push(BuiltinFunctionId(index));
+            add_name(&mut names, &prototype.name, BuiltinFunctionId(index));
             functions.push(prototype.function());
         }
         let table = variables::build(version, stage, limits, &mut types);
@@ -454,7 +494,7 @@ impl Builtins {
         stage: ShaderStage,
         limits: &ResourceLimits,
         functions: Vec<Function>,
-        names: BTreeMap<String, Vec<BuiltinFunctionId>>,
+        names: FastHashMap<String, Vec<BuiltinFunctionId>>,
         types: TypeRegistry,
         table: (Vec<Symbol>, Vec<(String, SymbolId)>),
         footprints: Footprints,
