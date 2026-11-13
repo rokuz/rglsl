@@ -1,7 +1,7 @@
 use alloc::boxed::Box;
 use alloc::rc::Rc;
 use alloc::vec::Vec;
-use core::cell::{Cell, RefCell};
+use core::cell::Cell;
 use core::fmt;
 use core::future::Future;
 use core::pin::Pin;
@@ -15,7 +15,7 @@ pub struct Stalled;
 
 #[derive(Clone)]
 pub struct Stack<'b> {
-    spawned: Rc<RefCell<Option<Frame<'b>>>>,
+    spawned: Rc<Cell<Option<Frame<'b>>>>,
 }
 
 impl fmt::Debug for Stack<'_> {
@@ -57,7 +57,7 @@ impl<T> Future for Call<'_, T> {
     fn poll(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<T> {
         let this = self.get_mut();
         if let Some(frame) = this.frame.take() {
-            *this.stack.spawned.borrow_mut() = Some(frame);
+            this.stack.spawned.set(Some(frame));
             return Poll::Pending;
         }
         match this.slot.take() {
@@ -69,28 +69,27 @@ impl<T> Future for Call<'_, T> {
 
 pub fn run<'b, T: 'b, F: Future<Output = T> + 'b>(root: impl FnOnce(Stack<'b>) -> F) -> Option<T> {
     let stack = Stack {
-        spawned: Rc::new(RefCell::new(None)),
+        spawned: Rc::new(Cell::new(None)),
     };
-    let slot = Rc::new(Cell::new(None));
-    let result = Rc::clone(&slot);
-    let root = root(stack.clone());
+    let mut root = core::pin::pin!(root(stack.clone()));
     let mut frames: Vec<Frame<'b>> = Vec::new();
-    frames.push(Box::pin(async move {
-        result.set(Some(root.await));
-    }));
     let mut context = Context::from_waker(Waker::noop());
-    while let Some(top) = frames.last_mut() {
-        match top.as_mut().poll(&mut context) {
-            Poll::Ready(()) => {
-                frames.pop();
+    loop {
+        match frames.last_mut() {
+            Some(top) => {
+                if top.as_mut().poll(&mut context).is_ready() {
+                    frames.pop();
+                    continue;
+                }
             }
-            Poll::Pending => {
-                let spawned = stack.spawned.borrow_mut().take();
-                frames.push(spawned?);
+            None => {
+                if let Poll::Ready(value) = root.as_mut().poll(&mut context) {
+                    return Some(value);
+                }
             }
         }
+        frames.push(stack.spawned.take()?);
     }
-    slot.take()
 }
 
 #[cfg(test)]
