@@ -1,6 +1,4 @@
 use alloc::collections::{BTreeMap, BTreeSet};
-use alloc::format;
-use alloc::string::String;
 use alloc::vec::Vec;
 use core::cell::RefCell;
 
@@ -16,8 +14,6 @@ use super::frames::Cx;
 use super::{Analysis, Callee};
 use crate::scope::{SymbolId, SymbolKind};
 use crate::types::{Scalar, TypeKind};
-
-const DELIMITER: char = '/';
 
 const ARITHMETIC_BUILTINS: [&str; 6] = [
     "dot",
@@ -57,7 +53,7 @@ pub(crate) fn no_contraction(unit: &TranslationUnit, analysis: &Analysis) -> BTr
         returns: Vec::new(),
         result: BTreeSet::new(),
         precise_return: false,
-        remained: String::new(),
+        remained: Vec::new(),
     };
     if !pass.any_precise() {
         return BTreeSet::new();
@@ -74,25 +70,38 @@ pub(crate) fn no_contraction(unit: &TranslationUnit, analysis: &Analysis) -> BTr
 
 struct Precise<'a> {
     analysis: &'a Analysis,
-    chains: BTreeMap<NodeId, String>,
-    definitions: BTreeMap<String, Vec<Definition<'a>>>,
-    objects: BTreeSet<String>,
-    added: BTreeSet<String>,
+    chains: BTreeMap<NodeId, AccessPath>,
+    definitions: BTreeMap<SymbolId, Vec<Definition<'a>>>,
+    objects: BTreeSet<AccessPath>,
+    added: BTreeSet<AccessPath>,
     marked: BTreeSet<NodeId>,
     returns: Vec<&'a Expression>,
     result: BTreeSet<NodeId>,
     precise_return: bool,
-    remained: String,
+    remained: Vec<u32>,
 }
 
-fn front(chain: &str) -> &str {
-    chain
-        .split_once(DELIMITER)
-        .map_or(chain, |(first, _)| first)
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct AccessPath {
+    root: SymbolId,
+    fields: Vec<u32>,
 }
 
-fn after_front(chain: &str) -> &str {
-    chain.split_once(DELIMITER).map_or("", |(_, rest)| rest)
+impl AccessPath {
+    const fn of(root: SymbolId) -> Self {
+        Self {
+            root,
+            fields: Vec::new(),
+        }
+    }
+
+    fn strip_prefix(&self, prefix: &Self) -> Option<&[u32]> {
+        if self.root == prefix.root {
+            self.fields.strip_prefix(prefix.fields.as_slice())
+        } else {
+            None
+        }
+    }
 }
 
 const fn arithmetic_assignment(operator: AssignmentOperator) -> bool {
@@ -138,14 +147,6 @@ impl<'a> Precise<'a> {
                     .iter()
                     .any(|member| member.qualifiers.precise)
             })
-    }
-
-    fn label(&self, symbol: SymbolId) -> String {
-        let name = self
-            .analysis
-            .symbol(symbol)
-            .map_or("", |symbol| symbol.name.as_str());
-        format!("{}({name})", symbol.index())
     }
 
     fn symbol_precise(&self, symbol: SymbolId) -> bool {
@@ -246,33 +247,34 @@ impl<'a> Precise<'a> {
         }
     }
 
-    fn variable_chain(&self, expression: &Expression) -> Option<String> {
+    fn variable_chain(&self, expression: &Expression) -> Option<AccessPath> {
         let symbol = *self.analysis.references.get(&expression.id)?;
         match self.analysis.symbol(symbol)?.kind {
-            SymbolKind::BlockMember { instance, index } => {
-                Some(format!("{}{DELIMITER}{index}", self.label(instance)))
-            }
-            _ => Some(self.label(symbol)),
+            SymbolKind::BlockMember { instance, index } => Some(AccessPath {
+                root: instance,
+                fields: Vec::from([index]),
+            }),
+            _ => Some(AccessPath::of(symbol)),
         }
     }
 
     fn define_collected(
         &mut self,
         target: &'a Expression,
-        chain: Option<String>,
+        chain: Option<AccessPath>,
         definition: Definition<'a>,
     ) {
-        let chain = chain.unwrap_or_default();
+        let Some(chain) = chain else {
+            return;
+        };
+        let root = chain.root;
         if self.is_precise(target) {
-            self.objects.insert(chain.clone());
+            self.objects.insert(chain);
         }
-        self.definitions
-            .entry(String::from(front(&chain)))
-            .or_default()
-            .push(definition);
+        self.definitions.entry(root).or_default().push(definition);
     }
 
-    fn check_target(&mut self, target: &Expression, object: &str) {
+    fn check_target(&mut self, target: &Expression, object: &AccessPath) {
         let mut path = Vec::new();
         let mut current = target;
         while let ExpressionKind::Parenthesized(ref inner)
@@ -313,7 +315,7 @@ impl<'a> Precise<'a> {
         }
     }
 
-    fn check(&mut self, definition: Definition<'a>, object: &str) -> Option<String> {
+    fn check(&mut self, definition: Definition<'a>, object: &AccessPath) -> Option<Vec<u32>> {
         let assignee = match definition {
             Definition::Assignment { target, .. }
             | Definition::Step {
@@ -321,38 +323,32 @@ impl<'a> Precise<'a> {
             } => {
                 self.check_target(target, object);
                 if self.is_precise(target) {
-                    return Some(String::new());
+                    return Some(Vec::new());
                 }
-                self.chains.get(&target.id).cloned().unwrap_or_default()
+                self.chains.get(&target.id)?.clone()
             }
             Definition::Initializer { symbol, .. } => {
                 if self.symbol_precise(symbol) {
-                    return Some(String::new());
+                    return Some(Vec::new());
                 }
-                self.label(symbol)
+                AccessPath::of(symbol)
             }
         };
-        if assignee.starts_with(object) {
-            Some(String::new())
-        } else if object.starts_with(assignee.as_str()) {
-            Some(String::from(
-                object
-                    .get(assignee.len() + DELIMITER.len_utf8()..)
-                    .unwrap_or(""),
-            ))
+        if assignee.strip_prefix(object).is_some() {
+            Some(Vec::new())
         } else {
-            None
+            object.strip_prefix(&assignee).map(<[u32]>::to_vec)
         }
     }
 
     fn object(&mut self, expression: &Expression) {
-        let mut chain = self.chains.get(&expression.id).cloned().unwrap_or_default();
         if self.remained.is_empty() {
             self.marked.insert(expression.id);
-        } else {
-            chain.push(DELIMITER);
-            chain.push_str(&self.remained);
         }
+        let Some(mut chain) = self.chains.get(&expression.id).cloned() else {
+            return;
+        };
+        chain.fields.extend_from_slice(&self.remained);
         if self.added.insert(chain.clone()) {
             self.objects.insert(chain);
         }
@@ -369,7 +365,7 @@ impl<'a> Precise<'a> {
         &mut self,
         expression: &'e Expression,
         pending: &mut Vec<&'e Expression>,
-    ) -> Option<(&'e Expression, String)> {
+    ) -> Option<(&'e Expression, Vec<u32>)> {
         match expression.kind {
             ExpressionKind::Parenthesized(ref inner) => pending.push(inner),
             ExpressionKind::Variable(_)
@@ -427,14 +423,12 @@ impl<'a> Precise<'a> {
             }
             ExpressionKind::FunctionCall(ref call) => {
                 let callee = self.analysis.calls.get(&expression.id);
-                if !self.remained.is_empty() {
-                    if let Some(Callee::Constructor(ty)) = callee {
-                        if !ty.is_array() && matches!(ty.kind, TypeKind::Struct(_)) {
-                            let index: usize = front(&self.remained).parse().unwrap_or(usize::MAX);
-                            let argument = call.arguments.get(index)?;
-                            let rest = String::from(after_front(&self.remained));
-                            return Some((argument, rest));
-                        }
+                if let (Some(Callee::Constructor(ty)), Some((&index, rest))) =
+                    (callee, self.remained.split_first())
+                {
+                    if !ty.is_array() && matches!(ty.kind, TypeKind::Struct(_)) {
+                        let argument = call.arguments.get(usize::try_from(index).ok()?)?;
+                        return Some((argument, rest.to_vec()));
                     }
                 }
                 if let Some(Callee::Builtin(id)) = callee {
@@ -465,12 +459,11 @@ impl<'a> Precise<'a> {
             .and_then(|symbol| symbol.variable())
             .is_some_and(|variable| variable.value.is_some());
         if let (Some(symbol), false) = (symbol, folded) {
-            let label = self.label(symbol);
             if self.symbol_precise(symbol) {
-                self.objects.insert(label.clone());
+                self.objects.insert(AccessPath::of(symbol));
             }
             self.definitions
-                .entry(label)
+                .entry(symbol)
                 .or_default()
                 .push(Definition::Initializer {
                     symbol,
@@ -479,16 +472,20 @@ impl<'a> Precise<'a> {
         }
     }
 
-    fn collect_variable(&mut self, expression: &Expression) -> Option<String> {
+    fn collect_variable(&mut self, expression: &Expression) -> Option<AccessPath> {
         let chain = self.variable_chain(expression)?;
         self.chains.insert(expression.id, chain.clone());
         Some(chain)
     }
 
-    fn collect_link(&mut self, node: &'a Expression, inner: Option<String>) -> Option<String> {
+    fn collect_link(
+        &mut self,
+        node: &'a Expression,
+        inner: Option<AccessPath>,
+    ) -> Option<AccessPath> {
         match node.kind {
             ExpressionKind::Subscript { .. } => {
-                let chain = inner.unwrap_or_default();
+                let chain = inner?;
                 self.chains.insert(node.id, chain.clone());
                 Some(chain)
             }
@@ -496,10 +493,9 @@ impl<'a> Precise<'a> {
                 ref base,
                 ref field,
             } => {
-                let mut chain = inner.unwrap_or_default();
+                let mut chain = inner?;
                 if let Some((index, _)) = self.member(base, &field.node) {
-                    chain.push(DELIMITER);
-                    chain.push_str(&format!("{index}"));
+                    chain.fields.push(index);
                 }
                 self.chains.insert(node.id, chain.clone());
                 Some(chain)
@@ -685,7 +681,7 @@ impl<'b, 'a: 'b> Cx<'b, Precise<'a>> {
         self.with(|pass| pass.define_collected(target, chain, definition));
     }
 
-    async fn collect(self, expression: &'a Expression) -> Option<String> {
+    async fn collect(self, expression: &'a Expression) -> Option<AccessPath> {
         match expression.kind {
             ExpressionKind::Variable(_) => self.with(|pass| pass.collect_variable(expression)),
             ExpressionKind::Parenthesized(ref inner) => {
@@ -737,7 +733,7 @@ impl<'b, 'a: 'b> Cx<'b, Precise<'a>> {
         }
     }
 
-    async fn collect_left(self, expression: &'a Expression) -> Option<String> {
+    async fn collect_left(self, expression: &'a Expression) -> Option<AccessPath> {
         let spine = Spine::of(expression);
         let mut chain = self.call(self.clone().collect(spine.head)).await;
         for node in spine.links.into_iter().rev() {
@@ -789,9 +785,12 @@ impl<'b, 'a: 'b> Cx<'b, Precise<'a>> {
             self.call(self.clone().propagate(value)).await;
         }
         while let Some(object) = self.with(|pass| pass.objects.pop_first()) {
-            let symbol = String::from(front(&object));
-            let definitions =
-                self.with(|pass| pass.definitions.get(&symbol).cloned().unwrap_or_default());
+            let definitions = self.with(|pass| {
+                pass.definitions
+                    .get(&object.root)
+                    .cloned()
+                    .unwrap_or_default()
+            });
             for definition in definitions {
                 if let Some(remained) = self.with(|pass| pass.check(definition, &object)) {
                     self.call(self.clone().propagate_definition(definition, remained))
@@ -801,7 +800,7 @@ impl<'b, 'a: 'b> Cx<'b, Precise<'a>> {
         }
     }
 
-    async fn propagate_definition(self, definition: Definition<'a>, remained: String) {
+    async fn propagate_definition(self, definition: Definition<'a>, remained: Vec<u32>) {
         self.with(|pass| pass.remained = remained);
         match definition {
             Definition::Assignment {
@@ -841,12 +840,14 @@ impl<'b, 'a: 'b> Cx<'b, Precise<'a>> {
                     !ty.is_array() && matches!(ty.kind, TypeKind::Struct(_) | TypeKind::Block(_))
                 });
                 let remained = self.with(|pass| pass.remained.clone());
-                if structure && !remained.is_empty() {
-                    let index: usize = front(&remained).parse().unwrap_or(usize::MAX);
-                    let Some(item) = items.get(index) else {
+                if let (true, Some((&index, rest))) = (structure, remained.split_first()) {
+                    let Some(item) = usize::try_from(index)
+                        .ok()
+                        .and_then(|index| items.get(index))
+                    else {
                         return;
                     };
-                    let rest = String::from(after_front(&remained));
+                    let rest = rest.to_vec();
                     let outer = self.with(|pass| core::mem::replace(&mut pass.remained, rest));
                     self.call(self.clone().propagate_initializer(item, None))
                         .await;

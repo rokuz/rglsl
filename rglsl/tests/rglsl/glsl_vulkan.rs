@@ -9604,6 +9604,37 @@ fn precise_follows_struct_members_and_compound_assignments() -> crate::TestResul
 }
 
 #[test]
+fn precise_tells_struct_members_apart_past_the_tenth() -> crate::TestResult {
+    for (member, expected) in [("f1", Op::FAdd), ("f10", Op::FMul)] {
+        let module = compile_valid(
+            ShaderStage::Fragment,
+            &format!(
+                "#version 450
+                struct T {{
+                    float f0; float f1; float f2; float f3; float f4; float f5;
+                    float f6; float f7; float f8; float f9; float f10;
+                }};
+                layout(location = 0) in float a;
+                layout(location = 0) out float color;
+                void main() {{
+                    T s;
+                    s.f1 = a + 0.2;
+                    s.f10 = a * 0.5;
+                    precise float result = s.{member};
+                    color = result;
+                }}"
+            ),
+        )?;
+        assert_eq!(
+            decorated_ops(&module, Decoration::NoContraction),
+            [expected],
+            "{member}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn precision_qualifiers_become_relaxed_precision() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Fragment,
